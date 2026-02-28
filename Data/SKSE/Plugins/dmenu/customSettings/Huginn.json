@@ -1,0 +1,326 @@
+{
+  "name": "Huginn",
+  "ini": "Data\\SKSE\\Plugins\\dmenu\\customSettings\\ini\\Huginn.ini",
+  "data": [
+    {
+      "type": "group",
+      "text": {
+        "name": "Intuition Widget",
+        "desc": "HUD widget position and appearance"
+      },
+      "entries": [
+        {
+          "type": "checkbox",
+          "text": {
+            "name": "Enable Widget",
+            "desc": "Show the Intuition widget on the HUD"
+          },
+          "default": true,
+          "ini": {
+            "section": "Widget",
+            "id": "bEnabled"
+          }
+        },
+        {
+          "type": "slider",
+          "text": {
+            "name": "Position X (%)",
+            "desc": "Horizontal position (0=left, 100=right)"
+          },
+          "default": 28.0,
+          "style": {
+            "min": 0.0,
+            "max": 100.0,
+            "step": 1.0
+          },
+          "ini": {
+            "section": "Widget",
+            "id": "fPositionX"
+          }
+        },
+        {
+          "type": "slider",
+          "text": {
+            "name": "Position Y (%)",
+            "desc": "Vertical position (0=top, 100=bottom)"
+          },
+          "default": 83.0,
+          "style": {
+            "min": 0.0,
+            "max": 100.0,
+            "step": 1.0
+          },
+          "ini": {
+            "section": "Widget",
+            "id": "fPositionY"
+          }
+        },
+        {
+          "type": "slider",
+          "text": {
+            "name": "Opacity (%)",
+            "desc": "Widget transparency (0=invisible, 100=opaque)"
+          },
+          "default": 100.0,
+          "style": {
+            "min": 0.0,
+            "max": 100.0,
+            "step": 5.0
+          },
+          "ini": {
+            "section": "Widget",
+            "id": "fAlpha"
+          }
+        },
+        {
+          "type": "slider",
+          "text": {
+            "name": "Scale (%)",
+            "desc": "Widget size (50=half, 100=normal, 200=double)"
+          },
+          "default": 70.0,
+          "style": {
+            "min": 50.0,
+            "max": 200.0,
+            "step": 5.0
+          },
+          "ini": {
+            "section": "Widget",
+            "id": "fScale"
+          }
+        }
+      ]
+    },
+    {
+      "type": "group",
+      "text": {
+        "name": "Keybindings",
+        "desc": "Hotkeys for equipping items and cycling pages"
+      },
+      "entries": [
+        {
+          "type": "keymap",
+          "text": {
+            "name": "Equip Slot 1",
+            "desc": "Tap=right hand, Double-tap=left, Hold=both"
+          },
+          "default": 2,
+          "ini": {
+            "section": "Keybindings",
+            "id": "iSlot1Key"
+          }
+        },
+        {
+          "type": "keymap",
+          "text": {
+            "name": "Equip Slot 2",
+            "desc": "Tap=right hand, Double-tap=left, Hold=both"
+          },
+          "default": 3,
+          "ini": {
+            "section": "Keybindings",
+            "id": "iSlot2Key"
+          }
+        },
+        {
+          "type": "keymap",
+          "text": {
+            "name": "Equip Slot 3",
+            "desc": "Tap=right hand, Double-tap=left, Hold=both"
+          },
+          "default": 4,
+          "ini": {
+            "section": "Keybindings",
+            "id": "iSlot3Key"
+          }
+        },
+        {
+          "type": "keymap",
+          "text": {
+            "name": "Equip Slot 4",
+            "desc": "Tap=right hand, Double-tap=left, Hold=both"
+          },
+          "default": 5,
+          "ini": {
+            "section": "Keybindings",
+            "id": "iSlot4Key"
+          }
+        },
+        {
+          "type": "keymap",
+          "text": {
+            "name": "Equip Slot 5",
+            "desc": "Tap=right hand, Double-tap=left, Hold=both"
+          },
+          "default": 6,
+          "ini": {
+            "section": "Keybindings",
+            "id": "iSlot5Key"
+          }
+        },
+        {
+          "type": "keymap",
+          "text": {
+            "name": "Equip Slot 6",
+            "desc": "Tap=right hand, Double-tap=left, Hold=both"
+          },
+          "default": 7,
+          "ini": {
+            "section": "Keybindings",
+            "id": "iSlot6Key"
+          }
+        },
+        {
+          "type": "keymap",
+          "text": {
+            "name": "Equip Slot 7",
+            "desc": "Tap=right hand, Double-tap=left, Hold=both"
+          },
+          "default": 8,
+          "ini": {
+            "section": "Keybindings",
+            "id": "iSlot7Key"
+          }
+        },
+        {
+          "type": "keymap",
+          "text": {
+            "name": "Equip Slot 8",
+            "desc": "Tap=right hand, Double-tap=left, Hold=both"
+          },
+          "default": 9,
+          "ini": {
+            "section": "Keybindings",
+            "id": "iSlot8Key"
+          }
+        },
+        {
+          "type": "keymap",
+          "text": {
+            "name": "Equip Slot 9",
+            "desc": "Tap=right hand, Double-tap=left, Hold=both"
+          },
+          "default": 10,
+          "ini": {
+            "section": "Keybindings",
+            "id": "iSlot9Key"
+          }
+        },
+        {
+          "type": "keymap",
+          "text": {
+            "name": "Equip Slot 10",
+            "desc": "Tap=right hand, Double-tap=left, Hold=both (0 key)"
+          },
+          "default": 11,
+          "ini": {
+            "section": "Keybindings",
+            "id": "iSlot10Key"
+          }
+        },
+        {
+          "type": "keymap",
+          "text": {
+            "name": "Previous Page",
+            "desc": "Cycle to previous page (- key by default)"
+          },
+          "default": 12,
+          "ini": {
+            "section": "Keybindings",
+            "id": "iPreviousPageKey"
+          }
+        },
+        {
+          "type": "keymap",
+          "text": {
+            "name": "Next Page",
+            "desc": "Cycle to next page (= key by default)"
+          },
+          "default": 13,
+          "ini": {
+            "section": "Keybindings",
+            "id": "iNextPageKey"
+          }
+        }
+      ]
+    },
+    {
+      "type": "group",
+      "text": {
+        "name": "Debug Widgets",
+        "desc": "Show/hide debug overlays (Debug builds only)"
+      },
+      "entries": [
+        {
+          "type": "checkbox",
+          "text": {
+            "name": "Show State Manager",
+            "desc": "Display player state, world state, and target tracking"
+          },
+          "default": false,
+          "ini": {
+            "section": "Debug",
+            "id": "bShowStateManager"
+          }
+        },
+        {
+          "type": "checkbox",
+          "text": {
+            "name": "Show Registry",
+            "desc": "Display spell, item, and weapon registries"
+          },
+          "default": false,
+          "ini": {
+            "section": "Debug",
+            "id": "bShowRegistry"
+          }
+        },
+        {
+          "type": "checkbox",
+          "text": {
+            "name": "Show Utility Scorer",
+            "desc": "Display candidate scoring breakdown"
+          },
+          "default": false,
+          "ini": {
+            "section": "Debug",
+            "id": "bShowUtilityScorer"
+          }
+        }
+      ]
+    },
+    {
+      "type": "group",
+      "text": {
+        "name": "Actions",
+        "desc": "Reset learning data and reload settings"
+      },
+      "entries": [
+        {
+          "type": "button",
+          "text": {
+            "name": "Reset Q-Table",
+            "desc": "Clear all learned preferences (rewards/penalties)"
+          },
+          "id": "Huginn_reset_qtable"
+        },
+        {
+          "type": "button",
+          "text": {
+            "name": "Reset to Defaults",
+            "desc": "Restore all settings to compile-time defaults"
+          },
+          "id": "Huginn_reset_defaults"
+        },
+        {
+          "type": "button",
+          "text": {
+            "name": "Reload INI",
+            "desc": "Reload settings from Huginn.ini (bypass dMenu changes)"
+          },
+          "id": "Huginn_reload_ini"
+        }
+      ]
+    }
+  ]
+}

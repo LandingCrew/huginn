@@ -1,0 +1,20 @@
+{
+  "$schema": "https://raw.githubusercontent.com/microsoft/vcpkg-tool/main/docs/vcpkg.schema.json",
+  "name": "huginn",
+  "version-string": "0.13.0",
+  "description": "Context-aware spell and equipment recommendation system for Skyrim",
+  "license": "MIT",
+  "dependencies": [
+    "rsm-binary-io",
+    "spdlog",
+    "simpleini",
+    "toml11",
+    "rapidcsv",
+    "freetype",
+    {
+      "name": "imgui",
+      "features": ["win32-binding", "dx11-binding"]
+    }
+  ],
+  "builtin-baseline": "4bb07a326d9b9bce3703272a509e5bc25dd9cfd5"
+}

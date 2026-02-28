@@ -1,0 +1,31 @@
+#pragma once
+
+#include <string_view>
+
+namespace Plugin
+{
+   using namespace std::literals;
+
+   inline constexpr REL::Version VERSION
+   {
+      // clang-format off
+      @PROJECT_VERSION_MAJOR@u,
+      @PROJECT_VERSION_MINOR@u,
+      @PROJECT_VERSION_PATCH@u,
+      // clang-format on
+   };
+
+   inline constexpr auto NAME = "@PROJECT_NAME@"sv;
+}
+
+namespace Huginn
+{
+   using namespace std::literals;
+
+   inline constexpr std::size_t VERSION_MAJOR = @PROJECT_VERSION_MAJOR@;
+   inline constexpr std::size_t VERSION_MINOR = @PROJECT_VERSION_MINOR@;
+   inline constexpr std::size_t VERSION_PATCH = @PROJECT_VERSION_PATCH@;
+   inline constexpr auto VERSION_STRING = "@PROJECT_VERSION@"sv;
+   inline constexpr auto GIT_COMMIT = "@GIT_COMMIT_HASH@"sv;
+   inline constexpr auto PROJECT_NAME = "@PROJECT_NAME@"sv;
+}

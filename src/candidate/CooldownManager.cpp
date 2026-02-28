@@ -1,0 +1,159 @@
+#include "CooldownManager.h"
+
+namespace Huginn::Candidate
+{
+    // Thread safety macros for clarity
+    #define READ_LOCK std::shared_lock lock(m_mutex)
+    #define WRITE_LOCK std::unique_lock lock(m_mutex)
+    CooldownManager::CooldownManager()
+        : m_lastCleanup(std::chrono::steady_clock::now())
+    {
+        // Initialize default durations for each source type
+        m_durations[static_cast<size_t>(SourceType::Spell)]   = DEFAULT_SPELL_COOLDOWN;
+        m_durations[static_cast<size_t>(SourceType::Potion)]  = DEFAULT_POTION_COOLDOWN;
+        m_durations[static_cast<size_t>(SourceType::Scroll)]  = DEFAULT_SCROLL_COOLDOWN;
+        m_durations[static_cast<size_t>(SourceType::Weapon)]  = DEFAULT_WEAPON_COOLDOWN;
+        m_durations[static_cast<size_t>(SourceType::Ammo)]    = DEFAULT_AMMO_COOLDOWN;
+        m_durations[static_cast<size_t>(SourceType::SoulGem)] = DEFAULT_SOULGEM_COOLDOWN;
+        m_durations[static_cast<size_t>(SourceType::Food)]    = DEFAULT_FOOD_COOLDOWN;
+        m_durations[static_cast<size_t>(SourceType::Staff)]   = DEFAULT_STAFF_COOLDOWN;
+
+        // Reserve space for typical usage
+        m_cooldowns.reserve(32);
+    }
+
+    bool CooldownManager::IsOnCooldown(RE::FormID formID, SourceType type) const noexcept
+    {
+        READ_LOCK;
+        const uint64_t key = MakeKey(formID, type);
+        auto it = m_cooldowns.find(key);
+
+        if (it == m_cooldowns.end()) {
+            return false;
+        }
+
+        // Check if cooldown has expired
+        return std::chrono::steady_clock::now() < it->second.expiryTime;
+    }
+
+    void CooldownManager::StartCooldown(RE::FormID formID, SourceType type)
+    {
+        StartCooldown(formID, type, GetDuration(type));
+    }
+
+    void CooldownManager::StartCooldown(RE::FormID formID, SourceType type, float durationSeconds)
+    {
+        if (durationSeconds <= 0.0f) {
+            return;  // No cooldown to start
+        }
+
+        const uint64_t key = MakeKey(formID, type);
+        const auto now = std::chrono::steady_clock::now();
+        const auto duration = std::chrono::duration_cast<std::chrono::steady_clock::duration>(
+            std::chrono::duration<float>(durationSeconds)
+        );
+
+        WRITE_LOCK;
+        m_cooldowns[key] = CooldownEntry{ now + duration };
+    }
+
+    void CooldownManager::Update([[maybe_unused]] float deltaSeconds)
+    {
+        // Note: deltaSeconds is unused - we use steady_clock for time tracking.
+        // Parameter kept for API consistency with other Update() methods.
+
+        // Periodically clean up expired entries to prevent unbounded growth
+        const auto now = std::chrono::steady_clock::now();
+        const auto elapsed = std::chrono::duration<float>(now - m_lastCleanup).count();
+
+        if (elapsed >= CLEANUP_INTERVAL_SECONDS) {
+            WRITE_LOCK;
+            CleanupExpiredLocked();  // Call lockless version since we already hold lock
+            m_lastCleanup = now;
+        }
+    }
+
+    void CooldownManager::SetDuration(SourceType type, float seconds)
+    {
+        const size_t index = static_cast<size_t>(type);
+        if (index < m_durations.size()) {
+            m_durations[index] = seconds;
+        }
+    }
+
+    float CooldownManager::GetDuration(SourceType type) const noexcept
+    {
+        const size_t index = static_cast<size_t>(type);
+        if (index < m_durations.size()) {
+            return m_durations[index];
+        }
+        return 2.0f;  // Fallback default
+    }
+
+    void CooldownManager::Clear()
+    {
+        WRITE_LOCK;
+        m_cooldowns.clear();
+    }
+
+    size_t CooldownManager::GetActiveCount() const noexcept
+    {
+        READ_LOCK;
+        const auto now = std::chrono::steady_clock::now();
+        size_t count = 0;
+
+        for (const auto& [key, entry] : m_cooldowns) {
+            if (now < entry.expiryTime) {
+                ++count;
+            }
+        }
+
+        return count;
+    }
+
+    float CooldownManager::GetRemainingCooldown(RE::FormID formID, SourceType type) const noexcept
+    {
+        READ_LOCK;
+        const uint64_t key = MakeKey(formID, type);
+        auto it = m_cooldowns.find(key);
+
+        if (it == m_cooldowns.end()) {
+            return 0.0f;
+        }
+
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= it->second.expiryTime) {
+            return 0.0f;
+        }
+
+        return std::chrono::duration<float>(it->second.expiryTime - now).count();
+    }
+
+    bool CooldownManager::CancelCooldown(RE::FormID formID, SourceType type)
+    {
+        WRITE_LOCK;
+        const uint64_t key = MakeKey(formID, type);
+        return m_cooldowns.erase(key) > 0;
+    }
+
+    void CooldownManager::CleanupExpired()
+    {
+        WRITE_LOCK;
+        CleanupExpiredLocked();
+    }
+
+    void CooldownManager::CleanupExpiredLocked()
+    {
+        // Note: Caller must hold m_mutex (either shared or unique lock)
+        const auto now = std::chrono::steady_clock::now();
+
+        // C++20 erase_if for efficient removal
+        std::erase_if(m_cooldowns, [&now](const auto& pair) {
+            return now >= pair.second.expiryTime;
+        });
+    }
+
+    #undef READ_LOCK
+    #undef WRITE_LOCK
+
+}  // namespace Huginn::Candidate

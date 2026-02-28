@@ -1,0 +1,90 @@
+# =============================================================================
+# C++ / CMake / Visual Studio / SKSE Project
+# =============================================================================
+
+# Build directories
+build/
+out/
+cmake-build-*/
+
+# Visual Studio
+.vs/
+*.vcxproj.user
+*.suo
+*.user
+*.userosscache
+*.sln.docstates
+*.opendb
+*.db
+*.ipch
+*.aps
+*.ncb
+*.opensdf
+*.sdf
+*.cachefile
+*.VC.db
+*.VC.VC.opendb
+
+# Visual Studio Code
+.vscode/settings.json
+.vscode/launch.json
+.vscode/tasks.json
+.vscode/*.log
+
+# Compiled binaries
+*.exe
+*.dll
+*.lib
+*.pdb
+*.ilk
+*.obj
+*.o
+*.a
+*.so
+*.dylib
+*.exp
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+_deps/
+CMakeUserPresets.json
+
+# vcpkg
+vcpkg_installed/
+
+# Claude Code (local settings only)
+.claude/settings.local.json
+
+# IDE / Editor
+*.swp
+*.swo
+*~
+.idea/
+*.iml
+
+# OS files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs
+*.log
+logs/
+
+# Package manager locks (if using conan, etc.)
+conan.lock
+graph_info.json
+
+# Test output
+Testing/
+coverage/
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
