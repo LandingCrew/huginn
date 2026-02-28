@@ -1,6 +1,6 @@
 [submodule "extern/tracy"]
 	path = extern/tracy
-	url = https://github.com/wolfpld/tracy
+	url = https://github.com/wolfpld/tracy.git
 [submodule "extern/wheelerAPI"]
 	path = extern/wheelerAPI
 	url = https://github.com/LandingCrew/wheelerAPI.git

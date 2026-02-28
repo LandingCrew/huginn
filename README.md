@@ -52,7 +52,13 @@ cmake --build build --config Release
 
 Debug builds enable extra logging and unit tests:
 ```powershell
-cmake --build build --config Debug
+git submodule add https://github.com/wolfpld/tracy.git extern/tracy  
+cd extern/tracy
+git checkout v0.13.1
+cd ../..
+git add extern/tracy
+
+cmake --preset vs2022-windows -DHuginn_TRACY=ON ;cmake --build build --config Debug
 ```
 
 ### Dependencies (vcpkg)
