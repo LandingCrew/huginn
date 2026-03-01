@@ -833,17 +833,17 @@ namespace Huginn::Item
       return keywords;
    }
 
-   bool ItemClassifier::IsAlcohol(const RE::AlchemyItem* item, std::string_view name) const noexcept
+   bool ItemClassifier::IsAlcohol(const RE::AlchemyItem* item, std::string_view name) noexcept
    {
       // TIER 1: Keyword-based detection (mod support - CACO, etc.)
       auto* keywordForm = item->As<RE::BGSKeywordForm>();
       if (keywordForm) {
-      auto keywords = BuildKeywordSet(keywordForm);
-      if (keywords.contains("VendorItemAlcohol") ||
-          keywords.contains("CACO_IsAlcohol") ||
-          keywords.contains("VendorItemSkooma")) {
-        return true;
-      }
+         auto keywords = BuildKeywordSet(keywordForm);
+         if (keywords.contains("VendorItemAlcohol") ||
+             keywords.contains("CACO_IsAlcohol") ||
+             keywords.contains("VendorItemSkooma")) {
+            return true;
+         }
       }
 
       // TIER 2: Name-based fallback for vanilla and untagged items
@@ -863,36 +863,41 @@ namespace Huginn::Item
           NameContains(name, "shein") ||
           NameContains(name, "jagga") ||
           NameContains(name, "rotmeth")) {
-      return true;
+         return true;
       }
 
-      // Generic terms — match as whole words to avoid false positives
-      // (e.g. "ale" in "stale bread" handled by checking known full names first)
-      if (NameContains(name, " ale") ||
-          NameContains(name, " mead") ||
-          NameContains(name, " wine") ||
-          NameContains(name, " beer") ||
-          NameContains(name, " brandy")) {
-      return true;
-      }
-
-      // Check if name starts with the generic term
-      auto startsWithCI = [](std::string_view str, std::string_view prefix) noexcept {
-      if (str.size() < prefix.size()) return false;
-      for (size_t i = 0; i < prefix.size(); ++i) {
-        if (std::tolower(static_cast<unsigned char>(str[i])) !=
-            std::tolower(static_cast<unsigned char>(prefix[i])))
-           return false;
-      }
-      return true;
+      // Generic terms — word-boundary check to avoid false positives
+      // (e.g. " ale" in "Scale Armor", "wine" in "Wineberry")
+      auto endsWithWordCI = [](std::string_view str, std::string_view suffix) noexcept {
+         if (str.size() < suffix.size()) return false;
+         size_t start = str.size() - suffix.size();
+         // Suffix must be preceded by a space (or be the entire string)
+         if (start > 0 && str[start - 1] != ' ') return false;
+         for (size_t i = 0; i < suffix.size(); ++i) {
+            if (std::tolower(static_cast<unsigned char>(str[start + i])) !=
+                std::tolower(static_cast<unsigned char>(suffix[i])))
+               return false;
+         }
+         return true;
       };
 
-      if (startsWithCI(name, "ale") ||
-          startsWithCI(name, "mead") ||
-          startsWithCI(name, "wine") ||
-          startsWithCI(name, "beer") ||
-          startsWithCI(name, "brandy")) {
-      return true;
+      auto startsWithWordCI = [](std::string_view str, std::string_view prefix) noexcept {
+         if (str.size() < prefix.size()) return false;
+         // Prefix must be followed by a space (or be the entire string)
+         if (str.size() > prefix.size() && str[prefix.size()] != ' ') return false;
+         for (size_t i = 0; i < prefix.size(); ++i) {
+            if (std::tolower(static_cast<unsigned char>(str[i])) !=
+                std::tolower(static_cast<unsigned char>(prefix[i])))
+               return false;
+         }
+         return true;
+      };
+
+      constexpr std::string_view genericTerms[] = { "ale", "mead", "wine", "beer", "brandy" };
+      for (auto term : genericTerms) {
+         if (endsWithWordCI(name, term) || startsWithWordCI(name, term)) {
+            return true;
+         }
       }
 
       return false;

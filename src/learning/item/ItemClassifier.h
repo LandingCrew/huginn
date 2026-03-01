@@ -63,7 +63,7 @@ namespace Huginn::Item
 
       // Check if a food item is actually an alcoholic beverage
       // Two-tier detection: keyword check (mod support), then name fallback
-      [[nodiscard]] bool IsAlcohol(const RE::AlchemyItem* item, std::string_view name) const noexcept;
+      [[nodiscard]] static bool IsAlcohol(const RE::AlchemyItem* item, std::string_view name) noexcept;
 
       // Helper: Check if item name contains keyword (case-insensitive)
       [[nodiscard]] static bool NameContains(std::string_view name, std::string_view keyword) noexcept;
