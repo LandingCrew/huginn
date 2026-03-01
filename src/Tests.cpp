@@ -407,6 +407,7 @@ void RunItemClassifierTests()
     size_t potionCount = 0;
     size_t poisonCount = 0;
     size_t foodCount = 0;
+    size_t alcoholCount = 0;
     size_t unknownCount = 0;
 
     logger::info("=== ItemClassifier Test Results ==="sv);
@@ -449,6 +450,9 @@ void RunItemClassifierTests()
         case Item::ItemType::Food:
             foodCount++;
             break;
+        case Item::ItemType::Alcohol:
+            alcoholCount++;
+            break;
         default:
             unknownCount++;
             break;
@@ -459,10 +463,11 @@ void RunItemClassifierTests()
     logger::info("  Potions: {}", potionCount);
     logger::info("  Poisons: {}", poisonCount);
     logger::info("  Food: {}", foodCount);
+    logger::info("  Alcohol: {}", alcoholCount);
     logger::info("  Unknown: {}", unknownCount);
-    logger::info("  Total alchemy items: {}", potionCount + poisonCount + foodCount + unknownCount);
+    logger::info("  Total alchemy items: {}", potionCount + poisonCount + foodCount + alcoholCount + unknownCount);
 
-    if (potionCount + poisonCount + foodCount > 0) {
+    if (potionCount + poisonCount + foodCount + alcoholCount > 0) {
         logger::info("TEST PASS: ItemClassifier successfully classified items"sv);
     } else if (unknownCount > 0) {
         logger::warn("TEST WARN: All items classified as Unknown"sv);

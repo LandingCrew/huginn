@@ -48,6 +48,7 @@ namespace Huginn::Candidate
                 candidate.sourceType = SourceType::Potion;
                 break;
             case Item::ItemType::Food:
+            case Item::ItemType::Alcohol:
             case Item::ItemType::Ingredient:
                 candidate.sourceType = SourceType::Food;
                 break;

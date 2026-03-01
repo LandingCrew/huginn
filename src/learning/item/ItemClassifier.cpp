@@ -48,6 +48,10 @@ namespace Huginn::Item
       if (data.type == ItemType::Unknown) {
         data.type = DeriveItemTypeFromTags(data.tags);  // Tag-based fallback
       }
+      // Sub-classify food items: check if actually alcohol
+      if (data.type == ItemType::Food && IsAlcohol(item, data.name)) {
+        data.type = ItemType::Alcohol;
+      }
       }
 
       // STEP 3: Get magnitude and duration from costliest effect
@@ -827,6 +831,71 @@ namespace Huginn::Item
       }
       }
       return keywords;
+   }
+
+   bool ItemClassifier::IsAlcohol(const RE::AlchemyItem* item, std::string_view name) const noexcept
+   {
+      // TIER 1: Keyword-based detection (mod support - CACO, etc.)
+      auto* keywordForm = item->As<RE::BGSKeywordForm>();
+      if (keywordForm) {
+      auto keywords = BuildKeywordSet(keywordForm);
+      if (keywords.contains("VendorItemAlcohol") ||
+          keywords.contains("CACO_IsAlcohol") ||
+          keywords.contains("VendorItemSkooma")) {
+        return true;
+      }
+      }
+
+      // TIER 2: Name-based fallback for vanilla and untagged items
+      // Full drink names (match anywhere in name, case-insensitive)
+      if (NameContains(name, "alto wine") ||
+          NameContains(name, "argonian ale") ||
+          NameContains(name, "black-briar mead") ||
+          NameContains(name, "honningbrew mead") ||
+          NameContains(name, "nord mead") ||
+          NameContains(name, "spiced wine") ||
+          NameContains(name, "firebrand wine") ||
+          NameContains(name, "colovian brandy") ||
+          NameContains(name, "cyrodilic brandy") ||
+          NameContains(name, "skooma") ||
+          NameContains(name, "mazte") ||
+          NameContains(name, "flin") ||
+          NameContains(name, "shein") ||
+          NameContains(name, "jagga") ||
+          NameContains(name, "rotmeth")) {
+      return true;
+      }
+
+      // Generic terms — match as whole words to avoid false positives
+      // (e.g. "ale" in "stale bread" handled by checking known full names first)
+      if (NameContains(name, " ale") ||
+          NameContains(name, " mead") ||
+          NameContains(name, " wine") ||
+          NameContains(name, " beer") ||
+          NameContains(name, " brandy")) {
+      return true;
+      }
+
+      // Check if name starts with the generic term
+      auto startsWithCI = [](std::string_view str, std::string_view prefix) noexcept {
+      if (str.size() < prefix.size()) return false;
+      for (size_t i = 0; i < prefix.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(str[i])) !=
+            std::tolower(static_cast<unsigned char>(prefix[i])))
+           return false;
+      }
+      return true;
+      };
+
+      if (startsWithCI(name, "ale") ||
+          startsWithCI(name, "mead") ||
+          startsWithCI(name, "wine") ||
+          startsWithCI(name, "beer") ||
+          startsWithCI(name, "brandy")) {
+      return true;
+      }
+
+      return false;
    }
 
    bool ItemClassifier::HasSoulGemKeyword(const RE::AlchemyItem* item) noexcept
