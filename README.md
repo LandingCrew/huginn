@@ -17,7 +17,7 @@ Huginn is an SKSE plugin that watches what you can see — health, enemies, envi
 - **Learns as you play** — observes what you equip in each situation, bootstrapped with sensible defaults
 - **Scaleform HUD widget** — minimal overlay with keybinds, auto-hides outside combat
 - **Wheeler integration** — optional [Wheeler](https://www.nexusmods.com/skyrimspecialedition/mods/97345) radial menu support
-- **Multi-page slots** — organize recommendations by role (up to 4 pages, 10 slots each)
+- **Multi-page slots** — organize recommendations by role (up to 10 pages, 10 slots each)
 - **Workstation awareness** — Fortify Smithing at forges, Fortify Enchanting at enchanters
 - **INI-configurable** — context weights, scoring, slot layout, keybindings, display mode
 
@@ -52,13 +52,7 @@ cmake --build build --config Release
 
 Debug builds enable extra logging and unit tests:
 ```powershell
-git submodule add https://github.com/wolfpld/tracy.git extern/tracy  
-cd extern/tracy
-git checkout v0.13.1
-cd ../..
-git add extern/tracy
-
-cmake --preset vs2022-windows -DHuginn_TRACY=ON ;cmake --build build --config Debug
+cmake --build build --config Debug
 ```
 
 ### Dependencies (vcpkg)
