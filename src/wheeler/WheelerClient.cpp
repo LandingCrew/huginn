@@ -473,7 +473,17 @@ namespace Huginn::Wheeler
             // requested (observed during new game). Add missing entries individually.
             int32_t actualEntries = m_api->GetEntryCount(pageWheel.wheelIndex);
             int32_t targetEntries = static_cast<int32_t>(slotCount);
-            if (actualEntries < targetEntries) {
+            if (actualEntries < 0) {
+                spdlog::error("[WheelerClient] Page {} GetEntryCount returned negative ({}), skipping wheel",
+                    p, actualEntries);
+                continue;
+            } else if (actualEntries > targetEntries) {
+                spdlog::warn("[WheelerClient] Page {} wheel {} has more entries ({}) than requested ({}), discarding excess",
+                    p, pageWheel.wheelIndex, actualEntries, targetEntries);
+                for (int32_t e = actualEntries - 1; e >= targetEntries; --e) {
+                    m_api->DeleteEntry(pageWheel.wheelIndex, e);
+                }
+            } else if (actualEntries < targetEntries) {
                 spdlog::warn("[WheelerClient] Page {} wheel {} created with {}/{} entries, adding missing entries",
                     p, pageWheel.wheelIndex, actualEntries, targetEntries);
                 for (int32_t e = actualEntries; e < targetEntries; ++e) {
@@ -486,10 +496,15 @@ namespace Huginn::Wheeler
                 }
                 // Re-check and adjust slot count to match reality
                 actualEntries = m_api->GetEntryCount(pageWheel.wheelIndex);
+                if (actualEntries < 0) {
+                    spdlog::error("[WheelerClient] Page {} GetEntryCount returned negative ({}) after repair, skipping wheel",
+                        p, actualEntries);
+                    continue;
+                }
                 if (actualEntries < targetEntries) {
                     spdlog::warn("[WheelerClient] Page {} could only create {}/{} entries, adjusting slot count",
                         p, actualEntries, targetEntries);
-                    pageWheel.slotCount = static_cast<size_t>(std::max(actualEntries, 0));
+                    pageWheel.slotCount = static_cast<size_t>(actualEntries);
                     pageWheel.slotFormIDs.resize(pageWheel.slotCount, 0);
                     pageWheel.slotWildcard.resize(pageWheel.slotCount, false);
                     pageWheel.slotUniqueIDs.resize(pageWheel.slotCount, 0);
@@ -499,9 +514,12 @@ namespace Huginn::Wheeler
                 }
             }
 
-            spdlog::info("[WheelerClient] Created wheel for page {} '{}': index={}, {} slots{}",
-                p, pageConfig.name, pageWheel.wheelIndex, pageWheel.slotCount,
-                (pageWheel.slotCount != slotCount) ? std::format(" (requested {})", slotCount) : "");
+            if (pageWheel.slotCount != slotCount)
+                spdlog::info("[WheelerClient] Created wheel for page {} '{}': index={}, {} slots (requested {})",
+                    p, pageConfig.name, pageWheel.wheelIndex, pageWheel.slotCount, slotCount);
+            else
+                spdlog::info("[WheelerClient] Created wheel for page {} '{}': index={}, {} slots",
+                    p, pageConfig.name, pageWheel.wheelIndex, pageWheel.slotCount);
 
             m_pageWheels.push_back(std::move(pageWheel));
         }
