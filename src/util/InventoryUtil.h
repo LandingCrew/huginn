@@ -35,6 +35,8 @@ namespace Huginn::Util
                     if (!inserted) {
                         // Duplicate — accumulate count, keep first entry
                         it->second.first += entry->countDelta;
+                        logger::debug("GetInventorySafe: duplicate inventory entry for {} ({:08X}), delta {}",
+                            entry->object->GetName(), entry->object->GetFormID(), entry->countDelta);
                     }
                 }
             }
