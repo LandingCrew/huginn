@@ -41,6 +41,7 @@ namespace Huginn::Slot
         WeaponsMelee,   // Melee weapons only (sword, axe, mace, dagger)
         WeaponsRanged,  // Ranged weapons only (bow, crossbow, staff)
         FoodAny,        // Food items (CC Survival Mode)
+        AlcoholAny,     // Alcoholic beverages (ale, mead, wine, skooma)
         AmmoAny,        // Ammunition (arrows, bolts)
 
         // Unrestricted
@@ -135,6 +136,7 @@ namespace Huginn::Slot
             case SlotClassification::WeaponsMelee: return "WeaponsMelee";
             case SlotClassification::WeaponsRanged: return "WeaponsRanged";
             case SlotClassification::FoodAny:      return "FoodAny";
+            case SlotClassification::AlcoholAny:   return "AlcoholAny";
             case SlotClassification::AmmoAny:      return "AmmoAny";
             case SlotClassification::Regular:      return "Regular";
             default:                              return "Unknown";

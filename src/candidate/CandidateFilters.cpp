@@ -214,6 +214,13 @@ namespace Huginn::Candidate
             using T = std::decay_t<decltype(c)>;
 
             if constexpr (std::is_same_v<T, ItemCandidate>) {
+                // Food and alcohol are consumed for survival/roleplay, not just
+                // restore effects — never filter them by full vitals.
+                if (c.type == Item::ItemType::Food ||
+                    c.type == Item::ItemType::Alcohol) {
+                    return true;
+                }
+
                 // Filter health potions when health is full
                 if (m_config.filterHealingWhenFull &&
                     Item::HasTag(c.tags, Item::ItemTag::RestoreHealth) &&

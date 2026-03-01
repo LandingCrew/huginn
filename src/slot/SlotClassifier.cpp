@@ -58,6 +58,7 @@ namespace Huginn::Slot
             SlotClassification::SummonsAny,
             SlotClassification::Utility,
             SlotClassification::FoodAny,        // Before PotionsAny so food gets specific match
+            SlotClassification::AlcoholAny,     // After FoodAny so alcohol gets specific match
             SlotClassification::PotionsAny,
             SlotClassification::ScrollsAny,
             SlotClassification::WeaponsMelee,   // Before WeaponsAny so melee gets specific match
@@ -147,6 +148,7 @@ namespace Huginn::Slot
             case SlotClassification::WeaponsMelee:
             case SlotClassification::WeaponsRanged:
             case SlotClassification::FoodAny:
+            case SlotClassification::AlcoholAny:
             case SlotClassification::AmmoAny:
                 return false;
 
@@ -218,6 +220,9 @@ namespace Huginn::Slot
 
             case SlotClassification::FoodAny:
                 return item.type == ItemType::Food;
+
+            case SlotClassification::AlcoholAny:
+                return item.type == ItemType::Alcohol;
 
             case SlotClassification::SpellsAny:
             case SlotClassification::SpellsDestruction:
@@ -305,6 +310,7 @@ namespace Huginn::Slot
             case SlotClassification::WeaponsMelee:
             case SlotClassification::WeaponsRanged:
             case SlotClassification::FoodAny:
+            case SlotClassification::AlcoholAny:
             case SlotClassification::AmmoAny:
                 return false;
 
@@ -353,6 +359,7 @@ namespace Huginn::Slot
             case SlotClassification::SpellsIllusion:
             case SlotClassification::SpellsAlteration:
             case SlotClassification::FoodAny:
+            case SlotClassification::AlcoholAny:
             case SlotClassification::AmmoAny:
                 return false;
 

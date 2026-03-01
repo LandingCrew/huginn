@@ -61,6 +61,10 @@ namespace Huginn::Item
       // Check if item has a resistance effect for the specified actor value
       [[nodiscard]] static bool HasResistEffect(const RE::AlchemyItem* item, RE::ActorValue resistAV) noexcept;
 
+      // Check if a food item is actually an alcoholic beverage
+      // Two-tier detection: keyword check (mod support), then name fallback
+      [[nodiscard]] static bool IsAlcohol(const RE::AlchemyItem* item, std::string_view name) noexcept;
+
       // Helper: Check if item name contains keyword (case-insensitive)
       [[nodiscard]] static bool NameContains(std::string_view name, std::string_view keyword) noexcept;
 

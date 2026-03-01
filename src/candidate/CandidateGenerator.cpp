@@ -312,7 +312,12 @@ namespace Huginn::Candidate
         const State::PlayerActorState& player,
         RelevanceTag contextTags)
     {
-        if (!m_itemRegistry || m_itemRegistry->IsLoading()) {
+        if (!m_itemRegistry) {
+            logger::warn("[CandidateGenerator] GatherPotionCandidates: m_itemRegistry is null");
+            return;
+        }
+        if (m_itemRegistry->IsLoading()) {
+            logger::debug("[CandidateGenerator] GatherPotionCandidates: registry is loading, skipping");
             return;
         }
 
@@ -335,6 +340,13 @@ namespace Huginn::Candidate
             out.push_back(std::move(candidate));
         });
         m_stats.potionsScanned = count;
+
+        // Log item candidate count (transition-only)
+        static size_t lastCount = SIZE_MAX;
+        if (count != lastCount) {
+            logger::info("[CandidateGenerator] GatherPotionCandidates: {} items scanned from registry", count);
+            lastCount = count;
+        }
     }
 
     // =========================================================================
@@ -448,7 +460,12 @@ namespace Huginn::Candidate
         const State::PlayerActorState& player,
         RelevanceTag contextTags)
     {
-        if (!m_itemRegistry || m_itemRegistry->IsLoading()) {
+        if (!m_itemRegistry) {
+            logger::warn("[CandidateGenerator] GatherSoulGemCandidates: m_itemRegistry is null");
+            return;
+        }
+        if (m_itemRegistry->IsLoading()) {
+            logger::debug("[CandidateGenerator] GatherSoulGemCandidates: registry is loading, skipping");
             return;
         }
 

@@ -48,6 +48,10 @@ namespace Huginn::Item
       if (data.type == ItemType::Unknown) {
         data.type = DeriveItemTypeFromTags(data.tags);  // Tag-based fallback
       }
+      // Sub-classify food items: check if actually alcohol
+      if (data.type == ItemType::Food && IsAlcohol(item, data.name)) {
+        data.type = ItemType::Alcohol;
+      }
       }
 
       // STEP 3: Get magnitude and duration from costliest effect
@@ -827,6 +831,76 @@ namespace Huginn::Item
       }
       }
       return keywords;
+   }
+
+   bool ItemClassifier::IsAlcohol(const RE::AlchemyItem* item, std::string_view name) noexcept
+   {
+      // TIER 1: Keyword-based detection (mod support - CACO, etc.)
+      auto* keywordForm = item->As<RE::BGSKeywordForm>();
+      if (keywordForm) {
+         auto keywords = BuildKeywordSet(keywordForm);
+         if (keywords.contains("VendorItemAlcohol") ||
+             keywords.contains("CACO_IsAlcohol") ||
+             keywords.contains("VendorItemSkooma")) {
+            return true;
+         }
+      }
+
+      // TIER 2: Name-based fallback for vanilla and untagged items
+      // Full drink names (match anywhere in name, case-insensitive)
+      if (NameContains(name, "alto wine") ||
+          NameContains(name, "argonian ale") ||
+          NameContains(name, "black-briar mead") ||
+          NameContains(name, "honningbrew mead") ||
+          NameContains(name, "nord mead") ||
+          NameContains(name, "spiced wine") ||
+          NameContains(name, "firebrand wine") ||
+          NameContains(name, "colovian brandy") ||
+          NameContains(name, "cyrodilic brandy") ||
+          NameContains(name, "skooma") ||
+          NameContains(name, "mazte") ||
+          NameContains(name, "flin") ||
+          NameContains(name, "shein") ||
+          NameContains(name, "jagga") ||
+          NameContains(name, "rotmeth")) {
+         return true;
+      }
+
+      // Generic terms — word-boundary check to avoid false positives
+      // (e.g. " ale" in "Scale Armor", "wine" in "Wineberry")
+      auto endsWithWordCI = [](std::string_view str, std::string_view suffix) noexcept {
+         if (str.size() < suffix.size()) return false;
+         size_t start = str.size() - suffix.size();
+         // Suffix must be preceded by a space (or be the entire string)
+         if (start > 0 && str[start - 1] != ' ') return false;
+         for (size_t i = 0; i < suffix.size(); ++i) {
+            if (std::tolower(static_cast<unsigned char>(str[start + i])) !=
+                std::tolower(static_cast<unsigned char>(suffix[i])))
+               return false;
+         }
+         return true;
+      };
+
+      auto startsWithWordCI = [](std::string_view str, std::string_view prefix) noexcept {
+         if (str.size() < prefix.size()) return false;
+         // Prefix must be followed by a space (or be the entire string)
+         if (str.size() > prefix.size() && str[prefix.size()] != ' ') return false;
+         for (size_t i = 0; i < prefix.size(); ++i) {
+            if (std::tolower(static_cast<unsigned char>(str[i])) !=
+                std::tolower(static_cast<unsigned char>(prefix[i])))
+               return false;
+         }
+         return true;
+      };
+
+      constexpr std::string_view genericTerms[] = { "ale", "mead", "wine", "beer", "brandy" };
+      for (auto term : genericTerms) {
+         if (endsWithWordCI(name, term) || startsWithWordCI(name, term)) {
+            return true;
+         }
+      }
+
+      return false;
    }
 
    bool ItemClassifier::HasSoulGemKeyword(const RE::AlchemyItem* item) noexcept
