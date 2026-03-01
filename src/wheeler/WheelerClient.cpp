@@ -469,8 +469,39 @@ namespace Huginn::Wheeler
                 continue;
             }
 
-            spdlog::info("[WheelerClient] Created wheel for page {} '{}': index={}, {} slots",
-                p, pageConfig.name, pageWheel.wheelIndex, slotCount);
+            // Post-creation entry count repair: Wheeler may create fewer entries than
+            // requested (observed during new game). Add missing entries individually.
+            int32_t actualEntries = m_api->GetEntryCount(pageWheel.wheelIndex);
+            int32_t targetEntries = static_cast<int32_t>(slotCount);
+            if (actualEntries < targetEntries) {
+                spdlog::warn("[WheelerClient] Page {} wheel {} created with {}/{} entries, adding missing entries",
+                    p, pageWheel.wheelIndex, actualEntries, targetEntries);
+                for (int32_t e = actualEntries; e < targetEntries; ++e) {
+                    int32_t result = m_api->AddEntry(pageWheel.wheelIndex);
+                    if (result < 0) {
+                        spdlog::error("[WheelerClient] Page {} AddEntry failed at entry {} (result={})",
+                            p, e, result);
+                        break;
+                    }
+                }
+                // Re-check and adjust slot count to match reality
+                actualEntries = m_api->GetEntryCount(pageWheel.wheelIndex);
+                if (actualEntries < targetEntries) {
+                    spdlog::warn("[WheelerClient] Page {} could only create {}/{} entries, adjusting slot count",
+                        p, actualEntries, targetEntries);
+                    pageWheel.slotCount = static_cast<size_t>(std::max(actualEntries, 0));
+                    pageWheel.slotFormIDs.resize(pageWheel.slotCount, 0);
+                    pageWheel.slotWildcard.resize(pageWheel.slotCount, false);
+                    pageWheel.slotUniqueIDs.resize(pageWheel.slotCount, 0);
+                    pageWheel.slotSubtexts.resize(pageWheel.slotCount);
+                    pageWheel.slotRetries.resize(pageWheel.slotCount, 0);
+                    pageWheel.slotActivationEmptied.resize(pageWheel.slotCount, false);
+                }
+            }
+
+            spdlog::info("[WheelerClient] Created wheel for page {} '{}': index={}, {} slots{}",
+                p, pageConfig.name, pageWheel.wheelIndex, pageWheel.slotCount,
+                (pageWheel.slotCount != slotCount) ? std::format(" (requested {})", slotCount) : "");
 
             m_pageWheels.push_back(std::move(pageWheel));
         }
