@@ -9,4 +9,4 @@
 
 
 ## Known Recommendation Issues
-- [ ] Need to split Alcohol and food for recommendation engine slots
+- [x] Need to split Alcohol and food for recommendation engine slots
