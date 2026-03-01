@@ -27,7 +27,7 @@ namespace Huginn::Slot
     // v0.12.0: Multi-page support
     //   - Allocation is now stateless - takes slot configs as parameter
     //   - SlotSettings manages page configurations
-    //   - Each page has its own slot layout (up to 4 pages, 10 slots per page)
+    //   - Each page has its own slot layout (up to 10 pages, 10 slots per page)
     //
     // Responsibilities:
     //   1. Classification filtering: Match candidates to slot types
