@@ -3,6 +3,7 @@
 #include "util/ScopedTimer.h"
 #include "util/AtomicGuard.h"
 #include "util/AlgorithmUtils.h"
+#include "util/InventoryUtil.h"
 
 namespace Huginn::Scroll
 {
@@ -563,7 +564,7 @@ namespace Huginn::Scroll
       // GetInventory() merges base container + inventory changes for true counts.
       // The old entryList + countDelta approach missed base container scrolls
       // (countDelta only tracks CHANGES, not total count).
-      auto inventory = player->GetInventory([](RE::TESBoundObject& obj) {
+      auto inventory = Util::GetInventorySafe(player, [](RE::TESBoundObject& obj) {
       return obj.Is(RE::FormType::Scroll);
       });
 

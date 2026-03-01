@@ -4,6 +4,7 @@
 #include "util/ScopedTimer.h"
 #include "util/AtomicGuard.h"
 #include "util/AlgorithmUtils.h"
+#include "util/InventoryUtil.h"
 
 namespace Huginn::Weapon
 {
@@ -134,7 +135,7 @@ namespace Huginn::Weapon
       // =========================================================================
 
       // Build map of current weapon state (including extraLists data)
-      auto inventory = player->GetInventory([](RE::TESBoundObject& obj) {
+      auto inventory = Util::GetInventorySafe(player, [](RE::TESBoundObject& obj) {
       return obj.Is(RE::FormType::Weapon);
       });
 
@@ -328,7 +329,7 @@ namespace Huginn::Weapon
       }
 
       // FIX (v0.12.x): Use GetInventory() to include base container weapons
-      auto inventory = player->GetInventory([](RE::TESBoundObject& obj) {
+      auto inventory = Util::GetInventorySafe(player, [](RE::TESBoundObject& obj) {
       return obj.Is(RE::FormType::Weapon);
       });
 
@@ -1059,7 +1060,7 @@ namespace Huginn::Weapon
 
       // FIX (v0.12.x): Use GetInventory() to include base container items (starting weapons)
       // The old entryList + countDelta approach missed items from the player's base container.
-      auto inventory = player->GetInventory([](RE::TESBoundObject& obj) {
+      auto inventory = Util::GetInventorySafe(player, [](RE::TESBoundObject& obj) {
       return obj.Is(RE::FormType::Weapon);
       });
 
@@ -1110,7 +1111,7 @@ namespace Huginn::Weapon
       }
 
       // FIX (v0.12.x): Use GetInventory() to include base container ammo
-      auto inventory = player->GetInventory([](RE::TESBoundObject& obj) {
+      auto inventory = Util::GetInventorySafe(player, [](RE::TESBoundObject& obj) {
       return obj.Is(RE::FormType::Ammo);
       });
 
@@ -1160,7 +1161,7 @@ namespace Huginn::Weapon
 
       // FIX (v0.12.x): Use GetInventory() + IsFavorited() to include base container items
       // and properly detect starred favorites (not just hotkeyed ones).
-      auto inventory = player->GetInventory([](RE::TESBoundObject& obj) {
+      auto inventory = Util::GetInventorySafe(player, [](RE::TESBoundObject& obj) {
       return obj.Is(RE::FormType::Weapon);
       });
 

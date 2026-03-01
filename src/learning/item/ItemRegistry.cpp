@@ -3,6 +3,7 @@
 #include "util/ScopedTimer.h"
 #include "util/AtomicGuard.h"
 #include "util/AlgorithmUtils.h"
+#include "util/InventoryUtil.h"
 
 namespace Huginn::Item
 {
@@ -947,7 +948,7 @@ namespace Huginn::Item
       // FIX (v0.12.x): Use GetInventory() to include base container items (starting potions, etc.)
       // The old entryList + countDelta approach missed items from the player's base container
       // because countDelta only tracks changes, not the total count.
-      auto inventory = player->GetInventory([](RE::TESBoundObject& obj) {
+      auto inventory = Util::GetInventorySafe(player, [](RE::TESBoundObject& obj) {
       return obj.Is(RE::FormType::AlchemyItem) || obj.Is(RE::FormType::SoulGem);
       });
 
