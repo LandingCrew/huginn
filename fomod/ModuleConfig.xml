@@ -1,0 +1,75 @@
+<config xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+        xsi:noNamespaceSchemaLocation="http://qconsulting.ca/fo3/ModConfig5.0.xsd">
+  <moduleName>Huginn</moduleName>
+
+  <requiredInstallFiles>
+    <folder source="Core" destination="" />
+  </requiredInstallFiles>
+
+  <installSteps order="Explicit">
+    <installStep name="Options">
+      <optionalFileGroups order="Explicit">
+
+        <group name="Playstyle Preset" type="SelectAtMostOne">
+          <plugins order="Explicit">
+            <plugin name="Battlemage">
+              <description>Optimized weights for hybrid melee/magic playstyle.</description>
+              <files>
+                <folder source="Templates/battlemage" destination="SKSE/Plugins" />
+              </files>
+              <typeDescriptor><type name="Optional"/></typeDescriptor>
+            </plugin>
+            <plugin name="Paladin">
+              <description>Optimized weights for holy warrior playstyle (restoration + melee).</description>
+              <files>
+                <folder source="Templates/paladin" destination="SKSE/Plugins" />
+              </files>
+              <typeDescriptor><type name="Optional"/></typeDescriptor>
+            </plugin>
+            <plugin name="Pure Mage">
+              <description>Optimized weights for pure spellcaster playstyle.</description>
+              <files>
+                <folder source="Templates/pure-mage" destination="SKSE/Plugins" />
+              </files>
+              <typeDescriptor><type name="Optional"/></typeDescriptor>
+            </plugin>
+            <plugin name="Stealth Archer">
+              <description>Optimized weights for stealth and archery playstyle.</description>
+              <files>
+                <folder source="Templates/stealth-archer" destination="SKSE/Plugins" />
+              </files>
+              <typeDescriptor><type name="Optional"/></typeDescriptor>
+            </plugin>
+            <plugin name="Summoner">
+              <description>Optimized weights for conjuration-focused playstyle.</description>
+              <files>
+                <folder source="Templates/summoner" destination="SKSE/Plugins" />
+              </files>
+              <typeDescriptor><type name="Optional"/></typeDescriptor>
+            </plugin>
+            <plugin name="Survivalist">
+              <description>Optimized weights for needs/survival-focused playstyle.</description>
+              <files>
+                <folder source="Templates/survivalist" destination="SKSE/Plugins" />
+              </files>
+              <typeDescriptor><type name="Optional"/></typeDescriptor>
+            </plugin>
+          </plugins>
+        </group>
+
+        <group name="dMenu Integration" type="SelectAtMostOne">
+          <plugins order="Explicit">
+            <plugin name="Install dMenu config">
+              <description>Adds a Huginn settings page to dMenu for in-game configuration. Requires dMenu to be installed.</description>
+              <files>
+                <folder source="dMenu" destination="" />
+              </files>
+              <typeDescriptor><type name="Optional"/></typeDescriptor>
+            </plugin>
+          </plugins>
+        </group>
+
+      </optionalFileGroups>
+    </installStep>
+  </installSteps>
+</config>

@@ -1,0 +1,10 @@
+<fomod>
+  <Name>Huginn</Name>
+  <Author>LandingCrew</Author>
+  <Version>0.13.0</Version>
+  <Description>A contextual quick-access system that surfaces the right spell, potion, weapon, or item exactly when you need it.</Description>
+  <Website/>
+  <Groups>
+    <element>Immersion</element>
+  </Groups>
+</fomod>

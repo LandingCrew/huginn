@@ -1,0 +1,269 @@
+[center]﻿[/center][center][size=5][b]Huginn[/b][/size]
+[size=3][i]Contextual Quick-Access for Skyrim[/i][/size]
+
+[color=#cc9933]The right spell, potion, weapon, or item — exactly when you need it.[/color]
+
+[size=2][b]Alpha Release[/b] — Experimental. Aimed at testers and tinkerers. Several feature described below are in various states of "need testing and validation"[/size][/center]
+[center][size=2]
+[youtube]VtSp32RGPZM[/youtube][/size][/center]
+
+[line]
+[size=4][b]What Is Huginn?[/b][/size]
+
+Huginn watches what your character can see and feel — your health dropping, the dragon overhead, the forge in front of you — and surfaces the most useful items in a set of hotkey slots. No menu diving. No pausing to swap spells. Just glance and press.
+
+It only uses information your character already has or what the player can observe. This is a convenience tool, not a cheat tool.
+
+
+[line]
+[size=4][b]Requirements[/b][/size]
+
+[list]
+[*][url=https://skse.silverlock.org/]SKSE64[/url]
+[*][url=https://www.nexusmods.com/skyrimspecialedition/mods/32444]Address Library for SKSE Plugins[/url]
+[/list]
+[size=3][b]Optional: Wheeler Integration[/b][/size]
+
+A wheeler integration was made to allow for a more game-pad native UI/UX experience. For this, you have two options:
+ 
+[list]
+[*][url=https://www.nexusmods.com/skyrimspecialedition/mods/167380]wheelerAPI[/url] — Radial menu integration (LandingCrew Fork) with v2 API support. This is included as an optional download in the FOMOD or as a standalone mod. You need the assets from [url=https://www.nexusmods.com/skyrimspecialedition/mods/97345]WheelerAPI - Wheeler - Quick Action Wheel Of Skyrim[/url] as a prerequisite and allow Huggin's wheelerAPI dll to overwrite it. (install wheeler before you install huggin)
+[*][url=https://www.nexusmods.com/skyrimspecialedition/mods/167380]WHEELER - Refined[/url] — Radial menu integration with v1 API support. Installation order should not matte
+[/list]Some features: 
+[list]
+[*]Each Huginn page becomes a managed Wheeler wheel
+[*]Auto-focuses the Huginn wheel when Wheeler opens (configurable)
+[*]Auto-navigates to Huginn wheel on urgent overrides
+[*]Subtext labels: wildcard picks, override alerts, context explanations (v2 API)
+[*]Post-activation behavior: backfill with next candidate, stay sticky, or clear
+[*]Equipping via Wheeler triggers Huginn's learning system
+[/list]
+API Differences: [list]
+[*]V1 Includes all core functionality and error handling
+[*]V2 extends V1 with optional features such as huggin controlled UI elements
+[/list]
+
+[size=3][b][size=3][b]Optional: [/b][/size] dMenu Integration[/b][/size]
+
+[b]Optional.[/b] Provides an in-game settings panel for Huginn — toggle the widget, adjust position/opacity/scale, remap keybinds, reset learning data — all without touching an INI file.
+
+[line]
+
+[size=4][b]How It Works[/b][/size]
+
+During normal gameplay, Huginn:
+[list=1]
+[*]Reads your situation — vitals, buffs, enemies, environment
+[*]Scores every relevant item in your inventory against that context
+[*]Fills your slots with the highest-utility picks
+[*]Displays them on a HUD widget and/or a Wheeler radial wheel
+[/list]
+You press a hotkey(or select the wheeler slot). The item is equips/used. Huginn notices what you chose and learns for next time.
+
+[line]
+
+[size=4][b]Features[/b][/size]
+
+[size=3][b]Context-Aware Recommendations[/b][/size]
+
+Huginn reads 11 independent sensor streams to understand what's happening:
+
+[list]
+[*][b]Player Vitals[/b] — Health, Magicka, and Stamina tracked as continuous values with urgency detection. Depletion rate tracking catches sustained damage patterns like bleed effects.
+[*][b]Status Effects[/b] — On fire? Poisoned? Frost/shock DoT? Diseased? Huginn knows, and resist potions/spells rise to the top.
+[*][b]Active Buffs[/b] — Already have Invisibility? An armor spell? A summon out? Huginn won't waste a slot suggesting what you already have.
+[*][b]Resistances[/b] — High fire resist means fire resist potions drop in priority. Low poison resist near Falmer? Resist Poison climbs.
+[*][b]Equipment State[/b] — Melee, ranged, staff, shield, dual-wield, enchanted weapon charge — all tracked. Low on charge? Soul gems appear.
+[*][b]Enemies[/b] — Up to 50 enemies tracked. Type classified (Humanoid, Undead, Beast, Dragon, Construct, Daedra). Distance, count, and whether they're casting spells — all factor in.
+[*][b]Environment[/b] — At a forge? Looking at a locked door? Standing at an alchemy lab? The right tool for the job appears.
+[*][b]Survival Mode[/b] — Full CC Survival Mode and SurvivalModeImproved support. Hunger, cold, and fatigue tracked.
+[*][b]Movement & Position[/b] — Sneaking, mounted, overencumbered.
+[/list]
+Each Sensor triggers relevant updates to provide time relevant suggestions.
+
+[size=3][b]What Gets Surfaced When[/b][/size]
+
+[list]
+[*]Health dropping ﻿→ Healing spells and potions rise sharply
+[*]On fire ﻿→ Resist Fire items get 8x priority
+[*]Looking at a lock ﻿→ Unlock spells appear
+[*]At a forge ﻿→ Fortify Smithing potions appear
+[*]Enemy casting spells → Wards rise in priority
+[*]Multiple enemies → AoE spells climb
+[*]Undead targets → Turn Undead and Sun damage surface
+[*]Sneaking ﻿→ Invisibility and Muffle become relevant
+[*]Enchanted weapon empty ﻿→ Soul gems appear at 9x priority
+[*]Bow equipped, low arrows ﻿→ Ammo surfaces
+[/list]
+[size=3][b]Urgency Overrides[/b][/size]
+
+When things get critical, Huginn cuts through normal scoring and forces the most important items into your top slots:
+
+[list]
+[*][b]Critical Health[/b] (HP < 35%) — Healing items forced to top priority
+[*][b]Critical Magicka[/b] (MP < 35%) — Magicka restore forced up
+[*][b]Critical Stamina[/b] (SP < 35%) — Stamina restore forced up
+[*][b]Low Ammo[/b] — arrows/bolts surfaced
+[*][b]Weapon Empty[/b] — Soul gems when enchanted weapon hits 0% charge
+[/list]
+All thresholds configurable. Hysteresis prevents flickering (e.g., health override activates at 35%, deactivates at 50%).
+
+[line]
+
+[size=3][b]Learns Your Preferences[/b][/size]
+
+Huginn uses lightweight reinforcement learning to adapt to how [i]you[/i] play.
+
+[list]
+[*][b]Equip via Huginn hotkey[/b] → Strong positive signal. "I wanted this item in this situation."
+[*][b]Equip via vanilla menu[/b] → Weaker signal. "The player chose this, but maybe not because of Huginn."
+[*][b]Add favorites →  [/b]Sends passive boost to Huginn, I like this, show me more for this.[b][/b]
+[*][b]Quick-switch away[/b] (equip then immediately swap within 3 seconds) → Negative signal. "That was a misclick."
+[*][b]Items unused for a long time[/b] → Gradual preference decay. Old habits fade.
+[/list]
+Learning persists across save/load via SKSE cosave. Each character has independent preferences.
+
+New items start with minimal learning influence. After ~5 uses, Huginn has a decent read on your preference. After ~15, it's confident.
+
+[size=3][b]Wildcard Exploration[/b][/size]
+
+Optionally, lower-priority slots will occasionally show items you haven't tried yet — giving the learner a chance to discover that you actually love that Scroll of Blizzard you forgot about. Configurable probability, cooldown, and which slots participate.
+
+[line]
+
+[size=3][b]Item Support[/b][/size]
+
+[list]
+[*][b]Spells[/b] — Every spell the player knows. Auto-classified by school, damage type, role (healing, damage, buff, summon, utility, defensive). Optionally filters uncastable spells.
+[*][b]Potions & Consumables[/b] — Health, Magicka, Stamina restores. Resist potions. Buff potions. Cure Disease/Poison. Poisons (damage, paralyze, slow, fear, frenzy). -Work in progress/Needs validation   ﻿
+[*][b]Food & Drink[/b] — Survival Mode food with hunger/cold satisfaction. Alcohol auto-detected (ale, mead, wine, skooma, and more — plus keyword detection for CACO and other overhauls). -Work in progress/Needs validation   
+[*][b]Weapons[/b] — Favorited weapons, classified by type. Enchanted weapon charge tracked. Silver weapons get bonus vs. undead.
+[*][b]Ammo[/b] — Arrows and bolts, matched to equipped bow/crossbow.
+[*][b]Scrolls[/b] — Classified using the same system as spells.
+[*][b]Soul Gems[/b] — Filled gems surfaced when enchanted weapons need recharging.
+[/list]
+
+[line]
+
+[size=3][b]Multi-Page Slot System[/b][/size]
+
+[list]
+[*]Up to 10 pages, each with up to 10 slots
+[*]Each slot has a classification — restrict it to damage spells, healing items, potions, weapons, food, or leave it open
+[*]Slots have configurable [b]priority[/b] (higher-priority slots get filled first), [b]wildcard[/b] toggle, and [b]override routing[/b] (e.g., "this slot only receives health emergencies")
+[/list][list]
+[*]Slot locking prevents recommendations from flickering when context changes briefly
+[/list][list]
+[*]Page cycling via hotkey (default [font=Courier New]-[/font] and [font=Courier New]=[/font])
+[/list]
+[b]Pre-made templates included:[/b]
+[list]
+[*]Battlemage — Destruction + melee + emergency healing
+[*]Paladin — Restoration-focused combat
+[*]Pure Mage — All schools, prioritizing spells
+[*]Stealth Archer — Ranged focus with poison and utility
+[*]Summoner — Conjuration-heavy with summon management
+[*]Survivalist — Survival Mode oriented with food and utility
+[/list]
+
+[line]
+
+[size=3][b]HUD Widget[/b][/size]
+
+A lightweight Scaleform overlay on your HUD showing current slot recommendations.
+
+[list]
+[*][b]Three display modes:[/b] Minimal (name only), Normal (name + context details), Verbose (full score breakdown)
+[*][b]Animations:[/b] Slide, fade, or instant transitions. Urgent override slots pulse. Confirm dip on re-evaluation.
+[*][b]Fully repositionable[/b] — screen percentage coordinates, works at any resolution/aspect ratio
+[*][b]Adjustable[/b] opacity and scale (separate child element opacity for page labels and dots)
+[*][b]Auto-hides[/b] in menus — inventory, map, crafting, dialogue, barter, lockpicking. Stays visible during console and favorites.
+[*][b]Persists through loading screens[/b] — automatically re-shows after cell transitions
+[*][b]Dynamic background width[/b] — panel auto-sizes to fit long item names
+[*][b]Page indicator[/b] — active page dot shows an inline label (e.g., "Smart", "Inventory")
+[*]Can be disabled entirely if you prefer Wheeler-only
+[/list]
+[size=3][b]Keybindings[/b][/size]
+
+[list]
+[*][b]Single-Tap[/b] a slot key → Equip to right hand
+[*][b]Double-tap[/b] → Equip to left hand
+[*][b]Hold[/b] → Equip to both hands
+[*]All keys fully remappable via INI or dMenu
+[/list]
+
+[line]
+
+[size=3][b]Console Commands[/b][/size]
+
+Open the console ([font=Courier New]~[/font]) and type [font=Courier New]hg[/font]:
+
+[list]
+[*][font=Courier New]hg refresh[/font] — Force immediate recommendation update
+[*][font=Courier New]hg reload[/font] — Hot-reload all settings from INI (no restart needed)
+[*][font=Courier New]hg status[/font] — Show system status
+[*][font=Courier New]hg unlock[/font] — Clear all slot locks
+[*][font=Courier New]hg rebuild[/font] — Force rebuild all registries
+[*][font=Courier New]hg page N[/font] — Switch to page N
+[*][font=Courier New]hg weights <FormID>[/font] — Inspect learning weights for an item
+[*][font=Courier New]hg reset qvalues[/font] — Clear all learned preferences
+[*][font=Courier New]hg reset all[/font] — Full system reset
+[/list]
+
+[line]
+
+[size=3][b]Mod Compatibility[/b][/size]
+
+[list]
+[*][b]ENB / ReShade[/b] — No conflicts
+[*][b]CC Survival Mode[/b] — Full support (hunger, cold, fatigue)
+[*][b]SurvivalModeImproved (SMI)[/b] — Full support
+[*][b]Spell overhauls[/b] (Apocalypse, Triumvirate, Mysticism, Odin, Adamant/Vokrii) — Auto-classification works out of the box. Override INI available for edge cases.
+[*][b]Potion overhauls[/b] (CACO, Lorerim, Requiem, etc.) — Keyword detection + manual override INI
+[*][b]Combat mods[/b] (MCO, Precision, Chocolate Poise, TK Dodge, DMCO) — Compatible
+[*][b]ImmersiveHUD SKSE[/b] — Compatible
+[*][b]SPID[/b] — Compatible (distributed spells picked up within 5 seconds)
+[/list]
+[b]Not currently supported:[/b]
+[list]
+[*]Frostfall, Sunhelm, iNeed — These use different global variables than CC Survival Mode. Cold/hunger/fatigue sensors will not read from these mods. 
+[/list]
+[b]Requiem / Lorerim note:[/b] Requiem stops magicka regeneration in combat. Huginn's default weights are tuned for vanilla magicka behavior. Requiem/Lorerim users should adjust context weights in the INI for best results (higher restore-magicka potion weight, higher melee fallback threshold).
+
+[line]
+
+[size=3][b]Configuration[/b][/size]
+
+Everything is configurable via [font=Courier New]Data/SKSE/Plugins/Huginn.ini[/font] — scoring parameters, context weights, override thresholds, slot layouts, widget appearance, keybindings, learning behavior, Wheeler settings, and more.
+
+Modded spells and items that aren't auto-classified correctly can be manually overridden in [font=Courier New]Huginn_Overrides.ini[/font] by name or FormID.
+
+All settings hot-reloadable with [font=Courier New]hg reload[/font]. No game restart required.
+
+[line]
+
+[size=3][b]Performance[/b][/size]
+
+Huginn is designed to be low impact and lazy .
+
+[list]
+[*][b]Tiered update loop[/b] — Not a flat 100ms hammer. Override checks and UI render run every frame (~1ms). Context polling runs at 100–500ms. The full scoring pipeline only runs when game state has meaningfully changed (dirty-flag + hash comparison).
+[*][b]Adaptive timing[/b] — Polling speeds up 2x in combat, slows down 2x during long idle. Configurable.
+[*][b]Pipeline skips entirely[/b] when nothing has changed — no wasted cycles.
+[*][b]Q-learning updates are async[/b] — queued and processed without blocking the game thread.
+[*][b]Slot locks prevent churn[/b] — recommendations hold stable, reducing unnecessary UI updates.
+[/list]
+During profiling and testing with Tracy, max memory usage was
+
+[line]
+
+[size=3][b]Known Limitations (Alpha)[/b][/size]
+
+[list]
+[*]Soul gems display correctly on the HUD widget and recharge works via hotkey, but [b]appear as empty circles in Wheeler wheels[/b] (Skyrim engine limitation — Wheeler cannot display soul gem forms). Togglable via INI.
+[*]Widget may show during some "cutscenes".
+[*]Widget is not compatible with 
+[*]Survival mode hunger/cold/fatigue sensors may report inaccurate values in some configurations (calibration in progress).
+[*]Modded spells the classifier can't categorize (type "Unknown") are currently excluded from recommendations. Override INI can fix specific spells.
+[*]Changing mod load order between sessions may orphan Q-learning data for removed/replaced mods (learning for remaining mods is unaffected).
+[/list]

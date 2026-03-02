@@ -137,6 +137,8 @@ install(
 install(
    FILES
       "${ROOT_DIR}/configs/Huginn.ini"
+      "${ROOT_DIR}/configs/Huginn_keybindings.ini"
+      "${ROOT_DIR}/configs/Huginn_Overrides.ini"
    DESTINATION "SKSE/Plugins"
    COMPONENT "main"
 )
