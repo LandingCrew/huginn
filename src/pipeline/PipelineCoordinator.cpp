@@ -17,6 +17,7 @@
 #include "display/IDisplayBackend.h"
 #include "display/WheelerBackend.h"
 #include "display/IntuitionBackend.h"
+#include <set>
 
 #ifdef _DEBUG
 #include "ui/UtilityScorerDebugWidget.h"
@@ -303,6 +304,21 @@ void PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
     auto& slotLocker = Slot::SlotLocker::GetSingleton();
     slotLocker.Update(ctx.deltaMs);
     ctx.assignments = slotLocker.ApplyLocks(ctx.rawAssignments, ctx.overrides);
+
+    // Post-lock dedup: locked slots can reintroduce items that the allocator
+    // already assigned elsewhere. Clear duplicates (keep first occurrence).
+    {
+        std::set<std::string_view> seenNames;
+        for (auto& assignment : ctx.assignments) {
+            if (assignment.IsEmpty()) continue;
+            auto [it, inserted] = seenNames.insert(assignment.name);
+            if (!inserted) {
+                SKSE::log::debug("[Pipeline] Post-lock dedup: clearing duplicate '{}' from slot {}",
+                    assignment.name, assignment.slotIndex);
+                assignment = Slot::SlotAssignment::Empty(assignment.slotIndex, assignment.classification);
+            }
+        }
+    }
 
     // Compute visual state for each slot
     ComputeVisualStates(ctx.assignments, ctx.rawAssignments, slotLocker);
