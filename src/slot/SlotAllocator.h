@@ -179,6 +179,7 @@ namespace Huginn::Slot
             const Scoring::ScoredCandidateList& candidates,
             SlotClassification classification,
             const std::set<RE::FormID>& assignedFormIDs,
+            const std::set<std::string_view>& assignedNames,
             bool skipEquipped = false,
             const State::PlayerActorState* player = nullptr) const;
     };

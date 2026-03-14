@@ -216,8 +216,10 @@ namespace Huginn::Slot
         }
 #endif
 
-        // Track which candidates have been assigned (by FormID)
+        // Track which candidates have been assigned (by FormID and name)
+        // Name tracking prevents duplicate enchanted items (different FormIDs, same name)
         std::set<RE::FormID> assignedFormIDs;
+        std::set<std::string_view> assignedNames;
 
         // =======================================================================
         // PASS 1: Assign overrides to MATCHING slots first
@@ -249,6 +251,7 @@ namespace Huginn::Slot
                         assignments[priorityIdx] = SlotAssignment::FromCandidate(
                             priorityIdx, config.classification, sc, AssignmentType::Override);
                         assignedFormIDs.insert(formID);
+                        assignedNames.insert(Candidate::GetName(*override.candidate));
                         overrideAssignedThisFrame = true;
 
                         // Only log if override changed (different formID or slot)
@@ -286,6 +289,7 @@ namespace Huginn::Slot
                     assignments[priorityIdx] = SlotAssignment::FromCandidate(
                         priorityIdx, config.classification, sc, AssignmentType::Override);
                     assignedFormIDs.insert(formID);
+                    assignedNames.insert(Candidate::GetName(*override.candidate));
                     overrideAssignedThisFrame = true;
                     placed = true;
 
@@ -333,7 +337,7 @@ namespace Huginn::Slot
 
             // Find best matching candidate
             auto bestCandidate = FindBestCandidate(
-                candidates, config.classification, assignedFormIDs, config.skipEquipped, &player);
+                candidates, config.classification, assignedFormIDs, assignedNames, config.skipEquipped, &player);
 
             if (!bestCandidate) {
                 // Rate-limit "no candidate found" logs per classification type
@@ -356,6 +360,7 @@ namespace Huginn::Slot
                     for (const auto& candidate : candidates) {
                         if (candidate.isWildcard) continue;
                         if (assignedFormIDs.contains(candidate.GetFormID())) continue;
+                        if (assignedNames.contains(candidate.GetName())) continue;
                         if (!SlotClassifier::Matches(candidate, config.classification)) continue;
 
                         bestCandidate = candidate;
@@ -371,6 +376,7 @@ namespace Huginn::Slot
                         *bestCandidate,
                         assignType);
                     assignedFormIDs.insert(bestCandidate->GetFormID());
+                    assignedNames.insert(bestCandidate->GetName());
                 }
             }
         }
@@ -402,14 +408,19 @@ namespace Huginn::Slot
         const Scoring::ScoredCandidateList& candidates,
         SlotClassification classification,
         const std::set<RE::FormID>& assignedFormIDs,
+        const std::set<std::string_view>& assignedNames,
         bool skipEquipped,
         const State::PlayerActorState* player) const
     {
         // Candidates are already sorted by utility (highest first)
         // Find the first candidate that matches and isn't already assigned
         for (const auto& candidate : candidates) {
-            // Skip already assigned candidates
+            // Skip already assigned candidates (by FormID or name)
+            // Name check catches duplicate enchanted items with different FormIDs
             if (assignedFormIDs.contains(candidate.GetFormID())) {
+                continue;
+            }
+            if (assignedNames.contains(candidate.GetName())) {
                 continue;
             }
 
