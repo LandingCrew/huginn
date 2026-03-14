@@ -53,7 +53,8 @@
       },
       "cacheVariables": {
         "CMAKE_CXX_FLAGS": "/EHsc /MP /W0",
-        "CompiledPluginsPath": "F:/Modlists/LoreRim/overwrite/"
+        "CompiledPluginsPath": "$env{CompiledPluginsPath}",
+        "COPY_OUTPUT": "TRUE"
       },
       "generator": "Visual Studio 17 2022",
       "inherits": [
