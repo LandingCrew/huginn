@@ -142,8 +142,10 @@ static void InitializeGameSystems(bool isNewGame)
     // SpellRegistry
     if (!g_spellRegistry) {
         g_spellRegistry = std::make_unique<Huginn::Spell::SpellRegistry>();
+    }
+    if (isNewGame) {
         g_spellRegistry->RebuildRegistry();
-    } else if (!isNewGame) {
+    } else {
         logger::info("Force reconciling spell registry on save load"sv);
         g_spellRegistry->ReconcileSpells();
     }
