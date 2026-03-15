@@ -1,5 +1,5 @@
 #include "ConsoleCommands.h"
-#include "UpdateLoop.h"
+#include "update/UpdateHandler.h"
 
 #include "Globals.h"
 #include "learning/FeatureQLearner.h"
@@ -118,8 +118,8 @@ namespace Huginn::Console
       // Unlock all slots so the re-score can freely reassign
       Slot::SlotLocker::GetSingleton().Reset();
 
-      // Run one full update cycle immediately (deltaSeconds=0 since it's instant)
-      OnUpdate(0.0f);
+      // Run one full update cycle immediately via UpdateHandler (serialized by its mutex)
+      Huginn::Update::UpdateHandler::GetSingleton()->ForceUpdate();
 
       Print("Recommendations refreshed");
       logger::info("[Console] Forced recommendation refresh"sv);
