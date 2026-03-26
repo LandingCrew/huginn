@@ -384,11 +384,6 @@ namespace Huginn::Candidate
             output.push_back(std::move(c));
         }
 
-        // Apply affordability penalties to uncastable spells that survived filtering
-        if (m_config.uncastableSpellPolicy == UncastableSpellPolicy::Penalize) {
-            ApplyAffordabilityPenalties(output, currentMagicka);
-        }
-
         // Count weapons after filter+dedup, before truncation
         size_t weaponsAfterFilterDedup = std::count_if(output.begin(), output.end(),
             [](const auto& c) { return std::holds_alternative<WeaponCandidate>(c); });
@@ -457,45 +452,6 @@ namespace Huginn::Candidate
         }
 
         return false;
-    }
-
-    // =========================================================================
-    // AFFORDABILITY PENALTIES (Penalize mode)
-    // =========================================================================
-    void CandidateFilters::ApplyAffordabilityPenalties(
-        std::vector<CandidateVariant>& candidates,
-        float currentMagicka)
-    {
-        auto* player = RE::PlayerCharacter::GetSingleton();
-        if (!player) return;
-
-        for (auto& candidate : candidates) {
-            auto* spell = std::get_if<SpellCandidate>(&candidate);
-            if (!spell) continue;
-
-            // Compute effective cost (same logic as PassesAffordabilityFilter)
-            auto* form = RE::TESForm::LookupByID(spell->formID);
-            auto* spellItem = form ? form->As<RE::SpellItem>() : nullptr;
-
-            float effectiveCost = spellItem
-                ? spellItem->CalculateMagickaCost(player)
-                : static_cast<float>(spell->baseCost);
-
-            if (spell->isConcentration && effectiveCost <= 0.0f) {
-                effectiveCost = static_cast<float>(spell->baseCost);
-            }
-
-            // Only penalize spells the player can't afford
-            if (effectiveCost > 0.0f && currentMagicka < effectiveCost) {
-                float ratio = currentMagicka / effectiveCost;
-                float penalty = std::clamp(ratio, m_config.uncastablePenaltyFloor, 1.0f);
-                // Stage 1g: baseRelevance penalty disabled - field is no longer used.
-                // TODO: If uncastable penalty is desired, integrate into ContextRuleEngine
-                // or PriorCalculator to penalize the context weight or prior score.
-                // spell->baseRelevance *= penalty;
-                (void)penalty;  // Suppress unused variable warning
-            }
-        }
     }
 
     // =========================================================================

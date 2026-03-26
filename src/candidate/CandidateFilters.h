@@ -199,12 +199,6 @@ namespace Huginn::Candidate
             const State::ActorResistances& resistances
         ) const;
 
-        /// Apply ratio-based relevance penalty to unaffordable spell candidates.
-        /// Only runs when policy == Penalize. Modifies baseRelevance in-place.
-        void ApplyAffordabilityPenalties(
-            std::vector<CandidateVariant>& candidates,
-            float currentMagicka
-        );
     };
 
 }  // namespace Huginn::Candidate

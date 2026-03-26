@@ -79,7 +79,6 @@ namespace Huginn::Candidate
 
         // Stealth-based relevance
         Sneaking        = 1 << 24,  // Player is sneaking
-        DetectedWhileSneaking = 1 << 25,  // Sneaking but detected
 
         // Workstation-based relevance (crafting stations)
         AtForge         = 1 << 26,  // Looking at forge/smithing station
