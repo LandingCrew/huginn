@@ -13,257 +13,195 @@ namespace Huginn::Candidate
     }
 
     // =========================================================================
-    // AFFORDABILITY FILTER
+    // CONSOLIDATED VISITOR — single std::visit dispatch per candidate
+    // Runs affordability, equipped, full vitals, and active buff checks.
+    // Returns early on first failure (cheapest filters first).
     // =========================================================================
-    bool CandidateFilters::PassesAffordabilityFilter(
+    CandidateFilters::FilterResult CandidateFilters::RunVisitorFilters(
         const CandidateVariant& candidate,
+        const State::PlayerActorState& player,
         float currentMagicka) const
     {
-        return std::visit([currentMagicka, policy = m_config.uncastableSpellPolicy](const auto& c) -> bool {
+        const auto policy = m_config.uncastableSpellPolicy;
+        const bool checkBuffs = m_config.filterActiveBuffs;
+        const bool checkResists = m_config.filterRedundantResists;
+
+        return std::visit([&](const auto& c) -> FilterResult {
             using T = std::decay_t<decltype(c)>;
 
+            // =================================================================
+            // SPELL
+            // =================================================================
             if constexpr (std::is_same_v<T, SpellCandidate>) {
-                // effectiveCost is pre-computed during gathering (includes perk/enchant reductions)
-                if (currentMagicka >= c.effectiveCost) {
-                    logger::trace("Affordable spell passed: {} [{:X}] cost={:.0f} magicka={:.0f}",
-                        c.name, c.formID, c.effectiveCost, currentMagicka);
-                    return true;
+                // 1. Affordability
+                if (currentMagicka < c.effectiveCost) {
+                    logger::trace("Unaffordable spell {} (policy={}): {} [{:X}] cost={:.0f} magicka={:.0f}",
+                        policy == UncastableSpellPolicy::Disallow ? "filtered" : "kept",
+                        ToString(policy), c.name, c.formID, c.effectiveCost, currentMagicka);
+                    if (policy == UncastableSpellPolicy::Disallow)
+                        return FilterResult::Affordability;
                 }
 
-                logger::trace("Unaffordable spell {} (policy={}): {} [{:X}] cost={:.0f} magicka={:.0f}",
-                    policy == UncastableSpellPolicy::Disallow ? "filtered" : "kept",
-                    ToString(policy), c.name, c.formID, c.effectiveCost, currentMagicka);
-                return policy != UncastableSpellPolicy::Disallow;
+                // 2. Equipped
+                if (player.IsSpellEquipped(c.formID))
+                    return FilterResult::Equipped;
+
+                // 3. Full Vitals
+                if (m_config.filterHealingWhenFull &&
+                    Spell::HasTag(c.tags, Spell::SpellTag::RestoreHealth) &&
+                    player.vitals.health >= State::DefaultState::FULL_VITAL - FULL_VITAL_EPSILON)
+                    return FilterResult::FullVitals;
+                if (m_config.filterMagickaWhenFull &&
+                    Spell::HasTag(c.tags, Spell::SpellTag::RestoreMagicka) &&
+                    player.vitals.magicka >= State::DefaultState::FULL_VITAL - FULL_VITAL_EPSILON)
+                    return FilterResult::FullVitals;
+
+                // 4. Active Buff
+                if (checkBuffs) {
+                    if (Spell::HasTag(c.tags, Spell::SpellTag::Invisibility) && player.buffs.isInvisible)
+                        return FilterResult::ActiveBuff;
+                    if (Spell::HasTag(c.tags, Spell::SpellTag::Muffle) && player.buffs.hasMuffle)
+                        return FilterResult::ActiveBuff;
+                    if (Spell::HasTag(c.tags, Spell::SpellTag::Armor) && player.buffs.hasArmorBuff)
+                        return FilterResult::ActiveBuff;
+                    if (c.type == Spell::SpellType::Summon && player.buffs.hasActiveSummon)
+                        return FilterResult::ActiveBuff;
+                }
+                if (checkResists && IsResistSpellRedundant(c, player.resistances))
+                    return FilterResult::ActiveBuff;
+
+                return FilterResult::Passed;
             }
+            // =================================================================
+            // ITEM (Potion, Food, SoulGem)
+            // =================================================================
             else if constexpr (std::is_same_v<T, ItemCandidate>) {
-                // Items require count > 0
-                return c.count > 0;
+                // 1. Affordability (count > 0)
+                if (c.count <= 0)
+                    return FilterResult::Affordability;
+
+                // 3. Full Vitals (skip for food/alcohol)
+                if (c.type != Item::ItemType::Food && c.type != Item::ItemType::Alcohol) {
+                    if (m_config.filterHealingWhenFull &&
+                        Item::HasTag(c.tags, Item::ItemTag::RestoreHealth) &&
+                        player.vitals.health >= State::DefaultState::FULL_VITAL - FULL_VITAL_EPSILON)
+                        return FilterResult::FullVitals;
+                    if (m_config.filterMagickaWhenFull &&
+                        Item::HasTag(c.tags, Item::ItemTag::RestoreMagicka) &&
+                        player.vitals.magicka >= State::DefaultState::FULL_VITAL - FULL_VITAL_EPSILON)
+                        return FilterResult::FullVitals;
+                    if (m_config.filterStaminaWhenFull &&
+                        Item::HasTag(c.tags, Item::ItemTag::RestoreStamina) &&
+                        player.vitals.stamina >= State::DefaultState::FULL_VITAL - FULL_VITAL_EPSILON)
+                        return FilterResult::FullVitals;
+                }
+
+                // 4. Active Buff
+                if (checkResists && IsResistPotionRedundant(c, player.resistances))
+                    return FilterResult::ActiveBuff;
+                if (checkBuffs) {
+                    if (Item::HasTag(c.tags, Item::ItemTag::Waterbreathing) && player.buffs.hasWaterBreathing)
+                        return FilterResult::ActiveBuff;
+                    if (Item::HasTag(c.tags, Item::ItemTag::Invisibility) && player.buffs.isInvisible)
+                        return FilterResult::ActiveBuff;
+                }
+
+                return FilterResult::Passed;
             }
+            // =================================================================
+            // SCROLL
+            // =================================================================
             else if constexpr (std::is_same_v<T, ScrollCandidate>) {
-                // Scrolls require count > 0
-                return c.count > 0;
+                // 1. Affordability (count > 0)
+                if (c.count <= 0)
+                    return FilterResult::Affordability;
+
+                // 3. Full Vitals
+                if (m_config.filterHealingWhenFull &&
+                    Spell::HasTag(c.tags, Spell::SpellTag::RestoreHealth) &&
+                    player.vitals.health >= State::DefaultState::FULL_VITAL - FULL_VITAL_EPSILON)
+                    return FilterResult::FullVitals;
+
+                // 4. Active Buff
+                if (checkBuffs) {
+                    if (Spell::HasTag(c.tags, Spell::SpellTag::Invisibility) && player.buffs.isInvisible)
+                        return FilterResult::ActiveBuff;
+                    if (Spell::HasTag(c.tags, Spell::SpellTag::Muffle) && player.buffs.hasMuffle)
+                        return FilterResult::ActiveBuff;
+                }
+
+                return FilterResult::Passed;
             }
+            // =================================================================
+            // AMMO
+            // =================================================================
             else if constexpr (std::is_same_v<T, AmmoCandidate>) {
-                // Ammo requires count > 0
-                return c.count > 0;
+                if (c.count <= 0) return FilterResult::Affordability;
+                if (c.isEquipped) return FilterResult::Equipped;
+                return FilterResult::Passed;
             }
+            // =================================================================
+            // WEAPON
+            // =================================================================
             else if constexpr (std::is_same_v<T, WeaponCandidate>) {
-                // Weapons are always "affordable" (no cost to equip)
-                return true;
+                // Weapons pass all visitor filters (equipped-skip is per-slot in SlotAllocator)
+                return FilterResult::Passed;
             }
             else {
-                return true;
+                return FilterResult::Passed;
             }
         }, candidate);
     }
 
-    // =========================================================================
-    // EQUIPPED FILTER
-    // =========================================================================
+    // Keep individual filters as public API for external callers
+    bool CandidateFilters::PassesAffordabilityFilter(
+        const CandidateVariant& candidate, float currentMagicka) const
+    {
+        // Simplified — delegates to consolidated visitor for spell logic,
+        // but external callers may use this standalone
+        return std::visit([currentMagicka, policy = m_config.uncastableSpellPolicy](const auto& c) -> bool {
+            using T = std::decay_t<decltype(c)>;
+            if constexpr (std::is_same_v<T, SpellCandidate>) {
+                if (currentMagicka >= c.effectiveCost) return true;
+                return policy != UncastableSpellPolicy::Disallow;
+            }
+            else if constexpr (std::is_same_v<T, ItemCandidate>) { return c.count > 0; }
+            else if constexpr (std::is_same_v<T, ScrollCandidate>) { return c.count > 0; }
+            else if constexpr (std::is_same_v<T, AmmoCandidate>) { return c.count > 0; }
+            else { return true; }
+        }, candidate);
+    }
+
     bool CandidateFilters::PassesEquippedFilter(
-        const CandidateVariant& candidate,
-        const State::PlayerActorState& player) const
+        const CandidateVariant& candidate, const State::PlayerActorState& player) const
     {
         return std::visit([&player](const auto& c) -> bool {
             using T = std::decay_t<decltype(c)>;
-
-            if constexpr (std::is_same_v<T, SpellCandidate>) {
-                // Check if spell is equipped in either hand
-                return !player.IsSpellEquipped(c.formID);
-            }
-            else if constexpr (std::is_same_v<T, WeaponCandidate>) {
-                // Weapons pass the global filter — equipped-skip is now per-slot
-                // via bSkipEquipped in SlotAllocator::FindBestCandidate()
-                return true;
-            }
-            else if constexpr (std::is_same_v<T, AmmoCandidate>) {
-                // Check if ammo is already equipped
-                return !c.isEquipped;
-            }
-            else {
-                // Items and scrolls can't be "equipped" in the traditional sense
-                return true;
-            }
+            if constexpr (std::is_same_v<T, SpellCandidate>) { return !player.IsSpellEquipped(c.formID); }
+            else if constexpr (std::is_same_v<T, AmmoCandidate>) { return !c.isEquipped; }
+            else { return true; }
         }, candidate);
     }
 
-    // =========================================================================
-    // COOLDOWN FILTER
-    // =========================================================================
     bool CandidateFilters::PassesCooldownFilter(const CandidateVariant& candidate) const
     {
         const auto& base = GetBase(candidate);
         return !m_cooldownMgr.IsOnCooldown(base.formID, base.sourceType);
     }
 
-    // =========================================================================
-    // ACTIVE BUFF FILTER
-    // =========================================================================
     bool CandidateFilters::PassesActiveBuffFilter(
-        const CandidateVariant& candidate,
-        const State::PlayerActorState& player) const
+        const CandidateVariant& candidate, const State::PlayerActorState& player) const
     {
-        // Early exit if filtering is disabled
-        if (!m_config.filterActiveBuffs && !m_config.filterRedundantResists) {
-            return true;
-        }
-
-        return std::visit([&](const auto& c) -> bool {
-            using T = std::decay_t<decltype(c)>;
-
-            if constexpr (std::is_same_v<T, ItemCandidate>) {
-                // Check resist potions against current resistances
-                if (m_config.filterRedundantResists) {
-                    if (IsResistPotionRedundant(c, player.resistances)) {
-                        return false;
-                    }
-                }
-
-                // Check buff potions against active buffs
-                if (m_config.filterActiveBuffs) {
-                    if (Item::HasTag(c.tags, Item::ItemTag::Waterbreathing) &&
-                        player.buffs.hasWaterBreathing) {
-                        return false;
-                    }
-                    if (Item::HasTag(c.tags, Item::ItemTag::Invisibility) &&
-                        player.buffs.isInvisible) {
-                        return false;
-                    }
-                }
-
-                return true;
-            }
-            else if constexpr (std::is_same_v<T, SpellCandidate>) {
-                if (m_config.filterActiveBuffs) {
-                    // Filter waterbreathing spell if already has effect
-                    // Note: Would need a specific tag for waterbreathing spells
-                    // For now, check utility spells with Stealth tag (approximation)
-                    if (Spell::HasTag(c.tags, Spell::SpellTag::Invisibility) &&
-                        player.buffs.isInvisible) {
-                        return false;
-                    }
-                    if (Spell::HasTag(c.tags, Spell::SpellTag::Muffle) &&
-                        player.buffs.hasMuffle) {
-                        return false;
-                    }
-
-                    // Filter armor spells if any armor buff is already active
-                    if (Spell::HasTag(c.tags, Spell::SpellTag::Armor) &&
-                        player.buffs.hasArmorBuff) {
-                        return false;
-                    }
-
-                    // Filter summon spells if already have an active summon
-                    if (c.type == Spell::SpellType::Summon &&
-                        player.buffs.hasActiveSummon) {
-                        return false;
-                    }
-                }
-
-                // Check resist spells against current resistances
-                if (m_config.filterRedundantResists) {
-                    if (IsResistSpellRedundant(c, player.resistances)) {
-                        return false;
-                    }
-                }
-
-                return true;
-            }
-            else if constexpr (std::is_same_v<T, ScrollCandidate>) {
-                if (m_config.filterActiveBuffs) {
-                    // Similar logic as spells, using scroll tags (which alias spell tags)
-                    // ScrollTag is an alias for Spell::SpellTag, so use Spell::HasTag
-                    if (Spell::HasTag(c.tags, Spell::SpellTag::Invisibility) &&
-                        player.buffs.isInvisible) {
-                        return false;
-                    }
-                    if (Spell::HasTag(c.tags, Spell::SpellTag::Muffle) &&
-                        player.buffs.hasMuffle) {
-                        return false;
-                    }
-                }
-                return true;
-            }
-            else {
-                // Weapons and ammo don't have buff effects
-                return true;
-            }
-        }, candidate);
+        if (!m_config.filterActiveBuffs && !m_config.filterRedundantResists) return true;
+        auto result = RunVisitorFilters(candidate, player, 999999.0f); // high magicka to skip affordability
+        return result != FilterResult::ActiveBuff;
     }
 
-    // =========================================================================
-    // FULL VITALS FILTER
-    // =========================================================================
     bool CandidateFilters::PassesFullVitalsFilter(
-        const CandidateVariant& candidate,
-        const State::PlayerActorState& player) const
+        const CandidateVariant& candidate, const State::PlayerActorState& player) const
     {
-        return std::visit([&](const auto& c) -> bool {
-            using T = std::decay_t<decltype(c)>;
-
-            if constexpr (std::is_same_v<T, ItemCandidate>) {
-                // Food and alcohol are consumed for survival/roleplay, not just
-                // restore effects — never filter them by full vitals.
-                if (c.type == Item::ItemType::Food ||
-                    c.type == Item::ItemType::Alcohol) {
-                    return true;
-                }
-
-                // Filter health potions when health is full
-                if (m_config.filterHealingWhenFull &&
-                    Item::HasTag(c.tags, Item::ItemTag::RestoreHealth) &&
-                    player.vitals.health >= State::DefaultState::FULL_VITAL - FULL_VITAL_EPSILON) {
-                    return false;
-                }
-
-                // Filter magicka potions when magicka is full
-                if (m_config.filterMagickaWhenFull &&
-                    Item::HasTag(c.tags, Item::ItemTag::RestoreMagicka) &&
-                    player.vitals.magicka >= State::DefaultState::FULL_VITAL - FULL_VITAL_EPSILON) {
-                    return false;
-                }
-
-                // Filter stamina potions when stamina is full
-                if (m_config.filterStaminaWhenFull &&
-                    Item::HasTag(c.tags, Item::ItemTag::RestoreStamina) &&
-                    player.vitals.stamina >= State::DefaultState::FULL_VITAL - FULL_VITAL_EPSILON) {
-                    return false;
-                }
-
-                return true;
-            }
-            else if constexpr (std::is_same_v<T, SpellCandidate>) {
-                // Filter healing spells when health is full
-                if (m_config.filterHealingWhenFull &&
-                    Spell::HasTag(c.tags, Spell::SpellTag::RestoreHealth) &&
-                    player.vitals.health >= State::DefaultState::FULL_VITAL - FULL_VITAL_EPSILON) {
-                    return false;
-                }
-
-                // Filter magicka restoration (rare, but some mods have them)
-                if (m_config.filterMagickaWhenFull &&
-                    Spell::HasTag(c.tags, Spell::SpellTag::RestoreMagicka) &&
-                    player.vitals.magicka >= State::DefaultState::FULL_VITAL - FULL_VITAL_EPSILON) {
-                    return false;
-                }
-
-                return true;
-            }
-            else if constexpr (std::is_same_v<T, ScrollCandidate>) {
-                // Similar logic for scrolls (ScrollTag is alias for Spell::SpellTag)
-                if (m_config.filterHealingWhenFull &&
-                    Spell::HasTag(c.tags, Spell::SpellTag::RestoreHealth) &&
-                    player.vitals.health >= State::DefaultState::FULL_VITAL - FULL_VITAL_EPSILON) {
-                    return false;
-                }
-
-                return true;
-            }
-            else {
-                // Weapons and ammo aren't affected by vitals
-                return true;
-            }
-        }, candidate);
+        auto result = RunVisitorFilters(candidate, player, 999999.0f);
+        return result != FilterResult::FullVitals;
     }
 
     // =========================================================================
@@ -316,19 +254,35 @@ namespace Huginn::Candidate
             const bool isWeapon = std::holds_alternative<WeaponCandidate>(c);
             if (isWeapon) ++weaponsBefore;
 
-            // 1. Affordability (cheapest — just a comparison)
-            if (!PassesAffordabilityFilter(c, currentMagicka)) {
-                ++stats.filteredByAffordability;
-                if (isWeapon) ++weaponsFilteredByAffordability;
-                continue;
+            // 1-4. Consolidated visitor: affordability, equipped, full vitals, active buff
+            //       Single std::visit dispatch instead of 4 separate ones.
+            {
+                auto result = RunVisitorFilters(c, player, currentMagicka);
+                if (result != FilterResult::Passed) {
+                    switch (result) {
+                        case FilterResult::Affordability:
+                            ++stats.filteredByAffordability;
+                            if (isWeapon) ++weaponsFilteredByAffordability;
+                            break;
+                        case FilterResult::Equipped:
+                            ++stats.filteredByEquipped;
+                            if (isWeapon) ++weaponsFilteredByEquipped;
+                            break;
+                        case FilterResult::FullVitals:
+                            ++stats.filteredByFullVitals;
+                            if (isWeapon) ++weaponsFilteredByFullVitals;
+                            break;
+                        case FilterResult::ActiveBuff:
+                            ++stats.filteredByActiveBuff;
+                            if (isWeapon) ++weaponsFilteredByActiveBuff;
+                            break;
+                        default: break;
+                    }
+                    continue;
+                }
             }
-            // 2. Equipped
-            if (!PassesEquippedFilter(c, player)) {
-                ++stats.filteredByEquipped;
-                if (isWeapon) ++weaponsFilteredByEquipped;
-                continue;
-            }
-            // 3. Cooldown (uses pre-snapshotted set — no lock per candidate)
+
+            // 5. Cooldown (uses pre-snapshotted set — no lock per candidate)
             {
                 const auto& base = GetBase(c);
                 if (activeCooldowns.contains(CooldownManager::MakeKey(base.formID, base.sourceType))) {
@@ -338,28 +292,8 @@ namespace Huginn::Candidate
                     continue;
                 }
             }
-            // 4. Full Vitals
-            if (!PassesFullVitalsFilter(c, player)) {
-                ++stats.filteredByFullVitals;
-                if (isWeapon) ++weaponsFilteredByFullVitals;
-                continue;
-            }
-            // 5. Active Buff (more expensive — checks multiple buff states)
-            if (!PassesActiveBuffFilter(c, player)) {
-                ++stats.filteredByActiveBuff;
-                if (isWeapon) ++weaponsFilteredByActiveBuff;
-                continue;
-            }
-            // 6. Relevance - DISABLED (Stage 1g)
-            // Relevance filtering has been moved to UtilityScorer via minimumContextWeight.
-            // The old baseRelevance field is no longer set by CandidateGenerator.
-            // All context weight filtering now happens in UtilityScorer::ScoreCandidates().
-            // if (!PassesRelevanceFilter(c)) {
-            //     ++stats.filteredByRelevance;
-            //     if (isWeapon) ++weaponsFilteredByRelevance;
-            //     continue;
-            // }
-            // 7. Deduplication (inline — avoids a second erase_if pass)
+
+            // 6. Deduplication (inline — avoids a second erase_if pass)
             const auto& base = GetBase(c);
             const uint64_t key = base.GetDeduplicationKey();
             auto [iter, inserted] = m_deduplicationSet.insert(key);
