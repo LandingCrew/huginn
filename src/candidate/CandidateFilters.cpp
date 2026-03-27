@@ -307,22 +307,19 @@ namespace Huginn::Candidate
             return;
         }
 
-        // Debug: Count weapon candidates before filtering
-        size_t weaponsBefore = std::count_if(gatherBuffer.begin(), gatherBuffer.end(),
-            [](const auto& c) { return std::holds_alternative<WeaponCandidate>(c); });
-
         // Prepare output vector and dedup set
         output.clear();
         output.reserve(gatherBuffer.size());
         m_deduplicationSet.clear();
-        if (m_deduplicationSet.bucket_count() < gatherBuffer.size()) {
-            m_deduplicationSet.reserve(gatherBuffer.size());
-        }
+
+        // Snapshot active cooldowns once (avoids per-candidate shared_lock acquisition)
+        const auto activeCooldowns = m_cooldownMgr.GetActiveCooldownKeys();
 
         // Single forward pass: filter + dedup, moving survivors into output.
         // Each candidate is moved at most once (into output). No in-place
         // erase_if means no variant move-assignment chains that trigger
         // string proxy swaps on freed memory.
+        size_t weaponsBefore = 0;
         size_t weaponsFilteredByEquipped = 0;
         size_t weaponsFilteredByAffordability = 0;
         size_t weaponsFilteredByCooldown = 0;
@@ -330,9 +327,11 @@ namespace Huginn::Candidate
         size_t weaponsFilteredByActiveBuff = 0;
         size_t weaponsFilteredByRelevance = 0;
         size_t weaponsDeduplicated = 0;
+        size_t weaponsPassed = 0;
 
         for (auto& c : gatherBuffer) {
             const bool isWeapon = std::holds_alternative<WeaponCandidate>(c);
+            if (isWeapon) ++weaponsBefore;
 
             // 1. Affordability (cheapest — just a comparison)
             if (!PassesAffordabilityFilter(c, currentMagicka)) {
@@ -346,11 +345,15 @@ namespace Huginn::Candidate
                 if (isWeapon) ++weaponsFilteredByEquipped;
                 continue;
             }
-            // 3. Cooldown
-            if (!PassesCooldownFilter(c)) {
-                ++stats.filteredByCooldown;
-                if (isWeapon) ++weaponsFilteredByCooldown;
-                continue;
+            // 3. Cooldown (uses pre-snapshotted set — no lock per candidate)
+            {
+                const auto& base = GetBase(c);
+                if (activeCooldowns.contains(CooldownManager::MakeKey(base.formID, base.sourceType))) {
+                    logger::trace("Cooldown filtered: {} [{:X}]", base.name, base.formID);
+                    ++stats.filteredByCooldown;
+                    if (isWeapon) ++weaponsFilteredByCooldown;
+                    continue;
+                }
             }
             // 4. Full Vitals
             if (!PassesFullVitalsFilter(c, player)) {
@@ -386,30 +389,32 @@ namespace Huginn::Candidate
             }
 
             // Passed all filters — move into output (single move per survivor)
+            if (isWeapon) ++weaponsPassed;
             output.push_back(std::move(c));
         }
 
-        // Count weapons after filter+dedup, before truncation
-        size_t weaponsAfterFilterDedup = std::count_if(output.begin(), output.end(),
-            [](const auto& c) { return std::holds_alternative<WeaponCandidate>(c); });
-
         // Limit output size if configured
-        // NOTE: Previously sorted by baseRelevance, but that field has been removed (Stage 1g).
-        // Context-based filtering now happens in UtilityScorer via minimumContextWeight.
-        // Here we just truncate to first N candidates in gather order for performance.
         if (m_config.maxCandidatesAfterFilter > 0 &&
             output.size() > m_config.maxCandidatesAfterFilter) {
-            // Keep candidates in gather order (spells, then potions, then scrolls, etc.)
-            // Real scoring/prioritization happens in UtilityScorer
+            size_t weaponsBeforeTrunc = weaponsPassed;
             output.resize(m_config.maxCandidatesAfterFilter);
+            // Recount weapons only if truncation happened (rare path)
+            size_t weaponsAfter = 0;
+            for (const auto& c : output) {
+                if (std::holds_alternative<WeaponCandidate>(c)) ++weaponsAfter;
+            }
+            weaponsPassed = weaponsAfter;
         }
 
         stats.outputCount = output.size();
 
-        // Count weapons after resize (to detect truncation)
-        size_t weaponsAfter = std::count_if(output.begin(), output.end(),
-            [](const auto& c) { return std::holds_alternative<WeaponCandidate>(c); });
-        size_t weaponsTruncated = weaponsAfterFilterDedup - weaponsAfter;
+        // Log cooldown stats (only when count changes)
+        static size_t lastCooldownFiltered = 0;
+        if (stats.filteredByCooldown != lastCooldownFiltered) {
+            logger::debug("[CandidateFilters] Cooldowns: {} filtered ({} active cooldowns)",
+                stats.filteredByCooldown, activeCooldowns.size());
+            lastCooldownFiltered = stats.filteredByCooldown;
+        }
 
         // Log affordability stats (only when counts change)
         static size_t lastAffordFiltered = 0, lastInput = 0;
@@ -422,17 +427,17 @@ namespace Huginn::Candidate
         }
 
         // Log weapon filter stats (only when count changes)
-        static size_t lastBefore = 0, lastAfter = 0;
-        if (weaponsBefore != lastBefore || weaponsAfter != lastAfter) {
-            logger::info("[CandidateFilters] Weapons: {} in -> {} afterFilter+Dedup -> {} out "
-                "(afford={}, equip={}, cool={}, vital={}, buff={}, rel={}, dedup={}, trunc={})",
-                weaponsBefore, weaponsAfterFilterDedup, weaponsAfter,
+        static size_t lastWpnBefore = 0, lastWpnAfter = 0;
+        if (weaponsBefore != lastWpnBefore || weaponsPassed != lastWpnAfter) {
+            logger::info("[CandidateFilters] Weapons: {} in -> {} out "
+                "(afford={}, equip={}, cool={}, vital={}, buff={}, rel={}, dedup={})",
+                weaponsBefore, weaponsPassed,
                 weaponsFilteredByAffordability, weaponsFilteredByEquipped,
                 weaponsFilteredByCooldown, weaponsFilteredByFullVitals,
                 weaponsFilteredByActiveBuff, weaponsFilteredByRelevance,
-                weaponsDeduplicated, weaponsTruncated);
-            lastBefore = weaponsBefore;
-            lastAfter = weaponsAfter;
+                weaponsDeduplicated);
+            lastWpnBefore = weaponsBefore;
+            lastWpnAfter = weaponsPassed;
         }
     }
 

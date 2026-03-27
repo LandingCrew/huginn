@@ -36,6 +36,19 @@ namespace Huginn::Candidate
         return std::chrono::steady_clock::now() < it->second.expiryTime;
     }
 
+    std::unordered_set<uint64_t> CooldownManager::GetActiveCooldownKeys() const
+    {
+        READ_LOCK;
+        std::unordered_set<uint64_t> active;
+        auto now = std::chrono::steady_clock::now();
+        for (const auto& [key, entry] : m_cooldowns) {
+            if (now < entry.expiryTime) {
+                active.insert(key);
+            }
+        }
+        return active;
+    }
+
     void CooldownManager::StartCooldown(RE::FormID formID, SourceType type)
     {
         StartCooldown(formID, type, GetDuration(type));
