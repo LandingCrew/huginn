@@ -324,11 +324,11 @@ namespace Huginn::Candidate
         // OPTIMIZATION: Zero-copy iteration via ForEach visitor pattern
         size_t count = 0;
         m_itemRegistry->ForEachItem([&](const Item::InventoryItem& invItem) {
-            ++count;
             // Skip soul gems (handled separately)
             if (invItem.data.type == Item::ItemType::SoulGem) {
                 return;  // continue to next item
             }
+            ++count;
 
             ItemCandidate candidate = ItemCandidate::FromInventoryItem(invItem);
 
@@ -473,23 +473,16 @@ namespace Huginn::Candidate
             return;
         }
 
-        // Get the single best soul gem (largest capacity).
+        // Get the single best soul gem (largest capacity) — zero allocation.
         // Soul gems are informational — they tell the player their weapon needs
-        // recharging. Only one recommendation is needed; flooding slots with
-        // Petty/Common/Greater/Grand wastes space for usable items.
-        auto soulGems = m_itemRegistry->GetSoulGems(1);
-        m_stats.soulGemsScanned = soulGems.size();
+        // recharging. Only one recommendation is needed.
+        const auto* bestGem = m_itemRegistry->GetBestSoulGem();
+        m_stats.soulGemsScanned = bestGem ? 1 : 0;
 
-        for (const auto* invItem : soulGems) {
-            if (!invItem) continue;
-
-            ItemCandidate candidate = ItemCandidate::FromInventoryItem(*invItem);
+        if (bestGem && bestGem->count > 0) {
+            ItemCandidate candidate = ItemCandidate::FromInventoryItem(*bestGem);
             candidate.sourceType = SourceType::SoulGem;
-
-            // Set relevance tags (used by filters)
             candidate.relevanceTags = contextTags;
-            // Stage 1g: baseRelevance removed - now computed by ContextRuleEngine
-
             out.push_back(std::move(candidate));
         }
     }
