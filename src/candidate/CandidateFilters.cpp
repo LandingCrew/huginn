@@ -40,11 +40,16 @@ namespace Huginn::Candidate
                 }
 
                 if (currentMagicka >= effectiveCost) {
+                    logger::trace("Affordable spell passed: {} [{:X}] cost={:.0f} magicka={:.0f}",
+                        c.name, c.formID, effectiveCost, currentMagicka);
                     return true;  // Can afford — always keep
                 }
 
                 // Can't afford — policy determines behavior
                 // Allow and Penalize both keep the spell; Disallow filters it out
+                logger::trace("Unaffordable spell {} (policy={}): {} [{:X}] cost={:.0f} magicka={:.0f}",
+                    policy == UncastableSpellPolicy::Disallow ? "filtered" : "kept",
+                    ToString(policy), c.name, c.formID, effectiveCost, currentMagicka);
                 return policy != UncastableSpellPolicy::Disallow;
             }
             else if constexpr (std::is_same_v<T, ItemCandidate>) {
@@ -405,6 +410,16 @@ namespace Huginn::Candidate
         size_t weaponsAfter = std::count_if(output.begin(), output.end(),
             [](const auto& c) { return std::holds_alternative<WeaponCandidate>(c); });
         size_t weaponsTruncated = weaponsAfterFilterDedup - weaponsAfter;
+
+        // Log affordability stats (only when counts change)
+        static size_t lastAffordFiltered = 0, lastInput = 0;
+        if (stats.filteredByAffordability != lastAffordFiltered || stats.inputCount != lastInput) {
+            logger::debug("[CandidateFilters] Affordability: {}/{} spells filtered (policy={}, magicka={:.0f})",
+                stats.filteredByAffordability, stats.inputCount,
+                ToString(m_config.uncastableSpellPolicy), currentMagicka);
+            lastAffordFiltered = stats.filteredByAffordability;
+            lastInput = stats.inputCount;
+        }
 
         // Log weapon filter stats (only when count changes)
         static size_t lastBefore = 0, lastAfter = 0;
