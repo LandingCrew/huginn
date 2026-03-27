@@ -23,16 +23,6 @@ namespace Huginn::Candidate
     class CooldownManager
     {
     public:
-        // Default cooldown durations in seconds
-        static constexpr float DEFAULT_SPELL_COOLDOWN = 2.0f;
-        static constexpr float DEFAULT_POTION_COOLDOWN = 3.0f;
-        static constexpr float DEFAULT_SCROLL_COOLDOWN = 2.0f;
-        static constexpr float DEFAULT_WEAPON_COOLDOWN = 5.0f;
-        static constexpr float DEFAULT_AMMO_COOLDOWN = 1.0f;
-        static constexpr float DEFAULT_SOULGEM_COOLDOWN = 3.0f;
-        static constexpr float DEFAULT_FOOD_COOLDOWN = 3.0f;
-        static constexpr float DEFAULT_STAFF_COOLDOWN = 2.0f;
-
         CooldownManager();
 
         /**

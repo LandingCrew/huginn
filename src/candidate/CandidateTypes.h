@@ -17,6 +17,16 @@ namespace Huginn::Candidate
     // =============================================================================
     // SOURCE TYPE - Identifies which registry/system the candidate came from
     // =============================================================================
+    // Mapping to CandidateVariant types:
+    //   Spell   -> SpellCandidate
+    //   Potion  -> ItemCandidate   (sourceType distinguishes from Food/SoulGem)
+    //   Scroll  -> ScrollCandidate
+    //   Weapon  -> WeaponCandidate
+    //   Ammo    -> AmmoCandidate
+    //   SoulGem -> ItemCandidate   (sourceType = SoulGem)
+    //   Food    -> ItemCandidate   (sourceType = Food)
+    //   Staff   -> WeaponCandidate (sourceType = Staff)
+    // =============================================================================
     enum class SourceType : uint8_t
     {
         Spell = 0,

@@ -62,7 +62,8 @@ namespace Huginn::Candidate
 
     void CandidateGenerator::RefreshConfigFromGlobal() noexcept
     {
-        // Copy global config to local snapshot (atomic copy of POD struct)
+        // Copy global config to local snapshot.
+        // Safe because writes only occur when the update loop is paused.
         m_config = g_candidateConfig;
 
         // Re-sync cooldown durations with new config values
