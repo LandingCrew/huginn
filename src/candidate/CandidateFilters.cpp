@@ -23,33 +23,16 @@ namespace Huginn::Candidate
             using T = std::decay_t<decltype(c)>;
 
             if constexpr (std::is_same_v<T, SpellCandidate>) {
-                // Look up the actual spell form to compute effective cost
-                // (baseCost is raw form cost — doesn't include perk/enchantment reductions)
-                auto* form = RE::TESForm::LookupByID(c.formID);
-                auto* spell = form ? form->As<RE::SpellItem>() : nullptr;
-                // Player should never be null here (guarded by UpdateLoop actorValue check),
-                // but defensively fall back to baseCost if form lookup or player fails
-                auto* player = RE::PlayerCharacter::GetSingleton();
-
-                float effectiveCost = (spell && player)
-                    ? spell->CalculateMagickaCost(player)
-                    : static_cast<float>(c.baseCost);
-
-                if (c.isConcentration && effectiveCost <= 0.0f) {
-                    effectiveCost = static_cast<float>(c.baseCost);
-                }
-
-                if (currentMagicka >= effectiveCost) {
+                // effectiveCost is pre-computed during gathering (includes perk/enchant reductions)
+                if (currentMagicka >= c.effectiveCost) {
                     logger::trace("Affordable spell passed: {} [{:X}] cost={:.0f} magicka={:.0f}",
-                        c.name, c.formID, effectiveCost, currentMagicka);
-                    return true;  // Can afford — always keep
+                        c.name, c.formID, c.effectiveCost, currentMagicka);
+                    return true;
                 }
 
-                // Can't afford — policy determines behavior
-                // Allow and Penalize both keep the spell; Disallow filters it out
                 logger::trace("Unaffordable spell {} (policy={}): {} [{:X}] cost={:.0f} magicka={:.0f}",
                     policy == UncastableSpellPolicy::Disallow ? "filtered" : "kept",
-                    ToString(policy), c.name, c.formID, effectiveCost, currentMagicka);
+                    ToString(policy), c.name, c.formID, c.effectiveCost, currentMagicka);
                 return policy != UncastableSpellPolicy::Disallow;
             }
             else if constexpr (std::is_same_v<T, ItemCandidate>) {

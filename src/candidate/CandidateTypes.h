@@ -173,6 +173,7 @@ namespace Huginn::Candidate
         Spell::MagicSchool school = Spell::MagicSchool::Unknown;
         Spell::ElementType element = Spell::ElementType::None;
         uint32_t baseCost = 0;
+        float effectiveCost = 0.0f;  // Perk/enchant-adjusted cost, cached during gathering
         bool isConcentration = false;
         float range = 0.0f;
         bool isFavorited = false;

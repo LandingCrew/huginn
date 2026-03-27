@@ -288,16 +288,23 @@ namespace Huginn::Candidate
 
         // OPTIMIZATION: Zero-copy iteration via ForEach visitor pattern
         size_t count = 0;
+        auto* playerRef = RE::PlayerCharacter::GetSingleton();
         m_spellRegistry->ForEachSpell([&](const Spell::SpellData& spellData) {
             ++count;
             SpellCandidate candidate = SpellCandidate::FromSpellData(spellData);
 
-            // Set equipped status
-            candidate.isEquipped = player.IsSpellEquipped(candidate.formID);
+            // Cache effective cost (perk/enchant-adjusted) to avoid form lookup in filter
+            auto* form = RE::TESForm::LookupByID(candidate.formID);
+            auto* spellItem = form ? form->As<RE::SpellItem>() : nullptr;
+            candidate.effectiveCost = (spellItem && playerRef)
+                ? spellItem->CalculateMagickaCost(playerRef)
+                : static_cast<float>(candidate.baseCost);
+            if (candidate.isConcentration && candidate.effectiveCost <= 0.0f) {
+                candidate.effectiveCost = static_cast<float>(candidate.baseCost);
+            }
 
-            // Set relevance tags (used by filters)
+            candidate.isEquipped = player.IsSpellEquipped(candidate.formID);
             candidate.relevanceTags = contextTags;
-            // Stage 1g: baseRelevance removed - now computed by ContextRuleEngine
 
             out.push_back(std::move(candidate));
         });
