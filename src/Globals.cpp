@@ -150,16 +150,12 @@ void LoadCandidateConfigFromINI() {
       Candidate::UncastableSpellPolicy::Disallow;
   }
 
-  Candidate::g_candidateConfig.uncastablePenaltyFloor = static_cast<float>(
-    ini.GetDoubleValue(section, "fUncastablePenaltyFloor", 0.05));
-
   // Soul gem recharge toggle
   Candidate::g_candidateConfig.enableSoulGemRecharge =
     ini.GetBoolValue(section, "bEnableSoulGemRecharge", true);
 
-  logger::info("[CandidateConfig] Uncastable spell policy: {}, penalty floor: {:.2f}, soul gem recharge: {}",
+  logger::info("[CandidateConfig] Uncastable spell policy: {}, soul gem recharge: {}",
     Candidate::ToString(Candidate::g_candidateConfig.uncastableSpellPolicy),
-    Candidate::g_candidateConfig.uncastablePenaltyFloor,
     Candidate::g_candidateConfig.enableSoulGemRecharge ? "enabled" : "disabled");
 }
 

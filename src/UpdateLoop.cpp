@@ -173,6 +173,7 @@ void OnUpdate(float deltaSeconds)
   bool pageChanged = Slot::SlotAllocator::GetSingleton().ConsumePageChanged();
 
   if (!stateChanged && !pageChanged) {
+    Learning::PipelineStateCache::GetSingleton().RefreshTimestamp();
     return;  // Skip entire pipeline — huge performance win when idle
   }
 

@@ -8,9 +8,7 @@ namespace Huginn::Candidate
     enum class SourceType : uint8_t;
 
     /// Policy for handling spells the player can't currently afford (insufficient magicka).
-    /// Applied in two phases during CandidateFilters::ApplyAllFilters():
-    ///   1. PassesAffordabilityFilter() - Disallow removes spells, Penalize/Allow keep them
-    ///   2. ApplyAffordabilityPenalties() - Penalize reduces baseRelevance by ratio
+    /// Disallow removes them in PassesAffordabilityFilter(); Penalize/Allow both keep them.
     enum class UncastableSpellPolicy : uint8_t {
         Disallow,   // Filter out uncastable spells (current behavior)
         Penalize,   // Keep but reduce relevance by magicka shortfall ratio
@@ -75,11 +73,6 @@ namespace Huginn::Candidate
 
         /// Policy for spells the player lacks magicka to cast.
         UncastableSpellPolicy uncastableSpellPolicy = UncastableSpellPolicy::Disallow;
-
-        /// Minimum penalty multiplier for Penalize mode (floor for ratio).
-        /// Prevents completely zeroing out high-cost spells.
-        /// 0.05 = even wildly expensive spells retain 5% of their relevance.
-        float uncastablePenaltyFloor = 0.05f;
 
         // =============================================================================
         // SOUL GEM RECHARGING

@@ -64,7 +64,7 @@ namespace Huginn::Scoring
             return Candidate::GetSourceType(candidate);
         }
 
-        [[nodiscard]] const std::string& GetName() const noexcept {
+        [[nodiscard]] std::string_view GetName() const noexcept {
             return Candidate::GetName(candidate);
         }
 

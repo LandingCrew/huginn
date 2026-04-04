@@ -187,6 +187,22 @@ namespace Huginn::Candidate
         // Reusable deduplication set (avoids repeated allocation in ApplyAllFilters)
         mutable std::unordered_set<uint64_t> m_deduplicationSet;
 
+        // Consolidated visitor result — which filter rejected a candidate
+        enum class FilterResult : uint8_t {
+            Passed,
+            Affordability,
+            Equipped,
+            FullVitals,
+            ActiveBuff
+        };
+
+        // Single std::visit dispatch running affordability, equipped, full vitals, active buff
+        [[nodiscard]] FilterResult RunVisitorFilters(
+            const CandidateVariant& candidate,
+            const State::PlayerActorState& player,
+            float currentMagicka
+        ) const;
+
         // Helper: Check resist potion against current resistances
         [[nodiscard]] bool IsResistPotionRedundant(
             const ItemCandidate& item,
@@ -199,12 +215,6 @@ namespace Huginn::Candidate
             const State::ActorResistances& resistances
         ) const;
 
-        /// Apply ratio-based relevance penalty to unaffordable spell candidates.
-        /// Only runs when policy == Penalize. Modifies baseRelevance in-place.
-        void ApplyAffordabilityPenalties(
-            std::vector<CandidateVariant>& candidates,
-            float currentMagicka
-        );
     };
 
 }  // namespace Huginn::Candidate

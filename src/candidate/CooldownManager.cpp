@@ -1,4 +1,5 @@
 #include "CooldownManager.h"
+#include "CandidateConfig.h"
 
 namespace Huginn::Candidate
 {
@@ -8,15 +9,16 @@ namespace Huginn::Candidate
     CooldownManager::CooldownManager()
         : m_lastCleanup(std::chrono::steady_clock::now())
     {
-        // Initialize default durations for each source type
-        m_durations[static_cast<size_t>(SourceType::Spell)]   = DEFAULT_SPELL_COOLDOWN;
-        m_durations[static_cast<size_t>(SourceType::Potion)]  = DEFAULT_POTION_COOLDOWN;
-        m_durations[static_cast<size_t>(SourceType::Scroll)]  = DEFAULT_SCROLL_COOLDOWN;
-        m_durations[static_cast<size_t>(SourceType::Weapon)]  = DEFAULT_WEAPON_COOLDOWN;
-        m_durations[static_cast<size_t>(SourceType::Ammo)]    = DEFAULT_AMMO_COOLDOWN;
-        m_durations[static_cast<size_t>(SourceType::SoulGem)] = DEFAULT_SOULGEM_COOLDOWN;
-        m_durations[static_cast<size_t>(SourceType::Food)]    = DEFAULT_FOOD_COOLDOWN;
-        m_durations[static_cast<size_t>(SourceType::Staff)]   = DEFAULT_STAFF_COOLDOWN;
+        // Initialize durations from CandidateConfig defaults (single source of truth)
+        constexpr CandidateConfig defaults{};
+        m_durations[static_cast<size_t>(SourceType::Spell)]   = defaults.spellCooldown;
+        m_durations[static_cast<size_t>(SourceType::Potion)]  = defaults.potionCooldown;
+        m_durations[static_cast<size_t>(SourceType::Scroll)]  = defaults.scrollCooldown;
+        m_durations[static_cast<size_t>(SourceType::Weapon)]  = defaults.weaponCooldown;
+        m_durations[static_cast<size_t>(SourceType::Ammo)]    = defaults.ammoCooldown;
+        m_durations[static_cast<size_t>(SourceType::SoulGem)] = defaults.soulGemCooldown;
+        m_durations[static_cast<size_t>(SourceType::Food)]    = defaults.foodCooldown;
+        m_durations[static_cast<size_t>(SourceType::Staff)]   = defaults.spellCooldown;  // Intentional: staves share spell cooldown
 
         // Reserve space for typical usage
         m_cooldowns.reserve(32);
@@ -34,6 +36,19 @@ namespace Huginn::Candidate
 
         // Check if cooldown has expired
         return std::chrono::steady_clock::now() < it->second.expiryTime;
+    }
+
+    std::unordered_set<uint64_t> CooldownManager::GetActiveCooldownKeys() const
+    {
+        READ_LOCK;
+        std::unordered_set<uint64_t> active;
+        auto now = std::chrono::steady_clock::now();
+        for (const auto& [key, entry] : m_cooldowns) {
+            if (now < entry.expiryTime) {
+                active.insert(key);
+            }
+        }
+        return active;
     }
 
     void CooldownManager::StartCooldown(RE::FormID formID, SourceType type)

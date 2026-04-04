@@ -2,6 +2,7 @@
 
 #include "CandidateTypes.h"
 #include <unordered_map>
+#include <unordered_set>
 #include <chrono>
 #include <array>
 #include <shared_mutex>  // Thread safety for concurrent read/write
@@ -22,16 +23,6 @@ namespace Huginn::Candidate
     class CooldownManager
     {
     public:
-        // Default cooldown durations in seconds
-        static constexpr float DEFAULT_SPELL_COOLDOWN = 2.0f;
-        static constexpr float DEFAULT_POTION_COOLDOWN = 3.0f;
-        static constexpr float DEFAULT_SCROLL_COOLDOWN = 2.0f;
-        static constexpr float DEFAULT_WEAPON_COOLDOWN = 5.0f;
-        static constexpr float DEFAULT_AMMO_COOLDOWN = 1.0f;
-        static constexpr float DEFAULT_SOULGEM_COOLDOWN = 3.0f;
-        static constexpr float DEFAULT_FOOD_COOLDOWN = 3.0f;
-        static constexpr float DEFAULT_STAFF_COOLDOWN = 2.0f;
-
         CooldownManager();
 
         /**
@@ -105,6 +96,19 @@ namespace Huginn::Candidate
          */
         bool CancelCooldown(RE::FormID formID, SourceType type);
 
+        /**
+         * @brief Snapshot all active (non-expired) cooldown keys.
+         * Acquires the lock once; callers can then check the returned set lock-free.
+         */
+        [[nodiscard]] std::unordered_set<uint64_t> GetActiveCooldownKeys() const;
+
+        /**
+         * @brief Create a unique key from formID and source type.
+         */
+        [[nodiscard]] static constexpr uint64_t MakeKey(RE::FormID formID, SourceType type) noexcept {
+            return (static_cast<uint64_t>(type) << 32) | static_cast<uint64_t>(formID);
+        }
+
     private:
         struct CooldownEntry {
             std::chrono::steady_clock::time_point expiryTime;
@@ -119,13 +123,6 @@ namespace Huginn::Candidate
         // Timestamp of last cleanup pass
         std::chrono::steady_clock::time_point m_lastCleanup;
         static constexpr float CLEANUP_INTERVAL_SECONDS = 5.0f;
-
-        /**
-         * @brief Create a unique key from formID and source type.
-         */
-        [[nodiscard]] static constexpr uint64_t MakeKey(RE::FormID formID, SourceType type) noexcept {
-            return (static_cast<uint64_t>(type) << 32) | static_cast<uint64_t>(formID);
-        }
 
         /**
          * @brief Remove all expired entries from the map.

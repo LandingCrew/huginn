@@ -62,7 +62,8 @@ namespace Huginn::Candidate
 
     void CandidateGenerator::RefreshConfigFromGlobal() noexcept
     {
-        // Copy global config to local snapshot (atomic copy of POD struct)
+        // Copy global config to local snapshot.
+        // Safe because writes only occur when the update loop is paused.
         m_config = g_candidateConfig;
 
         // Re-sync cooldown durations with new config values
@@ -287,16 +288,23 @@ namespace Huginn::Candidate
 
         // OPTIMIZATION: Zero-copy iteration via ForEach visitor pattern
         size_t count = 0;
+        auto* playerRef = RE::PlayerCharacter::GetSingleton();
         m_spellRegistry->ForEachSpell([&](const Spell::SpellData& spellData) {
             ++count;
             SpellCandidate candidate = SpellCandidate::FromSpellData(spellData);
 
-            // Set equipped status
-            candidate.isEquipped = player.IsSpellEquipped(candidate.formID);
+            // Cache effective cost (perk/enchant-adjusted) to avoid form lookup in filter
+            auto* form = RE::TESForm::LookupByID(candidate.formID);
+            auto* spellItem = form ? form->As<RE::SpellItem>() : nullptr;
+            candidate.effectiveCost = (spellItem && playerRef)
+                ? spellItem->CalculateMagickaCost(playerRef)
+                : static_cast<float>(candidate.baseCost);
+            if (candidate.isConcentration && candidate.effectiveCost <= 0.0f) {
+                candidate.effectiveCost = static_cast<float>(candidate.baseCost);
+            }
 
-            // Set relevance tags (used by filters)
+            candidate.isEquipped = player.IsSpellEquipped(candidate.formID);
             candidate.relevanceTags = contextTags;
-            // Stage 1g: baseRelevance removed - now computed by ContextRuleEngine
 
             out.push_back(std::move(candidate));
         });
@@ -324,11 +332,11 @@ namespace Huginn::Candidate
         // OPTIMIZATION: Zero-copy iteration via ForEach visitor pattern
         size_t count = 0;
         m_itemRegistry->ForEachItem([&](const Item::InventoryItem& invItem) {
-            ++count;
             // Skip soul gems (handled separately)
             if (invItem.data.type == Item::ItemType::SoulGem) {
                 return;  // continue to next item
             }
+            ++count;
 
             ItemCandidate candidate = ItemCandidate::FromInventoryItem(invItem);
 
@@ -473,23 +481,16 @@ namespace Huginn::Candidate
             return;
         }
 
-        // Get the single best soul gem (largest capacity).
+        // Get the single best soul gem (largest capacity) — zero allocation.
         // Soul gems are informational — they tell the player their weapon needs
-        // recharging. Only one recommendation is needed; flooding slots with
-        // Petty/Common/Greater/Grand wastes space for usable items.
-        auto soulGems = m_itemRegistry->GetSoulGems(1);
-        m_stats.soulGemsScanned = soulGems.size();
+        // recharging. Only one recommendation is needed.
+        const auto* bestGem = m_itemRegistry->GetBestSoulGem();
+        m_stats.soulGemsScanned = bestGem ? 1 : 0;
 
-        for (const auto* invItem : soulGems) {
-            if (!invItem) continue;
-
-            ItemCandidate candidate = ItemCandidate::FromInventoryItem(*invItem);
+        if (bestGem && bestGem->count > 0) {
+            ItemCandidate candidate = ItemCandidate::FromInventoryItem(*bestGem);
             candidate.sourceType = SourceType::SoulGem;
-
-            // Set relevance tags (used by filters)
             candidate.relevanceTags = contextTags;
-            // Stage 1g: baseRelevance removed - now computed by ContextRuleEngine
-
             out.push_back(std::move(candidate));
         }
     }
