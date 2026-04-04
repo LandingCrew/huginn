@@ -189,11 +189,16 @@ namespace Huginn::Candidate
         return !m_cooldownMgr.IsOnCooldown(base.formID, base.sourceType);
     }
 
+    // NOTE: These standalone shims delegate to the consolidated RunVisitorFilters,
+    // which returns the *first* failing filter (early-exit). If a candidate fails an
+    // earlier filter (e.g. Equipped), the specific check here is never reached and the
+    // shim returns true. This is acceptable: such candidates would be removed by the
+    // earlier filter anyway in the main ApplyAllFilters pipeline.
     bool CandidateFilters::PassesActiveBuffFilter(
         const CandidateVariant& candidate, const State::PlayerActorState& player) const
     {
         if (!m_config.filterActiveBuffs && !m_config.filterRedundantResists) return true;
-        auto result = RunVisitorFilters(candidate, player, 999999.0f); // high magicka to skip affordability
+        auto result = RunVisitorFilters(candidate, player, 999999.0f);
         return result != FilterResult::ActiveBuff;
     }
 
