@@ -18,7 +18,7 @@ namespace Huginn::Candidate
         m_durations[static_cast<size_t>(SourceType::Ammo)]    = defaults.ammoCooldown;
         m_durations[static_cast<size_t>(SourceType::SoulGem)] = defaults.soulGemCooldown;
         m_durations[static_cast<size_t>(SourceType::Food)]    = defaults.foodCooldown;
-        m_durations[static_cast<size_t>(SourceType::Staff)]   = defaults.spellCooldown;
+        m_durations[static_cast<size_t>(SourceType::Staff)]   = defaults.spellCooldown;  // Intentional: staves share spell cooldown
 
         // Reserve space for typical usage
         m_cooldowns.reserve(32);
