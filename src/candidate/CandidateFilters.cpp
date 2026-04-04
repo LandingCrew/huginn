@@ -354,12 +354,11 @@ namespace Huginn::Candidate
         static size_t lastWpnBefore = 0, lastWpnAfter = 0;
         if (weaponsBefore != lastWpnBefore || weaponsPassed != lastWpnAfter) {
             logger::info("[CandidateFilters] Weapons: {} in -> {} out "
-                "(afford={}, equip={}, cool={}, vital={}, buff={}, rel={}, dedup={})",
+                "(afford={}, equip={}, cool={}, vital={}, buff={}, dedup={})",
                 weaponsBefore, weaponsPassed,
                 weaponsFilteredByAffordability, weaponsFilteredByEquipped,
                 weaponsFilteredByCooldown, weaponsFilteredByFullVitals,
-                weaponsFilteredByActiveBuff, weaponsFilteredByRelevance,
-                weaponsDeduplicated);
+                weaponsFilteredByActiveBuff, weaponsDeduplicated);
             lastWpnBefore = weaponsBefore;
             lastWpnAfter = weaponsPassed;
         }
