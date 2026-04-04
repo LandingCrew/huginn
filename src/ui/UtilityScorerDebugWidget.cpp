@@ -303,7 +303,6 @@ namespace Huginn::UI
         // Candidate name (truncated if too long)
         const auto name = candidate.GetName();
         if (name.length() > 20) {
-            logger::warn("[ScorerWidget] Name truncated in display: {}", name);
             ImGui::Text("%.*s...", 17, name.data());
         } else {
             ImGui::Text("%.*s", static_cast<int>(name.length()), name.data());
