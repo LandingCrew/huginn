@@ -251,7 +251,6 @@ namespace Huginn::Candidate
         size_t weaponsFilteredByCooldown = 0;
         size_t weaponsFilteredByFullVitals = 0;
         size_t weaponsFilteredByActiveBuff = 0;
-        size_t weaponsFilteredByRelevance = 0;
         size_t weaponsDeduplicated = 0;
         size_t weaponsPassed = 0;
 
