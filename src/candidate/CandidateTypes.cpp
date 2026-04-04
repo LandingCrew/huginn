@@ -5,6 +5,8 @@ namespace Huginn::Candidate
     // =============================================================================
     // SPELL CANDIDATE FACTORY
     // =============================================================================
+    // NOTE: candidate.name borrows from registry data (string_view into persistent std::string).
+    // Safe because registries outlive candidates (candidates are recreated each pipeline tick).
     SpellCandidate SpellCandidate::FromSpellData(const Spell::SpellData& data)
     {
         SpellCandidate candidate;

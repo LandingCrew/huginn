@@ -147,7 +147,7 @@ namespace Huginn::Override
             }
 
             // Get name before any moves for safe logging
-            const std::string candidateName = Candidate::GetName(override.candidate.value());
+            const std::string candidateName{Candidate::GetName(override.candidate.value())};
 
             // Create scored candidate with massive utility boost
             Scoring::ScoredCandidate scored;

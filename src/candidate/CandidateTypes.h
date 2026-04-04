@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <string_view>
 #include <variant>
 #include <RE/Skyrim.h>
 
@@ -135,7 +136,7 @@ namespace Huginn::Candidate
         RE::FormID formID = 0;
         uint16_t uniqueID = 0;       // ExtraUniqueID for Wheeler (weapons/armor only)
         SourceType sourceType = SourceType::Spell;
-        std::string name;
+        std::string_view name;
 
         // Pre-computed filter results (set by filters before scoring)
         bool canAfford = true;           // Has enough magicka (spells) or count > 0 (consumables)
@@ -315,7 +316,7 @@ namespace Huginn::Candidate
     }
 
     // Helper: Get name from variant
-    [[nodiscard]] inline const std::string& GetName(const CandidateVariant& v) noexcept {
+    [[nodiscard]] inline std::string_view GetName(const CandidateVariant& v) noexcept {
         return GetBase(v).name;
     }
 
@@ -370,9 +371,8 @@ namespace Huginn::Candidate
     // STATIC ASSERTIONS - Compile-time verification
     // =============================================================================
     static_assert(SOURCE_TYPE_COUNT == 8, "SOURCE_TYPE_COUNT must match number of SourceType values");
-    // Note: CandidateBase contains std::string which heap-allocates, so this is a size check
-    // rather than a true cache-friendliness guarantee. Consider string_view for hot paths.
-    static_assert(sizeof(CandidateBase) <= 72, "CandidateBase struct size check");
+    // CandidateBase::name is a string_view borrowing from persistent registry data.
+    static_assert(sizeof(CandidateBase) <= 56, "CandidateBase struct size check");
     static_assert((RelevanceTag::LowHealth | RelevanceTag::CriticalHealth) != RelevanceTag::None,
                   "Bitwise OR should work correctly");
     static_assert(HasTag(RelevanceTag::LowHealth | RelevanceTag::InCombat, RelevanceTag::LowHealth),

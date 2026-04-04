@@ -113,7 +113,7 @@ namespace Huginn::Slot
                 classification,
                 sc,
                 sc.GetFormID(),
-                sc.GetName(),
+                std::string(sc.GetName()),
                 sc.utility
             };
         }
