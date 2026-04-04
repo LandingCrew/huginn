@@ -170,7 +170,7 @@ void OnUpdate(float deltaSeconds)
   // so we must run the pipeline to update IntuitionMenu with the new page's slots.
   auto& stateManager = State::StateManager::GetSingleton();
   bool stateChanged = stateManager.DidLastUpdateChangeState();
-  bool pageChanged = Slot::SlotAllocator::GetSingleton().ConsumePageChanged();
+  bool pageChanged = Slot::SlotAllocator::GetSingleton().PeekPageChanged();
 
   if (!stateChanged && !pageChanged) {
     Learning::PipelineStateCache::GetSingleton().RefreshTimestamp();
@@ -179,6 +179,12 @@ void OnUpdate(float deltaSeconds)
 
   // Recommendation pipeline: state → candidates → scoring → slot allocation → display
   if (g_utilityScorer && g_stateEvaluator && g_spellRegistry && !g_spellRegistry->IsLoading()) {
+      // Consume the page-changed flag only when we're actually going to run the pipeline.
+      // Previously, ConsumePageChanged() ran before this guard — if the guard failed
+      // (e.g., registry loading), the flag was lost and the display never updated.
+      if (pageChanged) {
+          Slot::SlotAllocator::GetSingleton().ConsumePageChanged();
+      }
       Pipeline::PipelineCoordinator::GetSingleton().RunPipeline(
           deltaMs, player, now, pageChanged);
   }

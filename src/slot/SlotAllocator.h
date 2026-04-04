@@ -137,6 +137,11 @@ namespace Huginn::Slot
         /// Check and consume page-changed flag (for update loop to detect page cycling)
         [[nodiscard]] bool ConsumePageChanged() noexcept { return m_pageChanged.exchange(false); }
 
+        /// Non-destructive peek at the page-changed flag.
+        /// Used by the update loop to check before the pipeline guard, so the
+        /// flag isn't lost if the guard fails (e.g., registry still loading).
+        [[nodiscard]] bool PeekPageChanged() const noexcept { return m_pageChanged.load(); }
+
         /// Force the page-changed flag without changing the page.
         /// Used when a consumer (e.g., IntuitionMenu) missed a page change
         /// because it was disabled when the flag was consumed.
