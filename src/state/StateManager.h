@@ -85,6 +85,28 @@ namespace Huginn::State
       [[nodiscard]] bool DidLastUpdateChangeState() const noexcept { return m_lastUpdateChanged; }
 
       // =============================================================================
+      // COMBAT TRANSITION TRACKING
+      // =============================================================================
+      // Detected inside PollPlayerPosition (which already holds the lock and
+      // knows exactly when isInCombat flips). Avoids the full PlayerActorState
+      // copy that the old UpdateLoop combat tracking required.
+
+      enum class CombatTransition : uint8_t { None, Entered, Exited };
+
+      /// Consume and reset the combat transition flag (destructive read).
+      /// Returns the transition that occurred since the last call.
+      [[nodiscard]] CombatTransition ConsumeCombatTransition() noexcept
+      {
+         return m_combatTransition.exchange(CombatTransition::None, std::memory_order_acq_rel);
+      }
+
+      /// Lightweight combat state check (no full PlayerActorState copy).
+      [[nodiscard]] bool IsInCombat() const noexcept
+      {
+         return m_isInCombat.load(std::memory_order_acquire);
+      }
+
+      // =============================================================================
       // STATE ACCESSORS (Thread-safe via copy-out pattern)
       // =============================================================================
 
@@ -330,6 +352,11 @@ namespace Huginn::State
       // Tracks whether last Update() detected any state changes
       // Used by UpdateLoop to skip expensive pipeline when state is stable
       std::atomic<bool> m_lastUpdateChanged{true};  // Default true to run pipeline on first update
+
+      // Combat transition tracking (set in PollPlayerPosition, consumed by UpdateLoop)
+      std::atomic<CombatTransition> m_combatTransition{CombatTransition::None};
+      std::atomic<bool> m_isInCombat{false};
+      bool m_wasInCombat = false;  // Previous tick's combat state (single-writer in PollPlayerPosition)
 
       // =============================================================================
       // TARGET TRACKING STATE (Persistent across polls)

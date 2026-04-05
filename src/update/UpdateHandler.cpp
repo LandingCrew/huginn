@@ -114,8 +114,9 @@ namespace Huginn::Update
       }
    }
 
-   float UpdateHandler::GetTimeSinceLastUpdate() const noexcept
+   float UpdateHandler::GetTimeSinceLastUpdate() const
    {
+      std::lock_guard<std::mutex> lock(m_mutex);
       auto now = std::chrono::steady_clock::now();
       auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - m_lastUpdate);
       return static_cast<float>(elapsed.count());
@@ -129,15 +130,24 @@ namespace Huginn::Update
       auto delta = now - m_lastUpdate;
       float deltaSeconds = std::chrono::duration<float>(delta).count();
 
-      // Lock for callback invocation (thread safety)
+      // Clamp after alt-tab or long pauses. Normal interval is ~0.1s;
+      // anything over 1s means the game was suspended. Large deltas would
+      // cause timer expiry bursts and could confuse integration-based logic.
+      static constexpr float MAX_DELTA_SECONDS = 1.0f;
+      if (deltaSeconds > MAX_DELTA_SECONDS) {
+         logger::warn("[UpdateHandler] Clamped deltaSeconds {:.1f}s → {:.1f}s (alt-tab or pause)"sv,
+            deltaSeconds, MAX_DELTA_SECONDS);
+         deltaSeconds = MAX_DELTA_SECONDS;
+      }
+
+      // Lock for callback invocation and m_lastUpdate write (thread safety).
+      // GetTimeSinceLastUpdate() also acquires this mutex to read m_lastUpdate.
       {
       std::lock_guard<std::mutex> lock(m_mutex);
       if (m_updateCallback) {
         m_updateCallback(deltaSeconds);
       }
-      }
-
-      // Update last update time
       m_lastUpdate = now;
+      }
    }
 }
