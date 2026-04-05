@@ -2,6 +2,7 @@
 
 #include "../Config.h"
 // Note: std headers (functional, array, chrono) come from PCH via RE/Skyrim.h
+#include <shared_mutex>
 
 namespace Huginn::Input
 {
@@ -130,6 +131,9 @@ namespace Huginn::Input
       /// Key codes for each action
       /// Default: 1-0 = slots (2-11), - = prev (12), = = next (13)
       std::array<uint32_t, 12> m_keyCodes;
+
+      /// Protects m_keyCodes: shared_lock for reads, unique_lock for writes
+      mutable std::shared_mutex m_keyCodeMutex;
 
       /// Timing thresholds
       float m_holdThreshold = 0.4f;      // Seconds to trigger hold

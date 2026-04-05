@@ -24,6 +24,7 @@ namespace Huginn::Input
                    uint32_t slot5, uint32_t slot6, uint32_t slot7, uint32_t slot8,
                    uint32_t slot9, uint32_t slot10, uint32_t cyclePrev, uint32_t cycleNext)
    {
+      std::unique_lock lock(m_keyCodeMutex);
       m_keyCodes[0] = slot1;
       m_keyCodes[1] = slot2;
       m_keyCodes[2] = slot3;
@@ -55,6 +56,7 @@ namespace Huginn::Input
       // Log config once on first call
       static bool loggedConfig = false;
       if (!loggedConfig) {
+      std::shared_lock lock(m_keyCodeMutex);
       logger::info("[InputHandler] Key codes: [1-10]={},{},{},{},{},{},{},{},{},{} [-=]={},{}"sv,
         m_keyCodes[0], m_keyCodes[1], m_keyCodes[2], m_keyCodes[3], m_keyCodes[4],
         m_keyCodes[5], m_keyCodes[6], m_keyCodes[7], m_keyCodes[8], m_keyCodes[9],
@@ -70,26 +72,32 @@ namespace Huginn::Input
       uint32_t keyCode = button->GetIDCode();
       uint32_t device = static_cast<uint32_t>(button->GetDevice());
 
-      // Check if it's one of our keys
-      // Layout: [slot1-10, cyclePrev, cycleNext]
+      // Snapshot key codes under shared lock, then match outside the lock
+      int matchedIndex = -1;
+      {
+      std::shared_lock lock(m_keyCodeMutex);
       for (size_t i = 0; i < m_keyCodes.size(); ++i) {
-      if (keyCode == m_keyCodes[i]) {
-        if (button->IsDown()) {
-           logger::debug("[InputHandler] KEY PRESS: code={} (0x{:02X}) action={}"sv,
-            keyCode, keyCode, i);
+        if (keyCode == m_keyCodes[i]) {
+           matchedIndex = static_cast<int>(i);
+           break;
         }
-        if (i < 10) {
-           // Equip keys (index 0-9 -> slot 0-9)
-           HandleEquipKey(static_cast<int>(i), button);
-        } else {
-           // Cycle keys (index 10-11 -> 0=prev, 1=next)
-           HandleCycleKey(static_cast<int>(i - 10), button);
-        }
-        return true;  // Event consumed
       }
       }
 
+      if (matchedIndex < 0) {
       return false;  // Not our key
+      }
+
+      if (button->IsDown()) {
+      logger::debug("[InputHandler] KEY PRESS: code={} (0x{:02X}) action={}"sv,
+        keyCode, keyCode, matchedIndex);
+      }
+      if (matchedIndex < 10) {
+      HandleEquipKey(matchedIndex, button);
+      } else {
+      HandleCycleKey(matchedIndex - 10, button);
+      }
+      return true;  // Event consumed
    }
 
    void InputHandler::HandleCycleKey(int index, RE::ButtonEvent* button)

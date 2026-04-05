@@ -395,8 +395,17 @@ namespace Huginn::Input
       case UI::SlotContentType::RangedWeapon:
       {
         Learning::EquipSourceTracker::GetSingleton().MarkHuginnEquip();
-        bool leftHand = (hand == EquipHand::Left);
-        success = EquipWeapon(content.formID, leftHand);
+        switch (hand) {
+        case EquipHand::Right:
+           success = EquipWeapon(content.formID, false);
+           break;
+        case EquipHand::Left:
+           success = EquipWeapon(content.formID, true);
+           break;
+        case EquipHand::Both:
+           success = EquipWeapon(content.formID, false) && EquipWeapon(content.formID, true);
+           break;
+        }
         if (success && m_equipCallback) {
            m_equipCallback(content.formID, true);
         }
