@@ -12,18 +12,18 @@ namespace Huginn::Config
    // Spell Registry Configuration
    // -----------------------------------------------------------------------------
 
-   // How often to check for newly learned spells (in seconds)
+   // How often to check for newly learned spells (in milliseconds)
    // Lower = more responsive, Higher = better performance
-   // Recommended: 3-10 seconds
-   inline constexpr float SPELL_RECONCILE_INTERVAL_SECONDS = 5.0f;
+   // Recommended: 3000-10000ms (3-10 seconds)
+   inline constexpr float SPELL_RECONCILE_INTERVAL_MS = 5000.0f;
 
    // -----------------------------------------------------------------------------
    // State Evaluation Configuration
    // -----------------------------------------------------------------------------
 
-   // How often to log game state in debug mode (in seconds)
+   // How often to log game state in debug mode (in milliseconds)
    // Only affects debug builds
-   inline constexpr float STATE_LOG_INTERVAL_SECONDS = 1.0f;
+   inline constexpr float STATE_LOG_INTERVAL_MS = 1000.0f;
 
    // -----------------------------------------------------------------------------
    // Reward Shaping Configuration (v0.3.0+)

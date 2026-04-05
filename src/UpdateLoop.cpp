@@ -95,7 +95,7 @@ void OnUpdate(float deltaSeconds)
 
   // Reconcile spell registry periodically
   if (g_spellRegistry) {
-    if (g_registryTimers.spellReconcile.CheckAndReset(now, Config::SPELL_RECONCILE_INTERVAL_SECONDS * 1000.0f)) {
+    if (g_registryTimers.spellReconcile.CheckAndReset(now, Config::SPELL_RECONCILE_INTERVAL_MS)) {
       g_spellRegistry->ReconcileSpells(player);
     }
     if (!g_spellRegistry->IsLoading() &&

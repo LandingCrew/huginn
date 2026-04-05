@@ -107,7 +107,7 @@ namespace Huginn::UI
       // Spell Registry Section
       static const std::string spellHeader = std::format("Spell Registry | Refresh: {:.0f}ms | Reconcile: {:.0f}s",
         Config::SPELL_FAVORITES_REFRESH_INTERVAL_MS,
-        Config::SPELL_RECONCILE_INTERVAL_SECONDS);
+        Config::SPELL_RECONCILE_INTERVAL_MS / 1000.0f);
       if (ImGui::CollapsingHeader(spellHeader.c_str(), ImGuiTreeNodeFlags_DefaultOpen)) {
         DrawSpellRegistrySection(g_spellRegistry.get());
       }
