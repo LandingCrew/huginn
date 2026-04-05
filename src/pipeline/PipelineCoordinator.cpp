@@ -353,9 +353,28 @@ void PipelineCoordinator::PushDisplay(PipelineContext& ctx)
         wheelerClient.TryUrgentAutoFocus(topOverride->priority);
     }
 
+    // Sync display page with Wheeler's active managed page.
+    // If Wheeler is viewing a different page than the allocator, re-sync and
+    // re-allocate so all backends see consistent assignments.
+    Slot::SlotAssignments displayAssignments;
+    const Slot::SlotAssignments* assignmentsPtr = &ctx.assignments;
+
+    auto& slotAllocator = Slot::SlotAllocator::GetSingleton();
+    if (wheelerClient.IsConnected()) {
+        int wheelerPage = wheelerClient.GetActiveManagedPage();
+        int currentPage = static_cast<int>(slotAllocator.GetCurrentPage());
+        if (wheelerPage >= 0 && wheelerPage != currentPage) {
+            slotAllocator.SetCurrentPage(static_cast<size_t>(wheelerPage));
+            displayAssignments = slotAllocator.AllocateSlotsForPage(
+                static_cast<size_t>(wheelerPage), ctx.scoredCandidates,
+                ctx.overrides, ctx.playerState, ctx.worldState);
+            assignmentsPtr = &displayAssignments;
+        }
+    }
+
     // Push to display backends
     Display::DisplayContext displayCtx{
-        ctx.assignments, ctx.scoredCandidates, ctx.overrides,
+        *assignmentsPtr, ctx.scoredCandidates, ctx.overrides,
         ctx.playerState, ctx.worldState, ctx.hasUrgentOverride, ctx.now
     };
     for (auto* backend : s_displayBackends) {
