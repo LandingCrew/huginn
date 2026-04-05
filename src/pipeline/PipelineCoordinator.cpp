@@ -191,14 +191,20 @@ bool PipelineCoordinator::RunPipeline(
 void PipelineCoordinator::GatherState(PipelineContext& ctx)
 {
     Huginn_ZONE_NAMED("Pipeline::GatherState");
-    auto [currentState, playerState] = EvaluateCurrentGameState();
-    ctx.currentState = currentState;
-    ctx.playerState = playerState;
-
     auto& stateManager = State::StateManager::GetSingleton();
 
+    // Fetch each state snapshot once (single lock acquisition each)
+    ctx.worldState = stateManager.GetWorldState();
+    ctx.playerState = stateManager.GetPlayerState();
+    ctx.targets = stateManager.GetTargets();
     ctx.healthTracking = stateManager.GetHealthTracking();
-    ctx.stateHash = currentState.GetHash();
+    ctx.magickaTracking = stateManager.GetMagickaTracking();
+    ctx.staminaTracking = stateManager.GetStaminaTracking();
+
+    // Evaluate GameState from the already-fetched snapshots (no extra copies)
+    ctx.currentState = g_stateEvaluator->EvaluateCurrentState(
+        ctx.worldState, ctx.playerState, ctx.targets);
+    ctx.stateHash = ctx.currentState.GetHash();
 
     // Check if elemental damage requires pipeline run despite unchanged hash
     constexpr float kElementalWindow = State::VitalTracking::ELEMENTAL_DAMAGE_ENRICHMENT_WINDOW;
@@ -208,10 +214,6 @@ void PipelineCoordinator::GatherState(PipelineContext& ctx)
         ctx.healthTracking.timeSinceLastShock < kElementalWindow;
 
     ctx.currentMagicka = ctx.actorValue->GetActorValue(RE::ActorValue::kMagicka);
-    ctx.targets = stateManager.GetTargets();
-    ctx.worldState = stateManager.GetWorldState();
-    ctx.magickaTracking = stateManager.GetMagickaTracking();
-    ctx.staminaTracking = stateManager.GetStaminaTracking();
 }
 
 // -----------------------------------------------------------------------------
