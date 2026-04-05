@@ -56,7 +56,7 @@ namespace Huginn::Slot
 
         // Handle by assignment type first
         if (assignment.IsOverride()) {
-            // Check if this is a health or magicka potion override
+            // Override potions get specific styling for health/magicka/stamina
             if (candidate.Is<Candidate::ItemCandidate>()) {
                 const auto& item = candidate.As<Candidate::ItemCandidate>();
                 if (item.type == Item::ItemType::HealthPotion ||
@@ -67,13 +67,24 @@ namespace Huginn::Slot
                     Item::HasTag(item.tags, Item::ItemTag::RestoreMagicka)) {
                     return UI::SlotContent::MagickaPotion(name, formID);
                 }
+                if (item.type == Item::ItemType::StaminaPotion ||
+                    Item::HasTag(item.tags, Item::ItemTag::RestoreStamina)) {
+                    return UI::SlotContent::StaminaPotion(name, formID);
+                }
             }
-            // For other overrides, show as regular spell/item with high confidence
-            return UI::SlotContent::Spell(name, 1.0f, formID);
+            // For non-potion overrides, fall through to normal source-type logic
+            // (don't default to Spell — weapons, soul gems, etc. need correct types)
         }
 
         if (assignment.IsWildcard()) {
-            return UI::SlotContent::Wildcard(name, confidence, formID);
+            // Only use Wildcard type for spells/scrolls (UI styling + equippable via spell path).
+            // Non-spell wildcards (weapons, potions, etc.) need their real SlotContentType
+            // so EquipSlot routes them correctly.
+            auto src = candidate.GetSourceType();
+            if (src == Candidate::SourceType::Spell || src == Candidate::SourceType::Scroll) {
+                return UI::SlotContent::Wildcard(name, confidence, formID);
+            }
+            // Fall through to normal source-type logic for non-spell wildcards
         }
 
         // Normal assignment - determine type based on candidate
