@@ -23,6 +23,7 @@ namespace Huginn::Input
    void InputHandler::SetKeyCodes(const KeybindingSettings& settings)
    {
       std::unique_lock lock(m_keyCodeMutex);
+      m_keybindings = settings;
       m_keyCodes[0] = settings.slot1Key;
       m_keyCodes[1] = settings.slot2Key;
       m_keyCodes[2] = settings.slot3Key;
@@ -40,6 +41,12 @@ namespace Huginn::Input
       settings.slot1Key, settings.slot2Key, settings.slot3Key, settings.slot4Key,
       settings.slot5Key, settings.slot6Key, settings.slot7Key, settings.slot8Key,
       settings.slot9Key, settings.slot10Key, settings.prevPageKey, settings.nextPageKey);
+   }
+
+   KeybindingSettings InputHandler::GetKeybindings() const
+   {
+      std::shared_lock lock(m_keyCodeMutex);
+      return m_keybindings;
    }
 
    bool InputHandler::ProcessButton(RE::ButtonEvent* button)

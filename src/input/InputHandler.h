@@ -93,6 +93,11 @@ namespace Huginn::Input
       void SetKeyCodes(const KeybindingSettings& settings);
 
       /**
+       * @brief Get the current keybinding settings (copy-out for thread safety)
+       */
+      [[nodiscard]] KeybindingSettings GetKeybindings() const;
+
+      /**
        * @brief Called each frame to handle deferred double-tap detection
        * Must be called from the update loop
        */
@@ -117,11 +122,13 @@ namespace Huginn::Input
       /// Enabled state
       bool m_enabled = true;
 
-      /// Key codes for each action
-      /// Default: 1-0 = slots (2-11), - = prev (12), = = next (13)
+      /// Key codes for each action (derived from m_keybindings for fast scan)
       std::array<uint32_t, 12> m_keyCodes;
 
-      /// Protects m_keyCodes: shared_lock for reads, unique_lock for writes
+      /// Authoritative keybinding settings
+      KeybindingSettings m_keybindings;
+
+      /// Protects m_keyCodes and m_keybindings
       mutable std::shared_mutex m_keyCodeMutex;
 
       /// Timing thresholds
