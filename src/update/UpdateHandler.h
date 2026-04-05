@@ -69,6 +69,18 @@ namespace Huginn::Update
       void ForceUpdate();
 
       /**
+       * @brief Execute a callable while holding the update mutex.
+       * Use this to safely mutate state that the update loop reads (e.g.,
+       * registry rebuilds, pipeline resets) from another thread (console).
+       */
+      template <typename Fn>
+      void RunExclusive(Fn&& fn)
+      {
+         std::lock_guard<std::mutex> lock(m_mutex);
+         std::forward<Fn>(fn)();
+      }
+
+      /**
        * @brief Enable or disable updates
        * @param enabled true to enable updates, false to disable
        */

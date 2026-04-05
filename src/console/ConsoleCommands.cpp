@@ -78,39 +78,46 @@ namespace Huginn::Console
       return;
       }
 
-      size_t fqlItems = g_featureQLearner->GetItemCount();
-      g_featureQLearner->Clear();
+      // Run under the update mutex to prevent data races with the update loop.
+      Huginn::Update::UpdateHandler::GetSingleton()->RunExclusive([&] {
+         size_t fqlItems = g_featureQLearner->GetItemCount();
+         g_featureQLearner->Clear();
 
-      // Unlock all slots so the next scoring cycle can reassign immediately
-      Slot::SlotLocker::GetSingleton().Reset();
+         // Unlock all slots so the next scoring cycle can reassign immediately
+         Slot::SlotLocker::GetSingleton().Reset();
 
-      auto msg = std::format("Learning data cleared ({} FQL items)", fqlItems);
-      Print(msg.c_str());
-      logger::info("[Console] {}"sv, msg);
+         auto msg = std::format("Learning data cleared ({} FQL items)", fqlItems);
+         Print(msg.c_str());
+         logger::info("[Console] {}"sv, msg);
+      });
    }
 
    static void Cmd_ResetAll(std::string_view /*arg*/)
    {
-      // 1. Clear learning data (console-specific — init path restores from cosave)
-      size_t fqlItems = 0;
-      if (g_featureQLearner) {
-      fqlItems = g_featureQLearner->GetItemCount();
-      g_featureQLearner->Clear();
-      }
+      // Run under the update mutex to prevent data races with the update loop.
+      // Without this, the console thread could reset subsystems mid-update.
+      Huginn::Update::UpdateHandler::GetSingleton()->RunExclusive([&] {
+         // 1. Clear learning data (console-specific — init path restores from cosave)
+         size_t fqlItems = 0;
+         if (g_featureQLearner) {
+            fqlItems = g_featureQLearner->GetItemCount();
+            g_featureQLearner->Clear();
+         }
 
-      // 2. Rebuild all registries (console does full rebuild; init path reconciles)
-      if (g_spellRegistry) g_spellRegistry->RebuildRegistry();
-      if (g_itemRegistry) g_itemRegistry->RebuildRegistry();
-      if (g_weaponRegistry) g_weaponRegistry->RebuildRegistry();
-      if (g_scrollRegistry) g_scrollRegistry->RebuildRegistry();
+         // 2. Rebuild all registries (console does full rebuild; init path reconciles)
+         if (g_spellRegistry) g_spellRegistry->RebuildRegistry();
+         if (g_itemRegistry) g_itemRegistry->RebuildRegistry();
+         if (g_weaponRegistry) g_weaponRegistry->RebuildRegistry();
+         if (g_scrollRegistry) g_scrollRegistry->RebuildRegistry();
 
-      // 3. Reset all stateful pipeline subsystems (shared with InitializeGameSystems)
-      ResetPipelineSubsystems();
+         // 3. Reset all stateful pipeline subsystems (shared with InitializeGameSystems)
+         ResetPipelineSubsystems();
 
-      auto msg = std::format("Full reset complete (FQL: {} items, all subsystems reset)",
-      fqlItems);
-      Print(msg.c_str());
-      logger::info("[Console] {}"sv, msg);
+         auto msg = std::format("Full reset complete (FQL: {} items, all subsystems reset)",
+            fqlItems);
+         Print(msg.c_str());
+         logger::info("[Console] {}"sv, msg);
+      });
    }
 
    static void Cmd_Refresh(std::string_view /*arg*/)
@@ -246,29 +253,32 @@ namespace Huginn::Console
 
    static void Cmd_Rebuild(std::string_view /*arg*/)
    {
-      size_t spells = 0, items = 0, weapons = 0, scrolls = 0;
+      // Run under the update mutex to prevent data races with the update loop.
+      Huginn::Update::UpdateHandler::GetSingleton()->RunExclusive([&] {
+         size_t spells = 0, items = 0, weapons = 0, scrolls = 0;
 
-      if (g_spellRegistry) {
-      g_spellRegistry->RebuildRegistry();
-      spells = g_spellRegistry->GetSpellCount();
-      }
-      if (g_itemRegistry) {
-      g_itemRegistry->RebuildRegistry();
-      items = g_itemRegistry->GetItemCount();
-      }
-      if (g_weaponRegistry) {
-      g_weaponRegistry->RebuildRegistry();
-      weapons = g_weaponRegistry->GetWeaponCount();
-      }
-      if (g_scrollRegistry) {
-      g_scrollRegistry->RebuildRegistry();
-      scrolls = g_scrollRegistry->GetScrollCount();
-      }
+         if (g_spellRegistry) {
+            g_spellRegistry->RebuildRegistry();
+            spells = g_spellRegistry->GetSpellCount();
+         }
+         if (g_itemRegistry) {
+            g_itemRegistry->RebuildRegistry();
+            items = g_itemRegistry->GetItemCount();
+         }
+         if (g_weaponRegistry) {
+            g_weaponRegistry->RebuildRegistry();
+            weapons = g_weaponRegistry->GetWeaponCount();
+         }
+         if (g_scrollRegistry) {
+            g_scrollRegistry->RebuildRegistry();
+            scrolls = g_scrollRegistry->GetScrollCount();
+         }
 
-      auto msg = std::format("Registries rebuilt ({} spells, {} items, {} weapons, {} scrolls)",
-      spells, items, weapons, scrolls);
-      Print(msg.c_str());
-      logger::info("[Console] {}"sv, msg);
+         auto msg = std::format("Registries rebuilt ({} spells, {} items, {} weapons, {} scrolls)",
+            spells, items, weapons, scrolls);
+         Print(msg.c_str());
+         logger::info("[Console] {}"sv, msg);
+      });
    }
 
    static void Cmd_Reload(std::string_view /*arg*/)
@@ -309,40 +319,39 @@ namespace Huginn::Console
       Print("  [Candidates] reloaded");
 
       // =====================================================================
-      // Phase 2: Apply side effects
+      // Phase 2: Apply side effects (under update mutex)
       // =====================================================================
-      // NOTE: Phase 1 settings (ScorerSettings, ContextWeightSettings, etc.)
-      // are POD float/bool singletons. The update thread reads them without
-      // locks — worst case is one frame with mixed old/new values, acceptable
-      // for tuning. SlotSettings has its own shared_mutex (safe). The
-      // remaining side effects below are ordered to avoid inconsistency.
+      // Phase 1 settings are POD singletons — one frame of mixed old/new is
+      // acceptable. Phase 2 mutates objects the update loop reads (scorer,
+      // allocator, locker, wheeler), so we serialize against the update loop.
+      Huginn::Update::UpdateHandler::GetSingleton()->RunExclusive([&] {
+         // 1. Apply scorer config + context weight config + wildcard config
+         if (g_utilityScorer) {
+            g_utilityScorer->SetConfig(scorerSettings.BuildConfig());
+            g_utilityScorer->SetContextWeightConfig(State::ContextWeightSettings::GetSingleton().BuildConfig());
+            LoadWildcardConfigFromINI(g_utilityScorer->GetWildcardManager());
+         }
 
-      // 1. Apply scorer config + context weight config + wildcard config
-      if (g_utilityScorer) {
-      g_utilityScorer->SetConfig(scorerSettings.BuildConfig());
-      g_utilityScorer->SetContextWeightConfig(State::ContextWeightSettings::GetSingleton().BuildConfig());
-      LoadWildcardConfigFromINI(g_utilityScorer->GetWildcardManager());
-      }
+         // 1b. Apply learning config to ExternalEquipLearner
+         Learning::ExternalEquipLearner::GetSingleton().SetConfig(
+            Learning::LearningSettings::GetSingleton().BuildConfig());
 
-      // 1b. Apply learning config to ExternalEquipLearner
-      Learning::ExternalEquipLearner::GetSingleton().SetConfig(
-      Learning::LearningSettings::GetSingleton().BuildConfig());
+         // 2. Re-initialize slot allocator FIRST (re-reads SlotSettings for new page count)
+         Slot::SlotAllocator::GetSingleton().Initialize();
 
-      // 2. Re-initialize slot allocator FIRST (re-reads SlotSettings for new page count)
-      Slot::SlotAllocator::GetSingleton().Initialize();
+         // 3. Reset slot locker AFTER allocator (so it operates on correct slot count)
+         auto& slotLocker = Slot::SlotLocker::GetSingleton();
+         slotLocker.Reset();
+         slotLocker.SetConfig(LoadSlotLockerConfigFromINI());
 
-      // 3. Reset slot locker AFTER allocator (so it operates on correct slot count)
-      auto& slotLocker = Slot::SlotLocker::GetSingleton();
-      slotLocker.Reset();
-      slotLocker.SetConfig(LoadSlotLockerConfigFromINI());
-
-      // 4. Rebuild Wheeler wheels (if connected)
-      auto& wheelerClient = Wheeler::WheelerClient::GetSingleton();
-      if (wheelerClient.IsConnected()) {
-      wheelerClient.DestroyRecommendationWheels();
-      wheelerClient.CreateRecommendationWheels();
-      Print("  [Wheeler] wheels rebuilt");
-      }
+         // 4. Rebuild Wheeler wheels (if connected)
+         auto& wheelerClient = Wheeler::WheelerClient::GetSingleton();
+         if (wheelerClient.IsConnected()) {
+            wheelerClient.DestroyRecommendationWheels();
+            wheelerClient.CreateRecommendationWheels();
+            Print("  [Wheeler] wheels rebuilt");
+         }
+      });
 
       // 5. Reapply Intuition widget settings (position, alpha, scale)
       // IntuitionSettings loads from main INI (console reload doesn't have dMenu path)
