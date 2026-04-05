@@ -158,27 +158,27 @@ bool PipelineCoordinator::RunPipeline(
 
     Huginn_ZONE_NAMED("RunPipeline");
 
-    PipelineContext ctx;
-    ctx.deltaMs = deltaMs;
-    ctx.player = player;
-    ctx.actorValue = actorValue;
-    ctx.now = now;
+    m_ctx.Reset();
+    m_ctx.deltaMs = deltaMs;
+    m_ctx.player = player;
+    m_ctx.actorValue = actorValue;
+    m_ctx.now = now;
 
-    GatherState(ctx);
+    GatherState(m_ctx);
 
-    if (CheckHashSkip(ctx, pageChanged)) {
+    if (CheckHashSkip(m_ctx, pageChanged)) {
         return false;  // Hash unchanged, pipeline skipped
     }
 
-    LogStateTransition(ctx);
-    EnrichElementalDamage(ctx);
-    ScoreCandidates(ctx);
-    AllocateAndLock(ctx);
-    UpdateCaches(ctx);
-    PushDisplay(ctx);
+    LogStateTransition(m_ctx);
+    EnrichElementalDamage(m_ctx);
+    ScoreCandidates(m_ctx);
+    AllocateAndLock(m_ctx);
+    UpdateCaches(m_ctx);
+    PushDisplay(m_ctx);
 
 #ifndef NDEBUG
-    UpdateDebugWidgets(ctx);
+    UpdateDebugWidgets(m_ctx);
 #endif
 
     return true;
