@@ -411,7 +411,7 @@ namespace Huginn::Input
       }
 
       if (success && m_equipCallback) {
-      m_equipCallback(content.formID, true);
+         m_equipCallback(content.formID, true);
       }
 
       return success;

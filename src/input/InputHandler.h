@@ -4,6 +4,7 @@
 #include "EquipHand.h"
 #include "KeybindingSettings.h"
 // Note: std headers (functional, array, chrono) come from PCH via RE/Skyrim.h
+#include <atomic>
 #include <shared_mutex>
 
 namespace Huginn::Input
@@ -160,6 +161,6 @@ namespace Huginn::Input
       std::chrono::steady_clock::time_point m_frameTime;
 
       /// Whether config has been logged (reset on rebind so new keys are visible)
-      bool m_loggedConfig = false;
+      std::atomic<bool> m_loggedConfig = false;
    };
 }

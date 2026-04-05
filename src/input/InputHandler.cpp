@@ -93,7 +93,6 @@ namespace Huginn::Input
       }
 
       uint32_t keyCode = button->GetIDCode();
-      uint32_t device = static_cast<uint32_t>(button->GetDevice());
 
       // Snapshot key codes under shared lock, then match outside the lock
       int matchedIndex = -1;
