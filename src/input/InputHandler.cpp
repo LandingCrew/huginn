@@ -37,6 +37,15 @@ namespace Huginn::Input
       m_keyCodes[10] = settings.prevPageKey;
       m_keyCodes[11] = settings.nextPageKey;
 
+      // Reset all input state to prevent stale press/hold from misfiring
+      // after rebind (e.g. old key held → rebind → new key sees ghost state)
+      for (auto& s : m_equipState) {
+      s = {};
+      }
+      for (auto& s : m_cycleState) {
+      s = {};
+      }
+
       logger::debug("[InputHandler] Key codes set: slots={},{},{},{},{},{},{},{},{},{} cycle={},{}"sv,
       settings.slot1Key, settings.slot2Key, settings.slot3Key, settings.slot4Key,
       settings.slot5Key, settings.slot6Key, settings.slot7Key, settings.slot8Key,
