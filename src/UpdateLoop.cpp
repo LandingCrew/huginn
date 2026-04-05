@@ -77,16 +77,15 @@ void OnUpdate(float deltaSeconds)
   if (g_utilityScorer) {
     g_utilityScorer->Update(deltaSeconds);
 
-    // Track combat state transitions
-    auto& stateMgr = State::StateManager::GetSingleton();
-    auto playerState = stateMgr.GetPlayerState();
-    static bool wasInCombat = false;
-    if (playerState.isInCombat && !wasInCombat) {
+    // Combat transitions are now detected inside StateManager::PollPlayerPosition,
+    // avoiding the full PlayerActorState copy (~300 bytes + heap alloc) that the
+    // old approach required just to read a single bool.
+    auto transition = State::StateManager::GetSingleton().ConsumeCombatTransition();
+    if (transition == State::StateManager::CombatTransition::Entered) {
       g_utilityScorer->OnCombatStart();
-    } else if (!playerState.isInCombat && wasInCombat) {
+    } else if (transition == State::StateManager::CombatTransition::Exited) {
       g_utilityScorer->OnCombatEnd();
     }
-    wasInCombat = playerState.isInCombat;
   }
 
   // Update OverrideManager (hysteresis timers - v0.10.0)

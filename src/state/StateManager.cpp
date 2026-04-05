@@ -142,6 +142,11 @@ namespace Huginn::State
          *timer = 0.0f;
       }
 
+      // --- Combat transition tracking ---
+      m_combatTransition.store(CombatTransition::None, std::memory_order_relaxed);
+      m_isInCombat.store(false, std::memory_order_relaxed);
+      m_wasInCombat = false;
+
       m_lastUpdateChanged = true;  // Force pipeline to run on next update
    }
 

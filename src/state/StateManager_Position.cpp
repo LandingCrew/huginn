@@ -120,6 +120,16 @@ namespace Huginn::State
         logger::trace("[StateManager] PlayerPosition changed"sv);
 #endif
       }
+
+      // Combat transition tracking (single-writer, no lock needed for m_wasInCombat)
+      if (newIsInCombat != m_wasInCombat) {
+        m_combatTransition.store(
+            newIsInCombat ? CombatTransition::Entered : CombatTransition::Exited,
+            std::memory_order_release);
+        m_isInCombat.store(newIsInCombat, std::memory_order_release);
+        m_wasInCombat = newIsInCombat;
+      }
+
       return changed;
       }
    }
