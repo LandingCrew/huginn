@@ -216,6 +216,8 @@ namespace Huginn::Input
          return false;
       }
 
+      // LIMITATION: Vanilla engine constants — not exposed as GMSTs, so mods that
+      // alter soul gem charge/XP values via SKSE or script will diverge from these.
       float chargeValue = 0.0f;
       float expValue = 0.0f;
       switch (soulLevel) {
