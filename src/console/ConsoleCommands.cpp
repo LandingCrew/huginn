@@ -92,6 +92,45 @@ namespace Huginn::Console
       });
    }
 
+   struct RegistryCounts {
+      size_t spells = 0, items = 0, weapons = 0, scrolls = 0;
+   };
+
+   static RegistryCounts RebuildRegistries()
+   {
+      RegistryCounts c;
+      if (g_spellRegistry) {
+         g_spellRegistry->RebuildRegistry();
+         c.spells = g_spellRegistry->GetSpellCount();
+      }
+      if (g_itemRegistry) {
+         g_itemRegistry->RebuildRegistry();
+         c.items = g_itemRegistry->GetItemCount();
+      }
+      if (g_weaponRegistry) {
+         g_weaponRegistry->RebuildRegistry();
+         c.weapons = g_weaponRegistry->GetWeaponCount();
+      }
+      if (g_scrollRegistry) {
+         g_scrollRegistry->RebuildRegistry();
+         c.scrolls = g_scrollRegistry->GetScrollCount();
+      }
+      return c;
+   }
+
+   static size_t CountLockedSlots()
+   {
+      auto& slotLocker = Slot::SlotLocker::GetSingleton();
+      const size_t slotCount = Slot::SlotAllocator::GetSingleton().GetSlotCount();
+      size_t count = 0;
+      for (size_t i = 0; i < slotCount; ++i) {
+         if (slotLocker.IsSlotLocked(i)) {
+            ++count;
+         }
+      }
+      return count;
+   }
+
    static void Cmd_ResetAll(std::string_view /*arg*/)
    {
       // Run under the update mutex to prevent data races with the update loop.
@@ -105,10 +144,7 @@ namespace Huginn::Console
          }
 
          // 2. Rebuild all registries (console does full rebuild; init path reconciles)
-         if (g_spellRegistry) g_spellRegistry->RebuildRegistry();
-         if (g_itemRegistry) g_itemRegistry->RebuildRegistry();
-         if (g_weaponRegistry) g_weaponRegistry->RebuildRegistry();
-         if (g_scrollRegistry) g_scrollRegistry->RebuildRegistry();
+         RebuildRegistries();
 
          // 3. Reset all stateful pipeline subsystems (shared with InitializeGameSystems)
          ResetPipelineSubsystems();
@@ -134,16 +170,8 @@ namespace Huginn::Console
 
    static void Cmd_Unlock(std::string_view /*arg*/)
    {
-      auto& slotLocker = Slot::SlotLocker::GetSingleton();
-      auto& slotAllocator = Slot::SlotAllocator::GetSingleton();
-      const size_t slotCount = slotAllocator.GetSlotCount();
-      size_t lockedCount = 0;
-      for (size_t i = 0; i < slotCount; ++i) {
-      if (slotLocker.IsSlotLocked(i)) {
-        ++lockedCount;
-      }
-      }
-      slotLocker.Reset();
+      size_t lockedCount = CountLockedSlots();
+      Slot::SlotLocker::GetSingleton().Reset();
 
       auto msg = std::format("All slot locks cleared ({} were active)", lockedCount);
       Print(msg.c_str());
@@ -171,14 +199,7 @@ namespace Huginn::Console
       auto& slotAllocator = Slot::SlotAllocator::GetSingleton();
 
       // Slot locks
-      auto& slotLocker = Slot::SlotLocker::GetSingleton();
-      const size_t slotCount = slotAllocator.GetSlotCount();
-      size_t lockedCount = 0;
-      for (size_t i = 0; i < slotCount; ++i) {
-      if (slotLocker.IsSlotLocked(i)) {
-        ++lockedCount;
-      }
-      }
+      size_t lockedCount = CountLockedSlots();
       auto slotMsg = std::format("Page: {} of {} ('{}'), {} slots, {} locked",
       slotAllocator.GetCurrentPage() + 1, slotAllocator.GetPageCount(),
       slotAllocator.GetCurrentPageName(),
@@ -247,7 +268,7 @@ namespace Huginn::Console
       for (size_t i = 0; i < Learning::StateFeatures::NUM_FEATURES; ++i) {
          auto line = std::format("  {:>12s}: {:+.4f}", kFeatureNames[i], weights[i]);
          Print(line.c_str());
-         logger::info("[Weights] {:08X} {} = {:.4f}", formID, kFeatureNames[i], weights[i]);
+         logger::debug("[Weights] {:08X} {} = {:.4f}", formID, kFeatureNames[i], weights[i]);
       }
    }
 
@@ -255,27 +276,10 @@ namespace Huginn::Console
    {
       // Run under the update mutex to prevent data races with the update loop.
       Huginn::Update::UpdateHandler::GetSingleton()->RunExclusive([&] {
-         size_t spells = 0, items = 0, weapons = 0, scrolls = 0;
-
-         if (g_spellRegistry) {
-            g_spellRegistry->RebuildRegistry();
-            spells = g_spellRegistry->GetSpellCount();
-         }
-         if (g_itemRegistry) {
-            g_itemRegistry->RebuildRegistry();
-            items = g_itemRegistry->GetItemCount();
-         }
-         if (g_weaponRegistry) {
-            g_weaponRegistry->RebuildRegistry();
-            weapons = g_weaponRegistry->GetWeaponCount();
-         }
-         if (g_scrollRegistry) {
-            g_scrollRegistry->RebuildRegistry();
-            scrolls = g_scrollRegistry->GetScrollCount();
-         }
+         auto c = RebuildRegistries();
 
          auto msg = std::format("Registries rebuilt ({} spells, {} items, {} weapons, {} scrolls)",
-            spells, items, weapons, scrolls);
+            c.spells, c.items, c.weapons, c.scrolls);
          Print(msg.c_str());
          logger::info("[Console] {}"sv, msg);
       });
@@ -470,9 +474,9 @@ namespace Huginn::Console
           break;
         }
         if (cmd.takesArg) {
-          auto prefix = std::string(cmd.name) + " ";
-          if (subcmd.starts_with(prefix)) {
-            cmd.execute(subcmd.substr(prefix.size()));
+          auto nameLen = std::string_view(cmd.name).size();
+          if (subcmd.size() > nameLen && subcmd[nameLen] == ' ' && subcmd.starts_with(cmd.name)) {
+            cmd.execute(subcmd.substr(nameLen + 1));
             handled = true;
             break;
           }
