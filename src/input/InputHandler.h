@@ -2,6 +2,7 @@
 
 #include "../Config.h"
 #include "EquipHand.h"
+#include "KeybindingSettings.h"
 // Note: std headers (functional, array, chrono) come from PCH via RE/Skyrim.h
 #include <shared_mutex>
 
@@ -87,12 +88,9 @@ namespace Huginn::Input
       void SetDoubleTapWindow(float seconds) { m_doubleTapWindow = seconds; }
 
       /**
-       * @brief Set the key codes for each action
-       * Defaults: 1-0 = slots 1-10, - = prev, = = next (DirectInput scancodes)
+       * @brief Set the key codes for each action from keybinding settings
        */
-      void SetKeyCodes(uint32_t slot1, uint32_t slot2, uint32_t slot3, uint32_t slot4,
-             uint32_t slot5, uint32_t slot6, uint32_t slot7, uint32_t slot8,
-             uint32_t slot9, uint32_t slot10, uint32_t cyclePrev, uint32_t cycleNext);
+      void SetKeyCodes(const KeybindingSettings& settings);
 
       /**
        * @brief Called each frame to handle deferred double-tap detection

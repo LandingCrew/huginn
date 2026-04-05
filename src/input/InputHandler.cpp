@@ -20,26 +20,26 @@ namespace Huginn::Input
       m_frameTime = std::chrono::steady_clock::now();
    }
 
-   void InputHandler::SetKeyCodes(uint32_t slot1, uint32_t slot2, uint32_t slot3, uint32_t slot4,
-                   uint32_t slot5, uint32_t slot6, uint32_t slot7, uint32_t slot8,
-                   uint32_t slot9, uint32_t slot10, uint32_t cyclePrev, uint32_t cycleNext)
+   void InputHandler::SetKeyCodes(const KeybindingSettings& settings)
    {
       std::unique_lock lock(m_keyCodeMutex);
-      m_keyCodes[0] = slot1;
-      m_keyCodes[1] = slot2;
-      m_keyCodes[2] = slot3;
-      m_keyCodes[3] = slot4;
-      m_keyCodes[4] = slot5;
-      m_keyCodes[5] = slot6;
-      m_keyCodes[6] = slot7;
-      m_keyCodes[7] = slot8;
-      m_keyCodes[8] = slot9;
-      m_keyCodes[9] = slot10;
-      m_keyCodes[10] = cyclePrev;
-      m_keyCodes[11] = cycleNext;
+      m_keyCodes[0] = settings.slot1Key;
+      m_keyCodes[1] = settings.slot2Key;
+      m_keyCodes[2] = settings.slot3Key;
+      m_keyCodes[3] = settings.slot4Key;
+      m_keyCodes[4] = settings.slot5Key;
+      m_keyCodes[5] = settings.slot6Key;
+      m_keyCodes[6] = settings.slot7Key;
+      m_keyCodes[7] = settings.slot8Key;
+      m_keyCodes[8] = settings.slot9Key;
+      m_keyCodes[9] = settings.slot10Key;
+      m_keyCodes[10] = settings.prevPageKey;
+      m_keyCodes[11] = settings.nextPageKey;
 
       logger::debug("[InputHandler] Key codes set: slots={},{},{},{},{},{},{},{},{},{} cycle={},{}"sv,
-      slot1, slot2, slot3, slot4, slot5, slot6, slot7, slot8, slot9, slot10, cyclePrev, cycleNext);
+      settings.slot1Key, settings.slot2Key, settings.slot3Key, settings.slot4Key,
+      settings.slot5Key, settings.slot6Key, settings.slot7Key, settings.slot8Key,
+      settings.slot9Key, settings.slot10Key, settings.prevPageKey, settings.nextPageKey);
    }
 
    bool InputHandler::ProcessButton(RE::ButtonEvent* button)
