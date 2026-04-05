@@ -41,7 +41,7 @@ namespace Huginn::Learning
         {
             std::unique_lock lock(m_mutex);
 
-            m_timestamp = std::chrono::steady_clock::now();
+            m_timestamp.store(SteadyNow(), std::memory_order_release);
             m_currentPage = currentPage;
 
             // Build FormID -> {rank, utility} map from scored candidates
@@ -66,10 +66,10 @@ namespace Huginn::Learning
         // Called when the pipeline skips scoring (state unchanged) — the cached
         // candidates/assignments are still valid, just need a fresh timestamp
         // so IsStale() doesn't reject external equip events.
+        // Lock-free: only touches an atomic counter, no mutex needed.
         void RefreshTimestamp()
         {
-            std::unique_lock lock(m_mutex);
-            m_timestamp = std::chrono::steady_clock::now();
+            m_timestamp.store(SteadyNow(), std::memory_order_release);
         }
 
         // Query for external equip attribution
@@ -117,9 +117,10 @@ namespace Huginn::Learning
 
         [[nodiscard]] bool IsStale(float maxAgeMs = 500.0f) const
         {
-            std::shared_lock lock(m_mutex);
-            auto elapsed = std::chrono::steady_clock::now() - m_timestamp;
-            auto elapsedMs = std::chrono::duration<float, std::milli>(elapsed).count();
+            auto cachedTicks = m_timestamp.load(std::memory_order_acquire);
+            auto nowTicks = SteadyNow();
+            auto elapsed = std::chrono::steady_clock::duration(nowTicks - cachedTicks);
+            float elapsedMs = std::chrono::duration<float, std::milli>(elapsed).count();
             return elapsedMs > maxAgeMs;
         }
 
@@ -129,8 +130,13 @@ namespace Huginn::Learning
         PipelineStateCache(const PipelineStateCache&) = delete;
         PipelineStateCache& operator=(const PipelineStateCache&) = delete;
 
+        static int64_t SteadyNow()
+        {
+            return std::chrono::steady_clock::now().time_since_epoch().count();
+        }
+
         mutable std::shared_mutex m_mutex;
-        std::chrono::steady_clock::time_point m_timestamp{};
+        std::atomic<int64_t> m_timestamp{0};
 
         // FormID -> {rank, utility} for O(1) lookup
         struct CachedCandidate

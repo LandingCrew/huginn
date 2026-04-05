@@ -48,6 +48,33 @@ namespace Huginn::Pipeline
         Slot::SlotAssignments rawAssignments;
         Slot::SlotAssignments assignments;
         bool hasUrgentOverride = false;
+
+        /// Reset all fields for reuse, preserving allocated container capacity.
+        void Reset()
+        {
+            deltaMs = 0.0f;
+            player = nullptr;
+            actorValue = nullptr;
+            now = {};
+
+            currentState = {};
+            playerState = {};
+            targets.primary.reset();
+            targets.targets.clear();
+            worldState = {};
+            healthTracking = {};
+            magickaTracking = {};
+            staminaTracking = {};
+            currentMagicka = 0.0f;
+            stateHash = 0;
+            elementalDamageActive = false;
+
+            scoredCandidates.clear();
+            overrides.activeOverrides.clear();
+            rawAssignments.clear();
+            assignments.clear();
+            hasUrgentOverride = false;
+        }
     };
 
     // =========================================================================
@@ -94,6 +121,9 @@ namespace Huginn::Pipeline
 #ifndef NDEBUG
         void UpdateDebugWidgets(PipelineContext& ctx);
 #endif
+
+        // Reusable pipeline context — cleared each frame, preserves container capacity
+        PipelineContext m_ctx;
 
         // Member state (converted from static locals in OnUpdate)
         uint32_t m_lastPipelineHash = UINT32_MAX;  // Force first run

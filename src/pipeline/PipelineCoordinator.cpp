@@ -17,7 +17,6 @@
 #include "display/IDisplayBackend.h"
 #include "display/WheelerBackend.h"
 #include "display/IntuitionBackend.h"
-#include <set>
 
 #ifdef _DEBUG
 #include "ui/UtilityScorerDebugWidget.h"
@@ -98,17 +97,19 @@ static void ComputeVisualStates(
     }
 
     // Log visual state summary (non-normal states only) — one condensed line
-    std::string visualSummary;
-    for (size_t i = 0; i < assignments.size(); ++i) {
-        const auto& assignment = assignments[i];
-        if (!assignment.IsEmpty() && assignment.visualState != Slot::SlotVisualState::Normal) {
-            if (!visualSummary.empty()) visualSummary += ", ";
-            visualSummary += fmt::format("{}:{}({})",
-                i, Slot::SlotVisualStateToString(assignment.visualState), assignment.name);
+    if (spdlog::default_logger()->should_log(spdlog::level::debug)) {
+        std::string visualSummary;
+        for (size_t i = 0; i < assignments.size(); ++i) {
+            const auto& assignment = assignments[i];
+            if (!assignment.IsEmpty() && assignment.visualState != Slot::SlotVisualState::Normal) {
+                if (!visualSummary.empty()) visualSummary += ", ";
+                visualSummary += fmt::format("{}:{}({})",
+                    i, Slot::SlotVisualStateToString(assignment.visualState), assignment.name);
+            }
         }
-    }
-    if (!visualSummary.empty()) {
-        logger::debug("[VisualState] {}", visualSummary);
+        if (!visualSummary.empty()) {
+            logger::debug("[VisualState] {}", visualSummary);
+        }
     }
 }
 
@@ -158,27 +159,27 @@ bool PipelineCoordinator::RunPipeline(
 
     Huginn_ZONE_NAMED("RunPipeline");
 
-    PipelineContext ctx;
-    ctx.deltaMs = deltaMs;
-    ctx.player = player;
-    ctx.actorValue = actorValue;
-    ctx.now = now;
+    m_ctx.Reset();
+    m_ctx.deltaMs = deltaMs;
+    m_ctx.player = player;
+    m_ctx.actorValue = actorValue;
+    m_ctx.now = now;
 
-    GatherState(ctx);
+    GatherState(m_ctx);
 
-    if (CheckHashSkip(ctx, pageChanged)) {
+    if (CheckHashSkip(m_ctx, pageChanged)) {
         return false;  // Hash unchanged, pipeline skipped
     }
 
-    LogStateTransition(ctx);
-    EnrichElementalDamage(ctx);
-    ScoreCandidates(ctx);
-    AllocateAndLock(ctx);
-    UpdateCaches(ctx);
-    PushDisplay(ctx);
+    LogStateTransition(m_ctx);
+    EnrichElementalDamage(m_ctx);
+    ScoreCandidates(m_ctx);
+    AllocateAndLock(m_ctx);
+    UpdateCaches(m_ctx);
+    PushDisplay(m_ctx);
 
 #ifndef NDEBUG
-    UpdateDebugWidgets(ctx);
+    UpdateDebugWidgets(m_ctx);
 #endif
 
     return true;
@@ -191,14 +192,20 @@ bool PipelineCoordinator::RunPipeline(
 void PipelineCoordinator::GatherState(PipelineContext& ctx)
 {
     Huginn_ZONE_NAMED("Pipeline::GatherState");
-    auto [currentState, playerState] = EvaluateCurrentGameState();
-    ctx.currentState = currentState;
-    ctx.playerState = playerState;
-
     auto& stateManager = State::StateManager::GetSingleton();
 
+    // Fetch each state snapshot once (single lock acquisition each)
+    ctx.worldState = stateManager.GetWorldState();
+    ctx.playerState = stateManager.GetPlayerState();
+    ctx.targets = stateManager.GetTargets();
     ctx.healthTracking = stateManager.GetHealthTracking();
-    ctx.stateHash = currentState.GetHash();
+    ctx.magickaTracking = stateManager.GetMagickaTracking();
+    ctx.staminaTracking = stateManager.GetStaminaTracking();
+
+    // Evaluate GameState from the already-fetched snapshots (no extra copies)
+    ctx.currentState = g_stateEvaluator->EvaluateCurrentState(
+        ctx.worldState, ctx.playerState, ctx.targets);
+    ctx.stateHash = ctx.currentState.GetHash();
 
     // Check if elemental damage requires pipeline run despite unchanged hash
     constexpr float kElementalWindow = State::VitalTracking::ELEMENTAL_DAMAGE_ENRICHMENT_WINDOW;
@@ -208,10 +215,6 @@ void PipelineCoordinator::GatherState(PipelineContext& ctx)
         ctx.healthTracking.timeSinceLastShock < kElementalWindow;
 
     ctx.currentMagicka = ctx.actorValue->GetActorValue(RE::ActorValue::kMagicka);
-    ctx.targets = stateManager.GetTargets();
-    ctx.worldState = stateManager.GetWorldState();
-    ctx.magickaTracking = stateManager.GetMagickaTracking();
-    ctx.staminaTracking = stateManager.GetStaminaTracking();
 }
 
 // -----------------------------------------------------------------------------
@@ -307,18 +310,7 @@ void PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
 
     // Post-lock dedup: locked slots can reintroduce items that the allocator
     // already assigned elsewhere. Clear duplicates (keep first occurrence).
-    {
-        std::set<std::string_view> seenNames;
-        for (auto& assignment : ctx.assignments) {
-            if (assignment.IsEmpty()) continue;
-            auto [it, inserted] = seenNames.insert(assignment.name);
-            if (!inserted) {
-                SKSE::log::debug("[Pipeline] Post-lock dedup: clearing duplicate '{}' from slot {}",
-                    assignment.name, assignment.slotIndex);
-                assignment = Slot::SlotAssignment::Empty(assignment.slotIndex, assignment.classification);
-            }
-        }
-    }
+    Slot::DeduplicateAssignments(ctx.assignments);
 
     // Compute visual state for each slot
     ComputeVisualStates(ctx.assignments, ctx.rawAssignments, slotLocker);
@@ -361,9 +353,28 @@ void PipelineCoordinator::PushDisplay(PipelineContext& ctx)
         wheelerClient.TryUrgentAutoFocus(topOverride->priority);
     }
 
+    // Sync display page with Wheeler's active managed page.
+    // If Wheeler is viewing a different page than the allocator, re-sync and
+    // re-allocate so all backends see consistent assignments.
+    Slot::SlotAssignments displayAssignments;
+    const Slot::SlotAssignments* assignmentsPtr = &ctx.assignments;
+
+    auto& slotAllocator = Slot::SlotAllocator::GetSingleton();
+    if (wheelerClient.IsConnected()) {
+        int wheelerPage = wheelerClient.GetActiveManagedPage();
+        int currentPage = static_cast<int>(slotAllocator.GetCurrentPage());
+        if (wheelerPage >= 0 && wheelerPage != currentPage) {
+            slotAllocator.SetCurrentPage(static_cast<size_t>(wheelerPage));
+            displayAssignments = slotAllocator.AllocateSlotsForPage(
+                static_cast<size_t>(wheelerPage), ctx.scoredCandidates,
+                ctx.overrides, ctx.playerState, ctx.worldState);
+            assignmentsPtr = &displayAssignments;
+        }
+    }
+
     // Push to display backends
     Display::DisplayContext displayCtx{
-        ctx.assignments, ctx.scoredCandidates, ctx.overrides,
+        *assignmentsPtr, ctx.scoredCandidates, ctx.overrides,
         ctx.playerState, ctx.worldState, ctx.hasUrgentOverride, ctx.now
     };
     for (auto* backend : s_displayBackends) {

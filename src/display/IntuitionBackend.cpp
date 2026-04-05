@@ -52,21 +52,10 @@ namespace Huginn::Display
             m_widgetHiddenForWheel = false;
         }
 
-        // Determine display page: track Wheeler's active managed wheel if open,
-        // otherwise fall back to slot allocator's current page.
+        // Page sync is handled by PipelineCoordinator::PushDisplay() — we just
+        // read the current page and use the assignments we're given.
         int displayPage = static_cast<int>(slotAllocator.GetCurrentPage());
-        Slot::SlotAssignments displayAssignments = ctx.assignments;
-
-        if (wheelerClient.IsConnected()) {
-            int wheelerPage = wheelerClient.GetActiveManagedPage();
-            if (wheelerPage >= 0 && wheelerPage != displayPage) {
-                displayPage = wheelerPage;
-                slotAllocator.SetCurrentPage(static_cast<size_t>(wheelerPage));
-                displayAssignments = slotAllocator.AllocateSlotsForPage(
-                    static_cast<size_t>(wheelerPage), ctx.scoredCandidates,
-                    ctx.overrides, ctx.playerState, ctx.worldState);
-            }
-        }
+        const auto& displayAssignments = ctx.assignments;
 
         const auto displayPageName = Slot::SlotSettings::GetSingleton().GetPageName(
             static_cast<size_t>(displayPage));

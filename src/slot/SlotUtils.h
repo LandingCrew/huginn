@@ -4,6 +4,7 @@
 #include "ui/SlotTypes.h"
 #include "learning/item/ItemData.h"
 #include "weapon/WeaponData.h"
+#include <set>
 
 namespace Huginn::Slot
 {
@@ -132,6 +133,23 @@ namespace Huginn::Slot
 
             default:
                 return UI::SlotContent::Spell(name, confidence, formID);
+        }
+    }
+
+    /// Remove duplicate items from post-lock assignments (keep first occurrence).
+    /// Locked slots can reintroduce items that the allocator already assigned
+    /// elsewhere — this clears the later duplicates by name.
+    inline void DeduplicateAssignments(SlotAssignments& assignments)
+    {
+        std::set<std::string_view> seenNames;
+        for (auto& assignment : assignments) {
+            if (assignment.IsEmpty()) continue;
+            auto [it, inserted] = seenNames.insert(assignment.name);
+            if (!inserted) {
+                logger::debug("[SlotUtils] Post-lock dedup: clearing duplicate '{}' from slot {}",
+                    assignment.name, assignment.slotIndex);
+                assignment = SlotAssignment::Empty(assignment.slotIndex, assignment.classification);
+            }
         }
     }
 
