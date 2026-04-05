@@ -47,6 +47,16 @@ namespace Huginn::Input
       }
       m_loggedConfig = false;
 
+      // Warn about duplicate key codes (higher-index slot is silently unreachable)
+      for (size_t i = 0; i < m_keyCodes.size(); ++i) {
+      for (size_t j = i + 1; j < m_keyCodes.size(); ++j) {
+        if (m_keyCodes[i] == m_keyCodes[j]) {
+           logger::warn("[InputHandler] Duplicate key code {} (0x{:02X}) bound to actions {} and {} — action {} will be unreachable"sv,
+            m_keyCodes[i], m_keyCodes[i], i, j, j);
+        }
+      }
+      }
+
       logger::debug("[InputHandler] Key codes set: slots={},{},{},{},{},{},{},{},{},{} cycle={},{}"sv,
       settings.slot1Key, settings.slot2Key, settings.slot3Key, settings.slot4Key,
       settings.slot5Key, settings.slot6Key, settings.slot7Key, settings.slot8Key,
