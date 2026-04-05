@@ -152,7 +152,6 @@ namespace Huginn::Input
       std::chrono::steady_clock::time_point lastTapTime;
       bool isPressed = false;
       bool holdTriggered = false;
-      bool waitingForDoubleTap = false;
       bool pendingTapAction = false;  // Deferred tap waiting to fire
       };
       std::array<EquipKeyState, 10> m_equipState;

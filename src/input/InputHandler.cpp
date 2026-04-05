@@ -92,9 +92,6 @@ namespace Huginn::Input
       m_loggedConfig = true;
       }
 
-      // Update frame time
-      m_frameTime = std::chrono::steady_clock::now();
-
       uint32_t keyCode = button->GetIDCode();
       uint32_t device = static_cast<uint32_t>(button->GetDevice());
 
@@ -187,7 +184,6 @@ namespace Huginn::Input
         if (elapsedSec >= m_holdThreshold) {
            // Hold triggered - equip both hands
            state.holdTriggered = true;
-           state.waitingForDoubleTap = false;
            state.pendingTapAction = false;  // Cancel any pending tap
            logger::info("[InputHandler] Slot {} HOLD TRIGGERED -> equip both hands"sv, slotIndex + 1);
 
@@ -207,12 +203,11 @@ namespace Huginn::Input
            m_frameTime - state.lastTapTime);
         float sinceLastTap = elapsed.count() / 1000.0f;
 
-        logger::debug("[InputHandler] Slot {} UP: waitingForDoubleTap={} pendingTap={} sinceLastTap={:.3f}s window={:.3f}s"sv,
-           slotIndex + 1, state.waitingForDoubleTap, state.pendingTapAction, sinceLastTap, m_doubleTapWindow);
+        logger::debug("[InputHandler] Slot {} UP: pendingTap={} sinceLastTap={:.3f}s window={:.3f}s"sv,
+           slotIndex + 1, state.pendingTapAction, sinceLastTap, m_doubleTapWindow);
 
         if (state.pendingTapAction && sinceLastTap < m_doubleTapWindow) {
            // Double tap detected - equip left hand ONLY
-           state.waitingForDoubleTap = false;
            state.pendingTapAction = false;  // Cancel pending right-hand
            logger::info("[InputHandler] Slot {} DOUBLE-TAP -> equip left hand ONLY"sv, slotIndex + 1);
 
@@ -222,7 +217,6 @@ namespace Huginn::Input
         } else {
            // First tap - defer action, wait for potential double tap
            state.lastTapTime = m_frameTime;
-           state.waitingForDoubleTap = true;
            state.pendingTapAction = true;  // Will fire in Update() if no double-tap
            logger::debug("[InputHandler] Slot {} TAP pending (waiting {:.0f}ms for double-tap)"sv,
             slotIndex + 1, m_doubleTapWindow * 1000.0f);
@@ -250,21 +244,11 @@ namespace Huginn::Input
         if (elapsedSec > m_doubleTapWindow) {
            // Double-tap window expired - fire the single tap action
            state.pendingTapAction = false;
-           state.waitingForDoubleTap = false;
            logger::info("[InputHandler] Slot {} TAP (deferred) -> equip right hand"sv, i + 1);
 
            if (m_slotCallback) {
             m_slotCallback(i, EquipHand::Right);
            }
-        }
-      } else if (state.waitingForDoubleTap) {
-        // Clear stale waiting state (no pending action)
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-           m_frameTime - state.lastTapTime);
-        float elapsedSec = elapsed.count() / 1000.0f;
-
-        if (elapsedSec > m_doubleTapWindow) {
-           state.waitingForDoubleTap = false;
         }
       }
       }
