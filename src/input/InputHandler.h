@@ -159,5 +159,8 @@ namespace Huginn::Input
 
       /// Current time helper (for consistent timing within single frame)
       std::chrono::steady_clock::time_point m_frameTime;
+
+      /// Whether config has been logged (reset on rebind so new keys are visible)
+      bool m_loggedConfig = false;
    };
 }

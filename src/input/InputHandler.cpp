@@ -45,6 +45,7 @@ namespace Huginn::Input
       for (auto& s : m_cycleState) {
       s = {};
       }
+      m_loggedConfig = false;
 
       logger::debug("[InputHandler] Key codes set: slots={},{},{},{},{},{},{},{},{},{} cycle={},{}"sv,
       settings.slot1Key, settings.slot2Key, settings.slot3Key, settings.slot4Key,
@@ -69,9 +70,8 @@ namespace Huginn::Input
       return false;
       }
 
-      // Log config once on first call
-      static bool loggedConfig = false;
-      if (!loggedConfig) {
+      // Log config once after init or rebind
+      if (!m_loggedConfig) {
       std::shared_lock lock(m_keyCodeMutex);
       logger::info("[InputHandler] Key codes: [1-10]={},{},{},{},{},{},{},{},{},{} [-=]={},{}"sv,
         m_keyCodes[0], m_keyCodes[1], m_keyCodes[2], m_keyCodes[3], m_keyCodes[4],
@@ -79,7 +79,7 @@ namespace Huginn::Input
         m_keyCodes[10], m_keyCodes[11]);
       logger::info("[InputHandler] Thresholds: hold={:.2f}s doubleTap={:.2f}s cycleHold={:.2f}s"sv,
         m_holdThreshold, m_doubleTapWindow, m_cycleHoldThreshold);
-      loggedConfig = true;
+      m_loggedConfig = true;
       }
 
       // Update frame time
