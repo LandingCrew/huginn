@@ -1,20 +1,14 @@
 #pragma once
 
 #include "../Config.h"
+#include "EquipHand.h"
+#include "KeybindingSettings.h"
 // Note: std headers (functional, array, chrono) come from PCH via RE/Skyrim.h
+#include <atomic>
+#include <shared_mutex>
 
 namespace Huginn::Input
 {
-   /**
-    * @brief Hand to equip spell to
-    */
-   enum class EquipHand
-   {
-      Right,  // Single tap
-      Left,   // Double tap
-      Both    // Hold
-   };
-
    /**
     * @brief Callback when a slot key is pressed
     * @param slotIndex 0-based slot index (0, 1, 2 for slots 1, 2, 3)
@@ -95,12 +89,14 @@ namespace Huginn::Input
       void SetDoubleTapWindow(float seconds) { m_doubleTapWindow = seconds; }
 
       /**
-       * @brief Set the key codes for each action
-       * Defaults: 1-0 = slots 1-10, - = prev, = = next (DirectInput scancodes)
+       * @brief Set the key codes for each action from keybinding settings
        */
-      void SetKeyCodes(uint32_t slot1, uint32_t slot2, uint32_t slot3, uint32_t slot4,
-             uint32_t slot5, uint32_t slot6, uint32_t slot7, uint32_t slot8,
-             uint32_t slot9, uint32_t slot10, uint32_t cyclePrev, uint32_t cycleNext);
+      void SetKeyCodes(const KeybindingSettings& settings);
+
+      /**
+       * @brief Get the current keybinding settings (copy-out for thread safety)
+       */
+      [[nodiscard]] KeybindingSettings GetKeybindings() const;
 
       /**
        * @brief Called each frame to handle deferred double-tap detection
@@ -127,9 +123,14 @@ namespace Huginn::Input
       /// Enabled state
       bool m_enabled = true;
 
-      /// Key codes for each action
-      /// Default: 1-0 = slots (2-11), - = prev (12), = = next (13)
+      /// Key codes for each action (derived from m_keybindings for fast scan)
       std::array<uint32_t, 12> m_keyCodes;
+
+      /// Authoritative keybinding settings
+      KeybindingSettings m_keybindings;
+
+      /// Protects m_keyCodes and m_keybindings
+      mutable std::shared_mutex m_keyCodeMutex;
 
       /// Timing thresholds
       float m_holdThreshold = 0.4f;      // Seconds to trigger hold
@@ -152,12 +153,14 @@ namespace Huginn::Input
       std::chrono::steady_clock::time_point lastTapTime;
       bool isPressed = false;
       bool holdTriggered = false;
-      bool waitingForDoubleTap = false;
       bool pendingTapAction = false;  // Deferred tap waiting to fire
       };
       std::array<EquipKeyState, 10> m_equipState;
 
       /// Current time helper (for consistent timing within single frame)
       std::chrono::steady_clock::time_point m_frameTime;
+
+      /// Whether config has been logged (reset on rebind so new keys are visible)
+      std::atomic<bool> m_loggedConfig = false;
    };
 }

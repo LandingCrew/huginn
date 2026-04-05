@@ -412,12 +412,7 @@ void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
                 // Load keybindings from INI and configure InputHandler
                 Input::KeybindingSettings keybindings;
                 keybindings.LoadFromFile(GetDMenuIniPath());
-                inputHandler.SetKeyCodes(
-                    keybindings.slot1Key, keybindings.slot2Key, keybindings.slot3Key,
-                    keybindings.slot4Key, keybindings.slot5Key, keybindings.slot6Key,
-                    keybindings.slot7Key, keybindings.slot8Key, keybindings.slot9Key,
-                    keybindings.slot10Key, keybindings.prevPageKey, keybindings.nextPageKey
-                );
+                inputHandler.SetKeyCodes(keybindings);
 
                 // Slot key callback: equip spell/item from slot
                 inputHandler.SetSlotCallback([&equipManager](size_t slotIndex, Input::EquipHand hand) {

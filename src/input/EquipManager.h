@@ -1,6 +1,6 @@
 #pragma once
 
-#include "InputHandler.h"
+#include "EquipHand.h"
 #include "../ui/SlotTypes.h"
 #include "../slot/SlotSettings.h"
 // Note: std headers (functional) come from PCH via RE/Skyrim.h

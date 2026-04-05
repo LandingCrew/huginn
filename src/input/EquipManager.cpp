@@ -216,6 +216,8 @@ namespace Huginn::Input
          return false;
       }
 
+      // LIMITATION: Vanilla engine constants — not exposed as GMSTs, so mods that
+      // alter soul gem charge/XP values via SKSE or script will diverge from these.
       float chargeValue = 0.0f;
       float expValue = 0.0f;
       switch (soulLevel) {
@@ -314,6 +316,12 @@ namespace Huginn::Input
       return false;
       }
 
+      // Mark as Huginn-mediated equip BEFORE the game API call.
+      // EquipSpell/EquipObject fire TESEquipEvent synchronously — ExternalEquipListener
+      // checks IsRecentHuginnEquip() within a 100ms window, so the mark must be set first.
+      // If the equip fails, the 100ms window expires harmlessly.
+      Learning::EquipSourceTracker::GetSingleton().MarkHuginnEquip();
+
       bool success = false;
 
       switch (content.type) {
@@ -354,12 +362,6 @@ namespace Huginn::Input
            }
         }
 
-        // Mark as Huginn-mediated equip BEFORE the game API call.
-        // EquipSpell fires TESEquipEvent synchronously — ExternalEquipListener checks
-        // IsRecentHuginnEquip() within a 100ms window, so the mark must be set first.
-        // If the equip fails, the 100ms window expires harmlessly.
-        Learning::EquipSourceTracker::GetSingleton().MarkHuginnEquip();
-
         // Equip based on hand preference
         switch (hand) {
         case EquipHand::Right:
@@ -372,11 +374,6 @@ namespace Huginn::Input
            success = EquipSpellToHand(spell, false) && EquipSpellToHand(spell, true);
            break;
         }
-
-        // Trigger callback for learning system
-        if (success && m_equipCallback) {
-           m_equipCallback(spell->GetFormID(), true);
-        }
       }
       break;
 
@@ -384,36 +381,37 @@ namespace Huginn::Input
       case UI::SlotContentType::HealthPotion:
       case UI::SlotContentType::MagickaPotion:
       case UI::SlotContentType::StaminaPotion:
-      Learning::EquipSourceTracker::GetSingleton().MarkHuginnEquip();
       success = UsePotion(content.formID);
-      if (success && m_equipCallback) {
-        m_equipCallback(content.formID, true);
-      }
       break;
 
       case UI::SlotContentType::MeleeWeapon:
       case UI::SlotContentType::RangedWeapon:
       {
-        Learning::EquipSourceTracker::GetSingleton().MarkHuginnEquip();
-        bool leftHand = (hand == EquipHand::Left);
-        success = EquipWeapon(content.formID, leftHand);
-        if (success && m_equipCallback) {
-           m_equipCallback(content.formID, true);
+        switch (hand) {
+        case EquipHand::Right:
+           success = EquipWeapon(content.formID, false);
+           break;
+        case EquipHand::Left:
+           success = EquipWeapon(content.formID, true);
+           break;
+        case EquipHand::Both:
+           success = EquipWeapon(content.formID, false) && EquipWeapon(content.formID, true);
+           break;
         }
       }
       break;
 
       case UI::SlotContentType::SoulGem:
-      Learning::EquipSourceTracker::GetSingleton().MarkHuginnEquip();
       success = UseSoulGem(content.formID);
-      if (success && m_equipCallback) {
-        m_equipCallback(content.formID, true);
-      }
       break;
 
       default:
       logger::warn("[EquipManager] Unknown slot content type"sv);
       break;
+      }
+
+      if (success && m_equipCallback) {
+         m_equipCallback(content.formID, true);
       }
 
       return success;

@@ -20,25 +20,53 @@ namespace Huginn::Input
       m_frameTime = std::chrono::steady_clock::now();
    }
 
-   void InputHandler::SetKeyCodes(uint32_t slot1, uint32_t slot2, uint32_t slot3, uint32_t slot4,
-                   uint32_t slot5, uint32_t slot6, uint32_t slot7, uint32_t slot8,
-                   uint32_t slot9, uint32_t slot10, uint32_t cyclePrev, uint32_t cycleNext)
+   void InputHandler::SetKeyCodes(const KeybindingSettings& settings)
    {
-      m_keyCodes[0] = slot1;
-      m_keyCodes[1] = slot2;
-      m_keyCodes[2] = slot3;
-      m_keyCodes[3] = slot4;
-      m_keyCodes[4] = slot5;
-      m_keyCodes[5] = slot6;
-      m_keyCodes[6] = slot7;
-      m_keyCodes[7] = slot8;
-      m_keyCodes[8] = slot9;
-      m_keyCodes[9] = slot10;
-      m_keyCodes[10] = cyclePrev;
-      m_keyCodes[11] = cycleNext;
+      std::unique_lock lock(m_keyCodeMutex);
+      m_keybindings = settings;
+      m_keyCodes[0] = settings.slot1Key;
+      m_keyCodes[1] = settings.slot2Key;
+      m_keyCodes[2] = settings.slot3Key;
+      m_keyCodes[3] = settings.slot4Key;
+      m_keyCodes[4] = settings.slot5Key;
+      m_keyCodes[5] = settings.slot6Key;
+      m_keyCodes[6] = settings.slot7Key;
+      m_keyCodes[7] = settings.slot8Key;
+      m_keyCodes[8] = settings.slot9Key;
+      m_keyCodes[9] = settings.slot10Key;
+      m_keyCodes[10] = settings.prevPageKey;
+      m_keyCodes[11] = settings.nextPageKey;
+
+      // Reset all input state to prevent stale press/hold from misfiring
+      // after rebind (e.g. old key held → rebind → new key sees ghost state)
+      for (auto& s : m_equipState) {
+      s = {};
+      }
+      for (auto& s : m_cycleState) {
+      s = {};
+      }
+      m_loggedConfig = false;
+
+      // Warn about duplicate key codes (higher-index slot is silently unreachable)
+      for (size_t i = 0; i < m_keyCodes.size(); ++i) {
+      for (size_t j = i + 1; j < m_keyCodes.size(); ++j) {
+        if (m_keyCodes[i] == m_keyCodes[j]) {
+           logger::warn("[InputHandler] Duplicate key code {} (0x{:02X}) bound to actions {} and {} — action {} will be unreachable"sv,
+            m_keyCodes[i], m_keyCodes[i], i, j, j);
+        }
+      }
+      }
 
       logger::debug("[InputHandler] Key codes set: slots={},{},{},{},{},{},{},{},{},{} cycle={},{}"sv,
-      slot1, slot2, slot3, slot4, slot5, slot6, slot7, slot8, slot9, slot10, cyclePrev, cycleNext);
+      settings.slot1Key, settings.slot2Key, settings.slot3Key, settings.slot4Key,
+      settings.slot5Key, settings.slot6Key, settings.slot7Key, settings.slot8Key,
+      settings.slot9Key, settings.slot10Key, settings.prevPageKey, settings.nextPageKey);
+   }
+
+   KeybindingSettings InputHandler::GetKeybindings() const
+   {
+      std::shared_lock lock(m_keyCodeMutex);
+      return m_keybindings;
    }
 
    bool InputHandler::ProcessButton(RE::ButtonEvent* button)
@@ -52,44 +80,46 @@ namespace Huginn::Input
       return false;
       }
 
-      // Log config once on first call
-      static bool loggedConfig = false;
-      if (!loggedConfig) {
+      // Log config once after init or rebind
+      if (!m_loggedConfig) {
+      std::shared_lock lock(m_keyCodeMutex);
       logger::info("[InputHandler] Key codes: [1-10]={},{},{},{},{},{},{},{},{},{} [-=]={},{}"sv,
         m_keyCodes[0], m_keyCodes[1], m_keyCodes[2], m_keyCodes[3], m_keyCodes[4],
         m_keyCodes[5], m_keyCodes[6], m_keyCodes[7], m_keyCodes[8], m_keyCodes[9],
         m_keyCodes[10], m_keyCodes[11]);
       logger::info("[InputHandler] Thresholds: hold={:.2f}s doubleTap={:.2f}s cycleHold={:.2f}s"sv,
         m_holdThreshold, m_doubleTapWindow, m_cycleHoldThreshold);
-      loggedConfig = true;
+      m_loggedConfig = true;
       }
-
-      // Update frame time
-      m_frameTime = std::chrono::steady_clock::now();
 
       uint32_t keyCode = button->GetIDCode();
-      uint32_t device = static_cast<uint32_t>(button->GetDevice());
 
-      // Check if it's one of our keys
-      // Layout: [slot1-10, cyclePrev, cycleNext]
+      // Snapshot key codes under shared lock, then match outside the lock
+      int matchedIndex = -1;
+      {
+      std::shared_lock lock(m_keyCodeMutex);
       for (size_t i = 0; i < m_keyCodes.size(); ++i) {
-      if (keyCode == m_keyCodes[i]) {
-        if (button->IsDown()) {
-           logger::debug("[InputHandler] KEY PRESS: code={} (0x{:02X}) action={}"sv,
-            keyCode, keyCode, i);
+        if (keyCode == m_keyCodes[i]) {
+           matchedIndex = static_cast<int>(i);
+           break;
         }
-        if (i < 10) {
-           // Equip keys (index 0-9 -> slot 0-9)
-           HandleEquipKey(static_cast<int>(i), button);
-        } else {
-           // Cycle keys (index 10-11 -> 0=prev, 1=next)
-           HandleCycleKey(static_cast<int>(i - 10), button);
-        }
-        return true;  // Event consumed
       }
       }
 
+      if (matchedIndex < 0) {
       return false;  // Not our key
+      }
+
+      if (button->IsDown()) {
+      logger::debug("[InputHandler] KEY PRESS: code={} (0x{:02X}) action={}"sv,
+        keyCode, keyCode, matchedIndex);
+      }
+      if (matchedIndex < 10) {
+      HandleEquipKey(matchedIndex, button);
+      } else {
+      HandleCycleKey(matchedIndex - 10, button);
+      }
+      return true;  // Event consumed
    }
 
    void InputHandler::HandleCycleKey(int index, RE::ButtonEvent* button)
@@ -153,7 +183,6 @@ namespace Huginn::Input
         if (elapsedSec >= m_holdThreshold) {
            // Hold triggered - equip both hands
            state.holdTriggered = true;
-           state.waitingForDoubleTap = false;
            state.pendingTapAction = false;  // Cancel any pending tap
            logger::info("[InputHandler] Slot {} HOLD TRIGGERED -> equip both hands"sv, slotIndex + 1);
 
@@ -173,12 +202,11 @@ namespace Huginn::Input
            m_frameTime - state.lastTapTime);
         float sinceLastTap = elapsed.count() / 1000.0f;
 
-        logger::debug("[InputHandler] Slot {} UP: waitingForDoubleTap={} pendingTap={} sinceLastTap={:.3f}s window={:.3f}s"sv,
-           slotIndex + 1, state.waitingForDoubleTap, state.pendingTapAction, sinceLastTap, m_doubleTapWindow);
+        logger::debug("[InputHandler] Slot {} UP: pendingTap={} sinceLastTap={:.3f}s window={:.3f}s"sv,
+           slotIndex + 1, state.pendingTapAction, sinceLastTap, m_doubleTapWindow);
 
         if (state.pendingTapAction && sinceLastTap < m_doubleTapWindow) {
            // Double tap detected - equip left hand ONLY
-           state.waitingForDoubleTap = false;
            state.pendingTapAction = false;  // Cancel pending right-hand
            logger::info("[InputHandler] Slot {} DOUBLE-TAP -> equip left hand ONLY"sv, slotIndex + 1);
 
@@ -188,7 +216,6 @@ namespace Huginn::Input
         } else {
            // First tap - defer action, wait for potential double tap
            state.lastTapTime = m_frameTime;
-           state.waitingForDoubleTap = true;
            state.pendingTapAction = true;  // Will fire in Update() if no double-tap
            logger::debug("[InputHandler] Slot {} TAP pending (waiting {:.0f}ms for double-tap)"sv,
             slotIndex + 1, m_doubleTapWindow * 1000.0f);
@@ -216,21 +243,11 @@ namespace Huginn::Input
         if (elapsedSec > m_doubleTapWindow) {
            // Double-tap window expired - fire the single tap action
            state.pendingTapAction = false;
-           state.waitingForDoubleTap = false;
            logger::info("[InputHandler] Slot {} TAP (deferred) -> equip right hand"sv, i + 1);
 
            if (m_slotCallback) {
             m_slotCallback(i, EquipHand::Right);
            }
-        }
-      } else if (state.waitingForDoubleTap) {
-        // Clear stale waiting state (no pending action)
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-           m_frameTime - state.lastTapTime);
-        float elapsedSec = elapsed.count() / 1000.0f;
-
-        if (elapsedSec > m_doubleTapWindow) {
-           state.waitingForDoubleTap = false;
         }
       }
       }
