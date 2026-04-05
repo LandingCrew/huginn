@@ -102,7 +102,7 @@ namespace Huginn::Update
        * @brief Get the time since last update in milliseconds
        * @return Milliseconds elapsed since last update
        */
-      [[nodiscard]] float GetTimeSinceLastUpdate() const noexcept;
+      [[nodiscard]] float GetTimeSinceLastUpdate() const;
 
    private:
       UpdateHandler() = default;
