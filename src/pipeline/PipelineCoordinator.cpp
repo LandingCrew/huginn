@@ -98,17 +98,19 @@ static void ComputeVisualStates(
     }
 
     // Log visual state summary (non-normal states only) — one condensed line
-    std::string visualSummary;
-    for (size_t i = 0; i < assignments.size(); ++i) {
-        const auto& assignment = assignments[i];
-        if (!assignment.IsEmpty() && assignment.visualState != Slot::SlotVisualState::Normal) {
-            if (!visualSummary.empty()) visualSummary += ", ";
-            visualSummary += fmt::format("{}:{}({})",
-                i, Slot::SlotVisualStateToString(assignment.visualState), assignment.name);
+    if (spdlog::default_logger()->should_log(spdlog::level::debug)) {
+        std::string visualSummary;
+        for (size_t i = 0; i < assignments.size(); ++i) {
+            const auto& assignment = assignments[i];
+            if (!assignment.IsEmpty() && assignment.visualState != Slot::SlotVisualState::Normal) {
+                if (!visualSummary.empty()) visualSummary += ", ";
+                visualSummary += fmt::format("{}:{}({})",
+                    i, Slot::SlotVisualStateToString(assignment.visualState), assignment.name);
+            }
         }
-    }
-    if (!visualSummary.empty()) {
-        logger::debug("[VisualState] {}", visualSummary);
+        if (!visualSummary.empty()) {
+            logger::debug("[VisualState] {}", visualSummary);
+        }
     }
 }
 
