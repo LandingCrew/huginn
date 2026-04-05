@@ -110,6 +110,9 @@ namespace Huginn::Slot
                 }
                 return UI::SlotContent::MeleeWeapon(name, formID);
 
+            case Candidate::SourceType::Staff:
+                return UI::SlotContent::RangedWeapon(name, formID);
+
             case Candidate::SourceType::Ammo:
                 return UI::SlotContent::RangedWeapon(name, formID);
 
