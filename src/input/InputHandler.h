@@ -1,21 +1,12 @@
 #pragma once
 
 #include "../Config.h"
+#include "EquipHand.h"
 // Note: std headers (functional, array, chrono) come from PCH via RE/Skyrim.h
 #include <shared_mutex>
 
 namespace Huginn::Input
 {
-   /**
-    * @brief Hand to equip spell to
-    */
-   enum class EquipHand
-   {
-      Right,  // Single tap
-      Left,   // Double tap
-      Both    // Hold
-   };
-
    /**
     * @brief Callback when a slot key is pressed
     * @param slotIndex 0-based slot index (0, 1, 2 for slots 1, 2, 3)
