@@ -124,19 +124,37 @@ namespace Huginn::State
       SneakStatus isSneaking;     // 2 states
 
       // Generate unique hash for Q-table lookup
-      // Returns value in range [0, 36287]
+      // Returns value in range [0, kTotalStates - 1]
       // Stamina excluded: PotionDiscriminator reads it directly, ContextRuleEngine uses raw float
       // Multi-radix bases: [6, 6, 3, 7, 4, 3, 2, 2]
-      // Multipliers: [6048, 1008, 336, 48, 12, 4, 2, 1]
+      // Multipliers computed at compile time from bases (right-to-left product)
+   private:
+      static constexpr uint32_t kBases[] = { 6, 6, 3, 7, 4, 3, 2, 2 };
+      static constexpr size_t kDims = std::size(kBases);
+
+      // Compute multiplier for dimension i: product of bases[i+1..N-1]
+      static constexpr uint32_t Multiplier(size_t i) noexcept {
+      uint32_t m = 1;
+      for (size_t j = i + 1; j < kDims; ++j) m *= kBases[j];
+      return m;
+      }
+
+   public:
+      static constexpr uint32_t kTotalStates = [] {
+      uint32_t t = 1;
+      for (auto b : kBases) t *= b;
+      return t;
+      }();  // 36,288
+
       [[nodiscard]] uint32_t GetHash() const noexcept
       {
-      return static_cast<uint32_t>(health) * 6048 +
-             static_cast<uint32_t>(magicka) * 1008 +
-             static_cast<uint32_t>(distance) * 336 +
-             static_cast<uint32_t>(targetType) * 48 +
-             static_cast<uint32_t>(enemyCount) * 12 +
-             static_cast<uint32_t>(allyStatus) * 4 +
-             static_cast<uint32_t>(inCombat) * 2 +
+      return static_cast<uint32_t>(health)      * Multiplier(0) +
+             static_cast<uint32_t>(magicka)     * Multiplier(1) +
+             static_cast<uint32_t>(distance)    * Multiplier(2) +
+             static_cast<uint32_t>(targetType)  * Multiplier(3) +
+             static_cast<uint32_t>(enemyCount)  * Multiplier(4) +
+             static_cast<uint32_t>(allyStatus)  * Multiplier(5) +
+             static_cast<uint32_t>(inCombat)    * Multiplier(6) +
              static_cast<uint32_t>(isSneaking);
       }
 

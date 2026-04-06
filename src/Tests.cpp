@@ -1473,8 +1473,8 @@ void RunUnitTests()
         .isSneaking = SneakStatus::Sneaking
     };
 
-    if (state2.GetHash() != 36287) {
-        logger::error("TEST FAIL: Max hash should be 36287, got {}"sv, state2.GetHash());
+    if (state2.GetHash() != GameState::kTotalStates - 1) {
+        logger::error("TEST FAIL: Max hash should be {}, got {}"sv, GameState::kTotalStates - 1, state2.GetHash());
         return;
     }
 
@@ -1501,8 +1501,8 @@ void RunUnitTests()
                                     };
 
                                     uint32_t hash = state.GetHash();
-                                    if (hash >= 36288) {
-                                        logger::error("TEST FAIL: Hash {} out of range [0, 36287]"sv, hash);
+                                    if (hash >= GameState::kTotalStates) {
+                                        logger::error("TEST FAIL: Hash {} out of range [0, {}]"sv, hash, GameState::kTotalStates - 1);
                                         return;
                                     }
 
@@ -1521,8 +1521,8 @@ void RunUnitTests()
         }
     }
 
-    if (seenHashes.size() != 36288) {
-        logger::error("TEST FAIL: Should have 36288 unique hashes, got {}"sv, seenHashes.size());
+    if (seenHashes.size() != GameState::kTotalStates) {
+        logger::error("TEST FAIL: Should have {} unique hashes, got {}"sv, GameState::kTotalStates, seenHashes.size());
         return;
     }
 
@@ -1547,7 +1547,7 @@ void RunUnitTests()
         return;
     }
 
-    logger::info("TEST PASS: All hash tests passed! 36288 unique states verified, stamina excluded."sv);
+    logger::info("TEST PASS: All hash tests passed! {} unique states verified, stamina excluded."sv, GameState::kTotalStates);
 
     // === SpellRegistry Unit Tests ===
     logger::info("Running SpellRegistry unit tests..."sv);
