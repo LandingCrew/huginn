@@ -218,6 +218,7 @@ namespace Huginn::State
       // =========================================================================
       // MAIN LOCK SECTION — update targets collection
       // =========================================================================
+      bool changed = false;
       {
       std::unique_lock lock(m_targetsMutex);
 
@@ -673,10 +674,49 @@ namespace Huginn::State
 
       // Sync primary target with targets map
       m_targets.SyncPrimaryTarget();
+
+      // Change detection: compare lightweight digest against previous
+      TargetDigest digest = ComputeTargetDigest();
+      bool changed = !(digest == m_prevTargetDigest);
+      m_prevTargetDigest = digest;
       }
 
-      // Targets are volatile (enemies/allies move, appear, die) - assume changed
-      return true;
+      return changed;
+   }
+
+   StateManager::TargetDigest StateManager::ComputeTargetDigest() const noexcept
+   {
+      TargetDigest digest;
+
+      if (m_targets.primary.has_value()) {
+      const auto& p = *m_targets.primary;
+      digest.primaryFormID = p.actorFormID;
+      digest.primaryTargetType = p.targetType;
+
+      // Discretize distance using same thresholds as StateEvaluator
+      const float dist = p.GetDistanceToPlayer();
+      if (dist <= 256.0f) {
+        digest.primaryDistance = DistanceBucket::Melee;
+      } else if (dist <= 768.0f) {
+        digest.primaryDistance = DistanceBucket::Mid;
+      } else {
+        digest.primaryDistance = DistanceBucket::Ranged;
+      }
+      }
+
+      for (const auto& [formID, target] : m_targets.targets) {
+      if (target.isDead) continue;
+      if (target.isHostile) {
+        ++digest.enemyCount;
+      } else {
+        ++digest.allyCount;
+        if (!digest.hasInjuredAlly && target.vitals.IsHealthLow()) {
+           digest.hasInjuredAlly = true;
+        }
+      }
+      }
+
+      return digest;
    }
 
 } // namespace Huginn::State

@@ -129,6 +129,7 @@ namespace Huginn::State
       }
       m_stickyTargetFormID = 0;
       m_stickyTargetLastSeenTime = 0.0f;
+      m_prevTargetDigest = TargetDigest{};
 
       // --- Actor type cache (race could differ between save files) ---
       m_actorTypeCache.clear();

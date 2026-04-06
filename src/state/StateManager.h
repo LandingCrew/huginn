@@ -359,6 +359,30 @@ namespace Huginn::State
       bool m_wasInCombat = false;  // Previous tick's combat state (single-writer in PollPlayerPosition)
 
       // =============================================================================
+      // TARGET CHANGE DETECTION (Lightweight digest for pipeline skip optimization)
+      // =============================================================================
+      // Instead of comparing the full TargetCollection (expensive unordered_map),
+      // we compare a small digest of the discretized fields that feed into GameState.
+      // If the digest is unchanged, PollTargets returns false → pipeline skips.
+
+      struct TargetDigest
+      {
+         RE::FormID primaryFormID = 0;
+         TargetType primaryTargetType = TargetType::None;
+         DistanceBucket primaryDistance = DistanceBucket::Ranged;
+         int enemyCount = 0;
+         int allyCount = 0;
+         bool hasInjuredAlly = false;
+
+         bool operator==(const TargetDigest&) const = default;
+      };
+
+      TargetDigest m_prevTargetDigest{};
+
+      // Compute digest from current m_targets (called inside lock)
+      [[nodiscard]] TargetDigest ComputeTargetDigest() const noexcept;
+
+      // =============================================================================
       // TARGET TRACKING STATE (Persistent across polls)
       // =============================================================================
 
