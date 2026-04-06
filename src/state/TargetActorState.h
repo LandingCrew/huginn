@@ -496,6 +496,26 @@ namespace Huginn::State
       return lowestFormID;
       }
 
+      // Evict lowest-priority target if at capacity.
+      // Returns true if insertion can proceed (had room or evicted).
+      // Returns false if the new target's priority is lower than all existing (don't insert).
+      bool EvictIfFull(float newPriority) noexcept {
+      if (targets.size() < TargetTracking::MAX_TRACKED_TARGETS) {
+        return true;  // Room available
+      }
+
+      auto lowest = FindLowestPriorityTarget();
+      if (!lowest) return true;
+
+      // Only evict if new target is higher priority
+      auto it = targets.find(*lowest);
+      if (it != targets.end() && newPriority > it->second.priority) {
+        targets.erase(it);
+        return true;
+      }
+      return false;  // New target isn't worth inserting
+      }
+
       // Equality comparison
       bool operator==(const TargetCollection& other) const {
       if (primary != other.primary) {

@@ -386,6 +386,10 @@ namespace Huginn::State
 
             targetState.priority = TargetCollection::CalculatePriority(targetState);
 
+            // Evict lowest-priority target if at capacity (skip if new target is worse)
+            if (!m_targets.targets.contains(formID) && !m_targets.EvictIfFull(targetState.priority)) {
+              continue;
+            }
             m_targets.targets[formID] = targetState;
            }
         }
@@ -621,6 +625,10 @@ namespace Huginn::State
 
             followerState.priority = TargetCollection::CalculatePriority(followerState);
 
+            // Evict lowest-priority target if at capacity (skip if new ally is worse)
+            if (!m_targets.targets.contains(allyFormID) && !m_targets.EvictIfFull(followerState.priority)) {
+              return false;
+            }
             m_targets.targets[allyFormID] = followerState;
             return true;
            };
