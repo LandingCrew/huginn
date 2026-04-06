@@ -770,7 +770,7 @@ namespace Huginn::UI
       // Follower tracking (v0.6.10, enhanced v0.6.12)
       ImGui::TextColored(Colors::HEADER_YELLOW, "Followers:");
       int followerCount = 0;
-      for (const auto& [formID, target] : targets.targets) {
+      for (const auto& target : targets.targets) {
          if (target.isFollower && !target.isDead) {
         ++followerCount;
         // Show HP bar color based on health level
@@ -783,7 +783,7 @@ namespace Huginn::UI
            hpColor = Colors::ACTIVE_INDICATOR;  // Yellow for medium
         }
         ImGui::TextColored(hpColor, "  %08X: %.0f%% HP (%.0f units)",
-                           formID, target.vitals.health * 100.0f, target.GetDistanceToPlayer());
+                           target.actorFormID, target.vitals.health * 100.0f, target.GetDistanceToPlayer());
          }
       }
       if (followerCount == 0) {
@@ -793,7 +793,7 @@ namespace Huginn::UI
       // v0.6.12: Debug - show all tracked targets
       ImGui::Separator();
       ImGui::Text("All Tracked (%zu):", targets.targets.size());
-      for (const auto& [formID, target] : targets.targets) {
+      for (const auto& target : targets.targets) {
          const char* srcName = "?";
          switch (target.source) {
         case State::TargetSource::Crosshair: srcName = "XHR"; break;
@@ -803,7 +803,7 @@ namespace Huginn::UI
         default: break;
          }
          const char* iff = target.isHostile ? "H" : (target.isFollower ? "F" : "A");
-         ImGui::Text("  %08X %s %s %.0f", formID, srcName, iff, target.GetDistanceToPlayer());
+         ImGui::Text("  %08X %s %s %.0f", target.actorFormID, srcName, iff, target.GetDistanceToPlayer());
       }
 
       ImGui::Unindent(8.0f);

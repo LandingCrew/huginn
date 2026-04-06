@@ -930,7 +930,7 @@ void RunStateFeaturesTests()
             primary.distanceToPlayerSq = 512.0f * 512.0f;
             primary.actorFormID = 1;
             targets.primary = primary;
-            targets.targets[1] = primary;
+            targets.InsertOrUpdate(1, primary);
 
             auto f = StateFeatures::FromState(player, targets);
             auto arr = f.ToArray();
@@ -958,7 +958,7 @@ void RunStateFeaturesTests()
         enemy.isHostile = true;
         enemy.distanceToPlayerSq = 256.0f * 256.0f;
         enemy.actorFormID = 1;
-        targets.targets[1] = enemy;
+        targets.InsertOrUpdate(1, enemy);
 
         auto f = StateFeatures::FromState(player, targets);
         float expected = 256.0f / StateFeatures::MAX_DISTANCE;  // 0.0625
@@ -971,7 +971,7 @@ void RunStateFeaturesTests()
         // 4b: Enemy at max range: 4096 units → 4096/4096 = 1.0
         targets.targets.clear();
         enemy.distanceToPlayerSq = 4096.0f * 4096.0f;
-        targets.targets[1] = enemy;
+        targets.InsertOrUpdate(1, enemy);
 
         f = StateFeatures::FromState(player, targets);
         if (!feq(f.distanceNorm, 1.0f)) {
@@ -982,7 +982,7 @@ void RunStateFeaturesTests()
         // 4c: Enemy beyond MAX_DISTANCE: 8192 units → clamped to 1.0
         targets.targets.clear();
         enemy.distanceToPlayerSq = 8192.0f * 8192.0f;
-        targets.targets[1] = enemy;
+        targets.InsertOrUpdate(1, enemy);
 
         f = StateFeatures::FromState(player, targets);
         if (!feq(f.distanceNorm, 1.0f)) {
@@ -997,7 +997,7 @@ void RunStateFeaturesTests()
         sentinel.isHostile = true;
         sentinel.distanceToPlayerSq = 0.0f;  // NO_TARGET sentinel
         sentinel.actorFormID = 2;
-        targets.targets[2] = sentinel;
+        targets.InsertOrUpdate(2, sentinel);
 
         f = StateFeatures::FromState(player, targets);
         if (!feq(f.distanceNorm, 1.0f)) {
@@ -1009,12 +1009,12 @@ void RunStateFeaturesTests()
         // 4e: Sentinel + real enemy coexistence — real enemy should win
         // GetClosestEnemy() must skip sentinel entries so the real enemy is found
         targets.targets.clear();
-        targets.targets[2] = sentinel;  // sentinel at distSq=0.0
+        targets.InsertOrUpdate(2, sentinel);  // sentinel at distSq=0.0
         TargetActorState realEnemy;
         realEnemy.isHostile = true;
         realEnemy.distanceToPlayerSq = 256.0f * 256.0f;
         realEnemy.actorFormID = 3;
-        targets.targets[3] = realEnemy;
+        targets.InsertOrUpdate(3, realEnemy);
 
         f = StateFeatures::FromState(player, targets);
         float expectedReal = 256.0f / StateFeatures::MAX_DISTANCE;
@@ -1045,7 +1045,7 @@ void RunStateFeaturesTests()
         primary.distanceToPlayerSq = 2048.0f * 2048.0f;
         primary.actorFormID = 2;
         targets.primary = primary;
-        targets.targets[2] = primary;
+        targets.InsertOrUpdate(2, primary);
 
         auto f = StateFeatures::FromState(player, targets);
         auto arr = f.ToArray();
@@ -1083,7 +1083,7 @@ void RunStateFeaturesTests()
         enemy.distanceToPlayerSq = 100.0f;  // Very close (~10 units)
         enemy.actorFormID = 3;
         targets.primary = enemy;
-        targets.targets[3] = enemy;
+        targets.InsertOrUpdate(3, enemy);
 
         auto f = StateFeatures::FromState(player, targets);
         auto arr = f.ToArray();
@@ -1108,7 +1108,7 @@ void RunStateFeaturesTests()
         ally.isDead = false;
         ally.distanceToPlayerSq = 100.0f;
         ally.actorFormID = 4;
-        targets.targets[4] = ally;
+        targets.InsertOrUpdate(4, ally);
 
         auto f = StateFeatures::FromState(player, targets);
 
@@ -2194,7 +2194,7 @@ void RunUnitTests()
             castingEnemy.isDead = false;
             castingEnemy.isCasting = true;
 
-            testTargets.targets[castingEnemy.actorFormID] = castingEnemy;
+            testTargets.InsertOrUpdate(castingEnemy.actorFormID, castingEnemy);
 
             auto weights = engine.EvaluateRules(testState, testPlayer, testTargets, testWorld);
 
@@ -2216,7 +2216,7 @@ void RunUnitTests()
                 enemy.actorFormID = 0x10000 + i;
                 enemy.isHostile = true;
                 enemy.isDead = false;
-                testTargets.targets[enemy.actorFormID] = enemy;
+                testTargets.InsertOrUpdate(enemy.actorFormID, enemy);
             }
 
             auto weights = engine.EvaluateRules(testState, testPlayer, testTargets, testWorld);
@@ -2636,7 +2636,8 @@ void RunUnitTests()
                 State::TargetActorState enemy{};
                 enemy.isHostile = true;
                 enemy.isDead = false;
-                targets.targets[formID] = enemy;
+                enemy.actorFormID = formID;
+                targets.InsertOrUpdate(formID, enemy);
             }
 
             State::GameState gameState{};
@@ -2854,7 +2855,7 @@ void RunRegressionTests()
         castingEnemy.isHostile = true;
         castingEnemy.isDead = false;
         castingEnemy.isCasting = true;
-        testTargets.targets[castingEnemy.actorFormID] = castingEnemy;
+        testTargets.InsertOrUpdate(castingEnemy.actorFormID, castingEnemy);
 
         auto weights = engine.EvaluateRules(testState, player, testTargets, testWorld);
 
@@ -2975,7 +2976,7 @@ void RunRegressionTests()
         castingEnemy.isHostile = true;
         castingEnemy.isDead = false;
         castingEnemy.isCasting = true;
-        testTargets.targets[castingEnemy.actorFormID] = castingEnemy;
+        testTargets.InsertOrUpdate(castingEnemy.actorFormID, castingEnemy);
 
         auto weights = engine.EvaluateRules(testState, player, testTargets, testWorld);
 
