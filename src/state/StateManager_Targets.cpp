@@ -633,18 +633,11 @@ namespace Huginn::State
             return true;
            };
 
-           // v0.6.12: Scan ALL process levels for allies
+           // Scan high process list only for allies.
+           // Actors within DETECTION_RANGE (2048) / ALLY_DETECTION_RANGE (512) are
+           // always in the high list. Middle lists add iteration cost in modded games
+           // (hundreds of distant actors) with no practical benefit.
            for (auto& allyHandle : processLists->highActorHandles) {
-            if (auto allyPtr = allyHandle.get()) {
-              processAlly(allyPtr.get());
-            }
-           }
-           for (auto& allyHandle : processLists->middleHighActorHandles) {
-            if (auto allyPtr = allyHandle.get()) {
-              processAlly(allyPtr.get());
-            }
-           }
-           for (auto& allyHandle : processLists->middleLowActorHandles) {
             if (auto allyPtr = allyHandle.get()) {
               processAlly(allyPtr.get());
             }
