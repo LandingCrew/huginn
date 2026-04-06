@@ -77,55 +77,62 @@ namespace Huginn::State
       if (m_accumulatedHealthDamage >= VitalTracking::HEALTH_DAMAGE_THRESHOLD) {
       const float damageAmount = m_accumulatedHealthDamage;
 
-      // Detect damage type by checking active damage effects (v0.6.7)
-      // Query SKSE directly for fresh data (matches healing classification pattern)
-      // Note: GetActiveEffectList() is non-const in SKSE API
+      // Classify damage type using dual-path detection:
+      // 1. TESHitEvent (authoritative for instant damage — knows exact spell/enchant)
+      // 2. ActiveEffect scan (fallback for DoTs with no hit event)
+      // Priority: hit event first, then highest-magnitude active effect.
       DamageType damageType = DamageType::Physical;
-      auto* magicTargetForDamage = player->AsMagicTarget();
-      if (magicTargetForDamage) {
-        auto* activeEffectsForDamage = magicTargetForDamage->GetActiveEffectList();
-        if (activeEffectsForDamage) {
-           for (const auto* effect : *activeEffectsForDamage) {
-            if (!effect || effect->flags.any(RE::ActiveEffect::Flag::kInactive)) {
-              continue;
-            }
 
-            const auto* baseEffect = effect->GetBaseObject();
-            if (!baseEffect || !baseEffect->IsDetrimental()) {
-              continue;
-            }
-
-            // Check for damage effect by resist type (fire/frost/shock/poison/disease)
-            const auto resistAV = baseEffect->data.resistVariable;
-            if (resistAV == RE::ActorValue::kResistFire) {
-              damageType = DamageType::Fire;
-              break;
-            } else if (resistAV == RE::ActorValue::kResistFrost) {
-              damageType = DamageType::Frost;
-              break;
-            } else if (resistAV == RE::ActorValue::kResistShock) {
-              damageType = DamageType::Shock;
-              break;
-            } else if (resistAV == RE::ActorValue::kPoisonResist) {
-              damageType = DamageType::Poison;
-              break;
-            } else if (resistAV == RE::ActorValue::kResistDisease) {
-              damageType = DamageType::Disease;
-              break;
-            }
-           }
-        }
-      }
-
-      // v0.6.8: Check queued TESHitEvent for instant damage classification
-      // If ActiveEffect-based classification failed (returned Physical), use event-based type
-      if (damageType == DamageType::Physical && !queuedHitEvents.empty()) {
-        // Use most recent queued event (last in vector)
+      // Path 1: Check queued TESHitEvent (most reliable for instant damage)
+      if (!queuedHitEvents.empty()) {
         const auto& latestEvent = queuedHitEvents.back();
         if (latestEvent.type != DamageType::Physical) {
            damageType = latestEvent.type;
            logger::trace("[StateManager] Used TESHitEvent for damage type: {}"sv,
             GetDamageTypeName(damageType));
+        }
+      }
+
+      // Path 2: ActiveEffect scan (for DoTs — pick highest magnitude, not first match)
+      if (damageType == DamageType::Physical) {
+        float highestMagnitude = 0.0f;
+        auto* magicTargetForDamage = player->AsMagicTarget();
+        if (magicTargetForDamage) {
+           auto* activeEffectsForDamage = magicTargetForDamage->GetActiveEffectList();
+           if (activeEffectsForDamage) {
+            for (const auto* effect : *activeEffectsForDamage) {
+              if (!effect || effect->flags.any(RE::ActiveEffect::Flag::kInactive)) {
+                continue;
+              }
+
+              const auto* baseEffect = effect->GetBaseObject();
+              if (!baseEffect || !baseEffect->IsDetrimental()) {
+                continue;
+              }
+
+              const auto resistAV = baseEffect->data.resistVariable;
+              DamageType effectType = DamageType::Physical;
+              if (resistAV == RE::ActorValue::kResistFire) {
+                effectType = DamageType::Fire;
+              } else if (resistAV == RE::ActorValue::kResistFrost) {
+                effectType = DamageType::Frost;
+              } else if (resistAV == RE::ActorValue::kResistShock) {
+                effectType = DamageType::Shock;
+              } else if (resistAV == RE::ActorValue::kPoisonResist) {
+                effectType = DamageType::Poison;
+              } else if (resistAV == RE::ActorValue::kResistDisease) {
+                effectType = DamageType::Disease;
+              }
+
+              if (effectType != DamageType::Physical) {
+                float mag = std::abs(effect->magnitude);
+                if (mag > highestMagnitude) {
+                   highestMagnitude = mag;
+                   damageType = effectType;
+                }
+              }
+            }
+           }
         }
       }
 
