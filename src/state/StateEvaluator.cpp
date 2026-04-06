@@ -106,27 +106,6 @@ namespace Huginn::State
       return targets.primary->targetType;
    }
 
-   CombatStatus StateEvaluator::EvaluateCombatStatus() const noexcept
-   {
-      auto* player = GetPlayer();
-      return (player && player->IsInCombat())
-      ? CombatStatus::InCombat
-      : CombatStatus::NotInCombat;
-   }
-
-   SneakStatus StateEvaluator::EvaluateSneakStatus() const noexcept
-   {
-      auto* player = GetPlayer();
-      return (player && player->IsSneaking())
-      ? SneakStatus::Sneaking
-      : SneakStatus::NotSneaking;
-   }
-
-   RE::Actor* StateEvaluator::GetPlayer() const noexcept
-   {
-      return RE::PlayerCharacter::GetSingleton();
-   }
-
    EnemyCountBucket StateEvaluator::EvaluateEnemyCount(const TargetCollection& targets) const
    {
       const int enemyCount = targets.GetEnemyCount();
