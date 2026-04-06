@@ -465,8 +465,14 @@ namespace Huginn::UI
                 int32_t count = (weapon->type == Weapon::WeaponType::Bow)
                     ? playerState.arrowCount : playerState.boltCount;
                 if (count > 0) {
-                    if (!playerState.equippedAmmoName.empty()) {
-                        detail += std::format(" \xC2\xB7 {} x {}", count, playerState.equippedAmmoName);
+                    const char* ammoName = nullptr;
+                    if (playerState.equippedAmmoFormID != 0) {
+                        if (auto* form = RE::TESForm::LookupByID(playerState.equippedAmmoFormID)) {
+                            ammoName = form->GetName();
+                        }
+                    }
+                    if (ammoName && ammoName[0] != '\0') {
+                        detail += std::format(" \xC2\xB7 {} x {}", count, ammoName);
                     } else {
                         detail += std::format(" \xC2\xB7 {} {}",
                             count,

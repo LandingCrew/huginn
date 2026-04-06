@@ -172,13 +172,13 @@ namespace Huginn::State
       std::int32_t newBoltCount = DefaultState::NO_ARROWS;
 
       // Get equipped ammo for bows/crossbows
-      std::string newAmmoName;
+      RE::FormID newAmmoFormID = 0;
       float newAmmoDamage = 0.0f;
       if (newHasBowEquipped || newHasCrossbowEquipped) {
       equippedAmmo = player->GetCurrentAmmo();
       needAmmoCount = (equippedAmmo != nullptr);
       if (equippedAmmo) {
-        newAmmoName = equippedAmmo->GetName();
+        newAmmoFormID = equippedAmmo->GetFormID();
         if (auto* ammo = equippedAmmo->As<RE::TESAmmo>()) {
            newAmmoDamage = ammo->GetRuntimeData().data.damage;
         }
@@ -290,8 +290,8 @@ namespace Huginn::State
         m_playerState.boltCount = newBoltCount;
         changed = true;
       }
-      if (m_playerState.equippedAmmoName != newAmmoName) {
-        m_playerState.equippedAmmoName = std::move(newAmmoName);
+      if (m_playerState.equippedAmmoFormID != newAmmoFormID) {
+        m_playerState.equippedAmmoFormID = newAmmoFormID;
         changed = true;
       }
       if (std::abs(m_playerState.equippedAmmoDamage - newAmmoDamage) >= 0.1f) {
