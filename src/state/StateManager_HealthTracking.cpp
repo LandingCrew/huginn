@@ -48,13 +48,13 @@ namespace Huginn::State
       float currentHealth = actorValueOwner->GetActorValue(RE::ActorValue::kHealth);
 
       // Initialize previous health on first poll
-      if (m_previousHealth < 0.0f) {
-      m_previousHealth = currentHealth;
+      if (m_healthTracker.previousValue < 0.0f) {
+      m_healthTracker.previousValue = currentHealth;
       return false;
       }
 
       // Calculate health delta
-      float healthDelta = currentHealth - m_previousHealth;
+      float healthDelta = currentHealth - m_healthTracker.previousValue;
 
       // v0.6.8: Drain queued TESHitEvent damage types early to avoid stale accumulation
       // These events capture instant damage types that ActiveEffect polling misses
@@ -71,11 +71,11 @@ namespace Huginn::State
 
       // v0.12.x: Accumulate sub-threshold health losses across ticks.
       // A 3 HP/sec poison deals ~0.3 HP per 100ms tick — below the 5.0 HP threshold.
-      VitalTracking::UpdateAccumulator(m_accumulatedHealthDamage, healthDelta);
+      VitalTracking::UpdateAccumulator(m_healthTracker.accumulated, healthDelta);
 
       // Emit damage event when accumulated total crosses threshold
-      if (m_accumulatedHealthDamage >= VitalTracking::HEALTH_DAMAGE_THRESHOLD) {
-      const float damageAmount = m_accumulatedHealthDamage;
+      if (m_healthTracker.accumulated >= VitalTracking::HEALTH_DAMAGE_THRESHOLD) {
+      const float damageAmount = m_healthTracker.accumulated;
 
       // Classify damage type using dual-path detection:
       // 1. TESHitEvent (authoritative for instant damage — knows exact spell/enchant)
@@ -138,7 +138,7 @@ namespace Huginn::State
 
       // Create and record damage event with accumulated amount
       newState.damageHistory.push_back(DamageEvent(gameTime, damageAmount, damageType));
-      m_accumulatedHealthDamage = 0.0f;
+      m_healthTracker.accumulated = 0.0f;
       }
       else if (!queuedHitEvents.empty()) {
       // v0.12.x: Accumulated damage hasn't crossed threshold yet, but DamageEventSink
@@ -148,7 +148,7 @@ namespace Huginn::State
       if (latestEvent.type != DamageType::Physical && latestEvent.type != DamageType::Unknown) {
         newState.damageHistory.push_back(DamageEvent(gameTime, 0.0f, latestEvent.type));
         logger::debug("[StateManager] Sub-threshold elemental hit recorded: {} (accumulated={:.1f}, threshold={:.1f})"sv,
-           GetDamageTypeName(latestEvent.type), m_accumulatedHealthDamage, VitalTracking::HEALTH_DAMAGE_THRESHOLD);
+           GetDamageTypeName(latestEvent.type), m_healthTracker.accumulated, VitalTracking::HEALTH_DAMAGE_THRESHOLD);
       }
       }
 
@@ -326,12 +326,12 @@ namespace Huginn::State
       newState.healingRate = totalHealing / damageWindowSeconds;
 
       // Detect damage trend (increasing/decreasing)
-      float damageRateChange = newState.damageRate - m_previousDamageRate;
+      float damageRateChange = newState.damageRate - m_healthTracker.previousRate;
       newState.damageIncreasing = damageRateChange > VitalTracking::TREND_CHANGE_THRESHOLD;
       newState.damageDecreasing = damageRateChange < -VitalTracking::TREND_CHANGE_THRESHOLD;
 
       // Detect healing trend
-      float healingRateChange = newState.healingRate - m_previousHealingRate;
+      float healingRateChange = newState.healingRate - m_healthTracker.previousSecondaryRate;
       newState.healingIncreasing = healingRateChange > VitalTracking::TREND_CHANGE_THRESHOLD;
       newState.healingDecreasing = healingRateChange < -VitalTracking::TREND_CHANGE_THRESHOLD;
 
@@ -354,9 +354,9 @@ namespace Huginn::State
       }
 
       // Update previous values for next poll (inside lock to prevent data races)
-      m_previousHealth = currentHealth;
-      m_previousDamageRate = newState.damageRate;
-      m_previousHealingRate = newState.healingRate;
+      m_healthTracker.previousValue = currentHealth;
+      m_healthTracker.previousRate = newState.damageRate;
+      m_healthTracker.previousSecondaryRate = newState.healingRate;
       return changed;
       }
    }

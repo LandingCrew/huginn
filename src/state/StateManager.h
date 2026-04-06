@@ -462,43 +462,29 @@ namespace Huginn::State
       void CacheSurvivalGlobals() noexcept;
 
       // =============================================================================
-      // DAMAGE TRACKING STATE (Persistent across polls)
+      // RESOURCE TRACKING STATE (Persistent across polls)
       // =============================================================================
-
-      // Previous health value for delta calculation (-1 indicates not initialized)
-      float m_previousHealth = -1.0f;
-
-      // Previous damage rate for trend detection
-      float m_previousDamageRate = 0.0f;
-
-      // Previous healing rate for trend detection
-      float m_previousHealingRate = 0.0f;
-
-      // =============================================================================
-      // STAMINA/MAGICKA TRACKING STATE (v0.6.9 - Persistent across polls)
-      // =============================================================================
-
-      // Previous stamina value for delta calculation (-1 indicates not initialized)
-      float m_previousStamina = -1.0f;
-
-      // Previous magicka value for delta calculation (-1 indicates not initialized)
-      float m_previousMagicka = -1.0f;
-
-      // Previous usage rates for trend detection
-      float m_previousStaminaUsageRate = 0.0f;
-      float m_previousMagickaUsageRate = 0.0f;
-
-      // =============================================================================
-      // SUB-THRESHOLD ACCUMULATORS (v0.12.x - Small Bleed Detection)
-      // =============================================================================
-      // Accumulate sub-threshold vital losses across ticks. When the running total
-      // crosses the existing threshold, we emit an event and reset. Decays at 0.8×
-      // per idle tick (~310ms half-life) to prevent jitter accumulation.
+      // Per-resource transient state for delta/trend/accumulator tracking.
       // Thread safety: single-writer (only mutated from Poll*Tracking, called by Update).
 
-      float m_accumulatedHealthDamage = 0.0f;
-      float m_accumulatedMagickaUsage = 0.0f;
-      float m_accumulatedStaminaUsage = 0.0f;
+      struct ResourceTracker
+      {
+         float previousValue = -1.0f;       // Previous vital value (-1 = not initialized)
+         float previousRate = 0.0f;          // Previous usage/damage rate (trend detection)
+         float previousSecondaryRate = 0.0f; // Previous healing rate (health only)
+         float accumulated = 0.0f;           // Sub-threshold accumulator (0.8× decay)
+
+         void Reset() noexcept {
+            previousValue = -1.0f;
+            previousRate = 0.0f;
+            previousSecondaryRate = 0.0f;
+            accumulated = 0.0f;
+         }
+      };
+
+      ResourceTracker m_healthTracker;
+      ResourceTracker m_staminaTracker;
+      ResourceTracker m_magickaTracker;
 
       // =============================================================================
       // SOURCE CLASSIFICATION HELPERS (v0.6.9)

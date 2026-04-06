@@ -107,19 +107,10 @@ namespace Huginn::State
          m_magickaTracking = MagickaTrackingState{};
       }
 
-      // --- Delta baselines (sentinel = not initialized, triggers re-init on next poll) ---
-      m_previousHealth = -1.0f;
-      m_previousStamina = -1.0f;
-      m_previousMagicka = -1.0f;
-      m_previousDamageRate = 0.0f;
-      m_previousHealingRate = 0.0f;
-      m_previousStaminaUsageRate = 0.0f;
-      m_previousMagickaUsageRate = 0.0f;
-
-      // --- Sub-threshold accumulators ---
-      m_accumulatedHealthDamage = 0.0f;
-      m_accumulatedStaminaUsage = 0.0f;
-      m_accumulatedMagickaUsage = 0.0f;
+      // --- Resource trackers (delta baselines + accumulators) ---
+      m_healthTracker.Reset();
+      m_staminaTracker.Reset();
+      m_magickaTracker.Reset();
 
       // --- Target tracking ---
       {

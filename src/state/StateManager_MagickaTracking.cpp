@@ -103,13 +103,13 @@ namespace Huginn::State
       float currentMagicka = actorValueOwner->GetActorValue(RE::ActorValue::kMagicka);
 
       // Initialize previous magicka on first poll
-      if (m_previousMagicka < 0.0f) {
-      m_previousMagicka = currentMagicka;
+      if (m_magickaTracker.previousValue < 0.0f) {
+      m_magickaTracker.previousValue = currentMagicka;
       return false;
       }
 
       // Calculate magicka delta
-      float magickaDelta = currentMagicka - m_previousMagicka;
+      float magickaDelta = currentMagicka - m_magickaTracker.previousValue;
 
       // Build new tracking state
       MagickaTrackingState newState;
@@ -127,17 +127,17 @@ namespace Huginn::State
       newState.isHoldingWard = (currentSource == MagickaUsageSource::Ward);
 
       // v0.12.x: Accumulate sub-threshold magicka losses across ticks.
-      VitalTracking::UpdateAccumulator(m_accumulatedMagickaUsage, magickaDelta);
+      VitalTracking::UpdateAccumulator(m_magickaTracker.accumulated, magickaDelta);
 
       // Emit usage event when accumulated total crosses threshold
-      if (m_accumulatedMagickaUsage >= VitalTracking::MAGICKA_USAGE_THRESHOLD) {
-      float usageAmount = m_accumulatedMagickaUsage;
+      if (m_magickaTracker.accumulated >= VitalTracking::MAGICKA_USAGE_THRESHOLD) {
+      float usageAmount = m_magickaTracker.accumulated;
       RE::FormID spellID = 0;
       MagickaUsageSource source = ClassifyMagickaUsage(player, spellID);
 
       MagickaUsageEvent event(gameTime, usageAmount, source, spellID);
       newState.usage.history.push_back(event);
-      m_accumulatedMagickaUsage = 0.0f;
+      m_magickaTracker.accumulated = 0.0f;
       }
 
       // Detect regen (magicka increased)
@@ -221,7 +221,7 @@ namespace Huginn::State
       newState.regen.rate = totalRegen / windowSeconds;
 
       // Detect usage trend (increasing/decreasing)
-      float usageRateChange = newState.usage.rate - m_previousMagickaUsageRate;
+      float usageRateChange = newState.usage.rate - m_magickaTracker.previousRate;
       newState.usage.isIncreasing = usageRateChange > VitalTracking::MAGICKA_TREND_THRESHOLD;
       newState.usage.isDecreasing = usageRateChange < -VitalTracking::MAGICKA_TREND_THRESHOLD;
 
@@ -240,8 +240,8 @@ namespace Huginn::State
       }
 
       // Update previous values for next poll
-      m_previousMagicka = currentMagicka;
-      m_previousMagickaUsageRate = newState.usage.rate;
+      m_magickaTracker.previousValue = currentMagicka;
+      m_magickaTracker.previousRate = newState.usage.rate;
       return changed;
       }
    }
