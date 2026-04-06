@@ -306,12 +306,13 @@ namespace Huginn::State
       MagickaTrackingState m_magickaTracking;   // v0.6.9
 
       // =============================================================================
-      // THREAD SYNCHRONIZATION (3 locks - coarse-grained)
+      // THREAD SYNCHRONIZATION (4 locks)
       // =============================================================================
 
-      mutable std::shared_mutex m_worldMutex;    // Protects WorldState
-      mutable std::shared_mutex m_playerMutex;   // Protects PlayerActorState
-      mutable std::shared_mutex m_targetsMutex;  // Protects TargetCollection
+      mutable std::shared_mutex m_worldMutex;      // Protects WorldState
+      mutable std::shared_mutex m_playerMutex;     // Protects PlayerActorState
+      mutable std::shared_mutex m_targetsMutex;    // Protects TargetCollection
+      mutable std::shared_mutex m_trackingMutex;   // Protects Health/Stamina/MagickaTrackingState
 
       // =============================================================================
       // POLL TIMERS (7 float accumulators)

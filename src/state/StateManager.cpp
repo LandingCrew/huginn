@@ -101,7 +101,7 @@ namespace Huginn::State
 
       // --- Health/Stamina/Magicka tracking state ---
       {
-         std::unique_lock lock(m_playerMutex);
+         std::unique_lock lock(m_trackingMutex);
          m_healthTracking = HealthTrackingState{};
          m_staminaTracking = StaminaTrackingState{};
          m_magickaTracking = MagickaTrackingState{};
@@ -192,19 +192,19 @@ namespace Huginn::State
 
    HealthTrackingState StateManager::GetHealthTracking() const noexcept
    {
-      std::shared_lock lock(m_playerMutex);
+      std::shared_lock lock(m_trackingMutex);
       return m_healthTracking;  // Copy-out pattern
    }
 
    StaminaTrackingState StateManager::GetStaminaTracking() const noexcept
    {
-      std::shared_lock lock(m_playerMutex);
+      std::shared_lock lock(m_trackingMutex);
       return m_staminaTracking;  // Copy-out pattern
    }
 
    MagickaTrackingState StateManager::GetMagickaTracking() const noexcept
    {
-      std::shared_lock lock(m_playerMutex);
+      std::shared_lock lock(m_trackingMutex);
       return m_magickaTracking;  // Copy-out pattern
    }
 

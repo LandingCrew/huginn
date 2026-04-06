@@ -109,7 +109,7 @@ namespace Huginn::State
 
       // Copy existing history (will prune old events below)
       {
-      std::shared_lock lock(m_playerMutex);
+      std::shared_lock lock(m_trackingMutex);
       newState = m_staminaTracking;
       }
 
@@ -212,7 +212,7 @@ namespace Huginn::State
 
       // Stage 3b: Update state with change detection
       {
-      std::unique_lock lock(m_playerMutex);
+      std::unique_lock lock(m_trackingMutex);
       bool changed = (m_staminaTracking != newState);
       if (changed) {
         m_staminaTracking = newState;
