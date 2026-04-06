@@ -183,6 +183,45 @@ namespace Huginn::Input
       return true;
    }
 
+   bool EquipManager::EquipAmmo(RE::FormID formID)
+   {
+      if (formID == 0) {
+      logger::warn("[EquipManager] Cannot equip ammo with FormID 0"sv);
+      return false;
+      }
+
+      auto* player = RE::PlayerCharacter::GetSingleton();
+      if (!player) {
+      logger::warn("[EquipManager] Player not found"sv);
+      return false;
+      }
+
+      auto* equipManager = RE::ActorEquipManager::GetSingleton();
+      if (!equipManager) {
+      logger::warn("[EquipManager] ActorEquipManager not found"sv);
+      return false;
+      }
+
+      auto* form = RE::TESForm::LookupByID(formID);
+      if (!form) {
+      logger::warn("[EquipManager] Ammo FormID {:08X} not found"sv, formID);
+      return false;
+      }
+
+      auto* ammo = form->As<RE::TESAmmo>();
+      if (!ammo) {
+      logger::warn("[EquipManager] FormID {:08X} is not ammo"sv, formID);
+      return false;
+      }
+
+      equipManager->EquipObject(player, ammo);
+
+      logger::info("[EquipManager] Equipped ammo '{}' (FormID: {:08X})"sv,
+      ammo->GetName(), formID);
+
+      return true;
+   }
+
    bool EquipManager::UseSoulGem(RE::FormID formID)
    {
       if (formID == 0) {
@@ -399,6 +438,10 @@ namespace Huginn::Input
            break;
         }
       }
+      break;
+
+      case UI::SlotContentType::Ammo:
+      success = EquipAmmo(content.formID);
       break;
 
       case UI::SlotContentType::SoulGem:

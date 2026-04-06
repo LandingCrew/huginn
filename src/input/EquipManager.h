@@ -80,6 +80,9 @@ namespace Huginn::Input
       /// Equip a weapon by FormID
       bool EquipWeapon(RE::FormID formID, bool leftHand = false);
 
+      /// Equip ammo (arrow/bolt) by FormID
+      bool EquipAmmo(RE::FormID formID);
+
       /// Use a soul gem to recharge the equipped enchanted weapon
       bool UseSoulGem(RE::FormID formID);
 

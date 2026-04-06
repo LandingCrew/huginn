@@ -20,6 +20,7 @@ namespace Huginn::UI
         StaminaPotion,  // Stamina potion (green styling)
         MeleeWeapon,    // Favorited melee weapon
         RangedWeapon,   // Favorited ranged weapon
+        Ammo,           // Arrow or bolt (equip as ammo, not weapon)
         SoulGem         // Soul gem (informational - weapon needs charging)
     };
 
@@ -63,6 +64,9 @@ namespace Huginn::UI
         static SlotContent RangedWeapon(const std::string& name = "Equip Ranged", RE::FormID formID = 0) {
             return { SlotContentType::RangedWeapon, name, 0.0f, formID };
         }
+        static SlotContent Ammo(const std::string& name, RE::FormID formID = 0) {
+            return { SlotContentType::Ammo, name, 0.0f, formID };
+        }
         static SlotContent SoulGem(const std::string& name, RE::FormID formID = 0) {
             return { SlotContentType::SoulGem, name, 0.0f, formID };
         }
@@ -76,6 +80,7 @@ namespace Huginn::UI
                    type == SlotContentType::StaminaPotion;
         }
         bool IsWeapon() const { return type == SlotContentType::MeleeWeapon || type == SlotContentType::RangedWeapon; }
+        bool IsAmmo() const { return type == SlotContentType::Ammo; }
         bool IsSpell() const { return type == SlotContentType::Spell || type == SlotContentType::Wildcard; }
         bool IsSoulGem() const { return type == SlotContentType::SoulGem; }
     };

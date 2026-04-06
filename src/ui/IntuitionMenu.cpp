@@ -430,6 +430,7 @@ namespace Huginn::UI
             case SlotContentType::StaminaPotion: return IntuitionSlotType::kStaminaPotion;
             case SlotContentType::MeleeWeapon:   return IntuitionSlotType::kMeleeWeapon;
             case SlotContentType::RangedWeapon:  return IntuitionSlotType::kRangedWeapon;
+            case SlotContentType::Ammo:          return IntuitionSlotType::kRangedWeapon;  // Arrows/bolts use ranged visual
             case SlotContentType::SoulGem:       return IntuitionSlotType::kSpell;  // Use spell visual for soul gems
             default:                             return IntuitionSlotType::kEmpty;
         }
