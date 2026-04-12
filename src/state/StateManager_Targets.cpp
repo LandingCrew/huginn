@@ -674,6 +674,9 @@ namespace Huginn::State
       // Sync primary target with targets map
       m_targets.SyncPrimaryTarget();
 
+      // Recompute cached aggregates after all mutations
+      m_targets.UpdateCachedCounts();
+
       // Change detection: compare lightweight digest against previous
       TargetDigest digest = ComputeTargetDigest();
       changed = !(digest == m_prevTargetDigest);

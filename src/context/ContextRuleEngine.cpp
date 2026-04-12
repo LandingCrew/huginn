@@ -150,27 +150,34 @@ namespace Huginn::Context
         ContextWeightMap& result,
         const State::PlayerActorState& player) const
     {
+        // Resistance scaling: weight is reduced proportionally to existing resistance.
+        // At 0% resist → full weight, 50% → half weight, 85%+ → near-zero.
+        // Negative resistances (weaknesses) are clamped to not over-amplify.
+        auto resistScale = [](float resistPct) {
+            return std::clamp(1.0f - resistPct * 0.01f, 0.0f, 1.0f);
+        };
+
         // Fire damage → Resist Fire relevant
         if (player.effects.isOnFire) {
-            result.resistFireWeight = m_config.weightOnFire;
+            result.resistFireWeight = m_config.weightOnFire * resistScale(player.resistances.fire);
         }
 
         // Frost damage → Resist Frost relevant
         if (player.effects.isFrozen) {
-            result.resistFrostWeight = m_config.weightFrozen;
+            result.resistFrostWeight = m_config.weightFrozen * resistScale(player.resistances.frost);
         }
 
         // Shock damage → Resist Shock relevant
         if (player.effects.isShocked) {
-            result.resistShockWeight = m_config.weightShocked;
+            result.resistShockWeight = m_config.weightShocked * resistScale(player.resistances.shock);
         }
 
         // Poison → Resist Poison relevant
         if (player.effects.isPoisoned) {
-            result.resistPoisonWeight = m_config.weightPoisoned;
+            result.resistPoisonWeight = m_config.weightPoisoned * resistScale(player.resistances.poison);
         }
 
-        // Disease → Resist Disease relevant
+        // Disease → Resist Disease relevant (no disease resistance tracked)
         if (player.effects.isDiseased) {
             result.resistDiseaseWeight = m_config.weightDiseased;
         }
@@ -281,16 +288,7 @@ namespace Huginn::Context
         // =====================================================================
         // WARD SPELLS (Enemy Casting Detection)
         // =====================================================================
-        // Check if any tracked enemy is casting a spell
-        bool anyCasting = false;
-        for (const auto& target : targets.targets) {
-            if (target.isHostile && !target.isDead && target.isCasting) {
-                anyCasting = true;
-                break;
-            }
-        }
-
-        if (anyCasting) {
+        if (targets.cachedAnyCasting) {
             result.wardWeight = m_config.weightEnemyCasting;  // Already [0,1]
         }
 

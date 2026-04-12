@@ -234,6 +234,10 @@ namespace Huginn::State
       // All tracked targets (flat vector — cache-friendly for N≤50, contiguous copy)
       std::vector<TargetActorState> targets;
 
+      // Cached aggregate counts — call UpdateCachedCounts() after modifying targets
+      int cachedEnemyCount = 0;
+      bool cachedAnyCasting = false;
+
       // =============================================================================
       // LOOKUP HELPERS (linear search — faster than unordered_map for N≤50)
       // =============================================================================
@@ -437,15 +441,24 @@ namespace Huginn::State
       return CountHostilesInRange(2048.0f) >= 3;
       }
 
-      // Get enemy count (all hostile actors)
+      // Get enemy count (all hostile actors) — returns cached value
       [[nodiscard]] int GetEnemyCount() const noexcept {
-      int count = 0;
+      return cachedEnemyCount;
+      }
+
+      // Recompute cached aggregates from current targets.
+      // Called by StateManager after all target mutations are complete.
+      void UpdateCachedCounts() noexcept {
+      cachedEnemyCount = 0;
+      cachedAnyCasting = false;
       for (const auto& target : targets) {
         if (target.isHostile && !target.isDead) {
-           ++count;
+           ++cachedEnemyCount;
+           if (target.isCasting) {
+              cachedAnyCasting = true;
+           }
         }
       }
-      return count;
       }
 
       // =============================================================================
