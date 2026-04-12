@@ -4,7 +4,7 @@
 #include "state/PlayerActorState.h"
 #include "state/TargetActorState.h"
 #include "state/WorldState.h"
-#include "state/ContextWeightConfig.h"
+#include "ContextWeightConfig.h"
 
 namespace Huginn::Context
 {

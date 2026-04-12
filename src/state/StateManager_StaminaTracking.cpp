@@ -96,34 +96,34 @@ namespace Huginn::State
       float currentStamina = actorValueOwner->GetActorValue(RE::ActorValue::kStamina);
 
       // Initialize previous stamina on first poll
-      if (m_previousStamina < 0.0f) {
-      m_previousStamina = currentStamina;
+      if (m_staminaTracker.previousValue < 0.0f) {
+      m_staminaTracker.previousValue = currentStamina;
       return false;
       }
 
       // Calculate stamina delta
-      float staminaDelta = currentStamina - m_previousStamina;
+      float staminaDelta = currentStamina - m_staminaTracker.previousValue;
 
       // Build new tracking state
       StaminaTrackingState newState;
 
       // Copy existing history (will prune old events below)
       {
-      std::shared_lock lock(m_playerMutex);
+      std::shared_lock lock(m_trackingMutex);
       newState = m_staminaTracking;
       }
 
       // v0.12.x: Accumulate sub-threshold stamina losses across ticks.
-      VitalTracking::UpdateAccumulator(m_accumulatedStaminaUsage, staminaDelta);
+      VitalTracking::UpdateAccumulator(m_staminaTracker.accumulated, staminaDelta);
 
       // Emit usage event when accumulated total crosses threshold
-      if (m_accumulatedStaminaUsage >= VitalTracking::STAMINA_USAGE_THRESHOLD) {
-      float usageAmount = m_accumulatedStaminaUsage;
+      if (m_staminaTracker.accumulated >= VitalTracking::STAMINA_USAGE_THRESHOLD) {
+      float usageAmount = m_staminaTracker.accumulated;
       StaminaUsageSource source = ClassifyStaminaUsage(player);
 
       StaminaUsageEvent event(gameTime, usageAmount, source);
       newState.usage.history.push_back(event);
-      m_accumulatedStaminaUsage = 0.0f;
+      m_staminaTracker.accumulated = 0.0f;
       }
 
       // Detect regen (stamina increased)
@@ -206,13 +206,13 @@ namespace Huginn::State
       newState.regen.rate = totalRegen / windowSeconds;
 
       // Detect usage trend (increasing/decreasing)
-      float usageRateChange = newState.usage.rate - m_previousStaminaUsageRate;
+      float usageRateChange = newState.usage.rate - m_staminaTracker.previousRate;
       newState.usage.isIncreasing = usageRateChange > VitalTracking::STAMINA_TREND_THRESHOLD;
       newState.usage.isDecreasing = usageRateChange < -VitalTracking::STAMINA_TREND_THRESHOLD;
 
       // Stage 3b: Update state with change detection
       {
-      std::unique_lock lock(m_playerMutex);
+      std::unique_lock lock(m_trackingMutex);
       bool changed = (m_staminaTracking != newState);
       if (changed) {
         m_staminaTracking = newState;
@@ -225,8 +225,8 @@ namespace Huginn::State
       }
 
       // Update previous values for next poll
-      m_previousStamina = currentStamina;
-      m_previousStaminaUsageRate = newState.usage.rate;
+      m_staminaTracker.previousValue = currentStamina;
+      m_staminaTracker.previousRate = newState.usage.rate;
       return changed;
       }
    }

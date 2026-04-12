@@ -35,11 +35,5 @@ namespace Huginn::State
       [[nodiscard]] EnemyCountBucket EvaluateEnemyCount(const TargetCollection& targets) const;
       [[nodiscard]] AllyStatus EvaluateAllyStatus(const TargetCollection& targets) const;
 
-      // Unchanged (can be simplified later)
-      [[nodiscard]] CombatStatus EvaluateCombatStatus() const noexcept;
-      [[nodiscard]] SneakStatus EvaluateSneakStatus() const noexcept;
-
-      // Helper: Get player actor
-      [[nodiscard]] RE::Actor* GetPlayer() const noexcept;
    };
 }

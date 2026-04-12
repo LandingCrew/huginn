@@ -101,25 +101,16 @@ namespace Huginn::State
 
       // --- Health/Stamina/Magicka tracking state ---
       {
-         std::unique_lock lock(m_playerMutex);
+         std::unique_lock lock(m_trackingMutex);
          m_healthTracking = HealthTrackingState{};
          m_staminaTracking = StaminaTrackingState{};
          m_magickaTracking = MagickaTrackingState{};
       }
 
-      // --- Delta baselines (sentinel = not initialized, triggers re-init on next poll) ---
-      m_previousHealth = -1.0f;
-      m_previousStamina = -1.0f;
-      m_previousMagicka = -1.0f;
-      m_previousDamageRate = 0.0f;
-      m_previousHealingRate = 0.0f;
-      m_previousStaminaUsageRate = 0.0f;
-      m_previousMagickaUsageRate = 0.0f;
-
-      // --- Sub-threshold accumulators ---
-      m_accumulatedHealthDamage = 0.0f;
-      m_accumulatedStaminaUsage = 0.0f;
-      m_accumulatedMagickaUsage = 0.0f;
+      // --- Resource trackers (delta baselines + accumulators) ---
+      m_healthTracker.Reset();
+      m_staminaTracker.Reset();
+      m_magickaTracker.Reset();
 
       // --- Target tracking ---
       {
@@ -129,6 +120,7 @@ namespace Huginn::State
       }
       m_stickyTargetFormID = 0;
       m_stickyTargetLastSeenTime = 0.0f;
+      m_prevTargetDigest = TargetDigest{};
 
       // --- Actor type cache (race could differ between save files) ---
       m_actorTypeCache.clear();
@@ -191,19 +183,19 @@ namespace Huginn::State
 
    HealthTrackingState StateManager::GetHealthTracking() const noexcept
    {
-      std::shared_lock lock(m_playerMutex);
+      std::shared_lock lock(m_trackingMutex);
       return m_healthTracking;  // Copy-out pattern
    }
 
    StaminaTrackingState StateManager::GetStaminaTracking() const noexcept
    {
-      std::shared_lock lock(m_playerMutex);
+      std::shared_lock lock(m_trackingMutex);
       return m_staminaTracking;  // Copy-out pattern
    }
 
    MagickaTrackingState StateManager::GetMagickaTracking() const noexcept
    {
-      std::shared_lock lock(m_playerMutex);
+      std::shared_lock lock(m_trackingMutex);
       return m_magickaTracking;  // Copy-out pattern
    }
 

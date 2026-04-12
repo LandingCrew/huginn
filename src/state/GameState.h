@@ -102,6 +102,20 @@ namespace Huginn::State
       InjuredPresent = 2  // At least one injured ally (health < 30%)
    };
 
+   // Shared name arrays for ToString() and DiffGameState()
+   namespace BucketNames
+   {
+      inline constexpr std::array<const char*, 6> kHealth = { "Critical", "VeryLow", "Low", "Med", "High", "VeryHigh" };
+      inline constexpr std::array<const char*, 6> kMagicka = { "Critical", "VeryLow", "Low", "Med", "High", "VeryHigh" };
+      inline constexpr std::array<const char*, 6> kStamina = { "Critical", "VeryLow", "Low", "Med", "High", "VeryHigh" };
+      inline constexpr std::array<const char*, 3> kDistance = { "Melee", "Mid", "Ranged" };
+      inline constexpr std::array<const char*, 7> kTarget = { "None", "Humanoid", "Undead", "Beast", "Dragon", "Construct", "Daedra" };
+      inline constexpr std::array<const char*, 4> kEnemyCount = { "None", "One", "Few", "Many" };
+      inline constexpr std::array<const char*, 3> kAllyStatus = { "None", "Present", "InjuredPresent" };
+      inline constexpr std::array<const char*, 2> kCombat = { "OutOfCombat", "InCombat" };
+      inline constexpr std::array<const char*, 2> kSneak = { "Standing", "Sneaking" };
+   }
+
    // Complete game state representation
    // Hash states: 6 × 6 × 3 × 7 × 4 × 3 × 2 × 2 = 36,288 (stamina excluded from hash)
    struct GameState
@@ -124,47 +138,54 @@ namespace Huginn::State
       SneakStatus isSneaking;     // 2 states
 
       // Generate unique hash for Q-table lookup
-      // Returns value in range [0, 36287]
+      // Returns value in range [0, kTotalStates - 1]
       // Stamina excluded: PotionDiscriminator reads it directly, ContextRuleEngine uses raw float
       // Multi-radix bases: [6, 6, 3, 7, 4, 3, 2, 2]
-      // Multipliers: [6048, 1008, 336, 48, 12, 4, 2, 1]
+      // Multipliers computed at compile time from bases (right-to-left product)
+   private:
+      static constexpr uint32_t kBases[] = { 6, 6, 3, 7, 4, 3, 2, 2 };
+      static constexpr size_t kDims = std::size(kBases);
+
+      // Compute multiplier for dimension i: product of bases[i+1..N-1]
+      static constexpr uint32_t Multiplier(size_t i) noexcept {
+      uint32_t m = 1;
+      for (size_t j = i + 1; j < kDims; ++j) m *= kBases[j];
+      return m;
+      }
+
+   public:
+      static constexpr uint32_t kTotalStates = [] {
+      uint32_t t = 1;
+      for (auto b : kBases) t *= b;
+      return t;
+      }();  // 36,288
+
       [[nodiscard]] uint32_t GetHash() const noexcept
       {
-      return static_cast<uint32_t>(health) * 6048 +
-             static_cast<uint32_t>(magicka) * 1008 +
-             static_cast<uint32_t>(distance) * 336 +
-             static_cast<uint32_t>(targetType) * 48 +
-             static_cast<uint32_t>(enemyCount) * 12 +
-             static_cast<uint32_t>(allyStatus) * 4 +
-             static_cast<uint32_t>(inCombat) * 2 +
+      return static_cast<uint32_t>(health)      * Multiplier(0) +
+             static_cast<uint32_t>(magicka)     * Multiplier(1) +
+             static_cast<uint32_t>(distance)    * Multiplier(2) +
+             static_cast<uint32_t>(targetType)  * Multiplier(3) +
+             static_cast<uint32_t>(enemyCount)  * Multiplier(4) +
+             static_cast<uint32_t>(allyStatus)  * Multiplier(5) +
+             static_cast<uint32_t>(inCombat)    * Multiplier(6) +
              static_cast<uint32_t>(isSneaking);
       }
 
       // String representation for logging
       [[nodiscard]] std::string ToString() const
       {
-      // Static constexpr arrays - compiled once, not recreated per call
-      static constexpr std::array<const char*, 6> healthNames = { "Critical", "VeryLow", "Low", "Med", "High", "VeryHigh" };
-      static constexpr std::array<const char*, 6> magickaNames = { "Critical", "VeryLow", "Low", "Med", "High", "VeryHigh" };
-      static constexpr std::array<const char*, 6> staminaNames = { "Critical", "VeryLow", "Low", "Med", "High", "VeryHigh" };
-      static constexpr std::array<const char*, 3> distanceNames = { "Melee", "Mid", "Ranged" };
-      static constexpr std::array<const char*, 7> targetNames = { "None", "Humanoid", "Undead", "Beast", "Dragon", "Construct", "Daedra" };
-      static constexpr std::array<const char*, 4> enemyCountNames = { "None", "One", "Few", "Many" };
-      static constexpr std::array<const char*, 3> allyStatusNames = { "None", "Present", "InjuredPresent" };
-      static constexpr std::array<const char*, 2> combatNames = { "OutOfCombat", "InCombat" };
-      static constexpr std::array<const char*, 2> sneakNames = { "Standing", "Sneaking" };
-
       return std::format(
         "GameState[HP:{}, MP:{}, SP:{}, Dist:{}, Target:{}, Enemies:{}, Ally:{}, Combat:{}, Sneak:{}] hash={}",
-        healthNames[std::to_underlying(health)],
-        magickaNames[std::to_underlying(magicka)],
-        staminaNames[std::to_underlying(stamina)],
-        distanceNames[std::to_underlying(distance)],
-        targetNames[std::to_underlying(targetType)],
-        enemyCountNames[std::to_underlying(enemyCount)],
-        allyStatusNames[std::to_underlying(allyStatus)],
-        combatNames[std::to_underlying(inCombat)],
-        sneakNames[std::to_underlying(isSneaking)],
+        BucketNames::kHealth[std::to_underlying(health)],
+        BucketNames::kMagicka[std::to_underlying(magicka)],
+        BucketNames::kStamina[std::to_underlying(stamina)],
+        BucketNames::kDistance[std::to_underlying(distance)],
+        BucketNames::kTarget[std::to_underlying(targetType)],
+        BucketNames::kEnemyCount[std::to_underlying(enemyCount)],
+        BucketNames::kAllyStatus[std::to_underlying(allyStatus)],
+        BucketNames::kCombat[std::to_underlying(inCombat)],
+        BucketNames::kSneak[std::to_underlying(isSneaking)],
         GetHash());
       }
 
@@ -177,15 +198,6 @@ namespace Huginn::State
    // On first call (prev is default-constructed), logs all fields.
    [[nodiscard]] inline std::string DiffGameState(const GameState& prev, const GameState& curr)
    {
-      static constexpr std::array<const char*, 6> healthNames = { "Critical", "VeryLow", "Low", "Med", "High", "VeryHigh" };
-      static constexpr std::array<const char*, 6> magickaNames = { "Critical", "VeryLow", "Low", "Med", "High", "VeryHigh" };
-      static constexpr std::array<const char*, 3> distanceNames = { "Melee", "Mid", "Ranged" };
-      static constexpr std::array<const char*, 7> targetNames = { "None", "Humanoid", "Undead", "Beast", "Dragon", "Construct", "Daedra" };
-      static constexpr std::array<const char*, 4> enemyCountNames = { "None", "One", "Few", "Many" };
-      static constexpr std::array<const char*, 3> allyStatusNames = { "None", "Present", "InjuredPresent" };
-      static constexpr std::array<const char*, 2> combatNames = { "OutOfCombat", "InCombat" };
-      static constexpr std::array<const char*, 2> sneakNames = { "Standing", "Sneaking" };
-
       std::string result;
       auto append = [&](std::string_view field, std::string_view oldVal, std::string_view newVal) {
          if (!result.empty()) result += ", ";
@@ -197,21 +209,21 @@ namespace Huginn::State
       };
 
       if (prev.health != curr.health)
-         append("HP", healthNames[std::to_underlying(prev.health)], healthNames[std::to_underlying(curr.health)]);
+         append("HP", BucketNames::kHealth[std::to_underlying(prev.health)], BucketNames::kHealth[std::to_underlying(curr.health)]);
       if (prev.magicka != curr.magicka)
-         append("MP", magickaNames[std::to_underlying(prev.magicka)], magickaNames[std::to_underlying(curr.magicka)]);
+         append("MP", BucketNames::kMagicka[std::to_underlying(prev.magicka)], BucketNames::kMagicka[std::to_underlying(curr.magicka)]);
       if (prev.distance != curr.distance)
-         append("Dist", distanceNames[std::to_underlying(prev.distance)], distanceNames[std::to_underlying(curr.distance)]);
+         append("Dist", BucketNames::kDistance[std::to_underlying(prev.distance)], BucketNames::kDistance[std::to_underlying(curr.distance)]);
       if (prev.targetType != curr.targetType)
-         append("Target", targetNames[std::to_underlying(prev.targetType)], targetNames[std::to_underlying(curr.targetType)]);
+         append("Target", BucketNames::kTarget[std::to_underlying(prev.targetType)], BucketNames::kTarget[std::to_underlying(curr.targetType)]);
       if (prev.enemyCount != curr.enemyCount)
-         append("Enemies", enemyCountNames[std::to_underlying(prev.enemyCount)], enemyCountNames[std::to_underlying(curr.enemyCount)]);
+         append("Enemies", BucketNames::kEnemyCount[std::to_underlying(prev.enemyCount)], BucketNames::kEnemyCount[std::to_underlying(curr.enemyCount)]);
       if (prev.allyStatus != curr.allyStatus)
-         append("Ally", allyStatusNames[std::to_underlying(prev.allyStatus)], allyStatusNames[std::to_underlying(curr.allyStatus)]);
+         append("Ally", BucketNames::kAllyStatus[std::to_underlying(prev.allyStatus)], BucketNames::kAllyStatus[std::to_underlying(curr.allyStatus)]);
       if (prev.inCombat != curr.inCombat)
-         append("Combat", combatNames[std::to_underlying(prev.inCombat)], combatNames[std::to_underlying(curr.inCombat)]);
+         append("Combat", BucketNames::kCombat[std::to_underlying(prev.inCombat)], BucketNames::kCombat[std::to_underlying(curr.inCombat)]);
       if (prev.isSneaking != curr.isSneaking)
-         append("Sneak", sneakNames[std::to_underlying(prev.isSneaking)], sneakNames[std::to_underlying(curr.isSneaking)]);
+         append("Sneak", BucketNames::kSneak[std::to_underlying(prev.isSneaking)], BucketNames::kSneak[std::to_underlying(curr.isSneaking)]);
 
       if (result.empty()) result = "(no changes)";
       return result;

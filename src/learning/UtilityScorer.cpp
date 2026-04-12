@@ -1,5 +1,5 @@
 #include "UtilityScorer.h"
-#include "state/ContextWeightSettings.h"  // For BuildConfig() in constructor
+#include "context/ContextWeightSettings.h"  // For BuildConfig() in constructor
 #include "util/ScopedTimer.h"
 #include <algorithm>
 #include <chrono>

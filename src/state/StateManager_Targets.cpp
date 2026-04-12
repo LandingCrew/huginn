@@ -48,7 +48,7 @@ namespace Huginn::State
 
    void StateManager::RemoveTarget(RE::FormID formID) noexcept
    {
-      m_targets.targets.erase(formID);
+      m_targets.Remove(formID);
    }
 
    void StateManager::PruneStaleTargets(float gameTime) noexcept
@@ -56,16 +56,16 @@ namespace Huginn::State
       // Remove targets that haven't been seen recently
       std::vector<RE::FormID> toRemove;
 
-      for (const auto& [formID, target] : m_targets.targets) {
+      for (const auto& target : m_targets.targets) {
       float timeSinceLastSeen = gameTime - target.lastSeenTime;
 
       // Remove if out of range timeout
       if (timeSinceLastSeen > TargetTracking::LAST_SEEN_TIMEOUT) {
-        toRemove.push_back(formID);
+        toRemove.push_back(target.actorFormID);
       }
       // Remove if dead for too long
       else if (target.isDead && timeSinceLastSeen > TargetTracking::DEAD_ACTOR_TIMEOUT) {
-        toRemove.push_back(formID);
+        toRemove.push_back(target.actorFormID);
       }
       // Remove if out of detection range - apply differentiated ranges (v0.6.12)
       // Followers/hostiles: 2048 range, Non-follower allies: 512 range
@@ -74,7 +74,7 @@ namespace Huginn::State
                                ? TargetTracking::DETECTION_RANGE_SQ
                                : TargetTracking::ALLY_DETECTION_RANGE_SQ;
         if (target.distanceToPlayerSq > maxRangeSq) {
-           toRemove.push_back(formID);
+           toRemove.push_back(target.actorFormID);
         }
       }
       }
@@ -218,6 +218,7 @@ namespace Huginn::State
       // =========================================================================
       // MAIN LOCK SECTION — update targets collection
       // =========================================================================
+      bool changed = false;
       {
       std::unique_lock lock(m_targetsMutex);
 
@@ -227,9 +228,9 @@ namespace Huginn::State
       if (!inCombat && !m_targets.targets.empty()) {
         RE::FormID primaryFormID = crosshairOrStickyActor ? crosshairOrStickyActor->GetFormID() : 0;
 
-        std::erase_if(m_targets.targets, [primaryFormID](const auto& pair) {
-           if (pair.first == primaryFormID) return false;
-           if (!pair.second.isHostile) return false;
+        std::erase_if(m_targets.targets, [primaryFormID](const auto& target) {
+           if (target.actorFormID == primaryFormID) return false;
+           if (!target.isHostile) return false;
            return true;
         });
 
@@ -320,11 +321,10 @@ namespace Huginn::State
             targetState.isDead = false;
 
             // Vitals polling optimization for secondary targets
-            auto existingIt = m_targets.targets.find(formID);
-            const bool hasExisting = (existingIt != m_targets.targets.end());
+            const auto* existing = m_targets.Find(formID);
             const bool withinVitalsRange = (distSq <= TargetVitalsPolling::VITALS_POLL_DISTANCE_SQ);
-            const bool needsVitalsPoll = !hasExisting ||
-              (withinVitalsRange && existingIt->second.NeedsVitalsPoll(gameTime, TargetVitalsPolling::SECONDARY_VITALS_INTERVAL_MS));
+            const bool needsVitalsPoll = !existing ||
+              (withinVitalsRange && existing->NeedsVitalsPoll(gameTime, TargetVitalsPolling::SECONDARY_VITALS_INTERVAL_MS));
 
             if (needsVitalsPoll) {
               auto* actorValueOwner = actor->AsActorValueOwner();
@@ -352,8 +352,8 @@ namespace Huginn::State
               }
               targetState.lastVitalsPollTime = gameTime;
             } else {
-              targetState.vitals = existingIt->second.vitals;
-              targetState.lastVitalsPollTime = existingIt->second.lastVitalsPollTime;
+              targetState.vitals = existing->vitals;
+              targetState.lastVitalsPollTime = existing->lastVitalsPollTime;
             }
 
             targetState.isCasting = actor->IsCasting(nullptr);
@@ -385,7 +385,11 @@ namespace Huginn::State
 
             targetState.priority = TargetCollection::CalculatePriority(targetState);
 
-            m_targets.targets[formID] = targetState;
+            // Evict lowest-priority target if at capacity (skip if new target is worse)
+            if (!m_targets.Contains(formID) && !m_targets.EvictIfFull(targetState.priority)) {
+              continue;
+            }
+            m_targets.InsertOrUpdate(formID, targetState);
            }
         }
       }
@@ -476,7 +480,7 @@ namespace Huginn::State
 
         primaryState.priority = TargetCollection::CalculatePriority(primaryState);
 
-        m_targets.targets[formID] = primaryState;
+        m_targets.InsertOrUpdate(formID, primaryState);
         m_targets.primary = primaryState;
       } else {
         if (m_targets.primary.has_value()) {
@@ -576,12 +580,11 @@ namespace Huginn::State
             followerState.isFollower = isTeammate;
 
             // Vitals polling optimization for followers
-            auto existingFollowerIt = m_targets.targets.find(allyFormID);
-            const bool hasExistingFollower = (existingFollowerIt != m_targets.targets.end());
+            const auto* existingFollower = m_targets.Find(allyFormID);
             const bool withinFollowerVitalsRange = (followerState.isFollower && TargetVitalsPolling::ALWAYS_POLL_FOLLOWER_VITALS) ||
               (distSq <= TargetVitalsPolling::VITALS_POLL_DISTANCE_SQ);
-            const bool needsFollowerVitalsPoll = !hasExistingFollower ||
-              (withinFollowerVitalsRange && existingFollowerIt->second.NeedsVitalsPoll(gameTime, TargetVitalsPolling::SECONDARY_VITALS_INTERVAL_MS));
+            const bool needsFollowerVitalsPoll = !existingFollower ||
+              (withinFollowerVitalsRange && existingFollower->NeedsVitalsPoll(gameTime, TargetVitalsPolling::SECONDARY_VITALS_INTERVAL_MS));
 
             if (needsFollowerVitalsPoll) {
               auto* allyValueOwner = ally->AsActorValueOwner();
@@ -609,8 +612,8 @@ namespace Huginn::State
               }
               followerState.lastVitalsPollTime = gameTime;
             } else {
-              followerState.vitals = existingFollowerIt->second.vitals;
-              followerState.lastVitalsPollTime = existingFollowerIt->second.lastVitalsPollTime;
+              followerState.vitals = existingFollower->vitals;
+              followerState.lastVitalsPollTime = existingFollower->lastVitalsPollTime;
             }
 
             followerState.level = ally->GetLevel();
@@ -620,22 +623,19 @@ namespace Huginn::State
 
             followerState.priority = TargetCollection::CalculatePriority(followerState);
 
-            m_targets.targets[allyFormID] = followerState;
+            // Evict lowest-priority target if at capacity (skip if new ally is worse)
+            if (!m_targets.Contains(allyFormID) && !m_targets.EvictIfFull(followerState.priority)) {
+              return false;
+            }
+            m_targets.InsertOrUpdate(allyFormID, followerState);
             return true;
            };
 
-           // v0.6.12: Scan ALL process levels for allies
+           // Scan high process list only for allies.
+           // Actors within DETECTION_RANGE (2048) / ALLY_DETECTION_RANGE (512) are
+           // always in the high list. Middle lists add iteration cost in modded games
+           // (hundreds of distant actors) with no practical benefit.
            for (auto& allyHandle : processLists->highActorHandles) {
-            if (auto allyPtr = allyHandle.get()) {
-              processAlly(allyPtr.get());
-            }
-           }
-           for (auto& allyHandle : processLists->middleHighActorHandles) {
-            if (auto allyPtr = allyHandle.get()) {
-              processAlly(allyPtr.get());
-            }
-           }
-           for (auto& allyHandle : processLists->middleLowActorHandles) {
             if (auto allyPtr = allyHandle.get()) {
               processAlly(allyPtr.get());
             }
@@ -647,12 +647,12 @@ namespace Huginn::State
       // UPDATE DISTANCES FOR STALE TARGETS (v0.6.12 fix)
       // =========================================================================
       {
-        for (auto& [formID, target] : m_targets.targets) {
+        for (auto& target : m_targets.targets) {
            if (target.lastSeenTime == gameTime) {
             continue;
            }
 
-           RE::Actor* actor = GetActorByFormID(formID);
+           RE::Actor* actor = GetActorByFormID(target.actorFormID);
            if (!actor) continue;
 
            auto* actor3D = actor->Get3D();
@@ -673,10 +673,49 @@ namespace Huginn::State
 
       // Sync primary target with targets map
       m_targets.SyncPrimaryTarget();
+
+      // Change detection: compare lightweight digest against previous
+      TargetDigest digest = ComputeTargetDigest();
+      changed = !(digest == m_prevTargetDigest);
+      m_prevTargetDigest = digest;
       }
 
-      // Targets are volatile (enemies/allies move, appear, die) - assume changed
-      return true;
+      return changed;
+   }
+
+   StateManager::TargetDigest StateManager::ComputeTargetDigest() const noexcept
+   {
+      TargetDigest digest;
+
+      if (m_targets.primary.has_value()) {
+      const auto& p = *m_targets.primary;
+      digest.primaryFormID = p.actorFormID;
+      digest.primaryTargetType = p.targetType;
+
+      // Discretize distance using same thresholds as StateEvaluator
+      const float dist = p.GetDistanceToPlayer();
+      if (dist <= DistanceThresholds::MELEE_MAX) {
+        digest.primaryDistance = DistanceBucket::Melee;
+      } else if (dist <= DistanceThresholds::MID_MAX) {
+        digest.primaryDistance = DistanceBucket::Mid;
+      } else {
+        digest.primaryDistance = DistanceBucket::Ranged;
+      }
+      }
+
+      for (const auto& target : m_targets.targets) {
+      if (target.isDead) continue;
+      if (target.isHostile) {
+        ++digest.enemyCount;
+      } else {
+        ++digest.allyCount;
+        if (!digest.hasInjuredAlly && target.vitals.IsHealthLow()) {
+           digest.hasInjuredAlly = true;
+        }
+      }
+      }
+
+      return digest;
    }
 
 } // namespace Huginn::State

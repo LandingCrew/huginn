@@ -430,7 +430,7 @@ namespace Huginn::State
     bool hasTorchEquipped = false;
     float weaponChargeMax = 0.0f;
     std::int32_t boltCount = DefaultState::NO_ARROWS;
-    std::string equippedAmmoName;  // Name of currently equipped arrow/bolt (for display)
+    RE::FormID equippedAmmoFormID = 0;  // FormID of equipped arrow/bolt (name looked up at display time)
     float equippedAmmoDamage = 0.0f;  // Base damage of equipped ammo (for bow total damage calc)
 
     // Survival state (player-specific)
@@ -582,7 +582,7 @@ namespace Huginn::State
              hasTorchEquipped == other.hasTorchEquipped &&
              std::abs(weaponChargeMax - other.weaponChargeMax) < Epsilon::WEAPON_CHARGE &&
              boltCount == other.boltCount &&
-             equippedAmmoName == other.equippedAmmoName &&
+             equippedAmmoFormID == other.equippedAmmoFormID &&
              std::abs(equippedAmmoDamage - other.equippedAmmoDamage) < 0.1f &&
              // Survival
              hungerLevel == other.hungerLevel &&

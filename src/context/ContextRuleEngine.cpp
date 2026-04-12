@@ -279,7 +279,7 @@ namespace Huginn::Context
         // =====================================================================
         // Check if any tracked enemy is casting a spell
         bool anyCasting = false;
-        for (const auto& [formID, target] : targets.targets) {
+        for (const auto& target : targets.targets) {
             if (target.isHostile && !target.isDead && target.isCasting) {
                 anyCasting = true;
                 break;

@@ -430,6 +430,7 @@ namespace Huginn::UI
             case SlotContentType::StaminaPotion: return IntuitionSlotType::kStaminaPotion;
             case SlotContentType::MeleeWeapon:   return IntuitionSlotType::kMeleeWeapon;
             case SlotContentType::RangedWeapon:  return IntuitionSlotType::kRangedWeapon;
+            case SlotContentType::Ammo:          return IntuitionSlotType::kRangedWeapon;  // Arrows/bolts use ranged visual
             case SlotContentType::SoulGem:       return IntuitionSlotType::kSpell;  // Use spell visual for soul gems
             default:                             return IntuitionSlotType::kEmpty;
         }
@@ -465,8 +466,14 @@ namespace Huginn::UI
                 int32_t count = (weapon->type == Weapon::WeaponType::Bow)
                     ? playerState.arrowCount : playerState.boltCount;
                 if (count > 0) {
-                    if (!playerState.equippedAmmoName.empty()) {
-                        detail += std::format(" \xC2\xB7 {} x {}", count, playerState.equippedAmmoName);
+                    const char* ammoName = nullptr;
+                    if (playerState.equippedAmmoFormID != 0) {
+                        if (auto* form = RE::TESForm::LookupByID(playerState.equippedAmmoFormID)) {
+                            ammoName = form->GetName();
+                        }
+                    }
+                    if (ammoName && ammoName[0] != '\0') {
+                        detail += std::format(" \xC2\xB7 {} x {}", count, ammoName);
                     } else {
                         detail += std::format(" \xC2\xB7 {} {}",
                             count,

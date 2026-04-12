@@ -4,7 +4,6 @@
 #include "StateConstants.h"     // For distance thresholds, epsilons
 #include "GameState.h"  // For TargetType enum
 #include "StateManagerConstants.h"  // For TargetTracking constants
-#include <unordered_map>
 #include <vector>
 #include <optional>
 #include <algorithm>  // For std::max
@@ -219,12 +218,12 @@ namespace Huginn::State
    //
    // THREAD SAFETY:
    // - Entire struct copied out via StateManager::GetTargets()
-   // - No heap allocations after initialization (std::unordered_map pre-reserved)
+   // - No heap allocations after initialization (std::vector pre-reserved)
    // =============================================================================
 
    struct TargetCollection
    {
-      // Constructor - reserves capacity to avoid rehashing
+      // Constructor - reserves capacity for contiguous storage
       TargetCollection() {
       targets.reserve(TargetTracking::MAX_TRACKED_TARGETS);
       }
@@ -232,9 +231,53 @@ namespace Huginn::State
       // Primary target (crosshair or combat target - highest priority)
       std::optional<TargetActorState> primary;
 
-      // All tracked targets (FormID -> TargetActorState)
-      // Capacity pre-reserved in constructor to avoid rehashing
-      std::unordered_map<RE::FormID, TargetActorState> targets;
+      // All tracked targets (flat vector — cache-friendly for N≤50, contiguous copy)
+      std::vector<TargetActorState> targets;
+
+      // =============================================================================
+      // LOOKUP HELPERS (linear search — faster than unordered_map for N≤50)
+      // =============================================================================
+
+      // Find target by FormID (mutable)
+      [[nodiscard]] TargetActorState* Find(RE::FormID formID) noexcept {
+      for (auto& t : targets) {
+        if (t.actorFormID == formID) return &t;
+      }
+      return nullptr;
+      }
+
+      // Find target by FormID (const)
+      [[nodiscard]] const TargetActorState* Find(RE::FormID formID) const noexcept {
+      for (const auto& t : targets) {
+        if (t.actorFormID == formID) return &t;
+      }
+      return nullptr;
+      }
+
+      // Insert or update target by FormID
+      void InsertOrUpdate(RE::FormID formID, const TargetActorState& state) noexcept {
+      if (auto* existing = Find(formID)) {
+        *existing = state;
+      } else {
+        targets.push_back(state);
+      }
+      }
+
+      // Remove target by FormID (swap-and-pop for O(1) removal)
+      void Remove(RE::FormID formID) noexcept {
+      for (size_t i = 0; i < targets.size(); ++i) {
+        if (targets[i].actorFormID == formID) {
+           targets[i] = targets.back();
+           targets.pop_back();
+           return;
+        }
+      }
+      }
+
+      // Check if target exists
+      [[nodiscard]] bool Contains(RE::FormID formID) const noexcept {
+      return Find(formID) != nullptr;
+      }
 
       // =============================================================================
       // QUERY METHODS
@@ -242,9 +285,8 @@ namespace Huginn::State
 
       // Get target by FormID
       [[nodiscard]] std::optional<TargetActorState> GetTarget(RE::FormID formID) const noexcept {
-      auto it = targets.find(formID);
-      if (it != targets.end()) {
-        return it->second;
+      if (const auto* t = Find(formID)) {
+        return *t;
       }
       return std::nullopt;
       }
@@ -253,7 +295,7 @@ namespace Huginn::State
       [[nodiscard]] std::vector<TargetActorState> GetNearbyEnemies() const {
       std::vector<TargetActorState> enemies;
       enemies.reserve(targets.size());
-      for (const auto& [formID, target] : targets) {
+      for (const auto& target : targets) {
         if (target.isHostile && !target.isDead) {
            enemies.push_back(target);
         }
@@ -261,36 +303,12 @@ namespace Huginn::State
       return enemies;
       }
 
-      // Get all nearby allies (non-hostile actors)
-      [[nodiscard]] std::vector<TargetActorState> GetNearbyAllies() const {
-      std::vector<TargetActorState> allies;
-      allies.reserve(targets.size());
-      for (const auto& [formID, target] : targets) {
-        if (!target.isHostile && !target.isDead) {
-           allies.push_back(target);
-        }
-      }
-      return allies;
-      }
-
-      // Get injured allies (for healing spell recommendations - Phase 7)
-      [[nodiscard]] std::vector<TargetActorState> GetInjuredAllies() const {
-      std::vector<TargetActorState> injured;
-      injured.reserve(targets.size());
-      for (const auto& [formID, target] : targets) {
-        if (!target.isHostile && !target.isDead && target.vitals.IsHealthLow()) {
-           injured.push_back(target);
-        }
-      }
-      return injured;
-      }
-
       // Get most injured ally (for targeted healing recommendations)
       [[nodiscard]] std::optional<TargetActorState> GetMostInjuredAlly() const noexcept {
       std::optional<TargetActorState> mostInjured;
       float lowestHealth = 1.0f;
 
-      for (const auto& [formID, target] : targets) {
+      for (const auto& target : targets) {
         if (!target.isHostile && !target.isDead && target.vitals.health < lowestHealth) {
            lowestHealth = target.vitals.health;
            mostInjured = target;
@@ -310,7 +328,7 @@ namespace Huginn::State
       [[nodiscard]] std::vector<TargetActorState> GetNearbyFollowers() const {
       std::vector<TargetActorState> followers;
       followers.reserve(targets.size());
-      for (const auto& [formID, target] : targets) {
+      for (const auto& target : targets) {
         if (target.isFollower && !target.isDead) {
            followers.push_back(target);
         }
@@ -322,7 +340,7 @@ namespace Huginn::State
       [[nodiscard]] std::vector<TargetActorState> GetInjuredFollowers() const {
       std::vector<TargetActorState> injured;
       injured.reserve(targets.size());
-      for (const auto& [formID, target] : targets) {
+      for (const auto& target : targets) {
         if (target.isFollower && !target.isDead && target.vitals.IsHealthLow()) {
            injured.push_back(target);
         }
@@ -335,7 +353,7 @@ namespace Huginn::State
       std::optional<TargetActorState> mostInjured;
       float lowestHealth = 1.0f;
 
-      for (const auto& [formID, target] : targets) {
+      for (const auto& target : targets) {
         if (target.isFollower && !target.isDead && target.vitals.health < lowestHealth) {
            lowestHealth = target.vitals.health;
            mostInjured = target;
@@ -347,7 +365,7 @@ namespace Huginn::State
       // Count followers
       [[nodiscard]] int GetFollowerCount() const noexcept {
       int count = 0;
-      for (const auto& [formID, target] : targets) {
+      for (const auto& target : targets) {
         if (target.isFollower && !target.isDead) {
            ++count;
         }
@@ -357,7 +375,7 @@ namespace Huginn::State
 
       // Check if any follower is injured (for healing spell recommendations)
       [[nodiscard]] bool HasInjuredFollower() const noexcept {
-      for (const auto& [formID, target] : targets) {
+      for (const auto& target : targets) {
         if (target.isFollower && !target.isDead && target.vitals.IsHealthLow()) {
            return true;
         }
@@ -371,7 +389,7 @@ namespace Huginn::State
       std::optional<TargetActorState> closest;
       float closestDistSq = std::numeric_limits<float>::max();
 
-      for (const auto& [formID, target] : targets) {
+      for (const auto& target : targets) {
         if (target.isHostile && !target.isDead &&
             target.distanceToPlayerSq > DefaultState::NO_TARGET &&
             target.distanceToPlayerSq < closestDistSq) {
@@ -390,7 +408,7 @@ namespace Huginn::State
       [[nodiscard]] int CountHostilesInRange(float maxDistanceUnits) const noexcept {
       const float maxDistSq = maxDistanceUnits * maxDistanceUnits;
       int count = 0;
-      for (const auto& [formID, target] : targets) {
+      for (const auto& target : targets) {
         if (target.isHostile && !target.isDead && target.distanceToPlayerSq <= maxDistSq) {
            ++count;
         }
@@ -400,15 +418,13 @@ namespace Huginn::State
 
       // Count enemies in melee range
       [[nodiscard]] int CountEnemiesInMeleeRange() const noexcept {
-      // PERFORMANCE: Avoid sqrt by passing MELEE_MAX directly
-      // (CountHostilesInRange squares it internally anyway)
       return CountHostilesInRange(DistanceThresholds::MELEE_MAX);
       }
 
       // Count casting enemies (for ward spell recommendations)
       [[nodiscard]] int CountCastingEnemies() const noexcept {
       int count = 0;
-      for (const auto& [formID, target] : targets) {
+      for (const auto& target : targets) {
         if (target.isHostile && !target.isDead && target.isCasting) {
            ++count;
         }
@@ -424,7 +440,7 @@ namespace Huginn::State
       // Get enemy count (all hostile actors)
       [[nodiscard]] int GetEnemyCount() const noexcept {
       int count = 0;
-      for (const auto& [formID, target] : targets) {
+      for (const auto& target : targets) {
         if (target.isHostile && !target.isDead) {
            ++count;
         }
@@ -436,19 +452,13 @@ namespace Huginn::State
       // TARGET SYNCHRONIZATION
       // =============================================================================
 
-      // Synchronize primary target with targets map
-      // EDGE CASE: If primary target was removed from targets map (died, out of range),
-      // this method clears the stale primary reference.
-      // USAGE: Call after PruneStaleTargets() to ensure primary is always valid.
       void SyncPrimaryTarget() {
       if (primary.has_value()) {
-        auto it = targets.find(primary->actorFormID);
-        if (it == targets.end()) {
-           // Primary target no longer tracked - clear it
+        const auto* t = Find(primary->actorFormID);
+        if (!t) {
            primary.reset();
         } else {
-           // Update primary with latest data from targets map
-           primary = it->second;
+           primary = *t;
         }
       }
       }
@@ -458,42 +468,46 @@ namespace Huginn::State
       // =============================================================================
 
       // Calculate priority score for a target (higher = more important to track)
-      // Used for eviction decisions when target collection is full.
-      //
-      // Formula: Priority = (10.0 / distance) + bonuses
-      // - Distance penalty: Closer = higher priority
-      // - Hostility bonus: +5.0 if hostile
-      // - Low health bonus: +3.0 if health < 30%
-      // - Combat target bonus: +10.0 if player's combat target
-      // - Crosshair bonus: +15.0 if crosshair target (highest priority)
-      //
-      // Example scores:
-      // - Crosshair enemy at 256 units, 50% HP: (10/256) + 15 + 5 = ~20.04
-      // - Combat enemy at 512 units, 20% HP: (10/512) + 10 + 5 + 3 = ~18.02
-      // - Nearby enemy at 1024 units, 80% HP: (10/1024) + 5 = ~5.01
-      // - Distant ally at 2048 units, 30% HP: (10/2048) + 3 = ~3.005
-      // Delegate to TargetActorState member function
       [[nodiscard]] static float CalculatePriority(const TargetActorState& target) noexcept {
       return target.CalculatePriority();
       }
 
-      // Find FormID of lowest-priority target (for eviction)
-      [[nodiscard]] std::optional<RE::FormID> FindLowestPriorityTarget() const noexcept {
+      // Find index of lowest-priority target (for eviction)
+      [[nodiscard]] std::optional<size_t> FindLowestPriorityIndex() const noexcept {
       if (targets.empty()) {
         return std::nullopt;
       }
 
-      RE::FormID lowestFormID = 0;
-      float lowestPriority = std::numeric_limits<float>::max();
+      size_t lowestIdx = 0;
+      float lowestPriority = targets[0].priority;
 
-      for (const auto& [formID, target] : targets) {
-        if (target.priority < lowestPriority) {
-           lowestPriority = target.priority;
-           lowestFormID = formID;
+      for (size_t i = 1; i < targets.size(); ++i) {
+        if (targets[i].priority < lowestPriority) {
+           lowestPriority = targets[i].priority;
+           lowestIdx = i;
         }
       }
 
-      return lowestFormID;
+      return lowestIdx;
+      }
+
+      // Evict lowest-priority target if at capacity.
+      // Returns true if insertion can proceed (had room or evicted).
+      // Returns false if the new target's priority is lower than all existing (don't insert).
+      bool EvictIfFull(float newPriority) noexcept {
+      if (targets.size() < TargetTracking::MAX_TRACKED_TARGETS) {
+        return true;
+      }
+
+      auto lowestIdx = FindLowestPriorityIndex();
+      if (!lowestIdx) return true;
+
+      if (newPriority > targets[*lowestIdx].priority) {
+        targets[*lowestIdx] = targets.back();
+        targets.pop_back();
+        return true;
+      }
+      return false;
       }
 
       // Equality comparison
@@ -506,9 +520,9 @@ namespace Huginn::State
         return false;
       }
 
-      for (const auto& [formID, target] : targets) {
-        auto it = other.targets.find(formID);
-        if (it == other.targets.end() || target != it->second) {
+      for (const auto& target : targets) {
+        const auto* otherTarget = other.Find(target.actorFormID);
+        if (!otherTarget || target != *otherTarget) {
            return false;
         }
       }

@@ -306,7 +306,7 @@ namespace Huginn::Scoring
         }
 
         // Check any tracked target
-        for (const auto& [formId, target] : targets.targets) {
+        for (const auto& target : targets.targets) {
             if (target.targetType == State::TargetType::Undead) {
                 return true;
             }

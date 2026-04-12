@@ -106,27 +106,6 @@ namespace Huginn::State
       return targets.primary->targetType;
    }
 
-   CombatStatus StateEvaluator::EvaluateCombatStatus() const noexcept
-   {
-      auto* player = GetPlayer();
-      return (player && player->IsInCombat())
-      ? CombatStatus::InCombat
-      : CombatStatus::NotInCombat;
-   }
-
-   SneakStatus StateEvaluator::EvaluateSneakStatus() const noexcept
-   {
-      auto* player = GetPlayer();
-      return (player && player->IsSneaking())
-      ? SneakStatus::Sneaking
-      : SneakStatus::NotSneaking;
-   }
-
-   RE::Actor* StateEvaluator::GetPlayer() const noexcept
-   {
-      return RE::PlayerCharacter::GetSingleton();
-   }
-
    EnemyCountBucket StateEvaluator::EvaluateEnemyCount(const TargetCollection& targets) const
    {
       const int enemyCount = targets.GetEnemyCount();
@@ -145,15 +124,15 @@ namespace Huginn::State
 
    AllyStatus StateEvaluator::EvaluateAllyStatus(const TargetCollection& targets) const
    {
-      const auto allies = targets.GetNearbyAllies();
+      bool hasAlly = false;
 
-      if (allies.empty()) return AllyStatus::None;
+      for (const auto& target : targets.targets) {
+      if (target.isHostile || target.isDead) continue;
+      hasAlly = true;
+      if (target.vitals.IsHealthLow()) return AllyStatus::InjuredPresent;
+      }
 
-      // Check if any ally is injured
-      const auto injured = targets.GetInjuredAllies();
-      if (!injured.empty()) return AllyStatus::InjuredPresent;
-
-      return AllyStatus::Present;
+      return hasAlly ? AllyStatus::Present : AllyStatus::None;
    }
 
    TargetType StateEvaluator::ClassifyActor(RE::Actor* actor) const

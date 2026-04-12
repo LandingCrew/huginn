@@ -306,12 +306,13 @@ namespace Huginn::State
       MagickaTrackingState m_magickaTracking;   // v0.6.9
 
       // =============================================================================
-      // THREAD SYNCHRONIZATION (3 locks - coarse-grained)
+      // THREAD SYNCHRONIZATION (4 locks)
       // =============================================================================
 
-      mutable std::shared_mutex m_worldMutex;    // Protects WorldState
-      mutable std::shared_mutex m_playerMutex;   // Protects PlayerActorState
-      mutable std::shared_mutex m_targetsMutex;  // Protects TargetCollection
+      mutable std::shared_mutex m_worldMutex;      // Protects WorldState
+      mutable std::shared_mutex m_playerMutex;     // Protects PlayerActorState
+      mutable std::shared_mutex m_targetsMutex;    // Protects TargetCollection
+      mutable std::shared_mutex m_trackingMutex;   // Protects Health/Stamina/MagickaTrackingState
 
       // =============================================================================
       // POLL TIMERS (7 float accumulators)
@@ -357,6 +358,30 @@ namespace Huginn::State
       std::atomic<CombatTransition> m_combatTransition{CombatTransition::None};
       std::atomic<bool> m_isInCombat{false};
       bool m_wasInCombat = false;  // Previous tick's combat state (single-writer in PollPlayerPosition)
+
+      // =============================================================================
+      // TARGET CHANGE DETECTION (Lightweight digest for pipeline skip optimization)
+      // =============================================================================
+      // Instead of comparing the full TargetCollection (expensive unordered_map),
+      // we compare a small digest of the discretized fields that feed into GameState.
+      // If the digest is unchanged, PollTargets returns false → pipeline skips.
+
+      struct TargetDigest
+      {
+         RE::FormID primaryFormID = 0;
+         TargetType primaryTargetType = TargetType::None;
+         DistanceBucket primaryDistance = DistanceBucket::Ranged;
+         int enemyCount = 0;
+         int allyCount = 0;
+         bool hasInjuredAlly = false;
+
+         bool operator==(const TargetDigest&) const = default;
+      };
+
+      TargetDigest m_prevTargetDigest{};
+
+      // Compute digest from current m_targets (called inside lock)
+      [[nodiscard]] TargetDigest ComputeTargetDigest() const noexcept;
 
       // =============================================================================
       // TARGET TRACKING STATE (Persistent across polls)
@@ -437,43 +462,29 @@ namespace Huginn::State
       void CacheSurvivalGlobals() noexcept;
 
       // =============================================================================
-      // DAMAGE TRACKING STATE (Persistent across polls)
+      // RESOURCE TRACKING STATE (Persistent across polls)
       // =============================================================================
-
-      // Previous health value for delta calculation (-1 indicates not initialized)
-      float m_previousHealth = -1.0f;
-
-      // Previous damage rate for trend detection
-      float m_previousDamageRate = 0.0f;
-
-      // Previous healing rate for trend detection
-      float m_previousHealingRate = 0.0f;
-
-      // =============================================================================
-      // STAMINA/MAGICKA TRACKING STATE (v0.6.9 - Persistent across polls)
-      // =============================================================================
-
-      // Previous stamina value for delta calculation (-1 indicates not initialized)
-      float m_previousStamina = -1.0f;
-
-      // Previous magicka value for delta calculation (-1 indicates not initialized)
-      float m_previousMagicka = -1.0f;
-
-      // Previous usage rates for trend detection
-      float m_previousStaminaUsageRate = 0.0f;
-      float m_previousMagickaUsageRate = 0.0f;
-
-      // =============================================================================
-      // SUB-THRESHOLD ACCUMULATORS (v0.12.x - Small Bleed Detection)
-      // =============================================================================
-      // Accumulate sub-threshold vital losses across ticks. When the running total
-      // crosses the existing threshold, we emit an event and reset. Decays at 0.8×
-      // per idle tick (~310ms half-life) to prevent jitter accumulation.
+      // Per-resource transient state for delta/trend/accumulator tracking.
       // Thread safety: single-writer (only mutated from Poll*Tracking, called by Update).
 
-      float m_accumulatedHealthDamage = 0.0f;
-      float m_accumulatedMagickaUsage = 0.0f;
-      float m_accumulatedStaminaUsage = 0.0f;
+      struct ResourceTracker
+      {
+         float previousValue = -1.0f;       // Previous vital value (-1 = not initialized)
+         float previousRate = 0.0f;          // Previous usage/damage rate (trend detection)
+         float previousSecondaryRate = 0.0f; // Previous healing rate (health only)
+         float accumulated = 0.0f;           // Sub-threshold accumulator (0.8× decay)
+
+         void Reset() noexcept {
+            previousValue = -1.0f;
+            previousRate = 0.0f;
+            previousSecondaryRate = 0.0f;
+            accumulated = 0.0f;
+         }
+      };
+
+      ResourceTracker m_healthTracker;
+      ResourceTracker m_staminaTracker;
+      ResourceTracker m_magickaTracker;
 
       // =============================================================================
       // SOURCE CLASSIFICATION HELPERS (v0.6.9)

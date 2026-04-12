@@ -48,13 +48,13 @@ namespace Huginn::State
       float currentHealth = actorValueOwner->GetActorValue(RE::ActorValue::kHealth);
 
       // Initialize previous health on first poll
-      if (m_previousHealth < 0.0f) {
-      m_previousHealth = currentHealth;
+      if (m_healthTracker.previousValue < 0.0f) {
+      m_healthTracker.previousValue = currentHealth;
       return false;
       }
 
       // Calculate health delta
-      float healthDelta = currentHealth - m_previousHealth;
+      float healthDelta = currentHealth - m_healthTracker.previousValue;
 
       // v0.6.8: Drain queued TESHitEvent damage types early to avoid stale accumulation
       // These events capture instant damage types that ActiveEffect polling misses
@@ -65,62 +65,26 @@ namespace Huginn::State
 
       // Copy existing history (will prune old events below)
       {
-      std::shared_lock lock(m_playerMutex);
+      std::shared_lock lock(m_trackingMutex);
       newState = m_healthTracking;
       }
 
       // v0.12.x: Accumulate sub-threshold health losses across ticks.
       // A 3 HP/sec poison deals ~0.3 HP per 100ms tick — below the 5.0 HP threshold.
-      VitalTracking::UpdateAccumulator(m_accumulatedHealthDamage, healthDelta);
+      VitalTracking::UpdateAccumulator(m_healthTracker.accumulated, healthDelta);
 
       // Emit damage event when accumulated total crosses threshold
-      if (m_accumulatedHealthDamage >= VitalTracking::HEALTH_DAMAGE_THRESHOLD) {
-      const float damageAmount = m_accumulatedHealthDamage;
+      if (m_healthTracker.accumulated >= VitalTracking::HEALTH_DAMAGE_THRESHOLD) {
+      const float damageAmount = m_healthTracker.accumulated;
 
-      // Detect damage type by checking active damage effects (v0.6.7)
-      // Query SKSE directly for fresh data (matches healing classification pattern)
-      // Note: GetActiveEffectList() is non-const in SKSE API
+      // Classify damage type using dual-path detection:
+      // 1. TESHitEvent (authoritative for instant damage — knows exact spell/enchant)
+      // 2. ActiveEffect scan (fallback for DoTs with no hit event)
+      // Priority: hit event first, then highest-magnitude active effect.
       DamageType damageType = DamageType::Physical;
-      auto* magicTargetForDamage = player->AsMagicTarget();
-      if (magicTargetForDamage) {
-        auto* activeEffectsForDamage = magicTargetForDamage->GetActiveEffectList();
-        if (activeEffectsForDamage) {
-           for (const auto* effect : *activeEffectsForDamage) {
-            if (!effect || effect->flags.any(RE::ActiveEffect::Flag::kInactive)) {
-              continue;
-            }
 
-            const auto* baseEffect = effect->GetBaseObject();
-            if (!baseEffect || !baseEffect->IsDetrimental()) {
-              continue;
-            }
-
-            // Check for damage effect by resist type (fire/frost/shock/poison/disease)
-            const auto resistAV = baseEffect->data.resistVariable;
-            if (resistAV == RE::ActorValue::kResistFire) {
-              damageType = DamageType::Fire;
-              break;
-            } else if (resistAV == RE::ActorValue::kResistFrost) {
-              damageType = DamageType::Frost;
-              break;
-            } else if (resistAV == RE::ActorValue::kResistShock) {
-              damageType = DamageType::Shock;
-              break;
-            } else if (resistAV == RE::ActorValue::kPoisonResist) {
-              damageType = DamageType::Poison;
-              break;
-            } else if (resistAV == RE::ActorValue::kResistDisease) {
-              damageType = DamageType::Disease;
-              break;
-            }
-           }
-        }
-      }
-
-      // v0.6.8: Check queued TESHitEvent for instant damage classification
-      // If ActiveEffect-based classification failed (returned Physical), use event-based type
-      if (damageType == DamageType::Physical && !queuedHitEvents.empty()) {
-        // Use most recent queued event (last in vector)
+      // Path 1: Check queued TESHitEvent (most reliable for instant damage)
+      if (!queuedHitEvents.empty()) {
         const auto& latestEvent = queuedHitEvents.back();
         if (latestEvent.type != DamageType::Physical) {
            damageType = latestEvent.type;
@@ -129,9 +93,52 @@ namespace Huginn::State
         }
       }
 
+      // Path 2: ActiveEffect scan (for DoTs — pick highest magnitude, not first match)
+      if (damageType == DamageType::Physical) {
+        float highestMagnitude = 0.0f;
+        auto* magicTargetForDamage = player->AsMagicTarget();
+        if (magicTargetForDamage) {
+           auto* activeEffectsForDamage = magicTargetForDamage->GetActiveEffectList();
+           if (activeEffectsForDamage) {
+            for (const auto* effect : *activeEffectsForDamage) {
+              if (!effect || effect->flags.any(RE::ActiveEffect::Flag::kInactive)) {
+                continue;
+              }
+
+              const auto* baseEffect = effect->GetBaseObject();
+              if (!baseEffect || !baseEffect->IsDetrimental()) {
+                continue;
+              }
+
+              const auto resistAV = baseEffect->data.resistVariable;
+              DamageType effectType = DamageType::Physical;
+              if (resistAV == RE::ActorValue::kResistFire) {
+                effectType = DamageType::Fire;
+              } else if (resistAV == RE::ActorValue::kResistFrost) {
+                effectType = DamageType::Frost;
+              } else if (resistAV == RE::ActorValue::kResistShock) {
+                effectType = DamageType::Shock;
+              } else if (resistAV == RE::ActorValue::kPoisonResist) {
+                effectType = DamageType::Poison;
+              } else if (resistAV == RE::ActorValue::kResistDisease) {
+                effectType = DamageType::Disease;
+              }
+
+              if (effectType != DamageType::Physical) {
+                float mag = std::abs(effect->magnitude);
+                if (mag > highestMagnitude) {
+                   highestMagnitude = mag;
+                   damageType = effectType;
+                }
+              }
+            }
+           }
+        }
+      }
+
       // Create and record damage event with accumulated amount
       newState.damageHistory.push_back(DamageEvent(gameTime, damageAmount, damageType));
-      m_accumulatedHealthDamage = 0.0f;
+      m_healthTracker.accumulated = 0.0f;
       }
       else if (!queuedHitEvents.empty()) {
       // v0.12.x: Accumulated damage hasn't crossed threshold yet, but DamageEventSink
@@ -141,7 +148,7 @@ namespace Huginn::State
       if (latestEvent.type != DamageType::Physical && latestEvent.type != DamageType::Unknown) {
         newState.damageHistory.push_back(DamageEvent(gameTime, 0.0f, latestEvent.type));
         logger::debug("[StateManager] Sub-threshold elemental hit recorded: {} (accumulated={:.1f}, threshold={:.1f})"sv,
-           GetDamageTypeName(latestEvent.type), m_accumulatedHealthDamage, VitalTracking::HEALTH_DAMAGE_THRESHOLD);
+           GetDamageTypeName(latestEvent.type), m_healthTracker.accumulated, VitalTracking::HEALTH_DAMAGE_THRESHOLD);
       }
       }
 
@@ -319,18 +326,18 @@ namespace Huginn::State
       newState.healingRate = totalHealing / damageWindowSeconds;
 
       // Detect damage trend (increasing/decreasing)
-      float damageRateChange = newState.damageRate - m_previousDamageRate;
+      float damageRateChange = newState.damageRate - m_healthTracker.previousRate;
       newState.damageIncreasing = damageRateChange > VitalTracking::TREND_CHANGE_THRESHOLD;
       newState.damageDecreasing = damageRateChange < -VitalTracking::TREND_CHANGE_THRESHOLD;
 
       // Detect healing trend
-      float healingRateChange = newState.healingRate - m_previousHealingRate;
+      float healingRateChange = newState.healingRate - m_healthTracker.previousSecondaryRate;
       newState.healingIncreasing = healingRateChange > VitalTracking::TREND_CHANGE_THRESHOLD;
       newState.healingDecreasing = healingRateChange < -VitalTracking::TREND_CHANGE_THRESHOLD;
 
       // Update state with change detection
       {
-      std::unique_lock lock(m_playerMutex);
+      std::unique_lock lock(m_trackingMutex);
       bool changed = (m_healthTracking != newState);
       if (changed) {
         m_healthTracking = newState;
@@ -347,9 +354,9 @@ namespace Huginn::State
       }
 
       // Update previous values for next poll (inside lock to prevent data races)
-      m_previousHealth = currentHealth;
-      m_previousDamageRate = newState.damageRate;
-      m_previousHealingRate = newState.healingRate;
+      m_healthTracker.previousValue = currentHealth;
+      m_healthTracker.previousRate = newState.damageRate;
+      m_healthTracker.previousSecondaryRate = newState.healingRate;
       return changed;
       }
    }

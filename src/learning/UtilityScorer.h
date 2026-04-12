@@ -10,7 +10,7 @@
 #include "state/PlayerActorState.h"
 #include "state/TargetActorState.h"  // Contains TargetCollection
 #include "state/WorldState.h"        // For ContextRuleEngine (Stage 1f)
-#include "state/ContextWeightConfig.h"    // For ContextRuleEngine config
+#include "context/ContextWeightConfig.h"    // For ContextRuleEngine config
 #include "context/ContextRuleEngine.h"    // For ContextRuleEngine (Stage 1f)
 #include "FeatureQLearner.h"
 #include "UsageMemory.h"

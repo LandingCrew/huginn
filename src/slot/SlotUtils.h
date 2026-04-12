@@ -126,7 +126,7 @@ namespace Huginn::Slot
                 return UI::SlotContent::RangedWeapon(name, formID);
 
             case Candidate::SourceType::Ammo:
-                return UI::SlotContent::RangedWeapon(name, formID);
+                return UI::SlotContent::Ammo(name, formID);
 
             case Candidate::SourceType::SoulGem:
                 return UI::SlotContent::SoulGem(name, formID);
