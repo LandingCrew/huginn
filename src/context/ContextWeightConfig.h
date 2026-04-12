@@ -78,6 +78,7 @@ namespace Huginn::State
         float weightNoWeapon = ContextWeightDefaults::NO_WEAPON;
         float weightWeapon = ContextWeightDefaults::WEAPON;
         float weightSpell = ContextWeightDefaults::SPELL;
+        float weightSummon = ContextWeightDefaults::SUMMON;
 
         // Utility baseline
         float weightBaseRelevance = ContextWeightDefaults::BASE_RELEVANCE;
@@ -89,6 +90,7 @@ namespace Huginn::State
         float fHealthSmoothingExponent = ContextWeightDefaults::HEALTH_SMOOTHING_EXPONENT;
         float fMagickaSmoothingExponent = ContextWeightDefaults::MAGICKA_SMOOTHING_EXPONENT;
         float fStaminaSmoothingExponent = ContextWeightDefaults::STAMINA_SMOOTHING_EXPONENT;
+        float fWeaponChargeSmoothingExponent = ContextWeightDefaults::WEAPON_CHARGE_SMOOTHING_EXPONENT;
     };
 
     inline constexpr ContextWeightConfig DefaultContextWeightConfig{};

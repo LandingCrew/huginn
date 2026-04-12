@@ -153,27 +153,27 @@ namespace Huginn::Context
     {
         // Fire damage → Resist Fire relevant
         if (player.effects.isOnFire) {
-            result.resistFireWeight = m_config.weightOnFire * 0.1f;  // Legacy 8.0 → 0.8
+            result.resistFireWeight = m_config.weightOnFire;
         }
 
         // Frost damage → Resist Frost relevant
         if (player.effects.isFrozen) {
-            result.resistFrostWeight = m_config.weightFrozen * 0.1f;  // Legacy 8.0 → 0.8
+            result.resistFrostWeight = m_config.weightFrozen;
         }
 
         // Shock damage → Resist Shock relevant
         if (player.effects.isShocked) {
-            result.resistShockWeight = m_config.weightShocked * 0.1f;  // Legacy 8.0 → 0.8
+            result.resistShockWeight = m_config.weightShocked;
         }
 
         // Poison → Resist Poison relevant
         if (player.effects.isPoisoned) {
-            result.resistPoisonWeight = m_config.weightPoisoned * 0.1f;  // Legacy 6.0 → 0.6
+            result.resistPoisonWeight = m_config.weightPoisoned;
         }
 
         // Disease → Resist Disease relevant
         if (player.effects.isDiseased) {
-            result.resistDiseaseWeight = m_config.weightDiseased * 0.1f;  // Legacy 3.0 → 0.3
+            result.resistDiseaseWeight = m_config.weightDiseased;
         }
     }
 
@@ -205,14 +205,14 @@ namespace Huginn::Context
         // UNDERWATER → Waterbreathing (suppressed if already active)
         // =====================================================================
         if (player.isUnderwater && !player.buffs.hasWaterBreathing) {
-            result.waterbreathingWeight = m_config.weightUnderwater * 0.1f;  // Legacy 10.0 → 1.0
+            result.waterbreathingWeight = m_config.weightUnderwater;
         }
 
         // =====================================================================
         // LOOKING AT LOCK → Unlock spells
         // =====================================================================
         if (world.isLookingAtLock) {
-            result.unlockWeight = m_config.weightLookingAtLock * 0.1f;  // Legacy 10.0 → 1.0
+            result.unlockWeight = m_config.weightLookingAtLock;
         }
 
         // =====================================================================
@@ -220,7 +220,7 @@ namespace Huginn::Context
         // =====================================================================
         // StateManager sets isFalling based on velocity/height threshold
         if (player.isFalling) {
-            result.slowFallWeight = m_config.weightFallingHigh * 0.1f;  // Legacy 8.0 → 0.8
+            result.slowFallWeight = m_config.weightFallingHigh;
         }
 
         // =====================================================================
@@ -307,7 +307,7 @@ namespace Huginn::Context
         // =====================================================================
         // Relevant when in combat AND no active summon
         if (player.isInCombat && !player.buffs.hasActiveSummon) {
-            result.summonWeight = 0.4f;  // Moderate priority (was 4.0 in old scale)
+            result.summonWeight = m_config.weightSummon;
         }
 
         // =====================================================================
@@ -421,8 +421,8 @@ namespace Huginn::Context
         //
         if (player.hasEnchantedWeapon && player.weaponChargePercent < 1.0f) {
             const float chargeDeficit = 1.0f - player.weaponChargePercent;
-            // Quadratic curve for urgency (same pattern as health/magicka)
-            const float chargeWeight = std::pow(chargeDeficit, 2.0f);
+            // Continuous curve for urgency (same pattern as health/magicka)
+            const float chargeWeight = std::pow(chargeDeficit, m_config.fWeaponChargeSmoothingExponent);
             result.weaponChargeWeight = std::clamp(chargeWeight, 0.0f, 1.0f);
         }
 
