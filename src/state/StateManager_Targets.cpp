@@ -694,9 +694,9 @@ namespace Huginn::State
 
       // Discretize distance using same thresholds as StateEvaluator
       const float dist = p.GetDistanceToPlayer();
-      if (dist <= 256.0f) {
+      if (dist <= DistanceThresholds::MELEE_MAX) {
         digest.primaryDistance = DistanceBucket::Melee;
-      } else if (dist <= 768.0f) {
+      } else if (dist <= DistanceThresholds::MID_MAX) {
         digest.primaryDistance = DistanceBucket::Mid;
       } else {
         digest.primaryDistance = DistanceBucket::Ranged;
