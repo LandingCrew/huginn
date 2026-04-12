@@ -222,17 +222,6 @@ namespace Huginn::State
         config.weightFallingHigh = weightFallingHigh * 0.1f;
         config.weightLookingAtLock = weightLookingAtLock * 0.1f;
 
-        config.weightWeaponChargeModerate = weightWeaponChargeModerate;
-        config.weightWeaponChargeLow = weightWeaponChargeLow;
-        config.weightWeaponChargeCritical = weightWeaponChargeCritical;
-
-        config.weightHasWaterbreathing = weightHasWaterbreathing;
-        config.weightHasInvisibility = weightHasInvisibility;
-        config.weightHasMuffle = weightHasMuffle;
-        config.weightHasArmorBuff = weightHasArmorBuff;
-        config.weightHasCloak = weightHasCloak;
-        config.weightHasSummon = weightHasSummon;
-
         // Normalized weights [0,1]
         config.weightCriticalHealth = weightCriticalHealth;
         config.weightLowHealth = weightLowHealth;

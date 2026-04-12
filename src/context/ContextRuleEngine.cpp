@@ -15,7 +15,6 @@ namespace Huginn::Context
     // =============================================================================
 
     ContextWeightMap ContextRuleEngine::EvaluateRules(
-        const State::GameState& state,
         const State::PlayerActorState& player,
         const State::TargetCollection& targets,
         const State::WorldState& world) const
@@ -35,7 +34,7 @@ namespace Huginn::Context
         EvaluateEnvironmentalRules(result, player, world);
 
         // Combat/tactical rules (Stage 1e)
-        EvaluateCombatRules(result, state, player, targets);
+        EvaluateCombatRules(result, player, targets);
 
         // Target-specific rules (Stage 1e)
         EvaluateTargetRules(result, targets);
@@ -226,28 +225,31 @@ namespace Huginn::Context
         // =====================================================================
         // WORKSTATION → Fortify Crafting
         // =====================================================================
-        // Mapping: RE::TESFurniture::WorkBenchData::BenchType values
-        //   1 = Forge, 2 = Smithing       → Fortify Smithing
-        //   3 = Enchanting, 4 = EnchantExp → Fortify Enchanting
-        //   5 = Alchemy, 6 = AlchemyExp    → Fortify Alchemy
+        // RE::TESFurniture::WorkBenchData::BenchType enum values:
+        //   kCreateObject(1), kSmithingWeapon(2), kSmithingArmor(7) → Fortify Smithing
+        //   kEnchanting(3), kEnchantingExperiment(4)                → Fortify Enchanting
+        //   kAlchemy(5), kAlchemyExperiment(6)                      → Fortify Alchemy
         if (world.isLookingAtWorkstation) {
-            const uint8_t type = world.workstationType;
+            using BenchType = RE::TESFurniture::WorkBenchData::BenchType;
+            const auto type = static_cast<BenchType>(world.workstationType);
 
-            // Forge / Smithing workstation
-            if (type == 1 || type == 2) {
-                result.fortifySmithingWeight = m_config.weightAtForge;  // Already [0,1]
+            switch (type) {
+            case BenchType::kCreateObject:
+            case BenchType::kSmithingWeapon:
+            case BenchType::kSmithingArmor:
+                result.fortifySmithingWeight = m_config.weightAtForge;
+                break;
+            case BenchType::kEnchanting:
+            case BenchType::kEnchantingExperiment:
+                result.fortifyEnchantingWeight = m_config.weightAtEnchanter;
+                break;
+            case BenchType::kAlchemy:
+            case BenchType::kAlchemyExperiment:
+                result.fortifyAlchemyWeight = m_config.weightAtAlchemyLab;
+                break;
+            default:
+                break;
             }
-            // Enchanting / Enchanting Experimenter
-            else if (type == 3 || type == 4) {
-                result.fortifyEnchantingWeight = m_config.weightAtEnchanter;  // Already [0,1]
-            }
-            // Alchemy / Alchemy Experimenter
-            else if (type == 5 || type == 6) {
-                result.fortifyAlchemyWeight = m_config.weightAtAlchemyLab;  // Already [0,1]
-            }
-            // Tanning (7), Smelter (8), Cooking (9) — no fortify effects exist
-            // in Skyrim for these, so no weights to set. Handled explicitly to
-            // avoid silent fallthrough when new bench types are added upstream.
         }
     }
 
@@ -266,7 +268,6 @@ namespace Huginn::Context
 
     void ContextRuleEngine::EvaluateCombatRules(
         ContextWeightMap& result,
-        const State::GameState& state,
         const State::PlayerActorState& player,
         const State::TargetCollection& targets) const
     {

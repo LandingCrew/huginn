@@ -1,6 +1,5 @@
 #pragma once
 
-#include "state/GameState.h"
 #include "state/PlayerActorState.h"
 #include "state/TargetActorState.h"
 #include "state/WorldState.h"
@@ -162,12 +161,12 @@ namespace Huginn::Context
     // - Single source of truth for context rules
     // - Reads from INI-configurable ContextWeightSettings
     // - Uses continuous functions (not threshold discontinuities)
-    // - Thread-safe (const methods, no mutable state)
+    // - Game-thread only (SetConfig mutates state without synchronization)
     //
     // USAGE:
     // ```cpp
     // ContextRuleEngine engine(settings);
-    // auto weights = engine.EvaluateRules(state, player, targets, world);
+    // auto weights = engine.EvaluateRules(player, targets, world);
     // float healingWeight = weights.healingWeight;  // 0.0-1.0
     // ```
     // =============================================================================
@@ -190,7 +189,6 @@ namespace Huginn::Context
         /**
          * @brief Evaluate all context rules and produce normalized weights.
          *
-         * @param state Discretized game state (for Q-learning hash)
          * @param player Current player state (vitals, buffs, equipment, position)
          * @param targets Current target collection (enemies, allies, primary target)
          * @param world Current world state (time, light, workstations, locks)
@@ -201,7 +199,6 @@ namespace Huginn::Context
          * different threads.
          */
         [[nodiscard]] ContextWeightMap EvaluateRules(
-            const State::GameState& state,
             const State::PlayerActorState& player,
             const State::TargetCollection& targets,
             const State::WorldState& world) const;
@@ -234,7 +231,6 @@ namespace Huginn::Context
         // Stage 1e: Combat/target/equipment rules
         void EvaluateCombatRules(
             ContextWeightMap& result,
-            const State::GameState& state,
             const State::PlayerActorState& player,
             const State::TargetCollection& targets) const;
 

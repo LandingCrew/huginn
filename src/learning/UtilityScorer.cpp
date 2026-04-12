@@ -38,7 +38,7 @@ namespace Huginn::Scoring
         // Stage 1f: Evaluate context rules ONCE for all candidates
         // This replaces per-candidate relevance from CandidateGenerator
         Context::ContextWeightMap weights = m_contextEngine.EvaluateRules(
-            state, player, targets, world);
+            player, targets, world);
 
         // Phase 3.5c: Pre-compute StateFeatures for FeatureQLearner (once per scoring pass)
         auto stateFeatures = Learning::StateFeatures::FromState(player, targets);
@@ -195,7 +195,7 @@ namespace Huginn::Scoring
     {
         // Stage 1f: Evaluate context rules for single candidate
         Context::ContextWeightMap weights = m_contextEngine.EvaluateRules(
-            state, player, targets, world);
+            player, targets, world);
 
         // Single candidate — no lock amortization benefit, use direct APIs
         RE::FormID formID = Candidate::GetFormID(candidate);

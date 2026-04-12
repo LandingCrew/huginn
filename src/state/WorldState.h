@@ -49,7 +49,7 @@ namespace Huginn::State
       // Workstation detection
       bool isLookingAtWorkstation = false;
       uint8_t workstationType = 0;  // RE::TESFurniture::WorkBenchData::BenchType
-                                 // 0=None, 1=Forge, 2=Smithing, 3=Enchanting, 4=EnchantExp, 5=Alchemy, 6=AlchemyExp, 7=Tanning, 8=Smelter, 9=Cooking
+                                 // 0=None, 1=CreateObject, 2=SmithingWeapon, 3=Enchanting, 4=EnchantingExperiment, 5=Alchemy, 6=AlchemyExperiment, 7=SmithingArmor
 
       // =============================================================================
       // HELPER METHODS

@@ -34,19 +34,6 @@ namespace Huginn::State
         float weightFallingHigh = ContextWeightDefaults::FALLING_HIGH;
         float weightLookingAtLock = ContextWeightDefaults::LOOKING_AT_LOCK;
 
-        // Weapon charge
-        float weightWeaponChargeModerate = ContextWeightDefaults::WEAPON_CHARGE_MODERATE;
-        float weightWeaponChargeLow = ContextWeightDefaults::WEAPON_CHARGE_LOW;
-        float weightWeaponChargeCritical = ContextWeightDefaults::WEAPON_CHARGE_CRITICAL;
-
-        // Active buff suppression
-        float weightHasWaterbreathing = ContextWeightDefaults::HAS_WATERBREATHING;
-        float weightHasInvisibility = ContextWeightDefaults::HAS_INVISIBILITY;
-        float weightHasMuffle = ContextWeightDefaults::HAS_MUFFLE;
-        float weightHasArmorBuff = ContextWeightDefaults::HAS_ARMOR_BUFF;
-        float weightHasCloak = ContextWeightDefaults::HAS_CLOAK;
-        float weightHasSummon = ContextWeightDefaults::HAS_SUMMON;
-
         // =====================================================================
         // NORMALIZED WEIGHTS [0,1] for ContextRuleEngine
         // =====================================================================
