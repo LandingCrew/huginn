@@ -676,7 +676,7 @@ namespace Huginn::State
 
       // Change detection: compare lightweight digest against previous
       TargetDigest digest = ComputeTargetDigest();
-      bool changed = !(digest == m_prevTargetDigest);
+      changed = !(digest == m_prevTargetDigest);
       m_prevTargetDigest = digest;
       }
 
