@@ -218,7 +218,7 @@ namespace Huginn::State
    //
    // THREAD SAFETY:
    // - Entire struct copied out via StateManager::GetTargets()
-   // - No heap allocations after initialization (std::unordered_map pre-reserved)
+   // - No heap allocations after initialization (std::vector pre-reserved)
    // =============================================================================
 
    struct TargetCollection
