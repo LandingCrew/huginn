@@ -132,6 +132,7 @@ namespace Huginn::Context
             maxWeight = std::max(maxWeight, boundWeaponWeight);
             maxWeight = std::max(maxWeight, weaponWeight);
             maxWeight = std::max(maxWeight, spellWeight);
+            maxWeight = std::max(maxWeight, baseRelevanceWeight);
             return maxWeight;
         }
 

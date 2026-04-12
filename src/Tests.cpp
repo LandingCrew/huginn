@@ -2420,18 +2420,22 @@ void RunUnitTests()
             }
         }
 
-        // Test 9c: Weapon charge high (50%) → weaponChargeWeight = 0.0
+        // Test 9c: Weapon charge moderate (50%) → weaponChargeWeight ≈ 0.25
+        // Continuous curve: deficit=0.5, (0.5)^2 = 0.25
         {
             State::PlayerActorState testPlayer{};
 
             testPlayer.hasEnchantedWeapon = true;
-            testPlayer.weaponChargePercent = 0.50f;  // 50% charge (above threshold)
+            testPlayer.weaponChargePercent = 0.50f;  // 50% charge
 
             auto weights = engine.EvaluateRules(testState, testPlayer, testTargets, testWorld);
 
-            if (weights.weaponChargeWeight != 0.0f) {
-                logger::error("TEST FAIL: 50%% charge should give weaponChargeWeight=0.0, got {:.3f}",
-                    weights.weaponChargeWeight);
+            const float expected = 0.25f;
+            const float tolerance = 0.01f;
+
+            if (std::abs(weights.weaponChargeWeight - expected) > tolerance) {
+                logger::error("TEST FAIL: 50%% charge should give weaponChargeWeight≈{:.2f}, got {:.3f}",
+                    expected, weights.weaponChargeWeight);
                 return;
             }
         }

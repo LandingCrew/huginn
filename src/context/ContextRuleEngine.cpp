@@ -202,9 +202,9 @@ namespace Huginn::Context
         const State::WorldState& world) const
     {
         // =====================================================================
-        // UNDERWATER → Waterbreathing
+        // UNDERWATER → Waterbreathing (suppressed if already active)
         // =====================================================================
-        if (player.isUnderwater) {
+        if (player.isUnderwater && !player.buffs.hasWaterBreathing) {
             result.waterbreathingWeight = m_config.weightUnderwater * 0.1f;  // Legacy 10.0 → 1.0
         }
 
@@ -245,6 +245,9 @@ namespace Huginn::Context
             else if (type == 5 || type == 6) {
                 result.fortifyAlchemyWeight = m_config.weightAtAlchemyLab;  // Already [0,1]
             }
+            // Tanning (7), Smelter (8), Cooking (9) — no fortify effects exist
+            // in Skyrim for these, so no weights to set. Handled explicitly to
+            // avoid silent fallthrough when new bench types are added upstream.
         }
     }
 
@@ -308,9 +311,9 @@ namespace Huginn::Context
         }
 
         // =====================================================================
-        // STEALTH (Invisibility/Muffle)
+        // STEALTH (Invisibility/Muffle — suppressed if already invisible)
         // =====================================================================
-        if (player.isSneaking) {
+        if (player.isSneaking && !player.buffs.isInvisible) {
             result.stealthWeight = m_config.weightSneaking;  // Already [0,1]
         }
     }
@@ -407,15 +410,16 @@ namespace Huginn::Context
         // =====================================================================
         // WEAPON CHARGE (Soul Gems)
         // =====================================================================
-        // Continuous scaling based on charge percentage (avoids cliffs)
-        // Formula: weight = (1 - chargePercent) when charge < 25%
+        // Continuous scaling based on charge percentage (same pattern as vitals)
+        // Formula: weight = (1 - chargePercent)^2
         //
         // Examples:
-        //   25% charge: weight ≈ 0.56 (moderate urgency)
-        //   10% charge: weight ≈ 0.81 (high urgency)
-        //    5% charge: weight ≈ 0.87 (critical urgency)
+        //   75% charge: weight ≈ 0.06 (barely noticeable)
+        //   50% charge: weight ≈ 0.25 (moderate urgency)
+        //   25% charge: weight ≈ 0.56 (high urgency)
+        //   10% charge: weight ≈ 0.81 (critical urgency)
         //
-        if (player.hasEnchantedWeapon && player.weaponChargePercent < 0.25f) {
+        if (player.hasEnchantedWeapon && player.weaponChargePercent < 1.0f) {
             const float chargeDeficit = 1.0f - player.weaponChargePercent;
             // Quadratic curve for urgency (same pattern as health/magicka)
             const float chargeWeight = std::pow(chargeDeficit, 2.0f);
