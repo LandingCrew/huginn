@@ -303,30 +303,6 @@ namespace Huginn::State
       return enemies;
       }
 
-      // Get all nearby allies (non-hostile actors)
-      [[nodiscard]] std::vector<TargetActorState> GetNearbyAllies() const {
-      std::vector<TargetActorState> allies;
-      allies.reserve(targets.size());
-      for (const auto& target : targets) {
-        if (!target.isHostile && !target.isDead) {
-           allies.push_back(target);
-        }
-      }
-      return allies;
-      }
-
-      // Get injured allies (for healing spell recommendations - Phase 7)
-      [[nodiscard]] std::vector<TargetActorState> GetInjuredAllies() const {
-      std::vector<TargetActorState> injured;
-      injured.reserve(targets.size());
-      for (const auto& target : targets) {
-        if (!target.isHostile && !target.isDead && target.vitals.IsHealthLow()) {
-           injured.push_back(target);
-        }
-      }
-      return injured;
-      }
-
       // Get most injured ally (for targeted healing recommendations)
       [[nodiscard]] std::optional<TargetActorState> GetMostInjuredAlly() const noexcept {
       std::optional<TargetActorState> mostInjured;
