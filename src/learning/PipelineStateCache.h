@@ -3,6 +3,7 @@
 #include "ScoredCandidate.h"
 #include "slot/SlotAssignment.h"
 #include <chrono>
+#include <limits>
 #include <mutex>
 #include <shared_mutex>
 #include <unordered_map>
@@ -33,11 +34,27 @@ namespace Huginn::Learning
             return instance;
         }
 
-        // Called from UpdateLoop after scoring + allocation
+        // Sentinel rank for candidates beyond the sorted prefix: their true rank
+        // is unknown (partial_sort leaves the tail unordered), so attribution
+        // must treat them as far-miss (B-low), never near-miss. Consumers
+        // compute overshoot = rank - displayedCount, which any real
+        // displayedCount keeps far above FAR_MISS_SLOTS for this value.
+        static constexpr size_t kUnrankedTail = std::numeric_limits<size_t>::max() / 2;
+
+        // Called from UpdateLoop after scoring + allocation.
+        // sortedPrefix: number of leading entries in `scored` that are actually
+        // in utility order (UtilityScorer uses partial_sort for top-N only; the
+        // tail is in unspecified order). Ranks beyond the prefix are stored as
+        // kUnrankedTail so attribution deterministically classifies them as
+        // far-miss instead of reading a meaningless tail index.
+        // NOTE: wildcard swaps run after sorting, so a prefix rank may hold a
+        // wildcard-promoted item — intentional: attribution should see what was
+        // actually surfaced, not the pre-wildcard utility order.
         void Update(
             const Scoring::ScoredCandidateList& scored,
             const Slot::SlotAssignments& currentPageAssignments,
-            size_t currentPage)
+            size_t currentPage,
+            size_t sortedPrefix)
         {
             std::unique_lock lock(m_mutex);
 
@@ -47,7 +64,8 @@ namespace Huginn::Learning
             // Build FormID -> {rank, utility} map from scored candidates
             m_candidateMap.clear();
             for (size_t i = 0; i < scored.size(); ++i) {
-                m_candidateMap[scored[i].GetFormID()] = CachedCandidate{i, scored[i].utility};
+                const size_t rank = (i < sortedPrefix) ? i : kUnrankedTail;
+                m_candidateMap[scored[i].GetFormID()] = CachedCandidate{rank, scored[i].utility};
             }
 
             // Build displayed FormID set from current page assignments

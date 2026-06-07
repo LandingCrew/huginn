@@ -60,16 +60,15 @@ namespace Huginn::Item
 
       // STEP 4: Soul gem capacity encoding (v0.7.8)
       // For soul gems, magnitude encodes capacity level (1.0-6.0)
-      // OPTIMIZATION (v0.7.20 H2): Build keyword set once, then O(1) lookups
+      // Direct keyword scans — allocation-free, early-exit per check
       if (data.type == ItemType::SoulGem) {
       auto* keywordForm = item->As<RE::BGSKeywordForm>();
-      auto keywords = BuildKeywordSet(keywordForm);
-      if      (keywords.contains("SoulGemBlack"))   { data.magnitude = 6.0f; data.tagsExt |= ItemTagExt::SoulGemBlack; }
-      else if (keywords.contains("SoulGemGrand"))   { data.magnitude = 5.0f; data.tagsExt |= ItemTagExt::SoulGemGrand; }
-      else if (keywords.contains("SoulGemGreater")) { data.magnitude = 4.0f; data.tagsExt |= ItemTagExt::SoulGemGreater; }
-      else if (keywords.contains("SoulGemCommon"))  { data.magnitude = 3.0f; data.tagsExt |= ItemTagExt::SoulGemCommon; }
-      else if (keywords.contains("SoulGemLesser"))  { data.magnitude = 2.0f; data.tagsExt |= ItemTagExt::SoulGemLesser; }
-      else if (keywords.contains("SoulGemPetty"))   { data.magnitude = 1.0f; data.tagsExt |= ItemTagExt::SoulGemPetty; }
+      if      (HasKeyword(keywordForm, "SoulGemBlack"))   { data.magnitude = 6.0f; data.tagsExt |= ItemTagExt::SoulGemBlack; }
+      else if (HasKeyword(keywordForm, "SoulGemGrand"))   { data.magnitude = 5.0f; data.tagsExt |= ItemTagExt::SoulGemGrand; }
+      else if (HasKeyword(keywordForm, "SoulGemGreater")) { data.magnitude = 4.0f; data.tagsExt |= ItemTagExt::SoulGemGreater; }
+      else if (HasKeyword(keywordForm, "SoulGemCommon"))  { data.magnitude = 3.0f; data.tagsExt |= ItemTagExt::SoulGemCommon; }
+      else if (HasKeyword(keywordForm, "SoulGemLesser"))  { data.magnitude = 2.0f; data.tagsExt |= ItemTagExt::SoulGemLesser; }
+      else if (HasKeyword(keywordForm, "SoulGemPetty"))   { data.magnitude = 1.0f; data.tagsExt |= ItemTagExt::SoulGemPetty; }
       else data.magnitude = 0.0f;  // Unknown soul gem
       }
 
@@ -617,26 +616,25 @@ namespace Huginn::Item
 
       // =============================================================================
       // KEYWORD-BASED TAGS (CC Survival Mode)
-      // OPTIMIZATION (v0.7.20 H2): Build keyword set once, then O(1) lookups
-      // Reduces O(14n) keyword iterations to O(n + 14) per item
+      // Direct keyword scans — allocation-free, early-exit per check
+      // (items carry 1-5 keywords, so scanning beats building a hash set)
       // NOTE (v0.8): Soul gem tags moved to ItemTagExt, handled in ClassifyItem
       // =============================================================================
 
       auto* keywordForm = item->As<RE::BGSKeywordForm>();
-      auto keywords = BuildKeywordSet(keywordForm);
 
       // Survival mode food keywords
-      if (keywords.contains("Survival_FoodRestoreHunger") ||
-          keywords.contains("Survival_FoodRestoreHungerSmall") ||
-          keywords.contains("Survival_FoodRestoreHungerMedium") ||
-          keywords.contains("Survival_FoodRestoreHungerLarge")) {
+      if (HasKeyword(keywordForm, "Survival_FoodRestoreHunger") ||
+          HasKeyword(keywordForm, "Survival_FoodRestoreHungerSmall") ||
+          HasKeyword(keywordForm, "Survival_FoodRestoreHungerMedium") ||
+          HasKeyword(keywordForm, "Survival_FoodRestoreHungerLarge")) {
       data.tags |= ItemTag::SatisfiesHunger;
       }
 
-      if (keywords.contains("Survival_FoodWarm") ||
-          keywords.contains("Survival_FoodWarmSmall") ||
-          keywords.contains("Survival_FoodWarmMedium") ||
-          keywords.contains("Survival_FoodWarmLarge")) {
+      if (HasKeyword(keywordForm, "Survival_FoodWarm") ||
+          HasKeyword(keywordForm, "Survival_FoodWarmSmall") ||
+          HasKeyword(keywordForm, "Survival_FoodWarmMedium") ||
+          HasKeyword(keywordForm, "Survival_FoodWarmLarge")) {
       data.tags |= ItemTag::SatisfiesCold;
       }
 
@@ -793,9 +791,12 @@ namespace Huginn::Item
    bool ItemClassifier::HasKeyword(const RE::AlchemyItem* item, std::string_view keywordEditorID) const noexcept
    {
       if (!item) return false;
+      return HasKeyword(item->As<RE::BGSKeywordForm>(), keywordEditorID);
+   }
 
-      // Check if item has a specific keyword
-      auto* keywordForm = item->As<RE::BGSKeywordForm>();
+   bool ItemClassifier::HasKeyword(
+      const RE::BGSKeywordForm* keywordForm, std::string_view keywordEditorID) noexcept
+   {
       if (!keywordForm) return false;
 
       for (uint32_t i = 0; i < keywordForm->GetNumKeywords(); ++i) {
@@ -811,39 +812,14 @@ namespace Huginn::Item
       return false;
    }
 
-   // OPTIMIZATION (v0.7.20 H2): Build keyword set once for O(1) lookups
-   // Reduces O(n*k) to O(n + k) where n = keywords on form, k = keywords to check
-   //
-   // LIFETIME SAFETY: The string_view entries point to EditorID strings stored in
-   // Skyrim's static keyword forms. These persist for the game session lifetime,
-   // making the string_views safe to use within this function's scope.
-   std::unordered_set<std::string_view> ItemClassifier::BuildKeywordSet(
-      const RE::BGSKeywordForm* keywordForm) noexcept
-   {
-      std::unordered_set<std::string_view> keywords;
-      if (!keywordForm) return keywords;
-
-      keywords.reserve(keywordForm->GetNumKeywords());
-      for (uint32_t i = 0; i < keywordForm->GetNumKeywords(); ++i) {
-      auto keywordOpt = keywordForm->GetKeywordAt(i);
-      if (keywordOpt.has_value() && keywordOpt.value()) {
-        keywords.insert(keywordOpt.value()->GetFormEditorID());
-      }
-      }
-      return keywords;
-   }
-
    bool ItemClassifier::IsAlcohol(const RE::AlchemyItem* item, std::string_view name) noexcept
    {
       // TIER 1: Keyword-based detection (mod support - CACO, etc.)
       auto* keywordForm = item->As<RE::BGSKeywordForm>();
-      if (keywordForm) {
-         auto keywords = BuildKeywordSet(keywordForm);
-         if (keywords.contains("VendorItemAlcohol") ||
-             keywords.contains("CACO_IsAlcohol") ||
-             keywords.contains("VendorItemSkooma")) {
-            return true;
-         }
+      if (HasKeyword(keywordForm, "VendorItemAlcohol") ||
+          HasKeyword(keywordForm, "CACO_IsAlcohol") ||
+          HasKeyword(keywordForm, "VendorItemSkooma")) {
+         return true;
       }
 
       // TIER 2: Name-based fallback for vanilla and untagged items
@@ -908,17 +884,13 @@ namespace Huginn::Item
       if (!item) return false;
 
       auto* keywordForm = item->As<RE::BGSKeywordForm>();
-      if (!keywordForm) return false;
 
-      // OPTIMIZATION (v0.7.20 H2): Build keyword set once, check against known soul gem keywords
-      auto keywords = BuildKeywordSet(keywordForm);
-
-      // Check against known soul gem keywords
-      return keywords.contains("SoulGemPetty") ||
-             keywords.contains("SoulGemLesser") ||
-             keywords.contains("SoulGemCommon") ||
-             keywords.contains("SoulGemGreater") ||
-             keywords.contains("SoulGemGrand") ||
-             keywords.contains("SoulGemBlack");
+      // Check against known soul gem keywords (direct scans, allocation-free)
+      return HasKeyword(keywordForm, "SoulGemPetty") ||
+             HasKeyword(keywordForm, "SoulGemLesser") ||
+             HasKeyword(keywordForm, "SoulGemCommon") ||
+             HasKeyword(keywordForm, "SoulGemGreater") ||
+             HasKeyword(keywordForm, "SoulGemGrand") ||
+             HasKeyword(keywordForm, "SoulGemBlack");
    }
 }

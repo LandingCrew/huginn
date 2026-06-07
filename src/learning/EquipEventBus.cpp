@@ -53,19 +53,23 @@ namespace Huginn::Learning
         event.rewardMultiplier = rewardMultiplier;
         event.wasRecommended = wasRecommended;
 
-        // Evaluate state once for all subscribers.
-        // StateFeatures are extracted directly from StateManager (continuous features for FQL).
-        // GameState is the discretized version (for UsageMemory context hashing).
+        // Evaluate state once for all subscribers. StateFeatures are extracted
+        // directly (continuous features for FQL); GameState is the discretized
+        // version (for UsageMemory context hashing). Both derive from the SAME
+        // player/targets copies below, so features and gameState can't disagree.
+        // NOTE: each accessor takes its own shared_lock — this is NOT one atomic
+        // StateManager snapshot, and world (fetched later) can skew slightly
+        // relative to player/targets. That's acceptable; the invariant that
+        // matters here is features/gameState consistency.
         auto& stateMgr = State::StateManager::GetSingleton();
-        event.features = StateFeatures::FromState(
-            stateMgr.GetPlayerState(), stateMgr.GetTargets());
+        auto player = stateMgr.GetPlayerState();
+        auto targets = stateMgr.GetTargets();
 
-        if (Huginn::GetStateEvaluator()) {
-            // EvaluateCurrentGameState returns {GameState, PlayerActorState}.
-            // We only need GameState here — PlayerActorState is not stored in the event
-            // because subscribers use the pre-computed StateFeatures instead.
-            auto [gameState, unused_] = EvaluateCurrentGameState();
-            event.gameState = gameState;
+        event.features = StateFeatures::FromState(player, targets);
+
+        if (auto* evaluator = Huginn::GetStateEvaluator()) {
+            auto world = stateMgr.GetWorldState();
+            event.gameState = evaluator->EvaluateCurrentState(world, player, targets);
         }
 
         return event;

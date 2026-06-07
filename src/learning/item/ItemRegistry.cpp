@@ -93,8 +93,12 @@ namespace Huginn::Item
 
       // Build map for fast lookup: FormID -> count (outside critical section)
       // OPTIMIZATION (S5 v0.7.19): Use cached formID instead of calling GetFormID() again
-      std::unordered_map<RE::FormID, int32_t> currentCounts;
-      std::unordered_map<RE::FormID, int32_t> currentFilledCounts;  // v0.10.0: Track fill state
+      // Persistent scratch members (single-caller poll thread, NOT under m_mutex):
+      // clear() keeps the bucket arrays, so the 2 Hz scan is allocation-free.
+      auto& currentCounts = m_scanCounts;
+      auto& currentFilledCounts = m_scanFilledCounts;
+      currentCounts.clear();
+      currentFilledCounts.clear();
       currentCounts.reserve(currentInventory.size() + currentSoulGems.size());
       for (const auto& scanned : currentInventory) {
       currentCounts[scanned.formID] = scanned.count;  // Use cached formID

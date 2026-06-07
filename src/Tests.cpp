@@ -13,6 +13,9 @@
 #include "persist/QLearnerSerializer.h"
 #include "learning/StateFeatures.h"
 #include "learning/FeatureQLearner.h"
+#include "learning/PipelineStateCache.h"
+#include "learning/EquipSourceTracker.h"
+#include "learning/UsageMemory.h"
 #include "util/ScopedTimer.h"
 #include "context/ContextRuleEngine.h"
 
@@ -1625,8 +1628,8 @@ void RunUnitTests()
     healingSpell.baseCost = 100;  // Adept-level healing spell
     healingSpell.type = Spell::SpellType::Healing;
 
-    float healPriorExtreme = priorCalc.CalculatePrior(extremeState, extremePlayer, healingSpell);
-    float healPriorNeutral = priorCalc.CalculatePrior(neutralState, neutralPlayer, healingSpell);
+    float healPriorExtreme = priorCalc.CalculatePrior(extremePlayer, healingSpell);
+    float healPriorNeutral = priorCalc.CalculatePrior(neutralPlayer, healingSpell);
 
     if (std::abs(healPriorExtreme - healPriorNeutral) > 0.001f) {
         logger::error("TEST FAIL: Healing spell prior should be context-independent! Extreme={:.3f}, Neutral={:.3f}",
@@ -1639,8 +1642,8 @@ void RunUnitTests()
     damageSpell.baseCost = 200;  // Expert-level damage spell
     damageSpell.type = Spell::SpellType::Damage;
 
-    float dmgPriorExtreme = priorCalc.CalculatePrior(extremeState, extremePlayer, damageSpell);
-    float dmgPriorNeutral = priorCalc.CalculatePrior(neutralState, neutralPlayer, damageSpell);
+    float dmgPriorExtreme = priorCalc.CalculatePrior(extremePlayer, damageSpell);
+    float dmgPriorNeutral = priorCalc.CalculatePrior(neutralPlayer, damageSpell);
 
     if (std::abs(dmgPriorExtreme - dmgPriorNeutral) > 0.001f) {
         logger::error("TEST FAIL: Damage spell prior should be context-independent! Extreme={:.3f}, Neutral={:.3f}",
@@ -1657,8 +1660,8 @@ void RunUnitTests()
     largePotion.magnitude = 200.0f;  // Extreme healing potion
     largePotion.count = 10;
 
-    float smallPrior = priorCalc.CalculatePrior(neutralState, neutralPlayer, smallPotion);
-    float largePrior = priorCalc.CalculatePrior(neutralState, neutralPlayer, largePotion);
+    float smallPrior = priorCalc.CalculatePrior(neutralPlayer, smallPotion);
+    float largePrior = priorCalc.CalculatePrior(neutralPlayer, largePotion);
 
     if (largePrior <= smallPrior) {
         logger::error("TEST FAIL: Larger magnitude should give higher prior! Small={:.3f}, Large={:.3f}",
@@ -1675,8 +1678,8 @@ void RunUnitTests()
     scarcePotion.magnitude = 100.0f;
     scarcePotion.count = 2;  // Below LOW_COUNT_THRESHOLD
 
-    float plentifulPrior = priorCalc.CalculatePrior(neutralState, neutralPlayer, plentifulPotion);
-    float scarcePrior = priorCalc.CalculatePrior(neutralState, neutralPlayer, scarcePotion);
+    float plentifulPrior = priorCalc.CalculatePrior(neutralPlayer, plentifulPotion);
+    float scarcePrior = priorCalc.CalculatePrior(neutralPlayer, scarcePotion);
 
     if (scarcePrior >= plentifulPrior) {
         logger::error("TEST FAIL: Low count should reduce prior! Plentiful={:.3f}, Scarce={:.3f}",
@@ -1691,8 +1694,8 @@ void RunUnitTests()
     SpellCandidate expertSpell;
     expertSpell.baseCost = 200;  // Expert
 
-    float novicePrior = priorCalc.CalculatePrior(neutralState, neutralPlayer, noviceSpell);
-    float expertPrior = priorCalc.CalculatePrior(neutralState, neutralPlayer, expertSpell);
+    float novicePrior = priorCalc.CalculatePrior(neutralPlayer, noviceSpell);
+    float expertPrior = priorCalc.CalculatePrior(neutralPlayer, expertSpell);
 
     if (expertPrior <= novicePrior) {
         logger::error("TEST FAIL: Higher cost spell should have higher prior! Novice={:.3f}, Expert={:.3f}",
@@ -1711,8 +1714,8 @@ void RunUnitTests()
     lowCharge.currentCharge = 5.0f;
     lowCharge.maxCharge = 100.0f;
 
-    float fullPrior = priorCalc.CalculatePrior(neutralState, neutralPlayer, fullCharge);
-    float lowPrior = priorCalc.CalculatePrior(neutralState, neutralPlayer, lowCharge);
+    float fullPrior = priorCalc.CalculatePrior(neutralPlayer, fullCharge);
+    float lowPrior = priorCalc.CalculatePrior(neutralPlayer, lowCharge);
 
     if (lowPrior >= fullPrior) {
         logger::error("TEST FAIL: Low charge should reduce prior! Full={:.3f}, Low={:.3f}",
@@ -1735,8 +1738,8 @@ void RunUnitTests()
     meleePlayer.hasBowEquipped = false;
     meleePlayer.hasCrossbowEquipped = false;
 
-    float arrowsWithBow = priorCalc.CalculatePrior(neutralState, bowPlayer, arrows);
-    float arrowsWithoutBow = priorCalc.CalculatePrior(neutralState, meleePlayer, arrows);
+    float arrowsWithBow = priorCalc.CalculatePrior(bowPlayer, arrows);
+    float arrowsWithoutBow = priorCalc.CalculatePrior(meleePlayer, arrows);
 
     if (arrowsWithBow <= arrowsWithoutBow) {
         logger::error("TEST FAIL: Compatible ammo should have higher prior! WithBow={:.3f}, WithoutBow={:.3f}",
@@ -1751,8 +1754,8 @@ void RunUnitTests()
     ScrollCandidate damageScroll;
     damageScroll.type = Spell::SpellType::Damage;
 
-    float healScrollPrior = priorCalc.CalculatePrior(neutralState, neutralPlayer, healScroll);
-    float dmgScrollPrior = priorCalc.CalculatePrior(neutralState, neutralPlayer, damageScroll);
+    float healScrollPrior = priorCalc.CalculatePrior(neutralPlayer, healScroll);
+    float dmgScrollPrior = priorCalc.CalculatePrior(neutralPlayer, damageScroll);
 
     if (std::abs(healScrollPrior - dmgScrollPrior) > 0.001f) {
         logger::error("TEST FAIL: All scrolls should have identical prior! Heal={:.3f}, Damage={:.3f}",
@@ -2833,6 +2836,302 @@ void RunUnitTests()
         }
 
         logger::info("TEST PASS: TargetCollection cache invariant holds across InsertOrUpdate/Remove/Clear"sv);
+    }
+
+    // Test 12: PipelineStateCache rank clamping — ranks beyond the sorted prefix
+    // must be clamped to the prefix length, not stored as meaningless tail indices.
+    {
+        logger::info("TEST: PipelineStateCache rank clamping..."sv);
+
+        constexpr size_t kSortedPrefix = 10;
+        constexpr size_t kTotal = 15;
+        constexpr RE::FormID kBaseID = 0xAB0000;
+
+        Scoring::ScoredCandidateList scored;
+        for (size_t i = 0; i < kTotal; ++i) {
+            Candidate::SpellCandidate spell{};
+            spell.formID = static_cast<RE::FormID>(kBaseID + i);
+            Scoring::ScoredCandidate sc{};
+            sc.candidate = spell;
+            sc.utility = static_cast<float>(kTotal - i);  // descending
+            scored.push_back(sc);
+        }
+
+        auto& cache = Learning::PipelineStateCache::GetSingleton();
+        cache.Update(scored, Slot::SlotAssignments{}, 0, kSortedPrefix);
+
+        bool failed = false;
+        for (size_t i = 0; i < kTotal; ++i) {
+            auto info = cache.GetCandidateInfo(static_cast<RE::FormID>(kBaseID + i));
+            if (!info.wasCandidate) {
+                logger::error("TEST FAIL: candidate {} missing from cache", i);
+                failed = true;
+                break;
+            }
+            const size_t expected = (i < kSortedPrefix)
+                ? i
+                : Learning::PipelineStateCache::kUnrankedTail;
+            if (info.rank != expected) {
+                logger::error("TEST FAIL: candidate {} rank should be {}, got {}", i, expected, info.rank);
+                failed = true;
+                break;
+            }
+        }
+        if (failed) return;
+
+        // Restore an empty cache — the singleton is live, and a real external
+        // equip during the next ~100ms must not attribute against test data.
+        cache.Update({}, Slot::SlotAssignments{}, 0, 0);
+
+        logger::info("TEST PASS: PipelineStateCache clamps tail ranks to sorted prefix"sv);
+    }
+
+    // Test 13: EquipSourceTracker FormID keying — a Huginn equip of item X must
+    // not suppress external-equip learning for item Y, and entries must expire.
+    {
+        logger::info("TEST: EquipSourceTracker FormID keying..."sv);
+
+        auto& tracker = Learning::EquipSourceTracker::GetSingleton();
+
+        // The singleton is live and marks linger for the 400ms window — use
+        // 0xFF-prefixed FormIDs (dynamic-form range) that no plugin record has.
+        constexpr RE::FormID kMarkA = 0xFF00AA01;
+        constexpr RE::FormID kUnmarked = 0xFF00BB02;
+        constexpr RE::FormID kMarkB = 0xFF00CC03;
+
+        tracker.MarkHuginnEquip(kMarkA);
+        if (!tracker.IsRecentHuginnEquip(kMarkA)) {
+            logger::error("TEST FAIL: marked FormID should be recent");
+            return;
+        }
+        if (tracker.IsRecentHuginnEquip(kUnmarked)) {
+            logger::error("TEST FAIL: unmarked FormID must NOT be suppressed (cross-item false suppression)");
+            return;
+        }
+
+        // FormID 0 must never match — the ring's empty slots are zero-initialized
+        if (tracker.IsRecentHuginnEquip(0)) {
+            logger::error("TEST FAIL: FormID 0 must never be suppressed");
+            return;
+        }
+
+        // Non-consumption: the game can fire multiple TESEquipEvents for ONE
+        // equip action (e.g. both hands) — repeated checks must all match.
+        tracker.MarkHuginnEquip(kMarkB);
+        if (!tracker.IsRecentHuginnEquip(kMarkB) || !tracker.IsRecentHuginnEquip(kMarkB)) {
+            logger::error("TEST FAIL: repeated checks within window must all match (non-consuming)");
+            return;
+        }
+
+        // Expiry: a tiny window must reject a mark older than it
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        if (tracker.IsRecentHuginnEquip(kMarkB, 1.0f)) {
+            logger::error("TEST FAIL: mark older than window should not be recent");
+            return;
+        }
+        // Still within the default window though. (Wall-clock dependent: assumes
+        // <400ms since the mark — can only flake under extreme scheduler
+        // starvation during startup.)
+        if (!tracker.IsRecentHuginnEquip(kMarkB)) {
+            logger::error("TEST FAIL: mark should still be within default window");
+            return;
+        }
+
+        logger::info("TEST PASS: EquipSourceTracker is FormID-keyed, non-consuming, with window expiry"sv);
+    }
+
+    // Test 14: UsageMemory snapshot reader — misclick detection semantics, recency
+    // boost, and (critically) RecordUsage while a reader is alive. Under the old
+    // lock-holding reader, same-thread RecordUsage during a scoring pass would
+    // deadlock (shared_lock held + unique_lock requested on one thread).
+    {
+        logger::info("TEST: UsageMemory snapshot reader..."sv);
+
+        Learning::UsageMemory memory;
+        State::GameState ctxA{};
+        State::GameState ctxB{};
+        // GameState{} zero-inits every bucket, and Critical IS 0 — so the
+        // different-context state must use a nonzero bucket value.
+        ctxB.health = State::HealthBucket::VeryHigh;  // different hash from ctxA
+
+        // Misclick: different item, same context, fast switch
+        memory.RecordUsage(0x1111, ctxA);
+        auto misclick = memory.RecordUsage(0x2222, ctxA);
+        if (!misclick.detected || misclick.previousFormID != 0x1111) {
+            logger::error("TEST FAIL: fast same-context switch should flag misclick of previous item");
+            return;
+        }
+
+        // No misclick across different contexts
+        auto noMisclick = memory.RecordUsage(0x3333, ctxB);
+        if (noMisclick.detected) {
+            logger::error("TEST FAIL: different-context switch should not flag misclick");
+            return;
+        }
+
+        // Recency boost after MATCH_THRESHOLD uses in same context
+        memory.Clear();
+        for (size_t i = 0; i < Learning::UsageMemory::MATCH_THRESHOLD; ++i) {
+            memory.RecordUsage(0x4444, ctxA);
+        }
+        {
+            auto reader = memory.AcquireReader(ctxA);
+            if (reader.GetRecencyBoost(0x4444) != Learning::UsageMemory::RECENCY_BOOST) {
+                logger::error("TEST FAIL: {} same-context uses should give recency boost",
+                    Learning::UsageMemory::MATCH_THRESHOLD);
+                return;
+            }
+            if (reader.GetRecencyBoost(0x5555) != 0.0f) {
+                logger::error("TEST FAIL: unrelated item should get no recency boost");
+                return;
+            }
+
+            // Write while reader alive — would deadlock with the old lock-holding reader
+            memory.RecordUsage(0x6666, ctxA);
+
+            // Snapshot semantics: the reader does NOT see the new write
+            if (reader.GetRecencyBoost(0x6666) != 0.0f) {
+                logger::error("TEST FAIL: snapshot reader should not see post-snapshot writes");
+                return;
+            }
+        }
+        if (memory.GetEventCount() != Learning::UsageMemory::MATCH_THRESHOLD + 1) {
+            logger::error("TEST FAIL: RecordUsage during reader lifetime should have landed");
+            return;
+        }
+
+        logger::info("TEST PASS: UsageMemory snapshot reader (misclick, boost, non-blocking writes)"sv);
+    }
+
+    // Test 15: Deduplicated logic stays in sync — IsFavorited single source of
+    // truth, and spell/scroll fortify-school correlation parity.
+    {
+        logger::info("TEST: Dedup equivalence (IsFavorited, fortify-school parity)..."sv);
+
+        // IsFavorited: free function must match ScoredCandidate accessor for all types
+        {
+            Candidate::SpellCandidate favSpell{};
+            favSpell.isFavorited = true;
+            Candidate::WeaponCandidate favWeapon{};
+            favWeapon.isFavorited = true;
+            Candidate::ItemCandidate item{};
+            Candidate::ScrollCandidate scroll{};
+            Candidate::AmmoCandidate ammo{};
+
+            const Candidate::CandidateVariant variants[] = {favSpell, favWeapon, item, scroll, ammo};
+            const bool expected[] = {true, true, false, false, false};
+
+            for (size_t i = 0; i < 5; ++i) {
+                Scoring::ScoredCandidate sc{};
+                sc.candidate = variants[i];
+                if (Candidate::IsFavorited(variants[i]) != expected[i] ||
+                    sc.IsFavorited() != expected[i]) {
+                    logger::error("TEST FAIL: IsFavorited mismatch for variant {}", i);
+                    return;
+                }
+            }
+        }
+
+        // Fortify-school parity: spell and scroll of the same school must get the
+        // same fortify multiplier from CorrelationBooster (shared helper)
+        {
+            Scoring::ScorerConfig config{};
+            Scoring::CorrelationBooster booster(config);
+
+            State::PlayerActorState player{};
+            player.buffs.hasFortifyDestruction = true;
+            State::TargetCollection targets{};
+
+            Candidate::SpellCandidate spell{};
+            spell.school = Spell::MagicSchool::Destruction;
+            Candidate::ScrollCandidate scroll{};
+            scroll.school = Scroll::MagicSchool::Destruction;
+
+            const float spellBonus = booster.CalculateBonus(player, targets, spell);
+            const float scrollBonus = booster.CalculateBonus(player, targets, scroll);
+            const float expected = 1.0f + config.fortifySchoolBonus;
+
+            if (std::abs(spellBonus - expected) > 0.01f) {
+                logger::error("TEST FAIL: fortified spell should get x{:.1f}, got {:.2f}", expected, spellBonus);
+                return;
+            }
+            if (std::abs(spellBonus - scrollBonus) > 0.001f) {
+                logger::error("TEST FAIL: spell ({:.2f}) and scroll ({:.2f}) fortify bonuses diverged",
+                    spellBonus, scrollBonus);
+                return;
+            }
+
+            // Non-matching school gets no fortify bonus
+            Candidate::SpellCandidate offSchool{};
+            offSchool.school = Spell::MagicSchool::Illusion;
+            if (booster.CalculateBonus(player, targets, offSchool) != 1.0f) {
+                logger::error("TEST FAIL: non-fortified school should stay at neutral 1.0");
+                return;
+            }
+        }
+
+        logger::info("TEST PASS: Dedup equivalence holds (IsFavorited, fortify parity)"sv);
+    }
+
+    // Test 16: FeatureQLearner batch decay — one call decays multiple idle items,
+    // leaves unlisted/fresh items untouched, preserves train counts, and is
+    // idempotent (re-decay at the same injected time is a no-op).
+    {
+        logger::info("TEST: FeatureQLearner batch decay..."sv);
+
+        Learning::FeatureQLearner fql;
+        Learning::StateFeatures s{};
+        s.healthPct = 0.5f;
+        s.inCombat = 1.0f;
+
+        fql.Update(0xD001, s, 1.0f);
+        fql.Update(0xD002, s, 1.0f);
+        fql.Update(0xD003, s, 1.0f);
+
+        const auto wBefore1 = fql.GetWeights(0xD001);
+        const auto wBefore3 = fql.GetWeights(0xD003);
+
+        // Inject a future "now" well past the decay threshold (~60 min idle)
+        const auto future = std::chrono::steady_clock::now() + std::chrono::minutes(60);
+        const std::vector<RE::FormID> batch = {0xD001, 0xD002, 0xD999 /* never trained */};
+
+        const size_t decayed = fql.MaybeDecayBatch(batch, future);
+        if (decayed != 2) {
+            logger::error("TEST FAIL: batch decay should decay exactly 2 items, got {}", decayed);
+            return;
+        }
+
+        // ~60 min idle → factor ≈ (1 - rate)^1.0; allow slack for the microseconds
+        // between the Update stamp and the test's now() baseline
+        const float expectedFactor = std::pow(1.0f - Config::DECAY_RATE_PER_HOUR, 1.0f);
+        const auto wAfter1 = fql.GetWeights(0xD001);
+        for (size_t i = 0; i < Learning::StateFeatures::NUM_FEATURES; ++i) {
+            if (std::abs(wAfter1[i] - wBefore1[i] * expectedFactor) > 0.001f) {
+                logger::error("TEST FAIL: weight[{}] should decay by ~{:.4f}: {:.4f} -> {:.4f}",
+                    i, expectedFactor, wBefore1[i], wAfter1[i]);
+                return;
+            }
+        }
+
+        // Unlisted item untouched
+        if (fql.GetWeights(0xD003) != wBefore3) {
+            logger::error("TEST FAIL: item not in batch must not decay");
+            return;
+        }
+
+        // Train counts unaffected by decay
+        if (fql.GetTrainCount(0xD001) != 1 || fql.GetTotalTrainCount() != 3) {
+            logger::error("TEST FAIL: decay must not change train counts");
+            return;
+        }
+
+        // Idempotent: lastUpdate was stamped to `future`, so re-decay is a no-op
+        if (fql.MaybeDecayBatch(batch, future) != 0) {
+            logger::error("TEST FAIL: immediate re-decay at same time should be a no-op");
+            return;
+        }
+
+        logger::info("TEST PASS: FeatureQLearner batch decay (selective, count-preserving, idempotent)"sv);
     }
 
     logger::info("=== All unit tests passed! ==="sv);

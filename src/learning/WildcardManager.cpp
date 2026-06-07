@@ -135,7 +135,8 @@ namespace Huginn::Scoring
         std::uniform_real_distribution<float> probDist(0.0f, 1.0f);
 
         bool anyRolled = false;
-        std::vector<RE::FormID> usedFormIDs;
+        auto& usedFormIDs = m_usedFormIDsBuffer;
+        usedFormIDs.clear();
 
         // Get source type from top candidate for coherent wildcards
         auto topType = rankedCandidates[0].GetSourceType();
@@ -176,8 +177,10 @@ namespace Huginn::Scoring
 
     void WildcardManager::ApplyWildcardsToRanking(ScoredCandidateList& rankedCandidates, size_t slotCount)
     {
-        // Track which positions have been swapped to avoid double-swapping
-        std::vector<bool> swappedPositions(rankedCandidates.size(), false);
+        // Track which positions have been swapped to avoid double-swapping.
+        // assign() reuses capacity — allocation-free after the first call.
+        auto& swappedPositions = m_swappedBuffer;
+        swappedPositions.assign(rankedCandidates.size(), false);
 
         // Apply wildcards for each slot
         for (size_t slotIdx = 0; slotIdx < slotCount && slotIdx < MAX_WILDCARD_SLOTS; ++slotIdx) {

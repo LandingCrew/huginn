@@ -41,10 +41,15 @@ namespace Huginn::Spell
       if (event->equipped) {
       AddNewSpell(spell);
 
-      // Phase 3b: External equip learning
-      if (!Learning::EquipSourceTracker::GetSingleton().IsRecentHuginnEquip()) {
+      // Phase 3b: External equip learning.
+      // NOTE: scrolls arrive here too — ScrollItem inherits from SpellItem, so the
+      // As<SpellItem>() check above matches them. AddNewSpell self-filters scrolls
+      // (GetSpellType() == kScroll), and the learning signal below is correct for
+      // both; only the label differs.
+      if (!Learning::EquipSourceTracker::GetSingleton().IsRecentHuginnEquip(spell->GetFormID())) {
+        const char* label = form->As<RE::ScrollItem>() ? "Scroll" : "Spell";
         Learning::ExternalEquipLearner::GetSingleton().OnExternalEquip(
-            spell->GetFormID(), "Spell");
+            spell->GetFormID(), label);
       }
       }
 

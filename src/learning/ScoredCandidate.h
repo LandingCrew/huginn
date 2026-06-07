@@ -94,16 +94,7 @@ namespace Huginn::Scoring
 
         // Check if candidate is favorited (where applicable)
         [[nodiscard]] bool IsFavorited() const noexcept {
-            return std::visit([](const auto& c) -> bool {
-                using T = std::decay_t<decltype(c)>;
-                if constexpr (std::is_same_v<T, Candidate::SpellCandidate>) {
-                    return c.isFavorited;
-                } else if constexpr (std::is_same_v<T, Candidate::WeaponCandidate>) {
-                    return c.isFavorited;
-                } else {
-                    return false;  // Items, scrolls, ammo don't have favorites
-                }
-            }, candidate);
+            return Candidate::IsFavorited(candidate);
         }
 
         // ---------------------------------------------------------------------

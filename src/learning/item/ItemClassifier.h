@@ -2,7 +2,6 @@
 
 #include "ItemData.h"
 #include "ItemOverrides.h"
-#include <unordered_set>
 
 namespace Huginn::Item
 {
@@ -71,11 +70,12 @@ namespace Huginn::Item
       // Helper: Check if item has a specific keyword by EditorID
       [[nodiscard]] bool HasKeyword(const RE::AlchemyItem* item, std::string_view keywordEditorID) const noexcept;
 
-      // OPTIMIZATION (v0.7.20 H2): Build keyword set once for O(1) lookups
-      // @param keywordForm The keyword form to extract keywords from
-      // @return Set of keyword EditorIDs for fast contains() checks
-      [[nodiscard]] static std::unordered_set<std::string_view> BuildKeywordSet(
-      const RE::BGSKeywordForm* keywordForm) noexcept;
+      // Helper: Check a keyword form directly — linear scan with early exit.
+      // Allocation-free (replaces BuildKeywordSet, which heap-allocated an
+      // unordered_set per call, up to 4x per item during registry rebuilds).
+      // Item keyword counts are tiny (1-5), so scanning beats hashing.
+      [[nodiscard]] static bool HasKeyword(
+      const RE::BGSKeywordForm* keywordForm, std::string_view keywordEditorID) noexcept;
 
       // Helper: Check if item is a soul gem (v0.7.8)
       [[nodiscard]] static bool HasSoulGemKeyword(const RE::AlchemyItem* item) noexcept;

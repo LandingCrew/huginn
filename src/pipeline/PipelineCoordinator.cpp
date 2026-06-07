@@ -322,11 +322,14 @@ void PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
 
 void PipelineCoordinator::UpdateCaches(PipelineContext& ctx)
 {
-    // Cache pipeline state for external equip attribution
+    // Cache pipeline state for external equip attribution.
+    // sortedPrefix = topNCandidates: only that prefix of scoredCandidates is in
+    // utility order (partial_sort); see PipelineStateCache::Update.
     auto& slotAllocator = Slot::SlotAllocator::GetSingleton();
     Learning::PipelineStateCache::GetSingleton().Update(
         ctx.scoredCandidates, ctx.assignments,
-        slotAllocator.GetCurrentPage());
+        slotAllocator.GetCurrentPage(),
+        g_utilityScorer->GetConfig().topNCandidates);
 
     // Cache slot contents for EquipManager (keyboard equip hotkeys)
     auto& equipMgr = Input::EquipManager::GetSingleton();

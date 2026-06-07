@@ -226,7 +226,8 @@ namespace Huginn::Wheeler
             }
 
             // Mark as Huginn-mediated equip (for external equip detection)
-            Learning::EquipSourceTracker::GetSingleton().MarkHuginnEquip();
+            Learning::EquipSourceTracker::GetSingleton().MarkHuginnEquip(
+                static_cast<RE::FormID>(formID));
 
             // Start cooldown so the consumed item is filtered out on the next update cycle (~100ms)
             // Without this, the item stays recommended until RefreshCounts detects count=0 (up to 500ms)

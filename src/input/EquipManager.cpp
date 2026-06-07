@@ -357,9 +357,9 @@ namespace Huginn::Input
 
       // Mark as Huginn-mediated equip BEFORE the game API call.
       // EquipSpell/EquipObject fire TESEquipEvent synchronously — ExternalEquipListener
-      // checks IsRecentHuginnEquip() within a 100ms window, so the mark must be set first.
-      // If the equip fails, the 100ms window expires harmlessly.
-      Learning::EquipSourceTracker::GetSingleton().MarkHuginnEquip();
+      // checks IsRecentHuginnEquip(formID) within the suppression window, so the mark
+      // must be set first. If the equip fails, the window expires harmlessly.
+      Learning::EquipSourceTracker::GetSingleton().MarkHuginnEquip(content.formID);
 
       bool success = false;
 

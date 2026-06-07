@@ -132,6 +132,12 @@ namespace Huginn::Scoring
         // Stage 2b: Compute confidence-adaptive lambda for multiplicative formula
         [[nodiscard]] float ComputeAdaptiveLambda(float confidence) const;
 
+        // Final utility formula — the single source of truth, used by both the
+        // normal scoring path (ScoreCandidateInternal Step 8) and the cold-start
+        // fallback in ScoreCandidates. Reads all factors from the breakdown:
+        //   utility = ctx × (1 + λ(confidence)×learn) × corr × potion × fav
+        [[nodiscard]] float ComputeUtility(const ScoreBreakdown& breakdown) const;
+
         // Components
         Learning::FeatureQLearner& m_featureLearner;
         Learning::UsageMemory& m_usageMemory;
@@ -142,8 +148,8 @@ namespace Huginn::Scoring
         WildcardManager m_wildcardMgr;
         Context::ContextRuleEngine m_contextEngine;  // Stage 1f: New component
 
-        // Cached state
-        bool m_wasInCombat = false;
+        // Scratch buffer for batch decay (update thread only, reused per tick)
+        std::vector<RE::FormID> m_decayScratch;
     };
 
 }  // namespace Huginn::Scoring

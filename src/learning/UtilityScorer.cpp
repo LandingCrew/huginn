@@ -3,7 +3,6 @@
 #include "util/ScopedTimer.h"
 #include <algorithm>
 #include <chrono>
-#include <unordered_set>
 
 namespace Huginn::Scoring
 {
@@ -45,11 +44,14 @@ namespace Huginn::Scoring
         auto phi = stateFeatures.ToArray();  // Pre-compute once for locked reader
 
         // Lazy decay: apply time-based weight decay to candidates about to be scored.
-        // Only decays items idle > DECAY_THRESHOLD_MINUTES. Cost is proportional to
-        // the candidate pool (~50-200), not the entire Q-table.
+        // Only decays items idle > DECAY_THRESHOLD_MINUTES. Batched: one shared-lock
+        // pass over the pool instead of ~N per-candidate lock acquisitions.
+        m_decayScratch.clear();
+        m_decayScratch.reserve(candidates.size());
         for (const auto& candidate : candidates) {
-            m_featureLearner.MaybeDecay(Candidate::GetFormID(candidate));
+            m_decayScratch.push_back(Candidate::GetFormID(candidate));
         }
+        m_featureLearner.MaybeDecayBatch(m_decayScratch);
 
         // Acquire locked readers once for the entire scoring loop.
         // Eliminates per-candidate mutex acquire/release (~200 lock ops → 2).
@@ -103,15 +105,20 @@ namespace Huginn::Scoring
         // which covers both "Top 0" (empty Q-table) and "Top 1" (only 1 item has real
         // context weight, e.g. a favorited weapon). The fallback self-heals as UCB decays.
         if (scored.size() < m_config.topNCandidates && m_config.coldStartUCBBoost > 0.0f) {
-            // Build set of already-scored FormIDs for O(1) dedup
-            std::unordered_set<RE::FormID> scoredIDs;
-            scoredIDs.reserve(scored.size());
-            for (const auto& s : scored) scoredIDs.insert(s.GetFormID());
+            // Dedup against already-scored candidates by linear scan — this branch
+            // only runs when scored.size() < topNCandidates (<10), so a scan beats
+            // allocating a hash set every cold-start tick.
+            const auto alreadyScored = [&scored](RE::FormID id) {
+                for (const auto& s : scored) {
+                    if (s.GetFormID() == id) return true;
+                }
+                return false;
+            };
 
             size_t coldStartCount = 0;
             for (const auto& candidate : candidates) {
                 RE::FormID formID = Candidate::GetFormID(candidate);
-                if (scoredIDs.contains(formID)) continue;
+                if (alreadyScored(formID)) continue;
 
                 float contextWeight = GetContextWeight(candidate, weights);
 
@@ -130,19 +137,11 @@ namespace Huginn::Scoring
                     candidate, state, player, targets, world, weights,
                     contextWeight, metrics, recencyBoost);
 
-                // Override context weight and recompute utility with boosted value
-                // SYNC: Must match ScoreCandidateInternal Step 8 formula
+                // Override context weight and recompute utility with the boosted
+                // value via the shared formula helper (reads contextWeight from
+                // the breakdown, so the assignment above must come first).
                 result.breakdown.contextWeight = boostedContext;
-
-                {
-                    float lambda = ComputeAdaptiveLambda(result.breakdown.confidence);
-                    result.utility =
-                        boostedContext *
-                        (1.0f + lambda * result.breakdown.learningScore) *
-                        result.breakdown.correlationBonus *
-                        result.breakdown.potionMultiplier *
-                        result.breakdown.favoritesMultiplier;
-                }
+                result.utility = ComputeUtility(result.breakdown);
 
                 if (result.utility >= m_config.minimumUtility) {
                     result.isColdStartBoosted = true;
@@ -241,7 +240,7 @@ namespace Huginn::Scoring
         // =====================================================================
         // Step 3: Calculate prior from PriorCalculator
         // =====================================================================
-        result.breakdown.prior = m_priorCalc.CalculatePrior(state, player, candidate);
+        result.breakdown.prior = m_priorCalc.CalculatePrior(player, candidate);
 
         // =====================================================================
         // Step 4: Compute learning score: α*Q + (1-α)*prior + β*UCB
@@ -281,29 +280,27 @@ namespace Huginn::Scoring
             GetFavoritesMultiplier(candidate, 0, 1);  // Rank 0 for now (recalculated later)
 
         // =====================================================================
-        // Step 8: Compute final utility (version-dependent formula)
-        // SYNC: Cold-start fallback in ScoreCandidates() duplicates this formula.
-        //       If you change the formula here, update the fallback too.
+        // Step 8: Compute final utility via the shared formula helper.
         // NOTE: breakdown.learningScore already includes recencyBoost (added in
         //       Step 4b). The cold-start block uses breakdown.learningScore
         //       directly, so it inherits the boost automatically. Do NOT add
         //       a separate recencyBoost term in the cold-start path.
         // =====================================================================
-
-        {
-            // Compute confidence-adaptive lambda
-            float lambda = ComputeAdaptiveLambda(result.breakdown.confidence);
-
-            // Formula: utility = ctx × (1 + λ×learn) × corr × potion × fav
-            result.utility =
-                result.breakdown.contextWeight *                        // [0,1] gate
-                (1.0f + lambda * result.breakdown.learningScore) *     // Learning boost
-                result.breakdown.correlationBonus *                     // Multiplicative
-                result.breakdown.potionMultiplier *
-                result.breakdown.favoritesMultiplier;
-        }
+        result.utility = ComputeUtility(result.breakdown);
 
         return result;
+    }
+
+    float UtilityScorer::ComputeUtility(const ScoreBreakdown& breakdown) const
+    {
+        const float lambda = ComputeAdaptiveLambda(breakdown.confidence);
+
+        // Formula: utility = ctx × (1 + λ×learn) × corr × potion × fav
+        return breakdown.contextWeight *                    // [0,1] gate
+               (1.0f + lambda * breakdown.learningScore) *  // Learning boost
+               breakdown.correlationBonus *                 // Multiplicative
+               breakdown.potionMultiplier *
+               breakdown.favoritesMultiplier;
     }
 
     // =========================================================================
@@ -350,17 +347,7 @@ namespace Huginn::Scoring
 
     bool UtilityScorer::IsCandidateFavorited(const Candidate::CandidateVariant& candidate) const
     {
-        return std::visit([](const auto& c) -> bool {
-            using T = std::decay_t<decltype(c)>;
-
-            if constexpr (std::is_same_v<T, Candidate::SpellCandidate>) {
-                return c.isFavorited;
-            } else if constexpr (std::is_same_v<T, Candidate::WeaponCandidate>) {
-                return c.isFavorited;
-            } else {
-                return false;  // Items, scrolls, ammo don't have favorites in the same way
-            }
-        }, candidate);
+        return Candidate::IsFavorited(candidate);
     }
 
     // =========================================================================
@@ -569,8 +556,10 @@ namespace Huginn::Scoring
                 return std::max(weights.ammoWeight, weights.baseRelevanceWeight);
             }
             else {
-                // Unknown type - return base relevance
-                return weights.baseRelevanceWeight;
+                // Compile-time exhaustiveness: adding a new CandidateVariant
+                // alternative must force a context-weight mapping here.
+                static_assert(Candidate::always_false_v<T>,
+                    "Unhandled CandidateVariant alternative in GetContextWeight");
             }
         }, candidate);
     }
@@ -597,7 +586,6 @@ namespace Huginn::Scoring
     void UtilityScorer::Reset()
     {
         m_wildcardMgr.Reset();
-        m_wasInCombat = false;
     }
 
     void UtilityScorer::SetContextWeightConfig(const State::ContextWeightConfig& config)

@@ -3,6 +3,7 @@
 #include "Config.h"
 #include "core/RingBuffer.h"
 #include "state/GameState.h"
+#include <array>
 #include <chrono>
 #include <mutex>
 #include <shared_mutex>
@@ -107,18 +108,22 @@ namespace Huginn::Learning
             return 0.0f;
         }
 
-        // ── Locked reader for amortized scoring loops ────────────────
-        // Acquires mutex once; caller loops N candidates under it.
+        // ── Snapshot reader for amortized scoring loops ────────────────
+        // Copies the ring buffer (≤20 events, ~320 bytes) under a brief
+        // shared_lock, then scans the local copy with NO lock held. The old
+        // approach held a shared_lock across the entire scoring pass, blocking
+        // RecordUsage (equip-event path) until scoring finished.
         // Pre-computes contextHash once.
-        class LockedReader
+        class SnapshotReader
         {
         public:
-            LockedReader(LockedReader&&) = default;
+            SnapshotReader(SnapshotReader&&) = default;
 
             [[nodiscard]] float GetRecencyBoost(RE::FormID formID) const
             {
                 size_t matchCount = 0;
-                for (const auto& event : m_owner.m_buffer) {
+                for (size_t i = 0; i < m_count; ++i) {
+                    const auto& event = m_events[i];
                     if (event.formID == formID && event.contextHash == m_contextHash) {
                         if (++matchCount >= MATCH_THRESHOLD) {
                             return RECENCY_BOOST;
@@ -130,17 +135,23 @@ namespace Huginn::Learning
 
         private:
             friend class UsageMemory;
-            explicit LockedReader(const UsageMemory& owner, uint32_t contextHash)
-                : m_owner(owner), m_lock(owner.m_mutex), m_contextHash(contextHash) {}
+            explicit SnapshotReader(const UsageMemory& owner, uint32_t contextHash)
+                : m_contextHash(contextHash)
+            {
+                std::shared_lock lock(owner.m_mutex);
+                for (const auto& event : owner.m_buffer) {
+                    m_events[m_count++] = event;
+                }
+            }
 
-            const UsageMemory& m_owner;
-            std::shared_lock<std::shared_mutex> m_lock;
+            std::array<UsageEvent, BUFFER_CAPACITY> m_events{};
+            size_t m_count = 0;
             uint32_t m_contextHash;
         };
 
-        [[nodiscard]] LockedReader AcquireReader(const State::GameState& state) const
+        [[nodiscard]] SnapshotReader AcquireReader(const State::GameState& state) const
         {
-            return LockedReader(*this, state.GetHash());
+            return SnapshotReader(*this, state.GetHash());
         }
 
         // Clear all usage history (e.g., on save load)

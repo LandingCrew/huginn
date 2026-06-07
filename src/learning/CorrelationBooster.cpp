@@ -2,6 +2,36 @@
 
 namespace Huginn::Scoring
 {
+    // The scroll correlation path calls Spell::HasTag(scroll.tags, ...) and
+    // compares scroll.type/.school against Spell enums. That compiles only
+    // because the Scroll types are aliases of the Spell types (ScrollData.h).
+    // If scrolls ever get distinct enums, these fire and the scroll path needs
+    // its own tag/type handling instead of silently breaking.
+    static_assert(std::is_same_v<Scroll::ScrollTag, Spell::SpellTag>,
+        "CorrelationBooster scroll path relies on ScrollTag aliasing SpellTag");
+    static_assert(std::is_same_v<Scroll::ScrollType, Spell::SpellType>,
+        "CorrelationBooster scroll path relies on ScrollType aliasing SpellType");
+    static_assert(std::is_same_v<Scroll::MagicSchool, Spell::MagicSchool>,
+        "CorrelationBooster scroll path relies on Scroll::MagicSchool aliasing Spell::MagicSchool");
+
+    namespace
+    {
+        // Shared fortify-school lookup for the spell AND scroll correlation
+        // paths (Scroll::MagicSchool is the same enum as Spell::MagicSchool).
+        [[nodiscard]] bool HasFortifyForSchool(
+            const State::PlayerActorState& player, Spell::MagicSchool school) noexcept
+        {
+            switch (school) {
+                case Spell::MagicSchool::Destruction: return player.buffs.hasFortifyDestruction;
+                case Spell::MagicSchool::Conjuration: return player.buffs.hasFortifyConjuration;
+                case Spell::MagicSchool::Restoration: return player.buffs.hasFortifyRestoration;
+                case Spell::MagicSchool::Alteration:  return player.buffs.hasFortifyAlteration;
+                case Spell::MagicSchool::Illusion:    return player.buffs.hasFortifyIllusion;
+                default:                              return false;
+            }
+        }
+    }
+
     CorrelationBooster::CorrelationBooster(const ScorerConfig& config)
         : m_config(config)
     {
@@ -26,7 +56,10 @@ namespace Huginn::Scoring
             } else if constexpr (std::is_same_v<T, Candidate::ScrollCandidate>) {
                 return CalculateScrollCorrelation(player, targets, c);
             } else {
-                return 1.0f;  // Neutral (no correlation bonus) - prevents zeroing unknown types
+                // Compile-time exhaustiveness: adding a new CandidateVariant
+                // alternative must force a correlation decision here.
+                static_assert(Candidate::always_false_v<T>,
+                    "Unhandled CandidateVariant alternative in CalculateBonus");
             }
         }, candidate);
 
@@ -50,28 +83,7 @@ namespace Huginn::Scoring
         // When player has Fortify [School] active, spells of that school get multiplier.
         // This is a real game mechanic - fortify potions increase spell effectiveness.
         // =============================================================================
-        bool fortifyMatch = false;
-        switch (spell.school) {
-            case Spell::MagicSchool::Destruction:
-                fortifyMatch = player.buffs.hasFortifyDestruction;
-                break;
-            case Spell::MagicSchool::Conjuration:
-                fortifyMatch = player.buffs.hasFortifyConjuration;
-                break;
-            case Spell::MagicSchool::Restoration:
-                fortifyMatch = player.buffs.hasFortifyRestoration;
-                break;
-            case Spell::MagicSchool::Alteration:
-                fortifyMatch = player.buffs.hasFortifyAlteration;
-                break;
-            case Spell::MagicSchool::Illusion:
-                fortifyMatch = player.buffs.hasFortifyIllusion;
-                break;
-            default:
-                break;
-        }
-
-        if (fortifyMatch) {
+        if (HasFortifyForSchool(player, spell.school)) {
             multiplier *= (1.0f + m_config.fortifySchoolBonus);  // ×3.0 with default 2.0
 #ifdef _DEBUG
             logger::trace("[CorrelationBooster] Fortify {} synergy: ×{:.1f} for '{}'",
@@ -243,28 +255,7 @@ namespace Huginn::Scoring
         // =============================================================================
         // FORTIFY SCHOOL SYNERGY (v0.8.x) - Scrolls benefit from fortify buffs too
         // =============================================================================
-        bool fortifyMatch = false;
-        switch (scroll.school) {
-            case Scroll::MagicSchool::Destruction:
-                fortifyMatch = player.buffs.hasFortifyDestruction;
-                break;
-            case Scroll::MagicSchool::Conjuration:
-                fortifyMatch = player.buffs.hasFortifyConjuration;
-                break;
-            case Scroll::MagicSchool::Restoration:
-                fortifyMatch = player.buffs.hasFortifyRestoration;
-                break;
-            case Scroll::MagicSchool::Alteration:
-                fortifyMatch = player.buffs.hasFortifyAlteration;
-                break;
-            case Scroll::MagicSchool::Illusion:
-                fortifyMatch = player.buffs.hasFortifyIllusion;
-                break;
-            default:
-                break;
-        }
-
-        if (fortifyMatch) {
+        if (HasFortifyForSchool(player, scroll.school)) {
             multiplier *= (1.0f + m_config.fortifySchoolBonus);  // ×3.0 with default 2.0
 #ifdef _DEBUG
             logger::trace("[CorrelationBooster] Fortify {} synergy: ×{:.1f} for scroll '{}'",
