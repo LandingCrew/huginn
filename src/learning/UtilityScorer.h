@@ -150,6 +150,9 @@ namespace Huginn::Scoring
 
         // Cached state
         bool m_wasInCombat = false;
+
+        // Scratch buffer for batch decay (update thread only, reused per tick)
+        std::vector<RE::FormID> m_decayScratch;
     };
 
 }  // namespace Huginn::Scoring

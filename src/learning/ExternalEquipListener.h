@@ -55,25 +55,32 @@ namespace Huginn::Learning
                 return RE::BSEventNotifyControl::kContinue;
             }
 
-            // Classify the form type for logging
+            // Classify by form type — single enum switch instead of a chain of
+            // up to six As<>() RTTI dispatches (common weapon case ran two).
             const char* formType = "Unknown";
-            if (form->As<RE::SpellItem>()) {
+            switch (form->GetFormType()) {
+            case RE::FormType::Spell:
+            case RE::FormType::Scroll:
                 // Spells AND scrolls are handled by SpellRegistry::ProcessEvent
-                // (ScrollItem is-a SpellItem, so the cast matches both). Skip here
-                // to avoid duplicate learning and logs.
+                // (ScrollItem is-a SpellItem, so its As<SpellItem>() check matches
+                // both). Skip here to avoid duplicate learning and logs.
                 return RE::BSEventNotifyControl::kContinue;
-            } else if (form->As<RE::TESObjectWEAP>()) {
+            case RE::FormType::Weapon:
                 formType = "Weapon";
-            } else if (form->As<RE::AlchemyItem>()) {
+                break;
+            case RE::FormType::AlchemyItem:
                 formType = "Potion";
-            } else if (form->As<RE::TESAmmo>()) {
+                break;
+            case RE::FormType::Ammo:
                 formType = "Ammo";
-            } else if (form->As<RE::TESObjectLIGH>()) {
+                break;
+            case RE::FormType::Light:
                 formType = "Torch";
-            } else if (form->As<RE::TESObjectARMO>()) {
+                break;
+            case RE::FormType::Armor:
                 // Armor equips aren't relevant for Huginn learning — skip
                 return RE::BSEventNotifyControl::kContinue;
-            } else {
+            default:
                 // Misc forms (books, keys, ingredients, ...) — not Huginn candidates
                 return RE::BSEventNotifyControl::kContinue;
             }

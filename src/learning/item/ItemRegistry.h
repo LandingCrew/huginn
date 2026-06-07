@@ -502,6 +502,12 @@ namespace Huginn::Item
       // Change tracking buffer (cleared by GetAndClearChanges)
       std::vector<ItemChangeEvent> m_pendingChanges;
 
+      // Scratch maps for RefreshCounts delta scans (2 Hz). Populated OUTSIDE
+      // m_mutex; safe only because RefreshCounts has a single caller on the
+      // poll thread. Do not touch from any other path.
+      std::unordered_map<RE::FormID, int32_t> m_scanCounts;
+      std::unordered_map<RE::FormID, int32_t> m_scanFilledCounts;
+
       // Item classifier instance
       ItemClassifier m_classifier;
 

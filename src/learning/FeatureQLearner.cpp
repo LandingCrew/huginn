@@ -12,12 +12,12 @@ namespace Huginn::Learning
 
       std::shared_lock lock(m_mutex);
 
-      auto it = m_weights.find(formID);
-      if (it == m_weights.end()) [[unlikely]] {
+      auto it = m_items.find(formID);
+      if (it == m_items.end()) [[unlikely]] {
          return 0.0f;  // Unknown item → zero Q-value
       }
 
-      return DotProduct(it->second, phi);
+      return DotProduct(it->second.weights, phi);
    }
 
    void FeatureQLearner::Update(RE::FormID formID, const StateFeatures& features, float reward)
@@ -27,8 +27,9 @@ namespace Huginn::Learning
 
       std::unique_lock lock(m_mutex);
 
-      // Zero-init on first access (operator[] default-constructs the array)
-      auto& w = m_weights[formID];
+      // Zero-init on first access (operator[] default-constructs the struct)
+      auto& data = m_items[formID];
+      auto& w = data.weights;
 
       // Prediction error: delta = reward - Q(s, item)
       float prediction = DotProduct(w, phi);
@@ -42,79 +43,82 @@ namespace Huginn::Learning
       }
 
       // Update train counts and last-update timestamp
-      m_trainCount[formID]++;
+      data.trainCount++;
       m_totalTrainCount++;
-      m_lastUpdateTime[formID] = std::chrono::steady_clock::now();
+      data.lastUpdate = std::chrono::steady_clock::now();
 
       logger::trace("FQL update: item={:08X}, reward={:.2f}, error={:.3f}, Q {:.3f}->{:.3f}"sv,
          formID, reward, error, prediction, DotProduct(w, phi));
    }
 
-   bool FeatureQLearner::MaybeDecay(RE::FormID formID)
+   size_t FeatureQLearner::MaybeDecayBatch(
+      const std::vector<RE::FormID>& formIDs,
+      std::chrono::steady_clock::time_point now)
    {
-      auto now = std::chrono::steady_clock::now();
-      float elapsedMinutes = 0.0f;
-
-      // Phase 1: shared_lock — check if decay is needed
+      // Phase 1: ONE shared_lock — collect items whose idle time crosses the
+      // decay threshold. Most ticks collect nothing and never take the
+      // unique lock at all.
+      std::vector<RE::FormID> needsDecay;
       {
          std::shared_lock lock(m_mutex);
 
-         auto timeIt = m_lastUpdateTime.find(formID);
-         if (timeIt == m_lastUpdateTime.end()) {
-            return false;  // No timestamp → never trained, nothing to decay
-         }
+         for (RE::FormID formID : formIDs) {
+            auto it = m_items.find(formID);
+            if (it == m_items.end()) {
+               continue;  // Never trained, nothing to decay
+            }
 
-         auto weightIt = m_weights.find(formID);
-         if (weightIt == m_weights.end()) {
-            return false;  // No weights → nothing to decay
-         }
+            const float elapsedMinutes = std::chrono::duration<float, std::ratio<60>>(
+               now - it->second.lastUpdate).count();
 
-         elapsedMinutes = std::chrono::duration<float, std::ratio<60>>(
-            now - timeIt->second).count();
-
-         if (elapsedMinutes < Config::DECAY_THRESHOLD_MINUTES) {
-            return false;  // Recently updated — skip
+            if (elapsedMinutes >= Config::DECAY_THRESHOLD_MINUTES) {
+               needsDecay.push_back(formID);
+            }
          }
       }
 
-      // Phase 2: unique_lock — apply decay
+      if (needsDecay.empty()) {
+         return 0;
+      }
+
+      // Phase 2: ONE unique_lock — re-check and apply (an Update from the
+      // game thread may have refreshed an item between the locks).
+      size_t decayed = 0;
       {
          std::unique_lock lock(m_mutex);
 
-         // Re-check under unique_lock (another thread may have updated)
-         auto timeIt = m_lastUpdateTime.find(formID);
-         if (timeIt == m_lastUpdateTime.end()) {
-            return false;
+         for (RE::FormID formID : needsDecay) {
+            auto it = m_items.find(formID);
+            if (it == m_items.end()) {
+               continue;
+            }
+
+            auto& data = it->second;
+            const float elapsedMinutes = std::chrono::duration<float, std::ratio<60>>(
+               now - data.lastUpdate).count();
+
+            if (elapsedMinutes < Config::DECAY_THRESHOLD_MINUTES) {
+               continue;  // Became fresh between the locks
+            }
+
+            const float elapsedHours = elapsedMinutes / 60.0f;
+            const float decayFactor = std::pow(1.0f - Config::DECAY_RATE_PER_HOUR, elapsedHours);
+
+            for (size_t i = 0; i < StateFeatures::NUM_FEATURES; ++i) {
+               data.weights[i] *= decayFactor;
+            }
+
+            // Stamp to now so we don't re-decay on the next scoring pass
+            // (also feeds minutesSinceLastUpdate in cosave export)
+            data.lastUpdate = now;
+            ++decayed;
+
+            logger::debug("FQL decay: item={:08X}, elapsed={:.1f}min, factor={:.4f}"sv,
+               formID, elapsedMinutes, decayFactor);
          }
-
-         elapsedMinutes = std::chrono::duration<float, std::ratio<60>>(
-            now - timeIt->second).count();
-
-         if (elapsedMinutes < Config::DECAY_THRESHOLD_MINUTES) {
-            return false;  // Became fresh between lock upgrade
-         }
-
-         auto weightIt = m_weights.find(formID);
-         if (weightIt == m_weights.end()) {
-            return false;
-         }
-
-         float elapsedHours = elapsedMinutes / 60.0f;
-         float decayFactor = std::pow(1.0f - Config::DECAY_RATE_PER_HOUR, elapsedHours);
-
-         auto& w = weightIt->second;
-         for (size_t i = 0; i < StateFeatures::NUM_FEATURES; ++i) {
-            w[i] *= decayFactor;
-         }
-
-         // Stamp to now so we don't re-decay on the next scoring pass
-         timeIt->second = now;
-
-         logger::debug("FQL decay: item={:08X}, elapsed={:.1f}min, factor={:.4f}"sv,
-            formID, elapsedMinutes, decayFactor);
-
-         return true;
       }
+
+      return decayed;
    }
 
    // Private helpers — formulas shared by GetConfidence/GetUCB/GetMetrics.
@@ -142,8 +146,8 @@ namespace Huginn::Learning
    {
       std::shared_lock lock(m_mutex);
       uint32_t trains = 0;
-      if (auto it = m_trainCount.find(formID); it != m_trainCount.end()) {
-         trains = it->second;
+      if (auto it = m_items.find(formID); it != m_items.end()) {
+         trains = it->second.trainCount;
       }
       return ComputeConfidence(trains);
    }
@@ -152,8 +156,8 @@ namespace Huginn::Learning
    {
       std::shared_lock lock(m_mutex);
       uint32_t itemTrains = 0;
-      if (auto it = m_trainCount.find(formID); it != m_trainCount.end()) {
-         itemTrains = it->second;
+      if (auto it = m_items.find(formID); it != m_items.end()) {
+         itemTrains = it->second.trainCount;
       }
       return ComputeUCB(itemTrains);
    }
@@ -167,15 +171,11 @@ namespace Huginn::Learning
 
       FeatureItemMetrics metrics{0.0f, 1.0f, 0.0f};  // Defaults: Q=0, UCB=max, confidence=0
 
-      // Q-value
-      if (auto it = m_weights.find(formID); it != m_weights.end()) {
-         metrics.qValue = DotProduct(it->second, phi);
-      }
-
-      // Train count for this item
+      // ONE lookup yields weights + train count (previously two parallel maps)
       uint32_t itemTrains = 0;
-      if (auto it = m_trainCount.find(formID); it != m_trainCount.end()) {
-         itemTrains = it->second;
+      if (auto it = m_items.find(formID); it != m_items.end()) {
+         metrics.qValue = DotProduct(it->second.weights, phi);
+         itemTrains = it->second.trainCount;
       }
 
       metrics.confidence = ComputeConfidence(itemTrains);
@@ -196,13 +196,11 @@ namespace Huginn::Learning
       // Lock already held by m_lock — no acquire needed
       FeatureItemMetrics metrics{0.0f, 1.0f, 0.0f};
 
-      if (auto it = m_owner.m_weights.find(formID); it != m_owner.m_weights.end()) {
-         metrics.qValue = DotProduct(it->second, phi);
-      }
-
+      // ONE lookup per candidate (previously two parallel-map finds)
       uint32_t itemTrains = 0;
-      if (auto it = m_owner.m_trainCount.find(formID); it != m_owner.m_trainCount.end()) {
-         itemTrains = it->second;
+      if (auto it = m_owner.m_items.find(formID); it != m_owner.m_items.end()) {
+         metrics.qValue = DotProduct(it->second.weights, phi);
+         itemTrains = it->second.trainCount;
       }
 
       metrics.confidence = m_owner.ComputeConfidence(itemTrains);
@@ -219,7 +217,7 @@ namespace Huginn::Learning
    size_t FeatureQLearner::GetItemCount() const
    {
       std::shared_lock lock(m_mutex);
-      return m_weights.size();
+      return m_items.size();
    }
 
    uint32_t FeatureQLearner::GetTotalTrainCount() const
@@ -232,34 +230,32 @@ namespace Huginn::Learning
    {
       std::shared_lock lock(m_mutex);
 
-      auto it = m_trainCount.find(formID);
-      if (it == m_trainCount.end()) {
+      auto it = m_items.find(formID);
+      if (it == m_items.end()) {
          return 0;
       }
-      return it->second;
+      return it->second.trainCount;
    }
 
    std::array<float, StateFeatures::NUM_FEATURES> FeatureQLearner::GetWeights(RE::FormID formID) const
    {
       std::shared_lock lock(m_mutex);
 
-      auto it = m_weights.find(formID);
-      if (it == m_weights.end()) {
+      auto it = m_items.find(formID);
+      if (it == m_items.end()) {
          return {};  // Zero-initialized array
       }
-      return it->second;
+      return it->second.weights;
    }
 
    void FeatureQLearner::Clear()
    {
       std::unique_lock lock(m_mutex);
 
-      const size_t itemCount = m_weights.size();
+      const size_t itemCount = m_items.size();
       const uint32_t totalTrains = m_totalTrainCount;
 
-      m_weights.clear();
-      m_trainCount.clear();
-      m_lastUpdateTime.clear();
+      m_items.clear();
       m_totalTrainCount = 0;
 
       logger::info("FeatureQLearner cleared: {} items, {} total trains removed"sv,
@@ -275,24 +271,17 @@ namespace Huginn::Learning
       outTotalTrainCount = m_totalTrainCount;
       auto now = std::chrono::steady_clock::now();
 
-      for (const auto& [formID, weights] : m_weights) {
+      for (const auto& [formID, data] : m_items) {
          SerializedEntry entry;
          entry.formID = formID;
-         entry.weights = weights;
-
-         auto it = m_trainCount.find(formID);
-         entry.trainCount = (it != m_trainCount.end()) ? it->second : 0;
+         entry.weights = data.weights;
+         entry.trainCount = data.trainCount;
 
          // v2: compute minutes since last update for decay persistence
-         auto timeIt = m_lastUpdateTime.find(formID);
-         if (timeIt != m_lastUpdateTime.end()) {
-            auto elapsed = std::chrono::duration_cast<std::chrono::minutes>(
-               now - timeIt->second).count();
-            entry.minutesSinceLastUpdate = (elapsed > 0)
-               ? static_cast<uint32_t>(elapsed) : 0;
-         } else {
-            entry.minutesSinceLastUpdate = 0;  // No timestamp → treat as fresh
-         }
+         auto elapsed = std::chrono::duration_cast<std::chrono::minutes>(
+            now - data.lastUpdate).count();
+         entry.minutesSinceLastUpdate = (elapsed > 0)
+            ? static_cast<uint32_t>(elapsed) : 0;
 
          entryCallback(std::move(entry));
       }
@@ -304,29 +293,22 @@ namespace Huginn::Learning
    {
       std::unique_lock lock(m_mutex);
 
-      m_weights.clear();
-      m_trainCount.clear();
-      m_lastUpdateTime.clear();
+      m_items.clear();
       m_totalTrainCount = totalTrainCount;
-
-      m_weights.reserve(entries.size());
-      m_trainCount.reserve(entries.size());
-      m_lastUpdateTime.reserve(entries.size());
+      m_items.reserve(entries.size());
 
       auto now = std::chrono::steady_clock::now();
 
       for (const auto& entry : entries) {
-         m_weights[entry.formID] = entry.weights;
-         if (entry.trainCount > 0) {
-            m_trainCount[entry.formID] = entry.trainCount;
-         }
          // Reconstruct last-update timestamp from saved minutes-ago offset
-         m_lastUpdateTime[entry.formID] = now -
-            std::chrono::minutes(entry.minutesSinceLastUpdate);
+         m_items[entry.formID] = ItemLearningData{
+            entry.weights,
+            entry.trainCount,
+            now - std::chrono::minutes(entry.minutesSinceLastUpdate)};
       }
 
       logger::info("FeatureQLearner imported: {} items, {} total trains"sv,
-         m_weights.size(), m_totalTrainCount);
+         m_items.size(), m_totalTrainCount);
    }
 
    float FeatureQLearner::DotProduct(

@@ -3,7 +3,6 @@
 #include "util/ScopedTimer.h"
 #include <algorithm>
 #include <chrono>
-#include <unordered_set>
 
 namespace Huginn::Scoring
 {
@@ -45,11 +44,14 @@ namespace Huginn::Scoring
         auto phi = stateFeatures.ToArray();  // Pre-compute once for locked reader
 
         // Lazy decay: apply time-based weight decay to candidates about to be scored.
-        // Only decays items idle > DECAY_THRESHOLD_MINUTES. Cost is proportional to
-        // the candidate pool (~50-200), not the entire Q-table.
+        // Only decays items idle > DECAY_THRESHOLD_MINUTES. Batched: one shared-lock
+        // pass over the pool instead of ~N per-candidate lock acquisitions.
+        m_decayScratch.clear();
+        m_decayScratch.reserve(candidates.size());
         for (const auto& candidate : candidates) {
-            m_featureLearner.MaybeDecay(Candidate::GetFormID(candidate));
+            m_decayScratch.push_back(Candidate::GetFormID(candidate));
         }
+        m_featureLearner.MaybeDecayBatch(m_decayScratch);
 
         // Acquire locked readers once for the entire scoring loop.
         // Eliminates per-candidate mutex acquire/release (~200 lock ops → 2).
@@ -103,15 +105,20 @@ namespace Huginn::Scoring
         // which covers both "Top 0" (empty Q-table) and "Top 1" (only 1 item has real
         // context weight, e.g. a favorited weapon). The fallback self-heals as UCB decays.
         if (scored.size() < m_config.topNCandidates && m_config.coldStartUCBBoost > 0.0f) {
-            // Build set of already-scored FormIDs for O(1) dedup
-            std::unordered_set<RE::FormID> scoredIDs;
-            scoredIDs.reserve(scored.size());
-            for (const auto& s : scored) scoredIDs.insert(s.GetFormID());
+            // Dedup against already-scored candidates by linear scan — this branch
+            // only runs when scored.size() < topNCandidates (<10), so a scan beats
+            // allocating a hash set every cold-start tick.
+            const auto alreadyScored = [&scored](RE::FormID id) {
+                for (const auto& s : scored) {
+                    if (s.GetFormID() == id) return true;
+                }
+                return false;
+            };
 
             size_t coldStartCount = 0;
             for (const auto& candidate : candidates) {
                 RE::FormID formID = Candidate::GetFormID(candidate);
-                if (scoredIDs.contains(formID)) continue;
+                if (alreadyScored(formID)) continue;
 
                 float contextWeight = GetContextWeight(candidate, weights);
 

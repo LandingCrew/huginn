@@ -3044,6 +3044,67 @@ void RunUnitTests()
         logger::info("TEST PASS: Dedup equivalence holds (IsFavorited, fortify parity)"sv);
     }
 
+    // Test 16: FeatureQLearner batch decay — one call decays multiple idle items,
+    // leaves unlisted/fresh items untouched, preserves train counts, and is
+    // idempotent (re-decay at the same injected time is a no-op).
+    {
+        logger::info("TEST: FeatureQLearner batch decay..."sv);
+
+        Learning::FeatureQLearner fql;
+        Learning::StateFeatures s{};
+        s.healthPct = 0.5f;
+        s.inCombat = 1.0f;
+
+        fql.Update(0xD001, s, 1.0f);
+        fql.Update(0xD002, s, 1.0f);
+        fql.Update(0xD003, s, 1.0f);
+
+        const auto wBefore1 = fql.GetWeights(0xD001);
+        const auto wBefore3 = fql.GetWeights(0xD003);
+
+        // Inject a future "now" well past the decay threshold (~60 min idle)
+        const auto future = std::chrono::steady_clock::now() + std::chrono::minutes(60);
+        const std::vector<RE::FormID> batch = {0xD001, 0xD002, 0xD999 /* never trained */};
+
+        const size_t decayed = fql.MaybeDecayBatch(batch, future);
+        if (decayed != 2) {
+            logger::error("TEST FAIL: batch decay should decay exactly 2 items, got {}", decayed);
+            return;
+        }
+
+        // ~60 min idle → factor ≈ (1 - rate)^1.0; allow slack for the microseconds
+        // between the Update stamp and the test's now() baseline
+        const float expectedFactor = std::pow(1.0f - Config::DECAY_RATE_PER_HOUR, 1.0f);
+        const auto wAfter1 = fql.GetWeights(0xD001);
+        for (size_t i = 0; i < Learning::StateFeatures::NUM_FEATURES; ++i) {
+            if (std::abs(wAfter1[i] - wBefore1[i] * expectedFactor) > 0.001f) {
+                logger::error("TEST FAIL: weight[{}] should decay by ~{:.4f}: {:.4f} -> {:.4f}",
+                    i, expectedFactor, wBefore1[i], wAfter1[i]);
+                return;
+            }
+        }
+
+        // Unlisted item untouched
+        if (fql.GetWeights(0xD003) != wBefore3) {
+            logger::error("TEST FAIL: item not in batch must not decay");
+            return;
+        }
+
+        // Train counts unaffected by decay
+        if (fql.GetTrainCount(0xD001) != 1 || fql.GetTotalTrainCount() != 3) {
+            logger::error("TEST FAIL: decay must not change train counts");
+            return;
+        }
+
+        // Idempotent: lastUpdate was stamped to `future`, so re-decay is a no-op
+        if (fql.MaybeDecayBatch(batch, future) != 0) {
+            logger::error("TEST FAIL: immediate re-decay at same time should be a no-op");
+            return;
+        }
+
+        logger::info("TEST PASS: FeatureQLearner batch decay (selective, count-preserving, idempotent)"sv);
+    }
+
     logger::info("=== All unit tests passed! ==="sv);
 #endif
 }

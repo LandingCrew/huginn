@@ -125,6 +125,12 @@ namespace Huginn::Scoring
 
         // Reusable buffer for candidate selection (avoids heap allocation in hot path)
         mutable std::vector<RE::FormID> m_eligibleBuffer;
+
+        // Reusable per-call scratch (update thread only; cleared at each use):
+        // FormIDs assigned this roll, and swap tracking across the ranked list
+        // (full-list sized — swap SOURCE indices can be anywhere in the list).
+        std::vector<RE::FormID> m_usedFormIDsBuffer;
+        std::vector<bool> m_swappedBuffer;
     };
 
 }  // namespace Huginn::Scoring

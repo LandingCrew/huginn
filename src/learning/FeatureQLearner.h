@@ -6,6 +6,7 @@
 #include <shared_mutex>
 #include <array>
 #include <functional>
+#include <vector>
 
 namespace Huginn::Learning
 {
@@ -38,9 +39,16 @@ namespace Huginn::Learning
       [[nodiscard]] float GetQValue(RE::FormID formID, const StateFeatures& features) const;
       void Update(RE::FormID formID, const StateFeatures& features, float reward);
 
-      // Lazy decay: apply time-based weight decay to items idle > threshold.
-      // Returns true if decay was actually applied.
-      bool MaybeDecay(RE::FormID formID);
+      // Lazy decay, batched: apply time-based weight decay to the given items
+      // when idle > threshold. One shared-lock pass collects items needing
+      // decay; one unique-lock pass applies it (skipped entirely when nothing
+      // qualifies — the common case). Replaces per-candidate MaybeDecay, which
+      // cost ~N lock acquisitions per scoring tick.
+      // `now` is injectable for tests (decay threshold is minutes-scale).
+      // Returns the number of items decayed.
+      size_t MaybeDecayBatch(
+         const std::vector<RE::FormID>& formIDs,
+         std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
 
       // Metrics API (3.5d-compatible shape)
       [[nodiscard]] float GetConfidence(RE::FormID formID) const;
@@ -102,9 +110,19 @@ namespace Huginn::Learning
       [[nodiscard]] float ComputeConfidence(uint32_t trains) const noexcept;
       [[nodiscard]] float ComputeUCB(uint32_t itemTrains) const noexcept;
 
-      std::unordered_map<RE::FormID, std::array<float, StateFeatures::NUM_FEATURES>> m_weights;
-      std::unordered_map<RE::FormID, uint32_t> m_trainCount;
-      std::unordered_map<RE::FormID, std::chrono::steady_clock::time_point> m_lastUpdateTime;
+      // Per-item learning state, colocated in one map: one hash lookup per
+      // candidate instead of three parallel-map lookups (weights, trainCount,
+      // lastUpdate previously lived in separate unordered_maps).
+      // NOTE: the cosave format is unaffected — serialization goes exclusively
+      // through SerializedEntry in ExportData/ImportData.
+      struct ItemLearningData
+      {
+         std::array<float, StateFeatures::NUM_FEATURES> weights{};
+         uint32_t trainCount = 0;
+         std::chrono::steady_clock::time_point lastUpdate{};
+      };
+
+      std::unordered_map<RE::FormID, ItemLearningData> m_items;
       uint32_t m_totalTrainCount = 0;
 
       static constexpr float LEARNING_RATE = 0.1f;
