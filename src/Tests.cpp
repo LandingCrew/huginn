@@ -57,7 +57,7 @@ void RunMultiplicativeScoringTests()
         GameState gameState{};
         gameState.health = HealthBucket::VeryHigh;
 
-        auto weights = engine.EvaluateRules(gameState, player, targets, world);
+        auto weights = engine.EvaluateRules(player, targets, world);
 
         // Healing spell candidate (not needed at full health)
         Candidate::SpellCandidate healingSpell{};
@@ -1226,21 +1226,28 @@ void RunFeatureQLearnerTests()
         FeatureQLearner fql;
         RE::FormID healSpell = 0xDEAD0003;
 
-        // Train at low health + combat: reward=1.0
+        // Contrastive training: healing rewarded at LOW health, not rewarded at
+        // FULL health. Without the high-health/zero-reward examples the learner
+        // has no gradient toward a negative healthPct weight — it would just fit
+        // Q≈1 with small positive weights on whatever features are active.
         StateFeatures lowHealthCombat;
         lowHealthCombat.healthPct = 0.2f;
         lowHealthCombat.inCombat = 1.0f;
 
+        StateFeatures fullHealthCombat;
+        fullHealthCombat.healthPct = 1.0f;
+        fullHealthCombat.inCombat = 1.0f;
+
         for (int i = 0; i < 30; ++i) {
             fql.Update(healSpell, lowHealthCombat, 1.0f);
+            fql.Update(healSpell, fullHealthCombat, 0.0f);
         }
 
         auto weights = fql.GetWeights(healSpell);
 
-        // healthPct weight should be negative: low healthPct (0.2) paired with
-        // positive reward means the model learns that low health correlates with
-        // high Q — so the weight on healthPct should be negative (lower health = higher Q).
-        // inCombat weight should be positive: combat=1.0 paired with reward.
+        // To fit Q(low)=1 and Q(full)=0 simultaneously, the model must assign
+        // healthPct a negative weight (lower health = higher Q) and offset it
+        // with a positive inCombat weight.
         if (weights[0] >= 0.0f) {
             logger::error("TEST FAIL: healthPct weight should be negative (low health = high Q), got {:.4f}"sv, weights[0]);
             return;
@@ -1837,7 +1844,7 @@ void RunUnitTests()
             State::PlayerActorState testPlayer{};
             testPlayer.vitals.health = 0.10f;  // 10% HP
 
-            auto weights = engine.EvaluateRules(testState, testPlayer, testTargets, testWorld);
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
 
             // deficit=0.9, curve=(0.9)^2 = 0.81
             const float expected = 0.81f;
@@ -1858,8 +1865,8 @@ void RunUnitTests()
             State::PlayerActorState testPlayer51{};
             testPlayer51.vitals.health = 0.51f;  // 51% HP
 
-            auto weights49 = engine.EvaluateRules(testState, testPlayer49, testTargets, testWorld);
-            auto weights51 = engine.EvaluateRules(testState, testPlayer51, testTargets, testWorld);
+            auto weights49 = engine.EvaluateRules(testPlayer49, testTargets, testWorld);
+            auto weights51 = engine.EvaluateRules(testPlayer51, testTargets, testWorld);
 
             // Pure continuous: 49%: deficit=0.51, curve=(0.51)^2 ≈ 0.26
             //                  51%: deficit=0.49, curve=(0.49)^2 ≈ 0.24
@@ -1895,7 +1902,7 @@ void RunUnitTests()
             State::PlayerActorState testPlayer{};
             testPlayer.vitals.health = 1.0f;  // 100% HP
 
-            auto weights = engine.EvaluateRules(testState, testPlayer, testTargets, testWorld);
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
 
             if (weights.healingWeight != 0.0f) {
                 logger::error("TEST FAIL: Full health should give healingWeight=0.0, got {:.3f}",
@@ -1909,7 +1916,7 @@ void RunUnitTests()
             State::PlayerActorState testPlayer{};
             testPlayer.vitals.magicka = 0.25f;  // 25% magicka
 
-            auto weights = engine.EvaluateRules(testState, testPlayer, testTargets, testWorld);
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
 
             // deficit=0.75, curve=(0.75)^2 = 0.56
             const float expected = 0.56f;
@@ -1927,7 +1934,7 @@ void RunUnitTests()
             State::PlayerActorState testPlayer{};
             testPlayer.vitals.stamina = 0.50f;  // 50% stamina
 
-            auto weights = engine.EvaluateRules(testState, testPlayer, testTargets, testWorld);
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
 
             // deficit=0.5, curve=(0.5)^1.5 ≈ 0.35
             const float expected = 0.35f;
@@ -1959,7 +1966,7 @@ void RunUnitTests()
             State::PlayerActorState testPlayer{};
             testPlayer.effects.isOnFire = true;
 
-            auto weights = engine.EvaluateRules(testState, testPlayer, testTargets, testWorld);
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
 
             if (std::abs(weights.resistFireWeight - 0.8f) > 0.01f) {
                 logger::error("TEST FAIL: OnFire should give resistFireWeight=0.8, got {:.3f}",
@@ -1974,7 +1981,7 @@ void RunUnitTests()
             testPlayer.effects.isFrozen = true;
             testPlayer.effects.isShocked = true;
 
-            auto weights = engine.EvaluateRules(testState, testPlayer, testTargets, testWorld);
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
 
             if (std::abs(weights.resistFrostWeight - 0.8f) > 0.01f ||
                 std::abs(weights.resistShockWeight - 0.8f) > 0.01f) {
@@ -1989,7 +1996,7 @@ void RunUnitTests()
             State::PlayerActorState testPlayer{};
             testPlayer.effects.isPoisoned = true;
 
-            auto weights = engine.EvaluateRules(testState, testPlayer, testTargets, testWorld);
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
 
             if (std::abs(weights.resistPoisonWeight - 0.6f) > 0.01f) {
                 logger::error("TEST FAIL: Poisoned should give resistPoisonWeight=0.6, got {:.3f}",
@@ -2003,7 +2010,7 @@ void RunUnitTests()
             State::PlayerActorState testPlayer{};
             testPlayer.effects.isDiseased = true;
 
-            auto weights = engine.EvaluateRules(testState, testPlayer, testTargets, testWorld);
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
 
             if (std::abs(weights.resistDiseaseWeight - 0.3f) > 0.01f) {
                 logger::error("TEST FAIL: Diseased should give resistDiseaseWeight=0.3, got {:.3f}",
@@ -2016,12 +2023,43 @@ void RunUnitTests()
         {
             State::PlayerActorState testPlayer{};  // All effects false by default
 
-            auto weights = engine.EvaluateRules(testState, testPlayer, testTargets, testWorld);
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
 
             if (weights.resistFireWeight != 0.0f || weights.resistFrostWeight != 0.0f ||
                 weights.resistShockWeight != 0.0f || weights.resistPoisonWeight != 0.0f ||
                 weights.resistDiseaseWeight != 0.0f) {
                 logger::error("TEST FAIL: No effects should give all resist weights=0.0");
+                return;
+            }
+        }
+
+        // Test 5f: Resistance scales weight (capped fire resist → near-zero weight)
+        {
+            State::PlayerActorState testPlayer{};
+            testPlayer.effects.isOnFire = true;
+            testPlayer.resistances.fire = 80.0f;  // 80% resist → 0.2x scale
+
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
+
+            const float expected = 0.8f * 0.2f;  // baseWeight × (1 - 0.8)
+            if (std::abs(weights.resistFireWeight - expected) > 0.01f) {
+                logger::error("TEST FAIL: 80%% fire resist should scale weight to {:.3f}, got {:.3f}",
+                    expected, weights.resistFireWeight);
+                return;
+            }
+        }
+
+        // Test 5g: Resistance weakness (negative resist) clamps at 1.0x — no over-amplification
+        {
+            State::PlayerActorState testPlayer{};
+            testPlayer.effects.isOnFire = true;
+            testPlayer.resistances.fire = -50.0f;  // Weakness → clamped to 1.0x
+
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
+
+            if (std::abs(weights.resistFireWeight - 0.8f) > 0.01f) {
+                logger::error("TEST FAIL: Negative fire resist should clamp to full weight 0.8, got {:.3f}",
+                    weights.resistFireWeight);
                 return;
             }
         }
@@ -2046,7 +2084,7 @@ void RunUnitTests()
 
             testPlayer.isUnderwater = true;
 
-            auto weights = engine.EvaluateRules(testState, testPlayer, testTargets, testWorld);
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
 
             if (std::abs(weights.waterbreathingWeight - 1.0f) > 0.01f) {
                 logger::error("TEST FAIL: Underwater should give waterbreathingWeight=1.0, got {:.3f}",
@@ -2062,7 +2100,7 @@ void RunUnitTests()
 
             testWorld.isLookingAtLock = true;
 
-            auto weights = engine.EvaluateRules(testState, testPlayer, testTargets, testWorld);
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
 
             if (std::abs(weights.unlockWeight - 1.0f) > 0.01f) {
                 logger::error("TEST FAIL: Looking at lock should give unlockWeight=1.0, got {:.3f}",
@@ -2078,7 +2116,7 @@ void RunUnitTests()
 
             testPlayer.isFalling = true;
 
-            auto weights = engine.EvaluateRules(testState, testPlayer, testTargets, testWorld);
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
 
             if (std::abs(weights.slowFallWeight - 0.8f) > 0.01f) {
                 logger::error("TEST FAIL: Falling should give slowFallWeight=0.8, got {:.3f}",
@@ -2095,10 +2133,28 @@ void RunUnitTests()
             testWorld.isLookingAtWorkstation = true;
             testWorld.workstationType = 1;  // Forge
 
-            auto weights = engine.EvaluateRules(testState, testPlayer, testTargets, testWorld);
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
 
             if (std::abs(weights.fortifySmithingWeight - 0.8f) > 0.01f) {
                 logger::error("TEST FAIL: Forge should give fortifySmithingWeight=0.8, got {:.3f}",
+                    weights.fortifySmithingWeight);
+                return;
+            }
+        }
+
+        // Test 6d-armor: Workstation (SmithingArmor, type 7) → fortifySmithingWeight = 0.8
+        // Regression: type 7 was previously dropped (only types 1-2 mapped to smithing).
+        {
+            State::PlayerActorState testPlayer{};
+            State::WorldState testWorld{};
+
+            testWorld.isLookingAtWorkstation = true;
+            testWorld.workstationType = 7;  // SmithingArmor
+
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
+
+            if (std::abs(weights.fortifySmithingWeight - 0.8f) > 0.01f) {
+                logger::error("TEST FAIL: SmithingArmor should give fortifySmithingWeight=0.8, got {:.3f}",
                     weights.fortifySmithingWeight);
                 return;
             }
@@ -2112,7 +2168,7 @@ void RunUnitTests()
             testWorld.isLookingAtWorkstation = true;
             testWorld.workstationType = 3;  // Enchanting
 
-            auto weights = engine.EvaluateRules(testState, testPlayer, testTargets, testWorld);
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
 
             if (std::abs(weights.fortifyEnchantingWeight - 0.8f) > 0.01f) {
                 logger::error("TEST FAIL: Enchanter should give fortifyEnchantingWeight=0.8, got {:.3f}",
@@ -2129,7 +2185,7 @@ void RunUnitTests()
             testWorld.isLookingAtWorkstation = true;
             testWorld.workstationType = 5;  // Alchemy
 
-            auto weights = engine.EvaluateRules(testState, testPlayer, testTargets, testWorld);
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
 
             if (std::abs(weights.fortifyAlchemyWeight - 0.8f) > 0.01f) {
                 logger::error("TEST FAIL: Alchemy Lab should give fortifyAlchemyWeight=0.8, got {:.3f}",
@@ -2143,7 +2199,7 @@ void RunUnitTests()
             State::PlayerActorState testPlayer{};
             State::WorldState testWorld{};
 
-            auto weights = engine.EvaluateRules(testState, testPlayer, testTargets, testWorld);
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
 
             if (weights.waterbreathingWeight != 0.0f || weights.unlockWeight != 0.0f ||
                 weights.slowFallWeight != 0.0f || weights.fortifySmithingWeight != 0.0f ||
@@ -2173,7 +2229,7 @@ void RunUnitTests()
 
             testPlayer.isInCombat = true;
 
-            auto weights = engine.EvaluateRules(testState, testPlayer, testTargets, testWorld);
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
 
             if (std::abs(weights.damageWeight - 0.3f) > 0.01f) {
                 logger::error("TEST FAIL: In combat should give damageWeight=0.3, got {:.3f}",
@@ -2196,7 +2252,7 @@ void RunUnitTests()
 
             testTargets.InsertOrUpdate(castingEnemy.actorFormID, castingEnemy);
 
-            auto weights = engine.EvaluateRules(testState, testPlayer, testTargets, testWorld);
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
 
             if (std::abs(weights.wardWeight - 0.7f) > 0.01f) {
                 logger::error("TEST FAIL: Enemy casting should give wardWeight=0.7, got {:.3f}",
@@ -2219,7 +2275,7 @@ void RunUnitTests()
                 testTargets.InsertOrUpdate(enemy.actorFormID, enemy);
             }
 
-            auto weights = engine.EvaluateRules(testState, testPlayer, testTargets, testWorld);
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
 
             if (std::abs(weights.aoeWeight - 0.5f) > 0.01f) {
                 logger::error("TEST FAIL: 3+ enemies should give aoeWeight=0.5, got {:.3f}",
@@ -2236,7 +2292,7 @@ void RunUnitTests()
             testPlayer.isInCombat = true;
             testPlayer.buffs.hasActiveSummon = false;
 
-            auto weights = engine.EvaluateRules(testState, testPlayer, testTargets, testWorld);
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
 
             if (std::abs(weights.summonWeight - 0.4f) > 0.01f) {
                 logger::error("TEST FAIL: Combat+NoSummon should give summonWeight=0.4, got {:.3f}",
@@ -2253,7 +2309,7 @@ void RunUnitTests()
             testPlayer.isInCombat = true;
             testPlayer.buffs.hasActiveSummon = true;  // Already has summon
 
-            auto weights = engine.EvaluateRules(testState, testPlayer, testTargets, testWorld);
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
 
             if (weights.summonWeight != 0.0f) {
                 logger::error("TEST FAIL: Combat+HasSummon should give summonWeight=0.0, got {:.3f}",
@@ -2269,7 +2325,7 @@ void RunUnitTests()
 
             testPlayer.isSneaking = true;
 
-            auto weights = engine.EvaluateRules(testState, testPlayer, testTargets, testWorld);
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
 
             if (std::abs(weights.stealthWeight - 0.4f) > 0.01f) {
                 logger::error("TEST FAIL: Sneaking should give stealthWeight=0.4, got {:.3f}",
@@ -2303,7 +2359,7 @@ void RunUnitTests()
 
             testTargets.primary = undeadTarget;
 
-            auto weights = engine.EvaluateRules(testState, testPlayer, testTargets, testWorld);
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
 
             if (std::abs(weights.antiUndeadWeight - 0.6f) > 0.01f) {
                 logger::error("TEST FAIL: Undead target should give antiUndeadWeight=0.6, got {:.3f}",
@@ -2323,7 +2379,7 @@ void RunUnitTests()
 
             testTargets.primary = daedraTarget;
 
-            auto weights = engine.EvaluateRules(testState, testPlayer, testTargets, testWorld);
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
 
             if (std::abs(weights.antiDaedraWeight - 0.6f) > 0.01f) {
                 logger::error("TEST FAIL: Daedra target should give antiDaedraWeight=0.6, got {:.3f}",
@@ -2343,7 +2399,7 @@ void RunUnitTests()
 
             testTargets.primary = dragonTarget;
 
-            auto weights = engine.EvaluateRules(testState, testPlayer, testTargets, testWorld);
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
 
             if (std::abs(weights.antiDragonWeight - 0.5f) > 0.01f) {
                 logger::error("TEST FAIL: Dragon target should give antiDragonWeight=0.5, got {:.3f}",
@@ -2357,7 +2413,7 @@ void RunUnitTests()
             State::TargetCollection testTargets{};
             // primary = std::nullopt (no target)
 
-            auto weights = engine.EvaluateRules(testState, testPlayer, testTargets, testWorld);
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
 
             if (weights.antiUndeadWeight != 0.0f || weights.antiDaedraWeight != 0.0f ||
                 weights.antiDragonWeight != 0.0f) {
@@ -2387,7 +2443,7 @@ void RunUnitTests()
             testPlayer.hasEnchantedWeapon = true;
             testPlayer.weaponChargePercent = 0.10f;  // 10% charge
 
-            auto weights = engine.EvaluateRules(testState, testPlayer, testTargets, testWorld);
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
 
             // deficit=0.9, curve=(0.9)^2 = 0.81
             const float expected = 0.81f;
@@ -2407,7 +2463,7 @@ void RunUnitTests()
             testPlayer.hasEnchantedWeapon = true;
             testPlayer.weaponChargePercent = 0.25f;  // 25% charge (threshold)
 
-            auto weights = engine.EvaluateRules(testState, testPlayer, testTargets, testWorld);
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
 
             // deficit=0.75, curve=(0.75)^2 = 0.56
             const float expected = 0.56f;
@@ -2428,7 +2484,7 @@ void RunUnitTests()
             testPlayer.hasEnchantedWeapon = true;
             testPlayer.weaponChargePercent = 0.50f;  // 50% charge
 
-            auto weights = engine.EvaluateRules(testState, testPlayer, testTargets, testWorld);
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
 
             const float expected = 0.25f;
             const float tolerance = 0.01f;
@@ -2447,7 +2503,7 @@ void RunUnitTests()
             testPlayer.hasBowEquipped = true;
             testPlayer.arrowCount = 0;  // Out of arrows
 
-            auto weights = engine.EvaluateRules(testState, testPlayer, testTargets, testWorld);
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
 
             if (std::abs(weights.ammoWeight - 0.5f) > 0.01f) {
                 logger::error("TEST FAIL: Out of arrows should give ammoWeight=0.5, got {:.3f}",
@@ -2464,7 +2520,7 @@ void RunUnitTests()
             testPlayer.hasBowEquipped = false;
             testPlayer.hasSpellEquipped = false;
 
-            auto weights = engine.EvaluateRules(testState, testPlayer, testTargets, testWorld);
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
 
             if (std::abs(weights.boundWeaponWeight - 0.4f) > 0.01f) {
                 logger::error("TEST FAIL: No weapon should give boundWeaponWeight=0.4, got {:.3f}",
@@ -2479,7 +2535,7 @@ void RunUnitTests()
 
             testPlayer.hasMeleeEquipped = true;  // Has weapon
 
-            auto weights = engine.EvaluateRules(testState, testPlayer, testTargets, testWorld);
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
 
             if (weights.boundWeaponWeight != 0.0f) {
                 logger::error("TEST FAIL: Has weapon should give boundWeaponWeight=0.0, got {:.3f}",
@@ -2512,7 +2568,7 @@ void RunUnitTests()
             State::GameState gameState{};
 
             // Evaluate rules
-            auto weights = engine.EvaluateRules(gameState, player, targets, world);
+            auto weights = engine.EvaluateRules(player, targets, world);
 
             // Create Fortify Smithing potion candidate
             Candidate::ItemCandidate smithingPotion{};
@@ -2546,7 +2602,7 @@ void RunUnitTests()
             State::TargetCollection targets{};
             State::GameState gameState{};
 
-            auto weights = engine.EvaluateRules(gameState, player, targets, world);
+            auto weights = engine.EvaluateRules(player, targets, world);
 
             Candidate::ItemCandidate enchantingPotion{};
             enchantingPotion.tags = Item::ItemTag::FortifyMagicSchool;
@@ -2578,7 +2634,7 @@ void RunUnitTests()
             State::TargetCollection targets{};
             State::GameState gameState{};
 
-            auto weights = engine.EvaluateRules(gameState, player, targets, world);
+            auto weights = engine.EvaluateRules(player, targets, world);
 
             Candidate::ItemCandidate resistFirePotion{};
             resistFirePotion.tags = Item::ItemTag::ResistFire;
@@ -2607,7 +2663,7 @@ void RunUnitTests()
             State::TargetCollection targets{};
             State::GameState gameState{};
 
-            auto weights = engine.EvaluateRules(gameState, player, targets, world);
+            auto weights = engine.EvaluateRules(player, targets, world);
 
             Candidate::SpellCandidate healingSpell{};
             healingSpell.tags = Spell::SpellTag::RestoreHealth;
@@ -2618,8 +2674,11 @@ void RunUnitTests()
                 weight = std::max(weight, weights.healingWeight);
             }
 
-            if (weight < 0.6f) {  // Should be high at 30% health
-                logger::error("TEST FAIL: Healing spell at 30%% health should get high weight, got {:.2f}"sv, weight);
+            // Pure quadratic curve: deficit=0.7, weight=(0.7)^2 = 0.49
+            const float expected = 0.49f;
+            if (std::abs(weight - expected) > 0.01f) {
+                logger::error("TEST FAIL: Healing spell at 30%% health should get weight={:.2f}, got {:.2f}"sv,
+                    expected, weight);
                 return;
             }
             logger::info("  ✓ Healing spell at 30%% health: weight={:.2f} (continuous!)"sv, weight);
@@ -2646,7 +2705,7 @@ void RunUnitTests()
 
             State::GameState gameState{};
 
-            auto weights = engine.EvaluateRules(gameState, player, targets, world);
+            auto weights = engine.EvaluateRules(player, targets, world);
 
             Candidate::SpellCandidate aoeSpell{};
             aoeSpell.tags = Spell::SpellTag::AOE;
@@ -2683,7 +2742,7 @@ void RunUnitTests()
             State::TargetCollection targets{};
             State::GameState gameState{};
 
-            auto weights = engine.EvaluateRules(gameState, player, targets, world);
+            auto weights = engine.EvaluateRules(player, targets, world);
 
             Candidate::ItemCandidate soulGem{};
             soulGem.sourceType = Candidate::SourceType::SoulGem;
@@ -2703,6 +2762,77 @@ void RunUnitTests()
         }
 
         logger::info("TEST PASS: End-to-end ContextRuleEngine → UtilityScorer integration works!"sv);
+    }
+
+    // Test 11: TargetCollection cache invariant — mutators must keep cachedEnemyCount
+    // and cachedAnyCasting in sync without an explicit UpdateCachedCounts() call.
+    {
+        logger::info("TEST: TargetCollection cache invariant..."sv);
+
+        State::TargetCollection coll{};
+
+        if (coll.cachedEnemyCount != 0 || coll.cachedAnyCasting) {
+            logger::error("TEST FAIL: default-constructed collection has non-empty caches");
+            return;
+        }
+
+        State::TargetActorState hostile{};
+        hostile.actorFormID = 0x1001;
+        hostile.isHostile = true;
+        hostile.isDead = false;
+        hostile.isCasting = false;
+
+        State::TargetActorState castingHostile{};
+        castingHostile.actorFormID = 0x1002;
+        castingHostile.isHostile = true;
+        castingHostile.isDead = false;
+        castingHostile.isCasting = true;
+
+        State::TargetActorState ally{};
+        ally.actorFormID = 0x1003;
+        ally.isHostile = false;
+
+        coll.InsertOrUpdate(hostile.actorFormID, hostile);
+        coll.InsertOrUpdate(castingHostile.actorFormID, castingHostile);
+        coll.InsertOrUpdate(ally.actorFormID, ally);
+
+        if (coll.cachedEnemyCount != 2 || !coll.cachedAnyCasting) {
+            logger::error("TEST FAIL: after 3 inserts (2 hostile, 1 ally, 1 casting) caches wrong: count={}, anyCasting={}",
+                coll.cachedEnemyCount, coll.cachedAnyCasting);
+            return;
+        }
+
+        // Remove the casting hostile — anyCasting should drop to false
+        coll.Remove(castingHostile.actorFormID);
+        if (coll.cachedEnemyCount != 1 || coll.cachedAnyCasting) {
+            logger::error("TEST FAIL: after removing casting hostile, caches wrong: count={}, anyCasting={}",
+                coll.cachedEnemyCount, coll.cachedAnyCasting);
+            return;
+        }
+
+        // Clear — caches should reset
+        coll.Clear();
+        if (coll.cachedEnemyCount != 0 || coll.cachedAnyCasting || !coll.targets.empty() || coll.primary.has_value()) {
+            logger::error("TEST FAIL: Clear() left residual state");
+            return;
+        }
+
+        // Update-in-place: hostile becomes dead → enemy count drops
+        coll.InsertOrUpdate(hostile.actorFormID, hostile);
+        if (coll.cachedEnemyCount != 1) {
+            logger::error("TEST FAIL: re-insert after Clear should give count=1, got {}", coll.cachedEnemyCount);
+            return;
+        }
+
+        State::TargetActorState deadVersion = hostile;
+        deadVersion.isDead = true;
+        coll.InsertOrUpdate(hostile.actorFormID, deadVersion);
+        if (coll.cachedEnemyCount != 0) {
+            logger::error("TEST FAIL: InsertOrUpdate to dead should drop count to 0, got {}", coll.cachedEnemyCount);
+            return;
+        }
+
+        logger::info("TEST PASS: TargetCollection cache invariant holds across InsertOrUpdate/Remove/Clear"sv);
     }
 
     logger::info("=== All unit tests passed! ==="sv);
@@ -2750,12 +2880,12 @@ void RunRegressionTests()
         // Test 49% HP
         PlayerActorState player49{};
         player49.vitals.health = 0.49f;
-        auto weights49 = engine.EvaluateRules(testState, player49, testTargets, testWorld);
+        auto weights49 = engine.EvaluateRules(player49, testTargets, testWorld);
 
         // Test 51% HP
         PlayerActorState player51{};
         player51.vitals.health = 0.51f;
-        auto weights51 = engine.EvaluateRules(testState, player51, testTargets, testWorld);
+        auto weights51 = engine.EvaluateRules(player51, testTargets, testWorld);
 
         // Expected (quadratic curve):
         // 49%: deficit=0.51, weight=(0.51)² ≈ 0.26
@@ -2800,7 +2930,7 @@ void RunRegressionTests()
         TargetCollection testTargets{};
         WorldState testWorld{};
 
-        auto weights = engine.EvaluateRules(testState, player, testTargets, testWorld);
+        auto weights = engine.EvaluateRules(player, testTargets, testWorld);
 
         // deficit=0.9, weight=(0.9)² = 0.81
         const float expected = 0.81f;
@@ -2827,7 +2957,7 @@ void RunRegressionTests()
         TargetCollection testTargets{};
         WorldState testWorld{};
 
-        auto weights = engine.EvaluateRules(testState, player, testTargets, testWorld);
+        auto weights = engine.EvaluateRules(player, testTargets, testWorld);
 
         if (weights.healingWeight != 0.0f) {
             logger::error("TC-03 FAIL: Full health should give healingWeight=0.0, got {:.3f}"sv,
@@ -2861,7 +2991,7 @@ void RunRegressionTests()
         castingEnemy.isCasting = true;
         testTargets.InsertOrUpdate(castingEnemy.actorFormID, castingEnemy);
 
-        auto weights = engine.EvaluateRules(testState, player, testTargets, testWorld);
+        auto weights = engine.EvaluateRules(player, testTargets, testWorld);
 
         // Create multi-tag spell: RestoreHealth + Ward (hypothetical combo)
         Candidate::SpellCandidate healingWardSpell{};
@@ -2905,7 +3035,7 @@ void RunRegressionTests()
         TargetCollection testTargets{};
         WorldState testWorld{};
 
-        auto weights = engine.EvaluateRules(testState, player, testTargets, testWorld);
+        auto weights = engine.EvaluateRules(player, testTargets, testWorld);
 
         if (weights.resistFireWeight < 0.75f) {  // Expected ~0.8
             logger::error("TC-07 FAIL: On fire should give resistFireWeight≈0.8, got {:.3f}"sv,
@@ -2929,7 +3059,7 @@ void RunRegressionTests()
         testWorld.isLookingAtWorkstation = true;
         testWorld.workstationType = 1;  // Forge
 
-        auto weights = engine.EvaluateRules(testState, player, testTargets, testWorld);
+        auto weights = engine.EvaluateRules(player, testTargets, testWorld);
 
         if (weights.fortifySmithingWeight < 0.75f) {  // Expected ~0.8
             logger::error("TC-10 FAIL: At forge should give fortifySmithingWeight≈0.8, got {:.3f}"sv,
@@ -2952,7 +3082,7 @@ void RunRegressionTests()
         WorldState testWorld{};
         testWorld.isLookingAtLock = true;
 
-        auto weights = engine.EvaluateRules(testState, player, testTargets, testWorld);
+        auto weights = engine.EvaluateRules(player, testTargets, testWorld);
 
         if (weights.unlockWeight < 0.95f) {  // Expected 1.0 (critical)
             logger::error("TC-11 FAIL: Looking at lock should give unlockWeight=1.0, got {:.3f}"sv,
@@ -2982,7 +3112,7 @@ void RunRegressionTests()
         castingEnemy.isCasting = true;
         testTargets.InsertOrUpdate(castingEnemy.actorFormID, castingEnemy);
 
-        auto weights = engine.EvaluateRules(testState, player, testTargets, testWorld);
+        auto weights = engine.EvaluateRules(player, testTargets, testWorld);
 
         if (weights.wardWeight < 0.65f) {  // Expected ~0.7
             logger::error("TC-12 FAIL: Enemy casting should give wardWeight≈0.7, got {:.3f}"sv,
@@ -3006,7 +3136,7 @@ void RunRegressionTests()
         TargetCollection testTargets{};
         WorldState testWorld{};
 
-        auto weights = engine.EvaluateRules(testState, player, testTargets, testWorld);
+        auto weights = engine.EvaluateRules(player, testTargets, testWorld);
 
         if (weights.summonWeight != 0.0f) {
             logger::error("TC-14 FAIL: Has active summon should give summonWeight=0.0, got {:.3f}"sv,
@@ -3035,7 +3165,7 @@ void RunRegressionTests()
         undeadTarget.isHostile = true;
         testTargets.primary = undeadTarget;
 
-        auto weights = engine.EvaluateRules(testState, player, testTargets, testWorld);
+        auto weights = engine.EvaluateRules(player, testTargets, testWorld);
 
         if (weights.antiUndeadWeight < 0.55f) {  // Expected ~0.6
             logger::error("TC-15 FAIL: Undead target should give antiUndeadWeight≈0.6, got {:.3f}"sv,

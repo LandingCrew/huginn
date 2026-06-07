@@ -112,6 +112,8 @@ namespace Huginn::State
             ini.GetDoubleValue(section, "fWeightWeapon", ContextWeightDefaults::WEAPON));
         weightSpell = static_cast<float>(
             ini.GetDoubleValue(section, "fWeightSpell", ContextWeightDefaults::SPELL));
+        weightSummon = static_cast<float>(
+            ini.GetDoubleValue(section, "fWeightSummon", ContextWeightDefaults::SUMMON));
 
         // Utility baseline
         weightBaseRelevance = static_cast<float>(
@@ -127,6 +129,8 @@ namespace Huginn::State
             ini.GetDoubleValue(section, "fMagickaSmoothingExponent", ContextWeightDefaults::MAGICKA_SMOOTHING_EXPONENT));
         fStaminaSmoothingExponent = static_cast<float>(
             ini.GetDoubleValue(section, "fStaminaSmoothingExponent", ContextWeightDefaults::STAMINA_SMOOTHING_EXPONENT));
+        fWeaponChargeSmoothingExponent = static_cast<float>(
+            ini.GetDoubleValue(section, "fWeaponChargeSmoothingExponent", ContextWeightDefaults::WEAPON_CHARGE_SMOOTHING_EXPONENT));
 
         logger::info("[ContextWeightSettings] Loaded legacy weights: fire={:.1f}, poison={:.1f}, frost={:.1f}, "
             "shock={:.1f}, disease={:.1f}, underwater={:.1f}, falling={:.1f}, lock={:.1f}",
@@ -189,6 +193,7 @@ namespace Huginn::State
         weightNoWeapon = ContextWeightDefaults::NO_WEAPON;
         weightWeapon = ContextWeightDefaults::WEAPON;
         weightSpell = ContextWeightDefaults::SPELL;
+        weightSummon = ContextWeightDefaults::SUMMON;
 
         weightBaseRelevance = ContextWeightDefaults::BASE_RELEVANCE;
 
@@ -196,6 +201,7 @@ namespace Huginn::State
         fHealthSmoothingExponent = ContextWeightDefaults::HEALTH_SMOOTHING_EXPONENT;
         fMagickaSmoothingExponent = ContextWeightDefaults::MAGICKA_SMOOTHING_EXPONENT;
         fStaminaSmoothingExponent = ContextWeightDefaults::STAMINA_SMOOTHING_EXPONENT;
+        fWeaponChargeSmoothingExponent = ContextWeightDefaults::WEAPON_CHARGE_SMOOTHING_EXPONENT;
 
         logger::info("[ContextWeightSettings] Reset to defaults (legacy + normalized weights)"sv);
     }
@@ -204,27 +210,17 @@ namespace Huginn::State
     {
         ContextWeightConfig config;
 
-        // Legacy weights (0-10 scale)
-        config.weightOnFire = weightOnFire;
-        config.weightPoisoned = weightPoisoned;
-        config.weightFrozen = weightFrozen;
-        config.weightShocked = weightShocked;
-        config.weightDiseased = weightDiseased;
+        // Legacy weights — pre-normalized from 0-10 INI scale to [0,1]
+        // so the engine reads a uniform scale without runtime conversion.
+        config.weightOnFire = weightOnFire * 0.1f;
+        config.weightPoisoned = weightPoisoned * 0.1f;
+        config.weightFrozen = weightFrozen * 0.1f;
+        config.weightShocked = weightShocked * 0.1f;
+        config.weightDiseased = weightDiseased * 0.1f;
 
-        config.weightUnderwater = weightUnderwater;
-        config.weightFallingHigh = weightFallingHigh;
-        config.weightLookingAtLock = weightLookingAtLock;
-
-        config.weightWeaponChargeModerate = weightWeaponChargeModerate;
-        config.weightWeaponChargeLow = weightWeaponChargeLow;
-        config.weightWeaponChargeCritical = weightWeaponChargeCritical;
-
-        config.weightHasWaterbreathing = weightHasWaterbreathing;
-        config.weightHasInvisibility = weightHasInvisibility;
-        config.weightHasMuffle = weightHasMuffle;
-        config.weightHasArmorBuff = weightHasArmorBuff;
-        config.weightHasCloak = weightHasCloak;
-        config.weightHasSummon = weightHasSummon;
+        config.weightUnderwater = weightUnderwater * 0.1f;
+        config.weightFallingHigh = weightFallingHigh * 0.1f;
+        config.weightLookingAtLock = weightLookingAtLock * 0.1f;
 
         // Normalized weights [0,1]
         config.weightCriticalHealth = weightCriticalHealth;
@@ -249,6 +245,7 @@ namespace Huginn::State
         config.weightNoWeapon = weightNoWeapon;
         config.weightWeapon = weightWeapon;
         config.weightSpell = weightSpell;
+        config.weightSummon = weightSummon;
 
         config.weightBaseRelevance = weightBaseRelevance;
 
@@ -256,6 +253,7 @@ namespace Huginn::State
         config.fHealthSmoothingExponent = fHealthSmoothingExponent;
         config.fMagickaSmoothingExponent = fMagickaSmoothingExponent;
         config.fStaminaSmoothingExponent = fStaminaSmoothingExponent;
+        config.fWeaponChargeSmoothingExponent = fWeaponChargeSmoothingExponent;
 
         return config;
     }

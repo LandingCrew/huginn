@@ -100,8 +100,7 @@ namespace Huginn::State
       auto* player = RE::PlayerCharacter::GetSingleton();
       if (!player) {
       std::unique_lock lock(m_targetsMutex);
-      m_targets.primary.reset();
-      m_targets.targets.clear();
+      m_targets.Clear();
       return false;
       }
 
@@ -673,6 +672,9 @@ namespace Huginn::State
 
       // Sync primary target with targets map
       m_targets.SyncPrimaryTarget();
+
+      // Recompute cached aggregates after all mutations
+      m_targets.UpdateCachedCounts();
 
       // Change detection: compare lightweight digest against previous
       TargetDigest digest = ComputeTargetDigest();

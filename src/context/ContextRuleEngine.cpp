@@ -15,7 +15,6 @@ namespace Huginn::Context
     // =============================================================================
 
     ContextWeightMap ContextRuleEngine::EvaluateRules(
-        const State::GameState& state,
         const State::PlayerActorState& player,
         const State::TargetCollection& targets,
         const State::WorldState& world) const
@@ -35,7 +34,7 @@ namespace Huginn::Context
         EvaluateEnvironmentalRules(result, player, world);
 
         // Combat/tactical rules (Stage 1e)
-        EvaluateCombatRules(result, state, player, targets);
+        EvaluateCombatRules(result, player, targets);
 
         // Target-specific rules (Stage 1e)
         EvaluateTargetRules(result, targets);
@@ -151,29 +150,36 @@ namespace Huginn::Context
         ContextWeightMap& result,
         const State::PlayerActorState& player) const
     {
+        // Resistance scaling: weight is reduced proportionally to existing resistance.
+        // At 0% resist → full weight, 50% → half weight, 85%+ → near-zero.
+        // Negative resistances (weaknesses) are clamped to not over-amplify.
+        auto resistScale = [](float resistPct) {
+            return std::clamp(1.0f - resistPct * 0.01f, 0.0f, 1.0f);
+        };
+
         // Fire damage → Resist Fire relevant
         if (player.effects.isOnFire) {
-            result.resistFireWeight = m_config.weightOnFire * 0.1f;  // Legacy 8.0 → 0.8
+            result.resistFireWeight = m_config.weightOnFire * resistScale(player.resistances.fire);
         }
 
         // Frost damage → Resist Frost relevant
         if (player.effects.isFrozen) {
-            result.resistFrostWeight = m_config.weightFrozen * 0.1f;  // Legacy 8.0 → 0.8
+            result.resistFrostWeight = m_config.weightFrozen * resistScale(player.resistances.frost);
         }
 
         // Shock damage → Resist Shock relevant
         if (player.effects.isShocked) {
-            result.resistShockWeight = m_config.weightShocked * 0.1f;  // Legacy 8.0 → 0.8
+            result.resistShockWeight = m_config.weightShocked * resistScale(player.resistances.shock);
         }
 
         // Poison → Resist Poison relevant
         if (player.effects.isPoisoned) {
-            result.resistPoisonWeight = m_config.weightPoisoned * 0.1f;  // Legacy 6.0 → 0.6
+            result.resistPoisonWeight = m_config.weightPoisoned * resistScale(player.resistances.poison);
         }
 
-        // Disease → Resist Disease relevant
+        // Disease → Resist Disease relevant (no disease resistance tracked)
         if (player.effects.isDiseased) {
-            result.resistDiseaseWeight = m_config.weightDiseased * 0.1f;  // Legacy 3.0 → 0.3
+            result.resistDiseaseWeight = m_config.weightDiseased;
         }
     }
 
@@ -205,14 +211,14 @@ namespace Huginn::Context
         // UNDERWATER → Waterbreathing (suppressed if already active)
         // =====================================================================
         if (player.isUnderwater && !player.buffs.hasWaterBreathing) {
-            result.waterbreathingWeight = m_config.weightUnderwater * 0.1f;  // Legacy 10.0 → 1.0
+            result.waterbreathingWeight = m_config.weightUnderwater;
         }
 
         // =====================================================================
         // LOOKING AT LOCK → Unlock spells
         // =====================================================================
         if (world.isLookingAtLock) {
-            result.unlockWeight = m_config.weightLookingAtLock * 0.1f;  // Legacy 10.0 → 1.0
+            result.unlockWeight = m_config.weightLookingAtLock;
         }
 
         // =====================================================================
@@ -220,34 +226,37 @@ namespace Huginn::Context
         // =====================================================================
         // StateManager sets isFalling based on velocity/height threshold
         if (player.isFalling) {
-            result.slowFallWeight = m_config.weightFallingHigh * 0.1f;  // Legacy 8.0 → 0.8
+            result.slowFallWeight = m_config.weightFallingHigh;
         }
 
         // =====================================================================
         // WORKSTATION → Fortify Crafting
         // =====================================================================
-        // Mapping: RE::TESFurniture::WorkBenchData::BenchType values
-        //   1 = Forge, 2 = Smithing       → Fortify Smithing
-        //   3 = Enchanting, 4 = EnchantExp → Fortify Enchanting
-        //   5 = Alchemy, 6 = AlchemyExp    → Fortify Alchemy
+        // RE::TESFurniture::WorkBenchData::BenchType enum values:
+        //   kCreateObject(1), kSmithingWeapon(2), kSmithingArmor(7) → Fortify Smithing
+        //   kEnchanting(3), kEnchantingExperiment(4)                → Fortify Enchanting
+        //   kAlchemy(5), kAlchemyExperiment(6)                      → Fortify Alchemy
         if (world.isLookingAtWorkstation) {
-            const uint8_t type = world.workstationType;
+            using BenchType = RE::TESFurniture::WorkBenchData::BenchType;
+            const auto type = static_cast<BenchType>(world.workstationType);
 
-            // Forge / Smithing workstation
-            if (type == 1 || type == 2) {
-                result.fortifySmithingWeight = m_config.weightAtForge;  // Already [0,1]
+            switch (type) {
+            case BenchType::kCreateObject:
+            case BenchType::kSmithingWeapon:
+            case BenchType::kSmithingArmor:
+                result.fortifySmithingWeight = m_config.weightAtForge;
+                break;
+            case BenchType::kEnchanting:
+            case BenchType::kEnchantingExperiment:
+                result.fortifyEnchantingWeight = m_config.weightAtEnchanter;
+                break;
+            case BenchType::kAlchemy:
+            case BenchType::kAlchemyExperiment:
+                result.fortifyAlchemyWeight = m_config.weightAtAlchemyLab;
+                break;
+            default:
+                break;
             }
-            // Enchanting / Enchanting Experimenter
-            else if (type == 3 || type == 4) {
-                result.fortifyEnchantingWeight = m_config.weightAtEnchanter;  // Already [0,1]
-            }
-            // Alchemy / Alchemy Experimenter
-            else if (type == 5 || type == 6) {
-                result.fortifyAlchemyWeight = m_config.weightAtAlchemyLab;  // Already [0,1]
-            }
-            // Tanning (7), Smelter (8), Cooking (9) — no fortify effects exist
-            // in Skyrim for these, so no weights to set. Handled explicitly to
-            // avoid silent fallthrough when new bench types are added upstream.
         }
     }
 
@@ -266,7 +275,6 @@ namespace Huginn::Context
 
     void ContextRuleEngine::EvaluateCombatRules(
         ContextWeightMap& result,
-        const State::GameState& state,
         const State::PlayerActorState& player,
         const State::TargetCollection& targets) const
     {
@@ -280,16 +288,7 @@ namespace Huginn::Context
         // =====================================================================
         // WARD SPELLS (Enemy Casting Detection)
         // =====================================================================
-        // Check if any tracked enemy is casting a spell
-        bool anyCasting = false;
-        for (const auto& target : targets.targets) {
-            if (target.isHostile && !target.isDead && target.isCasting) {
-                anyCasting = true;
-                break;
-            }
-        }
-
-        if (anyCasting) {
+        if (targets.cachedAnyCasting) {
             result.wardWeight = m_config.weightEnemyCasting;  // Already [0,1]
         }
 
@@ -307,7 +306,7 @@ namespace Huginn::Context
         // =====================================================================
         // Relevant when in combat AND no active summon
         if (player.isInCombat && !player.buffs.hasActiveSummon) {
-            result.summonWeight = 0.4f;  // Moderate priority (was 4.0 in old scale)
+            result.summonWeight = m_config.weightSummon;
         }
 
         // =====================================================================
@@ -421,8 +420,8 @@ namespace Huginn::Context
         //
         if (player.hasEnchantedWeapon && player.weaponChargePercent < 1.0f) {
             const float chargeDeficit = 1.0f - player.weaponChargePercent;
-            // Quadratic curve for urgency (same pattern as health/magicka)
-            const float chargeWeight = std::pow(chargeDeficit, 2.0f);
+            // Continuous curve for urgency (same pattern as health/magicka)
+            const float chargeWeight = std::pow(chargeDeficit, m_config.fWeaponChargeSmoothingExponent);
             result.weaponChargeWeight = std::clamp(chargeWeight, 0.0f, 1.0f);
         }
 

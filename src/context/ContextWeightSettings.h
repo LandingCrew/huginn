@@ -74,6 +74,7 @@ namespace Huginn::State
         inline constexpr float NO_WEAPON = 0.4f;            // No weapon equipped (bound weapon)
         inline constexpr float WEAPON = 0.2f;               // Physical weapons (always-on baseline)
         inline constexpr float SPELL = 0.2f;                // Spells (always-on baseline for typed spell slots)
+        inline constexpr float SUMMON = 0.4f;               // Summon spells (in combat, no active summon)
 
         // Utility baseline
         inline constexpr float BASE_RELEVANCE = 0.05f;      // Noise floor for always-available items
@@ -88,6 +89,7 @@ namespace Huginn::State
         inline constexpr float HEALTH_SMOOTHING_EXPONENT = 2.0f;    // Quadratic falloff
         inline constexpr float MAGICKA_SMOOTHING_EXPONENT = 2.0f;   // Quadratic falloff
         inline constexpr float STAMINA_SMOOTHING_EXPONENT = 1.5f;   // Slightly less steep
+        inline constexpr float WEAPON_CHARGE_SMOOTHING_EXPONENT = 2.0f;  // Quadratic falloff
     }
 
     // =========================================================================
@@ -181,6 +183,7 @@ namespace Huginn::State
         float weightNoWeapon = ContextWeightDefaults::NO_WEAPON;
         float weightWeapon = ContextWeightDefaults::WEAPON;
         float weightSpell = ContextWeightDefaults::SPELL;
+        float weightSummon = ContextWeightDefaults::SUMMON;
 
         // --- Utility baseline ---
         float weightBaseRelevance = ContextWeightDefaults::BASE_RELEVANCE;
@@ -196,6 +199,7 @@ namespace Huginn::State
         float fHealthSmoothingExponent = ContextWeightDefaults::HEALTH_SMOOTHING_EXPONENT;
         float fMagickaSmoothingExponent = ContextWeightDefaults::MAGICKA_SMOOTHING_EXPONENT;
         float fStaminaSmoothingExponent = ContextWeightDefaults::STAMINA_SMOOTHING_EXPONENT;
+        float fWeaponChargeSmoothingExponent = ContextWeightDefaults::WEAPON_CHARGE_SMOOTHING_EXPONENT;
 
     private:
         ContextWeightSettings() = default;
