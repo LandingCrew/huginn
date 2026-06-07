@@ -1,7 +1,8 @@
 #pragma once
 
-#include <atomic>
+#include <array>
 #include <chrono>
+#include <mutex>
 
 namespace Huginn::Learning
 {
@@ -11,17 +12,30 @@ namespace Huginn::Learning
     // Tracks whether a recent equip was triggered by Huginn (EquipManager or
     // WheelerClient) vs an external source (inventory menu, favorites, console).
     //
-    // Huginn equip sites call MarkHuginnEquip() just before triggering the equip.
-    // SpellRegistry::ProcessEvent checks IsRecentHuginnEquip() to distinguish
-    // Huginn-mediated equips from external ones.
+    // Huginn equip sites call MarkHuginnEquip(formID) just before triggering the
+    // equip. SpellRegistry::ProcessEvent and ExternalEquipListener check
+    // IsRecentHuginnEquip(formID) to distinguish Huginn-mediated equips from
+    // external ones.
     //
-    // Uses a simple timestamp comparison — if the equip event arrives within
-    // windowMs of the last MarkHuginnEquip() call, it's considered Huginn-mediated.
+    // FormID-keyed: a Huginn equip of item X must not suppress learning from a
+    // genuine external equip of item Y in the same window. Entries are kept
+    // until window expiry (NOT consumed on first match) because the game can
+    // fire multiple TESEquipEvents for a single equip action (e.g. both hands);
+    // all events for the marked FormID within the window are Huginn-mediated.
+    //
+    // Storage is a small fixed ring (no heap, no unbounded growth); marks are
+    // rare (one per player action) so WINDOW_CAPACITY=8 is generous.
     // =========================================================================
 
     class EquipSourceTracker
     {
     public:
+        // Suppression window. Wider than the old 100ms global window — safe now
+        // that matching is per-FormID, so over-suppression of unrelated external
+        // equips can no longer occur. Covers event-delivery latency spikes
+        // (frame drops, loading) that caused double-learning at 100ms.
+        static constexpr float DEFAULT_WINDOW_MS = 400.0f;
+
         static EquipSourceTracker& GetSingleton()
         {
             static EquipSourceTracker instance;
@@ -29,20 +43,31 @@ namespace Huginn::Learning
         }
 
         // Called by EquipManager and WheelerClient when they trigger equips
-        void MarkHuginnEquip()
+        void MarkHuginnEquip(RE::FormID formID)
         {
-            m_lastHuginnEquipTime.store(
-                std::chrono::steady_clock::now(),
-                std::memory_order_release);
+            const auto now = std::chrono::steady_clock::now();
+            std::lock_guard lock(m_mutex);
+            m_entries[m_nextSlot] = Entry{formID, now};
+            m_nextSlot = (m_nextSlot + 1) % m_entries.size();
         }
 
-        // Called by SpellRegistry::ProcessEvent to check if recent equip was Huginn-mediated
-        [[nodiscard]] bool IsRecentHuginnEquip(float windowMs = 100.0f) const
+        // Called on TESEquipEvent to check if the equip of this specific form
+        // was Huginn-mediated (marked within the window).
+        [[nodiscard]] bool IsRecentHuginnEquip(RE::FormID formID, float windowMs = DEFAULT_WINDOW_MS) const
         {
-            auto lastTime = m_lastHuginnEquipTime.load(std::memory_order_acquire);
-            auto elapsed = std::chrono::steady_clock::now() - lastTime;
-            auto elapsedMs = std::chrono::duration<float, std::milli>(elapsed).count();
-            return elapsedMs <= windowMs;
+            const auto now = std::chrono::steady_clock::now();
+            std::lock_guard lock(m_mutex);
+            for (const auto& entry : m_entries) {
+                if (entry.formID != formID) {
+                    continue;
+                }
+                const float elapsedMs =
+                    std::chrono::duration<float, std::milli>(now - entry.timestamp).count();
+                if (elapsedMs <= windowMs) {
+                    return true;
+                }
+            }
+            return false;
         }
 
     private:
@@ -51,7 +76,15 @@ namespace Huginn::Learning
         EquipSourceTracker(const EquipSourceTracker&) = delete;
         EquipSourceTracker& operator=(const EquipSourceTracker&) = delete;
 
-        std::atomic<std::chrono::steady_clock::time_point> m_lastHuginnEquipTime{};
+        struct Entry
+        {
+            RE::FormID formID = 0;
+            std::chrono::steady_clock::time_point timestamp{};
+        };
+
+        mutable std::mutex m_mutex;
+        std::array<Entry, 8> m_entries{};
+        size_t m_nextSlot = 0;
     };
 
 }  // namespace Huginn::Learning

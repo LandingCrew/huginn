@@ -5,6 +5,13 @@
 
 namespace Huginn::Learning
 {
+    // Scroll learning depends on this inheritance: scrolls are routed to
+    // SpellRegistry::ProcessEvent via As<SpellItem>() (see below and
+    // SpellRegistry.cpp). If this ever breaks, scrolls need their own
+    // explicit branch BEFORE the SpellItem check.
+    static_assert(std::is_base_of_v<RE::SpellItem, RE::ScrollItem>,
+        "ScrollItem must inherit from SpellItem — scroll equip learning relies on it");
+
     // =========================================================================
     // EXTERNAL EQUIP LISTENER
     // =========================================================================
@@ -37,22 +44,23 @@ namespace Huginn::Learning
                 return RE::BSEventNotifyControl::kContinue;
             }
 
-            // Skip if this was an Huginn-mediated equip
-            if (EquipSourceTracker::GetSingleton().IsRecentHuginnEquip()) {
-                return RE::BSEventNotifyControl::kContinue;
-            }
-
             // Look up the form to identify what was equipped
             auto* form = RE::TESForm::LookupByID(event->baseObject);
             if (!form) {
                 return RE::BSEventNotifyControl::kContinue;
             }
 
+            // Skip if this was a Huginn-mediated equip of this specific form
+            if (EquipSourceTracker::GetSingleton().IsRecentHuginnEquip(form->GetFormID())) {
+                return RE::BSEventNotifyControl::kContinue;
+            }
+
             // Classify the form type for logging
             const char* formType = "Unknown";
             if (form->As<RE::SpellItem>()) {
-                // SpellRegistry already handles spell equips (calls ExternalEquipLearner directly)
-                // Skip here to avoid duplicate learning and logs
+                // Spells AND scrolls are handled by SpellRegistry::ProcessEvent
+                // (ScrollItem is-a SpellItem, so the cast matches both). Skip here
+                // to avoid duplicate learning and logs.
                 return RE::BSEventNotifyControl::kContinue;
             } else if (form->As<RE::TESObjectWEAP>()) {
                 formType = "Weapon";
@@ -66,7 +74,7 @@ namespace Huginn::Learning
                 // Armor equips aren't relevant for Huginn learning — skip
                 return RE::BSEventNotifyControl::kContinue;
             } else {
-                // Other form types (scrolls, misc items) — skip for now
+                // Misc forms (books, keys, ingredients, ...) — not Huginn candidates
                 return RE::BSEventNotifyControl::kContinue;
             }
 

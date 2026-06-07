@@ -33,11 +33,17 @@ namespace Huginn::Learning
             return instance;
         }
 
-        // Called from UpdateLoop after scoring + allocation
+        // Called from UpdateLoop after scoring + allocation.
+        // sortedPrefix: number of leading entries in `scored` that are actually
+        // in utility order (UtilityScorer uses partial_sort for top-N only; the
+        // tail is in unspecified order). Ranks beyond the prefix are clamped to
+        // sortedPrefix so attribution deterministically classifies them as
+        // far-miss instead of reading a meaningless tail index.
         void Update(
             const Scoring::ScoredCandidateList& scored,
             const Slot::SlotAssignments& currentPageAssignments,
-            size_t currentPage)
+            size_t currentPage,
+            size_t sortedPrefix)
         {
             std::unique_lock lock(m_mutex);
 
@@ -47,7 +53,8 @@ namespace Huginn::Learning
             // Build FormID -> {rank, utility} map from scored candidates
             m_candidateMap.clear();
             for (size_t i = 0; i < scored.size(); ++i) {
-                m_candidateMap[scored[i].GetFormID()] = CachedCandidate{i, scored[i].utility};
+                const size_t rank = (i < sortedPrefix) ? i : sortedPrefix;
+                m_candidateMap[scored[i].GetFormID()] = CachedCandidate{rank, scored[i].utility};
             }
 
             // Build displayed FormID set from current page assignments

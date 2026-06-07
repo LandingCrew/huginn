@@ -13,6 +13,9 @@
 #include "persist/QLearnerSerializer.h"
 #include "learning/StateFeatures.h"
 #include "learning/FeatureQLearner.h"
+#include "learning/PipelineStateCache.h"
+#include "learning/EquipSourceTracker.h"
+#include "learning/UsageMemory.h"
 #include "util/ScopedTimer.h"
 #include "context/ContextRuleEngine.h"
 
@@ -2833,6 +2836,142 @@ void RunUnitTests()
         }
 
         logger::info("TEST PASS: TargetCollection cache invariant holds across InsertOrUpdate/Remove/Clear"sv);
+    }
+
+    // Test 12: PipelineStateCache rank clamping — ranks beyond the sorted prefix
+    // must be clamped to the prefix length, not stored as meaningless tail indices.
+    {
+        logger::info("TEST: PipelineStateCache rank clamping..."sv);
+
+        constexpr size_t kSortedPrefix = 10;
+        constexpr size_t kTotal = 15;
+        constexpr RE::FormID kBaseID = 0xAB0000;
+
+        Scoring::ScoredCandidateList scored;
+        for (size_t i = 0; i < kTotal; ++i) {
+            Candidate::SpellCandidate spell{};
+            spell.formID = static_cast<RE::FormID>(kBaseID + i);
+            Scoring::ScoredCandidate sc{};
+            sc.candidate = spell;
+            sc.utility = static_cast<float>(kTotal - i);  // descending
+            scored.push_back(sc);
+        }
+
+        auto& cache = Learning::PipelineStateCache::GetSingleton();
+        cache.Update(scored, Slot::SlotAssignments{}, 0, kSortedPrefix);
+
+        bool failed = false;
+        for (size_t i = 0; i < kTotal; ++i) {
+            auto info = cache.GetCandidateInfo(static_cast<RE::FormID>(kBaseID + i));
+            if (!info.wasCandidate) {
+                logger::error("TEST FAIL: candidate {} missing from cache", i);
+                failed = true;
+                break;
+            }
+            const size_t expected = (i < kSortedPrefix) ? i : kSortedPrefix;
+            if (info.rank != expected) {
+                logger::error("TEST FAIL: candidate {} rank should be {}, got {}", i, expected, info.rank);
+                failed = true;
+                break;
+            }
+        }
+        if (failed) return;
+
+        logger::info("TEST PASS: PipelineStateCache clamps tail ranks to sorted prefix"sv);
+    }
+
+    // Test 13: EquipSourceTracker FormID keying — a Huginn equip of item X must
+    // not suppress external-equip learning for item Y, and entries must expire.
+    {
+        logger::info("TEST: EquipSourceTracker FormID keying..."sv);
+
+        auto& tracker = Learning::EquipSourceTracker::GetSingleton();
+
+        tracker.MarkHuginnEquip(0xAA01);
+        if (!tracker.IsRecentHuginnEquip(0xAA01)) {
+            logger::error("TEST FAIL: marked FormID should be recent");
+            return;
+        }
+        if (tracker.IsRecentHuginnEquip(0xBB02)) {
+            logger::error("TEST FAIL: unmarked FormID must NOT be suppressed (cross-item false suppression)");
+            return;
+        }
+
+        // Expiry: a tiny window must reject a mark older than it
+        tracker.MarkHuginnEquip(0xCC03);
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        if (tracker.IsRecentHuginnEquip(0xCC03, 1.0f)) {
+            logger::error("TEST FAIL: mark older than window should not be recent");
+            return;
+        }
+        // Still within the default window though
+        if (!tracker.IsRecentHuginnEquip(0xCC03)) {
+            logger::error("TEST FAIL: mark should still be within default window");
+            return;
+        }
+
+        logger::info("TEST PASS: EquipSourceTracker is FormID-keyed with window expiry"sv);
+    }
+
+    // Test 14: UsageMemory snapshot reader — misclick detection semantics, recency
+    // boost, and (critically) RecordUsage while a reader is alive. Under the old
+    // lock-holding reader, same-thread RecordUsage during a scoring pass would
+    // deadlock (shared_lock held + unique_lock requested on one thread).
+    {
+        logger::info("TEST: UsageMemory snapshot reader..."sv);
+
+        Learning::UsageMemory memory;
+        State::GameState ctxA{};
+        State::GameState ctxB{};
+        ctxB.health = State::HealthBucket::Critical;  // different hash from ctxA
+
+        // Misclick: different item, same context, fast switch
+        memory.RecordUsage(0x1111, ctxA);
+        auto misclick = memory.RecordUsage(0x2222, ctxA);
+        if (!misclick.detected || misclick.previousFormID != 0x1111) {
+            logger::error("TEST FAIL: fast same-context switch should flag misclick of previous item");
+            return;
+        }
+
+        // No misclick across different contexts
+        auto noMisclick = memory.RecordUsage(0x3333, ctxB);
+        if (noMisclick.detected) {
+            logger::error("TEST FAIL: different-context switch should not flag misclick");
+            return;
+        }
+
+        // Recency boost after MATCH_THRESHOLD uses in same context
+        memory.Clear();
+        for (size_t i = 0; i < Learning::UsageMemory::MATCH_THRESHOLD; ++i) {
+            memory.RecordUsage(0x4444, ctxA);
+        }
+        {
+            auto reader = memory.AcquireReader(ctxA);
+            if (reader.GetRecencyBoost(0x4444) != Learning::UsageMemory::RECENCY_BOOST) {
+                logger::error("TEST FAIL: {} same-context uses should give recency boost",
+                    Learning::UsageMemory::MATCH_THRESHOLD);
+                return;
+            }
+            if (reader.GetRecencyBoost(0x5555) != 0.0f) {
+                logger::error("TEST FAIL: unrelated item should get no recency boost");
+                return;
+            }
+
+            // Write while reader alive — would deadlock with the old lock-holding reader
+            memory.RecordUsage(0x6666, ctxA);
+
+            // Snapshot semantics: the reader does NOT see the new write
+            if (reader.GetRecencyBoost(0x6666) != 0.0f) {
+                logger::error("TEST FAIL: snapshot reader should not see post-snapshot writes");
+                return;
+            }
+        }
+        if (memory.GetEventCount() != Learning::UsageMemory::MATCH_THRESHOLD + 1) {
+            logger::error("TEST FAIL: RecordUsage during reader lifetime should have landed");
+            return;
+        }
+
+        logger::info("TEST PASS: UsageMemory snapshot reader (misclick, boost, non-blocking writes)"sv);
     }
 
     logger::info("=== All unit tests passed! ==="sv);
