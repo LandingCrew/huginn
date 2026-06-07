@@ -53,11 +53,14 @@ namespace Huginn::Learning
         event.rewardMultiplier = rewardMultiplier;
         event.wasRecommended = wasRecommended;
 
-        // Evaluate state once for all subscribers, from ONE StateManager snapshot.
-        // StateFeatures are extracted directly (continuous features for FQL).
-        // GameState is the discretized version (for UsageMemory context hashing).
-        // Both derive from the same player/targets copies so they can't disagree
-        // across the StateManager shared_mutex.
+        // Evaluate state once for all subscribers. StateFeatures are extracted
+        // directly (continuous features for FQL); GameState is the discretized
+        // version (for UsageMemory context hashing). Both derive from the SAME
+        // player/targets copies below, so features and gameState can't disagree.
+        // NOTE: each accessor takes its own shared_lock — this is NOT one atomic
+        // StateManager snapshot, and world (fetched later) can skew slightly
+        // relative to player/targets. That's acceptable; the invariant that
+        // matters here is features/gameState consistency.
         auto& stateMgr = State::StateManager::GetSingleton();
         auto player = stateMgr.GetPlayerState();
         auto targets = stateMgr.GetTargets();

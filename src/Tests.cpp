@@ -2879,6 +2879,10 @@ void RunUnitTests()
         }
         if (failed) return;
 
+        // Restore an empty cache — the singleton is live, and a real external
+        // equip during the next ~100ms must not attribute against test data.
+        cache.Update({}, Slot::SlotAssignments{}, 0, 0);
+
         logger::info("TEST PASS: PipelineStateCache clamps tail ranks to sorted prefix"sv);
     }
 
@@ -2889,30 +2893,51 @@ void RunUnitTests()
 
         auto& tracker = Learning::EquipSourceTracker::GetSingleton();
 
-        tracker.MarkHuginnEquip(0xAA01);
-        if (!tracker.IsRecentHuginnEquip(0xAA01)) {
+        // The singleton is live and marks linger for the 400ms window — use
+        // 0xFF-prefixed FormIDs (dynamic-form range) that no plugin record has.
+        constexpr RE::FormID kMarkA = 0xFF00AA01;
+        constexpr RE::FormID kUnmarked = 0xFF00BB02;
+        constexpr RE::FormID kMarkB = 0xFF00CC03;
+
+        tracker.MarkHuginnEquip(kMarkA);
+        if (!tracker.IsRecentHuginnEquip(kMarkA)) {
             logger::error("TEST FAIL: marked FormID should be recent");
             return;
         }
-        if (tracker.IsRecentHuginnEquip(0xBB02)) {
+        if (tracker.IsRecentHuginnEquip(kUnmarked)) {
             logger::error("TEST FAIL: unmarked FormID must NOT be suppressed (cross-item false suppression)");
             return;
         }
 
+        // FormID 0 must never match — the ring's empty slots are zero-initialized
+        if (tracker.IsRecentHuginnEquip(0)) {
+            logger::error("TEST FAIL: FormID 0 must never be suppressed");
+            return;
+        }
+
+        // Non-consumption: the game can fire multiple TESEquipEvents for ONE
+        // equip action (e.g. both hands) — repeated checks must all match.
+        tracker.MarkHuginnEquip(kMarkB);
+        if (!tracker.IsRecentHuginnEquip(kMarkB) || !tracker.IsRecentHuginnEquip(kMarkB)) {
+            logger::error("TEST FAIL: repeated checks within window must all match (non-consuming)");
+            return;
+        }
+
         // Expiry: a tiny window must reject a mark older than it
-        tracker.MarkHuginnEquip(0xCC03);
         std::this_thread::sleep_for(std::chrono::milliseconds(5));
-        if (tracker.IsRecentHuginnEquip(0xCC03, 1.0f)) {
+        if (tracker.IsRecentHuginnEquip(kMarkB, 1.0f)) {
             logger::error("TEST FAIL: mark older than window should not be recent");
             return;
         }
-        // Still within the default window though
-        if (!tracker.IsRecentHuginnEquip(0xCC03)) {
+        // Still within the default window though. (Wall-clock dependent: assumes
+        // <400ms since the mark — can only flake under extreme scheduler
+        // starvation during startup.)
+        if (!tracker.IsRecentHuginnEquip(kMarkB)) {
             logger::error("TEST FAIL: mark should still be within default window");
             return;
         }
 
-        logger::info("TEST PASS: EquipSourceTracker is FormID-keyed with window expiry"sv);
+        logger::info("TEST PASS: EquipSourceTracker is FormID-keyed, non-consuming, with window expiry"sv);
     }
 
     // Test 14: UsageMemory snapshot reader — misclick detection semantics, recency

@@ -47,6 +47,9 @@ namespace Huginn::Learning
         // tail is in unspecified order). Ranks beyond the prefix are stored as
         // kUnrankedTail so attribution deterministically classifies them as
         // far-miss instead of reading a meaningless tail index.
+        // NOTE: wildcard swaps run after sorting, so a prefix rank may hold a
+        // wildcard-promoted item — intentional: attribution should see what was
+        // actually surfaced, not the pre-wildcard utility order.
         void Update(
             const Scoring::ScoredCandidateList& scored,
             const Slot::SlotAssignments& currentPageAssignments,

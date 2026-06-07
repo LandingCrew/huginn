@@ -55,6 +55,9 @@ namespace Huginn::Learning
         // was Huginn-mediated (marked within the window).
         [[nodiscard]] bool IsRecentHuginnEquip(RE::FormID formID, float windowMs = DEFAULT_WINDOW_MS) const
         {
+            if (formID == 0) {
+                return false;  // Never match the empty ring slots (Entry{} has formID 0)
+            }
             const auto now = std::chrono::steady_clock::now();
             std::lock_guard lock(m_mutex);
             for (const auto& entry : m_entries) {
