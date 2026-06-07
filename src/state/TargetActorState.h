@@ -234,7 +234,9 @@ namespace Huginn::State
       // All tracked targets (flat vector — cache-friendly for N≤50, contiguous copy)
       std::vector<TargetActorState> targets;
 
-      // Cached aggregate counts — call UpdateCachedCounts() after modifying targets
+      // Cached aggregate counts — kept in sync automatically by InsertOrUpdate,
+      // Remove, and Clear. External code that mutates `targets` directly
+      // (e.g. std::erase_if) must call UpdateCachedCounts() before reading.
       int cachedEnemyCount = 0;
       bool cachedAnyCasting = false;
 
@@ -265,6 +267,7 @@ namespace Huginn::State
       } else {
         targets.push_back(state);
       }
+      UpdateCachedCounts();
       }
 
       // Remove target by FormID (swap-and-pop for O(1) removal)
@@ -273,9 +276,18 @@ namespace Huginn::State
         if (targets[i].actorFormID == formID) {
            targets[i] = targets.back();
            targets.pop_back();
+           UpdateCachedCounts();
            return;
         }
       }
+      }
+
+      // Clear all targets (and primary) and reset cached counts.
+      void Clear() noexcept {
+      primary.reset();
+      targets.clear();
+      cachedEnemyCount = 0;
+      cachedAnyCasting = false;
       }
 
       // Check if target exists

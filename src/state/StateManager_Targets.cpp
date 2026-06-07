@@ -100,8 +100,7 @@ namespace Huginn::State
       auto* player = RE::PlayerCharacter::GetSingleton();
       if (!player) {
       std::unique_lock lock(m_targetsMutex);
-      m_targets.primary.reset();
-      m_targets.targets.clear();
+      m_targets.Clear();
       return false;
       }
 

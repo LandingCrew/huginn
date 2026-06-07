@@ -1226,21 +1226,28 @@ void RunFeatureQLearnerTests()
         FeatureQLearner fql;
         RE::FormID healSpell = 0xDEAD0003;
 
-        // Train at low health + combat: reward=1.0
+        // Contrastive training: healing rewarded at LOW health, not rewarded at
+        // FULL health. Without the high-health/zero-reward examples the learner
+        // has no gradient toward a negative healthPct weight — it would just fit
+        // Q≈1 with small positive weights on whatever features are active.
         StateFeatures lowHealthCombat;
         lowHealthCombat.healthPct = 0.2f;
         lowHealthCombat.inCombat = 1.0f;
 
+        StateFeatures fullHealthCombat;
+        fullHealthCombat.healthPct = 1.0f;
+        fullHealthCombat.inCombat = 1.0f;
+
         for (int i = 0; i < 30; ++i) {
             fql.Update(healSpell, lowHealthCombat, 1.0f);
+            fql.Update(healSpell, fullHealthCombat, 0.0f);
         }
 
         auto weights = fql.GetWeights(healSpell);
 
-        // healthPct weight should be negative: low healthPct (0.2) paired with
-        // positive reward means the model learns that low health correlates with
-        // high Q — so the weight on healthPct should be negative (lower health = higher Q).
-        // inCombat weight should be positive: combat=1.0 paired with reward.
+        // To fit Q(low)=1 and Q(full)=0 simultaneously, the model must assign
+        // healthPct a negative weight (lower health = higher Q) and offset it
+        // with a positive inCombat weight.
         if (weights[0] >= 0.0f) {
             logger::error("TEST FAIL: healthPct weight should be negative (low health = high Q), got {:.4f}"sv, weights[0]);
             return;
@@ -2026,6 +2033,37 @@ void RunUnitTests()
             }
         }
 
+        // Test 5f: Resistance scales weight (capped fire resist → near-zero weight)
+        {
+            State::PlayerActorState testPlayer{};
+            testPlayer.effects.isOnFire = true;
+            testPlayer.resistances.fire = 80.0f;  // 80% resist → 0.2x scale
+
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
+
+            const float expected = 0.8f * 0.2f;  // baseWeight × (1 - 0.8)
+            if (std::abs(weights.resistFireWeight - expected) > 0.01f) {
+                logger::error("TEST FAIL: 80%% fire resist should scale weight to {:.3f}, got {:.3f}",
+                    expected, weights.resistFireWeight);
+                return;
+            }
+        }
+
+        // Test 5g: Resistance weakness (negative resist) clamps at 1.0x — no over-amplification
+        {
+            State::PlayerActorState testPlayer{};
+            testPlayer.effects.isOnFire = true;
+            testPlayer.resistances.fire = -50.0f;  // Weakness → clamped to 1.0x
+
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
+
+            if (std::abs(weights.resistFireWeight - 0.8f) > 0.01f) {
+                logger::error("TEST FAIL: Negative fire resist should clamp to full weight 0.8, got {:.3f}",
+                    weights.resistFireWeight);
+                return;
+            }
+        }
+
         logger::info("TEST PASS: ContextRuleEngine elemental rules work correctly"sv);
     }
 
@@ -2099,6 +2137,24 @@ void RunUnitTests()
 
             if (std::abs(weights.fortifySmithingWeight - 0.8f) > 0.01f) {
                 logger::error("TEST FAIL: Forge should give fortifySmithingWeight=0.8, got {:.3f}",
+                    weights.fortifySmithingWeight);
+                return;
+            }
+        }
+
+        // Test 6d-armor: Workstation (SmithingArmor, type 7) → fortifySmithingWeight = 0.8
+        // Regression: type 7 was previously dropped (only types 1-2 mapped to smithing).
+        {
+            State::PlayerActorState testPlayer{};
+            State::WorldState testWorld{};
+
+            testWorld.isLookingAtWorkstation = true;
+            testWorld.workstationType = 7;  // SmithingArmor
+
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
+
+            if (std::abs(weights.fortifySmithingWeight - 0.8f) > 0.01f) {
+                logger::error("TEST FAIL: SmithingArmor should give fortifySmithingWeight=0.8, got {:.3f}",
                     weights.fortifySmithingWeight);
                 return;
             }
@@ -2618,8 +2674,11 @@ void RunUnitTests()
                 weight = std::max(weight, weights.healingWeight);
             }
 
-            if (weight < 0.6f) {  // Should be high at 30% health
-                logger::error("TEST FAIL: Healing spell at 30%% health should get high weight, got {:.2f}"sv, weight);
+            // Pure quadratic curve: deficit=0.7, weight=(0.7)^2 = 0.49
+            const float expected = 0.49f;
+            if (std::abs(weight - expected) > 0.01f) {
+                logger::error("TEST FAIL: Healing spell at 30%% health should get weight={:.2f}, got {:.2f}"sv,
+                    expected, weight);
                 return;
             }
             logger::info("  ✓ Healing spell at 30%% health: weight={:.2f} (continuous!)"sv, weight);
@@ -2703,6 +2762,77 @@ void RunUnitTests()
         }
 
         logger::info("TEST PASS: End-to-end ContextRuleEngine → UtilityScorer integration works!"sv);
+    }
+
+    // Test 11: TargetCollection cache invariant — mutators must keep cachedEnemyCount
+    // and cachedAnyCasting in sync without an explicit UpdateCachedCounts() call.
+    {
+        logger::info("TEST: TargetCollection cache invariant..."sv);
+
+        State::TargetCollection coll{};
+
+        if (coll.cachedEnemyCount != 0 || coll.cachedAnyCasting) {
+            logger::error("TEST FAIL: default-constructed collection has non-empty caches");
+            return;
+        }
+
+        State::TargetActorState hostile{};
+        hostile.actorFormID = 0x1001;
+        hostile.isHostile = true;
+        hostile.isDead = false;
+        hostile.isCasting = false;
+
+        State::TargetActorState castingHostile{};
+        castingHostile.actorFormID = 0x1002;
+        castingHostile.isHostile = true;
+        castingHostile.isDead = false;
+        castingHostile.isCasting = true;
+
+        State::TargetActorState ally{};
+        ally.actorFormID = 0x1003;
+        ally.isHostile = false;
+
+        coll.InsertOrUpdate(hostile.actorFormID, hostile);
+        coll.InsertOrUpdate(castingHostile.actorFormID, castingHostile);
+        coll.InsertOrUpdate(ally.actorFormID, ally);
+
+        if (coll.cachedEnemyCount != 2 || !coll.cachedAnyCasting) {
+            logger::error("TEST FAIL: after 3 inserts (2 hostile, 1 ally, 1 casting) caches wrong: count={}, anyCasting={}",
+                coll.cachedEnemyCount, coll.cachedAnyCasting);
+            return;
+        }
+
+        // Remove the casting hostile — anyCasting should drop to false
+        coll.Remove(castingHostile.actorFormID);
+        if (coll.cachedEnemyCount != 1 || coll.cachedAnyCasting) {
+            logger::error("TEST FAIL: after removing casting hostile, caches wrong: count={}, anyCasting={}",
+                coll.cachedEnemyCount, coll.cachedAnyCasting);
+            return;
+        }
+
+        // Clear — caches should reset
+        coll.Clear();
+        if (coll.cachedEnemyCount != 0 || coll.cachedAnyCasting || !coll.targets.empty() || coll.primary.has_value()) {
+            logger::error("TEST FAIL: Clear() left residual state");
+            return;
+        }
+
+        // Update-in-place: hostile becomes dead → enemy count drops
+        coll.InsertOrUpdate(hostile.actorFormID, hostile);
+        if (coll.cachedEnemyCount != 1) {
+            logger::error("TEST FAIL: re-insert after Clear should give count=1, got {}", coll.cachedEnemyCount);
+            return;
+        }
+
+        State::TargetActorState deadVersion = hostile;
+        deadVersion.isDead = true;
+        coll.InsertOrUpdate(hostile.actorFormID, deadVersion);
+        if (coll.cachedEnemyCount != 0) {
+            logger::error("TEST FAIL: InsertOrUpdate to dead should drop count to 0, got {}", coll.cachedEnemyCount);
+            return;
+        }
+
+        logger::info("TEST PASS: TargetCollection cache invariant holds across InsertOrUpdate/Remove/Clear"sv);
     }
 
     logger::info("=== All unit tests passed! ==="sv);
