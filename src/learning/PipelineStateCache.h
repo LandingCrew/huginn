@@ -3,6 +3,7 @@
 #include "ScoredCandidate.h"
 #include "slot/SlotAssignment.h"
 #include <chrono>
+#include <limits>
 #include <mutex>
 #include <shared_mutex>
 #include <unordered_map>
@@ -33,11 +34,18 @@ namespace Huginn::Learning
             return instance;
         }
 
+        // Sentinel rank for candidates beyond the sorted prefix: their true rank
+        // is unknown (partial_sort leaves the tail unordered), so attribution
+        // must treat them as far-miss (B-low), never near-miss. Consumers
+        // compute overshoot = rank - displayedCount, which any real
+        // displayedCount keeps far above FAR_MISS_SLOTS for this value.
+        static constexpr size_t kUnrankedTail = std::numeric_limits<size_t>::max() / 2;
+
         // Called from UpdateLoop after scoring + allocation.
         // sortedPrefix: number of leading entries in `scored` that are actually
         // in utility order (UtilityScorer uses partial_sort for top-N only; the
-        // tail is in unspecified order). Ranks beyond the prefix are clamped to
-        // sortedPrefix so attribution deterministically classifies them as
+        // tail is in unspecified order). Ranks beyond the prefix are stored as
+        // kUnrankedTail so attribution deterministically classifies them as
         // far-miss instead of reading a meaningless tail index.
         void Update(
             const Scoring::ScoredCandidateList& scored,
@@ -53,7 +61,7 @@ namespace Huginn::Learning
             // Build FormID -> {rank, utility} map from scored candidates
             m_candidateMap.clear();
             for (size_t i = 0; i < scored.size(); ++i) {
-                const size_t rank = (i < sortedPrefix) ? i : sortedPrefix;
+                const size_t rank = (i < sortedPrefix) ? i : kUnrankedTail;
                 m_candidateMap[scored[i].GetFormID()] = CachedCandidate{rank, scored[i].utility};
             }
 

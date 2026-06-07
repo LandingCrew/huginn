@@ -2868,7 +2868,9 @@ void RunUnitTests()
                 failed = true;
                 break;
             }
-            const size_t expected = (i < kSortedPrefix) ? i : kSortedPrefix;
+            const size_t expected = (i < kSortedPrefix)
+                ? i
+                : Learning::PipelineStateCache::kUnrankedTail;
             if (info.rank != expected) {
                 logger::error("TEST FAIL: candidate {} rank should be {}, got {}", i, expected, info.rank);
                 failed = true;
