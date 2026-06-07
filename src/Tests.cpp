@@ -2950,7 +2950,9 @@ void RunUnitTests()
         Learning::UsageMemory memory;
         State::GameState ctxA{};
         State::GameState ctxB{};
-        ctxB.health = State::HealthBucket::Critical;  // different hash from ctxA
+        // GameState{} zero-inits every bucket, and Critical IS 0 — so the
+        // different-context state must use a nonzero bucket value.
+        ctxB.health = State::HealthBucket::VeryHigh;  // different hash from ctxA
 
         // Misclick: different item, same context, fast switch
         memory.RecordUsage(0x1111, ctxA);
