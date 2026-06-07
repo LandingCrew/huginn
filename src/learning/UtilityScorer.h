@@ -148,9 +148,6 @@ namespace Huginn::Scoring
         WildcardManager m_wildcardMgr;
         Context::ContextRuleEngine m_contextEngine;  // Stage 1f: New component
 
-        // Cached state
-        bool m_wasInCombat = false;
-
         // Scratch buffer for batch decay (update thread only, reused per tick)
         std::vector<RE::FormID> m_decayScratch;
     };

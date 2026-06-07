@@ -4,23 +4,22 @@
 namespace Huginn::Scoring
 {
     float PriorCalculator::CalculatePrior(
-        const State::GameState& state,
         const State::PlayerActorState& player,
         const Candidate::CandidateVariant& candidate) const
     {
-        return std::visit([this, &state, &player](const auto& c) -> float {
+        return std::visit([this, &player](const auto& c) -> float {
             using T = std::decay_t<decltype(c)>;
 
             if constexpr (std::is_same_v<T, Candidate::SpellCandidate>) {
-                return CalculateSpellPrior(state, player, c);
+                return CalculateSpellPrior(c);
             } else if constexpr (std::is_same_v<T, Candidate::ItemCandidate>) {
-                return CalculateItemPrior(state, player, c);
+                return CalculateItemPrior(c);
             } else if constexpr (std::is_same_v<T, Candidate::WeaponCandidate>) {
-                return CalculateWeaponPrior(state, player, c);
+                return CalculateWeaponPrior(c);
             } else if constexpr (std::is_same_v<T, Candidate::AmmoCandidate>) {
-                return CalculateAmmoPrior(state, player, c);
+                return CalculateAmmoPrior(player, c);
             } else if constexpr (std::is_same_v<T, Candidate::ScrollCandidate>) {
-                return CalculateScrollPrior(state, player, c);
+                return CalculateScrollPrior(c);
             } else {
                 // Compile-time exhaustiveness: adding a new CandidateVariant
                 // alternative must force a prior decision here.
@@ -35,8 +34,6 @@ namespace Huginn::Scoring
     // =========================================================================
 
     float PriorCalculator::CalculateSpellPrior(
-        const State::GameState& state,
-        [[maybe_unused]] const State::PlayerActorState& player,
         const Candidate::SpellCandidate& spell) const
     {
         float prior = BASE_PRIOR;
@@ -68,8 +65,6 @@ namespace Huginn::Scoring
     // =========================================================================
 
     float PriorCalculator::CalculateItemPrior(
-        const State::GameState& state,
-        const State::PlayerActorState& player,
         const Candidate::ItemCandidate& item) const
     {
         float prior = BASE_PRIOR;
@@ -107,8 +102,6 @@ namespace Huginn::Scoring
     // =========================================================================
 
     float PriorCalculator::CalculateWeaponPrior(
-        const State::GameState& state,
-        const State::PlayerActorState& player,
         const Candidate::WeaponCandidate& weapon) const
     {
         float prior = BASE_PRIOR;
@@ -135,7 +128,6 @@ namespace Huginn::Scoring
     // =========================================================================
 
     float PriorCalculator::CalculateAmmoPrior(
-        const State::GameState& state,
         const State::PlayerActorState& player,
         const Candidate::AmmoCandidate& ammo) const
     {
@@ -177,8 +169,6 @@ namespace Huginn::Scoring
     // =========================================================================
 
     float PriorCalculator::CalculateScrollPrior(
-        const State::GameState& state,
-        const State::PlayerActorState& player,
         const Candidate::ScrollCandidate& scroll) const
     {
         // Scrolls have no intrinsic properties to compare

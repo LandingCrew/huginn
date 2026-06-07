@@ -1628,8 +1628,8 @@ void RunUnitTests()
     healingSpell.baseCost = 100;  // Adept-level healing spell
     healingSpell.type = Spell::SpellType::Healing;
 
-    float healPriorExtreme = priorCalc.CalculatePrior(extremeState, extremePlayer, healingSpell);
-    float healPriorNeutral = priorCalc.CalculatePrior(neutralState, neutralPlayer, healingSpell);
+    float healPriorExtreme = priorCalc.CalculatePrior(extremePlayer, healingSpell);
+    float healPriorNeutral = priorCalc.CalculatePrior(neutralPlayer, healingSpell);
 
     if (std::abs(healPriorExtreme - healPriorNeutral) > 0.001f) {
         logger::error("TEST FAIL: Healing spell prior should be context-independent! Extreme={:.3f}, Neutral={:.3f}",
@@ -1642,8 +1642,8 @@ void RunUnitTests()
     damageSpell.baseCost = 200;  // Expert-level damage spell
     damageSpell.type = Spell::SpellType::Damage;
 
-    float dmgPriorExtreme = priorCalc.CalculatePrior(extremeState, extremePlayer, damageSpell);
-    float dmgPriorNeutral = priorCalc.CalculatePrior(neutralState, neutralPlayer, damageSpell);
+    float dmgPriorExtreme = priorCalc.CalculatePrior(extremePlayer, damageSpell);
+    float dmgPriorNeutral = priorCalc.CalculatePrior(neutralPlayer, damageSpell);
 
     if (std::abs(dmgPriorExtreme - dmgPriorNeutral) > 0.001f) {
         logger::error("TEST FAIL: Damage spell prior should be context-independent! Extreme={:.3f}, Neutral={:.3f}",
@@ -1660,8 +1660,8 @@ void RunUnitTests()
     largePotion.magnitude = 200.0f;  // Extreme healing potion
     largePotion.count = 10;
 
-    float smallPrior = priorCalc.CalculatePrior(neutralState, neutralPlayer, smallPotion);
-    float largePrior = priorCalc.CalculatePrior(neutralState, neutralPlayer, largePotion);
+    float smallPrior = priorCalc.CalculatePrior(neutralPlayer, smallPotion);
+    float largePrior = priorCalc.CalculatePrior(neutralPlayer, largePotion);
 
     if (largePrior <= smallPrior) {
         logger::error("TEST FAIL: Larger magnitude should give higher prior! Small={:.3f}, Large={:.3f}",
@@ -1678,8 +1678,8 @@ void RunUnitTests()
     scarcePotion.magnitude = 100.0f;
     scarcePotion.count = 2;  // Below LOW_COUNT_THRESHOLD
 
-    float plentifulPrior = priorCalc.CalculatePrior(neutralState, neutralPlayer, plentifulPotion);
-    float scarcePrior = priorCalc.CalculatePrior(neutralState, neutralPlayer, scarcePotion);
+    float plentifulPrior = priorCalc.CalculatePrior(neutralPlayer, plentifulPotion);
+    float scarcePrior = priorCalc.CalculatePrior(neutralPlayer, scarcePotion);
 
     if (scarcePrior >= plentifulPrior) {
         logger::error("TEST FAIL: Low count should reduce prior! Plentiful={:.3f}, Scarce={:.3f}",
@@ -1694,8 +1694,8 @@ void RunUnitTests()
     SpellCandidate expertSpell;
     expertSpell.baseCost = 200;  // Expert
 
-    float novicePrior = priorCalc.CalculatePrior(neutralState, neutralPlayer, noviceSpell);
-    float expertPrior = priorCalc.CalculatePrior(neutralState, neutralPlayer, expertSpell);
+    float novicePrior = priorCalc.CalculatePrior(neutralPlayer, noviceSpell);
+    float expertPrior = priorCalc.CalculatePrior(neutralPlayer, expertSpell);
 
     if (expertPrior <= novicePrior) {
         logger::error("TEST FAIL: Higher cost spell should have higher prior! Novice={:.3f}, Expert={:.3f}",
@@ -1714,8 +1714,8 @@ void RunUnitTests()
     lowCharge.currentCharge = 5.0f;
     lowCharge.maxCharge = 100.0f;
 
-    float fullPrior = priorCalc.CalculatePrior(neutralState, neutralPlayer, fullCharge);
-    float lowPrior = priorCalc.CalculatePrior(neutralState, neutralPlayer, lowCharge);
+    float fullPrior = priorCalc.CalculatePrior(neutralPlayer, fullCharge);
+    float lowPrior = priorCalc.CalculatePrior(neutralPlayer, lowCharge);
 
     if (lowPrior >= fullPrior) {
         logger::error("TEST FAIL: Low charge should reduce prior! Full={:.3f}, Low={:.3f}",
@@ -1738,8 +1738,8 @@ void RunUnitTests()
     meleePlayer.hasBowEquipped = false;
     meleePlayer.hasCrossbowEquipped = false;
 
-    float arrowsWithBow = priorCalc.CalculatePrior(neutralState, bowPlayer, arrows);
-    float arrowsWithoutBow = priorCalc.CalculatePrior(neutralState, meleePlayer, arrows);
+    float arrowsWithBow = priorCalc.CalculatePrior(bowPlayer, arrows);
+    float arrowsWithoutBow = priorCalc.CalculatePrior(meleePlayer, arrows);
 
     if (arrowsWithBow <= arrowsWithoutBow) {
         logger::error("TEST FAIL: Compatible ammo should have higher prior! WithBow={:.3f}, WithoutBow={:.3f}",
@@ -1754,8 +1754,8 @@ void RunUnitTests()
     ScrollCandidate damageScroll;
     damageScroll.type = Spell::SpellType::Damage;
 
-    float healScrollPrior = priorCalc.CalculatePrior(neutralState, neutralPlayer, healScroll);
-    float dmgScrollPrior = priorCalc.CalculatePrior(neutralState, neutralPlayer, damageScroll);
+    float healScrollPrior = priorCalc.CalculatePrior(neutralPlayer, healScroll);
+    float dmgScrollPrior = priorCalc.CalculatePrior(neutralPlayer, damageScroll);
 
     if (std::abs(healScrollPrior - dmgScrollPrior) > 0.001f) {
         logger::error("TEST FAIL: All scrolls should have identical prior! Heal={:.3f}, Damage={:.3f}",

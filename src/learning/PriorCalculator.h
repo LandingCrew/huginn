@@ -1,6 +1,5 @@
 #pragma once
 
-#include "state/GameState.h"
 #include "state/PlayerActorState.h"
 #include "candidate/CandidateTypes.h"
 
@@ -28,38 +27,31 @@ namespace Huginn::Scoring
         PriorCalculator() = default;
         ~PriorCalculator() = default;
 
-        // Calculate heuristic prior score for any candidate type
-        // Uses std::visit to dispatch to type-specific calculation
+        // Calculate heuristic prior score for any candidate type.
+        // Uses std::visit to dispatch to type-specific calculation.
+        // Takes PlayerActorState only for the ammo path (equipped-weapon
+        // compatibility) — deliberately NO GameState: priors are not
+        // context-aware, and accepting one falsely suggested otherwise.
         [[nodiscard]] float CalculatePrior(
-            const State::GameState& state,
             const State::PlayerActorState& player,
             const Candidate::CandidateVariant& candidate) const;
 
     private:
         // Type-specific prior calculations
         [[nodiscard]] float CalculateSpellPrior(
-            const State::GameState& state,
-            const State::PlayerActorState& player,
             const Candidate::SpellCandidate& spell) const;
 
         [[nodiscard]] float CalculateItemPrior(
-            const State::GameState& state,
-            const State::PlayerActorState& player,
             const Candidate::ItemCandidate& item) const;
 
         [[nodiscard]] float CalculateWeaponPrior(
-            const State::GameState& state,
-            const State::PlayerActorState& player,
             const Candidate::WeaponCandidate& weapon) const;
 
         [[nodiscard]] float CalculateAmmoPrior(
-            const State::GameState& state,
             const State::PlayerActorState& player,
             const Candidate::AmmoCandidate& ammo) const;
 
         [[nodiscard]] float CalculateScrollPrior(
-            const State::GameState& state,
-            const State::PlayerActorState& player,
             const Candidate::ScrollCandidate& scroll) const;
 
         // =============================================================================

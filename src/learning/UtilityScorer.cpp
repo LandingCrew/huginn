@@ -240,7 +240,7 @@ namespace Huginn::Scoring
         // =====================================================================
         // Step 3: Calculate prior from PriorCalculator
         // =====================================================================
-        result.breakdown.prior = m_priorCalc.CalculatePrior(state, player, candidate);
+        result.breakdown.prior = m_priorCalc.CalculatePrior(player, candidate);
 
         // =====================================================================
         // Step 4: Compute learning score: α*Q + (1-α)*prior + β*UCB
@@ -586,7 +586,6 @@ namespace Huginn::Scoring
     void UtilityScorer::Reset()
     {
         m_wildcardMgr.Reset();
-        m_wasInCombat = false;
     }
 
     void UtilityScorer::SetContextWeightConfig(const State::ContextWeightConfig& config)
