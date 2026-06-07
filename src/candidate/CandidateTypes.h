@@ -290,6 +290,13 @@ namespace Huginn::Candidate
         ScrollCandidate
     >;
 
+    // Helper for compile-time exhaustiveness checks in CandidateVariant visitors:
+    // `else { static_assert(always_false_v<T>, ...); }` turns a forgotten case for
+    // a newly-added variant alternative into a build error instead of a silent,
+    // visitor-specific fallback value.
+    template <class>
+    inline constexpr bool always_false_v = false;
+
     // Helper: Get reference to CandidateBase from variant (const version)
     [[nodiscard]] inline const CandidateBase& GetBase(const CandidateVariant& v) noexcept {
         return std::visit([](const auto& c) -> const CandidateBase& { return c; }, v);
@@ -318,6 +325,21 @@ namespace Huginn::Candidate
     // Helper: Get name from variant
     [[nodiscard]] inline std::string_view GetName(const CandidateVariant& v) noexcept {
         return GetBase(v).name;
+    }
+
+    // Helper: Check if candidate is favorited. Single source of truth — used by
+    // both ScoredCandidate::IsFavorited and UtilityScorer's favorites gate.
+    // Only spells and weapons carry a favorites flag.
+    [[nodiscard]] inline bool IsFavorited(const CandidateVariant& v) noexcept {
+        return std::visit([](const auto& c) -> bool {
+            using T = std::decay_t<decltype(c)>;
+            if constexpr (std::is_same_v<T, SpellCandidate> ||
+                          std::is_same_v<T, WeaponCandidate>) {
+                return c.isFavorited;
+            } else {
+                return false;  // Items, scrolls, ammo don't have favorites
+            }
+        }, v);
     }
 
     // NOTE: GetRelevance() helper removed in v0.12.x - use ContextRuleEngine.Evaluate() instead

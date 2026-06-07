@@ -2974,6 +2974,76 @@ void RunUnitTests()
         logger::info("TEST PASS: UsageMemory snapshot reader (misclick, boost, non-blocking writes)"sv);
     }
 
+    // Test 15: Deduplicated logic stays in sync — IsFavorited single source of
+    // truth, and spell/scroll fortify-school correlation parity.
+    {
+        logger::info("TEST: Dedup equivalence (IsFavorited, fortify-school parity)..."sv);
+
+        // IsFavorited: free function must match ScoredCandidate accessor for all types
+        {
+            Candidate::SpellCandidate favSpell{};
+            favSpell.isFavorited = true;
+            Candidate::WeaponCandidate favWeapon{};
+            favWeapon.isFavorited = true;
+            Candidate::ItemCandidate item{};
+            Candidate::ScrollCandidate scroll{};
+            Candidate::AmmoCandidate ammo{};
+
+            const Candidate::CandidateVariant variants[] = {favSpell, favWeapon, item, scroll, ammo};
+            const bool expected[] = {true, true, false, false, false};
+
+            for (size_t i = 0; i < 5; ++i) {
+                Scoring::ScoredCandidate sc{};
+                sc.candidate = variants[i];
+                if (Candidate::IsFavorited(variants[i]) != expected[i] ||
+                    sc.IsFavorited() != expected[i]) {
+                    logger::error("TEST FAIL: IsFavorited mismatch for variant {}", i);
+                    return;
+                }
+            }
+        }
+
+        // Fortify-school parity: spell and scroll of the same school must get the
+        // same fortify multiplier from CorrelationBooster (shared helper)
+        {
+            Scoring::ScorerConfig config{};
+            Scoring::CorrelationBooster booster(config);
+
+            State::PlayerActorState player{};
+            player.buffs.hasFortifyDestruction = true;
+            State::TargetCollection targets{};
+
+            Candidate::SpellCandidate spell{};
+            spell.school = Spell::MagicSchool::Destruction;
+            Candidate::ScrollCandidate scroll{};
+            scroll.school = Scroll::MagicSchool::Destruction;
+
+            const float spellBonus = booster.CalculateBonus(player, targets, spell);
+            const float scrollBonus = booster.CalculateBonus(player, targets, scroll);
+            const float expected = 1.0f + config.fortifySchoolBonus;
+
+            if (std::abs(spellBonus - expected) > 0.01f) {
+                logger::error("TEST FAIL: fortified spell should get x{:.1f}, got {:.2f}", expected, spellBonus);
+                return;
+            }
+            if (std::abs(spellBonus - scrollBonus) > 0.001f) {
+                logger::error("TEST FAIL: spell ({:.2f}) and scroll ({:.2f}) fortify bonuses diverged",
+                    spellBonus, scrollBonus);
+                return;
+            }
+
+            // Non-matching school gets no fortify bonus
+            Candidate::SpellCandidate offSchool{};
+            offSchool.school = Spell::MagicSchool::Illusion;
+            if (booster.CalculateBonus(player, targets, offSchool) != 1.0f) {
+                logger::error("TEST FAIL: non-fortified school should stay at neutral 1.0");
+                return;
+            }
+        }
+
+        logger::info("TEST PASS: Dedup equivalence holds (IsFavorited, fortify parity)"sv);
+    }
+
     logger::info("=== All unit tests passed! ==="sv);
 #endif
 }

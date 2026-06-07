@@ -22,7 +22,10 @@ namespace Huginn::Scoring
             } else if constexpr (std::is_same_v<T, Candidate::ScrollCandidate>) {
                 return CalculateScrollPrior(state, player, c);
             } else {
-                return BASE_PRIOR;
+                // Compile-time exhaustiveness: adding a new CandidateVariant
+                // alternative must force a prior decision here.
+                static_assert(Candidate::always_false_v<T>,
+                    "Unhandled CandidateVariant alternative in CalculatePrior");
             }
         }, candidate);
     }
