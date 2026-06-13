@@ -5,6 +5,12 @@
 
 namespace Huginn::Slot
 {
+    // Tripwire: a new SlotClassification means each Matches*/Classify switch
+    // below may need a case — they default to `return false`, so a forgotten
+    // case silently never matches. Bump the count here after auditing them all.
+    static_assert(SLOT_CLASSIFICATION_COUNT == 21,
+        "SlotClassification changed — audit MatchesSpell/Item/Scroll/Weapon and Classify()");
+
     bool SlotClassifier::Matches(
         const Scoring::ScoredCandidate& candidate,
         SlotClassification classification) noexcept

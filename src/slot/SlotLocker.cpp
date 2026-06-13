@@ -1,5 +1,6 @@
 #include "SlotLocker.h"
 #include "override/OverrideConditions.h"
+#include <set>
 #include <spdlog/spdlog.h>
 
 namespace Huginn::Slot
@@ -104,6 +105,10 @@ namespace Huginn::Slot
             result.push_back(newAssign);
         }
 
+        // Locks can reintroduce an item the allocator placed in another slot —
+        // dedup here (where lock state is known) so locked content always wins.
+        DedupePreferLocked(result);
+
         return result;
     }
 
@@ -178,6 +183,23 @@ namespace Huginn::Slot
     // =========================================================================
     // QUERY METHODS
     // =========================================================================
+
+    std::array<SlotLocker::SlotLockView, SlotLocker::MAX_SLOTS> SlotLocker::GetLockSnapshot() const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+
+        std::array<SlotLockView, MAX_SLOTS> snapshot;
+        for (size_t i = 0; i < MAX_SLOTS; ++i) {
+            const auto& slot = m_lockedSlots[i];
+            snapshot[i] = SlotLockView{
+                .isLocked = slot.isLocked,
+                .remainingMs = slot.isLocked ? slot.remainingMs : 0.0f,
+                .previousFormID = slot.previousFormID,
+                .hadContent = slot.hadContent,
+            };
+        }
+        return snapshot;
+    }
 
     bool SlotLocker::IsSlotLocked(size_t slotIndex) const
     {
@@ -293,16 +315,23 @@ namespace Huginn::Slot
         // HIGH-PRIORITY OVERRIDES bypass the minimum lock duration entirely.
         // Safety overrides (health potions, drowning) should never be delayed
         // by anti-flicker timers — the player needs them immediately.
+        //
+        // Only the override actually targeting THIS slot may break its lock:
+        // match by FormID so a high-priority HP override can't break an
+        // unrelated slot's lock (e.g., a BuffsAny slot whose new assignment
+        // happens to be flagged Override on a different page layout).
         if (m_config.overridesBreakLock &&
             newAssign.type == AssignmentType::Override &&
             overrides.HasActiveOverride())
         {
             for (const auto& ovr : overrides.activeOverrides) {
-                if (ovr.active && ovr.priority >= m_config.immediateBreakPriority) {
-                    spdlog::debug("[SlotLocker] Immediate lock break for override: {} (priority={})",
-                        ovr.reason, ovr.priority);
-                    return true;
-                }
+                if (!ovr.active || !ovr.candidate) continue;
+                if (ovr.priority < m_config.immediateBreakPriority) continue;
+                if (Candidate::GetFormID(*ovr.candidate) != newAssign.formID) continue;
+
+                spdlog::debug("[SlotLocker] Immediate lock break for override: {} (priority={})",
+                    ovr.reason, ovr.priority);
+                return true;
             }
         }
 
@@ -321,6 +350,40 @@ namespace Huginn::Slot
         // Note: We intentionally do NOT break when newAssign is empty - that's
         // the "context window" use case (e.g., surfacing while Waterbreathing is shown)
         return false;
+    }
+
+    void SlotLocker::DedupePreferLocked(SlotAssignments& result) const
+    {
+        // First pass: collect names held by LOCKED slots — these win ties.
+        std::set<std::string_view> lockedNames;
+        for (size_t i = 0; i < result.size() && i < MAX_SLOTS; ++i) {
+            if (!result[i].IsEmpty() && m_lockedSlots[i].isLocked) {
+                lockedNames.insert(result[i].name);
+            }
+        }
+
+        // Second pass: clear duplicates. An unlocked slot whose name is held by a
+        // locked slot is cleared outright; otherwise keep first occurrence.
+        std::set<std::string_view> seen;
+        for (size_t i = 0; i < result.size() && i < MAX_SLOTS; ++i) {
+            auto& assignment = result[i];
+            if (assignment.IsEmpty()) continue;
+
+            const bool isLocked = m_lockedSlots[i].isLocked;
+            if (!isLocked && lockedNames.contains(assignment.name)) {
+                spdlog::debug("[SlotLocker] Post-lock dedup: clearing unlocked '{}' from slot {} (locked elsewhere)",
+                    assignment.name, assignment.slotIndex);
+                assignment = SlotAssignment::Empty(assignment.slotIndex, assignment.classification);
+                continue;
+            }
+
+            auto [it, inserted] = seen.insert(assignment.name);
+            if (!inserted) {
+                spdlog::debug("[SlotLocker] Post-lock dedup: clearing duplicate '{}' from slot {}",
+                    assignment.name, assignment.slotIndex);
+                assignment = SlotAssignment::Empty(assignment.slotIndex, assignment.classification);
+            }
+        }
     }
 
 }  // namespace Huginn::Slot

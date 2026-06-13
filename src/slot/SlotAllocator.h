@@ -8,7 +8,10 @@
 #include "override/OverrideConditions.h"
 #include "state/PlayerActorState.h"
 #include "state/WorldState.h"
+#include <array>
 #include <atomic>
+#include <memory>
+#include <mutex>
 #include <set>
 #include <vector>
 
@@ -159,9 +162,25 @@ namespace Huginn::Slot
         // Dirty flag: set by page cycling input, consumed by update loop
         std::atomic<bool> m_pageChanged{false};
 
-        // Log-dedup caches (mutable: AllocateSlotsInternal is const, these are just log noise filters)
+        // Log-dedup caches (mutable: AllocateSlotsInternal is const, these are
+        // just log noise filters). Guarded by m_logMutex because allocation can
+        // run on both the update thread (current page) and a Wheeler callback
+        // thread (non-current pages) — std::set/std::string are not thread-safe.
+        mutable std::mutex m_logMutex;
         mutable std::set<SlotClassification> m_loggedMissingClassifications;
         mutable std::string m_lastUnplacedReason;
+
+        // Config snapshot cache — avoids a SlotSettings shared_lock + vector copy
+        // on every allocation tick. Refreshed only when SlotSettings bumps its
+        // generation (INI reload). The shared_ptr keeps the snapshot alive for
+        // the duration of any in-flight allocation, even across a concurrent reload.
+        mutable std::mutex m_cacheMutex;
+        mutable std::shared_ptr<const std::vector<PageConfig>> m_configCache;
+        mutable uint32_t m_cacheGeneration = UINT32_MAX;
+
+        /// Get the current page-config snapshot, refreshing from SlotSettings
+        /// only when the generation changed. Thread-safe; cheap on the hot path.
+        [[nodiscard]] std::shared_ptr<const std::vector<PageConfig>> GetConfigSnapshot() const;
 
         // =========================================================================
         // INTERNAL HELPERS
@@ -175,9 +194,11 @@ namespace Huginn::Slot
             const State::PlayerActorState& player,
             const State::WorldState& world) const;
 
-        /// Compute priority order from configs (returns sorted indices)
-        [[nodiscard]] std::vector<size_t> ComputePriorityOrder(
-            const std::vector<SlotConfig>& configs) const;
+        /// Compute priority order from configs into a caller-provided buffer
+        /// (no heap allocation). Returns the number of valid entries written.
+        [[nodiscard]] size_t ComputePriorityOrder(
+            const std::vector<SlotConfig>& configs,
+            std::array<size_t, MAX_SLOTS_PER_PAGE>& outOrder) const;
 
         /// Helper: Try to find the best candidate for a slot
         [[nodiscard]] std::optional<Scoring::ScoredCandidate> FindBestCandidate(
@@ -186,7 +207,8 @@ namespace Huginn::Slot
             const std::set<RE::FormID>& assignedFormIDs,
             const std::set<std::string_view>& assignedNames,
             bool skipEquipped = false,
-            const State::PlayerActorState* player = nullptr) const;
+            const State::PlayerActorState* player = nullptr,
+            bool skipWildcards = false) const;
     };
 
 }  // namespace Huginn::Slot

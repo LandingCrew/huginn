@@ -97,7 +97,10 @@ void ResetPipelineSubsystems() {
     Override::OverrideManager::GetSingleton().Reset();
     Candidate::CandidateGenerator::GetSingleton().Reset();
 
-    Slot::SlotAllocator::GetSingleton().Initialize();
+    // Reset() (not Initialize()) — resets to page 0 AND clears the log-dedup
+    // caches so first-time "no candidate"/unplaced-override messages aren't
+    // suppressed across a game load.
+    Slot::SlotAllocator::GetSingleton().Reset();
     auto& slotLocker = Slot::SlotLocker::GetSingleton();
     slotLocker.Reset();
     slotLocker.SetConfig(LoadSlotLockerConfigFromINI());

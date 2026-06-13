@@ -15,6 +15,7 @@ namespace Huginn::Slot
             case OverrideFilter::HP:   return category == Override::OverrideCategory::HP;
             case OverrideFilter::MP:   return category == Override::OverrideCategory::MP;
             case OverrideFilter::SP:   return category == Override::OverrideCategory::SP;
+            case OverrideFilter::Other: return category == Override::OverrideCategory::Other;
             default:                   return false;
         }
     }
@@ -50,8 +51,11 @@ namespace Huginn::Slot
     void SlotAllocator::Reset()
     {
         m_currentPage = 0;
-        m_loggedMissingClassifications.clear();
-        m_lastUnplacedReason.clear();
+        {
+            std::lock_guard<std::mutex> logLock(m_logMutex);
+            m_loggedMissingClassifications.clear();
+            m_lastUnplacedReason.clear();
+        }
         SKSE::log::info("[SlotAllocator] Reset to page 0");
     }
 
@@ -101,12 +105,25 @@ namespace Huginn::Slot
 
     size_t SlotAllocator::GetPageCount() const
     {
-        return SlotSettings::GetSingleton().GetPageCount();
+        return GetConfigSnapshot()->size();
     }
 
     // =========================================================================
     // CONFIGURATION ACCESS
     // =========================================================================
+
+    std::shared_ptr<const std::vector<PageConfig>> SlotAllocator::GetConfigSnapshot() const
+    {
+        auto& settings = SlotSettings::GetSingleton();
+        const uint32_t gen = settings.GetGeneration();
+
+        std::lock_guard<std::mutex> lock(m_cacheMutex);
+        if (!m_configCache || m_cacheGeneration != gen) {
+            m_configCache = std::make_shared<const std::vector<PageConfig>>(settings.GetAllPages());
+            m_cacheGeneration = gen;
+        }
+        return m_configCache;
+    }
 
     size_t SlotAllocator::GetSlotCount() const
     {
@@ -115,7 +132,11 @@ namespace Huginn::Slot
 
     size_t SlotAllocator::GetSlotCount(size_t pageIndex) const
     {
-        return SlotSettings::GetSingleton().GetSlotConfigs(pageIndex).size();
+        auto snap = GetConfigSnapshot();
+        if (pageIndex >= snap->size()) {
+            return 0;
+        }
+        return (*snap)[pageIndex].slots.size();
     }
 
     SlotConfig SlotAllocator::GetSlotConfig(size_t slotIndex) const
@@ -130,12 +151,22 @@ namespace Huginn::Slot
 
     std::vector<SlotConfig> SlotAllocator::GetSlotConfigs() const
     {
-        return SlotSettings::GetSingleton().GetSlotConfigs(m_currentPage);
+        auto snap = GetConfigSnapshot();
+        if (snap->empty()) {
+            return {};
+        }
+        const size_t page = m_currentPage < snap->size() ? m_currentPage.load() : 0;
+        return (*snap)[page].slots;
     }
 
     std::string SlotAllocator::GetCurrentPageName() const
     {
-        return SlotSettings::GetSingleton().GetPageName(m_currentPage);
+        auto snap = GetConfigSnapshot();
+        const size_t page = m_currentPage.load();
+        if (page >= snap->size()) {
+            return "Page";
+        }
+        return (*snap)[page].name;
     }
 
     // =========================================================================
@@ -159,8 +190,14 @@ namespace Huginn::Slot
         const State::PlayerActorState& player,
         const State::WorldState& world) const
     {
-        const auto slotConfigs = SlotSettings::GetSingleton().GetSlotConfigs(pageIndex);
-        return AllocateSlotsInternal(slotConfigs, candidates, overrides, player, world);
+        // Hold the snapshot for the duration of the call so the config refs
+        // passed to AllocateSlotsInternal stay valid even across a concurrent reload.
+        auto snap = GetConfigSnapshot();
+        if (snap->empty()) {
+            return {};
+        }
+        const size_t page = pageIndex < snap->size() ? pageIndex : 0;
+        return AllocateSlotsInternal((*snap)[page].slots, candidates, overrides, player, world);
     }
 
     SlotAssignments SlotAllocator::AllocateSlots(
@@ -196,8 +233,9 @@ namespace Huginn::Slot
             return assignments;
         }
 
-        // Compute priority order for this config
-        auto priorityOrder = ComputePriorityOrder(slotConfigs);
+        // Compute priority order for this config (fixed-size, no heap allocation)
+        std::array<size_t, MAX_SLOTS_PER_PAGE> priorityOrder;
+        const size_t priorityCount = ComputePriorityOrder(slotConfigs, priorityOrder);
 
         // Diagnostic: Count candidates by classification (logs only on change, debug level)
         // Use thread_local for thread safety in case of multi-threaded access
@@ -237,7 +275,8 @@ namespace Huginn::Slot
                 if (assignedFormIDs.contains(formID)) continue;
 
                 // Find first override-enabled slot that MATCHES this override's type
-                for (size_t priorityIdx : priorityOrder) {
+                for (size_t k = 0; k < priorityCount; ++k) {
+                    const size_t priorityIdx = priorityOrder[k];
                     const auto& config = slotConfigs[priorityIdx];
                     if (!AcceptsOverride(config.overrideFilter, override.category)) continue;
                     if (!assignments[priorityIdx].IsEmpty()) continue;  // Already filled
@@ -276,7 +315,8 @@ namespace Huginn::Slot
 
                 // Find first empty slot that accepts this override category
                 bool placed = false;
-                for (size_t priorityIdx : priorityOrder) {
+                for (size_t k = 0; k < priorityCount; ++k) {
+                    const size_t priorityIdx = priorityOrder[k];
                     const auto& config = slotConfigs[priorityIdx];
                     if (!AcceptsOverride(config.overrideFilter, override.category)) continue;
                     if (!assignments[priorityIdx].IsEmpty()) continue;
@@ -306,6 +346,7 @@ namespace Huginn::Slot
 
                 if (!placed) {
                     // Rate-limit: only warn once per override reason (avoid per-frame spam)
+                    std::lock_guard<std::mutex> logLock(m_logMutex);
                     if (override.reason != m_lastUnplacedReason) {
                         SKSE::log::warn("[SlotAllocator] Override '{}' could not be placed - "
                             "no slot accepts category '{}'",
@@ -328,7 +369,8 @@ namespace Huginn::Slot
         // =======================================================================
         // PASS 2: Fill remaining slots with candidates by classification
         // =======================================================================
-        for (size_t priorityIdx : priorityOrder) {
+        for (size_t k = 0; k < priorityCount; ++k) {
+            const size_t priorityIdx = priorityOrder[k];
             const auto& config = slotConfigs[priorityIdx];
             auto& assignment = assignments[priorityIdx];
 
@@ -341,6 +383,7 @@ namespace Huginn::Slot
 
             if (!bestCandidate) {
                 // Rate-limit "no candidate found" logs per classification type
+                std::lock_guard<std::mutex> logLock(m_logMutex);
                 if (m_loggedMissingClassifications.find(config.classification) == m_loggedMissingClassifications.end()) {
                     SKSE::log::info("[SlotAllocator] Slot {}: No {} candidate found",
                         priorityIdx, SlotClassificationToString(config.classification));
@@ -354,19 +397,18 @@ namespace Huginn::Slot
                     ? AssignmentType::Wildcard
                     : AssignmentType::Normal;
 
-                // Honor wildcard setting
+                // Honor wildcard setting: if this slot forbids wildcards, re-run
+                // the search restricted to non-wildcard candidates. Reusing
+                // FindBestCandidate (rather than an inline scan) means the fallback
+                // also honors skipEquipped, and returns nullopt cleanly when no
+                // alternative exists — so the wildcard is NOT left assigned to a
+                // wildcard-disabled slot.
                 if (assignType == AssignmentType::Wildcard && !config.wildcardsEnabled) {
-                    // Skip this candidate and find next non-wildcard
-                    for (const auto& candidate : candidates) {
-                        if (candidate.isWildcard) continue;
-                        if (assignedFormIDs.contains(candidate.GetFormID())) continue;
-                        if (assignedNames.contains(candidate.GetName())) continue;
-                        if (!SlotClassifier::Matches(candidate, config.classification)) continue;
-
-                        bestCandidate = candidate;
-                        assignType = AssignmentType::Normal;
-                        break;
-                    }
+                    bestCandidate = FindBestCandidate(
+                        candidates, config.classification, assignedFormIDs,
+                        assignedNames, config.skipEquipped, &player,
+                        /*skipWildcards=*/true);
+                    assignType = AssignmentType::Normal;
                 }
 
                 if (bestCandidate) {
@@ -384,24 +426,24 @@ namespace Huginn::Slot
         return assignments;
     }
 
-    std::vector<size_t> SlotAllocator::ComputePriorityOrder(
-        const std::vector<SlotConfig>& configs) const
+    size_t SlotAllocator::ComputePriorityOrder(
+        const std::vector<SlotConfig>& configs,
+        std::array<size_t, MAX_SLOTS_PER_PAGE>& outOrder) const
     {
-        std::vector<size_t> priorityOrder;
-        priorityOrder.reserve(configs.size());
+        const size_t n = std::min(configs.size(), MAX_SLOTS_PER_PAGE);
 
         // Build index list
-        for (size_t i = 0; i < configs.size(); ++i) {
-            priorityOrder.push_back(i);
+        for (size_t i = 0; i < n; ++i) {
+            outOrder[i] = i;
         }
 
         // Sort by priority (highest first)
-        std::sort(priorityOrder.begin(), priorityOrder.end(),
+        std::sort(outOrder.begin(), outOrder.begin() + n,
             [&configs](size_t a, size_t b) {
                 return configs[a].priority > configs[b].priority;
             });
 
-        return priorityOrder;
+        return n;
     }
 
     std::optional<Scoring::ScoredCandidate> SlotAllocator::FindBestCandidate(
@@ -410,11 +452,17 @@ namespace Huginn::Slot
         const std::set<RE::FormID>& assignedFormIDs,
         const std::set<std::string_view>& assignedNames,
         bool skipEquipped,
-        const State::PlayerActorState* player) const
+        const State::PlayerActorState* player,
+        bool skipWildcards) const
     {
         // Candidates are already sorted by utility (highest first)
         // Find the first candidate that matches and isn't already assigned
         for (const auto& candidate : candidates) {
+            // Skip wildcards when the target slot forbids them
+            if (skipWildcards && candidate.isWildcard) {
+                continue;
+            }
+
             // Skip already assigned candidates (by FormID or name)
             // Name check catches duplicate enchanted items with different FormIDs
             if (assignedFormIDs.contains(candidate.GetFormID())) {

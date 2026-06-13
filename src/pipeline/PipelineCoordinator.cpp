@@ -25,95 +25,6 @@
 using namespace Huginn;
 
 // =============================================================================
-// VISUAL STATE COMPUTATION
-// =============================================================================
-// Enriches slot assignments with visual state flags based on lock timers,
-// assignment history, and override priorities. Called after SlotLocker.ApplyLocks().
-// =============================================================================
-
-static void ComputeVisualStates(
-    Slot::SlotAssignments& assignments,
-    const Slot::SlotAssignments& rawAssignments,
-    const Slot::SlotLocker& locker)
-{
-    // Expiring threshold: show pulse during last 40% of lock duration
-    // (e.g., 3s lock → pulse starts at 1.2s remaining)
-    const float lockDurationMs = locker.GetConfig().lockDurationMs;
-    const float EXPIRING_THRESHOLD_MS = lockDurationMs * 0.4f;
-
-    for (size_t i = 0; i < assignments.size(); ++i) {
-        auto& assignment = assignments[i];
-
-        // Priority 1: Override/Wildcard (highest visual priority)
-        if (assignment.IsOverride()) {
-            assignment.visualState = Slot::SlotVisualState::Override;
-            continue;
-        }
-        if (assignment.IsWildcard()) {
-            assignment.visualState = Slot::SlotVisualState::Wildcard;
-            continue;
-        }
-
-        // Skip empty slots
-        if (assignment.IsEmpty()) {
-            assignment.visualState = Slot::SlotVisualState::Normal;
-            continue;
-        }
-
-        // Priority 2: Confirmed (re-evaluated, same item)
-        if (locker.WasConfirmed(assignment.slotIndex, assignment.formID)) {
-            assignment.visualState = Slot::SlotVisualState::Confirmed;
-            continue;
-        }
-
-        // Priority 3: Expiring (lock about to expire AND content will change)
-        if (locker.IsSlotLocked(assignment.slotIndex)) {
-            float remainingMs = locker.GetRemainingLockTime(assignment.slotIndex);
-
-            if (remainingMs > 0.0f && remainingMs <= EXPIRING_THRESHOLD_MS) {
-                // Check if content will actually change when lock expires
-                bool contentWillChange = (i < rawAssignments.size() &&
-                    rawAssignments[i].formID != 0 &&
-                    rawAssignments[i].formID != assignment.formID);
-
-                logger::trace("[VisualState] Slot {} expiring check: remainingMs={:.0f}, locked={:08X}, raw={:08X}, willChange={}",
-                    i, remainingMs,
-                    assignment.formID,
-                    i < rawAssignments.size() ? rawAssignments[i].formID : 0,
-                    contentWillChange);
-
-                if (contentWillChange) {
-                    assignment.visualState = Slot::SlotVisualState::Expiring;
-                    logger::debug("[VisualState] Slot {} set to EXPIRING ({}ms remaining, {} -> {})",
-                        i, remainingMs, assignment.name,
-                        i < rawAssignments.size() ? rawAssignments[i].name : "empty");
-                    continue;
-                }
-            }
-        }
-
-        // Default: normal state (no special effect)
-        assignment.visualState = Slot::SlotVisualState::Normal;
-    }
-
-    // Log visual state summary (non-normal states only) — one condensed line
-    if (spdlog::default_logger()->should_log(spdlog::level::debug)) {
-        std::string visualSummary;
-        for (size_t i = 0; i < assignments.size(); ++i) {
-            const auto& assignment = assignments[i];
-            if (!assignment.IsEmpty() && assignment.visualState != Slot::SlotVisualState::Normal) {
-                if (!visualSummary.empty()) visualSummary += ", ";
-                visualSummary += fmt::format("{}:{}({})",
-                    i, Slot::SlotVisualStateToString(assignment.visualState), assignment.name);
-            }
-        }
-        if (!visualSummary.empty()) {
-            logger::debug("[VisualState] {}", visualSummary);
-        }
-    }
-}
-
-// =============================================================================
 // DISPLAY BACKENDS
 // =============================================================================
 // Registered display backends — each receives slot assignments per frame.
@@ -303,17 +214,15 @@ void PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
     ctx.rawAssignments = slotAllocator.AllocateSlots(
         ctx.scoredCandidates, ctx.overrides, ctx.playerState, ctx.worldState);
 
-    // Apply slot locking for temporal stability
+    // Apply slot locking for temporal stability. ApplyLocks also dedups
+    // post-lock (locked slots can reintroduce an item the allocator placed
+    // elsewhere), preferring to keep locked content.
     auto& slotLocker = Slot::SlotLocker::GetSingleton();
     slotLocker.Update(ctx.deltaMs);
     ctx.assignments = slotLocker.ApplyLocks(ctx.rawAssignments, ctx.overrides);
 
-    // Post-lock dedup: locked slots can reintroduce items that the allocator
-    // already assigned elsewhere. Clear duplicates (keep first occurrence).
-    Slot::DeduplicateAssignments(ctx.assignments);
-
     // Compute visual state for each slot
-    ComputeVisualStates(ctx.assignments, ctx.rawAssignments, slotLocker);
+    Slot::ComputeVisualStates(ctx.assignments, ctx.rawAssignments, slotLocker);
 }
 
 // -----------------------------------------------------------------------------
