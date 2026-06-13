@@ -1,6 +1,7 @@
 #include "WeaponRegistry.h"
 #include "Config.h"
 #include "Globals.h"
+#include "../Profiling.h"
 #include "util/ScopedTimer.h"
 #include "util/AtomicGuard.h"
 #include "util/AlgorithmUtils.h"
@@ -108,6 +109,7 @@ namespace Huginn::Weapon
 
    void WeaponRegistry::RefreshCharges(const EquippedWeapons& equipped)
    {
+      Huginn_ZONE_NAMED("WeaponRegistry::RefreshCharges");
       SCOPED_TIMER("WeaponRegistry::RefreshCharges");
 
       auto* player = RE::PlayerCharacter::GetSingleton();
@@ -303,6 +305,7 @@ namespace Huginn::Weapon
 
    size_t WeaponRegistry::ReconcileWeapons(const EquippedWeapons& equipped)
    {
+      Huginn_ZONE_NAMED("WeaponRegistry::ReconcileWeapons");
       SCOPED_TIMER("WeaponRegistry::ReconcileWeapons");
       logger::trace("[WeaponRegistry] ReconcileWeapons() triggered"sv);
       m_isLoading = true;

@@ -124,7 +124,10 @@ static void MaintainRegistries(RE::PlayerCharacter* player,
             bool needsReconcile = g_registryTimers.weaponReconcile.IsDue(now, Config::WEAPON_RECONCILE_INTERVAL_MS);
             if (needsCharge || needsReconcile) {
                 Huginn_ZONE_NAMED("WeaponRegistry::Refresh");
-                auto equipped = Huginn::Weapon::EquippedWeapons::Query(player);
+                auto equipped = [&] {
+                    Huginn_ZONE_NAMED("EquippedWeapons::Query");
+                    return Huginn::Weapon::EquippedWeapons::Query(player);
+                }();
                 if (needsCharge) { g_weaponRegistry->RefreshCharges(equipped); g_registryTimers.weaponCharge.Reset(now); }
                 if (needsReconcile) { g_weaponRegistry->ReconcileWeapons(equipped); g_registryTimers.weaponReconcile.Reset(now); }
             }
