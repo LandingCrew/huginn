@@ -121,6 +121,21 @@ namespace Huginn::Slot
         // QUERY METHODS
         // =========================================================================
 
+        /// Read-only view of a single slot's lock state (one entry per slot).
+        struct SlotLockView
+        {
+            bool isLocked = false;
+            float remainingMs = 0.0f;
+            RE::FormID previousFormID = 0;
+            bool hadContent = false;
+        };
+
+        /// Snapshot all slots' lock state under a SINGLE mutex acquisition.
+        /// Prefer this over per-slot IsSlotLocked/GetRemainingLockTime/WasConfirmed
+        /// when a caller needs several slots' state in one pass (e.g. visual-state
+        /// computation), which otherwise takes up to 3 lock/unlock pairs per slot.
+        [[nodiscard]] std::array<SlotLockView, MAX_SLOTS_PER_PAGE> GetLockSnapshot() const;
+
         /// Check if a slot is currently locked
         [[nodiscard]] bool IsSlotLocked(size_t slotIndex) const;
 
@@ -176,6 +191,12 @@ namespace Huginn::Slot
             const LockedSlot& lock,
             const SlotAssignment& newAssign,
             const Override::OverrideCollection& overrides) const;
+
+        /// Post-lock dedup: a locked slot can hold an item the allocator also
+        /// placed in another (unlocked) slot this frame. Clears duplicate names,
+        /// PREFERRING to keep the locked occurrence so a lower-index unlocked
+        /// duplicate can't evict locked content. Caller must hold m_mutex.
+        void DedupePreferLocked(SlotAssignments& result) const;
     };
 
 }  // namespace Huginn::Slot

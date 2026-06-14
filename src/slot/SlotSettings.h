@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SlotConfig.h"
+#include <atomic>
 #include <filesystem>
 #include <shared_mutex>
 #include <vector>
@@ -76,11 +77,20 @@ namespace Huginn::Slot
         /// Get all pages (returns copy for thread safety)
         [[nodiscard]] std::vector<PageConfig> GetAllPages() const;
 
+        /// Monotonic generation counter — bumped on every config change
+        /// (LoadFromFile / ResetToDefaults). Consumers can cache config copies
+        /// and cheaply detect staleness without re-copying every access.
+        [[nodiscard]] uint32_t GetGeneration() const noexcept
+        {
+            return m_generation.load(std::memory_order_acquire);
+        }
+
     private:
         SlotSettings() { ResetToDefaults(); }
 
         mutable std::shared_mutex m_mutex;
         std::vector<PageConfig> m_pages;
+        std::atomic<uint32_t> m_generation{0};
 
         /// Parse classification string to enum (logs warning on error, returns Regular)
         [[nodiscard]] static SlotClassification ParseClassification(const std::string& str);

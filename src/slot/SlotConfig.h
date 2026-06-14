@@ -68,6 +68,7 @@ namespace Huginn::Slot
         HP,     // Health overrides only
         MP,     // Magicka overrides only
         SP,     // Stamina overrides only
+        Other,  // Non-resource overrides only (drowning, weapon charge, ammo)
         _Count
     };
 
@@ -82,6 +83,7 @@ namespace Huginn::Slot
             case OverrideFilter::HP:   return "HP";
             case OverrideFilter::MP:   return "MP";
             case OverrideFilter::SP:   return "SP";
+            case OverrideFilter::Other: return "Other";
             default:                   return "Unknown";
         }
     }
@@ -117,6 +119,8 @@ namespace Huginn::Slot
 
     [[nodiscard]] inline constexpr std::string_view SlotClassificationToString(SlotClassification c) noexcept
     {
+        static_assert(SLOT_CLASSIFICATION_COUNT == 21,
+            "SlotClassification changed — add the new case to this switch and its siblings");
         switch (c) {
             case SlotClassification::DamageAny:   return "DamageAny";
             case SlotClassification::HealingAny:  return "HealingAny";

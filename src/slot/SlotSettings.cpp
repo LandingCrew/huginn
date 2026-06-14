@@ -4,6 +4,12 @@
 
 namespace Huginn::Slot
 {
+    // Tripwire: a new SlotClassification needs a parse alias + ToIniString case
+    // below (ParseClassification / ClassificationToIniString), else it can't be
+    // configured from INI and round-trips to Regular.
+    static_assert(SLOT_CLASSIFICATION_COUNT == 21,
+        "SlotClassification changed — update ParseClassification and ClassificationToIniString");
+
     void SlotSettings::LoadFromFile(const std::filesystem::path& iniPath)
     {
         if (!std::filesystem::exists(iniPath)) {
@@ -111,6 +117,7 @@ namespace Huginn::Slot
             m_pages = std::move(newPages);
             committedCount = m_pages.size();
         }
+        m_generation.fetch_add(1, std::memory_order_release);
         SKSE::log::info("[SlotSettings] Loaded {} page(s)"sv, committedCount);
     }
 
@@ -123,6 +130,7 @@ namespace Huginn::Slot
             m_pages.push_back(CreateDefaultPage(0));
             slotCount = m_pages[0].slots.size();
         }
+        m_generation.fetch_add(1, std::memory_order_release);
         SKSE::log::info("[SlotSettings] Reset to defaults (1 page, {} slots)"sv, slotCount);
     }
 
@@ -273,6 +281,7 @@ namespace Huginn::Slot
         if (lower == "hp" || lower == "health") return OverrideFilter::HP;
         if (lower == "mp" || lower == "magicka" || lower == "mana") return OverrideFilter::MP;
         if (lower == "sp" || lower == "stamina") return OverrideFilter::SP;
+        if (lower == "other" || lower == "misc") return OverrideFilter::Other;
 
         SKSE::log::warn("[SlotSettings] Unknown override filter '{}', defaulting to Any"sv, str);
         return OverrideFilter::Any;
@@ -286,6 +295,7 @@ namespace Huginn::Slot
             case OverrideFilter::HP:   return "HP";
             case OverrideFilter::MP:   return "MP";
             case OverrideFilter::SP:   return "SP";
+            case OverrideFilter::Other: return "Other";
             default:                   return "true";
         }
     }

@@ -1,10 +1,12 @@
 #pragma once
 
 #include "SlotAssignment.h"
+#include "SlotLocker.h"
 #include "ui/SlotTypes.h"
 #include "learning/item/ItemData.h"
 #include "weapon/WeaponData.h"
 #include <set>
+#include <spdlog/spdlog.h>
 
 namespace Huginn::Slot
 {
@@ -14,9 +16,15 @@ namespace Huginn::Slot
     // Helper functions for converting SlotAssignments to widget/wheeler formats.
     // =============================================================================
 
-    /// Get a short display name for a slot classification (for "No X" messages)
-    [[nodiscard]] inline std::string GetClassificationDisplayName(SlotClassification c) noexcept
+    /// Get a short display name for a slot classification (for "No X" messages).
+    /// Returns a string_view into static storage — no allocation per empty slot.
+    [[nodiscard]] inline constexpr std::string_view GetClassificationDisplayName(SlotClassification c) noexcept
     {
+        // Tripwire: adding a SlotClassification means this switch (and the other
+        // classification switches in SlotConfig.h/SlotClassifier.cpp/SlotSettings.cpp)
+        // may need a new case — they default to a generic fallback otherwise.
+        static_assert(SLOT_CLASSIFICATION_COUNT == 21,
+            "SlotClassification changed — review GetClassificationDisplayName and sibling switches");
         switch (c) {
             case SlotClassification::DamageAny:   return "damage";
             case SlotClassification::HealingAny:  return "healing";
@@ -136,19 +144,86 @@ namespace Huginn::Slot
         }
     }
 
-    /// Remove duplicate items from post-lock assignments (keep first occurrence).
-    /// Locked slots can reintroduce items that the allocator already assigned
-    /// elsewhere — this clears the later duplicates by name.
-    inline void DeduplicateAssignments(SlotAssignments& assignments)
+    /// Enrich slot assignments with visual state flags (override, wildcard,
+    /// confirmed, expiring) based on lock timers and assignment history.
+    /// Call after SlotLocker::ApplyLocks(). Uses a single lock snapshot rather
+    /// than per-slot locker queries (which would take up to 3 acquisitions each).
+    inline void ComputeVisualStates(
+        SlotAssignments& assignments,
+        const SlotAssignments& rawAssignments,
+        const SlotLocker& locker)
     {
-        std::set<std::string_view> seenNames;
-        for (auto& assignment : assignments) {
-            if (assignment.IsEmpty()) continue;
-            auto [it, inserted] = seenNames.insert(assignment.name);
-            if (!inserted) {
-                logger::debug("[SlotUtils] Post-lock dedup: clearing duplicate '{}' from slot {}",
-                    assignment.name, assignment.slotIndex);
-                assignment = SlotAssignment::Empty(assignment.slotIndex, assignment.classification);
+        // Expiring threshold: show pulse during last 40% of lock duration
+        // (e.g., 3s lock → pulse starts at 1.2s remaining)
+        const float lockDurationMs = locker.GetConfig().lockDurationMs;
+        const float EXPIRING_THRESHOLD_MS = lockDurationMs * 0.4f;
+
+        const auto lockSnapshot = locker.GetLockSnapshot();
+        const size_t lockCount = lockSnapshot.size();
+
+        for (size_t i = 0; i < assignments.size(); ++i) {
+            auto& assignment = assignments[i];
+
+            // Priority 1: Override/Wildcard (highest visual priority)
+            if (assignment.IsOverride()) {
+                assignment.visualState = SlotVisualState::Override;
+                continue;
+            }
+            if (assignment.IsWildcard()) {
+                assignment.visualState = SlotVisualState::Wildcard;
+                continue;
+            }
+
+            // Skip empty slots
+            if (assignment.IsEmpty()) {
+                assignment.visualState = SlotVisualState::Normal;
+                continue;
+            }
+
+            const size_t slot = assignment.slotIndex;
+            const SlotLocker::SlotLockView* lock =
+                slot < lockCount ? &lockSnapshot[slot] : nullptr;
+
+            // Priority 2: Confirmed (re-evaluated to same item)
+            if (lock && assignment.formID != 0 &&
+                lock->hadContent && lock->previousFormID == assignment.formID) {
+                assignment.visualState = SlotVisualState::Confirmed;
+                continue;
+            }
+
+            // Priority 3: Expiring (lock about to expire AND content will change)
+            if (lock && lock->isLocked &&
+                lock->remainingMs > 0.0f && lock->remainingMs <= EXPIRING_THRESHOLD_MS) {
+                const bool contentWillChange = (i < rawAssignments.size() &&
+                    rawAssignments[i].formID != 0 &&
+                    rawAssignments[i].formID != assignment.formID);
+
+                if (contentWillChange) {
+                    assignment.visualState = SlotVisualState::Expiring;
+                    logger::debug("[VisualState] Slot {} set to EXPIRING ({:.0f}ms remaining, {} -> {})",
+                        i, lock->remainingMs, assignment.name,
+                        i < rawAssignments.size() ? rawAssignments[i].name : "empty");
+                    continue;
+                }
+            }
+
+            // Default: normal state (no special effect)
+            assignment.visualState = SlotVisualState::Normal;
+        }
+
+        // Log visual state summary (non-normal states only) — one condensed line
+        if (spdlog::default_logger()->should_log(spdlog::level::debug)) {
+            std::string visualSummary;
+            for (size_t i = 0; i < assignments.size(); ++i) {
+                const auto& assignment = assignments[i];
+                if (!assignment.IsEmpty() && assignment.visualState != SlotVisualState::Normal) {
+                    if (!visualSummary.empty()) visualSummary += ", ";
+                    visualSummary += fmt::format("{}:{}({})",
+                        i, SlotVisualStateToString(assignment.visualState), assignment.name);
+                }
+            }
+            if (!visualSummary.empty()) {
+                logger::debug("[VisualState] {}", visualSummary);
             }
         }
     }
