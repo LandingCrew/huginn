@@ -87,16 +87,18 @@ namespace Huginn::Weapon
       // m_isLoading cleared by LoadingGuard destructor
    }
 
+   bool WeaponRegistry::IsExtraListStable() noexcept
+   {
+      const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
+      std::chrono::steady_clock::now() - g_lastGameLoad);
+      return elapsed.count() >= static_cast<int64_t>(Config::EXTRALIST_STABILIZATION_MS);
+   }
+
    void WeaponRegistry::RefreshCharges()
    {
       // CRITICAL SAFETY: Check if enough time has passed since save load (v0.7.9)
-      auto now = std::chrono::steady_clock::now();
-      auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - g_lastGameLoad);
-
-      if (elapsed.count() < static_cast<int64_t>(Config::EXTRALIST_STABILIZATION_MS)) {
-      logger::trace("[WeaponRegistry] RefreshCharges() skipped - extraLists not stable "
-                    "({}ms since load, need {}ms)"sv, elapsed.count(),
-                    static_cast<int64_t>(Config::EXTRALIST_STABILIZATION_MS));
+      if (!IsExtraListStable()) {
+      logger::trace("[WeaponRegistry] RefreshCharges() skipped - extraLists not stable"sv);
       return;
       }
 
@@ -111,6 +113,14 @@ namespace Huginn::Weapon
    {
       Huginn_ZONE_NAMED("WeaponRegistry::RefreshCharges");
       SCOPED_TIMER("WeaponRegistry::RefreshCharges");
+
+      // Stabilization guard: this overload is called directly from the update loop,
+      // so it must gate on extraList stability itself rather than relying on the
+      // zero-arg wrapper or on the refresh interval coincidentally equalling
+      // EXTRALIST_STABILIZATION_MS. Reading extraLists too early can crash.
+      if (!IsExtraListStable()) {
+      return;
+      }
 
       auto* player = RE::PlayerCharacter::GetSingleton();
       if (!player) {
@@ -136,69 +146,80 @@ namespace Huginn::Weapon
       // FIX (v0.12.x): Use IsFavorited() instead of kHotkey check (catches starred favorites)
       // =========================================================================
 
-      // Build map of current weapon state (including extraLists data)
-      auto inventory = Util::GetInventorySafe(player, [](RE::TESBoundObject& obj) {
-      return obj.Is(RE::FormType::Weapon);
+      // Build current weapon + ammo state in a SINGLE inventory traversal.
+      // (Previously this scanned weapons here and ammo again via ScanPlayerAmmo(),
+      //  i.e. two full GetInventorySafe passes — each allocating an entry copy per
+      //  item — every 500ms. One combined pass halves that cost.)
+      auto inventory = [&] {
+      Huginn_ZONE_NAMED("RefreshCharges::GetInventory");
+      return Util::GetInventorySafe(player, [](RE::TESBoundObject& obj) {
+        return obj.Is(RE::FormType::Weapon) || obj.Is(RE::FormType::Ammo);
       });
+      }();
+
+      auto* equippedAmmo = player->GetCurrentAmmo();
 
       std::unordered_map<RE::FormID, ScannedWeapon> currentState;
       currentState.reserve(trackedFormIDs.size() + 8);
+      std::unordered_map<RE::FormID, ScannedAmmo> ammoState;
 
+      {
+      // Localizes the per-weapon ExtractWeaponMetadata cost (extraList walk) vs the
+      // GetInventory traversal above — the two suspected drivers of this method.
+      Huginn_ZONE_NAMED("RefreshCharges::ExtractMetadata");
       for (auto& [obj, data] : inventory) {
       auto& [count, entry] = data;
       if (count <= 0) continue;
 
-      auto* weapon = obj->As<RE::TESObjectWEAP>();
-      if (!weapon) continue;
+      if (auto* weapon = obj->As<RE::TESObjectWEAP>()) {
+        RE::FormID formID = weapon->GetFormID();
 
-      RE::FormID formID = weapon->GetFormID();
-
-      // Skip weapons that are neither tracked nor favorited (performance optimization)
-      bool isTracked = trackedFormIDs.contains(formID);
-      if (!isTracked) {
-        bool isFavorited = entry && entry->IsFavorited();
-        if (!isFavorited) {
-           continue;
+        // Skip weapons that are neither tracked nor favorited (performance optimization)
+        bool isTracked = trackedFormIDs.contains(formID);
+        if (!isTracked) {
+           bool isFavorited = entry && entry->IsFavorited();
+           if (!isFavorited) {
+            continue;
+           }
         }
-      }
 
-      // Extract metadata using helper if entry data available
-      if (entry) {
-        ScannedWeapon sw = ExtractWeaponMetadata(weapon, entry.get(), true, equipped);
-        currentState[formID] = sw;
-      } else {
-        ScannedWeapon sw{};
-        sw.weapon = weapon;
-        sw.isFavorited = false;
-        sw.isEquipped = equipped.IsEquipped(weapon);
-        sw.currentCharge = 0.0f;
-        sw.maxCharge = 0.0f;
-        sw.uniqueID = 0;
-        auto* enchantable = weapon->As<RE::TESEnchantableForm>();
-        const bool isStaff = weapon->GetWeaponType() == RE::WEAPON_TYPE::kStaff;
-        const bool isEnchanted = (enchantable && enchantable->formEnchanting) || isStaff;
-        if (isEnchanted && enchantable) {
-           sw.maxCharge = static_cast<float>(enchantable->amountofEnchantment);
-           sw.currentCharge = sw.maxCharge;
+        // Extract metadata using helper if entry data available
+        if (entry) {
+           ScannedWeapon sw = ExtractWeaponMetadata(weapon, entry.get(), true, equipped);
+           currentState[formID] = sw;
+        } else {
+           ScannedWeapon sw{};
+           sw.weapon = weapon;
+           sw.isFavorited = false;
+           sw.isEquipped = equipped.IsEquipped(weapon);
+           sw.currentCharge = 0.0f;
+           sw.maxCharge = 0.0f;
+           sw.uniqueID = 0;
+           auto* enchantable = weapon->As<RE::TESEnchantableForm>();
+           const bool isStaff = weapon->GetWeaponType() == RE::WEAPON_TYPE::kStaff;
+           const bool isEnchanted = (enchantable && enchantable->formEnchanting) || isStaff;
+           if (isEnchanted && enchantable) {
+            sw.maxCharge = static_cast<float>(enchantable->amountofEnchantment);
+            sw.currentCharge = sw.maxCharge;
+           }
+           currentState[formID] = sw;
         }
-        currentState[formID] = sw;
+      } else if (auto* ammo = obj->As<RE::TESAmmo>()) {
+        ScannedAmmo sa{};
+        sa.ammo = ammo;
+        sa.count = count;
+        sa.isEquipped = (ammo == equippedAmmo);
+        ammoState[ammo->GetFormID()] = sa;
       }
       }
-
-      // Scan ammo OUTSIDE lock as well
-      auto scannedAmmo = ScanPlayerAmmo();
-      std::unordered_map<RE::FormID, ScannedAmmo> ammoState;
-      ammoState.reserve(scannedAmmo.size());
-      for (const auto& sa : scannedAmmo) {
-      if (sa.ammo) {
-        ammoState[sa.ammo->GetFormID()] = sa;
-      }
-      }
+      }  // end RefreshCharges::ExtractMetadata zone
 
       // =========================================================================
       // PHASE 3: Fast in-memory updates under unique_lock (fast, ~2-5ms)
       // Only simple assignments, no SKSE API calls
       // =========================================================================
+      {
+      Huginn_ZONE_NAMED("RefreshCharges::Apply");
       std::unique_lock lock(m_mutex);
 
       // Add newly favorited weapons
@@ -292,6 +313,7 @@ namespace Huginn::Weapon
         invAmmo.count = 0;  // Ammo depleted
       }
       }
+      }  // end RefreshCharges::Apply zone
    }
 
    size_t WeaponRegistry::ReconcileWeapons()
@@ -319,55 +341,68 @@ namespace Huginn::Weapon
       size_t ammoAdded = 0;
       size_t ammoRemoved = 0;
 
-      // === WEAPONS ===
+      // === WEAPONS + AMMO ===
       // Check if safe to access extraLists (v0.7.9)
-      auto now = std::chrono::steady_clock::now();
-      auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - g_lastGameLoad);
-      bool safeToAccessExtraLists =
-          elapsed.count() >= static_cast<int64_t>(Config::EXTRALIST_STABILIZATION_MS);
+      const bool safeToAccessExtraLists = IsExtraListStable();
 
       auto* player = RE::PlayerCharacter::GetSingleton();
       if (!player) {
       return 0;
       }
 
-      // FIX (v0.12.x): Use GetInventory() to include base container weapons
-      auto inventory = Util::GetInventorySafe(player, [](RE::TESBoundObject& obj) {
-      return obj.Is(RE::FormType::Weapon);
+      // Scan weapons AND ammo in a SINGLE inventory traversal, entirely OUTSIDE
+      // the write lock. (Ammo previously rescanned via ScanPlayerAmmo() while the
+      // unique_lock was held — a 20-40ms SKSE traversal blocking all readers.)
+      auto* equippedAmmo = player->GetCurrentAmmo();
+      auto inventory = [&] {
+      Huginn_ZONE_NAMED("ReconcileWeapons::GetInventory");
+      return Util::GetInventorySafe(player, [](RE::TESBoundObject& obj) {
+        return obj.Is(RE::FormType::Weapon) || obj.Is(RE::FormType::Ammo);
       });
+      }();
 
       std::vector<ScannedWeapon> scannedWeapons;
       scannedWeapons.reserve(32);
+      std::vector<ScannedAmmo> scannedAmmo;
+      scannedAmmo.reserve(16);
 
+      {
+      Huginn_ZONE_NAMED("ReconcileWeapons::ExtractMetadata");
       for (auto& [obj, data] : inventory) {
       auto& [count, entry] = data;
       if (count <= 0) continue;
 
-      auto* weapon = obj->As<RE::TESObjectWEAP>();
-      if (!weapon) continue;
+      if (auto* weapon = obj->As<RE::TESObjectWEAP>()) {
+        // Use entry data if available for metadata extraction
+        if (entry && safeToAccessExtraLists) {
+           ScannedWeapon sw = ExtractWeaponMetadata(weapon, entry.get(), true, equipped);
+           scannedWeapons.push_back(sw);
+        } else {
+           // No entry data or extraLists not stable - basic scan only
+           ScannedWeapon sw{};
+           sw.weapon = weapon;
+           sw.isFavorited = false;
+           sw.isEquipped = equipped.IsEquipped(weapon);
+           sw.currentCharge = 0.0f;
+           sw.maxCharge = 0.0f;
+           sw.uniqueID = 0;
 
-      // Use entry data if available for metadata extraction
-      if (entry && safeToAccessExtraLists) {
-        ScannedWeapon sw = ExtractWeaponMetadata(weapon, entry.get(), true, equipped);
-        scannedWeapons.push_back(sw);
-      } else {
-        // No entry data or extraLists not stable - basic scan only
-        ScannedWeapon sw{};
-        sw.weapon = weapon;
-        sw.isFavorited = false;
-        sw.isEquipped = equipped.IsEquipped(weapon);
-        sw.currentCharge = 0.0f;
-        sw.maxCharge = 0.0f;
-        sw.uniqueID = 0;
-
-        auto* enchantable = weapon->As<RE::TESEnchantableForm>();
-        if (enchantable && enchantable->formEnchanting) {
-           sw.maxCharge = static_cast<float>(enchantable->amountofEnchantment);
-           sw.currentCharge = sw.maxCharge;
+           auto* enchantable = weapon->As<RE::TESEnchantableForm>();
+           if (enchantable && enchantable->formEnchanting) {
+            sw.maxCharge = static_cast<float>(enchantable->amountofEnchantment);
+            sw.currentCharge = sw.maxCharge;
+           }
+           scannedWeapons.push_back(sw);
         }
-        scannedWeapons.push_back(sw);
+      } else if (auto* ammo = obj->As<RE::TESAmmo>()) {
+        ScannedAmmo sa{};
+        sa.ammo = ammo;
+        sa.count = count;
+        sa.isEquipped = (ammo == equippedAmmo);
+        scannedAmmo.push_back(sa);
       }
       }
+      }  // end ReconcileWeapons::ExtractMetadata zone
 
       // Build set of current inventory weapon FormIDs (outside critical section)
       std::unordered_set<RE::FormID> currentWeaponIDs;
@@ -378,6 +413,8 @@ namespace Huginn::Weapon
       }
 
       // Acquire unique lock for write access (v0.7.12 - thread safety)
+      {
+      Huginn_ZONE_NAMED("ReconcileWeapons::Apply");
       std::unique_lock lock(m_mutex);
 
       // Add new weapons or update existing (assumes lock is held)
@@ -429,9 +466,7 @@ namespace Huginn::Weapon
       }
       }
 
-      // === AMMO ===
-      auto scannedAmmo = ScanPlayerAmmo();
-
+      // === AMMO === (scannedAmmo was gathered above, outside the lock)
       // Build set of current ammo FormIDs
       std::unordered_set<RE::FormID> currentAmmoIDs;
       for (const auto& sa : scannedAmmo) {
@@ -466,6 +501,7 @@ namespace Huginn::Weapon
         ammoRemoved++;
       }
       }
+      }  // end ReconcileWeapons::Apply zone
 
       size_t totalChanges = weaponsAdded + weaponsRemoved + favoriteChanges + ammoAdded + ammoRemoved;
       if (totalChanges > 0) {
@@ -609,136 +645,6 @@ namespace Huginn::Weapon
       }
 
       return result;
-   }
-
-   // =============================================================================
-   // STAFF ACCESSORS (StaffScanner v0.7.7)
-   // =============================================================================
-
-   std::vector<const InventoryWeapon*> WeaponRegistry::GetStaffs() const
-   {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<const InventoryWeapon*> result;
-      result.reserve(4);  // Staves are relatively rare
-
-      for (const auto& weapon : m_weapons) {
-      if (weapon.data.type == WeaponType::Staff) {
-        result.push_back(&weapon);
-      }
-      }
-
-      return result;
-   }
-
-   std::vector<const InventoryWeapon*> WeaponRegistry::GetEnchantedStaffs() const
-   {
-      std::shared_lock lock(m_mutex);  // v0.7.17 - thread safety fix
-      std::vector<const InventoryWeapon*> result;
-      result.reserve(4);
-
-      for (const auto& weapon : m_weapons) {
-      if (weapon.data.type == WeaponType::Staff && weapon.data.hasEnchantment) {
-        result.push_back(&weapon);
-      }
-      }
-
-      return result;
-   }
-
-   std::vector<const InventoryWeapon*> WeaponRegistry::GetFireStaffs(size_t topK) const
-   {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<const InventoryWeapon*> result;
-      result.reserve(4);
-
-      for (const auto& weapon : m_weapons) {
-      if (weapon.data.type == WeaponType::Staff &&
-          HasTag(weapon.data.tags, WeaponTag::EnchantFire)) {
-        result.push_back(&weapon);
-      }
-      }
-
-      // OPTIMIZATION (v0.7.20 H4): partial_sort for top-K is O(n log k) vs O(n log n)
-      Util::SortTopK(result, [](const InventoryWeapon* a, const InventoryWeapon* b) {
-      return a->data.baseDamage > b->data.baseDamage;
-      }, topK);
-
-      return result;
-   }
-
-   std::vector<const InventoryWeapon*> WeaponRegistry::GetFrostStaffs(size_t topK) const
-   {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<const InventoryWeapon*> result;
-      result.reserve(4);
-
-      for (const auto& weapon : m_weapons) {
-      if (weapon.data.type == WeaponType::Staff &&
-          HasTag(weapon.data.tags, WeaponTag::EnchantFrost)) {
-        result.push_back(&weapon);
-      }
-      }
-
-      Util::SortTopK(result, [](const InventoryWeapon* a, const InventoryWeapon* b) {
-      return a->data.baseDamage > b->data.baseDamage;
-      }, topK);
-
-      return result;
-   }
-
-   std::vector<const InventoryWeapon*> WeaponRegistry::GetShockStaffs(size_t topK) const
-   {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<const InventoryWeapon*> result;
-      result.reserve(4);
-
-      for (const auto& weapon : m_weapons) {
-      if (weapon.data.type == WeaponType::Staff &&
-          HasTag(weapon.data.tags, WeaponTag::EnchantShock)) {
-        result.push_back(&weapon);
-      }
-      }
-
-      Util::SortTopK(result, [](const InventoryWeapon* a, const InventoryWeapon* b) {
-      return a->data.baseDamage > b->data.baseDamage;
-      }, topK);
-
-      return result;
-   }
-
-   const InventoryWeapon* WeaponRegistry::GetBestStaff() const noexcept
-   {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      const InventoryWeapon* best = nullptr;
-      float maxDamage = 0.0f;
-
-      for (const auto& weapon : m_weapons) {
-      if (weapon.data.type == WeaponType::Staff &&
-          weapon.data.baseDamage > maxDamage) {
-        best = &weapon;
-        maxDamage = weapon.data.baseDamage;
-      }
-      }
-
-      return best;
-   }
-
-   const InventoryWeapon* WeaponRegistry::GetHighestChargeStaff() const noexcept
-   {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      const InventoryWeapon* best = nullptr;
-      float maxCharge = 0.0f;
-
-      for (const auto& weapon : m_weapons) {
-      if (weapon.data.type == WeaponType::Staff &&
-          weapon.data.hasEnchantment &&
-          weapon.data.currentCharge > maxCharge) {
-        best = &weapon;
-        maxCharge = weapon.data.currentCharge;
-      }
-      }
-
-      return best;
    }
 
    // =============================================================================
@@ -1146,13 +1052,8 @@ namespace Huginn::Weapon
       std::unordered_set<RE::FormID> favoritedWeapons;
 
       // CRITICAL: Check if enough time has passed since save load for extraLists to be stable
-      auto now = std::chrono::steady_clock::now();
-      auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - g_lastGameLoad);
-
-      if (elapsed.count() < static_cast<int64_t>(Config::EXTRALIST_STABILIZATION_MS)) {
-      logger::trace("[WeaponRegistry] ScanWeaponFavorites() skipped - extraLists not stable "
-                    "({}ms since load, need {}ms)"sv, elapsed.count(),
-                    static_cast<int64_t>(Config::EXTRALIST_STABILIZATION_MS));
+      if (!IsExtraListStable()) {
+      logger::trace("[WeaponRegistry] ScanWeaponFavorites() skipped - extraLists not stable"sv);
       return favoritedWeapons;  // Return empty - will be populated by RefreshCharges later
       }
 

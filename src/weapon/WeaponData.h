@@ -20,9 +20,10 @@ namespace Huginn::Weapon
       OneHandDagger,
 
       // Two-handed melee
+      // (Skyrim has no distinct warhammer WEAPON_TYPE — warhammers report as
+      //  kTwoHandAxe, so there is no TwoHandMace value to map them to.)
       TwoHandSword,
       TwoHandAxe,
-      TwoHandMace,
 
       // Ranged
       Bow,
@@ -140,7 +141,6 @@ namespace Huginn::Weapon
       case WeaponType::OneHandDagger: return "OneHandDagger";
       case WeaponType::TwoHandSword:  return "TwoHandSword";
       case WeaponType::TwoHandAxe:    return "TwoHandAxe";
-      case WeaponType::TwoHandMace:   return "TwoHandMace";
       case WeaponType::Bow:           return "Bow";
       case WeaponType::Crossbow:      return "Crossbow";
       case WeaponType::Staff:         return "Staff";
@@ -276,6 +276,48 @@ namespace Huginn::Weapon
         data.name,
         count,
         isEquipped);
+      }
+   };
+
+   // =============================================================================
+   // EQUIPPED WEAPONS CACHE (v0.7.19)
+   // =============================================================================
+   // Caches currently equipped weapons to avoid redundant GetEquippedObject() calls.
+   // Query once per update cycle and pass to methods that need equipped weapon info.
+   // Lives here (not in WeaponRegistry.h) so consumers like UpdateLoop can use it
+   // without pulling in the whole registry.
+   // =============================================================================
+
+   struct EquippedWeapons
+   {
+      RE::TESObjectWEAP* rightHand = nullptr;
+      RE::TESObjectWEAP* leftHand = nullptr;
+
+      /**
+       * @brief Query current equipped weapons from player
+       * @param player Player character (must not be null)
+       * @return EquippedWeapons with right/left hand weapons (may be nullptr if empty)
+       */
+      [[nodiscard]] static EquippedWeapons Query(RE::PlayerCharacter* player)
+      {
+      EquippedWeapons eq;
+      if (!player) return eq;
+
+      if (auto* rightObj = player->GetEquippedObject(false)) {
+        eq.rightHand = rightObj->As<RE::TESObjectWEAP>();
+      }
+      if (auto* leftObj = player->GetEquippedObject(true)) {
+        eq.leftHand = leftObj->As<RE::TESObjectWEAP>();
+      }
+      return eq;
+      }
+
+      /**
+       * @brief Check if a weapon is currently equipped in either hand
+       */
+      [[nodiscard]] bool IsEquipped(const RE::TESObjectWEAP* weapon) const noexcept
+      {
+      return weapon && (weapon == rightHand || weapon == leftHand);
       }
    };
 }
