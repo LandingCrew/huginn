@@ -59,11 +59,9 @@ namespace Huginn::Spell
       // Check if spell is concentration (continuous) vs one-shot
       [[nodiscard]] bool IsConcentration(RE::SpellItem* spell) const;
 
-      // Estimate effective range from delivery type and projectile
-      [[nodiscard]] float GetEffectiveRange(RE::SpellItem* spell) const;
-
-      // Helper: Get primary magic effect (typically first effect)
-      [[nodiscard]] RE::EffectSetting* GetPrimaryEffect(RE::SpellItem* spell) const;
+      // Estimate effective range from delivery type and projectile.
+      // @param primaryEffect Pre-computed costliest effect's base setting (may be null)
+      [[nodiscard]] float GetEffectiveRange(RE::SpellItem* spell, RE::EffectSetting* primaryEffect) const;
 
       // Spell overrides loaded from INI file
       SpellOverrides m_overrides;

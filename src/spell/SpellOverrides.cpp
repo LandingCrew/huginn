@@ -22,6 +22,11 @@ namespace Huginn::Spell
 
       logger::info("Loading spell overrides from: {}"sv, iniPath.string());
 
+      // Clear any previously-loaded overrides so re-loading (hot-reload via
+      // RebuildRegistry) is idempotent rather than accumulating stale entries.
+      m_nameOverrides.clear();
+      m_formIDOverrides.clear();
+
       // Iterate through all sections (each section is a spell name or FormID)
       CSimpleIniA::TNamesDepend sections;
       ini.GetAllSections(sections);
@@ -135,7 +140,7 @@ namespace Huginn::Spell
       token.erase(token.find_last_not_of(" \t\n\r") + 1);
 
       if (auto tag = ParseSingleTag(token)) {
-        result = static_cast<SpellTag>(static_cast<uint32_t>(result) | static_cast<uint32_t>(*tag));
+        result |= *tag;  // uses SpellTag operator|= from SpellData.h
       }
       }
 

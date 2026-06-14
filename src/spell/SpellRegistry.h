@@ -42,19 +42,14 @@ namespace Huginn::Spell
       size_t ReconcileSpells(RE::PlayerCharacter* player);
 
       // Get spell data by FormID (returns nullptr if not found)
+      // LIFETIME: The returned pointer is only valid synchronously, on the same
+      // thread, until the next registry mutation (AddNewSpell/ReconcileSpells/
+      // RebuildRegistry may reallocate m_spells and dangle it). Copy immediately;
+      // never store. For cross-thread or retained access use GetAllSpells/ForEachSpell.
       [[nodiscard]] const SpellData* GetSpellData(RE::FormID formID) const;
-
-      // Get all spells of a specific type
-      [[nodiscard]] std::vector<const SpellData*> GetSpellsByType(SpellType type) const;
 
       // Get count of spells of a specific type (efficient - no allocation)
       [[nodiscard]] size_t GetSpellCountByType(SpellType type) const;
-
-      // Get all spells with a specific tag
-      [[nodiscard]] std::vector<const SpellData*> GetSpellsWithTag(SpellTag tag) const;
-
-      // Get all spells castable with current magicka
-      [[nodiscard]] std::vector<const SpellData*> GetCastableSpells(float currentMagicka) const;
 
       // Get total number of registered spells
       [[nodiscard]] size_t GetSpellCount() const;
@@ -131,6 +126,10 @@ namespace Huginn::Spell
 
       // Classifier instance
       SpellClassifier m_classifier;
+
+      // Path the overrides INI was loaded from (re-loaded on each RebuildRegistry
+      // so `hg rebuild` / `hg reset all` pick up edits without a game restart).
+      std::filesystem::path m_overridesPath;
 
       // Thread safety (v0.7.12)
       // Protects m_spells and m_formIDIndex from concurrent access
