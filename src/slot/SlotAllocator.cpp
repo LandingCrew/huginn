@@ -115,9 +115,15 @@ namespace Huginn::Slot
     std::shared_ptr<const std::vector<PageConfig>> SlotAllocator::GetConfigSnapshot() const
     {
         auto& settings = SlotSettings::GetSingleton();
-        const uint32_t gen = settings.GetGeneration();
 
         std::lock_guard<std::mutex> lock(m_cacheMutex);
+        // GetGeneration() and GetAllPages() take SlotSettings' lock separately,
+        // so a reload landing between them can leave m_cacheGeneration trailing
+        // the copied data by one. That only ever forces a redundant rebuild on
+        // the next call — never serves stale data — because the writer bumps the
+        // generation only after committing pages, so a stored gen is always <=
+        // the data's true generation and any newer reload re-trips the mismatch.
+        const uint32_t gen = settings.GetGeneration();
         if (!m_configCache || m_cacheGeneration != gen) {
             m_configCache = std::make_shared<const std::vector<PageConfig>>(settings.GetAllPages());
             m_cacheGeneration = gen;
@@ -431,6 +437,16 @@ namespace Huginn::Slot
         std::array<size_t, MAX_SLOTS_PER_PAGE>& outOrder) const
     {
         const size_t n = std::min(configs.size(), MAX_SLOTS_PER_PAGE);
+        if (configs.size() > MAX_SLOTS_PER_PAGE) {
+            // Not silent: a page configured with more slots than the fixed cap
+            // would otherwise drop the overflow with no trace.
+            thread_local size_t s_lastWarnedCount = 0;
+            if (configs.size() != s_lastWarnedCount) {
+                SKSE::log::warn("[SlotAllocator] Page has {} slots, exceeding MAX_SLOTS_PER_PAGE ({}); "
+                    "extra slots ignored", configs.size(), MAX_SLOTS_PER_PAGE);
+                s_lastWarnedCount = configs.size();
+            }
+        }
 
         // Build index list
         for (size_t i = 0; i < n; ++i) {

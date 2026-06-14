@@ -354,6 +354,10 @@ namespace Huginn::Slot
 
     void SlotLocker::DedupePreferLocked(SlotAssignments& result) const
     {
+        // `result` is built 1:1 per slot by ApplyLocks, so result[i] corresponds
+        // to m_lockedSlots[i] (i == slotIndex). The index-parallel access below
+        // relies on that invariant.
+
         // First pass: collect names held by LOCKED slots — these win ties.
         std::set<std::string_view> lockedNames;
         for (size_t i = 0; i < result.size() && i < MAX_SLOTS; ++i) {
