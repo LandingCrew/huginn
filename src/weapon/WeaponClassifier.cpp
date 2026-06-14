@@ -46,7 +46,8 @@ namespace Huginn::Weapon
       data.hasEnchantment = (enchantment != nullptr) ||
                             (data.type == WeaponType::Staff);
       if (data.hasEnchantment) {
-      // For now, set charge to 100% - UpdateWeaponCharge will be called with actual values
+      // Placeholder full charge — WeaponRegistry::ExtractWeaponMetadata overwrites
+      // this with the real charge read from the inventory entry's ExtraCharge.
       data.currentCharge = 1.0f;
       data.maxCharge = 1.0f;
       }
@@ -80,21 +81,6 @@ namespace Huginn::Weapon
 
       logger::trace("Classified ammo: {}"sv, data.ToString());
       return data;
-   }
-
-   void WeaponClassifier::UpdateWeaponCharge(WeaponData& data, RE::TESObjectWEAP* weapon) const
-   {
-      if (!weapon || !data.hasEnchantment) return;
-
-      float chargePercent = GetChargePercentage(weapon);
-      data.currentCharge = chargePercent;
-
-      // Update NeedsCharge tag based on charge level
-      if (chargePercent < Config::WEAPON_CHARGE_LOW_THRESHOLD) {
-      data.tags |= WeaponTag::NeedsCharge;
-      } else {
-      data.tags &= ~WeaponTag::NeedsCharge;
-      }
    }
 
    // =============================================================================
@@ -166,7 +152,6 @@ namespace Huginn::Weapon
 
       case WeaponType::TwoHandSword:
       case WeaponType::TwoHandAxe:
-      case WeaponType::TwoHandMace:
       tags |= WeaponTag::Melee | WeaponTag::TwoHanded;
       break;
 
@@ -393,24 +378,6 @@ namespace Huginn::Weapon
       }
 
       return tags;
-   }
-
-   float WeaponClassifier::GetChargePercentage(RE::TESObjectWEAP* weapon) const
-   {
-      if (!weapon) return 1.0f;
-
-      // This is a placeholder - actual charge tracking requires inventory entry data
-      // The registry will update this with actual charge from the inventory entry
-      auto* enchantable = weapon->As<RE::TESEnchantableForm>();
-      if (enchantable && enchantable->formEnchanting) {
-      // Return max charge for now, actual charge comes from inventory entry
-      float maxCharge = enchantable->amountofEnchantment;
-      if (maxCharge > 0.0f) {
-        return 1.0f;  // Will be updated by registry with actual charge
-      }
-      }
-
-      return 1.0f;  // Not enchanted or no charge tracking
    }
 
    // =============================================================================

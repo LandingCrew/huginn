@@ -40,14 +40,6 @@ namespace Huginn::Weapon
        */
       [[nodiscard]] AmmoData ClassifyAmmo(RE::TESAmmo* ammo) const;
 
-      /**
-       * @brief Update charge level for an already-classified weapon
-       * @param data The weapon data to update
-       * @param weapon The weapon instance with current charge
-       * @note Call during refresh to track charge changes without full reclassification
-       */
-      void UpdateWeaponCharge(WeaponData& data, RE::TESObjectWEAP* weapon) const;
-
    private:
       // =============================================================================
       // TYPE DETERMINATION
@@ -128,13 +120,6 @@ namespace Huginn::Weapon
        * @return WeaponTag with element and effect flags set
        */
       [[nodiscard]] WeaponTag ClassifyEnchantmentEffects(RE::EnchantmentItem* enchantment) const;
-
-      /**
-       * @brief Get current charge percentage for an enchanted weapon
-       * @param weapon The weapon to check
-       * @return Charge as 0.0-1.0 percentage, or 1.0 if not applicable
-       */
-      [[nodiscard]] float GetChargePercentage(RE::TESObjectWEAP* weapon) const;
 
       // =============================================================================
       // COMBAT STATS

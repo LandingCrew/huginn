@@ -9,46 +9,6 @@
 namespace Huginn::Weapon
 {
    // =============================================================================
-   // EQUIPPED WEAPONS CACHE (v0.7.19)
-   // =============================================================================
-   // Caches currently equipped weapons to avoid redundant GetEquippedObject() calls.
-   // Query once per update cycle and pass to methods that need equipped weapon info.
-   // =============================================================================
-
-   struct EquippedWeapons
-   {
-      RE::TESObjectWEAP* rightHand = nullptr;
-      RE::TESObjectWEAP* leftHand = nullptr;
-
-      /**
-       * @brief Query current equipped weapons from player
-       * @param player Player character (must not be null)
-       * @return EquippedWeapons with right/left hand weapons (may be nullptr if empty)
-       */
-      [[nodiscard]] static EquippedWeapons Query(RE::PlayerCharacter* player)
-      {
-      EquippedWeapons eq;
-      if (!player) return eq;
-
-      if (auto* rightObj = player->GetEquippedObject(false)) {
-        eq.rightHand = rightObj->As<RE::TESObjectWEAP>();
-      }
-      if (auto* leftObj = player->GetEquippedObject(true)) {
-        eq.leftHand = leftObj->As<RE::TESObjectWEAP>();
-      }
-      return eq;
-      }
-
-      /**
-       * @brief Check if a weapon is currently equipped in either hand
-       */
-      [[nodiscard]] bool IsEquipped(const RE::TESObjectWEAP* weapon) const noexcept
-      {
-      return weapon && (weapon == rightHand || weapon == leftHand);
-      }
-   };
-
-   // =============================================================================
    // WEAPON REGISTRY (v0.7.6)
    // =============================================================================
    // Tracks all weapons and ammo in the player's inventory.
@@ -119,6 +79,16 @@ namespace Huginn::Weapon
       // =============================================================================
       // WEAPON ACCESSORS
       // =============================================================================
+      //
+      // LIFETIME CONTRACT: the pointer- and vector-of-pointer-returning accessors
+      // below hand out raw pointers into m_weapons/m_ammo, but the shared_lock is
+      // released when the accessor returns. A subsequent write (RefreshCharges,
+      // ReconcileWeapons) can reallocate the backing vector or swap-remove an
+      // element, dangling those pointers. They are therefore only safe to use
+      // synchronously on the update thread, before yielding to the next write.
+      // Do NOT cache them across frames or hand them to another thread; for
+      // cross-thread/persistent use, copy via GetAllWeapons()/GetAllAmmo() or
+      // ForEachWeapon()/ForEachAmmo() (which hold the lock for the whole visit).
 
       /**
        * @brief Get weapon by FormID
@@ -175,59 +145,6 @@ namespace Huginn::Weapon
        * @return Vector of pointers to matching weapons
        */
       [[nodiscard]] std::vector<const InventoryWeapon*> GetWeaponsWithTag(WeaponTag tag) const;
-
-      // =============================================================================
-      // STAFF ACCESSORS (StaffScanner v0.7.7)
-      // =============================================================================
-
-      /**
-       * @brief Get all staves
-       * @return Vector of pointers to staff weapons
-       */
-      [[nodiscard]] std::vector<const InventoryWeapon*> GetStaffs() const;
-
-      /**
-       * @brief Get all enchanted staves
-       * @return Vector of pointers to enchanted staves
-       */
-      [[nodiscard]] std::vector<const InventoryWeapon*> GetEnchantedStaffs() const;
-
-      /**
-       * @brief Get fire staves (EnchantFire tag)
-       * @param topK Maximum number of results (default 3, 0 = all)
-       * @return Vector of pointers to fire staves, sorted by damage descending
-       * @note OPTIMIZATION (v0.7.20 H4): Uses partial_sort for O(n log k) vs O(n log n)
-       */
-      [[nodiscard]] std::vector<const InventoryWeapon*> GetFireStaffs(size_t topK = 3) const;
-
-      /**
-       * @brief Get frost staves (EnchantFrost tag)
-       * @param topK Maximum number of results (default 3, 0 = all)
-       * @return Vector of pointers to frost staves, sorted by damage descending
-       * @note OPTIMIZATION (v0.7.20 H4): Uses partial_sort for O(n log k) vs O(n log n)
-       */
-      [[nodiscard]] std::vector<const InventoryWeapon*> GetFrostStaffs(size_t topK = 3) const;
-
-      /**
-       * @brief Get shock staves (EnchantShock tag)
-       * @param topK Maximum number of results (default 3, 0 = all)
-       * @return Vector of pointers to shock staves, sorted by damage descending
-       * @note OPTIMIZATION (v0.7.20 H4): Uses partial_sort for O(n log k) vs O(n log n)
-       */
-      [[nodiscard]] std::vector<const InventoryWeapon*> GetShockStaffs(size_t topK = 3) const;
-
-      /**
-       * @brief Get best staff by damage
-       * @return Pointer to highest-damage staff, or nullptr if none
-       */
-      [[nodiscard]] const InventoryWeapon* GetBestStaff() const noexcept;
-
-      /**
-       * @brief Get staff with highest charge percentage
-       * @return Pointer to staff with most charge, or nullptr if none
-       * @note Useful for preferring fully-charged staves
-       */
-      [[nodiscard]] const InventoryWeapon* GetHighestChargeStaff() const noexcept;
 
       // =============================================================================
       // CONVENIENCE "BEST" ACCESSORS - O(n) single-pass max-find
@@ -423,16 +340,21 @@ namespace Huginn::Weapon
        */
       [[nodiscard]] std::vector<ScannedWeapon> ScanPlayerWeapons(const EquippedWeapons& equipped) const;
 
-      /**
-       * @brief Scan player inventory for ammo
-       * @return Vector of (ammo, count, isEquipped) tuples
-       */
+      /// Scanned ammo entry (form, current count, equipped status).
       struct ScannedAmmo {
       RE::TESAmmo* ammo;
       int32_t count;
       bool isEquipped;
       };
+      /// Standalone ammo-only scan (used by RebuildRegistry). RefreshCharges and
+      /// ReconcileWeapons instead fold ammo into their combined weapon+ammo scan.
       [[nodiscard]] std::vector<ScannedAmmo> ScanPlayerAmmo() const;
+
+      /// True once enough time has elapsed since the last game load for inventory
+      /// extraLists to be stable. Accessing extraLists earlier can crash, so all
+      /// extraList-reading scans gate on this. Shared by RefreshCharges (both
+      /// overloads), ReconcileWeapons, and ScanWeaponFavorites.
+      [[nodiscard]] static bool IsExtraListStable() noexcept;
 
       /**
        * @brief Add a weapon to the registry
