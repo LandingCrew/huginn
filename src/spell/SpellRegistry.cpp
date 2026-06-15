@@ -9,9 +9,10 @@ namespace Huginn::Spell
 {
    SpellRegistry::SpellRegistry()
    {
-      // Constructor - load overrides from default location
-      auto overridesPath = std::filesystem::path("Data/SKSE/Plugins/Huginn_Overrides.ini");
-      LoadOverrides(overridesPath);
+      // Constructor - load overrides from default location.
+      // Path is retained so RebuildRegistry() can re-load on demand (hot-reload).
+      m_overridesPath = std::filesystem::path("Data/SKSE/Plugins/Huginn_Overrides.ini");
+      LoadOverrides(m_overridesPath);
    }
 
    RE::BSEventNotifyControl SpellRegistry::ProcessEvent(const RE::TESEquipEvent* event, RE::BSTEventSource<RE::TESEquipEvent>*)
@@ -69,6 +70,12 @@ namespace Huginn::Spell
       logger::info("Rebuilding spell registry..."sv);
       m_isLoading = true;
       Util::AtomicBoolGuard loadingGuard{ m_isLoading, false };
+
+      // Re-load classification overrides so edits to the INI are picked up on
+      // `hg rebuild` / `hg reset all` without a game restart. Cheap (small file).
+      if (!m_overridesPath.empty()) {
+      m_classifier.LoadOverrides(m_overridesPath);
+      }
 
       // Scan favorites and player spells BEFORE acquiring lock (SKSE API calls)
       auto favoritedSpells = ScanSpellFavorites();
@@ -193,22 +200,45 @@ namespace Huginn::Spell
       }
       }
 
+      // PHASE 1: Identify new spells under a shared_lock (cheap index lookups only).
+      std::vector<RE::SpellItem*> newSpells;
+      {
+      std::shared_lock readLock(m_mutex);
+      for (auto* spell : currentSpells) {
+        if (spell && !m_formIDIndex.contains(spell->GetFormID())) {
+           newSpells.push_back(spell);
+        }
+      }
+      }
+
+      // PHASE 2: Classify new spells OUTSIDE any lock (SKSE API access).
+      // Matches AddNewSpell's three-phase pattern — keeps the heavy classification
+      // off the write lock so hot-path readers aren't blocked during reconciliation.
+      std::vector<SpellData> classified;
+      classified.reserve(newSpells.size());
+      for (auto* spell : newSpells) {
+      SpellData data = m_classifier.ClassifySpell(spell);
+      if (data.formID != 0) {
+        classified.push_back(std::move(data));
+      }
+      }
+
       // Acquire unique lock for write access (v0.7.12 - thread safety)
       std::unique_lock lock(m_mutex);
 
       size_t newSpellsAdded = 0;
       size_t spellsRemoved = 0;
 
-      // STEP 1: Add new spells (registry <- current)
-      for (auto* spell : currentSpells) {
-      if (!spell) continue;
-
-      // Check if already in registry
-      if (!m_formIDIndex.contains(spell->GetFormID())) {
-        // New spell found - add it (AddSpell assumes lock is held by caller)
-        AddSpell(spell);
-        newSpellsAdded++;
-      }
+      // STEP 1: Insert newly-classified spells (registry <- current).
+      // Double-check against m_formIDIndex: another thread (AddNewSpell) may have
+      // inserted while we were classifying outside the lock.
+      for (auto& data : classified) {
+      if (m_formIDIndex.contains(data.formID)) continue;
+      const size_t index = m_spells.size();
+      const RE::FormID formID = data.formID;
+      m_spells.push_back(std::move(data));
+      m_formIDIndex[formID] = index;
+      newSpellsAdded++;
       }
 
       // STEP 2: Remove spells no longer known (registry -> current)
@@ -305,59 +335,12 @@ namespace Huginn::Spell
       return &m_spells[it->second];
    }
 
-   std::vector<const SpellData*> SpellRegistry::GetSpellsByType(SpellType type) const
-   {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<const SpellData*> result;
-      result.reserve(m_spells.size() / 4);  // Rough estimate
-
-      for (const auto& spell : m_spells) {
-      if (spell.type == type) {
-        result.push_back(&spell);
-      }
-      }
-
-      return result;
-   }
-
    size_t SpellRegistry::GetSpellCountByType(SpellType type) const
    {
       std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
       return std::ranges::count_if(m_spells, [type](const auto& spell) {
       return spell.type == type;
       });
-   }
-
-   std::vector<const SpellData*> SpellRegistry::GetSpellsWithTag(SpellTag tag) const
-   {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<const SpellData*> result;
-      result.reserve(m_spells.size() / 4);  // Rough estimate
-
-      for (const auto& spell : m_spells) {
-      if (HasTag(spell.tags, tag)) {
-        result.push_back(&spell);
-      }
-      }
-
-      return result;
-   }
-
-   std::vector<const SpellData*> SpellRegistry::GetCastableSpells(float currentMagicka) const
-   {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<const SpellData*> result;
-      result.reserve(m_spells.size());
-
-      for (const auto& spell : m_spells) {
-      // Filter out concentration spells - they need continuous magicka
-      // For concentration spells, check if player has enough to start casting
-      if (static_cast<float>(spell.baseCost) <= currentMagicka) {
-        result.push_back(&spell);
-      }
-      }
-
-      return result;
    }
 
    std::vector<const SpellData*> SpellRegistry::GetFavoritedSpells() const

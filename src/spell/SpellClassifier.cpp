@@ -68,7 +68,7 @@ namespace Huginn::Spell
 
       data.baseCost = GetBaseCost(spell);
       data.isConcentration = IsConcentration(spell);
-      data.range = GetEffectiveRange(spell);
+      data.range = GetEffectiveRange(spell, primaryEffect);  // reuse pre-computed effect
 
       return data;
    }
@@ -378,7 +378,7 @@ namespace Huginn::Spell
       return spell->GetCastingType() == RE::MagicSystem::CastingType::kConcentration;
    }
 
-   float SpellClassifier::GetEffectiveRange(RE::SpellItem* spell) const
+   float SpellClassifier::GetEffectiveRange(RE::SpellItem* spell, RE::EffectSetting* primaryEffect) const
    {
       if (!spell) return 0.0f;
 
@@ -394,9 +394,9 @@ namespace Huginn::Spell
       case RE::MagicSystem::Delivery::kTargetActor:
       case RE::MagicSystem::Delivery::kTargetLocation:
       {
-        // Check for projectile data to get actual range
-        // Default to long range for projectile spells
-        auto* primaryEffect = GetPrimaryEffect(spell);
+        // Check for projectile data to get actual range.
+        // OPTIMIZATION (v0.7.19): primaryEffect is the caller's pre-computed
+        // costliest effect — avoids a redundant GetCostliestEffect() pass.
         if (primaryEffect && primaryEffect->data.projectileBase) {
            // Use projectile range if available
            return primaryEffect->data.projectileBase->data.range;
@@ -408,21 +408,6 @@ namespace Huginn::Spell
       default:
       return 0.0f;
       }
-   }
-
-   RE::EffectSetting* SpellClassifier::GetPrimaryEffect(RE::SpellItem* spell) const
-   {
-      if (!spell || spell->effects.empty()) return nullptr;
-
-      // Use costliest effect as primary (more reliable than first effect)
-      auto* costliestEffect = GetCostliestEffect(spell);
-      if (costliestEffect && costliestEffect->baseEffect) {
-      return costliestEffect->baseEffect;
-      }
-
-      // Fallback to first effect
-      auto* effect = spell->effects[0];
-      return effect ? effect->baseEffect : nullptr;
    }
 
    RE::Effect* SpellClassifier::GetCostliestEffect(RE::SpellItem* spell) const
