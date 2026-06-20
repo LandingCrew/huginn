@@ -42,8 +42,9 @@ namespace Huginn::Scroll
    // - Uses ScrollClassifier which delegates to SpellClassifier for effect analysis
    //
    // THREAD SAFETY:
-   // - Not thread-safe (single-threaded access from update loop)
-   // - If needed, can add shared_mutex following SpellRegistry pattern
+   // - shared_mutex guards m_scrolls/m_formIDIndex (v0.7.12)
+   // - Readers (render thread) use shared_lock, writers (update thread) unique_lock
+   // - Accessors return copies/values; ForEachScroll holds the lock for iteration
    // =============================================================================
 
    class ScrollRegistry
@@ -106,25 +107,11 @@ namespace Huginn::Scroll
       // =============================================================================
 
       /**
-       * @brief Get scroll by FormID
-       * @param formID The scroll's form ID
-       * @return Pointer to InventoryScroll, or nullptr if not found
-       */
-      [[nodiscard]] const InventoryScroll* GetScroll(RE::FormID formID) const;
-
-      /**
        * @brief Get all scrolls of a specific type
        * @param type ScrollType to filter by
        * @return Vector of pointers to matching scrolls
        */
       [[nodiscard]] std::vector<const InventoryScroll*> GetScrollsByType(ScrollType type) const;
-
-      /**
-       * @brief Get all scrolls with a specific tag
-       * @param tag ScrollTag to filter by (bitflag check)
-       * @return Vector of pointers to matching scrolls
-       */
-      [[nodiscard]] std::vector<const InventoryScroll*> GetScrollsWithTag(ScrollTag tag) const;
 
       // =============================================================================
       // TYPE-BASED ACCESSORS (ScrollScanner v0.7.7)
@@ -195,29 +182,6 @@ namespace Huginn::Scroll
       [[nodiscard]] std::vector<const InventoryScroll*> GetShockScrolls(size_t topK = 3) const;
 
       // =============================================================================
-      // SCHOOL-BASED ACCESSORS (ScrollScanner v0.7.7)
-      // =============================================================================
-
-      /**
-       * @brief Get scrolls by magic school
-       * @param school MagicSchool to filter by
-       * @return Vector of pointers to matching scrolls
-       */
-      [[nodiscard]] std::vector<const InventoryScroll*> GetScrollsBySchool(MagicSchool school) const;
-
-      /**
-       * @brief Get destruction scrolls
-       * @return Vector of pointers to destruction scrolls
-       */
-      [[nodiscard]] std::vector<const InventoryScroll*> GetDestructionScrolls() const;
-
-      /**
-       * @brief Get restoration scrolls
-       * @return Vector of pointers to restoration scrolls
-       */
-      [[nodiscard]] std::vector<const InventoryScroll*> GetRestorationScrolls() const;
-
-      // =============================================================================
       // CONVENIENCE "BEST" ACCESSORS (ScrollScanner v0.7.7)
       // =============================================================================
       // These return the single best scroll for quick slot allocation.
@@ -276,7 +240,7 @@ namespace Huginn::Scroll
       /**
        * @brief Get and clear pending change events
        * @return Vector of change events since last call (clears internal buffer)
-       * @note NOT thread-safe: single-threaded access only (from update loop)
+       * @note Thread-safe: acquires unique_lock to move out m_pendingChanges
        */
       [[nodiscard]] std::vector<ScrollChangeEvent> GetAndClearChanges();
 
