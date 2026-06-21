@@ -179,8 +179,17 @@ namespace Huginn::Scroll
         logger::debug("[ScrollRegistry] Added new scroll: {} x{}"sv, scroll->GetName(), count);
       } else {
         // Already tracked: sync count from inventory so reconcile is self-consistent
-        // even if it runs before the first RefreshCounts delta scan (e.g. on load).
-        // Reconcile does not emit ScrollChangeEvents, so this never double-rewards.
+        // even if it runs before the first RefreshCounts delta scan (e.g. on load,
+        // where a stale serialized count would otherwise produce a spurious delta).
+        // Reconcile emits no ScrollChangeEvents, so this never double-rewards.
+        //
+        // TRADEOFF: this also absorbs a consumption that lands on a reconcile tick
+        // when the 500ms delta scan isn't simultaneously due — that delta is lost
+        // and yields no consumption reward. RefreshCounts runs first in the update
+        // tick (UpdateLoop.cpp), so the window is a rare sub-500ms case. We accept
+        // it: correct counts outweigh an occasional missed reward. Do NOT "fix" the
+        // missed reward by leaving count stale here — that reintroduces the spurious
+        // load-time delta this sync exists to suppress.
         m_scrolls[it->second].count = count;
       }
       }
