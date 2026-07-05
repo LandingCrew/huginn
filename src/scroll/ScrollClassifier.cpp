@@ -30,9 +30,13 @@ namespace Huginn::Scroll
       data = ConvertToScrollData(data.formID, data.name, spellData);
 
       // Override magnitude and duration with scroll-specific values
-      // (scrolls may have different magnitude/duration than base spell)
-      data.magnitude = GetPrimaryMagnitude(scroll);
-      data.duration = GetPrimaryDuration(scroll);
+      // (scrolls may have different magnitude/duration than base spell).
+      // ScrollItem IS-A SpellItem, so reuse the SpellClassifier's costliest-effect
+      // calc once and read both fields from it (avoids two extra list scans).
+      if (auto* effect = m_spellClassifier.GetCostliestEffect(scroll)) {
+      data.magnitude = effect->effectItem.magnitude;
+      data.duration = static_cast<float>(effect->effectItem.duration);
+      }
 
       logger::trace("Classified scroll: {}", data.ToString());
 
@@ -71,27 +75,5 @@ namespace Huginn::Scroll
       data.duration = 0.0f;
 
       return data;
-   }
-
-   // OPTIMIZATION (v0.7.20 H1+H6): Delegate to SpellClassifier to eliminate duplicate code
-   // ScrollItem inherits from SpellItem, so we can pass it directly to GetCostliestEffect()
-   float ScrollClassifier::GetPrimaryMagnitude(RE::ScrollItem* scroll) const
-   {
-      if (!scroll) {
-      return 0.0f;
-      }
-      // ScrollItem IS-A SpellItem - delegate to single source of truth for cost calculation
-      auto* effect = m_spellClassifier.GetCostliestEffect(scroll);
-      return effect ? effect->effectItem.magnitude : 0.0f;
-   }
-
-   float ScrollClassifier::GetPrimaryDuration(RE::ScrollItem* scroll) const
-   {
-      if (!scroll) {
-      return 0.0f;
-      }
-      // ScrollItem IS-A SpellItem - delegate to single source of truth for cost calculation
-      auto* effect = m_spellClassifier.GetCostliestEffect(scroll);
-      return effect ? static_cast<float>(effect->effectItem.duration) : 0.0f;
    }
 }

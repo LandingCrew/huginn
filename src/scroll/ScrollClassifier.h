@@ -43,12 +43,6 @@ namespace Huginn::Scroll
       std::string_view scrollName,
       const Spell::SpellData& spellData) const;
 
-      // Get magnitude of the scroll's primary effect
-      [[nodiscard]] float GetPrimaryMagnitude(RE::ScrollItem* scroll) const;
-
-      // Get duration of the scroll's primary effect
-      [[nodiscard]] float GetPrimaryDuration(RE::ScrollItem* scroll) const;
-
       // Reference to SpellClassifier for effect analysis
       const Spell::SpellClassifier& m_spellClassifier;
    };

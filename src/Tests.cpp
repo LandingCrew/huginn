@@ -1747,7 +1747,8 @@ void RunUnitTests()
         return;
     }
 
-    // Test 8: Scrolls should all have identical prior (no intrinsic differences)
+    // Test 8: Scroll type alone does NOT affect prior, but magnitude/scarcity DO
+    //         (scroll prior now mirrors item prior — intrinsic quality)
     ScrollCandidate healScroll;
     healScroll.type = Spell::SpellType::Healing;
 
@@ -1757,16 +1758,53 @@ void RunUnitTests()
     float healScrollPrior = priorCalc.CalculatePrior(neutralPlayer, healScroll);
     float dmgScrollPrior = priorCalc.CalculatePrior(neutralPlayer, damageScroll);
 
+    // Type alone (with equal zero magnitude/count) must not change the prior
     if (std::abs(healScrollPrior - dmgScrollPrior) > 0.001f) {
-        logger::error("TEST FAIL: All scrolls should have identical prior! Heal={:.3f}, Damage={:.3f}",
+        logger::error("TEST FAIL: Scroll type alone should not affect prior! Heal={:.3f}, Damage={:.3f}",
             healScrollPrior, dmgScrollPrior);
         return;
     }
 
-    // Should be exactly BASE_PRIOR (0.3f)
+    // Zero-magnitude, zero-count scroll should be exactly BASE_PRIOR (0.3f)
     if (std::abs(healScrollPrior - 0.3f) > 0.001f) {
-        logger::error("TEST FAIL: Scroll prior should be BASE_PRIOR (0.3)! Got={:.3f}",
+        logger::error("TEST FAIL: Plain scroll prior should be BASE_PRIOR (0.3)! Got={:.3f}",
             healScrollPrior);
+        return;
+    }
+
+    // Higher magnitude SHOULD raise scroll prior (intrinsic potency)
+    ScrollCandidate weakScroll;
+    weakScroll.magnitude = 8.0f;     // e.g. Scroll of Flames
+    weakScroll.count = 10;
+
+    ScrollCandidate strongScroll;
+    strongScroll.magnitude = 75.0f;  // e.g. Scroll of Fireball
+    strongScroll.count = 10;
+
+    float weakScrollPrior = priorCalc.CalculatePrior(neutralPlayer, weakScroll);
+    float strongScrollPrior = priorCalc.CalculatePrior(neutralPlayer, strongScroll);
+
+    if (strongScrollPrior <= weakScrollPrior) {
+        logger::error("TEST FAIL: Higher-magnitude scroll should have higher prior! Weak={:.3f}, Strong={:.3f}",
+            weakScrollPrior, strongScrollPrior);
+        return;
+    }
+
+    // Low count SHOULD reduce scroll prior (scarcity penalty)
+    ScrollCandidate plentifulScroll;
+    plentifulScroll.magnitude = 50.0f;
+    plentifulScroll.count = 50;
+
+    ScrollCandidate scarceScroll;
+    scarceScroll.magnitude = 50.0f;
+    scarceScroll.count = 2;  // Below LOW_COUNT_THRESHOLD
+
+    float plentifulScrollPrior = priorCalc.CalculatePrior(neutralPlayer, plentifulScroll);
+    float scarceScrollPrior = priorCalc.CalculatePrior(neutralPlayer, scarceScroll);
+
+    if (scarceScrollPrior >= plentifulScrollPrior) {
+        logger::error("TEST FAIL: Low scroll count should reduce prior! Plentiful={:.3f}, Scarce={:.3f}",
+            plentifulScrollPrior, scarceScrollPrior);
         return;
     }
 
@@ -1778,7 +1816,7 @@ void RunUnitTests()
     logger::info("  - Spell cost affects prior (power scaling)"sv);
     logger::info("  - Weapon charge affects prior (depletion penalty)"sv);
     logger::info("  - Ammo type matching affects prior (compatibility)"sv);
-    logger::info("  - Scrolls have uniform prior (no intrinsic differences)"sv);
+    logger::info("  - Scroll prior mirrors item prior (magnitude + scarcity, type-independent)"sv);
 
     // === Optimization Unit Tests ===
     logger::info("Running optimization unit tests..."sv);

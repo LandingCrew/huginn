@@ -164,7 +164,8 @@ namespace Huginn::Scroll
       RE::FormID formID = scroll->GetFormID();
 
       // Check if already registered
-      if (!m_formIDIndex.contains(formID)) {
+      auto it = m_formIDIndex.find(formID);
+      if (it == m_formIDIndex.end()) {
         // Check capacity limit
         if (m_scrolls.size() >= Config::MAX_TRACKED_ITEMS) {
            logger::warn("Scroll registry at max capacity, cannot add new scrolls"sv);
@@ -176,6 +177,20 @@ namespace Huginn::Scroll
         scrollsAdded++;
 
         logger::debug("[ScrollRegistry] Added new scroll: {} x{}"sv, scroll->GetName(), count);
+      } else {
+        // Already tracked: sync count from inventory so reconcile is self-consistent
+        // even if it runs before the first RefreshCounts delta scan (e.g. on load,
+        // where a stale serialized count would otherwise produce a spurious delta).
+        // Reconcile emits no ScrollChangeEvents, so this never double-rewards.
+        //
+        // TRADEOFF: this also absorbs a consumption that lands on a reconcile tick
+        // when the 500ms delta scan isn't simultaneously due — that delta is lost
+        // and yields no consumption reward. RefreshCounts runs first in the update
+        // tick (UpdateLoop.cpp), so the window is a rare sub-500ms case. We accept
+        // it: correct counts outweigh an occasional missed reward. Do NOT "fix" the
+        // missed reward by leaving count stale here — that reintroduces the spurious
+        // load-time delta this sync exists to suppress.
+        m_scrolls[it->second].count = count;
       }
       }
 
@@ -209,16 +224,6 @@ namespace Huginn::Scroll
       return scrollsAdded + scrollsRemoved;
    }
 
-   const InventoryScroll* ScrollRegistry::GetScroll(RE::FormID formID) const
-   {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      auto it = m_formIDIndex.find(formID);
-      if (it == m_formIDIndex.end()) {
-      return nullptr;
-      }
-      return &m_scrolls[it->second];
-   }
-
    std::vector<const InventoryScroll*> ScrollRegistry::GetScrollsByType(ScrollType type) const
    {
       std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
@@ -227,21 +232,6 @@ namespace Huginn::Scroll
 
       for (const auto& scroll : m_scrolls) {
       if (scroll.data.type == type && scroll.count > 0) {
-        result.push_back(&scroll);
-      }
-      }
-
-      return result;
-   }
-
-   std::vector<const InventoryScroll*> ScrollRegistry::GetScrollsWithTag(ScrollTag tag) const
-   {
-      std::shared_lock lock(m_mutex);  // v0.7.17 - thread safety fix
-      std::vector<const InventoryScroll*> result;
-      result.reserve(m_scrolls.size() / 4);  // Rough estimate
-
-      for (const auto& scroll : m_scrolls) {
-      if (HasTag(scroll.data.tags, tag) && scroll.count > 0) {
         result.push_back(&scroll);
       }
       }
@@ -383,35 +373,6 @@ namespace Huginn::Scroll
       }, topK);
 
       return result;
-   }
-
-   // =============================================================================
-   // SCHOOL-BASED ACCESSORS
-   // =============================================================================
-
-   std::vector<const InventoryScroll*> ScrollRegistry::GetScrollsBySchool(MagicSchool school) const
-   {
-      std::shared_lock lock(m_mutex);  // v0.7.17 - thread safety fix
-      std::vector<const InventoryScroll*> result;
-      result.reserve(m_scrolls.size() / 4);
-
-      for (const auto& scroll : m_scrolls) {
-      if (scroll.data.school == school && scroll.count > 0) {
-        result.push_back(&scroll);
-      }
-      }
-
-      return result;
-   }
-
-   std::vector<const InventoryScroll*> ScrollRegistry::GetDestructionScrolls() const
-   {
-      return GetScrollsBySchool(MagicSchool::Destruction);
-   }
-
-   std::vector<const InventoryScroll*> ScrollRegistry::GetRestorationScrolls() const
-   {
-      return GetScrollsBySchool(MagicSchool::Restoration);
    }
 
    // =============================================================================

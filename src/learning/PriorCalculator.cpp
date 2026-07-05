@@ -165,22 +165,35 @@ namespace Huginn::Scoring
     }
 
     // =========================================================================
-    // SCROLL PRIORS - Minimal (scrolls have no intrinsic quality differences)
+    // SCROLL PRIORS - Intrinsic quality heuristics only (mirrors item priors)
     // =========================================================================
 
     float PriorCalculator::CalculateScrollPrior(
         const Candidate::ScrollCandidate& scroll) const
     {
-        // Scrolls have no intrinsic properties to compare
-        // - No magnitude field (effect data not stored in candidate)
-        // - No cost field (one-use items, no magicka cost)
-        // - No quality tiers (all scrolls of same type are identical)
-        // Their value is entirely contextual (handled by ContextRuleEngine)
+        float prior = BASE_PRIOR;
 
-        // Example: "Scroll of Healing" value depends on current HP (context)
-        //          not on any intrinsic property of the scroll itself
+        // Magnitude bonus (logarithmic, diminishing returns) - same treatment as
+        // potions. A Scroll of Fireball (mag 75) is intrinsically higher quality
+        // than a Scroll of Flames (mag 8). This is INTRINSIC, not context: the
+        // potency is a property of the scroll, perceivable from its tooltip.
+        if (scroll.magnitude > 0.0f) {
+            float magRatio = std::log(1.0f + scroll.magnitude) /
+                            std::log(1.0f + MAGNITUDE_REFERENCE_VALUE);
+            prior += std::min(magRatio, 1.0f) * MAGNITUDE_SCALE_FACTOR;
+        }
 
-        return BASE_PRIOR;  // Just return base prior for all scrolls
+        // Inventory scarcity penalty (prefer not to burn the last few scrolls).
+        // INTRINSIC availability, not game context.
+        if (scroll.count > 0 && scroll.count < LOW_COUNT_THRESHOLD) {
+            float countRatio = scroll.count / LOW_COUNT_THRESHOLD;
+            prior -= (1.0f - countRatio) * COUNT_PENALTY_SCALE;
+        }
+
+        // NO context checks here - "Scroll of Healing" urgency vs current HP is
+        // ContextRuleEngine's job, not the intrinsic prior's.
+
+        return std::clamp(prior, 0.0f, 1.0f);
     }
 
 }  // namespace Huginn::Scoring
