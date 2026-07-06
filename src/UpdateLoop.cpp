@@ -10,6 +10,7 @@
 #include "wheeler/WheelerClient.h"
 #include "learning/PipelineStateCache.h"
 #include "learning/EquipEventBus.h"
+#include "learning/InventoryExitTracker.h"
 #include "util/ScopedTimer.h"
 #include "weapon/WeaponRegistry.h"
 
@@ -18,6 +19,17 @@ using namespace Huginn;
 // =============================================================================
 // CONSUMPTION REWARD HELPER
 // =============================================================================
+
+// Returns true if the count decrease was a real consumption (cast/drink/eat)
+// rather than a drop/sell/store, which must not be rewarded — see
+// InventoryExitTracker.
+static bool IsConsumption(RE::FormID formID, int32_t delta)
+{
+    const int32_t removed = -delta;
+    const int32_t transferred =
+        Learning::InventoryExitTracker::GetSingleton().ClaimExits(formID, removed);
+    return transferred < removed;
+}
 
 static void ApplyConsumptionReward(RE::FormID formID, std::string_view name)
 {
@@ -100,6 +112,11 @@ static void MaintainRegistries(RE::PlayerCharacter* player,
             auto changes = g_itemRegistry->RefreshCounts(player);
             for (const auto& change : changes) {
                 if (change.delta < 0) {
+                    if (!IsConsumption(change.formID, change.delta)) {
+                        logger::debug("[ItemRegistry] Left inventory (drop/sell/store), no reward: {} x{}"sv,
+                            change.name, -change.delta);
+                        continue;
+                    }
                     logger::debug("[ItemRegistry] Consumed: {} x{}"sv, change.name, -change.delta);
                     ApplyConsumptionReward(change.formID, change.name);
                 }
@@ -141,6 +158,11 @@ static void MaintainRegistries(RE::PlayerCharacter* player,
             auto changes = g_scrollRegistry->RefreshCounts(player);
             for (const auto& change : changes) {
                 if (change.delta < 0) {
+                    if (!IsConsumption(change.formID, change.delta)) {
+                        logger::debug("[ScrollRegistry] Left inventory (drop/sell/store), no reward: {} x{}"sv,
+                            change.name, -change.delta);
+                        continue;
+                    }
                     logger::debug("[ScrollRegistry] Consumed: {} x{}"sv, change.name, -change.delta);
                     ApplyConsumptionReward(change.formID, change.name);
                 }
