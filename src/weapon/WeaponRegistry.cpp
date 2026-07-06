@@ -1111,6 +1111,18 @@ namespace Huginn::Weapon
       // Classify weapon directly (no caching - classification is cheap ~0.01ms)
       // NOTE: Weapons not cached as of v0.7.11 - see CLAUDE.md design rationale
       WeaponData data = m_classifier.ClassifyWeapon(weapon);
+
+      // ClassifyWeapon returns a default WeaponData (formID == 0) when it rejects the
+      // weapon (no display name AND no editor ID — some modded weapons). Storing a
+      // rejected entry would desync data.formID (0) from the m_weaponIndex key
+      // (weapon->GetFormID()); RemoveWeapon's swap-pop re-keys by data.formID, which
+      // then orphans the real key and lets m_weaponIndex outgrow m_weapons — a later
+      // m_weapons[m_weaponIndex[id]] reads out of range. Mirror ScrollRegistry::AddScroll.
+      if (data.formID == 0) {
+      logger::warn("[WeaponRegistry] Skipping weapon {:08X}: classification rejected (no name)"sv, formID);
+      return;
+      }
+
       data.uniqueID = uniqueID;
 
       // Update charge info
