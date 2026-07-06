@@ -626,6 +626,24 @@ namespace Huginn::Item
    // These use single-pass max-find instead of O(n log n) sort for performance.
    // Called frequently in recommendation pipeline hot path (~10x per 500ms update).
 
+   const InventoryItem* ItemRegistry::GetBestWaterbreathingPotion() const noexcept
+   {
+      std::shared_lock lock(m_mutex);
+      const InventoryItem* best = nullptr;
+      float maxDuration = 0.0f;
+
+      // Longest duration wins (matches GetWaterbreathingPotions ordering)
+      for (const auto& item : m_items) {
+      if (HasTag(item.data.tags, ItemTag::Waterbreathing) &&
+          item.count > 0 &&
+          item.data.duration > maxDuration) {
+        best = &item;
+        maxDuration = item.data.duration;
+      }
+      }
+      return best;
+   }
+
    const InventoryItem* ItemRegistry::GetBestHealthPotion() const noexcept
    {
       std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety

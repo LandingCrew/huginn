@@ -208,8 +208,16 @@ namespace Huginn::Override
         // Find best soul gem
         auto candidate = FindSoulGem();
 
+        // Warn once per episode, not per tick — this evaluator re-runs every
+        // pipeline tick while the override is latched
+        static bool s_warnedNoSoulGem = false;
         if (!candidate.has_value()) {
-            logger::warn("[OverrideManager] WeaponCharge: No soul gem found in inventory!"sv);
+            if (!s_warnedNoSoulGem) {
+                logger::warn("[OverrideManager] WeaponCharge: No soul gem found in inventory!"sv);
+                s_warnedNoSoulGem = true;
+            }
+        } else {
+            s_warnedNoSoulGem = false;
         }
 
         OverrideResult result;
@@ -371,18 +379,30 @@ namespace Huginn::Override
             return std::nullopt;
         }
 
-        auto ammoList = isBow ? m_weaponRegistry->GetArrows(1) : m_weaponRegistry->GetBolts(1);
+        // Single-pass max-damage scan (no per-tick allocation/sort)
+        const auto* bestAmmo = isBow ? m_weaponRegistry->GetBestArrow()
+                                     : m_weaponRegistry->GetBestBolt();
 
-        if (ammoList.empty() || ammoList[0]->count <= 0) {
-            logger::debug("[OverrideManager] FindBestAmmo: No {} available"sv,
-                isBow ? "arrows" : "bolts");
+        static bool s_loggedNoAmmo = false;
+        if (!bestAmmo || bestAmmo->count <= 0) {
+            if (!s_loggedNoAmmo) {
+                logger::debug("[OverrideManager] FindBestAmmo: No {} available"sv,
+                    isBow ? "arrows" : "bolts");
+                s_loggedNoAmmo = true;
+            }
             return std::nullopt;
         }
+        s_loggedNoAmmo = false;  // Reset when ammo becomes available
 
-        logger::debug("[OverrideManager] FindBestAmmo: Found {} (count={})"sv,
-            ammoList[0]->data.name, ammoList[0]->count);
+        // Only log when selected ammo changes (this runs per-tick while latched)
+        static RE::FormID s_lastLoggedAmmo = 0;
+        if (bestAmmo->data.formID != s_lastLoggedAmmo) {
+            logger::debug("[OverrideManager] FindBestAmmo: Found {} (count={})"sv,
+                bestAmmo->data.name, bestAmmo->count);
+            s_lastLoggedAmmo = bestAmmo->data.formID;
+        }
 
-        auto candidate = Candidate::AmmoCandidate::FromInventoryAmmo(*ammoList[0]);
+        auto candidate = Candidate::AmmoCandidate::FromInventoryAmmo(*bestAmmo);
         candidate.relevanceTags = Candidate::RelevanceTag::NeedsAmmo;
 
         return candidate;
@@ -465,10 +485,11 @@ namespace Huginn::Override
         // The CandidateGenerator already handles waterbreathing spells via contextual
         // relevance when underwater, so we focus on potions here.
         if (m_itemRegistry) {
-            auto potions = m_itemRegistry->GetWaterbreathingPotions(1);
-            if (!potions.empty() && potions[0]->count > 0) {
-                auto candidate = Candidate::ItemCandidate::FromInventoryItem(*potions[0]);
-                        candidate.relevanceTags = Candidate::RelevanceTag::Underwater;
+            // Single-pass longest-duration scan (no per-tick allocation/sort)
+            const auto* bestPotion = m_itemRegistry->GetBestWaterbreathingPotion();
+            if (bestPotion) {
+                auto candidate = Candidate::ItemCandidate::FromInventoryItem(*bestPotion);
+                candidate.relevanceTags = Candidate::RelevanceTag::Underwater;
                 return candidate;
             }
         }

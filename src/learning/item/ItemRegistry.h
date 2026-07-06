@@ -339,6 +339,7 @@ namespace Huginn::Item
       [[nodiscard]] const InventoryItem* GetBestResistPoisonPotion() const noexcept;
       [[nodiscard]] const InventoryItem* GetBestCureDiseasePotion() const noexcept;
       [[nodiscard]] const InventoryItem* GetBestCurePoisonPotion() const noexcept;
+      [[nodiscard]] const InventoryItem* GetBestWaterbreathingPotion() const noexcept;  // Longest duration
 
       // =============================================================================
       // SOUL GEM ACCESSORS (SoulGemScanner v0.7.8)
