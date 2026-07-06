@@ -53,6 +53,7 @@ namespace Huginn::Weapon
       // Clear existing data
       m_weapons.clear();
       m_weaponIndex.clear();
+      m_rejectedWeapons.clear();  // rebuild retries rejected weapons (mod update may have named them)
       m_ammo.clear();
       m_ammoIndex.clear();
 
@@ -222,9 +223,10 @@ namespace Huginn::Weapon
       Huginn_ZONE_NAMED("RefreshCharges::Apply");
       std::unique_lock lock(m_mutex);
 
-      // Add newly favorited weapons
+      // Add newly favorited weapons (skip known-rejected ones — they can never be
+      // added, and retrying would log "adding immediately" every 500ms forever)
       for (const auto& [formID, sw] : currentState) {
-      if (sw.isFavorited && !m_weaponIndex.contains(formID)) {
+      if (sw.isFavorited && !m_weaponIndex.contains(formID) && !m_rejectedWeapons.contains(formID)) {
         // Found favorited weapon not in registry - add it immediately
         if (m_weapons.size() < Config::MAX_TRACKED_WEAPONS) {
            logger::info("[WeaponRegistry] Favorited weapon {} ({:08X}) not in registry - adding immediately"sv,
@@ -424,10 +426,13 @@ namespace Huginn::Weapon
       RE::FormID formID = sw.weapon->GetFormID();
       if (!m_weaponIndex.contains(formID)) {
         if (m_weapons.size() < Config::MAX_TRACKED_WEAPONS) {
-           AddWeapon(sw.weapon, sw.isFavorited, sw.isEquipped,
-                     sw.currentCharge, sw.maxCharge, sw.uniqueID);
-           weaponsAdded++;
-           logger::trace("[WeaponRegistry] Added weapon: {}"sv, sw.weapon->GetName());
+           // Only count actual insertions — AddWeapon no-ops on rejected weapons,
+           // and counting those would report phantom changes every reconcile
+           if (AddWeapon(sw.weapon, sw.isFavorited, sw.isEquipped,
+                         sw.currentCharge, sw.maxCharge, sw.uniqueID)) {
+            weaponsAdded++;
+            logger::trace("[WeaponRegistry] Added weapon: {}"sv, sw.weapon->GetName());
+           }
         }
       } else {
         // Update favorited/equipped status for existing weapons
@@ -1091,11 +1096,11 @@ namespace Huginn::Weapon
       return favoritedWeapons;
    }
 
-   void WeaponRegistry::AddWeapon(RE::TESObjectWEAP* weapon, bool isFavorited, bool isEquipped,
+   bool WeaponRegistry::AddWeapon(RE::TESObjectWEAP* weapon, bool isFavorited, bool isEquipped,
                                   float currentCharge, float maxCharge, uint16_t uniqueID)
    {
       // NOTE: Assumes m_mutex is already held by caller (v0.7.12 - thread safety)
-      if (!weapon) return;
+      if (!weapon) return false;
 
       RE::FormID formID = weapon->GetFormID();
 
@@ -1105,22 +1110,25 @@ namespace Huginn::Weapon
       logger::debug("[WeaponRegistry] Weapon {:08X} already registered, updating status"sv, formID);
       m_weapons[it->second].isFavorited = isFavorited;
       m_weapons[it->second].isEquipped = isEquipped;
-      return;
+      return true;
+      }
+
+      // Known-rejected weapon — don't re-classify or re-log every scan cycle
+      if (m_rejectedWeapons.contains(formID)) {
+      return false;
       }
 
       // Classify weapon directly (no caching - classification is cheap ~0.01ms)
       // NOTE: Weapons not cached as of v0.7.11 - see CLAUDE.md design rationale
       WeaponData data = m_classifier.ClassifyWeapon(weapon);
 
-      // ClassifyWeapon returns a default WeaponData (formID == 0) when it rejects the
-      // weapon (no display name AND no editor ID — some modded weapons). Storing a
-      // rejected entry would desync data.formID (0) from the m_weaponIndex key
-      // (weapon->GetFormID()); RemoveWeapon's swap-pop re-keys by data.formID, which
-      // then orphans the real key and lets m_weaponIndex outgrow m_weapons — a later
-      // m_weapons[m_weaponIndex[id]] reads out of range. Mirror ScrollRegistry::AddScroll.
+      // Classification rejected (formID stays 0 — nameless modded weapons). Storing it
+      // would desync data.formID from the m_weaponIndex key and corrupt RemoveWeapon's
+      // swap-pop re-keying. Tombstone it so this logs once, not every scan cycle.
       if (data.formID == 0) {
-      logger::warn("[WeaponRegistry] Skipping weapon {:08X}: classification rejected (no name)"sv, formID);
-      return;
+      m_rejectedWeapons.insert(formID);
+      logger::warn("[WeaponRegistry] Failed to classify weapon {:08X}, skipping (won't retry)"sv, formID);
+      return false;
       }
 
       data.uniqueID = uniqueID;
@@ -1150,6 +1158,7 @@ namespace Huginn::Weapon
 
       logger::trace("[WeaponRegistry] Added weapon: {} (fav={}, eq={})"sv,
       weapon->GetName(), isFavorited, isEquipped);
+      return true;
    }
 
    void WeaponRegistry::AddAmmo(RE::TESAmmo* ammo, int32_t count, bool isEquipped)
