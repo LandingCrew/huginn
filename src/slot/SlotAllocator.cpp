@@ -6,6 +6,11 @@
 
 namespace Huginn::Slot
 {
+    // Utility stamped on override slot assignments. Far above any organic
+    // score so downstream consumers (lock arbitration, debug display) can
+    // tell overrides apart; placement itself ignores the magnitude.
+    static constexpr float kOverrideUtility = 1000.0f;
+
     // File-local helper: Does this slot's filter accept the given override category?
     [[nodiscard]] static constexpr bool AcceptsOverride(OverrideFilter filter, Override::OverrideCategory category) noexcept
     {
@@ -275,7 +280,7 @@ namespace Huginn::Slot
 
         if (overrides.HasActiveOverride()) {
             for (const auto& override : overrides.activeOverrides) {
-                if (!override.active || !override.candidate) continue;
+                if (!override.candidate) continue;
 
                 RE::FormID formID = Candidate::GetFormID(*override.candidate);
                 if (assignedFormIDs.contains(formID)) continue;
@@ -290,7 +295,7 @@ namespace Huginn::Slot
                     if (SlotClassifier::Matches(*override.candidate, config.classification)) {
                         Scoring::ScoredCandidate sc;
                         sc.candidate = *override.candidate;
-                        sc.utility = 1000.0f;
+                        sc.utility = kOverrideUtility;
                         sc.isWildcard = false;
 
                         assignments[priorityIdx] = SlotAssignment::FromCandidate(
@@ -314,7 +319,7 @@ namespace Huginn::Slot
 
             // PASS 1b: Fallback - unassigned overrides go to first empty slot that accepts their category
             for (const auto& override : overrides.activeOverrides) {
-                if (!override.active || !override.candidate) continue;
+                if (!override.candidate) continue;
 
                 RE::FormID formID = Candidate::GetFormID(*override.candidate);
                 if (assignedFormIDs.contains(formID)) continue;  // Already placed
@@ -329,7 +334,7 @@ namespace Huginn::Slot
 
                     Scoring::ScoredCandidate sc;
                     sc.candidate = *override.candidate;
-                    sc.utility = 1000.0f;
+                    sc.utility = kOverrideUtility;
                     sc.isWildcard = false;
 
                     assignments[priorityIdx] = SlotAssignment::FromCandidate(

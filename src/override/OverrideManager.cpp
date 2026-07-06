@@ -2,7 +2,6 @@
 #include "learning/item/ItemRegistry.h"
 #include "learning/item/ItemData.h"
 #include "weapon/WeaponRegistry.h"
-#include <algorithm>
 
 namespace Huginn::Override
 {
@@ -143,7 +142,6 @@ namespace Huginn::Override
         auto candidate = FindHealthPotion();
 
         OverrideResult result;
-        result.active = true;
         result.priority = Priority::CRITICAL_HEALTH;
         result.category = OverrideCategory::HP;
         result.reason = "CRITICAL: Need Health Potion!";
@@ -169,11 +167,10 @@ namespace Huginn::Override
             return std::nullopt;
         }
 
-        // Find waterbreathing item (potion or spell)
+        // Find waterbreathing potion (spells surface via normal scoring)
         auto candidate = FindWaterbreathingItem();
 
         OverrideResult result;
-        result.active = true;
         result.priority = Priority::DROWNING;
         result.category = OverrideCategory::Other;
         result.reason = "DROWNING: Need Waterbreathing!";
@@ -216,7 +213,6 @@ namespace Huginn::Override
         }
 
         OverrideResult result;
-        result.active = true;
         result.priority = Priority::WEAPON_EMPTY;
         result.category = OverrideCategory::Other;
         result.reason = "WEAPON EMPTY: Need Soul Gem!";
@@ -258,7 +254,6 @@ namespace Huginn::Override
         auto candidate = FindBestAmmo(player.hasBowEquipped);
 
         OverrideResult result;
-        result.active = true;
         result.priority = Priority::LOW_AMMO;
         result.category = OverrideCategory::Other;
         result.reason = player.hasBowEquipped
@@ -287,7 +282,6 @@ namespace Huginn::Override
         auto candidate = FindMagickaPotion();
 
         OverrideResult result;
-        result.active = true;
         result.priority = Priority::CRITICAL_MAGICKA;
         result.category = OverrideCategory::MP;
         result.reason = "CRITICAL: Need Magicka Potion!";
@@ -314,7 +308,6 @@ namespace Huginn::Override
         auto candidate = FindStaminaPotion();
 
         OverrideResult result;
-        result.active = true;
         result.priority = Priority::CRITICAL_STAMINA;
         result.category = OverrideCategory::SP;
         result.reason = "CRITICAL: Need Stamina Potion!";

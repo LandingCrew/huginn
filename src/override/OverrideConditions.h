@@ -1,6 +1,7 @@
 #pragma once
 
 #include "candidate/CandidateTypes.h"
+#include <algorithm>
 #include <optional>
 #include <string>
 #include <vector>
@@ -11,8 +12,9 @@ namespace Huginn::Override
     // PRIORITY CONSTANTS (higher = more urgent)
     // =============================================================================
     // These values determine which override takes precedence when multiple
-    // conditions are active simultaneously. Higher priority overrides
-    // claim slot 1 (the top/most visible slot).
+    // conditions are active simultaneously. Priority orders the collection,
+    // decides SlotLocker lock-breaking, and gates Wheeler urgent auto-focus;
+    // slot placement itself is category/filter-matched by SlotAllocator.
     // =============================================================================
 
     namespace Priority
@@ -87,18 +89,19 @@ namespace Huginn::Override
     // =============================================================================
     // OVERRIDE RESULT
     // =============================================================================
-    // Result of evaluating a single override condition.
-    // Contains everything needed to inject the override into the candidate list.
+    // Result of evaluating a single override condition. Consumed by
+    // SlotAllocator (type-matched slot placement), SlotLocker (lock breaking),
+    // and the display/Wheeler path (urgent auto-focus, subtexts).
+    // Presence in OverrideCollection::activeOverrides means the condition is met.
     // =============================================================================
 
     struct OverrideResult
     {
-        bool active = false;           // Is this override condition met?
-        int priority = 0;              // Priority for slot allocation (higher = slot 1)
+        int priority = 0;              // Ordering, lock-breaking, auto-focus gating
         OverrideCategory category = OverrideCategory::Other;  // Resource category for slot filtering
         std::string reason;            // Human-readable reason (for logging/debug)
 
-        // The candidate to inject (nullopt if condition met but no item available)
+        // The item to surface (nullopt if condition met but no item available)
         std::optional<Candidate::CandidateVariant> candidate;
     };
 
