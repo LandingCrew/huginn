@@ -11,16 +11,12 @@ namespace Huginn::Scroll
       return ScrollData{};
       }
 
-      ScrollData data;
-      data.formID = scroll->GetFormID();
-      data.name = scroll->GetName();
-
       // Delegate to SpellClassifier for effect analysis
       // (ScrollItem IS-A SpellItem, so the scroll classifies directly as a spell)
       auto spellData = m_spellClassifier.ClassifySpell(scroll);
 
       // Convert SpellData to ScrollData
-      data = ConvertToScrollData(data.formID, data.name, spellData);
+      ScrollData data = ConvertToScrollData(scroll->GetFormID(), scroll->GetName(), spellData);
 
       // Override magnitude and duration with scroll-specific values
       // (scrolls may have different magnitude/duration than base spell).
@@ -52,9 +48,8 @@ namespace Huginn::Scroll
       data.element = spellData.element;
       data.baseCost = spellData.baseCost;
 
-      // magnitude and duration will be set by caller
-      data.magnitude = 0.0f;
-      data.duration = 0.0f;
+      // magnitude and duration keep their zero defaults; ClassifyScroll overrides
+      // them with scroll-specific values
 
       return data;
    }

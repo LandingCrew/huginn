@@ -29,7 +29,7 @@ namespace Huginn::Scroll
       // Scroll-specific properties
       float magnitude = 0.0f;                    // Effect magnitude (for potency comparison)
       float duration = 0.0f;                     // Effect duration in seconds
-      uint32_t baseCost = 0;                     // Base magicka cost (of linked spell, for comparison)
+      uint32_t baseCost = 0;                     // Base magicka cost of the scroll's spell effects (for comparison)
 
       // String representation for logging
       [[nodiscard]] std::string ToString() const
