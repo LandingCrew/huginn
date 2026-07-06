@@ -363,8 +363,10 @@ namespace Huginn::Weapon
        * @param isEquipped Is the weapon currently equipped
        * @param currentCharge Current enchantment charge (0-maxCharge)
        * @param maxCharge Maximum enchantment charge
+       * @return true if the weapon is registered (inserted or updated),
+       *         false if null or rejected by classification
        */
-      void AddWeapon(RE::TESObjectWEAP* weapon, bool isFavorited, bool isEquipped,
+      bool AddWeapon(RE::TESObjectWEAP* weapon, bool isFavorited, bool isEquipped,
                      float currentCharge, float maxCharge, uint16_t uniqueID = 0);
 
       /**
@@ -410,6 +412,11 @@ namespace Huginn::Weapon
       // Dual-index storage for weapons (same pattern as SpellRegistry/ItemRegistry)
       std::vector<InventoryWeapon> m_weapons;
       std::unordered_map<RE::FormID, size_t> m_weaponIndex;
+
+      // FormIDs whose classification was rejected (see AddWeapon guard). Without this,
+      // the periodic scans re-classify and re-log the same unnameable weapon every
+      // cycle, since it never enters m_weaponIndex. Cleared on RebuildRegistry.
+      std::unordered_set<RE::FormID> m_rejectedWeapons;
 
       // Dual-index storage for ammo
       std::vector<InventoryAmmo> m_ammo;

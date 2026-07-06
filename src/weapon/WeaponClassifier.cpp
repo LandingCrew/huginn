@@ -23,8 +23,9 @@ namespace Huginn::Weapon
       }
 
       // Reject weapons with empty names (both display name and editor ID are missing)
+      // debug, not warn: AddWeapon logs the one release-visible warn per rejected weapon
       if (data.name.empty()) {
-      logger::warn("Rejecting weapon with empty name: FormID={:08X}"sv, data.formID);
+      logger::debug("Rejecting weapon with empty name: FormID={:08X}"sv, data.formID);
       return WeaponData{};
       }
 
