@@ -4,14 +4,12 @@
 #include "OverrideConfig.h"
 #include "state/PlayerActorState.h"
 #include "state/WorldState.h"
-#include "learning/ScoredCandidate.h"
 #include <unordered_map>
 #include <string>
 #include <string_view>
 
 // Forward declarations
 namespace Huginn::Item { class ItemRegistry; }
-namespace Huginn::Spell { class SpellRegistry; }
 namespace Huginn::Weapon { class WeaponRegistry; }
 
 namespace Huginn::Override
@@ -23,17 +21,19 @@ namespace Huginn::Override
     // recommendation slots when urgent conditions are met.
     //
     // DESIGN PRINCIPLES:
-    // - Overrides inject into the scored candidate list, not the widget directly
-    // - This ensures consistent behavior across Widget AND Wheeler paths
-    // - Hysteresis prevents flickering when values hover near thresholds
-    // - Items with overrides get massive utility boost to guarantee top slots
+    // - EvaluateOverrides() reports which conditions are urgent right now as an
+    //   OverrideCollection; it does not touch the scored candidate list.
+    // - The pipeline hands that collection to SlotAllocator, which places the
+    //   override items into type-matched slots, and to SlotLocker, which lets
+    //   high-priority overrides break existing slot locks.
+    // - Hysteresis prevents flickering when values hover near thresholds.
     //
-    // INJECTION POINT:
-    //   CandidateGenerator -> UtilityScorer -> [OverrideManager] -> Widget/Wheeler
+    // FLOW:
+    //   EvaluateOverrides -> OverrideCollection -> SlotAllocator / SlotLocker
     //
     // USAGE:
     //   auto overrides = overrideMgr.EvaluateOverrides(playerState, worldState);
-    //   scoredCandidates = overrideMgr.ApplyOverrides(std::move(scoredCandidates), overrides);
+    //   slotAllocator.AllocateSlots(candidates, overrides, ...);
     // =============================================================================
 
     class OverrideManager
@@ -42,8 +42,7 @@ namespace Huginn::Override
         static OverrideManager& GetSingleton();
 
         // Initialize with registry references (call in kPostLoadGame)
-        void Initialize(Item::ItemRegistry& itemRegistry, Spell::SpellRegistry& spellRegistry,
-                        Weapon::WeaponRegistry& weaponRegistry);
+        void Initialize(Item::ItemRegistry& itemRegistry, Weapon::WeaponRegistry& weaponRegistry);
 
         // Reset state (e.g., on save load)
         void Reset();
@@ -61,19 +60,6 @@ namespace Huginn::Override
         [[nodiscard]] OverrideCollection EvaluateOverrides(
             const State::PlayerActorState& player,
             const State::WorldState& world);
-
-        /**
-         * @brief Apply active overrides to scored candidate list
-         * @param candidates Scored candidates from UtilityScorer
-         * @param overrides Active overrides from EvaluateOverrides
-         * @return Modified candidate list with override items at top
-         *
-         * Override items are injected with boosted utility scores to ensure
-         * they appear in the top slots. Original candidates are shifted down.
-         */
-        [[nodiscard]] Scoring::ScoredCandidateList ApplyOverrides(
-            Scoring::ScoredCandidateList candidates,
-            const OverrideCollection& overrides);
 
         /**
          * @brief Update internal timers (call from main update loop)
@@ -229,7 +215,6 @@ namespace Huginn::Override
 
         // Registry references (set during Initialize)
         Item::ItemRegistry* m_itemRegistry = nullptr;
-        Spell::SpellRegistry* m_spellRegistry = nullptr;
         Weapon::WeaponRegistry* m_weaponRegistry = nullptr;
 
         // Hysteresis tracking for each condition

@@ -100,9 +100,6 @@ namespace Huginn::Override
 
         // The candidate to inject (nullopt if condition met but no item available)
         std::optional<Candidate::CandidateVariant> candidate;
-
-        // Target slot (0 = slot 1, highest priority)
-        int targetSlot = 0;
     };
 
     // =============================================================================
