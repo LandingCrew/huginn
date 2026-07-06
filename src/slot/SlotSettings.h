@@ -134,7 +134,7 @@ namespace Huginn::Slot
             { SlotClassification::Regular,    true, OverrideFilter::None, 3, false },  // Slot 3
             { SlotClassification::Regular,    true, OverrideFilter::None, 2, false },  // Slot 4
             { SlotClassification::Regular,    true, OverrideFilter::None, 1, false },  // Slot 5
-            { SlotClassification::Regular,    true, OverrideFilter::None, 0, false },  // Slot 6
+            { SlotClassification::Regular,    true, OverrideFilter::Other, 0, false }, // Slot 6 (reserves an Other-only home for soul-gem/ammo/drowning overrides)
         };
     }
 
