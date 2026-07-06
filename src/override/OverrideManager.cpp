@@ -327,52 +327,13 @@ namespace Huginn::Override
     // ITEM FINDERS
     // =============================================================================
 
-    // Helper: Reject potions with harmful side effects (Skooma, etc.)
-    // Emergency overrides should only use pure restore potions.
-    static bool HasHarmfulSideEffects(const Item::ItemData& data)
-    {
-        // Hostile flag covers most cases (poisons, etc.)
-        if (data.isHostile) {
-            return true;
-        }
-
-        // Check primary tags for direct damage effects.
-        // Skooma has DamageHealth alongside RestoreStamina but isn't flagged as poison,
-        // so isHostile misses it. This catches mixed-effect potions.
-        const auto primaryHarmfulMask =
-            Item::ItemTag::DamageHealth | Item::ItemTag::DamageMagicka | Item::ItemTag::DamageStamina;
-
-        if (Item::HasTag(data.tags, primaryHarmfulMask)) {
-            return true;
-        }
-
-        // Check extended tags for debuff effects that can exist on "positive" potions
-        // (Ravage, regen damage, elemental weakness)
-        const auto extHarmfulMask =
-            Item::ItemTagExt::RavageHealth | Item::ItemTagExt::RavageMagicka | Item::ItemTagExt::RavageStamina |
-            Item::ItemTagExt::DamageHealthRegen | Item::ItemTagExt::DamageMagickaRegen | Item::ItemTagExt::DamageStaminaRegen |
-            Item::ItemTagExt::WeaknessElement;
-
-        return Item::HasTagExt(data.tagsExt, extHarmfulMask);
-    }
-
-    // Shared two-pass potion selection: prefer pure, optionally fall back to impure
-    static const Item::InventoryItem* FindBestPotionFiltered(
-        const std::vector<const Item::InventoryItem*>& potions,
+    // Shared selection policy: prefer pure, optionally fall back to impure
+    static const Item::InventoryItem* SelectPotion(
+        const Item::ItemRegistry::BestPotionPick& pick,
         bool allowImpure)
     {
-        const Item::InventoryItem* bestPure = nullptr;
-        const Item::InventoryItem* bestAny = nullptr;
-        for (const auto* potion : potions) {
-            if (potion->count <= 0) continue;
-            if (!bestAny) bestAny = potion;  // First available = highest magnitude
-            if (!bestPure && !HasHarmfulSideEffects(potion->data)) {
-                bestPure = potion;
-                break;  // Found a pure one, no need to keep looking
-            }
-        }
-        if (bestPure) return bestPure;
-        return allowImpure ? bestAny : nullptr;
+        if (pick.pure) return pick.pure;
+        return allowImpure ? pick.any : nullptr;
     }
 
     std::optional<Candidate::CandidateVariant> OverrideManager::FindStaminaPotion() const
@@ -382,8 +343,8 @@ namespace Huginn::Override
             return std::nullopt;
         }
 
-        auto potions = m_itemRegistry->GetStaminaPotionsByMagnitude(0);
-        const auto* bestPotion = FindBestPotionFiltered(potions, Config::ALLOW_IMPURE_POTIONS());
+        const auto pick = m_itemRegistry->GetBestPotion(Item::ItemType::StaminaPotion);
+        const auto* bestPotion = SelectPotion(pick, Config::ALLOW_IMPURE_POTIONS());
         static bool s_loggedNoStaminaPotion = false;
         if (!bestPotion) {
             if (!s_loggedNoStaminaPotion) {
@@ -397,7 +358,7 @@ namespace Huginn::Override
         // Only log when selected potion changes (suppress per-frame spam)
         static RE::FormID lastLoggedFormID = 0;
         if (bestPotion->data.formID != lastLoggedFormID) {
-            bool isPure = !HasHarmfulSideEffects(bestPotion->data);
+            bool isPure = !bestPotion->data.HasHarmfulSideEffects();
             logger::info("[OverrideManager] FindStaminaPotion: '{}' FormID={:08X} count={}{}"sv,
                 bestPotion->data.name, bestPotion->data.formID, bestPotion->count,
                 isPure ? "" : " (has side effects)");
@@ -441,8 +402,8 @@ namespace Huginn::Override
             return std::nullopt;
         }
 
-        auto potions = m_itemRegistry->GetHealthPotionsByMagnitude(0);
-        const auto* bestPotion = FindBestPotionFiltered(potions, Config::ALLOW_IMPURE_POTIONS());
+        const auto pick = m_itemRegistry->GetBestPotion(Item::ItemType::HealthPotion);
+        const auto* bestPotion = SelectPotion(pick, Config::ALLOW_IMPURE_POTIONS());
         static bool s_loggedNoHealthPotion = false;
         if (!bestPotion) {
             if (!s_loggedNoHealthPotion) {
@@ -456,7 +417,7 @@ namespace Huginn::Override
         // Only log when selected potion changes (suppress per-frame spam)
         static RE::FormID lastLoggedFormID = 0;
         if (bestPotion->data.formID != lastLoggedFormID) {
-            bool isPure = !HasHarmfulSideEffects(bestPotion->data);
+            bool isPure = !bestPotion->data.HasHarmfulSideEffects();
             logger::info("[OverrideManager] FindHealthPotion: '{}' FormID={:08X} count={}{}"sv,
                 bestPotion->data.name, bestPotion->data.formID, bestPotion->count,
                 isPure ? "" : " (has side effects)");
@@ -476,8 +437,8 @@ namespace Huginn::Override
             return std::nullopt;
         }
 
-        auto potions = m_itemRegistry->GetMagickaPotionsByMagnitude(0);
-        const auto* bestPotion = FindBestPotionFiltered(potions, Config::ALLOW_IMPURE_POTIONS());
+        const auto pick = m_itemRegistry->GetBestPotion(Item::ItemType::MagickaPotion);
+        const auto* bestPotion = SelectPotion(pick, Config::ALLOW_IMPURE_POTIONS());
         static bool s_loggedNoMagickaPotion = false;
         if (!bestPotion) {
             if (!s_loggedNoMagickaPotion) {
@@ -491,7 +452,7 @@ namespace Huginn::Override
         // Only log when selected potion changes (suppress per-frame spam)
         static RE::FormID lastLoggedFormID = 0;
         if (bestPotion->data.formID != lastLoggedFormID) {
-            bool isPure = !HasHarmfulSideEffects(bestPotion->data);
+            bool isPure = !bestPotion->data.HasHarmfulSideEffects();
             logger::info("[OverrideManager] FindMagickaPotion: '{}' FormID={:08X} count={}{}"sv,
                 bestPotion->data.name, bestPotion->data.formID, bestPotion->count,
                 isPure ? "" : " (has side effects)");

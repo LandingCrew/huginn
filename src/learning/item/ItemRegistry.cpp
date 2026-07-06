@@ -881,6 +881,28 @@ namespace Huginn::Item
       return best;
    }
 
+   ItemRegistry::BestPotionPick ItemRegistry::GetBestPotion(ItemType type) const noexcept
+   {
+      std::shared_lock lock(m_mutex);
+      BestPotionPick pick;
+
+      // Single pass, no allocation/sort — called per-tick by override evaluation
+      for (const auto& item : m_items) {
+      if (item.data.type != type || item.count <= 0) {
+        continue;
+      }
+      if (!pick.any || item.data.magnitude > pick.any->data.magnitude) {
+        pick.any = &item;
+      }
+      if ((!pick.pure || item.data.magnitude > pick.pure->data.magnitude) &&
+          !item.data.HasHarmfulSideEffects()) {
+        pick.pure = &item;
+      }
+      }
+
+      return pick;
+   }
+
    std::vector<ItemChangeEvent> ItemRegistry::GetAndClearChanges()
    {
       std::unique_lock lock(m_mutex);  // v0.7.12 - thread safety
