@@ -18,8 +18,11 @@ namespace Huginn::Override
         inline constexpr float CRITICAL_HEALTH_HYSTERESIS = 0.15f;   // 15% - trigger deactivation
 
         // Weapon Charge Override
-        inline constexpr float WEAPON_CHARGE_THRESHOLD = 0.0f;       // 0% - trigger activation
-        inline constexpr float WEAPON_CHARGE_HYSTERESIS = 0.05f;     // 5% - trigger deactivation
+        // Activation uses `charge < threshold`, and a drained weapon keeps a
+        // sub-cost charge remainder (rarely exactly 0), so the threshold must be
+        // nonzero to ever fire. 10% matches IsWeaponChargeCritical().
+        inline constexpr float WEAPON_CHARGE_THRESHOLD = 0.10f;      // 10% - trigger activation
+        inline constexpr float WEAPON_CHARGE_HYSTERESIS = 0.05f;     // gap - deactivate at threshold+gap (15%)
 
         // Low Ammo Override (absolute counts, not percentages)
         inline constexpr float LOW_AMMO_THRESHOLD = 10.0f;           // 10 arrows/bolts - trigger activation
