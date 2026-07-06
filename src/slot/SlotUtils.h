@@ -222,8 +222,14 @@ namespace Huginn::Slot
                         i, SlotVisualStateToString(assignment.visualState), assignment.name);
                 }
             }
-            if (!visualSummary.empty()) {
-                logger::debug("[VisualState] {}", visualSummary);
+            // Dedup: only log when the visual state actually changes
+            // NOTE: Single-threaded (called from update thread only)
+            static std::string s_lastVisualSummary;
+            if (visualSummary != s_lastVisualSummary) {
+                if (!visualSummary.empty()) {
+                    logger::debug("[VisualState] {}", visualSummary);
+                }
+                s_lastVisualSummary = visualSummary;
             }
         }
     }

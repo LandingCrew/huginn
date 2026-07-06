@@ -56,19 +56,19 @@ namespace Huginn::Override
     // HYSTERESIS CONFIGURATION
     // =============================================================================
     // Prevents flickering when values hover near thresholds.
-    // Once an override activates, it stays active until the value crosses
-    // a higher deactivation threshold (or minimum duration expires).
+    // Once an override activates, it stays active until the value climbs past
+    // activationThreshold + hysteresisGap (and the minimum duration expires).
     //
-    // Example: Health override
-    //   - Activates when health < 10%
-    //   - Deactivates when health >= 15% (hysteresis gap prevents rapid toggle)
+    // Example: Health override (threshold 0.35, gap 0.15)
+    //   - Activates when health < 35%
+    //   - Deactivates when health >= 50% (threshold + gap prevents rapid toggle)
     //   - Stays active for at least 2 seconds (prevents split-second flicker)
     // =============================================================================
 
     struct HysteresisConfig
     {
-        float activationThreshold;     // When to activate (e.g., 0.10 for 10%)
-        float deactivationThreshold;   // When to deactivate (e.g., 0.15 for 15%)
+        float activationThreshold;     // Activate when value drops below this (e.g., 0.35 for 35%)
+        float hysteresisGap;           // Deactivate once value >= activationThreshold + gap (INI "hysteresis")
         float minDurationMs;           // Minimum time active once triggered
     };
 
