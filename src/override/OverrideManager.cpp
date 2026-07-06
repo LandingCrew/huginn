@@ -1,7 +1,6 @@
 #include "OverrideManager.h"
 #include "learning/item/ItemRegistry.h"
 #include "learning/item/ItemData.h"
-#include "spell/SpellRegistry.h"
 #include "weapon/WeaponRegistry.h"
 #include <algorithm>
 
@@ -21,11 +20,9 @@ namespace Huginn::Override
     // LIFECYCLE
     // =============================================================================
 
-    void OverrideManager::Initialize(Item::ItemRegistry& itemRegistry, Spell::SpellRegistry& spellRegistry,
-                                     Weapon::WeaponRegistry& weaponRegistry)
+    void OverrideManager::Initialize(Item::ItemRegistry& itemRegistry, Weapon::WeaponRegistry& weaponRegistry)
     {
         m_itemRegistry = &itemRegistry;
-        m_spellRegistry = &spellRegistry;
         m_weaponRegistry = &weaponRegistry;
         m_initialized = true;
 
@@ -124,67 +121,6 @@ namespace Huginn::Override
     }
 
     // =============================================================================
-    // APPLY OVERRIDES
-    // =============================================================================
-
-    Scoring::ScoredCandidateList OverrideManager::ApplyOverrides(
-        Scoring::ScoredCandidateList candidates,
-        const OverrideCollection& overrides)
-    {
-        if (!overrides.HasActiveOverride()) {
-            return candidates;  // No overrides - return unchanged
-        }
-
-        // Build list of override candidates with boosted utility
-        std::vector<Scoring::ScoredCandidate> overrideCandidates;
-        overrideCandidates.reserve(overrides.GetCount());
-
-        for (const auto& override : overrides.activeOverrides) {
-            if (!override.candidate.has_value()) {
-                // Condition met but no item available - log warning
-                logger::warn("[OverrideManager] Override active but no item: {}"sv, override.reason);
-                continue;
-            }
-
-            // Get name before any moves for safe logging
-            const std::string candidateName{Candidate::GetName(override.candidate.value())};
-
-            // Create scored candidate with massive utility boost
-            Scoring::ScoredCandidate scored;
-            scored.candidate = override.candidate.value();  // Copy, not move
-            scored.utility = Config::OVERRIDE_UTILITY_BOOST + static_cast<float>(override.priority);
-            scored.isWildcard = false;
-
-            // Set breakdown to show it's an override
-            scored.breakdown.contextWeight = Config::OVERRIDE_UTILITY_BOOST;
-            scored.breakdown.qValue = 0.0f;
-            scored.breakdown.prior = 0.0f;
-            scored.breakdown.ucb = 0.0f;
-            scored.breakdown.confidence = 1.0f;
-            scored.breakdown.learningScore = 0.0f;
-            scored.breakdown.correlationBonus = 0.0f;
-            scored.breakdown.potionMultiplier = 1.0f;
-            scored.breakdown.favoritesMultiplier = 1.0f;
-
-            logger::debug("[OverrideManager] Injecting override: {} (priority {})"sv,
-                candidateName, override.priority);
-
-            overrideCandidates.push_back(std::move(scored));
-        }
-
-        // Insert override candidates at the front
-        // This ensures they get the top slots after the list is sorted
-        candidates.insert(candidates.begin(),
-            std::make_move_iterator(overrideCandidates.begin()),
-            std::make_move_iterator(overrideCandidates.end()));
-
-        // Re-sort to ensure proper ordering (overrides have highest utility)
-        std::sort(candidates.begin(), candidates.end());
-
-        return candidates;
-    }
-
-    // =============================================================================
     // CONDITION EVALUATORS
     // =============================================================================
 
@@ -212,7 +148,6 @@ namespace Huginn::Override
         result.category = OverrideCategory::HP;
         result.reason = "CRITICAL: Need Health Potion!";
         result.candidate = std::move(candidate);
-        result.targetSlot = 0;
 
         return result;
     }
@@ -243,7 +178,6 @@ namespace Huginn::Override
         result.category = OverrideCategory::Other;
         result.reason = "DROWNING: Need Waterbreathing!";
         result.candidate = std::move(candidate);
-        result.targetSlot = 0;
 
         return result;
     }
@@ -269,10 +203,6 @@ namespace Huginn::Override
             return std::nullopt;
         }
 
-        // Debug: Log weapon charge state
-        logger::debug("[OverrideManager] WeaponCharge check: hasEnchanted={}, charge={:.2f}%"sv,
-            player.hasEnchantedWeapon, player.weaponChargePercent * 100.0f);
-
         // Check if weapon charge is depleted (with hysteresis)
         if (!CheckThresholdHysteresis("WeaponCharge", player.weaponChargePercent, config)) {
             return std::nullopt;
@@ -291,7 +221,6 @@ namespace Huginn::Override
         result.category = OverrideCategory::Other;
         result.reason = "WEAPON EMPTY: Need Soul Gem!";
         result.candidate = std::move(candidate);
-        result.targetSlot = 0;
 
         return result;
     }
@@ -336,7 +265,6 @@ namespace Huginn::Override
             ? std::format("LOW AMMO: {} arrows remaining", rawCount)
             : std::format("LOW AMMO: {} bolts remaining", rawCount);
         result.candidate = std::move(candidate);
-        result.targetSlot = 0;
 
         return result;
     }
@@ -364,7 +292,6 @@ namespace Huginn::Override
         result.category = OverrideCategory::MP;
         result.reason = "CRITICAL: Need Magicka Potion!";
         result.candidate = std::move(candidate);
-        result.targetSlot = 0;
 
         return result;
     }
@@ -392,7 +319,6 @@ namespace Huginn::Override
         result.category = OverrideCategory::SP;
         result.reason = "CRITICAL: Need Stamina Potion!";
         result.candidate = std::move(candidate);
-        result.targetSlot = 0;
 
         return result;
     }
@@ -479,8 +405,6 @@ namespace Huginn::Override
         }
 
         auto candidate = Candidate::ItemCandidate::FromInventoryItem(*bestPotion);
-        // Stage 1g: baseRelevance removed - no longer used (utility set directly in ScoredCandidate)
-        // candidate.baseRelevance = Config::OVERRIDE_UTILITY_BOOST;
         candidate.relevanceTags = Candidate::RelevanceTag::LowStamina;
 
         return candidate;
@@ -505,8 +429,6 @@ namespace Huginn::Override
             ammoList[0]->data.name, ammoList[0]->count);
 
         auto candidate = Candidate::AmmoCandidate::FromInventoryAmmo(*ammoList[0]);
-        // Stage 1g: baseRelevance removed - no longer used (utility set directly in ScoredCandidate)
-        // candidate.baseRelevance = Config::OVERRIDE_UTILITY_BOOST;
         candidate.relevanceTags = Candidate::RelevanceTag::NeedsAmmo;
 
         return candidate;
@@ -542,8 +464,6 @@ namespace Huginn::Override
         }
 
         auto candidate = Candidate::ItemCandidate::FromInventoryItem(*bestPotion);
-        // Stage 1g: baseRelevance removed - no longer used (utility set directly in ScoredCandidate)
-        // candidate.baseRelevance = Config::OVERRIDE_UTILITY_BOOST;
         candidate.relevanceTags = Candidate::RelevanceTag::CriticalHealth;
 
         return candidate;
@@ -579,8 +499,6 @@ namespace Huginn::Override
         }
 
         auto candidate = Candidate::ItemCandidate::FromInventoryItem(*bestPotion);
-        // Stage 1g: baseRelevance removed - no longer used (utility set directly in ScoredCandidate)
-        // candidate.baseRelevance = Config::OVERRIDE_UTILITY_BOOST;
         candidate.relevanceTags = Candidate::RelevanceTag::LowMagicka;
 
         return candidate;
@@ -596,9 +514,7 @@ namespace Huginn::Override
             auto potions = m_itemRegistry->GetWaterbreathingPotions(1);
             if (!potions.empty() && potions[0]->count > 0) {
                 auto candidate = Candidate::ItemCandidate::FromInventoryItem(*potions[0]);
-                // Stage 1g: baseRelevance removed - no longer used (utility set directly in ScoredCandidate)
-        // candidate.baseRelevance = Config::OVERRIDE_UTILITY_BOOST;
-                candidate.relevanceTags = Candidate::RelevanceTag::Underwater;
+                        candidate.relevanceTags = Candidate::RelevanceTag::Underwater;
                 return candidate;
             }
         }
@@ -632,8 +548,6 @@ namespace Huginn::Override
 
         // Convert to ItemCandidate
         auto candidate = Candidate::ItemCandidate::FromInventoryItem(*bestGem);
-        // Stage 1g: baseRelevance removed - no longer used (utility set directly in ScoredCandidate)
-        // candidate.baseRelevance = Config::OVERRIDE_UTILITY_BOOST;
         candidate.relevanceTags = Candidate::RelevanceTag::WeaponLowCharge;
 
         return candidate;

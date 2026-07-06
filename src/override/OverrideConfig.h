@@ -46,9 +46,6 @@ namespace Huginn::Override
 
         // Potion selection
         inline constexpr bool ALLOW_IMPURE_POTIONS = true;       // Fall back to potions with side effects (Skooma etc.)
-
-        // Utility boost (not user-configurable)
-        inline constexpr float OVERRIDE_UTILITY_BOOST = 1000.0f;
     }
 
     // =============================================================================
@@ -158,9 +155,6 @@ namespace Huginn::Override
         inline float CRITICAL_STAMINA_HYSTERESIS() { return Settings::GetSingleton().criticalStaminaHysteresis; }
         inline bool ENABLE_CRITICAL_STAMINA() { return Settings::GetSingleton().enableCriticalStamina; }
         inline bool ALLOW_IMPURE_POTIONS() { return Settings::GetSingleton().allowImpurePotions; }
-
-        // This one stays constexpr (not user-configurable)
-        inline constexpr float OVERRIDE_UTILITY_BOOST = Defaults::OVERRIDE_UTILITY_BOOST;
     }
 
 }  // namespace Huginn::Override

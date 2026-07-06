@@ -268,7 +268,7 @@ static void InitializeGameSystems(bool isNewGame)
         settings.LoadFromFile(GetMainIniPath());
 
         auto& overrideMgr = Override::OverrideManager::GetSingleton();
-        overrideMgr.Initialize(*g_itemRegistry, *g_spellRegistry, *g_weaponRegistry);
+        overrideMgr.Initialize(*g_itemRegistry, *g_weaponRegistry);
         logger::info("OverrideManager initialized ({})"sv,
             isNewGame ? "new game" : "save load");
     }
