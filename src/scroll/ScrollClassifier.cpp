@@ -15,16 +15,9 @@ namespace Huginn::Scroll
       data.formID = scroll->GetFormID();
       data.name = scroll->GetName();
 
-      // Get linked spell from scroll
-      auto* linkedSpell = GetLinkedSpell(scroll);
-      if (!linkedSpell) {
-      logger::warn("Scroll '{}' ({:08X}) has no linked spell, classifying as Unknown",
-        data.name, data.formID);
-      return data;  // Returns default Unknown type
-      }
-
       // Delegate to SpellClassifier for effect analysis
-      auto spellData = m_spellClassifier.ClassifySpell(linkedSpell);
+      // (ScrollItem IS-A SpellItem, so the scroll classifies directly as a spell)
+      auto spellData = m_spellClassifier.ClassifySpell(scroll);
 
       // Convert SpellData to ScrollData
       data = ConvertToScrollData(data.formID, data.name, spellData);
@@ -41,17 +34,6 @@ namespace Huginn::Scroll
       logger::trace("Classified scroll: {}", data.ToString());
 
       return data;
-   }
-
-   RE::SpellItem* ScrollClassifier::GetLinkedSpell(RE::ScrollItem* scroll) const
-   {
-      if (!scroll) {
-      return nullptr;
-      }
-
-      // ScrollItem IS a SpellItem (inherits from it)
-      // Just cast/return the scroll itself as a SpellItem
-      return scroll;
    }
 
    ScrollData ScrollClassifier::ConvertToScrollData(

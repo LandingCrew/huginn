@@ -559,14 +559,10 @@ namespace Huginn::Scroll
       return;
       }
 
-      // Classify directly (cheap, ~0.01ms per form)
+      // Classify directly (cheap, ~0.01ms per form). Unlike WeaponClassifier,
+      // ClassifyScroll has no rejection path: it preserves formID on every return
+      // except null input, which is guarded above, so no formID==0 check is needed.
       ScrollData scrollData = m_classifier.ClassifyScroll(scroll);
-
-      // Skip if classification failed
-      if (scrollData.formID == 0) {
-      logger::warn("[ScrollRegistry] Failed to classify scroll, skipping"sv);
-      return;
-      }
 
       // Create inventory scroll and add to registry
       InventoryScroll invScroll{

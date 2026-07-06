@@ -13,7 +13,8 @@ namespace Huginn::Scroll
    //
    // ARCHITECTURE:
    // - Scrolls are consumable spell casts with no magicka cost
-   // - Classification strategy: Extract linked spell, delegate to SpellClassifier
+   // - Classification strategy: ScrollItem IS-A SpellItem, so the scroll is
+   //   classified directly by SpellClassifier
    // - Reuses spell classification logic to avoid duplication
    // - Converts SpellData to ScrollData for scroll-specific metadata
    // =============================================================================
@@ -33,10 +34,6 @@ namespace Huginn::Scroll
       [[nodiscard]] ScrollData ClassifyScroll(RE::ScrollItem* scroll) const;
 
    private:
-      // Extract linked spell from scroll
-      // Returns nullptr if scroll has no linked spell
-      [[nodiscard]] RE::SpellItem* GetLinkedSpell(RE::ScrollItem* scroll) const;
-
       // Convert SpellData to ScrollData (same classification, different metadata)
       [[nodiscard]] ScrollData ConvertToScrollData(
       RE::FormID scrollFormID,
