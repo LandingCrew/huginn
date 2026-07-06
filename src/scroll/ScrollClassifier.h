@@ -13,7 +13,8 @@ namespace Huginn::Scroll
    //
    // ARCHITECTURE:
    // - Scrolls are consumable spell casts with no magicka cost
-   // - Classification strategy: Extract linked spell, delegate to SpellClassifier
+   // - Classification strategy: ScrollItem IS-A SpellItem, so the scroll is
+   //   classified directly by SpellClassifier
    // - Reuses spell classification logic to avoid duplication
    // - Converts SpellData to ScrollData for scroll-specific metadata
    // =============================================================================
@@ -30,13 +31,16 @@ namespace Huginn::Scroll
       // Classify a scroll from its SKSE scroll object
       // Returns ScrollData with detected type, tags, and metadata
       // Delegates effect analysis to SpellClassifier
+      //
+      // CONTRACT: for non-null input the result always carries the scroll's real
+      // formID — there is no rejection path (unlike WeaponClassifier, which returns
+      // a formID==0 sentinel). ScrollRegistry stores results unchecked and re-keys
+      // m_formIDIndex on data.formID during swap-pop removal, so a sentinel return
+      // would desync its index. If a rejection path is ever added, restore the
+      // formID==0 guard in ScrollRegistry::AddScroll.
       [[nodiscard]] ScrollData ClassifyScroll(RE::ScrollItem* scroll) const;
 
    private:
-      // Extract linked spell from scroll
-      // Returns nullptr if scroll has no linked spell
-      [[nodiscard]] RE::SpellItem* GetLinkedSpell(RE::ScrollItem* scroll) const;
-
       // Convert SpellData to ScrollData (same classification, different metadata)
       [[nodiscard]] ScrollData ConvertToScrollData(
       RE::FormID scrollFormID,

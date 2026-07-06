@@ -9,6 +9,7 @@
 
 #include "state/StateManager.h"
 #include "state/DamageEventSink.h"
+#include "learning/InventoryExitTracker.h"
 #include "spell/SpellRegistry.h"
 #include "learning/item/ItemRegistry.h"
 #include "weapon/WeaponRegistry.h"
@@ -370,6 +371,10 @@ void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
 
             // Register DamageEventSink for instant damage type classification (v0.6.8)
             State::DamageEventSink::GetSingleton().Register();
+
+            // Register InventoryExitTracker so drop/sell/store count decreases
+            // are not rewarded as consumption (v0.7.22)
+            Learning::InventoryExitTracker::GetSingleton().Register();
 
             // Register SettingsReloader for dMenu integration (v0.13.0)
             Settings::SettingsReloader::GetSingleton().Register();

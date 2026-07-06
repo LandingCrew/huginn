@@ -559,14 +559,10 @@ namespace Huginn::Scroll
       return;
       }
 
-      // Classify directly (cheap, ~0.01ms per form)
+      // Classify directly (cheap, ~0.01ms per form). No formID==0 check needed:
+      // ClassifyScroll guarantees no rejection path for non-null input (see the
+      // CONTRACT note on its declaration).
       ScrollData scrollData = m_classifier.ClassifyScroll(scroll);
-
-      // Skip if classification failed
-      if (scrollData.formID == 0) {
-      logger::warn("[ScrollRegistry] Failed to classify scroll, skipping"sv);
-      return;
-      }
 
       // Create inventory scroll and add to registry
       InventoryScroll invScroll{
