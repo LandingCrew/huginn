@@ -6,9 +6,10 @@
 
 namespace Huginn::Slot
 {
-    // Utility stamped on override slot assignments. Far above any organic
-    // score so downstream consumers (lock arbitration, debug display) can
-    // tell overrides apart; placement itself ignores the magnitude.
+    // Utility stamped on override slot assignments. The magnitude is cosmetic:
+    // consumers identify overrides via AssignmentType::Override, never by
+    // comparing utility — this value only makes them read as clearly
+    // non-organic in debug output.
     static constexpr float kOverrideUtility = 1000.0f;
 
     // File-local helper: Does this slot's filter accept the given override category?

@@ -15,7 +15,7 @@ namespace Huginn::Override
     {
         // Critical Health Override
         inline constexpr float CRITICAL_HEALTH_THRESHOLD = 0.10f;    // 10% - trigger activation
-        inline constexpr float CRITICAL_HEALTH_HYSTERESIS = 0.15f;   // 15% - trigger deactivation
+        inline constexpr float CRITICAL_HEALTH_HYSTERESIS = 0.15f;   // gap - deactivate at threshold+gap (25%)
 
         // Weapon Charge Override
         // Activation uses `charge < threshold`, and a drained weapon keeps a
@@ -26,15 +26,15 @@ namespace Huginn::Override
 
         // Low Ammo Override (absolute counts, not percentages)
         inline constexpr float LOW_AMMO_THRESHOLD = 10.0f;           // 10 arrows/bolts - trigger activation
-        inline constexpr float LOW_AMMO_HYSTERESIS = 15.0f;          // 15 arrows/bolts - trigger deactivation
+        inline constexpr float LOW_AMMO_HYSTERESIS = 15.0f;          // gap - deactivate at threshold+gap (25)
 
         // Critical Magicka Override
         inline constexpr float CRITICAL_MAGICKA_THRESHOLD = 0.10f;   // 10% - trigger activation
-        inline constexpr float CRITICAL_MAGICKA_HYSTERESIS = 0.15f;  // 15% - trigger deactivation
+        inline constexpr float CRITICAL_MAGICKA_HYSTERESIS = 0.15f;  // gap - deactivate at threshold+gap (25%)
 
         // Critical Stamina Override
         inline constexpr float CRITICAL_STAMINA_THRESHOLD = 0.10f;   // 10% - trigger activation
-        inline constexpr float CRITICAL_STAMINA_HYSTERESIS = 0.15f;  // 15% - trigger deactivation
+        inline constexpr float CRITICAL_STAMINA_HYSTERESIS = 0.15f;  // gap - deactivate at threshold+gap (25%)
 
         // Anti-flicker
         inline constexpr float MIN_OVERRIDE_DURATION_MS = 2000.0f;   // 2 seconds minimum
