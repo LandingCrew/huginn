@@ -147,7 +147,7 @@ namespace Huginn::State
       const auto& latestEvent = queuedHitEvents.back();
       if (latestEvent.type != DamageType::Physical && latestEvent.type != DamageType::Unknown) {
         newState.damageHistory.push_back(DamageEvent(gameTime, 0.0f, latestEvent.type));
-        logger::debug("[StateManager] Sub-threshold elemental hit recorded: {} (accumulated={:.1f}, threshold={:.1f})"sv,
+        logger::trace("[StateManager] Sub-threshold elemental hit recorded: {} (accumulated={:.1f}, threshold={:.1f})"sv,
            GetDamageTypeName(latestEvent.type), m_healthTracker.accumulated, VitalTracking::HEALTH_DAMAGE_THRESHOLD);
       }
       }

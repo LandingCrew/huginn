@@ -164,21 +164,39 @@ void PipelineCoordinator::EnrichElementalDamage(PipelineContext& ctx)
 {
     constexpr float kElementalWindow = State::VitalTracking::ELEMENTAL_DAMAGE_ENRICHMENT_WINDOW;
 
-    if (ctx.healthTracking.timeSinceLastFire < kElementalWindow) {
+    // Log the enrichment window opening, not every tick inside it
+    // NOTE: Single-threaded (called from update thread only)
+    static bool s_wasOnFire = false, s_wasFrozen = false, s_wasShocked = false;
+
+    const bool fireActive = ctx.healthTracking.timeSinceLastFire < kElementalWindow;
+    if (fireActive) {
         ctx.playerState.effects.isOnFire = true;
-        logger::debug("[Enrichment] Fire damage detected {:.1f}s ago → isOnFire=true",
-            ctx.healthTracking.timeSinceLastFire);
+        if (!s_wasOnFire) {
+            logger::debug("[Enrichment] Fire damage detected {:.1f}s ago → isOnFire=true",
+                ctx.healthTracking.timeSinceLastFire);
+        }
     }
-    if (ctx.healthTracking.timeSinceLastFrost < kElementalWindow) {
+    s_wasOnFire = fireActive;
+
+    const bool frostActive = ctx.healthTracking.timeSinceLastFrost < kElementalWindow;
+    if (frostActive) {
         ctx.playerState.effects.isFrozen = true;
-        logger::debug("[Enrichment] Frost damage detected {:.1f}s ago → isFrozen=true",
-            ctx.healthTracking.timeSinceLastFrost);
+        if (!s_wasFrozen) {
+            logger::debug("[Enrichment] Frost damage detected {:.1f}s ago → isFrozen=true",
+                ctx.healthTracking.timeSinceLastFrost);
+        }
     }
-    if (ctx.healthTracking.timeSinceLastShock < kElementalWindow) {
+    s_wasFrozen = frostActive;
+
+    const bool shockActive = ctx.healthTracking.timeSinceLastShock < kElementalWindow;
+    if (shockActive) {
         ctx.playerState.effects.isShocked = true;
-        logger::debug("[Enrichment] Shock damage detected {:.1f}s ago → isShocked=true",
-            ctx.healthTracking.timeSinceLastShock);
+        if (!s_wasShocked) {
+            logger::debug("[Enrichment] Shock damage detected {:.1f}s ago → isShocked=true",
+                ctx.healthTracking.timeSinceLastShock);
+        }
     }
+    s_wasShocked = shockActive;
 }
 
 // -----------------------------------------------------------------------------

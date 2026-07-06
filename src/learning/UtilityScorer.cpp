@@ -601,6 +601,20 @@ namespace Huginn::Scoring
     {
         size_t numToLog = std::min(count, ranked.size());
 
+        // Dedup: skip the dump unless the ranking's membership/order changed.
+        // Utilities are continuous in the vitals, so they drift every scoring
+        // run — including them here would defeat the dedup.
+        // NOTE: Single-threaded (called from update thread only)
+        static std::string s_lastSignature{"<none>"};
+        std::string signature;
+        for (size_t i = 0; i < numToLog; ++i) {
+            signature += fmt::format("{}|", ranked[i].GetName());
+        }
+        if (signature == s_lastSignature) {
+            return;
+        }
+        s_lastSignature = std::move(signature);
+
         if (numToLog == 0) {
             logger::info("[UtilityScorer] No candidates to display"sv);
             return;
