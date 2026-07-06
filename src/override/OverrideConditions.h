@@ -24,7 +24,7 @@ namespace Huginn::Override
         inline constexpr int CRITICAL_STAMINA = 60;  // SP < 10% - stamina potion
         inline constexpr int DROWNING = 50;          // Underwater without waterbreathing
         inline constexpr int LOW_AMMO = 40;          // Bow/crossbow equipped, ammo running low
-        inline constexpr int WEAPON_EMPTY = 35;      // Enchanted weapon charge critically low (< 10%)
+        inline constexpr int WEAPON_EMPTY = 35;      // Enchanted weapon charge below fWeaponChargeThreshold
         // FALLING = 40 deferred (Slow Fall not in vanilla Skyrim)
     }
 
