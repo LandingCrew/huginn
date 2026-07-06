@@ -697,13 +697,15 @@ namespace Huginn::Override
             return false;
         }
 
-        // Currently active - check deactivation threshold
-        if (currentValue >= config.deactivationThreshold &&
+        // Currently active - deactivate only once the value clears the gap
+        // above the activation threshold (latch; prevents flapping in the band)
+        const float deactivationThreshold = config.activationThreshold + config.hysteresisGap;
+        if (currentValue >= deactivationThreshold &&
             state.activeDurationMs >= config.minDurationMs) {
             state.isActive = false;
             state.activeDurationMs = 0.0f;
             logger::debug("[OverrideManager] {} deactivated (value={:.2f} >= {:.2f})"sv,
-                name, currentValue, config.deactivationThreshold);
+                name, currentValue, deactivationThreshold);
             return false;
         }
 
