@@ -20,9 +20,9 @@ namespace Huginn::Override
         // Weapon Charge Override
         // Activation uses `charge < threshold`, and a drained weapon keeps a
         // sub-cost charge remainder (rarely exactly 0), so the threshold must be
-        // nonzero to ever fire. 10% matches IsWeaponChargeCritical().
-        inline constexpr float WEAPON_CHARGE_THRESHOLD = 0.10f;      // 10% - trigger activation
-        inline constexpr float WEAPON_CHARGE_HYSTERESIS = 0.05f;     // gap - deactivate at threshold+gap (15%)
+        // nonzero to ever fire. Matches the shipped configs/Huginn.ini value.
+        inline constexpr float WEAPON_CHARGE_THRESHOLD = 0.25f;      // 25% - trigger activation
+        inline constexpr float WEAPON_CHARGE_HYSTERESIS = 0.05f;     // gap - deactivate at threshold+gap (30%)
 
         // Low Ammo Override (absolute counts, not percentages)
         inline constexpr float LOW_AMMO_THRESHOLD = 10.0f;           // 10 arrows/bolts - trigger activation
