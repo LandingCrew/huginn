@@ -33,6 +33,26 @@ namespace Huginn::Settings
             return m_registered.load(std::memory_order_acquire);
         }
 
+        /// Reload all settings from INI, then apply side effects.
+        ///
+        /// Single source of truth for a full settings reload. Both the dMenu
+        /// event handler and the `hg reload` console command delegate here so
+        /// they can never diverge (e.g. one path forgetting a settings class).
+        ///
+        /// The path argument is the dMenu-managed INI (Widget, Keybindings,
+        /// Debug); non-dMenu sections always load from the main INI. Pass the
+        /// main INI path for a console reload — the dMenu-managed sections then
+        /// fall back to the main INI, which is the correct no-dMenu behavior.
+        ///
+        /// Thread Safety:
+        /// - Called from the game thread (ModCallbackEvent handler, or console
+        ///   command wrapped in UpdateHandler::RunExclusive)
+        /// - POD settings singletons (ScorerSettings, ContextWeightSettings) read without locks
+        /// - SlotSettings uses shared_mutex internally for safe concurrent access
+        /// - Side effects are ordered to prevent inconsistent state
+        /// - Worst case: one update frame with mixed old/new values (acceptable for tuning)
+        void ReloadAllSettings(const std::filesystem::path& iniPath);
+
     protected:
         /// Process ModCallbackEvent - handles dmenu_updateSettings and dmenu_buttonCallback
         RE::BSEventNotifyControl ProcessEvent(
@@ -47,16 +67,6 @@ namespace Huginn::Settings
         SettingsReloader(SettingsReloader&&) = delete;
         SettingsReloader& operator=(const SettingsReloader&) = delete;
         SettingsReloader& operator=(SettingsReloader&&) = delete;
-
-        /// Reload all settings from INI file (reuses ConsoleCommands.cpp:263-339 pattern)
-        ///
-        /// Thread Safety:
-        /// - Called from game thread (ModCallbackEvent handler)
-        /// - POD settings singletons (ScorerSettings, ContextWeightSettings) read without locks
-        /// - SlotSettings uses shared_mutex internally for safe concurrent access
-        /// - Side effects are ordered to prevent inconsistent state
-        /// - Worst case: one update frame with mixed old/new values (acceptable for tuning)
-        void ReloadAllSettings(const std::filesystem::path& iniPath);
 
         /// Handle button callbacks (Reset Q-Table, Reset Defaults, Reload INI)
         void HandleButtonCallback(std::string_view buttonId);

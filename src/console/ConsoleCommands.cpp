@@ -21,6 +21,7 @@
 #include "ui/IntuitionSettings.h"
 #include "wheeler/WheelerSettings.h"
 #include "wheeler/WheelerClient.h"
+#include "settings/SettingsReloader.h"
 
 #include <algorithm>
 #include <cctype>
@@ -287,89 +288,24 @@ namespace Huginn::Console
 
    static void Cmd_Reload(std::string_view /*arg*/)
    {
+      // Delegate to SettingsReloader — the single source of truth for a full
+      // reload — so the console path can't diverge from the dMenu path (which
+      // previously happened: this command silently skipped Keybindings/Debug
+      // and read the widget settings from the wrong INI).
+      //
+      // Passing the main INI as the (dMenu-managed) path makes the widget,
+      // keybinding, and debug sections fall back to the main INI — the correct
+      // behavior for a console reload with no dMenu involvement.
       const auto iniPath = std::filesystem::path("Data/SKSE/Plugins/Huginn.ini");
 
-      // =====================================================================
-      // Phase 1: Reload all settings from INI
-      // =====================================================================
-
-      // 1. SlotSettings first (page count may change, affects allocator + wheels)
-      Slot::SlotSettings::GetSingleton().LoadFromFile(iniPath);
-      Print("  [SlotSettings] reloaded");
-
-      // 2. Scorer settings
-      auto& scorerSettings = Scoring::ScorerSettings::GetSingleton();
-      scorerSettings.LoadFromFile(iniPath);
-      Print("  [ScorerSettings] reloaded");
-
-      // 3. Context weight settings
-      State::ContextWeightSettings::GetSingleton().LoadFromFile(iniPath);
-      Print("  [ContextWeights] reloaded");
-
-      // 4. Override settings
-      Override::Settings::GetSingleton().LoadFromFile(iniPath);
-      Print("  [Overrides] reloaded");
-
-      // 4b. Learning settings
-      Learning::LearningSettings::GetSingleton().LoadFromFile(iniPath);
-      Print("  [Learning] reloaded");
-
-      // 5. Wheeler settings (before wheel rebuild)
-      Wheeler::WheelerSettings::GetSingleton().LoadFromFile(iniPath);
-      Print("  [Wheeler] reloaded");
-
-      // 6. Candidate config
-      LoadCandidateConfigFromINI();
-      Print("  [Candidates] reloaded");
-
-      // =====================================================================
-      // Phase 2: Apply side effects (under update mutex)
-      // =====================================================================
-      // Phase 1 settings are POD singletons — one frame of mixed old/new is
-      // acceptable. Phase 2 mutates objects the update loop reads (scorer,
-      // allocator, locker, wheeler), so we serialize against the update loop.
+      // Console commands may run off the game thread; serialize against the
+      // update loop (Phase 2 mutates scorer/allocator/locker/wheeler state).
       Huginn::Update::UpdateHandler::GetSingleton()->RunExclusive([&] {
-         // 1. Apply scorer config + context weight config + wildcard config
-         if (g_utilityScorer) {
-            g_utilityScorer->SetConfig(scorerSettings.BuildConfig());
-            g_utilityScorer->SetContextWeightConfig(State::ContextWeightSettings::GetSingleton().BuildConfig());
-            LoadWildcardConfigFromINI(g_utilityScorer->GetWildcardManager());
-         }
-
-         // 1b. Apply learning config to ExternalEquipLearner
-         Learning::ExternalEquipLearner::GetSingleton().SetConfig(
-            Learning::LearningSettings::GetSingleton().BuildConfig());
-
-         // 2. Re-initialize slot allocator FIRST (re-reads SlotSettings for new page count)
-         Slot::SlotAllocator::GetSingleton().Initialize();
-
-         // 3. Reset slot locker AFTER allocator (so it operates on correct slot count)
-         auto& slotLocker = Slot::SlotLocker::GetSingleton();
-         slotLocker.Reset();
-         slotLocker.SetConfig(LoadSlotLockerConfigFromINI());
-
-         // 4. Rebuild Wheeler wheels (if connected)
-         auto& wheelerClient = Wheeler::WheelerClient::GetSingleton();
-         if (wheelerClient.IsConnected()) {
-            wheelerClient.DestroyRecommendationWheels();
-            wheelerClient.CreateRecommendationWheels();
-            Print("  [Wheeler] wheels rebuilt");
-         }
+         Settings::SettingsReloader::GetSingleton().ReloadAllSettings(iniPath);
       });
 
-      // 5. Reapply Intuition widget settings (position, alpha, scale)
-      // IntuitionSettings loads from main INI (console reload doesn't have dMenu path)
-      UI::IntuitionSettings::GetSingleton().LoadFromFile(iniPath);
-      auto* menu = UI::IntuitionMenu::GetSingleton();
-      if (menu) {
-      menu->ReapplySettings(UI::IntuitionSettings::GetSingleton().BuildConfig());
-      }
-      Print("  [Widget] reloaded");
-
-      // The next update tick (~100ms) will pick up all new settings.
-      // SlotLocker::Reset() ensures the first tick after reload can freely
-      // reassign all slots, so the player sees changes almost immediately.
-
+      // ReloadAllSettings already emits an in-game notification; add console
+      // feedback for the `hg reload` invoker.
       Print("All settings reloaded from Huginn.ini");
       logger::info("[Console] Full settings reload completed"sv);
    }
