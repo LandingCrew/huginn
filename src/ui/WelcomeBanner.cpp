@@ -15,7 +15,6 @@ namespace Huginn::UI
     void WelcomeBanner::Show()
     {
         m_lingerTime = DISPLAY_TIME;
-        m_firstFrame = true;
         logger::info("[WelcomeBanner] Showing for {} seconds"sv, DISPLAY_TIME);
     }
 
@@ -28,17 +27,17 @@ namespace Huginn::UI
         // Get delta time
         float deltaTime = ImGui::GetIO().DeltaTime;
 
-        // Calculate alpha for fade in/out
+        // Calculate alpha for fade in/out. Elapsed time is derived from the
+        // countdown so the fade-in ramps gradually over FADE_TIME seconds
+        // instead of snapping to full alpha after the first frame.
         float alpha = 1.0f;
+        float elapsed = DISPLAY_TIME - m_lingerTime;
         if (m_lingerTime < FADE_TIME) {
             // Fade out
             alpha = m_lingerTime / FADE_TIME;
-        } else if (m_firstFrame) {
-            // Fade in on first frame
-            alpha = 1.0f - (m_lingerTime - (DISPLAY_TIME - FADE_TIME)) / FADE_TIME;
-            if (alpha > 1.0f) alpha = 1.0f;
-            if (alpha < 0.0f) alpha = 0.0f;
-            m_firstFrame = false;
+        } else if (elapsed < FADE_TIME) {
+            // Fade in
+            alpha = elapsed / FADE_TIME;
         }
 
         // Get screen dimensions

@@ -57,9 +57,9 @@ namespace Huginn::UI
         // correctly stays visible during those overlays.
         bool visible = !ui->GameIsPaused();
 
-        SKSE::GetTaskInterface()->AddUITask([visible]() {
-            auto* m = IntuitionMenu::GetSingleton();
-            if (m) m->SetVisible(visible);
-        });
+        // SetVisible already defers the GFx work via AddUITask internally, so
+        // call it directly — wrapping it in another AddUITask here would add a
+        // second task-queue round-trip (an extra frame of latency).
+        menu->SetVisible(visible);
     }
 }
