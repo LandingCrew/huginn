@@ -23,6 +23,5 @@ namespace Huginn::UI
         static constexpr float FADE_TIME = 1.0f;
 
         float m_lingerTime = 0.0f;
-        bool m_firstFrame = false;
     };
 }
