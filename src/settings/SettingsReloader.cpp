@@ -198,8 +198,9 @@ namespace Huginn::Settings
         }
         else if (buttonId == "Huginn_reload_ini"sv) {
             logger::info("[SettingsReloader] Manually reloading from Huginn.ini"sv);
+            // ReloadAllSettings already emits "Huginn: Settings reloaded";
+            // no second notification here (avoids a double toast).
             ReloadAllSettings("Data/SKSE/Plugins/Huginn.ini");
-            RE::DebugNotification("Huginn: Settings reloaded from Huginn.ini");
         }
         else {
             logger::warn("[SettingsReloader] Unknown button callback: {}"sv, buttonId);
