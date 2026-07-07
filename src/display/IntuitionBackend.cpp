@@ -43,7 +43,9 @@ namespace Huginn::Display
             // Re-assert hidden every tick while the wheel is open. A game menu
             // opening/closing (inventory, map) makes HudVisibilityManager call
             // SetVisible(true); without re-hiding here the widget would surface
-            // behind the wheel. SetVisible dedups internally, so this is cheap.
+            // behind the wheel. SetVisible defers its GFx work to the UI task
+            // queue and setting _root invisible is idempotent, so the repeated
+            // call is trivially cheap.
             intuition->SetVisible(false);
             m_widgetHiddenForWheel = true;
             return;  // Wheeler is visible and owns the display
