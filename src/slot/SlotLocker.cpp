@@ -325,7 +325,7 @@ namespace Huginn::Slot
             overrides.HasActiveOverride())
         {
             for (const auto& ovr : overrides.activeOverrides) {
-                if (!ovr.active || !ovr.candidate) continue;
+                if (!ovr.candidate) continue;
                 if (ovr.priority < m_config.immediateBreakPriority) continue;
                 if (Candidate::GetFormID(*ovr.candidate) != newAssign.formID) continue;
 

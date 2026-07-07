@@ -25,11 +25,14 @@ namespace Huginn::Override
     //   OverrideCollection; it does not touch the scored candidate list.
     // - The pipeline hands that collection to SlotAllocator, which places the
     //   override items into type-matched slots, and to SlotLocker, which lets
-    //   high-priority overrides break existing slot locks.
+    //   high-priority overrides break existing slot locks. It also flows into
+    //   DisplayContext, where the display/Wheeler path uses GetTopOverride()
+    //   for urgent auto-focus and subtext labels.
     // - Hysteresis prevents flickering when values hover near thresholds.
     //
     // FLOW:
     //   EvaluateOverrides -> OverrideCollection -> SlotAllocator / SlotLocker
+    //                                              -> DisplayContext (backends)
     //
     // USAGE:
     //   auto overrides = overrideMgr.EvaluateOverrides(playerState, worldState);
@@ -151,8 +154,8 @@ namespace Huginn::Override
         [[nodiscard]] std::optional<Candidate::CandidateVariant> FindHealthPotion() const;
 
         /**
-         * @brief Find waterbreathing item (potion or spell)
-         * @return CandidateVariant for waterbreathing item, or nullopt if none available
+         * @brief Find waterbreathing potion (spells surface via normal scoring)
+         * @return CandidateVariant for waterbreathing potion, or nullopt if none available
          */
         [[nodiscard]] std::optional<Candidate::CandidateVariant> FindWaterbreathingItem() const;
 

@@ -15,23 +15,26 @@ namespace Huginn::Override
     {
         // Critical Health Override
         inline constexpr float CRITICAL_HEALTH_THRESHOLD = 0.10f;    // 10% - trigger activation
-        inline constexpr float CRITICAL_HEALTH_HYSTERESIS = 0.15f;   // 15% - trigger deactivation
+        inline constexpr float CRITICAL_HEALTH_HYSTERESIS = 0.15f;   // gap - deactivate at threshold+gap (25%)
 
         // Weapon Charge Override
-        inline constexpr float WEAPON_CHARGE_THRESHOLD = 0.0f;       // 0% - trigger activation
-        inline constexpr float WEAPON_CHARGE_HYSTERESIS = 0.05f;     // 5% - trigger deactivation
+        // Activation uses `charge < threshold`, and a drained weapon keeps a
+        // sub-cost charge remainder (rarely exactly 0), so the threshold must be
+        // nonzero to ever fire. Matches the shipped configs/Huginn.ini value.
+        inline constexpr float WEAPON_CHARGE_THRESHOLD = 0.25f;      // 25% - trigger activation
+        inline constexpr float WEAPON_CHARGE_HYSTERESIS = 0.05f;     // gap - deactivate at threshold+gap (30%)
 
         // Low Ammo Override (absolute counts, not percentages)
         inline constexpr float LOW_AMMO_THRESHOLD = 10.0f;           // 10 arrows/bolts - trigger activation
-        inline constexpr float LOW_AMMO_HYSTERESIS = 15.0f;          // 15 arrows/bolts - trigger deactivation
+        inline constexpr float LOW_AMMO_HYSTERESIS = 15.0f;          // gap - deactivate at threshold+gap (25)
 
         // Critical Magicka Override
         inline constexpr float CRITICAL_MAGICKA_THRESHOLD = 0.10f;   // 10% - trigger activation
-        inline constexpr float CRITICAL_MAGICKA_HYSTERESIS = 0.15f;  // 15% - trigger deactivation
+        inline constexpr float CRITICAL_MAGICKA_HYSTERESIS = 0.15f;  // gap - deactivate at threshold+gap (25%)
 
         // Critical Stamina Override
         inline constexpr float CRITICAL_STAMINA_THRESHOLD = 0.10f;   // 10% - trigger activation
-        inline constexpr float CRITICAL_STAMINA_HYSTERESIS = 0.15f;  // 15% - trigger deactivation
+        inline constexpr float CRITICAL_STAMINA_HYSTERESIS = 0.15f;  // gap - deactivate at threshold+gap (25%)
 
         // Anti-flicker
         inline constexpr float MIN_OVERRIDE_DURATION_MS = 2000.0f;   // 2 seconds minimum

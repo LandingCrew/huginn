@@ -339,6 +339,7 @@ namespace Huginn::Item
       [[nodiscard]] const InventoryItem* GetBestResistPoisonPotion() const noexcept;
       [[nodiscard]] const InventoryItem* GetBestCureDiseasePotion() const noexcept;
       [[nodiscard]] const InventoryItem* GetBestCurePoisonPotion() const noexcept;
+      [[nodiscard]] const InventoryItem* GetBestWaterbreathingPotion() const noexcept;  // Longest duration
 
       // =============================================================================
       // SOUL GEM ACCESSORS (SoulGemScanner v0.7.8)
@@ -372,6 +373,25 @@ namespace Huginn::Item
        * @return Pointer to highest capacity soul gem, or nullptr if none available
        */
       [[nodiscard]] const InventoryItem* GetBestSoulGem() const noexcept;
+
+      /**
+       * @brief Best available potion of a type, found in one O(n) pass
+       *
+       * No allocation or sort — for hot paths (per-tick override evaluation)
+       * that only need the best pick, unlike Get*PotionsByMagnitude.
+       */
+      struct BestPotionPick
+      {
+         const InventoryItem* pure = nullptr;  // Highest magnitude without harmful side effects
+         const InventoryItem* any = nullptr;   // Highest magnitude overall
+      };
+
+      /**
+       * @brief Get the best potion of the given type (highest magnitude, count > 0)
+       * @param type Potion type to search (HealthPotion, MagickaPotion, StaminaPotion)
+       * @return Pure and overall best picks (nullptr fields when none available)
+       */
+      [[nodiscard]] BestPotionPick GetBestPotion(ItemType type) const noexcept;
 
       /**
        * @brief Get total number of tracked item types

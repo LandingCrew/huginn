@@ -626,6 +626,24 @@ namespace Huginn::Item
    // These use single-pass max-find instead of O(n log n) sort for performance.
    // Called frequently in recommendation pipeline hot path (~10x per 500ms update).
 
+   const InventoryItem* ItemRegistry::GetBestWaterbreathingPotion() const noexcept
+   {
+      std::shared_lock lock(m_mutex);
+      const InventoryItem* best = nullptr;
+      float maxDuration = 0.0f;
+
+      // Longest duration wins (matches GetWaterbreathingPotions ordering)
+      for (const auto& item : m_items) {
+      if (HasTag(item.data.tags, ItemTag::Waterbreathing) &&
+          item.count > 0 &&
+          item.data.duration > maxDuration) {
+        best = &item;
+        maxDuration = item.data.duration;
+      }
+      }
+      return best;
+   }
+
    const InventoryItem* ItemRegistry::GetBestHealthPotion() const noexcept
    {
       std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
@@ -879,6 +897,28 @@ namespace Huginn::Item
       }
 
       return best;
+   }
+
+   ItemRegistry::BestPotionPick ItemRegistry::GetBestPotion(ItemType type) const noexcept
+   {
+      std::shared_lock lock(m_mutex);
+      BestPotionPick pick;
+
+      // Single pass, no allocation/sort — called per-tick by override evaluation
+      for (const auto& item : m_items) {
+      if (item.data.type != type || item.count <= 0) {
+        continue;
+      }
+      if (!pick.any || item.data.magnitude > pick.any->data.magnitude) {
+        pick.any = &item;
+      }
+      if ((!pick.pure || item.data.magnitude > pick.pure->data.magnitude) &&
+          !item.data.HasHarmfulSideEffects()) {
+        pick.pure = &item;
+      }
+      }
+
+      return pick;
    }
 
    std::vector<ItemChangeEvent> ItemRegistry::GetAndClearChanges()

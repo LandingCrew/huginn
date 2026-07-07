@@ -461,11 +461,9 @@ namespace Huginn::State
 
     // Equipment helpers
     [[nodiscard]] bool IsWeaponChargeLow() const noexcept {
-      return hasEnchantedWeapon && weaponChargePercent < 0.25f;  // Config::WEAPON_CHARGE_LOW_THRESHOLD
-    }
-
-    [[nodiscard]] bool IsWeaponChargeCritical() const noexcept {
-      return hasEnchantedWeapon && weaponChargePercent < 0.10f;  // Config::WEAPON_CHARGE_CRITICAL_THRESHOLD
+      // Hardcoded 25%; WeaponRegistry separately flags low charge with the
+      // stricter Config::WEAPON_CHARGE_LOW_THRESHOLD (0.2f) — reconcile if tuning
+      return hasEnchantedWeapon && weaponChargePercent < 0.25f;
     }
 
     [[nodiscard]] bool IsOutOfArrows() const noexcept {

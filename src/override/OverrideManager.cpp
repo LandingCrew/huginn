@@ -2,7 +2,6 @@
 #include "learning/item/ItemRegistry.h"
 #include "learning/item/ItemData.h"
 #include "weapon/WeaponRegistry.h"
-#include <algorithm>
 
 namespace Huginn::Override
 {
@@ -143,7 +142,6 @@ namespace Huginn::Override
         auto candidate = FindHealthPotion();
 
         OverrideResult result;
-        result.active = true;
         result.priority = Priority::CRITICAL_HEALTH;
         result.category = OverrideCategory::HP;
         result.reason = "CRITICAL: Need Health Potion!";
@@ -169,11 +167,10 @@ namespace Huginn::Override
             return std::nullopt;
         }
 
-        // Find waterbreathing item (potion or spell)
+        // Find waterbreathing potion (spells surface via normal scoring)
         auto candidate = FindWaterbreathingItem();
 
         OverrideResult result;
-        result.active = true;
         result.priority = Priority::DROWNING;
         result.category = OverrideCategory::Other;
         result.reason = "DROWNING: Need Waterbreathing!";
@@ -211,12 +208,19 @@ namespace Huginn::Override
         // Find best soul gem
         auto candidate = FindSoulGem();
 
+        // Warn once per episode, not per tick — this evaluator re-runs every
+        // pipeline tick while the override is latched
+        static bool s_warnedNoSoulGem = false;
         if (!candidate.has_value()) {
-            logger::warn("[OverrideManager] WeaponCharge: No soul gem found in inventory!"sv);
+            if (!s_warnedNoSoulGem) {
+                logger::warn("[OverrideManager] WeaponCharge: No soul gem found in inventory!"sv);
+                s_warnedNoSoulGem = true;
+            }
+        } else {
+            s_warnedNoSoulGem = false;
         }
 
         OverrideResult result;
-        result.active = true;
         result.priority = Priority::WEAPON_EMPTY;
         result.category = OverrideCategory::Other;
         result.reason = "WEAPON EMPTY: Need Soul Gem!";
@@ -258,7 +262,6 @@ namespace Huginn::Override
         auto candidate = FindBestAmmo(player.hasBowEquipped);
 
         OverrideResult result;
-        result.active = true;
         result.priority = Priority::LOW_AMMO;
         result.category = OverrideCategory::Other;
         result.reason = player.hasBowEquipped
@@ -287,7 +290,6 @@ namespace Huginn::Override
         auto candidate = FindMagickaPotion();
 
         OverrideResult result;
-        result.active = true;
         result.priority = Priority::CRITICAL_MAGICKA;
         result.category = OverrideCategory::MP;
         result.reason = "CRITICAL: Need Magicka Potion!";
@@ -314,7 +316,6 @@ namespace Huginn::Override
         auto candidate = FindStaminaPotion();
 
         OverrideResult result;
-        result.active = true;
         result.priority = Priority::CRITICAL_STAMINA;
         result.category = OverrideCategory::SP;
         result.reason = "CRITICAL: Need Stamina Potion!";
@@ -327,87 +328,67 @@ namespace Huginn::Override
     // ITEM FINDERS
     // =============================================================================
 
-    // Helper: Reject potions with harmful side effects (Skooma, etc.)
-    // Emergency overrides should only use pure restore potions.
-    static bool HasHarmfulSideEffects(const Item::ItemData& data)
-    {
-        // Hostile flag covers most cases (poisons, etc.)
-        if (data.isHostile) {
-            return true;
-        }
-
-        // Check primary tags for direct damage effects.
-        // Skooma has DamageHealth alongside RestoreStamina but isn't flagged as poison,
-        // so isHostile misses it. This catches mixed-effect potions.
-        const auto primaryHarmfulMask =
-            Item::ItemTag::DamageHealth | Item::ItemTag::DamageMagicka | Item::ItemTag::DamageStamina;
-
-        if (Item::HasTag(data.tags, primaryHarmfulMask)) {
-            return true;
-        }
-
-        // Check extended tags for debuff effects that can exist on "positive" potions
-        // (Ravage, regen damage, elemental weakness)
-        const auto extHarmfulMask =
-            Item::ItemTagExt::RavageHealth | Item::ItemTagExt::RavageMagicka | Item::ItemTagExt::RavageStamina |
-            Item::ItemTagExt::DamageHealthRegen | Item::ItemTagExt::DamageMagickaRegen | Item::ItemTagExt::DamageStaminaRegen |
-            Item::ItemTagExt::WeaknessElement;
-
-        return Item::HasTagExt(data.tagsExt, extHarmfulMask);
-    }
-
-    // Shared two-pass potion selection: prefer pure, optionally fall back to impure
-    static const Item::InventoryItem* FindBestPotionFiltered(
-        const std::vector<const Item::InventoryItem*>& potions,
+    // Shared selection policy: prefer pure, optionally fall back to impure
+    static const Item::InventoryItem* SelectPotion(
+        const Item::ItemRegistry::BestPotionPick& pick,
         bool allowImpure)
     {
-        const Item::InventoryItem* bestPure = nullptr;
-        const Item::InventoryItem* bestAny = nullptr;
-        for (const auto* potion : potions) {
-            if (potion->count <= 0) continue;
-            if (!bestAny) bestAny = potion;  // First available = highest magnitude
-            if (!bestPure && !HasHarmfulSideEffects(potion->data)) {
-                bestPure = potion;
-                break;  // Found a pure one, no need to keep looking
-            }
+        if (pick.pure) return pick.pure;
+        return allowImpure ? pick.any : nullptr;
+    }
+
+    // Per-finder dedup state so each vitals finder logs independently
+    struct PotionLogState
+    {
+        bool loggedNone = false;      // "No potions available" latch
+        RE::FormID lastLogged = 0;    // Last potion logged (suppress per-frame spam)
+    };
+
+    // Shared body for the three vitals potion finders (health/magicka/stamina):
+    // single-pass registry pick, pure-preferred selection, deduped logging
+    static std::optional<Candidate::CandidateVariant> FindVitalsPotion(
+        const Item::ItemRegistry* registry,
+        Item::ItemType type,
+        std::string_view label,
+        Candidate::RelevanceTag tag,
+        PotionLogState& logState)
+    {
+        if (!registry) {
+            logger::debug("[OverrideManager] {}: ItemRegistry not available"sv, label);
+            return std::nullopt;
         }
-        if (bestPure) return bestPure;
-        return allowImpure ? bestAny : nullptr;
+
+        const auto pick = registry->GetBestPotion(type);
+        const auto* bestPotion = SelectPotion(pick, Config::ALLOW_IMPURE_POTIONS());
+        if (!bestPotion) {
+            if (!logState.loggedNone) {
+                logger::debug("[OverrideManager] {}: No potions available"sv, label);
+                logState.loggedNone = true;
+            }
+            return std::nullopt;
+        }
+        logState.loggedNone = false;  // Reset when potions become available
+
+        // Only log when selected potion changes (suppress per-frame spam)
+        if (bestPotion->data.formID != logState.lastLogged) {
+            bool isPure = !bestPotion->data.HasHarmfulSideEffects();
+            logger::info("[OverrideManager] {}: '{}' FormID={:08X} count={}{}"sv,
+                label, bestPotion->data.name, bestPotion->data.formID, bestPotion->count,
+                isPure ? "" : " (has side effects)");
+            logState.lastLogged = bestPotion->data.formID;
+        }
+
+        auto candidate = Candidate::ItemCandidate::FromInventoryItem(*bestPotion);
+        candidate.relevanceTags = tag;
+
+        return candidate;
     }
 
     std::optional<Candidate::CandidateVariant> OverrideManager::FindStaminaPotion() const
     {
-        if (!m_itemRegistry) {
-            logger::debug("[OverrideManager] FindStaminaPotion: ItemRegistry not available"sv);
-            return std::nullopt;
-        }
-
-        auto potions = m_itemRegistry->GetStaminaPotionsByMagnitude(0);
-        const auto* bestPotion = FindBestPotionFiltered(potions, Config::ALLOW_IMPURE_POTIONS());
-        static bool s_loggedNoStaminaPotion = false;
-        if (!bestPotion) {
-            if (!s_loggedNoStaminaPotion) {
-                logger::debug("[OverrideManager] FindStaminaPotion: No stamina potions available"sv);
-                s_loggedNoStaminaPotion = true;
-            }
-            return std::nullopt;
-        }
-        s_loggedNoStaminaPotion = false;  // Reset when potions become available
-
-        // Only log when selected potion changes (suppress per-frame spam)
-        static RE::FormID lastLoggedFormID = 0;
-        if (bestPotion->data.formID != lastLoggedFormID) {
-            bool isPure = !HasHarmfulSideEffects(bestPotion->data);
-            logger::info("[OverrideManager] FindStaminaPotion: '{}' FormID={:08X} count={}{}"sv,
-                bestPotion->data.name, bestPotion->data.formID, bestPotion->count,
-                isPure ? "" : " (has side effects)");
-            lastLoggedFormID = bestPotion->data.formID;
-        }
-
-        auto candidate = Candidate::ItemCandidate::FromInventoryItem(*bestPotion);
-        candidate.relevanceTags = Candidate::RelevanceTag::LowStamina;
-
-        return candidate;
+        static PotionLogState s_logState;
+        return FindVitalsPotion(m_itemRegistry, Item::ItemType::StaminaPotion,
+            "FindStaminaPotion"sv, Candidate::RelevanceTag::LowStamina, s_logState);
     }
 
     std::optional<Candidate::CandidateVariant> OverrideManager::FindBestAmmo(bool isBow) const
@@ -417,18 +398,30 @@ namespace Huginn::Override
             return std::nullopt;
         }
 
-        auto ammoList = isBow ? m_weaponRegistry->GetArrows(1) : m_weaponRegistry->GetBolts(1);
+        // Single-pass max-damage scan (no per-tick allocation/sort)
+        const auto* bestAmmo = isBow ? m_weaponRegistry->GetBestArrow()
+                                     : m_weaponRegistry->GetBestBolt();
 
-        if (ammoList.empty() || ammoList[0]->count <= 0) {
-            logger::debug("[OverrideManager] FindBestAmmo: No {} available"sv,
-                isBow ? "arrows" : "bolts");
+        static bool s_loggedNoAmmo = false;
+        if (!bestAmmo || bestAmmo->count <= 0) {
+            if (!s_loggedNoAmmo) {
+                logger::debug("[OverrideManager] FindBestAmmo: No {} available"sv,
+                    isBow ? "arrows" : "bolts");
+                s_loggedNoAmmo = true;
+            }
             return std::nullopt;
         }
+        s_loggedNoAmmo = false;  // Reset when ammo becomes available
 
-        logger::debug("[OverrideManager] FindBestAmmo: Found {} (count={})"sv,
-            ammoList[0]->data.name, ammoList[0]->count);
+        // Only log when selected ammo changes (this runs per-tick while latched)
+        static RE::FormID s_lastLoggedAmmo = 0;
+        if (bestAmmo->data.formID != s_lastLoggedAmmo) {
+            logger::debug("[OverrideManager] FindBestAmmo: Found {} (count={})"sv,
+                bestAmmo->data.name, bestAmmo->count);
+            s_lastLoggedAmmo = bestAmmo->data.formID;
+        }
 
-        auto candidate = Candidate::AmmoCandidate::FromInventoryAmmo(*ammoList[0]);
+        auto candidate = Candidate::AmmoCandidate::FromInventoryAmmo(*bestAmmo);
         candidate.relevanceTags = Candidate::RelevanceTag::NeedsAmmo;
 
         return candidate;
@@ -436,72 +429,16 @@ namespace Huginn::Override
 
     std::optional<Candidate::CandidateVariant> OverrideManager::FindHealthPotion() const
     {
-        if (!m_itemRegistry) {
-            logger::debug("[OverrideManager] FindHealthPotion: ItemRegistry not available"sv);
-            return std::nullopt;
-        }
-
-        auto potions = m_itemRegistry->GetHealthPotionsByMagnitude(0);
-        const auto* bestPotion = FindBestPotionFiltered(potions, Config::ALLOW_IMPURE_POTIONS());
-        static bool s_loggedNoHealthPotion = false;
-        if (!bestPotion) {
-            if (!s_loggedNoHealthPotion) {
-                logger::debug("[OverrideManager] FindHealthPotion: No health potions available"sv);
-                s_loggedNoHealthPotion = true;
-            }
-            return std::nullopt;
-        }
-        s_loggedNoHealthPotion = false;  // Reset when potions become available
-
-        // Only log when selected potion changes (suppress per-frame spam)
-        static RE::FormID lastLoggedFormID = 0;
-        if (bestPotion->data.formID != lastLoggedFormID) {
-            bool isPure = !HasHarmfulSideEffects(bestPotion->data);
-            logger::info("[OverrideManager] FindHealthPotion: '{}' FormID={:08X} count={}{}"sv,
-                bestPotion->data.name, bestPotion->data.formID, bestPotion->count,
-                isPure ? "" : " (has side effects)");
-            lastLoggedFormID = bestPotion->data.formID;
-        }
-
-        auto candidate = Candidate::ItemCandidate::FromInventoryItem(*bestPotion);
-        candidate.relevanceTags = Candidate::RelevanceTag::CriticalHealth;
-
-        return candidate;
+        static PotionLogState s_logState;
+        return FindVitalsPotion(m_itemRegistry, Item::ItemType::HealthPotion,
+            "FindHealthPotion"sv, Candidate::RelevanceTag::CriticalHealth, s_logState);
     }
 
     std::optional<Candidate::CandidateVariant> OverrideManager::FindMagickaPotion() const
     {
-        if (!m_itemRegistry) {
-            logger::debug("[OverrideManager] FindMagickaPotion: ItemRegistry not available"sv);
-            return std::nullopt;
-        }
-
-        auto potions = m_itemRegistry->GetMagickaPotionsByMagnitude(0);
-        const auto* bestPotion = FindBestPotionFiltered(potions, Config::ALLOW_IMPURE_POTIONS());
-        static bool s_loggedNoMagickaPotion = false;
-        if (!bestPotion) {
-            if (!s_loggedNoMagickaPotion) {
-                logger::debug("[OverrideManager] FindMagickaPotion: No magicka potions available"sv);
-                s_loggedNoMagickaPotion = true;
-            }
-            return std::nullopt;
-        }
-        s_loggedNoMagickaPotion = false;  // Reset when potions become available
-
-        // Only log when selected potion changes (suppress per-frame spam)
-        static RE::FormID lastLoggedFormID = 0;
-        if (bestPotion->data.formID != lastLoggedFormID) {
-            bool isPure = !HasHarmfulSideEffects(bestPotion->data);
-            logger::info("[OverrideManager] FindMagickaPotion: '{}' FormID={:08X} count={}{}"sv,
-                bestPotion->data.name, bestPotion->data.formID, bestPotion->count,
-                isPure ? "" : " (has side effects)");
-            lastLoggedFormID = bestPotion->data.formID;
-        }
-
-        auto candidate = Candidate::ItemCandidate::FromInventoryItem(*bestPotion);
-        candidate.relevanceTags = Candidate::RelevanceTag::LowMagicka;
-
-        return candidate;
+        static PotionLogState s_logState;
+        return FindVitalsPotion(m_itemRegistry, Item::ItemType::MagickaPotion,
+            "FindMagickaPotion"sv, Candidate::RelevanceTag::LowMagicka, s_logState);
     }
 
     std::optional<Candidate::CandidateVariant> OverrideManager::FindWaterbreathingItem() const
@@ -511,10 +448,11 @@ namespace Huginn::Override
         // The CandidateGenerator already handles waterbreathing spells via contextual
         // relevance when underwater, so we focus on potions here.
         if (m_itemRegistry) {
-            auto potions = m_itemRegistry->GetWaterbreathingPotions(1);
-            if (!potions.empty() && potions[0]->count > 0) {
-                auto candidate = Candidate::ItemCandidate::FromInventoryItem(*potions[0]);
-                        candidate.relevanceTags = Candidate::RelevanceTag::Underwater;
+            // Single-pass longest-duration scan (no per-tick allocation/sort)
+            const auto* bestPotion = m_itemRegistry->GetBestWaterbreathingPotion();
+            if (bestPotion) {
+                auto candidate = Candidate::ItemCandidate::FromInventoryItem(*bestPotion);
+                candidate.relevanceTags = Candidate::RelevanceTag::Underwater;
                 return candidate;
             }
         }
