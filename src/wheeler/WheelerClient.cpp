@@ -1,6 +1,7 @@
 #include "WheelerClient.h"
 #include "WheelerSettings.h"
 #include <Windows.h>
+#include <algorithm>
 #include <optional>
 #include <spdlog/spdlog.h>
 
@@ -392,6 +393,20 @@ namespace Huginn::Wheeler
         // Create one wheel per page
         m_pageWheels.reserve(pageCount);
 
+        // On any per-page failure, still push a wheelIndex=-1 placeholder so
+        // m_pageWheels stays 1:1 with page indices. Without it, a later page's
+        // wheel would take the failed page's slot in the vector and
+        // FindPageForWheel (which returns the vector index AS the page index)
+        // would map wheels to the wrong page. Mirrors the zero-slot path below.
+        auto pushPlaceholder = [&](size_t page, const std::string& name) {
+            PageWheel placeholder;
+            placeholder.wheelIndex = -1;
+            placeholder.slotCount = 0;
+            placeholder.pageName = name;
+            m_pageWheels.push_back(std::move(placeholder));
+            spdlog::warn("[WheelerClient] Page {} wheel unavailable — inserting placeholder to preserve page mapping", page);
+        };
+
         for (size_t p = 0; p < pageCount; ++p) {
             const auto pageConfig = slotSettings.GetPage(p);
             size_t slotCount = pageConfig.slots.size();
@@ -467,6 +482,7 @@ namespace Huginn::Wheeler
             if (pageWheel.wheelIndex < 0) {
                 spdlog::error("[WheelerClient] Failed to create wheel for page {}: {}",
                     p, pageWheel.wheelIndex);
+                pushPlaceholder(p, pageConfig.name);
                 continue;
             }
 
@@ -477,6 +493,8 @@ namespace Huginn::Wheeler
             if (actualEntries < 0) {
                 spdlog::error("[WheelerClient] Page {} GetEntryCount returned negative ({}), skipping wheel",
                     p, actualEntries);
+                m_api->DeleteManagedWheel(pageWheel.wheelIndex);  // wheel was created; don't orphan it
+                pushPlaceholder(p, pageConfig.name);
                 continue;
             } else if (actualEntries > targetEntries) {
                 spdlog::warn("[WheelerClient] Page {} wheel {} has more entries ({}) than requested ({}), discarding excess",
@@ -500,6 +518,8 @@ namespace Huginn::Wheeler
                 if (actualEntries < 0) {
                     spdlog::error("[WheelerClient] Page {} GetEntryCount returned negative ({}) after repair, skipping wheel",
                         p, actualEntries);
+                    m_api->DeleteManagedWheel(pageWheel.wheelIndex);  // wheel was created; don't orphan it
+                    pushPlaceholder(p, pageConfig.name);
                     continue;
                 }
                 if (actualEntries < targetEntries) {
@@ -525,8 +545,13 @@ namespace Huginn::Wheeler
             m_pageWheels.push_back(std::move(pageWheel));
         }
 
-        if (m_pageWheels.empty()) {
+        // Placeholders keep m_pageWheels 1:1 with pages, so "not empty" no longer
+        // implies real wheels exist — check for at least one valid wheel index.
+        const bool anyValidWheel = std::any_of(m_pageWheels.begin(), m_pageWheels.end(),
+            [](const PageWheel& pw) { return pw.wheelIndex >= 0; });
+        if (!anyValidWheel) {
             spdlog::error("[WheelerClient] Failed to create any wheels");
+            m_pageWheels.clear();  // drop placeholder-only state
             return false;
         }
 

@@ -199,8 +199,16 @@ namespace Huginn::Wheeler
                                           const std::vector<uint16_t>& uniqueIDs = {},
                                           const std::vector<std::string>& subtexts = {});
 
-        // Check if at least one recommendation wheel exists
-        [[nodiscard]] bool HasRecommendationWheels() const noexcept { return !m_pageWheels.empty() && m_pageWheels[0].wheelIndex >= 0; }
+        // Check if at least one recommendation wheel exists.
+        // Scans all pages rather than only page 0: a failed/zero-slot page 0 is
+        // stored as a wheelIndex=-1 placeholder, but later pages may hold real
+        // wheels — the backend should still run for those.
+        [[nodiscard]] bool HasRecommendationWheels() const noexcept {
+            for (const auto& pw : m_pageWheels) {
+                if (pw.wheelIndex >= 0) return true;
+            }
+            return false;
+        }
 
         // Get wheel index for a page (returns -1 if invalid)
         [[nodiscard]] int32_t GetWheelIndexForPage(size_t pageIndex) const;
