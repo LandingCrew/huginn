@@ -29,9 +29,23 @@ namespace Huginn::Display
 
         const auto& stConfig = Wheeler::WheelerSettings::GetSingleton().GetSubtextLabels();
 
-        for (size_t page = 0; page < slotAllocator.GetPageCount(); ++page) {
+        // Hoist per-tick invariants out of the page loop (E5): the current page,
+        // page count, and post-activation policy don't change within one push.
+        const size_t currentPage = slotAllocator.GetCurrentPage();
+        const size_t pageCount = slotAllocator.GetPageCount();
+        const bool emptyPolicy = Wheeler::WheelerSettings::GetSingleton().GetPostActivationPolicy()
+            == Wheeler::PostActivationPolicy::Empty;
+
+        for (size_t page = 0; page < pageCount; ++page) {
+            // Skip placeholder pages (zero-slot or transient creation failure): they
+            // hold no wheel, so AllocateSlotsForPage would be wasted work and
+            // UpdateRecommendationsForPage would no-op on wheelIndex < 0 anyway.
+            if (wheelerClient.GetWheelIndexForPage(page) < 0) {
+                continue;
+            }
+
             Slot::SlotAssignments pageAssignments;
-            if (page == slotAllocator.GetCurrentPage()) {
+            if (page == currentPage) {
                 pageAssignments = ctx.assignments;
             } else {
                 pageAssignments = slotAllocator.AllocateSlotsForPage(
@@ -45,7 +59,7 @@ namespace Huginn::Display
                     assignment.subtextLabel = Slot::DeriveExplanationLabel(assignment);
                     continue;
                 }
-                if (stConfig.showLockTimerLabel && page == slotAllocator.GetCurrentPage()
+                if (stConfig.showLockTimerLabel && page == currentPage
                     && slotLocker.IsSlotLocked(assignment.slotIndex)) {
                     float remainingMs = slotLocker.GetRemainingLockTime(assignment.slotIndex);
                     if (remainingMs > 0.0f) {
@@ -73,33 +87,45 @@ namespace Huginn::Display
                 }
             }
 
-            auto formIDs = Slot::ExtractFormIDs(pageAssignments);
-            auto wildcardFlags = Slot::ExtractWildcardFlags(pageAssignments);
-            auto uniqueIDs = Slot::ExtractUniqueIDs(pageAssignments);
-            auto subtexts = Slot::ExtractSubtexts(pageAssignments);
+            // Single-pass extraction into the four Wheeler arrays (E3/E6), with
+            // the soul-gem and Empty-policy fixups folded in — replaces four
+            // Extract* passes plus two separate fixup loops.
+            const size_t n = pageAssignments.size();
+            std::vector<RE::FormID> formIDs;      formIDs.reserve(n);
+            std::vector<bool>       wildcardFlags; wildcardFlags.reserve(n);
+            std::vector<uint16_t>   uniqueIDs;     uniqueIDs.reserve(n);
+            std::vector<std::string> subtexts;     subtexts.reserve(n);
 
-            // Soul gems are display-only — Wheeler can't handle TESSoulGem forms.
-            // Zero out their FormIDs so Wheeler treats them as empty slots.
-            for (size_t s = 0; s < pageAssignments.size(); ++s) {
-                if (pageAssignments[s].HasCandidate() &&
-                    pageAssignments[s].candidate->GetSourceType() == Candidate::SourceType::SoulGem) {
-                    formIDs[s] = 0;
-                    uniqueIDs[s] = 0;
-                    wildcardFlags[s] = false;
-                }
-            }
+            for (size_t s = 0; s < n; ++s) {
+                const auto& a = pageAssignments[s];
 
-            // Part B (Empty policy): Zero out activation-emptied slots
-            auto postPolicy = Wheeler::WheelerSettings::GetSingleton().GetPostActivationPolicy();
-            if (postPolicy == Wheeler::PostActivationPolicy::Empty) {
-                for (size_t s = 0; s < formIDs.size(); ++s) {
-                    if (wheelerClient.IsSlotActivationEmptied(page, s)) {
-                        formIDs[s] = 0;
-                        uniqueIDs[s] = 0;
-                        wildcardFlags[s] = false;
-                        subtexts[s] = "Equipped";
-                    }
+                RE::FormID formID = (!a.IsEmpty() && a.formID != 0) ? a.formID : 0;
+                uint16_t   uid = a.HasCandidate() ? a.candidate->GetUniqueID() : 0;
+                bool       wild = !a.IsEmpty() && a.IsWildcard();
+                std::string sub = a.subtextLabel;
+
+                // Soul gems are display-only — Wheeler can't handle TESSoulGem
+                // forms. Zero them so Wheeler treats the slot as empty.
+                if (a.HasCandidate() &&
+                    a.candidate->GetSourceType() == Candidate::SourceType::SoulGem) {
+                    formID = 0;
+                    uid = 0;
+                    wild = false;
                 }
+
+                // Empty post-activation policy: blank the activated slot and
+                // relabel it "Equipped".
+                if (emptyPolicy && wheelerClient.IsSlotActivationEmptied(page, s)) {
+                    formID = 0;
+                    uid = 0;
+                    wild = false;
+                    sub = "Equipped";
+                }
+
+                formIDs.push_back(formID);
+                uniqueIDs.push_back(uid);
+                wildcardFlags.push_back(wild);
+                subtexts.push_back(std::move(sub));
             }
 
             wheelerClient.UpdateRecommendationsForPage(page, formIDs, wildcardFlags, uniqueIDs, subtexts);

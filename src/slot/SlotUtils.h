@@ -234,61 +234,6 @@ namespace Huginn::Slot
         }
     }
 
-    /// Extract UniqueIDs from slot assignments (for Wheeler weapon support)
-    /// Returns 0 for non-weapon candidates (spells, potions, scrolls)
-    [[nodiscard]] inline std::vector<uint16_t> ExtractUniqueIDs(const SlotAssignments& assignments)
-    {
-        std::vector<uint16_t> ids;
-        ids.reserve(assignments.size());
-
-        for (const auto& a : assignments) {
-            uint16_t uid = 0;
-            if (a.HasCandidate()) {
-                uid = a.candidate->GetUniqueID();
-            }
-            ids.push_back(uid);
-        }
-
-        return ids;
-    }
-
-    /// Extract FormIDs from slot assignments (for Wheeler)
-    [[nodiscard]] inline std::vector<RE::FormID> ExtractFormIDs(const SlotAssignments& assignments)
-    {
-        std::vector<RE::FormID> formIDs;
-        formIDs.reserve(assignments.size());
-
-        for (const auto& a : assignments) {
-            formIDs.push_back((!a.IsEmpty() && a.formID != 0) ? a.formID : 0);
-        }
-
-        return formIDs;
-    }
-
-    /// Extract wildcard flags from slot assignments (for Wheeler)
-    [[nodiscard]] inline std::vector<bool> ExtractWildcardFlags(const SlotAssignments& assignments)
-    {
-        std::vector<bool> flags;
-        flags.reserve(assignments.size());
-
-        for (const auto& a : assignments) {
-            flags.push_back(!a.IsEmpty() ? a.IsWildcard() : false);
-        }
-
-        return flags;
-    }
-
-    /// Extract subtext labels from slot assignments (for Wheeler)
-    [[nodiscard]] inline std::vector<std::string> ExtractSubtexts(const SlotAssignments& assignments)
-    {
-        std::vector<std::string> labels;
-        labels.reserve(assignments.size());
-        for (const auto& a : assignments) {
-            labels.push_back(a.subtextLabel);
-        }
-        return labels;
-    }
-
     /// Derive a short explanation label from a candidate's relevance tags.
     /// Returns the first matching human-readable reason, or empty string if none.
     /// Used for Wheeler subtext when showExplanationLabel is enabled.
