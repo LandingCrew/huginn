@@ -37,6 +37,13 @@ namespace Huginn::Display
             == Wheeler::PostActivationPolicy::Empty;
 
         for (size_t page = 0; page < pageCount; ++page) {
+            // Skip placeholder pages (zero-slot or transient creation failure): they
+            // hold no wheel, so AllocateSlotsForPage would be wasted work and
+            // UpdateRecommendationsForPage would no-op on wheelIndex < 0 anyway.
+            if (wheelerClient.GetWheelIndexForPage(page) < 0) {
+                continue;
+            }
+
             Slot::SlotAssignments pageAssignments;
             if (page == currentPage) {
                 pageAssignments = ctx.assignments;

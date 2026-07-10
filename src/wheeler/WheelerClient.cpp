@@ -375,19 +375,27 @@ namespace Huginn::Wheeler
             return false;
         }
 
-        // Check if wheels already exist and are valid
-        if (!m_pageWheels.empty() && m_pageWheels[0].wheelIndex >= 0) {
-            if (m_api->IsManagedWheel(m_pageWheels[0].wheelIndex)) {
-                spdlog::debug("[WheelerClient] Recommendation wheels already exist ({} pages)", m_pageWheels.size());
-                return true;
-            } else {
+        // Check if wheels already exist and are valid. Probe the FIRST VALID wheel
+        // rather than page 0: page 0 may be a wheelIndex=-1 placeholder (zero-slot or
+        // a transient creation failure) while later pages hold real wheels. Keying on
+        // page 0 alone would tear down and recreate every valid wheel on each call.
+        if (!m_pageWheels.empty()) {
+            int32_t probeWheel = -1;
+            for (const auto& pw : m_pageWheels) {
+                if (pw.wheelIndex >= 0) { probeWheel = pw.wheelIndex; break; }
+            }
+            if (probeWheel >= 0) {
+                if (m_api->IsManagedWheel(probeWheel)) {
+                    spdlog::debug("[WheelerClient] Recommendation wheels already exist ({} pages)", m_pageWheels.size());
+                    return true;
+                }
                 // Wheels were invalidated (save/load cycle) - recreate
                 spdlog::info("[WheelerClient] Managed wheels invalidated after save/load, recreating...");
                 DestroyRecommendationWheels();
+            } else {
+                // Only stale placeholder/invalid indices — clean up before recreating
+                DestroyRecommendationWheels();
             }
-        } else if (!m_pageWheels.empty()) {
-            // Stale entries with invalid wheel indices — clean up
-            DestroyRecommendationWheels();
         }
 
         // Create one wheel per page
@@ -564,6 +572,20 @@ namespace Huginn::Wheeler
         spdlog::info("[WheelerClient] ==================================");
 
         return true;
+    }
+
+    bool WheelerClient::HasRecommendationWheels() const
+    {
+        // Thread safety: Protect iteration over m_pageWheels — Create/Destroy
+        // can reallocate or clear it from another thread (SKSE message, settings reload).
+        std::lock_guard<std::mutex> lock(m_pageDataMutex);
+
+        for (const auto& pw : m_pageWheels) {
+            if (pw.wheelIndex >= 0) {
+                return true;
+            }
+        }
+        return false;
     }
 
     int32_t WheelerClient::GetWheelIndexForPage(size_t pageIndex) const
@@ -1014,7 +1036,19 @@ namespace Huginn::Wheeler
             return false;
         }
 
-        if (m_pageWheels.empty() || m_pageWheels[0].wheelIndex < 0) {
+        // Snapshot the first page with a real wheel under the lock. Page 0 may be a
+        // wheelIndex=-1 placeholder while later pages hold valid wheels, so we can't
+        // key on [0]. Capture the target here and release the lock before calling any
+        // Wheeler API (SetActiveWheelIndex can fire OnWheelStateChanged synchronously,
+        // which locks m_pageDataMutex — holding it here would deadlock).
+        int32_t targetWheel = -1;
+        {
+            std::lock_guard<std::mutex> lock(m_pageDataMutex);
+            for (const auto& pw : m_pageWheels) {
+                if (pw.wheelIndex >= 0) { targetWheel = pw.wheelIndex; break; }
+            }
+        }
+        if (targetWheel < 0) {
             return false;
         }
 
@@ -1023,9 +1057,6 @@ namespace Huginn::Wheeler
         if (IsOurWheel(activeWheel)) {
             return false;  // Already on Huginn wheel, no need to focus
         }
-
-        // Auto-focus to our first wheel (page 0)
-        int32_t targetWheel = m_pageWheels[0].wheelIndex;
         spdlog::info("[WheelerClient] Urgent auto-focus: override priority {} >= {}, "
                      "focusing from wheel {} to Huginn wheel {}",
             overridePriority, settings.GetAutoFocusMinPriority(), activeWheel, targetWheel);

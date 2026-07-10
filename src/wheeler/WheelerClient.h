@@ -203,12 +203,10 @@ namespace Huginn::Wheeler
         // Scans all pages rather than only page 0: a failed/zero-slot page 0 is
         // stored as a wheelIndex=-1 placeholder, but later pages may hold real
         // wheels — the backend should still run for those.
-        [[nodiscard]] bool HasRecommendationWheels() const noexcept {
-            for (const auto& pw : m_pageWheels) {
-                if (pw.wheelIndex >= 0) return true;
-            }
-            return false;
-        }
+        // Locks m_pageDataMutex (like its sibling accessors) — CreateRecommendationWheels/
+        // DestroyRecommendationWheels can reallocate or clear m_pageWheels from another
+        // thread, so an unlocked iteration here would be UB. Not noexcept: lock may throw.
+        [[nodiscard]] bool HasRecommendationWheels() const;
 
         // Get wheel index for a page (returns -1 if invalid)
         [[nodiscard]] int32_t GetWheelIndexForPage(size_t pageIndex) const;
@@ -222,7 +220,7 @@ namespace Huginn::Wheeler
         bool SetActivePage(size_t pageIndex);
 
         // Legacy compatibility (returns page 0 wheel)
-        [[nodiscard]] bool HasRecommendationWheel() const noexcept { return HasRecommendationWheels(); }
+        [[nodiscard]] bool HasRecommendationWheel() const { return HasRecommendationWheels(); }
         [[nodiscard]] int32_t GetRecommendationWheelIndex() const noexcept { return GetWheelIndexForPage(0); }
         [[nodiscard]] int32_t GetPrimaryWheelIndex() const noexcept { return GetWheelIndexForPage(0); }
         [[nodiscard]] int32_t GetAlternateWheelIndex() const noexcept { return GetWheelIndexForPage(1); }
