@@ -37,14 +37,4 @@ namespace Huginn::Util
       std::sort(container.begin(), container.end(), cmp);
       }
    }
-
-   // Convenience overload with default descending-by-member pattern
-   // Usage: SortTopKByMember(items, &Item::magnitude, 3);
-   template<typename T, typename MemberPtr>
-   void SortTopKDescending(std::vector<T>& container, MemberPtr member, size_t topK)
-   {
-      SortTopK(container, [member](const auto& a, const auto& b) {
-      return a->*member > b->*member;
-      }, topK);
-   }
 }
