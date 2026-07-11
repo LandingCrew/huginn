@@ -341,11 +341,31 @@ namespace Huginn::Wheeler
             }
         }
 
-        for (auto& pw : m_pageWheels) {
-            if (pw.wheelIndex >= 0 && m_api) {
-                auto result = m_api->DeleteManagedWheel(pw.wheelIndex);
-                spdlog::debug("[WheelerClient] Deleted wheel {} for page '{}': {}",
-                    pw.wheelIndex, pw.pageName, static_cast<int>(result));
+        // Delete the wheels. Prefer the v3 batch delete-by-client: it matches wheels
+        // by their stable client label instead of a stored index, so it can't be
+        // tripped by index shifting — every single-index DeleteManagedWheel reshuffles
+        // the remaining indices, which used to leave our other stored indices stale
+        // and orphan wheels (5 wheels instead of 3). Fall back to descending-index
+        // deletes on older (v2) servers, where highest-first keeps the rest valid.
+        if (m_api && m_api->version >= 3 && m_api->DeleteManagedWheelsForClient) {
+            for (auto& pw : m_pageWheels) {
+                if (pw.wheelIndex < 0) {
+                    continue;  // placeholder — no wheel was created
+                }
+                int32_t n = m_api->DeleteManagedWheelsForClient(pw.wheelLabel.c_str());
+                spdlog::debug("[WheelerClient] Deleted {} managed wheel(s) for '{}'", n, pw.wheelLabel);
+            }
+        } else if (m_api) {
+            std::vector<int32_t> indices;
+            for (auto& pw : m_pageWheels) {
+                if (pw.wheelIndex >= 0) {
+                    indices.push_back(pw.wheelIndex);
+                }
+            }
+            std::sort(indices.rbegin(), indices.rend());  // highest index first
+            for (int32_t idx : indices) {
+                auto result = m_api->DeleteManagedWheel(idx);
+                spdlog::debug("[WheelerClient] Deleted wheel {}: {}", idx, static_cast<int>(result));
             }
         }
         m_pageWheels.clear();

@@ -9,9 +9,10 @@
 // Forward declare the API types we need
 namespace WheelerAPI
 {
-    // Minimum API version we support (v1 = base Wheeler, v2 = Wheeler with subtext support)
+    // Minimum API version we support (v1 = base Wheeler, v2 = subtext, v3 = batch
+    // delete-by-client + managed metadata on the wheel)
     constexpr uint32_t API_VERSION_MIN = 1;
-    constexpr uint32_t API_VERSION_MAX = 2;
+    constexpr uint32_t API_VERSION_MAX = 3;
 
     enum class Result : int32_t
     {
@@ -140,6 +141,12 @@ namespace WheelerAPI
         // NOTE: This function pointer is only valid when IWheelerAPI::version >= 2
         // Always check version before calling! On v1 APIs, this pointer may be garbage.
         Result (*SetManagedWheelEntrySubtext)(int32_t wheelIndex, int32_t entryIndex, const SubtextConfig* config);
+
+        // --- v3 Only: Batch delete by client ---
+        // Delete ALL managed wheels whose clientName matches, in one shift-safe pass.
+        // NOTE: Only valid when IWheelerAPI::version >= 3 — check before calling.
+        // Returns the number of wheels deleted (>= 0), or a negative Result on error.
+        int32_t (*DeleteManagedWheelsForClient)(const char* clientName);
     };
 }
 
