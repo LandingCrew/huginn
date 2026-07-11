@@ -3,7 +3,6 @@
 // Only compile in debug mode
 #ifdef _DEBUG
 
-#include <imgui.h>
 #include <chrono>
 
 // Forward declarations

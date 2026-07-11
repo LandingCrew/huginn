@@ -10,7 +10,6 @@
 #include "../slot/SlotAssignment.h"
 #include "../slot/SlotClassifier.h"
 #include "../slot/SlotConfig.h"
-#include <imgui.h>
 #include <shared_mutex>
 
 namespace Huginn::UI
