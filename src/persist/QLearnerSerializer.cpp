@@ -61,6 +61,13 @@ namespace Huginn::Persist
          uint32_t numItems = static_cast<uint32_t>(fqlEntries.size());
          a_intfc->WriteRecordData(numItems);
 
+         // The write side trusts numItems: no cap and no byteLen overflow guard.
+         // Both are bounded by reality — GetItemCount() is one entry per distinct
+         // trained FormID, so numItems > kMaxFQLItems (50k), let alone the ~51M
+         // where numItems * sizeof(FQLEntry) overflows uint32_t, cannot occur in a
+         // real playthrough. If a corrupt/oversized count somehow reached here, the
+         // load side rejects numItems > kMaxFQLItems wholesale (see LoadCallback).
+
          // Entries: one contiguous blob instead of 21 calls/item. The array is
          // byte-identical to the old per-field layout (see static_asserts above),
          // so existing v2 saves remain compatible in both directions.
