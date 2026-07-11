@@ -12,6 +12,7 @@
 #include "learning/EquipEventBus.h"
 #include "learning/InventoryExitTracker.h"
 #include "util/ScopedTimer.h"
+#include "util/InventoryUtil.h"
 #include "weapon/WeaponRegistry.h"
 
 using namespace Huginn;
@@ -105,23 +106,58 @@ static void MaintainRegistries(RE::PlayerCharacter* player,
         }
     }
 
-    // Item registry — two-tier: delta scan (500ms) + full reconcile (30s)
-    if (g_itemRegistry && !g_itemRegistry->IsLoading()) {
-        if (g_registryTimers.itemDelta.CheckAndReset(now, Config::ITEM_COUNT_REFRESH_INTERVAL_MS)) {
-            Huginn_ZONE_NAMED("ItemRegistry::RefreshCounts");
-            auto changes = g_itemRegistry->RefreshCounts(player);
-            for (const auto& change : changes) {
-                if (change.delta < 0) {
-                    if (!IsConsumption(change.formID, change.delta)) {
-                        logger::debug("[ItemRegistry] Left inventory (drop/sell/store), no reward: {} x{}"sv,
-                            change.name, -change.delta);
-                        continue;
+    // Item + Scroll delta scans (500ms, same interval) share ONE inventory pass.
+    // A single GetInventorySafe with a combined filter feeds both registries —
+    // each ignores the other's form types — mirroring the weapon block's
+    // shared-query pattern below. Reconciles (30s) stay in their own blocks.
+    {
+        const bool itemDeltaDue = g_itemRegistry && !g_itemRegistry->IsLoading() &&
+            g_registryTimers.itemDelta.IsDue(now, Config::ITEM_COUNT_REFRESH_INTERVAL_MS);
+        const bool scrollDeltaDue = g_scrollRegistry &&
+            g_registryTimers.scrollDelta.IsDue(now, Config::ITEM_COUNT_REFRESH_INTERVAL_MS);
+
+        if (itemDeltaDue || scrollDeltaDue) {
+            Huginn_ZONE_NAMED("Inventory::DeltaScan");
+            auto inventory = Util::GetInventorySafe(player, [](RE::TESBoundObject& obj) {
+                return obj.Is(RE::FormType::AlchemyItem) || obj.Is(RE::FormType::SoulGem) ||
+                       obj.Is(RE::FormType::Scroll);
+            });
+
+            if (itemDeltaDue) {
+                auto changes = g_itemRegistry->RefreshCounts(player, inventory);
+                for (const auto& change : changes) {
+                    if (change.delta < 0) {
+                        if (!IsConsumption(change.formID, change.delta)) {
+                            logger::debug("[ItemRegistry] Left inventory (drop/sell/store), no reward: {} x{}"sv,
+                                change.name, -change.delta);
+                            continue;
+                        }
+                        logger::debug("[ItemRegistry] Consumed: {} x{}"sv, change.name, -change.delta);
+                        ApplyConsumptionReward(change.formID, change.name);
                     }
-                    logger::debug("[ItemRegistry] Consumed: {} x{}"sv, change.name, -change.delta);
-                    ApplyConsumptionReward(change.formID, change.name);
                 }
+                g_registryTimers.itemDelta.Reset(now);
+            }
+            if (scrollDeltaDue) {
+                auto changes = g_scrollRegistry->RefreshCounts(player, inventory);
+                for (const auto& change : changes) {
+                    if (change.delta < 0) {
+                        if (!IsConsumption(change.formID, change.delta)) {
+                            logger::debug("[ScrollRegistry] Left inventory (drop/sell/store), no reward: {} x{}"sv,
+                                change.name, -change.delta);
+                            continue;
+                        }
+                        logger::debug("[ScrollRegistry] Consumed: {} x{}"sv, change.name, -change.delta);
+                        ApplyConsumptionReward(change.formID, change.name);
+                    }
+                }
+                g_registryTimers.scrollDelta.Reset(now);
             }
         }
+    }
+
+    // Item registry — full reconcile (30s); delta scan handled in the combined block above
+    if (g_itemRegistry && !g_itemRegistry->IsLoading()) {
         if (g_registryTimers.itemReconcile.CheckAndReset(now, Config::ITEM_RECONCILE_INTERVAL_MS)) {
             Huginn_ZONE_NAMED("ItemRegistry::Reconcile");
             g_itemRegistry->ReconcileItems(player);
@@ -151,23 +187,8 @@ static void MaintainRegistries(RE::PlayerCharacter* player,
         }
     }
 
-    // Scroll registry — same two-tier pattern as items
+    // Scroll registry — full reconcile (30s); delta scan handled in the combined block above
     if (g_scrollRegistry) {
-        if (g_registryTimers.scrollDelta.CheckAndReset(now, Config::ITEM_COUNT_REFRESH_INTERVAL_MS)) {
-            Huginn_ZONE_NAMED("ScrollRegistry::RefreshCounts");
-            auto changes = g_scrollRegistry->RefreshCounts(player);
-            for (const auto& change : changes) {
-                if (change.delta < 0) {
-                    if (!IsConsumption(change.formID, change.delta)) {
-                        logger::debug("[ScrollRegistry] Left inventory (drop/sell/store), no reward: {} x{}"sv,
-                            change.name, -change.delta);
-                        continue;
-                    }
-                    logger::debug("[ScrollRegistry] Consumed: {} x{}"sv, change.name, -change.delta);
-                    ApplyConsumptionReward(change.formID, change.name);
-                }
-            }
-        }
         if (g_registryTimers.scrollReconcile.CheckAndReset(now, Config::ITEM_RECONCILE_INTERVAL_MS)) {
             Huginn_ZONE_NAMED("ScrollRegistry::Reconcile");
             g_scrollRegistry->ReconcileScrolls(player);

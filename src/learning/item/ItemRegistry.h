@@ -2,6 +2,7 @@
 
 #include "ItemData.h"
 #include "ItemClassifier.h"
+#include "util/InventoryUtil.h"  // Util::InventoryItemMap (shared inventory scan)
 #include <shared_mutex>  // v0.7.12 - thread safety
 #include <atomic>        // M3 v0.7.21 - atomic m_isLoading
 #include <type_traits>   // For ForEach visitor pattern
@@ -150,6 +151,16 @@ namespace Huginn::Item
        * @param player Pre-fetched player pointer (avoids redundant GetSingleton)
        */
       std::vector<ItemChangeEvent> RefreshCounts(RE::PlayerCharacter* player);
+
+      /**
+       * @brief Delta scan reusing an already-scanned inventory (v0.18 G optimization)
+       * @param player    Pre-fetched player pointer (null-check only)
+       * @param inventory Shared inventory map (may contain non-alchemy/soulgem
+       *                  entries, e.g. scrolls — they are ignored by type check)
+       * @note Lets the update loop run ONE GetInventorySafe pass for items + scrolls
+       */
+      std::vector<ItemChangeEvent> RefreshCounts(
+         RE::PlayerCharacter* player, const Util::InventoryItemMap& inventory);
 
       /**
        * @brief Full item reconciliation (call at 30s intervals)
@@ -469,6 +480,18 @@ namespace Huginn::Item
        * @param player Pre-fetched player pointer (avoids redundant GetSingleton)
        */
       [[nodiscard]] InventoryScanResult ScanPlayerInventoryAll(RE::PlayerCharacter* player) const;
+
+      /**
+       * @brief Build a scan result from an already-scanned inventory map (v0.18 G).
+       * @note The map may hold entries of other form types (e.g. scrolls); only
+       *       alchemy items and soul gems are picked out.
+       */
+      [[nodiscard]] InventoryScanResult ScanPlayerInventoryAll(const Util::InventoryItemMap& inventory) const;
+
+      /**
+       * @brief Shared delta-diff tail for both RefreshCounts overloads.
+       */
+      std::vector<ItemChangeEvent> RefreshCountsFromScan(const InventoryScanResult& scanResult);
 
       /**
        * @brief Scan player inventory for alchemy items

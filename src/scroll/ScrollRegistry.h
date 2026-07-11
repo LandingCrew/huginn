@@ -2,6 +2,7 @@
 
 #include "ScrollData.h"
 #include "ScrollClassifier.h"
+#include "util/InventoryUtil.h"  // Util::InventoryItemMap (shared inventory scan)
 #include <shared_mutex>  // v0.7.12 - thread safety
 #include <atomic>        // M3 v0.7.21 - atomic m_isLoading
 #include <type_traits>   // For ForEach visitor pattern
@@ -87,6 +88,15 @@ namespace Huginn::Scroll
        * @param player Pre-fetched player pointer (avoids redundant GetSingleton)
        */
       std::vector<ScrollChangeEvent> RefreshCounts(RE::PlayerCharacter* player);
+
+      /**
+       * @brief Delta scan reusing an already-scanned inventory (v0.18 G optimization)
+       * @param player    Pre-fetched player pointer (null-check only)
+       * @param inventory Shared inventory map (non-scroll entries are ignored)
+       * @note Lets the update loop run ONE GetInventorySafe pass for items + scrolls
+       */
+      std::vector<ScrollChangeEvent> RefreshCounts(
+         RE::PlayerCharacter* player, const Util::InventoryItemMap& inventory);
 
       /**
        * @brief Full scroll reconciliation (call at 30s intervals)
@@ -265,6 +275,13 @@ namespace Huginn::Scroll
        */
       [[nodiscard]] std::vector<std::pair<RE::ScrollItem*, int32_t>> ScanPlayerInventory() const;
       [[nodiscard]] std::vector<std::pair<RE::ScrollItem*, int32_t>> ScanPlayerInventory(RE::PlayerCharacter* player) const;
+      // Build the scroll list from an already-scanned inventory map (v0.18 G).
+      // Non-scroll entries in the map are ignored.
+      [[nodiscard]] std::vector<std::pair<RE::ScrollItem*, int32_t>> ScanPlayerInventory(const Util::InventoryItemMap& inventory) const;
+
+      // Shared delta-diff tail for both RefreshCounts overloads.
+      std::vector<ScrollChangeEvent> RefreshCountsFromScan(
+         const std::vector<std::pair<RE::ScrollItem*, int32_t>>& currentInventory);
 
       /**
        * @brief Add scroll to registry
