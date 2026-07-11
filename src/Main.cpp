@@ -71,10 +71,7 @@ static std::atomic<bool> g_equipEventRegistered{false};
 //   - Non-dMenu settings: always from main INI
 //   - dMenu-managed settings: from dMenu INI if it exists, else main INI
 // =============================================================================
-static std::filesystem::path GetMainIniPath()
-{
-    return std::filesystem::path("Data/SKSE/Plugins/Huginn.ini");
-}
+// GetMainIniPath() is defined in Globals.cpp (shared with the INI loaders there).
 
 static std::filesystem::path GetDMenuIniPath()
 {
@@ -317,152 +314,177 @@ static void InitializeGameSystems(bool isNewGame)
 #endif
 }
 
+// =============================================================================
+// kDataLoaded handler — one-time engine/UI wiring (hooks, ImGui, input, update)
+// =============================================================================
+// Extracted from MessageHandler for readability. Guarded with a static flag so a
+// duplicate kDataLoaded dispatch (SKSE guarantees one, but modded messaging can
+// perturb it) can't re-install render/input hooks, leak the old g_stateEvaluator,
+// or double-register menus and update callbacks.
+static void OnDataLoaded()
+{
+    static bool s_dataLoadedDone = false;
+    if (s_dataLoadedDone) {
+        logger::warn("kDataLoaded fired again — ignoring (Huginn already initialized)"sv);
+        return;
+    }
+    s_dataLoadedDone = true;
+
+    auto timeElapsed = std::chrono::high_resolution_clock::now() - start;
+    logger::info("time to main menu {}"sv, std::chrono::duration_cast<std::chrono::milliseconds>(timeElapsed).count());
+
+    logger::info("Data loaded - Huginn ready"sv);
+
+    // Register console commands (replaces unused command table entry)
+    Huginn::Console::Register();
+
+    // Install D3D11 render hook for ImGui
+    if (UI::D3D11Hook::Install()) {
+        logger::info("D3D11 render hook installed"sv);
+    } else {
+        logger::error("Failed to install D3D11 render hook"sv);
+    }
+
+#ifdef _DEBUG
+    // Install input dispatch hook for interactive debug widgets (Home key toggle)
+    if (UI::DebugInputHook::Install()) {
+        logger::info("Debug input hook installed (Home key to toggle interaction)"sv);
+    } else {
+        logger::error("Failed to install debug input hook"sv);
+    }
+#endif
+
+    // Initialize ImGui renderer
+    if (UI::ImGuiRenderer::GetSingleton().Initialize()) {
+        // Show welcome banner via ImGui
+        UI::WelcomeBanner::GetSingleton().Show();
+        logger::info("ImGui welcome banner triggered"sv);
+
+#ifdef _DEBUG
+        // Debug widget visibility is now controlled by DebugSettings (loaded from INI)
+        // See InitializeGameSystems() -> DebugSettings::LoadFromFile()
+        logger::info("Debug widgets will be initialized from INI settings (debug build)"sv);
+#endif
+    } else {
+        // Fallback to DebugNotification
+        std::string versionMsg = std::format("{} v{}", Plugin::NAME, Plugin::VERSION.string());
+        RE::DebugNotification(versionMsg.c_str());
+        logger::warn("ImGui init failed, using DebugNotification fallback: {}"sv, versionMsg);
+    }
+
+    // Initialize StateEvaluator
+    g_stateEvaluator = std::make_unique<Huginn::State::StateEvaluator>();
+    g_lastStateLog = std::chrono::steady_clock::now();
+    logger::info("StateEvaluator initialized"sv);
+
+    // Register DamageEventSink for instant damage type classification (v0.6.8)
+    State::DamageEventSink::GetSingleton().Register();
+
+    // Register InventoryExitTracker so drop/sell/store count decreases
+    // are not rewarded as consumption (v0.7.22)
+    Learning::InventoryExitTracker::GetSingleton().Register();
+
+    // Register SettingsReloader for dMenu integration (v0.13.0)
+    Settings::SettingsReloader::GetSingleton().Register();
+
+    // Load debug widget visibility early so dMenu changes apply before game load
+    UI::DebugSettings::GetSingleton().LoadFromFile(GetDMenuIniPath());
+
+    // Try to connect to Wheeler API
+    auto& wheelerClient = Wheeler::WheelerClient::GetSingleton();
+    if (wheelerClient.TryConnect()) {
+        wheelerClient.LogAPIInfo();
+    } else {
+        logger::info("Wheeler not available (will retry on game load)"sv);
+    }
+
+    // Run unit tests. This NDEBUG guard MUST stay in sync with src/CMakeLists.txt,
+    // which excludes Tests.cpp from non-Debug configs (HEADER_FILE_ONLY). If a config
+    // ever leaves NDEBUG undefined while still excluding Tests.cpp, this call becomes
+    // an unresolved symbol. Standard MSVC Debug/Release presets keep them aligned.
+#ifndef NDEBUG
+    RunUnitTests();
+#endif
+
+    // Register UpdateHandler
+    if (Update::UpdateHandler::Register()) {
+        Update::UpdateHandler::GetSingleton()->SetUpdateCallback(OnUpdate);
+        logger::info("Update system registered ({}ms interval)"sv, Config::UPDATE_INTERVAL_MS);
+    } else {
+        // Issue #4: Mark system as degraded so OnUpdate knows to warn periodically
+        logger::error("[CRITICAL] Failed to register update handler - recommendations will not work!"sv);
+        g_updateSystemFailed.store(true, std::memory_order_release);
+        // Best-effort in-game surfacing. This fires at kDataLoaded (main menu), where
+        // the HUD may not render a notification — so the CRITICAL log line above stays
+        // the reliable signal; the notification is a bonus when a HUD is present.
+        RE::DebugNotification("Huginn: update system failed to start - recommendations disabled. See log.");
+    }
+
+    // Register IntuitionMenu (Scaleform HUD widget)
+    UI::IntuitionMenu::Register();
+
+    // Register HUD visibility manager (auto-hide widget in menus)
+    UI::HudVisibilityManager::Register();
+
+    // Setup input callbacks for equip actions
+    {
+        auto& inputHandler = Input::InputHandler::GetSingleton();
+        auto& equipManager = Input::EquipManager::GetSingleton();
+
+        // Load keybindings from INI and configure InputHandler
+        Input::KeybindingSettings keybindings;
+        keybindings.LoadFromFile(GetDMenuIniPath());
+        inputHandler.SetKeyCodes(keybindings);
+
+        // Slot key callback: equip spell/item from slot
+        inputHandler.SetSlotCallback([&equipManager](size_t slotIndex, Input::EquipHand hand) {
+            equipManager.EquipSlot(slotIndex, hand);
+        });
+
+        // Cycle key callback: cycle pages (v0.12.0 multi-page support)
+        inputHandler.SetCycleCallback([](bool isPrevious, bool isHold) {
+            if (isHold) {
+                // Hold action: reload/flush (future feature)
+                logger::info("[Input] Cycle {} (hold - reload/flush)"sv,
+                    isPrevious ? "previous" : "next");
+                return;
+            }
+
+            // Tap action: switch pages
+            auto& slotAllocator = Slot::SlotAllocator::GetSingleton();
+            if (isPrevious) {
+                slotAllocator.PreviousPage();
+            } else {
+                slotAllocator.NextPage();
+            }
+
+            // Sync Wheeler wheel to match the new page (no-op if Wheeler not installed)
+            auto& wheelerClient = Wheeler::WheelerClient::GetSingleton();
+            wheelerClient.SetActivePage(slotAllocator.GetCurrentPage());
+
+            // Widget will update automatically on next frame via the update handler
+            logger::info("[Input] Switched to page {} '{}'"sv,
+                slotAllocator.GetCurrentPage(),
+                slotAllocator.GetCurrentPageName());
+        });
+
+        // Equip callback: publish to EquipEventBus (subscribers handle FQL + UsageMemory)
+        // MarkHuginnEquip is already called in EquipManager.cpp before this callback
+        equipManager.SetEquipCallback([](RE::FormID formID, bool wasRecommended) {
+            Learning::EquipEventBus::GetSingleton().Publish(
+                formID, Learning::EquipSource::Hotkey, 1.0f, wasRecommended);
+        });
+
+        logger::info("Input handler and equip manager initialized (keys 1-5)"sv);
+    }
+}
+
 void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
 {
     switch (a_msg->type) {
     case SKSE::MessagingInterface::kDataLoaded:
-        {
-            auto timeElapsed = std::chrono::high_resolution_clock::now() - start;
-            logger::info("time to main menu {}"sv, std::chrono::duration_cast<std::chrono::milliseconds>(timeElapsed).count());
-
-            logger::info("Data loaded - Huginn ready"sv);
-
-            // Register console commands (replaces unused command table entry)
-            Huginn::Console::Register();
-
-            // Install D3D11 render hook for ImGui
-            if (UI::D3D11Hook::Install()) {
-                logger::info("D3D11 render hook installed"sv);
-            } else {
-                logger::error("Failed to install D3D11 render hook"sv);
-            }
-
-#ifdef _DEBUG
-            // Install input dispatch hook for interactive debug widgets (Home key toggle)
-            if (UI::DebugInputHook::Install()) {
-                logger::info("Debug input hook installed (Home key to toggle interaction)"sv);
-            } else {
-                logger::error("Failed to install debug input hook"sv);
-            }
-#endif
-
-            // Initialize ImGui renderer
-            if (UI::ImGuiRenderer::GetSingleton().Initialize()) {
-                // Show welcome banner via ImGui
-                UI::WelcomeBanner::GetSingleton().Show();
-                logger::info("ImGui welcome banner triggered"sv);
-
-#ifdef _DEBUG
-                // Debug widget visibility is now controlled by DebugSettings (loaded from INI)
-                // See InitializeGameSystems() -> DebugSettings::LoadFromFile()
-                logger::info("Debug widgets will be initialized from INI settings (debug build)"sv);
-#endif
-            } else {
-                // Fallback to DebugNotification
-                std::string versionMsg = std::format("{} v{}", Plugin::NAME, Plugin::VERSION.string());
-                RE::DebugNotification(versionMsg.c_str());
-                logger::warn("ImGui init failed, using DebugNotification fallback: {}"sv, versionMsg);
-            }
-
-            // Initialize StateEvaluator
-            g_stateEvaluator = std::make_unique<Huginn::State::StateEvaluator>();
-            g_lastStateLog = std::chrono::steady_clock::now();
-            logger::info("StateEvaluator initialized"sv);
-
-            // Register DamageEventSink for instant damage type classification (v0.6.8)
-            State::DamageEventSink::GetSingleton().Register();
-
-            // Register InventoryExitTracker so drop/sell/store count decreases
-            // are not rewarded as consumption (v0.7.22)
-            Learning::InventoryExitTracker::GetSingleton().Register();
-
-            // Register SettingsReloader for dMenu integration (v0.13.0)
-            Settings::SettingsReloader::GetSingleton().Register();
-
-            // Load debug widget visibility early so dMenu changes apply before game load
-            UI::DebugSettings::GetSingleton().LoadFromFile(GetDMenuIniPath());
-
-            // Try to connect to Wheeler API
-            auto& wheelerClient = Wheeler::WheelerClient::GetSingleton();
-            if (wheelerClient.TryConnect()) {
-                wheelerClient.LogAPIInfo();
-            } else {
-                logger::info("Wheeler not available (will retry on game load)"sv);
-            }
-
-            // Run unit tests
-            RunUnitTests();
-
-            // Register UpdateHandler
-            if (Update::UpdateHandler::Register()) {
-                Update::UpdateHandler::GetSingleton()->SetUpdateCallback(OnUpdate);
-                logger::info("Update system registered ({}ms interval)"sv, Config::UPDATE_INTERVAL_MS);
-            } else {
-                // Issue #4: Mark system as degraded so OnUpdate knows to warn periodically
-                logger::error("[CRITICAL] Failed to register update handler - recommendations will not work!"sv);
-                g_updateSystemFailed.store(true, std::memory_order_release);
-            }
-
-            // Register IntuitionMenu (Scaleform HUD widget)
-            UI::IntuitionMenu::Register();
-
-            // Register HUD visibility manager (auto-hide widget in menus)
-            UI::HudVisibilityManager::Register();
-
-            // Setup input callbacks for equip actions
-            {
-                auto& inputHandler = Input::InputHandler::GetSingleton();
-                auto& equipManager = Input::EquipManager::GetSingleton();
-
-                // Load keybindings from INI and configure InputHandler
-                Input::KeybindingSettings keybindings;
-                keybindings.LoadFromFile(GetDMenuIniPath());
-                inputHandler.SetKeyCodes(keybindings);
-
-                // Slot key callback: equip spell/item from slot
-                inputHandler.SetSlotCallback([&equipManager](size_t slotIndex, Input::EquipHand hand) {
-                    equipManager.EquipSlot(slotIndex, hand);
-                });
-
-                // Cycle key callback: cycle pages (v0.12.0 multi-page support)
-                inputHandler.SetCycleCallback([](bool isPrevious, bool isHold) {
-                    if (isHold) {
-                        // Hold action: reload/flush (future feature)
-                        logger::info("[Input] Cycle {} (hold - reload/flush)"sv,
-                            isPrevious ? "previous" : "next");
-                        return;
-                    }
-
-                    // Tap action: switch pages
-                    auto& slotAllocator = Slot::SlotAllocator::GetSingleton();
-                    if (isPrevious) {
-                        slotAllocator.PreviousPage();
-                    } else {
-                        slotAllocator.NextPage();
-                    }
-
-                    // Sync Wheeler wheel to match the new page (no-op if Wheeler not installed)
-                    auto& wheelerClient = Wheeler::WheelerClient::GetSingleton();
-                    wheelerClient.SetActivePage(slotAllocator.GetCurrentPage());
-
-                    // Widget will update automatically on next frame via the update handler
-                    logger::info("[Input] Switched to page {} '{}'"sv,
-                        slotAllocator.GetCurrentPage(),
-                        slotAllocator.GetCurrentPageName());
-                });
-
-                // Equip callback: publish to EquipEventBus (subscribers handle FQL + UsageMemory)
-                // MarkHuginnEquip is already called in EquipManager.cpp before this callback
-                equipManager.SetEquipCallback([](RE::FormID formID, bool wasRecommended) {
-                    Learning::EquipEventBus::GetSingleton().Publish(
-                        formID, Learning::EquipSource::Hotkey, 1.0f, wasRecommended);
-                });
-
-                logger::info("Input handler and equip manager initialized (keys 1-5)"sv);
-            }
-
-            break;
-        }
+        OnDataLoaded();
+        break;
     case SKSE::MessagingInterface::kNewGame:
         logger::info("New game started"sv);
         InitializeGameSystems(/*isNewGame=*/true);

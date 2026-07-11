@@ -59,7 +59,10 @@ namespace std
 #define DEBUG(...)    logger::debug(__VA_ARGS__)
 #define TRACE(...)    logger::trace(__VA_ARGS__)
 #define CRITICAL(...) logger::critical(__VA_ARGS__)
-#define ASSERT(condition) \
+// Soft assert: logs and CONTINUES (does not abort). Named SOFT_ASSERT so the
+// non-fatal semantics are obvious at the call site — a game mod should degrade,
+// not hard-stop, on a failed invariant.
+#define SOFT_ASSERT(condition) \
     do { \
         if (!(condition)) { \
             logger::critical("Assertion failed: " #condition); \

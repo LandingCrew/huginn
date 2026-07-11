@@ -128,8 +128,12 @@ EvaluatedGameState EvaluateCurrentGameState() {
 // INI Loading Helpers
 // =============================================================================
 
+std::filesystem::path GetMainIniPath() {
+  return std::filesystem::path("Data/SKSE/Plugins/Huginn.ini");
+}
+
 void LoadCandidateConfigFromINI() {
-  const auto iniPath = std::filesystem::path("Data/SKSE/Plugins/Huginn.ini");
+  const auto iniPath = GetMainIniPath();
   if (!std::filesystem::exists(iniPath)) return;
 
   CSimpleIniA ini;
@@ -163,7 +167,7 @@ void LoadCandidateConfigFromINI() {
 }
 
 Slot::SlotLockConfig LoadSlotLockerConfigFromINI() {
-  const auto iniPath = std::filesystem::path("Data/SKSE/Plugins/Huginn.ini");
+  const auto iniPath = GetMainIniPath();
   Slot::SlotLockConfig config;
 
   if (!std::filesystem::exists(iniPath)) return config;
@@ -190,7 +194,7 @@ Slot::SlotLockConfig LoadSlotLockerConfigFromINI() {
 }
 
 void LoadWildcardConfigFromINI(Scoring::WildcardManager& wildcardMgr) {
-  const auto iniPath = std::filesystem::path("Data/SKSE/Plugins/Huginn.ini");
+  const auto iniPath = GetMainIniPath();
   if (!std::filesystem::exists(iniPath)) return;
 
   CSimpleIniA ini;

@@ -43,6 +43,16 @@ add_library(
    "${ROOT_DIR}/.editorconfig"
 )
 
+# Tests.cpp is a debug-only suite: its function bodies are #ifndef NDEBUG gated,
+# so in Release it compiles to nothing but still parses ~3k lines and heavy test
+# headers. Mark it header-only (skip compilation) in non-Debug configs — it stays
+# visible in the IDE, and Debug builds compile/run it exactly as before.
+set_source_files_properties(
+   "${SOURCE_DIR}/Tests.cpp"
+   PROPERTIES
+      HEADER_FILE_ONLY "$<NOT:$<CONFIG:Debug>>"
+)
+
 target_compile_features(
    "${PROJECT_NAME}"
    PRIVATE
