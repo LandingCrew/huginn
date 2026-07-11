@@ -3,6 +3,7 @@
 // Only compile in debug mode
 #ifdef _DEBUG
 
+#include "ImGuiCommon.h"
 #include "../learning/ScoredCandidate.h"
 #include "../learning/UsageMemory.h"
 #include "../learning/UtilityScorer.h"

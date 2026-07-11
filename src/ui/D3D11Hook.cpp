@@ -1,4 +1,5 @@
 #include "D3D11Hook.h"
+#include "ImGuiCommon.h"
 #include "ImGuiRenderer.h"
 #include "WelcomeBanner.h"
 #ifdef _DEBUG

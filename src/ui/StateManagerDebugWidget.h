@@ -5,7 +5,7 @@
 
 #include "../state/StateManager.h"
 #include "../state/StateTypes.h"  // For HealthTrackingState
-#include <imgui.h>
+#include "ImGuiCommon.h"
 
 namespace Huginn::UI
 {

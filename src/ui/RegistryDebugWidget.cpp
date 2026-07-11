@@ -2,6 +2,7 @@
 #ifdef _DEBUG
 
 #include "RegistryDebugWidget.h"
+#include "ImGuiCommon.h"
 #include "../spell/SpellRegistry.h"
 #include "../spell/SpellData.h"
 #include "../learning/item/ItemRegistry.h"

@@ -3,7 +3,7 @@
 #include "DebugInputHook.h"
 
 #include <dinput.h>   // DIK_* scan codes
-#include <imgui.h>
+#include "ImGuiCommon.h"
 
 namespace Huginn::UI
 {

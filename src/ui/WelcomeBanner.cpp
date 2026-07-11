@@ -2,7 +2,7 @@
 #include "ImGuiRenderer.h"
 #include "../Config.h"
 
-#include <imgui.h>
+#include "ImGuiCommon.h"
 
 namespace Huginn::UI
 {

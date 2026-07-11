@@ -2,6 +2,8 @@
 
 #ifdef _DEBUG
 
+#include "ImGuiCommon.h"  // ImGuiKey in VirtualKeyToImGuiKey signature
+
 namespace Huginn::UI
 {
     /// Hooks SKSE's InputEventDispatch to translate DirectInput events into ImGui
