@@ -36,7 +36,12 @@ namespace Huginn::Util
 
    // Convenience macro for scoped timing
    // Usage: SCOPED_TIMER("FunctionName");
-   #define SCOPED_TIMER(name) Huginn::Util::ScopedTimer Huginn_scoped_timer_##__LINE__(name)
+   // Two-level indirection so __LINE__ expands to its value BEFORE being pasted
+   // (a direct `##__LINE__` pastes the literal token, so every use collides on
+   // one name — breaking two timers in the same scope on portable preprocessors).
+   #define HUGINN_TIMER_CONCAT_(a, b) a##b
+   #define HUGINN_TIMER_NAME_(line)   HUGINN_TIMER_CONCAT_(Huginn_scoped_timer_, line)
+   #define SCOPED_TIMER(name) Huginn::Util::ScopedTimer HUGINN_TIMER_NAME_(__LINE__)(name)
 #else
    // No-op in release builds
    #define SCOPED_TIMER(name) ((void)0)

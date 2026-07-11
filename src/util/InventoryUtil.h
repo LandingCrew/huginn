@@ -12,10 +12,19 @@ namespace Huginn::Util
     //
     // This reimplements the same logic but uses try_emplace + count accumulation
     // instead of assert-guarded emplace.
+    //
+    // RETIRE WHEN: CommonLibSSE-NG's TESObjectREFR::GetInventory() no longer
+    // asserts on duplicate TESBoundObject* entries (the upstream assert at
+    // TESObjectREFR.cpp:339 `it.second`). As of CommonLibSSE-NG v3.7.0 the assert
+    // is still present; once a release tolerates duplicates, callers can switch
+    // back to the stock GetInventory() and this helper can be deleted.
     // =============================================================================
 
     using InventoryItemMap = RE::TESObjectREFR::InventoryItemMap;
 
+    // `filter` must be a side-effect-free predicate: it may be invoked on entries
+    // that are ultimately skipped (e.g. leveled base-container duplicates), so its
+    // result must depend only on the object, not on call count or order.
     template <typename Filter>
     inline InventoryItemMap GetInventorySafe(RE::TESObjectREFR* ref, Filter&& filter)
     {
@@ -46,25 +55,25 @@ namespace Huginn::Util
         // Mirrors CommonLibSSE-NG logic: skip leveled items already in inventory changes
         auto* container = ref->GetContainer();
         if (container) {
-            const auto ignore = [&](RE::TESBoundObject* a_object) {
-                const auto it = results.find(a_object);
-                const auto entryData =
-                    it != results.end() ? it->second.second.get() : nullptr;
-                return entryData ? entryData->IsLeveled() : false;
-            };
-
             container->ForEachContainerObject([&](RE::ContainerObject& a_entry) {
-                if (a_entry.obj && !ignore(a_entry.obj) && filter(*a_entry.obj)) {
-                    auto it = results.find(a_entry.obj);
-                    if (it != results.end()) {
-                        it->second.first += a_entry.count;
-                    } else {
-                        results.emplace(
-                            a_entry.obj,
-                            std::make_pair(
-                                a_entry.count,
-                                std::make_unique<RE::InventoryEntryData>(a_entry.obj, 0)));
+                if (!a_entry.obj || !filter(*a_entry.obj)) {
+                    return RE::BSContainer::ForEachResult::kContinue;
+                }
+                // Single lookup reused for both the leveled-item skip (mirrors
+                // CommonLibSSE-NG, which ignores leveled entries already present
+                // from Phase 1) and the count merge.
+                auto it = results.find(a_entry.obj);
+                if (it != results.end()) {
+                    if (it->second.second && it->second.second->IsLeveled()) {
+                        return RE::BSContainer::ForEachResult::kContinue;  // leveled — skip
                     }
+                    it->second.first += a_entry.count;
+                } else {
+                    results.emplace(
+                        a_entry.obj,
+                        std::make_pair(
+                            a_entry.count,
+                            std::make_unique<RE::InventoryEntryData>(a_entry.obj, 0)));
                 }
                 return RE::BSContainer::ForEachResult::kContinue;
             });
