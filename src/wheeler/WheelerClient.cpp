@@ -353,7 +353,12 @@ namespace Huginn::Wheeler
                     continue;  // placeholder — no wheel was created
                 }
                 int32_t n = m_api->DeleteManagedWheelsForClient(pw.wheelLabel.c_str());
-                spdlog::debug("[WheelerClient] Deleted {} managed wheel(s) for '{}'", n, pw.wheelLabel);
+                if (n < 0) {
+                    spdlog::warn("[WheelerClient] DeleteManagedWheelsForClient('{}') failed: {}",
+                        pw.wheelLabel, n);
+                } else {
+                    spdlog::debug("[WheelerClient] Deleted {} managed wheel(s) for '{}'", n, pw.wheelLabel);
+                }
             }
         } else if (m_api) {
             std::vector<int32_t> indices;
