@@ -132,10 +132,15 @@ std::filesystem::path GetMainIniPath() {
   return std::filesystem::path("Data/SKSE/Plugins/Huginn.ini");
 }
 
-bool LoadIniFile(CSimpleIniA& out, const std::filesystem::path& path, std::string_view tag) {
+bool LoadIniFile(CSimpleIniA& out, const std::filesystem::path& path, std::string_view tag,
+                 IniMissing missing) {
   std::error_code ec;
   if (!std::filesystem::exists(path, ec) || ec) {
-    logger::info("[{}] INI file not found, using defaults: {}"sv, tag, path.string());
+    if (missing == IniMissing::Warn) {
+      logger::warn("[{}] INI file not found, using defaults: {}"sv, tag, path.string());
+    } else {
+      logger::info("[{}] INI file not found, using defaults: {}"sv, tag, path.string());
+    }
     return false;
   }
 

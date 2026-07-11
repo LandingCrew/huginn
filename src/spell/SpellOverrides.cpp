@@ -8,7 +8,7 @@ namespace Huginn::Spell
    bool SpellOverrides::LoadFromFile(const std::filesystem::path& iniPath)
    {
       CSimpleIniA ini;
-      if (!LoadIniFile(ini, iniPath, "SpellOverrides"sv)) {
+      if (!LoadIniFile(ini, iniPath, "SpellOverrides"sv, IniMissing::Warn)) {
       return false;
       }
 

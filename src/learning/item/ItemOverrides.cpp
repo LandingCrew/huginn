@@ -8,7 +8,7 @@ namespace Huginn::Item
    bool ItemOverrides::LoadFromFile(const std::filesystem::path& iniPath)
    {
       CSimpleIniA ini;
-      if (!LoadIniFile(ini, iniPath, "ItemOverrides"sv)) {
+      if (!LoadIniFile(ini, iniPath, "ItemOverrides"sv, IniMissing::Warn)) {
       return false;
       }
 
