@@ -3,6 +3,7 @@
 #include <chrono>
 #include <memory>
 #include <atomic>
+#include <filesystem>
 
 #include "state/StateEvaluator.h"
 #include "state/GameState.h"
@@ -79,6 +80,11 @@ struct EvaluatedGameState {
 /// Resets: UtilityScorer, UsageMemory, OverrideManager, CandidateGenerator,
 ///         SlotAllocator, SlotLocker (with INI config), StateManager tracking.
 void ResetPipelineSubsystems();
+
+/// @brief Canonical path to the main Huginn INI (Data/SKSE/Plugins/Huginn.ini).
+/// @details Single source of truth shared by Main.cpp and the INI loaders in
+/// Globals.cpp so the path literal isn't duplicated across translation units.
+[[nodiscard]] std::filesystem::path GetMainIniPath();
 
 /// @brief Load [Candidates] section settings from Huginn.ini into g_candidateConfig.
 /// @note Called during both kNewGame and kPostLoadGame events.
