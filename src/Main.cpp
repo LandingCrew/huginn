@@ -398,7 +398,10 @@ static void OnDataLoaded()
         logger::info("Wheeler not available (will retry on game load)"sv);
     }
 
-    // Run unit tests (debug only — Tests.cpp is excluded from Release builds)
+    // Run unit tests. This NDEBUG guard MUST stay in sync with src/CMakeLists.txt,
+    // which excludes Tests.cpp from non-Debug configs (HEADER_FILE_ONLY). If a config
+    // ever leaves NDEBUG undefined while still excluding Tests.cpp, this call becomes
+    // an unresolved symbol. Standard MSVC Debug/Release presets keep them aligned.
 #ifndef NDEBUG
     RunUnitTests();
 #endif
@@ -411,8 +414,9 @@ static void OnDataLoaded()
         // Issue #4: Mark system as degraded so OnUpdate knows to warn periodically
         logger::error("[CRITICAL] Failed to register update handler - recommendations will not work!"sv);
         g_updateSystemFailed.store(true, std::memory_order_release);
-        // Surface the failure in-game — otherwise the UI looks functional but never
-        // produces recommendations, with only a log line to explain why.
+        // Best-effort in-game surfacing. This fires at kDataLoaded (main menu), where
+        // the HUD may not render a notification — so the CRITICAL log line above stays
+        // the reliable signal; the notification is a bonus when a HUD is present.
         RE::DebugNotification("Huginn: update system failed to start - recommendations disabled. See log.");
     }
 
