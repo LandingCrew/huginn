@@ -6,8 +6,6 @@
 #define NOMINMAX
 #endif
 
-#define IMGUI_DEFINE_MATH_OPERATORS
-
 #pragma warning(push)
 #include <RE/Skyrim.h>
 #include <REL/Relocation.h>
@@ -70,11 +68,10 @@ namespace std
     } while (0)
 
 #include "Plugin.h"
-#include <d3d11.h>
-#include <dxgi.h>
 
-#include "imgui.h"
-#define IM_PI 3.14159265358979323846f
+// NOTE: imgui.h / d3d11.h / dxgi.h intentionally NOT included here — only src/ui/
+// needs them. UI TUs include "ui/ImGuiCommon.h" (ImGui) and <d3d11.h>/<dxgi.h>
+// directly, keeping the PCH (and every non-UI TU's compile) lighter.
 
 #ifdef SKYRIM_AE
 #    define VAR_NUM(se, ae) ae

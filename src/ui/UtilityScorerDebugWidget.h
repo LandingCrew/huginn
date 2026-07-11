@@ -3,13 +3,13 @@
 // Only compile in debug mode
 #ifdef _DEBUG
 
+#include "ImGuiCommon.h"
 #include "../learning/ScoredCandidate.h"
 #include "../learning/UsageMemory.h"
 #include "../learning/UtilityScorer.h"
 #include "../slot/SlotAssignment.h"
 #include "../slot/SlotClassifier.h"
 #include "../slot/SlotConfig.h"
-#include <imgui.h>
 #include <shared_mutex>
 
 namespace Huginn::UI
