@@ -1,8 +1,31 @@
 #include "QLearnerSerializer.h"
 #include "Globals.h"
 
+#include <cmath>
+#include <type_traits>
+
 namespace Huginn::Persist
 {
+   using FQLEntry = Learning::FeatureQLearner::SerializedEntry;
+
+   // The batch (single-blob) cosave path memcpy's the whole entry array, so the
+   // on-disk layout IS SerializedEntry's memory layout. These asserts lock that
+   // contract: the entry must be trivially copyable and tightly packed. The size
+   // check equals the exact field sum — if a field is added/reordered or padding
+   // appears, this fails to compile, forcing a wire-format + version bump instead
+   // of silently writing an incompatible blob. The byte order also matches the
+   // legacy per-field format (formID, weights[18], trainCount, minutes), so v2
+   // saves round-trip identically between the batch and per-field code paths.
+   static_assert(std::is_trivially_copyable_v<FQLEntry>,
+      "SerializedEntry must be trivially copyable for batch cosave I/O");
+   static_assert(sizeof(FQLEntry) ==
+         sizeof(RE::FormID)
+       + sizeof(float) * Learning::StateFeatures::NUM_FEATURES
+       + sizeof(uint32_t)   // trainCount
+       + sizeof(uint32_t),  // minutesSinceLastUpdate (v2)
+      "SerializedEntry layout changed — batch cosave I/O assumes tight packing; "
+      "bump kFQLSerializationVersion and update the wire format");
+
    // Static buffer — populated by LoadCallback, consumed by ApplyPendingFQLData
    static std::optional<LoadedFQLData> s_pendingFQLData;
 
@@ -18,19 +41,19 @@ namespace Huginn::Persist
             return;
          }
 
-         // Collect entries
-         std::vector<Learning::FeatureQLearner::SerializedEntry> fqlEntries;
+         // Collect entries into a contiguous buffer for a single bulk write.
+         std::vector<FQLEntry> fqlEntries;
          fqlEntries.reserve(g_featureQLearner->GetItemCount());
          uint32_t fqlTotalTrains = 0;
 
          g_featureQLearner->ExportData(
-            [&](Learning::FeatureQLearner::SerializedEntry entry) {
+            [&](FQLEntry entry) {
                fqlEntries.push_back(std::move(entry));
             },
             fqlTotalTrains
          );
 
-         // Write: version + numFeatures + totalTrainCount + numItems + [formID + weights[18] + trainCount]...
+         // Header: version + numFeatures + totalTrainCount + numItems
          a_intfc->WriteRecordData(kFQLSerializationVersion);
          uint32_t numFeatures = Learning::StateFeatures::NUM_FEATURES;
          a_intfc->WriteRecordData(numFeatures);
@@ -38,13 +61,15 @@ namespace Huginn::Persist
          uint32_t numItems = static_cast<uint32_t>(fqlEntries.size());
          a_intfc->WriteRecordData(numItems);
 
-         for (const auto& e : fqlEntries) {
-            a_intfc->WriteRecordData(e.formID);
-            for (size_t i = 0; i < Learning::StateFeatures::NUM_FEATURES; ++i) {
-               a_intfc->WriteRecordData(e.weights[i]);
+         // Entries: one contiguous blob instead of 21 calls/item. The array is
+         // byte-identical to the old per-field layout (see static_asserts above),
+         // so existing v2 saves remain compatible in both directions.
+         if (numItems > 0) {
+            const uint32_t byteLen = numItems * static_cast<uint32_t>(sizeof(FQLEntry));
+            if (!a_intfc->WriteRecordData(fqlEntries.data(), byteLen)) {
+               logger::error("[Cosave] Failed to write FQLW entry blob ({} bytes)"sv, byteLen);
+               return;
             }
-            a_intfc->WriteRecordData(e.trainCount);
-            a_intfc->WriteRecordData(e.minutesSinceLastUpdate);  // v2
          }
 
          logger::info("[Cosave] Saved {} FQL weight entries, {} total trains"sv,
@@ -107,53 +132,89 @@ namespace Huginn::Persist
             }
 
             fqlData.entries.reserve(numItems);
+            size_t droppedCorrupt = 0;
 
-            for (uint32_t i = 0; i < numItems; ++i) {
-               Learning::FeatureQLearner::SerializedEntry entry;
-               if (!a_intfc->ReadRecordData(entry.formID)) {
-                  logger::error("[Cosave] Failed to read FQLW formID at index {}"sv, i);
-                  break;
-               }
-
-               bool weightsOk = true;
-               for (size_t f = 0; f < Learning::StateFeatures::NUM_FEATURES; ++f) {
-                  if (!a_intfc->ReadRecordData(entry.weights[f])) {
-                     logger::error("[Cosave] Failed to read FQLW weight at item {}, feature {}"sv, i, f);
-                     weightsOk = false;
-                     break;
+            // Validate + resolve one decoded entry, keeping only survivors.
+            auto acceptEntry = [&](FQLEntry& entry) {
+               // Reject non-finite weights before corrupt data reaches the scorer.
+               for (float w : entry.weights) {
+                  if (!std::isfinite(w)) {
+                     ++droppedCorrupt;
+                     logger::warn("[Cosave] FQL entry {:08X} has non-finite weight — dropping"sv,
+                        entry.formID);
+                     return;
                   }
                }
-               if (!weightsOk) break;
-
-               if (!a_intfc->ReadRecordData(entry.trainCount)) {
-                  logger::error("[Cosave] Failed to read FQLW trainCount at index {}"sv, i);
-                  break;
-               }
-
-               // v2: read minutesSinceLastUpdate; v1: default to 0 (treat as fresh)
-               if (recVersion >= 2) {
-                  if (!a_intfc->ReadRecordData(entry.minutesSinceLastUpdate)) {
-                     logger::error("[Cosave] Failed to read FQLW minutesSinceLastUpdate at index {}"sv, i);
-                     break;
-                  }
-               } else {
-                  entry.minutesSinceLastUpdate = 0;
-               }
-
-               // Resolve FormID for mod load order changes
+               // Resolve FormID for mod load order changes.
                RE::FormID newFormID;
                if (a_intfc->ResolveFormID(entry.formID, newFormID)) {
                   entry.formID = newFormID;
                   fqlData.resolvedFormIDs++;
-                  fqlData.entries.push_back(std::move(entry));
+                  fqlData.entries.push_back(entry);
                } else {
                   fqlData.failedFormIDs++;
                   logger::debug("[Cosave] FQL FormID {:08X} failed to resolve"sv, entry.formID);
                }
+            };
+
+            if (recVersion >= 2) {
+               // v2: fixed-size entries — read the whole array in one call. A short
+               // read rejects the record wholesale (no silent partial import).
+               std::vector<FQLEntry> raw(numItems);
+               if (numItems > 0) {
+                  const uint32_t byteLen = numItems * static_cast<uint32_t>(sizeof(FQLEntry));
+                  const uint32_t got = a_intfc->ReadRecordData(raw.data(), byteLen);
+                  if (got != byteLen) {
+                     logger::error("[Cosave] FQLW bulk read short: got {} of {} bytes — skipping"sv,
+                        got, byteLen);
+                     break;
+                  }
+               }
+               for (auto& entry : raw) {
+                  acceptEntry(entry);
+               }
+            } else {
+               // v1 legacy: entries lack minutesSinceLastUpdate — read per field.
+               for (uint32_t i = 0; i < numItems; ++i) {
+                  FQLEntry entry;
+                  entry.minutesSinceLastUpdate = 0;  // v1: treat as fresh
+                  if (!a_intfc->ReadRecordData(entry.formID)) {
+                     logger::error("[Cosave] Failed to read FQLW formID at index {}"sv, i);
+                     break;
+                  }
+                  bool weightsOk = true;
+                  for (size_t f = 0; f < Learning::StateFeatures::NUM_FEATURES; ++f) {
+                     if (!a_intfc->ReadRecordData(entry.weights[f])) {
+                        logger::error("[Cosave] Failed to read FQLW weight at item {}, feature {}"sv, i, f);
+                        weightsOk = false;
+                        break;
+                     }
+                  }
+                  if (!weightsOk) break;
+                  if (!a_intfc->ReadRecordData(entry.trainCount)) {
+                     logger::error("[Cosave] Failed to read FQLW trainCount at index {}"sv, i);
+                     break;
+                  }
+                  acceptEntry(entry);
+               }
             }
 
-            logger::info("[Cosave] Loaded {} FQL entries ({} resolved, {} failed)"sv,
-               fqlData.entries.size(), fqlData.resolvedFormIDs, fqlData.failedFormIDs);
+            // Recompute totalTrainCount from surviving entries so trains belonging
+            // to failed/dropped FormIDs don't inflate the UCB exploration term.
+            // Invariant: m_totalTrainCount == sum of per-item trainCounts (the
+            // learner increments both together on every train).
+            uint32_t survivingTrains = 0;
+            for (const auto& e : fqlData.entries) {
+               survivingTrains += e.trainCount;
+            }
+            if (survivingTrains != fqlData.totalTrainCount) {
+               logger::info("[Cosave] Adjusted totalTrainCount {} -> {} ({} failed, {} corrupt)"sv,
+                  fqlData.totalTrainCount, survivingTrains, fqlData.failedFormIDs, droppedCorrupt);
+               fqlData.totalTrainCount = survivingTrains;
+            }
+
+            logger::info("[Cosave] Loaded {} FQL entries ({} resolved, {} failed, {} corrupt)"sv,
+               fqlData.entries.size(), fqlData.resolvedFormIDs, fqlData.failedFormIDs, droppedCorrupt);
             break;
          }
          default:

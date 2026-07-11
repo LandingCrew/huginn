@@ -90,7 +90,7 @@ namespace Huginn::Learning
 
       // Export all data for cosave save (acquires shared_lock)
       void ExportData(
-         std::function<void(SerializedEntry entry)> entryCallback,
+         const std::function<void(SerializedEntry entry)>& entryCallback,
          uint32_t& outTotalTrainCount) const;
 
       // Import data from cosave load (acquires unique_lock, clears existing data first)

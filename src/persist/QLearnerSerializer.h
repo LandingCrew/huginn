@@ -14,7 +14,6 @@ namespace Huginn::Persist
 
    // Record type (packed 4CC — SKSE interprets as little-endian uint32_t)
    inline constexpr uint32_t kRecordType_FQLWeights  = 'WLQF';  // 'FQLW' on disk
-   inline constexpr uint32_t kSerializationVersion    = 1;
    inline constexpr uint32_t kFQLSerializationVersion = 2;
    inline constexpr uint32_t kUniqueID                = 'QCNO';  // 'ONCQ' on disk
 

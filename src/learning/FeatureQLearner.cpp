@@ -263,7 +263,7 @@ namespace Huginn::Learning
    }
 
    void FeatureQLearner::ExportData(
-      std::function<void(SerializedEntry entry)> entryCallback,
+      const std::function<void(SerializedEntry entry)>& entryCallback,
       uint32_t& outTotalTrainCount) const
    {
       std::shared_lock lock(m_mutex);
