@@ -110,6 +110,12 @@ static void MaintainRegistries(RE::PlayerCharacter* player,
     // A single GetInventorySafe with a combined filter feeds both registries —
     // each ignores the other's form types — mirroring the weapon block's
     // shared-query pattern below. Reconciles (30s) stay in their own blocks.
+    //
+    // In steady state both delta timers share a baseline and fire on the same
+    // tick, so this reliably saves one traversal per window. If the item registry
+    // is IsLoading() for some ticks while scroll keeps firing, the two timers can
+    // desync and temporarily degrade back to two scans per window until they
+    // realign — a transient post-load perf edge case, not a correctness issue.
     {
         const bool itemDeltaDue = g_itemRegistry && !g_itemRegistry->IsLoading() &&
             g_registryTimers.itemDelta.IsDue(now, Config::ITEM_COUNT_REFRESH_INTERVAL_MS);
