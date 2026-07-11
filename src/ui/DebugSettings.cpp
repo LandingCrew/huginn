@@ -22,6 +22,7 @@ namespace Huginn::UI
         CSimpleIniA ini;
         if (LoadIniFile(ini, iniPath, "DebugSettings"sv)) {
             LoadFromIni(ini);
+            ApplyToWidgets();  // standalone load-then-apply convenience
         }
     }
 
@@ -35,9 +36,10 @@ namespace Huginn::UI
 
         logger::info("[DebugSettings] Loaded: StateManager={}, Registry={}, UtilityScorer={}"sv,
             stateManagerVisible, registryVisible, utilityScorerVisible);
-
-        // Apply to widgets immediately
-        ApplyToWidgets();
+        // No ApplyToWidgets() here — LoadFromIni is a pure loader (Phase 1), like
+        // every other settings class. Callers apply visibility explicitly: the
+        // LoadFromFile wrapper, InitializeGameSystems, and the reload path's
+        // ApplySideEffects (Phase 2).
     }
 
     void DebugSettings::ResetToDefaults()

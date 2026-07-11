@@ -307,7 +307,11 @@ static void InitializeGameSystems(bool isNewGame)
     UI::IntuitionMenu::Show();
 
     // ── 11b. Debug widget visibility (debug builds only) ───────────────
-    if (haveDMenuIni) UI::DebugSettings::GetSingleton().LoadFromIni(dmenuIni);
+    if (haveDMenuIni) {
+        auto& debugSettings = UI::DebugSettings::GetSingleton();
+        debugSettings.LoadFromIni(dmenuIni);
+        debugSettings.ApplyToWidgets();  // Phase-2 apply (LoadFromIni is now a pure loader)
+    }
 
     // ── 12. Debug integration tests (load game only) ───────────────────
 #ifndef NDEBUG

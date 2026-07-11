@@ -30,9 +30,6 @@ namespace Huginn::Settings
         /// Register with SKSE ModCallbackEvent system (call at kDataLoaded)
         void Register();
 
-        /// Unregister from event system
-        void Unregister();
-
         /// Check if currently registered
         [[nodiscard]] bool IsRegistered() const noexcept {
             return m_registered.load(std::memory_order_acquire);

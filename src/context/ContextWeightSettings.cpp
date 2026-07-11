@@ -17,115 +17,74 @@ namespace Huginn::State
         const char* section = "ContextWeights";
 
         // Elemental / status effects
-        weightOnFire = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeightOnFire", ContextWeightDefaults::ON_FIRE));
-        weightPoisoned = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeightPoisoned", ContextWeightDefaults::POISONED));
-        weightFrozen = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeightFrozen", ContextWeightDefaults::FROZEN));
-        weightShocked = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeightShocked", ContextWeightDefaults::SHOCKED));
-        weightDiseased = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeightDiseased", ContextWeightDefaults::DISEASED));
+        weightOnFire = ReadClampedFloat(ini, section, "fWeightOnFire", ContextWeightDefaults::ON_FIRE, 0.0f, 100.0f, "ContextWeightSettings"sv);
+        weightPoisoned = ReadClampedFloat(ini, section, "fWeightPoisoned", ContextWeightDefaults::POISONED, 0.0f, 100.0f, "ContextWeightSettings"sv);
+        weightFrozen = ReadClampedFloat(ini, section, "fWeightFrozen", ContextWeightDefaults::FROZEN, 0.0f, 100.0f, "ContextWeightSettings"sv);
+        weightShocked = ReadClampedFloat(ini, section, "fWeightShocked", ContextWeightDefaults::SHOCKED, 0.0f, 100.0f, "ContextWeightSettings"sv);
+        weightDiseased = ReadClampedFloat(ini, section, "fWeightDiseased", ContextWeightDefaults::DISEASED, 0.0f, 100.0f, "ContextWeightSettings"sv);
 
         // Environmental
-        weightUnderwater = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeightUnderwater", ContextWeightDefaults::UNDERWATER));
-        weightFallingHigh = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeightFallingHigh", ContextWeightDefaults::FALLING_HIGH));
-        weightLookingAtLock = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeightLookingAtLock", ContextWeightDefaults::LOOKING_AT_LOCK));
+        weightUnderwater = ReadClampedFloat(ini, section, "fWeightUnderwater", ContextWeightDefaults::UNDERWATER, 0.0f, 100.0f, "ContextWeightSettings"sv);
+        weightFallingHigh = ReadClampedFloat(ini, section, "fWeightFallingHigh", ContextWeightDefaults::FALLING_HIGH, 0.0f, 100.0f, "ContextWeightSettings"sv);
+        weightLookingAtLock = ReadClampedFloat(ini, section, "fWeightLookingAtLock", ContextWeightDefaults::LOOKING_AT_LOCK, 0.0f, 100.0f, "ContextWeightSettings"sv);
 
         // Weapon charge
-        weightWeaponChargeModerate = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeightWeaponChargeModerate", ContextWeightDefaults::WEAPON_CHARGE_MODERATE));
-        weightWeaponChargeLow = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeightWeaponChargeLow", ContextWeightDefaults::WEAPON_CHARGE_LOW));
-        weightWeaponChargeCritical = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeightWeaponChargeCritical", ContextWeightDefaults::WEAPON_CHARGE_CRITICAL));
+        weightWeaponChargeModerate = ReadClampedFloat(ini, section, "fWeightWeaponChargeModerate", ContextWeightDefaults::WEAPON_CHARGE_MODERATE, 0.0f, 100.0f, "ContextWeightSettings"sv);
+        weightWeaponChargeLow = ReadClampedFloat(ini, section, "fWeightWeaponChargeLow", ContextWeightDefaults::WEAPON_CHARGE_LOW, 0.0f, 100.0f, "ContextWeightSettings"sv);
+        weightWeaponChargeCritical = ReadClampedFloat(ini, section, "fWeightWeaponChargeCritical", ContextWeightDefaults::WEAPON_CHARGE_CRITICAL, 0.0f, 100.0f, "ContextWeightSettings"sv);
 
         // Active buff suppression
-        weightHasWaterbreathing = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeightHasWaterbreathing", ContextWeightDefaults::HAS_WATERBREATHING));
-        weightHasInvisibility = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeightHasInvisibility", ContextWeightDefaults::HAS_INVISIBILITY));
-        weightHasMuffle = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeightHasMuffle", ContextWeightDefaults::HAS_MUFFLE));
-        weightHasArmorBuff = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeightHasArmorBuff", ContextWeightDefaults::HAS_ARMOR_BUFF));
-        weightHasCloak = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeightHasCloak", ContextWeightDefaults::HAS_CLOAK));
-        weightHasSummon = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeightHasSummon", ContextWeightDefaults::HAS_SUMMON));
+        weightHasWaterbreathing = ReadClampedFloat(ini, section, "fWeightHasWaterbreathing", ContextWeightDefaults::HAS_WATERBREATHING, 0.0f, 100.0f, "ContextWeightSettings"sv);
+        weightHasInvisibility = ReadClampedFloat(ini, section, "fWeightHasInvisibility", ContextWeightDefaults::HAS_INVISIBILITY, 0.0f, 100.0f, "ContextWeightSettings"sv);
+        weightHasMuffle = ReadClampedFloat(ini, section, "fWeightHasMuffle", ContextWeightDefaults::HAS_MUFFLE, 0.0f, 100.0f, "ContextWeightSettings"sv);
+        weightHasArmorBuff = ReadClampedFloat(ini, section, "fWeightHasArmorBuff", ContextWeightDefaults::HAS_ARMOR_BUFF, 0.0f, 100.0f, "ContextWeightSettings"sv);
+        weightHasCloak = ReadClampedFloat(ini, section, "fWeightHasCloak", ContextWeightDefaults::HAS_CLOAK, 0.0f, 100.0f, "ContextWeightSettings"sv);
+        weightHasSummon = ReadClampedFloat(ini, section, "fWeightHasSummon", ContextWeightDefaults::HAS_SUMMON, 0.0f, 100.0f, "ContextWeightSettings"sv);
 
         // =====================================================================
         // NEW: NORMALIZED WEIGHTS [0,1] for ContextRuleEngine
         // =====================================================================
 
         // Health/resource restoration
-        weightCriticalHealth = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeightCriticalHealth", ContextWeightDefaults::CRITICAL_HEALTH));
-        weightLowHealth = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeightLowHealth", ContextWeightDefaults::LOW_HEALTH));
-        weightLowMagicka = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeightLowMagicka", ContextWeightDefaults::LOW_MAGICKA));
-        weightLowStamina = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeightLowStamina", ContextWeightDefaults::LOW_STAMINA));
+        weightCriticalHealth = ReadClampedFloat(ini, section, "fWeightCriticalHealth", ContextWeightDefaults::CRITICAL_HEALTH, 0.0f, 100.0f, "ContextWeightSettings"sv);
+        weightLowHealth = ReadClampedFloat(ini, section, "fWeightLowHealth", ContextWeightDefaults::LOW_HEALTH, 0.0f, 100.0f, "ContextWeightSettings"sv);
+        weightLowMagicka = ReadClampedFloat(ini, section, "fWeightLowMagicka", ContextWeightDefaults::LOW_MAGICKA, 0.0f, 100.0f, "ContextWeightSettings"sv);
+        weightLowStamina = ReadClampedFloat(ini, section, "fWeightLowStamina", ContextWeightDefaults::LOW_STAMINA, 0.0f, 100.0f, "ContextWeightSettings"sv);
 
         // Combat/tactical
-        weightInCombat = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeightInCombat", ContextWeightDefaults::IN_COMBAT));
-        weightMultipleEnemies = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeightMultipleEnemies", ContextWeightDefaults::MULTIPLE_ENEMIES));
-        weightEnemyCasting = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeightEnemyCasting", ContextWeightDefaults::ENEMY_CASTING));
-        weightSneaking = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeightSneaking", ContextWeightDefaults::SNEAKING));
+        weightInCombat = ReadClampedFloat(ini, section, "fWeightInCombat", ContextWeightDefaults::IN_COMBAT, 0.0f, 100.0f, "ContextWeightSettings"sv);
+        weightMultipleEnemies = ReadClampedFloat(ini, section, "fWeightMultipleEnemies", ContextWeightDefaults::MULTIPLE_ENEMIES, 0.0f, 100.0f, "ContextWeightSettings"sv);
+        weightEnemyCasting = ReadClampedFloat(ini, section, "fWeightEnemyCasting", ContextWeightDefaults::ENEMY_CASTING, 0.0f, 100.0f, "ContextWeightSettings"sv);
+        weightSneaking = ReadClampedFloat(ini, section, "fWeightSneaking", ContextWeightDefaults::SNEAKING, 0.0f, 100.0f, "ContextWeightSettings"sv);
 
         // Workstations
-        weightAtForge = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeightAtForge", ContextWeightDefaults::AT_FORGE));
-        weightAtEnchanter = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeightAtEnchanter", ContextWeightDefaults::AT_ENCHANTER));
-        weightAtAlchemyLab = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeightAtAlchemyLab", ContextWeightDefaults::AT_ALCHEMY_LAB));
+        weightAtForge = ReadClampedFloat(ini, section, "fWeightAtForge", ContextWeightDefaults::AT_FORGE, 0.0f, 100.0f, "ContextWeightSettings"sv);
+        weightAtEnchanter = ReadClampedFloat(ini, section, "fWeightAtEnchanter", ContextWeightDefaults::AT_ENCHANTER, 0.0f, 100.0f, "ContextWeightSettings"sv);
+        weightAtAlchemyLab = ReadClampedFloat(ini, section, "fWeightAtAlchemyLab", ContextWeightDefaults::AT_ALCHEMY_LAB, 0.0f, 100.0f, "ContextWeightSettings"sv);
 
         // Target-specific
-        weightTargetUndead = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeightTargetUndead", ContextWeightDefaults::TARGET_UNDEAD));
-        weightTargetDaedra = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeightTargetDaedra", ContextWeightDefaults::TARGET_DAEDRA));
-        weightTargetDragon = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeightTargetDragon", ContextWeightDefaults::TARGET_DRAGON));
+        weightTargetUndead = ReadClampedFloat(ini, section, "fWeightTargetUndead", ContextWeightDefaults::TARGET_UNDEAD, 0.0f, 100.0f, "ContextWeightSettings"sv);
+        weightTargetDaedra = ReadClampedFloat(ini, section, "fWeightTargetDaedra", ContextWeightDefaults::TARGET_DAEDRA, 0.0f, 100.0f, "ContextWeightSettings"sv);
+        weightTargetDragon = ReadClampedFloat(ini, section, "fWeightTargetDragon", ContextWeightDefaults::TARGET_DRAGON, 0.0f, 100.0f, "ContextWeightSettings"sv);
 
         // Equipment
-        weightNeedsAmmo = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeightNeedsAmmo", ContextWeightDefaults::NEEDS_AMMO));
-        weightNoWeapon = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeightNoWeapon", ContextWeightDefaults::NO_WEAPON));
-        weightWeapon = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeightWeapon", ContextWeightDefaults::WEAPON));
-        weightSpell = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeightSpell", ContextWeightDefaults::SPELL));
-        weightSummon = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeightSummon", ContextWeightDefaults::SUMMON));
+        weightNeedsAmmo = ReadClampedFloat(ini, section, "fWeightNeedsAmmo", ContextWeightDefaults::NEEDS_AMMO, 0.0f, 100.0f, "ContextWeightSettings"sv);
+        weightNoWeapon = ReadClampedFloat(ini, section, "fWeightNoWeapon", ContextWeightDefaults::NO_WEAPON, 0.0f, 100.0f, "ContextWeightSettings"sv);
+        weightWeapon = ReadClampedFloat(ini, section, "fWeightWeapon", ContextWeightDefaults::WEAPON, 0.0f, 100.0f, "ContextWeightSettings"sv);
+        weightSpell = ReadClampedFloat(ini, section, "fWeightSpell", ContextWeightDefaults::SPELL, 0.0f, 100.0f, "ContextWeightSettings"sv);
+        weightSummon = ReadClampedFloat(ini, section, "fWeightSummon", ContextWeightDefaults::SUMMON, 0.0f, 100.0f, "ContextWeightSettings"sv);
 
         // Utility baseline
-        weightBaseRelevance = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeightBaseRelevance", ContextWeightDefaults::BASE_RELEVANCE));
+        weightBaseRelevance = ReadClampedFloat(ini, section, "fWeightBaseRelevance", ContextWeightDefaults::BASE_RELEVANCE, 0.0f, 100.0f, "ContextWeightSettings"sv);
 
         // =====================================================================
         // CONTINUOUS FUNCTION SMOOTHING PARAMETERS
         // =====================================================================
 
-        fHealthSmoothingExponent = static_cast<float>(
-            ini.GetDoubleValue(section, "fHealthSmoothingExponent", ContextWeightDefaults::HEALTH_SMOOTHING_EXPONENT));
-        fMagickaSmoothingExponent = static_cast<float>(
-            ini.GetDoubleValue(section, "fMagickaSmoothingExponent", ContextWeightDefaults::MAGICKA_SMOOTHING_EXPONENT));
-        fStaminaSmoothingExponent = static_cast<float>(
-            ini.GetDoubleValue(section, "fStaminaSmoothingExponent", ContextWeightDefaults::STAMINA_SMOOTHING_EXPONENT));
-        fWeaponChargeSmoothingExponent = static_cast<float>(
-            ini.GetDoubleValue(section, "fWeaponChargeSmoothingExponent", ContextWeightDefaults::WEAPON_CHARGE_SMOOTHING_EXPONENT));
+        fHealthSmoothingExponent = ReadClampedFloat(ini, section, "fHealthSmoothingExponent", ContextWeightDefaults::HEALTH_SMOOTHING_EXPONENT, 0.0f, 100.0f, "ContextWeightSettings"sv);
+        fMagickaSmoothingExponent = ReadClampedFloat(ini, section, "fMagickaSmoothingExponent", ContextWeightDefaults::MAGICKA_SMOOTHING_EXPONENT, 0.0f, 100.0f, "ContextWeightSettings"sv);
+        fStaminaSmoothingExponent = ReadClampedFloat(ini, section, "fStaminaSmoothingExponent", ContextWeightDefaults::STAMINA_SMOOTHING_EXPONENT, 0.0f, 100.0f, "ContextWeightSettings"sv);
+        fWeaponChargeSmoothingExponent = ReadClampedFloat(ini, section, "fWeaponChargeSmoothingExponent", ContextWeightDefaults::WEAPON_CHARGE_SMOOTHING_EXPONENT, 0.0f, 100.0f, "ContextWeightSettings"sv);
 
         logger::info("[ContextWeightSettings] Loaded legacy weights: fire={:.1f}, poison={:.1f}, frost={:.1f}, "
             "shock={:.1f}, disease={:.1f}, underwater={:.1f}, falling={:.1f}, lock={:.1f}",

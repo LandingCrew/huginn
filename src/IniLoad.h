@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <filesystem>
 #include <string_view>
 #include <SimpleIni.h>
@@ -27,3 +28,19 @@ enum class IniMissing { Info, Warn };
 /// @return true if the file was found and parsed; false (caller keeps defaults) otherwise.
 [[nodiscard]] bool LoadIniFile(CSimpleIniA& out, const std::filesystem::path& path,
                                std::string_view tag, IniMissing missing = IniMissing::Info);
+
+/// @brief Read a float INI value and clamp it to [lo, hi].
+/// @details Warns (prefixed with `tag`) when the raw value was outside the range,
+/// so a typo'd or garbage INI edit (e.g. a negative scoring weight) is surfaced in
+/// the log and degraded gracefully instead of silently poisoning recommendations.
+[[nodiscard]] inline float ReadClampedFloat(const CSimpleIniA& ini, const char* section,
+    const char* key, double defaultVal, float lo, float hi, std::string_view tag)
+{
+   const float raw = static_cast<float>(ini.GetDoubleValue(section, key, defaultVal));
+   const float clamped = std::clamp(raw, lo, hi);
+   if (clamped != raw) {
+      logger::warn("[{}] {} = {:.3f} out of range [{:.1f}, {:.1f}], clamped to {:.3f}"sv,
+         tag, key, raw, lo, hi, clamped);
+   }
+   return clamped;
+}
