@@ -116,6 +116,10 @@ namespace Huginn::Settings
             dMenuPath = mainIniPath;
         }
 
+        // Snapshot the wheel layout BEFORE reloading so ApplySideEffects can tell
+        // whether a Wheeler rebuild is actually needed (vs. e.g. a scoring tweak).
+        const WheelLayout wheelLayoutBefore = CaptureWheelLayout();
+
         // =====================================================================
         // Phase 1: Reload all settings from INI
         // =====================================================================
@@ -179,7 +183,7 @@ namespace Huginn::Settings
         // =====================================================================
         // Phase 2: Apply side effects (reuse the already-parsed main INI)
         // =====================================================================
-        ApplySideEffects(haveMain ? &mainIni : nullptr);
+        ApplySideEffects(haveMain ? &mainIni : nullptr, wheelLayoutBefore);
 
         logger::info("[SettingsReloader] Reload complete"sv);
         RE::DebugNotification("Huginn: Settings reloaded");
@@ -223,6 +227,10 @@ namespace Huginn::Settings
         // Reset all settings to compile-time defaults
         // Each Settings class has a ResetToDefaults() method
 
+        // Snapshot before resetting so the Wheeler rebuild is skipped if the
+        // defaults happen to match the current wheel layout.
+        const WheelLayout wheelLayoutBefore = CaptureWheelLayout();
+
         Slot::SlotSettings::GetSingleton().ResetToDefaults();
         Scoring::ScorerSettings::GetSingleton().ResetToDefaults();
         State::ContextWeightSettings::GetSingleton().ResetToDefaults();
@@ -242,12 +250,27 @@ namespace Huginn::Settings
         logger::debug("[SettingsReloader]   All settings reset to compile-time defaults"sv);
 
         // Apply side effects (same as reload)
-        ApplySideEffects();
+        ApplySideEffects(nullptr, wheelLayoutBefore);
 
         logger::info("[SettingsReloader] Reset to defaults complete"sv);
     }
 
-    void SettingsReloader::ApplySideEffects(const CSimpleIniA* mainIni)
+    SettingsReloader::WheelLayout SettingsReloader::CaptureWheelLayout()
+    {
+        WheelLayout layout;
+        layout.wheelPosition = Wheeler::WheelerSettings::GetSingleton().GetAPIPosition();
+
+        auto& slotSettings = Slot::SlotSettings::GetSingleton();
+        const size_t pageCount = slotSettings.GetPageCount();
+        layout.pages.reserve(pageCount);
+        for (size_t p = 0; p < pageCount; ++p) {
+            const auto page = slotSettings.GetPage(p);
+            layout.pages.emplace_back(page.name, page.slots.size());
+        }
+        return layout;
+    }
+
+    void SettingsReloader::ApplySideEffects(const CSimpleIniA* mainIni, const WheelLayout& beforeLayout)
     {
         // NOTE: Phase 1 settings (ScorerSettings, ContextWeightSettings, etc.)
         // are POD float/bool singletons. Both UpdateHandler and SettingsReloader
@@ -283,12 +306,24 @@ namespace Huginn::Settings
         slotLocker.SetConfig(mainIni ? LoadSlotLockerConfigFromINI(*mainIni)
                                      : LoadSlotLockerConfigFromINI());
 
-        // 4. Rebuild Wheeler wheels (if connected)
+        // 4. Wheeler wheels — rebuild ONLY if the wheel structure actually changed.
+        // Wheel creation depends solely on the page layout (count/name/slot count)
+        // and the wheel position; subtext labels, auto-focus, etc. are read per-tick
+        // and need no rebuild. Tearing valid wheels down on every reload (e.g. a
+        // scoring tweak) is wasteful cross-DLL work, so compare and skip when equal.
         auto& wheelerClient = Wheeler::WheelerClient::GetSingleton();
         if (wheelerClient.IsConnected()) {
-            wheelerClient.DestroyRecommendationWheels();
-            wheelerClient.CreateRecommendationWheels();
-            logger::debug("[SettingsReloader]   [Wheeler] wheels rebuilt"sv);
+            if (CaptureWheelLayout() != beforeLayout) {
+                wheelerClient.DestroyRecommendationWheels();
+                wheelerClient.CreateRecommendationWheels();
+                logger::debug("[SettingsReloader]   [Wheeler] wheels rebuilt (layout changed)"sv);
+            } else {
+                // Structure unchanged: don't tear down valid wheels. Create is
+                // idempotent — it no-ops when wheels are valid, or recreates them
+                // if they went missing (e.g. a prior save/load invalidation).
+                wheelerClient.CreateRecommendationWheels();
+                logger::debug("[SettingsReloader]   [Wheeler] layout unchanged, skipped rebuild"sv);
+            }
         }
 
         // 5. Reapply Intuition widget settings (position, alpha, scale)

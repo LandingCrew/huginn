@@ -1,7 +1,11 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <filesystem>
+#include <string>
+#include <utility>
+#include <vector>
 #include <SimpleIni.h>
 
 namespace Huginn::Settings
@@ -75,13 +79,30 @@ namespace Huginn::Settings
         /// Reset all settings to compile-time defaults
         void ResetAllToDefaults();
 
+        /// The inputs Wheeler wheel *creation* actually depends on: the wheel
+        /// position and, per page, the name + slot count. Everything else Wheeler
+        /// reads (subtext labels, auto-focus, post-activation) is applied per-tick
+        /// and needs no rebuild. Captured before a reload and compared after to
+        /// decide whether the wheels must be torn down and recreated.
+        struct WheelLayout
+        {
+            int32_t wheelPosition = 0;
+            std::vector<std::pair<std::string, size_t>> pages;
+            bool operator==(const WheelLayout&) const = default;
+        };
+
+        /// Snapshot the current wheel layout (reads SlotSettings + WheelerSettings).
+        [[nodiscard]] static WheelLayout CaptureWheelLayout();
+
         /// Apply side effects after settings have been reloaded/reset
         /// (scorer config, allocator, locker, wheels, widget).
-        /// @param mainIni  When non-null, the already-parsed main INI is reused
+        /// @param mainIni      When non-null, the already-parsed main INI is reused
         ///   for the wildcard + slot-locker loads (parse-once reload path). When
         ///   null (reset-to-defaults path), those two loaders parse Huginn.ini
         ///   themselves, preserving the prior behavior.
-        void ApplySideEffects(const CSimpleIniA* mainIni = nullptr);
+        /// @param beforeLayout Wheel layout captured before the reload/reset; the
+        ///   Wheeler rebuild is skipped when the post-reload layout matches it.
+        void ApplySideEffects(const CSimpleIniA* mainIni, const WheelLayout& beforeLayout);
 
         /// Registration state (atomic for thread safety)
         std::atomic<bool> m_registered{false};
