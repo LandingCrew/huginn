@@ -1,4 +1,5 @@
 #include "ItemOverrides.h"
+#include "IniLoad.h"
 #include <algorithm>
 #include <cctype>
 
@@ -6,17 +7,8 @@ namespace Huginn::Item
 {
    bool ItemOverrides::LoadFromFile(const std::filesystem::path& iniPath)
    {
-      if (!std::filesystem::exists(iniPath)) {
-      logger::warn("Item overrides file not found: {}"sv, iniPath.string());
-      return false;
-      }
-
       CSimpleIniA ini;
-      ini.SetUnicode();
-      SI_Error rc = ini.LoadFile(iniPath.string().c_str());
-
-      if (rc < 0) {
-      logger::error("Failed to load item overrides file: {}"sv, iniPath.string());
+      if (!LoadIniFile(ini, iniPath, "ItemOverrides"sv, IniMissing::Warn)) {
       return false;
       }
 

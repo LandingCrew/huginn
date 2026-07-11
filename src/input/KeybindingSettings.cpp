@@ -1,24 +1,19 @@
 #include "KeybindingSettings.h"
+#include "IniLoad.h"
 #include <SimpleIni.h>
 
 namespace Huginn::Input
 {
     void KeybindingSettings::LoadFromFile(const std::filesystem::path& iniPath)
     {
-        if (!std::filesystem::exists(iniPath)) {
-            logger::info("[KeybindingSettings] INI file not found, using defaults: {}"sv, iniPath.string());
-            return;
-        }
-
         CSimpleIniA ini;
-        ini.SetUnicode();
-        SI_Error rc = ini.LoadFile(iniPath.string().c_str());
-
-        if (rc < 0) {
-            logger::error("[KeybindingSettings] Failed to load INI file: {}"sv, iniPath.string());
-            return;
+        if (LoadIniFile(ini, iniPath, "KeybindingSettings"sv)) {
+            LoadFromIni(ini);
         }
+    }
 
+    void KeybindingSettings::LoadFromIni(const CSimpleIniA& ini)
+    {
         const char* section = "Keybindings";
 
         slot1Key  = static_cast<uint32_t>(ini.GetLongValue(section, "iSlot1Key", KeybindingDefaults::SLOT1_KEY));

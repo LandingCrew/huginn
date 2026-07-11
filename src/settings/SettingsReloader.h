@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <filesystem>
+#include <SimpleIni.h>
 
 namespace Huginn::Settings
 {
@@ -75,8 +76,12 @@ namespace Huginn::Settings
         void ResetAllToDefaults();
 
         /// Apply side effects after settings have been reloaded/reset
-        /// (scorer config, allocator, locker, wheels, widget)
-        void ApplySideEffects();
+        /// (scorer config, allocator, locker, wheels, widget).
+        /// @param mainIni  When non-null, the already-parsed main INI is reused
+        ///   for the wildcard + slot-locker loads (parse-once reload path). When
+        ///   null (reset-to-defaults path), those two loaders parse Huginn.ini
+        ///   themselves, preserving the prior behavior.
+        void ApplySideEffects(const CSimpleIniA* mainIni = nullptr);
 
         /// Registration state (atomic for thread safety)
         std::atomic<bool> m_registered{false};

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SlotConfig.h"
+#include <SimpleIni.h>
 #include <atomic>
 #include <filesystem>
 #include <shared_mutex>
@@ -58,6 +59,7 @@ namespace Huginn::Slot
 
         /// Load settings from INI file
         void LoadFromFile(const std::filesystem::path& iniPath);
+        void LoadFromIni(const CSimpleIniA& ini);
 
         /// Reset to default configuration
         void ResetToDefaults();

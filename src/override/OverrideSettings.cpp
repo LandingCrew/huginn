@@ -1,25 +1,19 @@
 #include "OverrideConfig.h"
+#include "IniLoad.h"
 
 namespace Huginn::Override
 {
     void Settings::LoadFromFile(const std::filesystem::path& iniPath)
     {
-        if (!std::filesystem::exists(iniPath)) {
-            logger::info("[OverrideSettings] INI file not found, using defaults: {}"sv, iniPath.string());
-            return;
-        }
-
         CSimpleIniA ini;
-        ini.SetUnicode();
-        SI_Error rc = ini.LoadFile(iniPath.string().c_str());
-
-        if (rc < 0) {
-            logger::error("[OverrideSettings] Failed to load INI file: {}"sv, iniPath.string());
-            return;
+        if (LoadIniFile(ini, iniPath, "OverrideSettings"sv)) {
+            logger::info("[OverrideSettings] Loading override settings from: {}"sv, iniPath.string());
+            LoadFromIni(ini);
         }
+    }
 
-        logger::info("[OverrideSettings] Loading override settings from: {}"sv, iniPath.string());
-
+    void Settings::LoadFromIni(const CSimpleIniA& ini)
+    {
         // Helper lambda for reading float values with defaults
         auto readFloat = [&ini](const char* section, const char* key, float defaultVal) -> float {
             return static_cast<float>(ini.GetDoubleValue(section, key, defaultVal));

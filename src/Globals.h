@@ -4,6 +4,9 @@
 #include <memory>
 #include <atomic>
 #include <filesystem>
+#include <string_view>
+#include <SimpleIni.h>
+#include "IniLoad.h"
 
 #include "state/StateEvaluator.h"
 #include "state/GameState.h"
@@ -86,15 +89,24 @@ void ResetPipelineSubsystems();
 /// Globals.cpp so the path literal isn't duplicated across translation units.
 [[nodiscard]] std::filesystem::path GetMainIniPath();
 
-/// @brief Load [Candidates] section settings from Huginn.ini into g_candidateConfig.
+// LoadIniFile is declared in IniLoad.h (included above) — the shared parse front
+// door used by every settings loader.
+
+/// @brief Load [Candidates] section settings from an already-parsed INI into g_candidateConfig.
+void LoadCandidateConfigFromINI(const CSimpleIniA& ini);
+/// @brief Convenience overload: parse Huginn.ini, then load [Candidates].
 /// @note Called during both kNewGame and kPostLoadGame events.
 void LoadCandidateConfigFromINI();
 
-/// @brief Load [Wildcards] section settings from Huginn.ini into the WildcardManager.
+/// @brief Load [Wildcards] section settings from an already-parsed INI into the WildcardManager.
+void LoadWildcardConfigFromINI(Huginn::Scoring::WildcardManager& wildcardMgr, const CSimpleIniA& ini);
+/// @brief Convenience overload: parse Huginn.ini, then load [Wildcards].
 /// @note Called during both kNewGame and kPostLoadGame events, after UtilityScorer is created.
 void LoadWildcardConfigFromINI(Huginn::Scoring::WildcardManager& wildcardMgr);
 
-/// @brief Load [SlotLocker] section settings from Huginn.ini.
+/// @brief Load [SlotLocker] section settings from an already-parsed INI.
+[[nodiscard]] Huginn::Slot::SlotLockConfig LoadSlotLockerConfigFromINI(const CSimpleIniA& ini);
+/// @brief Convenience overload: parse Huginn.ini, then load [SlotLocker].
 /// @note Called during kNewGame, kPostLoadGame, and hg reload.
 [[nodiscard]] Huginn::Slot::SlotLockConfig LoadSlotLockerConfigFromINI();
 

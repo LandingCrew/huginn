@@ -78,6 +78,7 @@ namespace Huginn::Learning
         }
 
         void LoadFromFile(const std::filesystem::path& iniPath);
+        void LoadFromIni(const CSimpleIniA& ini);
         void ResetToDefaults();
 
         /// Produce an immutable snapshot of all learning settings.

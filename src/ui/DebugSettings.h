@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <SimpleIni.h>
 
 namespace Huginn::UI
 {
@@ -29,6 +30,7 @@ namespace Huginn::UI
          * @param iniPath Path to Huginn.ini
          */
         void LoadFromFile(const std::filesystem::path& iniPath);
+        void LoadFromIni(const CSimpleIniA& ini);
 
         /**
          * @brief Reset all settings to compile-time defaults

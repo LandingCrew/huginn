@@ -1,24 +1,19 @@
 #include "ContextWeightSettings.h"
+#include "IniLoad.h"
 #include "ContextWeightConfig.h"
 
 namespace Huginn::State
 {
     void ContextWeightSettings::LoadFromFile(const std::filesystem::path& iniPath)
     {
-        if (!std::filesystem::exists(iniPath)) {
-            logger::info("[ContextWeightSettings] INI file not found, using defaults: {}"sv, iniPath.string());
-            return;
-        }
-
         CSimpleIniA ini;
-        ini.SetUnicode();
-        SI_Error rc = ini.LoadFile(iniPath.string().c_str());
-
-        if (rc < 0) {
-            logger::error("[ContextWeightSettings] Failed to load INI file: {}"sv, iniPath.string());
-            return;
+        if (LoadIniFile(ini, iniPath, "ContextWeightSettings"sv)) {
+            LoadFromIni(ini);
         }
+    }
 
+    void ContextWeightSettings::LoadFromIni(const CSimpleIniA& ini)
+    {
         const char* section = "ContextWeights";
 
         // Elemental / status effects
