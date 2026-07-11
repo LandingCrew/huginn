@@ -132,14 +132,29 @@ std::filesystem::path GetMainIniPath() {
   return std::filesystem::path("Data/SKSE/Plugins/Huginn.ini");
 }
 
+bool LoadIniFile(CSimpleIniA& out, const std::filesystem::path& path, std::string_view tag) {
+  std::error_code ec;
+  if (!std::filesystem::exists(path, ec) || ec) {
+    logger::info("[{}] INI file not found, using defaults: {}"sv, tag, path.string());
+    return false;
+  }
+
+  out.SetUnicode();
+  if (out.LoadFile(path.string().c_str()) < 0) {
+    logger::error("[{}] Failed to load INI file: {}"sv, tag, path.string());
+    return false;
+  }
+  return true;
+}
+
 void LoadCandidateConfigFromINI() {
-  const auto iniPath = GetMainIniPath();
-  if (!std::filesystem::exists(iniPath)) return;
-
   CSimpleIniA ini;
-  ini.SetUnicode();
-  if (ini.LoadFile(iniPath.string().c_str()) < 0) return;
+  if (LoadIniFile(ini, GetMainIniPath(), "CandidateConfig"sv)) {
+    LoadCandidateConfigFromINI(ini);
+  }
+}
 
+void LoadCandidateConfigFromINI(const CSimpleIniA& ini) {
   const char* section = "Candidates";
 
   // Uncastable spell policy (case-insensitive)
@@ -167,14 +182,15 @@ void LoadCandidateConfigFromINI() {
 }
 
 Slot::SlotLockConfig LoadSlotLockerConfigFromINI() {
-  const auto iniPath = GetMainIniPath();
-  Slot::SlotLockConfig config;
-
-  if (!std::filesystem::exists(iniPath)) return config;
-
   CSimpleIniA ini;
-  ini.SetUnicode();
-  if (ini.LoadFile(iniPath.string().c_str()) < 0) return config;
+  if (LoadIniFile(ini, GetMainIniPath(), "SlotLockerConfig"sv)) {
+    return LoadSlotLockerConfigFromINI(ini);
+  }
+  return Slot::SlotLockConfig{};  // defaults
+}
+
+Slot::SlotLockConfig LoadSlotLockerConfigFromINI(const CSimpleIniA& ini) {
+  Slot::SlotLockConfig config;
 
   const char* section = "SlotLocker";
   config.lockDurationMs = static_cast<float>(
@@ -194,13 +210,13 @@ Slot::SlotLockConfig LoadSlotLockerConfigFromINI() {
 }
 
 void LoadWildcardConfigFromINI(Scoring::WildcardManager& wildcardMgr) {
-  const auto iniPath = GetMainIniPath();
-  if (!std::filesystem::exists(iniPath)) return;
-
   CSimpleIniA ini;
-  ini.SetUnicode();
-  if (ini.LoadFile(iniPath.string().c_str()) < 0) return;
+  if (LoadIniFile(ini, GetMainIniPath(), "WildcardConfig"sv)) {
+    LoadWildcardConfigFromINI(wildcardMgr, ini);
+  }
+}
 
+void LoadWildcardConfigFromINI(Scoring::WildcardManager& wildcardMgr, const CSimpleIniA& ini) {
   const char* section = "Wildcards";
 
   wildcardMgr.SetBaseProbability(static_cast<float>(

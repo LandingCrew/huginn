@@ -1,23 +1,18 @@
 #include "IntuitionSettings.h"
+#include "IniLoad.h"
 
 namespace Huginn::UI
 {
     void IntuitionSettings::LoadFromFile(const std::filesystem::path& iniPath)
     {
-        if (!std::filesystem::exists(iniPath)) {
-            logger::info("[IntuitionSettings] INI file not found, using defaults: {}"sv, iniPath.string());
-            return;
-        }
-
         CSimpleIniA ini;
-        ini.SetUnicode();
-        SI_Error rc = ini.LoadFile(iniPath.string().c_str());
-
-        if (rc < 0) {
-            logger::error("[IntuitionSettings] Failed to load INI file: {}"sv, iniPath.string());
-            return;
+        if (LoadIniFile(ini, iniPath, "IntuitionSettings"sv)) {
+            LoadFromIni(ini);
         }
+    }
 
+    void IntuitionSettings::LoadFromIni(const CSimpleIniA& ini)
+    {
         const char* section = "Widget";
 
         enabled   = ini.GetBoolValue(section, "bEnabled", IntuitionDefaults::ENABLED);

@@ -69,6 +69,7 @@ namespace Huginn::Override
 
         // Load settings from INI file
         void LoadFromFile(const std::filesystem::path& iniPath);
+        void LoadFromIni(const CSimpleIniA& ini);
 
         // Reset to defaults
         void ResetToDefaults();

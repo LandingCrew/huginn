@@ -1,4 +1,5 @@
 #include "WheelerSettings.h"
+#include "IniLoad.h"
 #include <stdexcept>
 
 namespace Huginn::Wheeler
@@ -34,20 +35,14 @@ namespace Huginn::Wheeler
 
     void WheelerSettings::LoadFromFile(const std::filesystem::path& iniPath)
     {
-        if (!std::filesystem::exists(iniPath)) {
-            logger::info("[WheelerSettings] INI file not found, using defaults: {}"sv, iniPath.string());
-            return;
-        }
-
         CSimpleIniA ini;
-        ini.SetUnicode();
-        SI_Error rc = ini.LoadFile(iniPath.string().c_str());
-
-        if (rc < 0) {
-            logger::error("[WheelerSettings] Failed to load INI file: {}"sv, iniPath.string());
-            return;
+        if (LoadIniFile(ini, iniPath, "WheelerSettings"sv)) {
+            LoadFromIni(ini);
         }
+    }
 
+    void WheelerSettings::LoadFromIni(const CSimpleIniA& ini)
+    {
         const char* section = "Wheeler";
 
         // Parse position: "First", "Last", or numeric

@@ -120,56 +120,66 @@ namespace Huginn::Settings
         // Phase 1: Reload all settings from INI
         // =====================================================================
         // Non-dMenu settings load from main INI (Scoring, ContextWeights, etc.)
-        // dMenu-managed settings load from dMenu INI (Widget, Keybindings, Debug)
+        // dMenu-managed settings load from dMenu INI (Widget, Keybindings, Debug).
+        // Each INI is parsed ONCE here and handed to every loader via LoadFromIni,
+        // instead of each loader re-opening and re-parsing the file itself.
+        CSimpleIniA mainIni;
+        const bool haveMain = LoadIniFile(mainIni, mainIniPath, "ReloadMain"sv);
+        CSimpleIniA dMenuIni;
+        const bool haveDMenu = LoadIniFile(dMenuIni, dMenuPath, "ReloadDMenu"sv);
 
-        // 1. SlotSettings first (page count may change, affects allocator + wheels)
-        Slot::SlotSettings::GetSingleton().LoadFromFile(mainIniPath);
-        logger::debug("[SettingsReloader]   [SlotSettings] reloaded"sv);
+        if (haveMain) {
+            // 1. SlotSettings first (page count may change, affects allocator + wheels)
+            Slot::SlotSettings::GetSingleton().LoadFromIni(mainIni);
+            logger::debug("[SettingsReloader]   [SlotSettings] reloaded"sv);
 
-        // 2. Scorer settings
-        auto& scorerSettings = Scoring::ScorerSettings::GetSingleton();
-        scorerSettings.LoadFromFile(mainIniPath);
-        logger::debug("[SettingsReloader]   [ScorerSettings] reloaded"sv);
+            // 2. Scorer settings
+            Scoring::ScorerSettings::GetSingleton().LoadFromIni(mainIni);
+            logger::debug("[SettingsReloader]   [ScorerSettings] reloaded"sv);
 
-        // 3. Context weight settings
-        State::ContextWeightSettings::GetSingleton().LoadFromFile(mainIniPath);
-        logger::debug("[SettingsReloader]   [ContextWeights] reloaded"sv);
+            // 3. Context weight settings
+            State::ContextWeightSettings::GetSingleton().LoadFromIni(mainIni);
+            logger::debug("[SettingsReloader]   [ContextWeights] reloaded"sv);
 
-        // 4. Override settings
-        Override::Settings::GetSingleton().LoadFromFile(mainIniPath);
-        logger::debug("[SettingsReloader]   [Overrides] reloaded"sv);
+            // 4. Override settings
+            Override::Settings::GetSingleton().LoadFromIni(mainIni);
+            logger::debug("[SettingsReloader]   [Overrides] reloaded"sv);
 
-        // 4b. Learning settings
-        Learning::LearningSettings::GetSingleton().LoadFromFile(mainIniPath);
-        logger::debug("[SettingsReloader]   [Learning] reloaded"sv);
+            // 4b. Learning settings
+            Learning::LearningSettings::GetSingleton().LoadFromIni(mainIni);
+            logger::debug("[SettingsReloader]   [Learning] reloaded"sv);
 
-        // 5. Wheeler settings (before wheel rebuild)
-        Wheeler::WheelerSettings::GetSingleton().LoadFromFile(mainIniPath);
-        logger::debug("[SettingsReloader]   [Wheeler] reloaded"sv);
+            // 5. Wheeler settings (before wheel rebuild)
+            Wheeler::WheelerSettings::GetSingleton().LoadFromIni(mainIni);
+            logger::debug("[SettingsReloader]   [Wheeler] reloaded"sv);
 
-        // 6. Candidate config (already hardcodes main INI internally)
-        LoadCandidateConfigFromINI();
-        logger::debug("[SettingsReloader]   [Candidates] reloaded"sv);
+            // 6. Candidate config
+            LoadCandidateConfigFromINI(mainIni);
+            logger::debug("[SettingsReloader]   [Candidates] reloaded"sv);
+        }
 
         // 7. Intuition widget settings (dMenu-managed)
-        UI::IntuitionSettings::GetSingleton().LoadFromFile(dMenuPath);
-        logger::debug("[SettingsReloader]   [Widget] reloaded"sv);
-
-        // 8. Keybindings (dMenu-managed)
         Input::KeybindingSettings keybindings;
-        keybindings.LoadFromFile(dMenuPath);
-        auto& inputHandler = Input::InputHandler::GetSingleton();
-        inputHandler.SetKeyCodes(keybindings);
-        logger::debug("[SettingsReloader]   [Keybindings] reloaded"sv);
+        if (haveDMenu) {
+            UI::IntuitionSettings::GetSingleton().LoadFromIni(dMenuIni);
+            logger::debug("[SettingsReloader]   [Widget] reloaded"sv);
 
-        // 9. Debug widget visibility (dMenu-managed)
-        UI::DebugSettings::GetSingleton().LoadFromFile(dMenuPath);
-        logger::debug("[SettingsReloader]   [Debug] reloaded"sv);
+            // 8. Keybindings (dMenu-managed)
+            keybindings.LoadFromIni(dMenuIni);
+            logger::debug("[SettingsReloader]   [Keybindings] reloaded"sv);
+
+            // 9. Debug widget visibility (dMenu-managed)
+            UI::DebugSettings::GetSingleton().LoadFromIni(dMenuIni);
+            logger::debug("[SettingsReloader]   [Debug] reloaded"sv);
+        }
+        // Apply keybindings (defaults if the dMenu INI was absent — matches the
+        // prior LoadFromFile-on-missing-file behavior of leaving defaults).
+        Input::InputHandler::GetSingleton().SetKeyCodes(keybindings);
 
         // =====================================================================
-        // Phase 2: Apply side effects
+        // Phase 2: Apply side effects (reuse the already-parsed main INI)
         // =====================================================================
-        ApplySideEffects();
+        ApplySideEffects(haveMain ? &mainIni : nullptr);
 
         logger::info("[SettingsReloader] Reload complete"sv);
         RE::DebugNotification("Huginn: Settings reloaded");
@@ -237,7 +247,7 @@ namespace Huginn::Settings
         logger::info("[SettingsReloader] Reset to defaults complete"sv);
     }
 
-    void SettingsReloader::ApplySideEffects()
+    void SettingsReloader::ApplySideEffects(const CSimpleIniA* mainIni)
     {
         // NOTE: Phase 1 settings (ScorerSettings, ContextWeightSettings, etc.)
         // are POD float/bool singletons. Both UpdateHandler and SettingsReloader
@@ -251,7 +261,13 @@ namespace Huginn::Settings
         if (utilityScorer) {
             utilityScorer->SetConfig(Scoring::ScorerSettings::GetSingleton().BuildConfig());
             utilityScorer->SetContextWeightConfig(State::ContextWeightSettings::GetSingleton().BuildConfig());
-            LoadWildcardConfigFromINI(utilityScorer->GetWildcardManager());
+            // Reuse the caller's parsed INI when available (reload path); otherwise
+            // parse Huginn.ini here (reset-to-defaults path).
+            if (mainIni) {
+                LoadWildcardConfigFromINI(utilityScorer->GetWildcardManager(), *mainIni);
+            } else {
+                LoadWildcardConfigFromINI(utilityScorer->GetWildcardManager());
+            }
         }
 
         // 1b. Apply learning config to ExternalEquipLearner
@@ -264,7 +280,8 @@ namespace Huginn::Settings
         // 3. Reset slot locker AFTER allocator (so it operates on correct slot count)
         auto& slotLocker = Slot::SlotLocker::GetSingleton();
         slotLocker.Reset();
-        slotLocker.SetConfig(LoadSlotLockerConfigFromINI());
+        slotLocker.SetConfig(mainIni ? LoadSlotLockerConfigFromINI(*mainIni)
+                                     : LoadSlotLockerConfigFromINI());
 
         // 4. Rebuild Wheeler wheels (if connected)
         auto& wheelerClient = Wheeler::WheelerClient::GetSingleton();

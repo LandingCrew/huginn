@@ -1,4 +1,5 @@
 #include "DebugSettings.h"
+#include "IniLoad.h"
 #include <SimpleIni.h>
 
 // Debug widgets only exist in debug builds
@@ -18,20 +19,14 @@ namespace Huginn::UI
 
     void DebugSettings::LoadFromFile(const std::filesystem::path& iniPath)
     {
-        if (!std::filesystem::exists(iniPath)) {
-            logger::info("[DebugSettings] INI file not found, using defaults: {}"sv, iniPath.string());
-            return;
-        }
-
         CSimpleIniA ini;
-        ini.SetUnicode();
-        SI_Error rc = ini.LoadFile(iniPath.string().c_str());
-
-        if (rc < 0) {
-            logger::error("[DebugSettings] Failed to load INI file: {}"sv, iniPath.string());
-            return;
+        if (LoadIniFile(ini, iniPath, "DebugSettings"sv)) {
+            LoadFromIni(ini);
         }
+    }
 
+    void DebugSettings::LoadFromIni(const CSimpleIniA& ini)
+    {
         const char* section = "Debug";
 
         stateManagerVisible = ini.GetBoolValue(section, "bShowStateManager", DebugDefaults::STATE_MANAGER_VISIBLE);

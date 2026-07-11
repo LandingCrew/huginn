@@ -1,4 +1,5 @@
 #include "SlotSettings.h"
+#include "IniLoad.h"
 #include <SimpleIni.h>
 #include <algorithm>
 
@@ -12,22 +13,15 @@ namespace Huginn::Slot
 
     void SlotSettings::LoadFromFile(const std::filesystem::path& iniPath)
     {
-        if (!std::filesystem::exists(iniPath)) {
-            SKSE::log::info("[SlotSettings] INI not found, using defaults: {}"sv, iniPath.string());
-            return;
-        }
-
         CSimpleIniA ini;
-        ini.SetUnicode();
-        SI_Error rc = ini.LoadFile(iniPath.string().c_str());
-
-        if (rc < 0) {
-            SKSE::log::error("[SlotSettings] Failed to load INI: {}"sv, iniPath.string());
-            return;
+        if (LoadIniFile(ini, iniPath, "SlotSettings"sv)) {
+            SKSE::log::info("[SlotSettings] Loading from: {}"sv, iniPath.string());
+            LoadFromIni(ini);
         }
+    }
 
-        SKSE::log::info("[SlotSettings] Loading from: {}"sv, iniPath.string());
-
+    void SlotSettings::LoadFromIni(const CSimpleIniA& ini)
+    {
         // Read page count
         size_t pageCount = static_cast<size_t>(ini.GetLongValue("Pages", "iPageCount", Defaults::PAGE_COUNT));
         pageCount = std::clamp(pageCount, size_t(1), MAX_PAGES);

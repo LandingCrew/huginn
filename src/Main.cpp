@@ -102,14 +102,23 @@ static std::filesystem::path GetDMenuIniPath()
 // =============================================================================
 static void InitializeGameSystems(bool isNewGame)
 {
+    // ── 0. Parse the main INI ONCE, distribute to every settings loader ──
+    // Each settings class used to re-open and re-parse Huginn.ini independently
+    // (9+ full parses per game load). Parse it a single time here and hand the
+    // parsed CSimpleIniA to each loader via LoadFromIni. When the file is
+    // missing, haveMainIni is false and every loader keeps its current values —
+    // matching the old per-call "not found, using defaults" early-return.
+    CSimpleIniA mainIni;
+    const bool haveMainIni = LoadIniFile(mainIni, GetMainIniPath(), "InitMain"sv);
+
     // ── 1. INI settings (before anything that depends on them) ──────────
     {
         auto& wheelerSettings = Wheeler::WheelerSettings::GetSingleton();
-        wheelerSettings.LoadFromFile(GetMainIniPath());
+        if (haveMainIni) wheelerSettings.LoadFromIni(mainIni);
     }
     {
         auto& slotSettings = Slot::SlotSettings::GetSingleton();
-        slotSettings.LoadFromFile(GetMainIniPath());
+        if (haveMainIni) slotSettings.LoadFromIni(mainIni);
     }
 
     // ── 2. Wheeler setup ────────────────────────────────────────────────
@@ -193,7 +202,7 @@ static void InitializeGameSystems(bool isNewGame)
     }
 
     // ── 4. CandidateConfig + CandidateGenerator ────────────────────────
-    LoadCandidateConfigFromINI();
+    if (haveMainIni) LoadCandidateConfigFromINI(mainIni);
     {
         auto& candidateGen = Candidate::CandidateGenerator::GetSingleton();
         if (!candidateGen.IsInitialized()) {
@@ -245,24 +254,24 @@ static void InitializeGameSystems(bool isNewGame)
 
     {
         auto& scorerSettings = Scoring::ScorerSettings::GetSingleton();
-        scorerSettings.LoadFromFile(GetMainIniPath());
+        if (haveMainIni) scorerSettings.LoadFromIni(mainIni);
         g_utilityScorer->SetConfig(scorerSettings.BuildConfig());
     }
 
     // ── 6. ContextWeightSettings + WildcardConfig ──────────────────────
-    State::ContextWeightSettings::GetSingleton().LoadFromFile(GetMainIniPath());
+    if (haveMainIni) State::ContextWeightSettings::GetSingleton().LoadFromIni(mainIni);
     g_utilityScorer->SetContextWeightConfig(State::ContextWeightSettings::GetSingleton().BuildConfig());
 
     // ── 6b. LearningSettings ────────────────────────────────────────────
-    Learning::LearningSettings::GetSingleton().LoadFromFile(GetMainIniPath());
+    if (haveMainIni) Learning::LearningSettings::GetSingleton().LoadFromIni(mainIni);
     Learning::ExternalEquipLearner::GetSingleton().SetConfig(
         Learning::LearningSettings::GetSingleton().BuildConfig());
-    LoadWildcardConfigFromINI(g_utilityScorer->GetWildcardManager());
+    if (haveMainIni) LoadWildcardConfigFromINI(g_utilityScorer->GetWildcardManager(), mainIni);
 
     // ── 7. OverrideManager ─────────────────────────────────────────────
     {
         auto& settings = Override::Settings::GetSingleton();
-        settings.LoadFromFile(GetMainIniPath());
+        if (haveMainIni) settings.LoadFromIni(mainIni);
 
         auto& overrideMgr = Override::OverrideManager::GetSingleton();
         overrideMgr.Initialize(*g_itemRegistry, *g_weaponRegistry);
@@ -290,11 +299,15 @@ static void InitializeGameSystems(bool isNewGame)
 #endif
 
     // ── 11. IntuitionMenu settings + show ──────────────────────────────
-    UI::IntuitionSettings::GetSingleton().LoadFromFile(GetDMenuIniPath());
+    // Parse the dMenu INI once (falls back to the main INI inside GetDMenuIniPath),
+    // then distribute to the dMenu-managed loaders.
+    CSimpleIniA dmenuIni;
+    const bool haveDMenuIni = LoadIniFile(dmenuIni, GetDMenuIniPath(), "InitDMenu"sv);
+    if (haveDMenuIni) UI::IntuitionSettings::GetSingleton().LoadFromIni(dmenuIni);
     UI::IntuitionMenu::Show();
 
     // ── 11b. Debug widget visibility (debug builds only) ───────────────
-    UI::DebugSettings::GetSingleton().LoadFromFile(GetDMenuIniPath());
+    if (haveDMenuIni) UI::DebugSettings::GetSingleton().LoadFromIni(dmenuIni);
 
     // ── 12. Debug integration tests (load game only) ───────────────────
 #ifndef NDEBUG
