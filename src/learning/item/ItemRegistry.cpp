@@ -81,15 +81,26 @@ namespace Huginn::Item
 
    std::vector<ItemChangeEvent> ItemRegistry::RefreshCounts(RE::PlayerCharacter* player)
    {
+      if (!player) return {};
+      return RefreshCountsFromScan(ScanPlayerInventoryAll(player));
+   }
+
+   // Shared item+scroll inventory pass (UpdateLoop): reuse a pre-scanned inventory
+   // map instead of running a second GetInventorySafe traversal.
+   std::vector<ItemChangeEvent> ItemRegistry::RefreshCounts(
+      RE::PlayerCharacter* player, const Util::InventoryItemMap& inventory)
+   {
+      if (!player) return {};
+      return RefreshCountsFromScan(ScanPlayerInventoryAll(inventory));
+   }
+
+   std::vector<ItemChangeEvent> ItemRegistry::RefreshCountsFromScan(const InventoryScanResult& scanResult)
+   {
       SCOPED_TIMER("ItemRegistry::RefreshCounts");
 
-      if (!player) return {};
-
       // OPTIMIZATION (v0.7.19): Single traversal for both item types
-      // OPTIMIZATION (S2 v0.7.19): Use pre-fetched player pointer
-      auto scanResult = ScanPlayerInventoryAll(player);
-      auto& currentInventory = scanResult.alchemyItems;
-      auto& currentSoulGems = scanResult.soulGems;
+      const auto& currentInventory = scanResult.alchemyItems;
+      const auto& currentSoulGems = scanResult.soulGems;
 
       // Build map for fast lookup: FormID -> count (outside critical section)
       // OPTIMIZATION (S5 v0.7.19): Use cached formID instead of calling GetFormID() again
@@ -982,19 +993,22 @@ namespace Huginn::Item
 
    InventoryScanResult ItemRegistry::ScanPlayerInventoryAll(RE::PlayerCharacter* player) const
    {
-      InventoryScanResult result;
-
       if (!player) {
       logger::debug("[ItemRegistry] ScanPlayerInventoryAll called with null player"sv);
-      return result;
+      return {};
       }
 
       // FIX (v0.12.x): Use GetInventory() to include base container items (starting potions, etc.)
       // The old entryList + countDelta approach missed items from the player's base container
       // because countDelta only tracks changes, not the total count.
-      auto inventory = Util::GetInventorySafe(player, [](RE::TESBoundObject& obj) {
+      return ScanPlayerInventoryAll(Util::GetInventorySafe(player, [](RE::TESBoundObject& obj) {
       return obj.Is(RE::FormType::AlchemyItem) || obj.Is(RE::FormType::SoulGem);
-      });
+      }));
+   }
+
+   InventoryScanResult ItemRegistry::ScanPlayerInventoryAll(const Util::InventoryItemMap& inventory) const
+   {
+      InventoryScanResult result;
 
       // Pre-allocate reasonable capacities
       result.alchemyItems.reserve(64);

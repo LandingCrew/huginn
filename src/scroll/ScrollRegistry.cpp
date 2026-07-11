@@ -64,13 +64,23 @@ namespace Huginn::Scroll
 
    std::vector<ScrollChangeEvent> ScrollRegistry::RefreshCounts(RE::PlayerCharacter* player)
    {
-      SCOPED_TIMER("ScrollRegistry::RefreshCounts");
-
       if (!player) return {};
+      return RefreshCountsFromScan(ScanPlayerInventory(player));
+   }
 
-      // Scan current inventory counts BEFORE acquiring lock (SKSE API call)
-      // OPTIMIZATION (S2 v0.7.19): Use pre-fetched player pointer
-      auto currentInventory = ScanPlayerInventory(player);
+   // Shared item+scroll inventory pass (UpdateLoop): reuse a pre-scanned inventory
+   // map instead of running a second GetInventorySafe traversal.
+   std::vector<ScrollChangeEvent> ScrollRegistry::RefreshCounts(
+      RE::PlayerCharacter* player, const Util::InventoryItemMap& inventory)
+   {
+      if (!player) return {};
+      return RefreshCountsFromScan(ScanPlayerInventory(inventory));
+   }
+
+   std::vector<ScrollChangeEvent> ScrollRegistry::RefreshCountsFromScan(
+      const std::vector<std::pair<RE::ScrollItem*, int32_t>>& currentInventory)
+   {
+      SCOPED_TIMER("ScrollRegistry::RefreshCounts");
 
       // Build map for fast lookup: FormID -> count (outside critical section)
       std::unordered_map<RE::FormID, int32_t> currentCounts;
@@ -515,20 +525,22 @@ namespace Huginn::Scroll
 
    std::vector<std::pair<RE::ScrollItem*, int32_t>> ScrollRegistry::ScanPlayerInventory(RE::PlayerCharacter* player) const
    {
-      std::vector<std::pair<RE::ScrollItem*, int32_t>> scrolls;
-
       if (!player) {
       logger::debug("[ScrollRegistry] ScanPlayerInventory called with null player"sv);
-      return scrolls;
+      return {};
       }
 
       // GetInventory() merges base container + inventory changes for true counts.
       // The old entryList + countDelta approach missed base container scrolls
       // (countDelta only tracks CHANGES, not total count).
-      auto inventory = Util::GetInventorySafe(player, [](RE::TESBoundObject& obj) {
+      return ScanPlayerInventory(Util::GetInventorySafe(player, [](RE::TESBoundObject& obj) {
       return obj.Is(RE::FormType::Scroll);
-      });
+      }));
+   }
 
+   std::vector<std::pair<RE::ScrollItem*, int32_t>> ScrollRegistry::ScanPlayerInventory(const Util::InventoryItemMap& inventory) const
+   {
+      std::vector<std::pair<RE::ScrollItem*, int32_t>> scrolls;
       scrolls.reserve(inventory.size());
 
       for (auto& [obj, data] : inventory) {
