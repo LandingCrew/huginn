@@ -307,7 +307,8 @@ namespace Huginn::Wheeler
             std::vector<RE::FormID> slotFormIDs;        // Cached FormIDs per slot
             std::vector<bool> slotWildcard;             // Wildcard flags per slot
             std::vector<uint16_t> slotUniqueIDs;        // Cached UniqueIDs per slot (for weapons)
-            std::vector<std::string> slotSubtexts;       // Cached subtext labels per slot
+            std::vector<std::string> slotSubtexts;       // Cached FINAL subtext labels (wildcard-applied) per slot
+            std::vector<std::string> slotRawSubtexts;    // Cached RAW incoming subtexts (for the content-unchanged early-out)
             std::vector<uint8_t> slotRetries;            // Retry counter per slot (max MAX_SLOT_RETRIES)
             std::vector<bool> slotActivationEmptied;     // Activation-emptied flags (Empty policy)
         };

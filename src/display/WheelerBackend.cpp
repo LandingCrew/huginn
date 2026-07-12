@@ -91,10 +91,10 @@ namespace Huginn::Display
             // the soul-gem and Empty-policy fixups folded in — replaces four
             // Extract* passes plus two separate fixup loops.
             const size_t n = pageAssignments.size();
-            std::vector<RE::FormID> formIDs;      formIDs.reserve(n);
-            std::vector<bool>       wildcardFlags; wildcardFlags.reserve(n);
-            std::vector<uint16_t>   uniqueIDs;     uniqueIDs.reserve(n);
-            std::vector<std::string> subtexts;     subtexts.reserve(n);
+            m_formIDs.clear();       m_formIDs.reserve(n);
+            m_wildcardFlags.clear(); m_wildcardFlags.reserve(n);
+            m_uniqueIDs.clear();     m_uniqueIDs.reserve(n);
+            m_subtexts.clear();      m_subtexts.reserve(n);
 
             for (size_t s = 0; s < n; ++s) {
                 const auto& a = pageAssignments[s];
@@ -122,13 +122,13 @@ namespace Huginn::Display
                     sub = "Equipped";
                 }
 
-                formIDs.push_back(formID);
-                uniqueIDs.push_back(uid);
-                wildcardFlags.push_back(wild);
-                subtexts.push_back(std::move(sub));
+                m_formIDs.push_back(formID);
+                m_uniqueIDs.push_back(uid);
+                m_wildcardFlags.push_back(wild);
+                m_subtexts.push_back(std::move(sub));
             }
 
-            wheelerClient.UpdateRecommendationsForPage(page, formIDs, wildcardFlags, uniqueIDs, subtexts);
+            wheelerClient.UpdateRecommendationsForPage(page, m_formIDs, m_wildcardFlags, m_uniqueIDs, m_subtexts);
         }
     }
 

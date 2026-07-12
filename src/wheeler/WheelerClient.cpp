@@ -461,6 +461,7 @@ namespace Huginn::Wheeler
             pageWheel.slotWildcard.resize(slotCount, false);
             pageWheel.slotUniqueIDs.resize(slotCount, 0);
             pageWheel.slotSubtexts.resize(slotCount);
+            pageWheel.slotRawSubtexts.resize(slotCount);
             pageWheel.slotRetries.resize(slotCount, 0);
             pageWheel.slotActivationEmptied.resize(slotCount, false);
 
@@ -563,6 +564,7 @@ namespace Huginn::Wheeler
                     pageWheel.slotWildcard.resize(pageWheel.slotCount, false);
                     pageWheel.slotUniqueIDs.resize(pageWheel.slotCount, 0);
                     pageWheel.slotSubtexts.resize(pageWheel.slotCount);
+                    pageWheel.slotRawSubtexts.resize(pageWheel.slotCount);
                     pageWheel.slotRetries.resize(pageWheel.slotCount, 0);
                     pageWheel.slotActivationEmptied.resize(pageWheel.slotCount, false);
                 }
@@ -712,6 +714,23 @@ namespace Huginn::Wheeler
             return;
         }
 
+        // Content-unchanged early-out: when nothing this page displays has changed
+        // since the last update, skip the per-tick cross-DLL pre-flight validation
+        // (IsManagedWheel / IsWheelEmpty / GetEntryCount) AND the per-slot diff loop.
+        // Steady state (stable recommendations) is the common case, so this removes
+        // the recurring per-page Wheeler API traffic. slotRawSubtexts caches the
+        // incoming subtexts — slotSubtexts holds the final wildcard-applied label, so
+        // it can't be compared against the incoming vector directly. (A settings
+        // reload that changes only the wildcard label text without an item change is
+        // the one stale edge; such reloads are rare and self-correct on the next
+        // content change.)
+        if (spellFormIDs == pageWheel.slotFormIDs &&
+            isWildcard   == pageWheel.slotWildcard &&
+            uniqueIDs    == pageWheel.slotUniqueIDs &&
+            subtexts     == pageWheel.slotRawSubtexts) {
+            return;
+        }
+
         // Validate wheel ownership - another mod may have deleted it or indices shifted
         if (!m_api->IsManagedWheel(pageWheel.wheelIndex)) {
             spdlog::warn("[WheelerClient] Page {} wheel {} no longer managed, marking invalid",
@@ -847,6 +866,9 @@ namespace Huginn::Wheeler
                 }
             }
         }
+
+        // Remember the raw inputs so the next update can early-out when unchanged.
+        pageWheel.slotRawSubtexts = subtexts;
     }
 
     // ============================================================================
