@@ -134,9 +134,9 @@ namespace Huginn::Weapon
       // equipped item's InventoryEntryData (with its ExtraCharge) directly from the
       // actor — no traversal, no per-call inventory-map allocation. Favorite
       // *discovery* (finding newly-starred weapons) is owned by ReconcileWeapons
-      // (30s); ammo *counts* are refreshed below via targeted per-item queries.
+      // (30s); ammo *counts* are refreshed below from the inventory-changes list.
       // This method was the #1 Huginn CPU cost (~1.2ms/call of full-inventory walk
-      // at 2Hz); it is now O(equipped + tracked ammo) with no inventory traversal.
+      // at 2Hz); it is now O(equipped) for charge plus one guarded entryList pass.
       std::unordered_map<RE::FormID, ScannedWeapon> equippedCharge;
       for (const bool leftHand : { false, true }) {
       RE::TESObjectWEAP* weapon = leftHand ? equipped.leftHand : equipped.rightHand;
@@ -154,12 +154,29 @@ namespace Huginn::Weapon
       // Ammo counts still need per-tick freshness: the low-ammo override's
       // FindBestAmmo gates on the cached count via GetBestArrow/GetBestBolt, so a
       // stale count would surface an ammo type the player has actually run out of —
-      // violating "recommend only what the player has". GetItemCount is a targeted
-      // per-item changes-list lookup (no inventory traversal, no entry allocation),
-      // and ammo is a small tracked set, so this is nothing like the full walk O1
-      // removed.
-      auto* invChanges = player->GetInventoryChanges();
+      // violating "recommend only what the player has". Collect current counts from
+      // the inventory-changes entry list (countDelta) — the same guarded entryList
+      // walk StateManager uses for arrow/bolt counts, and the pattern used
+      // everywhere else in the codebase.
+      //
+      // Do NOT call RE::InventoryChanges::GetItemCount here: it is the codebase's
+      // only use of that raw game function and it crashes on save-load (confirmed
+      // by bisecting PR #41 — sub-commit 23555b2 added exactly this call and it
+      // reproduced the access violation; 81eecc6 without it was stable). Ammo is a
+      // small tracked set, so this is nothing like the full walk O1 removed.
       auto* equippedAmmo = player->GetCurrentAmmo();
+      const RE::FormID equippedAmmoID = equippedAmmo ? equippedAmmo->GetFormID() : 0;
+
+      std::unordered_map<RE::FormID, int32_t> ammoCounts;
+      if (auto* invChanges = player->GetInventoryChanges();
+      invChanges && invChanges->entryList) {
+      for (auto* entry : *invChanges->entryList) {
+        if (!entry || !entry->object || !entry->object->Is(RE::FormType::Ammo)) {
+        continue;
+        }
+        ammoCounts[entry->object->GetFormID()] = static_cast<int32_t>(entry->countDelta);
+      }
+      }
 
       // =========================================================================
       // Fast in-memory updates under unique_lock (no SKSE API calls).
@@ -214,15 +231,14 @@ namespace Huginn::Weapon
       }
       }
 
-      // Refresh tracked ammo counts (targeted per-item queries, no inventory walk).
-      // A depleted type reads back as 0 and is filtered out by GetBestArrow/GetBestBolt
-      // (count > 0), so FindBestAmmo can't surface ammo the player no longer has.
+      // Refresh tracked ammo counts from the pre-built map. A type absent from the
+      // changes list reads back as 0 (depleted) and is filtered out by
+      // GetBestArrow/GetBestBolt (count > 0), so FindBestAmmo can't surface ammo
+      // the player no longer has.
       for (auto& invAmmo : m_ammo) {
-      auto* ammo = RE::TESForm::LookupByID<RE::TESAmmo>(invAmmo.data.formID);
-      invAmmo.count = (invChanges && ammo)
-        ? static_cast<int32_t>(invChanges->GetItemCount(ammo))
-        : 0;
-      invAmmo.isEquipped = (ammo != nullptr && ammo == equippedAmmo);
+      auto it = ammoCounts.find(invAmmo.data.formID);
+      invAmmo.count = (it != ammoCounts.end()) ? it->second : 0;
+      invAmmo.isEquipped = (equippedAmmoID != 0 && invAmmo.data.formID == equippedAmmoID);
       }
       }  // end RefreshCharges::Apply zone
    }
