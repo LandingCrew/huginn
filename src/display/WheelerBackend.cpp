@@ -105,12 +105,15 @@ namespace Huginn::Display
                 std::string sub = a.subtextLabel;
 
                 // Soul gems are display-only — Wheeler can't handle TESSoulGem
-                // forms. Zero them so Wheeler treats the slot as empty.
+                // forms. Zero them so Wheeler treats the slot as empty, and clear the
+                // subtext too — otherwise the now-empty slot would keep the soul gem's
+                // explanation label, showing an empty slot with a stale description.
                 if (a.HasCandidate() &&
                     a.candidate->GetSourceType() == Candidate::SourceType::SoulGem) {
                     formID = 0;
                     uid = 0;
                     wild = false;
+                    sub.clear();
                 }
 
                 // Empty post-activation policy: blank the activated slot and
