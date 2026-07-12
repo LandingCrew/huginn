@@ -133,9 +133,10 @@ namespace Huginn::Weapon
       // the entire player inventory every 500ms. GetEquippedEntryData returns the
       // equipped item's InventoryEntryData (with its ExtraCharge) directly from the
       // actor — no traversal, no per-call inventory-map allocation. Favorite
-      // discovery + ammo counts (which genuinely need the full walk) are owned by
-      // ReconcileWeapons (30s). This method was the #1 Huginn CPU cost (~1.2ms/call
-      // of full-inventory walk at 2Hz); it is now O(equipped).
+      // *discovery* (finding newly-starred weapons) is owned by ReconcileWeapons
+      // (30s); ammo *counts* are refreshed below via targeted per-item queries.
+      // This method was the #1 Huginn CPU cost (~1.2ms/call of full-inventory walk
+      // at 2Hz); it is now O(equipped + tracked ammo) with no inventory traversal.
       std::unordered_map<RE::FormID, ScannedWeapon> equippedCharge;
       for (const bool leftHand : { false, true }) {
       RE::TESObjectWEAP* weapon = leftHand ? equipped.leftHand : equipped.rightHand;
@@ -149,6 +150,16 @@ namespace Huginn::Weapon
 
       const RE::FormID rightID = equipped.rightHand ? equipped.rightHand->GetFormID() : 0;
       const RE::FormID leftID = equipped.leftHand ? equipped.leftHand->GetFormID() : 0;
+
+      // Ammo counts still need per-tick freshness: the low-ammo override's
+      // FindBestAmmo gates on the cached count via GetBestArrow/GetBestBolt, so a
+      // stale count would surface an ammo type the player has actually run out of —
+      // violating "recommend only what the player has". GetItemCount is a targeted
+      // per-item changes-list lookup (no inventory traversal, no entry allocation),
+      // and ammo is a small tracked set, so this is nothing like the full walk O1
+      // removed.
+      auto* invChanges = player->GetInventoryChanges();
+      auto* equippedAmmo = player->GetCurrentAmmo();
 
       // =========================================================================
       // Fast in-memory updates under unique_lock (no SKSE API calls).
@@ -201,6 +212,17 @@ namespace Huginn::Weapon
             invWeapon.data.currentCharge * 100.0f);
         }
       }
+      }
+
+      // Refresh tracked ammo counts (targeted per-item queries, no inventory walk).
+      // A depleted type reads back as 0 and is filtered out by GetBestArrow/GetBestBolt
+      // (count > 0), so FindBestAmmo can't surface ammo the player no longer has.
+      for (auto& invAmmo : m_ammo) {
+      auto* ammo = RE::TESForm::LookupByID<RE::TESAmmo>(invAmmo.data.formID);
+      invAmmo.count = (invChanges && ammo)
+        ? static_cast<int32_t>(invChanges->GetItemCount(ammo))
+        : 0;
+      invAmmo.isEquipped = (ammo != nullptr && ammo == equippedAmmo);
       }
       }  // end RefreshCharges::Apply zone
    }
