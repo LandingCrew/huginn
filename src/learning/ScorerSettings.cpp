@@ -19,46 +19,29 @@ namespace Huginn::Scoring
         const char* section = "Scoring";
 
         // Core
-        lambdaMin = static_cast<float>(
-            ini.GetDoubleValue(section, "fLambdaMin", ScorerDefaults::LAMBDA_MIN));
-        lambdaMax = static_cast<float>(
-            ini.GetDoubleValue(section, "fLambdaMax", ScorerDefaults::LAMBDA_MAX));
-        explorationWeight = static_cast<float>(
-            ini.GetDoubleValue(section, "fExplorationWeight", ScorerDefaults::EXPLORATION_WEIGHT));
+        lambdaMin = ReadClampedFloat(ini, section, "fLambdaMin", ScorerDefaults::LAMBDA_MIN, 0.0f, 1000.0f, "ScorerSettings"sv);
+        lambdaMax = ReadClampedFloat(ini, section, "fLambdaMax", ScorerDefaults::LAMBDA_MAX, 0.0f, 1000.0f, "ScorerSettings"sv);
+        explorationWeight = ReadClampedFloat(ini, section, "fExplorationWeight", ScorerDefaults::EXPLORATION_WEIGHT, 0.0f, 1000.0f, "ScorerSettings"sv);
 
         // Correlation bonuses
-        bowArrowBonus = static_cast<float>(
-            ini.GetDoubleValue(section, "fBowArrowBonus", ScorerDefaults::BOW_ARROW_BONUS));
-        crossbowBoltBonus = static_cast<float>(
-            ini.GetDoubleValue(section, "fCrossbowBoltBonus", ScorerDefaults::CROSSBOW_BOLT_BONUS));
-        meleeDefensiveBonus = static_cast<float>(
-            ini.GetDoubleValue(section, "fMeleeDefensiveBonus", ScorerDefaults::MELEE_DEFENSIVE_BONUS));
-        silverUndeadBonus = static_cast<float>(
-            ini.GetDoubleValue(section, "fSilverUndeadBonus", ScorerDefaults::SILVER_UNDEAD_BONUS));
-        fortifySchoolBonus = static_cast<float>(
-            ini.GetDoubleValue(section, "fFortifySchoolBonus", ScorerDefaults::FORTIFY_SCHOOL_BONUS));
-        staffLowMagickaBonus = static_cast<float>(
-            ini.GetDoubleValue(section, "fStaffLowMagickaBonus", ScorerDefaults::STAFF_LOW_MAGICKA_BONUS));
-        twoHandedDefensiveBonus = static_cast<float>(
-            ini.GetDoubleValue(section, "fTwoHandedDefensiveBonus", ScorerDefaults::TWO_HANDED_DEFENSIVE_BONUS));
+        bowArrowBonus = ReadClampedFloat(ini, section, "fBowArrowBonus", ScorerDefaults::BOW_ARROW_BONUS, 0.0f, 1000.0f, "ScorerSettings"sv);
+        crossbowBoltBonus = ReadClampedFloat(ini, section, "fCrossbowBoltBonus", ScorerDefaults::CROSSBOW_BOLT_BONUS, 0.0f, 1000.0f, "ScorerSettings"sv);
+        meleeDefensiveBonus = ReadClampedFloat(ini, section, "fMeleeDefensiveBonus", ScorerDefaults::MELEE_DEFENSIVE_BONUS, 0.0f, 1000.0f, "ScorerSettings"sv);
+        silverUndeadBonus = ReadClampedFloat(ini, section, "fSilverUndeadBonus", ScorerDefaults::SILVER_UNDEAD_BONUS, 0.0f, 1000.0f, "ScorerSettings"sv);
+        fortifySchoolBonus = ReadClampedFloat(ini, section, "fFortifySchoolBonus", ScorerDefaults::FORTIFY_SCHOOL_BONUS, 0.0f, 1000.0f, "ScorerSettings"sv);
+        staffLowMagickaBonus = ReadClampedFloat(ini, section, "fStaffLowMagickaBonus", ScorerDefaults::STAFF_LOW_MAGICKA_BONUS, 0.0f, 1000.0f, "ScorerSettings"sv);
+        twoHandedDefensiveBonus = ReadClampedFloat(ini, section, "fTwoHandedDefensiveBonus", ScorerDefaults::TWO_HANDED_DEFENSIVE_BONUS, 0.0f, 1000.0f, "ScorerSettings"sv);
 
         // Potion discrimination
-        combatStartWindow = static_cast<float>(
-            ini.GetDoubleValue(section, "fCombatStartWindow", ScorerDefaults::COMBAT_START_WINDOW));
-        regenPotionCombatStartMult = static_cast<float>(
-            ini.GetDoubleValue(section, "fRegenPotionCombatStartMult", ScorerDefaults::REGEN_POTION_COMBAT_START_MULT));
-        flatRestoreLowResourceMult = static_cast<float>(
-            ini.GetDoubleValue(section, "fFlatRestoreLowResourceMult", ScorerDefaults::FLAT_RESTORE_LOW_RESOURCE_MULT));
-        magnitudeValueScale = static_cast<float>(
-            ini.GetDoubleValue(section, "fMagnitudeValueScale", ScorerDefaults::MAGNITUDE_VALUE_SCALE));
+        combatStartWindow = ReadClampedFloat(ini, section, "fCombatStartWindow", ScorerDefaults::COMBAT_START_WINDOW, 0.0f, 1000.0f, "ScorerSettings"sv);
+        regenPotionCombatStartMult = ReadClampedFloat(ini, section, "fRegenPotionCombatStartMult", ScorerDefaults::REGEN_POTION_COMBAT_START_MULT, 0.0f, 1000.0f, "ScorerSettings"sv);
+        flatRestoreLowResourceMult = ReadClampedFloat(ini, section, "fFlatRestoreLowResourceMult", ScorerDefaults::FLAT_RESTORE_LOW_RESOURCE_MULT, 0.0f, 1000.0f, "ScorerSettings"sv);
+        magnitudeValueScale = ReadClampedFloat(ini, section, "fMagnitudeValueScale", ScorerDefaults::MAGNITUDE_VALUE_SCALE, 0.0f, 1000.0f, "ScorerSettings"sv);
 
         // Thresholds
-        minimumUtility = static_cast<float>(
-            ini.GetDoubleValue(section, "fMinimumUtility", ScorerDefaults::MINIMUM_UTILITY));
-        minimumContextWeight = static_cast<float>(
-            ini.GetDoubleValue(section, "fMinimumContextWeight", ScorerDefaults::MINIMUM_CONTEXT_WEIGHT));
-        coldStartUCBBoost = static_cast<float>(
-            ini.GetDoubleValue(section, "fColdStartUCBBoost", ScorerDefaults::COLD_START_UCB_BOOST));
+        minimumUtility = ReadClampedFloat(ini, section, "fMinimumUtility", ScorerDefaults::MINIMUM_UTILITY, 0.0f, 1000.0f, "ScorerSettings"sv);
+        minimumContextWeight = ReadClampedFloat(ini, section, "fMinimumContextWeight", ScorerDefaults::MINIMUM_CONTEXT_WEIGHT, 0.0f, 1000.0f, "ScorerSettings"sv);
+        coldStartUCBBoost = ReadClampedFloat(ini, section, "fColdStartUCBBoost", ScorerDefaults::COLD_START_UCB_BOOST, 0.0f, 1000.0f, "ScorerSettings"sv);
 
         // Performance
         maxCandidatesPerCycle = static_cast<size_t>(
@@ -74,10 +57,8 @@ namespace Huginn::Scoring
         const char* modeStr = ini.GetValue(favSection, "sFavoritesMode", ScorerDefaults::FAVORITES_MODE);
         favoritesMode = ParseFavoritesMode(modeStr);
 
-        favoritesBoostMin = static_cast<float>(
-            ini.GetDoubleValue(favSection, "fFavoritesBoostMin", ScorerDefaults::FAVORITES_BOOST_MIN));
-        favoritesBoostMax = static_cast<float>(
-            ini.GetDoubleValue(favSection, "fFavoritesBoostMax", ScorerDefaults::FAVORITES_BOOST_MAX));
+        favoritesBoostMin = ReadClampedFloat(ini, favSection, "fFavoritesBoostMin", ScorerDefaults::FAVORITES_BOOST_MIN, 0.0f, 1000.0f, "ScorerSettings"sv);
+        favoritesBoostMax = ReadClampedFloat(ini, favSection, "fFavoritesBoostMax", ScorerDefaults::FAVORITES_BOOST_MAX, 0.0f, 1000.0f, "ScorerSettings"sv);
 
         logger::info("[ScorerSettings] Loaded: λMin={:.2f}, λMax={:.2f}, "
             "exploration={:.2f}, favorites={}, boostRange=[{:.1f}, {:.1f}], "

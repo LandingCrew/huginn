@@ -47,21 +47,6 @@ namespace Huginn::Settings
         logger::info("[SettingsReloader] Registered for dMenu events (dmenu_updateSettings, dmenu_buttonCallback)"sv);
     }
 
-    void SettingsReloader::Unregister()
-    {
-        if (!m_registered.load(std::memory_order_acquire)) {
-            return;
-        }
-
-        auto* eventSource = SKSE::GetModCallbackEventSource();
-        if (eventSource) {
-            eventSource->RemoveEventSink(this);
-        }
-
-        m_registered.store(false, std::memory_order_release);
-        logger::info("[SettingsReloader] Unregistered from dMenu events"sv);
-    }
-
     RE::BSEventNotifyControl SettingsReloader::ProcessEvent(
         const SKSE::ModCallbackEvent* event,
         RE::BSTEventSource<SKSE::ModCallbackEvent>* /*source*/)
@@ -334,6 +319,10 @@ namespace Huginn::Settings
         } else {
             logger::debug("[SettingsReloader]   [Widget] IntuitionMenu unavailable, skipping ReapplySettings"sv);
         }
+
+        // 6. Apply debug widget visibility (Phase 2 — DebugSettings::LoadFromIni is a
+        //    pure loader now; this is the side-effect step for both reload and reset).
+        UI::DebugSettings::GetSingleton().ApplyToWidgets();
 
         // The next update tick (~100ms) will pick up all new settings.
         // SlotLocker::Reset() ensures the first tick after reload can freely
