@@ -1,5 +1,6 @@
 #include "HudVisibilityManager.h"
 #include "IntuitionMenu.h"
+#include "IntuitionSettings.h"
 
 namespace Huginn::UI
 {
@@ -52,10 +53,11 @@ namespace Huginn::UI
         auto* ui = RE::UI::GetSingleton();
         if (!ui) return;
 
-        // Widget visible when no game-pausing menu is open.
-        // Console and Favorites don't set kPausesGame, so the widget
-        // correctly stays visible during those overlays.
-        bool visible = !ui->GameIsPaused();
+        // Widget visible when no game-pausing menu is open AND the master enable
+        // toggle is on. Console and Favorites don't set kPausesGame, so the widget
+        // correctly stays visible during those overlays. The IsEnabled() gate is
+        // what keeps a user-disabled widget from being re-shown on every unpause.
+        bool visible = !ui->GameIsPaused() && IntuitionSettings::GetSingleton().IsEnabled();
 
         // SetVisible already defers the GFx work via AddUITask internally, so
         // call it directly — wrapping it in another AddUITask here would add a

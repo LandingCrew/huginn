@@ -368,6 +368,17 @@ namespace Huginn::UI
 
     void IntuitionMenu::ReapplySettings(const IntuitionConfig& config)
     {
+        // Honor the master enable toggle first. When the widget is disabled, hide it
+        // and skip the styling work (pointless on a hidden widget). When enabled,
+        // ensure it's shown — this re-opens it if the user had just toggled it back
+        // on. HudVisibilityManager also gates SetVisible() on IsEnabled(), so a
+        // disabled widget stays hidden across pause/menu transitions.
+        if (!config.enabled) {
+            Hide();
+            return;
+        }
+        Show();  // no-op if already open; re-checks IsEnabled() internally
+
         // Position + alpha go through the public API (already deferred via AddUITask)
         SetPosition(config.positionX, config.positionY);
         SetWidgetAlpha(config.alpha);
