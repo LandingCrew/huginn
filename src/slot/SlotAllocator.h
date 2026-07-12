@@ -145,9 +145,12 @@ namespace Huginn::Slot
         /// flag isn't lost if the guard fails (e.g., registry still loading).
         [[nodiscard]] bool PeekPageChanged() const noexcept { return m_pageChanged.load(); }
 
-        /// Force the page-changed flag without changing the page.
-        /// Used when a consumer (e.g., IntuitionMenu) missed a page change
-        /// because it was disabled when the flag was consumed.
+        /// Force a pipeline recompute of the current page without changing which
+        /// page is active. General "something off-state changed, re-run" signal:
+        /// a consumer (e.g. IntuitionMenu) missed a page change while disabled;
+        /// Wheeler closed; or the inventory changed (GameState hash excludes it,
+        /// so consumed/dropped items would otherwise linger). Sets the same flag
+        /// page cycling does, so it bypasses the pipeline's hash-skip.
         void MarkPageDirty() noexcept { m_pageChanged = true; }
 
     private:

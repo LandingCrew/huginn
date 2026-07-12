@@ -42,6 +42,11 @@ namespace Huginn::Slot
         // Track previous assignment for "confirmed" detection
         RE::FormID previousFormID = 0;       // FormID from last frame
         bool hadContent = false;             // Was non-empty last frame
+
+        // Sticky post-activation lock (LockSlotForActivation): a deliberate 10s
+        // hold that OnItemUsed must not break when asked to respect it, so a
+        // just-activated item stays visible even after it's consumed.
+        bool isActivationLock = false;
     };
 
     // =============================================================================
@@ -149,9 +154,13 @@ namespace Huginn::Slot
         // EVENT HANDLERS
         // =========================================================================
 
-        /// Called when player uses an item (from Wheeler or keyboard)
-        /// Breaks the lock on any slot containing this item (positive signal)
-        void OnItemUsed(RE::FormID formID);
+        /// Called when player uses an item (Wheeler/keyboard), or an item leaves
+        /// inventory (consume/drop, from the delta-scan path). Breaks the lock on
+        /// any slot containing this item so it can repopulate.
+        /// @param respectActivationLock When true, does NOT break a Sticky
+        ///   activation lock (LockSlotForActivation) — the delta scan passes true
+        ///   so a consumed sticky item still honors its 10s visibility window.
+        void OnItemUsed(RE::FormID formID, bool respectActivationLock = false);
 
         /// Reset all locks (call on save load or game state reset)
         void Reset();
