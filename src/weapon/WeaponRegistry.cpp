@@ -128,191 +128,78 @@ namespace Huginn::Weapon
       return;
       }
 
-      // =========================================================================
-      // PHASE 1: Snapshot tracked FormIDs under shared_lock (fast, ~0.1ms)
-      // FIX (v0.7.18): Move heavy inventory iteration OUTSIDE the lock to eliminate micro-stutter
-      // =========================================================================
-      std::unordered_set<RE::FormID> trackedFormIDs;
-      {
-      std::shared_lock readLock(m_mutex);
-      trackedFormIDs.reserve(m_weapons.size());
-      for (const auto& [formID, index] : m_weaponIndex) {
-        trackedFormIDs.insert(formID);
+      // O1: Enchantment charge only drains on EQUIPPED weapons (at most two), so
+      // read charge straight off the equipped items' entry data instead of walking
+      // the entire player inventory every 500ms. GetEquippedEntryData returns the
+      // equipped item's InventoryEntryData (with its ExtraCharge) directly from the
+      // actor — no traversal, no per-call inventory-map allocation. Favorite
+      // discovery + ammo counts (which genuinely need the full walk) are owned by
+      // ReconcileWeapons (30s). This method was the #1 Huginn CPU cost (~1.2ms/call
+      // of full-inventory walk at 2Hz); it is now O(equipped).
+      std::unordered_map<RE::FormID, ScannedWeapon> equippedCharge;
+      for (const bool leftHand : { false, true }) {
+      RE::TESObjectWEAP* weapon = leftHand ? equipped.leftHand : equipped.rightHand;
+      if (!weapon) {
+        continue;
       }
+      RE::InventoryEntryData* entry = player->GetEquippedEntryData(leftHand);
+      equippedCharge[weapon->GetFormID()] =
+        ExtractWeaponMetadata(weapon, entry, true, equipped);
       }
 
-      // =========================================================================
-      // PHASE 2: Heavy SKSE API work OUTSIDE the lock (slow, 20-40ms)
-      // FIX (v0.12.x): Use GetInventory() to include base container weapons
-      // FIX (v0.12.x): Use IsFavorited() instead of kHotkey check (catches starred favorites)
-      // =========================================================================
-
-      // Build current weapon + ammo state in a SINGLE inventory traversal.
-      // (Previously this scanned weapons here and ammo again via ScanPlayerAmmo(),
-      //  i.e. two full GetInventorySafe passes — each allocating an entry copy per
-      //  item — every 500ms. One combined pass halves that cost.)
-      auto inventory = [&] {
-      Huginn_ZONE_NAMED("RefreshCharges::GetInventory");
-      return Util::GetInventorySafe(player, [](RE::TESBoundObject& obj) {
-        return obj.Is(RE::FormType::Weapon) || obj.Is(RE::FormType::Ammo);
-      });
-      }();
-
-      auto* equippedAmmo = player->GetCurrentAmmo();
-
-      std::unordered_map<RE::FormID, ScannedWeapon> currentState;
-      currentState.reserve(trackedFormIDs.size() + 8);
-      std::unordered_map<RE::FormID, ScannedAmmo> ammoState;
-
-      {
-      // Localizes the per-weapon ExtractWeaponMetadata cost (extraList walk) vs the
-      // GetInventory traversal above — the two suspected drivers of this method.
-      Huginn_ZONE_NAMED("RefreshCharges::ExtractMetadata");
-      for (auto& [obj, data] : inventory) {
-      auto& [count, entry] = data;
-      if (count <= 0) continue;
-
-      if (auto* weapon = obj->As<RE::TESObjectWEAP>()) {
-        RE::FormID formID = weapon->GetFormID();
-
-        // Skip weapons that are neither tracked nor favorited (performance optimization)
-        bool isTracked = trackedFormIDs.contains(formID);
-        if (!isTracked) {
-           bool isFavorited = entry && entry->IsFavorited();
-           if (!isFavorited) {
-            continue;
-           }
-        }
-
-        // Extract metadata using helper if entry data available
-        if (entry) {
-           ScannedWeapon sw = ExtractWeaponMetadata(weapon, entry.get(), true, equipped);
-           currentState[formID] = sw;
-        } else {
-           ScannedWeapon sw{};
-           sw.weapon = weapon;
-           sw.isFavorited = false;
-           sw.isEquipped = equipped.IsEquipped(weapon);
-           sw.currentCharge = 0.0f;
-           sw.maxCharge = 0.0f;
-           sw.uniqueID = 0;
-           auto* enchantable = weapon->As<RE::TESEnchantableForm>();
-           const bool isStaff = weapon->GetWeaponType() == RE::WEAPON_TYPE::kStaff;
-           const bool isEnchanted = (enchantable && enchantable->formEnchanting) || isStaff;
-           if (isEnchanted && enchantable) {
-            sw.maxCharge = static_cast<float>(enchantable->amountofEnchantment);
-            sw.currentCharge = sw.maxCharge;
-           }
-           currentState[formID] = sw;
-        }
-      } else if (auto* ammo = obj->As<RE::TESAmmo>()) {
-        ScannedAmmo sa{};
-        sa.ammo = ammo;
-        sa.count = count;
-        sa.isEquipped = (ammo == equippedAmmo);
-        ammoState[ammo->GetFormID()] = sa;
-      }
-      }
-      }  // end RefreshCharges::ExtractMetadata zone
+      const RE::FormID rightID = equipped.rightHand ? equipped.rightHand->GetFormID() : 0;
+      const RE::FormID leftID = equipped.leftHand ? equipped.leftHand->GetFormID() : 0;
 
       // =========================================================================
-      // PHASE 3: Fast in-memory updates under unique_lock (fast, ~2-5ms)
-      // Only simple assignments, no SKSE API calls
+      // Fast in-memory updates under unique_lock (no SKSE API calls).
       // =========================================================================
       {
       Huginn_ZONE_NAMED("RefreshCharges::Apply");
       std::unique_lock lock(m_mutex);
 
-      // Add newly favorited weapons (skip known-rejected ones — they can never be
-      // added, and retrying would log "adding immediately" every 500ms forever)
-      for (const auto& [formID, sw] : currentState) {
-      if (sw.isFavorited && !m_weaponIndex.contains(formID) && !m_rejectedWeapons.contains(formID)) {
-        // Found favorited weapon not in registry - add it immediately
-        if (m_weapons.size() < Config::MAX_TRACKED_WEAPONS) {
-           logger::info("[WeaponRegistry] Favorited weapon {} ({:08X}) not in registry - adding immediately"sv,
-            sw.weapon->GetName(), formID);
-
-           AddWeapon(sw.weapon, sw.isFavorited, sw.isEquipped,
-                     sw.currentCharge, sw.maxCharge, sw.uniqueID);
-        } else {
-           logger::warn("[WeaponRegistry] Cannot add favorited weapon {} - registry full (max {})"sv,
-            sw.weapon->GetName(), Config::MAX_TRACKED_WEAPONS);
-        }
-      }
-      }
-
-      // Update tracked weapons
-      size_t favoritesUpdated = 0;
       for (auto& invWeapon : m_weapons) {
-      auto it = currentState.find(invWeapon.data.formID);
-      if (it != currentState.end()) {
-        const auto& sw = it->second;
+      // Equipped status: cheap FormID compare against the <=2 equipped weapons
+      // (no inventory walk needed to know which tracked weapons are equipped).
+      const RE::FormID fid = invWeapon.data.formID;
+      invWeapon.isEquipped = (fid != 0 && (fid == rightID || fid == leftID));
 
-        // Update equipped status
-        invWeapon.isEquipped = sw.isEquipped;
-
-        // Update uniqueID (populated after extraList stabilization)
-        if (sw.uniqueID != 0) {
-           invWeapon.data.uniqueID = sw.uniqueID;
-        }
-
-        // Update favorite status - log changes
-        if (invWeapon.isFavorited != sw.isFavorited) {
-           logger::debug("[WeaponRegistry] Favorite status changed: {} ({:08X}) {} -> {}"sv,
-            invWeapon.data.name, invWeapon.data.formID,
-            invWeapon.isFavorited ? "true" : "false",
-            sw.isFavorited ? "true" : "false");
-           if (sw.isFavorited) {
-            favoritesUpdated++;
-           }
-        }
-        invWeapon.isFavorited = sw.isFavorited;
-
-        // Update charge for enchanted weapons
-        if (invWeapon.data.hasEnchantment && sw.maxCharge > 0.0f) {
-           float chargePercent = sw.currentCharge / sw.maxCharge;
-           invWeapon.previousCharge = invWeapon.data.currentCharge;
-           invWeapon.data.currentCharge = chargePercent;
-           invWeapon.data.maxCharge = sw.maxCharge;
-
-           // Update NeedsCharge tag only when crossing threshold (avoids repeated bitfield ops)
-           bool wasLow = HasTag(invWeapon.data.tags, WeaponTag::NeedsCharge);
-           bool isLow = chargePercent < Config::WEAPON_CHARGE_LOW_THRESHOLD;
-           if (wasLow != isLow) {
-            if (isLow) {
-              invWeapon.data.tags |= WeaponTag::NeedsCharge;
-            } else {
-              invWeapon.data.tags &= ~WeaponTag::NeedsCharge;
-            }
-           }
-
-           // Log significant charge changes
-           if (std::abs(invWeapon.data.currentCharge - invWeapon.previousCharge) > 0.05f) {
-            logger::trace("[WeaponRegistry] Charge changed: {} {:.0f}% -> {:.0f}%"sv,
-              invWeapon.data.name,
-              invWeapon.previousCharge * 100.0f,
-              invWeapon.data.currentCharge * 100.0f);
-           }
-        }
+      // Charge only needs refreshing for the equipped enchanted weapons.
+      auto it = equippedCharge.find(fid);
+      if (it == equippedCharge.end()) {
+        continue;
       }
+      const auto& sw = it->second;
+
+      // Update uniqueID (populated after extraList stabilization)
+      if (sw.uniqueID != 0) {
+        invWeapon.data.uniqueID = sw.uniqueID;
       }
 
-      // Log summary of favorites detection (helps diagnose timing issues)
-      if (favoritesUpdated > 0) {
-      size_t totalFavorited = std::count_if(m_weapons.begin(), m_weapons.end(),
-        [](const auto& w) { return w.isFavorited; });
-      logger::info("[WeaponRegistry] RefreshCharges updated {} weapon favorites (total now: {})"sv,
-        favoritesUpdated, totalFavorited);
-      }
+      // Update charge for enchanted weapons
+      if (invWeapon.data.hasEnchantment && sw.maxCharge > 0.0f) {
+        float chargePercent = sw.currentCharge / sw.maxCharge;
+        invWeapon.previousCharge = invWeapon.data.currentCharge;
+        invWeapon.data.currentCharge = chargePercent;
+        invWeapon.data.maxCharge = sw.maxCharge;
 
-      // Update ammo counts
-      for (auto& invAmmo : m_ammo) {
-      auto it = ammoState.find(invAmmo.data.formID);
-      if (it != ammoState.end()) {
-        invAmmo.count = it->second.count;
-        invAmmo.isEquipped = it->second.isEquipped;
-      } else {
-        invAmmo.count = 0;  // Ammo depleted
+        // Update NeedsCharge tag only when crossing threshold (avoids repeated bitfield ops)
+        bool wasLow = HasTag(invWeapon.data.tags, WeaponTag::NeedsCharge);
+        bool isLow = chargePercent < Config::WEAPON_CHARGE_LOW_THRESHOLD;
+        if (wasLow != isLow) {
+           if (isLow) {
+            invWeapon.data.tags |= WeaponTag::NeedsCharge;
+           } else {
+            invWeapon.data.tags &= ~WeaponTag::NeedsCharge;
+           }
+        }
+
+        // Log significant charge changes
+        if (std::abs(invWeapon.data.currentCharge - invWeapon.previousCharge) > 0.05f) {
+           logger::trace("[WeaponRegistry] Charge changed: {} {:.0f}% -> {:.0f}%"sv,
+            invWeapon.data.name,
+            invWeapon.previousCharge * 100.0f,
+            invWeapon.data.currentCharge * 100.0f);
+        }
       }
       }
       }  // end RefreshCharges::Apply zone
@@ -438,8 +325,10 @@ namespace Huginn::Weapon
         // Update favorited/equipped status for existing weapons
         auto& invWeapon = m_weapons[m_weaponIndex[formID]];
 
-        // Only update favorites if we could reliably detect them (extraLists stable)
-        // Otherwise we'd overwrite RefreshCharges' correct detection with false
+        // Only update favorites when extraLists are stable — reading them too early
+        // yields false negatives. ReconcileWeapons is now the sole favorites detector
+        // (RefreshCharges no longer walks the inventory), so during the unstable
+        // window we keep the existing favorite state until the next reconcile.
         if (safeToAccessExtraLists) {
            if (invWeapon.isFavorited != sw.isFavorited) {
             logger::debug("[WeaponRegistry] Favorite status changed: {} (fav={} -> {})"sv,
