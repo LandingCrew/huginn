@@ -720,10 +720,16 @@ namespace Huginn::Wheeler
         // Steady state (stable recommendations) is the common case, so this removes
         // the recurring per-page Wheeler API traffic. slotRawSubtexts caches the
         // incoming subtexts — slotSubtexts holds the final wildcard-applied label, so
-        // it can't be compared against the incoming vector directly. (A settings
-        // reload that changes only the wildcard label text without an item change is
-        // the one stale edge; such reloads are rare and self-correct on the next
-        // content change.)
+        // it can't be compared against the incoming vector directly.
+        //
+        // Two things are intentionally deferred while a page's content is static:
+        //   (a) a settings reload that changes only the wildcard label text (no item
+        //       change) won't re-apply the label until the next content change; and
+        //   (b) a wheel invalidated externally (another mod deleting it, or an index
+        //       shift) won't be re-detected here — the IsManagedWheel check is skipped
+        //       — until content changes or the wheels are recreated on reload/postload.
+        // Both are rare and self-correcting, and the early-out writes nothing in this
+        // state, so it can never corrupt another mod's wheel — detection is only delayed.
         if (spellFormIDs == pageWheel.slotFormIDs &&
             isWildcard   == pageWheel.slotWildcard &&
             uniqueIDs    == pageWheel.slotUniqueIDs &&
