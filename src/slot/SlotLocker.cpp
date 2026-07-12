@@ -90,6 +90,7 @@ namespace Huginn::Slot
                 lockedSlot.remainingMs = m_config.lockDurationMs;
                 lockedSlot.totalDurationMs = m_config.lockDurationMs;
                 lockedSlot.isLocked = true;
+                lockedSlot.isActivationLock = false;
 
                 spdlog::debug("[SlotLocker] Slot {} locked for {:.0f}ms: {} ({:08X})",
                     i, m_config.lockDurationMs, newAssign.name, newAssign.formID);
@@ -128,6 +129,7 @@ namespace Huginn::Slot
         slot.remainingMs = durationMs;
         slot.totalDurationMs = durationMs;
         slot.isLocked = true;
+        slot.isActivationLock = false;
 
         spdlog::debug("[SlotLocker] Slot {} manually locked for {:.0f}ms", slotIndex, durationMs);
     }
@@ -144,6 +146,7 @@ namespace Huginn::Slot
         slot.remainingMs = ACTIVATION_LOCK_MS;
         slot.totalDurationMs = ACTIVATION_LOCK_MS;
         slot.isLocked = true;
+        slot.isActivationLock = true;
 
         spdlog::info("[SlotLocker] Slot {} activation-locked for {:.0f}ms (Sticky policy)",
             slotIndex, ACTIVATION_LOCK_MS);
@@ -237,7 +240,7 @@ namespace Huginn::Slot
     // EVENT HANDLERS
     // =========================================================================
 
-    void SlotLocker::OnItemUsed(RE::FormID formID)
+    void SlotLocker::OnItemUsed(RE::FormID formID, bool respectActivationLock)
     {
         if (formID == 0) {
             return;
@@ -249,10 +252,18 @@ namespace Huginn::Slot
         for (size_t i = 0; i < MAX_SLOTS; ++i) {
             auto& slot = m_lockedSlots[i];
             if (slot.isLocked && slot.assignment.formID == formID) {
+                // Preserve Sticky's deliberate 10s hold: the inventory delta-scan
+                // path (respectActivationLock) must not evict a just-activated item
+                // the instant it's consumed — that's exactly the case Sticky exists
+                // for. It still expires on its own timer.
+                if (respectActivationLock && slot.isActivationLock) {
+                    continue;
+                }
                 spdlog::info("[SlotLocker] Slot {} unlocked - item {:08X} was used",
                     i, formID);
                 slot.isLocked = false;
                 slot.remainingMs = 0.0f;
+                slot.isActivationLock = false;
                 // Don't break - item might be in multiple slots (unlikely but safe)
             }
         }

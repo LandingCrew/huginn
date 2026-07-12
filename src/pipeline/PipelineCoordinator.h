@@ -96,7 +96,9 @@ namespace Huginn::Pipeline
         /// @param deltaMs      Frame delta in milliseconds
         /// @param player       Player singleton (already null-checked by caller)
         /// @param now          Current time point
-        /// @param pageChanged  True if the user cycled pages (forces pipeline run)
+        /// @param pageChanged  Page-dirty flag: set by page cycling, a missed
+        ///                     page change, Wheeler close, or an inventory change.
+        ///                     Forces the pipeline run (bypasses hash-skip).
         /// @return true if the pipeline ran (false if hash-skipped)
         bool RunPipeline(float deltaMs, RE::PlayerCharacter* player,
                          std::chrono::steady_clock::time_point now,

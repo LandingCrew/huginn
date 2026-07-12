@@ -145,7 +145,7 @@ static void MaintainRegistries(RE::PlayerCharacter* player,
                         // lock pinning it. Otherwise SlotLocker holds the FormID until
                         // its timer expires and re-pins it through the recompute below,
                         // leaving a recommendation for an item the player no longer owns.
-                        Slot::SlotLocker::GetSingleton().OnItemUsed(change.formID);
+                        Slot::SlotLocker::GetSingleton().OnItemUsed(change.formID, /*respectActivationLock=*/true);
 
                         if (!IsConsumption(change.formID, change.delta)) {
                             logger::debug("[ItemRegistry] Left inventory (drop/sell/store), no reward: {} x{}"sv,
@@ -163,7 +163,7 @@ static void MaintainRegistries(RE::PlayerCharacter* player,
                 if (!changes.empty()) inventoryChanged = true;
                 for (const auto& change : changes) {
                     if (change.delta < 0) {
-                        Slot::SlotLocker::GetSingleton().OnItemUsed(change.formID);
+                        Slot::SlotLocker::GetSingleton().OnItemUsed(change.formID, /*respectActivationLock=*/true);
 
                         if (!IsConsumption(change.formID, change.delta)) {
                             logger::debug("[ScrollRegistry] Left inventory (drop/sell/store), no reward: {} x{}"sv,
