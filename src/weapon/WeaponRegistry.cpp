@@ -174,7 +174,10 @@ namespace Huginn::Weapon
         if (!entry || !entry->object || !entry->object->Is(RE::FormType::Ammo)) {
         continue;
         }
-        ammoCounts[entry->object->GetFormID()] = static_cast<int32_t>(entry->countDelta);
+        // Accumulate (+=), not assign: one ammo object can appear as multiple
+        // entryList entries (distinct extra-data stacks). GetInventorySafe sums
+        // the same way; a bare assign would keep only the last stack's count.
+        ammoCounts[entry->object->GetFormID()] += static_cast<int32_t>(entry->countDelta);
       }
       }
 
