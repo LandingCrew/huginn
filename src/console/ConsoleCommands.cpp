@@ -395,8 +395,14 @@ namespace Huginn::Console
       subcmd.clear();
       }
 
-      // Trim again after stripping prefix
-      subcmd = NormalizeCommand(subcmd);
+      // The prefix strip can leave one leading space (e.g. "hg  reset" -> " reset").
+      // The text is already lowercased + end-trimmed from the first NormalizeCommand,
+      // so only a leading-whitespace trim is needed here — not a second full pass.
+      if (auto lead = subcmd.find_first_not_of(" \t"); lead == std::string::npos) {
+      subcmd.clear();
+      } else if (lead > 0) {
+      subcmd.erase(0, lead);
+      }
 
       // Dispatch subcommands — table-driven lookup
       if (subcmd.empty() || subcmd == "help") {
