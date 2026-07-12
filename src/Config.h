@@ -143,4 +143,14 @@ namespace Huginn::Config
    // Debug UI positioning (only affects debug builds)
    inline constexpr float STATE_MANAGER_DEBUG_POS_X = 500.0f;  // Legacy, not used for initial position
    inline constexpr float STATE_MANAGER_DEBUG_POS_Y = 10.0f;
+
+   // -----------------------------------------------------------------------------
+   // Long-Play Soak Telemetry (v0.18.x)
+   // -----------------------------------------------------------------------------
+
+   // How often to emit the [Soak] heartbeat summary line (recommendation accept
+   // rate, recompute/tick counts, learned-item growth, tick perf).
+   // Long enough that it never counts as log spam, short enough to chart drift
+   // across a multi-hour session. Recommended: 5 min.
+   inline constexpr float SOAK_HEARTBEAT_INTERVAL_MS = 300000.0f;
 }

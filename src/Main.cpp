@@ -585,10 +585,15 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_s
     start = std::chrono::high_resolution_clock::now();
     OpenLog();
 
-#ifndef NDEBUG
-    logger::info("{} v{} ({}) [DEBUG BUILD] Loading"sv, Huginn::PROJECT_NAME, Huginn::VERSION_STRING, Huginn::GIT_COMMIT);
+#ifdef Huginn_TRACY_ENABLED
+    constexpr auto tracyTag = " [TRACY]"sv;
 #else
-    logger::info("{} v{} ({}) Loading"sv, Huginn::PROJECT_NAME, Huginn::VERSION_STRING, Huginn::GIT_COMMIT);
+    constexpr auto tracyTag = ""sv;
+#endif
+#ifndef NDEBUG
+    logger::info("{} v{} ({}) [DEBUG BUILD]{} Loading"sv, Huginn::PROJECT_NAME, Huginn::VERSION_STRING, Huginn::GIT_COMMIT, tracyTag);
+#else
+    logger::info("{} v{} ({}) [RELEASE]{} Loading"sv, Huginn::PROJECT_NAME, Huginn::VERSION_STRING, Huginn::GIT_COMMIT, tracyTag);
 #endif
 
     SKSE::Init(a_skse);

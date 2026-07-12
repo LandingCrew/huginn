@@ -3,6 +3,7 @@
 #include "EquipEventBus.h"
 #include "slot/SlotAllocator.h"
 #include "wheeler/WheelerClient.h"
+#include "telemetry/SoakMetrics.h"
 
 namespace Huginn::Learning
 {
@@ -13,6 +14,12 @@ namespace Huginn::Learning
         }
 
         auto attribution = ComputeAttribution(formID);
+
+        // Soak telemetry: the case label is the recommendation-quality signal
+        // (E = Huginn displayed it and the player equipped it; A = never
+        // surfaced). Record it before the reward early-return so hits count.
+        Telemetry::SoakMetrics::GetSingleton().RecordEquipCase(attribution.caseLabel[0]);
+
         if (attribution.multiplier <= 0.0f) {
             logger::debug("[ExternalEquipLearner] Skipped ({}) {:08X} '{}'",
                 attribution.caseLabel, formID, formType);

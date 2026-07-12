@@ -14,6 +14,7 @@
 #include "wheeler/WheelerClient.h"
 #include "wheeler/WheelerSettings.h"
 #include "learning/PipelineStateCache.h"
+#include "telemetry/SoakMetrics.h"
 #include "display/IDisplayBackend.h"
 #include "display/WheelerBackend.h"
 #include "display/IntuitionBackend.h"
@@ -92,6 +93,18 @@ bool PipelineCoordinator::RunPipeline(
 #ifndef NDEBUG
     UpdateDebugWidgets(m_ctx);
 #endif
+
+    // Soak telemetry: this was a real recompute — record candidate/display counts
+    // and whether a safety override took the top slot.
+    size_t displayedCount = 0;
+    for (const auto& assignment : m_ctx.assignments) {
+        if (!assignment.IsEmpty() && assignment.formID != 0) {
+            ++displayedCount;
+        }
+    }
+    Telemetry::SoakMetrics::GetSingleton().RecordPipelineRun(
+        m_ctx.scoredCandidates.size(), displayedCount,
+        m_ctx.overrides.GetTopOverride() != nullptr);
 
     return true;
 }
