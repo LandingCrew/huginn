@@ -15,6 +15,7 @@
 #include "util/ScopedTimer.h"
 #include "util/InventoryUtil.h"
 #include "weapon/WeaponRegistry.h"
+#include "telemetry/SoakMetrics.h"
 
 using namespace Huginn;
 
@@ -290,4 +291,9 @@ void OnUpdate(float deltaSeconds)
     UpdateSubsystems(deltaSeconds, deltaMs);
     MaintainRegistries(player, now);
     RunPipelineIfNeeded(deltaMs, player, now);
+
+    // Soak telemetry: record whole-tick cost and emit the periodic heartbeat.
+    const float tickMs = std::chrono::duration<float, std::milli>(
+        std::chrono::steady_clock::now() - now).count();
+    Telemetry::SoakMetrics::GetSingleton().RecordTick(tickMs, now);
 }
