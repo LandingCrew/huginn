@@ -7,6 +7,7 @@
 #include "candidate/CandidateGenerator.h"
 #include "override/OverrideManager.h"
 #include "slot/SlotAllocator.h"
+#include "slot/SlotLocker.h"
 #include "wheeler/WheelerClient.h"
 #include "learning/PipelineStateCache.h"
 #include "learning/EquipEventBus.h"
@@ -129,10 +130,23 @@ static void MaintainRegistries(RE::PlayerCharacter* player,
                        obj.Is(RE::FormType::Scroll);
             });
 
+            // Any inventory count change can invalidate the current widget — a
+            // consumed/dropped item must leave it, a new item may belong on it.
+            // The GameState hash excludes inventory, so without an explicit signal
+            // the pipeline never recomputes while the player is otherwise idle.
+            bool inventoryChanged = false;
+
             if (itemDeltaDue) {
                 auto changes = g_itemRegistry->RefreshCounts(player, inventory);
+                if (!changes.empty()) inventoryChanged = true;
                 for (const auto& change : changes) {
                     if (change.delta < 0) {
+                        // Item left inventory (consumed/dropped/sold) — break any slot
+                        // lock pinning it. Otherwise SlotLocker holds the FormID until
+                        // its timer expires and re-pins it through the recompute below,
+                        // leaving a recommendation for an item the player no longer owns.
+                        Slot::SlotLocker::GetSingleton().OnItemUsed(change.formID);
+
                         if (!IsConsumption(change.formID, change.delta)) {
                             logger::debug("[ItemRegistry] Left inventory (drop/sell/store), no reward: {} x{}"sv,
                                 change.name, -change.delta);
@@ -146,8 +160,11 @@ static void MaintainRegistries(RE::PlayerCharacter* player,
             }
             if (scrollDeltaDue) {
                 auto changes = g_scrollRegistry->RefreshCounts(player, inventory);
+                if (!changes.empty()) inventoryChanged = true;
                 for (const auto& change : changes) {
                     if (change.delta < 0) {
+                        Slot::SlotLocker::GetSingleton().OnItemUsed(change.formID);
+
                         if (!IsConsumption(change.formID, change.delta)) {
                             logger::debug("[ScrollRegistry] Left inventory (drop/sell/store), no reward: {} x{}"sv,
                                 change.name, -change.delta);
@@ -158,6 +175,13 @@ static void MaintainRegistries(RE::PlayerCharacter* player,
                     }
                 }
                 g_registryTimers.scrollDelta.Reset(now);
+            }
+
+            // Force one recompute so count==0 items drop from candidates and the
+            // widget refreshes even when no GameState field changed. Reuses the
+            // existing "page dirty" force-recompute path (as Wheeler-close does).
+            if (inventoryChanged) {
+                Slot::SlotAllocator::GetSingleton().MarkPageDirty();
             }
         }
     }
