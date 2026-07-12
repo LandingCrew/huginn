@@ -1,6 +1,7 @@
 #pragma once
 
 #include <algorithm>
+#include <cmath>
 #include <filesystem>
 #include <string_view>
 #include <SimpleIni.h>
@@ -37,6 +38,16 @@ enum class IniMissing { Info, Warn };
     const char* key, double defaultVal, float lo, float hi, std::string_view tag)
 {
    const float raw = static_cast<float>(ini.GetDoubleValue(section, key, defaultVal));
+
+   // NaN/inf slip through std::clamp (all comparisons with NaN are false → it
+   // returns NaN, which would then poison every downstream utility). Fall back to
+   // the compile-time default instead — this is the one case a clamp can't fix.
+   if (!std::isfinite(raw)) {
+      const float fallback = std::clamp(static_cast<float>(defaultVal), lo, hi);
+      logger::warn("[{}] {} = {} is not finite, using default {:.3f}"sv, tag, key, raw, fallback);
+      return fallback;
+   }
+
    const float clamped = std::clamp(raw, lo, hi);
    if (clamped != raw) {
       logger::warn("[{}] {} = {:.3f} out of range [{:.1f}, {:.1f}], clamped to {:.3f}"sv,
