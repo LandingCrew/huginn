@@ -244,17 +244,6 @@ namespace Huginn::Scroll
       [[nodiscard]] bool IsLoading() const noexcept { return m_isLoading.load(std::memory_order_acquire); }
 
       // =============================================================================
-      // CHANGE TRACKING
-      // =============================================================================
-
-      /**
-       * @brief Get and clear pending change events
-       * @return Vector of change events since last call (clears internal buffer)
-       * @note Thread-safe: acquires unique_lock to move out m_pendingChanges
-       */
-      [[nodiscard]] std::vector<ScrollChangeEvent> GetAndClearChanges();
-
-      // =============================================================================
       // DEBUG
       // =============================================================================
 
@@ -307,9 +296,6 @@ namespace Huginn::Scroll
       // - Map for O(1) FormID lookup
       std::vector<InventoryScroll> m_scrolls;
       std::unordered_map<RE::FormID, size_t> m_formIDIndex;
-
-      // Change tracking buffer (cleared by GetAndClearChanges)
-      std::vector<ScrollChangeEvent> m_pendingChanges;
 
       // Scroll classifier instance
       ScrollClassifier m_classifier;

@@ -443,17 +443,6 @@ namespace Huginn::Item
       [[nodiscard]] bool IsLoading() const noexcept { return m_isLoading.load(std::memory_order_acquire); }
 
       // =============================================================================
-      // CHANGE TRACKING
-      // =============================================================================
-
-      /**
-       * @brief Get and clear pending change events
-       * @return Vector of change events since last call (clears internal buffer)
-       * @note NOT thread-safe: single-threaded access only (from update loop)
-       */
-      [[nodiscard]] std::vector<ItemChangeEvent> GetAndClearChanges();
-
-      // =============================================================================
       // DEBUG
       // =============================================================================
 
@@ -541,9 +530,6 @@ namespace Huginn::Item
       // - Map for O(1) FormID lookup
       std::vector<InventoryItem> m_items;
       std::unordered_map<RE::FormID, size_t> m_formIDIndex;
-
-      // Change tracking buffer (cleared by GetAndClearChanges)
-      std::vector<ItemChangeEvent> m_pendingChanges;
 
       // Scratch maps for RefreshCounts delta scans (2 Hz). Populated OUTSIDE
       // m_mutex; safe only because RefreshCounts has a single caller on the
