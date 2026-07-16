@@ -91,7 +91,9 @@ namespace Huginn::Scoring
         // Combat state tracking (call from main update loop)
         void OnCombatStart();
         void OnCombatEnd();
-        void Update(float deltaSeconds);
+        // @return true if a displayed exploration wildcard expired this tick
+        //         (caller must force a pipeline run so the slot content swaps)
+        [[nodiscard]] bool Update(float deltaSeconds);
 
         // Reset state (e.g., on save load)
         void Reset();

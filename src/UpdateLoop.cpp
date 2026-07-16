@@ -61,14 +61,22 @@ static void UpdateSubsystems(float deltaSeconds, float deltaMs)
 
     State::StateManager::GetSingleton().Update(deltaMs);
 
+    // Timer-driven subsystems whose expirations change what should be displayed
+    // but produce no state delta: each reports lapses and we force one pipeline
+    // run. Without this, expired cooldowns/wildcards/latches/locks linger
+    // on-screen while the skip gate holds the pipeline idle.
+    bool forcePipelineRun = false;
+
     {
         Huginn_ZONE_NAMED("CandidateGenerator::Update");
-        Candidate::CandidateGenerator::GetSingleton().Update(deltaSeconds);
+        // Cooldown expiry: the item becomes recommendable again
+        forcePipelineRun |= Candidate::CandidateGenerator::GetSingleton().Update(deltaSeconds);
     }
 
     if (g_utilityScorer) {
         Huginn_ZONE_NAMED("UtilityScorer::Update");
-        g_utilityScorer->Update(deltaSeconds);
+        // Wildcard expiry: the exploration slot reverts to the ranked pick
+        forcePipelineRun |= g_utilityScorer->Update(deltaSeconds);
 
         auto transition = State::StateManager::GetSingleton().ConsumeCombatTransition();
         if (transition == State::StateManager::CombatTransition::Entered) {
@@ -80,18 +88,19 @@ static void UpdateSubsystems(float deltaSeconds, float deltaMs)
 
     {
         Huginn_ZONE_NAMED("OverrideManager::Update");
-        Override::OverrideManager::GetSingleton().Update(deltaMs);
+        // Hysteresis latch crossing min-duration: deactivation becomes possible
+        forcePipelineRun |= Override::OverrideManager::GetSingleton().Update(deltaMs);
     }
 
     {
         Huginn_ZONE_NAMED("SlotLocker::Update");
-        // Decay lock timers unconditionally so they track wall-clock time —
-        // behind the pipeline-skip gate a "3 s" lock only decayed on
-        // pipeline-active ticks. Expiry forces one pipeline run so the slot's
-        // content can swap without waiting for an unrelated state change.
-        if (Slot::SlotLocker::GetSingleton().Update(deltaMs)) {
-            Slot::SlotAllocator::GetSingleton().MarkPageDirty();
-        }
+        // Lock expiry: decay wall-clock (not just on pipeline-active ticks) and
+        // let the freed slot's content swap immediately
+        forcePipelineRun |= Slot::SlotLocker::GetSingleton().Update(deltaMs);
+    }
+
+    if (forcePipelineRun) {
+        Slot::SlotAllocator::GetSingleton().MarkPageDirty();
     }
 }
 

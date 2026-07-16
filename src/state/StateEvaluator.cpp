@@ -52,6 +52,7 @@ namespace Huginn::State
       .targetType = EvaluateTargetType(targets),
       .enemyCount = EvaluateEnemyCount(targets),
       .allyStatus = EvaluateAllyStatus(targets),
+      .anyCasting = targets.cachedAnyCasting ? CastingStatus::EnemyCasting : CastingStatus::NoneCasting,
       .inCombat = player.isInCombat ? CombatStatus::InCombat : CombatStatus::NotInCombat,
       .isSneaking = player.isSneaking ? SneakStatus::Sneaking : SneakStatus::NotSneaking
       };

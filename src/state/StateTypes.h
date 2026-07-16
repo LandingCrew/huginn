@@ -456,6 +456,20 @@ namespace Huginn::State
         logger::trace("  HealthTrackingState.IsActivelyHealing changed: {} -> {}"sv,
    other.IsActivelyHealing(), IsActivelyHealing());
       }
+      // Timer buckets (operator== compares buckets, so list them here or a
+      // bucket-only change logs "changed:" with nothing underneath)
+      auto logTimerBucket = [](std::string_view field, float curr, float prev) {
+        if (VitalTracking::TimeBucket(curr) != VitalTracking::TimeBucket(prev)) {
+           logger::trace("  HealthTrackingState.{} bucket changed: {:.1f}s (b{}) -> {:.1f}s (b{})"sv,
+   field, prev, VitalTracking::TimeBucket(prev), curr, VitalTracking::TimeBucket(curr));
+        }
+      };
+      logTimerBucket("timeSinceLastHit"sv, timeSinceLastHit, other.timeSinceLastHit);
+      logTimerBucket("timeSinceLastFire"sv, timeSinceLastFire, other.timeSinceLastFire);
+      logTimerBucket("timeSinceLastFrost"sv, timeSinceLastFrost, other.timeSinceLastFrost);
+      logTimerBucket("timeSinceLastShock"sv, timeSinceLastShock, other.timeSinceLastShock);
+      logTimerBucket("timeSinceLastPoison"sv, timeSinceLastPoison, other.timeSinceLastPoison);
+      logTimerBucket("timeSinceLastHeal"sv, timeSinceLastHeal, other.timeSinceLastHeal);
       }
 #endif
 

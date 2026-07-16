@@ -67,8 +67,12 @@ namespace Huginn::Override
         /**
          * @brief Update internal timers (call from main update loop)
          * @param deltaMs Milliseconds since last update
+         * @return true if an active latch crossed its minimum-duration window
+         *         this tick — deactivation is decided only inside pipeline runs,
+         *         so the caller must force one (MarkPageDirty) or the latch
+         *         lingers on-screen while the pipeline is idle
          */
-        void Update(float deltaMs);
+        [[nodiscard]] bool Update(float deltaMs);
 
         // =============================================================================
         // DEBUG / DIAGNOSTICS

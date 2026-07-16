@@ -708,13 +708,12 @@ namespace Huginn::State
       } else {
         digest.primaryDistance = DistanceBucket::Ranged;
       }
-
-      // Pipeline-relevant primary facts consumed by ContextRuleEngine/scoring:
-      // changing without a digest field is a missed dirty signal.
-      digest.primaryIsCasting = p.isCasting;
-      digest.primaryIsStaggered = p.isStaggered;
-      digest.primaryIsMage = p.isMage;
       }
+
+      // Scoring consumes the ANY-hostile-casting aggregate (ContextRuleEngine
+      // ward weights, GameState::anyCasting) — a background caster must produce
+      // a dirty signal even when the primary target is unchanged.
+      digest.anyCasting = m_targets.cachedAnyCasting;
 
       for (const auto& target : m_targets.targets) {
       if (target.isDead) continue;

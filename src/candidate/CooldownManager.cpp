@@ -8,6 +8,7 @@ namespace Huginn::Candidate
     #define WRITE_LOCK std::unique_lock lock(m_mutex)
     CooldownManager::CooldownManager()
         : m_lastCleanup(std::chrono::steady_clock::now())
+        , m_lastExpiryScan(std::chrono::steady_clock::now())
     {
         // Initialize durations from CandidateConfig defaults (single source of truth)
         constexpr CandidateConfig defaults{};
@@ -72,13 +73,29 @@ namespace Huginn::Candidate
         m_cooldowns[key] = CooldownEntry{ now + duration };
     }
 
-    void CooldownManager::Update([[maybe_unused]] float deltaSeconds)
+    bool CooldownManager::Update([[maybe_unused]] float deltaSeconds)
     {
         // Note: deltaSeconds is unused - we use steady_clock for time tracking.
         // Parameter kept for API consistency with other Update() methods.
 
-        // Periodically clean up expired entries to prevent unbounded growth
         const auto now = std::chrono::steady_clock::now();
+
+        // Detect entries that crossed into expired since the last scan: expiry
+        // is otherwise lazy, and an expired item needs one pipeline run to
+        // resurface (caller MarkPageDirty's on true).
+        bool anyExpired = false;
+        {
+            READ_LOCK;
+            for (const auto& [key, entry] : m_cooldowns) {
+                if (entry.expiryTime > m_lastExpiryScan && entry.expiryTime <= now) {
+                    anyExpired = true;
+                    break;
+                }
+            }
+        }
+        m_lastExpiryScan = now;
+
+        // Periodically clean up expired entries to prevent unbounded growth
         const auto elapsed = std::chrono::duration<float>(now - m_lastCleanup).count();
 
         if (elapsed >= CLEANUP_INTERVAL_SECONDS) {
@@ -86,6 +103,8 @@ namespace Huginn::Candidate
             CleanupExpiredLocked();  // Call lockless version since we already hold lock
             m_lastCleanup = now;
         }
+
+        return anyExpired;
     }
 
     void CooldownManager::SetDuration(SourceType type, float seconds)

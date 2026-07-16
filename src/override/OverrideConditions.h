@@ -84,6 +84,8 @@ namespace Huginn::Override
     {
         bool isActive = false;         // Currently active?
         float activeDurationMs = 0.0f; // How long has it been active?
+        float minDurationMs = 0.0f;    // Latch window (copied from config on activation
+                                       // so Update() can detect the clearable crossing)
     };
 
     // =============================================================================

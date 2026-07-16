@@ -53,8 +53,13 @@ namespace Huginn::Candidate
          * @brief Update cooldown manager, expiring old entries.
          * Should be called each frame/update tick.
          * @param deltaSeconds Time since last update
+         * @return true if any cooldown expired since the last call — expiry is
+         *         otherwise lazy (steady_clock compare) and produces no dirty
+         *         signal, so the caller must force a pipeline run
+         *         (MarkPageDirty) or an expired item never resurfaces while the
+         *         pipeline is idle
          */
-        void Update(float deltaSeconds);
+        [[nodiscard]] bool Update(float deltaSeconds);
 
         /**
          * @brief Set the default cooldown duration for a source type.
@@ -116,6 +121,9 @@ namespace Huginn::Candidate
 
         // Map from combined key (sourceType << 32 | formID) to cooldown entry
         std::unordered_map<uint64_t, CooldownEntry> m_cooldowns;
+
+        // Timestamp of the previous Update() expiry scan (update thread only)
+        std::chrono::steady_clock::time_point m_lastExpiryScan;
 
         // Default durations indexed by SourceType
         std::array<float, SOURCE_TYPE_COUNT> m_durations;

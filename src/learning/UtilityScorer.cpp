@@ -578,9 +578,10 @@ namespace Huginn::Scoring
         m_potionDiscrim.OnCombatEnd();
     }
 
-    void UtilityScorer::Update(float deltaSeconds)
+    bool UtilityScorer::Update(float deltaSeconds)
     {
         m_potionDiscrim.Update(deltaSeconds);
+        return m_wildcardMgr.UpdateExpiry();
     }
 
     void UtilityScorer::Reset()

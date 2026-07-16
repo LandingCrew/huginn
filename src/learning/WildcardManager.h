@@ -49,6 +49,19 @@ namespace Huginn::Scoring
             ApplyWildcards(rankedCandidates, slotCount);
         }
 
+        // Unconditional per-tick expiry check. ApplyWildcards (which normally
+        // drives expiry) runs only on non-skipped pipeline ticks, so without
+        // this an expired wildcard stays displayed while the pipeline is idle.
+        // @return true if the active wildcards lapsed this call (caller must
+        //         force a pipeline run so the slot content can swap)
+        [[nodiscard]] bool UpdateExpiry() {
+            if (!HasActiveWildcard()) {
+                return false;
+            }
+            UpdateWildcardExpiry(std::chrono::steady_clock::now());
+            return !HasActiveWildcard();
+        }
+
         // Configuration
         void SetEnabled(bool enabled) { m_enabled = enabled; }
         void SetBaseProbability(float probability) { m_baseProbability = std::clamp(probability, 0.0f, 1.0f); }

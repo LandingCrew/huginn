@@ -385,12 +385,10 @@ namespace Huginn::State
          RE::FormID primaryFormID = 0;
          TargetType primaryTargetType = TargetType::None;
          DistanceBucket primaryDistance = DistanceBucket::Ranged;
-         bool primaryIsCasting = false;
-         bool primaryIsStaggered = false;
-         bool primaryIsMage = false;
          int enemyCount = 0;
          int allyCount = 0;
          bool hasInjuredAlly = false;
+         bool anyCasting = false;  // mirrors GameState::anyCasting (ward weights)
 
          bool operator==(const TargetDigest&) const = default;
       };
