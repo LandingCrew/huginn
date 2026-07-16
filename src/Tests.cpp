@@ -3737,7 +3737,7 @@ void RunCosaveTests()
         {
             constexpr uint32_t disk = compiled - 2;
             auto blob = makeBlob(disk, 2);
-            auto entries = DecodeV2EntryBlob(blob.data(), 2, disk);
+            auto entries = DecodeV2EntryBlob(blob.data(), blob.size(), 2, disk);
             bool ok = entries.size() == 2
                    && entries[1].formID == 0x00040001
                    && entries[1].trainCount == 11
@@ -3756,7 +3756,7 @@ void RunCosaveTests()
         {
             constexpr uint32_t disk = compiled + 3;
             auto blob = makeBlob(disk, 2);
-            auto entries = DecodeV2EntryBlob(blob.data(), 2, disk);
+            auto entries = DecodeV2EntryBlob(blob.data(), blob.size(), 2, disk);
             bool ok = entries.size() == 2
                    && entries[0].formID == 0x00040000
                    && entries[0].trainCount == 10
@@ -3772,7 +3772,7 @@ void RunCosaveTests()
         // Equal count: decode must match a straight memcpy of SerializedEntry
         {
             auto blob = makeBlob(compiled, 1);
-            auto entries = DecodeV2EntryBlob(blob.data(), 1, compiled);
+            auto entries = DecodeV2EntryBlob(blob.data(), blob.size(), 1, compiled);
             FeatureQLearner::SerializedEntry direct;
             std::memcpy(&direct, blob.data(), sizeof(direct));
             bool ok = entries.size() == 1
@@ -3782,6 +3782,16 @@ void RunCosaveTests()
                    && entries[0].minutesSinceLastUpdate == direct.minutesSinceLastUpdate;
             if (!ok) {
                 logger::error("[Cosave Test] FAIL: equal-count decode differs from raw layout"sv);
+                return;
+            }
+        }
+
+        // Length mismatch: wrong byteLen must decode to nothing
+        {
+            auto blob = makeBlob(compiled, 1);
+            auto entries = DecodeV2EntryBlob(blob.data(), blob.size() - 1, 1, compiled);
+            if (!entries.empty()) {
+                logger::error("[Cosave Test] FAIL: byteLen mismatch should reject decode"sv);
                 return;
             }
         }

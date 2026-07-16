@@ -32,12 +32,17 @@ namespace Huginn::Persist
    static std::optional<LoadedFQLData> s_pendingFQLData;
 
    std::vector<FQLEntry> DecodeV2EntryBlob(
-      const std::byte* data, uint32_t numItems, uint32_t diskFeatureCount)
+      const std::byte* data, size_t byteLen, uint32_t numItems, uint32_t diskFeatureCount)
    {
       constexpr auto compiled = static_cast<uint32_t>(Learning::StateFeatures::NUM_FEATURES);
       const size_t stride = sizeof(RE::FormID)
                           + sizeof(float) * diskFeatureCount
                           + sizeof(uint32_t) * 2;
+      if (byteLen != stride * numItems) {
+         logger::error("[Cosave] DecodeV2EntryBlob: byteLen {} != stride {} x numItems {} — rejecting"sv,
+            byteLen, stride, numItems);
+         return {};
+      }
       const uint32_t copyCount = std::min(diskFeatureCount, compiled);
 
       // Value-init zeroes every weight, so positions >= copyCount stay 0
@@ -143,12 +148,14 @@ namespace Huginn::Persist
                   recVersion);
                break;
             }
-            // Both version copies were always written from the same constant, so a
-            // mismatch means the record (or the save) is corrupt.
+            // The two copies have been written from the same constant since the
+            // repo import, but pre-import v1 writers are not provably identical —
+            // so a mismatch is only logged, and the in-data version (the original
+            // wire format) is trusted. The version check, bounds checks, and
+            // exact-length reads below validate everything decode relies on.
             if (recVersion != version) {
-               logger::error("[Cosave] FQLW version mismatch: SKSE header {} vs in-data {} — corrupt record, skipping"sv,
+               logger::warn("[Cosave] FQLW version mismatch: SKSE header {} vs in-data {} — trusting in-data version"sv,
                   version, recVersion);
-               break;
             }
 
             uint32_t numFeatures;
@@ -233,7 +240,7 @@ namespace Huginn::Persist
                         got, byteLen);
                      break;
                   }
-                  raw = DecodeV2EntryBlob(blob.data(), numItems, numFeatures);
+                  raw = DecodeV2EntryBlob(blob.data(), blob.size(), numItems, numFeatures);
                }
                for (auto& entry : raw) {
                   acceptEntry(entry);
@@ -242,30 +249,44 @@ namespace Huginn::Persist
                // v1 legacy: entries lack minutesSinceLastUpdate — read per field.
                // Reads the on-disk feature count; positions beyond the compiled
                // count are discarded (truncation), missing tail stays zero (pad).
-               for (uint32_t i = 0; i < numItems; ++i) {
+               // Like v2, an incomplete read rejects the record wholesale (no
+               // silent partial import): entries are buffered and committed only
+               // after every read succeeded.
+               std::vector<FQLEntry> raw;
+               raw.reserve(numItems);
+               bool readOk = true;
+               for (uint32_t i = 0; i < numItems && readOk; ++i) {
                   FQLEntry entry{};                  // weights zeroed for migration pad
                   entry.minutesSinceLastUpdate = 0;  // v1: treat as fresh
                   if (!a_intfc->ReadRecordData(entry.formID)) {
                      logger::error("[Cosave] Failed to read FQLW formID at index {}"sv, i);
+                     readOk = false;
                      break;
                   }
-                  bool weightsOk = true;
                   for (uint32_t f = 0; f < numFeatures; ++f) {
                      float w;
                      if (!a_intfc->ReadRecordData(w)) {
                         logger::error("[Cosave] Failed to read FQLW weight at item {}, feature {}"sv, i, f);
-                        weightsOk = false;
+                        readOk = false;
                         break;
                      }
                      if (f < compiledFeatures) {
                         entry.weights[f] = w;
                      }
                   }
-                  if (!weightsOk) break;
+                  if (!readOk) break;
                   if (!a_intfc->ReadRecordData(entry.trainCount)) {
                      logger::error("[Cosave] Failed to read FQLW trainCount at index {}"sv, i);
+                     readOk = false;
                      break;
                   }
+                  raw.push_back(entry);
+               }
+               if (!readOk) {
+                  logger::error("[Cosave] FQLW v1 read incomplete — skipping record"sv);
+                  break;
+               }
+               for (auto& entry : raw) {
                   acceptEntry(entry);
                }
             }

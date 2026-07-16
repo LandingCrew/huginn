@@ -136,7 +136,9 @@ namespace Huginn::Learning
       // Convert to array for dot product with weight vectors
       [[nodiscard]] std::array<float, NUM_FEATURES> ToArray() const
       {
-         static_assert(NUM_FEATURES == 18, "Update ToArray() when adding features");
+         static_assert(NUM_FEATURES == 18,
+            "New features must be APPENDED at the END of ToArray() — cosave "
+            "migration is positional (see APPEND-ONLY block above NUM_FEATURES)");
          return {{
             healthPct, magickaPct, staminaPct,
             inCombat, isSneaking, distanceNorm,
