@@ -168,10 +168,14 @@ namespace Huginn::Slot
         // Log-dedup caches (mutable: AllocateSlotsInternal is const, these are
         // just log noise filters). Guarded by m_logMutex because allocation can
         // run on both the update thread (current page) and a Wheeler callback
-        // thread (non-current pages) — std::set/std::string are not thread-safe.
+        // thread (non-current pages) — std::set is not thread-safe.
+        // Unplaced-override warns latch per condition enum, never per reason
+        // string: reasons can embed live values (e.g. ammo counts) that would
+        // re-fire the warn every tick. Cleared on Reset() and re-armed by
+        // Initialize() when the config changes.
         mutable std::mutex m_logMutex;
         mutable std::set<SlotClassification> m_loggedMissingClassifications;
-        mutable std::string m_lastUnplacedReason;
+        mutable std::set<Override::OverrideCondition> m_warnedUnplacedConditions;
 
         // Config snapshot cache — avoids a SlotSettings shared_lock + vector copy
         // on every allocation tick. Refreshed only when SlotSettings bumps its
@@ -189,13 +193,27 @@ namespace Huginn::Slot
         // INTERNAL HELPERS
         // =========================================================================
 
-        /// Core allocation implementation (takes configs directly)
+        /// Core allocation implementation (takes configs directly).
+        /// pageIndex identifies which page slotConfigs belongs to — used only
+        /// for per-page log dedup and the config-wide unplaced-override check.
         [[nodiscard]] SlotAssignments AllocateSlotsInternal(
+            size_t pageIndex,
             const std::vector<SlotConfig>& slotConfigs,
             const Scoring::ScoredCandidateList& candidates,
             const Override::OverrideCollection& overrides,
             const State::PlayerActorState& player,
             const State::WorldState& world) const;
+
+        /// True if any slot on ANY configured page accepts this override
+        /// category. Overrides are global; a page without an accepting slot is
+        /// not a config problem as long as some other page has one.
+        [[nodiscard]] bool AnyPageAcceptsCategory(Override::OverrideCategory category) const;
+
+        /// Config-wide placeability check: for every ENABLED override condition,
+        /// verify some slot on some page accepts its category. Warns to the log
+        /// and surfaces an in-game notification listing the unplaceable ones.
+        /// Called from Initialize() (startup + every settings reload).
+        void ValidateOverridePlaceability() const;
 
         /// Compute priority order from configs into a caller-provided buffer
         /// (no heap allocation). Returns the number of valid entries written.

@@ -1,7 +1,9 @@
 #include "SlotAllocator.h"
 #include "SlotLocker.h"
 #include "override/OverrideConditions.h"
+#include "override/OverrideConfig.h"
 #include <algorithm>
+#include <format>
 #include <set>
 
 namespace Huginn::Slot
@@ -52,6 +54,14 @@ namespace Huginn::Slot
         }
 
         m_currentPage = 0;
+
+        // Config changed (startup or reload): re-arm the unplaced-override warn
+        // latch, then re-validate placeability against the new page layout.
+        {
+            std::lock_guard<std::mutex> logLock(m_logMutex);
+            m_warnedUnplacedConditions.clear();
+        }
+        ValidateOverridePlaceability();
     }
 
     void SlotAllocator::Reset()
@@ -60,7 +70,7 @@ namespace Huginn::Slot
         {
             std::lock_guard<std::mutex> logLock(m_logMutex);
             m_loggedMissingClassifications.clear();
-            m_lastUnplacedReason.clear();
+            m_warnedUnplacedConditions.clear();
         }
         SKSE::log::info("[SlotAllocator] Reset to page 0");
     }
@@ -209,7 +219,7 @@ namespace Huginn::Slot
             return {};
         }
         const size_t page = pageIndex < snap->size() ? pageIndex : 0;
-        return AllocateSlotsInternal((*snap)[page].slots, candidates, overrides, player, world);
+        return AllocateSlotsInternal(page, (*snap)[page].slots, candidates, overrides, player, world);
     }
 
     SlotAssignments SlotAllocator::AllocateSlots(
@@ -227,6 +237,7 @@ namespace Huginn::Slot
     // =========================================================================
 
     SlotAssignments SlotAllocator::AllocateSlotsInternal(
+        size_t pageIndex,
         const std::vector<SlotConfig>& slotConfigs,
         const Scoring::ScoredCandidateList& candidates,
         const Override::OverrideCollection& overrides,
@@ -274,9 +285,17 @@ namespace Huginn::Slot
         // =======================================================================
         // PASS 1: Assign overrides to MATCHING slots first
         // =======================================================================
-        // Track last override assignment to avoid log spam (only log on change)
-        thread_local RE::FormID lastOverrideFormID = 0;
-        thread_local size_t lastOverrideSlot = SIZE_MAX;
+        // Track last override assignment to avoid log spam (only log on change).
+        // Keyed per page: the same override lands on different slot indices on
+        // different pages within a single tick, so a single-key dedup would
+        // ping-pong and log every tick while an override is latched.
+        struct LastOverrideLog
+        {
+            RE::FormID formID = 0;
+            size_t slot = SIZE_MAX;
+        };
+        thread_local std::array<LastOverrideLog, MAX_PAGES> lastOverrideLogs{};
+        auto& lastOverrideLog = lastOverrideLogs[std::min(pageIndex, MAX_PAGES - 1)];
         bool overrideAssignedThisFrame = false;
 
         if (overrides.HasActiveOverride()) {
@@ -306,12 +325,12 @@ namespace Huginn::Slot
                         overrideAssignedThisFrame = true;
 
                         // Only log if override changed (different formID or slot)
-                        if (formID != lastOverrideFormID || priorityIdx != lastOverrideSlot) {
+                        if (formID != lastOverrideLog.formID || priorityIdx != lastOverrideLog.slot) {
                             SKSE::log::info("[SlotAllocator] Override '{}' → Slot {} ({})",
                                 override.reason, priorityIdx,
                                 SlotClassificationToString(config.classification));
-                            lastOverrideFormID = formID;
-                            lastOverrideSlot = priorityIdx;
+                            lastOverrideLog.formID = formID;
+                            lastOverrideLog.slot = priorityIdx;
                         }
                         break;
                     }
@@ -327,10 +346,12 @@ namespace Huginn::Slot
 
                 // Find first empty slot that accepts this override category
                 bool placed = false;
+                bool sawAcceptingSlot = false;  // page accepts the category; slots were just occupied
                 for (size_t k = 0; k < priorityCount; ++k) {
                     const size_t priorityIdx = priorityOrder[k];
                     const auto& config = slotConfigs[priorityIdx];
                     if (!AcceptsOverride(config.overrideFilter, override.category)) continue;
+                    sawAcceptingSlot = true;
                     if (!assignments[priorityIdx].IsEmpty()) continue;
 
                     Scoring::ScoredCandidate sc;
@@ -346,26 +367,39 @@ namespace Huginn::Slot
                     placed = true;
 
                     // Only log if override changed (different formID or slot)
-                    if (formID != lastOverrideFormID || priorityIdx != lastOverrideSlot) {
+                    if (formID != lastOverrideLog.formID || priorityIdx != lastOverrideLog.slot) {
                         SKSE::log::info("[SlotAllocator] Override '{}' → Slot {} (fallback, {})",
                             override.reason, priorityIdx,
                             SlotClassificationToString(config.classification));
-                        lastOverrideFormID = formID;
-                        lastOverrideSlot = priorityIdx;
+                        lastOverrideLog.formID = formID;
+                        lastOverrideLog.slot = priorityIdx;
                     }
                     break;
                 }
 
                 if (!placed) {
-                    // Rate-limit: only warn once per override reason (avoid per-frame spam)
-                    std::lock_guard<std::mutex> logLock(m_logMutex);
-                    if (override.reason != m_lastUnplacedReason) {
-                        SKSE::log::warn("[SlotAllocator] Override '{}' could not be placed - "
-                            "no slot accepts category '{}'",
-                            override.reason,
-                            Override::OverrideCategoryToString(override.category));
-                        m_lastUnplacedReason = override.reason;
+                    if (sawAcceptingSlot) {
+                        // All accepting slots on THIS page are occupied (typically
+                        // by higher-priority overrides). Allocation worked as
+                        // designed — not a config problem, so no warn.
+                        SKSE::log::trace("[SlotAllocator] Override '{}' displaced on page {} "
+                            "(accepting slots occupied)",
+                            override.reason, pageIndex);
+                    } else if (!AnyPageAcceptsCategory(override.category)) {
+                        // No slot on ANY page accepts this category — a genuine
+                        // config gap. Warn once per condition: the reason string
+                        // can embed live values (e.g. ammo counts), so it must
+                        // not be the dedup key.
+                        std::lock_guard<std::mutex> logLock(m_logMutex);
+                        if (m_warnedUnplacedConditions.insert(override.condition).second) {
+                            SKSE::log::warn("[SlotAllocator] Override '{}' could not be placed - "
+                                "no slot on any page accepts category '{}'",
+                                override.reason,
+                                Override::OverrideCategoryToString(override.category));
+                        }
                     }
+                    // else: another page accepts this category — expected with
+                    // multi-page layouts; the override is visible there.
                 }
             }
         }
@@ -374,8 +408,9 @@ namespace Huginn::Slot
         // on this particular page). With multi-page support, Page 1 may have no
         // override-eligible slots, but the override is still active on Page 0.
         if (!overrides.HasActiveOverride()) {
-            lastOverrideFormID = 0;
-            lastOverrideSlot = SIZE_MAX;
+            for (auto& entry : lastOverrideLogs) {
+                entry = LastOverrideLog{};
+            }
         }
 
         // =======================================================================
@@ -517,6 +552,60 @@ namespace Huginn::Slot
         }
 
         return std::nullopt;
+    }
+
+    // =========================================================================
+    // OVERRIDE PLACEABILITY
+    // =========================================================================
+
+    bool SlotAllocator::AnyPageAcceptsCategory(Override::OverrideCategory category) const
+    {
+        auto snap = GetConfigSnapshot();
+        for (const auto& page : *snap) {
+            for (const auto& slot : page.slots) {
+                if (AcceptsOverride(slot.overrideFilter, category)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    void SlotAllocator::ValidateOverridePlaceability() const
+    {
+        using Override::OverrideCategory;
+
+        struct ConditionCheck
+        {
+            bool enabled;
+            std::string_view name;
+            OverrideCategory category;
+        };
+        const ConditionCheck checks[] = {
+            { Override::Config::ENABLE_CRITICAL_HEALTH(),  "CriticalHealth",  OverrideCategory::HP },
+            { Override::Config::ENABLE_CRITICAL_MAGICKA(), "CriticalMagicka", OverrideCategory::MP },
+            { Override::Config::ENABLE_CRITICAL_STAMINA(), "CriticalStamina", OverrideCategory::SP },
+            { Override::Config::ENABLE_DROWNING(),         "Drowning",        OverrideCategory::Other },
+            { Override::Config::ENABLE_WEAPON_CHARGE(),    "WeaponCharge",    OverrideCategory::Other },
+            { Override::Config::ENABLE_LOW_AMMO(),         "LowAmmo",         OverrideCategory::Other },
+        };
+
+        std::string unplaceable;
+        for (const auto& check : checks) {
+            if (!check.enabled) continue;
+            if (AnyPageAcceptsCategory(check.category)) continue;
+            if (!unplaceable.empty()) unplaceable += ", ";
+            unplaceable += check.name;
+        }
+
+        if (!unplaceable.empty()) {
+            SKSE::log::warn("[SlotAllocator] Override condition(s) [{}] are enabled but no slot on "
+                "any page accepts their category - they will never be shown. "
+                "Check bOverridesEnabled under [PageN.SlotM] in Huginn.ini.",
+                unplaceable);
+            RE::DebugNotification(
+                std::format("Huginn: override(s) [{}] have no accepting slot (see log)", unplaceable).c_str());
+        }
     }
 
 }  // namespace Huginn::Slot

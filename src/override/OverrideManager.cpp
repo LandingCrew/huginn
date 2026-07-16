@@ -144,6 +144,7 @@ namespace Huginn::Override
         OverrideResult result;
         result.priority = Priority::CRITICAL_HEALTH;
         result.category = OverrideCategory::HP;
+        result.condition = OverrideCondition::CriticalHealth;
         result.reason = "CRITICAL: Need Health Potion!";
         result.candidate = std::move(candidate);
 
@@ -173,6 +174,7 @@ namespace Huginn::Override
         OverrideResult result;
         result.priority = Priority::DROWNING;
         result.category = OverrideCategory::Other;
+        result.condition = OverrideCondition::Drowning;
         result.reason = "DROWNING: Need Waterbreathing!";
         result.candidate = std::move(candidate);
 
@@ -223,6 +225,7 @@ namespace Huginn::Override
         OverrideResult result;
         result.priority = Priority::WEAPON_EMPTY;
         result.category = OverrideCategory::Other;
+        result.condition = OverrideCondition::WeaponCharge;
         result.reason = "WEAPON EMPTY: Need Soul Gem!";
         result.candidate = std::move(candidate);
 
@@ -264,6 +267,7 @@ namespace Huginn::Override
         OverrideResult result;
         result.priority = Priority::LOW_AMMO;
         result.category = OverrideCategory::Other;
+        result.condition = OverrideCondition::LowAmmo;
         result.reason = player.hasBowEquipped
             ? std::format("LOW AMMO: {} arrows remaining", rawCount)
             : std::format("LOW AMMO: {} bolts remaining", rawCount);
@@ -292,6 +296,7 @@ namespace Huginn::Override
         OverrideResult result;
         result.priority = Priority::CRITICAL_MAGICKA;
         result.category = OverrideCategory::MP;
+        result.condition = OverrideCondition::CriticalMagicka;
         result.reason = "CRITICAL: Need Magicka Potion!";
         result.candidate = std::move(candidate);
 
@@ -318,6 +323,7 @@ namespace Huginn::Override
         OverrideResult result;
         result.priority = Priority::CRITICAL_STAMINA;
         result.category = OverrideCategory::SP;
+        result.condition = OverrideCondition::CriticalStamina;
         result.reason = "CRITICAL: Need Stamina Potion!";
         result.candidate = std::move(candidate);
 
