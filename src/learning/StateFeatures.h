@@ -58,6 +58,13 @@ namespace Huginn::Learning
       // [17] Bias — always 1.0 (intercept term for linear model)
       float bias = 1.0f;
 
+      // APPEND-ONLY: the ToArray() order is the cosave wire order, and
+      // QLearnerSerializer migrates saved weights positionally when
+      // NUM_FEATURES changes. New features must be appended at the END of
+      // ToArray() (after the current last index); never reorder or remove
+      // positions — saved weights would silently apply to the wrong
+      // features. Retiring a feature means keeping its slot and feeding it
+      // a constant 0.
       static constexpr size_t NUM_FEATURES = 18;
 
       // Max distance for normalization: 4096 game units ≈ 56m
