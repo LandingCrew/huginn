@@ -71,24 +71,8 @@ static std::atomic<bool> g_equipEventRegistered{false};
 //   - Non-dMenu settings: always from main INI
 //   - dMenu-managed settings: from dMenu INI if it exists, else main INI
 // =============================================================================
-// GetMainIniPath() is defined in Globals.cpp (shared with the INI loaders there).
-
-static std::filesystem::path GetDMenuIniPath()
-{
-    const auto dmenuIniPath = std::filesystem::path("Data/SKSE/Plugins/dmenu/customSettings/ini/Huginn.ini");
-
-    try {
-        if (std::filesystem::exists(dmenuIniPath)) {
-            logger::debug("[Main] Using dmenu INI: {}"sv, dmenuIniPath.string());
-            return dmenuIniPath;
-        }
-    } catch (const std::filesystem::filesystem_error& e) {
-        logger::warn("[Main] Filesystem error checking dmenu INI: {}"sv, e.what());
-    }
-
-    logger::debug("[Main] dMenu INI not found, falling back to main INI"sv);
-    return GetMainIniPath();
-}
+// GetMainIniPath() and GetDMenuIniPath() are defined in Globals.cpp (shared
+// with the INI loaders there and with the `hg reload` console command).
 
 // =============================================================================
 // CONSOLIDATED GAME INIT - Shared logic for kNewGame and kPostLoadGame

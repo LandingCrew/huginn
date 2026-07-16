@@ -74,23 +74,17 @@ namespace Huginn::Console
 
    static void Cmd_ResetQValues(std::string_view /*arg*/)
    {
-      if (!g_featureQLearner) {
-      Print("FeatureQLearner not initialized (load a game first)");
-      return;
+      // Shared with the dMenu "reset learning data" button; serializes itself
+      // via RunExclusive and resets SlotLocker alongside the Q-table.
+      const auto fqlItems = Settings::SettingsReloader::ResetLearningData();
+      if (!fqlItems) {
+         Print("FeatureQLearner not initialized (load a game first)");
+         return;
       }
 
-      // Run under the update mutex to prevent data races with the update loop.
-      Huginn::Update::UpdateHandler::GetSingleton()->RunExclusive([&] {
-         size_t fqlItems = g_featureQLearner->GetItemCount();
-         g_featureQLearner->Clear();
-
-         // Unlock all slots so the next scoring cycle can reassign immediately
-         Slot::SlotLocker::GetSingleton().Reset();
-
-         auto msg = std::format("Learning data cleared ({} FQL items)", fqlItems);
-         Print(msg.c_str());
-         logger::info("[Console] {}"sv, msg);
-      });
+      auto msg = std::format("Learning data cleared ({} FQL items)", *fqlItems);
+      Print(msg.c_str());
+      logger::info("[Console] {}"sv, msg);
    }
 
    struct RegistryCounts {
@@ -293,20 +287,17 @@ namespace Huginn::Console
       // previously happened: this command silently skipped Keybindings/Debug
       // and read the widget settings from the wrong INI).
       //
-      // Passing the main INI as the (dMenu-managed) path makes the widget,
-      // keybinding, and debug sections fall back to the main INI — the correct
-      // behavior for a console reload with no dMenu involvement.
-      const auto iniPath = std::filesystem::path("Data/SKSE/Plugins/Huginn.ini");
-
-      // Console commands may run off the game thread; serialize against the
-      // update loop (Phase 2 mutates scorer/allocator/locker/wheeler state).
-      Huginn::Update::UpdateHandler::GetSingleton()->RunExclusive([&] {
-         Settings::SettingsReloader::GetSingleton().ReloadAllSettings(iniPath);
-      });
+      // GetDMenuIniPath() resolves the dMenu-managed sections to the dMenu INI
+      // when dMenu is installed (so `hg reload` doesn't reset dMenu-managed
+      // customizations) and falls back to the main INI otherwise.
+      //
+      // ReloadAllSettings serializes itself via RunExclusive — wrapping the
+      // call here again would deadlock (the update mutex is not re-entrant).
+      Settings::SettingsReloader::GetSingleton().ReloadAllSettings(GetDMenuIniPath());
 
       // ReloadAllSettings already emits an in-game notification; add console
       // feedback for the `hg reload` invoker.
-      Print("All settings reloaded from Huginn.ini");
+      Print("All settings reloaded from INI");
       logger::info("[Console] Full settings reload completed"sv);
    }
 

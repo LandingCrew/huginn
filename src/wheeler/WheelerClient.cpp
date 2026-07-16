@@ -206,19 +206,23 @@ namespace Huginn::Wheeler
                 // Empty: Mark as activation-emptied + clear cached state (inside mutex)
                 // Defer the actual Wheeler API calls (ClearEntry, SetEntrySubtext) to outside the mutex
                 Slot::SlotLocker::GetSingleton().OnItemUsed(static_cast<RE::FormID>(formID));
-                if (pageIndex >= 0 && static_cast<size_t>(pageIndex) < client.m_pageWheels.size()) {
+                {
+                    // Size check must sit INSIDE the lock: DestroyRecommendationWheels
+                    // can clear m_pageWheels between an unlocked check and the index.
                     std::lock_guard<std::mutex> dataLock(client.m_pageDataMutex);
-                    auto& pw = client.m_pageWheels[pageIndex];
-                    size_t slotIdx = static_cast<size_t>(entryIndex);
-                    if (slotIdx < pw.slotActivationEmptied.size() &&
-                        slotIdx < pw.slotFormIDs.size() &&
-                        slotIdx < pw.slotUniqueIDs.size()) {
-                        pw.slotActivationEmptied[slotIdx] = true;
-                        pw.slotFormIDs[slotIdx] = 0;
-                        pw.slotUniqueIDs[slotIdx] = 0;
+                    if (pageIndex >= 0 && static_cast<size_t>(pageIndex) < client.m_pageWheels.size()) {
+                        auto& pw = client.m_pageWheels[pageIndex];
+                        size_t slotIdx = static_cast<size_t>(entryIndex);
+                        if (slotIdx < pw.slotActivationEmptied.size() &&
+                            slotIdx < pw.slotFormIDs.size() &&
+                            slotIdx < pw.slotUniqueIDs.size()) {
+                            pw.slotActivationEmptied[slotIdx] = true;
+                            pw.slotFormIDs[slotIdx] = 0;
+                            pw.slotUniqueIDs[slotIdx] = 0;
+                        }
+                        // Capture deferred action for API calls outside mutex
+                        deferredEmpty = DeferredEmptyAction{pw.wheelIndex, entryIndex};
                     }
-                    // Capture deferred action for API calls outside mutex
-                    deferredEmpty = DeferredEmptyAction{pw.wheelIndex, entryIndex};
                 }
                 spdlog::info("[WheelerClient] Empty policy: slot {} marked activation-emptied (API calls deferred)", entryIndex);
             } else {
@@ -328,6 +332,17 @@ namespace Huginn::Wheeler
 
     void WheelerClient::DestroyRecommendationWheels()
     {
+        // External entry point (kPostLoadGame, settings reload). Wheeler callbacks
+        // iterate m_pageWheels under m_pageDataMutex from other threads, so the
+        // teardown must hold the same lock. Internal callers that already hold it
+        // use DestroyWheelsLocked() directly (locking here would deadlock —
+        // std::mutex is not re-entrant).
+        std::lock_guard<std::mutex> lock(m_pageDataMutex);
+        DestroyWheelsLocked();
+    }
+
+    void WheelerClient::DestroyWheelsLocked()  // REQUIRES: m_pageDataMutex held
+    {
         spdlog::info("[WheelerClient] Destroying {} recommendation wheels", m_pageWheels.size());
 
         // Clear all subtexts BEFORE deleting wheels. Wheeler may hold const char*
@@ -416,10 +431,10 @@ namespace Huginn::Wheeler
                 }
                 // Wheels were invalidated (save/load cycle) - recreate
                 spdlog::info("[WheelerClient] Managed wheels invalidated after save/load, recreating...");
-                DestroyRecommendationWheels();
+                DestroyWheelsLocked();
             } else {
                 // Only stale placeholder/invalid indices — clean up before recreating
-                DestroyRecommendationWheels();
+                DestroyWheelsLocked();
             }
         }
 

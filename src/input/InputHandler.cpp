@@ -37,14 +37,12 @@ namespace Huginn::Input
       m_keyCodes[10] = settings.prevPageKey;
       m_keyCodes[11] = settings.nextPageKey;
 
-      // Reset all input state to prevent stale press/hold from misfiring
-      // after rebind (e.g. old key held → rebind → new key sees ghost state)
-      for (auto& s : m_equipState) {
-      s = {};
-      }
-      for (auto& s : m_cycleState) {
-      s = {};
-      }
+      // Request an input-state reset to prevent stale press/hold from misfiring
+      // after rebind (e.g. old key held → rebind → new key sees ghost state).
+      // Deferred to the game thread: the state arrays are mutated lock-free by
+      // ProcessButton/Update, and this setter can run from the dMenu reload
+      // context — resetting them here would be a cross-thread data race.
+      m_pendingStateReset.store(true, std::memory_order_release);
       m_loggedConfig = false;
 
       // Warn about duplicate key codes (higher-index slot is silently unreachable)
@@ -69,11 +67,26 @@ namespace Huginn::Input
       return m_keybindings;
    }
 
+   void InputHandler::ConsumePendingStateReset()
+   {
+      if (m_pendingStateReset.load(std::memory_order_acquire) &&
+          m_pendingStateReset.exchange(false, std::memory_order_acq_rel)) {
+      for (auto& s : m_equipState) {
+        s = {};
+      }
+      for (auto& s : m_cycleState) {
+        s = {};
+      }
+      }
+   }
+
    bool InputHandler::ProcessButton(RE::ButtonEvent* button)
    {
       if (!m_enabled || !button) {
       return false;
       }
+
+      ConsumePendingStateReset();
 
       // Only process keyboard events - ignore mouse, gamepad, etc.
       if (button->GetDevice() != RE::INPUT_DEVICE::kKeyboard) {
@@ -228,6 +241,8 @@ namespace Huginn::Input
 
    void InputHandler::Update()
    {
+      ConsumePendingStateReset();
+
       // Update frame time
       m_frameTime = std::chrono::steady_clock::now();
 

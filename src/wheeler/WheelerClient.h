@@ -187,7 +187,10 @@ namespace Huginn::Wheeler
         // Returns true if at least one wheel was created
         bool CreateRecommendationWheels();
 
-        // Tear down all recommendation wheels (deletes from Wheeler, then clears vector)
+        // Tear down all recommendation wheels (deletes from Wheeler, then clears vector).
+        // Locks m_pageDataMutex — safe to call while Wheeler callbacks may be
+        // iterating m_pageWheels on another thread. Do NOT call while already
+        // holding m_pageDataMutex; use DestroyWheelsLocked() internally instead.
         void DestroyRecommendationWheels();
 
         // Update the wheel for the CURRENT page with new recommendations
@@ -359,5 +362,8 @@ namespace Huginn::Wheeler
 
         // Check if a wheel belongs to Huginn
         [[nodiscard]] bool IsOurWheel(int32_t wheelIndex) const;
+
+        // Teardown implementation. REQUIRES: m_pageDataMutex held.
+        void DestroyWheelsLocked();
     };
 }
