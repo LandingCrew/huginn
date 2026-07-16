@@ -471,7 +471,6 @@ namespace Huginn::Item
        * @brief Combined inventory scan for all item types (v0.7.19)
        * @return InventoryScanResult with both alchemy items and soul gems
        * @note Single traversal via GetInventoryChanges()->entryList
-       * @note Replaces separate ScanPlayerInventory() + ScanPlayerSoulGems() calls
        */
       [[nodiscard]] InventoryScanResult ScanPlayerInventoryAll() const;
 
@@ -492,22 +491,6 @@ namespace Huginn::Item
        * @brief Shared delta-diff tail for both RefreshCounts overloads.
        */
       std::vector<ItemChangeEvent> RefreshCountsFromScan(const InventoryScanResult& scanResult);
-
-      /**
-       * @brief Scan player inventory for alchemy items
-       * @return Vector of (AlchemyItem*, count) pairs
-       * @note Single traversal via GetInventoryChanges()->entryList
-       * @deprecated Use ScanPlayerInventoryAll() for combined scan
-       */
-      [[nodiscard]] std::vector<std::pair<RE::AlchemyItem*, int32_t>> ScanPlayerInventory() const;
-
-      /**
-       * @brief Scan player inventory for soul gems (v0.7.8)
-       * @return Vector of (TESSoulGem*, count) pairs
-       * @note Soul gems are separate form type from AlchemyItem
-       * @deprecated Use ScanPlayerInventoryAll() for combined scan
-       */
-      [[nodiscard]] std::vector<std::pair<RE::TESSoulGem*, int32_t>> ScanPlayerSoulGems() const;
 
       /**
        * @brief Add item to registry

@@ -4,6 +4,7 @@
 #include "util/AtomicGuard.h"
 #include "util/AlgorithmUtils.h"
 #include "util/InventoryUtil.h"
+#include "util/ExtraListStability.h"
 
 namespace Huginn::Item
 {
@@ -1010,6 +1011,13 @@ namespace Huginn::Item
    {
       InventoryScanResult result;
 
+      // Check if safe to access extraLists — reachable straight from kPostLoadGame
+      // (ReconcileItems), inside the post-load window where reading extra data can
+      // crash. When not yet stable, Check 2 below is skipped; player-filled gems
+      // read as empty until the next RefreshCounts pass (500ms), which updates
+      // fill state per scan.
+      const bool safeToAccessExtraLists = Util::IsExtraListStable();
+
       // Pre-allocate reasonable capacities
       result.alchemyItems.reserve(64);
       result.soulGems.reserve(16);
@@ -1038,7 +1046,7 @@ namespace Huginn::Item
         }
         // Check 2: Player-filled gems (via Soul Trap) use ExtraSoul extra data
         // attached at runtime to an empty gem base form.
-        else if (entry && entry->extraLists) {
+        else if (safeToAccessExtraLists && entry && entry->extraLists) {
            for (auto* extraList : *entry->extraLists) {
             if (!extraList) continue;
             if (auto* extraSoul = extraList->GetByType<RE::ExtraSoul>()) {
@@ -1063,90 +1071,6 @@ namespace Huginn::Item
       }
 
       return result;
-   }
-
-   // =============================================================================
-   // LEGACY SCAN METHODS (deprecated, kept for compatibility)
-   // =============================================================================
-
-   std::vector<std::pair<RE::AlchemyItem*, int32_t>> ItemRegistry::ScanPlayerInventory() const
-   {
-      std::vector<std::pair<RE::AlchemyItem*, int32_t>> items;
-
-      auto* player = RE::PlayerCharacter::GetSingleton();
-      if (!player) {
-      logger::debug("[ItemRegistry] Player not available for inventory scan"sv);
-      return items;
-      }
-
-      // Get player's inventory changes
-      auto* invChanges = player->GetInventoryChanges();
-      if (!invChanges || !invChanges->entryList) {
-      logger::debug("[ItemRegistry] No inventory changes available"sv);
-      return items;
-      }
-
-      // Pre-allocate reasonable capacity
-      items.reserve(64);
-
-      // Single traversal of inventory entry list
-      for (auto* entry : *invChanges->entryList) {
-      if (!entry || !entry->object) continue;
-
-      // Only process AlchemyItems (potions, poisons, food, ingredients)
-      auto* alchemyItem = entry->object->As<RE::AlchemyItem>();
-      if (!alchemyItem) continue;
-
-      // Get item count (countDelta is the change from base container)
-      // For player inventory, this is effectively the current count
-      int32_t count = entry->countDelta;
-
-      // Skip items with zero or negative count
-      if (count <= 0) continue;
-
-      items.emplace_back(alchemyItem, count);
-      }
-
-      return items;
-   }
-
-   std::vector<std::pair<RE::TESSoulGem*, int32_t>> ItemRegistry::ScanPlayerSoulGems() const
-   {
-      std::vector<std::pair<RE::TESSoulGem*, int32_t>> soulGems;
-
-      auto* player = RE::PlayerCharacter::GetSingleton();
-      if (!player) {
-      logger::debug("[ItemRegistry] Player not available for soul gem scan"sv);
-      return soulGems;
-      }
-
-      // Get player's inventory changes
-      auto* invChanges = player->GetInventoryChanges();
-      if (!invChanges || !invChanges->entryList) {
-      logger::debug("[ItemRegistry] No inventory changes available"sv);
-      return soulGems;
-      }
-
-      // Single traversal of inventory entry list
-      for (auto* entry : *invChanges->entryList) {
-      if (!entry || !entry->object) continue;
-
-      // Only process Soul Gems (v0.7.8)
-      auto* soulGem = entry->object->As<RE::TESSoulGem>();
-      if (!soulGem) continue;
-
-      // Get item count
-      int32_t count = entry->countDelta;
-
-      // Skip items with zero or negative count
-      if (count <= 0) continue;
-
-      soulGems.emplace_back(soulGem, count);
-      logger::trace("[ItemRegistry] Found soul gem: {} (count={})"sv,
-        soulGem->GetName(), count);
-      }
-
-      return soulGems;
    }
 
    void ItemRegistry::AddItem(RE::AlchemyItem* item, int32_t count)

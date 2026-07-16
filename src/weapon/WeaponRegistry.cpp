@@ -6,6 +6,7 @@
 #include "util/AtomicGuard.h"
 #include "util/AlgorithmUtils.h"
 #include "util/InventoryUtil.h"
+#include "util/ExtraListStability.h"
 
 namespace Huginn::Weapon
 {
@@ -88,17 +89,10 @@ namespace Huginn::Weapon
       // m_isLoading cleared by LoadingGuard destructor
    }
 
-   bool WeaponRegistry::IsExtraListStable() noexcept
-   {
-      const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-      std::chrono::steady_clock::now() - g_lastGameLoad);
-      return elapsed.count() >= static_cast<int64_t>(Config::EXTRALIST_STABILIZATION_MS);
-   }
-
    void WeaponRegistry::RefreshCharges()
    {
       // CRITICAL SAFETY: Check if enough time has passed since save load (v0.7.9)
-      if (!IsExtraListStable()) {
+      if (!Util::IsExtraListStable()) {
       logger::trace("[WeaponRegistry] RefreshCharges() skipped - extraLists not stable"sv);
       return;
       }
@@ -119,7 +113,7 @@ namespace Huginn::Weapon
       // so it must gate on extraList stability itself rather than relying on the
       // zero-arg wrapper or on the refresh interval coincidentally equalling
       // EXTRALIST_STABILIZATION_MS. Reading extraLists too early can crash.
-      if (!IsExtraListStable()) {
+      if (!Util::IsExtraListStable()) {
       return;
       }
 
@@ -273,7 +267,7 @@ namespace Huginn::Weapon
 
       // === WEAPONS + AMMO ===
       // Check if safe to access extraLists (v0.7.9)
-      const bool safeToAccessExtraLists = IsExtraListStable();
+      const bool safeToAccessExtraLists = Util::IsExtraListStable();
 
       auto* player = RE::PlayerCharacter::GetSingleton();
       if (!player) {
@@ -987,7 +981,7 @@ namespace Huginn::Weapon
       std::unordered_set<RE::FormID> favoritedWeapons;
 
       // CRITICAL: Check if enough time has passed since save load for extraLists to be stable
-      if (!IsExtraListStable()) {
+      if (!Util::IsExtraListStable()) {
       logger::trace("[WeaponRegistry] ScanWeaponFavorites() skipped - extraLists not stable"sv);
       return favoritedWeapons;  // Return empty - will be populated by RefreshCharges later
       }
