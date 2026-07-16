@@ -31,11 +31,12 @@ namespace Huginn::Slot
     // MAIN API
     // =========================================================================
 
-    void SlotLocker::Update(float deltaMs)
+    bool SlotLocker::Update(float deltaMs)
     {
         std::lock_guard<std::mutex> lock(m_mutex);
 
         // Decay lock timers for all slots
+        bool anyExpired = false;
         for (auto& slot : m_lockedSlots) {
             if (slot.isLocked && slot.remainingMs > 0.0f) {
                 slot.remainingMs -= deltaMs;
@@ -43,11 +44,13 @@ namespace Huginn::Slot
                 if (slot.remainingMs <= 0.0f) {
                     slot.isLocked = false;
                     slot.remainingMs = 0.0f;
+                    anyExpired = true;
                     spdlog::debug("[SlotLocker] Lock expired for slot with FormID {:08X}",
                         slot.assignment.formID);
                 }
             }
         }
+        return anyExpired;
     }
 
     SlotAssignments SlotLocker::ApplyLocks(

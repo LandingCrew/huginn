@@ -100,8 +100,12 @@ namespace Huginn::State
       auto* player = RE::PlayerCharacter::GetSingleton();
       if (!player) {
       std::unique_lock lock(m_targetsMutex);
+      // Losing the player IS a change if we were tracking anything: report it
+      // and reset the digest so the next real poll diffs against empty.
+      const bool hadTargets = m_targets.primary.has_value() || !m_targets.targets.empty();
       m_targets.Clear();
-      return false;
+      m_prevTargetDigest = TargetDigest{};
+      return hadTargets;
       }
 
       float gameTime = 0.0f;
@@ -694,15 +698,22 @@ namespace Huginn::State
       digest.primaryFormID = p.actorFormID;
       digest.primaryTargetType = p.targetType;
 
-      // Discretize distance using same thresholds as StateEvaluator
-      const float dist = p.GetDistanceToPlayer();
-      if (dist <= DistanceThresholds::MELEE_MAX) {
+      // Shared 3-bucket constants: must match StateEvaluator::EvaluateDistance
+      // exactly, or distance-bucket transitions produce no dirty signal.
+      const float distSq = p.distanceToPlayerSq;
+      if (distSq <= DistanceThresholds::EVAL_MELEE_MAX_SQ) {
         digest.primaryDistance = DistanceBucket::Melee;
-      } else if (dist <= DistanceThresholds::MID_MAX) {
+      } else if (distSq <= DistanceThresholds::EVAL_MID_MAX_SQ) {
         digest.primaryDistance = DistanceBucket::Mid;
       } else {
         digest.primaryDistance = DistanceBucket::Ranged;
       }
+
+      // Pipeline-relevant primary facts consumed by ContextRuleEngine/scoring:
+      // changing without a digest field is a missed dirty signal.
+      digest.primaryIsCasting = p.isCasting;
+      digest.primaryIsStaggered = p.isStaggered;
+      digest.primaryIsMage = p.isMage;
       }
 
       for (const auto& target : m_targets.targets) {

@@ -146,9 +146,11 @@ namespace Huginn::State
       }
 
       bool operator==(const ResourceFlowTracker& other) const {
+      // timeSinceLast grows without bound — compare behavior buckets, not raw
+      // floats (an epsilon here makes the dirty flag fire forever; see TimeBucket).
       return std::abs(recentAmount - other.recentAmount) < Epsilon::VITAL_PERCENTAGE &&
              std::abs(rate - other.rate) < 3.0f &&
-             std::abs(timeSinceLast - other.timeSinceLast) < 0.2f &&
+             VitalTracking::TimeBucket(timeSinceLast) == VitalTracking::TimeBucket(other.timeSinceLast) &&
              isIncreasing == other.isIncreasing &&
              isDecreasing == other.isDecreasing;
       }
@@ -459,18 +461,20 @@ namespace Huginn::State
 
       bool operator==(const HealthTrackingState& other) const
       {
+      // timeSince* fields grow without bound — compare behavior buckets, not raw
+      // floats (an epsilon here makes the dirty flag fire forever; see TimeBucket).
       bool equal = std::abs(recentDamageTaken - other.recentDamageTaken) < Epsilon::VITAL_PERCENTAGE &&
            std::abs(magicDamagePercent - other.magicDamagePercent) < Epsilon::VITAL_PERCENTAGE &&
         takingMagicDamage == other.takingMagicDamage &&
         damageIncreasing == other.damageIncreasing &&
         damageDecreasing == other.damageDecreasing &&
-        std::abs(timeSinceLastHit - other.timeSinceLastHit) < 0.2f &&
+        VitalTracking::TimeBucket(timeSinceLastHit) == VitalTracking::TimeBucket(other.timeSinceLastHit) &&
         // v0.6.7: Last damage type tracking
         lastDamageType == other.lastDamageType &&
-        std::abs(timeSinceLastFire - other.timeSinceLastFire) < 0.5f &&
-        std::abs(timeSinceLastFrost - other.timeSinceLastFrost) < 0.5f &&
-        std::abs(timeSinceLastShock - other.timeSinceLastShock) < 0.5f &&
-        std::abs(timeSinceLastPoison - other.timeSinceLastPoison) < 0.5f &&
+        VitalTracking::TimeBucket(timeSinceLastFire) == VitalTracking::TimeBucket(other.timeSinceLastFire) &&
+        VitalTracking::TimeBucket(timeSinceLastFrost) == VitalTracking::TimeBucket(other.timeSinceLastFrost) &&
+        VitalTracking::TimeBucket(timeSinceLastShock) == VitalTracking::TimeBucket(other.timeSinceLastShock) &&
+        VitalTracking::TimeBucket(timeSinceLastPoison) == VitalTracking::TimeBucket(other.timeSinceLastPoison) &&
         // Phase 4.5: Healing fields
         std::abs(recentHealingReceived - other.recentHealingReceived) < Epsilon::VITAL_PERCENTAGE &&
         std::abs(potionHealingPercent - other.potionHealingPercent) < Epsilon::VITAL_PERCENTAGE &&
@@ -479,7 +483,7 @@ namespace Huginn::State
         std::abs(healingRate - other.healingRate) < 3.0f &&
         healingIncreasing == other.healingIncreasing &&
         healingDecreasing == other.healingDecreasing &&
-        std::abs(timeSinceLastHeal - other.timeSinceLastHeal) < 0.2f;
+        VitalTracking::TimeBucket(timeSinceLastHeal) == VitalTracking::TimeBucket(other.timeSinceLastHeal);
 #ifdef _DEBUG
       if (!equal) {
         logger::trace("HealthTrackingState changed:"sv);

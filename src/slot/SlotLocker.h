@@ -93,9 +93,14 @@ namespace Huginn::Slot
         // MAIN API
         // =========================================================================
 
-        /// Update lock timers (call before ApplyLocks each frame)
+        /// Update lock timers. Called unconditionally from UpdateSubsystems every
+        /// tick (NOT from behind the pipeline-skip gate) so locks decay in
+        /// wall-clock time.
         /// @param deltaMs Milliseconds since last update
-        void Update(float deltaMs);
+        /// @return true if any lock expired this update — the caller must force a
+        ///         pipeline run (MarkPageDirty) so the freed slot's content swaps
+        ///         without waiting for an unrelated state change
+        [[nodiscard]] bool Update(float deltaMs);
 
         /// Apply locking logic to raw assignments from SlotAllocator
         /// @param newAssignments Fresh assignments from SlotAllocator

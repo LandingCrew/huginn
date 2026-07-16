@@ -147,12 +147,18 @@ void PipelineCoordinator::GatherState(PipelineContext& ctx)
 
 bool PipelineCoordinator::CheckHashSkip(PipelineContext& ctx, bool pageChanged)
 {
-    if (ctx.stateHash == m_lastPipelineHash && !pageChanged && !ctx.elementalDamageActive) {
+    // Run during the elemental window AND once on its falling edge — the
+    // enriched flags aren't in the hash, so the close of the window is
+    // otherwise invisible and stale fire/frost/shock scoring would persist.
+    const bool elementalBypass = ctx.elementalDamageActive || m_wasElementalDamageActive;
+
+    if (ctx.stateHash == m_lastPipelineHash && !pageChanged && !elementalBypass) {
         // Keep cache timestamp fresh so external equip events aren't rejected as stale
         Learning::PipelineStateCache::GetSingleton().RefreshTimestamp();
         return true;  // Skip
     }
     m_lastPipelineHash = ctx.stateHash;
+    m_wasElementalDamageActive = ctx.elementalDamageActive;
     return false;  // Don't skip
 }
 
@@ -247,9 +253,9 @@ void PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
 
     // Apply slot locking for temporal stability. ApplyLocks also dedups
     // post-lock (locked slots can reintroduce an item the allocator placed
-    // elsewhere), preferring to keep locked content.
+    // elsewhere), preferring to keep locked content. Lock-timer decay lives in
+    // UpdateSubsystems (unconditional per tick), not here behind the skip gate.
     auto& slotLocker = Slot::SlotLocker::GetSingleton();
-    slotLocker.Update(ctx.deltaMs);
     ctx.assignments = slotLocker.ApplyLocks(ctx.rawAssignments, ctx.overrides);
 
     // Compute visual state for each slot

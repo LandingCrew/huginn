@@ -82,6 +82,17 @@ static void UpdateSubsystems(float deltaSeconds, float deltaMs)
         Huginn_ZONE_NAMED("OverrideManager::Update");
         Override::OverrideManager::GetSingleton().Update(deltaMs);
     }
+
+    {
+        Huginn_ZONE_NAMED("SlotLocker::Update");
+        // Decay lock timers unconditionally so they track wall-clock time —
+        // behind the pipeline-skip gate a "3 s" lock only decayed on
+        // pipeline-active ticks. Expiry forces one pipeline run so the slot's
+        // content can swap without waiting for an unrelated state change.
+        if (Slot::SlotLocker::GetSingleton().Update(deltaMs)) {
+            Slot::SlotAllocator::GetSingleton().MarkPageDirty();
+        }
+    }
 }
 
 // =============================================================================
@@ -248,7 +259,11 @@ static void RunPipelineIfNeeded(float deltaMs, RE::PlayerCharacter* player,
     bool stateChanged = stateManager.DidLastUpdateChangeState();
     bool pageChanged = Slot::SlotAllocator::GetSingleton().PeekPageChanged();
 
-    if (!stateChanged && !pageChanged) {
+    // Elemental enrichment flags decay with wall-clock time without producing a
+    // state delta, so the outer gate must stay open for the whole window —
+    // mirrors the inner-gate bypass in CheckHashSkip (which remains the
+    // authority once fresh state is gathered).
+    if (!stateChanged && !pageChanged && !stateManager.IsElementalWindowActive()) {
         Learning::PipelineStateCache::GetSingleton().RefreshTimestamp();
         return;
     }

@@ -33,14 +33,6 @@ namespace
       else                        return static_cast<BucketEnum>(5);  // VeryHigh
    }
 
-   // Distance thresholds for 3-bucket DistanceBucket classification
-   // Note: Different from StateManagerConstants (4-bucket system for target tracking)
-   namespace EvaluatorThresholds
-   {
-      inline constexpr float MELEE_MAX = 256.0f;   // 0-256 units (~4m)
-      inline constexpr float MID_MAX = 768.0f;     // 257-768 units (~4-12m)
-      // Ranged: 769+ units
-   }
 }
 
 namespace Huginn::State
@@ -86,11 +78,13 @@ namespace Huginn::State
       return DistanceBucket::Ranged;  // No target
       }
 
-      const float distance = targets.primary->GetDistanceToPlayer();
+      // Shared constants: ComputeTargetDigest must bucket identically or the
+      // pipeline-skip digest misses distance transitions (critique finding 1).
+      const float distanceSq = targets.primary->distanceToPlayerSq;
 
-      if (distance <= EvaluatorThresholds::MELEE_MAX) {
+      if (distanceSq <= DistanceThresholds::EVAL_MELEE_MAX_SQ) {
       return DistanceBucket::Melee;
-      } else if (distance <= EvaluatorThresholds::MID_MAX) {
+      } else if (distanceSq <= DistanceThresholds::EVAL_MID_MAX_SQ) {
       return DistanceBucket::Mid;
       } else {
       return DistanceBucket::Ranged;

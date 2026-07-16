@@ -335,6 +335,18 @@ namespace Huginn::State
       newState.healingIncreasing = healingRateChange > VitalTracking::TREND_CHANGE_THRESHOLD;
       newState.healingDecreasing = healingRateChange < -VitalTracking::TREND_CHANGE_THRESHOLD;
 
+      // Publish the elemental-window flag for the outer pipeline-skip gate
+      // (see IsElementalWindowActive). Uses the freshly computed timers so the
+      // flag is current even when the state comparison below reports no change.
+      {
+      constexpr float kWindow = VitalTracking::ELEMENTAL_DAMAGE_ENRICHMENT_WINDOW;
+      m_elementalWindowActive.store(
+        newState.timeSinceLastFire < kWindow ||
+        newState.timeSinceLastFrost < kWindow ||
+        newState.timeSinceLastShock < kWindow,
+        std::memory_order_relaxed);
+      }
+
       // Update state with change detection
       {
       std::unique_lock lock(m_trackingMutex);
