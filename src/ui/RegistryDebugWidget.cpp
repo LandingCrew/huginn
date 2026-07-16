@@ -16,11 +16,7 @@
 #include <format>
 // Note: Huginn::VERSION_STRING is available via PCH.h -> Plugin.h
 
-// External references to global registries (defined in Main.cpp)
-extern std::unique_ptr<Huginn::Spell::SpellRegistry> g_spellRegistry;
-extern std::unique_ptr<Huginn::Item::ItemRegistry> g_itemRegistry;
-extern std::unique_ptr<Huginn::Weapon::WeaponRegistry> g_weaponRegistry;
-extern std::unique_ptr<Huginn::Scroll::ScrollRegistry> g_scrollRegistry;
+#include "../Globals.h"
 
 namespace Huginn::UI
 {
@@ -82,6 +78,8 @@ namespace Huginn::UI
       if (ShouldUpdateCache()) {
       UpdateSpellCache(g_spellRegistry.get());
       UpdateWeaponCache(g_weaponRegistry.get());
+      UpdateItemCache(g_itemRegistry.get());
+      UpdateScrollCache(g_scrollRegistry.get());
       }
 
       ImGui::SetNextWindowPos(ImVec2(m_posX, m_posY), ImGuiCond_FirstUseEver);
@@ -275,14 +273,11 @@ namespace Huginn::UI
       auto soulGems = registry->GetSoulGems();
       ImGui::Text("  Total: %zu", soulGems.size());
 
-      // Show best soul gem if available
-      if (!soulGems.empty()) {
-        auto* bestGem = registry->GetBestSoulGem();
-        if (bestGem) {
-           ImGui::Text("  Best: %s (%.0f)",
-            bestGem->data.name.c_str(),
-            bestGem->data.magnitude);
-        }
+      // Show best soul gem if available (cached copy — see UpdateItemCache)
+      if (m_itemCache.bestSoulGem.valid) {
+        ImGui::Text("  Best: %s (%.0f)",
+           m_itemCache.bestSoulGem.name.c_str(),
+           m_itemCache.bestSoulGem.value);
       }
 
       ImGui::TreePop();  // Close "Item Details" TreeNode
@@ -290,26 +285,26 @@ namespace Huginn::UI
 
       ImGui::Separator();
 
-      // Show best potions using GetBest* accessors
+      // Show best potions from the 250ms snapshot (owned copies — render thread
+      // must never dereference registry-internal pointers, see UpdateItemCache)
       ImGui::TextColored(Colors::HEADER_YELLOW, "Best Potions:");
 
-      // Helper lambda to display best potion (now using GetBest* methods)
-      auto showBestPotion = [](const char* label, const Item::InventoryItem* best, ImVec4 color) {
-      if (!best) {
+      auto showBestPotion = [](const char* label, const BestEntrySnap& best, ImVec4 color) {
+      if (!best.valid) {
         ImGui::TextDisabled("  %s: None", label);
         return;
       }
       ImGui::TextColored(color, "  %s:", label);
       ImGui::SameLine();
-      ImGui::Text("%s (%.0f) x%d", best->data.name.c_str(), best->data.magnitude, best->count);
+      ImGui::Text("%s (%.0f) x%d", best.name.c_str(), best.value, best.count);
       };
 
-      showBestPotion("HP", registry->GetBestHealthPotion(), Colors::HEALTH_LOW);
-      showBestPotion("MP", registry->GetBestMagickaPotion(), Colors::MAGICKA_LOW);
-      showBestPotion("SP", registry->GetBestStaminaPotion(), Colors::STAMINA_LOW);
-      showBestPotion("R.Fire", registry->GetBestResistFirePotion(), Colors::SPELL_DAMAGE);
-      showBestPotion("R.Frost", registry->GetBestResistFrostPotion(), Colors::SPELL_DEFENSIVE);
-      showBestPotion("R.Shock", registry->GetBestResistShockPotion(), Colors::ACTIVE_INDICATOR);
+      showBestPotion("HP", m_itemCache.bestHealth, Colors::HEALTH_LOW);
+      showBestPotion("MP", m_itemCache.bestMagicka, Colors::MAGICKA_LOW);
+      showBestPotion("SP", m_itemCache.bestStamina, Colors::STAMINA_LOW);
+      showBestPotion("R.Fire", m_itemCache.bestResistFire, Colors::SPELL_DAMAGE);
+      showBestPotion("R.Frost", m_itemCache.bestResistFrost, Colors::SPELL_DEFENSIVE);
+      showBestPotion("R.Shock", m_itemCache.bestResistShock, Colors::ACTIVE_INDICATOR);
 
       ImGui::Unindent(8.0f);
    }
@@ -376,34 +371,33 @@ namespace Huginn::UI
         ImGui::TextColored(Colors::HEALTH_LOW, "  Low Charge: %zu", lowChargeWeapons.size());
       }
 
-      // Best weapons
+      // Best weapons from the 250ms snapshot (owned copies — see UpdateWeaponCache)
       ImGui::TextColored(Colors::HEADER_YELLOW, "Best:");
 
-      auto showBestWeapon = [](const char* label, const Weapon::InventoryWeapon* best, ImVec4 color) {
-        if (!best) {
+      auto showBestWeapon = [](const char* label, const BestEntrySnap& best, ImVec4 color) {
+        if (!best.valid) {
            ImGui::TextDisabled("  %s: None", label);
            return;
         }
         ImGui::TextColored(color, "  %s:", label);
         ImGui::SameLine();
-        if (best->data.hasEnchantment) {
+        if (best.hasEnchantment) {
            ImGui::Text("%s (%.0f dmg, %.0f%%)",
-            best->data.name.c_str(),
-            best->data.baseDamage,
-            best->data.currentCharge * 100.0f);
+            best.name.c_str(),
+            best.value,
+            best.charge * 100.0f);
         } else {
            ImGui::Text("%s (%.0f dmg)",
-            best->data.name.c_str(),
-            best->data.baseDamage);
+            best.name.c_str(),
+            best.value);
         }
       };
 
-      showBestWeapon("Melee", registry->GetBestMeleeWeapon(), Colors::WEAPON_MELEE);
-      showBestWeapon("Ranged", registry->GetBestRangedWeapon(), Colors::WEAPON_RANGED);
+      showBestWeapon("Melee", m_weaponCache.bestMelee, Colors::WEAPON_MELEE);
+      showBestWeapon("Ranged", m_weaponCache.bestRanged, Colors::WEAPON_RANGED);
 
-      auto* bestSilver = registry->GetBestSilveredWeapon();
-      if (bestSilver) {
-        showBestWeapon("Silver", bestSilver, Colors::WEAPON_SILVER);
+      if (m_weaponCache.bestSilver.valid) {
+        showBestWeapon("Silver", m_weaponCache.bestSilver, Colors::WEAPON_SILVER);
       }
 
       ImGui::TreePop();  // Close "Weapon Details" TreeNode
@@ -421,21 +415,21 @@ namespace Huginn::UI
       ImGui::TextColored(Colors::AMMO_COLOR, "  Arrows: %zu  Bolts: %zu  Magic: %zu",
         arrows.size(), bolts.size(), magicAmmo.size());
 
-      // Best ammo
-      auto showBestAmmo = [](const char* label, const Weapon::InventoryAmmo* best, ImVec4 color) {
-        if (!best) {
+      // Best ammo from the 250ms snapshot (owned copies — see UpdateWeaponCache)
+      auto showBestAmmo = [](const char* label, const BestEntrySnap& best, ImVec4 color) {
+        if (!best.valid) {
            return;
         }
         ImGui::TextColored(color, "  Best %s:", label);
         ImGui::SameLine();
         ImGui::Text("%s (%.0f dmg) x%d",
-           best->data.name.c_str(),
-           best->data.baseDamage,
-           best->count);
+           best.name.c_str(),
+           best.value,
+           best.count);
       };
 
-      showBestAmmo("Arrow", registry->GetBestArrow(), Colors::AMMO_COLOR);
-      showBestAmmo("Bolt", registry->GetBestBolt(), Colors::AMMO_COLOR);
+      showBestAmmo("Arrow", m_weaponCache.bestArrow, Colors::AMMO_COLOR);
+      showBestAmmo("Bolt", m_weaponCache.bestBolt, Colors::AMMO_COLOR);
 
       ImGui::TreePop();  // Close "Ammo Details" TreeNode
       }
@@ -506,28 +500,28 @@ namespace Huginn::UI
       ImGui::TreePop();  // Close "Scroll Details" TreeNode
       }
 
-      // Best scrolls
+      // Best scrolls from the 250ms snapshot (owned copies — see UpdateScrollCache)
       ImGui::Separator();
       ImGui::TextColored(Colors::HEADER_YELLOW, "Best Scrolls:");
 
-      auto showBestScroll = [](const char* label, const Scroll::InventoryScroll* best, ImVec4 color) {
-      if (!best) {
+      auto showBestScroll = [](const char* label, const BestEntrySnap& best, ImVec4 color) {
+      if (!best.valid) {
         ImGui::TextDisabled("  %s: None", label);
         return;
       }
       ImGui::TextColored(color, "  %s:", label);
       ImGui::SameLine();
       ImGui::Text("%s (%.0f) x%d",
-        best->data.name.c_str(),
-        best->data.magnitude,
-        best->count);
+        best.name.c_str(),
+        best.value,
+        best.count);
       };
 
-      showBestScroll("Damage", registry->GetBestDamageScroll(), Colors::SPELL_DAMAGE);
-      showBestScroll("Healing", registry->GetBestHealingScroll(), Colors::SPELL_HEALING);
-      showBestScroll("Fire", registry->GetBestFireScroll(), Colors::ELEMENT_FIRE);
-      showBestScroll("Frost", registry->GetBestFrostScroll(), Colors::ELEMENT_FROST);
-      showBestScroll("Shock", registry->GetBestShockScroll(), Colors::ELEMENT_SHOCK);
+      showBestScroll("Damage", m_scrollCache.bestDamage, Colors::SPELL_DAMAGE);
+      showBestScroll("Healing", m_scrollCache.bestHealing, Colors::SPELL_HEALING);
+      showBestScroll("Fire", m_scrollCache.bestFire, Colors::ELEMENT_FIRE);
+      showBestScroll("Frost", m_scrollCache.bestFrost, Colors::ELEMENT_FROST);
+      showBestScroll("Shock", m_scrollCache.bestShock, Colors::ELEMENT_SHOCK);
 
       ImGui::Unindent(8.0f);
    }
@@ -571,13 +565,154 @@ namespace Huginn::UI
       return;
       }
 
-      m_weaponCache.weaponCount = registry->GetWeaponCount();
-      m_weaponCache.ammoCount = registry->GetAmmoCount();
+      WeaponCacheData fresh;
+      fresh.weaponCount = registry->GetWeaponCount();
+      fresh.ammoCount = registry->GetAmmoCount();
 
-      // Count favorited weapons
-      const auto& allWeapons = registry->GetAllWeapons();
-      m_weaponCache.favoritedCount = std::count_if(allWeapons.begin(), allWeapons.end(),
-      [](const auto& weapon) { return weapon.isFavorited; });
+      // Single pass per container under the registry lock (ForEach* holds it):
+      // favorited count + best picks copied by value, so the render path never
+      // reads registry-internal pointers. Selection mirrors
+      // WeaponRegistry::GetBestMeleeWeapon/RangedWeapon/SilveredWeapon/Arrow/Bolt.
+      registry->ForEachWeapon([&fresh](const Weapon::InventoryWeapon& weapon) {
+      if (weapon.isFavorited) {
+        ++fresh.favoritedCount;
+      }
+      auto consider = [&weapon](BestEntrySnap& slot) {
+        if (weapon.data.baseDamage > slot.value) {
+           slot.valid = true;
+           slot.name = weapon.data.name;
+           slot.value = weapon.data.baseDamage;
+           slot.hasEnchantment = weapon.data.hasEnchantment;
+           slot.charge = weapon.data.currentCharge;
+        }
+      };
+      if (HasTag(weapon.data.tags, Weapon::WeaponTag::Melee)) {
+        consider(fresh.bestMelee);
+      }
+      if (HasTag(weapon.data.tags, Weapon::WeaponTag::Ranged)) {
+        consider(fresh.bestRanged);
+      }
+      if (HasTag(weapon.data.tags, Weapon::WeaponTag::Silver)) {
+        consider(fresh.bestSilver);
+      }
+      });
+
+      registry->ForEachAmmo([&fresh](const Weapon::InventoryAmmo& ammo) {
+      if (ammo.count <= 0) {
+        return;
+      }
+      auto consider = [&ammo](BestEntrySnap& slot) {
+        if (ammo.data.baseDamage > slot.value) {
+           slot.valid = true;
+           slot.name = ammo.data.name;
+           slot.value = ammo.data.baseDamage;
+           slot.count = ammo.count;
+        }
+      };
+      if (ammo.data.type == Weapon::AmmoType::Arrow) {
+        consider(fresh.bestArrow);
+      } else if (ammo.data.type == Weapon::AmmoType::Bolt) {
+        consider(fresh.bestBolt);
+      }
+      });
+
+      m_weaponCache = std::move(fresh);
+   }
+
+   void RegistryDebugWidget::UpdateItemCache(const Item::ItemRegistry* registry)
+   {
+      if (!registry || registry->IsLoading()) {
+      return;
+      }
+
+      // Single pass under the registry lock (ForEachItem holds it): best picks
+      // copied by value for render-thread display. Selection mirrors
+      // ItemRegistry::GetBest*Potion (max magnitude, count > 0) and
+      // GetBestSoulGem (filled only).
+      ItemCacheData fresh;
+      registry->ForEachItem([&fresh](const Item::InventoryItem& item) {
+      if (item.count <= 0) {
+        return;
+      }
+      auto consider = [&item](BestEntrySnap& slot) {
+        if (item.data.magnitude > slot.value) {
+           slot.valid = true;
+           slot.name = item.data.name;
+           slot.value = item.data.magnitude;
+           slot.count = item.count;
+        }
+      };
+      switch (item.data.type) {
+      case Item::ItemType::HealthPotion:
+        consider(fresh.bestHealth);
+        break;
+      case Item::ItemType::MagickaPotion:
+        consider(fresh.bestMagicka);
+        break;
+      case Item::ItemType::StaminaPotion:
+        consider(fresh.bestStamina);
+        break;
+      case Item::ItemType::SoulGem:
+        if (item.data.isFilled) {
+           consider(fresh.bestSoulGem);
+        }
+        break;
+      default:
+        break;
+      }
+      if (HasTag(item.data.tags, Item::ItemTag::ResistFire)) {
+        consider(fresh.bestResistFire);
+      }
+      if (HasTag(item.data.tags, Item::ItemTag::ResistFrost)) {
+        consider(fresh.bestResistFrost);
+      }
+      if (HasTag(item.data.tags, Item::ItemTag::ResistShock)) {
+        consider(fresh.bestResistShock);
+      }
+      });
+
+      m_itemCache = std::move(fresh);
+   }
+
+   void RegistryDebugWidget::UpdateScrollCache(const Scroll::ScrollRegistry* registry)
+   {
+      if (!registry || registry->IsLoading()) {
+      return;
+      }
+
+      // Single pass under the registry lock (ForEachScroll holds it): best picks
+      // copied by value for render-thread display. Selection mirrors
+      // ScrollRegistry::GetBest* (max magnitude, count > 0).
+      ScrollCacheData fresh;
+      registry->ForEachScroll([&fresh](const Scroll::InventoryScroll& scroll) {
+      if (scroll.count <= 0) {
+        return;
+      }
+      auto consider = [&scroll](BestEntrySnap& slot) {
+        if (scroll.data.magnitude > slot.value) {
+           slot.valid = true;
+           slot.name = scroll.data.name;
+           slot.value = scroll.data.magnitude;
+           slot.count = scroll.count;
+        }
+      };
+      if (scroll.data.type == Scroll::ScrollType::Damage) {
+        consider(fresh.bestDamage);
+      } else if (scroll.data.type == Scroll::ScrollType::Healing) {
+        consider(fresh.bestHealing);
+      }
+      if (HasTag(scroll.data.tags, Scroll::ScrollTag::Fire)) {
+        consider(fresh.bestFire);
+      }
+      if (HasTag(scroll.data.tags, Scroll::ScrollTag::Frost)) {
+        consider(fresh.bestFrost);
+      }
+      if (HasTag(scroll.data.tags, Scroll::ScrollTag::Shock)) {
+        consider(fresh.bestShock);
+      }
+      });
+
+      m_scrollCache = std::move(fresh);
    }
 }
 
