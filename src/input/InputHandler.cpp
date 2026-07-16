@@ -86,8 +86,6 @@ namespace Huginn::Input
       return false;
       }
 
-      ConsumePendingStateReset();
-
       // Only process keyboard events - ignore mouse, gamepad, etc.
       if (button->GetDevice() != RE::INPUT_DEVICE::kKeyboard) {
       return false;
@@ -118,6 +116,11 @@ namespace Huginn::Input
         }
       }
       }
+
+      // Consume AFTER the key-code snapshot: SetKeyCodes stores the flag inside
+      // its unique lock, so observing new codes implies observing the flag —
+      // new bindings can never execute against stale press state.
+      ConsumePendingStateReset();
 
       if (matchedIndex < 0) {
       return false;  // Not our key

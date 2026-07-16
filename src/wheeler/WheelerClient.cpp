@@ -332,23 +332,38 @@ namespace Huginn::Wheeler
 
     void WheelerClient::DestroyRecommendationWheels()
     {
-        // External entry point (kPostLoadGame, settings reload). Wheeler callbacks
-        // iterate m_pageWheels under m_pageDataMutex from other threads, so the
-        // teardown must hold the same lock. Internal callers that already hold it
-        // use DestroyWheelsLocked() directly (locking here would deadlock —
-        // std::mutex is not re-entrant).
-        std::lock_guard<std::mutex> lock(m_pageDataMutex);
-        DestroyWheelsLocked();
+        // External entry point (kPostLoadGame, settings reload). Detach the wheel
+        // records under m_pageDataMutex, then issue the cross-DLL deletes with NO
+        // lock held: a delete can fire a synchronous Wheeler callback (see the
+        // m_callbackMutex rules above), and HandleWheelClosed → FindPageForWheel
+        // re-acquires m_pageDataMutex — doing the API work under the lock would
+        // self-deadlock on this thread and invert the documented
+        // callbackMutex → pageDataMutex order for concurrent callbacks.
+        std::vector<PageWheel> stale;
+        {
+            std::lock_guard<std::mutex> lock(m_pageDataMutex);
+            stale = DetachWheelsLocked();
+        }
+        IssueWheelDeletes(std::move(stale));
     }
 
-    void WheelerClient::DestroyWheelsLocked()  // REQUIRES: m_pageDataMutex held
+    std::vector<WheelerClient::PageWheel> WheelerClient::DetachWheelsLocked()
     {
         spdlog::info("[WheelerClient] Destroying {} recommendation wheels", m_pageWheels.size());
 
+        // Vector move steals the heap buffer, so element (and subtext string)
+        // addresses stay stable for the deferred API calls in IssueWheelDeletes.
+        std::vector<PageWheel> stale = std::move(m_pageWheels);
+        m_pageWheels.clear();  // moved-from state is unspecified; make it definitively empty
+        return stale;
+    }
+
+    void WheelerClient::IssueWheelDeletes(std::vector<PageWheel> staleWheels)
+    {
         // Clear all subtexts BEFORE deleting wheels. Wheeler may hold const char*
         // pointers into slotSubtexts — clearing tells Wheeler to drop its references
-        // so the backing strings can be safely destroyed.
-        for (auto& pw : m_pageWheels) {
+        // so the backing strings (kept alive by staleWheels) can be safely destroyed.
+        for (auto& pw : staleWheels) {
             if (pw.wheelIndex >= 0 && m_api) {
                 for (size_t i = 0; i < pw.slotCount; ++i) {
                     ClearEntrySubtext(pw.wheelIndex, static_cast<int32_t>(i));
@@ -363,7 +378,7 @@ namespace Huginn::Wheeler
         // and orphan wheels (5 wheels instead of 3). Fall back to descending-index
         // deletes on older (v2) servers, where highest-first keeps the rest valid.
         if (m_api && m_api->version >= 3 && m_api->DeleteManagedWheelsForClient) {
-            for (auto& pw : m_pageWheels) {
+            for (auto& pw : staleWheels) {
                 if (pw.wheelIndex < 0) {
                     continue;  // placeholder — no wheel was created
                 }
@@ -377,7 +392,7 @@ namespace Huginn::Wheeler
             }
         } else if (m_api) {
             std::vector<int32_t> indices;
-            for (auto& pw : m_pageWheels) {
+            for (auto& pw : staleWheels) {
                 if (pw.wheelIndex >= 0) {
                     indices.push_back(pw.wheelIndex);
                 }
@@ -388,7 +403,6 @@ namespace Huginn::Wheeler
                 spdlog::debug("[WheelerClient] Deleted wheel {}: {}", idx, static_cast<int>(result));
             }
         }
-        m_pageWheels.clear();
     }
 
     bool WheelerClient::CreateRecommendationWheels()
@@ -431,10 +445,14 @@ namespace Huginn::Wheeler
                 }
                 // Wheels were invalidated (save/load cycle) - recreate
                 spdlog::info("[WheelerClient] Managed wheels invalidated after save/load, recreating...");
-                DestroyWheelsLocked();
+                // ASSUMPTION: deletes for already-invalidated wheels do not fire
+                // synchronous callbacks, so issuing them under m_pageDataMutex is
+                // safe here — mirrors the CreateManagedWheel calls below, which
+                // run under the same lock for the same reason.
+                IssueWheelDeletes(DetachWheelsLocked());
             } else {
                 // Only stale placeholder/invalid indices — clean up before recreating
-                DestroyWheelsLocked();
+                IssueWheelDeletes(DetachWheelsLocked());
             }
         }
 
@@ -1151,6 +1169,10 @@ namespace Huginn::Wheeler
         if (!m_api) {
             return;
         }
+
+        // OnItemActivated writes slotFormIDs/slotUniqueIDs under m_pageDataMutex;
+        // this diagnostic iteration needs the same lock.
+        std::lock_guard<std::mutex> lock(m_pageDataMutex);
 
         for (size_t p = 0; p < m_pageWheels.size(); ++p) {
             const auto& pw = m_pageWheels[p];
