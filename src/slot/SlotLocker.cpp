@@ -5,6 +5,26 @@
 
 namespace Huginn::Slot
 {
+    namespace
+    {
+        // Truncate the registry-string borrow when an assignment enters
+        // cross-tick storage: the embedded candidate's name is a string_view
+        // into registry-owned strings, which registry reconcile/swap-pop can
+        // invalidate between pipeline runs (the moved last entry relocates
+        // too, not just the removed one). Every reader of locked-slot content
+        // (ApplyLocks re-emission, ToSlotContent, DeriveExplanationLabel,
+        // WheelerBackend, IntuitionMenu::BuildSlotDetail) uses the owned
+        // SlotAssignment::name or POD candidate fields, so the view must stay
+        // empty while stored here — never read candidate name from a
+        // LockedSlot.
+        void TruncateCandidateViews(SlotAssignment& stored) noexcept
+        {
+            if (stored.candidate) {
+                Candidate::GetBase(stored.candidate->candidate).name = {};
+            }
+        }
+    }
+
     SlotLocker& SlotLocker::GetSingleton()
     {
         static SlotLocker instance;
@@ -87,6 +107,7 @@ namespace Huginn::Slot
             if (ShouldLock(lockedSlot.assignment, newAssign)) {
                 // Lock the new assignment
                 lockedSlot.assignment = newAssign;
+                TruncateCandidateViews(lockedSlot.assignment);
                 lockedSlot.remainingMs = m_config.lockDurationMs;
                 lockedSlot.totalDurationMs = m_config.lockDurationMs;
                 lockedSlot.isLocked = true;
@@ -97,6 +118,7 @@ namespace Huginn::Slot
             } else {
                 // No lock needed - just track the assignment for comparison next frame
                 lockedSlot.assignment = newAssign;
+                TruncateCandidateViews(lockedSlot.assignment);
             }
 
             // Update FormID history for confirmed detection
