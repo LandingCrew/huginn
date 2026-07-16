@@ -124,6 +124,14 @@ namespace Huginn::Scoring
         // Check if candidate is favorited
         [[nodiscard]] bool IsCandidateFavorited(const Candidate::CandidateVariant& candidate) const;
 
+        // Boost mode: replace Step 7's provisional uniform max boost with the
+        // rank-scaled multiplier (rank 0 = strongest favorite → favoritesBoostMax,
+        // weakest → favoritesBoostMin) and recompute those utilities. Runs after
+        // the scoring loop + cold-start fallback, before the top-N sort. Also
+        // re-applies the minimumUtility filter, since a weak favorite may only
+        // have passed it under the provisional max boost.
+        void ApplyFavoritesRankScaling(ScoredCandidateList& scored);
+
         // Stage 1f: Extract relevant weight from ContextWeightMap for a candidate
         [[nodiscard]] float GetContextWeight(
             const Candidate::CandidateVariant& candidate,
@@ -150,6 +158,9 @@ namespace Huginn::Scoring
 
         // Scratch buffer for batch decay (update thread only, reused per tick)
         std::vector<RE::FormID> m_decayScratch;
+
+        // Scratch buffer for favorites rank scaling (update thread only, reused per tick)
+        std::vector<size_t> m_favoriteRankScratch;
     };
 
 }  // namespace Huginn::Scoring
