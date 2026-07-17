@@ -129,6 +129,11 @@ namespace Huginn::Pipeline
 
         // Member state (converted from static locals in OnUpdate)
         uint32_t m_lastPipelineHash = UINT32_MAX;  // Force first run
+        // Elemental window state at the last non-skipped run: the falling edge
+        // needs one more run to clear the enriched flags (isOnFire etc. are not
+        // part of the GameState hash), or fire-scored recommendations persist
+        // after the window closes.
+        bool m_wasElementalDamageActive = false;
         State::GameState m_lastLoggedState{};
 
 #ifndef NDEBUG

@@ -80,9 +80,9 @@ namespace Huginn::Candidate
     // UPDATE
     // =========================================================================
 
-    void CandidateGenerator::Update(float deltaSeconds)
+    bool CandidateGenerator::Update(float deltaSeconds)
     {
-        m_cooldownMgr.Update(deltaSeconds);
+        return m_cooldownMgr.Update(deltaSeconds);
     }
 
     void CandidateGenerator::StartCooldown(RE::FormID formID, SourceType type)

@@ -1461,6 +1461,7 @@ void RunUnitTests()
         .targetType = TargetType::None,
         .enemyCount = EnemyCountBucket::None,
         .allyStatus = AllyStatus::None,
+        .anyCasting = CastingStatus::NoneCasting,
         .inCombat = CombatStatus::NotInCombat,
         .isSneaking = SneakStatus::NotSneaking
     };
@@ -1471,7 +1472,7 @@ void RunUnitTests()
     }
 
     // Test 2: Maximum hash (all max values)
-    // Hash states: 6×6×3×7×4×3×2×2 = 36,288 (stamina excluded from hash), so max hash = 36,287
+    // Hash states: 6×6×3×7×4×3×2×2×2 = 72,576 (stamina excluded from hash), so max hash = 72,575
     GameState state2{
         .health = HealthBucket::VeryHigh,
         .magicka = MagickaBucket::VeryHigh,
@@ -1480,6 +1481,7 @@ void RunUnitTests()
         .targetType = TargetType::Daedra,  // Max is 6 (Daedra) - 7 target types total
         .enemyCount = EnemyCountBucket::Many,
         .allyStatus = AllyStatus::InjuredPresent,
+        .anyCasting = CastingStatus::EnemyCasting,
         .inCombat = CombatStatus::InCombat,
         .isSneaking = SneakStatus::Sneaking
     };
@@ -1489,7 +1491,7 @@ void RunUnitTests()
         return;
     }
 
-    // Test 3: Hash uniqueness for all 36,288 states (stamina excluded from hash)
+    // Test 3: Hash uniqueness for all 72,576 states (stamina excluded from hash)
     std::set<uint32_t> seenHashes;
     for (uint8_t h = 0; h < 6; ++h) {
         for (uint8_t m = 0; m < 6; ++m) {
@@ -1497,6 +1499,7 @@ void RunUnitTests()
                 for (uint8_t t = 0; t < 7; ++t) {
                     for (uint8_t ec = 0; ec < 4; ++ec) {
                         for (uint8_t as = 0; as < 3; ++as) {
+                          for (uint8_t ac = 0; ac < 2; ++ac) {
                             for (uint8_t c = 0; c < 2; ++c) {
                                 for (uint8_t s = 0; s < 2; ++s) {
                                     GameState state{
@@ -1507,6 +1510,7 @@ void RunUnitTests()
                                         .targetType = static_cast<TargetType>(t),
                                         .enemyCount = static_cast<EnemyCountBucket>(ec),
                                         .allyStatus = static_cast<AllyStatus>(as),
+                                        .anyCasting = static_cast<CastingStatus>(ac),
                                         .inCombat = static_cast<CombatStatus>(c),
                                         .isSneaking = static_cast<SneakStatus>(s)
                                     };
@@ -1525,6 +1529,7 @@ void RunUnitTests()
                                     seenHashes.insert(hash);
                                 }
                             }
+                          }
                         }
                     }
                 }

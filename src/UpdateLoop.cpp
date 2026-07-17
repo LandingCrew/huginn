@@ -61,14 +61,22 @@ static void UpdateSubsystems(float deltaSeconds, float deltaMs)
 
     State::StateManager::GetSingleton().Update(deltaMs);
 
+    // Timer-driven subsystems whose expirations change what should be displayed
+    // but produce no state delta: each reports lapses and we force one pipeline
+    // run. Without this, expired cooldowns/wildcards/latches/locks linger
+    // on-screen while the skip gate holds the pipeline idle.
+    bool forcePipelineRun = false;
+
     {
         Huginn_ZONE_NAMED("CandidateGenerator::Update");
-        Candidate::CandidateGenerator::GetSingleton().Update(deltaSeconds);
+        // Cooldown expiry: the item becomes recommendable again
+        forcePipelineRun |= Candidate::CandidateGenerator::GetSingleton().Update(deltaSeconds);
     }
 
     if (g_utilityScorer) {
         Huginn_ZONE_NAMED("UtilityScorer::Update");
-        g_utilityScorer->Update(deltaSeconds);
+        // Wildcard expiry: the exploration slot reverts to the ranked pick
+        forcePipelineRun |= g_utilityScorer->Update(deltaSeconds);
 
         auto transition = State::StateManager::GetSingleton().ConsumeCombatTransition();
         if (transition == State::StateManager::CombatTransition::Entered) {
@@ -80,7 +88,19 @@ static void UpdateSubsystems(float deltaSeconds, float deltaMs)
 
     {
         Huginn_ZONE_NAMED("OverrideManager::Update");
-        Override::OverrideManager::GetSingleton().Update(deltaMs);
+        // Hysteresis latch crossing min-duration: deactivation becomes possible
+        forcePipelineRun |= Override::OverrideManager::GetSingleton().Update(deltaMs);
+    }
+
+    {
+        Huginn_ZONE_NAMED("SlotLocker::Update");
+        // Lock expiry: decay wall-clock (not just on pipeline-active ticks) and
+        // let the freed slot's content swap immediately
+        forcePipelineRun |= Slot::SlotLocker::GetSingleton().Update(deltaMs);
+    }
+
+    if (forcePipelineRun) {
+        Slot::SlotAllocator::GetSingleton().MarkPageDirty();
     }
 }
 
@@ -248,7 +268,11 @@ static void RunPipelineIfNeeded(float deltaMs, RE::PlayerCharacter* player,
     bool stateChanged = stateManager.DidLastUpdateChangeState();
     bool pageChanged = Slot::SlotAllocator::GetSingleton().PeekPageChanged();
 
-    if (!stateChanged && !pageChanged) {
+    // Elemental enrichment flags decay with wall-clock time without producing a
+    // state delta, so the outer gate must stay open for the whole window —
+    // mirrors the inner-gate bypass in CheckHashSkip (which remains the
+    // authority once fresh state is gathered).
+    if (!stateChanged && !pageChanged && !stateManager.IsElementalWindowActive()) {
         Learning::PipelineStateCache::GetSingleton().RefreshTimestamp();
         return;
     }

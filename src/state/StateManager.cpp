@@ -139,6 +139,9 @@ namespace Huginn::State
       m_isInCombat.store(false, std::memory_order_relaxed);
       m_wasInCombat = false;
 
+      // --- Elemental window flag (stale true would hold the outer gate open) ---
+      m_elementalWindowActive.store(false, std::memory_order_relaxed);
+
       m_lastUpdateChanged = true;  // Force pipeline to run on next update
    }
 

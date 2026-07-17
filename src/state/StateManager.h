@@ -84,6 +84,16 @@ namespace Huginn::State
       // Used by UpdateLoop to skip expensive pipeline when state is stable
       [[nodiscard]] bool DidLastUpdateChangeState() const noexcept { return m_lastUpdateChanged; }
 
+      // True while instant-hit fire/frost/shock damage is inside the elemental
+      // enrichment window. The outer pipeline-skip gate must consult this: the
+      // enrichment flags (isOnFire/isFrozen/isShocked) decay with wall-clock time
+      // without any state delta, so an unchanged-state tick can still require a
+      // pipeline run. Mirrors the inner-gate bypass in CheckHashSkip.
+      [[nodiscard]] bool IsElementalWindowActive() const noexcept
+      {
+         return m_elementalWindowActive.load(std::memory_order_relaxed);
+      }
+
       // =============================================================================
       // COMBAT TRANSITION TRACKING
       // =============================================================================
@@ -354,6 +364,10 @@ namespace Huginn::State
       // Used by UpdateLoop to skip expensive pipeline when state is stable
       std::atomic<bool> m_lastUpdateChanged{true};  // Default true to run pipeline on first update
 
+      // Elemental enrichment window flag (set in PollHealthTracking, read by the
+      // outer skip gate in UpdateLoop via IsElementalWindowActive)
+      std::atomic<bool> m_elementalWindowActive{false};
+
       // Combat transition tracking (set in PollPlayerPosition, consumed by UpdateLoop)
       std::atomic<CombatTransition> m_combatTransition{CombatTransition::None};
       std::atomic<bool> m_isInCombat{false};
@@ -374,6 +388,7 @@ namespace Huginn::State
          int enemyCount = 0;
          int allyCount = 0;
          bool hasInjuredAlly = false;
+         bool anyCasting = false;  // mirrors GameState::anyCasting (ward weights)
 
          bool operator==(const TargetDigest&) const = default;
       };
