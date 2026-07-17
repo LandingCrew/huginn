@@ -21,6 +21,7 @@
 
 #include <random>
 #include <algorithm>
+#include <cstring>
 #include <set>
 #include <thread>
 
@@ -3702,6 +3703,100 @@ void RunCosaveTests()
         }
 
         logger::info("  PASS: FQL import clears old data and replaces with new"sv);
+    }
+
+    // ── Test 4: Feature-count migration decode (pad / truncate) ─────────
+    {
+        using Huginn::Persist::DecodeV2EntryBlob;
+        constexpr auto compiled = static_cast<uint32_t>(StateFeatures::NUM_FEATURES);
+
+        // Build a synthetic v2 blob with diskFeatures weights per entry.
+        auto makeBlob = [](uint32_t diskFeatures, uint32_t numItems) {
+            const size_t stride = sizeof(RE::FormID)
+                                + sizeof(float) * diskFeatures
+                                + sizeof(uint32_t) * 2;
+            std::vector<std::byte> blob(stride * numItems);
+            std::byte* p = blob.data();
+            for (uint32_t i = 0; i < numItems; ++i, p += stride) {
+                RE::FormID formID = 0x00040000 + i;
+                std::memcpy(p, &formID, sizeof(formID));
+                for (uint32_t f = 0; f < diskFeatures; ++f) {
+                    float w = static_cast<float>(i * 100 + f + 1);  // distinct, nonzero
+                    std::memcpy(p + sizeof(formID) + f * sizeof(float), &w, sizeof(w));
+                }
+                uint32_t trainCount = 10 + i;
+                uint32_t minutes = 20 + i;
+                std::byte* tail = p + sizeof(formID) + sizeof(float) * diskFeatures;
+                std::memcpy(tail, &trainCount, sizeof(trainCount));
+                std::memcpy(tail + sizeof(trainCount), &minutes, sizeof(minutes));
+            }
+            return blob;
+        };
+
+        // Pad: 16 on disk -> compiled 18, tail must be zero
+        {
+            constexpr uint32_t disk = compiled - 2;
+            auto blob = makeBlob(disk, 2);
+            auto entries = DecodeV2EntryBlob(blob.data(), blob.size(), 2, disk);
+            bool ok = entries.size() == 2
+                   && entries[1].formID == 0x00040001
+                   && entries[1].trainCount == 11
+                   && entries[1].minutesSinceLastUpdate == 21
+                   && entries[1].weights[0] == 101.0f
+                   && entries[1].weights[disk - 1] == static_cast<float>(100 + disk)
+                   && entries[1].weights[disk] == 0.0f
+                   && entries[1].weights[compiled - 1] == 0.0f;
+            if (!ok) {
+                logger::error("[Cosave Test] FAIL: pad migration decode incorrect"sv);
+                return;
+            }
+        }
+
+        // Truncate: 21 on disk -> compiled 18, extras dropped, tail fields intact
+        {
+            constexpr uint32_t disk = compiled + 3;
+            auto blob = makeBlob(disk, 2);
+            auto entries = DecodeV2EntryBlob(blob.data(), blob.size(), 2, disk);
+            bool ok = entries.size() == 2
+                   && entries[0].formID == 0x00040000
+                   && entries[0].trainCount == 10
+                   && entries[0].minutesSinceLastUpdate == 20
+                   && entries[0].weights[0] == 1.0f
+                   && entries[0].weights[compiled - 1] == static_cast<float>(compiled);
+            if (!ok) {
+                logger::error("[Cosave Test] FAIL: truncate migration decode incorrect"sv);
+                return;
+            }
+        }
+
+        // Equal count: decode must match a straight memcpy of SerializedEntry
+        {
+            auto blob = makeBlob(compiled, 1);
+            auto entries = DecodeV2EntryBlob(blob.data(), blob.size(), 1, compiled);
+            FeatureQLearner::SerializedEntry direct;
+            std::memcpy(&direct, blob.data(), sizeof(direct));
+            bool ok = entries.size() == 1
+                   && entries[0].formID == direct.formID
+                   && entries[0].weights == direct.weights
+                   && entries[0].trainCount == direct.trainCount
+                   && entries[0].minutesSinceLastUpdate == direct.minutesSinceLastUpdate;
+            if (!ok) {
+                logger::error("[Cosave Test] FAIL: equal-count decode differs from raw layout"sv);
+                return;
+            }
+        }
+
+        // Length mismatch: wrong byteLen must decode to nothing
+        {
+            auto blob = makeBlob(compiled, 1);
+            auto entries = DecodeV2EntryBlob(blob.data(), blob.size() - 1, 1, compiled);
+            if (!entries.empty()) {
+                logger::error("[Cosave Test] FAIL: byteLen mismatch should reject decode"sv);
+                return;
+            }
+        }
+
+        logger::info("  PASS: FQL feature-count migration pads, truncates, round-trips"sv);
     }
 
     logger::info("=== Cosave Serialization Tests PASSED ==="sv);
