@@ -394,12 +394,13 @@ namespace Huginn::Scoring
             entry.utility = ComputeUtility(entry.breakdown);
         }
 
-        // Re-apply the minimumUtility post-filter: a weak favorite may only have
-        // passed the scoring loop's filter under the provisional max boost.
-        // Non-favorites are untouched above, so only rescaled favorites can drop.
-        std::erase_if(scored, [this](const ScoredCandidate& s) {
-            return s.utility < m_config.minimumUtility;
-        });
+        // Deliberately NO minimumUtility re-filter here: favorites stay in the
+        // list even if rescaling drops them below the threshold. The scoring
+        // loop's favorites-always-pass contract (they must remain observable by
+        // the learner) applies to membership; rank scaling only corrects their
+        // ORDER. Erasing here would also under-fill slots after the cold-start
+        // fallback already ran, and near-threshold favorites would flicker in
+        // and out of the list across ticks.
     }
 
     // =========================================================================
