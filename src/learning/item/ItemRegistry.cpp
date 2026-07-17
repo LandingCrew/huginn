@@ -131,8 +131,9 @@ namespace Huginn::Item
       for (auto& invItem : m_items) {
       auto it = currentCounts.find(invItem.data.formID);
       int32_t currentCount = (it != currentCounts.end()) ? it->second : 0;
+      const bool countChanged = (currentCount != invItem.count);
 
-      if (currentCount != invItem.count) {
+      if (countChanged) {
         int32_t delta = currentCount - invItem.count;
 
         // Emit change event directly to pending changes
@@ -158,6 +159,19 @@ namespace Huginn::Item
         bool currentlyFilled = (fillIt != currentFilledCounts.end() && fillIt->second > 0);
         if (currentlyFilled != invItem.data.isFilled) {
            invItem.data.isFilled = currentlyFilled;
+           // Fill state feeds GetBestSoulGem (filled gems only), so a flip must
+           // reach the caller's inventoryChanged → MarkPageDirty signal even
+           // though the count is unchanged: emit a zero-delta event (delta == 0
+           // takes none of the consumption/lock-break paths in the consumer).
+           // Skipped when a count event for this gem was already emitted above.
+           if (!countChanged) {
+              m_pendingChanges.push_back(ItemChangeEvent{
+                 .formID = invItem.data.formID,
+                 .name = invItem.data.name,
+                 .type = invItem.data.type,
+                 .delta = 0
+              });
+           }
            logger::debug("[ItemRegistry] Soul gem fill state changed: {} -> {}"sv,
             invItem.data.name, currentlyFilled ? "filled" : "empty");
         }
