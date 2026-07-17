@@ -263,6 +263,12 @@ static void InitializeGameSystems(bool isNewGame)
             isNewGame ? "new game" : "save load");
     }
 
+    // ── 7b. Slot allocator init + override placeability validation ─────
+    // Must run after both SlotSettings (step 1) and Override::Settings
+    // (step 7) are loaded so the placeability check sees the final config.
+    // The reload path gets the same call via SettingsReloader::ApplySideEffects.
+    Slot::SlotAllocator::GetSingleton().Initialize();
+
     // ── 8. Reset all stateful pipeline subsystems ────────────────────
     // Shared with Cmd_ResetAll — single source of truth for pipeline resets.
     ResetPipelineSubsystems();
