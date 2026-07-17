@@ -126,6 +126,11 @@ namespace Huginn::State
       m_actorTypeCache.clear();
       m_processedAllies.clear();
 
+      // --- Ore-vein caches (FormIDs, esp. FF-runtime ones, can be recycled
+      //     between save files — same reason as the actor type cache) ---
+      m_oreVeinCache.clear();
+      m_notOreVeinCache.clear();
+
       // --- Drain any pending DamageEventSink events (prevent stale queued hits) ---
       DamageEventSink::GetSingleton().DrainQueue();
 

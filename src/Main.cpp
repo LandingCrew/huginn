@@ -13,6 +13,7 @@
 #include "spell/SpellRegistry.h"
 #include "learning/item/ItemRegistry.h"
 #include "weapon/WeaponRegistry.h"
+#include "util/ExtraListStability.h"
 #include "scroll/ScrollRegistry.h"
 #include "learning/FeatureQLearner.h"
 #include "learning/StateFeatures.h"
@@ -86,6 +87,17 @@ static std::atomic<bool> g_equipEventRegistered{false};
 // =============================================================================
 static void InitializeGameSystems(bool isNewGame)
 {
+    // ── Stamp the load time FIRST ───────────────────────────────────────
+    // Util::IsExtraListStable() measures from this stamp. The reconcile
+    // scans below (step 3) run inside the post-load extra-data danger
+    // window; if the stamp were written after them (or only at step 9),
+    // they would measure against the PREVIOUS load's stamp — or the
+    // default epoch on the first load — and the gate could never report
+    // "unstable" on the exact path it exists to protect.
+    g_lastGameLoad = std::chrono::steady_clock::now();
+    logger::info("Game load timestamp recorded ({})"sv,
+        isNewGame ? "kNewGame" : "kPostLoadGame");
+
     // ── 0. Parse the main INI ONCE, distribute to every settings loader ──
     // Each settings class used to re-open and re-parse Huginn.ini independently
     // (9+ full parses per game load). Parse it a single time here and hand the
@@ -167,9 +179,16 @@ static void InitializeGameSystems(bool isNewGame)
     if (!g_weaponRegistry) {
         g_weaponRegistry = std::make_unique<Huginn::Weapon::WeaponRegistry>();
     }
+    // Track whether this pass could read extraLists: RebuildRegistry never
+    // does (favorites/charge deferred by design), and a save-load reconcile
+    // runs inside the stabilization window. Captured BEFORE the call so a
+    // mid-scan stability flip errs toward the harmless extra retry. Used at
+    // step 9 to prime the reconcile timer for a short retry.
+    bool weaponScanDeferred = true;
     if (isNewGame) {
         g_weaponRegistry->RebuildRegistry();
     } else {
+        weaponScanDeferred = !Huginn::Util::IsExtraListStable();
         logger::info("Force reconciling weapon registry on save load"sv);
         g_weaponRegistry->ReconcileWeapons();
     }
@@ -274,11 +293,21 @@ static void InitializeGameSystems(bool isNewGame)
     ResetPipelineSubsystems();
 
     // ── 9. Timer reset ─────────────────────────────────────────────────
-    auto now = std::chrono::steady_clock::now();
-    g_registryTimers.ResetAll(now);
-    g_lastGameLoad = now;
-    logger::info("Game load timestamp recorded ({})"sv,
-        isNewGame ? "kNewGame" : "kPostLoadGame");
+    // (g_lastGameLoad is stamped at the top of this function — the step 3
+    // reconciles need it fresh before they run.)
+    g_registryTimers.ResetAll(std::chrono::steady_clock::now());
+
+    // The load-time weapon pass couldn't read extraLists (see step 3), so
+    // favorites are unknown and enchanted weapons assumed full charge. Prime
+    // the reconcile timer to come due just after stabilization instead of a
+    // full interval — otherwise favorited weapons vanish from recommendations
+    // for ~30 s after every load. Must run AFTER ResetAll, which would
+    // otherwise overwrite the primed timestamp.
+    if (weaponScanDeferred) {
+        g_registryTimers.weaponReconcile.Reset(
+            std::chrono::steady_clock::now() - std::chrono::milliseconds(static_cast<int64_t>(
+                Config::WEAPON_RECONCILE_INTERVAL_MS - Config::WEAPON_RECONCILE_RETRY_MS)));
+    }
 
     // ── 10. StateManager force update (debug only) ────────────────────
     // ResetTrackingState() already called by ResetPipelineSubsystems() above.

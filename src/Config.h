@@ -102,6 +102,13 @@ namespace Huginn::Config
    // Recommended: 30000ms (30 seconds) - matches item reconcile interval
    inline constexpr float WEAPON_RECONCILE_INTERVAL_MS = 30000.0f;
 
+   // Retry delay for a weapon reconcile whose load-time pass couldn't read
+   // extraLists (rebuild never does; a post-load reconcile runs inside the
+   // stabilization window). Must exceed EXTRALIST_STABILIZATION_MS so the
+   // primed retry runs stable and recovers favorites/charge promptly instead
+   // of waiting a full WEAPON_RECONCILE_INTERVAL_MS.
+   inline constexpr float WEAPON_RECONCILE_RETRY_MS = 1000.0f;
+
    // Minimum time to wait after save load before accessing extraLists (v0.7.9)
    // During this window, extraLists pointers may be stale/uninitialized
    // Accessing them causes EXCEPTION_ACCESS_VIOLATION crashes
