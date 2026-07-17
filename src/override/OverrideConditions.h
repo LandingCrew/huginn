@@ -63,10 +63,10 @@ namespace Huginn::Override
         Drowning,
         WeaponCharge,
         LowAmmo,
-        _Count
+        Count
     };
 
-    inline constexpr size_t OVERRIDE_CONDITION_COUNT = static_cast<size_t>(OverrideCondition::_Count);
+    inline constexpr size_t OVERRIDE_CONDITION_COUNT = static_cast<size_t>(OverrideCondition::Count);
 
     [[nodiscard]] inline constexpr std::string_view OverrideCategoryToString(OverrideCategory c) noexcept
     {

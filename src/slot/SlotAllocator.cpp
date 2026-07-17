@@ -14,6 +14,20 @@ namespace Huginn::Slot
     // non-organic in debug output.
     static constexpr float kOverrideUtility = 1000.0f;
 
+    // File-local helper: Should this override's log lines skip dedup entirely?
+    // Unstamped (Unknown) conditions log un-deduped in DEBUG builds so the
+    // missing stamp is loud right next to its tripwire warn; in RELEASE they
+    // dedup normally through the Unknown row the log arrays already reserve
+    // (an unexplained per-tick spam would be worse than a quiet alias).
+    [[nodiscard]] static constexpr bool BypassDedup([[maybe_unused]] Override::OverrideCondition condition) noexcept
+    {
+#ifdef NDEBUG
+        return false;
+#else
+        return condition == Override::OverrideCondition::Unknown;
+#endif
+    }
+
     // File-local helper: Does this slot's filter accept the given override category?
     [[nodiscard]] static constexpr bool AcceptsOverride(OverrideFilter filter, Override::OverrideCategory category) noexcept
     {
@@ -292,8 +306,9 @@ namespace Huginn::Slot
         // entry — either way a coarser key ping-pongs and logs every tick.
         // `displaced` records that the condition lost its accepting slots to
         // higher-priority overrides, so starvation logs on transition only.
-        // Unknown (unstamped) conditions bypass dedup entirely — loud beats
-        // silently aliasing another condition's latch entry.
+        // Unknown (unstamped) conditions bypass dedup in DEBUG builds only
+        // (see BypassDedup) — loud next to the tripwire warn there, deduped
+        // normally through the reserved Unknown row in release.
         struct LastOverrideLog
         {
             RE::FormID formID = 0;
@@ -346,7 +361,7 @@ namespace Huginn::Slot
                         // Only log if override changed (different formID or slot,
                         // or re-placed after a displacement)
                         auto& lastLog = pageLogs[static_cast<size_t>(override.condition)];
-                        const bool unstamped = override.condition == Override::OverrideCondition::Unknown;
+                        const bool unstamped = BypassDedup(override.condition);
                         if (unstamped || formID != lastLog.formID ||
                             priorityIdx != lastLog.slot || lastLog.displaced) {
                             SKSE::log::info("[SlotAllocator] Override '{}' → Slot {} ({})",
@@ -391,7 +406,7 @@ namespace Huginn::Slot
                     // Only log if override changed (different formID or slot,
                     // or re-placed after a displacement)
                     auto& lastLog = pageLogs[static_cast<size_t>(override.condition)];
-                    const bool unstamped = override.condition == Override::OverrideCondition::Unknown;
+                    const bool unstamped = BypassDedup(override.condition);
                     if (unstamped || formID != lastLog.formID ||
                         priorityIdx != lastLog.slot || lastLog.displaced) {
                         SKSE::log::info("[SlotAllocator] Override '{}' → Slot {} (fallback, {})",
@@ -404,7 +419,7 @@ namespace Huginn::Slot
 
                 if (!placed) {
                     auto& lastLog = pageLogs[static_cast<size_t>(override.condition)];
-                    const bool unstamped = override.condition == Override::OverrideCondition::Unknown;
+                    const bool unstamped = BypassDedup(override.condition);
                     if (sawAcceptingSlot) {
                         // All accepting slots on THIS page are occupied (typically
                         // by higher-priority overrides) — not a config problem.
@@ -645,7 +660,11 @@ namespace Huginn::Slot
         // constraint is the accepting-slot count of the single best page, not
         // the config-wide total. More enabled conditions than that means the
         // lowest-priority ones are starved config-wide whenever all fire at
-        // once; the runtime "displaced" log confirms it if it happens.
+        // once. The heuristic is one-sided: a warn means real risk, but
+        // silence does not prove safety — Any slots are credited to every
+        // category here yet hold only one override at runtime, so cross-
+        // category contention can still starve. The runtime "displaced" log
+        // is the backstop that confirms starvation if it actually happens.
         constexpr OverrideCategory kCategories[] = {
             OverrideCategory::HP, OverrideCategory::MP,
             OverrideCategory::SP, OverrideCategory::Other,
