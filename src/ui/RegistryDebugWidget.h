@@ -4,6 +4,8 @@
 #ifdef _DEBUG
 
 #include <chrono>
+#include <cstdint>
+#include <string>
 
 // Forward declarations
 namespace Huginn::Spell { class SpellRegistry; }
@@ -71,6 +73,8 @@ namespace Huginn::UI
       // Cache update helpers (v0.7.18 - throttle expensive operations)
       void UpdateSpellCache(const Spell::SpellRegistry* registry);
       void UpdateWeaponCache(const Weapon::WeaponRegistry* registry);
+      void UpdateItemCache(const Item::ItemRegistry* registry);
+      void UpdateScrollCache(const Scroll::ScrollRegistry* registry);
       bool ShouldUpdateCache();
 
       bool m_isVisible = true;  // Visible by default in Debug builds
@@ -95,12 +99,50 @@ namespace Huginn::UI
       size_t favoritedCount = 0;
       } m_spellCache;
 
+      // Owned snapshot of a registry "best X" entry for render-thread display.
+      // Registry accessor pointers are a same-thread loan (WeaponRegistry.h:83-91);
+      // the render thread must only ever read these copies, filled under the
+      // registry lock via ForEach* in the 250ms cache update.
+      struct BestEntrySnap {
+      bool valid = false;
+      std::string name;
+      float value = 0.0f;           // magnitude (items/scrolls) or baseDamage (weapons/ammo)
+      int32_t count = 0;
+      bool hasEnchantment = false;  // weapons only
+      float charge = 0.0f;          // weapons only (currentCharge fraction)
+      };
+
       // Cached weapon registry data
       struct WeaponCacheData {
       size_t weaponCount = 0;
       size_t ammoCount = 0;
       size_t favoritedCount = 0;
+      BestEntrySnap bestMelee;
+      BestEntrySnap bestRanged;
+      BestEntrySnap bestSilver;
+      BestEntrySnap bestArrow;
+      BestEntrySnap bestBolt;
       } m_weaponCache;
+
+      // Cached item registry data (best-potion display)
+      struct ItemCacheData {
+      BestEntrySnap bestHealth;
+      BestEntrySnap bestMagicka;
+      BestEntrySnap bestStamina;
+      BestEntrySnap bestResistFire;
+      BestEntrySnap bestResistFrost;
+      BestEntrySnap bestResistShock;
+      BestEntrySnap bestSoulGem;
+      } m_itemCache;
+
+      // Cached scroll registry data (best-scroll display)
+      struct ScrollCacheData {
+      BestEntrySnap bestDamage;
+      BestEntrySnap bestHealing;
+      BestEntrySnap bestFire;
+      BestEntrySnap bestFrost;
+      BestEntrySnap bestShock;
+      } m_scrollCache;
    };
 }
 
