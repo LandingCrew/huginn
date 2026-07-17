@@ -89,6 +89,14 @@ void ResetPipelineSubsystems();
 /// Globals.cpp so the path literal isn't duplicated across translation units.
 [[nodiscard]] std::filesystem::path GetMainIniPath();
 
+/// @brief Path to the dMenu-managed INI if it exists, else the main INI.
+/// @details dMenu writes only its tracked sections (Widget, Keybindings, Debug)
+/// to Data/SKSE/Plugins/dmenu/customSettings/ini/Huginn.ini. Every reader of
+/// dMenu-managed sections (game init, dMenu reload, `hg reload`) must resolve
+/// the path through here so a console reload can't silently reset dMenu-managed
+/// customizations by reading them from the wrong file.
+[[nodiscard]] std::filesystem::path GetDMenuIniPath();
+
 // LoadIniFile is declared in IniLoad.h (included above) — the shared parse front
 // door used by every settings loader.
 

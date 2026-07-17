@@ -132,6 +132,22 @@ std::filesystem::path GetMainIniPath() {
   return std::filesystem::path("Data/SKSE/Plugins/Huginn.ini");
 }
 
+std::filesystem::path GetDMenuIniPath() {
+  const auto dmenuIniPath = std::filesystem::path("Data/SKSE/Plugins/dmenu/customSettings/ini/Huginn.ini");
+
+  try {
+    if (std::filesystem::exists(dmenuIniPath)) {
+      logger::debug("[Globals] Using dmenu INI: {}"sv, dmenuIniPath.string());
+      return dmenuIniPath;
+    }
+  } catch (const std::filesystem::filesystem_error& e) {
+    logger::warn("[Globals] Filesystem error checking dmenu INI: {}"sv, e.what());
+  }
+
+  logger::debug("[Globals] dMenu INI not found, falling back to main INI"sv);
+  return GetMainIniPath();
+}
+
 bool LoadIniFile(CSimpleIniA& out, const std::filesystem::path& path, std::string_view tag,
                  IniMissing missing) {
   std::error_code ec;

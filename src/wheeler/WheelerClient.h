@@ -187,7 +187,11 @@ namespace Huginn::Wheeler
         // Returns true if at least one wheel was created
         bool CreateRecommendationWheels();
 
-        // Tear down all recommendation wheels (deletes from Wheeler, then clears vector)
+        // Tear down all recommendation wheels: detaches the records under
+        // m_pageDataMutex, then issues the Wheeler delete calls with no lock
+        // held (deletes may fire synchronous callbacks that re-acquire it).
+        // Do NOT call while already holding m_pageDataMutex; use
+        // DetachWheelsLocked() + IssueWheelDeletes() internally instead.
         void DestroyRecommendationWheels();
 
         // Update the wheel for the CURRENT page with new recommendations
@@ -359,5 +363,18 @@ namespace Huginn::Wheeler
 
         // Check if a wheel belongs to Huginn
         [[nodiscard]] bool IsOurWheel(int32_t wheelIndex) const;
+
+        // Detach all page-wheel records for teardown. REQUIRES: m_pageDataMutex
+        // held. The returned vector keeps the subtext strings alive (addresses
+        // stable — the vector move steals the buffer) until IssueWheelDeletes
+        // has told Wheeler to drop its references.
+        [[nodiscard]] std::vector<PageWheel> DetachWheelsLocked();
+
+        // Issue the cross-DLL subtext-clear + wheel-delete calls for detached
+        // wheels. External teardown paths call this WITHOUT m_pageDataMutex held
+        // (a delete may fire a synchronous callback that re-acquires it);
+        // CreateRecommendationWheels calls it under the lock on the documented
+        // assumption that already-invalidated wheels fire no callbacks.
+        void IssueWheelDeletes(std::vector<PageWheel> staleWheels);
     };
 }
