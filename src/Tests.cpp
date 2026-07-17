@@ -208,6 +208,36 @@ void RunMultiplicativeScoringTests()
             utility, contextWeight, lambda, learningScore, correlationBonus);
     }
 
+    // =========================================================================
+    // Test 6: Favorites boost scales with rank (max → min across the cohort)
+    // =========================================================================
+    {
+        logger::info("  Test 6: Favorites boost scales with rank..."sv);
+
+        Scoring::ScorerConfig cfg{};  // favoritesMode=Boost, min=1.3, max=2.5
+
+        // Rank 0 of N gets max; last rank gets min; midpoint is halfway.
+        bool ok =
+            std::abs(cfg.GetFavoritesMultiplier(0, 5) - cfg.favoritesBoostMax) < 0.001f &&
+            std::abs(cfg.GetFavoritesMultiplier(4, 5) - cfg.favoritesBoostMin) < 0.001f &&
+            std::abs(cfg.GetFavoritesMultiplier(2, 5) -
+                (cfg.favoritesBoostMax + cfg.favoritesBoostMin) * 0.5f) < 0.001f &&
+            // Single favorite: rank 0 of 1 gets max.
+            std::abs(cfg.GetFavoritesMultiplier(0, 1) - cfg.favoritesBoostMax) < 0.001f &&
+            // Degenerate/disabled cases are neutral.
+            std::abs(cfg.GetFavoritesMultiplier(0, 0) - 1.0f) < 0.001f;
+
+        cfg.favoritesMode = Scoring::FavoritesMode::Off;
+        ok = ok && std::abs(cfg.GetFavoritesMultiplier(0, 5) - 1.0f) < 0.001f;
+
+        if (!ok) {
+            logger::error("TEST FAIL: Favorites rank scaling should interpolate max→min by rank"sv);
+            return;
+        }
+        logger::info("  ✓ Favorites rank scaling: rank 0 → ×{:.1f}, last rank → ×{:.1f}"sv,
+            Scoring::ScorerConfig{}.favoritesBoostMax, Scoring::ScorerConfig{}.favoritesBoostMin);
+    }
+
     logger::info("TEST PASS: All multiplicative scoring formula tests passed!"sv);
 #endif
 }

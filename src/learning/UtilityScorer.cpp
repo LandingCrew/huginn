@@ -165,6 +165,10 @@ namespace Huginn::Scoring
             }
         }
 
+        // Rank-scaled favorites boost: replace Step 7's provisional uniform max
+        // boost with the documented rank-scaled value (ScorerConfig.h).
+        ApplyFavoritesRankScaling(scored);
+
         // Partial sort for top N (much faster than full sort for large lists)
         size_t topN = std::min(m_config.topNCandidates, scored.size());
         if (topN > 0) {
@@ -276,8 +280,12 @@ namespace Huginn::Scoring
         // =====================================================================
         // Step 7: Get favorites multiplier
         // =====================================================================
+        // Boost mode: provisional uniform boost (rank 0 of 1 = favoritesBoostMax).
+        // ScoreCandidates replaces it with the rank-scaled value once the whole
+        // cohort is scored (see ApplyFavoritesRankScaling). The single-candidate
+        // path has no cohort to rank against, so max is its final value.
         result.breakdown.favoritesMultiplier =
-            GetFavoritesMultiplier(candidate, 0, 1);  // Rank 0 for now (recalculated later)
+            GetFavoritesMultiplier(candidate, 0, 1);
 
         // =====================================================================
         // Step 8: Compute final utility via the shared formula helper.
@@ -348,6 +356,51 @@ namespace Huginn::Scoring
     bool UtilityScorer::IsCandidateFavorited(const Candidate::CandidateVariant& candidate) const
     {
         return Candidate::IsFavorited(candidate);
+    }
+
+    void UtilityScorer::ApplyFavoritesRankScaling(ScoredCandidateList& scored)
+    {
+        if (m_config.favoritesMode != FavoritesMode::Boost) {
+            return;
+        }
+
+        m_favoriteRankScratch.clear();
+        for (size_t i = 0; i < scored.size(); ++i) {
+            if (IsCandidateFavorited(scored[i].candidate)) {
+                m_favoriteRankScratch.push_back(i);
+            }
+        }
+        // 0 favorites: nothing to scale. 1 favorite: rank 0 of 1 is defined as
+        // favoritesBoostMax, which Step 7's provisional value already is.
+        if (m_favoriteRankScratch.size() < 2) {
+            return;
+        }
+
+        // Rank favorites by current utility. Step 7 gave every favorite the same
+        // provisional multiplier, so this order equals their pre-boost order.
+        std::sort(m_favoriteRankScratch.begin(), m_favoriteRankScratch.end(),
+            [&scored](size_t a, size_t b) noexcept {
+                return scored[a].utility > scored[b].utility;
+            });
+
+        // The multiplier is monotone non-increasing in rank, so rewriting
+        // utilities cannot reorder favorites relative to each other — the ranks
+        // derived above stay valid and no re-sort is needed here (the caller's
+        // partial_sort establishes the final combined order).
+        const size_t total = m_favoriteRankScratch.size();
+        for (size_t rank = 0; rank < total; ++rank) {
+            auto& entry = scored[m_favoriteRankScratch[rank]];
+            entry.breakdown.favoritesMultiplier = m_config.GetFavoritesMultiplier(rank, total);
+            entry.utility = ComputeUtility(entry.breakdown);
+        }
+
+        // Deliberately NO minimumUtility re-filter here: favorites stay in the
+        // list even if rescaling drops them below the threshold. The scoring
+        // loop's favorites-always-pass contract (they must remain observable by
+        // the learner) applies to membership; rank scaling only corrects their
+        // ORDER. Erasing here would also under-fill slots after the cold-start
+        // fallback already ran, and near-threshold favorites would flicker in
+        // and out of the list across ticks.
     }
 
     // =========================================================================
