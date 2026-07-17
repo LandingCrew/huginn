@@ -34,7 +34,11 @@ namespace Huginn::Slot
 
     struct LockedSlot
     {
-        SlotAssignment assignment;           // The locked assignment
+        // The locked assignment. INVARIANT: the embedded candidate's name view
+        // is blanked on storage (see TruncateCandidateViews) — registry
+        // reconcile can invalidate it between pipeline runs. Read the owned
+        // assignment.name instead.
+        SlotAssignment assignment;
         float remainingMs = 0.0f;            // Time remaining on lock
         float totalDurationMs = 0.0f;        // Original lock duration (for elapsed calculation)
         bool isLocked = false;               // Whether this slot is currently locked
