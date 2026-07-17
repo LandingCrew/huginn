@@ -329,7 +329,9 @@ namespace Huginn::Wheeler
 
         // Clear all subtexts BEFORE deleting wheels. Wheeler may hold const char*
         // pointers into slotSubtexts — clearing tells Wheeler to drop its references
-        // so the backing strings can be safely destroyed.
+        // so the backing strings can be safely destroyed. Invalidated records
+        // (wheelIndex == -1) can't be cleared by index; the label-keyed delete
+        // below removes the whole wheel, which drops its entry pointers.
         for (auto& pw : m_pageWheels) {
             if (pw.wheelIndex >= 0 && m_api) {
                 for (size_t i = 0; i < pw.slotCount; ++i) {
@@ -346,8 +348,13 @@ namespace Huginn::Wheeler
         // deletes on older (v2) servers, where highest-first keeps the rest valid.
         if (m_api && m_api->version >= 3 && m_api->DeleteManagedWheelsForClient) {
             for (auto& pw : m_pageWheels) {
-                if (pw.wheelIndex < 0 || !pw.wheelLabel) {
-                    continue;  // placeholder — no wheel was created
+                // Keyed on the label, NOT wheelIndex: UpdatePageWheel resets
+                // wheelIndex to -1 when IsManagedWheel fails (e.g. after an index
+                // shift), but the wheel may still exist under our name and hold
+                // pointers into this record. The by-name delete is exactly the
+                // shift-safe cleanup, and deleting the wheel drops those pointers.
+                if (!pw.wheelLabel) {
+                    continue;  // placeholder — no wheel was ever created
                 }
                 int32_t n = m_api->DeleteManagedWheelsForClient(pw.wheelLabel->c_str());
                 if (n < 0) {
@@ -866,8 +873,11 @@ namespace Huginn::Wheeler
                 // the API call below has handed Wheeler the new pointer. The new
                 // string sits in its own heap allocation, so its address stays
                 // stable for as long as Wheeler holds it.
+                // Allocate the replacement FIRST: if make_unique throws, the old
+                // (still-exported) buffer stays in place in the cache.
+                auto fresh = std::make_unique<std::string>(std::move(newSubtext));
                 auto retiring = std::move(cachedSubtext);
-                cachedSubtext = std::make_unique<std::string>(std::move(newSubtext));
+                cachedSubtext = std::move(fresh);
                 pageWheel.slotWildcard[idx] = newWildcard;
 
                 if (!cachedSubtext->empty()) {

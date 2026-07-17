@@ -307,7 +307,7 @@ namespace Huginn::Wheeler
             // through the API. Heap-owned (unique_ptr) storage survives PageWheel
             // moves and m_pageWheels reallocation; a plain std::string does not
             // (MSVC SSO relocates short-string bytes on every move).
-            std::unique_ptr<std::string> wheelLabel;    // Full wheel label (e.g., "Huginn: Combat"); set iff wheelIndex >= 0
+            std::unique_ptr<std::string> wheelLabel;    // Full wheel label (e.g., "Huginn: Combat"); non-null iff a wheel was ever created for this record (survives index invalidation — Wheeler may still hold the pointer)
             std::vector<RE::FormID> slotFormIDs;        // Cached FormIDs per slot
             std::vector<bool> slotWildcard;             // Wildcard flags per slot
             std::vector<uint16_t> slotUniqueIDs;        // Cached UniqueIDs per slot (for weapons)
