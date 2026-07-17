@@ -40,7 +40,6 @@ namespace Huginn::Item
       // Clear existing data
       m_items.clear();
       m_formIDIndex.clear();
-      m_pendingChanges.clear();
 
       // Reserve space for both containers to avoid reallocation/rehashing
       const size_t capacity = std::min(inventoryItems.size() + soulGems.size(), Config::MAX_TRACKED_ITEMS);
@@ -120,13 +119,14 @@ namespace Huginn::Item
       currentFilledCounts[scanned.formID] = scanned.filledCount;  // v0.10.0
       }
 
+      // Change events for this scan only; the caller (update loop) consumes
+      // the return value immediately — nothing is buffered across scans.
+      std::vector<ItemChangeEvent> changes;
+
       // Acquire unique lock for write access (v0.7.12 - thread safety)
       std::unique_lock lock(m_mutex);
 
-      // Track where new changes start (for return value)
-      const size_t changesStart = m_pendingChanges.size();
-
-      // Compare tracked items with current counts - build directly in m_pendingChanges
+      // Compare tracked items with current counts
       for (auto& invItem : m_items) {
       auto it = currentCounts.find(invItem.data.formID);
       int32_t currentCount = (it != currentCounts.end()) ? it->second : 0;
@@ -134,8 +134,8 @@ namespace Huginn::Item
       if (currentCount != invItem.count) {
         int32_t delta = currentCount - invItem.count;
 
-        // Emit change event directly to pending changes
-        m_pendingChanges.push_back(ItemChangeEvent{
+        // Emit change event
+        changes.push_back(ItemChangeEvent{
            .formID = invItem.data.formID,
            .name = invItem.data.name,
            .type = invItem.data.type,
@@ -163,10 +163,7 @@ namespace Huginn::Item
       }
       }
 
-      // Return only the newly added changes (avoids full copy)
-      return std::vector<ItemChangeEvent>(
-      m_pendingChanges.begin() + static_cast<ptrdiff_t>(changesStart),
-      m_pendingChanges.end());
+      return changes;
    }
 
    size_t ItemRegistry::ReconcileItems()
@@ -930,14 +927,6 @@ namespace Huginn::Item
       }
 
       return pick;
-   }
-
-   std::vector<ItemChangeEvent> ItemRegistry::GetAndClearChanges()
-   {
-      std::unique_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<ItemChangeEvent> result = std::move(m_pendingChanges);
-      m_pendingChanges.clear();
-      return result;
    }
 
    void ItemRegistry::LogAllItems() const

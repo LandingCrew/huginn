@@ -33,7 +33,6 @@ namespace Huginn::Scroll
       // Clear existing data
       m_scrolls.clear();
       m_formIDIndex.clear();
-      m_pendingChanges.clear();
 
       // Reserve space for both containers to avoid reallocation/rehashing
       const size_t capacity = std::min(inventoryScrolls.size(), Config::MAX_TRACKED_ITEMS);
@@ -91,13 +90,14 @@ namespace Huginn::Scroll
       }
       }
 
+      // Change events for this scan only; the caller (update loop) consumes
+      // the return value immediately — nothing is buffered across scans.
+      std::vector<ScrollChangeEvent> changes;
+
       // Acquire unique lock for write access (v0.7.12 - thread safety)
       std::unique_lock lock(m_mutex);
 
-      // Track where new changes start (for return value)
-      const size_t changesStart = m_pendingChanges.size();
-
-      // Compare tracked scrolls with current counts - build directly in m_pendingChanges
+      // Compare tracked scrolls with current counts
       for (auto& invScroll : m_scrolls) {
       auto it = currentCounts.find(invScroll.data.formID);
       int32_t currentCount = (it != currentCounts.end()) ? it->second : 0;
@@ -105,8 +105,8 @@ namespace Huginn::Scroll
       if (currentCount != invScroll.count) {
         int32_t delta = currentCount - invScroll.count;
 
-        // Emit change event directly to pending changes
-        m_pendingChanges.push_back(ScrollChangeEvent{
+        // Emit change event
+        changes.push_back(ScrollChangeEvent{
            .formID = invScroll.data.formID,
            .name = invScroll.data.name,
            .type = invScroll.data.type,
@@ -123,10 +123,7 @@ namespace Huginn::Scroll
       }
       }
 
-      // Return only the newly added changes (avoids full copy)
-      return std::vector<ScrollChangeEvent>(
-      m_pendingChanges.begin() + static_cast<ptrdiff_t>(changesStart),
-      m_pendingChanges.end());
+      return changes;
    }
 
    size_t ScrollRegistry::ReconcileScrolls()
@@ -472,14 +469,6 @@ namespace Huginn::Scroll
       }
       }
       return best;
-   }
-
-   std::vector<ScrollChangeEvent> ScrollRegistry::GetAndClearChanges()
-   {
-      std::unique_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<ScrollChangeEvent> result = std::move(m_pendingChanges);
-      m_pendingChanges.clear();
-      return result;
    }
 
    void ScrollRegistry::LogAllScrolls() const
