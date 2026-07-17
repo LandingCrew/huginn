@@ -212,6 +212,9 @@ namespace Huginn::Slot
         /// Config-wide placeability check: for every ENABLED override condition,
         /// verify some slot on some page accepts its category. Warns to the log
         /// and surfaces an in-game notification listing the unplaceable ones.
+        /// Also warns (log only) when more enabled conditions map to a category
+        /// than the best single page has accepting slots — a contention risk
+        /// that can starve lower-priority overrides when several fire at once.
         /// Called from Initialize() (startup + every settings reload).
         void ValidateOverridePlaceability() const;
 

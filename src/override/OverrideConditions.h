@@ -53,13 +53,20 @@ namespace Huginn::Override
 
     enum class OverrideCondition : uint8_t
     {
+        Unknown,         // Default — evaluator did not stamp a condition.
+                         // Dedup/latch consumers treat this as always-log so an
+                         // unstamped evaluator is loud instead of silently
+                         // aliasing another condition's latch entry.
         CriticalHealth,
         CriticalMagicka,
         CriticalStamina,
         Drowning,
         WeaponCharge,
-        LowAmmo
+        LowAmmo,
+        _Count
     };
+
+    inline constexpr size_t OVERRIDE_CONDITION_COUNT = static_cast<size_t>(OverrideCondition::_Count);
 
     [[nodiscard]] inline constexpr std::string_view OverrideCategoryToString(OverrideCategory c) noexcept
     {
@@ -117,7 +124,7 @@ namespace Huginn::Override
     {
         int priority = 0;              // Ordering, lock-breaking, auto-focus gating
         OverrideCategory category = OverrideCategory::Other;  // Resource category for slot filtering
-        OverrideCondition condition = OverrideCondition::CriticalHealth;  // Producing evaluator (dedup key)
+        OverrideCondition condition = OverrideCondition::Unknown;  // Producing evaluator (dedup key)
         std::string reason;            // Human-readable reason (for logging/debug)
 
         // The item to surface (nullopt if condition met but no item available)
