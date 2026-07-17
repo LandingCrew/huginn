@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -290,9 +291,6 @@ namespace Huginn::Wheeler
         // Clear activation-emptied flags for a page (called when new candidates arrive)
         void ClearActivationEmptied(size_t pageIndex);
 
-        // Get the slot index where the last activation occurred (-1 if none)
-        [[nodiscard]] int GetLastActivatedSlot() const noexcept { return m_lastActivatedSlot; }
-
     private:
         WheelerClient() = default;
 
@@ -307,11 +305,17 @@ namespace Huginn::Wheeler
             int32_t wheelIndex = -1;                    // Wheeler wheel index
             size_t slotCount = 0;                       // Number of slots for this page
             std::string pageName;                       // Page name (e.g., "Combat")
-            std::string wheelLabel;                     // Full wheel label (e.g., "Huginn: Combat") - MUST stay alive for Wheeler API
+            // Strings whose c_str() is exported to Wheeler are indefinite borrows:
+            // Wheeler stores the pointer and reads it while rendering, so the
+            // buffer must stay alive AND address-stable until replaced/cleared
+            // through the API. Heap-owned (unique_ptr) storage survives PageWheel
+            // moves and m_pageWheels reallocation; a plain std::string does not
+            // (MSVC SSO relocates short-string bytes on every move).
+            std::unique_ptr<std::string> wheelLabel;    // Full wheel label (e.g., "Huginn: Combat"); non-null iff a wheel was ever created for this record (survives index invalidation — Wheeler may still hold the pointer)
             std::vector<RE::FormID> slotFormIDs;        // Cached FormIDs per slot
             std::vector<bool> slotWildcard;             // Wildcard flags per slot
             std::vector<uint16_t> slotUniqueIDs;        // Cached UniqueIDs per slot (for weapons)
-            std::vector<std::string> slotSubtexts;       // Cached FINAL subtext labels (wildcard-applied) per slot
+            std::vector<std::unique_ptr<std::string>> slotSubtexts;  // Cached FINAL subtext labels (wildcard-applied); exported to Wheeler (see above); null ≙ empty
             std::vector<std::string> slotRawSubtexts;    // Cached RAW incoming subtexts (for the content-unchanged early-out)
             std::vector<uint8_t> slotRetries;            // Retry counter per slot (max MAX_SLOT_RETRIES)
             std::vector<bool> slotActivationEmptied;     // Activation-emptied flags (Empty policy)
@@ -333,9 +337,6 @@ namespace Huginn::Wheeler
         // Lock ordering: m_callbackMutex (outer) → m_pageDataMutex (inner).
         // Callbacks hold both; update-loop functions hold only m_pageDataMutex.
         mutable std::mutex m_pageDataMutex;
-
-        // Post-activation tracking (Part B)
-        int m_lastActivatedSlot = -1;           // Slot index where last activation occurred
 
         // Static callback trampolines (call into singleton instance)
         static void OnItemActivated(int32_t wheelIndex, int32_t entryIndex, int32_t itemIndex, uint32_t formID, bool isPrimary);

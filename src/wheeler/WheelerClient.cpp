@@ -192,9 +192,6 @@ namespace Huginn::Wheeler
             client.m_itemActivatedWhileOpen = true;
             spdlog::debug("[WheelerClient] Set m_itemActivatedWhileOpen=true for wheel {} (page {})", wheelIndex, pageIndex);
 
-            // Track which slot was activated (for post-activation policy)
-            client.m_lastActivatedSlot = entryIndex;
-
             // Post-activation policy determines how slot behaves after use
             policy = WheelerSettings::GetSingleton().GetPostActivationPolicy();
 
@@ -362,7 +359,10 @@ namespace Huginn::Wheeler
     {
         // Clear all subtexts BEFORE deleting wheels. Wheeler may hold const char*
         // pointers into slotSubtexts — clearing tells Wheeler to drop its references
-        // so the backing strings (kept alive by staleWheels) can be safely destroyed.
+        // so the backing strings (kept alive by staleWheels) can be safely
+        // destroyed. Invalidated records (wheelIndex == -1) can't be cleared by
+        // index; the label-keyed delete below removes the whole wheel, which
+        // drops its entry pointers.
         for (auto& pw : staleWheels) {
             if (pw.wheelIndex >= 0 && m_api) {
                 for (size_t i = 0; i < pw.slotCount; ++i) {
@@ -379,15 +379,20 @@ namespace Huginn::Wheeler
         // deletes on older (v2) servers, where highest-first keeps the rest valid.
         if (m_api && m_api->version >= 3 && m_api->DeleteManagedWheelsForClient) {
             for (auto& pw : staleWheels) {
-                if (pw.wheelIndex < 0) {
-                    continue;  // placeholder — no wheel was created
+                // Keyed on the label, NOT wheelIndex: UpdatePageWheel resets
+                // wheelIndex to -1 when IsManagedWheel fails (e.g. after an index
+                // shift), but the wheel may still exist under our name and hold
+                // pointers into this record. The by-name delete is exactly the
+                // shift-safe cleanup, and deleting the wheel drops those pointers.
+                if (!pw.wheelLabel) {
+                    continue;  // placeholder — no wheel was ever created
                 }
-                int32_t n = m_api->DeleteManagedWheelsForClient(pw.wheelLabel.c_str());
+                int32_t n = m_api->DeleteManagedWheelsForClient(pw.wheelLabel->c_str());
                 if (n < 0) {
                     spdlog::warn("[WheelerClient] DeleteManagedWheelsForClient('{}') failed: {}",
-                        pw.wheelLabel, n);
+                        *pw.wheelLabel, n);
                 } else {
-                    spdlog::debug("[WheelerClient] Deleted {} managed wheel(s) for '{}'", n, pw.wheelLabel);
+                    spdlog::debug("[WheelerClient] Deleted {} managed wheel(s) for '{}'", n, *pw.wheelLabel);
                 }
             }
         } else if (m_api) {
@@ -498,16 +503,19 @@ namespace Huginn::Wheeler
             pageWheel.slotRetries.resize(slotCount, 0);
             pageWheel.slotActivationEmptied.resize(slotCount, false);
 
-            // Build wheel label - MUST be stored in struct so it stays alive for Wheeler API
-            // Wheeler may hold onto the const char* pointer
+            // Build wheel label. Wheeler holds the exported const char* indefinitely,
+            // so it lives in heap storage whose address survives the push_back move
+            // below AND any later m_pageWheels reallocation (a plain std::string
+            // member would relocate its SSO bytes on move, dangling Wheeler's copy).
             if (pageCount > 1) {
-                pageWheel.wheelLabel = std::format("Huginn: {}", pageConfig.name);
+                pageWheel.wheelLabel = std::make_unique<std::string>(std::format("Huginn: {}", pageConfig.name));
             } else {
-                pageWheel.wheelLabel = "Huginn";
+                pageWheel.wheelLabel = std::make_unique<std::string>("Huginn");
             }
 
             // Create wheel with appropriate slot count
-            // NOTE: clientName points to pageWheel.wheelLabel.c_str() which stays valid
+            // NOTE: clientName points into heap storage owned by pageWheel.wheelLabel,
+            // which must be populated BEFORE this export (see PageWheel declaration).
             //
             // Position offset: When inserting at a fixed position (e.g. 0 = First),
             // each subsequent wheel must be placed at basePosition + pageIndex to avoid
@@ -524,7 +532,7 @@ namespace Huginn::Wheeler
                     .numEntries = static_cast<int32_t>(slotCount),
                     .position = pagePosition,
                     .managed = true,
-                    .clientName = pageWheel.wheelLabel.c_str(),
+                    .clientName = pageWheel.wheelLabel->c_str(),
                     .showLabel = true,
                     .labelFontSize = 0,
                     .labelColor = 0,
@@ -539,7 +547,7 @@ namespace Huginn::Wheeler
                     .numEntries = static_cast<int32_t>(slotCount),
                     .position = pagePosition,
                     .managed = true,
-                    .clientName = pageWheel.wheelLabel.c_str(),
+                    .clientName = pageWheel.wheelLabel->c_str(),
                     .showLabel = true
                 };
                 pageWheel.wheelIndex = m_api->CreateManagedWheel(
@@ -889,20 +897,29 @@ namespace Huginn::Wheeler
                 newSubtext = stConfig.wildcardLabelText;
             }
 
-            // 3. Apply subtext change if different from cached
-            std::string& cachedSubtext = pageWheel.slotSubtexts[idx];
-            if (newSubtext != cachedSubtext || newWildcard != cachedWildcard || newFormID != cachedFormID) {
-                // Update cache BEFORE passing pointer to Wheeler — Wheeler stores
-                // the const char* and reads it later during rendering, so the backing
-                // string must outlive the API call.
-                cachedSubtext = newSubtext;
+            // 3. Apply subtext change if different from cached (null cache ≙ empty)
+            auto& cachedSubtext = pageWheel.slotSubtexts[idx];
+            const bool subtextChanged =
+                cachedSubtext ? (newSubtext != *cachedSubtext) : !newSubtext.empty();
+            if (subtextChanged || newWildcard != cachedWildcard || newFormID != cachedFormID) {
+                // Wheeler stores the exported const char* and reads it while
+                // rendering, so the OLD buffer must stay alive and untouched until
+                // the API call below has handed Wheeler the new pointer. The new
+                // string sits in its own heap allocation, so its address stays
+                // stable for as long as Wheeler holds it.
+                // Allocate the replacement FIRST: if make_unique throws, the old
+                // (still-exported) buffer stays in place in the cache.
+                auto fresh = std::make_unique<std::string>(std::move(newSubtext));
+                auto retiring = std::move(cachedSubtext);
+                cachedSubtext = std::move(fresh);
                 pageWheel.slotWildcard[idx] = newWildcard;
 
-                if (!cachedSubtext.empty()) {
-                    SetEntrySubtext(pageWheel.wheelIndex, i, cachedSubtext.c_str());
+                if (!cachedSubtext->empty()) {
+                    SetEntrySubtext(pageWheel.wheelIndex, i, cachedSubtext->c_str());
                 } else {
                     ClearEntrySubtext(pageWheel.wheelIndex, i);
                 }
+                // `retiring` is destroyed here — only after Wheeler swapped pointers.
             }
         }
 
