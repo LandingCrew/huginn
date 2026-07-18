@@ -5,6 +5,10 @@
 #include "Profiling.h"
 #include "learning/FeatureQLearner.h"
 
+#include <algorithm>
+#include <format>
+#include <string>
+
 namespace Huginn::Telemetry
 {
     SoakMetrics& SoakMetrics::GetSingleton()
@@ -82,7 +86,10 @@ namespace Huginn::Telemetry
         const uint32_t peakMicros   = m_tickPeakMicros.exchange(0, std::memory_order_relaxed);
 
         const uint32_t totalEquips = hit + near_ + miss + novel;
-        const float accept = totalEquips ? (100.0f * static_cast<float>(hit) / totalEquips) : 0.0f;
+        // No equips in the window: print n/a, not a fake 0% (reads as rejection)
+        const float accept = 100.0f * static_cast<float>(hit) / std::max(totalEquips, 1u);
+        const std::string acceptStr =
+            totalEquips ? std::format("{:.0f}%", accept) : std::string("n/a");
         const float avgMs  = ticks ? (static_cast<float>(sumMicros) / 1000.0f / ticks) : 0.0f;
         const float peakMs = static_cast<float>(peakMicros) / 1000.0f;
 
@@ -102,15 +109,19 @@ namespace Huginn::Telemetry
         const int64_t upS = upSec % 60;
 
         logger::info(
-            "[Soak] up={}h{:02}m{:02}s | equips hit={} near={} miss={} novel={} accept={:.0f}% | "
+            "[Soak] up={}h{:02}m{:02}s | equips hit={} near={} miss={} novel={} accept={} | "
             "recompute={}/{} ticks override={} | learn items={} trains={} | tick avg={:.3f} peak={:.3f} ms"sv,
             upH, upM, upS,
-            hit, near_, miss, novel, accept,
+            hit, near_, miss, novel, acceptStr,
             recomputes, ticks, overrideRuns,
             fqlItems, fqlTrains,
             avgMs, peakMs);
 
         Huginn_PLOT("Huginn/FQL Items", static_cast<int64_t>(fqlItems));
-        Huginn_PLOT("Huginn/Accept %", static_cast<double>(accept));
+        // Only plot windows that carry signal — zero-equip windows would drag the
+        // Tracy trend line to 0 and read as rejection.
+        if (totalEquips > 0) {
+            Huginn_PLOT("Huginn/Accept %", static_cast<double>(accept));
+        }
     }
 }
