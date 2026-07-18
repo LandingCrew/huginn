@@ -76,18 +76,35 @@ namespace Huginn::UI
         // Build new lists outside lock to minimize critical section,
         // then swap in under unique_lock (writer).
         Scoring::ScoredCandidateList newCandidates;
+        std::vector<std::string> newNames;
         const size_t count = std::min(m_maxDisplay, candidates.size());
         newCandidates.reserve(count);
+        newNames.reserve(count);
         newCandidates.insert(newCandidates.end(),
                              candidates.begin(),
                              candidates.begin() + static_cast<ptrdiff_t>(count));
 
+        // The copies' name views point into registry strings that a reconcile
+        // can invalidate before the render thread reads them. Capture owned
+        // copies now (views still valid on this thread), then blank the views.
+        for (auto& sc : newCandidates) {
+            newNames.emplace_back(sc.GetName());
+            Candidate::GetBase(sc.candidate).name = {};
+        }
+
         Slot::SlotAssignments newAssignments = assignments;  // Full copy
+        for (auto& a : newAssignments) {
+            // assignment.name is owned; only the embedded candidate holds a view
+            if (a.candidate) {
+                Candidate::GetBase(a.candidate->candidate).name = {};
+            }
+        }
         std::string newPageName = pageName;
 
         // Short critical section: swap in the new data
         std::unique_lock lock(m_mutex);
         m_cachedCandidates = std::move(newCandidates);
+        m_cachedNames = std::move(newNames);
         m_cachedAssignments = std::move(newAssignments);
         m_cachedPageIndex = pageIndex;
         m_cachedPageName = std::move(newPageName);
@@ -112,6 +129,7 @@ namespace Huginn::UI
         // Thread safety: Called from render thread (D3D11 hook).
         // Copy-out pattern: Take short shared_lock to copy everything, then release.
         Scoring::ScoredCandidateList localCandidates;
+        std::vector<std::string> localNames;
         Slot::SlotAssignments localAssignments;
         size_t localPageIndex = 0;
         std::string localPageName;
@@ -122,6 +140,7 @@ namespace Huginn::UI
         {
             std::shared_lock lock(m_mutex);
             localCandidates = m_cachedCandidates;
+            localNames = m_cachedNames;
             localAssignments = m_cachedAssignments;
             localPageIndex = m_cachedPageIndex;
             localPageName = m_cachedPageName;
@@ -162,7 +181,7 @@ namespace Huginn::UI
             } else {
                 // Per-slot collapsible sections
                 for (size_t i = 0; i < localAssignments.size(); ++i) {
-                    DrawSlotSection(localAssignments[i], localCandidates, i);
+                    DrawSlotSection(localAssignments[i], localCandidates, localNames, i);
                 }
             }
 
@@ -210,6 +229,7 @@ namespace Huginn::UI
     void UtilityScorerDebugWidget::DrawSlotSection(
         const Slot::SlotAssignment& assignment,
         const Scoring::ScoredCandidateList& candidates,
+        const std::vector<std::string>& names,
         size_t slotIdx)
     {
         ImGui::PushID(static_cast<int>(slotIdx));
@@ -231,15 +251,18 @@ namespace Huginn::UI
 
         if (isOpen) {
             // Filter candidates matching this slot's classification
+            static const std::string kNoName{"???"};
             size_t shown = 0;
             size_t totalMatches = 0;
-            for (const auto& candidate : candidates) {
+            for (size_t ci = 0; ci < candidates.size(); ++ci) {
+                const auto& candidate = candidates[ci];
                 if (!Slot::SlotClassifier::Matches(candidate, assignment.classification)) {
                     continue;
                 }
                 ++totalMatches;
                 if (shown < m_candidatesPerSlot) {
-                    DrawCandidateCard(candidate, shown + 1);
+                    DrawCandidateCard(candidate,
+                        ci < names.size() ? names[ci] : kNoName, shown + 1);
                     ++shown;
                 }
             }
@@ -260,6 +283,7 @@ namespace Huginn::UI
 
     void UtilityScorerDebugWidget::DrawCandidateCard(
         const Scoring::ScoredCandidate& candidate,
+        const std::string& name,
         size_t rank)
     {
         ImGui::PushID(static_cast<int>(rank));
@@ -300,8 +324,8 @@ namespace Huginn::UI
             ImGui::SameLine();
         }
 
-        // Candidate name (truncated if too long)
-        const auto name = candidate.GetName();
+        // Candidate name (owned snapshot — the candidate's own view is blanked;
+        // see UpdateSlotData). Truncated if too long.
         if (name.length() > 20) {
             ImGui::Text("%.*s...", 17, name.data());
         } else {
