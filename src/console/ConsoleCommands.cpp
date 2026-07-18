@@ -22,6 +22,7 @@
 #include "wheeler/WheelerSettings.h"
 #include "wheeler/WheelerClient.h"
 #include "settings/SettingsReloader.h"
+#include "pipeline/PipelineCoordinator.h"
 
 #include <algorithm>
 #include <cctype>
@@ -161,6 +162,29 @@ namespace Huginn::Console
 
       Print("Recommendations refreshed");
       logger::info("[Console] Forced recommendation refresh"sv);
+   }
+
+   static void Cmd_Recs(std::string_view arg)
+   {
+      int n = 10;
+      if (!arg.empty()) {
+         auto [ptr, ec] = std::from_chars(arg.data(), arg.data() + arg.size(), n);
+         if (ec != std::errc{} || n < 1) {
+            Print("Usage: hg recs [N]  (N = 1-50, default 10)");
+            return;
+         }
+         n = std::min(n, 50);
+      }
+
+      // Queue a full-detail dump, then force a pipeline pass so it logs now.
+      // MarkPageDirty bypasses both skip gates; the dump fires inside ForceUpdate.
+      Pipeline::PipelineCoordinator::GetSingleton().RequestRecommendationDump(
+         static_cast<size_t>(n));
+      Slot::SlotAllocator::GetSingleton().MarkPageDirty();
+      Huginn::Update::UpdateHandler::GetSingleton()->ForceUpdate();
+
+      auto msg = std::format("Top {} recommendations dumped to Huginn log", n);
+      Print(msg.c_str());
    }
 
    static void Cmd_Unlock(std::string_view /*arg*/)
@@ -338,6 +362,7 @@ namespace Huginn::Console
 
    static const CommandEntry kCommands[] = {
       { "refresh",       "Force immediate recommendation update",       false, Cmd_Refresh },
+      { "recs",          "Dump top-N recommendation breakdown to log",  true,  Cmd_Recs },
       { "unlock",        "Clear all slot locks",                        false, Cmd_Unlock },
       { "status",        "Show system status",                          false, Cmd_Status },
       { "weights",       "Show FQL weight vector for FormID",           true,  Cmd_Weights },

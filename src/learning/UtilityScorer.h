@@ -98,8 +98,11 @@ namespace Huginn::Scoring
         // Reset state (e.g., on save load)
         void Reset();
 
-        // Debug logging
-        void LogTopCandidates(const ScoredCandidateList& ranked, size_t count = 5) const;
+        // Recommendation logging (release-available; see DebugSettings::recLogVerbosity).
+        // detail: append learn's inputs (Q/P/UCB/α) to each line.
+        // force: bypass the membership-change dedup (on-demand `hg recs` dumps).
+        void LogTopCandidates(const ScoredCandidateList& ranked, size_t count = 5,
+            bool detail = false, bool force = false) const;
 
     private:
         // Internal scoring implementation

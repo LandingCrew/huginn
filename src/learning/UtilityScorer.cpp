@@ -257,6 +257,9 @@ namespace Huginn::Scoring
             (1.0f - alpha) * result.breakdown.prior +
             beta * result.breakdown.ucb;
 
+        // Record λ(confidence) so logged breakdowns reproduce the utility formula
+        result.breakdown.lambda = ComputeAdaptiveLambda(alpha);
+
         // =====================================================================
         // Step 4b: Recency boost from UsageMemory (event-driven short-term recall)
         // =====================================================================
@@ -651,43 +654,48 @@ namespace Huginn::Scoring
     // DEBUG LOGGING
     // =========================================================================
 
-    void UtilityScorer::LogTopCandidates(const ScoredCandidateList& ranked, size_t count) const
+    void UtilityScorer::LogTopCandidates(
+        const ScoredCandidateList& ranked, size_t count, bool detail, bool force) const
     {
         size_t numToLog = std::min(count, ranked.size());
 
-        // Dedup: skip the dump unless the ranking's membership/order changed.
-        // Utilities are continuous in the vitals, so they drift every scoring
-        // run — including them here would defeat the dedup.
-        // NOTE: Single-threaded (called from update thread only)
-        static std::string s_lastSignature{"<none>"};
-        std::string signature;
-        for (size_t i = 0; i < numToLog; ++i) {
-            signature += fmt::format("{}|", ranked[i].GetName());
+        if (!force) {
+            // Dedup: skip the dump unless the ranking's membership/order changed.
+            // Utilities are continuous in the vitals, so they drift every scoring
+            // run — including them here would defeat the dedup. Forced dumps
+            // (hg recs) bypass and don't update the signature.
+            // NOTE: Single-threaded (called from update thread only)
+            static std::string s_lastSignature{"<none>"};
+            std::string signature;
+            for (size_t i = 0; i < numToLog; ++i) {
+                signature += fmt::format("{}|", ranked[i].GetName());
+            }
+            if (signature == s_lastSignature) {
+                return;
+            }
+            s_lastSignature = std::move(signature);
         }
-        if (signature == s_lastSignature) {
-            return;
-        }
-        s_lastSignature = std::move(signature);
 
         if (numToLog == 0) {
-            logger::info("[UtilityScorer] No candidates to display"sv);
+            logger::info("[Recs] No candidates to display"sv);
             return;
         }
 
-        logger::info("=== Top {} Candidates ==="sv, numToLog);
+        logger::info("[Recs] === Top {}/{} candidates | u = ctx*(1+λ*learn)*mults ==="sv,
+            numToLog, ranked.size());
 
         for (size_t i = 0; i < numToLog; ++i) {
             const auto& scored = ranked[i];
             const auto& bd = scored.breakdown;
 
-            logger::info("{}. {} ({}) - Utility: {:.3f} {}"sv,
+            logger::info("[Recs] {}. {} ({}) u={:.3f} | {}{}{}"sv,
                 i + 1,
                 scored.GetName(),
                 Candidate::SourceTypeToString(scored.GetSourceType()),
                 scored.utility,
-                scored.isWildcard ? "[WILDCARD]" : "");
-
-            logger::info("     {} "sv, bd.ToString());
+                detail ? bd.ToDetailString() : bd.ToCompactString(),
+                scored.isWildcard ? " [WC]" : "",
+                scored.isColdStartBoosted ? " [COLD]" : "");
         }
     }
 

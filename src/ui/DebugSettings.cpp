@@ -1,6 +1,7 @@
 #include "DebugSettings.h"
 #include "IniLoad.h"
 #include <SimpleIni.h>
+#include <algorithm>
 
 // Debug widgets only exist in debug builds
 #ifdef _DEBUG
@@ -33,9 +34,12 @@ namespace Huginn::UI
         stateManagerVisible = ini.GetBoolValue(section, "bShowStateManager", DebugDefaults::STATE_MANAGER_VISIBLE);
         registryVisible = ini.GetBoolValue(section, "bShowRegistry", DebugDefaults::REGISTRY_VISIBLE);
         utilityScorerVisible = ini.GetBoolValue(section, "bShowUtilityScorer", DebugDefaults::UTILITY_SCORER_VISIBLE);
+        recLogVerbosity = std::clamp(
+            static_cast<int>(ini.GetLongValue(section, "iRecommendationLog", DebugDefaults::REC_LOG_VERBOSITY)),
+            0, 2);
 
-        logger::info("[DebugSettings] Loaded: StateManager={}, Registry={}, UtilityScorer={}"sv,
-            stateManagerVisible, registryVisible, utilityScorerVisible);
+        logger::info("[DebugSettings] Loaded: StateManager={}, Registry={}, UtilityScorer={}, RecLog={}"sv,
+            stateManagerVisible, registryVisible, utilityScorerVisible, recLogVerbosity);
         // No ApplyToWidgets() here — LoadFromIni is a pure loader (Phase 1), like
         // every other settings class. Callers apply visibility explicitly: the
         // LoadFromFile wrapper, InitializeGameSystems, and the reload path's
@@ -47,6 +51,7 @@ namespace Huginn::UI
         stateManagerVisible = DebugDefaults::STATE_MANAGER_VISIBLE;
         registryVisible = DebugDefaults::REGISTRY_VISIBLE;
         utilityScorerVisible = DebugDefaults::UTILITY_SCORER_VISIBLE;
+        recLogVerbosity = DebugDefaults::REC_LOG_VERBOSITY;
 
         logger::info("[DebugSettings] Reset to defaults"sv);
 

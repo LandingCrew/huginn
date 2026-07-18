@@ -247,10 +247,27 @@
     {
       "type": "group",
       "text": {
-        "name": "Debug Widgets",
-        "desc": "Show/hide debug overlays (Debug builds only)"
+        "name": "Debug & Logging",
+        "desc": "Debug overlays (Debug builds only) and recommendation logging"
       },
       "entries": [
+        {
+          "type": "slider",
+          "text": {
+            "name": "Recommendation Log",
+            "desc": "0=off, 1=compact top-5 on change, 2=full scoring detail (works in all builds)"
+          },
+          "default": 1.0,
+          "style": {
+            "min": 0.0,
+            "max": 2.0,
+            "step": 1.0
+          },
+          "ini": {
+            "section": "Debug",
+            "id": "iRecommendationLog"
+          }
+        },
         {
           "type": "checkbox",
           "text": {

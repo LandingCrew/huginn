@@ -13,17 +13,23 @@ namespace Huginn::UI
         constexpr bool STATE_MANAGER_VISIBLE = false;
         constexpr bool REGISTRY_VISIBLE = false;
         constexpr bool UTILITY_SCORER_VISIBLE = false;
+        constexpr int REC_LOG_VERBOSITY = 1;  // 0=off, 1=compact top-5, 2=full detail
     }
 
     /**
-     * @brief Debug widget visibility settings
-     * Controls which debug overlays are shown (debug builds only)
+     * @brief Debug widget visibility + diagnostic logging settings
+     * Widget visibility only affects debug builds; recLogVerbosity works in
+     * release builds too (recommendation troubleshooting on regular runs).
      */
     struct DebugSettings
     {
         bool stateManagerVisible = DebugDefaults::STATE_MANAGER_VISIBLE;
         bool registryVisible = DebugDefaults::REGISTRY_VISIBLE;
         bool utilityScorerVisible = DebugDefaults::UTILITY_SCORER_VISIBLE;
+
+        // Recommendation log verbosity (both build configs):
+        //   0 = off, 1 = compact top-5 on ranking change, 2 = + learn inputs (Q/P/UCB/α)
+        int recLogVerbosity = DebugDefaults::REC_LOG_VERBOSITY;
 
         /**
          * @brief Load settings from INI file
