@@ -352,6 +352,9 @@ namespace Huginn::Wheeler
         // addresses stay stable for the deferred API calls in IssueWheelDeletes.
         std::vector<PageWheel> stale = std::move(m_pageWheels);
         m_pageWheels.clear();  // moved-from state is unspecified; make it definitively empty
+        // Wheels are recreated after save load / reload — the world state that made
+        // an add fail may be gone, so failed combos get a fresh retry budget.
+        m_addFailCooldowns.clear();
         return stale;
     }
 
@@ -802,6 +805,7 @@ namespace Huginn::Wheeler
         // Lock now held for the per-slot update loop below
 
         static constexpr uint8_t MAX_SLOT_RETRIES = 3;
+        const auto nowTime = std::chrono::steady_clock::now();
 
         // Update each slot (bounds-check all vectors to prevent out-of-range access)
         int32_t maxSlots = std::min(static_cast<int32_t>(pageWheel.slotCount), entryCount);
@@ -827,6 +831,23 @@ namespace Huginn::Wheeler
             }
 
             if (newFormID != cachedFormID || newUniqueID != cachedUniqueID) {
+                // Negative-cache check FIRST: a (formID, uniqueID) Wheeler already
+                // rejected MAX_SLOT_RETRIES times must not clear the current entry
+                // or hit the API again until its cooldown expires. Adopt the cache
+                // so the diff goes quiet; the combo retries naturally afterwards.
+                if (newFormID != 0) {
+                    if (auto it = m_addFailCooldowns.find(AddFailKey(newFormID, newUniqueID));
+                        it != m_addFailCooldowns.end()) {
+                        if (nowTime - it->second < ADD_FAIL_COOLDOWN) {
+                            pageWheel.slotFormIDs[idx] = newFormID;
+                            pageWheel.slotUniqueIDs[idx] = newUniqueID;
+                            pageWheel.slotRetries[idx] = 0;
+                            continue;
+                        }
+                        m_addFailCooldowns.erase(it);
+                    }
+                }
+
                 // Reset retry counter when a genuinely different item is recommended.
                 // Don't reset when cachedFormID is 0 — that means we never successfully
                 // populated this slot, so the retry counter should keep accumulating.
@@ -864,9 +885,17 @@ namespace Huginn::Wheeler
 
                         ++pageWheel.slotRetries[idx];
                         if (pageWheel.slotRetries[idx] >= MAX_SLOT_RETRIES) {
-                            spdlog::debug("[WheelerClient] AddItemByFormID {:08X} uid={} slot {} failed {} times (result={}), keeping previous item",
-                                newFormID, newUniqueID, i, pageWheel.slotRetries[idx], result);
-                            // Cache to stop retrying this FormID+UniqueID combination
+                            spdlog::warn("[WheelerClient] AddItemByFormID {:08X} uid={} slot {} failed {} times (result={}) — suppressing retries for {}s",
+                                newFormID, newUniqueID, i, pageWheel.slotRetries[idx], result,
+                                ADD_FAIL_COOLDOWN.count());
+                            // Start the cooldown and cache to stop retrying this
+                            // FormID+UniqueID combination (see m_addFailCooldowns)
+                            if (m_addFailCooldowns.size() > 32) {
+                                std::erase_if(m_addFailCooldowns, [&](const auto& e) {
+                                    return nowTime - e.second >= ADD_FAIL_COOLDOWN;
+                                });
+                            }
+                            m_addFailCooldowns[AddFailKey(newFormID, newUniqueID)] = nowTime;
                             pageWheel.slotFormIDs[idx] = newFormID;
                             pageWheel.slotUniqueIDs[idx] = newUniqueID;
                         } else {

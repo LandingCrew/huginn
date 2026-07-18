@@ -1,10 +1,12 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 // Forward declare the API types we need
@@ -321,6 +323,21 @@ namespace Huginn::Wheeler
             std::vector<bool> slotActivationEmptied;     // Activation-emptied flags (Empty policy)
         };
         std::vector<PageWheel> m_pageWheels;            // One wheel per page
+
+        // Negative cache for AddItemByFormID rejects. After MAX_SLOT_RETRIES
+        // consecutive failures of the same (formID, uniqueID), further attempts
+        // are suppressed for ADD_FAIL_COOLDOWN — slot churn (lock expiry,
+        // re-allocation) otherwise restarts the retry cycle every few seconds
+        // (observed: 569 API rejects in 11 min from one bad save entry that
+        // Wheeler answers with UnsupportedFormType). Keyed globally, not
+        // per-page: the same combo fails identically on every wheel.
+        // GUARDED_BY(m_pageDataMutex).
+        std::unordered_map<uint64_t, std::chrono::steady_clock::time_point> m_addFailCooldowns;
+        static constexpr std::chrono::seconds ADD_FAIL_COOLDOWN{30};
+        [[nodiscard]] static constexpr uint64_t AddFailKey(RE::FormID formID, uint16_t uniqueID) noexcept
+        {
+            return (static_cast<uint64_t>(formID) << 16) | uniqueID;
+        }
 
         // Helper to set/clear entry subtext
         void SetEntrySubtext(int32_t wheelIndex, int32_t entryIndex, const char* text);
