@@ -350,8 +350,10 @@ namespace Huginn::Input
       // Returns by value — safe snapshot for cross-thread access.
       auto content = GetSlotContent(slotIndex);
 
-      if (content.IsEmpty()) {
-      logger::debug("[EquipManager] Slot {} is empty, nothing to equip"sv, slotIndex + 1);
+      if (content.IsEmpty() || content.IsNoMatch()) {
+      // NoMatch = slot shows "(No damage)" / "(Learning...)" — a normal state,
+      // not an error; must bail before MarkHuginnEquip (formID is 0 here).
+      logger::debug("[EquipManager] Slot {} has no equippable content"sv, slotIndex + 1);
       return false;
       }
 
