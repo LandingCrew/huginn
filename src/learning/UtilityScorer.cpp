@@ -541,6 +541,22 @@ namespace Huginn::Scoring
                 if (HasTag(c.tags, ItemTag::ResistDisease)) {
                     maxWeight = std::max(maxWeight, weights.resistDiseaseWeight);
                 }
+                // Resist Magic: relevant when an enemy is casting (same
+                // perceivable trigger as ward spells)
+                if (HasTag(c.tags, ItemTag::ResistMagic)) {
+                    maxWeight = std::max(maxWeight, weights.wardWeight);
+                }
+
+                // Buff & resist potions: always-on baseline + in-combat boost.
+                // Mirrors the weapon/spell baselines — without it these are
+                // pinned at baseRelevance (0.05) and can never clear
+                // fMinimumUtility (0.1), so they never surface and never learn.
+                // Type-based so untagged buffs (e.g. Fortify Jump) are covered.
+                if (c.type == Item::ItemType::BuffPotion ||
+                    c.type == Item::ItemType::ResistPotion) {
+                    maxWeight = std::max(maxWeight, weights.buffPotionWeight);
+                    maxWeight = std::max(maxWeight, weights.buffCombatWeight);
+                }
 
                 // Workstation fortify potions (FIX: Stage 1g code review)
                 // These are split across three different tag/field pairs:
@@ -567,6 +583,11 @@ namespace Huginn::Scoring
 
                 // Stealth (Invisibility potions - Muffle doesn't exist as a potion)
                 if (HasTag(c.tags, ItemTag::Invisibility)) {
+                    maxWeight = std::max(maxWeight, weights.stealthWeight);
+                }
+                // Fortify Sneak while sneaking (same trigger as invisibility)
+                if (HasTag(c.tags, ItemTag::FortifyUtilitySkill) &&
+                    c.utilitySkill == Item::UtilitySkill::Sneak) {
                     maxWeight = std::max(maxWeight, weights.stealthWeight);
                 }
 

@@ -32,14 +32,6 @@ namespace Huginn::State
         inline constexpr float WEAPON_CHARGE_LOW = 6.0f;        // 20% threshold
         inline constexpr float WEAPON_CHARGE_CRITICAL = 9.0f;   // 5% threshold
 
-        // Active buff suppression (negative = suppress redundant suggestions)
-        inline constexpr float HAS_WATERBREATHING = -10.0f;
-        inline constexpr float HAS_INVISIBILITY = -10.0f;
-        inline constexpr float HAS_MUFFLE = -8.0f;
-        inline constexpr float HAS_ARMOR_BUFF = -5.0f;
-        inline constexpr float HAS_CLOAK = -8.0f;
-        inline constexpr float HAS_SUMMON = -6.0f;
-
         // =====================================================================
         // NEW: NORMALIZED WEIGHTS [0,1] for ContextRuleEngine
         // =====================================================================
@@ -75,6 +67,13 @@ namespace Huginn::State
         inline constexpr float WEAPON = 0.2f;               // Physical weapons (always-on baseline)
         inline constexpr float SPELL = 0.2f;                // Spells (always-on baseline for typed spell slots)
         inline constexpr float SUMMON = 0.4f;               // Summon spells (in combat, no active summon)
+
+        // Buff & resist potions (fortify skill, resist element, etc.)
+        // BUFF_POTION is the always-on baseline — same lockout fix as WEAPON/
+        // SPELL: without it these sit at BASE_RELEVANCE (0.05) which cannot
+        // clear fMinimumUtility (0.1), so they never surface and never learn.
+        inline constexpr float BUFF_POTION = 0.15f;         // Always-on baseline (BuffsAny/DefensiveAny slots)
+        inline constexpr float BUFF_COMBAT = 0.35f;         // In combat: pop fortify/resist potions
 
         // Utility baseline
         inline constexpr float BASE_RELEVANCE = 0.05f;      // Noise floor for always-available items
@@ -142,14 +141,6 @@ namespace Huginn::State
         float weightWeaponChargeLow = ContextWeightDefaults::WEAPON_CHARGE_LOW;
         float weightWeaponChargeCritical = ContextWeightDefaults::WEAPON_CHARGE_CRITICAL;
 
-        // --- Active buff suppression ---
-        float weightHasWaterbreathing = ContextWeightDefaults::HAS_WATERBREATHING;
-        float weightHasInvisibility = ContextWeightDefaults::HAS_INVISIBILITY;
-        float weightHasMuffle = ContextWeightDefaults::HAS_MUFFLE;
-        float weightHasArmorBuff = ContextWeightDefaults::HAS_ARMOR_BUFF;
-        float weightHasCloak = ContextWeightDefaults::HAS_CLOAK;
-        float weightHasSummon = ContextWeightDefaults::HAS_SUMMON;
-
         // =====================================================================
         // NEW: NORMALIZED WEIGHTS [0,1] for ContextRuleEngine
         // =====================================================================
@@ -185,6 +176,10 @@ namespace Huginn::State
         float weightWeapon = ContextWeightDefaults::WEAPON;
         float weightSpell = ContextWeightDefaults::SPELL;
         float weightSummon = ContextWeightDefaults::SUMMON;
+
+        // --- Buff & resist potions ---
+        float weightBuffPotion = ContextWeightDefaults::BUFF_POTION;
+        float weightBuffCombat = ContextWeightDefaults::BUFF_COMBAT;
 
         // --- Utility baseline ---
         float weightBaseRelevance = ContextWeightDefaults::BASE_RELEVANCE;

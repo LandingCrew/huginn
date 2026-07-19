@@ -89,6 +89,12 @@ namespace Huginn::Context
         float spellWeight = 0.0f;           // Spells (always-on baseline for spell candidates on typed slots)
 
         // =========================================================================
+        // BUFF & RESIST POTIONS
+        // =========================================================================
+        float buffPotionWeight = 0.0f;      // Buff/resist potions (always-on baseline, mirrors weapon/spell)
+        float buffCombatWeight = 0.0f;      // Buff/resist potions in combat (pop before/during fights)
+
+        // =========================================================================
         // UTILITY / ALWAYS-AVAILABLE
         // =========================================================================
         float baseRelevanceWeight = 0.05f;  // Noise floor for items with no specific context
@@ -131,6 +137,8 @@ namespace Huginn::Context
             maxWeight = std::max(maxWeight, boundWeaponWeight);
             maxWeight = std::max(maxWeight, weaponWeight);
             maxWeight = std::max(maxWeight, spellWeight);
+            maxWeight = std::max(maxWeight, buffPotionWeight);
+            maxWeight = std::max(maxWeight, buffCombatWeight);
             maxWeight = std::max(maxWeight, baseRelevanceWeight);
             return maxWeight;
         }
