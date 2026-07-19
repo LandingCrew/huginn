@@ -114,6 +114,15 @@ namespace Huginn::Config
    // Accessing them causes EXCEPTION_ACCESS_VIOLATION crashes
    inline constexpr float EXTRALIST_STABILIZATION_MS = 500.0f;
 
+   // Grace window after a game load / new game during which item removals are
+   // NOT rewarded as consumption. Alternate-start mods and settling scripts
+   // strip starter/quest items in bulk shortly after load; without this window
+   // those removals train the Q-learner as if the player drank them (observed:
+   // 6 starter potions each +5.0 FQL reward ~1.1 s after kNewGame). Must exceed
+   // the observed strip delay with margin; real player consumption in the first
+   // few seconds after a load is rare and low-value to learn.
+   inline constexpr float CONSUMPTION_POST_LOAD_GRACE_MS = 5000.0f;
+
    // Maximum favorited weapons to track
    // Typical player: 5-15 favorites, Collector: 30-50
    inline constexpr size_t MAX_TRACKED_WEAPONS = 100;

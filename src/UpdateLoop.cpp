@@ -34,8 +34,26 @@ static bool IsConsumption(RE::FormID formID, int32_t delta)
     return transferred < removed;
 }
 
+// True during the grace window after a game load / new game, when bulk item
+// strips (alt-start mods, settling scripts) masquerade as consumption.
+static bool InPostLoadGraceWindow()
+{
+    const float sinceLoadMs = std::chrono::duration<float, std::milli>(
+        std::chrono::steady_clock::now() - g_lastGameLoad).count();
+    return sinceLoadMs < Config::CONSUMPTION_POST_LOAD_GRACE_MS;
+}
+
 static void ApplyConsumptionReward(RE::FormID formID, std::string_view name)
 {
+    // Suppress rewards right after a load: alt-start/quest scripts strip items
+    // in bulk and would otherwise train the learner on drinks that never
+    // happened (see CONSUMPTION_POST_LOAD_GRACE_MS).
+    if (InPostLoadGraceWindow()) {
+        logger::debug("[Learning] Skipped consumption reward (post-load grace): {} ({:08X})",
+            name, formID);
+        return;
+    }
+
     auto& cache = Learning::PipelineStateCache::GetSingleton();
     if (!cache.IsStale(500.0f)) {
         Learning::EquipEventBus::GetSingleton().Publish(
