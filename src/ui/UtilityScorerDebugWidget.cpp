@@ -115,8 +115,20 @@ namespace Huginn::UI
     void UtilityScorerDebugWidget::UpdateUsageMemory(std::vector<Learning::UsageEvent> snapshot,
                                                       uint32_t currentContextHash)
     {
+        // Resolve names here (update thread) rather than at render time: the
+        // render thread must not walk the form table, and a form can be unloaded
+        // between snapshot and draw. Owned copies, index-aligned with the events.
+        std::vector<std::string> newNames;
+        newNames.reserve(snapshot.size());
+        for (const auto& event : snapshot) {
+            auto* form = RE::TESForm::LookupByID(event.formID);
+            const char* name = form ? form->GetName() : nullptr;
+            newNames.emplace_back((name && name[0]) ? name : "???");
+        }
+
         std::unique_lock lock(m_mutex);
         m_cachedUsageSnapshot = std::move(snapshot);
+        m_cachedUsageNames = std::move(newNames);
         m_cachedContextHash = currentContextHash;
     }
 
@@ -136,6 +148,7 @@ namespace Huginn::UI
         size_t localPageCount = 0;
         size_t localColdStartCount = 0;
         std::vector<Learning::UsageEvent> localUsageSnapshot;
+        std::vector<std::string> localUsageNames;
         uint32_t localContextHash = 0;
         {
             std::shared_lock lock(m_mutex);
@@ -147,6 +160,7 @@ namespace Huginn::UI
             localPageCount = m_pageCount;
             localColdStartCount = m_coldStartBoostedCount;
             localUsageSnapshot = m_cachedUsageSnapshot;
+            localUsageNames = m_cachedUsageNames;
             localContextHash = m_cachedContextHash;
         }
 
@@ -198,15 +212,14 @@ namespace Huginn::UI
                 ImGui::TextColored(ScorerColors::LABEL_DIM, "  (empty)");
             } else {
                 // Newest events at top (reverse iteration)
-                for (auto it = localUsageSnapshot.rbegin(); it != localUsageSnapshot.rend(); ++it) {
-                    const auto& event = *it;
+                for (size_t i = localUsageSnapshot.size(); i-- > 0;) {
+                    const auto& event = localUsageSnapshot[i];
                     bool matches = (event.contextHash == localContextHash);
 
-                    // Resolve item name via form lookup
-                    const char* itemName = "???";
-                    if (auto* form = RE::TESForm::LookupByID(event.formID)) {
-                        itemName = form->GetName();
-                    }
+                    // Names were resolved on the update thread; index-aligned.
+                    const char* itemName = i < localUsageNames.size()
+                        ? localUsageNames[i].c_str()
+                        : "???";
 
                     ImVec4 color = matches
                         ? ImVec4(0.9f, 0.9f, 0.9f, 1.0f)

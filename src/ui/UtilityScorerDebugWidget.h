@@ -129,6 +129,7 @@ namespace Huginn::UI
         size_t m_pageCount = 0;                                    // GUARDED_BY(m_mutex)
         size_t m_coldStartBoostedCount = 0;                        // GUARDED_BY(m_mutex)
         std::vector<Learning::UsageEvent> m_cachedUsageSnapshot;   // GUARDED_BY(m_mutex)
+        std::vector<std::string> m_cachedUsageNames;               // GUARDED_BY(m_mutex) owned, index-aligned with m_cachedUsageSnapshot
         uint32_t m_cachedContextHash = 0;                          // GUARDED_BY(m_mutex)
         bool m_isVisible = true;  // Visible by default in Debug builds
         size_t m_maxDisplay = 10; // Max total candidates to cache

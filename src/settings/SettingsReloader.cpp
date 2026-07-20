@@ -94,7 +94,7 @@ namespace Huginn::Settings
         // dMenu INI only contains dMenu-managed sections (Widget, Keybindings, Debug).
         // Non-dMenu settings always load from the main INI to avoid reading defaults
         // from an incomplete file (dMenu's flush_ini creates a fresh CSimpleIniA).
-        const auto mainIniPath = std::filesystem::path("Data/SKSE/Plugins/Huginn.ini");
+        const auto mainIniPath = GetMainIniPath();
 
         // Graceful degradation: fall back to main INI if dMenu path doesn't exist
         auto dMenuPath = dMenuIniPath;
