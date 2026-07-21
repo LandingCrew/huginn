@@ -171,14 +171,28 @@ namespace Huginn::Input
       return false;
       }
 
-      // Get the appropriate equip slot
+      // One-handed weapons declare the EitherHand slot — the caller picks the
+      // hand. Everything else (2H melee, bows, crossbows) declares its own slot
+      // (BothHands etc.), and forcing a hand slot makes EquipObject silently
+      // no-op: no TESEquipEvent, nothing rendered, hotkey appears dead.
+      constexpr RE::FormID kEitherHandSlot = 0x00013F44;
       auto* equipSlot = GetEquipSlot(EquipHand::Right, leftHand);
+      if (auto* declared = weapon->equipSlot; declared && declared->GetFormID() != kEitherHandSlot) {
+      equipSlot = declared;
+      }
 
       // Equip the weapon
       equipManager->EquipObject(player, weapon, nullptr, 1, equipSlot);
 
-      logger::info("[EquipManager] Equipped weapon '{}' to {} hand (FormID: {:08X})"sv,
-      weapon->GetName(), leftHand ? "left" : "right", formID);
+      logger::info("[EquipManager] Equipped weapon '{}' to {} hand (FormID: {:08X}, slot {:08X})"sv,
+      weapon->GetName(), leftHand ? "left" : "right", formID,
+      equipSlot ? equipSlot->GetFormID() : 0);
+
+      // Debug: what the engine put in hand (may lag the async equip)
+      if (auto* held = player->GetEquippedObject(leftHand)) {
+      logger::debug("[EquipManager] {} hand now shows: '{}' ({:08X})"sv,
+        leftHand ? "Left" : "Right", held->GetName(), held->GetFormID());
+      }
 
       return true;
    }
@@ -350,8 +364,10 @@ namespace Huginn::Input
       // Returns by value — safe snapshot for cross-thread access.
       auto content = GetSlotContent(slotIndex);
 
-      if (content.IsEmpty()) {
-      logger::debug("[EquipManager] Slot {} is empty, nothing to equip"sv, slotIndex + 1);
+      if (content.IsEmpty() || content.IsNoMatch()) {
+      // NoMatch = slot shows "(No damage)" / "(Learning...)" — a normal state,
+      // not an error; must bail before MarkHuginnEquip (formID is 0 here).
+      logger::debug("[EquipManager] Slot {} has no equippable content"sv, slotIndex + 1);
       return false;
       }
 

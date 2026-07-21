@@ -3,6 +3,7 @@
 #include <atomic>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -47,13 +48,26 @@ namespace Huginn::Settings
         /// fall back to the main INI, which is the correct no-dMenu behavior.
         ///
         /// Thread Safety:
-        /// - Called from the game thread (ModCallbackEvent handler, or console
-        ///   command wrapped in UpdateHandler::RunExclusive)
+        /// - Serializes itself against the update loop via
+        ///   UpdateHandler::RunExclusive — callers must NOT wrap this call in
+        ///   RunExclusive themselves (the mutex is not re-entrant; a caller-side
+        ///   wrap deadlocks). ModCallbackEvent senders (dMenu) may dispatch from
+        ///   any thread, so the callee-side lock is load-bearing, not belt-and-braces.
         /// - POD settings singletons (ScorerSettings, ContextWeightSettings) read without locks
         /// - SlotSettings uses shared_mutex internally for safe concurrent access
         /// - Side effects are ordered to prevent inconsistent state
-        /// - Worst case: one update frame with mixed old/new values (acceptable for tuning)
         void ReloadAllSettings(const std::filesystem::path& iniPath);
+
+        /// Clear the FeatureQLearner AND reset SlotLocker, under the update mutex.
+        ///
+        /// Single source of truth shared by `hg reset qvalues` and the dMenu
+        /// "reset learning data" button — both must reset SlotLocker too, or
+        /// locked slots keep pinning recommendations scored by the just-cleared
+        /// table. Do not call from inside RunExclusive (not re-entrant).
+        ///
+        /// @return Number of FQL items cleared, or nullopt if the FeatureQLearner
+        ///         is not initialized (nothing was reset).
+        static std::optional<size_t> ResetLearningData();
 
     protected:
         /// Process ModCallbackEvent - handles dmenu_updateSettings and dmenu_buttonCallback
@@ -73,8 +87,15 @@ namespace Huginn::Settings
         /// Handle button callbacks (Reset Q-Table, Reset Defaults, Reload INI)
         void HandleButtonCallback(std::string_view buttonId);
 
-        /// Reset all settings to compile-time defaults
+        /// Reset all settings to compile-time defaults.
+        /// Wraps itself in UpdateHandler::RunExclusive like ReloadAllSettings.
         void ResetAllToDefaults();
+
+        /// Reload implementation. REQUIRES: update mutex held (RunExclusive).
+        void ReloadAllSettingsExclusive(const std::filesystem::path& dMenuIniPath);
+
+        /// Reset implementation. REQUIRES: update mutex held (RunExclusive).
+        void ResetAllToDefaultsExclusive();
 
         /// The inputs Wheeler wheel *creation* actually depends on: the wheel
         /// position and, per page, the name + slot count. Everything else Wheeler

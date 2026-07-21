@@ -102,10 +102,26 @@ namespace Huginn::Config
    // Recommended: 30000ms (30 seconds) - matches item reconcile interval
    inline constexpr float WEAPON_RECONCILE_INTERVAL_MS = 30000.0f;
 
+   // Retry delay for a weapon reconcile whose load-time pass couldn't read
+   // extraLists (rebuild never does; a post-load reconcile runs inside the
+   // stabilization window). Must exceed EXTRALIST_STABILIZATION_MS so the
+   // primed retry runs stable and recovers favorites/charge promptly instead
+   // of waiting a full WEAPON_RECONCILE_INTERVAL_MS.
+   inline constexpr float WEAPON_RECONCILE_RETRY_MS = 1000.0f;
+
    // Minimum time to wait after save load before accessing extraLists (v0.7.9)
    // During this window, extraLists pointers may be stale/uninitialized
    // Accessing them causes EXCEPTION_ACCESS_VIOLATION crashes
    inline constexpr float EXTRALIST_STABILIZATION_MS = 500.0f;
+
+   // Grace window after a game load / new game during which item removals are
+   // NOT rewarded as consumption. Alternate-start mods and settling scripts
+   // strip starter/quest items in bulk shortly after load; without this window
+   // those removals train the Q-learner as if the player drank them (observed:
+   // 6 starter potions each +5.0 FQL reward ~1.1 s after kNewGame). Must exceed
+   // the observed strip delay with margin; real player consumption in the first
+   // few seconds after a load is rare and low-value to learn.
+   inline constexpr float CONSUMPTION_POST_LOAD_GRACE_MS = 5000.0f;
 
    // Maximum favorited weapons to track
    // Typical player: 5-15 favorites, Collector: 30-50
@@ -143,4 +159,14 @@ namespace Huginn::Config
    // Debug UI positioning (only affects debug builds)
    inline constexpr float STATE_MANAGER_DEBUG_POS_X = 500.0f;  // Legacy, not used for initial position
    inline constexpr float STATE_MANAGER_DEBUG_POS_Y = 10.0f;
+
+   // -----------------------------------------------------------------------------
+   // Long-Play Soak Telemetry (v0.18.x)
+   // -----------------------------------------------------------------------------
+
+   // How often to emit the [Soak] heartbeat summary line (recommendation accept
+   // rate, recompute/tick counts, learned-item growth, tick perf).
+   // Long enough that it never counts as log spam, short enough to chart drift
+   // across a multi-hour session. Recommended: 5 min.
+   inline constexpr float SOAK_HEARTBEAT_INTERVAL_MS = 300000.0f;
 }

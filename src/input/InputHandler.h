@@ -116,6 +116,11 @@ namespace Huginn::Input
       /// Process cycle key (4 or 5)
       void HandleCycleKey(int index, RE::ButtonEvent* button);
 
+      /// Perform a pending press-state reset (requested by SetKeyCodes).
+      /// Must only run on the game thread (ProcessButton/Update) — the state
+      /// arrays are game-thread-only and unlocked on the hot path.
+      void ConsumePendingStateReset();
+
       /// Callbacks
       SlotCallback m_slotCallback;
       CycleCallback m_cycleCallback;
@@ -162,5 +167,11 @@ namespace Huginn::Input
 
       /// Whether config has been logged (reset on rebind so new keys are visible)
       std::atomic<bool> m_loggedConfig = false;
+
+      /// Set by SetKeyCodes (any thread) to request a press-state reset;
+      /// consumed on the game thread before the state arrays are touched.
+      /// SetKeyCodes must not clear the arrays itself — it can run from the
+      /// dMenu reload context while the game thread is mid-ProcessButton.
+      std::atomic<bool> m_pendingStateReset = false;
    };
 }

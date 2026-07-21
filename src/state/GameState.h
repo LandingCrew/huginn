@@ -82,6 +82,16 @@ namespace Huginn::State
       Sneaking = 1
    };
 
+   // Hostile-caster status (any living hostile currently casting)
+   // Sourced from TargetCollection::cachedAnyCasting; drives ward/counter weights
+   // in ContextRuleEngine, so it must be a hash dimension or the pipeline-skip
+   // gate ignores casting transitions.
+   enum class CastingStatus : uint8_t
+   {
+      NoneCasting = 0,
+      EnemyCasting = 1
+   };
+
    // Enemy count buckets (4 levels - tactical AoE/single-target decisions)
    // Phase 6 stress testing: Staggered percentage-based thresholds scale with MAX_TRACKED_TARGETS
    // Staggered distribution: 20%, 40%, 40% (not flat splits - reflects tactical decision points)
@@ -114,10 +124,11 @@ namespace Huginn::State
       inline constexpr std::array<const char*, 3> kAllyStatus = { "None", "Present", "InjuredPresent" };
       inline constexpr std::array<const char*, 2> kCombat = { "OutOfCombat", "InCombat" };
       inline constexpr std::array<const char*, 2> kSneak = { "Standing", "Sneaking" };
+      inline constexpr std::array<const char*, 2> kCasting = { "NoCasting", "EnemyCasting" };
    }
 
    // Complete game state representation
-   // Hash states: 6 × 6 × 3 × 7 × 4 × 3 × 2 × 2 = 36,288 (stamina excluded from hash)
+   // Hash states: 6 × 6 × 3 × 7 × 4 × 3 × 2 × 2 × 2 = 72,576 (stamina excluded from hash)
    struct GameState
    {
       // Player vitals
@@ -132,6 +143,7 @@ namespace Huginn::State
       // Multi-target context
       EnemyCountBucket enemyCount; // 4 states
       AllyStatus allyStatus;      // 3 states (collapsed from AllyCount × HasInjuredAlly)
+      CastingStatus anyCasting;   // 2 states (any living hostile casting)
 
       // Player state
       CombatStatus inCombat;      // 2 states
@@ -140,10 +152,10 @@ namespace Huginn::State
       // Generate unique hash for Q-table lookup
       // Returns value in range [0, kTotalStates - 1]
       // Stamina excluded: PotionDiscriminator reads it directly, ContextRuleEngine uses raw float
-      // Multi-radix bases: [6, 6, 3, 7, 4, 3, 2, 2]
+      // Multi-radix bases: [6, 6, 3, 7, 4, 3, 2, 2, 2]
       // Multipliers computed at compile time from bases (right-to-left product)
    private:
-      static constexpr uint32_t kBases[] = { 6, 6, 3, 7, 4, 3, 2, 2 };
+      static constexpr uint32_t kBases[] = { 6, 6, 3, 7, 4, 3, 2, 2, 2 };
       static constexpr size_t kDims = std::size(kBases);
 
       // Compute multiplier for dimension i: product of bases[i+1..N-1]
@@ -158,7 +170,7 @@ namespace Huginn::State
       uint32_t t = 1;
       for (auto b : kBases) t *= b;
       return t;
-      }();  // 36,288
+      }();  // 72,576
 
       [[nodiscard]] uint32_t GetHash() const noexcept
       {
@@ -168,7 +180,8 @@ namespace Huginn::State
              static_cast<uint32_t>(targetType)  * Multiplier(3) +
              static_cast<uint32_t>(enemyCount)  * Multiplier(4) +
              static_cast<uint32_t>(allyStatus)  * Multiplier(5) +
-             static_cast<uint32_t>(inCombat)    * Multiplier(6) +
+             static_cast<uint32_t>(anyCasting)  * Multiplier(6) +
+             static_cast<uint32_t>(inCombat)    * Multiplier(7) +
              static_cast<uint32_t>(isSneaking);
       }
 
@@ -176,7 +189,7 @@ namespace Huginn::State
       [[nodiscard]] std::string ToString() const
       {
       return std::format(
-        "GameState[HP:{}, MP:{}, SP:{}, Dist:{}, Target:{}, Enemies:{}, Ally:{}, Combat:{}, Sneak:{}] hash={}",
+        "GameState[HP:{}, MP:{}, SP:{}, Dist:{}, Target:{}, Enemies:{}, Ally:{}, Casting:{}, Combat:{}, Sneak:{}] hash={}",
         BucketNames::kHealth[std::to_underlying(health)],
         BucketNames::kMagicka[std::to_underlying(magicka)],
         BucketNames::kStamina[std::to_underlying(stamina)],
@@ -184,6 +197,7 @@ namespace Huginn::State
         BucketNames::kTarget[std::to_underlying(targetType)],
         BucketNames::kEnemyCount[std::to_underlying(enemyCount)],
         BucketNames::kAllyStatus[std::to_underlying(allyStatus)],
+        BucketNames::kCasting[std::to_underlying(anyCasting)],
         BucketNames::kCombat[std::to_underlying(inCombat)],
         BucketNames::kSneak[std::to_underlying(isSneaking)],
         GetHash());
@@ -220,6 +234,8 @@ namespace Huginn::State
          append("Enemies", BucketNames::kEnemyCount[std::to_underlying(prev.enemyCount)], BucketNames::kEnemyCount[std::to_underlying(curr.enemyCount)]);
       if (prev.allyStatus != curr.allyStatus)
          append("Ally", BucketNames::kAllyStatus[std::to_underlying(prev.allyStatus)], BucketNames::kAllyStatus[std::to_underlying(curr.allyStatus)]);
+      if (prev.anyCasting != curr.anyCasting)
+         append("Casting", BucketNames::kCasting[std::to_underlying(prev.anyCasting)], BucketNames::kCasting[std::to_underlying(curr.anyCasting)]);
       if (prev.inCombat != curr.inCombat)
          append("Combat", BucketNames::kCombat[std::to_underlying(prev.inCombat)], BucketNames::kCombat[std::to_underlying(curr.inCombat)]);
       if (prev.isSneaking != curr.isSneaking)

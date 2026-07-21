@@ -91,13 +91,18 @@ namespace Huginn::Scoring
         // Combat state tracking (call from main update loop)
         void OnCombatStart();
         void OnCombatEnd();
-        void Update(float deltaSeconds);
+        // @return true if a displayed exploration wildcard expired this tick
+        //         (caller must force a pipeline run so the slot content swaps)
+        [[nodiscard]] bool Update(float deltaSeconds);
 
         // Reset state (e.g., on save load)
         void Reset();
 
-        // Debug logging
-        void LogTopCandidates(const ScoredCandidateList& ranked, size_t count = 5) const;
+        // Recommendation logging (release-available; see DebugSettings::recLogVerbosity).
+        // detail: append learn's inputs (Q/P/UCB/α) to each line.
+        // force: bypass the membership-change dedup (on-demand `hg recs` dumps).
+        void LogTopCandidates(const ScoredCandidateList& ranked, size_t count = 5,
+            bool detail = false, bool force = false) const;
 
     private:
         // Internal scoring implementation
@@ -123,6 +128,15 @@ namespace Huginn::Scoring
 
         // Check if candidate is favorited
         [[nodiscard]] bool IsCandidateFavorited(const Candidate::CandidateVariant& candidate) const;
+
+        // Boost mode: replace Step 7's provisional uniform max boost with the
+        // rank-scaled multiplier (rank 0 = strongest favorite → favoritesBoostMax,
+        // weakest → favoritesBoostMin) and recompute those utilities. Runs after
+        // the scoring loop + cold-start fallback, before the top-N sort. Never
+        // removes entries: favorites keep list membership even if rescaling drops
+        // them below minimumUtility (favorites-always-pass / learner-observability
+        // contract — rank scaling corrects order, not membership).
+        void ApplyFavoritesRankScaling(ScoredCandidateList& scored);
 
         // Stage 1f: Extract relevant weight from ContextWeightMap for a candidate
         [[nodiscard]] float GetContextWeight(
@@ -150,6 +164,9 @@ namespace Huginn::Scoring
 
         // Scratch buffer for batch decay (update thread only, reused per tick)
         std::vector<RE::FormID> m_decayScratch;
+
+        // Scratch buffer for favorites rank scaling (update thread only, reused per tick)
+        std::vector<size_t> m_favoriteRankScratch;
     };
 
 }  // namespace Huginn::Scoring

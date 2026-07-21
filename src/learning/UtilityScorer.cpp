@@ -165,6 +165,10 @@ namespace Huginn::Scoring
             }
         }
 
+        // Rank-scaled favorites boost: replace Step 7's provisional uniform max
+        // boost with the documented rank-scaled value (ScorerConfig.h).
+        ApplyFavoritesRankScaling(scored);
+
         // Partial sort for top N (much faster than full sort for large lists)
         size_t topN = std::min(m_config.topNCandidates, scored.size());
         if (topN > 0) {
@@ -253,6 +257,9 @@ namespace Huginn::Scoring
             (1.0f - alpha) * result.breakdown.prior +
             beta * result.breakdown.ucb;
 
+        // Record λ(confidence) so logged breakdowns reproduce the utility formula
+        result.breakdown.lambda = ComputeAdaptiveLambda(alpha);
+
         // =====================================================================
         // Step 4b: Recency boost from UsageMemory (event-driven short-term recall)
         // =====================================================================
@@ -276,8 +283,12 @@ namespace Huginn::Scoring
         // =====================================================================
         // Step 7: Get favorites multiplier
         // =====================================================================
+        // Boost mode: provisional uniform boost (rank 0 of 1 = favoritesBoostMax).
+        // ScoreCandidates replaces it with the rank-scaled value once the whole
+        // cohort is scored (see ApplyFavoritesRankScaling). The single-candidate
+        // path has no cohort to rank against, so max is its final value.
         result.breakdown.favoritesMultiplier =
-            GetFavoritesMultiplier(candidate, 0, 1);  // Rank 0 for now (recalculated later)
+            GetFavoritesMultiplier(candidate, 0, 1);
 
         // =====================================================================
         // Step 8: Compute final utility via the shared formula helper.
@@ -348,6 +359,51 @@ namespace Huginn::Scoring
     bool UtilityScorer::IsCandidateFavorited(const Candidate::CandidateVariant& candidate) const
     {
         return Candidate::IsFavorited(candidate);
+    }
+
+    void UtilityScorer::ApplyFavoritesRankScaling(ScoredCandidateList& scored)
+    {
+        if (m_config.favoritesMode != FavoritesMode::Boost) {
+            return;
+        }
+
+        m_favoriteRankScratch.clear();
+        for (size_t i = 0; i < scored.size(); ++i) {
+            if (IsCandidateFavorited(scored[i].candidate)) {
+                m_favoriteRankScratch.push_back(i);
+            }
+        }
+        // 0 favorites: nothing to scale. 1 favorite: rank 0 of 1 is defined as
+        // favoritesBoostMax, which Step 7's provisional value already is.
+        if (m_favoriteRankScratch.size() < 2) {
+            return;
+        }
+
+        // Rank favorites by current utility. Step 7 gave every favorite the same
+        // provisional multiplier, so this order equals their pre-boost order.
+        std::sort(m_favoriteRankScratch.begin(), m_favoriteRankScratch.end(),
+            [&scored](size_t a, size_t b) noexcept {
+                return scored[a].utility > scored[b].utility;
+            });
+
+        // The multiplier is monotone non-increasing in rank, so rewriting
+        // utilities cannot reorder favorites relative to each other — the ranks
+        // derived above stay valid and no re-sort is needed here (the caller's
+        // partial_sort establishes the final combined order).
+        const size_t total = m_favoriteRankScratch.size();
+        for (size_t rank = 0; rank < total; ++rank) {
+            auto& entry = scored[m_favoriteRankScratch[rank]];
+            entry.breakdown.favoritesMultiplier = m_config.GetFavoritesMultiplier(rank, total);
+            entry.utility = ComputeUtility(entry.breakdown);
+        }
+
+        // Deliberately NO minimumUtility re-filter here: favorites stay in the
+        // list even if rescaling drops them below the threshold. The scoring
+        // loop's favorites-always-pass contract (they must remain observable by
+        // the learner) applies to membership; rank scaling only corrects their
+        // ORDER. Erasing here would also under-fill slots after the cold-start
+        // fallback already ran, and near-threshold favorites would flicker in
+        // and out of the list across ticks.
     }
 
     // =========================================================================
@@ -485,6 +541,22 @@ namespace Huginn::Scoring
                 if (HasTag(c.tags, ItemTag::ResistDisease)) {
                     maxWeight = std::max(maxWeight, weights.resistDiseaseWeight);
                 }
+                // Resist Magic: relevant when an enemy is casting (same
+                // perceivable trigger as ward spells)
+                if (HasTag(c.tags, ItemTag::ResistMagic)) {
+                    maxWeight = std::max(maxWeight, weights.wardWeight);
+                }
+
+                // Buff & resist potions: always-on baseline + in-combat boost.
+                // Mirrors the weapon/spell baselines — without it these are
+                // pinned at baseRelevance (0.05) and can never clear
+                // fMinimumUtility (0.1), so they never surface and never learn.
+                // Type-based so untagged buffs (e.g. Fortify Jump) are covered.
+                if (c.type == Item::ItemType::BuffPotion ||
+                    c.type == Item::ItemType::ResistPotion) {
+                    maxWeight = std::max(maxWeight, weights.buffPotionWeight);
+                    maxWeight = std::max(maxWeight, weights.buffCombatWeight);
+                }
 
                 // Workstation fortify potions (FIX: Stage 1g code review)
                 // These are split across three different tag/field pairs:
@@ -511,6 +583,11 @@ namespace Huginn::Scoring
 
                 // Stealth (Invisibility potions - Muffle doesn't exist as a potion)
                 if (HasTag(c.tags, ItemTag::Invisibility)) {
+                    maxWeight = std::max(maxWeight, weights.stealthWeight);
+                }
+                // Fortify Sneak while sneaking (same trigger as invisibility)
+                if (HasTag(c.tags, ItemTag::FortifyUtilitySkill) &&
+                    c.utilitySkill == Item::UtilitySkill::Sneak) {
                     maxWeight = std::max(maxWeight, weights.stealthWeight);
                 }
 
@@ -578,9 +655,10 @@ namespace Huginn::Scoring
         m_potionDiscrim.OnCombatEnd();
     }
 
-    void UtilityScorer::Update(float deltaSeconds)
+    bool UtilityScorer::Update(float deltaSeconds)
     {
         m_potionDiscrim.Update(deltaSeconds);
+        return m_wildcardMgr.UpdateExpiry();
     }
 
     void UtilityScorer::Reset()
@@ -597,43 +675,48 @@ namespace Huginn::Scoring
     // DEBUG LOGGING
     // =========================================================================
 
-    void UtilityScorer::LogTopCandidates(const ScoredCandidateList& ranked, size_t count) const
+    void UtilityScorer::LogTopCandidates(
+        const ScoredCandidateList& ranked, size_t count, bool detail, bool force) const
     {
         size_t numToLog = std::min(count, ranked.size());
 
-        // Dedup: skip the dump unless the ranking's membership/order changed.
-        // Utilities are continuous in the vitals, so they drift every scoring
-        // run — including them here would defeat the dedup.
-        // NOTE: Single-threaded (called from update thread only)
-        static std::string s_lastSignature{"<none>"};
-        std::string signature;
-        for (size_t i = 0; i < numToLog; ++i) {
-            signature += fmt::format("{}|", ranked[i].GetName());
+        if (!force) {
+            // Dedup: skip the dump unless the ranking's membership/order changed.
+            // Utilities are continuous in the vitals, so they drift every scoring
+            // run — including them here would defeat the dedup. Forced dumps
+            // (hg recs) bypass and don't update the signature.
+            // NOTE: Single-threaded (called from update thread only)
+            static std::string s_lastSignature{"<none>"};
+            std::string signature;
+            for (size_t i = 0; i < numToLog; ++i) {
+                signature += fmt::format("{}|", ranked[i].GetName());
+            }
+            if (signature == s_lastSignature) {
+                return;
+            }
+            s_lastSignature = std::move(signature);
         }
-        if (signature == s_lastSignature) {
-            return;
-        }
-        s_lastSignature = std::move(signature);
 
         if (numToLog == 0) {
-            logger::info("[UtilityScorer] No candidates to display"sv);
+            logger::info("[Recs] No candidates to display"sv);
             return;
         }
 
-        logger::info("=== Top {} Candidates ==="sv, numToLog);
+        logger::info("[Recs] === Top {}/{} candidates | u = ctx*(1+λ*learn)*mults ==="sv,
+            numToLog, ranked.size());
 
         for (size_t i = 0; i < numToLog; ++i) {
             const auto& scored = ranked[i];
             const auto& bd = scored.breakdown;
 
-            logger::info("{}. {} ({}) - Utility: {:.3f} {}"sv,
+            logger::info("[Recs] {}. {} ({}) u={:.3f} | {}{}{}"sv,
                 i + 1,
                 scored.GetName(),
                 Candidate::SourceTypeToString(scored.GetSourceType()),
                 scored.utility,
-                scored.isWildcard ? "[WILDCARD]" : "");
-
-            logger::info("     {} "sv, bd.ToString());
+                detail ? bd.ToDetailString() : bd.ToCompactString(),
+                scored.isWildcard ? " [WC]" : "",
+                scored.isColdStartBoosted ? " [COLD]" : "");
         }
     }
 

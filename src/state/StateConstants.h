@@ -153,6 +153,19 @@ namespace Huginn::State
       // Matches StateEvaluator::DistanceBucket::Ranged lower bound
       // Units: Skyrim distance units
       inline constexpr float RANGED_MIN = 2048.0f;
+
+      // === 3-bucket evaluator scheme (GameState DistanceBucket) ===
+      // Melee ≤ 256 < Mid ≤ 768 < Ranged. Distinct from the 4-bucket
+      // target-tracking scheme above — the two schemes coexist; do not conflate.
+      // Both StateEvaluator::EvaluateDistance and StateManager::ComputeTargetDigest
+      // MUST bucket with these constants: if they diverge, the pipeline-skip digest
+      // misses distance-bucket transitions (e.g. Mid→Ranged) and recommendations
+      // are scored against a stale bucket.
+      // Units: Skyrim distance units (squared variants for sqrt-free comparison)
+      inline constexpr float EVAL_MELEE_MAX = 256.0f;
+      inline constexpr float EVAL_MID_MAX = 768.0f;
+      inline constexpr float EVAL_MELEE_MAX_SQ = EVAL_MELEE_MAX * EVAL_MELEE_MAX;
+      inline constexpr float EVAL_MID_MAX_SQ = EVAL_MID_MAX * EVAL_MID_MAX;
    }
 
    // =============================================================================
@@ -589,6 +602,23 @@ namespace Huginn::State
          return eventTime > 0.0f
             ? (gameTime - eventTime) * GAME_DAYS_TO_REAL_SECONDS
             : NO_RECENT_EVENT_SENTINEL;
+      }
+
+      // Discretize an unbounded timeSince* value for dirty-flag comparisons.
+      // Edges are the downstream behavior boundaries — a bucket transition must
+      // fire exactly when a consumer's decision would change:
+      //   2.0s — IsTakingDamage / IsActivelyHealing / ResourceFlowTracker::IsActive default
+      //   3.0s — MagickaTrackingState::IsActivelyCasting (usage.IsActive(3.0f))
+      //   5.0s — ELEMENTAL_DAMAGE_ENRICHMENT_WINDOW / TookDamageTypeRecently default
+      // Everything past the largest edge shares one "stale" bucket, so unbounded
+      // growth (and the NO_RECENT_EVENT_SENTINEL) can never re-fire the dirty flag.
+      // Never compare raw timeSince* floats with epsilons in an operator==.
+      [[nodiscard]] inline constexpr int TimeBucket(float seconds) noexcept
+      {
+         return seconds < 2.0f ? 0
+              : seconds < 3.0f ? 1
+              : seconds < 5.0f ? 2
+              : 3;
       }
 
       // Accumulate sub-threshold vital losses across ticks, with decay on recovery.

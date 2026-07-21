@@ -1,6 +1,8 @@
 #pragma once
 
 #include "candidate/CandidateTypes.h"
+#include <cmath>
+#include <format>
 #include <vector>
 
 namespace Huginn::Scoring
@@ -19,22 +21,45 @@ namespace Huginn::Scoring
 
         // Computed components
         float learningScore = 0.0f;     // α*Q + (1-α)*prior + β*UCB
+        float lambda = 0.0f;            // λ(confidence) — learning amplification actually applied
         float recencyBoost = 0.0f;      // From UsageMemory (event-driven short-term recall)
         float correlationBonus = 0.0f;  // From CorrelationBooster
         float potionMultiplier = 1.0f;  // From PotionDiscriminator
         float favoritesMultiplier = 1.0f; // From favorites system
 
-        // Debug: string representation
-        [[nodiscard]] std::string ToString() const
+        // Log string, compact: only the factors that enter the utility formula
+        // (u = ctx*(1+λ*learn)*mults), with neutral 1.00x multipliers omitted.
+        [[nodiscard]] std::string ToCompactString() const
         {
-            return std::format(
-                "[ctx={:.2f} Q={:.2f} P={:.2f} UCB={:.2f} α={:.2f}] "
-                "learn={:.2f}{} corr={:.2f} potion={:.2f}x fav={:.2f}x",
-                contextWeight, qValue, prior, ucb, confidence,
-                learningScore,
-                recencyBoost > 0.0f ? std::format(" rec={:.2f}", recencyBoost) : "",
-                correlationBonus, potionMultiplier, favoritesMultiplier);
+            return std::format("ctx={:.2f} λ={:.2f} learn={:.2f}{}",
+                contextWeight, lambda, learningScore, MultiplierSuffix());
         }
+
+        // Log string, detailed: compact plus the inputs that produced learn
+        // (learn = α*Q + (1-α)*P + β*UCB, rec additive when present).
+        [[nodiscard]] std::string ToDetailString() const
+        {
+            return std::format("ctx={:.2f} λ={:.2f} learn={:.2f} (Q={:+.2f} P={:.2f} UCB={:.2f} α={:.2f}{}){}",
+                contextWeight, lambda, learningScore,
+                qValue, prior, ucb, confidence,
+                recencyBoost > 0.0f ? std::format(" rec={:.2f}", recencyBoost) : "",
+                MultiplierSuffix());
+        }
+
+    private:
+        [[nodiscard]] std::string MultiplierSuffix() const
+        {
+            std::string s;
+            if (std::abs(correlationBonus - 1.0f) > 0.005f)
+                s += std::format(" corr={:.2f}x", correlationBonus);
+            if (std::abs(potionMultiplier - 1.0f) > 0.005f)
+                s += std::format(" potion={:.2f}x", potionMultiplier);
+            if (std::abs(favoritesMultiplier - 1.0f) > 0.005f)
+                s += std::format(" fav={:.2f}x", favoritesMultiplier);
+            return s;
+        }
+
+    public:
     };
 
     // =============================================================================

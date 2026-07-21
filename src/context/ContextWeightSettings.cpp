@@ -33,14 +33,6 @@ namespace Huginn::State
         weightWeaponChargeLow = ReadClampedFloat(ini, section, "fWeightWeaponChargeLow", ContextWeightDefaults::WEAPON_CHARGE_LOW, 0.0f, 100.0f, "ContextWeightSettings"sv);
         weightWeaponChargeCritical = ReadClampedFloat(ini, section, "fWeightWeaponChargeCritical", ContextWeightDefaults::WEAPON_CHARGE_CRITICAL, 0.0f, 100.0f, "ContextWeightSettings"sv);
 
-        // Active buff suppression
-        weightHasWaterbreathing = ReadClampedFloat(ini, section, "fWeightHasWaterbreathing", ContextWeightDefaults::HAS_WATERBREATHING, 0.0f, 100.0f, "ContextWeightSettings"sv);
-        weightHasInvisibility = ReadClampedFloat(ini, section, "fWeightHasInvisibility", ContextWeightDefaults::HAS_INVISIBILITY, 0.0f, 100.0f, "ContextWeightSettings"sv);
-        weightHasMuffle = ReadClampedFloat(ini, section, "fWeightHasMuffle", ContextWeightDefaults::HAS_MUFFLE, 0.0f, 100.0f, "ContextWeightSettings"sv);
-        weightHasArmorBuff = ReadClampedFloat(ini, section, "fWeightHasArmorBuff", ContextWeightDefaults::HAS_ARMOR_BUFF, 0.0f, 100.0f, "ContextWeightSettings"sv);
-        weightHasCloak = ReadClampedFloat(ini, section, "fWeightHasCloak", ContextWeightDefaults::HAS_CLOAK, 0.0f, 100.0f, "ContextWeightSettings"sv);
-        weightHasSummon = ReadClampedFloat(ini, section, "fWeightHasSummon", ContextWeightDefaults::HAS_SUMMON, 0.0f, 100.0f, "ContextWeightSettings"sv);
-
         // =====================================================================
         // NEW: NORMALIZED WEIGHTS [0,1] for ContextRuleEngine
         // =====================================================================
@@ -74,6 +66,10 @@ namespace Huginn::State
         weightSpell = ReadClampedFloat(ini, section, "fWeightSpell", ContextWeightDefaults::SPELL, 0.0f, 100.0f, "ContextWeightSettings"sv);
         weightSummon = ReadClampedFloat(ini, section, "fWeightSummon", ContextWeightDefaults::SUMMON, 0.0f, 100.0f, "ContextWeightSettings"sv);
 
+        // Buff & resist potions
+        weightBuffPotion = ReadClampedFloat(ini, section, "fWeightBuffPotion", ContextWeightDefaults::BUFF_POTION, 0.0f, 100.0f, "ContextWeightSettings"sv);
+        weightBuffCombat = ReadClampedFloat(ini, section, "fWeightBuffCombat", ContextWeightDefaults::BUFF_COMBAT, 0.0f, 100.0f, "ContextWeightSettings"sv);
+
         // Utility baseline
         weightBaseRelevance = ReadClampedFloat(ini, section, "fWeightBaseRelevance", ContextWeightDefaults::BASE_RELEVANCE, 0.0f, 100.0f, "ContextWeightSettings"sv);
 
@@ -92,9 +88,9 @@ namespace Huginn::State
             weightDiseased, weightUnderwater, weightFallingHigh, weightLookingAtLock);
 
         logger::info("[ContextWeightSettings] Loaded normalized weights: critHealth={:.2f}, lowHealth={:.2f}, "
-            "combat={:.2f}, multiEnemy={:.2f}, forge={:.2f}, baseRelevance={:.2f}",
+            "combat={:.2f}, multiEnemy={:.2f}, forge={:.2f}, buffPotion={:.2f}, buffCombat={:.2f}, baseRelevance={:.2f}",
             weightCriticalHealth, weightLowHealth, weightInCombat, weightMultipleEnemies,
-            weightAtForge, weightBaseRelevance);
+            weightAtForge, weightBuffPotion, weightBuffCombat, weightBaseRelevance);
 
         logger::info("[ContextWeightSettings] Loaded smoothing: health^{:.1f}, magicka^{:.1f}, stamina^{:.1f}",
             fHealthSmoothingExponent, fMagickaSmoothingExponent, fStaminaSmoothingExponent);
@@ -116,13 +112,6 @@ namespace Huginn::State
         weightWeaponChargeModerate = ContextWeightDefaults::WEAPON_CHARGE_MODERATE;
         weightWeaponChargeLow = ContextWeightDefaults::WEAPON_CHARGE_LOW;
         weightWeaponChargeCritical = ContextWeightDefaults::WEAPON_CHARGE_CRITICAL;
-
-        weightHasWaterbreathing = ContextWeightDefaults::HAS_WATERBREATHING;
-        weightHasInvisibility = ContextWeightDefaults::HAS_INVISIBILITY;
-        weightHasMuffle = ContextWeightDefaults::HAS_MUFFLE;
-        weightHasArmorBuff = ContextWeightDefaults::HAS_ARMOR_BUFF;
-        weightHasCloak = ContextWeightDefaults::HAS_CLOAK;
-        weightHasSummon = ContextWeightDefaults::HAS_SUMMON;
 
         // Normalized weights [0,1]
         weightCriticalHealth = ContextWeightDefaults::CRITICAL_HEALTH;
@@ -148,6 +137,9 @@ namespace Huginn::State
         weightWeapon = ContextWeightDefaults::WEAPON;
         weightSpell = ContextWeightDefaults::SPELL;
         weightSummon = ContextWeightDefaults::SUMMON;
+
+        weightBuffPotion = ContextWeightDefaults::BUFF_POTION;
+        weightBuffCombat = ContextWeightDefaults::BUFF_COMBAT;
 
         weightBaseRelevance = ContextWeightDefaults::BASE_RELEVANCE;
 
@@ -200,6 +192,9 @@ namespace Huginn::State
         config.weightWeapon = weightWeapon;
         config.weightSpell = weightSpell;
         config.weightSummon = weightSummon;
+
+        config.weightBuffPotion = weightBuffPotion;
+        config.weightBuffCombat = weightBuffCombat;
 
         config.weightBaseRelevance = weightBaseRelevance;
 

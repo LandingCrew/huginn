@@ -43,6 +43,31 @@ namespace Huginn::Override
         Other    // Drowning, LowAmmo, WeaponCharge
     };
 
+    // =============================================================================
+    // OVERRIDE CONDITION
+    // =============================================================================
+    // Stable identity of the evaluator that produced an OverrideResult.
+    // Used as a dedup/latch key (e.g. unplaced-override warnings) — unlike
+    // `reason`, it never embeds live values such as ammo counts.
+    // =============================================================================
+
+    enum class OverrideCondition : uint8_t
+    {
+        Unknown,         // Default — evaluator did not stamp a condition.
+                         // Dedup/latch consumers treat this as always-log so an
+                         // unstamped evaluator is loud instead of silently
+                         // aliasing another condition's latch entry.
+        CriticalHealth,
+        CriticalMagicka,
+        CriticalStamina,
+        Drowning,
+        WeaponCharge,
+        LowAmmo,
+        Count
+    };
+
+    inline constexpr size_t OVERRIDE_CONDITION_COUNT = static_cast<size_t>(OverrideCondition::Count);
+
     [[nodiscard]] inline constexpr std::string_view OverrideCategoryToString(OverrideCategory c) noexcept
     {
         switch (c) {
@@ -84,6 +109,8 @@ namespace Huginn::Override
     {
         bool isActive = false;         // Currently active?
         float activeDurationMs = 0.0f; // How long has it been active?
+        float minDurationMs = 0.0f;    // Latch window (copied from config on activation
+                                       // so Update() can detect the clearable crossing)
     };
 
     // =============================================================================
@@ -99,6 +126,7 @@ namespace Huginn::Override
     {
         int priority = 0;              // Ordering, lock-breaking, auto-focus gating
         OverrideCategory category = OverrideCategory::Other;  // Resource category for slot filtering
+        OverrideCondition condition = OverrideCondition::Unknown;  // Producing evaluator (dedup key)
         std::string reason;            // Human-readable reason (for logging/debug)
 
         // The item to surface (nullopt if condition met but no item available)

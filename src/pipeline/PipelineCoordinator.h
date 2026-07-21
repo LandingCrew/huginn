@@ -9,6 +9,7 @@
 #include "override/OverrideConditions.h"
 #include "slot/SlotAssignment.h"
 
+#include <atomic>
 #include <chrono>
 #include <vector>
 
@@ -104,6 +105,15 @@ namespace Huginn::Pipeline
                          std::chrono::steady_clock::time_point now,
                          bool pageChanged);
 
+        /// Queue a one-shot full-detail recommendation dump (console `hg recs`).
+        /// Logged by the next pipeline pass; caller should MarkPageDirty() +
+        /// ForceUpdate() to make that pass happen immediately.
+        /// Thread-safe (atomic) — callable from the console handler.
+        void RequestRecommendationDump(size_t topN)
+        {
+            m_recDumpRequest.store(topN, std::memory_order_relaxed);
+        }
+
     private:
         PipelineCoordinator() = default;
         ~PipelineCoordinator() = default;
@@ -119,6 +129,7 @@ namespace Huginn::Pipeline
         void AllocateAndLock(PipelineContext& ctx);
         void UpdateCaches(PipelineContext& ctx);
         void PushDisplay(PipelineContext& ctx);
+        void LogRecommendations(PipelineContext& ctx);
 
 #ifndef NDEBUG
         void UpdateDebugWidgets(PipelineContext& ctx);
@@ -129,9 +140,19 @@ namespace Huginn::Pipeline
 
         // Member state (converted from static locals in OnUpdate)
         uint32_t m_lastPipelineHash = UINT32_MAX;  // Force first run
+        // Elemental window state at the last non-skipped run: the falling edge
+        // needs one more run to clear the enriched flags (isOnFire etc. are not
+        // part of the GameState hash), or fire-scored recommendations persist
+        // after the window closes.
+        bool m_wasElementalDamageActive = false;
         State::GameState m_lastLoggedState{};
 
+        // Recommendation logging (both build configs)
+        std::chrono::steady_clock::time_point m_lastRecLog{};
+        std::atomic<size_t> m_recDumpRequest{0};  // pending `hg recs` top-N (0 = none)
+
 #ifndef NDEBUG
+        // Wheeler state validation throttle (debug builds)
         std::chrono::steady_clock::time_point m_lastDebugLog{};
 #endif
     };

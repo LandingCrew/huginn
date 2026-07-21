@@ -12,6 +12,11 @@
 #   define Huginn_FRAME_MARK    FrameMark
 #   define Huginn_SET_THREAD(n) tracy::SetThreadName(n)
 
+    // Time-series plot for long-play drift/leak watching (candidate counts,
+    // learned-item growth, accept-rate). `name` MUST be a persistent string
+    // literal — Tracy keys plots by pointer identity.
+#   define Huginn_PLOT(name, val) TracyPlot(name, val)
+
     // Targeted memory tracking — use around specific allocations to detect leaks.
     // Usage: auto* p = new Foo(); Huginn_ALLOC(p, sizeof(Foo));
     //        Huginn_FREE(p); delete p;
@@ -22,6 +27,7 @@
 #   define Huginn_ZONE_NAMED(n) ((void)0)
 #   define Huginn_FRAME_MARK    ((void)0)
 #   define Huginn_SET_THREAD(n) ((void)0)
+#   define Huginn_PLOT(name, val) ((void)0)
 #   define Huginn_ALLOC(ptr, size) ((void)0)
 #   define Huginn_FREE(ptr)        ((void)0)
 #endif

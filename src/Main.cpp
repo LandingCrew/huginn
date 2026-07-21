@@ -13,6 +13,7 @@
 #include "spell/SpellRegistry.h"
 #include "learning/item/ItemRegistry.h"
 #include "weapon/WeaponRegistry.h"
+#include "util/ExtraListStability.h"
 #include "scroll/ScrollRegistry.h"
 #include "learning/FeatureQLearner.h"
 #include "learning/StateFeatures.h"
@@ -71,24 +72,8 @@ static std::atomic<bool> g_equipEventRegistered{false};
 //   - Non-dMenu settings: always from main INI
 //   - dMenu-managed settings: from dMenu INI if it exists, else main INI
 // =============================================================================
-// GetMainIniPath() is defined in Globals.cpp (shared with the INI loaders there).
-
-static std::filesystem::path GetDMenuIniPath()
-{
-    const auto dmenuIniPath = std::filesystem::path("Data/SKSE/Plugins/dmenu/customSettings/ini/Huginn.ini");
-
-    try {
-        if (std::filesystem::exists(dmenuIniPath)) {
-            logger::debug("[Main] Using dmenu INI: {}"sv, dmenuIniPath.string());
-            return dmenuIniPath;
-        }
-    } catch (const std::filesystem::filesystem_error& e) {
-        logger::warn("[Main] Filesystem error checking dmenu INI: {}"sv, e.what());
-    }
-
-    logger::debug("[Main] dMenu INI not found, falling back to main INI"sv);
-    return GetMainIniPath();
-}
+// GetMainIniPath() and GetDMenuIniPath() are defined in Globals.cpp (shared
+// with the INI loaders there and with the `hg reload` console command).
 
 // =============================================================================
 // CONSOLIDATED GAME INIT - Shared logic for kNewGame and kPostLoadGame
@@ -102,6 +87,17 @@ static std::filesystem::path GetDMenuIniPath()
 // =============================================================================
 static void InitializeGameSystems(bool isNewGame)
 {
+    // ── Stamp the load time FIRST ───────────────────────────────────────
+    // Util::IsExtraListStable() measures from this stamp. The reconcile
+    // scans below (step 3) run inside the post-load extra-data danger
+    // window; if the stamp were written after them (or only at step 9),
+    // they would measure against the PREVIOUS load's stamp — or the
+    // default epoch on the first load — and the gate could never report
+    // "unstable" on the exact path it exists to protect.
+    g_lastGameLoad = std::chrono::steady_clock::now();
+    logger::info("Game load timestamp recorded ({})"sv,
+        isNewGame ? "kNewGame" : "kPostLoadGame");
+
     // ── 0. Parse the main INI ONCE, distribute to every settings loader ──
     // Each settings class used to re-open and re-parse Huginn.ini independently
     // (9+ full parses per game load). Parse it a single time here and hand the
@@ -183,9 +179,16 @@ static void InitializeGameSystems(bool isNewGame)
     if (!g_weaponRegistry) {
         g_weaponRegistry = std::make_unique<Huginn::Weapon::WeaponRegistry>();
     }
+    // Track whether this pass could read extraLists: RebuildRegistry never
+    // does (favorites/charge deferred by design), and a save-load reconcile
+    // runs inside the stabilization window. Captured BEFORE the call so a
+    // mid-scan stability flip errs toward the harmless extra retry. Used at
+    // step 9 to prime the reconcile timer for a short retry.
+    bool weaponScanDeferred = true;
     if (isNewGame) {
         g_weaponRegistry->RebuildRegistry();
     } else {
+        weaponScanDeferred = !Huginn::Util::IsExtraListStable();
         logger::info("Force reconciling weapon registry on save load"sv);
         g_weaponRegistry->ReconcileWeapons();
     }
@@ -279,16 +282,32 @@ static void InitializeGameSystems(bool isNewGame)
             isNewGame ? "new game" : "save load");
     }
 
+    // ── 7b. Slot allocator init + override placeability validation ─────
+    // Must run after both SlotSettings (step 1) and Override::Settings
+    // (step 7) are loaded so the placeability check sees the final config.
+    // The reload path gets the same call via SettingsReloader::ApplySideEffects.
+    Slot::SlotAllocator::GetSingleton().Initialize();
+
     // ── 8. Reset all stateful pipeline subsystems ────────────────────
     // Shared with Cmd_ResetAll — single source of truth for pipeline resets.
     ResetPipelineSubsystems();
 
     // ── 9. Timer reset ─────────────────────────────────────────────────
-    auto now = std::chrono::steady_clock::now();
-    g_registryTimers.ResetAll(now);
-    g_lastGameLoad = now;
-    logger::info("Game load timestamp recorded ({})"sv,
-        isNewGame ? "kNewGame" : "kPostLoadGame");
+    // (g_lastGameLoad is stamped at the top of this function — the step 3
+    // reconciles need it fresh before they run.)
+    g_registryTimers.ResetAll(std::chrono::steady_clock::now());
+
+    // The load-time weapon pass couldn't read extraLists (see step 3), so
+    // favorites are unknown and enchanted weapons assumed full charge. Prime
+    // the reconcile timer to come due just after stabilization instead of a
+    // full interval — otherwise favorited weapons vanish from recommendations
+    // for ~30 s after every load. Must run AFTER ResetAll, which would
+    // otherwise overwrite the primed timestamp.
+    if (weaponScanDeferred) {
+        g_registryTimers.weaponReconcile.Reset(
+            std::chrono::steady_clock::now() - std::chrono::milliseconds(static_cast<int64_t>(
+                Config::WEAPON_RECONCILE_INTERVAL_MS - Config::WEAPON_RECONCILE_RETRY_MS)));
+    }
 
     // ── 10. StateManager force update (debug only) ────────────────────
     // ResetTrackingState() already called by ResetPipelineSubsystems() above.
@@ -585,10 +604,15 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_s
     start = std::chrono::high_resolution_clock::now();
     OpenLog();
 
-#ifndef NDEBUG
-    logger::info("{} v{} ({}) [DEBUG BUILD] Loading"sv, Huginn::PROJECT_NAME, Huginn::VERSION_STRING, Huginn::GIT_COMMIT);
+#ifdef Huginn_TRACY_ENABLED
+    constexpr auto tracyTag = " [TRACY]"sv;
 #else
-    logger::info("{} v{} ({}) Loading"sv, Huginn::PROJECT_NAME, Huginn::VERSION_STRING, Huginn::GIT_COMMIT);
+    constexpr auto tracyTag = ""sv;
+#endif
+#ifndef NDEBUG
+    logger::info("{} v{} ({}) [DEBUG BUILD]{} Loading"sv, Huginn::PROJECT_NAME, Huginn::VERSION_STRING, Huginn::GIT_COMMIT, tracyTag);
+#else
+    logger::info("{} v{} ({}) [RELEASE]{} Loading"sv, Huginn::PROJECT_NAME, Huginn::VERSION_STRING, Huginn::GIT_COMMIT, tracyTag);
 #endif
 
     SKSE::Init(a_skse);

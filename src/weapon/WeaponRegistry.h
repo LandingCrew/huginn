@@ -350,12 +350,6 @@ namespace Huginn::Weapon
       /// ReconcileWeapons instead fold ammo into their combined weapon+ammo scan.
       [[nodiscard]] std::vector<ScannedAmmo> ScanPlayerAmmo() const;
 
-      /// True once enough time has elapsed since the last game load for inventory
-      /// extraLists to be stable. Accessing extraLists earlier can crash, so all
-      /// extraList-reading scans gate on this. Shared by RefreshCharges (both
-      /// overloads), ReconcileWeapons, and ScanWeaponFavorites.
-      [[nodiscard]] static bool IsExtraListStable() noexcept;
-
       /**
        * @brief Add a weapon to the registry
        * @param weapon The weapon to add

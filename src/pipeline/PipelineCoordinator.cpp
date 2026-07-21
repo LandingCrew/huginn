@@ -14,6 +14,8 @@
 #include "wheeler/WheelerClient.h"
 #include "wheeler/WheelerSettings.h"
 #include "learning/PipelineStateCache.h"
+#include "telemetry/SoakMetrics.h"
+#include "ui/DebugSettings.h"
 #include "display/IDisplayBackend.h"
 #include "display/WheelerBackend.h"
 #include "display/IntuitionBackend.h"
@@ -88,10 +90,23 @@ bool PipelineCoordinator::RunPipeline(
     AllocateAndLock(m_ctx);
     UpdateCaches(m_ctx);
     PushDisplay(m_ctx);
+    LogRecommendations(m_ctx);
 
 #ifndef NDEBUG
     UpdateDebugWidgets(m_ctx);
 #endif
+
+    // Soak telemetry: this was a real recompute — record candidate/display counts
+    // and whether a safety override took the top slot.
+    size_t displayedCount = 0;
+    for (const auto& assignment : m_ctx.assignments) {
+        if (!assignment.IsEmpty() && assignment.formID != 0) {
+            ++displayedCount;
+        }
+    }
+    Telemetry::SoakMetrics::GetSingleton().RecordPipelineRun(
+        m_ctx.scoredCandidates.size(), displayedCount,
+        m_ctx.overrides.GetTopOverride() != nullptr);
 
     return true;
 }
@@ -134,12 +149,18 @@ void PipelineCoordinator::GatherState(PipelineContext& ctx)
 
 bool PipelineCoordinator::CheckHashSkip(PipelineContext& ctx, bool pageChanged)
 {
-    if (ctx.stateHash == m_lastPipelineHash && !pageChanged && !ctx.elementalDamageActive) {
+    // Run during the elemental window AND once on its falling edge — the
+    // enriched flags aren't in the hash, so the close of the window is
+    // otherwise invisible and stale fire/frost/shock scoring would persist.
+    const bool elementalBypass = ctx.elementalDamageActive || m_wasElementalDamageActive;
+
+    if (ctx.stateHash == m_lastPipelineHash && !pageChanged && !elementalBypass) {
         // Keep cache timestamp fresh so external equip events aren't rejected as stale
         Learning::PipelineStateCache::GetSingleton().RefreshTimestamp();
         return true;  // Skip
     }
     m_lastPipelineHash = ctx.stateHash;
+    m_wasElementalDamageActive = ctx.elementalDamageActive;
     return false;  // Don't skip
 }
 
@@ -234,9 +255,9 @@ void PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
 
     // Apply slot locking for temporal stability. ApplyLocks also dedups
     // post-lock (locked slots can reintroduce an item the allocator placed
-    // elsewhere), preferring to keep locked content.
+    // elsewhere), preferring to keep locked content. Lock-timer decay lives in
+    // UpdateSubsystems (unconditional per tick), not here behind the skip gate.
     auto& slotLocker = Slot::SlotLocker::GetSingleton();
-    slotLocker.Update(ctx.deltaMs);
     ctx.assignments = slotLocker.ApplyLocks(ctx.rawAssignments, ctx.overrides);
 
     // Compute visual state for each slot
@@ -313,17 +334,53 @@ void PipelineCoordinator::PushDisplay(PipelineContext& ctx)
 }
 
 // -----------------------------------------------------------------------------
-// UpdateDebugWidgets — Debug logging + UtilityScorerDebugWidget (debug only)
+// LogRecommendations — Top-N recommendation logging (both build configs)
+// -----------------------------------------------------------------------------
+// Periodic path: throttled + membership-deduped, gated by DebugSettings
+// recLogVerbosity (0=off, 1=compact, 2=detail). Dump path: one-shot full-detail
+// dump queued by `hg recs`, bypasses verbosity/throttle/dedup and also logs the
+// current slot assignments (safe: SlotAssignment.name is an owned string).
+
+void PipelineCoordinator::LogRecommendations(PipelineContext& ctx)
+{
+    if (size_t dumpN = m_recDumpRequest.exchange(0, std::memory_order_relaxed); dumpN > 0) {
+        g_utilityScorer->LogTopCandidates(ctx.scoredCandidates, dumpN,
+            /*detail=*/true, /*force=*/true);
+
+        auto& slotAllocator = Slot::SlotAllocator::GetSingleton();
+        logger::info("[Recs] Slots (page {} '{}'):"sv,
+            slotAllocator.GetCurrentPage(), slotAllocator.GetCurrentPageName());
+        for (const auto& a : ctx.assignments) {
+            if (a.IsEmpty() || a.formID == 0) continue;
+            logger::info("[Recs]   slot {}: {} ({:08X}) u={:.3f}{}"sv,
+                a.slotIndex, a.name, a.formID, a.utility,
+                a.subtextLabel.empty() ? "" : fmt::format(" [{}]", a.subtextLabel));
+        }
+        return;  // The dump covers this tick; skip the periodic log
+    }
+
+    const int verbosity = UI::DebugSettings::GetSingleton().recLogVerbosity;
+    if (verbosity <= 0) return;
+
+    auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(ctx.now - m_lastRecLog);
+    if (elapsed.count() >= 5000) {
+        g_utilityScorer->LogTopCandidates(ctx.scoredCandidates, 5,
+            /*detail=*/verbosity >= 2, /*force=*/false);
+        m_lastRecLog = ctx.now;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// UpdateDebugWidgets — Wheeler validation + UtilityScorerDebugWidget (debug only)
 // -----------------------------------------------------------------------------
 
 #ifndef NDEBUG
 void PipelineCoordinator::UpdateDebugWidgets(PipelineContext& ctx)
 {
-    // Log top 5 candidates periodically + validate Wheeler state
+    // Validate Wheeler state periodically
     auto& wheelerClient = Wheeler::WheelerClient::GetSingleton();
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(ctx.now - m_lastDebugLog);
     if (elapsed.count() >= 5000) {
-        g_utilityScorer->LogTopCandidates(ctx.scoredCandidates, 5);
         wheelerClient.ValidateWheelState();
         m_lastDebugLog = ctx.now;
     }

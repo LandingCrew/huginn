@@ -4,6 +4,7 @@
 #include "util/AtomicGuard.h"
 #include "util/AlgorithmUtils.h"
 #include "util/InventoryUtil.h"
+#include "util/ExtraListStability.h"
 
 namespace Huginn::Item
 {
@@ -40,7 +41,6 @@ namespace Huginn::Item
       // Clear existing data
       m_items.clear();
       m_formIDIndex.clear();
-      m_pendingChanges.clear();
 
       // Reserve space for both containers to avoid reallocation/rehashing
       const size_t capacity = std::min(inventoryItems.size() + soulGems.size(), Config::MAX_TRACKED_ITEMS);
@@ -120,22 +120,24 @@ namespace Huginn::Item
       currentFilledCounts[scanned.formID] = scanned.filledCount;  // v0.10.0
       }
 
+      // Change events for this scan only; the caller (update loop) consumes
+      // the return value immediately — nothing is buffered across scans.
+      std::vector<ItemChangeEvent> changes;
+
       // Acquire unique lock for write access (v0.7.12 - thread safety)
       std::unique_lock lock(m_mutex);
 
-      // Track where new changes start (for return value)
-      const size_t changesStart = m_pendingChanges.size();
-
-      // Compare tracked items with current counts - build directly in m_pendingChanges
+      // Compare tracked items with current counts
       for (auto& invItem : m_items) {
       auto it = currentCounts.find(invItem.data.formID);
       int32_t currentCount = (it != currentCounts.end()) ? it->second : 0;
+      const bool countChanged = (currentCount != invItem.count);
 
-      if (currentCount != invItem.count) {
+      if (countChanged) {
         int32_t delta = currentCount - invItem.count;
 
-        // Emit change event directly to pending changes
-        m_pendingChanges.push_back(ItemChangeEvent{
+        // Emit change event
+        changes.push_back(ItemChangeEvent{
            .formID = invItem.data.formID,
            .name = invItem.data.name,
            .type = invItem.data.type,
@@ -157,16 +159,26 @@ namespace Huginn::Item
         bool currentlyFilled = (fillIt != currentFilledCounts.end() && fillIt->second > 0);
         if (currentlyFilled != invItem.data.isFilled) {
            invItem.data.isFilled = currentlyFilled;
+           // Fill state feeds GetBestSoulGem (filled gems only), so a flip must
+           // reach the caller's inventoryChanged → MarkPageDirty signal even
+           // though the count is unchanged: emit a zero-delta event (delta == 0
+           // takes none of the consumption/lock-break paths in the consumer).
+           // Skipped when a count event for this gem was already emitted above.
+           if (!countChanged) {
+              changes.push_back(ItemChangeEvent{
+                 .formID = invItem.data.formID,
+                 .name = invItem.data.name,
+                 .type = invItem.data.type,
+                 .delta = 0
+              });
+           }
            logger::debug("[ItemRegistry] Soul gem fill state changed: {} -> {}"sv,
             invItem.data.name, currentlyFilled ? "filled" : "empty");
         }
       }
       }
 
-      // Return only the newly added changes (avoids full copy)
-      return std::vector<ItemChangeEvent>(
-      m_pendingChanges.begin() + static_cast<ptrdiff_t>(changesStart),
-      m_pendingChanges.end());
+      return changes;
    }
 
    size_t ItemRegistry::ReconcileItems()
@@ -932,14 +944,6 @@ namespace Huginn::Item
       return pick;
    }
 
-   std::vector<ItemChangeEvent> ItemRegistry::GetAndClearChanges()
-   {
-      std::unique_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<ItemChangeEvent> result = std::move(m_pendingChanges);
-      m_pendingChanges.clear();
-      return result;
-   }
-
    void ItemRegistry::LogAllItems() const
    {
       std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
@@ -1010,6 +1014,13 @@ namespace Huginn::Item
    {
       InventoryScanResult result;
 
+      // Check if safe to access extraLists — reachable straight from kPostLoadGame
+      // (ReconcileItems), inside the post-load window where reading extra data can
+      // crash. When not yet stable, Check 2 below is skipped; player-filled gems
+      // read as empty until the next RefreshCounts pass (500ms), which updates
+      // fill state per scan.
+      const bool safeToAccessExtraLists = Util::IsExtraListStable();
+
       // Pre-allocate reasonable capacities
       result.alchemyItems.reserve(64);
       result.soulGems.reserve(16);
@@ -1038,7 +1049,7 @@ namespace Huginn::Item
         }
         // Check 2: Player-filled gems (via Soul Trap) use ExtraSoul extra data
         // attached at runtime to an empty gem base form.
-        else if (entry && entry->extraLists) {
+        else if (safeToAccessExtraLists && entry && entry->extraLists) {
            for (auto* extraList : *entry->extraLists) {
             if (!extraList) continue;
             if (auto* extraSoul = extraList->GetByType<RE::ExtraSoul>()) {
@@ -1063,90 +1074,6 @@ namespace Huginn::Item
       }
 
       return result;
-   }
-
-   // =============================================================================
-   // LEGACY SCAN METHODS (deprecated, kept for compatibility)
-   // =============================================================================
-
-   std::vector<std::pair<RE::AlchemyItem*, int32_t>> ItemRegistry::ScanPlayerInventory() const
-   {
-      std::vector<std::pair<RE::AlchemyItem*, int32_t>> items;
-
-      auto* player = RE::PlayerCharacter::GetSingleton();
-      if (!player) {
-      logger::debug("[ItemRegistry] Player not available for inventory scan"sv);
-      return items;
-      }
-
-      // Get player's inventory changes
-      auto* invChanges = player->GetInventoryChanges();
-      if (!invChanges || !invChanges->entryList) {
-      logger::debug("[ItemRegistry] No inventory changes available"sv);
-      return items;
-      }
-
-      // Pre-allocate reasonable capacity
-      items.reserve(64);
-
-      // Single traversal of inventory entry list
-      for (auto* entry : *invChanges->entryList) {
-      if (!entry || !entry->object) continue;
-
-      // Only process AlchemyItems (potions, poisons, food, ingredients)
-      auto* alchemyItem = entry->object->As<RE::AlchemyItem>();
-      if (!alchemyItem) continue;
-
-      // Get item count (countDelta is the change from base container)
-      // For player inventory, this is effectively the current count
-      int32_t count = entry->countDelta;
-
-      // Skip items with zero or negative count
-      if (count <= 0) continue;
-
-      items.emplace_back(alchemyItem, count);
-      }
-
-      return items;
-   }
-
-   std::vector<std::pair<RE::TESSoulGem*, int32_t>> ItemRegistry::ScanPlayerSoulGems() const
-   {
-      std::vector<std::pair<RE::TESSoulGem*, int32_t>> soulGems;
-
-      auto* player = RE::PlayerCharacter::GetSingleton();
-      if (!player) {
-      logger::debug("[ItemRegistry] Player not available for soul gem scan"sv);
-      return soulGems;
-      }
-
-      // Get player's inventory changes
-      auto* invChanges = player->GetInventoryChanges();
-      if (!invChanges || !invChanges->entryList) {
-      logger::debug("[ItemRegistry] No inventory changes available"sv);
-      return soulGems;
-      }
-
-      // Single traversal of inventory entry list
-      for (auto* entry : *invChanges->entryList) {
-      if (!entry || !entry->object) continue;
-
-      // Only process Soul Gems (v0.7.8)
-      auto* soulGem = entry->object->As<RE::TESSoulGem>();
-      if (!soulGem) continue;
-
-      // Get item count
-      int32_t count = entry->countDelta;
-
-      // Skip items with zero or negative count
-      if (count <= 0) continue;
-
-      soulGems.emplace_back(soulGem, count);
-      logger::trace("[ItemRegistry] Found soul gem: {} (count={})"sv,
-        soulGem->GetName(), count);
-      }
-
-      return soulGems;
    }
 
    void ItemRegistry::AddItem(RE::AlchemyItem* item, int32_t count)

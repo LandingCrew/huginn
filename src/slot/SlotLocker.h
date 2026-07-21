@@ -34,7 +34,11 @@ namespace Huginn::Slot
 
     struct LockedSlot
     {
-        SlotAssignment assignment;           // The locked assignment
+        // The locked assignment. INVARIANT: the embedded candidate's name view
+        // is blanked on storage (see TruncateCandidateViews) — registry
+        // reconcile can invalidate it between pipeline runs. Read the owned
+        // assignment.name instead.
+        SlotAssignment assignment;
         float remainingMs = 0.0f;            // Time remaining on lock
         float totalDurationMs = 0.0f;        // Original lock duration (for elapsed calculation)
         bool isLocked = false;               // Whether this slot is currently locked
@@ -93,9 +97,14 @@ namespace Huginn::Slot
         // MAIN API
         // =========================================================================
 
-        /// Update lock timers (call before ApplyLocks each frame)
+        /// Update lock timers. Called unconditionally from UpdateSubsystems every
+        /// tick (NOT from behind the pipeline-skip gate) so locks decay in
+        /// wall-clock time.
         /// @param deltaMs Milliseconds since last update
-        void Update(float deltaMs);
+        /// @return true if any lock expired this update — the caller must force a
+        ///         pipeline run (MarkPageDirty) so the freed slot's content swaps
+        ///         without waiting for an unrelated state change
+        [[nodiscard]] bool Update(float deltaMs);
 
         /// Apply locking logic to raw assignments from SlotAllocator
         /// @param newAssignments Fresh assignments from SlotAllocator

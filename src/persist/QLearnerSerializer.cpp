@@ -1,7 +1,9 @@
 #include "QLearnerSerializer.h"
 #include "Globals.h"
 
+#include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <type_traits>
 
 namespace Huginn::Persist
@@ -29,6 +31,36 @@ namespace Huginn::Persist
    // Static buffer — populated by LoadCallback, consumed by ApplyPendingFQLData
    static std::optional<LoadedFQLData> s_pendingFQLData;
 
+   std::vector<FQLEntry> DecodeV2EntryBlob(
+      const std::byte* data, size_t byteLen, uint32_t numItems, uint32_t diskFeatureCount)
+   {
+      constexpr auto compiled = static_cast<uint32_t>(Learning::StateFeatures::NUM_FEATURES);
+      const size_t stride = sizeof(RE::FormID)
+                          + sizeof(float) * diskFeatureCount
+                          + sizeof(uint32_t) * 2;
+      if (byteLen != stride * numItems) {
+         logger::error("[Cosave] DecodeV2EntryBlob: byteLen {} != stride {} x numItems {} — rejecting"sv,
+            byteLen, stride, numItems);
+         return {};
+      }
+      const uint32_t copyCount = std::min(diskFeatureCount, compiled);
+
+      // Value-init zeroes every weight, so positions >= copyCount stay 0
+      // (new features start untrained).
+      std::vector<FQLEntry> out(numItems);
+      const std::byte* p = data;
+      for (uint32_t i = 0; i < numItems; ++i, p += stride) {
+         auto& e = out[i];
+         std::memcpy(&e.formID, p, sizeof(e.formID));
+         std::memcpy(e.weights.data(), p + sizeof(e.formID), sizeof(float) * copyCount);
+         const std::byte* tail = p + sizeof(e.formID) + sizeof(float) * diskFeatureCount;
+         std::memcpy(&e.trainCount, tail, sizeof(e.trainCount));
+         std::memcpy(&e.minutesSinceLastUpdate, tail + sizeof(e.trainCount),
+            sizeof(e.minutesSinceLastUpdate));
+      }
+      return out;
+   }
+
    // =========================================================================
    // SaveCallback — serialize FeatureQLearner data into cosave records
    // =========================================================================
@@ -54,12 +86,18 @@ namespace Huginn::Persist
          );
 
          // Header: version + numFeatures + totalTrainCount + numItems
-         a_intfc->WriteRecordData(kFQLSerializationVersion);
+         // (version is also in the SKSE record header via OpenRecord; the
+         // in-data copy is the original wire format and must stay — the load
+         // side cross-checks the two.)
          uint32_t numFeatures = Learning::StateFeatures::NUM_FEATURES;
-         a_intfc->WriteRecordData(numFeatures);
-         a_intfc->WriteRecordData(fqlTotalTrains);
          uint32_t numItems = static_cast<uint32_t>(fqlEntries.size());
-         a_intfc->WriteRecordData(numItems);
+         if (!a_intfc->WriteRecordData(kFQLSerializationVersion) ||
+             !a_intfc->WriteRecordData(numFeatures) ||
+             !a_intfc->WriteRecordData(fqlTotalTrains) ||
+             !a_intfc->WriteRecordData(numItems)) {
+            logger::error("[Cosave] Failed to write FQLW header"sv);
+            return;
+         }
 
          // The write side trusts numItems: no cap and no byteLen overflow guard.
          // Both are bounded by reality — GetItemCount() is one entry per distinct
@@ -110,16 +148,35 @@ namespace Huginn::Persist
                   recVersion);
                break;
             }
+            // The two copies have been written from the same constant since the
+            // repo import, but pre-import v1 writers are not provably identical —
+            // so a mismatch is only logged, and the in-data version (the original
+            // wire format) is trusted. The version check, bounds checks, and
+            // exact-length reads below validate everything decode relies on.
+            if (recVersion != version) {
+               logger::warn("[Cosave] FQLW version mismatch: SKSE header {} vs in-data {} — trusting in-data version"sv,
+                  version, recVersion);
+            }
 
             uint32_t numFeatures;
             if (!a_intfc->ReadRecordData(numFeatures)) {
                logger::error("[Cosave] Failed to read FQLW numFeatures"sv);
                break;
             }
-            if (numFeatures != Learning::StateFeatures::NUM_FEATURES) {
-               logger::warn("[Cosave] FQLW feature count mismatch: expected {}, got {} — skipping"sv,
-                  Learning::StateFeatures::NUM_FEATURES, numFeatures);
+            if (numFeatures == 0 || numFeatures > kMaxFQLFeatures) {
+               logger::error("[Cosave] FQLW numFeatures {} out of range [1, {}] — corrupt record, skipping"sv,
+                  numFeatures, kMaxFQLFeatures);
                break;
+            }
+            constexpr auto compiledFeatures = static_cast<uint32_t>(Learning::StateFeatures::NUM_FEATURES);
+            if (numFeatures != compiledFeatures) {
+               // Positional migration (append-only convention, see header/StateFeatures.h):
+               // smaller on-disk count → tail zero-pads (new features untrained);
+               // larger → tail truncates (removed features dropped).
+               logger::info("[Cosave] FQLW feature-count migration: {} on disk -> {} compiled ({})"sv,
+                  numFeatures, compiledFeatures,
+                  numFeatures < compiledFeatures ? "zero-padding new features"sv
+                                                 : "truncating removed features"sv);
             }
 
             if (!a_intfc->ReadRecordData(fqlData.totalTrainCount)) {
@@ -165,43 +222,71 @@ namespace Huginn::Persist
             };
 
             if (recVersion >= 2) {
-               // v2: fixed-size entries — read the whole array in one call. A short
-               // read rejects the record wholesale (no silent partial import).
-               std::vector<FQLEntry> raw(numItems);
+               // v2: fixed-stride entries — read the whole array in one call, using
+               // the stride the record was WRITTEN with (differs from sizeof(FQLEntry)
+               // during feature-count migration). A short read rejects the record
+               // wholesale (no silent partial import). byteLen cannot overflow:
+               // numItems <= 50k and stride <= 4 + 4*256 + 8, product < 52 MB.
+               const size_t diskStride = sizeof(RE::FormID)
+                                       + sizeof(float) * numFeatures
+                                       + sizeof(uint32_t) * 2;
+               std::vector<FQLEntry> raw;
                if (numItems > 0) {
-                  const uint32_t byteLen = numItems * static_cast<uint32_t>(sizeof(FQLEntry));
-                  const uint32_t got = a_intfc->ReadRecordData(raw.data(), byteLen);
+                  const uint32_t byteLen = numItems * static_cast<uint32_t>(diskStride);
+                  std::vector<std::byte> blob(byteLen);
+                  const uint32_t got = a_intfc->ReadRecordData(blob.data(), byteLen);
                   if (got != byteLen) {
                      logger::error("[Cosave] FQLW bulk read short: got {} of {} bytes — skipping"sv,
                         got, byteLen);
                      break;
                   }
+                  raw = DecodeV2EntryBlob(blob.data(), blob.size(), numItems, numFeatures);
                }
                for (auto& entry : raw) {
                   acceptEntry(entry);
                }
             } else {
                // v1 legacy: entries lack minutesSinceLastUpdate — read per field.
-               for (uint32_t i = 0; i < numItems; ++i) {
-                  FQLEntry entry;
+               // Reads the on-disk feature count; positions beyond the compiled
+               // count are discarded (truncation), missing tail stays zero (pad).
+               // Like v2, an incomplete read rejects the record wholesale (no
+               // silent partial import): entries are buffered and committed only
+               // after every read succeeded.
+               std::vector<FQLEntry> raw;
+               raw.reserve(numItems);
+               bool readOk = true;
+               for (uint32_t i = 0; i < numItems && readOk; ++i) {
+                  FQLEntry entry{};                  // weights zeroed for migration pad
                   entry.minutesSinceLastUpdate = 0;  // v1: treat as fresh
                   if (!a_intfc->ReadRecordData(entry.formID)) {
                      logger::error("[Cosave] Failed to read FQLW formID at index {}"sv, i);
+                     readOk = false;
                      break;
                   }
-                  bool weightsOk = true;
-                  for (size_t f = 0; f < Learning::StateFeatures::NUM_FEATURES; ++f) {
-                     if (!a_intfc->ReadRecordData(entry.weights[f])) {
+                  for (uint32_t f = 0; f < numFeatures; ++f) {
+                     float w;
+                     if (!a_intfc->ReadRecordData(w)) {
                         logger::error("[Cosave] Failed to read FQLW weight at item {}, feature {}"sv, i, f);
-                        weightsOk = false;
+                        readOk = false;
                         break;
                      }
+                     if (f < compiledFeatures) {
+                        entry.weights[f] = w;
+                     }
                   }
-                  if (!weightsOk) break;
+                  if (!readOk) break;
                   if (!a_intfc->ReadRecordData(entry.trainCount)) {
                      logger::error("[Cosave] Failed to read FQLW trainCount at index {}"sv, i);
+                     readOk = false;
                      break;
                   }
+                  raw.push_back(entry);
+               }
+               if (!readOk) {
+                  logger::error("[Cosave] FQLW v1 read incomplete — skipping record"sv);
+                  break;
+               }
+               for (auto& entry : raw) {
                   acceptEntry(entry);
                }
             }

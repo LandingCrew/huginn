@@ -120,8 +120,10 @@ namespace Huginn::Candidate
         /**
          * @brief Update cooldowns. Call each frame/update tick.
          * @param deltaSeconds Time since last update
+         * @return true if any cooldown expired this tick (caller must force a
+         *         pipeline run so the item can resurface)
          */
-        void Update(float deltaSeconds);
+        [[nodiscard]] bool Update(float deltaSeconds);
 
         /**
          * @brief Start cooldown for an item that was used.

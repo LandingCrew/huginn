@@ -126,6 +126,11 @@ namespace Huginn::State
       m_actorTypeCache.clear();
       m_processedAllies.clear();
 
+      // --- Ore-vein caches (FormIDs, esp. FF-runtime ones, can be recycled
+      //     between save files — same reason as the actor type cache) ---
+      m_oreVeinCache.clear();
+      m_notOreVeinCache.clear();
+
       // --- Drain any pending DamageEventSink events (prevent stale queued hits) ---
       DamageEventSink::GetSingleton().DrainQueue();
 
@@ -138,6 +143,9 @@ namespace Huginn::State
       m_combatTransition.store(CombatTransition::None, std::memory_order_relaxed);
       m_isInCombat.store(false, std::memory_order_relaxed);
       m_wasInCombat = false;
+
+      // --- Elemental window flag (stale true would hold the outer gate open) ---
+      m_elementalWindowActive.store(false, std::memory_order_relaxed);
 
       m_lastUpdateChanged = true;  // Force pipeline to run on next update
    }

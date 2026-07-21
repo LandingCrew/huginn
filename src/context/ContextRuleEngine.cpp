@@ -315,6 +315,15 @@ namespace Huginn::Context
         if (player.isSneaking && !player.buffs.isInvisible) {
             result.stealthWeight = m_config.weightSneaking;  // Already [0,1]
         }
+
+        // =====================================================================
+        // BUFF & RESIST POTIONS IN COMBAT
+        // =====================================================================
+        // Fortify/resist potions are combat prep — popping them at the start of
+        // or during a fight is their whole use case.
+        if (player.isInCombat) {
+            result.buffCombatWeight = m_config.weightBuffCombat;
+        }
     }
 
     // =============================================================================
@@ -405,6 +414,16 @@ namespace Huginn::Context
         // defensive) only get baseRelevance (0.05), which produces utility
         // below minimumUtility (0.1) in the multiplicative formula.
         result.spellWeight = m_config.weightSpell;
+
+        // =====================================================================
+        // BUFF/RESIST POTION BASELINE
+        // =====================================================================
+        // Same lockout fix as the weapon/spell baselines: fortify-skill and
+        // resist potions have no trigger in ordinary play (resist rules fire
+        // only while taking that element's damage; fortify rules only at the
+        // matching workstation), so without a baseline they are pinned at
+        // baseRelevance and can never clear fMinimumUtility — or learn.
+        result.buffPotionWeight = m_config.weightBuffPotion;
 
         // =====================================================================
         // WEAPON CHARGE (Soul Gems)

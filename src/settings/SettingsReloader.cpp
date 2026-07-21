@@ -1,6 +1,7 @@
 #include "SettingsReloader.h"
 
 #include "Globals.h"
+#include "update/UpdateHandler.h"
 #include "slot/SlotAllocator.h"
 #include "slot/SlotLocker.h"
 #include "slot/SlotSettings.h"
@@ -60,10 +61,7 @@ namespace Huginn::Settings
             // strArg contains the mod name - only process if it's "Huginn"
             if (event->strArg == "Huginn"sv) {
                 logger::info("[SettingsReloader] dmenu_updateSettings received for Huginn"sv);
-
-                // dMenu stores settings in Data/SKSE/Plugins/dmenu/customSettings/ini/Huginn.ini
-                const auto dmenuIniPath = std::filesystem::path("Data/SKSE/Plugins/dmenu/customSettings/ini/Huginn.ini");
-                ReloadAllSettings(dmenuIniPath);
+                ReloadAllSettings(GetDMenuIniPath());
             }
             return RE::BSEventNotifyControl::kContinue;
         }
@@ -80,12 +78,23 @@ namespace Huginn::Settings
 
     void SettingsReloader::ReloadAllSettings(const std::filesystem::path& dMenuIniPath)
     {
+        // ModCallbackEvent senders (dMenu) may dispatch from any thread, and
+        // Phase 1 reassigns non-POD settings (std::string members) the pipeline
+        // reads per tick. Serialize against the update loop here, in the callee,
+        // so no caller can forget it.
+        Update::UpdateHandler::GetSingleton()->RunExclusive([&] {
+            ReloadAllSettingsExclusive(dMenuIniPath);
+        });
+    }
+
+    void SettingsReloader::ReloadAllSettingsExclusive(const std::filesystem::path& dMenuIniPath)
+    {
         logger::info("[SettingsReloader] Reloading (dMenu INI: {})"sv, dMenuIniPath.string());
 
         // dMenu INI only contains dMenu-managed sections (Widget, Keybindings, Debug).
         // Non-dMenu settings always load from the main INI to avoid reading defaults
         // from an incomplete file (dMenu's flush_ini creates a fresh CSimpleIniA).
-        const auto mainIniPath = std::filesystem::path("Data/SKSE/Plugins/Huginn.ini");
+        const auto mainIniPath = GetMainIniPath();
 
         // Graceful degradation: fall back to main INI if dMenu path doesn't exist
         auto dMenuPath = dMenuIniPath;
@@ -181,10 +190,8 @@ namespace Huginn::Settings
 
         if (buttonId == "Huginn_reset_qtable"sv) {
             logger::info("[SettingsReloader] Resetting learning data"sv);
-            auto* fql = g_featureQLearner.get();
-            if (fql) {
-                fql->Clear();
-                logger::info("[SettingsReloader] FeatureQLearner reset complete"sv);
+            if (const auto fqlItems = ResetLearningData()) {
+                logger::info("[SettingsReloader] Learning data reset complete ({} FQL items)"sv, *fqlItems);
                 RE::DebugNotification("Huginn: Learning data reset");
             } else {
                 logger::warn("[SettingsReloader] g_featureQLearner is null, cannot reset"sv);
@@ -196,10 +203,12 @@ namespace Huginn::Settings
             RE::DebugNotification("Huginn: Settings reset to defaults");
         }
         else if (buttonId == "Huginn_reload_ini"sv) {
-            logger::info("[SettingsReloader] Manually reloading from Huginn.ini"sv);
+            logger::info("[SettingsReloader] Manually reloading from INI"sv);
             // ReloadAllSettings already emits "Huginn: Settings reloaded";
             // no second notification here (avoids a double toast).
-            ReloadAllSettings("Data/SKSE/Plugins/Huginn.ini");
+            // dMenu-managed sections still come from the dMenu INI (when present)
+            // so a manual reload doesn't reset dMenu-managed customizations.
+            ReloadAllSettings(GetDMenuIniPath());
         }
         else {
             logger::warn("[SettingsReloader] Unknown button callback: {}"sv, buttonId);
@@ -207,7 +216,35 @@ namespace Huginn::Settings
         }
     }
 
+    std::optional<size_t> SettingsReloader::ResetLearningData()
+    {
+        auto* fql = g_featureQLearner.get();
+        if (!fql) {
+            return std::nullopt;
+        }
+
+        size_t fqlItems = 0;
+        Update::UpdateHandler::GetSingleton()->RunExclusive([&] {
+            fqlItems = fql->GetItemCount();
+            fql->Clear();
+
+            // Unlock all slots so the next scoring cycle can reassign immediately —
+            // otherwise locked slots keep pinning recommendations scored by the
+            // just-cleared table for the remainder of their lock duration.
+            Slot::SlotLocker::GetSingleton().Reset();
+        });
+        return fqlItems;
+    }
+
     void SettingsReloader::ResetAllToDefaults()
+    {
+        // Same serialization rationale as ReloadAllSettings.
+        Update::UpdateHandler::GetSingleton()->RunExclusive([&] {
+            ResetAllToDefaultsExclusive();
+        });
+    }
+
+    void SettingsReloader::ResetAllToDefaultsExclusive()
     {
         // Reset all settings to compile-time defaults
         // Each Settings class has a ResetToDefaults() method
@@ -257,12 +294,12 @@ namespace Huginn::Settings
 
     void SettingsReloader::ApplySideEffects(const CSimpleIniA* mainIni, const WheelLayout& beforeLayout)
     {
-        // NOTE: Phase 1 settings (ScorerSettings, ContextWeightSettings, etc.)
-        // are POD float/bool singletons. Both UpdateHandler and SettingsReloader
-        // run on the game thread, so no race conditions. "Mixed values" refers to
-        // settings changing between update ticks (tick boundaries), which is
-        // acceptable for tuning. SlotSettings has its own shared_mutex (safe).
-        // The remaining side effects below are ordered to avoid inconsistency.
+        // REQUIRES: update mutex held (RunExclusive) — reached only via
+        // ReloadAllSettingsExclusive / ResetAllToDefaultsExclusive. That lock is
+        // what makes the Phase 1 setting reassignments and the allocator/locker/
+        // wheel mutations below safe against a mid-tick pipeline read; dMenu's
+        // ModCallbackEvent gives no thread guarantee. SlotSettings additionally
+        // has its own shared_mutex. Side effects are ordered to avoid inconsistency.
 
         // 1. Apply scorer config + context weight config + wildcard config
         auto* utilityScorer = g_utilityScorer.get();

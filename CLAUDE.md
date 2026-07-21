@@ -78,6 +78,7 @@ Registered as `Huginn` with short alias `hg` (in-game `~` console):
 | Command | Description |
 |---------|-------------|
 | `hg refresh` | Force immediate recommendation update |
+| `hg recs [N]` | Dump top-N recommendation breakdown to log (default 10) |
 | `hg reload` | Hot-reload all settings from INI |
 | `hg status` | Show system status |
 | `hg unlock` | Clear all slot locks |

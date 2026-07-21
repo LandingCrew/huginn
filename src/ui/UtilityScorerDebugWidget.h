@@ -100,8 +100,10 @@ namespace Huginn::UI
         // Section renderers
         void DrawSlotSection(const Slot::SlotAssignment& assignment,
                              const Scoring::ScoredCandidateList& candidates,
+                             const std::vector<std::string>& names,
                              size_t slotIdx);
-        void DrawCandidateCard(const Scoring::ScoredCandidate& candidate, size_t rank);
+        void DrawCandidateCard(const Scoring::ScoredCandidate& candidate,
+                               const std::string& name, size_t rank);
         void DrawScoreSummary(const Scoring::ScoreBreakdown& breakdown);
         void DrawUtilityBar(float utility, float maxUtility);
 
@@ -115,13 +117,19 @@ namespace Huginn::UI
         //   - UpdateSlotData() acquires unique_lock (writer)
         //   - Draw() acquires shared_lock, copies out, then releases before iterating
         mutable std::shared_mutex m_mutex;
+        // INVARIANT: cached candidates/assignments have their embedded name
+        // string_views blanked at capture (they point into registry strings a
+        // reconcile can invalidate between ticks — same rule as SlotLocker's
+        // TruncateCandidateViews). Render reads m_cachedNames / assignment.name.
         Scoring::ScoredCandidateList m_cachedCandidates;           // GUARDED_BY(m_mutex)
+        std::vector<std::string> m_cachedNames;                    // GUARDED_BY(m_mutex) owned, index-aligned with m_cachedCandidates
         Slot::SlotAssignments m_cachedAssignments;                 // GUARDED_BY(m_mutex)
         size_t m_cachedPageIndex = 0;                              // GUARDED_BY(m_mutex)
         std::string m_cachedPageName;                              // GUARDED_BY(m_mutex)
         size_t m_pageCount = 0;                                    // GUARDED_BY(m_mutex)
         size_t m_coldStartBoostedCount = 0;                        // GUARDED_BY(m_mutex)
         std::vector<Learning::UsageEvent> m_cachedUsageSnapshot;   // GUARDED_BY(m_mutex)
+        std::vector<std::string> m_cachedUsageNames;               // GUARDED_BY(m_mutex) owned, index-aligned with m_cachedUsageSnapshot
         uint32_t m_cachedContextHash = 0;                          // GUARDED_BY(m_mutex)
         bool m_isVisible = true;  // Visible by default in Debug builds
         size_t m_maxDisplay = 10; // Max total candidates to cache

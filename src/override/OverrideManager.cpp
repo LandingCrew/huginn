@@ -36,19 +36,29 @@ namespace Huginn::Override
         logger::debug("[OverrideManager] Reset hysteresis states"sv);
     }
 
-    void OverrideManager::Update(float deltaMs)
+    bool OverrideManager::Update(float deltaMs)
     {
         // Guard: Skip if not initialized
         if (!m_initialized) {
-            return;
+            return false;
         }
 
-        // Update active durations for all hysteresis states
+        // Update active durations for all hysteresis states. Deactivation is
+        // decided only inside pipeline runs (CheckHysteresis), so the tick
+        // where a latch crosses its minimum-duration window must force a run —
+        // otherwise a latched override stays on-screen indefinitely while the
+        // pipeline is idle (e.g. critical-health after an insta-heal).
+        bool anyLatchClearable = false;
         for (auto& [name, state] : m_hysteresisStates) {
             if (state.isActive) {
+                const bool wasBelowMin = state.activeDurationMs < state.minDurationMs;
                 state.activeDurationMs += deltaMs;
+                if (wasBelowMin && state.activeDurationMs >= state.minDurationMs) {
+                    anyLatchClearable = true;
+                }
             }
         }
+        return anyLatchClearable;
     }
 
     // =============================================================================
@@ -144,6 +154,7 @@ namespace Huginn::Override
         OverrideResult result;
         result.priority = Priority::CRITICAL_HEALTH;
         result.category = OverrideCategory::HP;
+        result.condition = OverrideCondition::CriticalHealth;
         result.reason = "CRITICAL: Need Health Potion!";
         result.candidate = std::move(candidate);
 
@@ -173,6 +184,7 @@ namespace Huginn::Override
         OverrideResult result;
         result.priority = Priority::DROWNING;
         result.category = OverrideCategory::Other;
+        result.condition = OverrideCondition::Drowning;
         result.reason = "DROWNING: Need Waterbreathing!";
         result.candidate = std::move(candidate);
 
@@ -223,6 +235,7 @@ namespace Huginn::Override
         OverrideResult result;
         result.priority = Priority::WEAPON_EMPTY;
         result.category = OverrideCategory::Other;
+        result.condition = OverrideCondition::WeaponCharge;
         result.reason = "WEAPON EMPTY: Need Soul Gem!";
         result.candidate = std::move(candidate);
 
@@ -264,6 +277,7 @@ namespace Huginn::Override
         OverrideResult result;
         result.priority = Priority::LOW_AMMO;
         result.category = OverrideCategory::Other;
+        result.condition = OverrideCondition::LowAmmo;
         result.reason = player.hasBowEquipped
             ? std::format("LOW AMMO: {} arrows remaining", rawCount)
             : std::format("LOW AMMO: {} bolts remaining", rawCount);
@@ -292,6 +306,7 @@ namespace Huginn::Override
         OverrideResult result;
         result.priority = Priority::CRITICAL_MAGICKA;
         result.category = OverrideCategory::MP;
+        result.condition = OverrideCondition::CriticalMagicka;
         result.reason = "CRITICAL: Need Magicka Potion!";
         result.candidate = std::move(candidate);
 
@@ -318,6 +333,7 @@ namespace Huginn::Override
         OverrideResult result;
         result.priority = Priority::CRITICAL_STAMINA;
         result.category = OverrideCategory::SP;
+        result.condition = OverrideCondition::CriticalStamina;
         result.reason = "CRITICAL: Need Stamina Potion!";
         result.candidate = std::move(candidate);
 
@@ -508,6 +524,7 @@ namespace Huginn::Override
                 // Activate
                 state.isActive = true;
                 state.activeDurationMs = 0.0f;
+                state.minDurationMs = config.minDurationMs;
                 logger::debug("[OverrideManager] {} activated"sv, name);
             }
             return true;
@@ -542,6 +559,7 @@ namespace Huginn::Override
             if (currentValue < config.activationThreshold) {
                 state.isActive = true;
                 state.activeDurationMs = 0.0f;
+                state.minDurationMs = config.minDurationMs;
                 logger::debug("[OverrideManager] {} activated (value={:.2f} < {:.2f})"sv,
                     name, currentValue, config.activationThreshold);
                 return true;

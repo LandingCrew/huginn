@@ -6,6 +6,7 @@
 #include "util/AtomicGuard.h"
 #include "util/AlgorithmUtils.h"
 #include "util/InventoryUtil.h"
+#include "util/ExtraListStability.h"
 
 namespace Huginn::Weapon
 {
@@ -23,16 +24,17 @@ namespace Huginn::Weapon
       Util::AtomicBoolGuard guard{ m_isLoading, false };
 
       // Scan BEFORE acquiring lock (SKSE API calls)
-      // Note: ScanPlayerWeapons() doesn't access extraLists for safety during early load
-      // Favorites will be detected by RefreshCharges() after 500ms stabilization period
+      // Note: ScanPlayerWeapons() doesn't access extraLists for safety during early load.
+      // Favorites/charge are recovered by the primed short-retry reconcile
+      // (Main.cpp step 9) shortly after the stabilization window passes.
       auto scannedWeapons = ScanPlayerWeapons();
       size_t favCount = std::count_if(scannedWeapons.begin(), scannedWeapons.end(),
       [](const auto& w) { return w.isFavorited; });
       logger::info("Found {} weapons in player inventory ({} favorited at scan time)"sv,
       scannedWeapons.size(), favCount);
 
-      // Note: favCount will be 0 during initial load - favorites are updated by RefreshCharges()
-      // after the 500ms extraLists stabilization period passes
+      // Note: favCount will be 0 during initial load - favorites are recovered by
+      // the primed short-retry reconcile after the stabilization window passes
 
       // Debug: Log favorited weapons
       if (favCount > 0) {
@@ -88,17 +90,10 @@ namespace Huginn::Weapon
       // m_isLoading cleared by LoadingGuard destructor
    }
 
-   bool WeaponRegistry::IsExtraListStable() noexcept
-   {
-      const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-      std::chrono::steady_clock::now() - g_lastGameLoad);
-      return elapsed.count() >= static_cast<int64_t>(Config::EXTRALIST_STABILIZATION_MS);
-   }
-
    void WeaponRegistry::RefreshCharges()
    {
       // CRITICAL SAFETY: Check if enough time has passed since save load (v0.7.9)
-      if (!IsExtraListStable()) {
+      if (!Util::IsExtraListStable()) {
       logger::trace("[WeaponRegistry] RefreshCharges() skipped - extraLists not stable"sv);
       return;
       }
@@ -119,7 +114,7 @@ namespace Huginn::Weapon
       // so it must gate on extraList stability itself rather than relying on the
       // zero-arg wrapper or on the refresh interval coincidentally equalling
       // EXTRALIST_STABILIZATION_MS. Reading extraLists too early can crash.
-      if (!IsExtraListStable()) {
+      if (!Util::IsExtraListStable()) {
       return;
       }
 
@@ -273,7 +268,7 @@ namespace Huginn::Weapon
 
       // === WEAPONS + AMMO ===
       // Check if safe to access extraLists (v0.7.9)
-      const bool safeToAccessExtraLists = IsExtraListStable();
+      const bool safeToAccessExtraLists = Util::IsExtraListStable();
 
       auto* player = RE::PlayerCharacter::GetSingleton();
       if (!player) {
@@ -384,6 +379,28 @@ namespace Huginn::Weapon
         // Update uniqueID (populated after extraList stabilization)
         if (safeToAccessExtraLists && sw.uniqueID != 0) {
            invWeapon.data.uniqueID = sw.uniqueID;
+        }
+
+        // Update charge for existing enchanted weapons (mirrors RefreshCharges).
+        // Weapons first seen while extraLists were unstable assumed full charge,
+        // and RefreshCharges reads only the ≤2 equipped weapons — this is the
+        // only path that corrects an unequipped weapon's charge.
+        if (safeToAccessExtraLists && invWeapon.data.hasEnchantment && sw.maxCharge > 0.0f) {
+           float chargePercent = sw.currentCharge / sw.maxCharge;
+           invWeapon.previousCharge = invWeapon.data.currentCharge;
+           invWeapon.data.currentCharge = chargePercent;
+           invWeapon.data.maxCharge = sw.maxCharge;
+
+           // Update NeedsCharge tag only when crossing threshold (avoids repeated bitfield ops)
+           bool wasLow = HasTag(invWeapon.data.tags, WeaponTag::NeedsCharge);
+           bool isLow = chargePercent < Config::WEAPON_CHARGE_LOW_THRESHOLD;
+           if (wasLow != isLow) {
+            if (isLow) {
+              invWeapon.data.tags |= WeaponTag::NeedsCharge;
+            } else {
+              invWeapon.data.tags &= ~WeaponTag::NeedsCharge;
+            }
+           }
         }
       }
       }
@@ -925,8 +942,9 @@ namespace Huginn::Weapon
       sw.maxCharge = 0.0f;
       sw.uniqueID = 0;
 
-      // Skip extraLists during initial scan (time-guarded access pattern)
-      // RefreshCharges() will populate metadata after stabilization period.
+      // Skip extraLists during initial scan (time-guarded access pattern).
+      // The primed short-retry reconcile populates favorites/charge/uniqueID
+      // after the stabilization window.
 
       // If weapon is enchanted, assume full charge (no ExtraCharge during initial scan)
       // Includes staves which don't use formEnchanting but still have charges
@@ -987,7 +1005,7 @@ namespace Huginn::Weapon
       std::unordered_set<RE::FormID> favoritedWeapons;
 
       // CRITICAL: Check if enough time has passed since save load for extraLists to be stable
-      if (!IsExtraListStable()) {
+      if (!Util::IsExtraListStable()) {
       logger::trace("[WeaponRegistry] ScanWeaponFavorites() skipped - extraLists not stable"sv);
       return favoritedWeapons;  // Return empty - will be populated by RefreshCharges later
       }

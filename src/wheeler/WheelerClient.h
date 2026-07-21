@@ -1,9 +1,12 @@
 #pragma once
 
 #include <atomic>
+#include <chrono>
 #include <cstdint>
+#include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 // Forward declare the API types we need
@@ -187,7 +190,11 @@ namespace Huginn::Wheeler
         // Returns true if at least one wheel was created
         bool CreateRecommendationWheels();
 
-        // Tear down all recommendation wheels (deletes from Wheeler, then clears vector)
+        // Tear down all recommendation wheels: detaches the records under
+        // m_pageDataMutex, then issues the Wheeler delete calls with no lock
+        // held (deletes may fire synchronous callbacks that re-acquire it).
+        // Do NOT call while already holding m_pageDataMutex; use
+        // DetachWheelsLocked() + IssueWheelDeletes() internally instead.
         void DestroyRecommendationWheels();
 
         // Update the wheel for the CURRENT page with new recommendations
@@ -286,9 +293,6 @@ namespace Huginn::Wheeler
         // Clear activation-emptied flags for a page (called when new candidates arrive)
         void ClearActivationEmptied(size_t pageIndex);
 
-        // Get the slot index where the last activation occurred (-1 if none)
-        [[nodiscard]] int GetLastActivatedSlot() const noexcept { return m_lastActivatedSlot; }
-
     private:
         WheelerClient() = default;
 
@@ -303,16 +307,37 @@ namespace Huginn::Wheeler
             int32_t wheelIndex = -1;                    // Wheeler wheel index
             size_t slotCount = 0;                       // Number of slots for this page
             std::string pageName;                       // Page name (e.g., "Combat")
-            std::string wheelLabel;                     // Full wheel label (e.g., "Huginn: Combat") - MUST stay alive for Wheeler API
+            // Strings whose c_str() is exported to Wheeler are indefinite borrows:
+            // Wheeler stores the pointer and reads it while rendering, so the
+            // buffer must stay alive AND address-stable until replaced/cleared
+            // through the API. Heap-owned (unique_ptr) storage survives PageWheel
+            // moves and m_pageWheels reallocation; a plain std::string does not
+            // (MSVC SSO relocates short-string bytes on every move).
+            std::unique_ptr<std::string> wheelLabel;    // Full wheel label (e.g., "Huginn: Combat"); non-null iff a wheel was ever created for this record (survives index invalidation — Wheeler may still hold the pointer)
             std::vector<RE::FormID> slotFormIDs;        // Cached FormIDs per slot
             std::vector<bool> slotWildcard;             // Wildcard flags per slot
             std::vector<uint16_t> slotUniqueIDs;        // Cached UniqueIDs per slot (for weapons)
-            std::vector<std::string> slotSubtexts;       // Cached FINAL subtext labels (wildcard-applied) per slot
+            std::vector<std::unique_ptr<std::string>> slotSubtexts;  // Cached FINAL subtext labels (wildcard-applied); exported to Wheeler (see above); null ≙ empty
             std::vector<std::string> slotRawSubtexts;    // Cached RAW incoming subtexts (for the content-unchanged early-out)
             std::vector<uint8_t> slotRetries;            // Retry counter per slot (max MAX_SLOT_RETRIES)
             std::vector<bool> slotActivationEmptied;     // Activation-emptied flags (Empty policy)
         };
         std::vector<PageWheel> m_pageWheels;            // One wheel per page
+
+        // Negative cache for AddItemByFormID rejects. After MAX_SLOT_RETRIES
+        // consecutive failures of the same (formID, uniqueID), further attempts
+        // are suppressed for ADD_FAIL_COOLDOWN — slot churn (lock expiry,
+        // re-allocation) otherwise restarts the retry cycle every few seconds
+        // (observed: 569 API rejects in 11 min from one bad save entry that
+        // Wheeler answers with UnsupportedFormType). Keyed globally, not
+        // per-page: the same combo fails identically on every wheel.
+        // GUARDED_BY(m_pageDataMutex).
+        std::unordered_map<uint64_t, std::chrono::steady_clock::time_point> m_addFailCooldowns;
+        static constexpr std::chrono::seconds ADD_FAIL_COOLDOWN{30};
+        [[nodiscard]] static constexpr uint64_t AddFailKey(RE::FormID formID, uint16_t uniqueID) noexcept
+        {
+            return (static_cast<uint64_t>(formID) << 16) | uniqueID;
+        }
 
         // Helper to set/clear entry subtext
         void SetEntrySubtext(int32_t wheelIndex, int32_t entryIndex, const char* text);
@@ -329,9 +354,6 @@ namespace Huginn::Wheeler
         // Lock ordering: m_callbackMutex (outer) → m_pageDataMutex (inner).
         // Callbacks hold both; update-loop functions hold only m_pageDataMutex.
         mutable std::mutex m_pageDataMutex;
-
-        // Post-activation tracking (Part B)
-        int m_lastActivatedSlot = -1;           // Slot index where last activation occurred
 
         // Static callback trampolines (call into singleton instance)
         static void OnItemActivated(int32_t wheelIndex, int32_t entryIndex, int32_t itemIndex, uint32_t formID, bool isPrimary);
@@ -359,5 +381,18 @@ namespace Huginn::Wheeler
 
         // Check if a wheel belongs to Huginn
         [[nodiscard]] bool IsOurWheel(int32_t wheelIndex) const;
+
+        // Detach all page-wheel records for teardown. REQUIRES: m_pageDataMutex
+        // held. The returned vector keeps the subtext strings alive (addresses
+        // stable — the vector move steals the buffer) until IssueWheelDeletes
+        // has told Wheeler to drop its references.
+        [[nodiscard]] std::vector<PageWheel> DetachWheelsLocked();
+
+        // Issue the cross-DLL subtext-clear + wheel-delete calls for detached
+        // wheels. External teardown paths call this WITHOUT m_pageDataMutex held
+        // (a delete may fire a synchronous callback that re-acquires it);
+        // CreateRecommendationWheels calls it under the lock on the documented
+        // assumption that already-invalidated wheels fire no callbacks.
+        void IssueWheelDeletes(std::vector<PageWheel> staleWheels);
     };
 }
