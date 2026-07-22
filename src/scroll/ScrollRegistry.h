@@ -2,10 +2,8 @@
 
 #include "ScrollData.h"
 #include "ScrollClassifier.h"
-#include "util/InventoryUtil.h"  // Util::InventoryItemMap (shared inventory scan)
-#include <shared_mutex>  // v0.7.12 - thread safety
-#include <atomic>        // M3 v0.7.21 - atomic m_isLoading
-#include <type_traits>   // For ForEach visitor pattern
+#include "registry/FormRegistry.h"       // Huginn::Registry::FormRegistry core (finding #8)
+#include "util/InventoryUtil.h"          // Util::InventoryItemMap (shared inventory scan)
 
 namespace Huginn::Scroll
 {
@@ -34,32 +32,29 @@ namespace Huginn::Scroll
    // Tracks scrolls in player inventory.
    //
    // ARCHITECTURE:
-   // - Follows ItemRegistry two-tier refresh pattern
+   // - Storage/indexing/locking and the generic query helpers come from the
+   //   shared Registry::FormRegistry core (finding #8). ScrollRegistry adds only
+   //   the scroll-specific scan, classify, two-tier refresh, and typed accessors.
    // - Delta scan (500ms): Fast count comparison, emits change events
    // - Full reconcile (30s): Adds new scrolls, removes gone scrolls
    //
    // DESIGN NOTES:
    // - Separate from ItemRegistry since scrolls are RE::ScrollItem, not RE::AlchemyItem
    // - Uses ScrollClassifier which delegates to SpellClassifier for effect analysis
-   //
-   // THREAD SAFETY:
-   // - shared_mutex guards m_scrolls/m_formIDIndex (v0.7.12)
-   // - Readers (render thread) use shared_lock, writers (update thread) unique_lock
-   // - Accessors return copies/values; ForEachScroll holds the lock for iteration
    // =============================================================================
 
-   class ScrollRegistry
+   class ScrollRegistry : public Registry::FormRegistry<ScrollRegistry, InventoryScroll>
    {
    public:
       // Constructor takes SpellClassifier dependency (for ScrollClassifier)
       explicit ScrollRegistry(const Spell::SpellClassifier& spellClassifier);
       ~ScrollRegistry() = default;
 
-      // Disable copy/move (singleton-style usage)
-      ScrollRegistry(const ScrollRegistry&) = delete;
-      ScrollRegistry& operator=(const ScrollRegistry&) = delete;
-      ScrollRegistry(ScrollRegistry&&) = delete;
-      ScrollRegistry& operator=(ScrollRegistry&&) = delete;
+      // CRTP contract for FormRegistry: where the FormID lives on an entry.
+      [[nodiscard]] static RE::FormID FormIDOf(const InventoryScroll& scroll) noexcept
+      {
+         return scroll.data.formID;
+      }
 
       // =============================================================================
       // LIFECYCLE
@@ -78,21 +73,14 @@ namespace Huginn::Scroll
       /**
        * @brief Fast delta scan (call at 500ms intervals)
        * @return Vector of change events (consumed/acquired scrolls)
-       * @note O(n) where n = scroll count, no reclassification
-       * @note Only detects count changes for tracked scrolls
        */
       std::vector<ScrollChangeEvent> RefreshCounts();
 
-      /**
-       * @brief Fast delta scan with pre-fetched player pointer (v0.7.19 S2 optimization)
-       * @param player Pre-fetched player pointer (avoids redundant GetSingleton)
-       */
+      /** @brief Fast delta scan with pre-fetched player pointer (v0.7.19 S2 optimization) */
       std::vector<ScrollChangeEvent> RefreshCounts(RE::PlayerCharacter* player);
 
       /**
        * @brief Delta scan reusing an already-scanned inventory (v0.18 G optimization)
-       * @param player    Pre-fetched player pointer (null-check only)
-       * @param inventory Shared inventory map (non-scroll entries are ignored)
        * @note Lets the update loop run ONE GetInventorySafe pass for items + scrolls
        */
       std::vector<ScrollChangeEvent> RefreshCounts(
@@ -101,155 +89,51 @@ namespace Huginn::Scroll
       /**
        * @brief Full scroll reconciliation (call at 30s intervals)
        * @return Number of scrolls added or removed
-       * @note Adds new scrolls, removes gone scrolls, updates previousCount snapshot
-       * @note O(n) + O(m) classifications where m = new scrolls
        */
       size_t ReconcileScrolls();
 
-      /**
-       * @brief Full reconciliation with pre-fetched player pointer (v0.7.19 S2 optimization)
-       * @param player Pre-fetched player pointer (avoids redundant GetSingleton)
-       */
+      /** @brief Full reconciliation with pre-fetched player pointer (v0.7.19 S2 optimization) */
       size_t ReconcileScrolls(RE::PlayerCharacter* player);
 
       // =============================================================================
       // ACCESSORS
       // =============================================================================
 
-      /**
-       * @brief Get all scrolls of a specific type
-       * @param type ScrollType to filter by
-       * @return Vector of pointers to matching scrolls
-       */
+      /** @brief Get all scrolls of a specific type (count > 0) */
       [[nodiscard]] std::vector<const InventoryScroll*> GetScrollsByType(ScrollType type) const;
 
-      // =============================================================================
-      // TYPE-BASED ACCESSORS (ScrollScanner v0.7.7)
-      // =============================================================================
-
-      /**
-       * @brief Get damage scrolls sorted by magnitude (highest first)
-       * @param topK Maximum number of results (default 3, 0 = all)
-       * @return Vector of pointers to damage scrolls, sorted by magnitude descending
-       * @note OPTIMIZATION (v0.7.20 H4): Uses partial_sort for O(n log k) vs O(n log n)
-       */
+      // Type-based accessors (sorted by magnitude descending, top-K). topK 0 = all.
       [[nodiscard]] std::vector<const InventoryScroll*> GetDamageScrolls(size_t topK = 3) const;
-
-      /**
-       * @brief Get healing scrolls sorted by magnitude (highest first)
-       * @param topK Maximum number of results (default 3, 0 = all)
-       * @return Vector of pointers to healing scrolls, sorted by magnitude descending
-       * @note OPTIMIZATION (v0.7.20 H4): Uses partial_sort for O(n log k) vs O(n log n)
-       */
       [[nodiscard]] std::vector<const InventoryScroll*> GetHealingScrolls(size_t topK = 3) const;
-
-      /**
-       * @brief Get defensive scrolls (wards, armor) sorted by magnitude (highest first)
-       * @param topK Maximum number of results (default 3, 0 = all)
-       * @return Vector of pointers to defensive scrolls
-       * @note OPTIMIZATION (v0.7.20 H4): Uses partial_sort for O(n log k) vs O(n log n)
-       */
       [[nodiscard]] std::vector<const InventoryScroll*> GetDefensiveScrolls(size_t topK = 3) const;
-
-      /**
-       * @brief Get utility scrolls (detect life, light, telekinesis)
-       * @return Vector of pointers to utility scrolls
-       */
       [[nodiscard]] std::vector<const InventoryScroll*> GetUtilityScrolls() const;
-
-      /**
-       * @brief Get summon scrolls (conjuration)
-       * @return Vector of pointers to summon scrolls
-       */
       [[nodiscard]] std::vector<const InventoryScroll*> GetSummonScrolls() const;
 
-      // =============================================================================
-      // ELEMENT-BASED ACCESSORS (ScrollScanner v0.7.7)
-      // =============================================================================
-
-      /**
-       * @brief Get fire scrolls sorted by magnitude (highest first)
-       * @param topK Maximum number of results (default 3, 0 = all)
-       * @return Vector of pointers to fire scrolls
-       * @note OPTIMIZATION (v0.7.20 H4): Uses partial_sort for O(n log k) vs O(n log n)
-       */
+      // Element-based accessors (sorted by magnitude descending, top-K).
       [[nodiscard]] std::vector<const InventoryScroll*> GetFireScrolls(size_t topK = 3) const;
-
-      /**
-       * @brief Get frost scrolls sorted by magnitude (highest first)
-       * @param topK Maximum number of results (default 3, 0 = all)
-       * @return Vector of pointers to frost scrolls
-       * @note OPTIMIZATION (v0.7.20 H4): Uses partial_sort for O(n log k) vs O(n log n)
-       */
       [[nodiscard]] std::vector<const InventoryScroll*> GetFrostScrolls(size_t topK = 3) const;
-
-      /**
-       * @brief Get shock scrolls sorted by magnitude (highest first)
-       * @param topK Maximum number of results (default 3, 0 = all)
-       * @return Vector of pointers to shock scrolls
-       * @note OPTIMIZATION (v0.7.20 H4): Uses partial_sort for O(n log k) vs O(n log n)
-       */
       [[nodiscard]] std::vector<const InventoryScroll*> GetShockScrolls(size_t topK = 3) const;
 
-      // =============================================================================
-      // CONVENIENCE "BEST" ACCESSORS (ScrollScanner v0.7.7)
-      // =============================================================================
-      // These return the single best scroll for quick slot allocation.
-      // Returns nullptr if no scrolls of that type are available.
-      //
-      // PERFORMANCE: O(n) single-pass max-find instead of O(n log n) sort.
-
+      // Convenience "best" accessors — single best scroll, nullptr if none.
       [[nodiscard]] const InventoryScroll* GetBestDamageScroll() const noexcept;
       [[nodiscard]] const InventoryScroll* GetBestHealingScroll() const noexcept;
       [[nodiscard]] const InventoryScroll* GetBestFireScroll() const noexcept;
       [[nodiscard]] const InventoryScroll* GetBestFrostScroll() const noexcept;
       [[nodiscard]] const InventoryScroll* GetBestShockScroll() const noexcept;
 
-      /**
-       * @brief Get total number of tracked scroll types
-       * @return Number of unique scroll FormIDs in registry
-       */
-      [[nodiscard]] size_t GetScrollCount() const noexcept;
+      // Thin forwarders keeping the historical public names (zero call-site churn).
+      [[nodiscard]] size_t GetScrollCount() const noexcept { return EntryCount(); }
+      [[nodiscard]] std::vector<InventoryScroll> GetAllScrolls() const { return AllEntriesCopy(); }
 
-      /**
-       * @brief Get all tracked scrolls (returns copy for thread safety - v0.7.12)
-       * @return Copy of internal scrolls vector
-       */
-      [[nodiscard]] std::vector<InventoryScroll> GetAllScrolls() const;
-
-      /**
-       * @brief Iterate over all scrolls without copying (zero-allocation visitor pattern)
-       * @tparam Func Callable with signature void(const InventoryScroll&) or bool(const InventoryScroll&)
-       * @param func Function to call for each scroll. If returns bool, iteration stops on false.
-       * @note Thread-safe: Holds shared_lock during iteration
-       * @note PERFORMANCE: Use this instead of GetAllScrolls() in hot paths
-       */
+      /** @brief Zero-allocation visitor over all scrolls (holds shared_lock). */
       template<typename Func>
-      void ForEachScroll(Func&& func) const
-      {
-      std::shared_lock lock(m_mutex);
-      for (const auto& scroll : m_scrolls) {
-        if constexpr (std::is_same_v<std::invoke_result_t<Func, const InventoryScroll&>, bool>) {
-           if (!func(scroll)) return;
-        } else {
-           func(scroll);
-        }
-      }
-      }
-
-      /**
-       * @brief Check if registry is currently loading/rebuilding
-       * M3 (v0.7.21): Use atomic load with acquire semantics
-       */
-      [[nodiscard]] bool IsLoading() const noexcept { return m_isLoading.load(std::memory_order_acquire); }
+      void ForEachScroll(Func&& func) const { ForEachEntry(std::forward<Func>(func)); }
 
       // =============================================================================
       // DEBUG
       // =============================================================================
 
-      /**
-       * @brief Log all tracked scrolls to debug log
-       */
+      /** @brief Log all tracked scrolls to debug log */
       void LogAllScrolls() const;
 
    private:
@@ -257,55 +141,24 @@ namespace Huginn::Scroll
       // INTERNAL HELPERS
       // =============================================================================
 
-      /**
-       * @brief Scan player inventory for scrolls
-       * @return Vector of (ScrollItem*, count) pairs
-       * @note Single traversal via GetInventoryChanges()->entryList
-       */
+      // Scan player inventory for scrolls (single GetInventory traversal).
       [[nodiscard]] std::vector<std::pair<RE::ScrollItem*, int32_t>> ScanPlayerInventory() const;
       [[nodiscard]] std::vector<std::pair<RE::ScrollItem*, int32_t>> ScanPlayerInventory(RE::PlayerCharacter* player) const;
       // Build the scroll list from an already-scanned inventory map (v0.18 G).
       // Non-scroll entries in the map are ignored.
       [[nodiscard]] std::vector<std::pair<RE::ScrollItem*, int32_t>> ScanPlayerInventory(const Util::InventoryItemMap& inventory) const;
 
-      // Shared delta-diff tail for both RefreshCounts overloads.
+      // Shared delta-diff tail for the RefreshCounts overloads.
       std::vector<ScrollChangeEvent> RefreshCountsFromScan(
          const std::vector<std::pair<RE::ScrollItem*, int32_t>>& currentInventory);
 
-      /**
-       * @brief Add scroll to registry
-       * @param scroll The scroll to add
-       * @param count Current inventory count
-       */
+      // Add scroll to registry. Assumes m_mutex held by caller.
       void AddScroll(RE::ScrollItem* scroll, int32_t count);
 
-      /**
-       * @brief Remove scroll from registry by FormID
-       * @param formID The form ID to remove
-       * @return true if removed, false if not found
-       * @note Uses swap-remove pattern for O(1) deletion
-       */
+      // Remove scroll by FormID (swap-pop). Assumes m_mutex held by caller.
       bool RemoveScroll(RE::FormID formID);
 
-      // =============================================================================
-      // STORAGE
-      // =============================================================================
-
-      // Dual-index storage (mirrors ItemRegistry/SpellRegistry pattern)
-      // - Vector for iteration and cache-friendly access
-      // - Map for O(1) FormID lookup
-      std::vector<InventoryScroll> m_scrolls;
-      std::unordered_map<RE::FormID, size_t> m_formIDIndex;
-
-      // Scroll classifier instance
+      // Scroll classifier instance (storage/index/mutex/isLoading live in the base).
       ScrollClassifier m_classifier;
-
-      // Thread safety (v0.7.12)
-      // Protects m_scrolls and m_formIDIndex from concurrent access
-      // Readers (render thread) use shared_lock, writers (update thread) use unique_lock
-      mutable std::shared_mutex m_mutex;
-
-      // Loading state flag (M3 v0.7.21: atomic for thread-safe access)
-      std::atomic<bool> m_isLoading{false};
    };
 }
