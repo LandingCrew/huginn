@@ -88,8 +88,7 @@ namespace Huginn::Spell
       std::unique_lock lock(m_mutex);
 
       // Clear existing data
-      m_spells.clear();
-      m_formIDIndex.clear();
+      ClearStoreLocked();
 
       // Classify and add each spell (AddSpell assumes lock is held by caller)
       for (auto* spell : playerSpells) {
@@ -98,7 +97,7 @@ namespace Huginn::Spell
 
       // Set favorited status for newly added spells
       size_t favoritedCount = 0;
-      for (auto& spell : m_spells) {
+      for (auto& spell : m_entries) {
       if (favoritedSpells.contains(spell.formID)) {
         spell.isFavorited = true;
         favoritedCount++;
@@ -106,7 +105,7 @@ namespace Huginn::Spell
       }
 
       logger::info("Spell registry built: {} spells registered ({} favorited)"sv,
-      m_spells.size(), favoritedCount);
+      m_entries.size(), favoritedCount);
    }
 
    bool SpellRegistry::AddNewSpell(RE::SpellItem* spell)
@@ -157,9 +156,7 @@ namespace Huginn::Spell
       }
 
       // Add to registry (fast in-memory operations only)
-      size_t index = m_spells.size();
-      m_spells.push_back(spellData);
-      m_formIDIndex[formID] = index;
+      PushEntryLocked(std::move(spellData), formID);
       }
 
       logger::info("Dynamically added new spell: {} ({:08X})"sv, spell->GetName(), spell->GetFormID());
@@ -234,17 +231,15 @@ namespace Huginn::Spell
       // inserted while we were classifying outside the lock.
       for (auto& data : classified) {
       if (m_formIDIndex.contains(data.formID)) continue;
-      const size_t index = m_spells.size();
       const RE::FormID formID = data.formID;
-      m_spells.push_back(std::move(data));
-      m_formIDIndex[formID] = index;
+      PushEntryLocked(std::move(data), formID);
       newSpellsAdded++;
       }
 
       // STEP 2: Remove spells no longer known (registry -> current)
       std::vector<RE::FormID> toRemove;
-      toRemove.reserve(m_spells.size() / 10);  // Optimize: estimate ~10% removal rate
-      for (const auto& spell : m_spells) {
+      toRemove.reserve(m_entries.size() / 10);  // Optimize: estimate ~10% removal rate
+      for (const auto& spell : m_entries) {
       if (!currentFormIDs.contains(spell.formID)) {
         toRemove.push_back(spell.formID);
       }
@@ -259,7 +254,7 @@ namespace Huginn::Spell
 
       if (newSpellsAdded > 0 || spellsRemoved > 0) {
       logger::info("Reconciliation: +{} spell(s), -{} spell(s), total: {}"sv,
-        newSpellsAdded, spellsRemoved, m_spells.size());
+        newSpellsAdded, spellsRemoved, m_entries.size());
       }
 
       // E2 (v0.7.21): Clear loading flag BEFORE calling RefreshFavorites
@@ -302,7 +297,7 @@ namespace Huginn::Spell
       size_t changesCount = 0;
 
       // Update favorited status for all tracked spells
-      for (auto& spell : m_spells) {
+      for (auto& spell : m_entries) {
       bool wasFavorited = spell.isFavorited;
       bool isFavorited = currentFavorites.contains(spell.formID);
 
@@ -332,30 +327,17 @@ namespace Huginn::Spell
       return nullptr;
       }
 
-      return &m_spells[it->second];
+      return &m_entries[it->second];
    }
 
    size_t SpellRegistry::GetSpellCountByType(SpellType type) const
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      return std::ranges::count_if(m_spells, [type](const auto& spell) {
-      return spell.type == type;
-      });
+      return CountMatching([type](const SpellData& spell) { return spell.type == type; });
    }
 
    std::vector<const SpellData*> SpellRegistry::GetFavoritedSpells() const
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<const SpellData*> result;
-      result.reserve(m_spells.size() / 8);  // Rough estimate
-
-      for (const auto& spell : m_spells) {
-      if (spell.isFavorited) {
-        result.push_back(&spell);
-      }
-      }
-
-      return result;
+      return Collect([](const SpellData& spell) { return spell.isFavorited; });
    }
 
    bool SpellRegistry::IsFavorited(RE::FormID formID) const
@@ -364,26 +346,14 @@ namespace Huginn::Spell
       return spell ? spell->isFavorited : false;
    }
 
-   size_t SpellRegistry::GetSpellCount() const
-   {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      return m_spells.size();
-   }
-
-   std::vector<SpellData> SpellRegistry::GetAllSpells() const
-   {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      return m_spells;  // Returns copy for thread safety
-   }
-
    void SpellRegistry::LogAllSpells() const
    {
       std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      logger::info("=== Spell Registry ({} spells) ==="sv, m_spells.size());
+      logger::info("=== Spell Registry ({} spells) ==="sv, m_entries.size());
 
       // Group spells by type for organized logging
       std::map<SpellType, std::vector<const SpellData*>> spellsByType;
-      for (const auto& spell : m_spells) {
+      for (const auto& spell : m_entries) {
       spellsByType[spell.type].push_back(&spell);
       }
 
@@ -567,40 +537,25 @@ namespace Huginn::Spell
       return;
       }
 
-      // Add to registry
-      size_t index = m_spells.size();
-      m_spells.push_back(spellData);
-      m_formIDIndex[spellData.formID] = index;
-
+      // Add to registry via the shared core primitive (formID == spellData.formID).
       logger::trace("Registered spell: {}"sv, spellData.ToString());
+      PushEntryLocked(std::move(spellData), formID);
    }
 
    bool SpellRegistry::RemoveSpell(RE::FormID formID)
    {
       // NOTE: Assumes m_mutex is already held by caller (v0.7.12 - thread safety)
-      // Find the spell in the index
       auto it = m_formIDIndex.find(formID);
       if (it == m_formIDIndex.end()) {
       return false;  // Spell not found
       }
 
-      size_t indexToRemove = it->second;
-      std::string spellName = m_spells[indexToRemove].name;
+      // Capture name before the swap-pop moves the entry.
+      const std::string spellName = m_entries[it->second].name;
 
-      // Remove from vector by swapping with last element
-      if (indexToRemove < m_spells.size() - 1) {
-      // Swap with last element
-      std::swap(m_spells[indexToRemove], m_spells.back());
-
-      // Update the index of the swapped spell
-      m_formIDIndex[m_spells[indexToRemove].formID] = indexToRemove;
+      if (!RemoveEntryLocked(formID)) {  // swap-pop in the shared core
+      return false;
       }
-
-      // Remove last element
-      m_spells.pop_back();
-
-      // Remove from FormID index
-      m_formIDIndex.erase(formID);
 
       logger::info("Removed spell: {} ({:08X})"sv, spellName, formID);
 
