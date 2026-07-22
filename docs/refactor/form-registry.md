@@ -69,14 +69,28 @@ Weapon's dual store stays as two `FormRegistry` instantiations — not folded fu
 
 ## Migration order (each step builds + is independently PR-able)
 
-1. **Core + Scroll** (this doc's proof): land `FormRegistry.h`; migrate `ScrollRegistry` —
-   storage/remove/count/getall/foreach to the base, accessor farm to `QueryTopK`/`FindBest`.
-   Public method names kept as thin forwarders so **zero call sites change**.
-2. **Counted mixin + Scroll+Item reconcile/refresh** — the delta-diff twin. This is where the
-   Item-vs-Scroll drift (scratch-map, count-sync, override reload) gets fixed by construction.
-3. **Item accessor farm** — the ~25 potion/soul-gem accessors to `QueryTopK`/`FindBest`.
-4. **Spell** — storage + `GetByType`/`GetAll`/`ForEach`; keeps favorites + event-sink locally.
-5. **Weapon** — two base instantiations; accessor farm last.
+1. ✅ **Core + Scroll** (`63b1259`): landed `FormRegistry.h`; migrated `ScrollRegistry` —
+   storage/remove/count/getall/foreach to the base, 13-method accessor farm to
+   `QueryTopK`/`FindBest`. Public names kept as forwarders → zero call-site churn. −314 lines.
+2. ✅ **Item** (`25da293`): storage + the ~25-method potion/soul-gem accessor farm; soul-gem
+   two-form scan/fill-state/two-tier refresh kept local. −440 lines.
+3. ✅ **Spell** (`ace3c1e`): storage + `GetSpellCountByType`/`GetFavoritedSpells`; favorites,
+   equip-event sink, `AddNewSpell`, classify-outside-lock reconcile kept local. −71 lines.
+4. ⏳ **Weapon** — DEFERRED / needs a design decision. Two stores (`m_weapons`, `m_ammo`)
+   share **one** `m_mutex` + one `m_isLoading`; the combined weapon+ammo scan locks once and
+   touches both. Two `FormRegistry` instantiations would give two independent locks (a
+   granularity change to that combined path), so migrating Weapon requires either that change
+   or teaching the core to accept an externally-owned shared mutex. Left as-is for now.
+
+**Delivered:** 3/4 registries, −646 net lines, the Item↔Scroll counted-pair drift the critique
+called out now structurally impossible (both share one delta-diff/reconcile path via the core).
+No cosave-format change → landable during the soak (unlike addendum finding #15). Needs an
+in-game pass before merge per the usual workflow.
+
+**The counted-mixin (planned step 2) was folded into steps 1–3 directly:** each counted
+registry keeps its own `RefreshCountsFromScan`/reconcile locally against the base primitives
+rather than through a separate `CountedFormRegistry` layer. That layer is still worth extracting
+if a 5th counted registry appears, but with only Item+Scroll it earned its keep as-is.
 
 ## Invariants preserved (must stay true through every step)
 
