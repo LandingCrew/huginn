@@ -266,14 +266,27 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
     ctx.rawAssignments = slotAllocator.AllocateSlotsForPage(
         ctx.displayPageIndex, ctx.scoredCandidates, ctx.overrides, ctx.playerState, ctx.worldState);
 
-    // If an off-thread page switch landed since the snapshot (Wheeler callback,
-    // page-cycle keys, `hg page`), abandon before locking. SlotLocker is keyed by
-    // slot index only, so applying locks for THIS page now would pin its content
-    // into the new page's slots: the switch's own UnlockAll already fired, and
-    // next tick's ResolveDisplayPage sees the allocator already moved, so it won't
-    // UnlockAll again — the stale locks would survive for the lock duration. The
-    // switch set m_pageChanged, so the next tick re-runs cleanly on the new page.
+    // If an off-thread page mutation landed since the snapshot (Wheeler callback,
+    // page-cycle keys, `hg page`, or a full SlotAllocator::Reset), abandon before
+    // locking. SlotLocker is keyed by slot index only, so applying locks for THIS
+    // page now would pin its content into the new page's slots: the switch's own
+    // UnlockAll already fired, and next tick's ResolveDisplayPage sees the allocator
+    // already moved, so it won't UnlockAll again — the stale locks would survive for
+    // the lock duration.
+    //
+    // The abandoned tick is NOT side-effect-free (EvaluateOverrides above advanced
+    // hysteresis; CheckHashSkip already committed the hash), so we OWN the re-run
+    // via MarkPageDirty rather than trusting the mutator to have raised the
+    // page-dirty flag — SlotAllocator::Reset() notably does not.
+    //
+    // NOTE: this check is not atomic with ApplyLocks; a switch landing in the few
+    // instructions between them still leaks one page-blind lock. That shrinks the
+    // window from ~1 ms to a handful of instructions — the airtight fix is
+    // page-tagged locks, not worth it here.
     if (slotAllocator.GetCurrentPage() != ctx.displayPageIndex) {
+        slotAllocator.MarkPageDirty();  // guarantee the re-run; don't infer it
+        logger::debug("[Pipeline] Page changed mid-tick ({} -> {}); abandoning tick to avoid stale locks"sv,
+            ctx.displayPageIndex, slotAllocator.GetCurrentPage());
         return false;
     }
 
@@ -387,19 +400,20 @@ bool PipelineCoordinator::ResolveDisplayPage(PipelineContext& ctx)
     // warn-spamming ~10/s and pinning pageResynced=true (hash-skip disabled). A
     // transient over-range desire is reachable while SettingsReloader shrinks
     // pages before its wheels are rebuilt, so guard rather than trust the caller.
+    // Dedup the out-of-range warn across ticks, re-armed on the falling edge (a
+    // valid page seen) so a page that goes bad again later re-logs.
+    static int s_lastBadPage = -1;
     bool changed = false;
     if (desiredPage >= 0 && desiredPage < static_cast<int>(pageCount)) {
         const size_t before = slotAllocator.GetCurrentPage();
         slotAllocator.SetCurrentPage(static_cast<size_t>(desiredPage));
         changed = slotAllocator.GetCurrentPage() != before;
-    } else if (desiredPage >= 0) {
+        s_lastBadPage = -1;  // re-arm
+    } else if (desiredPage >= 0 && desiredPage != s_lastBadPage) {
         // Keep the ignored out-of-range request diagnosable without per-tick spam.
-        static int s_lastBadPage = -1;
-        if (desiredPage != s_lastBadPage) {
-            logger::debug("[Pipeline] Desired display page {} out of range (pages={}), ignoring"sv,
-                desiredPage, pageCount);
-            s_lastBadPage = desiredPage;
-        }
+        logger::debug("[Pipeline] Desired display page {} out of range (pages={}), ignoring"sv,
+            desiredPage, pageCount);
+        s_lastBadPage = desiredPage;
     }
 
     // Snapshot the resolved page for the whole tick. Both slot count and name are
