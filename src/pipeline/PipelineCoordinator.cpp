@@ -283,10 +283,14 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
     // instructions between them still leaks one page-blind lock. That shrinks the
     // window from ~1 ms to a handful of instructions — the airtight fix is
     // page-tagged locks, not worth it here.
-    if (slotAllocator.GetCurrentPage() != ctx.displayPageIndex) {
+    const size_t livePage = slotAllocator.GetCurrentPage();  // read once: compare AND log
+    if (livePage != ctx.displayPageIndex) {
         slotAllocator.MarkPageDirty();  // guarantee the re-run; don't infer it
+        // Counter surfaces in the info-level [Soak] heartbeat, so the race path is
+        // observable on Release long-play runs (the debug line is Debug-only).
+        Telemetry::SoakMetrics::GetSingleton().RecordPageRaceBail();
         logger::debug("[Pipeline] Page changed mid-tick ({} -> {}); abandoning tick to avoid stale locks"sv,
-            ctx.displayPageIndex, slotAllocator.GetCurrentPage());
+            ctx.displayPageIndex, livePage);
         return false;
     }
 

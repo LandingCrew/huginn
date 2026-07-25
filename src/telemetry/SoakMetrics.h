@@ -43,6 +43,11 @@ namespace Huginn::Telemetry
         void RecordPipelineRun(std::size_t candidateCount, std::size_t displayedCount,
             bool overrideActive);
 
+        // A pipeline tick was abandoned because a page switch landed mid-tick
+        // (PipelineCoordinator::AllocateAndLock). Expected ~0; a nonzero heartbeat
+        // value means the display-page race path actually executes on this build.
+        void RecordPageRaceBail();
+
         // Called every update tick with the measured whole-tick duration (ms).
         // Rolls the window and emits the heartbeat when the interval elapses.
         void RecordTick(float tickMs, std::chrono::steady_clock::time_point now);
@@ -69,6 +74,7 @@ namespace Huginn::Telemetry
         std::atomic<uint32_t> m_ticks{0};
         std::atomic<uint32_t> m_recomputes{0};
         std::atomic<uint32_t> m_overrideRuns{0};
+        std::atomic<uint32_t> m_pageRaceBails{0};  // ticks abandoned to a mid-tick page switch
         std::atomic<uint64_t> m_tickSumMicros{0};
         std::atomic<uint32_t> m_tickPeakMicros{0};
     };

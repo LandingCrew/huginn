@@ -41,6 +41,11 @@ namespace Huginn::Telemetry
         Huginn_PLOT("Huginn/Displayed", static_cast<int64_t>(displayedCount));
     }
 
+    void SoakMetrics::RecordPageRaceBail()
+    {
+        m_pageRaceBails.fetch_add(1, std::memory_order_relaxed);
+    }
+
     void SoakMetrics::RecordTick(float tickMs, std::chrono::steady_clock::time_point now)
     {
         const int64_t nowTicks = now.time_since_epoch().count();
@@ -82,6 +87,7 @@ namespace Huginn::Telemetry
         const uint32_t ticks = m_ticks.exchange(0, std::memory_order_relaxed);
         const uint32_t recomputes   = m_recomputes.exchange(0, std::memory_order_relaxed);
         const uint32_t overrideRuns = m_overrideRuns.exchange(0, std::memory_order_relaxed);
+        const uint32_t pageBails    = m_pageRaceBails.exchange(0, std::memory_order_relaxed);
         const uint64_t sumMicros    = m_tickSumMicros.exchange(0, std::memory_order_relaxed);
         const uint32_t peakMicros   = m_tickPeakMicros.exchange(0, std::memory_order_relaxed);
 
@@ -110,10 +116,10 @@ namespace Huginn::Telemetry
 
         logger::info(
             "[Soak] up={}h{:02}m{:02}s | equips hit={} near={} miss={} novel={} accept={} | "
-            "recompute={}/{} ticks override={} | learn items={} trains={} | tick avg={:.3f} peak={:.3f} ms"sv,
+            "recompute={}/{} ticks override={} pageBail={} | learn items={} trains={} | tick avg={:.3f} peak={:.3f} ms"sv,
             upH, upM, upS,
             hit, near_, miss, novel, acceptStr,
-            recomputes, ticks, overrideRuns,
+            recomputes, ticks, overrideRuns, pageBails,
             fqlItems, fqlTrains,
             avgMs, peakMs);
 
