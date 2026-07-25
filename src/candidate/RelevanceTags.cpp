@@ -90,6 +90,13 @@ namespace Huginn::Candidate
         if (targets.HasInjuredFollower()) {
             tags |= RelevanceTag::AllyInjured;
         }
+        // Enemy casting — drives the ward / Resist Magic subtext. Same
+        // TargetCollection flag ContextRuleEngine uses for wardWeight, and
+        // anyCasting is in GameState's hash, so the transition reliably re-runs the
+        // pipeline. (Revived here rather than left as a dead label — #10 review.)
+        if (targets.cachedAnyCasting) {
+            tags |= RelevanceTag::EnemyCasting;
+        }
 
         // Equipment-based tags
         if (player.IsWeaponChargeLow()) {

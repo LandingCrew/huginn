@@ -195,7 +195,7 @@ namespace Huginn::Candidate
 
             ItemCandidate candidate = ItemCandidate::FromInventoryItem(invItem);
 
-            // Set relevance tags (used by filters)            // Stage 1g: baseRelevance removed - now computed by ContextRuleEngine
+            // Stage 1g: baseRelevance removed - now computed by ContextRuleEngine
             // Stage 1g: preference multipliers removed - can be added to ContextWeightSettings if needed
 
             out.push_back(std::move(candidate));
@@ -235,7 +235,7 @@ namespace Huginn::Candidate
             if (invWeapon.isFavorited) ++favoritedCount;
             WeaponCandidate candidate = WeaponCandidate::FromInventoryWeapon(invWeapon);
 
-            // Set relevance tags (used by filters)            // Stage 1g: baseRelevance removed - now computed by ContextRuleEngine
+            // Stage 1g: baseRelevance removed - now computed by ContextRuleEngine
 
             out.push_back(std::move(candidate));
         });
@@ -270,7 +270,7 @@ namespace Huginn::Candidate
             ++count;
             AmmoCandidate candidate = AmmoCandidate::FromInventoryAmmo(invAmmo);
 
-            // Set relevance tags (used by filters)            // Stage 1g: baseRelevance removed - now computed by ContextRuleEngine
+            // Stage 1g: baseRelevance removed - now computed by ContextRuleEngine
 
             out.push_back(std::move(candidate));
         });
@@ -295,7 +295,7 @@ namespace Huginn::Candidate
             ++count;
             ScrollCandidate candidate = ScrollCandidate::FromInventoryScroll(invScroll);
 
-            // Set relevance tags (used by filters)            // Stage 1g: baseRelevance removed - now computed by ContextRuleEngine
+            // Stage 1g: baseRelevance removed - now computed by ContextRuleEngine
             // Stage 1g: scroll preference multiplier removed - can be added to ContextWeightSettings if needed
 
             out.push_back(std::move(candidate));
@@ -332,7 +332,8 @@ namespace Huginn::Candidate
 
         if (bestGem && bestGem->count > 0) {
             ItemCandidate candidate = ItemCandidate::FromInventoryItem(*bestGem);
-            candidate.sourceType = SourceType::SoulGem;            out.push_back(std::move(candidate));
+            candidate.sourceType = SourceType::SoulGem;
+            out.push_back(std::move(candidate));
         }
     }
 
@@ -342,7 +343,7 @@ namespace Huginn::Candidate
     // All relevance scoring has been moved to ContextRuleEngine.
     // The old Compute*Relevance() methods have been removed.
     // baseRelevance is no longer set in Gather methods - it's now computed
-    // by UtilityScorer::GetContextWeight() using ContextRuleEngine weights.
+    // by Context::WeightForCandidate() using ContextRuleEngine weights.
 
     // =========================================================================
     // DEBUG LOGGING

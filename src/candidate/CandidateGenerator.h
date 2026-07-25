@@ -8,10 +8,7 @@
 #include "learning/item/ItemRegistry.h"
 #include "weapon/WeaponRegistry.h"
 #include "scroll/ScrollRegistry.h"
-#include "state/WorldState.h"
-#include "state/PlayerActorState.h"
-#include "state/TargetActorState.h"
-#include "state/StateTypes.h"          // For HealthTrackingState, MagickaTrackingState, StaminaTrackingState
+#include "state/PlayerActorState.h"    // GenerateCandidates / Gather* take PlayerActorState
 #include <chrono>
 #include <memory>
 
@@ -55,14 +52,15 @@ namespace Huginn::Candidate
      *
      * PIPELINE (Stage 1g):
      * ```
-     * Registries → Gather → Tag (for filters) → Filter → Deduplicate → Output
-     *                                                                       ↓
-     *                                                    (Scored by UtilityScorer + ContextRuleEngine)
+     * Registries → Gather → Filter → Deduplicate → Output
+     *                                                  ↓
+     *                               (Scored by UtilityScorer + ContextRuleEngine)
      * ```
      *
-     * NOTE: As of Stage 1g, CandidateGenerator no longer computes relevance scores.
-     * All context weight scoring is now handled by ContextRuleEngine in UtilityScorer.
-     * CandidateGenerator only tags candidates with RelevanceTag for filter use.
+     * NOTE: CandidateGenerator computes neither relevance scores nor display tags.
+     * Context weight scoring lives in ContextRuleEngine (via UtilityScorer); the
+     * per-tick display relevance tags live in Candidate::ComputeRelevanceTags,
+     * called once by the pipeline (critique #10).
      *
      * USAGE:
      * ```cpp
@@ -71,8 +69,7 @@ namespace Huginn::Candidate
      *
      * // In update loop
      * generator.Update(deltaSeconds);
-     * auto candidates = generator.GenerateCandidates(world, player, targets, magicka,
-     *     healthTracking, magickaTracking, staminaTracking);
+     * auto candidates = generator.GenerateCandidates(player, magicka);
      * ```
      *
      * PERFORMANCE TARGET: <2ms per generation
@@ -241,7 +238,7 @@ namespace Huginn::Candidate
         // =========================================================================
         // All relevance scoring has been moved to ContextRuleEngine.
         // The Compute*Relevance() methods have been removed.
-        // Relevance is now computed by UtilityScorer::GetContextWeight().
+        // Context weight is computed by Context::WeightForCandidate().
     };
 
 }  // namespace Huginn::Candidate

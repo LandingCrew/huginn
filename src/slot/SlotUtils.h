@@ -279,7 +279,7 @@ namespace Huginn::Slot
         if (HasTag(tags, RT::TargetUndead))       return "Undead";
         if (HasTag(tags, RT::TargetDragon))       return "Dragon";
         if (HasTag(tags, RT::MultipleEnemies))    return "Outnumbered";
-        // (RT::EnemyCasting removed — never produced by ComputeRelevanceTags, #10)
+        if (HasTag(tags, RT::EnemyCasting))       return "Enemy Casting";
 
         // Favorited items get a label if nothing more specific applies
         if (assignment.candidate->IsFavorited())  return "Favorite";
