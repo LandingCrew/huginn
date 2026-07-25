@@ -26,7 +26,6 @@ namespace Huginn::Display
         const Override::OverrideCollection& overrides;
         const State::PlayerActorState& playerState;
         const State::WorldState& worldState;
-        bool hasUrgentOverride;
         std::chrono::steady_clock::time_point now;
     };
 
@@ -51,6 +50,12 @@ namespace Huginn::Display
 
         /// Coarse enable check — false skips this backend entirely.
         [[nodiscard]] virtual bool IsEnabled() const = 0;
+
+        /// The page this backend wants displayed, or -1 if it doesn't drive page
+        /// selection. The coordinator resolves the active page from these BEFORE
+        /// allocation so every backend renders one consistent page (see
+        /// PipelineCoordinator::ResolveDisplayPage). Default: no opinion.
+        [[nodiscard]] virtual int GetDesiredPage() const { return -1; }
     };
 
 }  // namespace Huginn::Display

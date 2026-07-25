@@ -11,8 +11,7 @@
 #include "slot/SlotLocker.h"
 #include "slot/SlotUtils.h"
 #include "input/EquipManager.h"
-#include "wheeler/WheelerClient.h"
-#include "wheeler/WheelerSettings.h"
+#include "wheeler/WheelerClient.h"  // debug-only: ValidateWheelState in UpdateDebugWidgets
 #include "learning/PipelineStateCache.h"
 #include "telemetry/SoakMetrics.h"
 #include "ui/DebugSettings.h"
@@ -300,25 +299,18 @@ void PipelineCoordinator::UpdateCaches(PipelineContext& ctx)
 void PipelineCoordinator::PushDisplay(PipelineContext& ctx)
 {
     Huginn_ZONE_NAMED("Pipeline::PushDisplay");
-    // Compute urgent override state for Wheeler gating
-    const auto* topOverride = ctx.overrides.GetTopOverride();
-    int autoFocusThreshold = Wheeler::WheelerSettings::GetSingleton().GetAutoFocusMinPriority();
-    ctx.hasUrgentOverride = topOverride && topOverride->priority >= autoFocusThreshold;
-
-    // If urgent override + wheel open, try to auto-focus to Huginn wheel
-    auto& wheelerClient = Wheeler::WheelerClient::GetSingleton();
-    if (ctx.hasUrgentOverride && wheelerClient.IsWheelOpen()) {
-        wheelerClient.TryUrgentAutoFocus(topOverride->priority);
-    }
-
     // The active page was already resolved before AllocateAndLock (see
     // ResolveDisplayPage), so ctx.assignments are lock-stabilized, visual-stated,
     // and cached for the SAME page every backend is about to render. No mid-tick
     // re-sync here: doing it after AllocateAndLock/UpdateCaches would push raw,
     // unlocked assignments and leave PipelineStateCache/EquipManager stale.
+    //
+    // Backend-specific concerns (Wheeler's urgent-override auto-focus, page
+    // ownership) now live in the backends themselves — the coordinator only
+    // drives the generic IDisplayBackend contract.
     Display::DisplayContext displayCtx{
         ctx.assignments, ctx.scoredCandidates, ctx.overrides,
-        ctx.playerState, ctx.worldState, ctx.hasUrgentOverride, ctx.now
+        ctx.playerState, ctx.worldState, ctx.now
     };
     for (auto* backend : s_displayBackends) {
         if (backend->IsEnabled()) backend->Push(displayCtx);
@@ -326,28 +318,34 @@ void PipelineCoordinator::PushDisplay(PipelineContext& ctx)
 }
 
 // -----------------------------------------------------------------------------
-// ResolveDisplayPage — Sync allocator's active page to Wheeler's managed page
+// ResolveDisplayPage — Sync allocator's active page to the display's desired page
 // -----------------------------------------------------------------------------
-// Runs BEFORE AllocateAndLock so the whole tick is page-consistent. Wheeler
-// normally drives the page via OnWheelStateChanged → SetCurrentPage on its
-// callback thread; this poll catches the case where the allocator page and
-// Wheeler's reported active page have drifted (callback missed / state-hash run
-// while Wheeler sits on another page). SetCurrentPage is a no-op unless the page
-// actually differs, and on a real change it clears stale locks — which is
-// correct here, before ApplyLocks runs for the new page.
+// Runs BEFORE AllocateAndLock so the whole tick is page-consistent. Asks each
+// enabled backend which page it wants (IDisplayBackend::GetDesiredPage) and takes
+// the first opinion — today only Wheeler drives the page (via its managed active
+// wheel); a second paged display could participate without touching this code.
+//
+// Wheeler normally drives the page via OnWheelStateChanged → SetCurrentPage on
+// its callback thread; this poll catches drift where the allocator page and the
+// backend's reported page diverge (callback missed / state-hash run while the
+// player sits on another page). SetCurrentPage is a no-op unless the page
+// actually differs, and on a real change it clears stale locks — correct here,
+// before ApplyLocks runs for the new page.
 
 bool PipelineCoordinator::ResolveDisplayPage()
 {
-    auto& wheelerClient = Wheeler::WheelerClient::GetSingleton();
-    if (!wheelerClient.IsConnected()) return false;
-
-    const int wheelerPage = wheelerClient.GetActiveManagedPage();
-    if (wheelerPage < 0) return false;
+    int desiredPage = -1;
+    for (auto* backend : s_displayBackends) {
+        if (!backend->IsEnabled()) continue;
+        const int p = backend->GetDesiredPage();
+        if (p >= 0) { desiredPage = p; break; }
+    }
+    if (desiredPage < 0) return false;
 
     auto& slotAllocator = Slot::SlotAllocator::GetSingleton();
-    if (static_cast<int>(slotAllocator.GetCurrentPage()) == wheelerPage) return false;
+    if (static_cast<int>(slotAllocator.GetCurrentPage()) == desiredPage) return false;
 
-    slotAllocator.SetCurrentPage(static_cast<size_t>(wheelerPage));
+    slotAllocator.SetCurrentPage(static_cast<size_t>(desiredPage));
     return true;
 }
 

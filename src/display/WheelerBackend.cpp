@@ -15,6 +15,15 @@ namespace Huginn::Display
         return Wheeler::WheelerClient::GetSingleton().IsConnected();
     }
 
+    int WheelerBackend::GetDesiredPage() const
+    {
+        // Wheeler owns page selection when connected: the coordinator syncs the
+        // allocator to whichever managed page the player is viewing, before
+        // allocation. -1 when disconnected / not on a managed page (no opinion).
+        auto& wheelerClient = Wheeler::WheelerClient::GetSingleton();
+        return wheelerClient.IsConnected() ? wheelerClient.GetActiveManagedPage() : -1;
+    }
+
     void WheelerBackend::Push(const DisplayContext& ctx)
     {
         Huginn_ZONE_NAMED("Display::Wheeler");
@@ -22,8 +31,21 @@ namespace Huginn::Display
         auto& slotAllocator = Slot::SlotAllocator::GetSingleton();
         auto& slotLocker = Slot::SlotLocker::GetSingleton();
 
+        // Urgent-override handling is Wheeler-local: an override at/above the
+        // auto-focus threshold both pulls focus to the Huginn wheel and lets the
+        // push through even while the wheel is open (so an open wheel updates).
+        const auto* topOverride = ctx.overrides.GetTopOverride();
+        const int autoFocusThreshold =
+            Wheeler::WheelerSettings::GetSingleton().GetAutoFocusMinPriority();
+        const bool hasUrgentOverride =
+            topOverride && topOverride->priority >= autoFocusThreshold;
+
+        if (hasUrgentOverride && wheelerClient.IsWheelOpen()) {
+            wheelerClient.TryUrgentAutoFocus(topOverride->priority);
+        }
+
         if (!wheelerClient.HasRecommendationWheel() ||
-            (wheelerClient.IsWheelOpen() && !ctx.hasUrgentOverride)) {
+            (wheelerClient.IsWheelOpen() && !hasUrgentOverride)) {
             return;
         }
 

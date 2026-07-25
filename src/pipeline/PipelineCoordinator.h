@@ -48,7 +48,6 @@ namespace Huginn::Pipeline
         Override::OverrideCollection overrides;
         Slot::SlotAssignments rawAssignments;
         Slot::SlotAssignments assignments;
-        bool hasUrgentOverride = false;
 
         /// Reset all fields for reuse, preserving allocated container capacity.
         void Reset()
@@ -74,7 +73,6 @@ namespace Huginn::Pipeline
             overrides.activeOverrides.clear();
             rawAssignments.clear();
             assignments.clear();
-            hasUrgentOverride = false;
         }
     };
 
