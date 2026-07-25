@@ -80,7 +80,7 @@ namespace Huginn::Display
             //   Override > Lock Timer > Wildcard (handled in Wheeler) > Explanation
             for (auto& assignment : pageAssignments) {
                 if (stConfig.showOverrideLabel && assignment.IsOverride()) {
-                    assignment.subtextLabel = Slot::DeriveExplanationLabel(assignment);
+                    assignment.subtextLabel = Slot::DeriveExplanationLabel(assignment, ctx.relevanceTags);
                     continue;
                 }
                 if (stConfig.showLockTimerLabel && page == currentPage
@@ -99,7 +99,7 @@ namespace Huginn::Display
                 // Wildcard label — handled by WheelerClient (uses INI text)
                 if (stConfig.showExplanationLabel && !assignment.IsWildcard()
                     && !assignment.IsEmpty()) {
-                    assignment.subtextLabel = Slot::DeriveExplanationLabel(assignment);
+                    assignment.subtextLabel = Slot::DeriveExplanationLabel(assignment, ctx.relevanceTags);
                 }
                 if (assignment.IsEmpty()) {
                     if (assignment.classification != Slot::SlotClassification::Regular) {

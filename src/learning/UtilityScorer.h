@@ -138,10 +138,9 @@ namespace Huginn::Scoring
         // contract — rank scaling corrects order, not membership).
         void ApplyFavoritesRankScaling(ScoredCandidateList& scored);
 
-        // Stage 1f: Extract relevant weight from ContextWeightMap for a candidate
-        [[nodiscard]] float GetContextWeight(
-            const Candidate::CandidateVariant& candidate,
-            const Context::ContextWeightMap& weights) const;
+        // Stage 1f: context→candidate weight mapping moved to
+        // Context::WeightForCandidate (context/ContextWeightForCandidate.h) — see
+        // architecture-critique #10. UtilityScorer just calls it.
 
         // Stage 2b: Compute confidence-adaptive lambda for multiplicative formula
         [[nodiscard]] float ComputeAdaptiveLambda(float confidence) const;

@@ -6,6 +6,7 @@
 #include "state/WorldState.h"
 #include "state/StateTypes.h"
 #include "learning/ScoredCandidate.h"
+#include "candidate/CandidateTypes.h"  // Candidate::RelevanceTag (per-tick display tags)
 #include "override/OverrideConditions.h"
 #include "slot/SlotAssignment.h"
 
@@ -49,6 +50,10 @@ namespace Huginn::Pipeline
         Slot::SlotAssignments rawAssignments;
         Slot::SlotAssignments assignments;
 
+        // Per-tick display relevance tags (Wheeler subtext label only), computed
+        // once by ScoreCandidates rather than copied onto every candidate (#10).
+        Candidate::RelevanceTag contextRelevanceTags = Candidate::RelevanceTag::None;
+
         // Display page resolved once per tick by ResolveDisplayPage, then used by
         // allocation, caches, and push so the WHOLE tick stays on one page even if
         // an off-thread page switch (Wheeler callback / page-cycle keys / console)
@@ -83,6 +88,7 @@ namespace Huginn::Pipeline
             overrides.activeOverrides.clear();
             rawAssignments.clear();
             assignments.clear();
+            contextRelevanceTags = Candidate::RelevanceTag::None;
             displayPageIndex = 0;
             displayPageCount = 0;
             displaySlotCount = 0;
