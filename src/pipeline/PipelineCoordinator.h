@@ -135,14 +135,18 @@ namespace Huginn::Pipeline
         // Pipeline steps (called in order by RunPipeline)
         void GatherState(PipelineContext& ctx);
         /// Sync the allocator's active page to the display's desired page BEFORE
-        /// allocation, so allocation/locks/caches/push are all consistent for one
-        /// page. Returns true if the page changed (folds into the skip decision).
-        bool ResolveDisplayPage();
+        /// allocation and snapshot it onto ctx, so allocation/locks/caches/push
+        /// are all consistent for one page. Returns true if the page changed
+        /// (folds into the skip decision).
+        bool ResolveDisplayPage(PipelineContext& ctx);
         bool CheckHashSkip(PipelineContext& ctx, bool pageChanged);
         void LogStateTransition(PipelineContext& ctx);
         void EnrichElementalDamage(PipelineContext& ctx);
         void ScoreCandidates(PipelineContext& ctx);
-        void AllocateAndLock(PipelineContext& ctx);
+        /// Allocate + lock + visual states. Returns false (abandon the tick) if an
+        /// off-thread page switch landed after ResolveDisplayPage's snapshot —
+        /// locking the stale page would leak page-blind locks across the switch.
+        bool AllocateAndLock(PipelineContext& ctx);
         void UpdateCaches(PipelineContext& ctx);
         void PushDisplay(PipelineContext& ctx);
         void LogRecommendations(PipelineContext& ctx);

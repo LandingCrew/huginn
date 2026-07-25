@@ -179,7 +179,13 @@ namespace Huginn::Scoring
             }
         }
 
-        // Apply wildcards for exploration
+        // Apply wildcards for exploration.
+        // TODO(page-consistency): the legacy overload reads SlotAllocator::GetSlotCount()
+        // live, so on a page switch that lands mid-tick it can use the new page's slot
+        // count while the pipeline allocates the snapshotted page (differing slot counts
+        // are the only trigger). Thread the pipeline's ctx.displaySlotCount in via the
+        // 2-arg ApplyWildcards(scored, slotCount) to make wildcard eligibility match the
+        // tick's page. Minor, one-tick, self-correcting — hence not done here.
         m_wildcardMgr.ApplyWildcards(scored);
 
         return scored;

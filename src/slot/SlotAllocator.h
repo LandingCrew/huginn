@@ -88,6 +88,12 @@ namespace Huginn::Slot
 
         /// Allocate scored candidates to slots for the CURRENT page.
         ///
+        /// DEAD (no production callers): the pipeline pins the resolved page and
+        /// calls AllocateSlotsForPage directly. Kept — with the 1-arg overload
+        /// below, its only caller — as the legacy/test allocation entry point.
+        /// Prefer AllocateSlotsForPage(GetCurrentPage(), ...) so allocation and the
+        /// page snapshot can't diverge.
+        ///
         /// @param candidates     Scored candidates from UtilityScorer (sorted by utility)
         /// @param overrides      Active overrides from OverrideManager (already prioritized)
         /// @param player         Current player state (for context-aware decisions)
@@ -133,6 +139,9 @@ namespace Huginn::Slot
 
         /// Get all slot configurations for current page (returns copy)
         [[nodiscard]] std::vector<SlotConfig> GetSlotConfigs() const;
+
+        /// Get page name for a specific page index (returns copy). "Page" if OOR.
+        [[nodiscard]] std::string GetPageName(size_t pageIndex) const;
 
         /// Get page name for current page (returns copy)
         [[nodiscard]] std::string GetCurrentPageName() const;

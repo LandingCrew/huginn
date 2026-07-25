@@ -195,14 +195,18 @@ namespace Huginn::Slot
         return (*snap)[page].slots;
     }
 
-    std::string SlotAllocator::GetCurrentPageName() const
+    std::string SlotAllocator::GetPageName(size_t pageIndex) const
     {
         auto snap = GetConfigSnapshot();
-        const size_t page = m_currentPage.load();
-        if (page >= snap->size()) {
+        if (pageIndex >= snap->size()) {
             return "Page";
         }
-        return (*snap)[page].name;
+        return (*snap)[pageIndex].name;
+    }
+
+    std::string SlotAllocator::GetCurrentPageName() const
+    {
+        return GetPageName(m_currentPage.load());
     }
 
     // =========================================================================

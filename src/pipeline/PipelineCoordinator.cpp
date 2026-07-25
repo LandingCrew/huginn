@@ -84,7 +84,7 @@ bool PipelineCoordinator::RunPipeline(
     // allocator page via OnWheelStateChanged (which also raised pageChanged);
     // this catches a polled drift where that callback didn't fire, and folds
     // into the skip decision so a page-only change still forces a run.
-    const bool pageResynced = ResolveDisplayPage();
+    const bool pageResynced = ResolveDisplayPage(m_ctx);
 
     if (CheckHashSkip(m_ctx, pageChanged || pageResynced)) {
         return false;  // Hash unchanged, pipeline skipped
@@ -93,7 +93,11 @@ bool PipelineCoordinator::RunPipeline(
     LogStateTransition(m_ctx);
     EnrichElementalDamage(m_ctx);
     ScoreCandidates(m_ctx);
-    AllocateAndLock(m_ctx);
+    if (!AllocateAndLock(m_ctx)) {
+        // A page switch landed mid-tick; abandon rather than lock/cache/push the
+        // stale page. The switch raised m_pageChanged, so next tick re-runs on it.
+        return false;
+    }
     UpdateCaches(m_ctx);
     PushDisplay(m_ctx);
     LogRecommendations(m_ctx);
@@ -247,7 +251,7 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
 // AllocateAndLock — Override evaluation, slot allocation, locking, visual states
 // -----------------------------------------------------------------------------
 
-void PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
+bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
 {
     Huginn_ZONE_NAMED("Pipeline::AllocateAndLock");
     // Evaluate safety overrides (critical health, drowning, weapon charge)
@@ -262,6 +266,17 @@ void PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
     ctx.rawAssignments = slotAllocator.AllocateSlotsForPage(
         ctx.displayPageIndex, ctx.scoredCandidates, ctx.overrides, ctx.playerState, ctx.worldState);
 
+    // If an off-thread page switch landed since the snapshot (Wheeler callback,
+    // page-cycle keys, `hg page`), abandon before locking. SlotLocker is keyed by
+    // slot index only, so applying locks for THIS page now would pin its content
+    // into the new page's slots: the switch's own UnlockAll already fired, and
+    // next tick's ResolveDisplayPage sees the allocator already moved, so it won't
+    // UnlockAll again — the stale locks would survive for the lock duration. The
+    // switch set m_pageChanged, so the next tick re-runs cleanly on the new page.
+    if (slotAllocator.GetCurrentPage() != ctx.displayPageIndex) {
+        return false;
+    }
+
     // Apply slot locking for temporal stability. ApplyLocks also dedups
     // post-lock (locked slots can reintroduce an item the allocator placed
     // elsewhere), preferring to keep locked content. Lock-timer decay lives in
@@ -271,6 +286,7 @@ void PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
 
     // Compute visual state for each slot
     Slot::ComputeVisualStates(ctx.assignments, ctx.rawAssignments, slotLocker);
+    return true;
 }
 
 // -----------------------------------------------------------------------------
@@ -354,9 +370,10 @@ void PipelineCoordinator::PushDisplay(PipelineContext& ctx)
 // m_pageChanged and re-runs next tick). Returns true only if the page actually
 // changed, so a page-only change forces a run without pinning the skip gate open.
 
-bool PipelineCoordinator::ResolveDisplayPage()
+bool PipelineCoordinator::ResolveDisplayPage(PipelineContext& ctx)
 {
     auto& slotAllocator = Slot::SlotAllocator::GetSingleton();
+    const size_t pageCount = slotAllocator.GetPageCount();
 
     int desiredPage = -1;
     for (auto* backend : s_displayBackends) {
@@ -371,19 +388,28 @@ bool PipelineCoordinator::ResolveDisplayPage()
     // transient over-range desire is reachable while SettingsReloader shrinks
     // pages before its wheels are rebuilt, so guard rather than trust the caller.
     bool changed = false;
-    if (desiredPage >= 0 && desiredPage < static_cast<int>(slotAllocator.GetPageCount())) {
+    if (desiredPage >= 0 && desiredPage < static_cast<int>(pageCount)) {
         const size_t before = slotAllocator.GetCurrentPage();
         slotAllocator.SetCurrentPage(static_cast<size_t>(desiredPage));
         changed = slotAllocator.GetCurrentPage() != before;
+    } else if (desiredPage >= 0) {
+        // Keep the ignored out-of-range request diagnosable without per-tick spam.
+        static int s_lastBadPage = -1;
+        if (desiredPage != s_lastBadPage) {
+            logger::debug("[Pipeline] Desired display page {} out of range (pages={}), ignoring"sv,
+                desiredPage, pageCount);
+            s_lastBadPage = desiredPage;
+        }
     }
 
-    // Snapshot the resolved page for the whole tick. displaySlotCount is by-index
-    // (not GetSlotCount() off m_currentPage), so it matches the page that
-    // AllocateSlotsForPage(displayPageIndex) produces below.
-    m_ctx.displayPageIndex = slotAllocator.GetCurrentPage();
-    m_ctx.displayPageCount = slotAllocator.GetPageCount();
-    m_ctx.displaySlotCount = slotAllocator.GetSlotCount(m_ctx.displayPageIndex);
-    m_ctx.displayPageName  = slotAllocator.GetCurrentPageName();
+    // Snapshot the resolved page for the whole tick. Both slot count and name are
+    // by-index (not read off m_currentPage), so all four fields describe the same
+    // page even if a switch lands between these statements — and they match the
+    // page AllocateSlotsForPage(displayPageIndex) produces below.
+    ctx.displayPageIndex = slotAllocator.GetCurrentPage();
+    ctx.displayPageCount = pageCount;
+    ctx.displaySlotCount = slotAllocator.GetSlotCount(ctx.displayPageIndex);
+    ctx.displayPageName  = slotAllocator.GetPageName(ctx.displayPageIndex);
 
     return changed;
 }
@@ -402,9 +428,10 @@ void PipelineCoordinator::LogRecommendations(PipelineContext& ctx)
         g_utilityScorer->LogTopCandidates(ctx.scoredCandidates, dumpN,
             /*detail=*/true, /*force=*/true);
 
-        auto& slotAllocator = Slot::SlotAllocator::GetSingleton();
+        // Label with the tick's snapshot page, not a live re-read, so the dump
+        // matches the assignments it prints.
         logger::info("[Recs] Slots (page {} '{}'):"sv,
-            slotAllocator.GetCurrentPage(), slotAllocator.GetCurrentPageName());
+            ctx.displayPageIndex, ctx.displayPageName);
         for (const auto& a : ctx.assignments) {
             if (a.IsEmpty() || a.formID == 0) continue;
             logger::info("[Recs]   slot {}: {} ({:08X}) u={:.3f}{}"sv,
@@ -441,9 +468,8 @@ void PipelineCoordinator::UpdateDebugWidgets(PipelineContext& ctx)
     }
 
 #ifdef _DEBUG  // Stricter than NDEBUG: ImGui widgets only in MSVC debug builds
-    // Update UtilityScorer debug widget with per-slot page-aware data
+    // Update UtilityScorer debug widget with per-slot page-aware data (tick snapshot)
     {
-        auto& slotAllocator = Slot::SlotAllocator::GetSingleton();
         size_t coldStartCount = 0;
         for (const auto& sc : ctx.scoredCandidates) {
             if (sc.isColdStartBoosted) ++coldStartCount;
@@ -451,9 +477,9 @@ void PipelineCoordinator::UpdateDebugWidgets(PipelineContext& ctx)
         UI::UtilityScorerDebugWidget::GetSingleton().UpdateSlotData(
             ctx.scoredCandidates,
             ctx.assignments,
-            slotAllocator.GetCurrentPage(),
-            slotAllocator.GetCurrentPageName(),
-            slotAllocator.GetPageCount(),
+            ctx.displayPageIndex,
+            ctx.displayPageName,
+            ctx.displayPageCount,
             coldStartCount);
         if (g_usageMemory) {
             UI::UtilityScorerDebugWidget::GetSingleton().UpdateUsageMemory(
