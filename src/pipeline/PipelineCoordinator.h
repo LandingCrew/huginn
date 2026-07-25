@@ -122,6 +122,10 @@ namespace Huginn::Pipeline
 
         // Pipeline steps (called in order by RunPipeline)
         void GatherState(PipelineContext& ctx);
+        /// Sync the allocator's active page to the display's desired page BEFORE
+        /// allocation, so allocation/locks/caches/push are all consistent for one
+        /// page. Returns true if the page changed (folds into the skip decision).
+        bool ResolveDisplayPage();
         bool CheckHashSkip(PipelineContext& ctx, bool pageChanged);
         void LogStateTransition(PipelineContext& ctx);
         void EnrichElementalDamage(PipelineContext& ctx);

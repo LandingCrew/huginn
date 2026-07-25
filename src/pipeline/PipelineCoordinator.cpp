@@ -80,7 +80,14 @@ bool PipelineCoordinator::RunPipeline(
 
     GatherState(m_ctx);
 
-    if (CheckHashSkip(m_ctx, pageChanged)) {
+    // Resolve the display page up-front so allocation, caches, and push all
+    // operate on ONE page. A Wheeler page change usually already set the
+    // allocator page via OnWheelStateChanged (which also raised pageChanged);
+    // this catches a polled drift where that callback didn't fire, and folds
+    // into the skip decision so a page-only change still forces a run.
+    const bool pageResynced = ResolveDisplayPage();
+
+    if (CheckHashSkip(m_ctx, pageChanged || pageResynced)) {
         return false;  // Hash unchanged, pipeline skipped
     }
 
@@ -304,33 +311,44 @@ void PipelineCoordinator::PushDisplay(PipelineContext& ctx)
         wheelerClient.TryUrgentAutoFocus(topOverride->priority);
     }
 
-    // Sync display page with Wheeler's active managed page.
-    // If Wheeler is viewing a different page than the allocator, re-sync and
-    // re-allocate so all backends see consistent assignments.
-    Slot::SlotAssignments displayAssignments;
-    const Slot::SlotAssignments* assignmentsPtr = &ctx.assignments;
-
-    auto& slotAllocator = Slot::SlotAllocator::GetSingleton();
-    if (wheelerClient.IsConnected()) {
-        int wheelerPage = wheelerClient.GetActiveManagedPage();
-        int currentPage = static_cast<int>(slotAllocator.GetCurrentPage());
-        if (wheelerPage >= 0 && wheelerPage != currentPage) {
-            slotAllocator.SetCurrentPage(static_cast<size_t>(wheelerPage));
-            displayAssignments = slotAllocator.AllocateSlotsForPage(
-                static_cast<size_t>(wheelerPage), ctx.scoredCandidates,
-                ctx.overrides, ctx.playerState, ctx.worldState);
-            assignmentsPtr = &displayAssignments;
-        }
-    }
-
-    // Push to display backends
+    // The active page was already resolved before AllocateAndLock (see
+    // ResolveDisplayPage), so ctx.assignments are lock-stabilized, visual-stated,
+    // and cached for the SAME page every backend is about to render. No mid-tick
+    // re-sync here: doing it after AllocateAndLock/UpdateCaches would push raw,
+    // unlocked assignments and leave PipelineStateCache/EquipManager stale.
     Display::DisplayContext displayCtx{
-        *assignmentsPtr, ctx.scoredCandidates, ctx.overrides,
+        ctx.assignments, ctx.scoredCandidates, ctx.overrides,
         ctx.playerState, ctx.worldState, ctx.hasUrgentOverride, ctx.now
     };
     for (auto* backend : s_displayBackends) {
         if (backend->IsEnabled()) backend->Push(displayCtx);
     }
+}
+
+// -----------------------------------------------------------------------------
+// ResolveDisplayPage — Sync allocator's active page to Wheeler's managed page
+// -----------------------------------------------------------------------------
+// Runs BEFORE AllocateAndLock so the whole tick is page-consistent. Wheeler
+// normally drives the page via OnWheelStateChanged → SetCurrentPage on its
+// callback thread; this poll catches the case where the allocator page and
+// Wheeler's reported active page have drifted (callback missed / state-hash run
+// while Wheeler sits on another page). SetCurrentPage is a no-op unless the page
+// actually differs, and on a real change it clears stale locks — which is
+// correct here, before ApplyLocks runs for the new page.
+
+bool PipelineCoordinator::ResolveDisplayPage()
+{
+    auto& wheelerClient = Wheeler::WheelerClient::GetSingleton();
+    if (!wheelerClient.IsConnected()) return false;
+
+    const int wheelerPage = wheelerClient.GetActiveManagedPage();
+    if (wheelerPage < 0) return false;
+
+    auto& slotAllocator = Slot::SlotAllocator::GetSingleton();
+    if (static_cast<int>(slotAllocator.GetCurrentPage()) == wheelerPage) return false;
+
+    slotAllocator.SetCurrentPage(static_cast<size_t>(wheelerPage));
+    return true;
 }
 
 // -----------------------------------------------------------------------------
