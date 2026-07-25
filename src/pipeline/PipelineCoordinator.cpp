@@ -6,6 +6,7 @@
 #include "state/StateManager.h"
 #include "state/StateConstants.h"
 #include "candidate/CandidateGenerator.h"
+#include "candidate/RelevanceTags.h"     // Candidate::ComputeRelevanceTags (#10)
 #include "override/OverrideManager.h"
 #include "slot/SlotAllocator.h"
 #include "slot/SlotLocker.h"
@@ -239,9 +240,14 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
     Huginn_ZONE_NAMED("Pipeline::ScoreCandidates");
     auto& candidateGen = Candidate::CandidateGenerator::GetSingleton();
 
-    auto candidates = candidateGen.GenerateCandidates(
-        ctx.worldState, ctx.playerState, ctx.targets, ctx.currentMagicka,
+    // Per-tick display relevance tags (Wheeler subtext label). Computed once here
+    // — not stamped onto every candidate — and read by DeriveExplanationLabel via
+    // DisplayContext (critique #10).
+    ctx.contextRelevanceTags = Candidate::ComputeRelevanceTags(
+        ctx.worldState, ctx.playerState, ctx.targets,
         ctx.healthTracking, ctx.magickaTracking, ctx.staminaTracking);
+
+    auto candidates = candidateGen.GenerateCandidates(ctx.playerState, ctx.currentMagicka);
 
     ctx.scoredCandidates = g_utilityScorer->ScoreCandidates(
         candidates, ctx.currentState, ctx.playerState, ctx.targets, ctx.worldState);
@@ -359,6 +365,7 @@ void PipelineCoordinator::PushDisplay(PipelineContext& ctx)
         .pageCount = ctx.displayPageCount,
         .slotCount = ctx.displaySlotCount,
         .pageName = ctx.displayPageName,
+        .relevanceTags = ctx.contextRelevanceTags,
         .now = ctx.now,
     };
     for (auto* backend : s_displayBackends) {

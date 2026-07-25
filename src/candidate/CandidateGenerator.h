@@ -99,22 +99,18 @@ namespace Huginn::Candidate
         [[nodiscard]] bool IsInitialized() const noexcept { return m_initialized; }
 
         /**
-         * @brief Generate and filter candidates based on current game state.
+         * @brief Generate and filter candidates for the current player state.
          *
-         * @param world Current world state (environment, crosshair target)
          * @param player Current player state (vitals, buffs, equipment)
-         * @param targets Current target collection (enemies, allies)
          * @param currentMagicka Player's current magicka (for affordability check)
          * @return Vector of filtered candidates, ready for scoring
+         * @note Per-tick relevance tags (for the display label) are no longer
+         *       produced here — the pipeline computes them once via
+         *       Candidate::ComputeRelevanceTags (critique #10).
          */
         [[nodiscard]] std::vector<CandidateVariant> GenerateCandidates(
-            const State::WorldState& world,
             const State::PlayerActorState& player,
-            const State::TargetCollection& targets,
-            float currentMagicka,
-            const State::HealthTrackingState& healthTracking,
-            const State::MagickaTrackingState& magickaTracking,
-            const State::StaminaTrackingState& staminaTracking
+            float currentMagicka
         );
 
         /**
@@ -207,60 +203,37 @@ namespace Huginn::Candidate
         std::vector<CandidateVariant> m_gatherBuffer;
 
         // =========================================================================
-        // RELEVANCE TAGGING (based on game state)
-        // =========================================================================
-
-        /**
-         * @brief Compute relevance tags from current game state.
-         * These tags indicate WHY items might be relevant.
-         */
-        [[nodiscard]] RelevanceTag ComputeRelevanceTags(
-            const State::WorldState& world,
-            const State::PlayerActorState& player,
-            const State::TargetCollection& targets,
-            const State::HealthTrackingState& healthTracking,
-            const State::MagickaTrackingState& magickaTracking,
-            const State::StaminaTrackingState& staminaTracking
-        ) const;
-
-        // =========================================================================
         // CANDIDATE GATHERING (from registries)
         // =========================================================================
 
         void GatherSpellCandidates(
             std::vector<CandidateVariant>& out,
-            const State::PlayerActorState& player,
-            RelevanceTag contextTags
+            const State::PlayerActorState& player
         );
 
         void GatherPotionCandidates(
             std::vector<CandidateVariant>& out,
-            const State::PlayerActorState& player,
-            RelevanceTag contextTags
+            const State::PlayerActorState& player
         );
 
         void GatherWeaponCandidates(
             std::vector<CandidateVariant>& out,
-            const State::PlayerActorState& player,
-            RelevanceTag contextTags
+            const State::PlayerActorState& player
         );
 
         void GatherAmmoCandidates(
             std::vector<CandidateVariant>& out,
-            const State::PlayerActorState& player,
-            RelevanceTag contextTags
+            const State::PlayerActorState& player
         );
 
         void GatherScrollCandidates(
             std::vector<CandidateVariant>& out,
-            const State::PlayerActorState& player,
-            RelevanceTag contextTags
+            const State::PlayerActorState& player
         );
 
         void GatherSoulGemCandidates(
             std::vector<CandidateVariant>& out,
-            const State::PlayerActorState& player,
-            RelevanceTag contextTags
+            const State::PlayerActorState& player
         );
 
         // =========================================================================
