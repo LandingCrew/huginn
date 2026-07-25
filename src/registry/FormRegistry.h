@@ -11,6 +11,56 @@
 namespace Huginn::Registry
 {
    // =============================================================================
+   // LOCK-FREE QUERY HELPERS
+   // =============================================================================
+   // Operate on a caller-locked entry vector — the caller MUST already hold the
+   // owning mutex. FormRegistry's member queries below delegate to these, and
+   // registries that manage their own storage under a shared mutex (e.g.
+   // WeaponRegistry's weapon+ammo stores) call them directly. Returned pointers
+   // are valid only synchronously, until the next mutation of the vector.
+
+   // All entries matching pred, unsorted.
+   template<typename Entry, typename Pred>
+   [[nodiscard]] std::vector<const Entry*> CollectLocked(const std::vector<Entry>& entries, Pred&& pred)
+   {
+      std::vector<const Entry*> result;
+      result.reserve(entries.size() / 4 + 1);
+      for (const auto& entry : entries) {
+         if (pred(entry)) result.push_back(&entry);
+      }
+      return result;
+   }
+
+   // Top-K entries matching pred, sorted by key descending. O(n log k).
+   template<typename Entry, typename Pred, typename Key>
+   [[nodiscard]] std::vector<const Entry*> QueryTopKLocked(
+      const std::vector<Entry>& entries, Pred&& pred, Key&& key, size_t topK)
+   {
+      std::vector<const Entry*> result = CollectLocked(entries, std::forward<Pred>(pred));
+      Util::SortTopK(result, [&key](const Entry* a, const Entry* b) {
+         return key(*a) > key(*b);
+      }, topK);
+      return result;
+   }
+
+   // Single highest-key entry matching pred. O(n) single pass, no allocation.
+   template<typename Entry, typename Pred, typename Key>
+   [[nodiscard]] const Entry* FindBestLocked(const std::vector<Entry>& entries, Pred&& pred, Key&& key)
+   {
+      const Entry* best = nullptr;
+      std::invoke_result_t<Key, const Entry&> bestKey{};
+      for (const auto& entry : entries) {
+         if (!pred(entry)) continue;
+         auto k = key(entry);
+         if (!best || k > bestKey) {
+            best = &entry;
+            bestKey = k;
+         }
+      }
+      return best;
+   }
+
+   // =============================================================================
    // FORM REGISTRY CORE (architecture-critique finding #8)
    // =============================================================================
    // CRTP base for the FormID-keyed registries (spells, items, scrolls, weapons).
@@ -84,12 +134,7 @@ namespace Huginn::Registry
       [[nodiscard]] std::vector<const Entry*> Collect(Pred&& pred) const
       {
          std::shared_lock lock(m_mutex);
-         std::vector<const Entry*> result;
-         result.reserve(m_entries.size() / 4 + 1);
-         for (const auto& entry : m_entries) {
-            if (pred(entry)) result.push_back(&entry);
-         }
-         return result;
+         return CollectLocked(m_entries, std::forward<Pred>(pred));
       }
 
       // Top-K entries matching pred, sorted by key descending. O(n log k) via partial_sort.
@@ -97,15 +142,7 @@ namespace Huginn::Registry
       [[nodiscard]] std::vector<const Entry*> QueryTopK(Pred&& pred, Key&& key, size_t topK) const
       {
          std::shared_lock lock(m_mutex);
-         std::vector<const Entry*> result;
-         result.reserve(m_entries.size() / 4 + 1);
-         for (const auto& entry : m_entries) {
-            if (pred(entry)) result.push_back(&entry);
-         }
-         Util::SortTopK(result, [&key](const Entry* a, const Entry* b) {
-            return key(*a) > key(*b);
-         }, topK);
-         return result;
+         return QueryTopKLocked(m_entries, std::forward<Pred>(pred), std::forward<Key>(key), topK);
       }
 
       // Single highest-key entry matching pred. O(n) single pass, no allocation.
@@ -113,17 +150,7 @@ namespace Huginn::Registry
       [[nodiscard]] const Entry* FindBest(Pred&& pred, Key&& key) const
       {
          std::shared_lock lock(m_mutex);
-         const Entry* best = nullptr;
-         std::invoke_result_t<Key, const Entry&> bestKey{};
-         for (const auto& entry : m_entries) {
-            if (!pred(entry)) continue;
-            auto k = key(entry);
-            if (!best || k > bestKey) {
-               best = &entry;
-               bestKey = k;
-            }
-         }
-         return best;
+         return FindBestLocked(m_entries, std::forward<Pred>(pred), std::forward<Key>(key));
       }
 
       template<typename Pred>
