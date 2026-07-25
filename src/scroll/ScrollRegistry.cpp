@@ -2,7 +2,6 @@
 #include "Config.h"
 #include "util/ScopedTimer.h"
 #include "util/AtomicGuard.h"
-#include "util/AlgorithmUtils.h"
 #include "util/InventoryUtil.h"
 
 namespace Huginn::Scroll
@@ -31,17 +30,16 @@ namespace Huginn::Scroll
       std::unique_lock lock(m_mutex);
 
       // Clear existing data
-      m_scrolls.clear();
-      m_formIDIndex.clear();
+      ClearStoreLocked();
 
       // Reserve space for both containers to avoid reallocation/rehashing
       const size_t capacity = std::min(inventoryScrolls.size(), Config::MAX_TRACKED_ITEMS);
-      m_scrolls.reserve(capacity);
+      m_entries.reserve(capacity);
       m_formIDIndex.reserve(capacity);
 
       // Classify and add each scroll (AddScroll assumes lock is held by caller)
       for (const auto& [scroll, count] : inventoryScrolls) {
-      if (m_scrolls.size() >= Config::MAX_TRACKED_ITEMS) {
+      if (m_entries.size() >= Config::MAX_TRACKED_ITEMS) {
         logger::warn("Scroll registry reached max capacity ({}), some scrolls skipped"sv,
            Config::MAX_TRACKED_ITEMS);
         break;
@@ -49,8 +47,8 @@ namespace Huginn::Scroll
       AddScroll(scroll, count);
       }
 
-      logger::info("Scroll registry built: {} scrolls registered"sv, m_scrolls.size());
-      // m_isLoading cleared by LoadingGuard destructor
+      logger::info("Scroll registry built: {} scrolls registered"sv, m_entries.size());
+      // m_isLoading cleared by guard destructor
    }
 
    std::vector<ScrollChangeEvent> ScrollRegistry::RefreshCounts()
@@ -98,7 +96,7 @@ namespace Huginn::Scroll
       std::unique_lock lock(m_mutex);
 
       // Compare tracked scrolls with current counts
-      for (auto& invScroll : m_scrolls) {
+      for (auto& invScroll : m_entries) {
       auto it = currentCounts.find(invScroll.data.formID);
       int32_t currentCount = (it != currentCounts.end()) ? it->second : 0;
 
@@ -174,7 +172,7 @@ namespace Huginn::Scroll
       auto it = m_formIDIndex.find(formID);
       if (it == m_formIDIndex.end()) {
         // Check capacity limit
-        if (m_scrolls.size() >= Config::MAX_TRACKED_ITEMS) {
+        if (m_entries.size() >= Config::MAX_TRACKED_ITEMS) {
            logger::warn("Scroll registry at max capacity, cannot add new scrolls"sv);
            break;
         }
@@ -197,15 +195,15 @@ namespace Huginn::Scroll
         // it: correct counts outweigh an occasional missed reward. Do NOT "fix" the
         // missed reward by leaving count stale here — that reintroduces the spurious
         // load-time delta this sync exists to suppress.
-        m_scrolls[it->second].count = count;
+        m_entries[it->second].count = count;
       }
       }
 
       // STEP 2: Remove scrolls no longer in inventory
       std::vector<RE::FormID> toRemove;
-      toRemove.reserve(m_scrolls.size() / 10);  // Estimate ~10% removal rate
+      toRemove.reserve(m_entries.size() / 10);  // Estimate ~10% removal rate
 
-      for (const auto& invScroll : m_scrolls) {
+      for (const auto& invScroll : m_entries) {
       if (!currentFormIDs.contains(invScroll.data.formID)) {
         toRemove.push_back(invScroll.data.formID);
       }
@@ -218,267 +216,131 @@ namespace Huginn::Scroll
       }
 
       // STEP 3: Update previousCount snapshot for all remaining scrolls
-      for (auto& invScroll : m_scrolls) {
+      for (auto& invScroll : m_entries) {
       invScroll.previousCount = invScroll.count;
       }
 
       if (scrollsAdded > 0 || scrollsRemoved > 0) {
       logger::info("[ScrollRegistry] Reconciliation: +{} scroll(s), -{} scroll(s), total: {}"sv,
-        scrollsAdded, scrollsRemoved, m_scrolls.size());
+        scrollsAdded, scrollsRemoved, m_entries.size());
       }
 
-      // m_isLoading cleared by LoadingGuard destructor
+      // m_isLoading cleared by guard destructor
       return scrollsAdded + scrollsRemoved;
    }
 
+   // =============================================================================
+   // ACCESSORS — thin wrappers over the FormRegistry query primitives (finding #8)
+   // =============================================================================
+
    std::vector<const InventoryScroll*> ScrollRegistry::GetScrollsByType(ScrollType type) const
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<const InventoryScroll*> result;
-      result.reserve(m_scrolls.size() / 4);  // Rough estimate
-
-      for (const auto& scroll : m_scrolls) {
-      if (scroll.data.type == type && scroll.count > 0) {
-        result.push_back(&scroll);
-      }
-      }
-
-      return result;
+      return Collect([type](const InventoryScroll& s) {
+      return s.data.type == type && s.count > 0;
+      });
    }
-
-   // =============================================================================
-   // TYPE-BASED ACCESSORS
-   // =============================================================================
 
    std::vector<const InventoryScroll*> ScrollRegistry::GetDamageScrolls(size_t topK) const
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<const InventoryScroll*> result;
-      result.reserve(m_scrolls.size() / 4);
-
-      for (const auto& scroll : m_scrolls) {
-      if (scroll.data.type == ScrollType::Damage && scroll.count > 0) {
-        result.push_back(&scroll);
-      }
-      }
-
-      // OPTIMIZATION (v0.7.20 H4): partial_sort for top-K is O(n log k) vs O(n log n)
-      Util::SortTopK(result, [](const InventoryScroll* a, const InventoryScroll* b) {
-      return a->data.magnitude > b->data.magnitude;
-      }, topK);
-
-      return result;
+      return QueryTopK(
+      [](const InventoryScroll& s) { return s.data.type == ScrollType::Damage && s.count > 0; },
+      [](const InventoryScroll& s) { return s.data.magnitude; },
+      topK);
    }
 
    std::vector<const InventoryScroll*> ScrollRegistry::GetHealingScrolls(size_t topK) const
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<const InventoryScroll*> result;
-      result.reserve(m_scrolls.size() / 4);
-
-      for (const auto& scroll : m_scrolls) {
-      if (scroll.data.type == ScrollType::Healing && scroll.count > 0) {
-        result.push_back(&scroll);
-      }
-      }
-
-      Util::SortTopK(result, [](const InventoryScroll* a, const InventoryScroll* b) {
-      return a->data.magnitude > b->data.magnitude;
-      }, topK);
-
-      return result;
+      return QueryTopK(
+      [](const InventoryScroll& s) { return s.data.type == ScrollType::Healing && s.count > 0; },
+      [](const InventoryScroll& s) { return s.data.magnitude; },
+      topK);
    }
 
    std::vector<const InventoryScroll*> ScrollRegistry::GetDefensiveScrolls(size_t topK) const
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<const InventoryScroll*> result;
-      result.reserve(m_scrolls.size() / 4);
-
-      for (const auto& scroll : m_scrolls) {
-      if (scroll.data.type == ScrollType::Defensive && scroll.count > 0) {
-        result.push_back(&scroll);
-      }
-      }
-
-      Util::SortTopK(result, [](const InventoryScroll* a, const InventoryScroll* b) {
-      return a->data.magnitude > b->data.magnitude;
-      }, topK);
-
-      return result;
+      return QueryTopK(
+      [](const InventoryScroll& s) { return s.data.type == ScrollType::Defensive && s.count > 0; },
+      [](const InventoryScroll& s) { return s.data.magnitude; },
+      topK);
    }
 
    std::vector<const InventoryScroll*> ScrollRegistry::GetUtilityScrolls() const
    {
-      // No lock here — GetScrollsByType() already acquires shared_lock(m_mutex).
-      // Double shared_lock is UB (std::shared_mutex is not reentrant) and deadlocks on MSVC.
       return GetScrollsByType(ScrollType::Utility);
    }
 
    std::vector<const InventoryScroll*> ScrollRegistry::GetSummonScrolls() const
    {
-      // No lock here — GetScrollsByType() already acquires shared_lock(m_mutex).
       return GetScrollsByType(ScrollType::Summon);
    }
 
-   // =============================================================================
-   // ELEMENT-BASED ACCESSORS
-   // =============================================================================
-
    std::vector<const InventoryScroll*> ScrollRegistry::GetFireScrolls(size_t topK) const
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<const InventoryScroll*> result;
-      result.reserve(m_scrolls.size() / 4);
-
-      for (const auto& scroll : m_scrolls) {
-      if (HasTag(scroll.data.tags, ScrollTag::Fire) && scroll.count > 0) {
-        result.push_back(&scroll);
-      }
-      }
-
-      Util::SortTopK(result, [](const InventoryScroll* a, const InventoryScroll* b) {
-      return a->data.magnitude > b->data.magnitude;
-      }, topK);
-
-      return result;
+      return QueryTopK(
+      [](const InventoryScroll& s) { return HasTag(s.data.tags, ScrollTag::Fire) && s.count > 0; },
+      [](const InventoryScroll& s) { return s.data.magnitude; },
+      topK);
    }
 
    std::vector<const InventoryScroll*> ScrollRegistry::GetFrostScrolls(size_t topK) const
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<const InventoryScroll*> result;
-      result.reserve(m_scrolls.size() / 4);
-
-      for (const auto& scroll : m_scrolls) {
-      if (HasTag(scroll.data.tags, ScrollTag::Frost) && scroll.count > 0) {
-        result.push_back(&scroll);
-      }
-      }
-
-      Util::SortTopK(result, [](const InventoryScroll* a, const InventoryScroll* b) {
-      return a->data.magnitude > b->data.magnitude;
-      }, topK);
-
-      return result;
+      return QueryTopK(
+      [](const InventoryScroll& s) { return HasTag(s.data.tags, ScrollTag::Frost) && s.count > 0; },
+      [](const InventoryScroll& s) { return s.data.magnitude; },
+      topK);
    }
 
    std::vector<const InventoryScroll*> ScrollRegistry::GetShockScrolls(size_t topK) const
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<const InventoryScroll*> result;
-      result.reserve(m_scrolls.size() / 4);
-
-      for (const auto& scroll : m_scrolls) {
-      if (HasTag(scroll.data.tags, ScrollTag::Shock) && scroll.count > 0) {
-        result.push_back(&scroll);
-      }
-      }
-
-      Util::SortTopK(result, [](const InventoryScroll* a, const InventoryScroll* b) {
-      return a->data.magnitude > b->data.magnitude;
-      }, topK);
-
-      return result;
+      return QueryTopK(
+      [](const InventoryScroll& s) { return HasTag(s.data.tags, ScrollTag::Shock) && s.count > 0; },
+      [](const InventoryScroll& s) { return s.data.magnitude; },
+      topK);
    }
-
-   // =============================================================================
-   // CONVENIENCE "BEST" ACCESSORS - O(n) single-pass implementation
-   // =============================================================================
 
    const InventoryScroll* ScrollRegistry::GetBestDamageScroll() const noexcept
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      const InventoryScroll* best = nullptr;
-      float maxMagnitude = 0.0f;
-
-      for (const auto& scroll : m_scrolls) {
-      if (scroll.data.type == ScrollType::Damage &&
-          scroll.count > 0 &&
-          scroll.data.magnitude > maxMagnitude) {
-        best = &scroll;
-        maxMagnitude = scroll.data.magnitude;
-      }
-      }
-      return best;
+      return FindBest(
+      [](const InventoryScroll& s) { return s.data.type == ScrollType::Damage && s.count > 0; },
+      [](const InventoryScroll& s) { return s.data.magnitude; });
    }
 
    const InventoryScroll* ScrollRegistry::GetBestHealingScroll() const noexcept
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      const InventoryScroll* best = nullptr;
-      float maxMagnitude = 0.0f;
-
-      for (const auto& scroll : m_scrolls) {
-      if (scroll.data.type == ScrollType::Healing &&
-          scroll.count > 0 &&
-          scroll.data.magnitude > maxMagnitude) {
-        best = &scroll;
-        maxMagnitude = scroll.data.magnitude;
-      }
-      }
-      return best;
+      return FindBest(
+      [](const InventoryScroll& s) { return s.data.type == ScrollType::Healing && s.count > 0; },
+      [](const InventoryScroll& s) { return s.data.magnitude; });
    }
 
    const InventoryScroll* ScrollRegistry::GetBestFireScroll() const noexcept
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      const InventoryScroll* best = nullptr;
-      float maxMagnitude = 0.0f;
-
-      for (const auto& scroll : m_scrolls) {
-      if (HasTag(scroll.data.tags, ScrollTag::Fire) &&
-          scroll.count > 0 &&
-          scroll.data.magnitude > maxMagnitude) {
-        best = &scroll;
-        maxMagnitude = scroll.data.magnitude;
-      }
-      }
-      return best;
+      return FindBest(
+      [](const InventoryScroll& s) { return HasTag(s.data.tags, ScrollTag::Fire) && s.count > 0; },
+      [](const InventoryScroll& s) { return s.data.magnitude; });
    }
 
    const InventoryScroll* ScrollRegistry::GetBestFrostScroll() const noexcept
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      const InventoryScroll* best = nullptr;
-      float maxMagnitude = 0.0f;
-
-      for (const auto& scroll : m_scrolls) {
-      if (HasTag(scroll.data.tags, ScrollTag::Frost) &&
-          scroll.count > 0 &&
-          scroll.data.magnitude > maxMagnitude) {
-        best = &scroll;
-        maxMagnitude = scroll.data.magnitude;
-      }
-      }
-      return best;
+      return FindBest(
+      [](const InventoryScroll& s) { return HasTag(s.data.tags, ScrollTag::Frost) && s.count > 0; },
+      [](const InventoryScroll& s) { return s.data.magnitude; });
    }
 
    const InventoryScroll* ScrollRegistry::GetBestShockScroll() const noexcept
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      const InventoryScroll* best = nullptr;
-      float maxMagnitude = 0.0f;
-
-      for (const auto& scroll : m_scrolls) {
-      if (HasTag(scroll.data.tags, ScrollTag::Shock) &&
-          scroll.count > 0 &&
-          scroll.data.magnitude > maxMagnitude) {
-        best = &scroll;
-        maxMagnitude = scroll.data.magnitude;
-      }
-      }
-      return best;
+      return FindBest(
+      [](const InventoryScroll& s) { return HasTag(s.data.tags, ScrollTag::Shock) && s.count > 0; },
+      [](const InventoryScroll& s) { return s.data.magnitude; });
    }
 
    void ScrollRegistry::LogAllScrolls() const
    {
       std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      logger::info("=== Scroll Registry ({} scrolls) ==="sv, m_scrolls.size());
+      logger::info("=== Scroll Registry ({} scrolls) ==="sv, m_entries.size());
 
       // Group scrolls by type for organized logging
       std::map<ScrollType, std::vector<const InventoryScroll*>> scrollsByType;
-      for (const auto& scroll : m_scrolls) {
+      for (const auto& scroll : m_entries) {
       scrollsByType[scroll.data.type].push_back(&scroll);
       }
 
@@ -556,7 +418,7 @@ namespace Huginn::Scroll
       auto it = m_formIDIndex.find(formID);
       if (it != m_formIDIndex.end()) {
       logger::debug("[ScrollRegistry] Scroll {:08X} already registered, updating count"sv, formID);
-      m_scrolls[it->second].count = count;
+      m_entries[it->second].count = count;
       return;
       }
 
@@ -565,17 +427,14 @@ namespace Huginn::Scroll
       // CONTRACT note on its declaration).
       ScrollData scrollData = m_classifier.ClassifyScroll(scroll);
 
-      // Create inventory scroll and add to registry
+      // Create inventory scroll and add to registry via the shared core primitive.
       InventoryScroll invScroll{
       .data = scrollData,
       .count = count,
       .previousCount = count  // Initialize previousCount to current count
       };
 
-      // Add to vector and index
-      size_t index = m_scrolls.size();
-      m_scrolls.push_back(std::move(invScroll));
-      m_formIDIndex[formID] = index;
+      PushEntryLocked(std::move(invScroll), formID);
 
       logger::trace("[ScrollRegistry] Added scroll: {}"sv, scrollData.ToString());
    }
@@ -588,37 +447,11 @@ namespace Huginn::Scroll
       return false;  // Not found
       }
 
-      size_t index = it->second;
-      const std::string removedName = m_scrolls[index].data.name;
-
-      // Swap-remove pattern: Move last element to removed slot
-      if (index != m_scrolls.size() - 1) {
-      // Swap with last element
-      m_scrolls[index] = std::move(m_scrolls.back());
-      // Update index of swapped element
-      m_formIDIndex[m_scrolls[index].data.formID] = index;
-      }
-
-      // Remove last element
-      m_scrolls.pop_back();
-      m_formIDIndex.erase(formID);
-
+      const std::string removedName = m_entries[it->second].data.name;
+      const bool removed = RemoveEntryLocked(formID);  // swap-pop in the shared core
+      if (removed) {
       logger::trace("[ScrollRegistry] Removed scroll: {}"sv, removedName);
-      return true;
-   }
-
-   // Thread-safe accessor implementations (v0.7.12)
-   size_t ScrollRegistry::GetScrollCount() const noexcept
-   {
-      std::shared_lock lock(m_mutex);
-      return m_scrolls.size();
-   }
-
-   std::vector<InventoryScroll> ScrollRegistry::GetAllScrolls() const
-   {
-      std::shared_lock lock(m_mutex);
-      return m_scrolls;  // Returns copy for thread safety
+      }
+      return removed;
    }
 }
-
-

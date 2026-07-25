@@ -2,10 +2,8 @@
 
 #include "ItemData.h"
 #include "ItemClassifier.h"
-#include "util/InventoryUtil.h"  // Util::InventoryItemMap (shared inventory scan)
-#include <shared_mutex>  // v0.7.12 - thread safety
-#include <atomic>        // M3 v0.7.21 - atomic m_isLoading
-#include <type_traits>   // For ForEach visitor pattern
+#include "registry/FormRegistry.h"       // Huginn::Registry::FormRegistry core (finding #8)
+#include "util/InventoryUtil.h"          // Util::InventoryItemMap (shared inventory scan)
 
 namespace Huginn::Item
 {
@@ -105,17 +103,17 @@ namespace Huginn::Item
    //
    // =============================================================================
 
-   class ItemRegistry
+   class ItemRegistry : public Registry::FormRegistry<ItemRegistry, InventoryItem>
    {
    public:
       ItemRegistry();
       ~ItemRegistry() = default;
 
-      // Disable copy/move (singleton-style usage)
-      ItemRegistry(const ItemRegistry&) = delete;
-      ItemRegistry& operator=(const ItemRegistry&) = delete;
-      ItemRegistry(ItemRegistry&&) = delete;
-      ItemRegistry& operator=(ItemRegistry&&) = delete;
+      // CRTP contract for FormRegistry: where the FormID lives on an entry.
+      [[nodiscard]] static RE::FormID FormIDOf(const InventoryItem& item) noexcept
+      {
+         return item.data.formID;
+      }
 
       // =============================================================================
       // LIFECYCLE
@@ -404,43 +402,14 @@ namespace Huginn::Item
        */
       [[nodiscard]] BestPotionPick GetBestPotion(ItemType type) const noexcept;
 
-      /**
-       * @brief Get total number of tracked item types
-       * @return Number of unique item FormIDs in registry
-       */
-      [[nodiscard]] size_t GetItemCount() const noexcept;
+      // Thin forwarders keeping the historical public names (zero call-site churn).
+      // Count / copy-out / loading-flag / iteration all live in the shared core.
+      [[nodiscard]] size_t GetItemCount() const noexcept { return EntryCount(); }
+      [[nodiscard]] std::vector<InventoryItem> GetAllItems() const { return AllEntriesCopy(); }
 
-      /**
-       * @brief Get all tracked items (returns copy for thread safety - v0.7.12)
-       * @return Copy of internal items vector
-       */
-      [[nodiscard]] std::vector<InventoryItem> GetAllItems() const;
-
-      /**
-       * @brief Iterate over all items without copying (zero-allocation visitor pattern)
-       * @tparam Func Callable with signature void(const InventoryItem&) or bool(const InventoryItem&)
-       * @param func Function to call for each item. If returns bool, iteration stops on false.
-       * @note Thread-safe: Holds shared_lock during iteration
-       * @note PERFORMANCE: Use this instead of GetAllItems() in hot paths
-       */
+      /** @brief Zero-allocation visitor over all items (holds shared_lock). */
       template<typename Func>
-      void ForEachItem(Func&& func) const
-      {
-      std::shared_lock lock(m_mutex);
-      for (const auto& item : m_items) {
-        if constexpr (std::is_same_v<std::invoke_result_t<Func, const InventoryItem&>, bool>) {
-           if (!func(item)) return;  // Early exit if callback returns false
-        } else {
-           func(item);
-        }
-      }
-      }
-
-      /**
-       * @brief Check if registry is currently loading/rebuilding
-       * M3 (v0.7.21): Use atomic load with acquire semantics
-       */
-      [[nodiscard]] bool IsLoading() const noexcept { return m_isLoading.load(std::memory_order_acquire); }
+      void ForEachItem(Func&& func) const { ForEachEntry(std::forward<Func>(func)); }
 
       // =============================================================================
       // DEBUG
@@ -507,12 +476,7 @@ namespace Huginn::Item
       // =============================================================================
       // STORAGE
       // =============================================================================
-
-      // Dual-index storage (mirrors SpellRegistry pattern)
-      // - Vector for iteration and cache-friendly access
-      // - Map for O(1) FormID lookup
-      std::vector<InventoryItem> m_items;
-      std::unordered_map<RE::FormID, size_t> m_formIDIndex;
+      // Dual-index storage, mutex, and loading flag live in the FormRegistry base.
 
       // Scratch maps for RefreshCounts delta scans (2 Hz). Populated OUTSIDE
       // m_mutex; safe only because RefreshCounts has a single caller on the
@@ -522,13 +486,5 @@ namespace Huginn::Item
 
       // Item classifier instance
       ItemClassifier m_classifier;
-
-      // Thread safety (v0.7.12)
-      // Protects m_items and m_formIDIndex from concurrent access
-      // Readers (render thread) use shared_lock, writers (update thread) use unique_lock
-      mutable std::shared_mutex m_mutex;
-
-      // Loading state flag (M3 v0.7.21: atomic for thread-safe access)
-      std::atomic<bool> m_isLoading{false};
    };
 }

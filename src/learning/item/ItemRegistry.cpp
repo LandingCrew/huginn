@@ -2,7 +2,6 @@
 #include "Config.h"
 #include "util/ScopedTimer.h"
 #include "util/AtomicGuard.h"
-#include "util/AlgorithmUtils.h"
 #include "util/InventoryUtil.h"
 #include "util/ExtraListStability.h"
 
@@ -39,17 +38,16 @@ namespace Huginn::Item
       std::unique_lock lock(m_mutex);
 
       // Clear existing data
-      m_items.clear();
-      m_formIDIndex.clear();
+      ClearStoreLocked();
 
       // Reserve space for both containers to avoid reallocation/rehashing
       const size_t capacity = std::min(inventoryItems.size() + soulGems.size(), Config::MAX_TRACKED_ITEMS);
-      m_items.reserve(capacity);
+      m_entries.reserve(capacity);
       m_formIDIndex.reserve(capacity);
 
       // Classify and add each item (AddItem assumes lock is held by caller)
       for (const auto& scanned : inventoryItems) {
-      if (m_items.size() >= Config::MAX_TRACKED_ITEMS) {
+      if (m_entries.size() >= Config::MAX_TRACKED_ITEMS) {
         logger::warn("Item registry reached max capacity ({}), some items skipped"sv,
            Config::MAX_TRACKED_ITEMS);
         break;
@@ -59,7 +57,7 @@ namespace Huginn::Item
 
       // Add soul gems (v0.7.8) - separate form type (AddSoulGem assumes lock is held)
       for (const auto& scanned : soulGems) {
-      if (m_items.size() >= Config::MAX_TRACKED_ITEMS) {
+      if (m_entries.size() >= Config::MAX_TRACKED_ITEMS) {
         logger::warn("Item registry reached max capacity ({}), soul gems skipped"sv,
            Config::MAX_TRACKED_ITEMS);
         break;
@@ -67,8 +65,8 @@ namespace Huginn::Item
       AddSoulGem(scanned.soulGem, scanned.count, scanned.filledCount);
       }
 
-      logger::info("Item registry built: {} items registered"sv, m_items.size());
-      // m_isLoading cleared by LoadingGuard destructor
+      logger::info("Item registry built: {} items registered"sv, m_entries.size());
+      // m_isLoading cleared by guard destructor
    }
 
    std::vector<ItemChangeEvent> ItemRegistry::RefreshCounts()
@@ -128,7 +126,7 @@ namespace Huginn::Item
       std::unique_lock lock(m_mutex);
 
       // Compare tracked items with current counts
-      for (auto& invItem : m_items) {
+      for (auto& invItem : m_entries) {
       auto it = currentCounts.find(invItem.data.formID);
       int32_t currentCount = (it != currentCounts.end()) ? it->second : 0;
       const bool countChanged = (currentCount != invItem.count);
@@ -230,7 +228,7 @@ namespace Huginn::Item
       // Check if already registered (use cached formID)
       if (!m_formIDIndex.contains(scanned.formID)) {
         // Check capacity limit
-        if (m_items.size() >= Config::MAX_TRACKED_ITEMS) {
+        if (m_entries.size() >= Config::MAX_TRACKED_ITEMS) {
            logger::warn("Item registry at max capacity, cannot add new items"sv);
            break;
         }
@@ -250,7 +248,7 @@ namespace Huginn::Item
       // Check if already registered (use cached formID)
       if (!m_formIDIndex.contains(scanned.formID)) {
         // Check capacity limit
-        if (m_items.size() >= Config::MAX_TRACKED_ITEMS) {
+        if (m_entries.size() >= Config::MAX_TRACKED_ITEMS) {
            logger::warn("Item registry at max capacity, cannot add new soul gems"sv);
            break;
         }
@@ -266,9 +264,9 @@ namespace Huginn::Item
 
       // STEP 2: Remove items no longer in inventory
       std::vector<RE::FormID> toRemove;
-      toRemove.reserve(m_items.size() / 10);  // Estimate ~10% removal rate
+      toRemove.reserve(m_entries.size() / 10);  // Estimate ~10% removal rate
 
-      for (const auto& invItem : m_items) {
+      for (const auto& invItem : m_entries) {
       if (!currentFormIDs.contains(invItem.data.formID)) {
         toRemove.push_back(invItem.data.formID);
       }
@@ -281,16 +279,16 @@ namespace Huginn::Item
       }
 
       // STEP 3: Update previousCount snapshot for all remaining items
-      for (auto& invItem : m_items) {
+      for (auto& invItem : m_entries) {
       invItem.previousCount = invItem.count;
       }
 
       if (itemsAdded > 0 || itemsRemoved > 0) {
       logger::info("[ItemRegistry] Reconciliation: +{} item(s), -{} item(s), total: {}"sv,
-        itemsAdded, itemsRemoved, m_items.size());
+        itemsAdded, itemsRemoved, m_entries.size());
       }
 
-      // m_isLoading cleared by LoadingGuard destructor
+      // m_isLoading cleared by guard destructor
       return itemsAdded + itemsRemoved;
    }
 
@@ -301,527 +299,227 @@ namespace Huginn::Item
       if (it == m_formIDIndex.end()) {
       return nullptr;
       }
-      return &m_items[it->second];
+      return &m_entries[it->second];
    }
+
+   // =============================================================================
+   // ACCESSORS — thin wrappers over the FormRegistry query primitives (finding #8)
+   // =============================================================================
+   // Every accessor below was a hand-copied lock + loop + (optional) SortTopK. They
+   // now delegate to Collect / QueryTopK / FindBest, which fold the count>0 filter
+   // into the predicate and take the shared_lock internally.
 
    std::vector<const InventoryItem*> ItemRegistry::GetItemsByType(ItemType type) const
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<const InventoryItem*> result;
-      result.reserve(m_items.size() / 4);  // Rough estimate
-
-      for (const auto& item : m_items) {
-      if (item.data.type == type && item.count > 0) {
-        result.push_back(&item);
-      }
-      }
-
-      return result;
+      return Collect([type](const InventoryItem& i) {
+      return i.data.type == type && i.count > 0;
+      });
    }
 
    std::vector<const InventoryItem*> ItemRegistry::GetItemsWithTag(ItemTag tag) const
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<const InventoryItem*> result;
-      result.reserve(m_items.size() / 4);  // Rough estimate
-
-      for (const auto& item : m_items) {
-      if (HasTag(item.data.tags, tag) && item.count > 0) {
-        result.push_back(&item);
-      }
-      }
-
-      return result;
+      return Collect([tag](const InventoryItem& i) {
+      return HasTag(i.data.tags, tag) && i.count > 0;
+      });
    }
-
-   // OPTIMIZATION (v0.7.20 H4): Helper lambda for partial_sort pattern
-   // Uses std::partial_sort when k < n (O(n log k)) for top-K queries,
-   // falls back to std::sort for full results (O(n log n)) when k >= n or k == 0
 
    std::vector<const InventoryItem*> ItemRegistry::GetHealthPotionsByMagnitude(size_t topK) const
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<const InventoryItem*> result;
-      result.reserve(m_items.size() / 4);
-
-      for (const auto& item : m_items) {
-      if (item.data.type == ItemType::HealthPotion && item.count > 0) {
-        result.push_back(&item);
-      }
-      }
-
-      // OPTIMIZATION (v0.7.20 H4): partial_sort for top-K is O(n log k) vs O(n log n)
-      Util::SortTopK(result, [](const InventoryItem* a, const InventoryItem* b) {
-      return a->data.magnitude > b->data.magnitude;
-      }, topK);
-
-      return result;
+      return QueryTopK(
+      [](const InventoryItem& i) { return i.data.type == ItemType::HealthPotion && i.count > 0; },
+      [](const InventoryItem& i) { return i.data.magnitude; }, topK);
    }
 
    std::vector<const InventoryItem*> ItemRegistry::GetMagickaPotionsByMagnitude(size_t topK) const
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<const InventoryItem*> result;
-      result.reserve(m_items.size() / 4);
-
-      for (const auto& item : m_items) {
-      if (item.data.type == ItemType::MagickaPotion && item.count > 0) {
-        result.push_back(&item);
-      }
-      }
-
-      Util::SortTopK(result, [](const InventoryItem* a, const InventoryItem* b) {
-      return a->data.magnitude > b->data.magnitude;
-      }, topK);
-
-      return result;
+      return QueryTopK(
+      [](const InventoryItem& i) { return i.data.type == ItemType::MagickaPotion && i.count > 0; },
+      [](const InventoryItem& i) { return i.data.magnitude; }, topK);
    }
 
    std::vector<const InventoryItem*> ItemRegistry::GetStaminaPotionsByMagnitude(size_t topK) const
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<const InventoryItem*> result;
-      result.reserve(m_items.size() / 4);
-
-      for (const auto& item : m_items) {
-      if (item.data.type == ItemType::StaminaPotion && item.count > 0) {
-        result.push_back(&item);
-      }
-      }
-
-      Util::SortTopK(result, [](const InventoryItem* a, const InventoryItem* b) {
-      return a->data.magnitude > b->data.magnitude;
-      }, topK);
-
-      return result;
+      return QueryTopK(
+      [](const InventoryItem& i) { return i.data.type == ItemType::StaminaPotion && i.count > 0; },
+      [](const InventoryItem& i) { return i.data.magnitude; }, topK);
    }
 
-   // =============================================================================
-   // RESIST POTION ACCESSORS
-   // =============================================================================
+   // ---- Resist potions (tag-filtered, magnitude-sorted) ----
 
    std::vector<const InventoryItem*> ItemRegistry::GetResistFirePotions(size_t topK) const
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<const InventoryItem*> result;
-      result.reserve(m_items.size() / 8);
-
-      for (const auto& item : m_items) {
-      if (HasTag(item.data.tags, ItemTag::ResistFire) && item.count > 0) {
-        result.push_back(&item);
-      }
-      }
-
-      Util::SortTopK(result, [](const InventoryItem* a, const InventoryItem* b) {
-      return a->data.magnitude > b->data.magnitude;
-      }, topK);
-
-      return result;
+      return QueryTopK(
+      [](const InventoryItem& i) { return HasTag(i.data.tags, ItemTag::ResistFire) && i.count > 0; },
+      [](const InventoryItem& i) { return i.data.magnitude; }, topK);
    }
 
    std::vector<const InventoryItem*> ItemRegistry::GetResistFrostPotions(size_t topK) const
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<const InventoryItem*> result;
-      result.reserve(m_items.size() / 8);
-
-      for (const auto& item : m_items) {
-      if (HasTag(item.data.tags, ItemTag::ResistFrost) && item.count > 0) {
-        result.push_back(&item);
-      }
-      }
-
-      Util::SortTopK(result, [](const InventoryItem* a, const InventoryItem* b) {
-      return a->data.magnitude > b->data.magnitude;
-      }, topK);
-
-      return result;
+      return QueryTopK(
+      [](const InventoryItem& i) { return HasTag(i.data.tags, ItemTag::ResistFrost) && i.count > 0; },
+      [](const InventoryItem& i) { return i.data.magnitude; }, topK);
    }
 
    std::vector<const InventoryItem*> ItemRegistry::GetResistShockPotions(size_t topK) const
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<const InventoryItem*> result;
-      result.reserve(m_items.size() / 8);
-
-      for (const auto& item : m_items) {
-      if (HasTag(item.data.tags, ItemTag::ResistShock) && item.count > 0) {
-        result.push_back(&item);
-      }
-      }
-
-      Util::SortTopK(result, [](const InventoryItem* a, const InventoryItem* b) {
-      return a->data.magnitude > b->data.magnitude;
-      }, topK);
-
-      return result;
+      return QueryTopK(
+      [](const InventoryItem& i) { return HasTag(i.data.tags, ItemTag::ResistShock) && i.count > 0; },
+      [](const InventoryItem& i) { return i.data.magnitude; }, topK);
    }
 
    std::vector<const InventoryItem*> ItemRegistry::GetResistPoisonPotions(size_t topK) const
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<const InventoryItem*> result;
-      result.reserve(m_items.size() / 8);
-
-      for (const auto& item : m_items) {
-      if (HasTag(item.data.tags, ItemTag::ResistPoison) && item.count > 0) {
-        result.push_back(&item);
-      }
-      }
-
-      Util::SortTopK(result, [](const InventoryItem* a, const InventoryItem* b) {
-      return a->data.magnitude > b->data.magnitude;
-      }, topK);
-
-      return result;
+      return QueryTopK(
+      [](const InventoryItem& i) { return HasTag(i.data.tags, ItemTag::ResistPoison) && i.count > 0; },
+      [](const InventoryItem& i) { return i.data.magnitude; }, topK);
    }
 
    std::vector<const InventoryItem*> ItemRegistry::GetResistMagicPotions(size_t topK) const
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<const InventoryItem*> result;
-      result.reserve(m_items.size() / 8);
-
-      for (const auto& item : m_items) {
-      if (HasTag(item.data.tags, ItemTag::ResistMagic) && item.count > 0) {
-        result.push_back(&item);
-      }
-      }
-
-      Util::SortTopK(result, [](const InventoryItem* a, const InventoryItem* b) {
-      return a->data.magnitude > b->data.magnitude;
-      }, topK);
-
-      return result;
+      return QueryTopK(
+      [](const InventoryItem& i) { return HasTag(i.data.tags, ItemTag::ResistMagic) && i.count > 0; },
+      [](const InventoryItem& i) { return i.data.magnitude; }, topK);
    }
 
-   // =============================================================================
-   // CURE POTION ACCESSORS
-   // =============================================================================
+   // ---- Cure potions (tag-filtered, unsorted) ----
 
    std::vector<const InventoryItem*> ItemRegistry::GetCureDiseasePotions() const
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<const InventoryItem*> result;
-
-      for (const auto& item : m_items) {
-      if (HasTag(item.data.tags, ItemTag::CureDisease) && item.count > 0) {
-        result.push_back(&item);
-      }
-      }
-
-      return result;
+      return Collect([](const InventoryItem& i) {
+      return HasTag(i.data.tags, ItemTag::CureDisease) && i.count > 0;
+      });
    }
 
    std::vector<const InventoryItem*> ItemRegistry::GetCurePoisonPotions() const
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<const InventoryItem*> result;
-
-      for (const auto& item : m_items) {
-      if (HasTag(item.data.tags, ItemTag::CurePoison) && item.count > 0) {
-        result.push_back(&item);
-      }
-      }
-
-      return result;
+      return Collect([](const InventoryItem& i) {
+      return HasTag(i.data.tags, ItemTag::CurePoison) && i.count > 0;
+      });
    }
 
-   // =============================================================================
-   // BUFF/FORTIFY POTION ACCESSORS (v0.8: Refactored to grouped tags)
-   // =============================================================================
+   // ---- Fortify potions (grouped tag + optional specific skill/school) ----
 
    std::vector<const InventoryItem*> ItemRegistry::GetFortifySchoolPotions(MagicSchool school, size_t topK) const
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<const InventoryItem*> result;
-      result.reserve(m_items.size() / 8);
-
-      for (const auto& item : m_items) {
-      if (HasTag(item.data.tags, ItemTag::FortifyMagicSchool) && item.count > 0) {
-        // If specific school requested, filter to that school
-        if (school != MagicSchool::None && item.data.school != school) {
-           continue;
-        }
-        result.push_back(&item);
-      }
-      }
-
-      // Sort by magnitude (stronger fortify effects first)
-      Util::SortTopK(result, [](const InventoryItem* a, const InventoryItem* b) {
-      return a->data.magnitude > b->data.magnitude;
-      }, topK);
-
-      return result;
+      return QueryTopK(
+      [school](const InventoryItem& i) {
+        return HasTag(i.data.tags, ItemTag::FortifyMagicSchool) && i.count > 0 &&
+           (school == MagicSchool::None || i.data.school == school);
+      },
+      [](const InventoryItem& i) { return i.data.magnitude; }, topK);
    }
 
    std::vector<const InventoryItem*> ItemRegistry::GetFortifyCombatPotions(CombatSkill skill, size_t topK) const
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<const InventoryItem*> result;
-      result.reserve(m_items.size() / 8);
-
-      for (const auto& item : m_items) {
-      if (HasTag(item.data.tags, ItemTag::FortifyCombatSkill) && item.count > 0) {
-        // If specific skill requested, filter to that skill
-        if (skill != CombatSkill::None && item.data.combatSkill != skill) {
-           continue;
-        }
-        result.push_back(&item);
-      }
-      }
-
-      // Sort by magnitude (stronger fortify effects first)
-      Util::SortTopK(result, [](const InventoryItem* a, const InventoryItem* b) {
-      return a->data.magnitude > b->data.magnitude;
-      }, topK);
-
-      return result;
+      return QueryTopK(
+      [skill](const InventoryItem& i) {
+        return HasTag(i.data.tags, ItemTag::FortifyCombatSkill) && i.count > 0 &&
+           (skill == CombatSkill::None || i.data.combatSkill == skill);
+      },
+      [](const InventoryItem& i) { return i.data.magnitude; }, topK);
    }
 
    std::vector<const InventoryItem*> ItemRegistry::GetFortifyUtilityPotions(UtilitySkill skill, size_t topK) const
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<const InventoryItem*> result;
-      result.reserve(m_items.size() / 8);
-
-      for (const auto& item : m_items) {
-      if (HasTag(item.data.tags, ItemTag::FortifyUtilitySkill) && item.count > 0) {
-        // If specific skill requested, filter to that skill
-        if (skill != UtilitySkill::None && item.data.utilitySkill != skill) {
-           continue;
-        }
-        result.push_back(&item);
-      }
-      }
-
-      // Sort by magnitude (stronger fortify effects first)
-      Util::SortTopK(result, [](const InventoryItem* a, const InventoryItem* b) {
-      return a->data.magnitude > b->data.magnitude;
-      }, topK);
-
-      return result;
+      return QueryTopK(
+      [skill](const InventoryItem& i) {
+        return HasTag(i.data.tags, ItemTag::FortifyUtilitySkill) && i.count > 0 &&
+           (skill == UtilitySkill::None || i.data.utilitySkill == skill);
+      },
+      [](const InventoryItem& i) { return i.data.magnitude; }, topK);
    }
+
+   // ---- Duration-sorted potions ----
 
    std::vector<const InventoryItem*> ItemRegistry::GetInvisibilityPotions(size_t topK) const
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<const InventoryItem*> result;
-      result.reserve(4);
-
-      for (const auto& item : m_items) {
-      if (HasTag(item.data.tags, ItemTag::Invisibility) && item.count > 0) {
-        result.push_back(&item);
-      }
-      }
-
-      // Sort by duration (longer invisibility first)
-      Util::SortTopK(result, [](const InventoryItem* a, const InventoryItem* b) {
-      return a->data.duration > b->data.duration;
-      }, topK);
-
-      return result;
+      return QueryTopK(
+      [](const InventoryItem& i) { return HasTag(i.data.tags, ItemTag::Invisibility) && i.count > 0; },
+      [](const InventoryItem& i) { return i.data.duration; }, topK);
    }
 
    std::vector<const InventoryItem*> ItemRegistry::GetWaterbreathingPotions(size_t topK) const
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<const InventoryItem*> result;
-      result.reserve(4);
-
-      for (const auto& item : m_items) {
-      if (HasTag(item.data.tags, ItemTag::Waterbreathing) && item.count > 0) {
-        result.push_back(&item);
-      }
-      }
-
-      // Sort by duration (longer waterbreathing first)
-      Util::SortTopK(result, [](const InventoryItem* a, const InventoryItem* b) {
-      return a->data.duration > b->data.duration;
-      }, topK);
-
-      return result;
+      return QueryTopK(
+      [](const InventoryItem& i) { return HasTag(i.data.tags, ItemTag::Waterbreathing) && i.count > 0; },
+      [](const InventoryItem& i) { return i.data.duration; }, topK);
    }
 
    // =============================================================================
-   // CONVENIENCE "BEST" ACCESSORS - O(n) single-pass implementation
+   // CONVENIENCE "BEST" ACCESSORS — single-pass FindBest (O(n), no allocation)
    // =============================================================================
-   // These use single-pass max-find instead of O(n log n) sort for performance.
-   // Called frequently in recommendation pipeline hot path (~10x per 500ms update).
 
    const InventoryItem* ItemRegistry::GetBestWaterbreathingPotion() const noexcept
    {
-      std::shared_lock lock(m_mutex);
-      const InventoryItem* best = nullptr;
-      float maxDuration = 0.0f;
-
       // Longest duration wins (matches GetWaterbreathingPotions ordering)
-      for (const auto& item : m_items) {
-      if (HasTag(item.data.tags, ItemTag::Waterbreathing) &&
-          item.count > 0 &&
-          item.data.duration > maxDuration) {
-        best = &item;
-        maxDuration = item.data.duration;
-      }
-      }
-      return best;
+      return FindBest(
+      [](const InventoryItem& i) { return HasTag(i.data.tags, ItemTag::Waterbreathing) && i.count > 0; },
+      [](const InventoryItem& i) { return i.data.duration; });
    }
 
    const InventoryItem* ItemRegistry::GetBestHealthPotion() const noexcept
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      const InventoryItem* best = nullptr;
-      float maxMagnitude = 0.0f;
-
-      for (const auto& item : m_items) {
-      if (item.data.type == ItemType::HealthPotion &&
-          item.count > 0 &&
-          item.data.magnitude > maxMagnitude) {
-        best = &item;
-        maxMagnitude = item.data.magnitude;
-      }
-      }
-      return best;
+      return FindBest(
+      [](const InventoryItem& i) { return i.data.type == ItemType::HealthPotion && i.count > 0; },
+      [](const InventoryItem& i) { return i.data.magnitude; });
    }
 
    const InventoryItem* ItemRegistry::GetBestMagickaPotion() const noexcept
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      const InventoryItem* best = nullptr;
-      float maxMagnitude = 0.0f;
-
-      for (const auto& item : m_items) {
-      if (item.data.type == ItemType::MagickaPotion &&
-          item.count > 0 &&
-          item.data.magnitude > maxMagnitude) {
-        best = &item;
-        maxMagnitude = item.data.magnitude;
-      }
-      }
-      return best;
+      return FindBest(
+      [](const InventoryItem& i) { return i.data.type == ItemType::MagickaPotion && i.count > 0; },
+      [](const InventoryItem& i) { return i.data.magnitude; });
    }
 
    const InventoryItem* ItemRegistry::GetBestStaminaPotion() const noexcept
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      const InventoryItem* best = nullptr;
-      float maxMagnitude = 0.0f;
-
-      for (const auto& item : m_items) {
-      if (item.data.type == ItemType::StaminaPotion &&
-          item.count > 0 &&
-          item.data.magnitude > maxMagnitude) {
-        best = &item;
-        maxMagnitude = item.data.magnitude;
-      }
-      }
-      return best;
+      return FindBest(
+      [](const InventoryItem& i) { return i.data.type == ItemType::StaminaPotion && i.count > 0; },
+      [](const InventoryItem& i) { return i.data.magnitude; });
    }
 
    const InventoryItem* ItemRegistry::GetBestResistFirePotion() const noexcept
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      const InventoryItem* best = nullptr;
-      float maxMagnitude = 0.0f;
-
-      for (const auto& item : m_items) {
-      if (HasTag(item.data.tags, ItemTag::ResistFire) &&
-          item.count > 0 &&
-          item.data.magnitude > maxMagnitude) {
-        best = &item;
-        maxMagnitude = item.data.magnitude;
-      }
-      }
-      return best;
+      return FindBest(
+      [](const InventoryItem& i) { return HasTag(i.data.tags, ItemTag::ResistFire) && i.count > 0; },
+      [](const InventoryItem& i) { return i.data.magnitude; });
    }
 
    const InventoryItem* ItemRegistry::GetBestResistFrostPotion() const noexcept
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      const InventoryItem* best = nullptr;
-      float maxMagnitude = 0.0f;
-
-      for (const auto& item : m_items) {
-      if (HasTag(item.data.tags, ItemTag::ResistFrost) &&
-          item.count > 0 &&
-          item.data.magnitude > maxMagnitude) {
-        best = &item;
-        maxMagnitude = item.data.magnitude;
-      }
-      }
-      return best;
+      return FindBest(
+      [](const InventoryItem& i) { return HasTag(i.data.tags, ItemTag::ResistFrost) && i.count > 0; },
+      [](const InventoryItem& i) { return i.data.magnitude; });
    }
 
    const InventoryItem* ItemRegistry::GetBestResistShockPotion() const noexcept
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      const InventoryItem* best = nullptr;
-      float maxMagnitude = 0.0f;
-
-      for (const auto& item : m_items) {
-      if (HasTag(item.data.tags, ItemTag::ResistShock) &&
-          item.count > 0 &&
-          item.data.magnitude > maxMagnitude) {
-        best = &item;
-        maxMagnitude = item.data.magnitude;
-      }
-      }
-      return best;
+      return FindBest(
+      [](const InventoryItem& i) { return HasTag(i.data.tags, ItemTag::ResistShock) && i.count > 0; },
+      [](const InventoryItem& i) { return i.data.magnitude; });
    }
 
    const InventoryItem* ItemRegistry::GetBestResistPoisonPotion() const noexcept
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      const InventoryItem* best = nullptr;
-      float maxMagnitude = 0.0f;
-
-      for (const auto& item : m_items) {
-      if (HasTag(item.data.tags, ItemTag::ResistPoison) &&
-          item.count > 0 &&
-          item.data.magnitude > maxMagnitude) {
-        best = &item;
-        maxMagnitude = item.data.magnitude;
-      }
-      }
-      return best;
+      return FindBest(
+      [](const InventoryItem& i) { return HasTag(i.data.tags, ItemTag::ResistPoison) && i.count > 0; },
+      [](const InventoryItem& i) { return i.data.magnitude; });
    }
 
+   // Cure potions are binary effects, so we prefer the most economical (lowest
+   // gold value). FindBest maximizes its key, so negate value to pick the minimum.
    const InventoryItem* ItemRegistry::GetBestCureDiseasePotion() const noexcept
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      // Cure potions are binary effects (cures or doesn't), so we prefer
-      // the one with lowest gold value (most economical choice)
-      const InventoryItem* best = nullptr;
-      uint32_t minValue = UINT32_MAX;
-
-      for (const auto& item : m_items) {
-      if (HasTag(item.data.tags, ItemTag::CureDisease) &&
-          item.count > 0 &&
-          item.data.value < minValue) {
-        best = &item;
-        minValue = item.data.value;
-      }
-      }
-      return best;
+      return FindBest(
+      [](const InventoryItem& i) { return HasTag(i.data.tags, ItemTag::CureDisease) && i.count > 0; },
+      [](const InventoryItem& i) { return -static_cast<int64_t>(i.data.value); });
    }
 
    const InventoryItem* ItemRegistry::GetBestCurePoisonPotion() const noexcept
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      // Cure potions are binary effects (cures or doesn't), so we prefer
-      // the one with lowest gold value (most economical choice)
-      const InventoryItem* best = nullptr;
-      uint32_t minValue = UINT32_MAX;
-
-      for (const auto& item : m_items) {
-      if (HasTag(item.data.tags, ItemTag::CurePoison) &&
-          item.count > 0 &&
-          item.data.value < minValue) {
-        best = &item;
-        minValue = item.data.value;
-      }
-      }
-      return best;
+      return FindBest(
+      [](const InventoryItem& i) { return HasTag(i.data.tags, ItemTag::CurePoison) && i.count > 0; },
+      [](const InventoryItem& i) { return -static_cast<int64_t>(i.data.value); });
    }
 
    // =============================================================================
@@ -830,96 +528,36 @@ namespace Huginn::Item
 
    std::vector<const InventoryItem*> ItemRegistry::GetSoulGems(size_t topK) const
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<const InventoryItem*> result;
-      result.reserve(m_items.size() / 8);
-
-      // Debug: Count soul gems by type
-      size_t soulGemCount = 0;
-      size_t totalItems = m_items.size();
-
-      for (const auto& item : m_items) {
-      if (item.data.type == ItemType::SoulGem) {
-        soulGemCount++;
-        logger::trace("[GetSoulGems] Found: {} (type={}, count={})"sv,
-           item.data.name,
-           static_cast<int>(item.data.type),
-           item.count);
-
-        if (item.count > 0) {
-           result.push_back(&item);
-        }
-      }
-      }
-
-      logger::trace("[GetSoulGems] Total items: {}, Soul gems: {}, With count>0: {}"sv,
-      totalItems, soulGemCount, result.size());
-
-      // Sort by capacity (magnitude) descending - highest capacity first
-      Util::SortTopK(result, [](const InventoryItem* a, const InventoryItem* b) {
-      return a->data.magnitude > b->data.magnitude;
-      }, topK);
-
-      return result;
+      return QueryTopK(
+      [](const InventoryItem& i) { return i.data.type == ItemType::SoulGem && i.count > 0; },
+      [](const InventoryItem& i) { return i.data.magnitude; }, topK);
    }
 
    std::vector<const InventoryItem*> ItemRegistry::GetSoulGemsByCapacity(float minCapacity, size_t topK) const
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<const InventoryItem*> result;
-      result.reserve(m_items.size() / 8);
-
-      for (const auto& item : m_items) {
-      if (item.data.type == ItemType::SoulGem &&
-          item.count > 0 &&
-          item.data.magnitude >= minCapacity) {
-        result.push_back(&item);
-      }
-      }
-
-      // Sort by capacity (magnitude) descending - highest capacity first
-      Util::SortTopK(result, [](const InventoryItem* a, const InventoryItem* b) {
-      return a->data.magnitude > b->data.magnitude;
-      }, topK);
-
-      return result;
+      return QueryTopK(
+      [minCapacity](const InventoryItem& i) {
+        return i.data.type == ItemType::SoulGem && i.count > 0 && i.data.magnitude >= minCapacity;
+      },
+      [](const InventoryItem& i) { return i.data.magnitude; }, topK);
    }
 
    std::vector<const InventoryItem*> ItemRegistry::GetBlackSoulGems() const
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      std::vector<const InventoryItem*> result;
-
-      for (const auto& item : m_items) {
-      if (item.data.type == ItemType::SoulGem &&
-          item.count > 0 &&
-          item.data.magnitude >= 6.0f) {  // Black soul gem capacity
-        result.push_back(&item);
-      }
-      }
-
-      return result;
+      // Black soul gem capacity == 6.0
+      return Collect([](const InventoryItem& i) {
+      return i.data.type == ItemType::SoulGem && i.count > 0 && i.data.magnitude >= 6.0f;
+      });
    }
 
    const InventoryItem* ItemRegistry::GetBestSoulGem() const noexcept
    {
-      std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      const InventoryItem* best = nullptr;
-      float maxCapacity = 0.0f;
-
-      // v0.10.0: Only return FILLED soul gems (for weapon recharge override)
-      // Empty soul gems are useless for recharging weapons
-      for (const auto& item : m_items) {
-      if (item.data.type == ItemType::SoulGem &&
-          item.count > 0 &&
-          item.data.isFilled &&  // v0.10.0: Must be filled
-          item.data.magnitude > maxCapacity) {
-        best = &item;
-        maxCapacity = item.data.magnitude;
-      }
-      }
-
-      return best;
+      // v0.10.0: Only FILLED soul gems are useful for weapon recharge.
+      return FindBest(
+      [](const InventoryItem& i) {
+        return i.data.type == ItemType::SoulGem && i.count > 0 && i.data.isFilled;
+      },
+      [](const InventoryItem& i) { return i.data.magnitude; });
    }
 
    ItemRegistry::BestPotionPick ItemRegistry::GetBestPotion(ItemType type) const noexcept
@@ -927,8 +565,9 @@ namespace Huginn::Item
       std::shared_lock lock(m_mutex);
       BestPotionPick pick;
 
-      // Single pass, no allocation/sort — called per-tick by override evaluation
-      for (const auto& item : m_items) {
+      // Single pass, no allocation/sort — called per-tick by override evaluation.
+      // Two tracked bests (pure + any) means this doesn't reduce to a single FindBest.
+      for (const auto& item : m_entries) {
       if (item.data.type != type || item.count <= 0) {
         continue;
       }
@@ -947,11 +586,11 @@ namespace Huginn::Item
    void ItemRegistry::LogAllItems() const
    {
       std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      logger::info("=== Item Registry ({} items) ==="sv, m_items.size());
+      logger::info("=== Item Registry ({} items) ==="sv, m_entries.size());
 
       // Group items by type for organized logging
       std::map<ItemType, std::vector<const InventoryItem*>> itemsByType;
-      for (const auto& item : m_items) {
+      for (const auto& item : m_entries) {
       itemsByType[item.data.type].push_back(&item);
       }
 
@@ -1087,7 +726,7 @@ namespace Huginn::Item
       auto it = m_formIDIndex.find(formID);
       if (it != m_formIDIndex.end()) {
       logger::debug("[ItemRegistry] Item {:08X} already registered, updating count"sv, formID);
-      m_items[it->second].count = count;
+      m_entries[it->second].count = count;
       return;
       }
 
@@ -1100,17 +739,14 @@ namespace Huginn::Item
       return;
       }
 
-      // Create inventory item and add to registry
+      // Create inventory item and add to registry via the shared core primitive.
       InventoryItem invItem{
       .data = itemData,
       .count = count,
       .previousCount = count  // Initialize to current count on first add
       };
 
-      // Add to dual-index storage
-      size_t index = m_items.size();
-      m_items.push_back(std::move(invItem));
-      m_formIDIndex[formID] = index;
+      PushEntryLocked(std::move(invItem), formID);
 
       logger::trace("[ItemRegistry] Registered item: {} x{}"sv,
       itemData.name,
@@ -1131,9 +767,9 @@ namespace Huginn::Item
       auto it = m_formIDIndex.find(formID);
       if (it != m_formIDIndex.end()) {
       logger::debug("[ItemRegistry] Soul gem {:08X} already registered, updating count/filled"sv, formID);
-      m_items[it->second].count = count;
+      m_entries[it->second].count = count;
       // v0.10.0: Update fill state - filled if ANY gems of this type are filled
-      m_items[it->second].data.isFilled = (filledCount > 0);
+      m_entries[it->second].data.isFilled = (filledCount > 0);
       return;
       }
 
@@ -1151,17 +787,14 @@ namespace Huginn::Item
       // v0.10.0: Set fill state based on extraData scan
       itemData.isFilled = (filledCount > 0);
 
-      // Create inventory item and add to registry
+      // Create inventory item and add to registry via the shared core primitive.
       InventoryItem invItem{
       .data = itemData,
       .count = count,
       .previousCount = count  // Initialize to current count on first add
       };
 
-      // Add to dual-index storage
-      size_t index = m_items.size();
-      m_items.push_back(std::move(invItem));
-      m_formIDIndex[formID] = index;
+      PushEntryLocked(std::move(invItem), formID);
 
       logger::info("[ItemRegistry] Registered soul gem: {} (capacity={:.0f}) x{} (filled={})"sv,
       itemData.name,
@@ -1173,47 +806,18 @@ namespace Huginn::Item
    bool ItemRegistry::RemoveItem(RE::FormID formID)
    {
       // NOTE: Assumes m_mutex is already held by caller (v0.7.12 - thread safety)
-      // Find the item in the index
       auto it = m_formIDIndex.find(formID);
       if (it == m_formIDIndex.end()) {
       return false;  // Item not found
       }
 
-      const size_t indexToRemove = it->second;
+      // Capture name before the swap-pop moves the entry.
+      const std::string itemName = m_entries[it->second].data.name;
 
-      // Capture name before potential move
-      std::string itemName = m_items[indexToRemove].data.name;
-
-      // Remove from FormID index first using iterator (avoids second lookup)
-      m_formIDIndex.erase(it);
-
-      // Swap-remove pattern: O(1) deletion from vector
-      const size_t lastIndex = m_items.size() - 1;
-      if (indexToRemove != lastIndex) {
-      // Move last element into the removed slot
-      m_items[indexToRemove] = std::move(m_items[lastIndex]);
-      // Update index for the moved element
-      m_formIDIndex[m_items[indexToRemove].data.formID] = indexToRemove;
-      }
-
-      // Remove last element
-      m_items.pop_back();
-
+      const bool removed = RemoveEntryLocked(formID);  // swap-pop in the shared core
+      if (removed) {
       logger::info("[ItemRegistry] Removed item: {} ({:08X})"sv, itemName, formID);
-
-      return true;
-   }
-
-   // Thread-safe accessor implementations (v0.7.12)
-   size_t ItemRegistry::GetItemCount() const noexcept
-   {
-      std::shared_lock lock(m_mutex);
-      return m_items.size();
-   }
-
-   std::vector<InventoryItem> ItemRegistry::GetAllItems() const
-   {
-      std::shared_lock lock(m_mutex);
-      return m_items;  // Returns copy for thread safety
+      }
+      return removed;
    }
 }
