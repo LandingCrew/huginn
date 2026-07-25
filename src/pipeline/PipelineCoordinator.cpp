@@ -308,9 +308,20 @@ void PipelineCoordinator::PushDisplay(PipelineContext& ctx)
     // Backend-specific concerns (Wheeler's urgent-override auto-focus, page
     // ownership) now live in the backends themselves — the coordinator only
     // drives the generic IDisplayBackend contract.
+    //
+    // Resolve page state once here (it's already fixed for the tick by
+    // ResolveDisplayPage) so each backend reads it off the context instead of
+    // re-hitting the allocator/settings singletons. pageName stays alive in this
+    // scope for the string_view the DisplayContext holds.
+    auto& slotAllocator = Slot::SlotAllocator::GetSingleton();
+    const size_t pageIndex = slotAllocator.GetCurrentPage();
+    const std::string pageName = slotAllocator.GetCurrentPageName();
+
     Display::DisplayContext displayCtx{
         ctx.assignments, ctx.scoredCandidates, ctx.overrides,
-        ctx.playerState, ctx.worldState, ctx.now
+        ctx.playerState, ctx.worldState,
+        pageIndex, slotAllocator.GetPageCount(), slotAllocator.GetSlotCount(),
+        pageName, ctx.now
     };
     for (auto* backend : s_displayBackends) {
         if (backend->IsEnabled()) backend->Push(displayCtx);

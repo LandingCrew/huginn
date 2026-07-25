@@ -2,8 +2,6 @@
 #include "IntuitionBackend.h"
 #include "../Profiling.h"
 
-#include "slot/SlotAllocator.h"
-#include "slot/SlotSettings.h"
 #include "slot/SlotUtils.h"
 #include "ui/IntuitionMenu.h"
 #include "ui/IntuitionSettings.h"
@@ -20,7 +18,6 @@ namespace Huginn::Display
     {
         Huginn_ZONE_NAMED("Display::Intuition");
         auto& wheelerClient = Wheeler::WheelerClient::GetSingleton();
-        auto& slotAllocator = Slot::SlotAllocator::GetSingleton();
 
         // Track widget visibility vs Wheeler overlap
         bool wheelIsOpen = wheelerClient.HasRecommendationWheel() && wheelerClient.IsWheelOpen();
@@ -56,20 +53,16 @@ namespace Huginn::Display
             m_widgetHiddenForWheel = false;
         }
 
-        // Page sync is handled by PipelineCoordinator::PushDisplay() — we just
-        // read the current page and use the assignments we're given.
-        int displayPage = static_cast<int>(slotAllocator.GetCurrentPage());
+        // Page state was resolved once by the coordinator (ResolveDisplayPage) and
+        // handed to us on the context — no need to re-fetch from the allocator or
+        // SlotSettings. We just render the assignments we're given for that page.
         const auto& displayAssignments = ctx.assignments;
 
-        const auto displayPageName = Slot::SlotSettings::GetSingleton().GetPageName(
-            static_cast<size_t>(displayPage));
-
-        intuition->SetSlotCount(static_cast<int>(slotAllocator.GetSlotCount(
-            static_cast<size_t>(displayPage))));
+        intuition->SetSlotCount(static_cast<int>(ctx.slotCount));
         intuition->SetPage(
-            displayPage,
-            static_cast<int>(slotAllocator.GetPageCount()),
-            displayPageName);
+            static_cast<int>(ctx.pageIndex),
+            static_cast<int>(ctx.pageCount),
+            std::string{ctx.pageName});
 
         const auto displayMode = UI::IntuitionSettings::GetSingleton().GetDisplayMode();
         logger::trace("[Intuition] displayMode={}"sv,

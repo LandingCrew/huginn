@@ -53,8 +53,10 @@ namespace Huginn::Display
 
         // Hoist per-tick invariants out of the page loop (E5): the current page,
         // page count, and post-activation policy don't change within one push.
-        const size_t currentPage = slotAllocator.GetCurrentPage();
-        const size_t pageCount = slotAllocator.GetPageCount();
+        // Page/count come resolved on the context (ResolveDisplayPage) rather than
+        // re-fetched from the allocator; AllocateSlotsForPage below still needs it.
+        const size_t currentPage = ctx.pageIndex;
+        const size_t pageCount = ctx.pageCount;
         const bool emptyPolicy = Wheeler::WheelerSettings::GetSingleton().GetPostActivationPolicy()
             == Wheeler::PostActivationPolicy::Empty;
 

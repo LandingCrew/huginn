@@ -7,6 +7,7 @@
 #include "state/WorldState.h"
 
 #include <chrono>
+#include <string_view>
 #include <vector>
 
 namespace Huginn::Display
@@ -26,6 +27,17 @@ namespace Huginn::Display
         const Override::OverrideCollection& overrides;
         const State::PlayerActorState& playerState;
         const State::WorldState& worldState;
+
+        // Resolved page state for THIS push. The coordinator reads it once from
+        // the allocator (after ResolveDisplayPage) so backends don't each re-fetch
+        // page/name/count from SlotAllocator/SlotSettings singletons at push time.
+        // pageName is a view into a string owned by the caller for the push's
+        // duration (PipelineCoordinator::PushDisplay).
+        size_t pageIndex;
+        size_t pageCount;
+        size_t slotCount;          // slot count on the current page
+        std::string_view pageName; // current page's display name
+
         std::chrono::steady_clock::time_point now;
     };
 
