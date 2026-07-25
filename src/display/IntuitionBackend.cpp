@@ -62,7 +62,7 @@ namespace Huginn::Display
         intuition->SetPage(
             static_cast<int>(ctx.pageIndex),
             static_cast<int>(ctx.pageCount),
-            std::string{ctx.pageName});
+            ctx.pageName);  // SetPage takes string_view + copies into the UI task
 
         const auto displayMode = UI::IntuitionSettings::GetSingleton().GetDisplayMode();
         logger::trace("[Intuition] displayMode={}"sv,

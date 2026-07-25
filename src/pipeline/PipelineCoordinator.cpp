@@ -254,10 +254,13 @@ void PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
     auto& overrideMgr = Override::OverrideManager::GetSingleton();
     ctx.overrides = overrideMgr.EvaluateOverrides(ctx.playerState, ctx.worldState);
 
-    // Multi-page classification-based slot assignment
+    // Multi-page classification-based slot assignment. Allocate for the page
+    // snapshotted by ResolveDisplayPage (not m_currentPage), so an off-thread
+    // switch mid-tick can't produce assignments for a different page than the
+    // caches/push use.
     auto& slotAllocator = Slot::SlotAllocator::GetSingleton();
-    ctx.rawAssignments = slotAllocator.AllocateSlots(
-        ctx.scoredCandidates, ctx.overrides, ctx.playerState, ctx.worldState);
+    ctx.rawAssignments = slotAllocator.AllocateSlotsForPage(
+        ctx.displayPageIndex, ctx.scoredCandidates, ctx.overrides, ctx.playerState, ctx.worldState);
 
     // Apply slot locking for temporal stability. ApplyLocks also dedups
     // post-lock (locked slots can reintroduce an item the allocator placed
@@ -278,11 +281,11 @@ void PipelineCoordinator::UpdateCaches(PipelineContext& ctx)
 {
     // Cache pipeline state for external equip attribution.
     // sortedPrefix = topNCandidates: only that prefix of scoredCandidates is in
-    // utility order (partial_sort); see PipelineStateCache::Update.
-    auto& slotAllocator = Slot::SlotAllocator::GetSingleton();
+    // utility order (partial_sort); see PipelineStateCache::Update. Page comes
+    // from the tick snapshot so it matches ctx.assignments exactly.
     Learning::PipelineStateCache::GetSingleton().Update(
         ctx.scoredCandidates, ctx.assignments,
-        slotAllocator.GetCurrentPage(),
+        ctx.displayPageIndex,
         g_utilityScorer->GetConfig().topNCandidates);
 
     // Cache slot contents for EquipManager (keyboard equip hotkeys)
@@ -309,19 +312,21 @@ void PipelineCoordinator::PushDisplay(PipelineContext& ctx)
     // ownership) now live in the backends themselves — the coordinator only
     // drives the generic IDisplayBackend contract.
     //
-    // Resolve page state once here (it's already fixed for the tick by
-    // ResolveDisplayPage) so each backend reads it off the context instead of
-    // re-hitting the allocator/settings singletons. pageName stays alive in this
-    // scope for the string_view the DisplayContext holds.
-    auto& slotAllocator = Slot::SlotAllocator::GetSingleton();
-    const size_t pageIndex = slotAllocator.GetCurrentPage();
-    const std::string pageName = slotAllocator.GetCurrentPageName();
-
+    // Page state comes from the tick snapshot (ResolveDisplayPage), NOT re-read
+    // from the allocator here — re-reading would reopen a torn-page window if an
+    // off-thread switch landed between allocation and push. displayPageName backs
+    // the string_view for the push's duration (it lives on the reused m_ctx).
     Display::DisplayContext displayCtx{
-        ctx.assignments, ctx.scoredCandidates, ctx.overrides,
-        ctx.playerState, ctx.worldState,
-        pageIndex, slotAllocator.GetPageCount(), slotAllocator.GetSlotCount(),
-        pageName, ctx.now
+        .assignments = ctx.assignments,
+        .scoredCandidates = ctx.scoredCandidates,
+        .overrides = ctx.overrides,
+        .playerState = ctx.playerState,
+        .worldState = ctx.worldState,
+        .pageIndex = ctx.displayPageIndex,
+        .pageCount = ctx.displayPageCount,
+        .slotCount = ctx.displaySlotCount,
+        .pageName = ctx.displayPageName,
+        .now = ctx.now,
     };
     for (auto* backend : s_displayBackends) {
         if (backend->IsEnabled()) backend->Push(displayCtx);
@@ -342,22 +347,45 @@ void PipelineCoordinator::PushDisplay(PipelineContext& ctx)
 // player sits on another page). SetCurrentPage is a no-op unless the page
 // actually differs, and on a real change it clears stale locks — correct here,
 // before ApplyLocks runs for the new page.
+//
+// The resolved page is snapshotted onto the context so allocation, caches, and
+// push all read ONE page for the whole tick — an off-thread switch landing
+// mid-tick can't tear assignments from their page metadata (it just raises
+// m_pageChanged and re-runs next tick). Returns true only if the page actually
+// changed, so a page-only change forces a run without pinning the skip gate open.
 
 bool PipelineCoordinator::ResolveDisplayPage()
 {
+    auto& slotAllocator = Slot::SlotAllocator::GetSingleton();
+
     int desiredPage = -1;
     for (auto* backend : s_displayBackends) {
         if (!backend->IsEnabled()) continue;
         const int p = backend->GetDesiredPage();
         if (p >= 0) { desiredPage = p; break; }
     }
-    if (desiredPage < 0) return false;
 
-    auto& slotAllocator = Slot::SlotAllocator::GetSingleton();
-    if (static_cast<int>(slotAllocator.GetCurrentPage()) == desiredPage) return false;
+    // Only apply a valid, actually-different page. SetCurrentPage clamps an
+    // out-of-range index (SlotAllocator.cpp) — which would never converge here,
+    // warn-spamming ~10/s and pinning pageResynced=true (hash-skip disabled). A
+    // transient over-range desire is reachable while SettingsReloader shrinks
+    // pages before its wheels are rebuilt, so guard rather than trust the caller.
+    bool changed = false;
+    if (desiredPage >= 0 && desiredPage < static_cast<int>(slotAllocator.GetPageCount())) {
+        const size_t before = slotAllocator.GetCurrentPage();
+        slotAllocator.SetCurrentPage(static_cast<size_t>(desiredPage));
+        changed = slotAllocator.GetCurrentPage() != before;
+    }
 
-    slotAllocator.SetCurrentPage(static_cast<size_t>(desiredPage));
-    return true;
+    // Snapshot the resolved page for the whole tick. displaySlotCount is by-index
+    // (not GetSlotCount() off m_currentPage), so it matches the page that
+    // AllocateSlotsForPage(displayPageIndex) produces below.
+    m_ctx.displayPageIndex = slotAllocator.GetCurrentPage();
+    m_ctx.displayPageCount = slotAllocator.GetPageCount();
+    m_ctx.displaySlotCount = slotAllocator.GetSlotCount(m_ctx.displayPageIndex);
+    m_ctx.displayPageName  = slotAllocator.GetCurrentPageName();
+
+    return changed;
 }
 
 // -----------------------------------------------------------------------------

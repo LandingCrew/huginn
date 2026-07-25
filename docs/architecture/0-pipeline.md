@@ -1,6 +1,6 @@
 # Huginn Recommendation Pipeline
 
-This document describes the data flow from game state to slot recommendations as currently implemented in v0.14.x.
+This document describes the data flow from game state to slot recommendations as currently implemented in v0.18.x.
 
 > **Related documentation:**
 > - [1-states.md](1-states.md) - State models (WorldState, PlayerActorState, TargetCollection, tracking states)
@@ -9,7 +9,7 @@ This document describes the data flow from game state to slot recommendations as
 
 ---
 
-## Current Implementation Status (v0.14.x)
+## Current Implementation Status (v0.18.x)
 
 **Scoring Formula:**
 ```
@@ -131,14 +131,17 @@ The `PipelineCoordinator` singleton orchestrates the full recommendation pipelin
 
 ```
 1. GatherState          — Fetch state snapshots from StateManager + StateEvaluator
-2. CheckHashSkip        — Compare discretized hash; skip if unchanged (+ elemental override)
-3. LogStateTransition   — Log diff of changed GameState fields
-4. EnrichElementalDamage — Bridge HealthTrackingState elemental timers → PlayerActorState effect flags
-5. ScoreCandidates      — CandidateGenerator.GenerateCandidates() → UtilityScorer.ScoreCandidates()
-6. AllocateAndLock      — OverrideManager → SlotAllocator → SlotLocker → ComputeVisualStates
-7. UpdateCaches         — PipelineStateCache + EquipManager slot contents
-8. PushDisplay          — Push DisplayContext to all IDisplayBackend instances
+2. ResolveDisplayPage   — Sync active page to the backend's desired page (IDisplayBackend::GetDesiredPage), snapshot it onto the context; result folds into the skip decision
+3. CheckHashSkip        — Compare discretized hash; skip if unchanged (+ elemental / page-change override)
+4. LogStateTransition   — Log diff of changed GameState fields
+5. EnrichElementalDamage — Bridge HealthTrackingState elemental timers → PlayerActorState effect flags
+6. ScoreCandidates      — CandidateGenerator.GenerateCandidates() → UtilityScorer.ScoreCandidates()
+7. AllocateAndLock      — OverrideManager → SlotAllocator (for the snapshotted page) → SlotLocker → ComputeVisualStates
+8. UpdateCaches         — PipelineStateCache + EquipManager slot contents (snapshotted page)
+9. PushDisplay          — Push DisplayContext to all IDisplayBackend instances
 ```
+
+> **Page consistency:** `ResolveDisplayPage` resolves and snapshots the active page (index/count/slot count/name onto `PipelineContext`) *before* the hash-skip and allocation. Allocation, caches, and push all read that snapshot, so a page switch arriving off-thread mid-tick (Wheeler callback, page-cycle keys, console) can't tear assignments from their page metadata — it just raises the page-dirty flag and re-runs next tick.
 
 **PipelineContext** (`src/pipeline/PipelineCoordinator.h`):
 
@@ -582,7 +585,9 @@ After locking, each slot is assigned a `SlotVisualState` that drives UI animatio
 
 ## Display Backends
 
-The display layer uses the `IDisplayBackend` interface (`src/display/IDisplayBackend.h`). Each backend receives a `DisplayContext` struct containing slot assignments, scored candidates, overrides, player/world state, and timing.
+The display layer uses the `IDisplayBackend` interface (`src/display/IDisplayBackend.h`). Each backend receives a `DisplayContext` struct containing slot assignments, scored candidates, overrides, player/world state, the resolved page state (index, count, slot count, name), and timing. The page fields are the tick snapshot from `ResolveDisplayPage`, so backends read them off the context instead of re-fetching from the `SlotAllocator`/`SlotSettings` singletons.
+
+A backend also implements `GetDesiredPage()` — returns the page it wants shown (or `-1` for no opinion). The coordinator polls this before allocation to resolve the active page. Wheeler-specific concerns (urgent-override auto-focus) live in `WheelerBackend`, not the coordinator.
 
 **Registered backends** (in `PipelineCoordinator.cpp`):
 
@@ -595,7 +600,7 @@ The display layer uses the `IDisplayBackend` interface (`src/display/IDisplayBac
 - `UtilityScorerDebugWidget` — ImGui overlay with per-slot scoring breakdown (`_DEBUG` builds only)
 - `StateManagerDebugWidget` — ImGui state display (`_DEBUG` builds only)
 
-Adding a new display target: implement `IDisplayBackend`, add instance to the `s_displayBackends[]` array in `PipelineCoordinator.cpp`.
+Adding a new display target: implement `IDisplayBackend` (`Push`, `IsEnabled`, and optionally `GetDesiredPage` if it drives page selection), add an instance to the `s_displayBackends[]` array in `PipelineCoordinator.cpp`.
 
 ---
 
@@ -699,27 +704,29 @@ graph TB
     PC -->|1. GatherState| SE[StateEvaluator<br/>Discretize]
     SE --> GS[GameState Hash]
 
-    PC -->|2. CheckHashSkip| Skip{Hash<br/>Changed?}
+    GS -->|2. ResolveDisplayPage| RDP[Snapshot active page<br/>onto context]
+
+    RDP -->|3. CheckHashSkip| Skip{Hash or<br/>page changed?}
     Skip -->|No| Done[Pipeline Skipped]
     Skip -->|Yes| Continue[Continue]
 
-    Continue -->|3. LogStateTransition| Log[Log Diff]
-    Log -->|4. EnrichElementalDamage| Enrich[Bridge elemental<br/>timers → effect flags]
+    Continue -->|4. LogStateTransition| Log[Log Diff]
+    Log -->|5. EnrichElementalDamage| Enrich[Bridge elemental<br/>timers → effect flags]
 
-    Enrich -->|5. ScoreCandidates| CG[CandidateGenerator]
+    Enrich -->|6. ScoreCandidates| CG[CandidateGenerator]
     CG --> US[UtilityScorer]
     GS --> CRE[ContextRuleEngine]
     CRE --> US
     GS --> QL[FeatureQLearner]
     QL --> US
 
-    US -->|6. AllocateAndLock| OvM[OverrideManager]
-    OvM --> SA[SlotAllocator]
+    US -->|7. AllocateAndLock| OvM[OverrideManager]
+    OvM --> SA[SlotAllocator<br/>snapshotted page]
     SA --> SL[SlotLocker]
     SL --> VS[ComputeVisualStates]
 
-    VS -->|7. UpdateCaches| PSC[PipelineStateCache]
-    VS -->|8. PushDisplay| Display[IDisplayBackend]
+    VS -->|8. UpdateCaches| PSC[PipelineStateCache]
+    VS -->|9. PushDisplay| Display[IDisplayBackend]
     Display --> IB[IntuitionBackend]
     Display --> WB[WheelerBackend]
 
@@ -737,13 +744,14 @@ graph TB
 | Stage | Step | Input | Output | Notes |
 |-------|------|-------|--------|-------|
 | 1 | `GatherState` | Game world | 6 state types + discretized `GameState` | 11 poll methods at 100ms-1000ms intervals |
-| 2 | `CheckHashSkip` | `GameState` hash | Skip/continue decision | Elemental damage overrides hash skip |
-| 3 | `LogStateTransition` | Previous + current `GameState` | Log output | Only logs when hash changes |
-| 4 | `EnrichElementalDamage` | `HealthTrackingState` timers | `PlayerActorState.effects` flags | Bridges instant-hit detection to context rules |
-| 5 | `ScoreCandidates` | State types, registries | Scored candidates | `CandidateGenerator` → `UtilityScorer` |
-| 6 | `AllocateAndLock` | Scored candidates, state | Stable slot assignments | `OverrideManager` → `SlotAllocator` → `SlotLocker` → `ComputeVisualStates` |
-| 7 | `UpdateCaches` | Scored candidates, assignments | Cached pipeline snapshot | `PipelineStateCache` + `EquipManager` slot contents |
-| 8 | `PushDisplay` | Assignments, overrides | UI updates | `IntuitionBackend` (Scaleform HUD) + `WheelerBackend` (radial menu) |
+| 2 | `ResolveDisplayPage` | Backend `GetDesiredPage()` | Active page synced + snapshotted onto context | Page change folds into the skip decision; snapshot keeps the whole tick on one page |
+| 3 | `CheckHashSkip` | `GameState` hash, page-change flag | Skip/continue decision | Elemental damage / page change override hash skip |
+| 4 | `LogStateTransition` | Previous + current `GameState` | Log output | Only logs when hash changes |
+| 5 | `EnrichElementalDamage` | `HealthTrackingState` timers | `PlayerActorState.effects` flags | Bridges instant-hit detection to context rules |
+| 6 | `ScoreCandidates` | State types, registries | Scored candidates | `CandidateGenerator` → `UtilityScorer` |
+| 7 | `AllocateAndLock` | Scored candidates, state, snapshotted page | Stable slot assignments | `OverrideManager` → `SlotAllocator` (snapshotted page) → `SlotLocker` → `ComputeVisualStates` |
+| 8 | `UpdateCaches` | Scored candidates, assignments | Cached pipeline snapshot | `PipelineStateCache` + `EquipManager` slot contents (snapshotted page) |
+| 9 | `PushDisplay` | Assignments, overrides, page snapshot | UI updates | `IntuitionBackend` (Scaleform HUD) + `WheelerBackend` (radial menu) |
 
 ---
 

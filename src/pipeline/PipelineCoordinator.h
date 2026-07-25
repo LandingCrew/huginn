@@ -49,6 +49,16 @@ namespace Huginn::Pipeline
         Slot::SlotAssignments rawAssignments;
         Slot::SlotAssignments assignments;
 
+        // Display page resolved once per tick by ResolveDisplayPage, then used by
+        // allocation, caches, and push so the WHOLE tick stays on one page even if
+        // an off-thread page switch (Wheeler callback / page-cycle keys / console)
+        // lands mid-tick. displaySlotCount is derived from displayPageIndex, so it
+        // always matches `assignments`.
+        size_t displayPageIndex = 0;
+        size_t displayPageCount = 0;
+        size_t displaySlotCount = 0;
+        std::string displayPageName;
+
         /// Reset all fields for reuse, preserving allocated container capacity.
         void Reset()
         {
@@ -73,6 +83,10 @@ namespace Huginn::Pipeline
             overrides.activeOverrides.clear();
             rawAssignments.clear();
             assignments.clear();
+            displayPageIndex = 0;
+            displayPageCount = 0;
+            displaySlotCount = 0;
+            displayPageName.clear();
         }
     };
 
