@@ -76,16 +76,21 @@ Weapon's dual store stays as two `FormRegistry` instantiations — not folded fu
    two-form scan/fill-state/two-tier refresh kept local. −440 lines.
 3. ✅ **Spell** (`ace3c1e`): storage + `GetSpellCountByType`/`GetFavoritedSpells`; favorites,
    equip-event sink, `AddNewSpell`, classify-outside-lock reconcile kept local. −71 lines.
-4. ⏳ **Weapon** — DEFERRED / needs a design decision. Two stores (`m_weapons`, `m_ammo`)
-   share **one** `m_mutex` + one `m_isLoading`; the combined weapon+ammo scan locks once and
-   touches both. Two `FormRegistry` instantiations would give two independent locks (a
-   granularity change to that combined path), so migrating Weapon requires either that change
-   or teaching the core to accept an externally-owned shared mutex. Left as-is for now.
+4. ✅ **Weapon** (`a3a5414`) — accessor farm only (Option C). Its two stores (`m_weapons`,
+   `m_ammo`) share **one** `m_mutex` + one `m_isLoading`, and `RebuildRegistry` swaps both under
+   a single lock (an atomic dual-store swap). Deriving would force either two independent locks
+   (relaxing that atomicity) or an externally-owned shared mutex in the core. Neither was worth
+   it: the perf is a wash (shared readers don't block; writers are cold) and the storage
+   duplication is *in-file* weapon-vs-ammo, not the cross-registry drift #8 targets. So Weapon
+   keeps its storage/reconcile/mutex verbatim and its ~19 accessors lock once, then call the
+   lock-free `CollectLocked`/`QueryTopKLocked`/`FindBestLocked` helpers. ~−175 lines.
 
-**Delivered:** 3/4 registries, −646 net lines, the Item↔Scroll counted-pair drift the critique
-called out now structurally impossible (both share one delta-diff/reconcile path via the core).
-No cosave-format change → landable during the soak (unlike addendum finding #15). Needs an
-in-game pass before merge per the usual workflow.
+**Delivered:** all 4 registries. The Item↔Scroll counted-pair drift the critique called out is
+now structurally impossible (both share one delta-diff/reconcile path via the core), the ~55-method
+accessor farm across all four is single-sourced, and the query loop/sort logic lives in exactly one
+place (the base members delegate to the same lock-free helpers Weapon calls directly). No
+cosave-format change → landable during the soak (unlike addendum finding #15). Needs an in-game
+pass before merge per the usual workflow.
 
 **The counted-mixin (planned step 2) was folded into steps 1–3 directly:** each counted
 registry keeps its own `RefreshCountsFromScan`/reconcile locally against the base primitives
