@@ -11,6 +11,13 @@
 ## Known Recommendation Issues
 - [x] Need to split Alcohol and food for recommendation engine slots
 
+## UX / Feature Backlog
+- [ ] Read-only Intuition menu mode — display-only widget, hotkeys disabled, an
+      external UI (Wheeler / 3rd-party) drives selection
+- [ ] Hide/toggle the Intuition menu on a hotkey — default key `x`
+- [ ] Finer Intuition menu granularity — config sliders (position / scale / alpha)
+      to one-decimal steps (00.0)  <!-- confirm: sliders, or on-widget numeric display? -->
+
 ## Architecture Critique — Backlog
 See [reviews/architecture-critique.md](reviews/architecture-critique.md).
 **Landed:** Tier 1 (all); Tier 2 #8 registry consolidation (PR #55), #9 display
