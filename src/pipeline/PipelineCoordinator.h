@@ -48,7 +48,16 @@ namespace Huginn::Pipeline
         Override::OverrideCollection overrides;
         Slot::SlotAssignments rawAssignments;
         Slot::SlotAssignments assignments;
-        bool hasUrgentOverride = false;
+
+        // Display page resolved once per tick by ResolveDisplayPage, then used by
+        // allocation, caches, and push so the WHOLE tick stays on one page even if
+        // an off-thread page switch (Wheeler callback / page-cycle keys / console)
+        // lands mid-tick. displaySlotCount is derived from displayPageIndex, so it
+        // always matches `assignments`.
+        size_t displayPageIndex = 0;
+        size_t displayPageCount = 0;
+        size_t displaySlotCount = 0;
+        std::string displayPageName;
 
         /// Reset all fields for reuse, preserving allocated container capacity.
         void Reset()
@@ -74,7 +83,10 @@ namespace Huginn::Pipeline
             overrides.activeOverrides.clear();
             rawAssignments.clear();
             assignments.clear();
-            hasUrgentOverride = false;
+            displayPageIndex = 0;
+            displayPageCount = 0;
+            displaySlotCount = 0;
+            displayPageName.clear();
         }
     };
 
@@ -122,11 +134,19 @@ namespace Huginn::Pipeline
 
         // Pipeline steps (called in order by RunPipeline)
         void GatherState(PipelineContext& ctx);
+        /// Sync the allocator's active page to the display's desired page BEFORE
+        /// allocation and snapshot it onto ctx, so allocation/locks/caches/push
+        /// are all consistent for one page. Returns true if the page changed
+        /// (folds into the skip decision).
+        bool ResolveDisplayPage(PipelineContext& ctx);
         bool CheckHashSkip(PipelineContext& ctx, bool pageChanged);
         void LogStateTransition(PipelineContext& ctx);
         void EnrichElementalDamage(PipelineContext& ctx);
         void ScoreCandidates(PipelineContext& ctx);
-        void AllocateAndLock(PipelineContext& ctx);
+        /// Allocate + lock + visual states. Returns false (abandon the tick) if an
+        /// off-thread page switch landed after ResolveDisplayPage's snapshot —
+        /// locking the stale page would leak page-blind locks across the switch.
+        bool AllocateAndLock(PipelineContext& ctx);
         void UpdateCaches(PipelineContext& ctx);
         void PushDisplay(PipelineContext& ctx);
         void LogRecommendations(PipelineContext& ctx);

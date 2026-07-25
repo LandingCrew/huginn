@@ -14,6 +14,7 @@ namespace Huginn::Display
     public:
         void Push(const DisplayContext& ctx) override;
         [[nodiscard]] bool IsEnabled() const override;
+        [[nodiscard]] int GetDesiredPage() const override;
 
     private:
         // Reusable per-page extraction scratch buffers, cleared and refilled for

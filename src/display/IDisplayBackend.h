@@ -7,6 +7,7 @@
 #include "state/WorldState.h"
 
 #include <chrono>
+#include <string_view>
 #include <vector>
 
 namespace Huginn::Display
@@ -26,7 +27,17 @@ namespace Huginn::Display
         const Override::OverrideCollection& overrides;
         const State::PlayerActorState& playerState;
         const State::WorldState& worldState;
-        bool hasUrgentOverride;
+
+        // Resolved page state for THIS push. The coordinator reads it once from
+        // the allocator (after ResolveDisplayPage) so backends don't each re-fetch
+        // page/name/count from SlotAllocator/SlotSettings singletons at push time.
+        // pageName is a view into a string owned by the caller for the push's
+        // duration (PipelineCoordinator::PushDisplay).
+        size_t pageIndex;
+        size_t pageCount;
+        size_t slotCount;          // slot count on the current page
+        std::string_view pageName; // current page's display name
+
         std::chrono::steady_clock::time_point now;
     };
 
@@ -51,6 +62,12 @@ namespace Huginn::Display
 
         /// Coarse enable check — false skips this backend entirely.
         [[nodiscard]] virtual bool IsEnabled() const = 0;
+
+        /// The page this backend wants displayed, or -1 if it doesn't drive page
+        /// selection. The coordinator resolves the active page from these BEFORE
+        /// allocation so every backend renders one consistent page (see
+        /// PipelineCoordinator::ResolveDisplayPage). Default: no opinion.
+        [[nodiscard]] virtual int GetDesiredPage() const { return -1; }
     };
 
 }  // namespace Huginn::Display

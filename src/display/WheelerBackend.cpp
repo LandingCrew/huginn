@@ -15,6 +15,15 @@ namespace Huginn::Display
         return Wheeler::WheelerClient::GetSingleton().IsConnected();
     }
 
+    int WheelerBackend::GetDesiredPage() const
+    {
+        // Wheeler owns page selection when connected: the coordinator syncs the
+        // allocator to whichever managed page the player is viewing, before
+        // allocation. -1 when disconnected / not on a managed page (no opinion).
+        auto& wheelerClient = Wheeler::WheelerClient::GetSingleton();
+        return wheelerClient.IsConnected() ? wheelerClient.GetActiveManagedPage() : -1;
+    }
+
     void WheelerBackend::Push(const DisplayContext& ctx)
     {
         Huginn_ZONE_NAMED("Display::Wheeler");
@@ -22,8 +31,21 @@ namespace Huginn::Display
         auto& slotAllocator = Slot::SlotAllocator::GetSingleton();
         auto& slotLocker = Slot::SlotLocker::GetSingleton();
 
+        // Urgent-override handling is Wheeler-local: an override at/above the
+        // auto-focus threshold both pulls focus to the Huginn wheel and lets the
+        // push through even while the wheel is open (so an open wheel updates).
+        const auto* topOverride = ctx.overrides.GetTopOverride();
+        const int autoFocusThreshold =
+            Wheeler::WheelerSettings::GetSingleton().GetAutoFocusMinPriority();
+        const bool hasUrgentOverride =
+            topOverride && topOverride->priority >= autoFocusThreshold;
+
+        if (hasUrgentOverride && wheelerClient.IsWheelOpen()) {
+            wheelerClient.TryUrgentAutoFocus(topOverride->priority);
+        }
+
         if (!wheelerClient.HasRecommendationWheel() ||
-            (wheelerClient.IsWheelOpen() && !ctx.hasUrgentOverride)) {
+            (wheelerClient.IsWheelOpen() && !hasUrgentOverride)) {
             return;
         }
 
@@ -31,8 +53,10 @@ namespace Huginn::Display
 
         // Hoist per-tick invariants out of the page loop (E5): the current page,
         // page count, and post-activation policy don't change within one push.
-        const size_t currentPage = slotAllocator.GetCurrentPage();
-        const size_t pageCount = slotAllocator.GetPageCount();
+        // Page/count come resolved on the context (ResolveDisplayPage) rather than
+        // re-fetched from the allocator; AllocateSlotsForPage below still needs it.
+        const size_t currentPage = ctx.pageIndex;
+        const size_t pageCount = ctx.pageCount;
         const bool emptyPolicy = Wheeler::WheelerSettings::GetSingleton().GetPostActivationPolicy()
             == Wheeler::PostActivationPolicy::Empty;
 
