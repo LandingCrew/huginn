@@ -17,6 +17,7 @@
 #include "telemetry/SoakMetrics.h"
 #include "ui/DebugSettings.h"
 #include "display/IDisplayBackend.h"
+#include "display/ExplanationLabel.h"  // ReasonLabel for the [Context] transition log
 #include "display/WheelerBackend.h"
 #include "display/IntuitionBackend.h"
 
@@ -99,6 +100,7 @@ bool PipelineCoordinator::RunPipeline(
         // stale page. The switch raised m_pageChanged, so next tick re-runs on it.
         return false;
     }
+    LogDisplayLabels(m_ctx);
     UpdateCaches(m_ctx);
     PushDisplay(m_ctx);
     LogRecommendations(m_ctx);
@@ -255,6 +257,31 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
             .lookingAtOre = ctx.worldState.isLookingAtOreVein,
             .lightLevel = ctx.worldState.lightLevel,
         });
+
+    // The reason drives a display string only, so nothing else in the log
+    // reveals it — log the transition (not the tick) so a session can be
+    // verified from the log instead of by watching the wheel. Same cadence as
+    // the [Pipeline] state transition line: only fires on a threshold cross.
+    //
+    // The vitals ride along because they are the ASSERTABLE part: the
+    // continuous rules invert their curve at fixed percentages (crit 15%, low
+    // 30% HP/MP/SP, charge 25%), so a checker can read this line alone and
+    // confirm the reported reason matches the numbers that produced it.
+    // NOTE: Single-threaded (pipeline runs on the update thread only).
+    static Context::ContextReason s_lastReason = Context::ContextReason::None;
+    if (ctx.contextReason != s_lastReason) {
+        const auto label = Display::ReasonLabel(ctx.contextReason);
+        const auto prev = Display::ReasonLabel(s_lastReason);
+        const auto& vitals = ctx.playerState.vitals;
+        logger::info("[Context] Reason: {} → {} | hp={:.0f}% mp={:.0f}% sp={:.0f}% charge={}"sv,
+            prev.empty() ? "(none)"sv : prev,
+            label.empty() ? "(none)"sv : label,
+            vitals.health * 100.0f, vitals.magicka * 100.0f, vitals.stamina * 100.0f,
+            ctx.playerState.hasEnchantedWeapon
+                ? std::format("{:.0f}%", ctx.playerState.weaponChargePercent * 100.0f)
+                : "n/a");
+        s_lastReason = ctx.contextReason;
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -478,6 +505,46 @@ void PipelineCoordinator::LogRecommendations(PipelineContext& ctx)
         g_utilityScorer->LogTopCandidates(ctx.scoredCandidates, 5,
             /*detail=*/verbosity >= 2, /*force=*/false);
         m_lastRecLog = ctx.now;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// LogDisplayLabels — What the player is actually shown (both build configs)
+// -----------------------------------------------------------------------------
+// Derives the explanation subtext once, on the tick's own assignments, so that
+//   (a) `hg recs` prints the real label instead of an empty string, and
+//   (b) the displayed surface is verifiable from a log alone — no reading
+//       labels off the wheel by hand, and no dependency on Wheeler at all.
+// Wheeler recomputes the same pure function for its other pages and may
+// substitute its own lock-timer/wildcard text per the [Subtexts] toggles it
+// logs at startup; the explanation text itself cannot diverge (same function,
+// same inputs). Transition-gated: one line when the label set changes.
+
+void PipelineCoordinator::LogDisplayLabels(PipelineContext& ctx)
+{
+    std::string summary;
+    for (auto& assignment : ctx.assignments) {
+        assignment.subtextLabel = Display::DeriveExplanationLabel(assignment, ctx.contextReason);
+
+        if (assignment.IsEmpty() || assignment.formID == 0 || assignment.subtextLabel.empty()) {
+            continue;
+        }
+        if (!summary.empty()) summary += ' ';
+        summary += fmt::format("{}={}({})",
+            assignment.slotIndex, assignment.subtextLabel, assignment.name);
+    }
+
+    // NOTE: Single-threaded (pipeline runs on the update thread only).
+    static std::string s_lastSummary;
+    if (summary == s_lastSummary) {
+        return;
+    }
+    s_lastSummary = summary;
+
+    if (summary.empty()) {
+        logger::info("[Subtext] page {} — no labels"sv, ctx.displayPageIndex);
+    } else {
+        logger::info("[Subtext] page {} | {}"sv, ctx.displayPageIndex, summary);
     }
 }
 

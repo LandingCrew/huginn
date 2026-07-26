@@ -160,6 +160,10 @@ namespace Huginn::Pipeline
         void UpdateCaches(PipelineContext& ctx);
         void PushDisplay(PipelineContext& ctx);
         void LogRecommendations(PipelineContext& ctx);
+        // Ground truth for what the player is actually shown: the derived
+        // subtext for every slot on the live page, logged on change. Keeps the
+        // display surface verifiable from a log alone (no eyeballing the wheel).
+        void LogDisplayLabels(PipelineContext& ctx);
 
 #ifndef NDEBUG
         void UpdateDebugWidgets(PipelineContext& ctx);
