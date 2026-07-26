@@ -53,11 +53,11 @@ namespace Huginn::Pipeline
         Slot::SlotAssignments rawAssignments;
         Slot::SlotAssignments assignments;
 
-        // Per-tick context summary. contextWeights is the map the scorer actually
-        // ranked against (handed back by ScoreCandidates); contextReason is the
-        // dominant reason derived from it for the Wheeler subtext label. One
-        // encoding — ContextRuleEngine's curves — for both scoring and display (#10).
-        Context::ContextWeightMap contextWeights{};
+        // Dominant reason for THIS tick, derived by ScoreCandidates from the very
+        // weight map the scorer ranked against, and consumed by the Wheeler
+        // subtext label. One encoding — ContextRuleEngine's curves — for both
+        // scoring and display (#10). The map itself stays local to that step;
+        // nothing downstream needs it.
         Context::ContextReason contextReason = Context::ContextReason::None;
 
         // Display page resolved once per tick by ResolveDisplayPage, then used by
@@ -92,7 +92,6 @@ namespace Huginn::Pipeline
             overrides.activeOverrides.clear();
             rawAssignments.clear();
             assignments.clear();
-            contextWeights = {};
             contextReason = Context::ContextReason::None;
             displayPageIndex = 0;
             displayPageCount = 0;

@@ -240,15 +240,16 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
 
     auto candidates = candidateGen.GenerateCandidates(ctx.playerState, ctx.currentMagicka);
 
+    Context::ContextWeightMap contextWeights{};
     ctx.scoredCandidates = g_utilityScorer->ScoreCandidates(
         candidates, ctx.currentState, ctx.playerState, ctx.targets, ctx.worldState,
-        &ctx.contextWeights);
+        &contextWeights);
 
     // Name the dominant reason once per tick, off the weights the ranking just
     // used — the display explanation can't disagree with the scoring (#10).
     // The two world facts below have no scoring weight to read them off.
     ctx.contextReason = g_utilityScorer->DominantContextReason(
-        ctx.contextWeights,
+        contextWeights,
         Context::ContextReasonSignals{
             .allyInjured = ctx.targets.HasInjuredFollower(),
             .lookingAtOre = ctx.worldState.isLookingAtOreVein,

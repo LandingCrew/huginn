@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 namespace Huginn::Context
@@ -16,8 +17,9 @@ namespace Huginn::Context
     // The enum carries no display text: the display layer owns the wording
     // (Display::ReasonLabel in display/ExplanationLabel.h).
     //
-    // Ordering is display priority — DominantReason() reports the FIRST reason
-    // whose weight clears its threshold, so more urgent reasons must come first.
+    // Ordering IS display priority: DominantReason() marks every reason whose
+    // threshold is met and then returns the lowest enumerator among them, so
+    // reordering here reorders the labels — no second list to keep in sync.
     // =========================================================================
     enum class ContextReason : uint8_t
     {
@@ -26,12 +28,9 @@ namespace Huginn::Context
         // Emergency
         CriticalHealth,
 
-        // Environment / crosshair interaction
+        // Environment / crosshair interaction the player is acting ON
         Underwater,
         LookingAtLock,
-        AtForge,
-        AtEnchanter,
-        AtAlchemy,
 
         // Active elemental / status damage
         OnFire,
@@ -39,6 +38,8 @@ namespace Huginn::Context
         Diseased,
         TakingFrost,
         TakingShock,
+
+        // Imminent physical harm
         Falling,
 
         // Depleted resources
@@ -48,8 +49,14 @@ namespace Huginn::Context
         WeaponLowCharge,
         NeedsAmmo,
 
-        // Surroundings
+        // Ambient surroundings — true for as long as you stand there, so they
+        // rank below anything actively hurting or depleting you. The crafting
+        // stations sit here rather than with the crosshair interactions above:
+        // looking at a forge is not more urgent than bleeding out next to it.
         AllyInjured,
+        AtForge,
+        AtEnchanter,
+        AtAlchemy,
         LookingAtOre,
         InDarkness,
         Sneaking,

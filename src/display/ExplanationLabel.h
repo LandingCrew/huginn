@@ -56,8 +56,14 @@ namespace Huginn::Display
             case R::TargetDragon:    return "Dragon";
             case R::MultipleEnemies: return "Outnumbered";
             case R::EnemyCasting:    return "Enemy Casting";
-            default:                 return {};
+
+            // No wording, by definition. Listed rather than defaulted so the
+            // compiler flags a new enumerator on top of the static_assert.
+            case R::None:
+            case R::_Count:
+                break;
         }
+        return {};
     }
 
     /// Derive the subtext explanation for one slot assignment.

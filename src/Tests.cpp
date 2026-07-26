@@ -3215,8 +3215,11 @@ void RunUnitTests()
     {
         logger::info("TEST: ContextReason derived from context weights..."sv);
 
-        auto& settings = State::ContextWeightSettings::GetSingleton();
-        Context::ContextRuleEngine engine(settings.BuildConfig());
+        // Pinned to DEFAULT config, not settings.BuildConfig(): these assertions
+        // are about the derivation, and the live INI can legitimately zero a
+        // weight (a rule at 0 never reports — that is a documented feature of
+        // Fires()), which would fail the test for a correct build.
+        Context::ContextRuleEngine engine(State::ContextWeightConfig{});
 
         const Context::ContextReasonSignals kNoSignals{};
 
@@ -3363,7 +3366,113 @@ void RunUnitTests()
             }
         }
 
-        // 17g: Every reason the engine can report has display wording
+        // 17g: Workstation reasons report, but rank BELOW anything hurting you
+        {
+            State::TargetCollection targets{};
+            State::PlayerActorState player{};
+
+            State::WorldState forge{};
+            forge.isLookingAtWorkstation = true;
+            forge.workstationType = 1;  // kCreateObject
+            if (reasonFor(player, targets, forge, kNoSignals) != Context::ContextReason::AtForge) {
+                logger::error("TEST FAIL: crosshair on a forge should report AtForge");
+                return;
+            }
+
+            State::WorldState alchemy{};
+            alchemy.isLookingAtWorkstation = true;
+            alchemy.workstationType = 5;  // kAlchemy
+            if (reasonFor(player, targets, alchemy, kNoSignals) != Context::ContextReason::AtAlchemy) {
+                logger::error("TEST FAIL: crosshair on an alchemy lab should report AtAlchemy");
+                return;
+            }
+
+            // Standing at a forge while bleeding out must still say Low HP —
+            // crafting stations are ambient, not urgent
+            State::PlayerActorState hurt{};
+            hurt.vitals.health = 0.25f;
+            if (reasonFor(hurt, targets, forge, kNoSignals) != Context::ContextReason::LowHealth) {
+                logger::error("TEST FAIL: LowHealth must outrank AtForge");
+                return;
+            }
+        }
+
+        // 17h: Equipment reasons (weapon charge inverts its own curve; ammo is binary)
+        {
+            State::TargetCollection targets{};
+            State::WorldState world{};
+
+            State::PlayerActorState drained{};
+            drained.hasEnchantedWeapon = true;
+            drained.weaponChargePercent = 0.10f;
+            if (reasonFor(drained, targets, world, kNoSignals) != Context::ContextReason::WeaponLowCharge) {
+                logger::error("TEST FAIL: 10%% weapon charge should report WeaponLowCharge");
+                return;
+            }
+
+            // No enchanted weapon → no charge weight → no phantom label
+            State::PlayerActorState plain{};
+            plain.weaponChargePercent = 0.10f;
+            if (reasonFor(plain, targets, world, kNoSignals) == Context::ContextReason::WeaponLowCharge) {
+                logger::error("TEST FAIL: unenchanted weapon must not report WeaponLowCharge");
+                return;
+            }
+
+            State::PlayerActorState dry{};
+            dry.hasBowEquipped = true;
+            dry.arrowCount = 0;
+            if (reasonFor(dry, targets, world, kNoSignals) != Context::ContextReason::NeedsAmmo) {
+                logger::error("TEST FAIL: bow with no arrows should report NeedsAmmo");
+                return;
+            }
+        }
+
+        // 17i: An override's own reason beats the tick's context reason
+        {
+            Slot::SlotAssignment assignment{};
+            assignment.type = Slot::AssignmentType::Override;
+
+            Scoring::ScoredCandidate scored{};
+            Candidate::ItemCandidate potion{};
+            potion.name = "Potion of Ultimate Healing";
+            potion.overrideReason = Context::ContextReason::CriticalHealth;
+            scored.candidate = potion;
+            assignment.candidate = scored;
+
+            // Context says Sneaking; the override says Critical HP and wins
+            const auto label = Display::DeriveExplanationLabel(
+                assignment, Context::ContextReason::Sneaking);
+            if (label != "Critical HP") {
+                logger::error("TEST FAIL: override reason should win, got '{}'", label);
+                return;
+            }
+
+            // Without a stamped reason, the tick's context reason is used
+            Slot::SlotAssignment plain{};
+            Scoring::ScoredCandidate plainScored{};
+            Candidate::ItemCandidate plainPotion{};
+            plainPotion.name = "Potion of Minor Healing";
+            plainScored.candidate = plainPotion;
+            plain.candidate = plainScored;
+
+            const auto contextLabel = Display::DeriveExplanationLabel(
+                plain, Context::ContextReason::Sneaking);
+            if (contextLabel != "Sneaking") {
+                logger::error("TEST FAIL: context reason should apply, got '{}'", contextLabel);
+                return;
+            }
+
+            // No reason at all and not favorited → no label
+            const auto emptyLabel = Display::DeriveExplanationLabel(
+                plain, Context::ContextReason::None);
+            if (!emptyLabel.empty()) {
+                logger::error("TEST FAIL: no reason and no favorite should give no label, got '{}'",
+                    emptyLabel);
+                return;
+            }
+        }
+
+        // 17j: Every reason the engine can report has display wording
         {
             for (size_t i = 1; i < Context::CONTEXT_REASON_COUNT; ++i) {
                 const auto reason = static_cast<Context::ContextReason>(i);

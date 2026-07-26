@@ -14,8 +14,9 @@ namespace Huginn::Context
     // CONTINUOUS RULES (vitals, weapon charge) invert the smoothing curve:
     //     weight >= (1 - pct)^exponent   ⟺   vital <= pct
     // so the reported boundary is exactly the old percentage threshold at ANY
-    // configured exponent — tune fHealthSmoothingExponent and the label moves
-    // with the curve instead of drifting away from it.
+    // usable exponent — tune fHealthSmoothingExponent and the label moves with
+    // the curve instead of drifting away from it. (Both sides evaluate the same
+    // expression, so the boundary is bit-for-bit consistent.)
     //
     // BINARY RULES fire at half their configured weight. For most rules the
     // weight is either 0 or the configured value, so this is just "the rule
@@ -23,6 +24,11 @@ namespace Huginn::Context
     // 50%+ resistance gets no "Fire Damage" explanation — matching the fact that
     // the context is no longer meaningfully driving their scoring. A rule
     // configured to 0 (disabled in the INI) never reports.
+    //
+    // PRIORITY comes from ContextReason's declaration order, not from the order
+    // of the Mark() calls below: every reason is marked, then the lowest
+    // enumerator wins. Reordering the enum reorders the labels, with no second
+    // list here to fall out of sync with it.
     // =============================================================================
 
     namespace
@@ -59,73 +65,79 @@ namespace Huginn::Context
         const ContextWeightMap& weights,
         const ContextReasonSignals& signals) const
     {
-        // Tripwire: a new ContextReason needs a threshold here (and a label in
+        // Tripwire: a new ContextReason needs a Mark() below (and a label in
         // display/ExplanationLabel.h) or it can never report.
         static_assert(CONTEXT_REASON_COUNT == 27,
             "ContextReason changed — review DominantReason and Display::ReasonLabel");
+        static_assert(CONTEXT_REASON_COUNT <= 32,
+            "ContextReason outgrew the uint32_t mark set — widen `marked`");
 
         using R = ContextReason;
 
-        // --- Emergency ------------------------------------------------------
-        if (weights.healingWeight >=
-            CurveThreshold(State::VitalThreshold::CRITICAL, m_config.fHealthSmoothingExponent)) {
-            return R::CriticalHealth;
-        }
+        uint32_t marked = 0;
+        const auto Mark = [&marked](R reason, bool condition) noexcept {
+            if (condition) {
+                marked |= 1u << static_cast<uint32_t>(reason);
+            }
+        };
 
-        // --- Environment / crosshair interaction ----------------------------
-        // Underwater and workstation rules are already suppression-aware in
-        // EvaluateRules (waterbreathing active → no weight → no explanation).
-        if (Fires(weights.waterbreathingWeight, m_config.weightUnderwater))     return R::Underwater;
-        if (Fires(weights.unlockWeight, m_config.weightLookingAtLock))          return R::LookingAtLock;
-        if (Fires(weights.fortifySmithingWeight, m_config.weightAtForge))       return R::AtForge;
-        if (Fires(weights.fortifyEnchantingWeight, m_config.weightAtEnchanter)) return R::AtEnchanter;
-        if (Fires(weights.fortifyAlchemyWeight, m_config.weightAtAlchemyLab))   return R::AtAlchemy;
+        // --- Vitals and weapon charge: invert the scoring curve ---------------
+        Mark(R::CriticalHealth, weights.healingWeight >=
+            CurveThreshold(State::VitalThreshold::CRITICAL, m_config.fHealthSmoothingExponent));
+        Mark(R::LowHealth, weights.healingWeight >=
+            CurveThreshold(State::VitalThreshold::LOW, m_config.fHealthSmoothingExponent));
+        Mark(R::LowMagicka, weights.magickaRestoreWeight >=
+            CurveThreshold(State::VitalThreshold::LOW, m_config.fMagickaSmoothingExponent));
+        Mark(R::LowStamina, weights.staminaRestoreWeight >=
+            CurveThreshold(State::VitalThreshold::LOW, m_config.fStaminaSmoothingExponent));
+        Mark(R::WeaponLowCharge, weights.weaponChargeWeight >=
+            CurveThreshold(kWeaponChargeLowPct, m_config.fWeaponChargeSmoothingExponent));
 
-        // --- Active elemental / status damage -------------------------------
-        if (Fires(weights.resistFireWeight, m_config.weightOnFire))        return R::OnFire;
-        if (Fires(weights.resistPoisonWeight, m_config.weightPoisoned))    return R::Poisoned;
-        if (Fires(weights.resistDiseaseWeight, m_config.weightDiseased))   return R::Diseased;
-        if (Fires(weights.resistFrostWeight, m_config.weightFrozen))       return R::TakingFrost;
-        if (Fires(weights.resistShockWeight, m_config.weightShocked))      return R::TakingShock;
-        if (Fires(weights.slowFallWeight, m_config.weightFallingHigh))     return R::Falling;
+        // --- Environment ------------------------------------------------------
+        // Already suppression-aware in EvaluateRules: waterbreathing active or
+        // invisibility up means no weight, hence no explanation.
+        Mark(R::Underwater,    Fires(weights.waterbreathingWeight, m_config.weightUnderwater));
+        Mark(R::LookingAtLock, Fires(weights.unlockWeight, m_config.weightLookingAtLock));
+        Mark(R::Falling,       Fires(weights.slowFallWeight, m_config.weightFallingHigh));
+        Mark(R::AtForge,       Fires(weights.fortifySmithingWeight, m_config.weightAtForge));
+        Mark(R::AtEnchanter,   Fires(weights.fortifyEnchantingWeight, m_config.weightAtEnchanter));
+        Mark(R::AtAlchemy,     Fires(weights.fortifyAlchemyWeight, m_config.weightAtAlchemyLab));
 
-        // --- Depleted resources ---------------------------------------------
-        if (weights.healingWeight >=
-            CurveThreshold(State::VitalThreshold::LOW, m_config.fHealthSmoothingExponent)) {
-            return R::LowHealth;
-        }
-        if (weights.magickaRestoreWeight >=
-            CurveThreshold(State::VitalThreshold::LOW, m_config.fMagickaSmoothingExponent)) {
-            return R::LowMagicka;
-        }
-        if (weights.staminaRestoreWeight >=
-            CurveThreshold(State::VitalThreshold::LOW, m_config.fStaminaSmoothingExponent)) {
-            return R::LowStamina;
-        }
-        if (weights.weaponChargeWeight >=
-            CurveThreshold(kWeaponChargeLowPct, m_config.fWeaponChargeSmoothingExponent)) {
-            return R::WeaponLowCharge;
-        }
-        if (Fires(weights.ammoWeight, m_config.weightNeedsAmmo)) return R::NeedsAmmo;
+        // --- Active elemental / status damage ---------------------------------
+        Mark(R::OnFire,      Fires(weights.resistFireWeight, m_config.weightOnFire));
+        Mark(R::Poisoned,    Fires(weights.resistPoisonWeight, m_config.weightPoisoned));
+        Mark(R::Diseased,    Fires(weights.resistDiseaseWeight, m_config.weightDiseased));
+        Mark(R::TakingFrost, Fires(weights.resistFrostWeight, m_config.weightFrozen));
+        Mark(R::TakingShock, Fires(weights.resistShockWeight, m_config.weightShocked));
 
-        // --- Surroundings ----------------------------------------------------
-        if (signals.allyInjured)                          return R::AllyInjured;
-        if (signals.lookingAtOre)                         return R::LookingAtOre;
-        if (signals.lightLevel < kDarknessLightLevel)     return R::InDarkness;
-        if (Fires(weights.stealthWeight, m_config.weightSneaking)) return R::Sneaking;
+        // --- Equipment --------------------------------------------------------
+        Mark(R::NeedsAmmo, Fires(weights.ammoWeight, m_config.weightNeedsAmmo));
 
-        // --- Target / combat --------------------------------------------------
-        if (Fires(weights.antiUndeadWeight, m_config.weightTargetUndead))   return R::TargetUndead;
-        if (Fires(weights.antiDaedraWeight, m_config.weightTargetDaedra))   return R::TargetDaedra;
-        if (Fires(weights.antiDragonWeight, m_config.weightTargetDragon))   return R::TargetDragon;
-        if (Fires(weights.aoeWeight, m_config.weightMultipleEnemies))       return R::MultipleEnemies;
-        if (Fires(weights.wardWeight, m_config.weightEnemyCasting))         return R::EnemyCasting;
+        // --- Surroundings -----------------------------------------------------
+        Mark(R::AllyInjured,  signals.allyInjured);
+        Mark(R::LookingAtOre, signals.lookingAtOre);
+        Mark(R::InDarkness,   signals.lightLevel < kDarknessLightLevel);
+        Mark(R::Sneaking,     Fires(weights.stealthWeight, m_config.weightSneaking));
 
-        // Deliberately NOT reasons: the always-on baselines (weapon/spell/buff
+        // --- Target / combat ---------------------------------------------------
+        Mark(R::TargetUndead,    Fires(weights.antiUndeadWeight, m_config.weightTargetUndead));
+        Mark(R::TargetDaedra,    Fires(weights.antiDaedraWeight, m_config.weightTargetDaedra));
+        Mark(R::TargetDragon,    Fires(weights.antiDragonWeight, m_config.weightTargetDragon));
+        Mark(R::MultipleEnemies, Fires(weights.aoeWeight, m_config.weightMultipleEnemies));
+        Mark(R::EnemyCasting,    Fires(weights.wardWeight, m_config.weightEnemyCasting));
+
+        // Deliberately NOT marked: the always-on baselines (weapon/spell/buff
         // potion/base relevance) and the ambient in-combat weights (damage,
         // summon, buff-combat). They are true almost whenever anything is
         // happening, so reporting them would drown out the specific reasons
         // above and replace every "Favorite" label with "In Combat".
+
+        // Enum order is priority: lowest marked enumerator wins.
+        for (uint32_t i = 1; i < CONTEXT_REASON_COUNT; ++i) {
+            if (marked & (1u << i)) {
+                return static_cast<ContextReason>(i);
+            }
+        }
         return R::None;
     }
 }
