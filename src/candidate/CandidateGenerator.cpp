@@ -109,8 +109,8 @@ namespace Huginn::Candidate
         m_gatherBuffer.clear();   // capacity is retained from previous calls
 
         // Gather candidates from all registries into the persistent buffer.
-        // Per-tick relevance tags (display label only) are computed by the pipeline
-        // via Candidate::ComputeRelevanceTags — not stamped onto each candidate here.
+        // No relevance metadata is stamped here: the per-tick display reason is
+        // derived by the pipeline from the scorer's context weights (#10).
         GatherSpellCandidates(m_gatherBuffer, player);
         GatherPotionCandidates(m_gatherBuffer, player);
         GatherScrollCandidates(m_gatherBuffer, player);

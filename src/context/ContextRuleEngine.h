@@ -4,6 +4,7 @@
 #include "state/TargetActorState.h"
 #include "state/WorldState.h"
 #include "ContextWeightConfig.h"
+#include "ContextReason.h"
 
 namespace Huginn::Context
 {
@@ -153,6 +154,28 @@ namespace Huginn::Context
     };
 
     // =============================================================================
+    // CONTEXT REASON SIGNALS
+    // =============================================================================
+    // Perceivable facts that DominantReason() reports but no scoring rule keys
+    // on, so they have no ContextWeightMap entry to read them off:
+    //   - injured follower: no heal-other weight exists (healingWeight is the
+    //     player's own deficit)
+    //   - ore vein / ambient light: no mining or light weight exists
+    //
+    // They are passed in raw (not pre-thresholded) so every threshold in the
+    // reason vocabulary stays in one place — this file's implementation.
+    // If any of these ever grows a scoring rule, delete the field and read the
+    // weight instead.
+    // =============================================================================
+
+    struct ContextReasonSignals
+    {
+        bool allyInjured = false;    // A follower is below the low-health threshold
+        bool lookingAtOre = false;   // Crosshair on an ore vein
+        float lightLevel = 1.0f;     // Ambient light [0,1] (WorldState::lightLevel)
+    };
+
+    // =============================================================================
     // CONTEXT RULE ENGINE
     // =============================================================================
     // Centralized context assessment engine that evaluates game state and produces
@@ -210,6 +233,28 @@ namespace Huginn::Context
             const State::PlayerActorState& player,
             const State::TargetCollection& targets,
             const State::WorldState& world) const;
+
+        /**
+         * @brief Name the dominant reason the current context matters (#10).
+         *
+         * Reads the SAME ContextWeightMap the scorer consumes, so the display
+         * explanation and the utility ranking can never disagree: a reason is
+         * reported only while its weight is actually driving scoring. Threshold
+         * per category is derived from this engine's own config — vitals invert
+         * the smoothing curve (weight >= (1-pct)^exp is exactly "vital <= pct"),
+         * binary rules fire at half their configured weight, which also lets the
+         * resistance-scaled elemental rules go quiet for a resistant player.
+         *
+         * Returns the first reason in ContextReason order that clears its
+         * threshold, or ContextReason::None.
+         *
+         * @param weights Weight map from EvaluateRules() for THIS tick.
+         * @param signals Perceivable facts with no scoring weight of their own
+         *        (see ContextReasonSignals).
+         */
+        [[nodiscard]] ContextReason DominantReason(
+            const ContextWeightMap& weights,
+            const ContextReasonSignals& signals) const;
 
     private:
         State::ContextWeightConfig m_config;

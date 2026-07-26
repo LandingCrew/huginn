@@ -5,6 +5,7 @@
 #include "slot/SlotAllocator.h"
 #include "slot/SlotLocker.h"
 #include "slot/SlotUtils.h"
+#include "ExplanationLabel.h"
 #include "wheeler/WheelerClient.h"
 #include "wheeler/WheelerSettings.h"
 
@@ -80,7 +81,7 @@ namespace Huginn::Display
             //   Override > Lock Timer > Wildcard (handled in Wheeler) > Explanation
             for (auto& assignment : pageAssignments) {
                 if (stConfig.showOverrideLabel && assignment.IsOverride()) {
-                    assignment.subtextLabel = Slot::DeriveExplanationLabel(assignment, ctx.relevanceTags);
+                    assignment.subtextLabel = Display::DeriveExplanationLabel(assignment, ctx.contextReason);
                     continue;
                 }
                 if (stConfig.showLockTimerLabel && page == currentPage
@@ -99,7 +100,7 @@ namespace Huginn::Display
                 // Wildcard label — handled by WheelerClient (uses INI text)
                 if (stConfig.showExplanationLabel && !assignment.IsWildcard()
                     && !assignment.IsEmpty()) {
-                    assignment.subtextLabel = Slot::DeriveExplanationLabel(assignment, ctx.relevanceTags);
+                    assignment.subtextLabel = Display::DeriveExplanationLabel(assignment, ctx.contextReason);
                 }
                 if (assignment.IsEmpty()) {
                     if (assignment.classification != Slot::SlotClassification::Regular) {

@@ -61,12 +61,16 @@ namespace Huginn::Scoring
 
         // Main scoring method: Score all candidates and return ranked list
         // Stage 1f: Added WorldState parameter for ContextRuleEngine
+        // @param outWeights Optional: receives the context weight map this pass
+        //        scored against, so callers can explain the ranking without
+        //        re-deriving context (see DominantContextReason, critique #10).
         [[nodiscard]] ScoredCandidateList ScoreCandidates(
             const std::vector<Candidate::CandidateVariant>& candidates,
             const State::GameState& state,
             const State::PlayerActorState& player,
             const State::TargetCollection& targets,
-            const State::WorldState& world);
+            const State::WorldState& world,
+            Context::ContextWeightMap* outWeights = nullptr);
 
         // Score a single candidate (useful for debugging)
         // Stage 1f: Added WorldState parameter for ContextRuleEngine
@@ -83,6 +87,16 @@ namespace Huginn::Scoring
 
         /// Replace the ContextRuleEngine's config snapshot (e.g., after INI hot-reload).
         void SetContextWeightConfig(const State::ContextWeightConfig& config);
+
+        /// Name the dominant reason behind a weight map from ScoreCandidates'
+        /// outWeights. Thin forward to the owned ContextRuleEngine, whose config
+        /// (and therefore whose thresholds) this scorer already keeps in sync.
+        [[nodiscard]] Context::ContextReason DominantContextReason(
+            const Context::ContextWeightMap& weights,
+            const Context::ContextReasonSignals& signals) const
+        {
+            return m_contextEngine.DominantReason(weights, signals);
+        }
 
         // Component access (for advanced configuration)
         [[nodiscard]] WildcardManager& GetWildcardManager() noexcept { return m_wildcardMgr; }

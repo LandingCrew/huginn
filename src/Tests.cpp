@@ -18,6 +18,7 @@
 #include "learning/UsageMemory.h"
 #include "util/ScopedTimer.h"
 #include "context/ContextRuleEngine.h"
+#include "display/ExplanationLabel.h"
 
 #include <random>
 #include <algorithm>
@@ -3206,6 +3207,178 @@ void RunUnitTests()
         }
 
         logger::info("TEST PASS: FeatureQLearner batch decay (selective, count-preserving, idempotent)"sv);
+    }
+
+    // Test 17: ContextReason derivation (architecture-critique #10) — the display
+    // explanation is read off the SAME weight map that ranks candidates, so the
+    // reported boundaries must match the vital thresholds and the suppressions.
+    {
+        logger::info("TEST: ContextReason derived from context weights..."sv);
+
+        auto& settings = State::ContextWeightSettings::GetSingleton();
+        Context::ContextRuleEngine engine(settings.BuildConfig());
+
+        const Context::ContextReasonSignals kNoSignals{};
+
+        // Helper: evaluate + name the reason in one step
+        const auto reasonFor = [&](const State::PlayerActorState& player,
+                                   const State::TargetCollection& targets,
+                                   const State::WorldState& world,
+                                   const Context::ContextReasonSignals& signals) {
+            return engine.DominantReason(engine.EvaluateRules(player, targets, world), signals);
+        };
+
+        // 17a: Vital bands land exactly on the old thresholds (15% / 30% HP)
+        {
+            State::TargetCollection targets{};
+            State::WorldState world{};
+
+            State::PlayerActorState healthy{};
+            healthy.vitals.health = 0.9f;
+            if (reasonFor(healthy, targets, world, kNoSignals) != Context::ContextReason::None) {
+                logger::error("TEST FAIL: 90%% HP should report no reason");
+                return;
+            }
+
+            State::PlayerActorState low{};
+            low.vitals.health = 0.25f;  // below LOW (0.30), above CRITICAL (0.15)
+            if (reasonFor(low, targets, world, kNoSignals) != Context::ContextReason::LowHealth) {
+                logger::error("TEST FAIL: 25%% HP should report LowHealth");
+                return;
+            }
+
+            State::PlayerActorState critical{};
+            critical.vitals.health = 0.10f;
+            if (reasonFor(critical, targets, world, kNoSignals) != Context::ContextReason::CriticalHealth) {
+                logger::error("TEST FAIL: 10%% HP should report CriticalHealth");
+                return;
+            }
+
+            // Just inside the LOW threshold — the curve inversion must not drift
+            State::PlayerActorState edge{};
+            edge.vitals.health = 0.299f;
+            if (reasonFor(edge, targets, world, kNoSignals) != Context::ContextReason::LowHealth) {
+                logger::error("TEST FAIL: 29.9%% HP should report LowHealth (threshold drift)");
+                return;
+            }
+            State::PlayerActorState justAbove{};
+            justAbove.vitals.health = 0.301f;
+            if (reasonFor(justAbove, targets, world, kNoSignals) == Context::ContextReason::LowHealth) {
+                logger::error("TEST FAIL: 30.1%% HP must not report LowHealth (threshold drift)");
+                return;
+            }
+        }
+
+        // 17b: Suppressions the old threshold pass ignored — an already-active
+        // buff means the context isn't driving scoring, so it isn't a reason
+        {
+            State::TargetCollection targets{};
+            State::WorldState world{};
+
+            State::PlayerActorState drowning{};
+            drowning.isUnderwater = true;
+            if (reasonFor(drowning, targets, world, kNoSignals) != Context::ContextReason::Underwater) {
+                logger::error("TEST FAIL: underwater should report Underwater");
+                return;
+            }
+
+            State::PlayerActorState breathing{};
+            breathing.isUnderwater = true;
+            breathing.buffs.hasWaterBreathing = true;
+            if (reasonFor(breathing, targets, world, kNoSignals) == Context::ContextReason::Underwater) {
+                logger::error("TEST FAIL: waterbreathing active must suppress the Underwater reason");
+                return;
+            }
+        }
+
+        // 17c: Elemental reasons scale with resistance (binary rules fire at
+        // half their configured weight)
+        {
+            State::TargetCollection targets{};
+            State::WorldState world{};
+
+            State::PlayerActorState burning{};
+            burning.effects.isOnFire = true;
+            if (reasonFor(burning, targets, world, kNoSignals) != Context::ContextReason::OnFire) {
+                logger::error("TEST FAIL: taking fire damage should report OnFire");
+                return;
+            }
+
+            State::PlayerActorState fireproof{};
+            fireproof.effects.isOnFire = true;
+            fireproof.resistances.fire = 80.0f;  // 80% resist → weight scaled to 0.2×
+            if (reasonFor(fireproof, targets, world, kNoSignals) == Context::ContextReason::OnFire) {
+                logger::error("TEST FAIL: 80%% fire resist must suppress the OnFire reason");
+                return;
+            }
+        }
+
+        // 17d: Priority — a more urgent reason wins over a co-occurring one
+        {
+            State::TargetCollection targets{};
+            State::WorldState world{};
+            State::PlayerActorState player{};
+            player.vitals.health = 0.10f;  // Critical
+            player.isSneaking = true;      // also true, lower priority
+
+            if (reasonFor(player, targets, world, kNoSignals) != Context::ContextReason::CriticalHealth) {
+                logger::error("TEST FAIL: CriticalHealth must outrank Sneaking");
+                return;
+            }
+        }
+
+        // 17e: Label-only signals (no scoring weight to read them off)
+        {
+            State::TargetCollection targets{};
+            State::WorldState world{};
+            State::PlayerActorState player{};
+
+            Context::ContextReasonSignals dark{};
+            dark.lightLevel = 0.1f;
+            if (reasonFor(player, targets, world, dark) != Context::ContextReason::InDarkness) {
+                logger::error("TEST FAIL: low light should report InDarkness");
+                return;
+            }
+
+            Context::ContextReasonSignals ally{};
+            ally.allyInjured = true;
+            ally.lightLevel = 0.1f;  // InDarkness is lower priority
+            if (reasonFor(player, targets, world, ally) != Context::ContextReason::AllyInjured) {
+                logger::error("TEST FAIL: AllyInjured must outrank InDarkness");
+                return;
+            }
+        }
+
+        // 17f: Ambient combat weights are deliberately NOT reasons — otherwise
+        // every fight would relabel every slot "In Combat"
+        {
+            State::TargetCollection targets{};
+            State::WorldState world{};
+            State::PlayerActorState fighting{};
+            fighting.isInCombat = true;
+
+            if (reasonFor(fighting, targets, world, kNoSignals) != Context::ContextReason::None) {
+                logger::error("TEST FAIL: plain in-combat state must not produce a reason");
+                return;
+            }
+        }
+
+        // 17g: Every reason the engine can report has display wording
+        {
+            for (size_t i = 1; i < Context::CONTEXT_REASON_COUNT; ++i) {
+                const auto reason = static_cast<Context::ContextReason>(i);
+                if (Display::ReasonLabel(reason).empty()) {
+                    logger::error("TEST FAIL: ContextReason {} has no display label", i);
+                    return;
+                }
+            }
+            if (!Display::ReasonLabel(Context::ContextReason::None).empty()) {
+                logger::error("TEST FAIL: ContextReason::None must have no label");
+                return;
+            }
+        }
+
+        logger::info("TEST PASS: ContextReason derivation (thresholds, suppression, priority)"sv);
     }
 
     logger::info("=== All unit tests passed! ==="sv);

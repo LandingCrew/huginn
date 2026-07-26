@@ -6,7 +6,8 @@
 #include "state/WorldState.h"
 #include "state/StateTypes.h"
 #include "learning/ScoredCandidate.h"
-#include "candidate/CandidateTypes.h"  // Candidate::RelevanceTag (per-tick display tags)
+#include "candidate/CandidateTypes.h"
+#include "context/ContextRuleEngine.h"  // Context::ContextWeightMap / ContextReason
 #include "override/OverrideConditions.h"
 #include "slot/SlotAssignment.h"
 
@@ -37,9 +38,11 @@ namespace Huginn::Pipeline
         State::PlayerActorState playerState{};
         State::TargetCollection targets{};
         State::WorldState worldState{};
+        // Health tracking only: the elemental-damage enrichment window reads it.
+        // Magicka/stamina tracking used to be snapshotted here for the relevance
+        // tags; nothing consumes them since the display reason moved onto the
+        // context weights (#10), so they are no longer polled per tick.
         State::HealthTrackingState healthTracking{};
-        State::MagickaTrackingState magickaTracking{};
-        State::StaminaTrackingState staminaTracking{};
         float currentMagicka = 0.0f;
         uint32_t stateHash = 0;
         bool elementalDamageActive = false;
@@ -50,9 +53,12 @@ namespace Huginn::Pipeline
         Slot::SlotAssignments rawAssignments;
         Slot::SlotAssignments assignments;
 
-        // Per-tick display relevance tags (Wheeler subtext label only), computed
-        // once by ScoreCandidates rather than copied onto every candidate (#10).
-        Candidate::RelevanceTag contextRelevanceTags = Candidate::RelevanceTag::None;
+        // Per-tick context summary. contextWeights is the map the scorer actually
+        // ranked against (handed back by ScoreCandidates); contextReason is the
+        // dominant reason derived from it for the Wheeler subtext label. One
+        // encoding — ContextRuleEngine's curves — for both scoring and display (#10).
+        Context::ContextWeightMap contextWeights{};
+        Context::ContextReason contextReason = Context::ContextReason::None;
 
         // Display page resolved once per tick by ResolveDisplayPage, then used by
         // allocation, caches, and push so the WHOLE tick stays on one page even if
@@ -78,8 +84,6 @@ namespace Huginn::Pipeline
             targets.targets.clear();
             worldState = {};
             healthTracking = {};
-            magickaTracking = {};
-            staminaTracking = {};
             currentMagicka = 0.0f;
             stateHash = 0;
             elementalDamageActive = false;
@@ -88,7 +92,8 @@ namespace Huginn::Pipeline
             overrides.activeOverrides.clear();
             rawAssignments.clear();
             assignments.clear();
-            contextRelevanceTags = Candidate::RelevanceTag::None;
+            contextWeights = {};
+            contextReason = Context::ContextReason::None;
             displayPageIndex = 0;
             displayPageCount = 0;
             displaySlotCount = 0;
