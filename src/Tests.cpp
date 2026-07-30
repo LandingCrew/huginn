@@ -3270,6 +3270,34 @@ void RunUnitTests()
                 logger::error("TEST FAIL: 30.1%% HP must not report LowHealth (threshold drift)");
                 return;
             }
+
+            // Magicka and stamina invert DIFFERENT exponents (stamina defaults to
+            // 1.5, not 2.0), so the HP cases above do not cover them.
+            State::PlayerActorState lowMagicka{};
+            lowMagicka.vitals.magicka = 0.299f;
+            if (reasonFor(lowMagicka, targets, world, kNoSignals) != Context::ContextReason::LowMagicka) {
+                logger::error("TEST FAIL: 29.9%% MP should report LowMagicka");
+                return;
+            }
+            State::PlayerActorState okMagicka{};
+            okMagicka.vitals.magicka = 0.301f;
+            if (reasonFor(okMagicka, targets, world, kNoSignals) == Context::ContextReason::LowMagicka) {
+                logger::error("TEST FAIL: 30.1%% MP must not report LowMagicka (threshold drift)");
+                return;
+            }
+
+            State::PlayerActorState lowStamina{};
+            lowStamina.vitals.stamina = 0.299f;
+            if (reasonFor(lowStamina, targets, world, kNoSignals) != Context::ContextReason::LowStamina) {
+                logger::error("TEST FAIL: 29.9%% SP should report LowStamina");
+                return;
+            }
+            State::PlayerActorState okStamina{};
+            okStamina.vitals.stamina = 0.301f;
+            if (reasonFor(okStamina, targets, world, kNoSignals) == Context::ContextReason::LowStamina) {
+                logger::error("TEST FAIL: 30.1%% SP must not report LowStamina (threshold drift)");
+                return;
+            }
         }
 
         // 17b: Suppressions the old threshold pass ignored — an already-active

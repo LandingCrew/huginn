@@ -290,7 +290,6 @@ graph TB
     Filter -->|candidates| Output[CandidateVariant list]
 
     style Filter fill:#fff4e1
-    style Tag fill:#ffe1e1
 ```
 
 **Registries** (`CandidateGenerator` member references):

@@ -7,7 +7,7 @@
 #include "state/StateTypes.h"
 #include "learning/ScoredCandidate.h"
 #include "candidate/CandidateTypes.h"
-#include "context/ContextRuleEngine.h"  // Context::ContextWeightMap / ContextReason
+#include "context/ContextReason.h"     // Context::ContextReason (per-tick display reason)
 #include "override/OverrideConditions.h"
 #include "slot/SlotAssignment.h"
 
@@ -56,8 +56,8 @@ namespace Huginn::Pipeline
         // Dominant reason for THIS tick, derived by ScoreCandidates from the very
         // weight map the scorer ranked against, and consumed by the Wheeler
         // subtext label. One encoding — ContextRuleEngine's curves — for both
-        // scoring and display (#10). The map itself stays local to that step;
-        // nothing downstream needs it.
+        // scoring and display (#10). The ContextWeightMap itself stays local to
+        // that step (hence only ContextReason.h here); nothing downstream needs it.
         Context::ContextReason contextReason = Context::ContextReason::None;
 
         // Display page resolved once per tick by ResolveDisplayPage, then used by
@@ -160,10 +160,11 @@ namespace Huginn::Pipeline
         void UpdateCaches(PipelineContext& ctx);
         void PushDisplay(PipelineContext& ctx);
         void LogRecommendations(PipelineContext& ctx);
-        // Ground truth for what the player is actually shown: the derived
-        // subtext for every slot on the live page, logged on change. Keeps the
-        // display surface verifiable from a log alone (no eyeballing the wheel).
-        void LogDisplayLabels(PipelineContext& ctx);
+        // Ground truth for what the player is actually shown: derives the
+        // subtext for every slot on the live page onto ctx.assignments (so
+        // `hg recs` prints it) and logs the set on change. Wheeler re-derives
+        // under its own [Subtexts] toggles rather than inheriting these.
+        void DeriveDisplayLabels(PipelineContext& ctx);
 
 #ifndef NDEBUG
         void UpdateDebugWidgets(PipelineContext& ctx);

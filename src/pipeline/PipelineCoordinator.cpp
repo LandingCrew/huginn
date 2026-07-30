@@ -100,7 +100,7 @@ bool PipelineCoordinator::RunPipeline(
         // stale page. The switch raised m_pageChanged, so next tick re-runs on it.
         return false;
     }
-    LogDisplayLabels(m_ctx);
+    DeriveDisplayLabels(m_ctx);
     UpdateCaches(m_ctx);
     PushDisplay(m_ctx);
     LogRecommendations(m_ctx);
@@ -265,20 +265,24 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
     //
     // The vitals ride along because they are the ASSERTABLE part: the
     // continuous rules invert their curve at fixed percentages (crit 15%, low
-    // 30% HP/MP/SP, charge 25%), so a checker can read this line alone and
+    // 30% HP/MP/SP, charge 25%), so a reader can take this line alone and
     // confirm the reported reason matches the numbers that produced it.
+    //
+    // Level is debug, not info: this is a behavior diagnostic, and behavior
+    // soak runs are Debug builds (perf runs are Release+Tracy, where these
+    // lines would only be noise). Meant to be read by an LLM or a log tool.
     // NOTE: Single-threaded (pipeline runs on the update thread only).
     static Context::ContextReason s_lastReason = Context::ContextReason::None;
     if (ctx.contextReason != s_lastReason) {
         const auto label = Display::ReasonLabel(ctx.contextReason);
         const auto prev = Display::ReasonLabel(s_lastReason);
         const auto& vitals = ctx.playerState.vitals;
-        logger::info("[Context] Reason: {} → {} | hp={:.0f}% mp={:.0f}% sp={:.0f}% charge={}"sv,
+        logger::debug("[Context] Reason: {} → {} | hp={:.0f}% mp={:.0f}% sp={:.0f}% charge={}"sv,
             prev.empty() ? "(none)"sv : prev,
             label.empty() ? "(none)"sv : label,
             vitals.health * 100.0f, vitals.magicka * 100.0f, vitals.stamina * 100.0f,
             ctx.playerState.hasEnchantedWeapon
-                ? std::format("{:.0f}%", ctx.playerState.weaponChargePercent * 100.0f)
+                ? fmt::format("{:.0f}%", ctx.playerState.weaponChargePercent * 100.0f)
                 : "n/a");
         s_lastReason = ctx.contextReason;
     }
@@ -509,23 +513,39 @@ void PipelineCoordinator::LogRecommendations(PipelineContext& ctx)
 }
 
 // -----------------------------------------------------------------------------
-// LogDisplayLabels — What the player is actually shown (both build configs)
+// DeriveDisplayLabels — What the player is actually shown (both build configs)
 // -----------------------------------------------------------------------------
 // Derives the explanation subtext once, on the tick's own assignments, so that
 //   (a) `hg recs` prints the real label instead of an empty string, and
 //   (b) the displayed surface is verifiable from a log alone — no reading
 //       labels off the wheel by hand, and no dependency on Wheeler at all.
-// Wheeler recomputes the same pure function for its other pages and may
-// substitute its own lock-timer/wildcard text per the [Subtexts] toggles it
-// logs at startup; the explanation text itself cannot diverge (same function,
-// same inputs). Transition-gated: one line when the label set changes.
+//
+// This MUTATES ctx.assignments; the [Subtext] line below is the diagnostic half.
+// The labels stamped here are the coordinator's own view. Wheeler does NOT
+// inherit them: WheelerBackend clears subtextLabel and re-derives under its own
+// [Subtexts] toggles (override / lock timer / wildcard / explanation), so the
+// INI toggles keep working and the wildcard label keeps its slot. Both sides
+// call the same pure Display::DeriveExplanationLabel, so the explanation text
+// itself cannot diverge. Transition-gated: one line when the label set changes.
 
-void PipelineCoordinator::LogDisplayLabels(PipelineContext& ctx)
+void PipelineCoordinator::DeriveDisplayLabels(PipelineContext& ctx)
 {
-    std::string summary;
+    // Filling subtextLabel is NOT diagnostics: it is what `hg recs` prints, so
+    // it happens every tick at every log level. Only the summary line below is
+    // debug-gated.
     for (auto& assignment : ctx.assignments) {
         assignment.subtextLabel = Display::DeriveExplanationLabel(assignment, ctx.contextReason);
+    }
 
+    // Behavior diagnostic, read by an LLM or a log tool rather than by eye.
+    // Bail before building the string in Release, where debug is filtered out
+    // and the summary could never be emitted anyway.
+    if (!spdlog::default_logger()->should_log(spdlog::level::debug)) {
+        return;
+    }
+
+    std::string summary;
+    for (const auto& assignment : ctx.assignments) {
         if (assignment.IsEmpty() || assignment.formID == 0 || assignment.subtextLabel.empty()) {
             continue;
         }
@@ -542,9 +562,9 @@ void PipelineCoordinator::LogDisplayLabels(PipelineContext& ctx)
     s_lastSummary = summary;
 
     if (summary.empty()) {
-        logger::info("[Subtext] page {} — no labels"sv, ctx.displayPageIndex);
+        logger::debug("[Subtext] page {} — no labels"sv, ctx.displayPageIndex);
     } else {
-        logger::info("[Subtext] page {} | {}"sv, ctx.displayPageIndex, summary);
+        logger::debug("[Subtext] page {} | {}"sv, ctx.displayPageIndex, summary);
     }
 }
 

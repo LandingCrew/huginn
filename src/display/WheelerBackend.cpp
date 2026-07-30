@@ -80,6 +80,16 @@ namespace Huginn::Display
             // Populate subtext labels using priority order:
             //   Override > Lock Timer > Wildcard (handled in Wheeler) > Explanation
             for (auto& assignment : pageAssignments) {
+                // The coordinator pre-derives the explanation label onto the
+                // CURRENT page's assignments (for `hg recs` and the [Subtext]
+                // log), and this loop only ever assigns — never clears. Start
+                // from a clean slate so Wheeler's own policy is authoritative:
+                // otherwise a pre-derived label would survive every branch that
+                // deliberately declines to write, silently defeating the
+                // [Subtexts] toggles and stealing the wildcard label — on the
+                // current page only, while other pages behaved correctly.
+                assignment.subtextLabel.clear();
+
                 if (stConfig.showOverrideLabel && assignment.IsOverride()) {
                     assignment.subtextLabel = Display::DeriveExplanationLabel(assignment, ctx.contextReason);
                     continue;

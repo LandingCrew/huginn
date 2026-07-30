@@ -166,6 +166,12 @@ namespace Huginn::Context
     // reason vocabulary stays in one place — this file's implementation.
     // If any of these ever grows a scoring rule, delete the field and read the
     // weight instead.
+    //
+    // CAVEAT: having no weight also means having no INI knob. Every other reason
+    // can be tuned or silenced from [ContextWeights] (a rule at 0 never reports);
+    // these three always report at their hardcoded thresholds. That is the price
+    // of labelling a fact nothing scores on — and the reason to prefer adding a
+    // weight over adding a field here.
     // =============================================================================
 
     struct ContextReasonSignals

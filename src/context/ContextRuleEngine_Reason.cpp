@@ -37,14 +37,10 @@ namespace Huginn::Context
         // configured value.
         constexpr float kBinaryReasonFraction = 0.5f;
 
-        // Enchanted-weapon charge percentage below which "Low Charge" reports.
-        // Mirrors PlayerActorState::IsWeaponChargeLow() (0.25), which is the
-        // threshold the old tag-based label used. NOTE: WeaponRegistry flags low
-        // charge with the stricter Config::WEAPON_CHARGE_LOW_THRESHOLD (0.20) —
-        // reconcile both if tuning.
-        constexpr float kWeaponChargeLowPct = 0.25f;
-
         // Ambient light below which "Darkness" reports (WorldState::lightLevel).
+        // Signal-only reason, so unlike every weight-backed reason below it has
+        // no INI weight to disable or tune it — see the note on
+        // ContextReasonSignals. Matches the old tag threshold.
         constexpr float kDarknessLightLevel = 0.3f;
 
         /// Weight a continuous rule reaches exactly at `pct` of the vital.
@@ -91,7 +87,8 @@ namespace Huginn::Context
         Mark(R::LowStamina, weights.staminaRestoreWeight >=
             CurveThreshold(State::VitalThreshold::LOW, m_config.fStaminaSmoothingExponent));
         Mark(R::WeaponLowCharge, weights.weaponChargeWeight >=
-            CurveThreshold(kWeaponChargeLowPct, m_config.fWeaponChargeSmoothingExponent));
+            CurveThreshold(State::VitalThreshold::WEAPON_CHARGE_LOW,
+                           m_config.fWeaponChargeSmoothingExponent));
 
         // --- Environment ------------------------------------------------------
         // Already suppression-aware in EvaluateRules: waterbreathing active or
