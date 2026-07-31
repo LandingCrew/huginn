@@ -277,12 +277,16 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
         const auto label = Display::ReasonLabel(ctx.contextReason);
         const auto prev = Display::ReasonLabel(s_lastReason);
         const auto& vitals = ctx.playerState.vitals;
-        logger::debug("[Context] Reason: {} → {} | hp={:.0f}% mp={:.0f}% sp={:.0f}% charge={}"sv,
+        // One decimal, not zero: the thresholds these lines exist to verify sit
+        // ON integer percentages (15 / 25 / 30). At {:.0f} a true 15.4% prints
+        // as "15%", so the one reading that decides whether the boundary held is
+        // exactly the reading the format destroys.
+        logger::debug("[Context] Reason: {} → {} | hp={:.1f}% mp={:.1f}% sp={:.1f}% charge={}"sv,
             prev.empty() ? "(none)"sv : prev,
             label.empty() ? "(none)"sv : label,
             vitals.health * 100.0f, vitals.magicka * 100.0f, vitals.stamina * 100.0f,
             ctx.playerState.hasEnchantedWeapon
-                ? fmt::format("{:.0f}%", ctx.playerState.weaponChargePercent * 100.0f)
+                ? fmt::format("{:.1f}%", ctx.playerState.weaponChargePercent * 100.0f)
                 : "n/a");
         s_lastReason = ctx.contextReason;
     }
