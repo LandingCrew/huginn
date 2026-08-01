@@ -26,6 +26,14 @@
 - [x] Need to split Alcohol and food for recommendation engine slots
 - [ ] #65: apparel is not a candidate source (`SourceType` has no armor entry),
       so fortify gear can never be recommended — blocks the Requiem answer to #63
+- [ ] Cached wildcards outlive a page switch to a smaller page: one rolled at
+      index 6 on an 8-slot page is skipped by ApplyWildcardsToRanking's bounds
+      check on a 4-slot page, but HasActiveWildcard() stays true, so no re-roll
+      happens until the 30s cooldown expires — an invisible refractory window on
+      the smaller page. Same differing-slot-count trigger as #10b but, unlike the
+      sizing bug, not one tick and not self-correcting. Fix: drop cached
+      wildcards at indices >= slotCount in ApplyWildcards, so refractory state
+      matches what is displayable (S)
 - [ ] Scroll cold-start: all scrolls sit in the pool every tick but score
       `learn≈0` against trained items at `learn=7–8`, so one can never surface
       until used and can't be used until surfaced
@@ -67,7 +75,8 @@ now closed; #59–#65 are follow-ups it surfaced, not remaining critique work.
       callback translator (M/L) — the coupling behind the finding-3 race surface.
       Needs a state-ownership pass first: m_api, m_wheelVisible/m_pendingWheelClose,
       and m_pageWheels under m_pageDataMutex are all touched by more than one of
-      the three proposed modules. Moving functions is the easy part
+      the three proposed modules; deciding who owns those is the work, moving
+      functions between files is not. (M/L)
 
 ### Tier 3 — hot-path perf (trace-prioritized; see docs/profiling/tracy-traces.md)
 - [ ] #14: gate the display push paths — IntuitionBackend change-detect, WheelerBackend

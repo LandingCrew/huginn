@@ -7,8 +7,13 @@
 // is now passed in from the pipeline snapshot, and learning/ no longer depends
 // on slot/ machinery (critique #10).
 #include "../slot/SlotSettings.h"
+#include <algorithm>  // std::clamp below
+#include <array>      // m_cachedWildcards below
 #include <chrono>
 #include <random>
+// <algorithm>/<array> were arriving through the deleted SlotAllocator.h. They
+// still resolve via MSVC's <random>/<vector> chains, which is a bet on standard
+// library internals — stated explicitly instead.
 
 namespace Huginn::Scoring
 {
@@ -43,13 +48,13 @@ namespace Huginn::Scoring
 
         // Apply wildcards to a ranked candidate list
         // Modifies the list in-place by swapping wildcard candidates into eligible slots
-        // @param slotCount Number of slots to consider (from current page configuration)
-        // slotCount must be the pipeline tick's snapshot
-        // (PipelineContext::displaySlotCount), not a live SlotAllocator read:
-        // wildcard eligibility is slot-relative, so reading it live lets a
-        // mid-tick page switch size wildcards against a page the pipeline is
-        // not allocating. A single-argument overload used to do exactly that
-        // (critique #10) — do not reintroduce one.
+        // @param slotCount Slot count of the page THIS tick allocates — must be
+        //        the pipeline snapshot (PipelineContext::displaySlotCount), not
+        //        a live SlotAllocator read. Wildcard eligibility is
+        //        slot-relative, so reading it live lets a mid-tick page switch
+        //        size wildcards against a page the pipeline is not allocating.
+        //        A single-argument overload used to do exactly that (critique
+        //        #10) — do not reintroduce one.
         void ApplyWildcards(ScoredCandidateList& rankedCandidates, size_t slotCount);
 
         // Unconditional per-tick expiry check. ApplyWildcards (which normally
