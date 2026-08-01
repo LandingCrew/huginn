@@ -1,9 +1,12 @@
 #include "ExternalEquipLearner.h"
 #include "PipelineStateCache.h"
 #include "EquipEventBus.h"
-#include "slot/SlotAllocator.h"
-#include "wheeler/WheelerClient.h"
 #include "telemetry/SoakMetrics.h"
+
+// Deliberately does NOT include slot/SlotAllocator.h or wheeler/WheelerClient.h:
+// both live above this class in the dependency order, and both are now reached
+// through Environment, wired by Main.cpp. Re-adding either include is the
+// regression this change exists to prevent.
 
 namespace Huginn::Learning
 {
@@ -64,8 +67,19 @@ namespace Huginn::Learning
             return true;
         }
 
-        // 3. Wheeler open — player might be mid-selection via Huginn wheel
-        if (Wheeler::WheelerClient::GetSingleton().IsWheelOpen()) {
+        // 3. Wheeler open — player might be mid-selection via Huginn wheel.
+        // Must be read live: a wheel opened since the last pipeline tick is
+        // exactly the case this filter exists for.
+        if (!m_env.isWheelOpen) {
+            static bool s_warned = false;
+            if (!s_warned) {
+                logger::error("[ExternalEquipLearner] Environment.isWheelOpen unwired — "
+                    "suppressing external-equip learning"sv);
+                s_warned = true;
+            }
+            return true;
+        }
+        if (m_env.isWheelOpen()) {
             logger::debug("[ExternalEquipLearner] Skipped (wheel open) {:08X}", formID);
             return true;
         }
@@ -102,14 +116,28 @@ namespace Huginn::Learning
             return {m_config.notCandidateRewardMult, "A (not candidate, boosted)"};
         }
 
-        // Case E: Displayed on current page — Huginn already surfaced it, skip
+        // Case E: Displayed on current page — Huginn already surfaced it, skip.
+        //
+        // info.displayPage is the page the cache snapshotted; the comparison is
+        // against the LIVE page, so D means "player changed pages since that
+        // snapshot", not "item lives on another page" (see the header note).
+        // Reading the cached page on both sides would make this always equal.
         if (info.wasDisplayed) {
-            size_t currentPage = Slot::SlotAllocator::GetSingleton().GetCurrentPage();
-            if (info.displayPage == currentPage) {
+            if (!m_env.currentDisplayPage) {
+                static bool s_warned = false;
+                if (!s_warned) {
+                    logger::error("[ExternalEquipLearner] Environment.currentDisplayPage unwired — "
+                        "treating displayed items as already-surfaced"sv);
+                    s_warned = true;
+                }
+                return {0.0f, "E (displayed, page provider unwired)"};
+            }
+
+            if (info.displayPage == m_env.currentDisplayPage()) {
                 return {0.0f, "E (displayed current page)"};
             }
 
-            // Case D: Displayed but on a different page
+            // Case D: displayed at snapshot time, player has since switched pages
             return {m_config.differentPageRewardMult, "D (different page)"};
         }
 

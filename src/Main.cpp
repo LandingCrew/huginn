@@ -269,6 +269,15 @@ static void InitializeGameSystems(bool isNewGame)
     if (haveMainIni) Learning::LearningSettings::GetSingleton().LoadFromIni(mainIni);
     Learning::ExternalEquipLearner::GetSingleton().SetConfig(
         Learning::LearningSettings::GetSingleton().BuildConfig());
+
+    // Composition root: the learner declares which live values it needs, this
+    // wires who answers. Keeps learning/ from including slot/ and wheeler/
+    // (critique #10). Both stay live queries rather than cached snapshots —
+    // attribution depends on the state at equip time, not at the last tick.
+    Learning::ExternalEquipLearner::GetSingleton().SetEnvironment({
+        .isWheelOpen = [] { return Wheeler::WheelerClient::GetSingleton().IsWheelOpen(); },
+        .currentDisplayPage = [] { return Slot::SlotAllocator::GetSingleton().GetCurrentPage(); },
+    });
     if (haveMainIni) LoadWildcardConfigFromINI(g_utilityScorer->GetWildcardManager(), mainIni);
 
     // ── 7. OverrideManager ─────────────────────────────────────────────

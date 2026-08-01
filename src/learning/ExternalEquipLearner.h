@@ -2,6 +2,7 @@
 
 #include "LearningSettings.h"  // For LearningConfig
 #include <chrono>
+#include <functional>
 #include <mutex>
 #include <unordered_map>
 
@@ -24,6 +25,15 @@ namespace Huginn::Learning
     //   C: High-rank, not displayed → high reward (0.8×)
     //   D: Displayed, other page    → medium reward (0.5×)
     //   E: Displayed, current page  → skip (Huginn already surfaced it)
+    //
+    // CASE D IS NARROWER THAN IT READS. PipelineStateCache only ever records
+    // assignments for the page that was current when it snapshotted, so an item
+    // displayed on some *other* page is not "displayed" as far as attribution is
+    // concerned — it never enters the displayed set. What actually separates D
+    // from E is comparing the snapshot's page against the LIVE page, so D fires
+    // only when the player changed pages between the last pipeline run and the
+    // equip. Reading the page from the cache instead of live would collapse D
+    // into E permanently.
     // =========================================================================
 
     class ExternalEquipLearner
@@ -41,6 +51,22 @@ namespace Huginn::Learning
         /// Replace the stored config snapshot (e.g., after INI hot-reload).
         void SetConfig(const LearningConfig& config) { m_config = config; }
 
+        // Live queries this class needs but must not reach *up* for (critique
+        // #10). Both are read at equip time, not snapshot time, and that is
+        // load-bearing — see the note on Case D above. Wired once by the
+        // composition root in Main.cpp, which is the only place that already
+        // knows about SlotAllocator and WheelerClient.
+        //
+        // Left unwired, both fall back to "suppress learning" and log once: a
+        // misconfigured learner that stops learning is recoverable, one that
+        // attributes rewards against wrong page state silently is not.
+        struct Environment
+        {
+            std::function<bool()>   isWheelOpen;
+            std::function<size_t()> currentDisplayPage;
+        };
+        void SetEnvironment(Environment env) { m_env = std::move(env); }
+
     private:
         ExternalEquipLearner() = default;
         ~ExternalEquipLearner() = default;
@@ -49,6 +75,9 @@ namespace Huginn::Learning
 
         // Config snapshot (updated via SetConfig on hot-reload)
         LearningConfig m_config;
+
+        // Injected live queries — see SetEnvironment.
+        Environment m_env;
 
         // Anti-spam: FormID → last learning timestamp
         std::unordered_map<RE::FormID, std::chrono::steady_clock::time_point> m_lastLearnTime;
