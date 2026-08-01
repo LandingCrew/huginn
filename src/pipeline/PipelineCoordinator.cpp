@@ -243,9 +243,11 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
     auto candidates = candidateGen.GenerateCandidates(ctx.playerState, ctx.currentMagicka);
 
     Context::ContextWeightMap contextWeights{};
+    // displaySlotCount comes from ResolveDisplayPage, which ran earlier this
+    // tick — so wildcards size against the same page AllocateAndLock will fill.
     ctx.scoredCandidates = g_utilityScorer->ScoreCandidates(
         candidates, ctx.currentState, ctx.playerState, ctx.targets, ctx.worldState,
-        &contextWeights);
+        ctx.displaySlotCount, &contextWeights);
 
     // Name the dominant reason once per tick, off the weights the ranking just
     // used — the display explanation can't disagree with the scoring (#10).
