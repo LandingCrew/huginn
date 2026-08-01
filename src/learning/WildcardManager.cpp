@@ -23,11 +23,34 @@ namespace Huginn::Scoring
         // Clamp slot count to maximum
         slotCount = std::min(slotCount, MAX_WILDCARD_SLOTS);
 
+        // Drop wildcards stranded above this page's slot count (#70).
+        //
+        // A switch to a smaller page leaves the two halves of this class
+        // disagreeing: ApplyWildcardsToRanking below is bounded by slotCount so
+        // it can never surface index >= slotCount, but HasActiveWildcard()
+        // scans the whole cache — so a stranded entry keeps reporting "a
+        // wildcard is active" and suppresses the re-roll that would produce a
+        // usable one. The player then sees no wildcard at all, with no re-roll,
+        // until the stranded entry's own cooldown expires.
+        //
+        // Clearing here rather than inside HasActiveWildcard() because
+        // UpdateExpiry() also calls it and wants the unbounded meaning: a
+        // wildcard on another page must still age out on its timer.
+        for (size_t i = slotCount; i < MAX_WILDCARD_SLOTS; ++i) {
+            if (m_cachedWildcards[i].formID != 0) {
+                logger::debug("[WildcardManager] Dropped wildcard at slot {} — page has {} slots"sv,
+                    i, slotCount);
+                m_cachedWildcards[i].formID = 0;
+            }
+        }
+
         auto now = std::chrono::steady_clock::now();
 
         // Update expiry and check refractory period
         UpdateWildcardExpiry(now);
 
+        // Reads the cache *after* the drop above, so it now describes only what
+        // this page can actually display.
         bool hasActiveWildcards = HasActiveWildcard();
         float refractoryElapsed = std::chrono::duration<float>(now - m_wildcardEndTime).count();
 
