@@ -17,11 +17,14 @@
 #include "weapon/WeaponRegistry.h"
 #include "telemetry/SoakMetrics.h"
 
-// std::same_as / std::convertible_to for the ProcessInventoryChanges constraint.
-// Explicit because nothing else under src/ pulls <concepts> in — it currently
-// arrives through CommonLibSSE-NG's umbrella header, and this file would be the
-// one that breaks, obscurely, if that ever stops being true.
+// For the ProcessInventoryChanges constraint: std::same_as / std::convertible_to
+// from <concepts>, std::remove_cvref_t from <type_traits>. Both explicit because
+// nothing else under src/ pulls them in — they currently arrive through
+// CommonLibSSE-NG's umbrella header (and MSVC's <concepts> happens to drag in
+// <type_traits>), and this file would be the one that breaks, obscurely, if
+// either stops being true.
 #include <concepts>
+#include <type_traits>
 
 using namespace Huginn;
 
