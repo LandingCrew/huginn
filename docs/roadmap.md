@@ -26,14 +26,13 @@
 - [x] Need to split Alcohol and food for recommendation engine slots
 - [ ] #65: apparel is not a candidate source (`SourceType` has no armor entry),
       so fortify gear can never be recommended — blocks the Requiem answer to #63
-- [ ] Cached wildcards outlive a page switch to a smaller page: one rolled at
-      index 6 on an 8-slot page is skipped by ApplyWildcardsToRanking's bounds
-      check on a 4-slot page, but HasActiveWildcard() stays true, so no re-roll
-      happens until the 30s cooldown expires — an invisible refractory window on
-      the smaller page. Same differing-slot-count trigger as #10b but, unlike the
-      sizing bug, not one tick and not self-correcting. Fix: drop cached
-      wildcards at indices >= slotCount in ApplyWildcards, so refractory state
-      matches what is displayable (S)
+- [ ] #70: cached wildcards above a smaller page's slot count block re-rolls
+      invisibly — HasActiveWildcard() scans the whole cache while
+      ApplyWildcardsToRanking bounds by slotCount, so a wildcard stranded at
+      index 6 suppresses rolling on a 4-slot page for 30s + refractory. Same
+      differing-slot-count trigger as #10b, but not one tick and not
+      self-correcting. Repro config (one 4-slot page) is in the issue and also
+      re-verifies #69 (S)
 - [ ] Scroll cold-start: all scrolls sit in the pool every tick but score
       `learn≈0` against trained items at `learn=7–8`, so one can never surface
       until used and can't be used until surfaced
