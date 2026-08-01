@@ -26,6 +26,20 @@
 - [x] Need to split Alcohol and food for recommendation engine slots
 - [ ] #65: apparel is not a candidate source (`SourceType` has no armor entry),
       so fortify gear can never be recommended — blocks the Requiem answer to #63
+- [ ] A wildcard can also go unreachable *without* being out of index range:
+      SlotAllocator.cpp:571 skips wildcard candidates for slots with
+      bWildcardsEnabled=false, and WildcardManager only ever receives a slot
+      COUNT, never per-slot enablement — so it can roll one for a slot that
+      forbids them. If no other slot picks it up, HasActiveWildcard() reports it
+      live while nothing displays: the same stall #70 fixed for the index case.
+      Unconfirmed — needs a config with wildcards disabled on some slots to
+      reproduce. Root cause for both is one global position-indexed cache; a
+      pageIndex → array cache would make stranding structurally impossible (S/M)
+- [ ] WildcardManager's slotCount < 2 guard returns before the #70 drop, so a
+      1-slot page leaves stranded entries in place. Bounded — nothing displays
+      there and UpdateExpiry() still ages the cache out on its own timer — so
+      the stall can't outlive the cooldown. Not worth restructuring the guard
+      for; noted so the invariant isn't assumed unconditional (XS)
 - [ ] #70: cached wildcards above a smaller page's slot count block re-rolls
       invisibly — HasActiveWildcard() scans the whole cache while
       ApplyWildcardsToRanking bounds by slotCount, so a wildcard stranded at
