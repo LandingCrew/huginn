@@ -17,6 +17,12 @@
 #include "weapon/WeaponRegistry.h"
 #include "telemetry/SoakMetrics.h"
 
+// std::same_as / std::convertible_to for the ProcessInventoryChanges constraint.
+// Explicit because nothing else under src/ pulls <concepts> in — it currently
+// arrives through CommonLibSSE-NG's umbrella header, and this file would be the
+// one that breaks, obscurely, if that ever stops being true.
+#include <concepts>
+
 using namespace Huginn;
 
 // =============================================================================
@@ -101,15 +107,21 @@ template <typename Registry>
 {
     auto changes = registry.RefreshCounts(player, inventory);
 
-    // Fail at the call site, not inside the loop body, when a third registry
-    // turns up whose change event doesn't carry these three fields.
+    // Fail here, not somewhere inside the loop body, when a third registry turns
+    // up whose change event doesn't carry these three fields.
+    //
+    // formID and delta demand the exact type: convertible_to would accept any
+    // arithmetic type, so a registry declaring `float delta` for a charge delta
+    // would pass and then narrow silently through IsConsumption() and
+    // -change.delta. name stays convertible — std::string, const char* and
+    // string_view are all fine to log.
     static_assert(
         requires(const typename decltype(changes)::value_type& c) {
-            { c.formID } -> std::convertible_to<RE::FormID>;
-            { c.name }   -> std::convertible_to<std::string_view>;
-            { c.delta }  -> std::convertible_to<int32_t>;
+            { c.name } -> std::convertible_to<std::string_view>;
+            requires std::same_as<std::remove_cvref_t<decltype(c.formID)>, RE::FormID>;
+            requires std::same_as<std::remove_cvref_t<decltype(c.delta)>, int32_t>;
         },
-        "Registry change event must expose formID / name / delta");
+        "Registry change event must expose formID (RE::FormID), name, delta (int32_t)");
 
     for (const auto& change : changes) {
         if (change.delta >= 0) {
