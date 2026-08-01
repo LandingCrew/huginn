@@ -17,6 +17,15 @@
 #include "weapon/WeaponRegistry.h"
 #include "telemetry/SoakMetrics.h"
 
+// For the ProcessInventoryChanges constraint: std::same_as / std::convertible_to
+// from <concepts>, std::remove_cvref_t from <type_traits>. Both explicit because
+// nothing else under src/ pulls them in — they currently arrive through
+// CommonLibSSE-NG's umbrella header (and MSVC's <concepts> happens to drag in
+// <type_traits>), and this file would be the one that breaks, obscurely, if
+// either stops being true.
+#include <concepts>
+#include <type_traits>
+
 using namespace Huginn;
 
 // =============================================================================
@@ -65,6 +74,79 @@ static void ApplyConsumptionReward(RE::FormID formID, std::string_view name)
         logger::debug("[Learning] Skipped consumption reward (stale cache): {} ({:08X})",
             name, formID);
     }
+}
+
+// =============================================================================
+// INVENTORY DELTA PROCESSING
+// =============================================================================
+// One consumption policy for every count-tracking registry: break the slot lock
+// pinning the item, separate real consumption from drop/sell/store, and reward
+// only the former.
+//
+// Templated rather than given a common base class: ItemChangeEvent and
+// ScrollChangeEvent are independent structs that happen to agree on
+// formID/name/delta, and both RefreshCounts overloads already take
+// (player, InventoryItemMap). A shared base would exist solely to satisfy this
+// one call.
+//
+// POLL THREAD ONLY. RefreshCounts populates unsynchronized scratch maps outside
+// the registry mutex, which is safe only because it has a single caller on the
+// poll thread (see ItemRegistry.h "Scratch maps for RefreshCounts delta scans").
+// That invariant used to be self-evident from an inline call site; behind a
+// helper built to be called from more places, it needs saying.
+//
+// `tag` is the log prefix ("ItemRegistry" / "ScrollRegistry"), kept verbatim so
+// existing log greps still match. Returns true if any count changed — i.e. the
+// widget needs a recompute, which is why the result must not be discarded:
+// dropping it compiles cleanly and silently stops the widget refreshing on
+// consumption.
+
+template <typename Registry>
+[[nodiscard]] static bool ProcessInventoryChanges(
+    Registry& registry,
+    std::string_view tag,
+    RE::PlayerCharacter* player,
+    const Util::InventoryItemMap& inventory)
+{
+    auto changes = registry.RefreshCounts(player, inventory);
+
+    // Fail here, not somewhere inside the loop body, when a third registry turns
+    // up whose change event doesn't carry these three fields.
+    //
+    // formID and delta demand the exact type: convertible_to would accept any
+    // arithmetic type, so a registry declaring `float delta` for a charge delta
+    // would pass and then narrow silently through IsConsumption() and
+    // -change.delta. name stays convertible — std::string, const char* and
+    // string_view are all fine to log.
+    static_assert(
+        requires(const typename decltype(changes)::value_type& c) {
+            { c.name } -> std::convertible_to<std::string_view>;
+            requires std::same_as<std::remove_cvref_t<decltype(c.formID)>, RE::FormID>;
+            requires std::same_as<std::remove_cvref_t<decltype(c.delta)>, int32_t>;
+        },
+        "Registry change event must expose formID (RE::FormID), name, delta (int32_t)");
+
+    for (const auto& change : changes) {
+        if (change.delta >= 0) {
+            continue;
+        }
+
+        // Item left inventory (consumed/dropped/sold) — break any slot lock
+        // pinning it. Otherwise SlotLocker holds the FormID until its timer
+        // expires and re-pins it through the recompute the caller triggers,
+        // leaving a recommendation for an item the player no longer owns.
+        Slot::SlotLocker::GetSingleton().OnItemUsed(change.formID, /*respectActivationLock=*/true);
+
+        if (!IsConsumption(change.formID, change.delta)) {
+            logger::debug("[{}] Left inventory (drop/sell/store), no reward: {} x{}"sv,
+                tag, change.name, -change.delta);
+            continue;
+        }
+        logger::debug("[{}] Consumed: {} x{}"sv, tag, change.name, -change.delta);
+        ApplyConsumptionReward(change.formID, change.name);
+    }
+
+    return !changes.empty();
 }
 
 // =============================================================================
@@ -176,43 +258,13 @@ static void MaintainRegistries(RE::PlayerCharacter* player,
             bool inventoryChanged = false;
 
             if (itemDeltaDue) {
-                auto changes = g_itemRegistry->RefreshCounts(player, inventory);
-                if (!changes.empty()) inventoryChanged = true;
-                for (const auto& change : changes) {
-                    if (change.delta < 0) {
-                        // Item left inventory (consumed/dropped/sold) — break any slot
-                        // lock pinning it. Otherwise SlotLocker holds the FormID until
-                        // its timer expires and re-pins it through the recompute below,
-                        // leaving a recommendation for an item the player no longer owns.
-                        Slot::SlotLocker::GetSingleton().OnItemUsed(change.formID, /*respectActivationLock=*/true);
-
-                        if (!IsConsumption(change.formID, change.delta)) {
-                            logger::debug("[ItemRegistry] Left inventory (drop/sell/store), no reward: {} x{}"sv,
-                                change.name, -change.delta);
-                            continue;
-                        }
-                        logger::debug("[ItemRegistry] Consumed: {} x{}"sv, change.name, -change.delta);
-                        ApplyConsumptionReward(change.formID, change.name);
-                    }
-                }
+                inventoryChanged |= ProcessInventoryChanges(
+                    *g_itemRegistry, "ItemRegistry"sv, player, inventory);
                 g_registryTimers.itemDelta.Reset(now);
             }
             if (scrollDeltaDue) {
-                auto changes = g_scrollRegistry->RefreshCounts(player, inventory);
-                if (!changes.empty()) inventoryChanged = true;
-                for (const auto& change : changes) {
-                    if (change.delta < 0) {
-                        Slot::SlotLocker::GetSingleton().OnItemUsed(change.formID, /*respectActivationLock=*/true);
-
-                        if (!IsConsumption(change.formID, change.delta)) {
-                            logger::debug("[ScrollRegistry] Left inventory (drop/sell/store), no reward: {} x{}"sv,
-                                change.name, -change.delta);
-                            continue;
-                        }
-                        logger::debug("[ScrollRegistry] Consumed: {} x{}"sv, change.name, -change.delta);
-                        ApplyConsumptionReward(change.formID, change.name);
-                    }
-                }
+                inventoryChanged |= ProcessInventoryChanges(
+                    *g_scrollRegistry, "ScrollRegistry"sv, player, inventory);
                 g_registryTimers.scrollDelta.Reset(now);
             }
 
