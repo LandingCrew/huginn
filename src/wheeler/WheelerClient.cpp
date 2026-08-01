@@ -1,9 +1,11 @@
 #include "WheelerClient.h"
+#include "WheelerConnection.h"
 #include "WheelerSettings.h"
-#include <Windows.h>
 #include <algorithm>
 #include <optional>
 #include <spdlog/spdlog.h>
+// <Windows.h> moved to WheelerConnection.cpp with TryConnect —
+// GetModuleHandleA/GetProcAddress were its only users here.
 
 #include "../Config.h"
 #include "../learning/EquipSourceTracker.h"
@@ -61,48 +63,14 @@ namespace Huginn::Wheeler
 
     bool WheelerClient::TryConnect()
     {
-        if (m_api) {
-            return true;
-        }
-
-        // Try to get Wheeler.dll handle
-        HMODULE hWheeler = GetModuleHandleA("Wheeler.dll");
-        if (!hWheeler) {
-            spdlog::debug("[WheelerClient] Wheeler.dll not loaded");
+        // Acquiring and version-gating the handle is WheelerConnection's job;
+        // deciding what runs when Wheeler talks back is ours, so the callback
+        // registration stays here.
+        if (!WheelerConnection::GetSingleton().TryConnect()) {
             return false;
         }
 
-        spdlog::debug("[WheelerClient] Found Wheeler.dll at {:p}", static_cast<void*>(hWheeler));
-
-        // Get the API interface
-        using GetWheelerAPIFn = WheelerAPI::IWheelerAPI* (*)();
-        auto GetWheelerAPI = reinterpret_cast<GetWheelerAPIFn>(
-            GetProcAddress(hWheeler, "GetWheelerAPI"));
-
-        if (!GetWheelerAPI) {
-            spdlog::warn("[WheelerClient] GetWheelerAPI export not found - old Wheeler version?");
-            return false;
-        }
-
-        m_api = GetWheelerAPI();
-        if (!m_api) {
-            spdlog::warn("[WheelerClient] GetWheelerAPI() returned nullptr");
-            return false;
-        }
-
-        if (m_api->version < WheelerAPI::API_VERSION_MIN) {
-            spdlog::warn("[WheelerClient] API version too old: got {}, need >= {}",
-                m_api->version, WheelerAPI::API_VERSION_MIN);
-            m_api = nullptr;
-            return false;
-        }
-
-        spdlog::info("[WheelerClient] Connected to Wheeler API v{} (v2={})",
-            m_api->version, m_api->version >= 2 ? "yes" : "no");
-
-        // Register callbacks
         RegisterCallbacks();
-
         return true;
     }
 
@@ -112,37 +80,15 @@ namespace Huginn::Wheeler
 
     void WheelerClient::RegisterCallbacks()
     {
-        if (!m_api) {
-            return;
-        }
-
-        auto itemCb = &WheelerClient::OnItemActivated;
-        auto wheelCb = &WheelerClient::OnWheelStateChanged;
-        auto editCb = &WheelerClient::OnEditModeChanged;
-
-        m_api->RegisterItemActivatedCallback(itemCb);
-        m_api->RegisterWheelStateCallback(wheelCb);
-        m_api->RegisterEditModeCallback(editCb);
-
-        spdlog::debug("[WheelerClient] Callbacks registered: ItemActivated={:p}, WheelState={:p}, EditMode={:p}",
-            reinterpret_cast<void*>(itemCb),
-            reinterpret_cast<void*>(wheelCb),
-            reinterpret_cast<void*>(editCb));
+        WheelerConnection::GetSingleton().RegisterCallbacks(
+            &WheelerClient::OnItemActivated,
+            &WheelerClient::OnWheelStateChanged,
+            &WheelerClient::OnEditModeChanged);
     }
 
     void WheelerClient::UnregisterCallbacks()
     {
-        if (!m_api) {
-            return;
-        }
-
-        spdlog::info("[WheelerClient] Unregistering callbacks...");
-
-        m_api->UnregisterItemActivatedCallback();
-        m_api->UnregisterWheelStateCallback();
-        m_api->UnregisterEditModeCallback();
-
-        spdlog::info("[WheelerClient] Callbacks unregistered");
+        WheelerConnection::GetSingleton().UnregisterCallbacks();
     }
 
     // ============================================================================
@@ -254,9 +200,10 @@ namespace Huginn::Wheeler
         // Execute deferred Wheeler API calls OUTSIDE the mutex (safe from deadlock).
         // Validate wheel is still managed — another thread (e.g. save/load) may have
         // destroyed wheels between mutex release and here.
-        if (deferredEmpty && client.m_api) {
-            if (client.m_api->IsManagedWheel(deferredEmpty->targetWheelIndex)) {
-                client.m_api->ClearEntry(deferredEmpty->targetWheelIndex, deferredEmpty->targetEntryIndex);
+        auto* api = Api();
+        if (deferredEmpty && api) {
+            if (api->IsManagedWheel(deferredEmpty->targetWheelIndex)) {
+                api->ClearEntry(deferredEmpty->targetWheelIndex, deferredEmpty->targetEntryIndex);
                 client.SetEntrySubtext(deferredEmpty->targetWheelIndex, deferredEmpty->targetEntryIndex, "Equipped");
                 spdlog::debug("[WheelerClient] Empty policy: deferred ClearEntry + SetEntrySubtext executed for wheel {} entry {}",
                     deferredEmpty->targetWheelIndex, deferredEmpty->targetEntryIndex);
@@ -294,8 +241,8 @@ namespace Huginn::Wheeler
 
         // Apply auto-focus OUTSIDE the mutex to avoid re-entrant callback deadlock.
         // SetActiveWheelIndex may fire OnWheelStateChanged synchronously.
-        if (autoFocusTarget >= 0 && client.m_api) {
-            client.m_api->SetActiveWheelIndex(autoFocusTarget);
+        if (auto* api = Api(); autoFocusTarget >= 0 && api) {
+            api->SetActiveWheelIndex(autoFocusTarget);
         }
     }
 
@@ -307,20 +254,7 @@ namespace Huginn::Wheeler
 
     void WheelerClient::LogAPIInfo()
     {
-        if (!m_api) {
-            spdlog::info("[WheelerClient] Not connected to Wheeler");
-            return;
-        }
-
-        spdlog::info("[WheelerClient] API v{}, wheels={}, active={}",
-            m_api->version, m_api->GetWheelCount(), m_api->GetActiveWheelIndex());
-        spdlog::debug("[WheelerClient] Initialized={}, Open={}, EditMode={}, v2={}",
-            m_api->IsInitialized(), m_api->IsWheelOpen(), m_api->IsInEditMode(),
-            m_api->version >= 2);
-        spdlog::debug("[WheelerClient] API fn ptrs: ItemCb={:p}, WheelStateCb={:p}, EditModeCb={:p}",
-            reinterpret_cast<void*>(m_api->RegisterItemActivatedCallback),
-            reinterpret_cast<void*>(m_api->RegisterWheelStateCallback),
-            reinterpret_cast<void*>(m_api->RegisterEditModeCallback));
+        WheelerConnection::GetSingleton().LogAPIInfo();
     }
 
     // ============================================================================
@@ -360,6 +294,8 @@ namespace Huginn::Wheeler
 
     void WheelerClient::IssueWheelDeletes(std::vector<PageWheel> staleWheels)
     {
+        auto* api = Api();
+
         // Clear all subtexts BEFORE deleting wheels. Wheeler may hold const char*
         // pointers into slotSubtexts — clearing tells Wheeler to drop its references
         // so the backing strings (kept alive by staleWheels) can be safely
@@ -367,7 +303,7 @@ namespace Huginn::Wheeler
         // index; the label-keyed delete below removes the whole wheel, which
         // drops its entry pointers.
         for (auto& pw : staleWheels) {
-            if (pw.wheelIndex >= 0 && m_api) {
+            if (pw.wheelIndex >= 0 && api) {
                 for (size_t i = 0; i < pw.slotCount; ++i) {
                     ClearEntrySubtext(pw.wheelIndex, static_cast<int32_t>(i));
                 }
@@ -380,7 +316,7 @@ namespace Huginn::Wheeler
         // the remaining indices, which used to leave our other stored indices stale
         // and orphan wheels (5 wheels instead of 3). Fall back to descending-index
         // deletes on older (v2) servers, where highest-first keeps the rest valid.
-        if (m_api && m_api->version >= 3 && m_api->DeleteManagedWheelsForClient) {
+        if (api && api->version >= 3 && api->DeleteManagedWheelsForClient) {
             for (auto& pw : staleWheels) {
                 // Keyed on the label, NOT wheelIndex: UpdatePageWheel resets
                 // wheelIndex to -1 when IsManagedWheel fails (e.g. after an index
@@ -390,7 +326,7 @@ namespace Huginn::Wheeler
                 if (!pw.wheelLabel) {
                     continue;  // placeholder — no wheel was ever created
                 }
-                int32_t n = m_api->DeleteManagedWheelsForClient(pw.wheelLabel->c_str());
+                int32_t n = api->DeleteManagedWheelsForClient(pw.wheelLabel->c_str());
                 if (n < 0) {
                     spdlog::warn("[WheelerClient] DeleteManagedWheelsForClient('{}') failed: {}",
                         *pw.wheelLabel, n);
@@ -398,7 +334,7 @@ namespace Huginn::Wheeler
                     spdlog::debug("[WheelerClient] Deleted {} managed wheel(s) for '{}'", n, *pw.wheelLabel);
                 }
             }
-        } else if (m_api) {
+        } else if (api) {
             std::vector<int32_t> indices;
             for (auto& pw : staleWheels) {
                 if (pw.wheelIndex >= 0) {
@@ -407,7 +343,7 @@ namespace Huginn::Wheeler
             }
             std::sort(indices.rbegin(), indices.rend());  // highest index first
             for (int32_t idx : indices) {
-                auto result = m_api->DeleteManagedWheel(idx);
+                auto result = api->DeleteManagedWheel(idx);
                 spdlog::debug("[WheelerClient] Deleted wheel {}: {}", idx, static_cast<int>(result));
             }
         }
@@ -415,12 +351,13 @@ namespace Huginn::Wheeler
 
     bool WheelerClient::CreateRecommendationWheels()
     {
-        if (!m_api) {
+        auto* api = Api();
+        if (!api) {
             spdlog::error("[WheelerClient] Cannot create recommendation wheels - not connected");
             return false;
         }
 
-        if (!m_api->IsInitialized()) {
+        if (!api->IsInitialized()) {
             spdlog::warn("[WheelerClient] Cannot create recommendation wheels - Wheeler not initialized");
             return false;
         }
@@ -447,7 +384,7 @@ namespace Huginn::Wheeler
                 if (pw.wheelIndex >= 0) { probeWheel = pw.wheelIndex; break; }
             }
             if (probeWheel >= 0) {
-                if (m_api->IsManagedWheel(probeWheel)) {
+                if (api->IsManagedWheel(probeWheel)) {
                     spdlog::debug("[WheelerClient] Recommendation wheels already exist ({} pages)", m_pageWheels.size());
                     return true;
                 }
@@ -530,7 +467,7 @@ namespace Huginn::Wheeler
                 ? basePosition + static_cast<int32_t>(p)
                 : basePosition;
 
-            if (m_api->version >= 2) {
+            if (api->version >= 2) {
                 WheelerAPI::WheelConfig config = {
                     .numEntries = static_cast<int32_t>(slotCount),
                     .position = pagePosition,
@@ -544,7 +481,7 @@ namespace Huginn::Wheeler
                     .indicatorActiveColor = 0,
                     .indicatorInactiveColor = 0
                 };
-                pageWheel.wheelIndex = m_api->CreateManagedWheel(&config);
+                pageWheel.wheelIndex = api->CreateManagedWheel(&config);
             } else {
                 WheelerAPI::WheelConfigV1 config = {
                     .numEntries = static_cast<int32_t>(slotCount),
@@ -553,7 +490,7 @@ namespace Huginn::Wheeler
                     .clientName = pageWheel.wheelLabel->c_str(),
                     .showLabel = true
                 };
-                pageWheel.wheelIndex = m_api->CreateManagedWheel(
+                pageWheel.wheelIndex = api->CreateManagedWheel(
                     reinterpret_cast<const WheelerAPI::WheelConfig*>(&config));
             }
 
@@ -566,25 +503,25 @@ namespace Huginn::Wheeler
 
             // Post-creation entry count repair: Wheeler may create fewer entries than
             // requested (observed during new game). Add missing entries individually.
-            int32_t actualEntries = m_api->GetEntryCount(pageWheel.wheelIndex);
+            int32_t actualEntries = api->GetEntryCount(pageWheel.wheelIndex);
             int32_t targetEntries = static_cast<int32_t>(slotCount);
             if (actualEntries < 0) {
                 spdlog::error("[WheelerClient] Page {} GetEntryCount returned negative ({}), skipping wheel",
                     p, actualEntries);
-                m_api->DeleteManagedWheel(pageWheel.wheelIndex);  // wheel was created; don't orphan it
+                api->DeleteManagedWheel(pageWheel.wheelIndex);  // wheel was created; don't orphan it
                 pushPlaceholder(p, pageConfig.name);
                 continue;
             } else if (actualEntries > targetEntries) {
                 spdlog::warn("[WheelerClient] Page {} wheel {} has more entries ({}) than requested ({}), discarding excess",
                     p, pageWheel.wheelIndex, actualEntries, targetEntries);
                 for (int32_t e = actualEntries - 1; e >= targetEntries; --e) {
-                    m_api->DeleteEntry(pageWheel.wheelIndex, e);
+                    api->DeleteEntry(pageWheel.wheelIndex, e);
                 }
             } else if (actualEntries < targetEntries) {
                 spdlog::warn("[WheelerClient] Page {} wheel {} created with {}/{} entries, adding missing entries",
                     p, pageWheel.wheelIndex, actualEntries, targetEntries);
                 for (int32_t e = actualEntries; e < targetEntries; ++e) {
-                    int32_t result = m_api->AddEntry(pageWheel.wheelIndex);
+                    int32_t result = api->AddEntry(pageWheel.wheelIndex);
                     if (result < 0) {
                         spdlog::error("[WheelerClient] Page {} AddEntry failed at entry {} (result={})",
                             p, e, result);
@@ -592,11 +529,11 @@ namespace Huginn::Wheeler
                     }
                 }
                 // Re-check and adjust slot count to match reality
-                actualEntries = m_api->GetEntryCount(pageWheel.wheelIndex);
+                actualEntries = api->GetEntryCount(pageWheel.wheelIndex);
                 if (actualEntries < 0) {
                     spdlog::error("[WheelerClient] Page {} GetEntryCount returned negative ({}) after repair, skipping wheel",
                         p, actualEntries);
-                    m_api->DeleteManagedWheel(pageWheel.wheelIndex);  // wheel was created; don't orphan it
+                    api->DeleteManagedWheel(pageWheel.wheelIndex);  // wheel was created; don't orphan it
                     pushPlaceholder(p, pageConfig.name);
                     continue;
                 }
@@ -678,10 +615,11 @@ namespace Huginn::Wheeler
 
     bool WheelerClient::SetActivePage(size_t pageIndex)
     {
-        if (!m_api) return false;
+        auto* api = Api();
+        if (!api) return false;
         int32_t wheelIndex = GetWheelIndexForPage(pageIndex);
         if (wheelIndex < 0) return false;
-        auto result = m_api->SetActiveWheelIndex(wheelIndex);
+        auto result = api->SetActiveWheelIndex(wheelIndex);
         if (result == WheelerAPI::Result::OK) {
             logger::debug("[WheelerClient] SetActivePage({}) -> wheel {}"sv, pageIndex, wheelIndex);
             return true;
@@ -709,8 +647,9 @@ namespace Huginn::Wheeler
 
     int WheelerClient::GetActiveManagedPage() const
     {
-        if (!m_api || !m_api->IsWheelOpen()) return -1;
-        int32_t activeWheel = m_api->GetActiveWheelIndex();
+        auto* api = Api();
+        if (!api || !api->IsWheelOpen()) return -1;
+        int32_t activeWheel = api->GetActiveWheelIndex();
         return FindPageForWheel(activeWheel);
     }
 
@@ -740,7 +679,8 @@ namespace Huginn::Wheeler
                                          const std::vector<std::string>& subtexts)
     {
         // Early validation (before lock - no shared state access)
-        if (!m_api) {
+        auto* api = Api();
+        if (!api) {
             return;
         }
 
@@ -782,7 +722,7 @@ namespace Huginn::Wheeler
         }
 
         // Validate wheel ownership - another mod may have deleted it or indices shifted
-        if (!m_api->IsManagedWheel(pageWheel.wheelIndex)) {
+        if (!api->IsManagedWheel(pageWheel.wheelIndex)) {
             spdlog::warn("[WheelerClient] Page {} wheel {} no longer managed, marking invalid",
                 pageIndex, pageWheel.wheelIndex);
             pageWheel.wheelIndex = -1;
@@ -790,13 +730,13 @@ namespace Huginn::Wheeler
         }
 
         // A3: Safety pre-check — verify wheel has entries (catches unexpected state)
-        if (m_api->IsWheelEmpty(pageWheel.wheelIndex)) {
+        if (api->IsWheelEmpty(pageWheel.wheelIndex)) {
             spdlog::warn("[WheelerClient] Page {} wheel {} is unexpectedly empty after creation",
                 pageIndex, pageWheel.wheelIndex);
             return;
         }
 
-        int32_t entryCount = m_api->GetEntryCount(pageWheel.wheelIndex);
+        int32_t entryCount = api->GetEntryCount(pageWheel.wheelIndex);
         if (entryCount <= 0) {
             spdlog::warn("[WheelerClient] Page {} wheel has no entries", pageIndex);
             return;
@@ -859,26 +799,26 @@ namespace Huginn::Wheeler
                 if (cachedFormID != 0) {
                     if (newFormID != 0) {
                         // Replacing one item with another — use surgical RemoveItem
-                        auto removeResult = m_api->RemoveItem(pageWheel.wheelIndex, i, 0);
+                        auto removeResult = api->RemoveItem(pageWheel.wheelIndex, i, 0);
                         if (removeResult != WheelerAPI::Result::OK) {
                             // Fallback to ClearEntry if RemoveItem fails
                             spdlog::debug("[WheelerClient] RemoveItem failed ({}), falling back to ClearEntry",
                                 static_cast<int>(removeResult));
-                            m_api->ClearEntry(pageWheel.wheelIndex, i);
+                            api->ClearEntry(pageWheel.wheelIndex, i);
                         }
                     } else {
                         // Clearing to empty — ClearEntry is appropriate
-                        m_api->ClearEntry(pageWheel.wheelIndex, i);
+                        api->ClearEntry(pageWheel.wheelIndex, i);
                     }
                 }
                 if (newFormID != 0) {
-                    int32_t result = m_api->AddItemByFormID(pageWheel.wheelIndex, i, newFormID, newUniqueID);
+                    int32_t result = api->AddItemByFormID(pageWheel.wheelIndex, i, newFormID, newUniqueID);
                     if (result < 0) {
                         // A3: Use IsEntryEmpty to decide recovery strategy
-                        bool entryEmpty = m_api->IsEntryEmpty(pageWheel.wheelIndex, i);
+                        bool entryEmpty = api->IsEntryEmpty(pageWheel.wheelIndex, i);
                         if (entryEmpty && cachedFormID != 0) {
                             // Entry is empty after removal — restore previous item
-                            m_api->AddItemByFormID(pageWheel.wheelIndex, i, cachedFormID, cachedUniqueID);
+                            api->AddItemByFormID(pageWheel.wheelIndex, i, cachedFormID, cachedUniqueID);
                         } else if (!entryEmpty) {
                             spdlog::debug("[WheelerClient] Entry {} not empty after AddItem failure, skipping restore", i);
                         }
@@ -962,7 +902,8 @@ namespace Huginn::Wheeler
 
     void WheelerClient::SetEntrySubtext(int32_t wheelIndex, int32_t entryIndex, const char* text)
     {
-        if (!m_api || m_api->version < 2) {
+        auto* api = Api();
+        if (!api || api->version < 2) {
             return;  // v2 API required
         }
 
@@ -975,16 +916,17 @@ namespace Huginn::Wheeler
             .color = 0          // Use default (70% white)
         };
 
-        m_api->SetManagedWheelEntrySubtext(wheelIndex, entryIndex, &config);
+        api->SetManagedWheelEntrySubtext(wheelIndex, entryIndex, &config);
     }
 
     void WheelerClient::ClearEntrySubtext(int32_t wheelIndex, int32_t entryIndex)
     {
-        if (!m_api || m_api->version < 2) {
+        auto* api = Api();
+        if (!api || api->version < 2) {
             return;
         }
 
-        m_api->SetManagedWheelEntrySubtext(wheelIndex, entryIndex, nullptr);
+        api->SetManagedWheelEntrySubtext(wheelIndex, entryIndex, nullptr);
     }
 
     void WheelerClient::UpdateRecommendations(const std::vector<RE::FormID>& spellFormIDs,
@@ -1091,7 +1033,7 @@ namespace Huginn::Wheeler
         }
 
         // Now running on the update thread — IsWheelOpen() is accurate here.
-        bool stillOpen = m_api && m_api->IsWheelOpen();
+        bool stillOpen = IsWheelOpen();
         if (stillOpen) {
             // Wheeler scrolled to another wheel (close A → open B).
             // The pending flag was set by close-A, but open-B already fired,
@@ -1155,7 +1097,8 @@ namespace Huginn::Wheeler
 
     bool WheelerClient::TryUrgentAutoFocus(int overridePriority)
     {
-        if (!m_api || !m_api->IsWheelOpen()) {
+        auto* api = Api();
+        if (!api || !api->IsWheelOpen()) {
             return false;
         }
 
@@ -1185,7 +1128,7 @@ namespace Huginn::Wheeler
         }
 
         // Check if Wheeler is already on one of our wheels
-        int32_t activeWheel = m_api->GetActiveWheelIndex();
+        int32_t activeWheel = api->GetActiveWheelIndex();
         if (IsOurWheel(activeWheel)) {
             return false;  // Already on Huginn wheel, no need to focus
         }
@@ -1195,7 +1138,7 @@ namespace Huginn::Wheeler
 
         // Call SetActiveWheelIndex — safe because we're not holding m_callbackMutex
         // (this is called from the update loop, not from a callback)
-        auto result = m_api->SetActiveWheelIndex(targetWheel);
+        auto result = api->SetActiveWheelIndex(targetWheel);
         if (result != WheelerAPI::Result::OK) {
             spdlog::warn("[WheelerClient] SetActiveWheelIndex({}) failed: {}",
                 targetWheel, static_cast<int>(result));
@@ -1212,7 +1155,8 @@ namespace Huginn::Wheeler
     void WheelerClient::ValidateWheelState() const
     {
 #ifndef NDEBUG
-        if (!m_api) {
+        auto* api = Api();
+        if (!api) {
             return;
         }
 
@@ -1227,13 +1171,13 @@ namespace Huginn::Wheeler
             }
 
             // Verify wheel still exists and is managed
-            if (!m_api->IsManagedWheel(pw.wheelIndex)) {
+            if (!api->IsManagedWheel(pw.wheelIndex)) {
                 spdlog::warn("[WheelerClient] ValidateWheelState: Page {} wheel {} is no longer managed!",
                     p, pw.wheelIndex);
                 continue;
             }
 
-            int32_t entryCount = m_api->GetEntryCount(pw.wheelIndex);
+            int32_t entryCount = api->GetEntryCount(pw.wheelIndex);
             int32_t expectedCount = static_cast<int32_t>(pw.slotCount);
             if (entryCount != expectedCount) {
                 spdlog::warn("[WheelerClient] ValidateWheelState: Page {} wheel {} entry count mismatch: "
@@ -1247,7 +1191,7 @@ namespace Huginn::Wheeler
                 size_t idx = static_cast<size_t>(i);
                 if (idx >= pw.slotFormIDs.size()) break;
 
-                uint32_t actualFormID = m_api->GetItemFormID(pw.wheelIndex, i, 0);
+                uint32_t actualFormID = api->GetItemFormID(pw.wheelIndex, i, 0);
                 RE::FormID cachedFormID = pw.slotFormIDs[idx];
 
                 // Empty entries: GetItemFormID returns 0 for empty slots

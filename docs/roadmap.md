@@ -84,12 +84,45 @@ now closed; #59–#65 are follow-ups it surfaced, not remaining critique work.
 - [x] #10: extract UpdateLoop reward policy into ProcessInventoryChanges(registry,
       tag) — item/scroll consumption blocks were duplicated verbatim (PR #66).
       Also the enabling step for the weapon/ammo OnItemUsed hook below.
-- [ ] #10: split WheelerClient.cpp (~1.3k lines) into Connection / WheelSync / a thin
-      callback translator (M/L) — the coupling behind the finding-3 race surface.
-      Needs a state-ownership pass first: m_api, m_wheelVisible/m_pendingWheelClose,
-      and m_pageWheels under m_pageDataMutex are all touched by more than one of
-      the three proposed modules; deciding who owns those is the work, moving
-      functions between files is not. (M/L)
+- [ ] #10: split WheelerClient.cpp (~1.3k lines) — the coupling behind the
+      finding-3 race surface. **State-ownership pass done**; it settled three
+      questions and changed the plan:
+      * `m_api` → **Connection**. Single writer (TryConnect); everyone else
+        reads. Never actually contested — a dependency, not shared state.
+      * `m_pageWheels` / `m_pageDataMutex` / `m_addFailCooldowns` → **WheelSync**,
+        exclusively. Callbacks get query+mutator methods, never a `PageWheel&`.
+      * `m_wheelVisible` / `m_pendingWheelClose` / `m_pendingCloseWheelIndex` /
+        `m_itemActivatedWhileOpen` / `m_callbackMutex` → **Session**.
+      Gives `Connection ← WheelSync ← Session`: acyclic, and the existing
+      `m_callbackMutex` → `m_pageDataMutex` order survives as "Session may call
+      WheelSync, never the reverse". Seam-defining functions are
+      `CheckPendingWheelClose` (touches all three), `HandleWheelOpened`,
+      `OnItemActivated`, `HandleWheelClosed`.
+      The finding that changed the plan: the callback layer is **not** a thin
+      translator. Those four functions reach outward into seven subsystems
+      (SlotLocker, SlotAllocator, CandidateGenerator, EquipSourceTracker,
+      EquipEventBus, IntuitionMenu, WheelerSettings) — the same reach-up shape
+      as #10a/#10b, and most of the 1.3k lines. Step 3 is therefore an
+      inversion job (injected callbacks, `ExternalEquipLearner::Environment`
+      pattern), not a file move.
+      Three hazards a naive extraction reintroduces: `HandleWheelOpened` inlines
+      `FindPageForWheel`'s loop specifically to avoid recursive locking;
+      `m_api` was a plain non-atomic pointer read from Wheeler's callback thread;
+      lock ordering had no enforcement beyond both mutexes being private to one
+      class. Public surface is only 12 call sites in 7 files, so a forwarding
+      facade keeps callers untouched and makes this three PRs, not one:
+    - [x] Step 1 — Connection extraction (PR: wheeler-split-connection).
+          `WheelerAPI.h` (ABI declarations) + `WheelerConnection` owning the
+          handle, now `std::atomic`. Closes the version-reject publication
+          window. Log output unchanged so the refactor diffs clean in-game.
+    - [ ] Step 2 — WheelSync extraction, with `FindPageForWheel` given an
+          explicit `…Locked()` variant so the recursive-lock hazard can't
+          recur. Also fold in: make the load-once-per-function handle rule
+          transitive by passing the handle into `SetEntrySubtext` /
+          `ClearEntrySubtext` rather than having them re-load it — these call
+          sites get rewritten by the extraction anyway (M)
+    - [ ] Step 3 — Session + injected callbacks, cutting the seven outward
+          reaches. The one with real behavioural risk (M)
 
 ### Tier 3 — hot-path perf (trace-prioritized; see docs/profiling/tracy-traces.md)
 - [ ] #14: gate the display push paths — IntuitionBackend change-detect, WheelerBackend

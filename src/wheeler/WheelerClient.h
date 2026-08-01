@@ -1,5 +1,8 @@
 #pragma once
 
+#include "WheelerAPI.h"
+#include "WheelerConnection.h"
+
 #include <atomic>
 #include <chrono>
 #include <cstdint>
@@ -9,150 +12,6 @@
 #include <unordered_map>
 #include <vector>
 
-// Forward declare the API types we need
-namespace WheelerAPI
-{
-    // Minimum API version we support (v1 = base Wheeler, v2 = subtext, v3 = batch
-    // delete-by-client + managed metadata on the wheel)
-    constexpr uint32_t API_VERSION_MIN = 1;
-    constexpr uint32_t API_VERSION_MAX = 3;
-
-    enum class Result : int32_t
-    {
-        OK = 0,
-        InvalidWheelIndex = -1,
-        InvalidEntryIndex = -2,
-        InvalidItemIndex = -3,
-        InvalidFormID = -4,
-        FormNotFound = -5,
-        UnsupportedFormType = -6,
-        WheelNotEmpty = -7,
-        LastWheel = -8,
-        NotInitialized = -9,
-        NotManagedWheel = -10,
-        InEditMode = -11,
-        EntryNotEmpty = -12,
-        InternalError = -100
-    };
-
-    // v1 WheelConfig - compatible with C0kAdam's Wheeler API
-    // This is the base struct that all Wheeler implementations support
-    struct WheelConfigV1
-    {
-        int32_t numEntries;
-        int32_t position;
-        bool managed;
-        const char* clientName;
-        bool showLabel;  // If true, show clientName as label when viewing this wheel
-    };
-
-    // v2 WheelConfig - extended with styling options (Wheeler v2+ with subtext)
-    // IMPORTANT: Only use this with API v2+, v1 servers won't recognize the extra fields
-    struct WheelConfig
-    {
-        int32_t numEntries;
-        int32_t position;
-        bool managed;
-        const char* clientName;
-        bool showLabel;  // If true, show clientName as label when viewing this wheel
-
-        // --- Label Styling (optional, 0 = use defaults) ---
-        float labelFontSize;       // Font size for clientName label (default: 42)
-        uint32_t labelColor;       // RGBA color for label (default: white)
-        float labelOffsetY;        // Y offset below wheel indicator (default: 50)
-
-        // --- Indicator Styling (optional) ---
-        const char* indicatorText;        // Text on wheel indicator (default: "M", nullptr/"" = no indicator)
-        uint32_t indicatorActiveColor;    // Color when wheel is active (default: cyan)
-        uint32_t indicatorInactiveColor;  // Color when wheel is inactive (default: dim cyan)
-    };
-
-    // Configuration for entry subtext (v2)
-    struct SubtextConfig
-    {
-        const char* text;    // The subtext to display (nullptr or "" to clear)
-        float offsetX;       // X offset from entry center (default: 0)
-        float offsetY;       // Y offset below item name (default: 20)
-        float fontSize;      // Font size in pixels (default: 28, 0 = use default)
-        uint32_t color;      // RGBA color (default: 0xB0FFFFFF = 70% white, 0 = use default)
-    };
-
-    enum class ChangeType : int32_t
-    {
-        ItemAdded,
-        ItemRemoved,
-        EntryAdded,
-        EntryRemoved,
-        ItemMoved
-    };
-
-    struct WheelChange
-    {
-        ChangeType type;
-        int32_t wheelIndex;
-        int32_t entryIndex;
-        int32_t itemIndex;
-        uint32_t formID;
-    };
-
-    using ItemActivatedCallback = void (*)(int32_t wheelIndex, int32_t entryIndex, int32_t itemIndex, uint32_t formID, bool isPrimary);
-    using EditModeCallback = void (*)(bool entered, const WheelChange* changes, size_t changeCount);
-    using WheelStateCallback = void (*)(int32_t wheelIndex, bool isOpen);
-
-    struct IWheelerAPI
-    {
-        uint32_t version;
-
-        bool (*IsInitialized)();
-        bool (*IsInEditMode)();
-        bool (*IsWheelOpen)();
-
-        int32_t (*CreateManagedWheel)(const WheelConfig* config);
-        Result (*DeleteManagedWheel)(int32_t wheelIndex);
-        bool (*IsManagedWheel)(int32_t wheelIndex);
-
-        int32_t (*GetWheelCount)();
-        int32_t (*GetActiveWheelIndex)();
-        Result (*SetActiveWheelIndex)(int32_t index);
-        bool (*IsWheelEmpty)(int32_t wheelIndex);
-
-        int32_t (*GetEntryCount)(int32_t wheelIndex);
-        int32_t (*AddEntry)(int32_t wheelIndex);
-        Result (*DeleteEntry)(int32_t wheelIndex, int32_t entryIndex);
-        bool (*IsEntryEmpty)(int32_t wheelIndex, int32_t entryIndex);
-
-        int32_t (*GetItemCount)(int32_t wheelIndex, int32_t entryIndex);
-        int32_t (*AddItemByFormID)(int32_t wheelIndex, int32_t entryIndex, uint32_t formID, uint16_t uniqueID);
-        Result (*RemoveItem)(int32_t wheelIndex, int32_t entryIndex, int32_t itemIndex);
-        Result (*ClearEntry)(int32_t wheelIndex, int32_t entryIndex);
-        uint32_t (*GetItemFormID)(int32_t wheelIndex, int32_t entryIndex, int32_t itemIndex);
-        int32_t (*GetSelectedItemIndex)(int32_t wheelIndex, int32_t entryIndex);
-        Result (*SetSelectedItemIndex)(int32_t wheelIndex, int32_t entryIndex, int32_t itemIndex);
-
-        // Pass nullptr to unregister a previously registered callback
-        void (*RegisterItemActivatedCallback)(ItemActivatedCallback callback);
-        void (*RegisterEditModeCallback)(EditModeCallback callback);
-        void (*RegisterWheelStateCallback)(WheelStateCallback callback);
-
-        // Unregister callbacks (convenience)
-        void (*UnregisterItemActivatedCallback)();
-        void (*UnregisterEditModeCallback)();
-        void (*UnregisterWheelStateCallback)();
-
-        // --- v2 Only: Entry Subtext ---
-        // Set subtext displayed below an entry's item name (managed wheels only)
-        // NOTE: This function pointer is only valid when IWheelerAPI::version >= 2
-        // Always check version before calling! On v1 APIs, this pointer may be garbage.
-        Result (*SetManagedWheelEntrySubtext)(int32_t wheelIndex, int32_t entryIndex, const SubtextConfig* config);
-
-        // --- v3 Only: Batch delete by client ---
-        // Delete ALL managed wheels whose clientName matches, in one shift-safe pass.
-        // NOTE: Only valid when IWheelerAPI::version >= 3 — check before calling.
-        // Returns the number of wheels deleted (>= 0), or a negative Result on error.
-        int32_t (*DeleteManagedWheelsForClient)(const char* clientName);
-    };
-}
-
 namespace Huginn::Wheeler
 {
     class WheelerClient
@@ -160,23 +19,46 @@ namespace Huginn::Wheeler
     public:
         static WheelerClient& GetSingleton();
 
-        // Try to connect to Wheeler API, returns true if successful
+        // ============================================================================
+        // Connection (forwarding facade)
+        //
+        // The API handle lives in WheelerConnection. Only the questions callers
+        // actually ask are forwarded — IsConnected() (6 sites in display/,
+        // settings/, Main.cpp) and IsWheelOpen() (4 sites) — so those callers
+        // keep talking to one Wheeler object rather than learning which half of
+        // the split answers which question.
+        //
+        // GetAPI(), GetAPIVersion() and SupportsV2Features() are deliberately
+        // NOT forwarded. They had no callers, and GetAPI() in particular handed
+        // the raw handle to anyone who asked — exactly the boundary
+        // WheelerConnection exists to draw. Anything inside this class that
+        // needs the handle uses the private Api() shorthand below; anything
+        // outside it should be asking WheelerConnection directly.
+        // ============================================================================
+
+        // Connect to Wheeler and install our callback trampolines.
+        // Returns true if connected.
+        //
+        // Safe to call repeatedly: WheelerConnection::TryConnect() early-returns
+        // on an existing handle, and re-registering is a no-op overwrite —
+        // Wheeler stores one callback per type, and we hand it the same three
+        // trampoline addresses every time. A repeat call does re-emit the
+        // "Callbacks registered" debug line; no caller does this today
+        // (Main.cpp:447 is the first call; the retry at Main.cpp:127 sits behind
+        // a !IsConnected() guard).
         bool TryConnect();
 
         // Check if connected
-        [[nodiscard]] bool IsConnected() const noexcept { return m_api != nullptr; }
-
-        // Get API version (0 if not connected)
-        [[nodiscard]] uint32_t GetAPIVersion() const noexcept { return m_api ? m_api->version : 0; }
-
-        // Check if v2 features are available (subtext, custom styling)
-        [[nodiscard]] bool SupportsV2Features() const noexcept { return m_api && m_api->version >= 2; }
+        [[nodiscard]] bool IsConnected() const noexcept
+        {
+            return WheelerConnection::GetSingleton().IsConnected();
+        }
 
         // Check if the Wheeler UI is currently open (any wheel visible)
-        [[nodiscard]] bool IsWheelOpen() const noexcept { return m_api && m_api->IsWheelOpen(); }
-
-        // Get API pointer (nullptr if not connected)
-        [[nodiscard]] WheelerAPI::IWheelerAPI* GetAPI() const noexcept { return m_api; }
+        [[nodiscard]] bool IsWheelOpen() const noexcept
+        {
+            return WheelerConnection::GetSingleton().IsWheelOpen();
+        }
 
         // Log API info
         void LogAPIInfo();
@@ -299,7 +181,21 @@ namespace Huginn::Wheeler
         // Maximum pages supported (matches SlotSettings::MAX_PAGES)
         static constexpr size_t MAX_PAGES = 10;
 
-        WheelerAPI::IWheelerAPI* m_api = nullptr;
+        // Shorthand for the handle owned by WheelerConnection. Load it ONCE per
+        // function into a local — re-reading it mid-sequence would let a
+        // concurrent disconnect change the answer between two API calls that
+        // were meant to see the same Wheeler.
+        //
+        // The rule is per-function, not transitive: SetEntrySubtext and
+        // ClearEntrySubtext load their own handle, so a caller that hoists api
+        // and then calls them does not extend its snapshot into them. Making
+        // that transitive means passing the handle down as a parameter, which
+        // belongs with the step-2 WheelSync extraction that rewrites these call
+        // sites anyway.
+        [[nodiscard]] static WheelerAPI::IWheelerAPI* Api() noexcept
+        {
+            return WheelerConnection::GetSingleton().Api();
+        }
 
         // Per-page wheel data (v0.12.0 multi-page support)
         struct PageWheel
