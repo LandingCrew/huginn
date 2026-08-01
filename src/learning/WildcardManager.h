@@ -2,7 +2,10 @@
 
 #include "ScoredCandidate.h"
 #include "Config.h"
-#include "../slot/SlotAllocator.h"
+// SlotSettings only — MAX_SLOTS_PER_PAGE below. SlotAllocator.h was included
+// for a legacy ApplyWildcards overload that read the live slot count; the count
+// is now passed in from the pipeline snapshot, and learning/ no longer depends
+// on slot/ machinery (critique #10).
 #include "../slot/SlotSettings.h"
 #include <chrono>
 #include <random>
@@ -41,13 +44,13 @@ namespace Huginn::Scoring
         // Apply wildcards to a ranked candidate list
         // Modifies the list in-place by swapping wildcard candidates into eligible slots
         // @param slotCount Number of slots to consider (from current page configuration)
+        // slotCount must be the pipeline tick's snapshot
+        // (PipelineContext::displaySlotCount), not a live SlotAllocator read:
+        // wildcard eligibility is slot-relative, so reading it live lets a
+        // mid-tick page switch size wildcards against a page the pipeline is
+        // not allocating. A single-argument overload used to do exactly that
+        // (critique #10) — do not reintroduce one.
         void ApplyWildcards(ScoredCandidateList& rankedCandidates, size_t slotCount);
-
-        // Legacy version - gets slot count from current page in SlotAllocator
-        void ApplyWildcards(ScoredCandidateList& rankedCandidates) {
-            size_t slotCount = Slot::SlotAllocator::GetSingleton().GetSlotCount();
-            ApplyWildcards(rankedCandidates, slotCount);
-        }
 
         // Unconditional per-tick expiry check. ApplyWildcards (which normally
         // drives expiry) runs only on non-skipped pipeline ticks, so without

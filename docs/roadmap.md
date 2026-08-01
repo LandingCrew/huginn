@@ -54,17 +54,20 @@ now closed; #59–#65 are follow-ups it surfaced, not remaining critique work.
       live rather than read from PipelineStateCache: the cache only records the
       page current at snapshot time, so sourcing both sides from it would
       collapse attribution case D into E.
-- [ ] #10b: WildcardManager still reaches up — WildcardManager.h:5 includes
-      slot/SlotAllocator.h for the legacy ApplyWildcards overload, which reads
-      GetSlotCount() live (:48), and UtilityScorer.cpp:197 calls exactly that
-      overload. Pass the pipeline's ctx.displaySlotCount at the call site and
-      delete the legacy overload — also resolves the TODO(page-consistency) at
-      UtilityScorer.cpp:191 (live slot count can disagree with the snapshotted
-      page mid-switch). Behavior change, so its own PR (S)
-- [ ] #10: split WheelerClient.cpp (~1.2k lines) into Connection / WheelSync / a thin
-      callback translator (M/L) — the coupling behind the finding-3 race surface
-- [ ] #10: extract UpdateLoop reward policy into ProcessInventoryChanges(changes, tag)
-      (item/scroll consumption blocks are duplicated verbatim) (S/M)
+- [x] #10b: WildcardManager reached up for the live slot count. ScoreCandidates
+      now takes the tick's displaySlotCount and passes it through; the legacy
+      one-arg ApplyWildcards overload is deleted and slot/SlotAllocator.h is out
+      of learning/. Resolves TODO(page-consistency) — wildcards can no longer be
+      sized against a page the pipeline isn't allocating. **learning/ now has no
+      code dependency on slot/ machinery.**
+- [x] #10: extract UpdateLoop reward policy into ProcessInventoryChanges(registry,
+      tag) — item/scroll consumption blocks were duplicated verbatim (PR #66).
+      Also the enabling step for the weapon/ammo OnItemUsed hook below.
+- [ ] #10: split WheelerClient.cpp (~1.3k lines) into Connection / WheelSync / a thin
+      callback translator (M/L) — the coupling behind the finding-3 race surface.
+      Needs a state-ownership pass first: m_api, m_wheelVisible/m_pendingWheelClose,
+      and m_pageWheels under m_pageDataMutex are all touched by more than one of
+      the three proposed modules. Moving functions is the easy part
 
 ### Tier 3 — hot-path perf (trace-prioritized; see docs/profiling/tracy-traces.md)
 - [ ] #14: gate the display push paths — IntuitionBackend change-detect, WheelerBackend

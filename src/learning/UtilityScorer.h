@@ -61,6 +61,12 @@ namespace Huginn::Scoring
 
         // Main scoring method: Score all candidates and return ranked list
         // Stage 1f: Added WorldState parameter for ContextRuleEngine
+        // @param displaySlotCount Slot count of the page THIS tick allocates
+        //        (PipelineContext::displaySlotCount). Wildcard eligibility is
+        //        slot-relative, so it must come from the tick's snapshot rather
+        //        than a live SlotAllocator read — otherwise a page switch
+        //        landing mid-tick sizes wildcards against the new page while
+        //        the pipeline allocates the snapshotted one (critique #10).
         // @param outWeights Optional: receives the context weight map this pass
         //        scored against, so callers can explain the ranking without
         //        re-deriving context (see DominantContextReason, critique #10).
@@ -70,6 +76,7 @@ namespace Huginn::Scoring
             const State::PlayerActorState& player,
             const State::TargetCollection& targets,
             const State::WorldState& world,
+            size_t displaySlotCount,
             Context::ContextWeightMap* outWeights = nullptr);
 
         // Score a single candidate (useful for debugging)

@@ -29,6 +29,7 @@ namespace Huginn::Scoring
         const State::PlayerActorState& player,
         const State::TargetCollection& targets,
         const State::WorldState& world,  // Stage 1f: Added WorldState
+        size_t displaySlotCount,
         Context::ContextWeightMap* outWeights)
     {
         SCOPED_TIMER("UtilityScorer::ScoreCandidates");
@@ -187,14 +188,12 @@ namespace Huginn::Scoring
             }
         }
 
-        // Apply wildcards for exploration.
-        // TODO(page-consistency): the legacy overload reads SlotAllocator::GetSlotCount()
-        // live, so on a page switch that lands mid-tick it can use the new page's slot
-        // count while the pipeline allocates the snapshotted page (differing slot counts
-        // are the only trigger). Thread the pipeline's ctx.displaySlotCount in via the
-        // 2-arg ApplyWildcards(scored, slotCount) to make wildcard eligibility match the
-        // tick's page. Minor, one-tick, self-correcting — hence not done here.
-        m_wildcardMgr.ApplyWildcards(scored);
+        // Apply wildcards for exploration, sized against the page THIS tick
+        // allocates. Previously this called an overload that read
+        // SlotAllocator::GetSlotCount() live, so a page switch landing mid-tick
+        // could size wildcards against the new page while the pipeline allocated
+        // the snapshotted one — resolves TODO(page-consistency).
+        m_wildcardMgr.ApplyWildcards(scored, displaySlotCount);
 
         return scored;
     }
