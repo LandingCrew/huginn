@@ -274,6 +274,13 @@ static void InitializeGameSystems(bool isNewGame)
     // wires who answers. Keeps learning/ from including slot/ and wheeler/
     // (critique #10). Both stay live queries rather than cached snapshots —
     // attribution depends on the state at equip time, not at the last tick.
+    //
+    // Ordering: the TESEquipEvent sink registers earlier in this same function,
+    // so equips landing in that window find the environment unwired and are
+    // suppressed. Harmless — same thread, and PipelineStateCache::IsStale would
+    // reject anything that early anyway, since no pipeline tick has run. Kept
+    // here beside SetConfig rather than hoisted, so learner setup stays in one
+    // place; SetEnvironment logs if it is ever left incomplete.
     Learning::ExternalEquipLearner::GetSingleton().SetEnvironment({
         .isWheelOpen = [] { return Wheeler::WheelerClient::GetSingleton().IsWheelOpen(); },
         .currentDisplayPage = [] { return Slot::SlotAllocator::GetSingleton().GetCurrentPage(); },

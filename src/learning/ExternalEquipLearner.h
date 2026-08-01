@@ -19,12 +19,12 @@ namespace Huginn::Learning
     // reward based on how well Huginn was already surfacing the item.
     //
     // Cases:
-    //   A: Not a candidate          → skip (0.0)
-    //   B-low: Low-rank candidate   → small reward (0.2×)
-    //   B-med: Mid-rank candidate   → medium reward (0.4×)
-    //   C: High-rank, not displayed → high reward (0.8×)
-    //   D: Displayed, other page    → medium reward (0.5×)
-    //   E: Displayed, current page  → skip (Huginn already surfaced it)
+    //   A: Not a candidate                     → boosted reward (notCandidateRewardMult)
+    //   B-low: Low-rank candidate              → small reward (0.2×)
+    //   B-med: Mid-rank candidate              → medium reward (0.4×)
+    //   C: High-rank, not displayed            → high reward (0.8×)
+    //   D: Displayed, page changed since snap  → medium reward (0.5×)
+    //   E: Displayed, current page             → skip (Huginn already surfaced it)
     //
     // CASE D IS NARROWER THAN IT READS. PipelineStateCache only ever records
     // assignments for the page that was current when it snapshotted, so an item
@@ -57,15 +57,32 @@ namespace Huginn::Learning
         // composition root in Main.cpp, which is the only place that already
         // knows about SlotAllocator and WheelerClient.
         //
-        // Left unwired, both fall back to "suppress learning" and log once: a
-        // misconfigured learner that stops learning is recoverable, one that
-        // attributes rewards against wrong page state silently is not.
+        // Left unwired, OnExternalEquip bails before doing anything — including
+        // before recording soak telemetry, so a wiring fault can't be mistaken
+        // for a recommendation hit. A misconfigured learner that stops learning
+        // is recoverable; one silently attributing rewards against wrong page
+        // state is not.
         struct Environment
         {
             std::function<bool()>   isWheelOpen;
             std::function<size_t()> currentDisplayPage;
         };
-        void SetEnvironment(Environment env) { m_env = std::move(env); }
+
+        // Validates immediately rather than waiting for an equip event that may
+        // never arrive: equipping through the Huginn wheel takes the wheel-open
+        // early-out, so this path can stay silent for a whole session. Also
+        // catches partial wiring, since this replaces the whole struct.
+        void SetEnvironment(Environment env)
+        {
+            if (!env.isWheelOpen || !env.currentDisplayPage) {
+                logger::error("[ExternalEquipLearner] SetEnvironment incomplete "
+                    "(isWheelOpen={}, currentDisplayPage={}) — external-equip "
+                    "learning will be suppressed"sv,
+                    static_cast<bool>(env.isWheelOpen),
+                    static_cast<bool>(env.currentDisplayPage));
+            }
+            m_env = std::move(env);
+        }
 
     private:
         ExternalEquipLearner() = default;
@@ -94,6 +111,11 @@ namespace Huginn::Learning
         //   rank 11+ (overshoot 6+) → Case B-low (low reward)
         static constexpr size_t NEAR_MISS_SLOTS = 2;   // Within 2 ranks of display = near-miss
         static constexpr size_t FAR_MISS_SLOTS = 5;     // Within 5 ranks = mid, beyond = low
+
+        // True once both live queries are wired. Warns once when they aren't;
+        // checked before anything else so an unwired learner records no
+        // telemetry rather than a misleading one.
+        bool EnvironmentReady() const;
 
         // Return true if this equip should be skipped (filtering heuristics)
         bool ShouldSkip(RE::FormID formID) const;

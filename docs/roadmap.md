@@ -49,12 +49,18 @@ observed, threshold parity exact on both smoothing exponents). Critique #10 is
 now closed; #59–#65 are follow-ups it surfaced, not remaining critique work.
 
 ### Tier 2 — remaining
-- [x] #10: ExternalEquipLearner reached *up* into SlotAllocator/WheelerClient —
+- [x] #10a: ExternalEquipLearner reached *up* into SlotAllocator/WheelerClient —
       now an injected Environment of live queries, wired in Main.cpp. Both stay
       live rather than read from PipelineStateCache: the cache only records the
       page current at snapshot time, so sourcing both sides from it would
-      collapse attribution case D into E. (WildcardManager was listed here too
-      but never reached up — it touches neither singleton.)
+      collapse attribution case D into E.
+- [ ] #10b: WildcardManager still reaches up — WildcardManager.h:5 includes
+      slot/SlotAllocator.h for the legacy ApplyWildcards overload, which reads
+      GetSlotCount() live (:48), and UtilityScorer.cpp:197 calls exactly that
+      overload. Pass the pipeline's ctx.displaySlotCount at the call site and
+      delete the legacy overload — also resolves the TODO(page-consistency) at
+      UtilityScorer.cpp:191 (live slot count can disagree with the snapshotted
+      page mid-switch). Behavior change, so its own PR (S)
 - [ ] #10: split WheelerClient.cpp (~1.2k lines) into Connection / WheelSync / a thin
       callback translator (M/L) — the coupling behind the finding-3 race surface
 - [ ] #10: extract UpdateLoop reward policy into ProcessInventoryChanges(changes, tag)
