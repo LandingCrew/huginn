@@ -1,14 +1,38 @@
 #include "ExternalEquipLearner.h"
 #include "PipelineStateCache.h"
 #include "EquipEventBus.h"
-#include "slot/SlotAllocator.h"
-#include "wheeler/WheelerClient.h"
 #include "telemetry/SoakMetrics.h"
+
+// Deliberately does NOT include slot/SlotAllocator.h or wheeler/WheelerClient.h:
+// both live above this class in the dependency order, and both are now reached
+// through Environment, wired by Main.cpp. Re-adding either include is the
+// regression this change exists to prevent.
 
 namespace Huginn::Learning
 {
+    bool ExternalEquipLearner::EnvironmentReady() const
+    {
+        if (m_env.isWheelOpen && m_env.currentDisplayPage) {
+            return true;
+        }
+        static bool s_warned = false;
+        if (!s_warned) {
+            logger::error("[ExternalEquipLearner] Environment unwired — suppressing "
+                "external-equip learning (see Main.cpp SetEnvironment)"sv);
+            s_warned = true;
+        }
+        return false;
+    }
+
     void ExternalEquipLearner::OnExternalEquip(RE::FormID formID, const char* formType)
     {
+        // Before the telemetry call below, deliberately: RecordEquipCase keys on
+        // caseLabel[0], so attributing an unwired environment to any real case
+        // would feed the soak accept% signal a wiring fault dressed as a result.
+        if (!EnvironmentReady()) {
+            return;
+        }
+
         if (ShouldSkip(formID)) {
             return;
         }
@@ -64,8 +88,11 @@ namespace Huginn::Learning
             return true;
         }
 
-        // 3. Wheeler open — player might be mid-selection via Huginn wheel
-        if (Wheeler::WheelerClient::GetSingleton().IsWheelOpen()) {
+        // 3. Wheeler open — player might be mid-selection via Huginn wheel.
+        // Must be read live: a wheel opened since the last pipeline tick is
+        // exactly the case this filter exists for. Wiring is guaranteed by the
+        // EnvironmentReady() gate in OnExternalEquip.
+        if (m_env.isWheelOpen()) {
             logger::debug("[ExternalEquipLearner] Skipped (wheel open) {:08X}", formID);
             return true;
         }
@@ -102,14 +129,18 @@ namespace Huginn::Learning
             return {m_config.notCandidateRewardMult, "A (not candidate, boosted)"};
         }
 
-        // Case E: Displayed on current page — Huginn already surfaced it, skip
+        // Case E: Displayed on current page — Huginn already surfaced it, skip.
+        //
+        // info.displayPage is the page the cache snapshotted; the comparison is
+        // against the LIVE page, so D means "player changed pages since that
+        // snapshot", not "item lives on another page" (see the header note).
+        // Reading the cached page on both sides would make this always equal.
         if (info.wasDisplayed) {
-            size_t currentPage = Slot::SlotAllocator::GetSingleton().GetCurrentPage();
-            if (info.displayPage == currentPage) {
+            if (info.displayPage == m_env.currentDisplayPage()) {
                 return {0.0f, "E (displayed current page)"};
             }
 
-            // Case D: Displayed but on a different page
+            // Case D: displayed at snapshot time, player has since switched pages
             return {m_config.differentPageRewardMult, "D (different page)"};
         }
 
