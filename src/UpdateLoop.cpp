@@ -80,18 +80,36 @@ static void ApplyConsumptionReward(RE::FormID formID, std::string_view name)
 // (player, InventoryItemMap). A shared base would exist solely to satisfy this
 // one call.
 //
-// @param tag  Log prefix ("ItemRegistry" / "ScrollRegistry"), kept verbatim so
-//             existing log greps still match.
-// @return true if any count changed — i.e. the widget needs a recompute.
+// POLL THREAD ONLY. RefreshCounts populates unsynchronized scratch maps outside
+// the registry mutex, which is safe only because it has a single caller on the
+// poll thread (see ItemRegistry.h "Scratch maps for RefreshCounts delta scans").
+// That invariant used to be self-evident from an inline call site; behind a
+// helper built to be called from more places, it needs saying.
+//
+// `tag` is the log prefix ("ItemRegistry" / "ScrollRegistry"), kept verbatim so
+// existing log greps still match. Returns true if any count changed — i.e. the
+// widget needs a recompute, which is why the result must not be discarded:
+// dropping it compiles cleanly and silently stops the widget refreshing on
+// consumption.
 
 template <typename Registry>
-static bool ProcessInventoryChanges(
+[[nodiscard]] static bool ProcessInventoryChanges(
     Registry& registry,
     std::string_view tag,
     RE::PlayerCharacter* player,
     const Util::InventoryItemMap& inventory)
 {
     auto changes = registry.RefreshCounts(player, inventory);
+
+    // Fail at the call site, not inside the loop body, when a third registry
+    // turns up whose change event doesn't carry these three fields.
+    static_assert(
+        requires(const typename decltype(changes)::value_type& c) {
+            { c.formID } -> std::convertible_to<RE::FormID>;
+            { c.name }   -> std::convertible_to<std::string_view>;
+            { c.delta }  -> std::convertible_to<int32_t>;
+        },
+        "Registry change event must expose formID / name / delta");
 
     for (const auto& change : changes) {
         if (change.delta >= 0) {
