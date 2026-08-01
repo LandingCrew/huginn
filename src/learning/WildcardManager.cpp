@@ -36,6 +36,20 @@ namespace Huginn::Scoring
         // Clearing here rather than inside HasActiveWildcard() because
         // UpdateExpiry() also calls it and wants the unbounded meaning: a
         // wildcard on another page must still age out on its timer.
+        //
+        // Deliberately does NOT stamp m_wildcardEndTime: these were never
+        // displayed, so no refractory is owed. Clearing the last live entry
+        // therefore leaves refractoryElapsed measured from the previous real
+        // expiry — usually long past — and the re-roll fires on this same tick.
+        // Consequence worth knowing: a switch down to a small page now almost
+        // always yields a wildcard promptly, where before it yielded none at
+        // all. That is a wider swing than "fixes a stall", and it is intended.
+        //
+        // Not wrapped in #ifndef NDEBUG like the other debug logs in this file:
+        // the defining property of this bug was that nothing recorded it, so
+        // the drop is worth a line wherever debug logging is on. It stays at
+        // debug (Release runs at info, Main.cpp:577) — same call as the
+        // [Context]/[Subtext] diagnostics, which are Debug-build tools.
         for (size_t i = slotCount; i < MAX_WILDCARD_SLOTS; ++i) {
             if (m_cachedWildcards[i].formID != 0) {
                 logger::debug("[WildcardManager] Dropped wildcard at slot {} — page has {} slots"sv,
