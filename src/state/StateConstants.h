@@ -185,6 +185,17 @@ namespace Huginn::State
       // Units: percentage (0.30 = 30%)
       inline constexpr float LOW = 0.30f;
 
+      // Enchanted-weapon charge "Low" threshold
+      // Why 0.25f: a quarter charge is roughly a fight's worth of swings left —
+      // early enough that a soul gem is still worth surfacing.
+      // Used by IsWeaponChargeLow() and by ContextRuleEngine::DominantReason,
+      // which inverts the charge curve at this same percentage so the "Low
+      // Charge" label and the predicate agree.
+      // NOTE: WeaponRegistry separately flags low charge with the stricter
+      // Config::WEAPON_CHARGE_LOW_THRESHOLD (0.20) — reconcile both if tuning.
+      // Units: percentage (0.25 = 25%)
+      inline constexpr float WEAPON_CHARGE_LOW = 0.25f;
+
       // Player health "Medium" threshold (for state bucketing)
       // Why 0.50f: Below 50% triggers moderate healing recommendations
       // Used in HealthBucket classification in StateEvaluator

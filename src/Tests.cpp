@@ -18,6 +18,7 @@
 #include "learning/UsageMemory.h"
 #include "util/ScopedTimer.h"
 #include "context/ContextRuleEngine.h"
+#include "display/ExplanationLabel.h"
 
 #include <random>
 #include <algorithm>
@@ -3206,6 +3207,315 @@ void RunUnitTests()
         }
 
         logger::info("TEST PASS: FeatureQLearner batch decay (selective, count-preserving, idempotent)"sv);
+    }
+
+    // Test 17: ContextReason derivation (architecture-critique #10) — the display
+    // explanation is read off the SAME weight map that ranks candidates, so the
+    // reported boundaries must match the vital thresholds and the suppressions.
+    {
+        logger::info("TEST: ContextReason derived from context weights..."sv);
+
+        // Pinned to DEFAULT config, not settings.BuildConfig(): these assertions
+        // are about the derivation, and the live INI can legitimately zero a
+        // weight (a rule at 0 never reports — that is a documented feature of
+        // Fires()), which would fail the test for a correct build.
+        Context::ContextRuleEngine engine(State::ContextWeightConfig{});
+
+        const Context::ContextReasonSignals kNoSignals{};
+
+        // Helper: evaluate + name the reason in one step
+        const auto reasonFor = [&](const State::PlayerActorState& player,
+                                   const State::TargetCollection& targets,
+                                   const State::WorldState& world,
+                                   const Context::ContextReasonSignals& signals) {
+            return engine.DominantReason(engine.EvaluateRules(player, targets, world), signals);
+        };
+
+        // 17a: Vital bands land exactly on the old thresholds (15% / 30% HP)
+        {
+            State::TargetCollection targets{};
+            State::WorldState world{};
+
+            State::PlayerActorState healthy{};
+            healthy.vitals.health = 0.9f;
+            if (reasonFor(healthy, targets, world, kNoSignals) != Context::ContextReason::None) {
+                logger::error("TEST FAIL: 90%% HP should report no reason");
+                return;
+            }
+
+            State::PlayerActorState low{};
+            low.vitals.health = 0.25f;  // below LOW (0.30), above CRITICAL (0.15)
+            if (reasonFor(low, targets, world, kNoSignals) != Context::ContextReason::LowHealth) {
+                logger::error("TEST FAIL: 25%% HP should report LowHealth");
+                return;
+            }
+
+            State::PlayerActorState critical{};
+            critical.vitals.health = 0.10f;
+            if (reasonFor(critical, targets, world, kNoSignals) != Context::ContextReason::CriticalHealth) {
+                logger::error("TEST FAIL: 10%% HP should report CriticalHealth");
+                return;
+            }
+
+            // Just inside the LOW threshold — the curve inversion must not drift
+            State::PlayerActorState edge{};
+            edge.vitals.health = 0.299f;
+            if (reasonFor(edge, targets, world, kNoSignals) != Context::ContextReason::LowHealth) {
+                logger::error("TEST FAIL: 29.9%% HP should report LowHealth (threshold drift)");
+                return;
+            }
+            State::PlayerActorState justAbove{};
+            justAbove.vitals.health = 0.301f;
+            if (reasonFor(justAbove, targets, world, kNoSignals) == Context::ContextReason::LowHealth) {
+                logger::error("TEST FAIL: 30.1%% HP must not report LowHealth (threshold drift)");
+                return;
+            }
+
+            // Magicka and stamina invert DIFFERENT exponents (stamina defaults to
+            // 1.5, not 2.0), so the HP cases above do not cover them.
+            State::PlayerActorState lowMagicka{};
+            lowMagicka.vitals.magicka = 0.299f;
+            if (reasonFor(lowMagicka, targets, world, kNoSignals) != Context::ContextReason::LowMagicka) {
+                logger::error("TEST FAIL: 29.9%% MP should report LowMagicka");
+                return;
+            }
+            State::PlayerActorState okMagicka{};
+            okMagicka.vitals.magicka = 0.301f;
+            if (reasonFor(okMagicka, targets, world, kNoSignals) == Context::ContextReason::LowMagicka) {
+                logger::error("TEST FAIL: 30.1%% MP must not report LowMagicka (threshold drift)");
+                return;
+            }
+
+            State::PlayerActorState lowStamina{};
+            lowStamina.vitals.stamina = 0.299f;
+            if (reasonFor(lowStamina, targets, world, kNoSignals) != Context::ContextReason::LowStamina) {
+                logger::error("TEST FAIL: 29.9%% SP should report LowStamina");
+                return;
+            }
+            State::PlayerActorState okStamina{};
+            okStamina.vitals.stamina = 0.301f;
+            if (reasonFor(okStamina, targets, world, kNoSignals) == Context::ContextReason::LowStamina) {
+                logger::error("TEST FAIL: 30.1%% SP must not report LowStamina (threshold drift)");
+                return;
+            }
+        }
+
+        // 17b: Suppressions the old threshold pass ignored — an already-active
+        // buff means the context isn't driving scoring, so it isn't a reason
+        {
+            State::TargetCollection targets{};
+            State::WorldState world{};
+
+            State::PlayerActorState drowning{};
+            drowning.isUnderwater = true;
+            if (reasonFor(drowning, targets, world, kNoSignals) != Context::ContextReason::Underwater) {
+                logger::error("TEST FAIL: underwater should report Underwater");
+                return;
+            }
+
+            State::PlayerActorState breathing{};
+            breathing.isUnderwater = true;
+            breathing.buffs.hasWaterBreathing = true;
+            if (reasonFor(breathing, targets, world, kNoSignals) == Context::ContextReason::Underwater) {
+                logger::error("TEST FAIL: waterbreathing active must suppress the Underwater reason");
+                return;
+            }
+        }
+
+        // 17c: Elemental reasons scale with resistance (binary rules fire at
+        // half their configured weight)
+        {
+            State::TargetCollection targets{};
+            State::WorldState world{};
+
+            State::PlayerActorState burning{};
+            burning.effects.isOnFire = true;
+            if (reasonFor(burning, targets, world, kNoSignals) != Context::ContextReason::OnFire) {
+                logger::error("TEST FAIL: taking fire damage should report OnFire");
+                return;
+            }
+
+            State::PlayerActorState fireproof{};
+            fireproof.effects.isOnFire = true;
+            fireproof.resistances.fire = 80.0f;  // 80% resist → weight scaled to 0.2×
+            if (reasonFor(fireproof, targets, world, kNoSignals) == Context::ContextReason::OnFire) {
+                logger::error("TEST FAIL: 80%% fire resist must suppress the OnFire reason");
+                return;
+            }
+        }
+
+        // 17d: Priority — a more urgent reason wins over a co-occurring one
+        {
+            State::TargetCollection targets{};
+            State::WorldState world{};
+            State::PlayerActorState player{};
+            player.vitals.health = 0.10f;  // Critical
+            player.isSneaking = true;      // also true, lower priority
+
+            if (reasonFor(player, targets, world, kNoSignals) != Context::ContextReason::CriticalHealth) {
+                logger::error("TEST FAIL: CriticalHealth must outrank Sneaking");
+                return;
+            }
+        }
+
+        // 17e: Label-only signals (no scoring weight to read them off)
+        {
+            State::TargetCollection targets{};
+            State::WorldState world{};
+            State::PlayerActorState player{};
+
+            Context::ContextReasonSignals dark{};
+            dark.lightLevel = 0.1f;
+            if (reasonFor(player, targets, world, dark) != Context::ContextReason::InDarkness) {
+                logger::error("TEST FAIL: low light should report InDarkness");
+                return;
+            }
+
+            Context::ContextReasonSignals ally{};
+            ally.allyInjured = true;
+            ally.lightLevel = 0.1f;  // InDarkness is lower priority
+            if (reasonFor(player, targets, world, ally) != Context::ContextReason::AllyInjured) {
+                logger::error("TEST FAIL: AllyInjured must outrank InDarkness");
+                return;
+            }
+        }
+
+        // 17f: Ambient combat weights are deliberately NOT reasons — otherwise
+        // every fight would relabel every slot "In Combat"
+        {
+            State::TargetCollection targets{};
+            State::WorldState world{};
+            State::PlayerActorState fighting{};
+            fighting.isInCombat = true;
+
+            if (reasonFor(fighting, targets, world, kNoSignals) != Context::ContextReason::None) {
+                logger::error("TEST FAIL: plain in-combat state must not produce a reason");
+                return;
+            }
+        }
+
+        // 17g: Workstation reasons report, but rank BELOW anything hurting you
+        {
+            State::TargetCollection targets{};
+            State::PlayerActorState player{};
+
+            State::WorldState forge{};
+            forge.isLookingAtWorkstation = true;
+            forge.workstationType = 1;  // kCreateObject
+            if (reasonFor(player, targets, forge, kNoSignals) != Context::ContextReason::AtForge) {
+                logger::error("TEST FAIL: crosshair on a forge should report AtForge");
+                return;
+            }
+
+            State::WorldState alchemy{};
+            alchemy.isLookingAtWorkstation = true;
+            alchemy.workstationType = 5;  // kAlchemy
+            if (reasonFor(player, targets, alchemy, kNoSignals) != Context::ContextReason::AtAlchemy) {
+                logger::error("TEST FAIL: crosshair on an alchemy lab should report AtAlchemy");
+                return;
+            }
+
+            // Standing at a forge while bleeding out must still say Low HP —
+            // crafting stations are ambient, not urgent
+            State::PlayerActorState hurt{};
+            hurt.vitals.health = 0.25f;
+            if (reasonFor(hurt, targets, forge, kNoSignals) != Context::ContextReason::LowHealth) {
+                logger::error("TEST FAIL: LowHealth must outrank AtForge");
+                return;
+            }
+        }
+
+        // 17h: Equipment reasons (weapon charge inverts its own curve; ammo is binary)
+        {
+            State::TargetCollection targets{};
+            State::WorldState world{};
+
+            State::PlayerActorState drained{};
+            drained.hasEnchantedWeapon = true;
+            drained.weaponChargePercent = 0.10f;
+            if (reasonFor(drained, targets, world, kNoSignals) != Context::ContextReason::WeaponLowCharge) {
+                logger::error("TEST FAIL: 10%% weapon charge should report WeaponLowCharge");
+                return;
+            }
+
+            // No enchanted weapon → no charge weight → no phantom label
+            State::PlayerActorState plain{};
+            plain.weaponChargePercent = 0.10f;
+            if (reasonFor(plain, targets, world, kNoSignals) == Context::ContextReason::WeaponLowCharge) {
+                logger::error("TEST FAIL: unenchanted weapon must not report WeaponLowCharge");
+                return;
+            }
+
+            State::PlayerActorState dry{};
+            dry.hasBowEquipped = true;
+            dry.arrowCount = 0;
+            if (reasonFor(dry, targets, world, kNoSignals) != Context::ContextReason::NeedsAmmo) {
+                logger::error("TEST FAIL: bow with no arrows should report NeedsAmmo");
+                return;
+            }
+        }
+
+        // 17i: An override's own reason beats the tick's context reason
+        {
+            Slot::SlotAssignment assignment{};
+            assignment.type = Slot::AssignmentType::Override;
+
+            Scoring::ScoredCandidate scored{};
+            Candidate::ItemCandidate potion{};
+            potion.name = "Potion of Ultimate Healing";
+            potion.overrideReason = Context::ContextReason::CriticalHealth;
+            scored.candidate = potion;
+            assignment.candidate = scored;
+
+            // Context says Sneaking; the override says Critical HP and wins
+            const auto label = Display::DeriveExplanationLabel(
+                assignment, Context::ContextReason::Sneaking);
+            if (label != "Critical HP") {
+                logger::error("TEST FAIL: override reason should win, got '{}'", label);
+                return;
+            }
+
+            // Without a stamped reason, the tick's context reason is used
+            Slot::SlotAssignment plain{};
+            Scoring::ScoredCandidate plainScored{};
+            Candidate::ItemCandidate plainPotion{};
+            plainPotion.name = "Potion of Minor Healing";
+            plainScored.candidate = plainPotion;
+            plain.candidate = plainScored;
+
+            const auto contextLabel = Display::DeriveExplanationLabel(
+                plain, Context::ContextReason::Sneaking);
+            if (contextLabel != "Sneaking") {
+                logger::error("TEST FAIL: context reason should apply, got '{}'", contextLabel);
+                return;
+            }
+
+            // No reason at all and not favorited → no label
+            const auto emptyLabel = Display::DeriveExplanationLabel(
+                plain, Context::ContextReason::None);
+            if (!emptyLabel.empty()) {
+                logger::error("TEST FAIL: no reason and no favorite should give no label, got '{}'",
+                    emptyLabel);
+                return;
+            }
+        }
+
+        // 17j: Every reason the engine can report has display wording
+        {
+            for (size_t i = 1; i < Context::CONTEXT_REASON_COUNT; ++i) {
+                const auto reason = static_cast<Context::ContextReason>(i);
+                if (Display::ReasonLabel(reason).empty()) {
+                    logger::error("TEST FAIL: ContextReason {} has no display label", i);
+                    return;
+                }
+            }
+            if (!Display::ReasonLabel(Context::ContextReason::None).empty()) {
+                logger::error("TEST FAIL: ContextReason::None must have no label");
+                return;
+            }
+        }
+
+        logger::info("TEST PASS: ContextReason derivation (thresholds, suppression, priority)"sv);
     }
 
     logger::info("=== All unit tests passed! ==="sv);

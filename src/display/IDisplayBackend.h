@@ -2,7 +2,7 @@
 
 #include "slot/SlotAssignment.h"
 #include "learning/ScoredCandidate.h"
-#include "candidate/CandidateTypes.h"   // Candidate::RelevanceTag
+#include "context/ContextReason.h"      // Context::ContextReason
 #include "override/OverrideConditions.h"
 #include "state/PlayerActorState.h"
 #include "state/WorldState.h"
@@ -39,10 +39,11 @@ namespace Huginn::Display
         size_t slotCount;          // slot count on the current page
         std::string_view pageName; // current page's display name
 
-        // Per-tick context relevance tags — the subtext-label fallback for
-        // non-override candidates (Slot::DeriveExplanationLabel). Override
-        // candidates carry their own specific tag on the assignment.
-        Candidate::RelevanceTag relevanceTags = Candidate::RelevanceTag::None;
+        // Dominant reason the current context matters, derived once per tick from
+        // the scorer's own weight map (Display::DeriveExplanationLabel turns it
+        // into text). Override candidates carry their own reason on the
+        // assignment and take priority over this one.
+        Context::ContextReason contextReason = Context::ContextReason::None;
 
         std::chrono::steady_clock::time_point now;
     };

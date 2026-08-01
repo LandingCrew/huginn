@@ -12,6 +12,7 @@
 #include "weapon/WeaponData.h"
 #include "scroll/ScrollData.h"
 #include "scroll/ScrollRegistry.h" // For InventoryScroll
+#include "context/ContextReason.h" // Context::ContextReason (override reason)
 
 namespace Huginn::Candidate
 {
@@ -45,90 +46,6 @@ namespace Huginn::Candidate
     inline constexpr size_t SOURCE_TYPE_COUNT = static_cast<size_t>(SourceType::_Count);
 
     // =============================================================================
-    // RELEVANCE TAGS - Bitflags indicating WHY an item is contextually relevant
-    // These tags are set by the CandidateGenerator based on current game state
-    // =============================================================================
-    enum class RelevanceTag : uint32_t
-    {
-        None = 0,
-
-        // Vital-based relevance (player health/magicka/stamina)
-        LowHealth       = 1 << 0,   // Health < 50%
-        CriticalHealth  = 1 << 1,   // Health < 20%
-        LowMagicka      = 1 << 2,   // Magicka < 30%
-        LowStamina      = 1 << 3,   // Stamina < 30%
-
-        // Active damage/effect relevance
-        OnFire          = 1 << 4,   // Taking fire damage
-        Poisoned        = 1 << 5,   // Has active poison effect
-        Diseased        = 1 << 6,   // Has disease effect
-        TakingFrost     = 1 << 7,   // Taking frost damage
-        TakingShock     = 1 << 8,   // Taking shock damage
-
-        // Environment-based relevance
-        Underwater      = 1 << 9,   // Player is underwater
-        LookingAtLock   = 1 << 10,  // Crosshair on locked container/door
-        LookingAtOre    = 1 << 11,  // Crosshair on ore vein
-        InDarkness      = 1 << 12,  // Low ambient light
-        Falling         = 1 << 13,  // Player is falling (high velocity)
-
-        // Combat-based relevance
-        InCombat        = 1 << 14,  // Combat state active
-        EnemyNearby     = 1 << 15,  // At least one hostile in range
-        MultipleEnemies = 1 << 16,  // 3+ hostiles in range
-        EnemyCasting    = 1 << 17,  // Tracked enemy is casting
-        AllyInjured     = 1 << 18,  // Follower/ally below 50% health
-
-        // Equipment-based relevance
-        WeaponLowCharge = 1 << 19,  // Equipped weapon charge < 20%
-        NeedsAmmo       = 1 << 20,  // Bow/crossbow equipped, low ammo
-        NoWeapon        = 1 << 21,  // No weapon equipped
-
-        // Target-type relevance
-        TargetUndead    = 1 << 22,  // Fighting undead (sun/turn spells)
-        TargetDragon    = 1 << 23,  // Fighting dragon
-
-        // Stealth-based relevance
-        Sneaking        = 1 << 24,  // Player is sneaking
-
-        // Workstation-based relevance (crafting stations)
-        AtForge         = 1 << 26,  // Looking at forge/smithing station
-        AtEnchanter     = 1 << 27,  // Looking at enchanting station
-        AtAlchemy       = 1 << 28,  // Looking at alchemy station
-
-        // Rate-based relevance (v0.12.x - sub-threshold vital tracking)
-        HealthDeclining = 1u << 29,  // Taking sustained damage (damageRate > 2 HP/s)
-        MagickaDraining = 1u << 30,  // Net magicka loss (usage > regen)
-        StaminaDraining = 1u << 31,  // Net stamina loss (usage > regen)
-    };
-
-    // Bitwise operators for RelevanceTag
-    inline constexpr RelevanceTag operator|(RelevanceTag a, RelevanceTag b) noexcept {
-        return static_cast<RelevanceTag>(static_cast<uint32_t>(a) | static_cast<uint32_t>(b));
-    }
-    inline constexpr RelevanceTag operator&(RelevanceTag a, RelevanceTag b) noexcept {
-        return static_cast<RelevanceTag>(static_cast<uint32_t>(a) & static_cast<uint32_t>(b));
-    }
-    inline constexpr RelevanceTag& operator|=(RelevanceTag& a, RelevanceTag b) noexcept {
-        return a = a | b;
-    }
-    inline constexpr RelevanceTag& operator&=(RelevanceTag& a, RelevanceTag b) noexcept {
-        return a = a & b;
-    }
-    inline constexpr RelevanceTag operator~(RelevanceTag a) noexcept {
-        return static_cast<RelevanceTag>(~static_cast<uint32_t>(a));
-    }
-    [[nodiscard]] inline constexpr bool HasTag(RelevanceTag tags, RelevanceTag check) noexcept {
-        return (static_cast<uint32_t>(tags) & static_cast<uint32_t>(check)) != 0;
-    }
-    [[nodiscard]] inline constexpr bool HasAnyTag(RelevanceTag tags, RelevanceTag mask) noexcept {
-        return (static_cast<uint32_t>(tags) & static_cast<uint32_t>(mask)) != 0;
-    }
-    [[nodiscard]] inline constexpr bool HasAllTags(RelevanceTag tags, RelevanceTag mask) noexcept {
-        return (static_cast<uint32_t>(tags) & static_cast<uint32_t>(mask)) == static_cast<uint32_t>(mask);
-    }
-
-    // =============================================================================
     // CANDIDATE BASE - Common fields shared by all candidate types
     // =============================================================================
     struct CandidateBase
@@ -144,9 +61,11 @@ namespace Huginn::Candidate
         bool isOnCooldown = false;       // Recently used, in cooldown period
         bool isBuffAlreadyActive = false; // Effect already active on player (waterbreathing, etc.)
 
-        // Relevance metadata (set by CandidateGenerator based on game state)
+        // Why an OVERRIDE surfaced this candidate (set by OverrideManager only —
+        // ordinary candidates leave it None and the display falls back to the
+        // per-tick context reason). See Context::ContextReason.
         // NOTE: baseRelevance field removed in v0.12.x - replaced by ContextRuleEngine.contextWeight
-        RelevanceTag relevanceTags = RelevanceTag::None;  // Why this item is relevant
+        Context::ContextReason overrideReason = Context::ContextReason::None;
 
         // Deduplication key combines source type, unique ID, and form ID.
         // Layout: [sourceType:8][uniqueID:16][formID:32] (bits 48-55, 32-47, 0-31)
@@ -395,11 +314,5 @@ namespace Huginn::Candidate
     static_assert(SOURCE_TYPE_COUNT == 8, "SOURCE_TYPE_COUNT must match number of SourceType values");
     // CandidateBase::name is a string_view borrowing from persistent registry data.
     static_assert(sizeof(CandidateBase) <= 56, "CandidateBase struct size check");
-    static_assert((RelevanceTag::LowHealth | RelevanceTag::CriticalHealth) != RelevanceTag::None,
-                  "Bitwise OR should work correctly");
-    static_assert(HasTag(RelevanceTag::LowHealth | RelevanceTag::InCombat, RelevanceTag::LowHealth),
-                  "HasTag should detect set bits");
-    static_assert(!HasTag(RelevanceTag::LowHealth, RelevanceTag::InCombat),
-                  "HasTag should not detect unset bits");
 
 }  // namespace Huginn::Candidate

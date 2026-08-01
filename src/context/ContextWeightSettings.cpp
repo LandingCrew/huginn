@@ -77,10 +77,14 @@ namespace Huginn::State
         // CONTINUOUS FUNCTION SMOOTHING PARAMETERS
         // =====================================================================
 
-        fHealthSmoothingExponent = ReadClampedFloat(ini, section, "fHealthSmoothingExponent", ContextWeightDefaults::HEALTH_SMOOTHING_EXPONENT, 0.0f, 100.0f, "ContextWeightSettings"sv);
-        fMagickaSmoothingExponent = ReadClampedFloat(ini, section, "fMagickaSmoothingExponent", ContextWeightDefaults::MAGICKA_SMOOTHING_EXPONENT, 0.0f, 100.0f, "ContextWeightSettings"sv);
-        fStaminaSmoothingExponent = ReadClampedFloat(ini, section, "fStaminaSmoothingExponent", ContextWeightDefaults::STAMINA_SMOOTHING_EXPONENT, 0.0f, 100.0f, "ContextWeightSettings"sv);
-        fWeaponChargeSmoothingExponent = ReadClampedFloat(ini, section, "fWeaponChargeSmoothingExponent", ContextWeightDefaults::WEAPON_CHARGE_SMOOTHING_EXPONENT, 0.0f, 100.0f, "ContextWeightSettings"sv);
+        // Floor is 0.1, not 0: at exponent 0 every deficit^0 == 1.0, so a player
+        // at 99% health would score as urgently as one at 1% — and the reason
+        // labels, which invert this same curve, would all pin to "Critical".
+        constexpr float kMinSmoothingExponent = 0.1f;
+        fHealthSmoothingExponent = ReadClampedFloat(ini, section, "fHealthSmoothingExponent", ContextWeightDefaults::HEALTH_SMOOTHING_EXPONENT, kMinSmoothingExponent, 100.0f, "ContextWeightSettings"sv);
+        fMagickaSmoothingExponent = ReadClampedFloat(ini, section, "fMagickaSmoothingExponent", ContextWeightDefaults::MAGICKA_SMOOTHING_EXPONENT, kMinSmoothingExponent, 100.0f, "ContextWeightSettings"sv);
+        fStaminaSmoothingExponent = ReadClampedFloat(ini, section, "fStaminaSmoothingExponent", ContextWeightDefaults::STAMINA_SMOOTHING_EXPONENT, kMinSmoothingExponent, 100.0f, "ContextWeightSettings"sv);
+        fWeaponChargeSmoothingExponent = ReadClampedFloat(ini, section, "fWeaponChargeSmoothingExponent", ContextWeightDefaults::WEAPON_CHARGE_SMOOTHING_EXPONENT, kMinSmoothingExponent, 100.0f, "ContextWeightSettings"sv);
 
         logger::info("[ContextWeightSettings] Loaded legacy weights: fire={:.1f}, poison={:.1f}, frost={:.1f}, "
             "shock={:.1f}, disease={:.1f}, underwater={:.1f}, falling={:.1f}, lock={:.1f}",

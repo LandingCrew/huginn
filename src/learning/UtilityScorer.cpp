@@ -28,7 +28,8 @@ namespace Huginn::Scoring
         const State::GameState& state,
         const State::PlayerActorState& player,
         const State::TargetCollection& targets,
-        const State::WorldState& world)  // Stage 1f: Added WorldState
+        const State::WorldState& world,  // Stage 1f: Added WorldState
+        Context::ContextWeightMap* outWeights)
     {
         SCOPED_TIMER("UtilityScorer::ScoreCandidates");
 
@@ -39,6 +40,12 @@ namespace Huginn::Scoring
         // This replaces per-candidate relevance from CandidateGenerator
         Context::ContextWeightMap weights = m_contextEngine.EvaluateRules(
             player, targets, world);
+
+        // Hand the map back so the display explanation is read off the SAME
+        // weights that ranked the list, not a second derivation (#10).
+        if (outWeights) {
+            *outWeights = weights;
+        }
 
         // Phase 3.5c: Pre-compute StateFeatures for FeatureQLearner (once per scoring pass)
         auto stateFeatures = Learning::StateFeatures::FromState(player, targets);

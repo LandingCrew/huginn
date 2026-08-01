@@ -6,7 +6,7 @@
 #include "state/StateManager.h"
 #include "state/StateConstants.h"
 #include "candidate/CandidateGenerator.h"
-#include "candidate/RelevanceTags.h"     // Candidate::ComputeRelevanceTags (#10)
+#include "context/ContextRuleEngine.h"   // Context::ContextReasonSignals (#10)
 #include "override/OverrideManager.h"
 #include "slot/SlotAllocator.h"
 #include "slot/SlotLocker.h"
@@ -17,6 +17,7 @@
 #include "telemetry/SoakMetrics.h"
 #include "ui/DebugSettings.h"
 #include "display/IDisplayBackend.h"
+#include "display/ExplanationLabel.h"  // ReasonLabel for the [Context] transition log
 #include "display/WheelerBackend.h"
 #include "display/IntuitionBackend.h"
 
@@ -99,6 +100,7 @@ bool PipelineCoordinator::RunPipeline(
         // stale page. The switch raised m_pageChanged, so next tick re-runs on it.
         return false;
     }
+    DeriveDisplayLabels(m_ctx);
     UpdateCaches(m_ctx);
     PushDisplay(m_ctx);
     LogRecommendations(m_ctx);
@@ -136,8 +138,6 @@ void PipelineCoordinator::GatherState(PipelineContext& ctx)
     ctx.playerState = stateManager.GetPlayerState();
     ctx.targets = stateManager.GetTargets();
     ctx.healthTracking = stateManager.GetHealthTracking();
-    ctx.magickaTracking = stateManager.GetMagickaTracking();
-    ctx.staminaTracking = stateManager.GetStaminaTracking();
 
     // Evaluate GameState from the already-fetched snapshots (no extra copies)
     ctx.currentState = g_stateEvaluator->EvaluateCurrentState(
@@ -240,17 +240,56 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
     Huginn_ZONE_NAMED("Pipeline::ScoreCandidates");
     auto& candidateGen = Candidate::CandidateGenerator::GetSingleton();
 
-    // Per-tick display relevance tags (Wheeler subtext label). Computed once here
-    // — not stamped onto every candidate — and read by DeriveExplanationLabel via
-    // DisplayContext (critique #10).
-    ctx.contextRelevanceTags = Candidate::ComputeRelevanceTags(
-        ctx.worldState, ctx.playerState, ctx.targets,
-        ctx.healthTracking, ctx.magickaTracking, ctx.staminaTracking);
-
     auto candidates = candidateGen.GenerateCandidates(ctx.playerState, ctx.currentMagicka);
 
+    Context::ContextWeightMap contextWeights{};
     ctx.scoredCandidates = g_utilityScorer->ScoreCandidates(
-        candidates, ctx.currentState, ctx.playerState, ctx.targets, ctx.worldState);
+        candidates, ctx.currentState, ctx.playerState, ctx.targets, ctx.worldState,
+        &contextWeights);
+
+    // Name the dominant reason once per tick, off the weights the ranking just
+    // used — the display explanation can't disagree with the scoring (#10).
+    // The two world facts below have no scoring weight to read them off.
+    ctx.contextReason = g_utilityScorer->DominantContextReason(
+        contextWeights,
+        Context::ContextReasonSignals{
+            .allyInjured = ctx.targets.HasInjuredFollower(),
+            .lookingAtOre = ctx.worldState.isLookingAtOreVein,
+            .lightLevel = ctx.worldState.lightLevel,
+        });
+
+    // The reason drives a display string only, so nothing else in the log
+    // reveals it — log the transition (not the tick) so a session can be
+    // verified from the log instead of by watching the wheel. Same cadence as
+    // the [Pipeline] state transition line: only fires on a threshold cross.
+    //
+    // The vitals ride along because they are the ASSERTABLE part: the
+    // continuous rules invert their curve at fixed percentages (crit 15%, low
+    // 30% HP/MP/SP, charge 25%), so a reader can take this line alone and
+    // confirm the reported reason matches the numbers that produced it.
+    //
+    // Level is debug, not info: this is a behavior diagnostic, and behavior
+    // soak runs are Debug builds (perf runs are Release+Tracy, where these
+    // lines would only be noise). Meant to be read by an LLM or a log tool.
+    // NOTE: Single-threaded (pipeline runs on the update thread only).
+    static Context::ContextReason s_lastReason = Context::ContextReason::None;
+    if (ctx.contextReason != s_lastReason) {
+        const auto label = Display::ReasonLabel(ctx.contextReason);
+        const auto prev = Display::ReasonLabel(s_lastReason);
+        const auto& vitals = ctx.playerState.vitals;
+        // One decimal, not zero: the thresholds these lines exist to verify sit
+        // ON integer percentages (15 / 25 / 30). At {:.0f} a true 15.4% prints
+        // as "15%", so the one reading that decides whether the boundary held is
+        // exactly the reading the format destroys.
+        logger::debug("[Context] Reason: {} → {} | hp={:.1f}% mp={:.1f}% sp={:.1f}% charge={}"sv,
+            prev.empty() ? "(none)"sv : prev,
+            label.empty() ? "(none)"sv : label,
+            vitals.health * 100.0f, vitals.magicka * 100.0f, vitals.stamina * 100.0f,
+            ctx.playerState.hasEnchantedWeapon
+                ? fmt::format("{:.1f}%", ctx.playerState.weaponChargePercent * 100.0f)
+                : "n/a");
+        s_lastReason = ctx.contextReason;
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -365,7 +404,7 @@ void PipelineCoordinator::PushDisplay(PipelineContext& ctx)
         .pageCount = ctx.displayPageCount,
         .slotCount = ctx.displaySlotCount,
         .pageName = ctx.displayPageName,
-        .relevanceTags = ctx.contextRelevanceTags,
+        .contextReason = ctx.contextReason,
         .now = ctx.now,
     };
     for (auto* backend : s_displayBackends) {
@@ -474,6 +513,62 @@ void PipelineCoordinator::LogRecommendations(PipelineContext& ctx)
         g_utilityScorer->LogTopCandidates(ctx.scoredCandidates, 5,
             /*detail=*/verbosity >= 2, /*force=*/false);
         m_lastRecLog = ctx.now;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// DeriveDisplayLabels — What the player is actually shown (both build configs)
+// -----------------------------------------------------------------------------
+// Derives the explanation subtext once, on the tick's own assignments, so that
+//   (a) `hg recs` prints the real label instead of an empty string, and
+//   (b) the displayed surface is verifiable from a log alone — no reading
+//       labels off the wheel by hand, and no dependency on Wheeler at all.
+//
+// This MUTATES ctx.assignments; the [Subtext] line below is the diagnostic half.
+// The labels stamped here are the coordinator's own view. Wheeler does NOT
+// inherit them: WheelerBackend clears subtextLabel and re-derives under its own
+// [Subtexts] toggles (override / lock timer / wildcard / explanation), so the
+// INI toggles keep working and the wildcard label keeps its slot. Both sides
+// call the same pure Display::DeriveExplanationLabel, so the explanation text
+// itself cannot diverge. Transition-gated: one line when the label set changes.
+
+void PipelineCoordinator::DeriveDisplayLabels(PipelineContext& ctx)
+{
+    // Filling subtextLabel is NOT diagnostics: it is what `hg recs` prints, so
+    // it happens every tick at every log level. Only the summary line below is
+    // debug-gated.
+    for (auto& assignment : ctx.assignments) {
+        assignment.subtextLabel = Display::DeriveExplanationLabel(assignment, ctx.contextReason);
+    }
+
+    // Behavior diagnostic, read by an LLM or a log tool rather than by eye.
+    // Bail before building the string in Release, where debug is filtered out
+    // and the summary could never be emitted anyway.
+    if (!spdlog::default_logger()->should_log(spdlog::level::debug)) {
+        return;
+    }
+
+    std::string summary;
+    for (const auto& assignment : ctx.assignments) {
+        if (assignment.IsEmpty() || assignment.formID == 0 || assignment.subtextLabel.empty()) {
+            continue;
+        }
+        if (!summary.empty()) summary += ' ';
+        summary += fmt::format("{}={}({})",
+            assignment.slotIndex, assignment.subtextLabel, assignment.name);
+    }
+
+    // NOTE: Single-threaded (pipeline runs on the update thread only).
+    static std::string s_lastSummary;
+    if (summary == s_lastSummary) {
+        return;
+    }
+    s_lastSummary = summary;
+
+    if (summary.empty()) {
+        logger::debug("[Subtext] page {} — no labels"sv, ctx.displayPageIndex);
+    } else {
+        logger::debug("[Subtext] page {} | {}"sv, ctx.displayPageIndex, summary);
     }
 }
 

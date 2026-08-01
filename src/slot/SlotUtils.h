@@ -234,57 +234,7 @@ namespace Huginn::Slot
         }
     }
 
-    /// Derive a short explanation label from a candidate's relevance tags.
-    /// Returns the first matching human-readable reason, or empty string if none.
-    /// Used for Wheeler subtext when showExplanationLabel is enabled.
-    /// @param contextTags Per-tick context relevance tags (from DisplayContext).
-    ///        Override candidates carry their own specific tag on the assignment;
-    ///        for everything else the label falls back to this per-tick set (#10).
-    [[nodiscard]] inline std::string DeriveExplanationLabel(
-        const SlotAssignment& assignment,
-        Candidate::RelevanceTag contextTags)
-    {
-        if (!assignment.HasCandidate()) {
-            return {};
-        }
-
-        const auto& base = Candidate::GetBase(assignment.candidate->candidate);
-        // Override candidates stamp a specific tag (e.g. NeedsAmmo); regular
-        // candidates carry None and fall back to the per-tick context tags.
-        const auto tags = base.relevanceTags != Candidate::RelevanceTag::None
-            ? base.relevanceTags
-            : contextTags;
-
-        // Priority order: most urgent/specific first
-        using RT = Candidate::RelevanceTag;
-
-        if (HasTag(tags, RT::CriticalHealth))    return "Critical HP";
-        if (HasTag(tags, RT::Underwater))         return "Underwater";
-        if (HasTag(tags, RT::LookingAtLock))      return "Lock";
-        if (HasTag(tags, RT::OnFire))             return "Fire Damage";
-        if (HasTag(tags, RT::Poisoned))           return "Poisoned";
-        if (HasTag(tags, RT::Diseased))           return "Diseased";
-        if (HasTag(tags, RT::TakingFrost))        return "Frost Damage";
-        if (HasTag(tags, RT::TakingShock))        return "Shock Damage";
-        if (HasTag(tags, RT::Falling))            return "Falling";
-        if (HasTag(tags, RT::LowHealth))          return "Low HP";
-        if (HasTag(tags, RT::LowMagicka))         return "Low MP";
-        if (HasTag(tags, RT::LowStamina))         return "Low SP";
-        if (HasTag(tags, RT::WeaponLowCharge))    return "Low Charge";
-        if (HasTag(tags, RT::NeedsAmmo))          return "Low Ammo";
-        if (HasTag(tags, RT::AllyInjured))        return "Ally Hurt";
-        if (HasTag(tags, RT::LookingAtOre))       return "Ore Vein";
-        if (HasTag(tags, RT::InDarkness))         return "Darkness";
-        if (HasTag(tags, RT::Sneaking))           return "Sneaking";
-        if (HasTag(tags, RT::TargetUndead))       return "Undead";
-        if (HasTag(tags, RT::TargetDragon))       return "Dragon";
-        if (HasTag(tags, RT::MultipleEnemies))    return "Outnumbered";
-        if (HasTag(tags, RT::EnemyCasting))       return "Enemy Casting";
-
-        // Favorited items get a label if nothing more specific applies
-        if (assignment.candidate->IsFavorited())  return "Favorite";
-
-        return {};
-    }
+    // NOTE: the subtext explanation label moved to the display layer —
+    // Display::DeriveExplanationLabel in display/ExplanationLabel.h (#9/#10).
 
 }  // namespace Huginn::Slot

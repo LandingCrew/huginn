@@ -57,10 +57,10 @@ namespace Huginn::Candidate
      *                               (Scored by UtilityScorer + ContextRuleEngine)
      * ```
      *
-     * NOTE: CandidateGenerator computes neither relevance scores nor display tags.
-     * Context weight scoring lives in ContextRuleEngine (via UtilityScorer); the
-     * per-tick display relevance tags live in Candidate::ComputeRelevanceTags,
-     * called once by the pipeline (critique #10).
+     * NOTE: CandidateGenerator computes neither relevance scores nor display
+     * explanations. Both come from ContextRuleEngine (via UtilityScorer): the
+     * weight map ranks candidates, and DominantReason names the reason the
+     * pipeline hands to the display each tick (critique #10).
      *
      * USAGE:
      * ```cpp
@@ -101,9 +101,9 @@ namespace Huginn::Candidate
          * @param player Current player state (vitals, buffs, equipment)
          * @param currentMagicka Player's current magicka (for affordability check)
          * @return Vector of filtered candidates, ready for scoring
-         * @note Per-tick relevance tags (for the display label) are no longer
-         *       produced here — the pipeline computes them once via
-         *       Candidate::ComputeRelevanceTags (critique #10).
+         * @note The per-tick display reason is no longer produced here — the
+         *       pipeline derives it once from the scorer's context weights
+         *       (ContextRuleEngine::DominantReason, critique #10).
          */
         [[nodiscard]] std::vector<CandidateVariant> GenerateCandidates(
             const State::PlayerActorState& player,

@@ -22,12 +22,9 @@
 See [reviews/architecture-critique.md](reviews/architecture-critique.md).
 **Landed:** Tier 1 (all); Tier 2 #8 registry consolidation (PR #55), #9 display
 abstraction (PR #56), #10 safe pieces — GetContextWeight move + ComputeRelevanceTags
-dedup (PR #57).
+dedup (PR #57), #10 leftover — relevance-tag encoding unified on ContextRuleEngine.
 
 ### Tier 2 — remaining
-- [ ] #10 leftover: unify the relevance-tag encoding — derive the subtext label from
-      ContextRuleEngine's continuous curves instead of ComputeRelevanceTags' hard
-      thresholds (behavior-changing; needs design, was excluded from the "safe pieces")
 - [ ] #10: WildcardManager / ExternalEquipLearner reach *up* into SlotAllocator/
       WheelerClient — pass slotCount/page state down from the coordinator (S)
 - [ ] #10: split WheelerClient.cpp (~1.2k lines) into Connection / WheelSync / a thin
@@ -48,8 +45,8 @@ dedup (PR #57).
       CalculateMagickaCost per known spell per tick, inside the registry lock (M)
 
 ### Follow-ups
-- [ ] Unit tests for the now-free pure functions: Context::WeightForCandidate,
-      Candidate::ComputeRelevanceTags, Slot::DeriveExplanationLabel (Tests.cpp:2656/3374
-      currently hand-reimplement the weight mapping — call the real one)
+- [ ] Unit tests for Context::WeightForCandidate (Tests.cpp:2656/3374 currently
+      hand-reimplement the weight mapping — call the real one). DominantReason /
+      ReasonLabel are covered by unit test 17.
 - [ ] Addendum #15/#16 (Kalman FQL / learnable context weights) — **parked**: needs a v3
       cosave bump, NOT landable during an active soak run

@@ -287,19 +287,9 @@ graph TB
     WR -->|weapons| Filter
     SCR -->|scrolls| Filter
 
-    Filter -->|candidates| Tag[RelevanceTag<br/>Computation]
-
-    PAS[PlayerActorState] --> Tag
-    TC[TargetCollection] --> Tag
-    WorldState --> Tag
-    HTS[HealthTrackingState] --> Tag
-    MTS[MagickaTrackingState] --> Tag
-    STS[StaminaTrackingState] --> Tag
-
-    Tag -->|tagged candidates| Output[CandidateVariant list]
+    Filter -->|candidates| Output[CandidateVariant list]
 
     style Filter fill:#fff4e1
-    style Tag fill:#ffe1e1
 ```
 
 **Registries** (`CandidateGenerator` member references):
@@ -323,7 +313,7 @@ graph TB
 
 Items are classified by **effect type** (not school), which works for vanilla and modded content.
 
-> `CandidateGenerator` does not compute relevance scores. All relevance scoring is handled by `ContextRuleEngine`. CandidateGenerator only tags candidates with `RelevanceTag` for filtering purposes.
+> `CandidateGenerator` computes neither relevance scores nor display explanations — it gathers, filters, and dedups. `ContextRuleEngine` owns both: its `ContextWeightMap` ranks candidates, and `DominantReason()` names the single `ContextReason` the pipeline hands to the display each tick for the Wheeler subtext label (critique #10).
 
 ### Stage 3: Elemental Damage Enrichment
 

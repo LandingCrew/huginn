@@ -366,7 +366,7 @@ namespace Huginn::Override
         const Item::ItemRegistry* registry,
         Item::ItemType type,
         std::string_view label,
-        Candidate::RelevanceTag tag,
+        Context::ContextReason reason,
         PotionLogState& logState)
     {
         if (!registry) {
@@ -395,7 +395,7 @@ namespace Huginn::Override
         }
 
         auto candidate = Candidate::ItemCandidate::FromInventoryItem(*bestPotion);
-        candidate.relevanceTags = tag;
+        candidate.overrideReason = reason;
 
         return candidate;
     }
@@ -404,7 +404,7 @@ namespace Huginn::Override
     {
         static PotionLogState s_logState;
         return FindVitalsPotion(m_itemRegistry, Item::ItemType::StaminaPotion,
-            "FindStaminaPotion"sv, Candidate::RelevanceTag::LowStamina, s_logState);
+            "FindStaminaPotion"sv, Context::ContextReason::LowStamina, s_logState);
     }
 
     std::optional<Candidate::CandidateVariant> OverrideManager::FindBestAmmo(bool isBow) const
@@ -438,7 +438,7 @@ namespace Huginn::Override
         }
 
         auto candidate = Candidate::AmmoCandidate::FromInventoryAmmo(*bestAmmo);
-        candidate.relevanceTags = Candidate::RelevanceTag::NeedsAmmo;
+        candidate.overrideReason = Context::ContextReason::NeedsAmmo;
 
         return candidate;
     }
@@ -447,14 +447,14 @@ namespace Huginn::Override
     {
         static PotionLogState s_logState;
         return FindVitalsPotion(m_itemRegistry, Item::ItemType::HealthPotion,
-            "FindHealthPotion"sv, Candidate::RelevanceTag::CriticalHealth, s_logState);
+            "FindHealthPotion"sv, Context::ContextReason::CriticalHealth, s_logState);
     }
 
     std::optional<Candidate::CandidateVariant> OverrideManager::FindMagickaPotion() const
     {
         static PotionLogState s_logState;
         return FindVitalsPotion(m_itemRegistry, Item::ItemType::MagickaPotion,
-            "FindMagickaPotion"sv, Candidate::RelevanceTag::LowMagicka, s_logState);
+            "FindMagickaPotion"sv, Context::ContextReason::LowMagicka, s_logState);
     }
 
     std::optional<Candidate::CandidateVariant> OverrideManager::FindWaterbreathingItem() const
@@ -468,7 +468,7 @@ namespace Huginn::Override
             const auto* bestPotion = m_itemRegistry->GetBestWaterbreathingPotion();
             if (bestPotion) {
                 auto candidate = Candidate::ItemCandidate::FromInventoryItem(*bestPotion);
-                candidate.relevanceTags = Candidate::RelevanceTag::Underwater;
+                candidate.overrideReason = Context::ContextReason::Underwater;
                 return candidate;
             }
         }
@@ -502,7 +502,7 @@ namespace Huginn::Override
 
         // Convert to ItemCandidate
         auto candidate = Candidate::ItemCandidate::FromInventoryItem(*bestGem);
-        candidate.relevanceTags = Candidate::RelevanceTag::WeaponLowCharge;
+        candidate.overrideReason = Context::ContextReason::WeaponLowCharge;
 
         return candidate;
     }
