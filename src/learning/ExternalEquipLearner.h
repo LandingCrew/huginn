@@ -93,7 +93,11 @@ namespace Huginn::Learning
         // Config snapshot (updated via SetConfig on hot-reload)
         LearningConfig m_config;
 
-        // Injected live queries — see SetEnvironment.
+        // Injected live queries — see SetEnvironment. Read unsynchronized from
+        // the equip path, like m_config above: both writers are main-thread
+        // (Main.cpp at init, SettingsReloader on hot-reload, which replaces
+        // m_config only and leaves m_env intact). m_mutex below guards
+        // m_lastLearnTime, not these.
         Environment m_env;
 
         // Anti-spam: FormID → last learning timestamp
