@@ -117,7 +117,10 @@ now closed; #59–#65 are follow-ups it surfaced, not remaining critique work.
           window. Log output unchanged so the refactor diffs clean in-game.
     - [ ] Step 2 — WheelSync extraction, with `FindPageForWheel` given an
           explicit `…Locked()` variant so the recursive-lock hazard can't
-          recur (M)
+          recur. Also fold in: make the load-once-per-function handle rule
+          transitive by passing the handle into `SetEntrySubtext` /
+          `ClearEntrySubtext` rather than having them re-load it — these call
+          sites get rewritten by the extraction anyway (M)
     - [ ] Step 3 — Session + injected callbacks, cutting the seven outward
           reaches. The one with real behavioural risk (M)
 

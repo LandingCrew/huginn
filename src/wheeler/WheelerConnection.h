@@ -17,20 +17,40 @@ namespace Huginn::Wheeler
     /// "TryConnect always runs before RegisterCallbacks"; that ordering still
     /// holds, but it is no longer the only thing standing between us and a race.
     ///
-    /// Load once per operation, not per call:
+    /// Load once per function, not per call:
     ///     auto* api = conn.Api();
     ///     if (!api) return;
     /// Re-reading Api() inside a function would let a concurrent disconnect
     /// change the answer half-way through a multi-call sequence.
+    ///
+    /// What the atomic does and does not buy:
+    /// - It buys a consistent view. A hoisted local cannot go from non-null to
+    ///   null between two calls that were meant to see the same Wheeler.
+    /// - It does NOT buy lifetime safety. Nothing in the tree stores nullptr
+    ///   today, so a hoisted pointer cannot currently go stale — but if a real
+    ///   Disconnect() ever lands (step 3 is the likely place), hoisting means
+    ///   the rest of that operation runs against the old handle. That is the
+    ///   right trade against a torn view, not protection from Wheeler going
+    ///   away underneath us.
+    /// - It does NOT pin the module. TryConnect uses GetModuleHandleA, which
+    ///   does not increment Wheeler.dll's reference count, so Huginn never
+    ///   keeps it loaded. Worth knowing given this class is nominally the
+    ///   owner of handle lifetime: it owns the pointer, not the DLL.
     class WheelerConnection
     {
     public:
         static WheelerConnection& GetSingleton();
 
         /// Locate Wheeler.dll, resolve GetWheelerAPI, and version-gate the
-        /// result. Idempotent — returns true immediately if already connected.
+        /// result. Returns true immediately if already connected.
         /// Does NOT register callbacks; the owner of the callback state does
         /// that (see WheelerClient::TryConnect).
+        ///
+        /// SINGLE WRITER: the SKSE message thread only (kDataLoaded via
+        /// Main.cpp, kPostLoadGame/kNewGame via the retry path). The check-then-
+        /// store is not atomic, so two concurrent callers could both resolve and
+        /// both store; that is acceptable precisely because no second writer
+        /// exists. Adding one means making this a compare_exchange.
         bool TryConnect();
 
         /// The API handle, or nullptr if not connected.

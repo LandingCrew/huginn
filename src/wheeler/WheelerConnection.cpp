@@ -54,6 +54,19 @@ namespace Huginn::Wheeler
             return false;
         }
 
+        // Deliberately a warning, not a reject. A future Wheeler that only APPENDS
+        // to IWheelerAPI stays binary-compatible with everything we call, so
+        // hard-failing would break forward compat for no reason. But one that
+        // REORDERS the struct would sail through the >= MIN gate and we would call
+        // through misaligned function pointers — a crash with no breadcrumb. This
+        // line is that breadcrumb, and it is what makes API_VERSION_MAX mean
+        // something (it had no references at all before).
+        if (api->version > WheelerAPI::API_VERSION_MAX) {
+            spdlog::warn("[WheelerClient] API version {} is newer than the {} this build knows; "
+                         "assuming append-only compatibility",
+                api->version, WheelerAPI::API_VERSION_MAX);
+        }
+
         // Publish last. The version gate runs against the local pointer, so a
         // rejected API is never briefly visible to another thread — the old code
         // stored it and then reset it to nullptr, leaving a window in which

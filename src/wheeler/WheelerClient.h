@@ -22,14 +22,30 @@ namespace Huginn::Wheeler
         // ============================================================================
         // Connection (forwarding facade)
         //
-        // The API handle lives in WheelerConnection. These stay as forwarders so
-        // the ~12 call sites across display/, pipeline/, settings/, console/ and
-        // Main.cpp keep talking to one Wheeler object rather than learning which
-        // half of the split answers which question.
+        // The API handle lives in WheelerConnection. Only the questions callers
+        // actually ask are forwarded — IsConnected() (6 sites in display/,
+        // settings/, Main.cpp) and IsWheelOpen() (4 sites) — so those callers
+        // keep talking to one Wheeler object rather than learning which half of
+        // the split answers which question.
+        //
+        // GetAPI(), GetAPIVersion() and SupportsV2Features() are deliberately
+        // NOT forwarded. They had no callers, and GetAPI() in particular handed
+        // the raw handle to anyone who asked — exactly the boundary
+        // WheelerConnection exists to draw. Anything inside this class that
+        // needs the handle uses the private Api() shorthand below; anything
+        // outside it should be asking WheelerConnection directly.
         // ============================================================================
 
         // Connect to Wheeler and install our callback trampolines.
-        // Returns true if connected (idempotent).
+        // Returns true if connected.
+        //
+        // Safe to call repeatedly: WheelerConnection::TryConnect() early-returns
+        // on an existing handle, and re-registering is a no-op overwrite —
+        // Wheeler stores one callback per type, and we hand it the same three
+        // trampoline addresses every time. A repeat call does re-emit the
+        // "Callbacks registered" debug line; no caller does this today
+        // (Main.cpp:447 is the first call; the retry at Main.cpp:127 sits behind
+        // a !IsConnected() guard).
         bool TryConnect();
 
         // Check if connected
@@ -38,28 +54,10 @@ namespace Huginn::Wheeler
             return WheelerConnection::GetSingleton().IsConnected();
         }
 
-        // Get API version (0 if not connected)
-        [[nodiscard]] uint32_t GetAPIVersion() const noexcept
-        {
-            return WheelerConnection::GetSingleton().Version();
-        }
-
-        // Check if v2 features are available (subtext, custom styling)
-        [[nodiscard]] bool SupportsV2Features() const noexcept
-        {
-            return WheelerConnection::GetSingleton().SupportsV2Features();
-        }
-
         // Check if the Wheeler UI is currently open (any wheel visible)
         [[nodiscard]] bool IsWheelOpen() const noexcept
         {
             return WheelerConnection::GetSingleton().IsWheelOpen();
-        }
-
-        // Get API pointer (nullptr if not connected)
-        [[nodiscard]] WheelerAPI::IWheelerAPI* GetAPI() const noexcept
-        {
-            return WheelerConnection::GetSingleton().Api();
         }
 
         // Log API info
@@ -184,9 +182,16 @@ namespace Huginn::Wheeler
         static constexpr size_t MAX_PAGES = 10;
 
         // Shorthand for the handle owned by WheelerConnection. Load it ONCE per
-        // operation into a local — re-reading it mid-sequence would let a
+        // function into a local — re-reading it mid-sequence would let a
         // concurrent disconnect change the answer between two API calls that
         // were meant to see the same Wheeler.
+        //
+        // The rule is per-function, not transitive: SetEntrySubtext and
+        // ClearEntrySubtext load their own handle, so a caller that hoists api
+        // and then calls them does not extend its snapshot into them. Making
+        // that transitive means passing the handle down as a parameter, which
+        // belongs with the step-2 WheelSync extraction that rewrites these call
+        // sites anyway.
         [[nodiscard]] static WheelerAPI::IWheelerAPI* Api() noexcept
         {
             return WheelerConnection::GetSingleton().Api();

@@ -1033,7 +1033,7 @@ namespace Huginn::Wheeler
         }
 
         // Now running on the update thread — IsWheelOpen() is accurate here.
-        bool stillOpen = WheelerConnection::GetSingleton().IsWheelOpen();
+        bool stillOpen = IsWheelOpen();
         if (stillOpen) {
             // Wheeler scrolled to another wheel (close A → open B).
             // The pending flag was set by close-A, but open-B already fired,
