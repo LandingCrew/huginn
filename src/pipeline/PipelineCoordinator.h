@@ -50,6 +50,8 @@ namespace Huginn::Pipeline
         // Falling is not in the GameState hash either — see the bypass in
         // CheckHashSkip and m_wasFalling below (#60).
         bool fallingActive = false;
+        // Nor is a pending reason downgrade — see CheckHashSkip (#62).
+        bool reasonHoldPending = false;
 
         // Pipeline outputs (built by successive steps)
         std::vector<Scoring::ScoredCandidate> scoredCandidates;
@@ -92,6 +94,7 @@ namespace Huginn::Pipeline
             stateHash = 0;
             elementalDamageActive = false;
             fallingActive = false;
+            reasonHoldPending = false;
 
             scoredCandidates.clear();
             overrides.activeOverrides.clear();
@@ -135,7 +138,13 @@ namespace Huginn::Pipeline
         /// Clear cross-save display state. The held context reason describes the
         /// character that was just unloaded and says nothing about the next one;
         /// without this it would survive a load for up to REASON_HOLD_MS (#62).
-        void ResetDisplayState() { m_reasonHold.Reset(); }
+        ///
+        /// THREAD SAFETY: called from the game thread (save load) and the
+        /// console handler, both while the update thread may be inside
+        /// ScoreCandidates. Same exposure as the SlotLocker/SlotAllocator resets
+        /// alongside it in ResetPipelineSubsystems, and the worst case is one
+        /// tick showing a reason from either side of the reset.
+        void ResetDisplayState() { m_reasonHold.Reset(); m_reasonLogDirty = true; }
 
         /// Queue a one-shot full-detail recommendation dump (console `hg recs`).
         /// Logged by the next pipeline pass; caller should MarkPageDirty() +
@@ -200,6 +209,9 @@ namespace Huginn::Pipeline
         // Holds the displayed reason so a momentary one stays readable.
         // Label-only: ScoreCandidates above it always sees the raw weights.
         Context::ReasonHold m_reasonHold;
+        // Forces the next [Context] line to print, so the first transition
+        // after a load is not diffed against the previous character's reason.
+        bool m_reasonLogDirty = false;
         State::GameState m_lastLoggedState{};
 
         // Recommendation logging (both build configs)

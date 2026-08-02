@@ -159,6 +159,14 @@ void PipelineCoordinator::GatherState(PipelineContext& ctx)
     // off a ledge changes no bucket at all — and would never be scored.
     ctx.fallingActive = ctx.playerState.isFalling;
 
+    // Third instance of the same shape (#62). A held reason is released by
+    // ReasonHold::Update, which only runs inside ScoreCandidates — below the
+    // skip check. Crouch, stand, then stand still with full vitals and no
+    // target: the hash never moves again, every tick skips, and the stale
+    // `Sneaking` never gets a tick to expire on. Reads the flag from the last
+    // non-skipped run, exactly like m_wasFalling.
+    ctx.reasonHoldPending = m_reasonHold.IsHolding();
+
     ctx.currentMagicka = ctx.actorValue->GetActorValue(RE::ActorValue::kMagicka);
 }
 
@@ -178,7 +186,13 @@ bool PipelineCoordinator::CheckHashSkip(PipelineContext& ctx, bool pageChanged)
     // bucket. Bounded by construction — a fall is over in about a second.
     const bool fallingBypass = ctx.fallingActive || m_wasFalling;
 
-    if (ctx.stateHash == m_lastPipelineHash && !pageChanged && !elementalBypass && !fallingBypass) {
+    // A pending downgrade needs ticks to expire on. Bounded: at most
+    // REASON_HOLD_MS / UPDATE_INTERVAL_MS runs (~15), and it self-clears the
+    // moment the downgrade lands.
+    const bool reasonHoldBypass = ctx.reasonHoldPending;
+
+    if (ctx.stateHash == m_lastPipelineHash && !pageChanged &&
+        !elementalBypass && !fallingBypass && !reasonHoldBypass) {
         // Keep cache timestamp fresh so external equip events aren't rejected as stale
         Learning::PipelineStateCache::GetSingleton().RefreshTimestamp();
         return true;  // Skip
@@ -278,8 +292,11 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
     // weights; a reason true for one tick still repainted all eight subtexts and
     // reverted before it could be read. The hold releases a reason slowly and
     // adopts a more urgent one instantly — see ReasonHold for the policy.
+    // ctx.now, not a fresh clock read: RunPipeline already captured a canonical
+    // timestamp for this tick, and the hold is argued against SlotLocker's
+    // duration, so both must be measured off the same clock reading.
     const double nowMs = std::chrono::duration<double, std::milli>(
-        std::chrono::steady_clock::now().time_since_epoch()).count();
+        ctx.now.time_since_epoch()).count();
     ctx.contextReason = m_reasonHold.Update(rawReason, nowMs, Config::REASON_HOLD_MS);
 
     // The reason drives a display string only, so nothing else in the log
@@ -297,6 +314,12 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
     // lines would only be noise). Meant to be read by an LLM or a log tool.
     // NOTE: Single-threaded (pipeline runs on the update thread only).
     static Context::ContextReason s_lastReason = Context::ContextReason::None;
+    if (m_reasonLogDirty) {
+        // A load happened; the previous value belongs to another character, so
+        // diffing against it would print a transition that never occurred.
+        s_lastReason = Context::ContextReason::None;
+        m_reasonLogDirty = false;
+    }
     if (ctx.contextReason != s_lastReason) {
         const auto label = Display::ReasonLabel(ctx.contextReason);
         const auto prev = Display::ReasonLabel(s_lastReason);

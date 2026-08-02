@@ -2383,7 +2383,10 @@ void RunUnitTests()
             // stale Sneaking. This is the property that makes the hold safe.
             {
                 Context::ReasonHold h;
-                h.Update(R::Sneaking, 0.0, kHold);
+                if (h.Update(R::Sneaking, 0.0, kHold) != R::Sneaking) {
+                    logger::error("TEST FAIL: setup — Sneaking should be held");
+                    return;
+                }
                 if (h.Update(R::CriticalHealth, 50.0, kHold) != R::CriticalHealth) {
                     logger::error("TEST FAIL: a more urgent reason must adopt instantly");
                     return;
@@ -2395,7 +2398,10 @@ void RunUnitTests()
             // Outnumbered is less urgent than Undead, so it waits.
             {
                 Context::ReasonHold h;
-                h.Update(R::TargetUndead, 0.0, kHold);
+                if (h.Update(R::TargetUndead, 0.0, kHold) != R::TargetUndead) {
+                    logger::error("TEST FAIL: setup — Undead should be held");
+                    return;
+                }
                 if (h.Update(R::MultipleEnemies, 100.0, kHold) != R::TargetUndead) {
                     logger::error("TEST FAIL: a less urgent reason should not preempt");
                     return;
@@ -2420,7 +2426,10 @@ void RunUnitTests()
             // says nothing about the next one.
             {
                 Context::ReasonHold h;
-                h.Update(R::TargetUndead, 0.0, kHold);
+                if (h.Update(R::TargetUndead, 0.0, kHold) != R::TargetUndead) {
+                    logger::error("TEST FAIL: setup — Undead should be held");
+                    return;
+                }
                 h.Reset();
                 if (h.Held() != R::None) {
                     logger::error("TEST FAIL: Reset() left a reason held");
@@ -2428,6 +2437,54 @@ void RunUnitTests()
                 }
                 if (h.Update(R::None, 10.0, kHold) != R::None) {
                     logger::error("TEST FAIL: post-Reset update should report None");
+                    return;
+                }
+            }
+
+            // Escalation out of a DECAYING hold, not a fresh one. This is the
+            // safety property the whole design leans on, and the case above
+            // escalates from a hold that is still raw-true.
+            {
+                Context::ReasonHold h;
+                if (h.Update(R::Sneaking, 0.0, kHold) != R::Sneaking) {
+                    logger::error("TEST FAIL: setup — Sneaking should be held");
+                    return;
+                }
+                for (double t = 100.0; t <= 1000.0; t += 100.0) {
+                    if (h.Update(R::None, t, kHold) != R::Sneaking) {
+                        logger::error("TEST FAIL: hold released early at t={:.0f}", t);
+                        return;
+                    }
+                }
+                if (!h.IsHolding()) {
+                    logger::error("TEST FAIL: a pending downgrade should report IsHolding");
+                    return;
+                }
+                if (h.Update(R::CriticalHealth, 1100.0, kHold) != R::CriticalHealth) {
+                    logger::error("TEST FAIL: escalation must cut through a decaying hold");
+                    return;
+                }
+                if (h.IsHolding()) {
+                    logger::error("TEST FAIL: adopting a reason should clear the pending flag");
+                    return;
+                }
+            }
+
+            // After an expiry-driven downgrade the state must actually advance,
+            // not merely return a matching value.
+            {
+                Context::ReasonHold h;
+                if (h.Update(R::Sneaking, 0.0, kHold) != R::Sneaking) {
+                    logger::error("TEST FAIL: setup — Sneaking should be held");
+                    return;
+                }
+                if (h.Update(R::None, 2000.0, kHold) != R::None) {
+                    logger::error("TEST FAIL: hold should have expired");
+                    return;
+                }
+                if (h.Held() != R::None || h.IsHolding()) {
+                    logger::error("TEST FAIL: expiry left stale state (held={}, holding={})",
+                        static_cast<int>(h.Held()), h.IsHolding());
                     return;
                 }
             }

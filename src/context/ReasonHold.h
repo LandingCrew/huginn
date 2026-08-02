@@ -31,8 +31,14 @@ namespace Huginn::Context
     //     blink, and the same-band swap seen mid-fight when a crosshair drifts
     //     off a draugr onto a bandit (Undead → Outnumbered → Undead).
     //
-    // Bounded by construction: the hold delays only a DOWNGRADE, never an
-    // escalation, and never by more than holdMs.
+    // The hold delays only a DOWNGRADE, never an escalation, and never by more
+    // than holdMs — but only while the pipeline is actually running. The skip
+    // check bails before scoring, so a hold whose expiry lands during a static
+    // stretch would never be released and the stale label would sit there
+    // indefinitely. IsHolding() exists so CheckHashSkip can bypass while one is
+    // pending, the same way it already does for the elemental window and for a
+    // fall; keep them wired together or the "never by more than holdMs"
+    // guarantee above is a class-level truth that the system does not honour.
     // =========================================================================
 
     class ReasonHold
@@ -48,6 +54,7 @@ namespace Huginn::Context
             // Still true: refresh and keep showing it.
             if (raw == m_held) {
                 m_lastTrueMs = nowMs;
+                m_holding = false;
                 return m_held;
             }
 
@@ -58,17 +65,20 @@ namespace Huginn::Context
                 (raw != ContextReason::None && raw < m_held)) {
                 m_held = raw;
                 m_lastTrueMs = nowMs;
+                m_holding = false;
                 return m_held;
             }
 
             // A downgrade (or a release to None): keep the old reason readable
             // until the hold expires.
             if (nowMs - m_lastTrueMs < holdMs) {
+                m_holding = true;
                 return m_held;
             }
 
             m_held = raw;
             m_lastTrueMs = nowMs;
+            m_holding = false;
             return m_held;
         }
 
@@ -78,8 +88,15 @@ namespace Huginn::Context
 
         [[nodiscard]] ContextReason Held() const noexcept { return m_held; }
 
+        /// True when the last Update returned a reason that is no longer raw-true
+        /// — i.e. a downgrade is pending. The pipeline must keep running while
+        /// this holds, or the expiry never gets a tick to land on; see the note
+        /// on the class.
+        [[nodiscard]] bool IsHolding() const noexcept { return m_holding; }
+
     private:
         ContextReason m_held = ContextReason::None;
         double m_lastTrueMs = 0.0;
+        bool m_holding = false;
     };
 }
