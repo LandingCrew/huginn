@@ -3,6 +3,7 @@
 #include "WheelerAPI.h"
 
 #include <chrono>
+#include <cstddef>  // size_t
 #include <cstdint>
 #include <memory>
 #include <mutex>
@@ -28,13 +29,17 @@ namespace Huginn::Wheeler
     /// WheelSync never calls back into WheelerClient." Keep it that way — the
     /// order is no longer enforced by both mutexes living in one class.
     ///
-    /// NO PUBLIC METHOD MAY BE CALLED WITH m_pageDataMutex ALREADY HELD.
-    /// Every public entry point takes the lock itself. This is why
-    /// DescribeOpenedWheel and MarkActivationEmptied exist: their callers used
-    /// to hold the lock and hand-inline the lookups to avoid recursing into it.
-    /// A single locked call that returns everything the caller needs is both
-    /// safer and more consistent than several, which could otherwise interleave
-    /// with a teardown between them.
+    /// Every public method that touches page data takes m_pageDataMutex itself,
+    /// and none may be called with it already held. SetEntrySubtext is the one
+    /// exception: it touches no page state and deliberately takes no lock, which
+    /// is why UpdatePage may call it from inside the critical section. Do not
+    /// "fix" that by adding a lock — the mutex is not recursive.
+    ///
+    /// That rule is why DescribeOpenedWheel and MarkActivationEmptied exist:
+    /// their callers used to hold the lock and hand-inline the lookups to avoid
+    /// recursing into it. A single locked call that returns everything the
+    /// caller needs is both safer and more consistent than several, which could
+    /// otherwise interleave with a teardown between them.
     class WheelSync
     {
     public:
@@ -73,7 +78,13 @@ namespace Huginn::Wheeler
         /// Set (text != nullptr) or clear an entry's subtext. Public because the
         /// Empty post-activation policy applies an "Equipped" label from the
         /// callback path, outside any lock. v2 API required; no-op otherwise.
-        void SetEntrySubtext(int32_t wheelIndex, int32_t entryIndex, const char* text);
+        ///
+        /// Takes the handle rather than re-loading it, so a caller that hoisted
+        /// `api` keeps one consistent view across its whole sequence — see the
+        /// load-once rule in WheelerConnection.h. Without this, an add could
+        /// succeed and its label silently vanish on a mid-sequence disconnect.
+        void SetEntrySubtext(WheelerAPI::IWheelerAPI* api,
+                             int32_t wheelIndex, int32_t entryIndex, const char* text);
 
         // ====================================================================
         // Lookup
@@ -194,7 +205,7 @@ namespace Huginn::Wheeler
         /// accessors can lock. See the lock-ordering note on the class.
         mutable std::mutex m_pageDataMutex;
 
-        void ClearEntrySubtext(int32_t wheelIndex, int32_t entryIndex);
+        void ClearEntrySubtext(WheelerAPI::IWheelerAPI* api, int32_t wheelIndex, int32_t entryIndex);
 
         /// Detach all page-wheel records for teardown. REQUIRES: m_pageDataMutex
         /// held. The returned vector keeps the subtext strings alive (addresses

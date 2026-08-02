@@ -162,7 +162,7 @@ namespace Huginn::Wheeler
         if (deferredEmpty && api) {
             if (api->IsManagedWheel(deferredEmpty->wheelIndex)) {
                 api->ClearEntry(deferredEmpty->wheelIndex, deferredEmpty->entryIndex);
-                wheels.SetEntrySubtext(deferredEmpty->wheelIndex, deferredEmpty->entryIndex, "Equipped");
+                wheels.SetEntrySubtext(api, deferredEmpty->wheelIndex, deferredEmpty->entryIndex, "Equipped");
                 spdlog::debug("[WheelerClient] Empty policy: deferred ClearEntry + SetEntrySubtext executed for wheel {} entry {}",
                     deferredEmpty->wheelIndex, deferredEmpty->entryIndex);
             } else {

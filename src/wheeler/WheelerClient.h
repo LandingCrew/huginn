@@ -93,6 +93,9 @@ namespace Huginn::Wheeler
         // ClearActivationEmptied, IsWheelVisible, GetItemTypeName, and the
         // GetRecommendationWheelIndex / GetPrimaryWheelIndex /
         // GetAlternateWheelIndex legacy aliases. All had zero callers.
+        //
+        // HasRecommendationWheels/HasRecommendationWheel were two names for one
+        // question; the alias survives because both call sites use it.
         // ============================================================================
 
         // Create recommendation wheels - one per page from SlotSettings.

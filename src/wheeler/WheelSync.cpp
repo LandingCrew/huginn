@@ -3,6 +3,7 @@
 #include "WheelerSettings.h"
 
 #include <algorithm>
+#include <format>   // std::format (wheel labels)
 #include <spdlog/spdlog.h>
 
 #include "../slot/SlotSettings.h"
@@ -63,6 +64,12 @@ namespace Huginn::Wheeler
     void WheelSync::IssueWheelDeletes(std::vector<PageWheel> staleWheels)
     {
         auto* api = Api();
+        if (!api) {
+            // Nothing to tell Wheeler. staleWheels is destroyed on return, which
+            // is safe precisely because there is no Wheeler holding pointers
+            // into it.
+            return;
+        }
 
         // Clear all subtexts BEFORE deleting wheels. Wheeler may hold const char*
         // pointers into slotSubtexts — clearing tells Wheeler to drop its references
@@ -71,9 +78,9 @@ namespace Huginn::Wheeler
         // index; the label-keyed delete below removes the whole wheel, which
         // drops its entry pointers.
         for (auto& pw : staleWheels) {
-            if (pw.wheelIndex >= 0 && api) {
+            if (pw.wheelIndex >= 0) {
                 for (size_t i = 0; i < pw.slotCount; ++i) {
-                    ClearEntrySubtext(pw.wheelIndex, static_cast<int32_t>(i));
+                    ClearEntrySubtext(api, pw.wheelIndex, static_cast<int32_t>(i));
                 }
             }
         }
@@ -84,7 +91,7 @@ namespace Huginn::Wheeler
         // the remaining indices, which used to leave our other stored indices stale
         // and orphan wheels (5 wheels instead of 3). Fall back to descending-index
         // deletes on older (v2) servers, where highest-first keeps the rest valid.
-        if (api && api->version >= 3 && api->DeleteManagedWheelsForClient) {
+        if (api->version >= 3 && api->DeleteManagedWheelsForClient) {
             for (auto& pw : staleWheels) {
                 // Keyed on the label, NOT wheelIndex: UpdatePage resets wheelIndex
                 // to -1 when IsManagedWheel fails (e.g. after an index shift), but
@@ -102,7 +109,7 @@ namespace Huginn::Wheeler
                     spdlog::debug("[WheelerClient] Deleted {} managed wheel(s) for '{}'", n, *pw.wheelLabel);
                 }
             }
-        } else if (api) {
+        } else {
             std::vector<int32_t> indices;
             for (auto& pw : staleWheels) {
                 if (pw.wheelIndex >= 0) {
@@ -131,6 +138,19 @@ namespace Huginn::Wheeler
         }
 
         // Thread safety: Protect entire function - reads and modifies m_pageWheels extensively
+        //
+        // LOAD-BEARING ASSUMPTION, now written down: this lock is held across
+        // every Wheeler creation and repair call below — CreateManagedWheel,
+        // GetEntryCount, AddEntry, DeleteEntry, DeleteManagedWheel — on the
+        // premise that none of them fires a synchronous callback. If one ever
+        // does, OnWheelStateChanged takes m_callbackMutex and then reaches
+        // DescribeOpenedWheel, which wants m_pageDataMutex on this same thread:
+        // self-deadlock, not a data race. Nothing enforces the premise.
+        //
+        // This was previously implicit, and visible only because both mutexes
+        // lived in one file. They no longer do, so it is stated here. The
+        // narrower version of the same assumption for deletes is called out
+        // again at the IssueWheelDeletes call below.
         std::lock_guard<std::mutex> lock(m_pageDataMutex);
 
         // Get page configuration from SlotSettings
@@ -444,7 +464,7 @@ namespace Huginn::Wheeler
         if (wheelIndex < 0) return false;
         auto result = api->SetActiveWheelIndex(wheelIndex);
         if (result == WheelerAPI::Result::OK) {
-            logger::debug("[WheelerClient] SetActivePage({}) -> wheel {}"sv, pageIndex, wheelIndex);
+            spdlog::debug("[WheelerClient] SetActivePage({}) -> wheel {}", pageIndex, wheelIndex);
             return true;
         }
         return false;
@@ -718,9 +738,9 @@ namespace Huginn::Wheeler
                 pageWheel.slotWildcard[idx] = newWildcard;
 
                 if (!cachedSubtext->empty()) {
-                    SetEntrySubtext(pageWheel.wheelIndex, i, cachedSubtext->c_str());
+                    SetEntrySubtext(api, pageWheel.wheelIndex, i, cachedSubtext->c_str());
                 } else {
-                    ClearEntrySubtext(pageWheel.wheelIndex, i);
+                    ClearEntrySubtext(api, pageWheel.wheelIndex, i);
                 }
                 // `retiring` is destroyed here — only after Wheeler swapped pointers.
             }
@@ -734,9 +754,9 @@ namespace Huginn::Wheeler
     // v2 API: Entry Subtext Support
     // ============================================================================
 
-    void WheelSync::SetEntrySubtext(int32_t wheelIndex, int32_t entryIndex, const char* text)
+    void WheelSync::SetEntrySubtext(WheelerAPI::IWheelerAPI* api,
+                                    int32_t wheelIndex, int32_t entryIndex, const char* text)
     {
-        auto* api = Api();
         if (!api || api->version < 2) {
             return;  // v2 API required
         }
@@ -753,9 +773,8 @@ namespace Huginn::Wheeler
         api->SetManagedWheelEntrySubtext(wheelIndex, entryIndex, &config);
     }
 
-    void WheelSync::ClearEntrySubtext(int32_t wheelIndex, int32_t entryIndex)
+    void WheelSync::ClearEntrySubtext(WheelerAPI::IWheelerAPI* api, int32_t wheelIndex, int32_t entryIndex)
     {
-        auto* api = Api();
         if (!api || api->version < 2) {
             return;
         }
