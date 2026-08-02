@@ -4025,13 +4025,46 @@ void RunRegressionTests()
             return;
         }
 
-        // Turn-undead and banish enchantments do the same job as silver.
+        // A turn-undead enchantment does the same job as silver.
         Candidate::WeaponCandidate turnBlade{};
         turnBlade.name = "Mace of Turn Undead";
         turnBlade.tags = Weapon::WeaponTag::Melee | Weapon::WeaponTag::Enchanted |
                          Weapon::WeaponTag::EnchantTurnUndead;
         if (Context::WeightForCandidate(turnBlade, weights) < weights.antiUndeadWeight - 0.001f) {
             logger::error("TC-15b FAIL: turn-undead enchantment should draw antiUndeadWeight"sv);
+            return;
+        }
+
+        // Banish is a different axis — it returns summoned daedra to Oblivion and
+        // does nothing to draugr. It must NOT draw the undead weight...
+        Candidate::WeaponCandidate banishBlade{};
+        banishBlade.name = "Sword of Banishing";
+        banishBlade.tags = Weapon::WeaponTag::Melee | Weapon::WeaponTag::Enchanted |
+                           Weapon::WeaponTag::EnchantBanish;
+        if (Context::WeightForCandidate(banishBlade, weights) >= weights.antiUndeadWeight - 0.001f) {
+            logger::error("TC-15b FAIL: banish must not draw antiUndeadWeight against undead"sv);
+            return;
+        }
+
+        // ...and must draw the daedra weight against a daedra.
+        TargetCollection daedraTargets{};
+        TargetActorState daedraTarget{};
+        daedraTarget.actorFormID = 0x20002;
+        daedraTarget.targetType = TargetType::Daedra;
+        daedraTarget.isHostile = true;
+        daedraTargets.primary = daedraTarget;
+        const auto daedraWeights = engine.EvaluateRules(player, daedraTargets, testWorld);
+        if (Context::WeightForCandidate(banishBlade, daedraWeights) <
+            daedraWeights.antiDaedraWeight - 0.001f) {
+            logger::error("TC-15b FAIL: banish weapon vs daedra should draw antiDaedraWeight "
+                "{:.2f}, got {:.3f}"sv, daedraWeights.antiDaedraWeight,
+                Context::WeightForCandidate(banishBlade, daedraWeights));
+            return;
+        }
+        // Silver is not a daedra answer, so it stays at baseline there.
+        if (Context::WeightForCandidate(silverSword, daedraWeights) >=
+            daedraWeights.antiDaedraWeight - 0.001f) {
+            logger::error("TC-15b FAIL: silver must not draw antiDaedraWeight"sv);
             return;
         }
 
@@ -4044,8 +4077,8 @@ void RunRegressionTests()
         humanoidTarget.isHostile = true;
         humanoidTargets.primary = humanoidTarget;
         const auto humanoidWeights = engine.EvaluateRules(player, humanoidTargets, testWorld);
-        if (Context::WeightForCandidate(silverSword, humanoidWeights) !=
-            Context::WeightForCandidate(steelSword, humanoidWeights)) {
+        if (std::abs(Context::WeightForCandidate(silverSword, humanoidWeights) -
+                     Context::WeightForCandidate(steelSword, humanoidWeights)) > 0.001f) {
             logger::error("TC-15b FAIL: silver must not outweigh steel against a humanoid"sv);
             return;
         }

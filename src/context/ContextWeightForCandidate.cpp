@@ -209,19 +209,26 @@ namespace Huginn::Context
                 // "information the player already has" line.
                 using Weapon::HasTag;
                 using WT = Weapon::WeaponTag;
-                if (HasTag(c.tags, WT::Silver) ||
-                    HasTag(c.tags, WT::EnchantTurnUndead) ||
-                    HasTag(c.tags, WT::EnchantBanish)) {
+                if (HasTag(c.tags, WT::Silver) || HasTag(c.tags, WT::EnchantTurnUndead)) {
                     maxWeight = std::max(maxWeight, weights.antiUndeadWeight);
                 }
 
-                // Bound weapons, mirroring the spell arm's BoundWeapon tag. The
-                // rule behind this weight only fires with nothing equipped, so a
-                // bound blade already in hand reads 0 here rather than competing
-                // with the real weapon it conjured.
-                if (HasTag(c.tags, WT::Bound)) {
-                    maxWeight = std::max(maxWeight, weights.boundWeaponWeight);
+                // Banish is a DIFFERENT axis, not a second anti-undead tag.
+                // WeaponClassifier sets it from Archetype::kBanish, which sends
+                // summoned daedra back to Oblivion and does nothing to draugr.
+                // Same perceivability argument as above — a flame atronach is as
+                // visible as a draugr — and antiDaedraWeight already exists,
+                // fires on TargetType::Daedra, and is read by the spell arm.
+                if (HasTag(c.tags, WT::EnchantBanish)) {
+                    maxWeight = std::max(maxWeight, weights.antiDaedraWeight);
                 }
+
+                // NOT mapped: WT::Bound → boundWeaponWeight, though it looks like
+                // the obvious mirror of the spell arm's BoundWeapon tag. That
+                // weight fires only with nothing equipped (ContextRuleEngine.cpp
+                // `noWeapon`), and a bound weapon exists as an inventory item
+                // only while conjured — which auto-equips it. Tag and weight are
+                // mutually exclusive, so the branch would be unreachable.
 
                 // DELIBERATELY ABSENT: EnchantFire/Frost/Shock. Ranking those
                 // means keying on what the TARGET resists or is weak to, which
