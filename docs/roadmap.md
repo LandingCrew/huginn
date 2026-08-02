@@ -16,6 +16,14 @@
       registers, so the drowning override and water-breathing weight are dead
       indoors. Needs research (breath meter may beat geometry)
 
+- [ ] #74: 15 `AddItemByFormID` rejects (`-6 UnsupportedFormType`) in a 5ms
+      window, ~1s after wheel creation on save-load, then clean for the rest of
+      the session. Every slot, all pages, all `attempt 1/3` — nothing reaches the
+      negative cache, so it self-corrects. Reproduces on ~2 of 3 loads; what
+      separates a failing load from a clean one is the open question. Predates
+      the WheelSync extraction (seen on step-1 code); needs a `main` Debug
+      baseline to date it properly. Cosmetic until the retry constants change
+
 ## Known Mod Compatability Issues
 - [ ] #63: Requiem (LoreRim et al.) strips Fortify Smithing/Enchanting from
       alchemy, so the workstation context has no potion to rank — inert in the
@@ -115,12 +123,17 @@ now closed; #59–#65 are follow-ups it surfaced, not remaining critique work.
           `WheelerAPI.h` (ABI declarations) + `WheelerConnection` owning the
           handle, now `std::atomic`. Closes the version-reject publication
           window. Log output unchanged so the refactor diffs clean in-game.
-    - [ ] Step 2 — WheelSync extraction, with `FindPageForWheel` given an
-          explicit `…Locked()` variant so the recursive-lock hazard can't
-          recur. Also fold in: make the load-once-per-function handle rule
-          transitive by passing the handle into `SetEntrySubtext` /
-          `ClearEntrySubtext` rather than having them re-load it — these call
-          sites get rewritten by the extraction anyway (M)
+    - [x] Step 2 — WheelSync extraction (PR: wheeler-split-wheelsync).
+          `m_pageWheels` / `m_pageDataMutex` / `m_addFailCooldowns` are now
+          exclusive to `WheelSync`; nothing outside it ever holds a `PageWheel&`.
+          The recursive-lock hazard is gone by construction rather than by an
+          `…Locked()` variant: `HandleWheelOpened` no longer holds the mutex, and
+          `DescribeOpenedWheel` answers page index + name + auto-focus target in
+          one locked call, so three lookups can't interleave with a teardown.
+          Also deleted rather than moved (zero callers): both
+          `UpdateRecommendations` overloads, `GetCurrentWheelIndex`,
+          `ClearActivationEmptied`, `IsWheelVisible`, `GetItemTypeName`, and the
+          three legacy wheel-index aliases. `WheelerClient.cpp` 1236 → 355.
     - [ ] Step 3 — Session + injected callbacks, cutting the seven outward
           reaches. The one with real behavioural risk (M)
 
