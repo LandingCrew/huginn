@@ -38,6 +38,16 @@ namespace Huginn::Context
     /// not needed. DominantReason only reports a reason whose weight already
     /// cleared its threshold, so the remaining question is purely structural —
     /// does this candidate's type/tag mapping read that field at all.
+    ///
+    /// STRUCTURAL, NOT ARGMAX — considered and rejected. The stricter test
+    /// ("did that field WIN the std::max in WeightForCandidate") would need the
+    /// tick's real weights plumbed through DisplayContext into the display
+    /// layer, and would make labels flicker: with the resistance-scaled
+    /// elemental rules, OnFire can fire at half weight while a resist-fire
+    /// potion's buffPotionWeight is higher, so the potion's own label would
+    /// blink out at exactly the moment the fire context appears. Structural
+    /// attribution keeps the label stable and still answers the question the
+    /// player is asking — is this item here *for* that reason.
     [[nodiscard]] bool ReasonAppliesTo(
         const Candidate::CandidateVariant& candidate,
         ContextReason reason);

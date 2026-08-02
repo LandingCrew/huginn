@@ -146,7 +146,7 @@ namespace Huginn::Context
         MarkCurve(R::LowMagicka,     State::VitalThreshold::LOW,      m_config.fMagickaSmoothingExponent);
         MarkCurve(R::LowStamina,     State::VitalThreshold::LOW,      m_config.fStaminaSmoothingExponent);
         MarkCurve(R::WeaponLowCharge, State::VitalThreshold::WEAPON_CHARGE_LOW,
-                                                                     m_config.fWeaponChargeSmoothingExponent);
+            m_config.fWeaponChargeSmoothingExponent);
 
         // --- Environment ------------------------------------------------------
         // Already suppression-aware in EvaluateRules: waterbreathing active or

@@ -6,6 +6,8 @@
 #include "ContextWeightConfig.h"
 #include "ContextReason.h"
 
+#include <algorithm>  // std::max (GetMaxWeight)
+
 namespace Huginn::Context
 {
     // =============================================================================
@@ -108,7 +110,7 @@ namespace Huginn::Context
          * @brief Get the maximum weight across all categories.
          * Used for debugging and validation.
          */
-        [[nodiscard]] float GetMaxWeight() const noexcept
+        [[nodiscard]] constexpr float GetMaxWeight() const noexcept
         {
             float maxWeight = 0.0f;
             maxWeight = std::max(maxWeight, healingWeight);
@@ -147,7 +149,9 @@ namespace Huginn::Context
         /**
          * @brief Check if all weights are zero (no context).
          */
-        [[nodiscard]] bool IsAllZero() const noexcept
+        /// constexpr so ReasonAppliesTo's one-hot probe can assert at compile
+        /// time that clearing baseRelevanceWeight really does zero the map.
+        [[nodiscard]] constexpr bool IsAllZero() const noexcept
         {
             return GetMaxWeight() < 0.001f;  // Epsilon for floating point comparison
         }

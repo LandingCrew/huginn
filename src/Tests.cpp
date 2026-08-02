@@ -3503,6 +3503,21 @@ void RunUnitTests()
             }
         }
 
+        // 17j: Every reason the engine can report has display wording
+        {
+            for (size_t i = 1; i < Context::CONTEXT_REASON_COUNT; ++i) {
+                const auto reason = static_cast<Context::ContextReason>(i);
+                if (Display::ReasonLabel(reason).empty()) {
+                    logger::error("TEST FAIL: ContextReason {} has no display label", i);
+                    return;
+                }
+            }
+            if (!Display::ReasonLabel(Context::ContextReason::None).empty()) {
+                logger::error("TEST FAIL: ContextReason::None must have no label");
+                return;
+            }
+        }
+
         // 17k: A context reason speaks only for slots it actually ranked (#64)
         {
             const auto labelFor = [](Candidate::CandidateVariant candidate,
@@ -3540,6 +3555,42 @@ void RunUnitTests()
             if (const auto label = labelFor(enchantingPotion, Context::ContextReason::AtEnchanter);
                 label != "At Enchanter") {
                 logger::error("TEST FAIL: AtEnchanter should label its own potion, got '{}'", label);
+                return;
+            }
+
+            // Every candidate type gets its own mapping in WeightForCandidate,
+            // so each needs a positive case — an ItemCandidate-only suite would
+            // miss a regression in the spell, scroll or ammo arm.
+            Candidate::SpellCandidate healingSpell{};
+            healingSpell.name = "Healing";
+            healingSpell.tags = Spell::SpellTag::RestoreHealth;
+            if (const auto label = labelFor(healingSpell, Context::ContextReason::LowHealth);
+                label != "Low HP") {
+                logger::error("TEST FAIL: LowHealth should label a healing spell, got '{}'", label);
+                return;
+            }
+
+            Candidate::ScrollCandidate turnUndead{};
+            turnUndead.name = "Scroll of Turn Undead";
+            turnUndead.tags = Scroll::ScrollTag::AntiUndead;
+            if (const auto label = labelFor(turnUndead, Context::ContextReason::TargetUndead);
+                label != "Undead") {
+                logger::error("TEST FAIL: TargetUndead should label an anti-undead scroll, got '{}'",
+                    label);
+                return;
+            }
+
+            Candidate::AmmoCandidate arrows{};
+            arrows.name = "Steel Arrow";
+            if (const auto label = labelFor(arrows, Context::ContextReason::NeedsAmmo);
+                label != "Low Ammo") {
+                logger::error("TEST FAIL: NeedsAmmo should label ammo, got '{}'", label);
+                return;
+            }
+            // ...and the same arrows stay unlabelled under an unrelated reason.
+            if (const auto label = labelFor(arrows, Context::ContextReason::AtEnchanter);
+                !label.empty()) {
+                logger::error("TEST FAIL: AtEnchanter must not label ammo, got '{}'", label);
                 return;
             }
 
@@ -3600,21 +3651,6 @@ void RunUnitTests()
             if (const auto label = labelFor(surfaced, Context::ContextReason::None);
                 label != "Ore Vein") {
                 logger::error("TEST FAIL: override reason should survive attribution, got '{}'", label);
-                return;
-            }
-        }
-
-        // 17j: Every reason the engine can report has display wording
-        {
-            for (size_t i = 1; i < Context::CONTEXT_REASON_COUNT; ++i) {
-                const auto reason = static_cast<Context::ContextReason>(i);
-                if (Display::ReasonLabel(reason).empty()) {
-                    logger::error("TEST FAIL: ContextReason {} has no display label", i);
-                    return;
-                }
-            }
-            if (!Display::ReasonLabel(Context::ContextReason::None).empty()) {
-                logger::error("TEST FAIL: ContextReason::None must have no label");
                 return;
             }
         }
