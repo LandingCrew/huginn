@@ -103,9 +103,10 @@ now closed; #59–#65 are follow-ups it surfaced, not remaining critique work.
 - [x] #10: extract UpdateLoop reward policy into ProcessInventoryChanges(registry,
       tag) — item/scroll consumption blocks were duplicated verbatim (PR #66).
       Also the enabling step for the weapon/ammo OnItemUsed hook below.
-- [ ] #10: split WheelerClient.cpp (~1.3k lines) — the coupling behind the
-      finding-3 race surface. **State-ownership pass done**; it settled three
-      questions and changed the plan:
+- [x] #10: split WheelerClient.cpp (~1.3k lines) — the coupling behind the
+      finding-3 race surface. **Complete across three PRs (#72, #73, and step 3
+      below).** State-ownership pass settled three questions and changed the
+      plan:
       * `m_api` → **Connection**. Single writer (TryConnect); everyone else
         reads. Never actually contested — a dependency, not shared state.
       * `m_pageWheels` / `m_pageDataMutex` / `m_addFailCooldowns` → **WheelSync**,
@@ -145,8 +146,18 @@ now closed; #59–#65 are follow-ups it surfaced, not remaining critique work.
           `UpdateRecommendations` overloads, `GetCurrentWheelIndex`,
           `ClearActivationEmptied`, `IsWheelVisible`, `GetItemTypeName`, and the
           three legacy wheel-index aliases. `WheelerClient.cpp` 1236 → 355.
-    - [ ] Step 3 — Session + injected callbacks, cutting the seven outward
-          reaches. The one with real behavioural risk (M)
+    - [x] Step 3 — injected callbacks, cutting the seven outward reaches
+          (PR: wheeler-split-session). WheelerClient keeps the wheel-session
+          state it already owned after step 2 — a fourth class would have been a
+          pure forwarder — and the seven reaches into SlotLocker, SlotAllocator,
+          CandidateGenerator, EquipSourceTracker, EquipEventBus, IntuitionMenu
+          and WheelerSettings become an 8-callback `Environment` wired in
+          Main.cpp, validated on assignment with an `EnvironmentReady()` gate as
+          the first statement of every callback. Form→SourceType classification
+          moved to the provider; it is candidate/'s vocabulary.
+          **`wheeler/` now includes exactly one thing outside itself:
+          `slot/SlotSettings.h` in WheelSync, for the page/slot layout it needs
+          to size the wheels. That is a config read, not a policy reach-up.**
 
 ### Tier 3 — hot-path perf (trace-prioritized; see docs/profiling/tracy-traces.md)
 - [ ] #14: gate the display push paths — IntuitionBackend change-detect, WheelerBackend

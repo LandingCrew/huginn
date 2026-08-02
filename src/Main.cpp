@@ -39,6 +39,7 @@
 #include "wheeler/WheelerSettings.h"
 #include "candidate/CandidateGenerator.h"
 #include "candidate/CandidateConfig.h"
+#include "candidate/CandidateTypes.h"     // SourceType (Wheeler cooldown classification)
 #include "override/OverrideManager.h"
 #include "slot/SlotAllocator.h"
 #include "slot/SlotLocker.h"
@@ -53,6 +54,7 @@
 #include "console/ConsoleCommands.h"
 #include "persist/QLearnerSerializer.h"
 #include "learning/EquipEventBus.h"
+#include "learning/EquipSourceTracker.h"  // MarkHuginnEquip (Wheeler environment)
 #include "learning/EquipSubscribers.h"
 
 using namespace Huginn;
@@ -444,6 +446,58 @@ static void OnDataLoaded()
 
     // Try to connect to Wheeler API
     auto& wheelerClient = Wheeler::WheelerClient::GetSingleton();
+
+    // Wire what happens when the player touches the wheel, BEFORE connecting —
+    // TryConnect installs the callbacks, and Wheeler could fire one immediately.
+    // WheelerClient owns the wheel session; everything Huginn does in response
+    // lives here, so wheeler/ no longer includes slot/, learning/, candidate/
+    // or ui/.
+    wheelerClient.SetEnvironment({
+        .lockSlotForActivation = [](size_t slotIndex) {
+            Slot::SlotLocker::GetSingleton().LockSlotForActivation(slotIndex);
+        },
+        .onItemUsed = [](RE::FormID formID) {
+            Slot::SlotLocker::GetSingleton().OnItemUsed(formID);
+        },
+        .markHuginnEquip = [](RE::FormID formID) {
+            Learning::EquipSourceTracker::GetSingleton().MarkHuginnEquip(formID);
+        },
+        .startCooldown = [](RE::FormID formID) {
+            // Classification lives here rather than in wheeler/: mapping a form
+            // to a SourceType is candidate/'s vocabulary.
+            auto& candidateGen = Candidate::CandidateGenerator::GetSingleton();
+            if (!candidateGen.IsInitialized()) {
+                return;
+            }
+            auto sourceType = Candidate::SourceType::Spell;
+            if (auto* form = RE::TESForm::LookupByID(formID)) {
+                if (form->Is(RE::FormType::AlchemyItem))  sourceType = Candidate::SourceType::Potion;
+                else if (form->Is(RE::FormType::Weapon))  sourceType = Candidate::SourceType::Weapon;
+                else if (form->Is(RE::FormType::Scroll))  sourceType = Candidate::SourceType::Scroll;
+            }
+            candidateGen.StartCooldown(formID, sourceType);
+            logger::info("[WheelerClient] Started cooldown for {:08X} (type {})"sv,
+                formID, static_cast<int>(sourceType));
+        },
+        .publishWheelerEquip = [](RE::FormID formID) {
+            Learning::EquipEventBus::GetSingleton().Publish(
+                formID, Learning::EquipSource::Wheeler, 1.0f, /*wasRecommended=*/true);
+        },
+        .setWidgetVisible = [](bool visible) {
+            // SetVisible defers to the UI thread via AddUITask, so this is safe
+            // from Wheeler's callback thread.
+            if (auto* intuition = UI::IntuitionMenu::GetSingleton()) {
+                intuition->SetVisible(visible);
+            }
+        },
+        .setCurrentPage = [](size_t pageIndex) {
+            Slot::SlotAllocator::GetSingleton().SetCurrentPage(pageIndex);
+        },
+        .markPageDirty = [] {
+            Slot::SlotAllocator::GetSingleton().MarkPageDirty();
+        },
+    });
+
     if (wheelerClient.TryConnect()) {
         wheelerClient.LogAPIInfo();
     } else {

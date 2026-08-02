@@ -5,14 +5,12 @@
 
 #include <optional>
 #include <spdlog/spdlog.h>
+#include <utility>
 
-#include "../learning/EquipSourceTracker.h"
-#include "../learning/EquipEventBus.h"
-#include "../slot/SlotAllocator.h"
-#include "../slot/SlotLocker.h"
-#include "../candidate/CandidateGenerator.h"
-#include "../candidate/CandidateTypes.h"
-#include "../ui/IntuitionMenu.h"
+// Deliberately includes nothing from slot/, learning/, candidate/ or ui/.
+// Everything this file used to call directly in those directories now arrives
+// as an injected Environment, wired at the composition root (Main.cpp). See the
+// Environment comment in WheelerClient.h for why.
 
 namespace Huginn::Wheeler
 {
@@ -62,6 +60,47 @@ namespace Huginn::Wheeler
     }
 
     // ============================================================================
+    // Environment
+    // ============================================================================
+
+    void WheelerClient::SetEnvironment(Environment env)
+    {
+        // Validate before storing. A half-wired Environment is worse than none:
+        // the wheel would keep working visually while quietly failing to break
+        // locks or train the learner, which reads as a subtle scoring bug rather
+        // than a wiring bug.
+        const bool complete =
+            env.lockSlotForActivation && env.onItemUsed && env.markHuginnEquip &&
+            env.startCooldown && env.publishWheelerEquip && env.setWidgetVisible &&
+            env.setCurrentPage && env.markPageDirty;
+
+        if (!complete) {
+            spdlog::error("[WheelerClient] SetEnvironment rejected — not every effect was wired; "
+                          "keeping the previous environment");
+            return;
+        }
+
+        m_env = std::move(env);
+        spdlog::info("[WheelerClient] Environment wired");
+    }
+
+    bool WheelerClient::EnvironmentReady() const
+    {
+        if (m_env.markPageDirty) {
+            return true;
+        }
+        // Rate-limited: this fires from a Wheeler callback, so an unwired build
+        // would otherwise emit one line per wheel interaction.
+        static bool warned = false;
+        if (!warned) {
+            warned = true;
+            spdlog::error("[WheelerClient] Wheeler callback fired before SetEnvironment — "
+                          "wheel interactions will do nothing. Check Main.cpp wiring.");
+        }
+        return false;
+    }
+
+    // ============================================================================
     // THREAD SAFETY: Wheeler callbacks may fire synchronously from Wheeler API
     // calls (e.g., SetActiveWheelIndex triggers OnWheelStateChanged). To avoid
     // deadlock: NEVER call Wheeler API functions while holding m_callbackMutex.
@@ -82,6 +121,9 @@ namespace Huginn::Wheeler
             wheelIndex, entryIndex, itemIndex, formID, isPrimary);
 
         auto& client = GetSingleton();
+        if (!client.EnvironmentReady()) {
+            return;
+        }
         auto& wheels = WheelSync::GetSingleton();
 
         // Deferred Wheeler API calls — populated inside mutex, executed outside.
@@ -114,7 +156,7 @@ namespace Huginn::Wheeler
 
             if (policy == PostActivationPolicy::Sticky) {
                 // Sticky: Keep the activated item visible — apply long lock, skip cooldown
-                Slot::SlotLocker::GetSingleton().LockSlotForActivation(static_cast<size_t>(entryIndex));
+                client.m_env.lockSlotForActivation(static_cast<size_t>(entryIndex));
                 spdlog::info("[WheelerClient] Sticky policy: slot {} locked for activation", entryIndex);
             } else if (policy == PostActivationPolicy::Empty) {
                 // Empty: Mark as activation-emptied + clear cached state. The
@@ -122,34 +164,25 @@ namespace Huginn::Wheeler
                 // DestroyWheels can clear the page list between an unlocked
                 // check and the index. The Wheeler API calls (ClearEntry,
                 // SetEntrySubtext) are deferred to outside the mutex.
-                Slot::SlotLocker::GetSingleton().OnItemUsed(static_cast<RE::FormID>(formID));
+                client.m_env.onItemUsed(static_cast<RE::FormID>(formID));
                 deferredEmpty = wheels.MarkActivationEmptied(
                     static_cast<size_t>(pageIndex), static_cast<size_t>(entryIndex));
                 spdlog::info("[WheelerClient] Empty policy: slot {} marked activation-emptied (API calls deferred)", entryIndex);
             } else {
                 // Backfill (default): Break lock so slot repopulates on next update cycle
-                Slot::SlotLocker::GetSingleton().OnItemUsed(static_cast<RE::FormID>(formID));
+                client.m_env.onItemUsed(static_cast<RE::FormID>(formID));
             }
 
             // Mark as Huginn-mediated equip (for external equip detection)
-            Learning::EquipSourceTracker::GetSingleton().MarkHuginnEquip(
-                static_cast<RE::FormID>(formID));
+            client.m_env.markHuginnEquip(static_cast<RE::FormID>(formID));
 
             // Start cooldown so the consumed item is filtered out on the next update cycle (~100ms)
             // Without this, the item stays recommended until RefreshCounts detects count=0 (up to 500ms)
-            // Skip cooldown for Sticky policy — the item should remain visible
+            // Skip cooldown for Sticky policy — the item should remain visible.
+            // The form-type classification moved to the provider: deciding that
+            // an AlchemyItem is a Potion is candidate/'s vocabulary, not ours.
             if (policy != PostActivationPolicy::Sticky) {
-                auto& candidateGen = Candidate::CandidateGenerator::GetSingleton();
-                if (candidateGen.IsInitialized()) {
-                    Candidate::SourceType sourceType = Candidate::SourceType::Spell;
-                    if (auto* form = RE::TESForm::LookupByID(formID)) {
-                        if (form->Is(RE::FormType::AlchemyItem)) sourceType = Candidate::SourceType::Potion;
-                        else if (form->Is(RE::FormType::Weapon))  sourceType = Candidate::SourceType::Weapon;
-                        else if (form->Is(RE::FormType::Scroll)) sourceType = Candidate::SourceType::Scroll;
-                    }
-                    candidateGen.StartCooldown(formID, sourceType);
-                    spdlog::info("[WheelerClient] Started cooldown for {:08X} (type {})", formID, static_cast<int>(sourceType));
-                }
+                client.m_env.startCooldown(static_cast<RE::FormID>(formID));
             } else {
                 spdlog::debug("[WheelerClient] Skipping cooldown for Sticky policy");
             }
@@ -175,14 +208,16 @@ namespace Huginn::Wheeler
         // Lock ordering: bus acquires StateManager shared locks in BuildEvent, then bus m_mutex,
         // then subscriber internal locks — all outside m_callbackMutex.
         if (pageIndex >= 0) {
-            Learning::EquipEventBus::GetSingleton().Publish(
-                formID, Learning::EquipSource::Wheeler, 1.0f, /*wasRecommended=*/true);
+            client.m_env.publishWheelerEquip(static_cast<RE::FormID>(formID));
         }
     }
 
     void WheelerClient::OnWheelStateChanged(int32_t wheelIndex, bool isOpen)
     {
         auto& client = GetSingleton();
+        if (!client.EnvironmentReady()) {
+            return;
+        }
         int32_t autoFocusTarget = -1;
 
         {
@@ -227,11 +262,10 @@ namespace Huginn::Wheeler
             spdlog::debug("[WheelerClient] Fresh open: reset m_itemActivatedWhileOpen=false");
 
             // Observer notification: hide IntuitionMenu when Wheeler opens
-            // (SetVisible defers to UI thread via AddUITask — safe from callback thread)
-            if (auto* intuition = UI::IntuitionMenu::GetSingleton()) {
-                intuition->SetVisible(false);
-                spdlog::debug("[WheelerClient] Notified IntuitionMenu: SetVisible(false)");
-            }
+            // (the provider defers to the UI thread via AddUITask — safe from
+            // the callback thread)
+            m_env.setWidgetVisible(false);
+            spdlog::debug("[WheelerClient] Notified IntuitionMenu: SetVisible(false)");
         } else {
             spdlog::debug("[WheelerClient] Scroll to wheel {} (not a fresh open)", wheelIndex);
         }
@@ -275,10 +309,10 @@ namespace Huginn::Wheeler
 
         spdlog::info("[WheelerClient] Page {} '{}' wheel opened", info.pageIndex, info.pageName);
 
-        // Observer notification: sync SlotAllocator page when Wheeler scrolls to our wheel.
-        // SetCurrentPage sets m_pageChanged=true, which makes the pipeline run on the next
+        // Observer notification: sync the current page when Wheeler scrolls to our wheel.
+        // The provider sets m_pageChanged=true, which makes the pipeline run on the next
         // tick and update IntuitionMenu with the correct page's slot assignments.
-        Slot::SlotAllocator::GetSingleton().SetCurrentPage(static_cast<size_t>(info.pageIndex));
+        m_env.setCurrentPage(static_cast<size_t>(info.pageIndex));
 
         return -1;  // Already on our wheel, no auto-focus needed
     }
@@ -307,6 +341,12 @@ namespace Huginn::Wheeler
             return false;
         }
 
+        // Gate here too: this one runs on the update thread, not a callback, but
+        // it still drives setCurrentPage / setWidgetVisible / markPageDirty.
+        if (!EnvironmentReady()) {
+            return false;
+        }
+
         // Now running on the update thread — IsWheelOpen() is accurate here.
         bool stillOpen = IsWheelOpen();
         if (stillOpen) {
@@ -331,7 +371,7 @@ namespace Huginn::Wheeler
         if (closedWheelIndex >= 0) {
             int pageIndex = WheelSync::GetSingleton().FindPageForWheel(closedWheelIndex);
             if (pageIndex >= 0) {
-                Slot::SlotAllocator::GetSingleton().SetCurrentPage(static_cast<size_t>(pageIndex));
+                m_env.setCurrentPage(static_cast<size_t>(pageIndex));
                 spdlog::debug("[WheelerClient] CheckPendingWheelClose: synced page to {} (wheel {})",
                     pageIndex, closedWheelIndex);
             }
@@ -341,13 +381,11 @@ namespace Huginn::Wheeler
         WheelSync::GetSingleton().ClearAllActivationEmptied();
 
         // Show IntuitionMenu now that Wheeler is fully closed.
-        // MarkPageDirty forces the pipeline to run on this tick, pushing
+        // markPageDirty forces the pipeline to run on this tick, pushing
         // the current page's slot assignments to IntuitionMenu.
-        if (auto* intuition = UI::IntuitionMenu::GetSingleton()) {
-            intuition->SetVisible(true);
-            spdlog::debug("[WheelerClient] CheckPendingWheelClose: SetVisible(true)");
-        }
-        Slot::SlotAllocator::GetSingleton().MarkPageDirty();
+        m_env.setWidgetVisible(true);
+        spdlog::debug("[WheelerClient] CheckPendingWheelClose: SetVisible(true)");
+        m_env.markPageDirty();
         spdlog::debug("[WheelerClient] CheckPendingWheelClose: MarkPageDirty for IntuitionMenu refresh");
 
         return true;
