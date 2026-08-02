@@ -186,6 +186,7 @@ namespace Huginn::Wheeler
             std::vector<std::unique_ptr<std::string>> slotSubtexts;  // Cached FINAL subtext labels (wildcard-applied); exported to Wheeler (see above); null ≙ empty
             std::vector<std::string> slotRawSubtexts;    // Cached RAW incoming subtexts (for the content-unchanged early-out)
             std::vector<uint8_t> slotRetries;            // Retry counter per slot (max MAX_SLOT_RETRIES)
+            std::vector<uint8_t> slotUniqueIDDefers;     // Consecutive uniqueID defers per slot (max MAX_UNIQUEID_DEFERS; see #74 guard)
             std::vector<bool> slotActivationEmptied;     // Activation-emptied flags (Empty policy)
         };
 

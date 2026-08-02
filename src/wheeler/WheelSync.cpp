@@ -30,9 +30,24 @@ namespace Huginn::Wheeler
     {
         // Weapon and armour instances are distinguished by ExtraUniqueID —
         // tempering and enchantment make two copies of one base form different
-        // items — so Wheeler will not accept them with uid=0. Everything else
-        // Huginn recommends (spells, potions, scrolls, food) is identified by
-        // base form alone and adds fine with uid=0.
+        // items — so Wheeler will not accept them with uid=0, answering
+        // UnsupportedFormType (-6). Everything else Huginn recommends (spells,
+        // potions, scrolls, food, ammo) is identified by base form alone and
+        // adds fine with uid=0. Documented in changelog v0.11.3.
+        //
+        // WHY THIS EXISTS (#74): for ~1s after every save load, every weapon
+        // has uniqueID=0. ExtraUniqueID lives in the extraList; the load-time
+        // scan deliberately skips extraLists because reading them early causes
+        // access violations (EXTRALIST_STABILIZATION_MS=500), and the primed
+        // reconcile that fills them in runs at WEAPON_RECONCILE_RETRY_MS=1000.
+        // The first Wheeler push measured 981ms, 982ms and 998ms across three
+        // observed loads, so whether it beats that deadline is ~100ms of tick
+        // phase — which is why the reject burst appeared on roughly two loads
+        // in three rather than every time.
+        //
+        // A null form falls through to the normal path on purpose: Wheeler
+        // answers FormNotFound (-5) and the existing retry logic handles it.
+        // That is a different failure and should not be quietly deferred.
         //
         // Armour is included for completeness even though nothing can currently
         // reach here as one: apparel is not a candidate source yet (#65).
@@ -243,6 +258,7 @@ namespace Huginn::Wheeler
             pageWheel.slotSubtexts.resize(slotCount);
             pageWheel.slotRawSubtexts.resize(slotCount);
             pageWheel.slotRetries.resize(slotCount, 0);
+            pageWheel.slotUniqueIDDefers.resize(slotCount, 0);
             pageWheel.slotActivationEmptied.resize(slotCount, false);
 
             // Build wheel label. Wheeler holds the exported const char* indefinitely,
@@ -349,6 +365,7 @@ namespace Huginn::Wheeler
                     pageWheel.slotSubtexts.resize(pageWheel.slotCount);
                     pageWheel.slotRawSubtexts.resize(pageWheel.slotCount);
                     pageWheel.slotRetries.resize(pageWheel.slotCount, 0);
+                    pageWheel.slotUniqueIDDefers.resize(pageWheel.slotCount, 0);
                     pageWheel.slotActivationEmptied.resize(pageWheel.slotCount, false);
                 }
             }
@@ -613,6 +630,18 @@ namespace Huginn::Wheeler
         // Lock now held for the per-slot update loop below
 
         static constexpr uint8_t MAX_SLOT_RETRIES = 3;
+
+        // How many pipeline passes a weapon/armour slot may wait for its
+        // uniqueID before we stop treating the absence as transient (#74). The
+        // real case resolves in ~10 passes — the primed reconcile runs 1s after
+        // load and the pipeline runs on state change — so 50 is generous while
+        // still bounded. See the guard in the slot loop for what happens after.
+        //
+        // The budget is per slot and only resets when something actually lands
+        // in that slot. A second uid-less weapon rotating into an already-spent
+        // slot therefore skips straight to the normal reject path, which is the
+        // pre-fix behaviour and the right fallback.
+        static constexpr uint8_t MAX_UNIQUEID_DEFERS = 50;
         const auto nowTime = std::chrono::steady_clock::now();
 
         // Update each slot (bounds-check all vectors to prevent out-of-range access)
@@ -639,42 +668,46 @@ namespace Huginn::Wheeler
             }
 
             if (newFormID != cachedFormID || newUniqueID != cachedUniqueID) {
-                // Certain-reject guard (#74). Wheeler needs a real ExtraUniqueID
-                // to identify WHICH instance of a weapon/armour is meant — the
-                // same base form can differ in tempering and enchantment — and
-                // answers uid=0 for those types with UnsupportedFormType (-6).
-                //
-                // For ~1s after every save load, every weapon has uniqueID=0:
-                // ExtraUniqueID lives in the extraList, the load-time scan
-                // deliberately skips extraLists (EXTRALIST_STABILIZATION_MS,
-                // reading them early crashes), and the primed reconcile that
-                // fills them in runs at WEAPON_RECONCILE_RETRY_MS=1000. The
-                // first Wheeler push was measured at 981-998ms across three
-                // loads, so whether it beats that deadline is ~100ms tick phase
-                // — which is why the reject burst appeared on roughly two loads
-                // in three.
+                // Certain-reject guard (#74). Wheeler answers uid=0 for weapons
+                // and armour with UnsupportedFormType (-6) — see RequiresUniqueID.
                 //
                 // Skipping matters more than the saved API call: the code below
                 // removes the cached item BEFORE adding the new one, so a
                 // guaranteed-failing add tears down a good entry and then tries
-                // to restore it. Returning early leaves the wheel untouched.
+                // to restore it. Deferring leaves the wheel untouched.
                 //
-                // Deliberately does NOT adopt the cache. Leaving slotFormIDs
-                // stale keeps the content diff dirty, so the next tick retries
-                // and the add lands as soon as the reconcile has run. Also does
-                // NOT touch slotRetries: three strikes would put the combo in
-                // m_addFailCooldowns and suppress it for 30s, which is the
-                // opposite of what a transient wants.
+                // The defer does NOT adopt the cache, which is what lets the
+                // retry happen — but that is also what makes it expensive to do
+                // forever. A stale slotFormIDs entry defeats the
+                // content-unchanged early-out above, so every subsequent
+                // pipeline pass pays IsManagedWheel + IsWheelEmpty +
+                // GetEntryCount plus the whole slot loop. Hence the bound: a
+                // uniqueID that is late shows up within a handful of passes, so
+                // anything still missing after MAX_UNIQUEID_DEFERS is treated as
+                // permanent and dropped through to the normal path. There it
+                // takes its three rejects, lands in m_addFailCooldowns, and the
+                // page's early-out can match again.
                 //
-                // If a weapon somehow never gets a uniqueID, this retries a
-                // LookupByID for that one slot every tick forever. That is
-                // cheap (a hash lookup, no cross-DLL call) and no worse than
-                // the old behaviour, which also never displayed it — it just
-                // went quiet about it after three failures.
+                // That matters because uid=0 is not always transient: a plain
+                // untempered, unenchanted weapon may carry no ExtraUniqueID at
+                // all (WeaponRegistry.cpp reads it only when the extraList has
+                // one), so its uniqueID is 0 for the whole session.
+                //
+                // While deferring, slotRetries is deliberately untouched: three
+                // strikes would suppress the combo for 30s, which is the
+                // opposite of what a late uniqueID wants.
                 if (newFormID != 0 && newUniqueID == 0 && RequiresUniqueID(newFormID)) {
-                    spdlog::trace("[WheelerClient] Page {} slot {} deferred: {:08X} needs a uniqueID, none yet",
-                        pageIndex, idx, newFormID);
-                    continue;
+                    if (pageWheel.slotUniqueIDDefers[idx] < MAX_UNIQUEID_DEFERS) {
+                        ++pageWheel.slotUniqueIDDefers[idx];
+                        spdlog::trace("[WheelerClient] Page {} slot {} deferred ({}/{}): {:08X} has no uniqueID yet",
+                            pageIndex, idx, pageWheel.slotUniqueIDDefers[idx], MAX_UNIQUEID_DEFERS, newFormID);
+                        continue;
+                    }
+                    // Budget spent — fall through and let Wheeler reject it for
+                    // real, so the negative cache can quiet the page down.
+                    spdlog::debug("[WheelerClient] Page {} slot {}: {:08X} still has no uniqueID after {} passes, "
+                                  "letting the normal reject path handle it",
+                        pageIndex, idx, newFormID, MAX_UNIQUEID_DEFERS);
                 }
 
                 // Negative-cache check FIRST: a (formID, uniqueID) Wheeler already
@@ -752,6 +785,7 @@ namespace Huginn::Wheeler
                     }
                 }
                 pageWheel.slotRetries[idx] = 0;  // Reset on success
+                pageWheel.slotUniqueIDDefers[idx] = 0;
                 pageWheel.slotFormIDs[idx] = newFormID;
                 pageWheel.slotUniqueIDs[idx] = newUniqueID;
             }
