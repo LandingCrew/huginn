@@ -154,6 +154,29 @@ namespace Huginn::Context
     };
 
     // =============================================================================
+    // REASON → WEIGHT FIELD
+    // =============================================================================
+    // Each weight-backed reason is derived from exactly one ContextWeightMap
+    // field. That pairing used to be implicit in DominantReason's Mark() calls;
+    // it is now named here because a second consumer needs it: the display asks
+    // "did THIS candidate draw weight from the field behind the tick's reason?"
+    // before letting the reason speak for a slot (Context::ReasonAppliesTo, #64).
+    //
+    // Single-sourcing matters more than the small indirection costs. If the two
+    // ever disagreed, a reason would fire off one field and be attributed off
+    // another — labels that are individually plausible and collectively wrong,
+    // which is precisely the failure #64 is about.
+    // =============================================================================
+
+    /// Pointer-to-member for the weight a reason is read off.
+    using ReasonWeightField = float ContextWeightMap::*;
+
+    /// The field behind `reason`, or nullptr for reasons no weight backs:
+    /// None, and the three ContextReasonSignals facts (AllyInjured,
+    /// LookingAtOre, InDarkness) that nothing scores on.
+    [[nodiscard]] ReasonWeightField WeightFieldFor(ContextReason reason) noexcept;
+
+    // =============================================================================
     // CONTEXT REASON SIGNALS
     // =============================================================================
     // Perceivable facts that DominantReason() reports but no scoring rule keys

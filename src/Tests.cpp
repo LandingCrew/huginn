@@ -3475,17 +3475,20 @@ void RunUnitTests()
                 return;
             }
 
-            // Without a stamped reason, the tick's context reason is used
+            // Without a stamped reason, the tick's context reason is used — but
+            // only on an item that reason actually ranks (#64). A healing potion
+            // draws healingWeight, which is what LowHealth is read off.
             Slot::SlotAssignment plain{};
             Scoring::ScoredCandidate plainScored{};
             Candidate::ItemCandidate plainPotion{};
             plainPotion.name = "Potion of Minor Healing";
+            plainPotion.tags = Item::ItemTag::RestoreHealth;
             plainScored.candidate = plainPotion;
             plain.candidate = plainScored;
 
             const auto contextLabel = Display::DeriveExplanationLabel(
-                plain, Context::ContextReason::Sneaking);
-            if (contextLabel != "Sneaking") {
+                plain, Context::ContextReason::LowHealth);
+            if (contextLabel != "Low HP") {
                 logger::error("TEST FAIL: context reason should apply, got '{}'", contextLabel);
                 return;
             }
@@ -3496,6 +3499,107 @@ void RunUnitTests()
             if (!emptyLabel.empty()) {
                 logger::error("TEST FAIL: no reason and no favorite should give no label, got '{}'",
                     emptyLabel);
+                return;
+            }
+        }
+
+        // 17k: A context reason speaks only for slots it actually ranked (#64)
+        {
+            const auto labelFor = [](Candidate::CandidateVariant candidate,
+                                     Context::ContextReason reason) {
+                Slot::SlotAssignment assignment{};
+                Scoring::ScoredCandidate scored{};
+                scored.candidate = std::move(candidate);
+                assignment.candidate = scored;
+                return Display::DeriveExplanationLabel(assignment, reason);
+            };
+
+            // The reported case: at an enchanter, everything on the page wore
+            // "At Enchanter" — a bow, a rabbit haunch, a pickaxe.
+            Candidate::WeaponCandidate bow{};
+            bow.name = "Silver Heavy Bow";
+            if (const auto label = labelFor(bow, Context::ContextReason::AtEnchanter);
+                !label.empty()) {
+                logger::error("TEST FAIL: AtEnchanter must not label a weapon, got '{}'", label);
+                return;
+            }
+
+            Candidate::ItemCandidate food{};
+            food.name = "Roasted Rabbit Haunch";
+            if (const auto label = labelFor(food, Context::ContextReason::AtEnchanter);
+                !label.empty()) {
+                logger::error("TEST FAIL: AtEnchanter must not label food, got '{}'", label);
+                return;
+            }
+
+            // ...while the potion the enchanter context does rank still wears it.
+            Candidate::ItemCandidate enchantingPotion{};
+            enchantingPotion.name = "Potion of Enchanting";
+            enchantingPotion.tags = Item::ItemTag::FortifyMagicSchool;
+            enchantingPotion.school = Item::MagicSchool::Enchanting;
+            if (const auto label = labelFor(enchantingPotion, Context::ContextReason::AtEnchanter);
+                label != "At Enchanter") {
+                logger::error("TEST FAIL: AtEnchanter should label its own potion, got '{}'", label);
+                return;
+            }
+
+            // Combat shape: "Fire Damage" marks the resist potion, not the
+            // greatsword beside it.
+            Candidate::ItemCandidate fireResist{};
+            fireResist.name = "Potion of Resist Fire";
+            fireResist.tags = Item::ItemTag::ResistFire;
+            if (const auto label = labelFor(fireResist, Context::ContextReason::OnFire);
+                label != "Fire Damage") {
+                logger::error("TEST FAIL: OnFire should label a resist-fire potion, got '{}'", label);
+                return;
+            }
+
+            Candidate::WeaponCandidate greatsword{};
+            greatsword.name = "Steel Greatsword";
+            if (const auto label = labelFor(greatsword, Context::ContextReason::OnFire);
+                !label.empty()) {
+                logger::error("TEST FAIL: OnFire must not label a greatsword, got '{}'", label);
+                return;
+            }
+
+            // Unattributed slots fall through the ladder rather than losing their
+            // label outright — this is what the out-of-combat lines already show.
+            Candidate::WeaponCandidate favorited{};
+            favorited.name = "Silver Heavy Bow";
+            favorited.isFavorited = true;
+            if (const auto label = labelFor(favorited, Context::ContextReason::AtEnchanter);
+                label != "Favorite") {
+                logger::error("TEST FAIL: unattributed favorite should read 'Favorite', got '{}'", label);
+                return;
+            }
+
+            // Signal-only reasons back no weight, so they can attribute nothing.
+            // `Ore Vein(Green Apple)` is the reported instance.
+            Candidate::ItemCandidate apple{};
+            apple.name = "Green Apple";
+            for (const auto reason : {Context::ContextReason::LookingAtOre,
+                                      Context::ContextReason::AllyInjured,
+                                      Context::ContextReason::InDarkness}) {
+                if (Context::WeightFieldFor(reason) != nullptr) {
+                    logger::error("TEST FAIL: signal-only reason {} gained a weight field",
+                        static_cast<int>(reason));
+                    return;
+                }
+                if (const auto label = labelFor(apple, reason); !label.empty()) {
+                    logger::error("TEST FAIL: signal-only reason labelled an apple, got '{}'", label);
+                    return;
+                }
+            }
+
+            // An override's own reason stays unconditional: OverrideManager
+            // surfaced that candidate FOR that reason, so it is attributed by
+            // construction even when no weight field maps to it.
+            Candidate::ItemCandidate surfaced{};
+            surfaced.name = "Potion of Ultimate Healing";
+            surfaced.overrideReason = Context::ContextReason::LookingAtOre;
+            if (const auto label = labelFor(surfaced, Context::ContextReason::None);
+                label != "Ore Vein") {
+                logger::error("TEST FAIL: override reason should survive attribution, got '{}'", label);
                 return;
             }
         }

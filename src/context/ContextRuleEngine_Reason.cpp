@@ -57,6 +57,53 @@ namespace Huginn::Context
         }
     }
 
+    ReasonWeightField WeightFieldFor(ContextReason reason) noexcept
+    {
+        // Tripwire: a new ContextReason belongs in this table (or is explicitly
+        // fieldless below). Missing it makes the reason silently un-markable.
+        static_assert(CONTEXT_REASON_COUNT == 27,
+            "ContextReason changed — review WeightFieldFor");
+
+        using R = ContextReason;
+        using W = ContextWeightMap;
+        switch (reason) {
+            case R::CriticalHealth:  return &W::healingWeight;
+            case R::Underwater:      return &W::waterbreathingWeight;
+            case R::LookingAtLock:   return &W::unlockWeight;
+            case R::OnFire:          return &W::resistFireWeight;
+            case R::Poisoned:        return &W::resistPoisonWeight;
+            case R::Diseased:        return &W::resistDiseaseWeight;
+            case R::TakingFrost:     return &W::resistFrostWeight;
+            case R::TakingShock:     return &W::resistShockWeight;
+            case R::Falling:         return &W::slowFallWeight;
+            case R::LowHealth:       return &W::healingWeight;
+            case R::LowMagicka:      return &W::magickaRestoreWeight;
+            case R::LowStamina:      return &W::staminaRestoreWeight;
+            case R::WeaponLowCharge: return &W::weaponChargeWeight;
+            case R::NeedsAmmo:       return &W::ammoWeight;
+            case R::AtForge:         return &W::fortifySmithingWeight;
+            case R::AtEnchanter:     return &W::fortifyEnchantingWeight;
+            case R::AtAlchemy:       return &W::fortifyAlchemyWeight;
+            case R::Sneaking:        return &W::stealthWeight;
+            case R::TargetUndead:    return &W::antiUndeadWeight;
+            case R::TargetDaedra:    return &W::antiDaedraWeight;
+            case R::TargetDragon:    return &W::antiDragonWeight;
+            case R::MultipleEnemies: return &W::aoeWeight;
+            case R::EnemyCasting:    return &W::wardWeight;
+
+            // Fieldless by definition — the three ContextReasonSignals facts
+            // nothing scores on, plus the two non-reasons. Listed rather than
+            // defaulted so a new enumerator is a compiler diagnostic here too.
+            case R::AllyInjured:
+            case R::LookingAtOre:
+            case R::InDarkness:
+            case R::None:
+            case R::_Count:
+                break;
+        }
+        return nullptr;
+    }
+
     ContextReason ContextRuleEngine::DominantReason(
         const ContextWeightMap& weights,
         const ContextReasonSignals& signals) const
@@ -77,51 +124,62 @@ namespace Huginn::Context
             }
         };
 
+        // Every weight-backed rule reads its field through WeightFieldFor rather
+        // than naming it inline, so the reason → weight pairing lives in exactly
+        // one place. The display's attribution test (Context::ReasonAppliesTo)
+        // reads the same table, and therefore cannot probe a different field than
+        // the one that made the reason fire (#64).
+        const auto Weight = [&weights](R reason) noexcept {
+            const auto field = WeightFieldFor(reason);
+            return field ? weights.*field : 0.0f;
+        };
+        const auto MarkCurve = [&](R reason, float pct, float exponent) noexcept {
+            Mark(reason, Weight(reason) >= CurveThreshold(pct, exponent));
+        };
+        const auto MarkBinary = [&](R reason, float configured) noexcept {
+            Mark(reason, Fires(Weight(reason), configured));
+        };
+
         // --- Vitals and weapon charge: invert the scoring curve ---------------
-        Mark(R::CriticalHealth, weights.healingWeight >=
-            CurveThreshold(State::VitalThreshold::CRITICAL, m_config.fHealthSmoothingExponent));
-        Mark(R::LowHealth, weights.healingWeight >=
-            CurveThreshold(State::VitalThreshold::LOW, m_config.fHealthSmoothingExponent));
-        Mark(R::LowMagicka, weights.magickaRestoreWeight >=
-            CurveThreshold(State::VitalThreshold::LOW, m_config.fMagickaSmoothingExponent));
-        Mark(R::LowStamina, weights.staminaRestoreWeight >=
-            CurveThreshold(State::VitalThreshold::LOW, m_config.fStaminaSmoothingExponent));
-        Mark(R::WeaponLowCharge, weights.weaponChargeWeight >=
-            CurveThreshold(State::VitalThreshold::WEAPON_CHARGE_LOW,
-                           m_config.fWeaponChargeSmoothingExponent));
+        MarkCurve(R::CriticalHealth, State::VitalThreshold::CRITICAL, m_config.fHealthSmoothingExponent);
+        MarkCurve(R::LowHealth,      State::VitalThreshold::LOW,      m_config.fHealthSmoothingExponent);
+        MarkCurve(R::LowMagicka,     State::VitalThreshold::LOW,      m_config.fMagickaSmoothingExponent);
+        MarkCurve(R::LowStamina,     State::VitalThreshold::LOW,      m_config.fStaminaSmoothingExponent);
+        MarkCurve(R::WeaponLowCharge, State::VitalThreshold::WEAPON_CHARGE_LOW,
+                                                                     m_config.fWeaponChargeSmoothingExponent);
 
         // --- Environment ------------------------------------------------------
         // Already suppression-aware in EvaluateRules: waterbreathing active or
         // invisibility up means no weight, hence no explanation.
-        Mark(R::Underwater,    Fires(weights.waterbreathingWeight, m_config.weightUnderwater));
-        Mark(R::LookingAtLock, Fires(weights.unlockWeight, m_config.weightLookingAtLock));
-        Mark(R::Falling,       Fires(weights.slowFallWeight, m_config.weightFallingHigh));
-        Mark(R::AtForge,       Fires(weights.fortifySmithingWeight, m_config.weightAtForge));
-        Mark(R::AtEnchanter,   Fires(weights.fortifyEnchantingWeight, m_config.weightAtEnchanter));
-        Mark(R::AtAlchemy,     Fires(weights.fortifyAlchemyWeight, m_config.weightAtAlchemyLab));
+        MarkBinary(R::Underwater,    m_config.weightUnderwater);
+        MarkBinary(R::LookingAtLock, m_config.weightLookingAtLock);
+        MarkBinary(R::Falling,       m_config.weightFallingHigh);
+        MarkBinary(R::AtForge,       m_config.weightAtForge);
+        MarkBinary(R::AtEnchanter,   m_config.weightAtEnchanter);
+        MarkBinary(R::AtAlchemy,     m_config.weightAtAlchemyLab);
 
         // --- Active elemental / status damage ---------------------------------
-        Mark(R::OnFire,      Fires(weights.resistFireWeight, m_config.weightOnFire));
-        Mark(R::Poisoned,    Fires(weights.resistPoisonWeight, m_config.weightPoisoned));
-        Mark(R::Diseased,    Fires(weights.resistDiseaseWeight, m_config.weightDiseased));
-        Mark(R::TakingFrost, Fires(weights.resistFrostWeight, m_config.weightFrozen));
-        Mark(R::TakingShock, Fires(weights.resistShockWeight, m_config.weightShocked));
+        MarkBinary(R::OnFire,      m_config.weightOnFire);
+        MarkBinary(R::Poisoned,    m_config.weightPoisoned);
+        MarkBinary(R::Diseased,    m_config.weightDiseased);
+        MarkBinary(R::TakingFrost, m_config.weightFrozen);
+        MarkBinary(R::TakingShock, m_config.weightShocked);
 
         // --- Equipment --------------------------------------------------------
-        Mark(R::NeedsAmmo, Fires(weights.ammoWeight, m_config.weightNeedsAmmo));
+        MarkBinary(R::NeedsAmmo, m_config.weightNeedsAmmo);
 
         // --- Surroundings -----------------------------------------------------
         Mark(R::AllyInjured,  signals.allyInjured);
         Mark(R::LookingAtOre, signals.lookingAtOre);
         Mark(R::InDarkness,   signals.lightLevel < kDarknessLightLevel);
-        Mark(R::Sneaking,     Fires(weights.stealthWeight, m_config.weightSneaking));
+        MarkBinary(R::Sneaking, m_config.weightSneaking);
 
         // --- Target / combat ---------------------------------------------------
-        Mark(R::TargetUndead,    Fires(weights.antiUndeadWeight, m_config.weightTargetUndead));
-        Mark(R::TargetDaedra,    Fires(weights.antiDaedraWeight, m_config.weightTargetDaedra));
-        Mark(R::TargetDragon,    Fires(weights.antiDragonWeight, m_config.weightTargetDragon));
-        Mark(R::MultipleEnemies, Fires(weights.aoeWeight, m_config.weightMultipleEnemies));
-        Mark(R::EnemyCasting,    Fires(weights.wardWeight, m_config.weightEnemyCasting));
+        MarkBinary(R::TargetUndead,    m_config.weightTargetUndead);
+        MarkBinary(R::TargetDaedra,    m_config.weightTargetDaedra);
+        MarkBinary(R::TargetDragon,    m_config.weightTargetDragon);
+        MarkBinary(R::MultipleEnemies, m_config.weightMultipleEnemies);
+        MarkBinary(R::EnemyCasting,    m_config.weightEnemyCasting);
 
         // Deliberately NOT marked: the always-on baselines (weapon/spell/buff
         // potion/base relevance) and the ambient in-combat weights (damage,

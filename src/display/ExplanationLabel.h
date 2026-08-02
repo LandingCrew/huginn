@@ -1,6 +1,7 @@
 #pragma once
 
 #include "context/ContextReason.h"
+#include "context/ContextReasonAttribution.h"
 #include "slot/SlotAssignment.h"
 
 #include <string>
@@ -15,8 +16,9 @@ namespace Huginn::Display
     //
     // Wording lives here, in the display layer — the context layer decides WHICH
     // reason applies (Context::ContextRuleEngine::DominantReason, derived from
-    // the same weight curves that drive scoring); this file decides how to say
-    // it. Adding a reason means adding a case below.
+    // the same weight curves that drive scoring) and WHICH SLOTS it may speak
+    // for (Context::ReasonAppliesTo, #64); this file decides how to say it.
+    // Adding a reason means adding a case below.
     // =========================================================================
 
     /// Human-readable text for a context reason, or "" for None.
@@ -67,8 +69,8 @@ namespace Huginn::Display
     }
 
     /// Derive the subtext explanation for one slot assignment.
-    /// Priority: the override's own reason > this tick's context reason >
-    /// "Favorite" > no label.
+    /// Priority: the override's own reason > this tick's context reason, IF it
+    /// ranked this item > "Favorite" > no label.
     /// @param contextReason Reason for THIS tick (DisplayContext::contextReason),
     ///        derived once by the pipeline from the tick's context weights.
     [[nodiscard]] inline std::string DeriveExplanationLabel(
@@ -79,16 +81,27 @@ namespace Huginn::Display
             return {};
         }
 
-        // Override candidates were surfaced FOR a specific reason (OverrideManager
-        // stamps it); prefer that over the ambient one. Regular candidates carry
-        // None and fall back to the tick's context reason.
-        const auto& base = Candidate::GetBase(assignment.candidate->candidate);
-        const auto reason = base.overrideReason != Context::ContextReason::None
-            ? base.overrideReason
-            : contextReason;
+        const auto& candidate = assignment.candidate->candidate;
+        const auto& base = Candidate::GetBase(candidate);
 
-        if (const auto label = ReasonLabel(reason); !label.empty()) {
-            return std::string(label);
+        // Two reasons, two burdens of proof (#64).
+        //
+        // An override's reason was stamped on THIS candidate by OverrideManager,
+        // which surfaced it for exactly that reason — attributed by construction.
+        //
+        // The tick's reason was not: it is one global fact about the situation,
+        // and the page it labels may contain nothing it ranked. It gets to speak
+        // for a slot only where the candidate actually draws weight from the
+        // field the reason is read off; otherwise the ladder falls through, the
+        // way it already does when no reason is active at all.
+        if (base.overrideReason != Context::ContextReason::None) {
+            if (const auto label = ReasonLabel(base.overrideReason); !label.empty()) {
+                return std::string(label);
+            }
+        } else if (Context::ReasonAppliesTo(candidate, contextReason)) {
+            if (const auto label = ReasonLabel(contextReason); !label.empty()) {
+                return std::string(label);
+            }
         }
 
         // Nothing situational applies — mark the player's own picks.
