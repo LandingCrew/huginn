@@ -144,6 +144,13 @@ namespace Huginn::State
       m_isInCombat.store(false, std::memory_order_relaxed);
       m_wasInCombat = false;
 
+      // --- Fall tracking (#60) ---
+      // The previous save's take-off Z describes a different world position.
+      // Timers were zeroed just above, so the next poll runs immediately —
+      // possibly while the player is still airborne as the cell settles, which
+      // is exactly when a stale anchor would report a thousand-unit fall.
+      m_fallTracker.Reset();
+
       // --- Elemental window flag (stale true would hold the outer gate open) ---
       m_elementalWindowActive.store(false, std::memory_order_relaxed);
 

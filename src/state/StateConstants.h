@@ -123,6 +123,17 @@ namespace Huginn::State
       // Units: Skyrim distance units (vertical).
       inline constexpr float FALL_DEPTH_BUCKET = 100.0f;
 
+      // Fastest descent gravity can plausibly produce, used to tell a fall from
+      // a relocation (save load, cell door, fast travel) — see FallTracker.
+      // Why 15000: Havok caps actor fall speed near 4000 units/s, so this leaves
+      // ~4× headroom above anything real while staying far below a cell
+      // transition, which moves the player thousands to tens of thousands of
+      // units in a single poll. The allowance is derived from the ACTUAL poll
+      // interval rather than baked per-poll, so it stays correct if the interval
+      // is retuned.
+      // Units: Skyrim distance units per second.
+      inline constexpr float MAX_FALL_SPEED = 15000.0f;
+
       // Invalid water height sentinel value
       // Why -1000000.0f: Skyrim engine uses this sentinel value to indicate
       // "no water present" in a cell. Any value below this means no water check.
@@ -502,11 +513,6 @@ namespace Huginn::State
       // Why 1.0f: Assume well-lit if no data available
       // Units: percentage (0.0 = dark, 1.0 = bright)
       inline constexpr float DEFAULT_LIGHT = 1.0f;
-
-      // Default height above ground (on ground)
-      // Why 0.0f: Assume on ground if no data available
-      // Units: Skyrim distance units (vertical)
-      inline constexpr float ON_GROUND = 0.0f;
 
       // Default distance to target (no target)
       // Why 0.0f: Zero means no target or unknown distance

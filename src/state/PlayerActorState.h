@@ -458,7 +458,7 @@ namespace Huginn::State
     // Descent below the point the player last left the ground, in Skyrim units.
     // 0 while grounded and throughout an ordinary jump, which returns to its own
     // take-off height. Drives the continuous slow-fall curve.
-    float fallDepth = DefaultState::ON_GROUND;
+    float fallDepth = 0.0f;
     bool isOverencumbered = false;
     bool isSneaking = false;
     bool isInCombat = false;
@@ -614,9 +614,13 @@ namespace Huginn::State
       // weight was when isFalling first flipped.
     }
 
-    /// Coarse fall-depth level, for change detection only.
-    [[nodiscard]] int FallDepthBucket() const noexcept {
-      return static_cast<int>(fallDepth / PhysicsConstants::FALL_DEPTH_BUCKET);
+    /// Coarse fall-depth level, for change detection only. The free-standing
+    /// form exists so the poller can bucket a candidate depth with the same
+    /// arithmetic it will be compared against — two copies could drift, and the
+    /// symptom would be change detection silently failing mid-fall.
+    [[nodiscard]] static int FallDepthBucketOf(float depth) noexcept {
+      return static_cast<int>(depth / PhysicsConstants::FALL_DEPTH_BUCKET);
     }
+    [[nodiscard]] int FallDepthBucket() const noexcept { return FallDepthBucketOf(fallDepth); }
   };
 }

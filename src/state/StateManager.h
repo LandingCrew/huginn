@@ -3,6 +3,7 @@
 #include "WorldState.h"
 #include "PlayerActorState.h"
 #include "TargetActorState.h"
+#include "FallTracker.h"
 #include "StateTypes.h"              // For HealthTrackingState
 #include "StateManagerConstants.h"
 #include "DamageEventSink.h"         // For instant damage classification (v0.6.8)
@@ -373,10 +374,11 @@ namespace Huginn::State
       std::atomic<bool> m_isInCombat{false};
       bool m_wasInCombat = false;  // Previous tick's combat state (single-writer in PollPlayerPosition)
 
-      // Z the player last left the ground at. Fall depth is measured against it
-      // so a jump — which returns to its own take-off height — never registers
-      // as a fall (#60). Single-writer in PollPlayerPosition, same as above.
-      float m_groundZ = 0.0f;
+      // Take-off Z tracking for fall depth (#60). Single-writer in
+      // PollPlayerPosition, same as m_wasInCombat. MUST be reset in
+      // ResetTrackingState — the previous save's take-off Z describes a
+      // different world position entirely.
+      FallTracker m_fallTracker;
 
       // =============================================================================
       // TARGET CHANGE DETECTION (Lightweight digest for pipeline skip optimization)

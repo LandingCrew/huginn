@@ -2256,6 +2256,98 @@ void RunUnitTests()
             }
         }
 
+        // Test 6c-2: FallTracker itself (#60). The rule engine was never the
+        // broken half — `isFalling = IsInMidair()` was — so the take-off-Z
+        // policy is what actually needs covering. It is engine-free precisely
+        // so these cases can run without a live PlayerCharacter.
+        {
+            using State::FallTracker;
+            constexpr float kMaxDelta = 1500.0f;  // 100ms poll at MAX_FALL_SPEED
+
+            // A jump: grounded, rise to apex, come back down to take-off height.
+            // Depth must never leave 0 — the reported bug in its purest form.
+            {
+                FallTracker t;
+                const float profile[] = {100.0f, 140.0f, 170.0f, 176.0f, 150.0f, 110.0f, 100.0f};
+                bool first = true;
+                for (const float z : profile) {
+                    const float depth = t.Update(z, /*airborne=*/!first, kMaxDelta);
+                    first = false;
+                    if (depth != 0.0f) {
+                        logger::error("TEST FAIL: a jump produced fallDepth {:.1f} at z={:.1f}",
+                            depth, z);
+                        return;
+                    }
+                }
+            }
+
+            // A real drop off a ledge measures the descent below take-off.
+            {
+                FallTracker t;
+                t.Update(1000.0f, false, kMaxDelta);          // grounded, anchor at 1000
+                if (const float d = t.Update(800.0f, true, kMaxDelta); std::abs(d - 200.0f) > 0.01f) {
+                    logger::error("TEST FAIL: 200-unit drop measured {:.1f}", d);
+                    return;
+                }
+                if (const float d = t.Update(300.0f, true, kMaxDelta); std::abs(d - 700.0f) > 0.01f) {
+                    logger::error("TEST FAIL: 700-unit drop measured {:.1f}", d);
+                    return;
+                }
+                // Landing re-anchors.
+                if (t.Update(300.0f, false, kMaxDelta) != 0.0f) {
+                    logger::error("TEST FAIL: landing should reset fall depth");
+                    return;
+                }
+            }
+
+            // A relocation — save load, cell door, fast travel — must re-anchor
+            // rather than report the world-space difference as a fall. Standing
+            // on a peak, then loading into an interior far below.
+            {
+                FallTracker t;
+                t.Update(20000.0f, false, kMaxDelta);
+                if (const float d = t.Update(100.0f, true, kMaxDelta); d != 0.0f) {
+                    logger::error("TEST FAIL: a relocation reported fallDepth {:.1f}", d);
+                    return;
+                }
+                // ...and tracking resumes normally from the new anchor.
+                if (const float d = t.Update(-200.0f, true, kMaxDelta);
+                    std::abs(d - 300.0f) > 0.01f) {
+                    logger::error("TEST FAIL: post-relocation fall measured {:.1f}", d);
+                    return;
+                }
+            }
+
+            // First poll of a session, already airborne, with no anchor yet.
+            // Must NOT measure against a default-constructed 0 — plenty of cells
+            // sit at negative Z, which would read as a large positive fall.
+            {
+                FallTracker t;
+                if (const float d = t.Update(-5000.0f, true, kMaxDelta); d != 0.0f) {
+                    logger::error("TEST FAIL: unanchored first poll reported {:.1f}", d);
+                    return;
+                }
+            }
+
+            // Reset() drops the anchor, so a post-load poll cannot measure
+            // against the previous save's take-off Z.
+            {
+                FallTracker t;
+                t.Update(20000.0f, false, kMaxDelta);
+                t.Reset();
+                if (t.IsAnchored()) {
+                    logger::error("TEST FAIL: Reset() left the tracker anchored");
+                    return;
+                }
+                if (const float d = t.Update(100.0f, true, kMaxDelta); d != 0.0f) {
+                    logger::error("TEST FAIL: post-Reset poll reported fallDepth {:.1f}", d);
+                    return;
+                }
+            }
+
+            logger::info("  ✓ PASS: FallTracker (jump, drop, relocation, unanchored, reset)"sv);
+        }
+
         // Test 6d: Workstation (Forge) → fortifySmithingWeight = 0.8
         {
             State::PlayerActorState testPlayer{};

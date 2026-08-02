@@ -20,7 +20,7 @@ namespace Huginn::State
       bool newIsUnderwater = false;
       bool newIsSwimming = false;
       bool newIsFalling = false;
-      float newFallDepth = DefaultState::ON_GROUND;
+      float newFallDepth = 0.0f;
       bool newIsOverencumbered = false;
       bool newIsSneaking = false;
       bool newIsInCombat = false;
@@ -29,10 +29,14 @@ namespace Huginn::State
 
       auto* player = RE::PlayerCharacter::GetSingleton();
       if (!player) {
+      // No player means no trustworthy Z next poll either — drop the anchor so
+      // the tracker re-anchors rather than measuring against a stale take-off.
+      m_fallTracker.Reset();
       std::unique_lock lock(m_playerMutex);
       if (m_playerState.isUnderwater != newIsUnderwater ||
           m_playerState.isSwimming != newIsSwimming ||
           m_playerState.isFalling != newIsFalling ||
+          m_playerState.FallDepthBucket() != PlayerActorState::FallDepthBucketOf(newFallDepth) ||
           m_playerState.isOverencumbered != newIsOverencumbered ||
           m_playerState.isSneaking != newIsSneaking ||
           m_playerState.isInCombat != newIsInCombat ||
@@ -51,13 +55,14 @@ namespace Huginn::State
       return false;
       }
 
+      const float currentZ = player->GetPosition().z;
+
       // Underwater check
       auto* cell = player->GetParentCell();
       if (cell) {
       float waterHeight = cell->GetExteriorWaterHeight();
       if (waterHeight > PhysicsConstants::INVALID_WATER_HEIGHT_VALUE) {
-        auto playerPos = player->GetPosition();
-        float headHeight = playerPos.z + PhysicsConstants::HEAD_HEIGHT;
+        float headHeight = currentZ + PhysicsConstants::HEAD_HEIGHT;
         newIsUnderwater = (headHeight < waterHeight);
       }
       }
@@ -65,27 +70,18 @@ namespace Huginn::State
       // Swimming check
       newIsSwimming = player->AsActorState()->IsSwimming();
 
-      // Falling check (#60).
+      // Falling check (#60). IsInMidair() alone is true for any airborne moment
+      // — a jump, a kerb, a knockback — so taking it at face value drove
+      // slowFallWeight to full on every hop. FallTracker measures the descent
+      // below the point the player left the ground instead; see its header.
       //
-      // IsInMidair() alone is true for any airborne moment — a jump, a step off
-      // a kerb, a knockback — so taking it at face value drove slowFallWeight to
-      // full on every hop, and put `Falling` (a high-priority reason) over
-      // genuine ones for a tick each time.
-      //
-      // Instead: remember the Z the player left the ground at, and measure how
-      // far BELOW it they now are. A jump rises and returns to its own take-off
-      // height, so its depth stays ~0 and never reaches the gate. A real drop
-      // ramps through it. This is the velocity/height threshold the old comment
-      // in ContextRuleEngine claimed already existed.
-      const bool inMidair = player->IsInMidair();
-      const float currentZ = player->GetPosition().z;
-      if (!inMidair) {
-      m_groundZ = currentZ;
-      newFallDepth = DefaultState::ON_GROUND;
-      } else {
-      // Rising (or level) keeps depth at 0 rather than going negative.
-      newFallDepth = std::max(0.0f, m_groundZ - currentZ);
-      }
+      // Swimming is excluded before the tracker sees it: diving is airborne to
+      // nobody, but a 400-unit descent underwater would otherwise read as a
+      // fall if the engine ever reports midair while submerged.
+      const bool airborne = player->IsInMidair() && !newIsSwimming;
+      const float maxPlausibleDelta =
+          PhysicsConstants::MAX_FALL_SPEED * (m_playerPositionPollInterval / 1000.0f);
+      newFallDepth = m_fallTracker.Update(currentZ, airborne, maxPlausibleDelta);
       newIsFalling = newFallDepth >= PhysicsConstants::FALL_DEPTH_MIN;
 
       // Overencumbered check (pattern from EnvironmentSensor.cpp)
@@ -123,8 +119,7 @@ namespace Huginn::State
       // fallDepth compared by bucket: the raw value changes every tick of a
       // fall, so an exact compare would report a change ~10×/second while
       // airborne. See PlayerActorState::FallDepthBucket.
-      const int newFallBucket =
-          static_cast<int>(newFallDepth / PhysicsConstants::FALL_DEPTH_BUCKET);
+      const int newFallBucket = PlayerActorState::FallDepthBucketOf(newFallDepth);
 
       bool changed = (m_playerState.isUnderwater != newIsUnderwater ||
                       m_playerState.isSwimming != newIsSwimming ||

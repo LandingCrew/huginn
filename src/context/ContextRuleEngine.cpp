@@ -233,6 +233,10 @@ namespace Huginn::Context
         // velocity/height threshold. It did not: isFalling came straight from
         // IsInMidair(), so every hop drove this to weightFallingHigh.
         if (player.isFalling) {
+            static_assert(State::PhysicsConstants::FALL_DEPTH_HIGH >
+                          State::PhysicsConstants::FALL_DEPTH_MIN,
+                "slow-fall ramp needs a positive span — a zero span divides to "
+                "NaN, and std::clamp(NaN) propagates it straight into the scorer");
             constexpr float span =
                 State::PhysicsConstants::FALL_DEPTH_HIGH - State::PhysicsConstants::FALL_DEPTH_MIN;
             const float depth = player.fallDepth - State::PhysicsConstants::FALL_DEPTH_MIN;
