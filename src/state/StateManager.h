@@ -379,7 +379,8 @@ namespace Huginn::State
       // ResetTrackingState — the previous save's take-off Z describes a
       // different world position entirely.
       FallTracker m_fallTracker;
-      bool m_wasFalling = false;  // Previous tick's gate state, for the transition log only
+      bool m_wasFalling = false;      // Previous tick's gate state, for the transition log only
+      float m_peakFallDepth = 0.0f;   // Deepest point of the current fall, for the same log
 
       // =============================================================================
       // TARGET CHANGE DETECTION (Lightweight digest for pipeline skip optimization)

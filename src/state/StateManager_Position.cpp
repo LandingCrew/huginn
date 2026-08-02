@@ -85,12 +85,30 @@ namespace Huginn::State
       newIsFalling = newFallDepth >= PhysicsConstants::FALL_DEPTH_MIN;
 
       // Transition only — the gate is otherwise invisible in a log, which makes
-      // "correctly quiet" and "never fires at all" look identical. Depth is the
-      // number to read when tuning FALL_DEPTH_MIN against a real ledge.
+      // "correctly quiet" and "never fires at all" look identical.
+      //
+      // PEAK depth is the number that matters, not the depth at the crossing:
+      // the crossing sample is just the first one past the gate, and by the end
+      // transition the tracker has already re-anchored to 0. Without the peak
+      // there is no way to tell a fall that never reached the ramp's upper half
+      // from one that did and failed to report — see the 0.18.17 session, where
+      // a fall deep enough to deal damage produced no Falling reason at all.
+      m_peakFallDepth = std::max(m_peakFallDepth, newFallDepth);
       if (newIsFalling != m_wasFalling) {
-      logger::debug("[Falling] {} at depth {:.0f} (gate {:.0f})"sv,
-          newIsFalling ? "start" : "end", newFallDepth, PhysicsConstants::FALL_DEPTH_MIN);
+      if (newIsFalling) {
+        logger::debug("[Falling] start at depth {:.0f} (gate {:.0f})"sv,
+            newFallDepth, PhysicsConstants::FALL_DEPTH_MIN);
+      } else {
+        logger::debug("[Falling] end — peak depth {:.0f} (reason needs {:.0f}, full at {:.0f})"sv,
+            m_peakFallDepth,
+            PhysicsConstants::FALL_DEPTH_MIN +
+                0.5f * (PhysicsConstants::FALL_DEPTH_HIGH - PhysicsConstants::FALL_DEPTH_MIN),
+            PhysicsConstants::FALL_DEPTH_HIGH);
+      }
       m_wasFalling = newIsFalling;
+      }
+      if (newFallDepth == 0.0f) {
+      m_peakFallDepth = 0.0f;
       }
 
       // Overencumbered check (pattern from EnvironmentSensor.cpp)

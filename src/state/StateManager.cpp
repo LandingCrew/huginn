@@ -151,6 +151,7 @@ namespace Huginn::State
       // is exactly when a stale anchor would report a thousand-unit fall.
       m_fallTracker.Reset();
       m_wasFalling = false;
+      m_peakFallDepth = 0.0f;
 
       // --- Elemental window flag (stale true would hold the outer gate open) ---
       m_elementalWindowActive.store(false, std::memory_order_relaxed);
