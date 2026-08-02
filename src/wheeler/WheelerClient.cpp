@@ -69,12 +69,7 @@ namespace Huginn::Wheeler
         // the wheel would keep working visually while quietly failing to break
         // locks or train the learner, which reads as a subtle scoring bug rather
         // than a wiring bug.
-        const bool complete =
-            env.lockSlotForActivation && env.onItemUsed && env.markHuginnEquip &&
-            env.startCooldown && env.publishWheelerEquip && env.setWidgetVisible &&
-            env.setCurrentPage && env.markPageDirty;
-
-        if (!complete) {
+        if (!env.Complete()) {
             spdlog::error("[WheelerClient] SetEnvironment rejected — not every effect was wired; "
                           "keeping the previous environment");
             return;
@@ -86,14 +81,17 @@ namespace Huginn::Wheeler
 
     bool WheelerClient::EnvironmentReady() const
     {
-        if (m_env.markPageDirty) {
+        // Complete(), not a single sentinel field: the gate and SetEnvironment
+        // must agree, and a hand-maintained field list in two places drifts.
+        if (m_env.Complete()) {
             return true;
         }
         // Rate-limited: this fires from a Wheeler callback, so an unwired build
-        // would otherwise emit one line per wheel interaction.
-        static bool warned = false;
-        if (!warned) {
-            warned = true;
+        // would otherwise emit one line per wheel interaction. Atomic because
+        // the three gate sites span Wheeler's callback thread and the update
+        // thread — a plain bool here is a data race for one duplicated line.
+        static std::atomic<bool> warned{false};
+        if (!warned.exchange(true)) {
             spdlog::error("[WheelerClient] Wheeler callback fired before SetEnvironment — "
                           "wheel interactions will do nothing. Check Main.cpp wiring.");
         }
@@ -207,9 +205,9 @@ namespace Huginn::Wheeler
         // Publish to EquipEventBus OUTSIDE the mutex (subscribers handle FQL + UsageMemory).
         // Lock ordering: bus acquires StateManager shared locks in BuildEvent, then bus m_mutex,
         // then subscriber internal locks — all outside m_callbackMutex.
-        if (pageIndex >= 0) {
-            client.m_env.publishWheelerEquip(static_cast<RE::FormID>(formID));
-        }
+        // No pageIndex guard: the locked block above returns early when the
+        // wheel isn't ours, so reaching here means pageIndex >= 0.
+        client.m_env.publishWheelerEquip(static_cast<RE::FormID>(formID));
     }
 
     void WheelerClient::OnWheelStateChanged(int32_t wheelIndex, bool isOpen)

@@ -178,13 +178,29 @@ namespace Huginn::Wheeler
         // They are now supplied by the composition root (Main.cpp). This class
         // decides WHAT happened and WHEN, and knows nothing about who cares.
         //
-        // THREAD SAFETY: everything except publishWheelerEquip is invoked from
-        // Wheeler's callback thread WITH m_callbackMutex held — exactly where
-        // the direct calls used to sit, so no lock order changed. None of these
-        // may call back into WheelerClient, and none may call the Wheeler API
-        // (a synchronous callback would re-enter the mutex).
-        // publishWheelerEquip is called with no lock held: its subscribers take
-        // StateManager and bus locks of their own.
+        // THREAD SAFETY — two call contexts, and three callbacks see both:
+        //
+        //   Wheeler's callback thread, WITH m_callbackMutex held:
+        //     lockSlotForActivation, onItemUsed, markHuginnEquip, startCooldown,
+        //     setWidgetVisible and setCurrentPage (via HandleWheelOpened).
+        //     Exactly where the direct calls used to sit, so no lock order
+        //     changed. None of these may call back into WheelerClient, and none
+        //     may call the Wheeler API — a synchronous callback would re-enter
+        //     the mutex.
+        //
+        //   The update thread, holding NO lock:
+        //     setCurrentPage, setWidgetVisible and markPageDirty, all via
+        //     CheckPendingWheelClose.
+        //
+        //   No lock, callback thread:
+        //     publishWheelerEquip — its subscribers take StateManager and bus
+        //     locks of their own.
+        //
+        // So setCurrentPage and setWidgetVisible can genuinely run concurrently
+        // with their callback-thread counterparts, and a provider must be safe
+        // under concurrent invocation rather than assuming serialization.
+        // Today's both are: SlotAllocator's page state is atomic, and
+        // IntuitionMenu::SetVisible defers to the UI thread via AddUITask.
         // ============================================================================
         struct Environment
         {
@@ -214,6 +230,21 @@ namespace Huginn::Wheeler
 
             /// Force the pipeline to run so the widget repaints on wheel close.
             std::function<void()> markPageDirty;
+
+            /// Every effect wired. Lives on the struct, immediately below the
+            /// fields, so the list cannot drift: SetEnvironment validates with
+            /// it and EnvironmentReady() gates with it, and adding a ninth
+            /// callback without extending this fails to compile nothing but is
+            /// impossible to overlook — the list is right here. A half-wired
+            /// Environment that slipped past both would throw
+            /// std::bad_function_call from a Wheeler callback, which in an SKSE
+            /// plugin is a crash to desktop, not a log line.
+            [[nodiscard]] bool Complete() const noexcept
+            {
+                return lockSlotForActivation && onItemUsed && markHuginnEquip &&
+                       startCooldown && publishWheelerEquip && setWidgetVisible &&
+                       setCurrentPage && markPageDirty;
+            }
         };
 
         /// Install the effects. Validated on assignment: a partially wired
@@ -225,6 +256,12 @@ namespace Huginn::Wheeler
     private:
         WheelerClient() = default;
 
+        /// Written once by SetEnvironment on the main thread at kDataLoaded,
+        /// before TryConnect installs the callbacks; read afterwards from both
+        /// Wheeler's callback thread and the update thread, unsynchronized.
+        /// Safe only because of that ordering — writing it again while the game
+        /// is running would race two reader threads, so don't. (Same invariant
+        /// as ExternalEquipLearner's, with one more reader.)
         Environment m_env;
 
         /// True once every callback is wired. Checked as the FIRST statement of

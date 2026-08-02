@@ -476,6 +476,9 @@ static void OnDataLoaded()
                 else if (form->Is(RE::FormType::Scroll))  sourceType = Candidate::SourceType::Scroll;
             }
             candidateGen.StartCooldown(formID, sourceType);
+            // Log tag stays [WheelerClient] although the line now lives here:
+            // the split is meant to leave a Debug session's log diffing clean,
+            // and the soak tooling greps that tag.
             logger::info("[WheelerClient] Started cooldown for {:08X} (type {})"sv,
                 formID, static_cast<int>(sourceType));
         },
