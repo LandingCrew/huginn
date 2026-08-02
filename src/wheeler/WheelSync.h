@@ -163,6 +163,11 @@ namespace Huginn::Wheeler
         /// function into a local; see WheelerConnection.h for why.
         [[nodiscard]] static WheelerAPI::IWheelerAPI* Api() noexcept;
 
+        /// True if Wheeler needs a non-zero uniqueID to accept this form —
+        /// weapons and armour, whose instances differ by tempering and
+        /// enchantment. See the certain-reject guard in UpdatePage (#74).
+        [[nodiscard]] static bool RequiresUniqueID(RE::FormID formID);
+
         struct PageWheel
         {
             int32_t wheelIndex = -1;                    // Wheeler wheel index

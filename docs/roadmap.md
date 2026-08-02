@@ -16,7 +16,7 @@
       registers, so the drowning override and water-breathing weight are dead
       indoors. Needs research (breath meter may beat geometry)
 
-- [ ] #74: 13–15 `AddItemByFormID` rejects (`-6 UnsupportedFormType`) ~1s after
+- [x] #74: 13–15 `AddItemByFormID` rejects (`-6 UnsupportedFormType`) ~1s after
       save-load, then clean for the session. **Root cause found:** every failing
       item is a weapon with `uid=0`, which Wheeler is documented to reject
       (changelog v0.11.3). Weapons load with `uniqueID=0` because the load-time

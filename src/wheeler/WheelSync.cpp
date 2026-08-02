@@ -26,6 +26,20 @@ namespace Huginn::Wheeler
         return WheelerConnection::GetSingleton().Api();
     }
 
+    bool WheelSync::RequiresUniqueID(RE::FormID formID)
+    {
+        // Weapon and armour instances are distinguished by ExtraUniqueID —
+        // tempering and enchantment make two copies of one base form different
+        // items — so Wheeler will not accept them with uid=0. Everything else
+        // Huginn recommends (spells, potions, scrolls, food) is identified by
+        // base form alone and adds fine with uid=0.
+        //
+        // Armour is included for completeness even though nothing can currently
+        // reach here as one: apparel is not a candidate source yet (#65).
+        auto* form = RE::TESForm::LookupByID(formID);
+        return form && (form->Is(RE::FormType::Weapon) || form->Is(RE::FormType::Armor));
+    }
+
     // ============================================================================
     // Lifecycle
     // ============================================================================
@@ -625,6 +639,44 @@ namespace Huginn::Wheeler
             }
 
             if (newFormID != cachedFormID || newUniqueID != cachedUniqueID) {
+                // Certain-reject guard (#74). Wheeler needs a real ExtraUniqueID
+                // to identify WHICH instance of a weapon/armour is meant — the
+                // same base form can differ in tempering and enchantment — and
+                // answers uid=0 for those types with UnsupportedFormType (-6).
+                //
+                // For ~1s after every save load, every weapon has uniqueID=0:
+                // ExtraUniqueID lives in the extraList, the load-time scan
+                // deliberately skips extraLists (EXTRALIST_STABILIZATION_MS,
+                // reading them early crashes), and the primed reconcile that
+                // fills them in runs at WEAPON_RECONCILE_RETRY_MS=1000. The
+                // first Wheeler push was measured at 981-998ms across three
+                // loads, so whether it beats that deadline is ~100ms tick phase
+                // — which is why the reject burst appeared on roughly two loads
+                // in three.
+                //
+                // Skipping matters more than the saved API call: the code below
+                // removes the cached item BEFORE adding the new one, so a
+                // guaranteed-failing add tears down a good entry and then tries
+                // to restore it. Returning early leaves the wheel untouched.
+                //
+                // Deliberately does NOT adopt the cache. Leaving slotFormIDs
+                // stale keeps the content diff dirty, so the next tick retries
+                // and the add lands as soon as the reconcile has run. Also does
+                // NOT touch slotRetries: three strikes would put the combo in
+                // m_addFailCooldowns and suppress it for 30s, which is the
+                // opposite of what a transient wants.
+                //
+                // If a weapon somehow never gets a uniqueID, this retries a
+                // LookupByID for that one slot every tick forever. That is
+                // cheap (a hash lookup, no cross-DLL call) and no worse than
+                // the old behaviour, which also never displayed it — it just
+                // went quiet about it after three failures.
+                if (newFormID != 0 && newUniqueID == 0 && RequiresUniqueID(newFormID)) {
+                    spdlog::trace("[WheelerClient] Page {} slot {} deferred: {:08X} needs a uniqueID, none yet",
+                        pageIndex, idx, newFormID);
+                    continue;
+                }
+
                 // Negative-cache check FIRST: a (formID, uniqueID) Wheeler already
                 // rejected MAX_SLOT_RETRIES times must not clear the current entry
                 // or hit the API again until its cooldown expires. Adopt the cache
