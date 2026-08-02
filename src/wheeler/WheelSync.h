@@ -163,6 +163,11 @@ namespace Huginn::Wheeler
         /// function into a local; see WheelerConnection.h for why.
         [[nodiscard]] static WheelerAPI::IWheelerAPI* Api() noexcept;
 
+        /// True if Wheeler needs a non-zero uniqueID to accept this form —
+        /// weapons and armour, whose instances differ by tempering and
+        /// enchantment. See the certain-reject guard in UpdatePage (#74).
+        [[nodiscard]] static bool RequiresUniqueID(RE::FormID formID);
+
         struct PageWheel
         {
             int32_t wheelIndex = -1;                    // Wheeler wheel index
@@ -181,6 +186,7 @@ namespace Huginn::Wheeler
             std::vector<std::unique_ptr<std::string>> slotSubtexts;  // Cached FINAL subtext labels (wildcard-applied); exported to Wheeler (see above); null ≙ empty
             std::vector<std::string> slotRawSubtexts;    // Cached RAW incoming subtexts (for the content-unchanged early-out)
             std::vector<uint8_t> slotRetries;            // Retry counter per slot (max MAX_SLOT_RETRIES)
+            std::vector<uint8_t> slotUniqueIDDefers;     // Consecutive uniqueID defers per slot (max MAX_UNIQUEID_DEFERS; see #74 guard)
             std::vector<bool> slotActivationEmptied;     // Activation-emptied flags (Empty policy)
         };
 
