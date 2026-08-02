@@ -5,6 +5,7 @@
 #include "candidate/CandidateGenerator.h"
 #include "override/OverrideManager.h"
 #include "slot/SlotAllocator.h"
+#include "pipeline/PipelineCoordinator.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -104,6 +105,8 @@ void ResetPipelineSubsystems() {
     auto& slotLocker = Slot::SlotLocker::GetSingleton();
     slotLocker.Reset();
     slotLocker.SetConfig(LoadSlotLockerConfigFromINI());
+
+    Pipeline::PipelineCoordinator::GetSingleton().ResetDisplayState();
 
     State::StateManager::GetSingleton().ResetTrackingState();
 }

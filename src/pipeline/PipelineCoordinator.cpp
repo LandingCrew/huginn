@@ -266,13 +266,21 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
     // Name the dominant reason once per tick, off the weights the ranking just
     // used — the display explanation can't disagree with the scoring (#10).
     // The two world facts below have no scoring weight to read them off.
-    ctx.contextReason = g_utilityScorer->DominantContextReason(
+    const auto rawReason = g_utilityScorer->DominantContextReason(
         contextWeights,
         Context::ContextReasonSignals{
             .allyInjured = ctx.targets.HasInjuredFollower(),
             .lookingAtOre = ctx.worldState.isLookingAtOreVein,
             .lightLevel = ctx.worldState.lightLevel,
         });
+
+    // Damp the LABEL only (#62). Scoring above already used the instantaneous
+    // weights; a reason true for one tick still repainted all eight subtexts and
+    // reverted before it could be read. The hold releases a reason slowly and
+    // adopts a more urgent one instantly — see ReasonHold for the policy.
+    const double nowMs = std::chrono::duration<double, std::milli>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+    ctx.contextReason = m_reasonHold.Update(rawReason, nowMs, Config::REASON_HOLD_MS);
 
     // The reason drives a display string only, so nothing else in the log
     // reveals it — log the transition (not the tick) so a session can be

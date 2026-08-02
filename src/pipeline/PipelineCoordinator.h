@@ -8,6 +8,7 @@
 #include "learning/ScoredCandidate.h"
 #include "candidate/CandidateTypes.h"
 #include "context/ContextReason.h"     // Context::ContextReason (per-tick display reason)
+#include "context/ReasonHold.h"        // Context::ReasonHold (label stability, #62)
 #include "override/OverrideConditions.h"
 #include "slot/SlotAssignment.h"
 
@@ -131,6 +132,11 @@ namespace Huginn::Pipeline
                          std::chrono::steady_clock::time_point now,
                          bool pageChanged);
 
+        /// Clear cross-save display state. The held context reason describes the
+        /// character that was just unloaded and says nothing about the next one;
+        /// without this it would survive a load for up to REASON_HOLD_MS (#62).
+        void ResetDisplayState() { m_reasonHold.Reset(); }
+
         /// Queue a one-shot full-detail recommendation dump (console `hg recs`).
         /// Logged by the next pipeline pass; caller should MarkPageDirty() +
         /// ForceUpdate() to make that pass happen immediately.
@@ -190,6 +196,10 @@ namespace Huginn::Pipeline
         // and never gets scored. The falling edge needs one more run to clear
         // slow-fall scoring once the player lands (#60).
         bool m_wasFalling = false;
+
+        // Holds the displayed reason so a momentary one stays readable.
+        // Label-only: ScoreCandidates above it always sees the raw weights.
+        Context::ReasonHold m_reasonHold;
         State::GameState m_lastLoggedState{};
 
         // Recommendation logging (both build configs)

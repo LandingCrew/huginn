@@ -19,6 +19,7 @@
 #include "learning/UsageMemory.h"
 #include "util/ScopedTimer.h"
 #include "context/ContextRuleEngine.h"
+#include "context/ReasonHold.h"
 #include "context/ContextWeightForCandidate.h"
 #include "display/ExplanationLabel.h"
 
@@ -2346,6 +2347,92 @@ void RunUnitTests()
             }
 
             logger::info("  ✓ PASS: FallTracker (jump, drop, relocation, unanchored, reset)"sv);
+        }
+
+        // Test 6c-3: ReasonHold (#62). A reason true for one tick repainted all
+        // eight subtexts and reverted before it could be read. Damps the label
+        // only — scoring never sees this.
+        {
+            using Context::ContextReason;
+            using R = ContextReason;
+            constexpr float kHold = 1500.0f;
+
+            // The reported shape: a momentary Sneaking must stay readable.
+            {
+                Context::ReasonHold h;
+                if (h.Update(R::Sneaking, 0.0, kHold) != R::Sneaking) {
+                    logger::error("TEST FAIL: a new reason should be adopted immediately");
+                    return;
+                }
+                if (h.Update(R::None, 100.0, kHold) != R::Sneaking) {
+                    logger::error("TEST FAIL: Sneaking should survive a one-tick drop");
+                    return;
+                }
+                if (h.Update(R::None, 1400.0, kHold) != R::Sneaking) {
+                    logger::error("TEST FAIL: hold released early");
+                    return;
+                }
+                // ...and released once the hold expires, so it cannot stick.
+                if (h.Update(R::None, 1600.0, kHold) != R::None) {
+                    logger::error("TEST FAIL: hold never released");
+                    return;
+                }
+            }
+
+            // Urgency is never delayed: Critical HP must not wait behind a
+            // stale Sneaking. This is the property that makes the hold safe.
+            {
+                Context::ReasonHold h;
+                h.Update(R::Sneaking, 0.0, kHold);
+                if (h.Update(R::CriticalHealth, 50.0, kHold) != R::CriticalHealth) {
+                    logger::error("TEST FAIL: a more urgent reason must adopt instantly");
+                    return;
+                }
+            }
+
+            // The same-band swap seen mid-fight: a crosshair drifting off a
+            // draugr onto a bandit must not flip the label back and forth.
+            // Outnumbered is less urgent than Undead, so it waits.
+            {
+                Context::ReasonHold h;
+                h.Update(R::TargetUndead, 0.0, kHold);
+                if (h.Update(R::MultipleEnemies, 100.0, kHold) != R::TargetUndead) {
+                    logger::error("TEST FAIL: a less urgent reason should not preempt");
+                    return;
+                }
+                // Crosshair returns — the reason refreshes rather than expiring.
+                if (h.Update(R::TargetUndead, 200.0, kHold) != R::TargetUndead) {
+                    logger::error("TEST FAIL: returning reason should refresh");
+                    return;
+                }
+                if (h.Update(R::MultipleEnemies, 1500.0, kHold) != R::TargetUndead) {
+                    logger::error("TEST FAIL: hold should run from the last time it was true");
+                    return;
+                }
+                // Genuinely gone: the downgrade lands once the hold expires.
+                if (h.Update(R::MultipleEnemies, 1800.0, kHold) != R::MultipleEnemies) {
+                    logger::error("TEST FAIL: downgrade should land after the hold");
+                    return;
+                }
+            }
+
+            // Reset drops the held reason — the previous character's context
+            // says nothing about the next one.
+            {
+                Context::ReasonHold h;
+                h.Update(R::TargetUndead, 0.0, kHold);
+                h.Reset();
+                if (h.Held() != R::None) {
+                    logger::error("TEST FAIL: Reset() left a reason held");
+                    return;
+                }
+                if (h.Update(R::None, 10.0, kHold) != R::None) {
+                    logger::error("TEST FAIL: post-Reset update should report None");
+                    return;
+                }
+            }
+
+            logger::info("  ✓ PASS: ReasonHold (blink damped, urgency instant, downgrade delayed)"sv);
         }
 
         // Test 6d: Workstation (Forge) → fortifySmithingWeight = 0.8
