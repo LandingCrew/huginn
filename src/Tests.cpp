@@ -18,6 +18,7 @@
 #include "learning/UsageMemory.h"
 #include "util/ScopedTimer.h"
 #include "context/ContextRuleEngine.h"
+#include "context/ContextWeightForCandidate.h"
 #include "display/ExplanationLabel.h"
 
 #include <random>
@@ -3997,6 +3998,60 @@ void RunRegressionTests()
         }
 
         logger::info("  ✓ PASS: Undead target → antiUndeadWeight={:.2f}"sv, weights.antiUndeadWeight);
+
+        // TC-15b: that weight has to reach a silver weapon, not just exist (#80).
+        // The weapon arm read none of its own tags, so a silver sword scored the
+        // same against a draugr as in a shop.
+        Candidate::WeaponCandidate silverSword{};
+        silverSword.name = "Silver Sword";
+        silverSword.tags = Weapon::WeaponTag::Melee | Weapon::WeaponTag::OneHanded |
+                           Weapon::WeaponTag::Silver;
+        const float silverWeight = Context::WeightForCandidate(silverSword, weights);
+        if (silverWeight < weights.antiUndeadWeight - 0.001f) {
+            logger::error("TC-15b FAIL: silver weapon vs undead should draw antiUndeadWeight "
+                "{:.2f}, got {:.3f}"sv, weights.antiUndeadWeight, silverWeight);
+            return;
+        }
+
+        // A steel sword must NOT — otherwise this is just a weapon baseline bump
+        // and every weapon would wear the "Undead" label again.
+        Candidate::WeaponCandidate steelSword{};
+        steelSword.name = "Steel Sword";
+        steelSword.tags = Weapon::WeaponTag::Melee | Weapon::WeaponTag::OneHanded;
+        const float steelWeight = Context::WeightForCandidate(steelSword, weights);
+        if (steelWeight >= weights.antiUndeadWeight - 0.001f) {
+            logger::error("TC-15b FAIL: plain weapon vs undead should stay at baseline, "
+                "got {:.3f} vs antiUndead {:.2f}"sv, steelWeight, weights.antiUndeadWeight);
+            return;
+        }
+
+        // Turn-undead and banish enchantments do the same job as silver.
+        Candidate::WeaponCandidate turnBlade{};
+        turnBlade.name = "Mace of Turn Undead";
+        turnBlade.tags = Weapon::WeaponTag::Melee | Weapon::WeaponTag::Enchanted |
+                         Weapon::WeaponTag::EnchantTurnUndead;
+        if (Context::WeightForCandidate(turnBlade, weights) < weights.antiUndeadWeight - 0.001f) {
+            logger::error("TC-15b FAIL: turn-undead enchantment should draw antiUndeadWeight"sv);
+            return;
+        }
+
+        // And the silver bonus must not leak into an unrelated context: with no
+        // undead in front of the player, silver is just a material.
+        TargetCollection humanoidTargets{};
+        TargetActorState humanoidTarget{};
+        humanoidTarget.actorFormID = 0x20001;
+        humanoidTarget.targetType = TargetType::Humanoid;
+        humanoidTarget.isHostile = true;
+        humanoidTargets.primary = humanoidTarget;
+        const auto humanoidWeights = engine.EvaluateRules(player, humanoidTargets, testWorld);
+        if (Context::WeightForCandidate(silverSword, humanoidWeights) !=
+            Context::WeightForCandidate(steelSword, humanoidWeights)) {
+            logger::error("TC-15b FAIL: silver must not outweigh steel against a humanoid"sv);
+            return;
+        }
+
+        logger::info("  ✓ PASS: silver/turn-undead weapon vs undead → {:.2f} (steel stays {:.2f})"sv,
+            silverWeight, steelWeight);
     }
 
     // =========================================================================

@@ -76,6 +76,17 @@
       differing-slot-count trigger as #10b, but not one tick and not
       self-correcting. Repro config (one 4-slot page) is in the issue and also
       re-verifies #69 (S)
+- [ ] #80: weapons are outside contextual scoring entirely — the WeaponCandidate
+      arm of `WeightForCandidate` reads only `weaponWeight` / `damageWeight` /
+      `baseRelevanceWeight` and checks ZERO tags (spells check ~12, items ~15).
+      A weapon's context weight is a constant: same in a dragon fight as in a
+      shop. `WeaponTag::Silver` ("bonus vs undead") and `EnchantTurnUndead` are
+      classified today and `antiUndeadWeight` is computed today; they have never
+      been connected. `WeaponTag` has 10 free bits, so unlike #79 nothing
+      structural blocks it. Scope: Silver|TurnUndead|Banish → antiUndead,
+      Bound → boundWeapon. NOT the elemental enchants — keying on what a target
+      resists is forbidden info. Surfaced by #64 removing the label that hid it.
+      **Next fix** (S/M)
 - [ ] #79: `unlockWeight`, `slowFallWeight` and `antiDragonWeight` are computed
       by EvaluateRules and read by no candidate mapping — LookingAtLock,
       Falling and TargetDragon have never moved a ranking. `SpellTag` is at

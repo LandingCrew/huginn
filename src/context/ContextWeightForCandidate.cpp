@@ -195,8 +195,46 @@ namespace Huginn::Context
             // WEAPON CANDIDATES
             // =====================================================================
             else if constexpr (std::is_same_v<T, Candidate::WeaponCandidate>) {
-                // Weapons get the best of: dedicated weapon weight, combat damage, or base relevance
-                return std::max({weights.weaponWeight, weights.damageWeight, weights.baseRelevanceWeight});
+                // Baseline: dedicated weapon weight, combat damage, or base relevance.
+                // All three are always-on, so for a long time this arm returned a
+                // constant — a weapon scored the same in a barrow as in a shop,
+                // and was the only candidate type reading none of its own tags (#80).
+                float maxWeight = std::max({weights.weaponWeight, weights.damageWeight,
+                                            weights.baseRelevanceWeight});
+
+                // Anti-undead. Silver is the material bonus; turn/banish are the
+                // enchantments that do the same job. Both sides of this are
+                // perceivable — the player can read the weapon and can see that
+                // the thing in front of them is a draugr — so it stays inside the
+                // "information the player already has" line.
+                using Weapon::HasTag;
+                using WT = Weapon::WeaponTag;
+                if (HasTag(c.tags, WT::Silver) ||
+                    HasTag(c.tags, WT::EnchantTurnUndead) ||
+                    HasTag(c.tags, WT::EnchantBanish)) {
+                    maxWeight = std::max(maxWeight, weights.antiUndeadWeight);
+                }
+
+                // Bound weapons, mirroring the spell arm's BoundWeapon tag. The
+                // rule behind this weight only fires with nothing equipped, so a
+                // bound blade already in hand reads 0 here rather than competing
+                // with the real weapon it conjured.
+                if (HasTag(c.tags, WT::Bound)) {
+                    maxWeight = std::max(maxWeight, weights.boundWeaponWeight);
+                }
+
+                // DELIBERATELY ABSENT: EnchantFire/Frost/Shock. Ranking those
+                // means keying on what the TARGET resists or is weak to, which
+                // the player cannot perceive and which CLAUDE.md puts off-limits
+                // ("must NOT read enemy spell lists or abilities"). Undead-ness
+                // is visible; elemental weakness is not. Do not "complete the
+                // set" here.
+                //
+                // Also absent: NeedsCharge. A drained enchanted weapon is a
+                // reason to rank it LOWER, and weaponChargeWeight already
+                // surfaces the soul gem, which is the action actually taken.
+
+                return maxWeight;
             }
             // =====================================================================
             // SCROLL CANDIDATES
