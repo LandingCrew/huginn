@@ -6,6 +6,7 @@
 
 #include <atomic>
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <vector>
@@ -164,8 +165,109 @@ namespace Huginn::Wheeler
         // Returns true if the wheel was truly closed and IntuitionMenu was shown.
         bool CheckPendingWheelClose();
 
+        // ============================================================================
+        // Environment (step 3: injected effects)
+        //
+        // When the player touches the wheel, most of Huginn needs to hear about
+        // it — locks break, the page syncs, a cooldown starts, the learner gets
+        // an equip event, the widget hides. Those used to be direct calls, which
+        // made wheeler/ depend on slot/, learning/, candidate/ and ui/: a
+        // low-level integration reaching up into pipeline policy, the same shape
+        // #10a and #10b removed elsewhere.
+        //
+        // They are now supplied by the composition root (Main.cpp). This class
+        // decides WHAT happened and WHEN, and knows nothing about who cares.
+        //
+        // THREAD SAFETY — two call contexts, and three callbacks see both:
+        //
+        //   Wheeler's callback thread, WITH m_callbackMutex held:
+        //     lockSlotForActivation, onItemUsed, markHuginnEquip, startCooldown,
+        //     setWidgetVisible and setCurrentPage (via HandleWheelOpened).
+        //     Exactly where the direct calls used to sit, so no lock order
+        //     changed. None of these may call back into WheelerClient, and none
+        //     may call the Wheeler API — a synchronous callback would re-enter
+        //     the mutex.
+        //
+        //   The update thread, holding NO lock:
+        //     setCurrentPage, setWidgetVisible and markPageDirty, all via
+        //     CheckPendingWheelClose.
+        //
+        //   No lock, callback thread:
+        //     publishWheelerEquip — its subscribers take StateManager and bus
+        //     locks of their own.
+        //
+        // So setCurrentPage and setWidgetVisible can genuinely run concurrently
+        // with their callback-thread counterparts, and a provider must be safe
+        // under concurrent invocation rather than assuming serialization.
+        // Today's both are: SlotAllocator's page state is atomic, and
+        // IntuitionMenu::SetVisible defers to the UI thread via AddUITask.
+        // ============================================================================
+        struct Environment
+        {
+            /// Sticky policy: hold this slot so the activated item stays visible.
+            std::function<void(size_t slotIndex)> lockSlotForActivation;
+
+            /// Empty/Backfill: the player used this item; break its slot lock.
+            std::function<void(RE::FormID)> onItemUsed;
+
+            /// Attribute the coming equip to Huginn, not to the player's own UI.
+            std::function<void(RE::FormID)> markHuginnEquip;
+
+            /// Suppress this item from the next few candidate passes. The caller
+            /// owns the form-type classification — it is the side that knows
+            /// what a SourceType is.
+            std::function<void(RE::FormID)> startCooldown;
+
+            /// Announce a Wheeler-mediated equip to the learning subscribers.
+            /// Called WITHOUT m_callbackMutex held.
+            std::function<void(RE::FormID)> publishWheelerEquip;
+
+            /// Show or hide the Intuition widget as the wheel opens and closes.
+            std::function<void(bool visible)> setWidgetVisible;
+
+            /// Follow Wheeler's active wheel with Huginn's current page.
+            std::function<void(size_t pageIndex)> setCurrentPage;
+
+            /// Force the pipeline to run so the widget repaints on wheel close.
+            std::function<void()> markPageDirty;
+
+            /// Every effect wired. Lives on the struct, immediately below the
+            /// fields, so the list cannot drift: SetEnvironment validates with
+            /// it and EnvironmentReady() gates with it, and adding a ninth
+            /// callback without extending this fails to compile nothing but is
+            /// impossible to overlook — the list is right here. A half-wired
+            /// Environment that slipped past both would throw
+            /// std::bad_function_call from a Wheeler callback, which in an SKSE
+            /// plugin is a crash to desktop, not a log line.
+            [[nodiscard]] bool Complete() const noexcept
+            {
+                return lockSlotForActivation && onItemUsed && markHuginnEquip &&
+                       startCooldown && publishWheelerEquip && setWidgetVisible &&
+                       setCurrentPage && markPageDirty;
+            }
+        };
+
+        /// Install the effects. Validated on assignment: a partially wired
+        /// Environment is rejected whole rather than half-applied, because a
+        /// missing callback would show up as a wheel that silently stops
+        /// affecting anything rather than as an error.
+        void SetEnvironment(Environment env);
+
     private:
         WheelerClient() = default;
+
+        /// Written once by SetEnvironment on the main thread at kDataLoaded,
+        /// before TryConnect installs the callbacks; read afterwards from both
+        /// Wheeler's callback thread and the update thread, unsynchronized.
+        /// Safe only because of that ordering — writing it again while the game
+        /// is running would race two reader threads, so don't. (Same invariant
+        /// as ExternalEquipLearner's, with one more reader.)
+        Environment m_env;
+
+        /// True once every callback is wired. Checked as the FIRST statement of
+        /// each Wheeler callback: a wiring fault must not get halfway through an
+        /// activation, and must be loud rather than silent.
+        [[nodiscard]] bool EnvironmentReady() const;
 
         // Callback state
         std::atomic<bool> m_wheelVisible{false};
