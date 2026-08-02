@@ -16,6 +16,14 @@
       registers, so the drowning override and water-breathing weight are dead
       indoors. Needs research (breath meter may beat geometry)
 
+- [ ] #74: 15 `AddItemByFormID` rejects (`-6 UnsupportedFormType`) in a 5ms
+      window, ~1s after wheel creation on save-load, then clean for the rest of
+      the session. Every slot, all pages, all `attempt 1/3` — nothing reaches the
+      negative cache, so it self-corrects. Reproduces on ~2 of 3 loads; what
+      separates a failing load from a clean one is the open question. Predates
+      the WheelSync extraction (seen on step-1 code); needs a `main` Debug
+      baseline to date it properly. Cosmetic until the retry constants change
+
 ## Known Mod Compatability Issues
 - [ ] #63: Requiem (LoreRim et al.) strips Fortify Smithing/Enchanting from
       alchemy, so the workstation context has no potion to rank — inert in the
