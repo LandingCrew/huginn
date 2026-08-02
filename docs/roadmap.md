@@ -76,6 +76,21 @@
       differing-slot-count trigger as #10b, but not one tick and not
       self-correcting. Repro config (one 4-slot page) is in the issue and also
       re-verifies #69 (S)
+- [x] #80: weapons were outside contextual scoring entirely — the
+      WeaponCandidate arm of `WeightForCandidate` read only `weaponWeight` /
+      `damageWeight` / `baseRelevanceWeight` and checked ZERO tags (spells check
+      ~12, items ~15), so a weapon's context weight was a constant: same in a
+      barrow as in a shop. `WeaponTag::Silver` and `EnchantTurnUndead` were
+      classified all along and `antiUndeadWeight` computed every tick; they had
+      never been connected. Now `Silver | EnchantTurnUndead → antiUndeadWeight`
+      and `EnchantBanish → antiDaedraWeight` (PR #81). Review caught Banish on
+      the wrong axis: `Archetype::kBanish` returns summoned daedra to Oblivion
+      and does nothing to draugr — mapped by name association, not by what the
+      archetype does. `Bound → boundWeapon` dropped as unreachable: the weight
+      fires only with nothing equipped, and conjuring a bound weapon auto-equips
+      it. NOT the elemental enchants — keying on what a target resists is
+      forbidden info, and there is a comment at the site saying so. Surfaced by
+      #64 removing the label that hid it
 - [ ] #79: `unlockWeight`, `slowFallWeight` and `antiDragonWeight` are computed
       by EvaluateRules and read by no candidate mapping — LookingAtLock,
       Falling and TargetDragon have never moved a ranking. `SpellTag` is at

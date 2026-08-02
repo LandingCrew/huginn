@@ -7,6 +7,7 @@
 #include "learning/item/ItemClassifier.h"
 #include "learning/item/ItemRegistry.h"
 #include "weapon/WeaponRegistry.h"
+#include "weapon/WeaponClassifier.h"
 #include "learning/UtilityScorer.h"
 #include "learning/ScoredCandidate.h"
 #include "candidate/CandidateGenerator.h"
@@ -18,6 +19,7 @@
 #include "learning/UsageMemory.h"
 #include "util/ScopedTimer.h"
 #include "context/ContextRuleEngine.h"
+#include "context/ContextWeightForCandidate.h"
 #include "display/ExplanationLabel.h"
 
 #include <random>
@@ -3997,6 +3999,118 @@ void RunRegressionTests()
         }
 
         logger::info("  ✓ PASS: Undead target → antiUndeadWeight={:.2f}"sv, weights.antiUndeadWeight);
+
+        // TC-15b: that weight has to reach a silver weapon, not just exist (#80).
+        // The weapon arm read none of its own tags, so a silver sword scored the
+        // same against a draugr as in a shop.
+        Candidate::WeaponCandidate silverSword{};
+        silverSword.name = "Silver Sword";
+        silverSword.tags = Weapon::WeaponTag::Melee | Weapon::WeaponTag::OneHanded |
+                           Weapon::WeaponTag::Silver;
+        const float silverWeight = Context::WeightForCandidate(silverSword, weights);
+        if (silverWeight < weights.antiUndeadWeight - 0.001f) {
+            logger::error("TC-15b FAIL: silver weapon vs undead should draw antiUndeadWeight "
+                "{:.2f}, got {:.3f}"sv, weights.antiUndeadWeight, silverWeight);
+            return;
+        }
+
+        // A steel sword must NOT — otherwise this is just a weapon baseline bump
+        // and every weapon would wear the "Undead" label again.
+        Candidate::WeaponCandidate steelSword{};
+        steelSword.name = "Steel Sword";
+        steelSword.tags = Weapon::WeaponTag::Melee | Weapon::WeaponTag::OneHanded;
+        const float steelWeight = Context::WeightForCandidate(steelSword, weights);
+        if (steelWeight >= weights.antiUndeadWeight - 0.001f) {
+            logger::error("TC-15b FAIL: plain weapon vs undead should stay at baseline, "
+                "got {:.3f} vs antiUndead {:.2f}"sv, steelWeight, weights.antiUndeadWeight);
+            return;
+        }
+
+        // A turn-undead enchantment does the same job as silver.
+        Candidate::WeaponCandidate turnBlade{};
+        turnBlade.name = "Mace of Turn Undead";
+        turnBlade.tags = Weapon::WeaponTag::Melee | Weapon::WeaponTag::Enchanted |
+                         Weapon::WeaponTag::EnchantTurnUndead;
+        if (Context::WeightForCandidate(turnBlade, weights) < weights.antiUndeadWeight - 0.001f) {
+            logger::error("TC-15b FAIL: turn-undead enchantment should draw antiUndeadWeight"sv);
+            return;
+        }
+
+        // Banish is a different axis — it returns summoned daedra to Oblivion and
+        // does nothing to draugr. It must NOT draw the undead weight...
+        Candidate::WeaponCandidate banishBlade{};
+        banishBlade.name = "Sword of Banishing";
+        banishBlade.tags = Weapon::WeaponTag::Melee | Weapon::WeaponTag::Enchanted |
+                           Weapon::WeaponTag::EnchantBanish;
+        if (Context::WeightForCandidate(banishBlade, weights) >= weights.antiUndeadWeight - 0.001f) {
+            logger::error("TC-15b FAIL: banish must not draw antiUndeadWeight against undead"sv);
+            return;
+        }
+
+        // ...and must draw the daedra weight against a daedra.
+        TargetCollection daedraTargets{};
+        TargetActorState daedraTarget{};
+        daedraTarget.actorFormID = 0x20002;
+        daedraTarget.targetType = TargetType::Daedra;
+        daedraTarget.isHostile = true;
+        daedraTargets.primary = daedraTarget;
+        const auto daedraWeights = engine.EvaluateRules(player, daedraTargets, testWorld);
+        if (Context::WeightForCandidate(banishBlade, daedraWeights) <
+            daedraWeights.antiDaedraWeight - 0.001f) {
+            logger::error("TC-15b FAIL: banish weapon vs daedra should draw antiDaedraWeight "
+                "{:.2f}, got {:.3f}"sv, daedraWeights.antiDaedraWeight,
+                Context::WeightForCandidate(banishBlade, daedraWeights));
+            return;
+        }
+        // Silver is not a daedra answer, so it stays at baseline there.
+        if (Context::WeightForCandidate(silverSword, daedraWeights) >=
+            daedraWeights.antiDaedraWeight - 0.001f) {
+            logger::error("TC-15b FAIL: silver must not draw antiDaedraWeight"sv);
+            return;
+        }
+
+        // And the silver bonus must not leak into an unrelated context: with no
+        // undead in front of the player, silver is just a material.
+        TargetCollection humanoidTargets{};
+        TargetActorState humanoidTarget{};
+        humanoidTarget.actorFormID = 0x20001;
+        humanoidTarget.targetType = TargetType::Humanoid;
+        humanoidTarget.isHostile = true;
+        humanoidTargets.primary = humanoidTarget;
+        const auto humanoidWeights = engine.EvaluateRules(player, humanoidTargets, testWorld);
+        if (std::abs(Context::WeightForCandidate(silverSword, humanoidWeights) -
+                     Context::WeightForCandidate(steelSword, humanoidWeights)) > 0.001f) {
+            logger::error("TC-15b FAIL: silver must not outweigh steel against a humanoid"sv);
+            return;
+        }
+
+        logger::info("  ✓ PASS: silver/turn-undead weapon vs undead → {:.2f} (steel stays {:.2f})"sv,
+            silverWeight, steelWeight);
+
+        // TC-15c: the tag feeding all of the above has to be assigned correctly.
+        // IsSilvered falls back to a name match, and a plain substring also
+        // matches "Quicksilver" — mercury, no anti-undead property. Observed
+        // in-game: Quicksilver Greatsword carried tags=00000019 (Silver set) and
+        // took ctx 0.60 against draugr. Inert until #80 read the tag; not inert
+        // afterwards.
+        struct { std::string_view name; bool expected; } kSilverNames[] = {
+            {"Silver Sword",           true },
+            {"Silver Heavy Bow",       true },
+            {"Silvered Greatsword",    true },   // suffix must still match
+            {"Ancient Silver Blade",   true },   // mid-name but at a word start
+            {"Quicksilver Greatsword", false},   // the reported collision
+            {"Quicksilver Ingot Mace", false},
+            {"Steel Sword",            false},
+        };
+        for (const auto& tc : kSilverNames) {
+            const bool got = Weapon::WeaponClassifier::NameContainsWord(tc.name, "silver");
+            if (got != tc.expected) {
+                logger::error("TC-15c FAIL: '{}' silver match = {}, expected {}"sv,
+                    tc.name, got, tc.expected);
+                return;
+            }
+        }
+        logger::info("  ✓ PASS: silver name match is word-bounded (Quicksilver excluded)"sv);
     }
 
     // =========================================================================
