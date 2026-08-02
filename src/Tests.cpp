@@ -2189,18 +2189,69 @@ void RunUnitTests()
             }
         }
 
-        // Test 6c: Falling → slowFallWeight = 0.8 (high priority)
+        // Test 6c: Falling ramps with depth, and a jump never reaches it (#60)
         {
-            State::PlayerActorState testPlayer{};
             State::WorldState testWorld{};
 
-            testPlayer.isFalling = true;
+            // A deep fall still reaches full weight.
+            State::PlayerActorState deepFall{};
+            deepFall.isFalling = true;
+            deepFall.fallDepth = State::PhysicsConstants::FALL_DEPTH_HIGH;
 
-            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
-
+            auto weights = engine.EvaluateRules(deepFall, testTargets, testWorld);
             if (std::abs(weights.slowFallWeight - 0.8f) > 0.01f) {
-                logger::error("TEST FAIL: Falling should give slowFallWeight=0.8, got {:.3f}",
+                logger::error("TEST FAIL: deep fall should give slowFallWeight=0.8, got {:.3f}",
                     weights.slowFallWeight);
+                return;
+            }
+
+            // Beyond the far end it clamps rather than running away.
+            State::PlayerActorState chasm{};
+            chasm.isFalling = true;
+            chasm.fallDepth = State::PhysicsConstants::FALL_DEPTH_HIGH * 10.0f;
+            if (std::abs(engine.EvaluateRules(chasm, testTargets, testWorld).slowFallWeight - 0.8f)
+                > 0.01f) {
+                logger::error("TEST FAIL: slowFallWeight must clamp at weightFallingHigh");
+                return;
+            }
+
+            // Halfway up the ramp reads half.
+            State::PlayerActorState midFall{};
+            midFall.isFalling = true;
+            midFall.fallDepth = (State::PhysicsConstants::FALL_DEPTH_MIN +
+                                 State::PhysicsConstants::FALL_DEPTH_HIGH) * 0.5f;
+            const float midWeight =
+                engine.EvaluateRules(midFall, testTargets, testWorld).slowFallWeight;
+            if (std::abs(midWeight - 0.4f) > 0.01f) {
+                logger::error("TEST FAIL: mid-depth fall should be half weight, got {:.3f}",
+                    midWeight);
+                return;
+            }
+
+            // The reported bug: a jump. StateManager leaves isFalling false below
+            // FALL_DEPTH_MIN, so this is what the rule actually sees on every hop.
+            State::PlayerActorState jump{};
+            jump.isFalling = false;
+            jump.fallDepth = 0.0f;
+            if (engine.EvaluateRules(jump, testTargets, testWorld).slowFallWeight != 0.0f) {
+                logger::error("TEST FAIL: a jump must not produce any slow-fall weight");
+                return;
+            }
+
+            // And the reason must stay quiet for a shallow drop, so it cannot
+            // outrank a live combat reason for a tick (the observed harm).
+            State::PlayerActorState shallow{};
+            shallow.isFalling = true;
+            shallow.fallDepth = State::PhysicsConstants::FALL_DEPTH_MIN + 1.0f;
+            const auto shallowWeights = engine.EvaluateRules(shallow, testTargets, testWorld);
+            if (engine.DominantReason(shallowWeights, {}) == Context::ContextReason::Falling) {
+                logger::error("TEST FAIL: a shallow drop must not report Falling");
+                return;
+            }
+            if (engine.DominantReason(
+                    engine.EvaluateRules(deepFall, testTargets, testWorld), {}) !=
+                Context::ContextReason::Falling) {
+                logger::error("TEST FAIL: a deep fall should report Falling");
                 return;
             }
         }

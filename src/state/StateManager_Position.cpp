@@ -20,6 +20,7 @@ namespace Huginn::State
       bool newIsUnderwater = false;
       bool newIsSwimming = false;
       bool newIsFalling = false;
+      float newFallDepth = DefaultState::ON_GROUND;
       bool newIsOverencumbered = false;
       bool newIsSneaking = false;
       bool newIsInCombat = false;
@@ -40,6 +41,7 @@ namespace Huginn::State
         m_playerState.isUnderwater = newIsUnderwater;
         m_playerState.isSwimming = newIsSwimming;
         m_playerState.isFalling = newIsFalling;
+        m_playerState.fallDepth = newFallDepth;
         m_playerState.isOverencumbered = newIsOverencumbered;
         m_playerState.isSneaking = newIsSneaking;
         m_playerState.isInCombat = newIsInCombat;
@@ -63,8 +65,28 @@ namespace Huginn::State
       // Swimming check
       newIsSwimming = player->AsActorState()->IsSwimming();
 
-      // Falling check
-      newIsFalling = player->IsInMidair();
+      // Falling check (#60).
+      //
+      // IsInMidair() alone is true for any airborne moment — a jump, a step off
+      // a kerb, a knockback — so taking it at face value drove slowFallWeight to
+      // full on every hop, and put `Falling` (a high-priority reason) over
+      // genuine ones for a tick each time.
+      //
+      // Instead: remember the Z the player left the ground at, and measure how
+      // far BELOW it they now are. A jump rises and returns to its own take-off
+      // height, so its depth stays ~0 and never reaches the gate. A real drop
+      // ramps through it. This is the velocity/height threshold the old comment
+      // in ContextRuleEngine claimed already existed.
+      const bool inMidair = player->IsInMidair();
+      const float currentZ = player->GetPosition().z;
+      if (!inMidair) {
+      m_groundZ = currentZ;
+      newFallDepth = DefaultState::ON_GROUND;
+      } else {
+      // Rising (or level) keeps depth at 0 rather than going negative.
+      newFallDepth = std::max(0.0f, m_groundZ - currentZ);
+      }
+      newIsFalling = newFallDepth >= PhysicsConstants::FALL_DEPTH_MIN;
 
       // Overencumbered check (pattern from EnvironmentSensor.cpp)
       auto* actorValueOwner = player->AsActorValueOwner();
@@ -98,14 +120,26 @@ namespace Huginn::State
       // Stage 3b: Update position state with change detection
       {
       std::unique_lock lock(m_playerMutex);
+      // fallDepth compared by bucket: the raw value changes every tick of a
+      // fall, so an exact compare would report a change ~10×/second while
+      // airborne. See PlayerActorState::FallDepthBucket.
+      const int newFallBucket =
+          static_cast<int>(newFallDepth / PhysicsConstants::FALL_DEPTH_BUCKET);
+
       bool changed = (m_playerState.isUnderwater != newIsUnderwater ||
                       m_playerState.isSwimming != newIsSwimming ||
                       m_playerState.isFalling != newIsFalling ||
+                      m_playerState.FallDepthBucket() != newFallBucket ||
                       m_playerState.isOverencumbered != newIsOverencumbered ||
                       m_playerState.isSneaking != newIsSneaking ||
                       m_playerState.isInCombat != newIsInCombat ||
                       m_playerState.isMounted != newIsMounted ||
                       m_playerState.isMountedOnDragon != newIsMountedOnDragon);
+
+      // Stored unconditionally, after `changed` has read the old bucket: the
+      // curve reads the exact depth and stays smooth, while only a bucket
+      // crossing marks the state dirty.
+      m_playerState.fallDepth = newFallDepth;
 
       if (changed) {
         m_playerState.isUnderwater = newIsUnderwater;

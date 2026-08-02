@@ -224,9 +224,20 @@ namespace Huginn::Context
         // =====================================================================
         // FALLING → Slow Fall / Become Ethereal
         // =====================================================================
-        // StateManager sets isFalling based on velocity/height threshold
+        // StateManager sets isFalling once the descent below the take-off point
+        // clears FALL_DEPTH_MIN — a jump never does (#60). The weight then ramps
+        // with depth rather than snapping to full, matching how the vitals rules
+        // scale, so a short drop reads weaker than a cliff.
+        //
+        // The old comment here claimed StateManager already applied a
+        // velocity/height threshold. It did not: isFalling came straight from
+        // IsInMidair(), so every hop drove this to weightFallingHigh.
         if (player.isFalling) {
-            result.slowFallWeight = m_config.weightFallingHigh;
+            constexpr float span =
+                State::PhysicsConstants::FALL_DEPTH_HIGH - State::PhysicsConstants::FALL_DEPTH_MIN;
+            const float depth = player.fallDepth - State::PhysicsConstants::FALL_DEPTH_MIN;
+            const float ramp = std::clamp(depth / span, 0.0f, 1.0f);
+            result.slowFallWeight = m_config.weightFallingHigh * ramp;
         }
 
         // =====================================================================

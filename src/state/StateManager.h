@@ -373,6 +373,11 @@ namespace Huginn::State
       std::atomic<bool> m_isInCombat{false};
       bool m_wasInCombat = false;  // Previous tick's combat state (single-writer in PollPlayerPosition)
 
+      // Z the player last left the ground at. Fall depth is measured against it
+      // so a jump — which returns to its own take-off height — never registers
+      // as a fall (#60). Single-writer in PollPlayerPosition, same as above.
+      float m_groundZ = 0.0f;
+
       // =============================================================================
       // TARGET CHANGE DETECTION (Lightweight digest for pipeline skip optimization)
       // =============================================================================

@@ -98,12 +98,30 @@ namespace Huginn::State
       // Units: Skyrim distance units (vertical offset)
       inline constexpr float HEAD_HEIGHT = 120.0f;
 
-      // Approximate fall velocity (units per second)
-      // Why 500.0f: Empirical estimate from testing Skyrim's fall speed
-      // Used to convert fall timer (seconds) to estimated height above ground
-      // Formula: height = fallTime * FALL_VELOCITY
-      // Units: Skyrim distance units per second
-      inline constexpr float FALL_VELOCITY = 500.0f;
+      // Fall depth at which slow-fall starts to matter, and at which it matters
+      // fully. Measured as descent BELOW the point the player left the ground,
+      // not airtime — a jump rises and returns to its own take-off height, so
+      // its net descent is ~0 and it clears neither gate by construction. That
+      // is the whole point: IsInMidair() alone was true for every hop.
+      //
+      // Replaces FALL_VELOCITY, which documented a fallTime × velocity estimate
+      // that was never implemented. Measuring the Z drop directly is both more
+      // accurate and free of an empirical constant.
+      //
+      // Why 200: comfortably clear of the ~76-unit vanilla jump apex
+      // (fJumpHeightMin), so no hop reaches it even landing slightly below
+      // take-off, and still well under a drop that hurts.
+      // Why 600: where Skyrim itself starts applying fall damage — the engine's
+      // own opinion that the fall is dangerous, not a number we invented.
+      // Units: Skyrim distance units (vertical).
+      inline constexpr float FALL_DEPTH_MIN = 200.0f;
+      inline constexpr float FALL_DEPTH_HIGH = 600.0f;
+
+      // Bucket width for fall-depth change detection. The depth is continuous
+      // and must not mark the player state dirty every tick; the bucket does, so
+      // the weight ramp still gets re-scored as a fall deepens.
+      // Units: Skyrim distance units (vertical).
+      inline constexpr float FALL_DEPTH_BUCKET = 100.0f;
 
       // Invalid water height sentinel value
       // Why -1000000.0f: Skyrim engine uses this sentinel value to indicate
