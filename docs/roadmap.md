@@ -11,9 +11,19 @@
 - [ ] Intuition menu shown during "cut scenes"
 - [ ] Intuition menu not hiding when commanded by external mod
 - [ ] New game wheelerAPI integration seems to fail
-- [ ] #64: context label stamped on slots that context never ranked
-      (`Ore Vein(Green Apple)`) — four contexts reproduce it; smallest fix of
-      the group and the one to do first
+- [x] #64: context label stamped on slots that context never ranked
+      (`Ore Vein(Green Apple)`). A reason may now speak for a slot only where
+      the candidate draws weight from the field that reason is read off
+      (`Context::ReasonAppliesTo`), probed through the real
+      `WeightForCandidate` so there is no second copy of the tag→weight table.
+      The reason→field pairing moved out of `DominantReason`'s inline field
+      names into one `WeightFieldFor` table that both consumers read, so a
+      reason cannot fire off one field and be attributed off another.
+      **Surfaced:** `unlockWeight`, `slowFallWeight` and `antiDragonWeight` are
+      written by `EvaluateRules` and read by NO candidate mapping — the
+      LookingAtLock / Falling / TargetDragon contexts have never influenced a
+      ranking, and their label was the only evidence they existed. They now
+      correctly label nothing. Tracked as #79 (PR #78)
 - [ ] #60: `Falling` reads `IsInMidair()`, true for any jump — spikes slow-fall
       weight in the live ranking, not just the label
 - [ ] #62: context reason flickers for a single tick (`Sneaking`, `Undead`,
@@ -66,6 +76,14 @@
       differing-slot-count trigger as #10b, but not one tick and not
       self-correcting. Repro config (one 4-slot page) is in the issue and also
       re-verifies #69 (S)
+- [ ] #79: `unlockWeight`, `slowFallWeight` and `antiDragonWeight` are computed
+      by EvaluateRules and read by no candidate mapping — LookingAtLock,
+      Falling and TargetDragon have never moved a ranking. `SpellTag` is at
+      32/32 bits, so the spell side of those contexts was never wired
+      (`ItemTag` solved the same squeeze with `ItemTagExt`). Waterbreathing is
+      half-live for the same reason: the potion path works, the spell path
+      doesn't. Fix is a `SpellTagExt`; deleting the three is the honest
+      alternative. Surfaced by #64 removing their false label (M)
 - [ ] Scroll cold-start: all scrolls sit in the pool every tick but score
       `learn≈0` against trained items at `learn=7–8`, so one can never surface
       until used and can't be used until surfaced

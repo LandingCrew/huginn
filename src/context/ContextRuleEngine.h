@@ -6,6 +6,8 @@
 #include "ContextWeightConfig.h"
 #include "ContextReason.h"
 
+#include <algorithm>  // std::max (GetMaxWeight)
+
 namespace Huginn::Context
 {
     // =============================================================================
@@ -108,7 +110,7 @@ namespace Huginn::Context
          * @brief Get the maximum weight across all categories.
          * Used for debugging and validation.
          */
-        [[nodiscard]] float GetMaxWeight() const noexcept
+        [[nodiscard]] constexpr float GetMaxWeight() const noexcept
         {
             float maxWeight = 0.0f;
             maxWeight = std::max(maxWeight, healingWeight);
@@ -147,11 +149,36 @@ namespace Huginn::Context
         /**
          * @brief Check if all weights are zero (no context).
          */
-        [[nodiscard]] bool IsAllZero() const noexcept
+        /// constexpr so ReasonAppliesTo's one-hot probe can assert at compile
+        /// time that clearing baseRelevanceWeight really does zero the map.
+        [[nodiscard]] constexpr bool IsAllZero() const noexcept
         {
             return GetMaxWeight() < 0.001f;  // Epsilon for floating point comparison
         }
     };
+
+    // =============================================================================
+    // REASON → WEIGHT FIELD
+    // =============================================================================
+    // Each weight-backed reason is derived from exactly one ContextWeightMap
+    // field. That pairing used to be implicit in DominantReason's Mark() calls;
+    // it is now named here because a second consumer needs it: the display asks
+    // "did THIS candidate draw weight from the field behind the tick's reason?"
+    // before letting the reason speak for a slot (Context::ReasonAppliesTo, #64).
+    //
+    // Single-sourcing matters more than the small indirection costs. If the two
+    // ever disagreed, a reason would fire off one field and be attributed off
+    // another — labels that are individually plausible and collectively wrong,
+    // which is precisely the failure #64 is about.
+    // =============================================================================
+
+    /// Pointer-to-member for the weight a reason is read off.
+    using ReasonWeightField = float ContextWeightMap::*;
+
+    /// The field behind `reason`, or nullptr for reasons no weight backs:
+    /// None, and the three ContextReasonSignals facts (AllyInjured,
+    /// LookingAtOre, InDarkness) that nothing scores on.
+    [[nodiscard]] ReasonWeightField WeightFieldFor(ContextReason reason) noexcept;
 
     // =============================================================================
     // CONTEXT REASON SIGNALS
