@@ -16,13 +16,17 @@
       registers, so the drowning override and water-breathing weight are dead
       indoors. Needs research (breath meter may beat geometry)
 
-- [ ] #74: 15 `AddItemByFormID` rejects (`-6 UnsupportedFormType`) in a 5ms
-      window, ~1s after wheel creation on save-load, then clean for the rest of
-      the session. Every slot, all pages, all `attempt 1/3` — nothing reaches the
-      negative cache, so it self-corrects. Reproduces on ~2 of 3 loads; what
-      separates a failing load from a clean one is the open question. Predates
-      the WheelSync extraction (seen on step-1 code); needs a `main` Debug
-      baseline to date it properly. Cosmetic until the retry constants change
+- [ ] #74: 13–15 `AddItemByFormID` rejects (`-6 UnsupportedFormType`) ~1s after
+      save-load, then clean for the session. **Root cause found:** every failing
+      item is a weapon with `uid=0`, which Wheeler is documented to reject
+      (changelog v0.11.3). Weapons load with `uniqueID=0` because the load-time
+      scan skips extraLists (`EXTRALIST_STABILIZATION_MS`=500), and the primed
+      reconcile that fills them runs at `WEAPON_RECONCILE_RETRY_MS`=1000. The
+      first Wheeler push lands at 981–998ms across three observed loads — a coin
+      flip on ~100ms tick phase against that 1s deadline, hence ~2-of-3.
+      Not a Wheeler bug and not from the split. Fix: skip the call when a weapon
+      has `uniqueID==0` rather than spending a retry; must not consume
+      `slotRetries` (3 would poison the entry for 30s) nor log above trace (S)
 
 ## Known Mod Compatability Issues
 - [ ] #63: Requiem (LoreRim et al.) strips Fortify Smithing/Enchanting from
