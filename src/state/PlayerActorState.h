@@ -451,8 +451,14 @@ namespace Huginn::State
     // Position/state flags (player-specific)
     bool isUnderwater = false;
     bool isSwimming = false;
+    // True only for a fall deep enough to matter — NOT raw IsInMidair(), which
+    // is true for every jump, ledge-hop and knockback (#60). Set when fallDepth
+    // clears PhysicsConstants::FALL_DEPTH_MIN.
     bool isFalling = false;
-    float heightAboveGround = DefaultState::ON_GROUND;
+    // Descent below the point the player last left the ground, in Skyrim units.
+    // 0 while grounded and throughout an ordinary jump, which returns to its own
+    // take-off height. Drives the continuous slow-fall curve.
+    float fallDepth = 0.0f;
     bool isOverencumbered = false;
     bool isSneaking = false;
     bool isInCombat = false;
@@ -600,8 +606,21 @@ namespace Huginn::State
              isSneaking == other.isSneaking &&
              isInCombat == other.isInCombat &&
              isMounted == other.isMounted &&
-             isMountedOnDragon == other.isMountedOnDragon;
-      // Note: heightAboveGround excluded (continuous value, isFalling captures important state)
+             isMountedOnDragon == other.isMountedOnDragon &&
+             FallDepthBucket() == other.FallDepthBucket();
+      // fallDepth is compared by bucket, not exactly: the raw value changes
+      // every tick of a fall and would mark the state dirty continuously, but
+      // ignoring it entirely would freeze the slow-fall ramp at whatever the
+      // weight was when isFalling first flipped.
     }
+
+    /// Coarse fall-depth level, for change detection only. The free-standing
+    /// form exists so the poller can bucket a candidate depth with the same
+    /// arithmetic it will be compared against — two copies could drift, and the
+    /// symptom would be change detection silently failing mid-fall.
+    [[nodiscard]] static int FallDepthBucketOf(float depth) noexcept {
+      return static_cast<int>(depth / PhysicsConstants::FALL_DEPTH_BUCKET);
+    }
+    [[nodiscard]] int FallDepthBucket() const noexcept { return FallDepthBucketOf(fallDepth); }
   };
 }

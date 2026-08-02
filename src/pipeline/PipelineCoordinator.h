@@ -46,6 +46,9 @@ namespace Huginn::Pipeline
         float currentMagicka = 0.0f;
         uint32_t stateHash = 0;
         bool elementalDamageActive = false;
+        // Falling is not in the GameState hash either — see the bypass in
+        // CheckHashSkip and m_wasFalling below (#60).
+        bool fallingActive = false;
 
         // Pipeline outputs (built by successive steps)
         std::vector<Scoring::ScoredCandidate> scoredCandidates;
@@ -87,6 +90,7 @@ namespace Huginn::Pipeline
             currentMagicka = 0.0f;
             stateHash = 0;
             elementalDamageActive = false;
+            fallingActive = false;
 
             scoredCandidates.clear();
             overrides.activeOverrides.clear();
@@ -180,6 +184,12 @@ namespace Huginn::Pipeline
         // part of the GameState hash), or fire-scored recommendations persist
         // after the window closes.
         bool m_wasElementalDamageActive = false;
+
+        // Same problem, same shape: isFalling is not in the GameState hash,
+        // so a fall that changes nothing else is invisible to the skip check
+        // and never gets scored. The falling edge needs one more run to clear
+        // slow-fall scoring once the player lands (#60).
+        bool m_wasFalling = false;
         State::GameState m_lastLoggedState{};
 
         // Recommendation logging (both build configs)

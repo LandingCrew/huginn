@@ -151,6 +151,14 @@ void PipelineCoordinator::GatherState(PipelineContext& ctx)
         ctx.healthTracking.timeSinceLastFrost < kElementalWindow ||
         ctx.healthTracking.timeSinceLastShock < kElementalWindow;
 
+    // Falling has the same problem as the elemental window: it is not in the
+    // GameState hash, so a fall that changes nothing else is invisible to the
+    // skip check. That was masked while isFalling came from IsInMidair(), since
+    // jumps mostly happen mid-combat where the hash is moving anyway. Restricted
+    // to real falls (#60), the context is usually a solitary event — stepping
+    // off a ledge changes no bucket at all — and would never be scored.
+    ctx.fallingActive = ctx.playerState.isFalling;
+
     ctx.currentMagicka = ctx.actorValue->GetActorValue(RE::ActorValue::kMagicka);
 }
 
@@ -165,13 +173,19 @@ bool PipelineCoordinator::CheckHashSkip(PipelineContext& ctx, bool pageChanged)
     // otherwise invisible and stale fire/frost/shock scoring would persist.
     const bool elementalBypass = ctx.elementalDamageActive || m_wasElementalDamageActive;
 
-    if (ctx.stateHash == m_lastPipelineHash && !pageChanged && !elementalBypass) {
+    // Falling, for the same reason and with the same falling-edge run: landing
+    // must clear slow-fall scoring, and the landing itself changes no hashed
+    // bucket. Bounded by construction — a fall is over in about a second.
+    const bool fallingBypass = ctx.fallingActive || m_wasFalling;
+
+    if (ctx.stateHash == m_lastPipelineHash && !pageChanged && !elementalBypass && !fallingBypass) {
         // Keep cache timestamp fresh so external equip events aren't rejected as stale
         Learning::PipelineStateCache::GetSingleton().RefreshTimestamp();
         return true;  // Skip
     }
     m_lastPipelineHash = ctx.stateHash;
     m_wasElementalDamageActive = ctx.elementalDamageActive;
+    m_wasFalling = ctx.fallingActive;
     return false;  // Don't skip
 }
 

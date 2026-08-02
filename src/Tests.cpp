@@ -2189,20 +2189,163 @@ void RunUnitTests()
             }
         }
 
-        // Test 6c: Falling → slowFallWeight = 0.8 (high priority)
+        // Test 6c: Falling ramps with depth, and a jump never reaches it (#60)
         {
-            State::PlayerActorState testPlayer{};
             State::WorldState testWorld{};
 
-            testPlayer.isFalling = true;
+            // A deep fall still reaches full weight.
+            State::PlayerActorState deepFall{};
+            deepFall.isFalling = true;
+            deepFall.fallDepth = State::PhysicsConstants::FALL_DEPTH_HIGH;
 
-            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
-
+            auto weights = engine.EvaluateRules(deepFall, testTargets, testWorld);
             if (std::abs(weights.slowFallWeight - 0.8f) > 0.01f) {
-                logger::error("TEST FAIL: Falling should give slowFallWeight=0.8, got {:.3f}",
+                logger::error("TEST FAIL: deep fall should give slowFallWeight=0.8, got {:.3f}",
                     weights.slowFallWeight);
                 return;
             }
+
+            // Beyond the far end it clamps rather than running away.
+            State::PlayerActorState chasm{};
+            chasm.isFalling = true;
+            chasm.fallDepth = State::PhysicsConstants::FALL_DEPTH_HIGH * 10.0f;
+            if (std::abs(engine.EvaluateRules(chasm, testTargets, testWorld).slowFallWeight - 0.8f)
+                > 0.01f) {
+                logger::error("TEST FAIL: slowFallWeight must clamp at weightFallingHigh");
+                return;
+            }
+
+            // Halfway up the ramp reads half.
+            State::PlayerActorState midFall{};
+            midFall.isFalling = true;
+            midFall.fallDepth = (State::PhysicsConstants::FALL_DEPTH_MIN +
+                                 State::PhysicsConstants::FALL_DEPTH_HIGH) * 0.5f;
+            const float midWeight =
+                engine.EvaluateRules(midFall, testTargets, testWorld).slowFallWeight;
+            if (std::abs(midWeight - 0.4f) > 0.01f) {
+                logger::error("TEST FAIL: mid-depth fall should be half weight, got {:.3f}",
+                    midWeight);
+                return;
+            }
+
+            // The reported bug: a jump. StateManager leaves isFalling false below
+            // FALL_DEPTH_MIN, so this is what the rule actually sees on every hop.
+            State::PlayerActorState jump{};
+            jump.isFalling = false;
+            jump.fallDepth = 0.0f;
+            if (engine.EvaluateRules(jump, testTargets, testWorld).slowFallWeight != 0.0f) {
+                logger::error("TEST FAIL: a jump must not produce any slow-fall weight");
+                return;
+            }
+
+            // And the reason must stay quiet for a shallow drop, so it cannot
+            // outrank a live combat reason for a tick (the observed harm).
+            State::PlayerActorState shallow{};
+            shallow.isFalling = true;
+            shallow.fallDepth = State::PhysicsConstants::FALL_DEPTH_MIN + 1.0f;
+            const auto shallowWeights = engine.EvaluateRules(shallow, testTargets, testWorld);
+            if (engine.DominantReason(shallowWeights, {}) == Context::ContextReason::Falling) {
+                logger::error("TEST FAIL: a shallow drop must not report Falling");
+                return;
+            }
+            if (engine.DominantReason(
+                    engine.EvaluateRules(deepFall, testTargets, testWorld), {}) !=
+                Context::ContextReason::Falling) {
+                logger::error("TEST FAIL: a deep fall should report Falling");
+                return;
+            }
+        }
+
+        // Test 6c-2: FallTracker itself (#60). The rule engine was never the
+        // broken half — `isFalling = IsInMidair()` was — so the take-off-Z
+        // policy is what actually needs covering. It is engine-free precisely
+        // so these cases can run without a live PlayerCharacter.
+        {
+            using State::FallTracker;
+            constexpr float kMaxDelta = 1500.0f;  // 100ms poll at MAX_FALL_SPEED
+
+            // A jump: grounded, rise to apex, come back down to take-off height.
+            // Depth must never leave 0 — the reported bug in its purest form.
+            {
+                FallTracker t;
+                const float profile[] = {100.0f, 140.0f, 170.0f, 176.0f, 150.0f, 110.0f, 100.0f};
+                bool first = true;
+                for (const float z : profile) {
+                    const float depth = t.Update(z, /*airborne=*/!first, kMaxDelta);
+                    first = false;
+                    if (depth != 0.0f) {
+                        logger::error("TEST FAIL: a jump produced fallDepth {:.1f} at z={:.1f}",
+                            depth, z);
+                        return;
+                    }
+                }
+            }
+
+            // A real drop off a ledge measures the descent below take-off.
+            {
+                FallTracker t;
+                t.Update(1000.0f, false, kMaxDelta);          // grounded, anchor at 1000
+                if (const float d = t.Update(800.0f, true, kMaxDelta); std::abs(d - 200.0f) > 0.01f) {
+                    logger::error("TEST FAIL: 200-unit drop measured {:.1f}", d);
+                    return;
+                }
+                if (const float d = t.Update(300.0f, true, kMaxDelta); std::abs(d - 700.0f) > 0.01f) {
+                    logger::error("TEST FAIL: 700-unit drop measured {:.1f}", d);
+                    return;
+                }
+                // Landing re-anchors.
+                if (t.Update(300.0f, false, kMaxDelta) != 0.0f) {
+                    logger::error("TEST FAIL: landing should reset fall depth");
+                    return;
+                }
+            }
+
+            // A relocation — save load, cell door, fast travel — must re-anchor
+            // rather than report the world-space difference as a fall. Standing
+            // on a peak, then loading into an interior far below.
+            {
+                FallTracker t;
+                t.Update(20000.0f, false, kMaxDelta);
+                if (const float d = t.Update(100.0f, true, kMaxDelta); d != 0.0f) {
+                    logger::error("TEST FAIL: a relocation reported fallDepth {:.1f}", d);
+                    return;
+                }
+                // ...and tracking resumes normally from the new anchor.
+                if (const float d = t.Update(-200.0f, true, kMaxDelta);
+                    std::abs(d - 300.0f) > 0.01f) {
+                    logger::error("TEST FAIL: post-relocation fall measured {:.1f}", d);
+                    return;
+                }
+            }
+
+            // First poll of a session, already airborne, with no anchor yet.
+            // Must NOT measure against a default-constructed 0 — plenty of cells
+            // sit at negative Z, which would read as a large positive fall.
+            {
+                FallTracker t;
+                if (const float d = t.Update(-5000.0f, true, kMaxDelta); d != 0.0f) {
+                    logger::error("TEST FAIL: unanchored first poll reported {:.1f}", d);
+                    return;
+                }
+            }
+
+            // Reset() drops the anchor, so a post-load poll cannot measure
+            // against the previous save's take-off Z.
+            {
+                FallTracker t;
+                t.Update(20000.0f, false, kMaxDelta);
+                t.Reset();
+                if (t.IsAnchored()) {
+                    logger::error("TEST FAIL: Reset() left the tracker anchored");
+                    return;
+                }
+                if (const float d = t.Update(100.0f, true, kMaxDelta); d != 0.0f) {
+                    logger::error("TEST FAIL: post-Reset poll reported fallDepth {:.1f}", d);
+                    return;
+                }
+            }
+
+            logger::info("  ✓ PASS: FallTracker (jump, drop, relocation, unanchored, reset)"sv);
         }
 
         // Test 6d: Workstation (Forge) → fortifySmithingWeight = 0.8
