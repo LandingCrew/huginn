@@ -84,6 +84,15 @@ namespace Huginn::State
       newFallDepth = m_fallTracker.Update(currentZ, airborne, maxPlausibleDelta);
       newIsFalling = newFallDepth >= PhysicsConstants::FALL_DEPTH_MIN;
 
+      // Transition only — the gate is otherwise invisible in a log, which makes
+      // "correctly quiet" and "never fires at all" look identical. Depth is the
+      // number to read when tuning FALL_DEPTH_MIN against a real ledge.
+      if (newIsFalling != m_wasFalling) {
+      logger::debug("[Falling] {} at depth {:.0f} (gate {:.0f})"sv,
+          newIsFalling ? "start" : "end", newFallDepth, PhysicsConstants::FALL_DEPTH_MIN);
+      m_wasFalling = newIsFalling;
+      }
+
       // Overencumbered check (pattern from EnvironmentSensor.cpp)
       auto* actorValueOwner = player->AsActorValueOwner();
       if (actorValueOwner) {

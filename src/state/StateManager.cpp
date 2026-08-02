@@ -150,6 +150,7 @@ namespace Huginn::State
       // possibly while the player is still airborne as the cell settles, which
       // is exactly when a stale anchor would report a thousand-unit fall.
       m_fallTracker.Reset();
+      m_wasFalling = false;
 
       // --- Elemental window flag (stale true would hold the outer gate open) ---
       m_elementalWindowActive.store(false, std::memory_order_relaxed);
