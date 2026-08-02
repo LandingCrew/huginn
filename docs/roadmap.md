@@ -1,6 +1,13 @@
 # Huginn Roadmap
 
 ## Known Bugs
+- [ ] #76: loading a second save in one session (esp. a different character)
+      leaves Huginn's stored wheel indices stale; `UpdatePage` finds every page
+      unmanaged ~1s after creation and sets `wheelIndex=-1` permanently. Does
+      NOT self-correct — the wheel is empty until `hg reload` or another
+      save-load. Same index-shift hazard the v3 delete-by-label path dodges on
+      the delete side; the read side has no equivalent. Ruled out as #75 fallout
+      (same build produced clean sessions). Repro in the issue, unconfirmed
 - [ ] Intuition menu shown during "cut scenes"
 - [ ] Intuition menu not hiding when commanded by external mod
 - [ ] New game wheelerAPI integration seems to fail
