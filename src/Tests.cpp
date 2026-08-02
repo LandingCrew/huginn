@@ -7,6 +7,7 @@
 #include "learning/item/ItemClassifier.h"
 #include "learning/item/ItemRegistry.h"
 #include "weapon/WeaponRegistry.h"
+#include "weapon/WeaponClassifier.h"
 #include "learning/UtilityScorer.h"
 #include "learning/ScoredCandidate.h"
 #include "candidate/CandidateGenerator.h"
@@ -4085,6 +4086,31 @@ void RunRegressionTests()
 
         logger::info("  ✓ PASS: silver/turn-undead weapon vs undead → {:.2f} (steel stays {:.2f})"sv,
             silverWeight, steelWeight);
+
+        // TC-15c: the tag feeding all of the above has to be assigned correctly.
+        // IsSilvered falls back to a name match, and a plain substring also
+        // matches "Quicksilver" — mercury, no anti-undead property. Observed
+        // in-game: Quicksilver Greatsword carried tags=00000019 (Silver set) and
+        // took ctx 0.60 against draugr. Inert until #80 read the tag; not inert
+        // afterwards.
+        struct { std::string_view name; bool expected; } kSilverNames[] = {
+            {"Silver Sword",           true },
+            {"Silver Heavy Bow",       true },
+            {"Silvered Greatsword",    true },   // suffix must still match
+            {"Ancient Silver Blade",   true },   // mid-name but at a word start
+            {"Quicksilver Greatsword", false},   // the reported collision
+            {"Quicksilver Ingot Mace", false},
+            {"Steel Sword",            false},
+        };
+        for (const auto& tc : kSilverNames) {
+            const bool got = Weapon::WeaponClassifier::NameContainsWord(tc.name, "silver");
+            if (got != tc.expected) {
+                logger::error("TC-15c FAIL: '{}' silver match = {}, expected {}"sv,
+                    tc.name, got, tc.expected);
+                return;
+            }
+        }
+        logger::info("  ✓ PASS: silver name match is word-bounded (Quicksilver excluded)"sv);
     }
 
     // =========================================================================

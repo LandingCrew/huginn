@@ -165,5 +165,12 @@ namespace Huginn::Weapon
        * @return true if name contains keyword
        */
       [[nodiscard]] bool NameContains(std::string_view name, std::string_view keyword) const;
+
+   public:
+      /// As NameContains, but the match must start at a word boundary, so
+      /// "Quicksilver" does not answer to "silver". Public and static because
+      /// its correctness now drives scoring, not just a tag nobody read — it is
+      /// a pure string predicate and is unit-tested directly (TC-15c).
+      [[nodiscard]] static bool NameContainsWord(std::string_view name, std::string_view keyword);
    };
 }
