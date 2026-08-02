@@ -699,7 +699,13 @@ namespace Huginn::Wheeler
                 if (newFormID != 0 && newUniqueID == 0 && RequiresUniqueID(newFormID)) {
                     if (pageWheel.slotUniqueIDDefers[idx] < MAX_UNIQUEID_DEFERS) {
                         ++pageWheel.slotUniqueIDDefers[idx];
-                        spdlog::trace("[WheelerClient] Page {} slot {} deferred ({}/{}): {:08X} has no uniqueID yet",
+                        // TEMPORARY at debug for #74 verification — revert to
+                        // trace before merge. Debug builds log at debug
+                        // (Main.cpp:574), so trace never reaches the file, which
+                        // made "the guard fired" and "the load won the race"
+                        // indistinguishable in the log. Bounded by
+                        // MAX_UNIQUEID_DEFERS, so this cannot run away.
+                        spdlog::debug("[WheelerClient] Page {} slot {} deferred ({}/{}): {:08X} has no uniqueID yet",
                             pageIndex, idx, pageWheel.slotUniqueIDDefers[idx], MAX_UNIQUEID_DEFERS, newFormID);
                         continue;
                     }
