@@ -24,11 +24,38 @@
       LookingAtLock / Falling / TargetDragon contexts have never influenced a
       ranking, and their label was the only evidence they existed. They now
       correctly label nothing. Tracked as #79 (PR #78)
-- [ ] #60: `Falling` reads `IsInMidair()`, true for any jump — spikes slow-fall
-      weight in the live ranking, not just the label
-- [ ] #62: context reason flickers for a single tick (`Sneaking`, `Undead`,
-      `Falling`), repainting all 8 labels; momentary states also outrank a
-      sustained `Low HP`
+- [x] #60: `Falling` read `IsInMidair()`, true for any jump, so each hop blanked
+      the dominant reason for a tick (enumerator 9 outranks every target/combat
+      reason). Now measures descent below the take-off Z: a jump returns to its
+      own height so its depth stays ~0 by construction, `isFalling` gates at 200
+      and the weight ramps to full at 600 (PR #82).
+      **Two things it turned up.** `GameState::GetHash()` omits falling
+      entirely, so `CheckHashSkip` skipped any tick where only the fall changed
+      — a peak depth of 567 against a 400 threshold still reported nothing.
+      Masked before, because jumps happen mid-combat where the hash moves
+      anyway; a real fall changes no hashed bucket. Fixed with the same
+      bypass + falling-edge run the elemental window uses, NOT by adding a
+      Q-learner state dimension (cosave bump). And the take-off Z survived save
+      loads in the first draft — `ResetTrackingState` zeroes the poll timers, so
+      loading into a low interior from a peak would have reported a
+      ~20,000-unit fall at full weight.
+      **Still inert downstream:** no slot wears `Falling`, because
+      `slowFallWeight` is read by no candidate mapping (#79). The context is now
+      correct, not yet useful
+- [x] #62: context reason flickered for a single tick (`Sneaking`, `Undead`,
+      `Falling`), repainting all 8 labels before they could be read. Each firing
+      was CORRECT — the player really was crouching — so this was display
+      stability, not detection, and had to be fixed separately from #60.
+      `Context::ReasonHold` damps the LABEL only; `ScoreCandidates` keeps using
+      the instantaneous weights. Asymmetric and priority-aware: a more urgent
+      reason (lower enumerator, the same ordering `DominantReason` resolves ties
+      with) is adopted instantly, so `Critical HP` never waits behind a stale
+      `Sneaking`; a release to `None` or a LESS urgent reason waits out
+      `REASON_HOLD_MS` (1500, chosen below SlotLocker's 3000ms content lock so a
+      label cannot outlive the contents it explains). Priority-awareness is what
+      also covers the same-band swap (`Undead → Outnumbered → Undead`) that a
+      plain release-delay would miss. Reset on save load — a held reason
+      describes the character just unloaded
 - [ ] #61: `isUnderwater` uses exterior-only water height — interior water never
       registers, so the drowning override and water-breathing weight are dead
       indoors. Needs research (breath meter may beat geometry)
@@ -90,15 +117,29 @@
       fires only with nothing equipped, and conjuring a bound weapon auto-equips
       it. NOT the elemental enchants — keying on what a target resists is
       forbidden info, and there is a comment at the site saying so. Surfaced by
-      #64 removing the label that hid it
-- [ ] #79: `unlockWeight`, `slowFallWeight` and `antiDragonWeight` are computed
+      #64 removing the label that hid it.
+      **Also fixed a dormant classifier bug it activated:** `IsSilvered` falls
+      back to a substring name match, and "Quicksilver" contains "silver", so
+      every Quicksilver weapon carried `WeaponTag::Silver`. Inert while nothing
+      read the tag; once #80 read it, an observed Quicksilver Greatsword took
+      ctx 0.30 → 0.60 vs draugr. `NameContainsWord` now requires a leading word
+      boundary ("Silvered Sword" must still match, so no trailing boundary).
+      bound/daedric keep the loose match — no observed collision, tags still
+      drive nothing. Verified in-game: `tags=00000019` → `00000009`
+- [ ] #79: **NEXT.** `unlockWeight`, `slowFallWeight` and `antiDragonWeight` are
+      computed
       by EvaluateRules and read by no candidate mapping — LookingAtLock,
       Falling and TargetDragon have never moved a ranking. `SpellTag` is at
       32/32 bits, so the spell side of those contexts was never wired
       (`ItemTag` solved the same squeeze with `ItemTagExt`). Waterbreathing is
       half-live for the same reason: the potion path works, the spell path
       doesn't. Fix is a `SpellTagExt`; deleting the three is the honest
-      alternative. Surfaced by #64 removing their false label (M)
+      alternative. Surfaced by #64 removing their false label.
+      **Now the bottleneck for three landed PRs:** #60 makes `Falling` fire
+      correctly and it still surfaces nothing, because no candidate draws
+      `slowFallWeight` — verified in-game 2026-08-02, reason fires, no slot
+      wears the label. Same for LookingAtLock, TargetDragon, and the spell
+      half of Underwater. A `SpellTagExt` closes all four in one shape (M)
 - [ ] Scroll cold-start: all scrolls sit in the pool every tick but score
       `learn≈0` against trained items at `learn=7–8`, so one can never surface
       until used and can't be used until surfaced

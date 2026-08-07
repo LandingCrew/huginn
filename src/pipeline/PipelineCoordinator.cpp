@@ -159,6 +159,11 @@ void PipelineCoordinator::GatherState(PipelineContext& ctx)
     // off a ledge changes no bucket at all — and would never be scored.
     ctx.fallingActive = ctx.playerState.isFalling;
 
+    // The third instance of this shape — a pending reason downgrade (#62) — has
+    // no ctx field: unlike these two it has no "current" reading to take here,
+    // because ReasonHold only advances in ScoreCandidates, below the skip check.
+    // Both gates read the latch straight off the member via NeedsForcedRun().
+
     ctx.currentMagicka = ctx.actorValue->GetActorValue(RE::ActorValue::kMagicka);
 }
 
@@ -168,17 +173,21 @@ void PipelineCoordinator::GatherState(PipelineContext& ctx)
 
 bool PipelineCoordinator::CheckHashSkip(PipelineContext& ctx, bool pageChanged)
 {
-    // Run during the elemental window AND once on its falling edge — the
-    // enriched flags aren't in the hash, so the close of the window is
-    // otherwise invisible and stale fire/frost/shock scoring would persist.
-    const bool elementalBypass = ctx.elementalDamageActive || m_wasElementalDamageActive;
+    // Rising edge: state gathered THIS tick that the hash cannot see — the
+    // elemental enrichment flags (isOnFire etc.) and a fall in progress. The
+    // falling edges live in NeedsForcedRun(), which grants the one further run
+    // each needs to clear itself: the close of an elemental window and a landing
+    // both change no hashed bucket, so stale fire/slow-fall scoring would
+    // otherwise persist. A pending reason downgrade is latch-only and rides
+    // along there too — see NeedsForcedRun.
+    //
+    // All bounded: a fall is over in about a second, the elemental window is
+    // fixed-length, and a hold expires within REASON_HOLD_MS / UPDATE_INTERVAL_MS
+    // runs (~15) and self-clears the moment the downgrade lands.
+    const bool unhashedStateActive = ctx.elementalDamageActive || ctx.fallingActive;
 
-    // Falling, for the same reason and with the same falling-edge run: landing
-    // must clear slow-fall scoring, and the landing itself changes no hashed
-    // bucket. Bounded by construction — a fall is over in about a second.
-    const bool fallingBypass = ctx.fallingActive || m_wasFalling;
-
-    if (ctx.stateHash == m_lastPipelineHash && !pageChanged && !elementalBypass && !fallingBypass) {
+    if (ctx.stateHash == m_lastPipelineHash && !pageChanged &&
+        !unhashedStateActive && !NeedsForcedRun()) {
         // Keep cache timestamp fresh so external equip events aren't rejected as stale
         Learning::PipelineStateCache::GetSingleton().RefreshTimestamp();
         return true;  // Skip
@@ -266,13 +275,35 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
     // Name the dominant reason once per tick, off the weights the ranking just
     // used — the display explanation can't disagree with the scoring (#10).
     // The two world facts below have no scoring weight to read them off.
-    ctx.contextReason = g_utilityScorer->DominantContextReason(
+    const auto rawReason = g_utilityScorer->DominantContextReason(
         contextWeights,
         Context::ContextReasonSignals{
             .allyInjured = ctx.targets.HasInjuredFollower(),
             .lookingAtOre = ctx.worldState.isLookingAtOreVein,
             .lightLevel = ctx.worldState.lightLevel,
         });
+
+    // Damp the LABEL only (#62). Scoring above already used the instantaneous
+    // weights; a reason true for one tick still repainted all eight subtexts and
+    // reverted before it could be read. The hold releases a reason slowly and
+    // adopts a more urgent one instantly — see ReasonHold for the policy.
+    // ctx.now, not a fresh clock read: RunPipeline already captured a canonical
+    // timestamp for this tick, and the hold is argued against SlotLocker's
+    // duration, so both must be measured off the same clock reading.
+    const double nowMs = std::chrono::duration<double, std::milli>(
+        ctx.now.time_since_epoch()).count();
+
+    // REASON_HOLD_MS is justified by sitting below the slot content lock — the
+    // label must not outlive the contents it explains — but that lock is
+    // fLockDurationMs, an INI value the player can lower or set to 0 to disable
+    // locking entirely. Clamp instead of asserting the default: with locking
+    // off, contents can swap every tick and the honest hold is zero, which
+    // degrades to the pre-#62 behaviour (a label that follows the raw reason
+    // exactly) rather than to a label describing a wheel that already moved on.
+    const float lockMs = Slot::SlotLocker::GetSingleton().GetConfig().lockDurationMs;
+    const float holdMs = std::min(Config::REASON_HOLD_MS, std::max(lockMs, 0.0f));
+
+    ctx.contextReason = m_reasonHold.Update(rawReason, nowMs, holdMs);
 
     // The reason drives a display string only, so nothing else in the log
     // reveals it — log the transition (not the tick) so a session can be
@@ -287,24 +318,39 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
     // Level is debug, not info: this is a behavior diagnostic, and behavior
     // soak runs are Debug builds (perf runs are Release+Tracy, where these
     // lines would only be noise). Meant to be read by an LLM or a log tool.
+    //
+    // Deduped on BOTH halves, and the raw one is printed whenever the hold is
+    // masking it. The displayed label alone is no longer a record of what the
+    // ranking saw (that is the whole point of the hold), so deduping on it would
+    // make a masked reason unrecoverable from any line in the log — and this
+    // line is the only place either value is ever written down.
+    //
     // NOTE: Single-threaded (pipeline runs on the update thread only).
-    static Context::ContextReason s_lastReason = Context::ContextReason::None;
-    if (ctx.contextReason != s_lastReason) {
-        const auto label = Display::ReasonLabel(ctx.contextReason);
-        const auto prev = Display::ReasonLabel(s_lastReason);
+    const LoggedReason nowLogged{ .raw = rawReason, .shown = ctx.contextReason };
+    if (!m_lastLoggedReason || *m_lastLoggedReason != nowLogged) {
+        const auto labelOr = [](Context::ContextReason r) {
+            const auto label = Display::ReasonLabel(r);
+            return label.empty() ? "(none)"sv : label;
+        };
         const auto& vitals = ctx.playerState.vitals;
+        // Only when they disagree: in the common case the hold is transparent
+        // and a permanent "raw:" column would just double every line.
+        const auto rawNote = rawReason == ctx.contextReason
+            ? std::string{}
+            : fmt::format(" (raw {})", labelOr(rawReason));
         // One decimal, not zero: the thresholds these lines exist to verify sit
         // ON integer percentages (15 / 25 / 30). At {:.0f} a true 15.4% prints
         // as "15%", so the one reading that decides whether the boundary held is
         // exactly the reading the format destroys.
-        logger::debug("[Context] Reason: {} → {} | hp={:.1f}% mp={:.1f}% sp={:.1f}% charge={}"sv,
-            prev.empty() ? "(none)"sv : prev,
-            label.empty() ? "(none)"sv : label,
+        logger::debug("[Context] Reason: {} → {}{} | hp={:.1f}% mp={:.1f}% sp={:.1f}% charge={}"sv,
+            m_lastLoggedReason ? labelOr(m_lastLoggedReason->shown) : "(none)"sv,
+            labelOr(ctx.contextReason),
+            rawNote,
             vitals.health * 100.0f, vitals.magicka * 100.0f, vitals.stamina * 100.0f,
             ctx.playerState.hasEnchantedWeapon
                 ? fmt::format("{:.1f}%", ctx.playerState.weaponChargePercent * 100.0f)
                 : "n/a");
-        s_lastReason = ctx.contextReason;
+        m_lastLoggedReason = nowLogged;
     }
 }
 

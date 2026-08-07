@@ -25,6 +25,18 @@ namespace Huginn::Config
    // Only affects debug builds
    inline constexpr float STATE_LOG_INTERVAL_MS = 1000.0f;
 
+   // How long a context reason stays on the wheel after it stops being true (#62).
+   // Only damps a DOWNGRADE — a more urgent reason is adopted instantly — so this
+   // is the longest a stale label can linger, not a delay on real news.
+   // Why 1500: a momentary crouch or a crosshair crossing a draugr is true for
+   // ~100ms, and 15× that is comfortably long enough to read. Also below
+   // SlotLocker's DEFAULT 3000ms content lock, so the label cannot outlive the
+   // slot contents it is explaining — but that lock is fLockDurationMs, which
+   // the player can lower or zero out, so this is a ceiling and not the whole
+   // guarantee. ScoreCandidates clamps the effective hold to the live lock
+   // duration; keep the two arguments together if this number changes.
+   inline constexpr float REASON_HOLD_MS = 1500.0f;
+
    // -----------------------------------------------------------------------------
    // Reward Shaping Configuration (v0.3.0+)
    // -----------------------------------------------------------------------------
