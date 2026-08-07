@@ -64,6 +64,17 @@
       ],
       "name": "vs2022-windows",
       "toolset": "v143"
+    },
+    {
+      "binaryDir": "${sourceDir}/build-verify",
+      "cacheVariables": {
+        "CompiledPluginsPath": null,
+        "COPY_OUTPUT": "FALSE"
+      },
+      "description": "Identical toolchain to vs2022-windows, but does not deploy: COPY_OUTPUT=FALSE and its own binary directory. Use when confirming a branch compiles without overwriting the DLL in the game directory — reviewing a PR, or building while a playtest session is live. CompiledPluginsPath is unset rather than inherited: with COPY_OUTPUT off nothing reads it, and leaving it set makes CMake warn about an unused variable on every configure.",
+      "displayName": "vs2022-windows (no deploy)",
+      "inherits": "vs2022-windows",
+      "name": "vs2022-windows-verify"
     }
   ],
   "version": 3
