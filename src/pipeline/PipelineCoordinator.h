@@ -14,6 +14,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <optional>
 #include <vector>
 
 namespace Huginn::Pipeline
@@ -50,8 +51,6 @@ namespace Huginn::Pipeline
         // Falling is not in the GameState hash either — see the bypass in
         // CheckHashSkip and m_wasFalling below (#60).
         bool fallingActive = false;
-        // Nor is a pending reason downgrade — see CheckHashSkip (#62).
-        bool reasonHoldPending = false;
 
         // Pipeline outputs (built by successive steps)
         std::vector<Scoring::ScoredCandidate> scoredCandidates;
@@ -94,7 +93,6 @@ namespace Huginn::Pipeline
             stateHash = 0;
             elementalDamageActive = false;
             fallingActive = false;
-            reasonHoldPending = false;
 
             scoredCandidates.clear();
             overrides.activeOverrides.clear();
@@ -135,16 +133,51 @@ namespace Huginn::Pipeline
                          std::chrono::steady_clock::time_point now,
                          bool pageChanged);
 
-        /// Clear cross-save display state. The held context reason describes the
-        /// character that was just unloaded and says nothing about the next one;
-        /// without this it would survive a load for up to REASON_HOLD_MS (#62).
+        /// True when the last completed run left behind state the GameState hash
+        /// cannot see, so the pipeline must run again even though no sensor
+        /// reported a change. ONE list, consulted by BOTH skip gates: the outer
+        /// one in RunPipelineIfNeeded (which returns before RunPipeline is ever
+        /// called) and CheckHashSkip below.
         ///
-        /// THREAD SAFETY: called from the game thread (save load) and the
-        /// console handler, both while the update thread may be inside
-        /// ScoreCandidates. Same exposure as the SlotLocker/SlotAllocator resets
-        /// alongside it in ResetPipelineSubsystems, and the worst case is one
-        /// tick showing a reason from either side of the reset.
-        void ResetDisplayState() { m_reasonHold.Reset(); m_reasonLogDirty = true; }
+        /// Three latches have needed this so far — the elemental window,
+        /// falling (#60) and a pending reason downgrade (#62) — and the first
+        /// two were each wired into one gate at a time. A latch wired into only
+        /// the inner gate is silently dead in a static scene, which is exactly
+        /// where the reason hold needed it. Add the fourth here, not at a call
+        /// site.
+        ///
+        /// Reads members written by the update thread; called from that same
+        /// thread only.
+        [[nodiscard]] bool NeedsForcedRun() const noexcept
+        {
+            return m_wasElementalDamageActive || m_wasFalling || m_reasonHold.IsHolding();
+        }
+
+        /// Drop everything that describes the character being unloaded. The held
+        /// context reason and the [Context] log baseline say nothing about the
+        /// next character (#62); the hash/state baselines below are worse — a
+        /// load into a state that happens to hash the same as the pre-load one
+        /// would let the FIRST post-load pass hash-skip, leaving the previous
+        /// character's recommendations on the wheel. ResetTrackingState opens
+        /// the outer gate for that pass, but nothing was reopening the inner one.
+        ///
+        /// THREAD SAFETY: NOT uniformly serialized. The console path
+        /// (`hg reset all`) runs under UpdateHandler::RunExclusive; the save-load
+        /// path (InitializeGameSystems → ResetPipelineSubsystems) does not, so
+        /// that one can land while the update thread is inside the pipeline.
+        /// Same exposure as the SlotLocker/SlotAllocator resets beside it, and
+        /// the worst case is one tick reading a mix of both sides — a stale
+        /// label or one redundant pipeline run, not a torn structure.
+        void ResetCrossSaveState()
+        {
+            m_reasonHold.Reset();
+            m_lastLoggedReason.reset();
+
+            m_lastPipelineHash = UINT32_MAX;  // Force the first post-load run
+            m_lastLoggedState = {};
+            m_wasElementalDamageActive = false;
+            m_wasFalling = false;
+        }
 
         /// Queue a one-shot full-detail recommendation dump (console `hg recs`).
         /// Logged by the next pipeline pass; caller should MarkPageDirty() +
@@ -209,9 +242,23 @@ namespace Huginn::Pipeline
         // Holds the displayed reason so a momentary one stays readable.
         // Label-only: ScoreCandidates above it always sees the raw weights.
         Context::ReasonHold m_reasonHold;
-        // Forces the next [Context] line to print, so the first transition
-        // after a load is not diffed against the previous character's reason.
-        bool m_reasonLogDirty = false;
+
+        // What the last [Context] line reported. Both halves, because the hold
+        // makes them diverge and the raw one is the only record of what actually
+        // drove the ranking — deduping on the displayed label alone would drop
+        // every raw change that a hold was masking.
+        struct LoggedReason
+        {
+            Context::ContextReason raw = Context::ContextReason::None;
+            Context::ContextReason shown = Context::ContextReason::None;
+            bool operator==(const LoggedReason&) const = default;
+        };
+        // Empty before the first line and after a load, so the first transition
+        // of a new character is never diffed against the previous one's reason.
+        // (An optional rather than a value + "dirty" flag: there is no reason
+        // value that can stand for "nothing logged yet" — None is a real one.)
+        std::optional<LoggedReason> m_lastLoggedReason;
+
         State::GameState m_lastLoggedState{};
 
         // Recommendation logging (both build configs)

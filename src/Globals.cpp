@@ -106,7 +106,7 @@ void ResetPipelineSubsystems() {
     slotLocker.Reset();
     slotLocker.SetConfig(LoadSlotLockerConfigFromINI());
 
-    Pipeline::PipelineCoordinator::GetSingleton().ResetDisplayState();
+    Pipeline::PipelineCoordinator::GetSingleton().ResetCrossSaveState();
 
     State::StateManager::GetSingleton().ResetTrackingState();
 }
