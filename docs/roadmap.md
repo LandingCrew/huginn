@@ -57,18 +57,30 @@
       also covers the same-band swap (`Undead → Outnumbered → Undead`) that a
       plain release-delay would miss. Reset on save load — a held reason
       describes the character just unloaded
-- [ ] #61: `isUnderwater` compares the player's head against
-      `cell->GetExteriorWaterHeight()`, so the drowning override and
-      water-breathing weight are dead wherever that value does not describe the
-      water actually overhead. **Worse than "interior water never registers":**
+- [x] #61: `isUnderwater` compared the player's head against
+      `cell->GetExteriorWaterHeight()` — one water plane for the whole cell — so
+      it was wrong wherever the local water is a placed object at its own
+      height. Worse than the "interior water never registers" it was filed as:
       observed 2026-08-08 fully submerged in the river at Graywinter Watch,
-      exterior, and it never fired — rivers and ponds are water objects at their
-      own height, not the cell's plane, so the test runs against a sea level far
-      below. Working set is effectively the sea and lakes on the worldspace
-      water level. Explains the "only detected in some places" report with a
-      cause unrelated to where you stand in a cell. Go straight to the breath
-      meter: it runs wherever the player is submerged and needs no geometry.
-      Blocks the last in-game check on #79's spell path
+      exterior, with no Underwater reason logged all session.
+      **The open question answered itself in CommonLibSSE, no breath meter
+      needed.** `TESObjectREFR::GetWaterHeight()` reads the engine's
+      `relevantWaterHeight` for that reference — the water it is actually in —
+      and only falls back to the cell plane when there is none. The old call was
+      literally the fallback path of the right one, so the fix is one line and
+      closes both halves at once. Same head-vs-surface test, right surface; the
+      +120 offset still rejects ankle-deep water (PR #85).
+      **Verified in-game:** the same river that failed an hour earlier, and an
+      interior cave pool — both labelling spell AND potion. That also closed
+      #79's last unverified link, which had no other way to be tested.
+      **Both dead consumers came back**, including the drowning override, which
+      had never once run in production. It behaves correctly: what looked like
+      double-placement was allocation running per page with a log line that
+      omitted the page (now fixed).
+      **Still open:** actionability — whether Skyrim lets the player use an item
+      at all while swimming. Detection being right does not make the drowning
+      override usable if the engine blocks interaction at that moment (same
+      question #60 raised). Tracked on the issue
 
 - [x] #74: 13–15 `AddItemByFormID` rejects (`-6 UnsupportedFormType`) ~1s after
       save-load, then clean for the session. **Root cause found:** every failing
