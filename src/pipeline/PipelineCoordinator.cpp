@@ -117,9 +117,14 @@ bool PipelineCoordinator::RunPipeline(
             ++displayedCount;
         }
     }
+    // "An override took a slot", not "an override condition was true". A
+    // condition can hold with nothing to offer — drowning with no waterbreathing
+    // potion is the ordinary case — and counting those inflates the soak
+    // override rate with ticks where the player was shown nothing.
+    const auto* topOverride = m_ctx.overrides.GetTopOverride();
     Telemetry::SoakMetrics::GetSingleton().RecordPipelineRun(
         m_ctx.scoredCandidates.size(), displayedCount,
-        m_ctx.overrides.GetTopOverride() != nullptr);
+        topOverride != nullptr && topOverride->candidate.has_value());
 
     return true;
 }
@@ -159,6 +164,11 @@ void PipelineCoordinator::GatherState(PipelineContext& ctx)
     // off a ledge changes no bucket at all — and would never be scored.
     ctx.fallingActive = ctx.playerState.isFalling;
 
+    // Underwater, for the same reason (#61). Submerging changes no hashed
+    // bucket — swimming is not sneaking, combat or a target — so without this
+    // the tick that flips it can hash-skip and the context never gets named.
+    ctx.underwaterActive = ctx.playerState.isUnderwater;
+
     // The third instance of this shape — a pending reason downgrade (#62) — has
     // no ctx field: unlike these two it has no "current" reading to take here,
     // because ReasonHold only advances in ScoreCandidates, below the skip check.
@@ -184,7 +194,8 @@ bool PipelineCoordinator::CheckHashSkip(PipelineContext& ctx, bool pageChanged)
     // All bounded: a fall is over in about a second, the elemental window is
     // fixed-length, and a hold expires within REASON_HOLD_MS / UPDATE_INTERVAL_MS
     // runs (~15) and self-clears the moment the downgrade lands.
-    const bool unhashedStateActive = ctx.elementalDamageActive || ctx.fallingActive;
+    const bool unhashedStateActive = ctx.elementalDamageActive || ctx.fallingActive ||
+                                     ctx.underwaterActive;
 
     if (ctx.stateHash == m_lastPipelineHash && !pageChanged &&
         !unhashedStateActive && !NeedsForcedRun()) {
@@ -195,6 +206,7 @@ bool PipelineCoordinator::CheckHashSkip(PipelineContext& ctx, bool pageChanged)
     m_lastPipelineHash = ctx.stateHash;
     m_wasElementalDamageActive = ctx.elementalDamageActive;
     m_wasFalling = ctx.fallingActive;
+    m_wasUnderwater = ctx.underwaterActive;
     return false;  // Don't skip
 }
 
