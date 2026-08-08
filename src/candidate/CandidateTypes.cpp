@@ -16,6 +16,7 @@ namespace Huginn::Candidate
 
         candidate.type = data.type;
         candidate.tags = data.tags;
+        candidate.tagsExt = data.tagsExt;
         candidate.school = data.school;
         candidate.element = data.element;
         candidate.baseCost = data.baseCost;

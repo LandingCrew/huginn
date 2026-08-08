@@ -65,6 +65,35 @@ namespace Huginn::Spell
       SummonUndead = 1 << 29,
       SummonCreature = 1 << 30,
       BoundWeapon = 1u << 31
+
+      // FULL. Anything new goes in SpellTagExt below.
+   };
+
+   // =========================================================================
+   // EXTENDED SPELL TAGS (#79)
+   // =========================================================================
+   // SpellTag has all 32 bits spoken for, and that is the whole reason four
+   // context weights sat computed-but-unread for as long as they existed.
+   // ContextRuleEngine raises unlockWeight, slowFallWeight, antiDragonWeight
+   // and waterbreathingWeight; DominantReason names them on the widget; and no
+   // candidate could draw on them because there was no bit left to match
+   // against. The contexts fired, labelled themselves, and moved no ranking.
+   //
+   // A second field rather than widening SpellTag to uint64_t: ItemTagExt
+   // already solved the identical squeeze on the item side, so this is the
+   // shape a reader of this codebase expects, and it groups "the ones that did
+   // not fit" instead of hiding them mid-enum.
+   //
+   // Detection is API-based for three of the four (see DetermineSpellTagsExt).
+   // Only AntiDragon is name-only, because no effect archetype describes it.
+   enum class SpellTagExt : uint16_t
+   {
+      None = 0,
+
+      Unlock         = 1 << 0,  // Open Lock / Knock          → unlockWeight
+      SlowFall       = 1 << 1,  // Slow Fall / Become Ethereal → slowFallWeight
+      AntiDragon     = 1 << 2,  // Dragonrend and friends      → antiDragonWeight
+      Waterbreathing = 1 << 3   // → waterbreathingWeight (the potion half already worked)
    };
 
    // Enable bitwise operations on SpellTag
@@ -85,6 +114,31 @@ namespace Huginn::Spell
    }
 
    inline bool HasTag(SpellTag tags, SpellTag check)
+   {
+      return std::to_underlying(tags & check) != 0;
+   }
+
+   // Enable bitwise operations on SpellTagExt
+   inline SpellTagExt operator|(SpellTagExt a, SpellTagExt b)
+   {
+      return static_cast<SpellTagExt>(std::to_underlying(a) | std::to_underlying(b));
+   }
+
+   inline SpellTagExt operator&(SpellTagExt a, SpellTagExt b)
+   {
+      return static_cast<SpellTagExt>(std::to_underlying(a) & std::to_underlying(b));
+   }
+
+   inline SpellTagExt& operator|=(SpellTagExt& a, SpellTagExt b)
+   {
+      a = a | b;
+      return a;
+   }
+
+   // Named HasTagExt, not an overload of HasTag: the two enums are distinct
+   // types, so an overload would compile, but a reader skimming
+   // `HasTag(c.tags, ...)` at a call site could not tell which set was meant.
+   inline bool HasTagExt(SpellTagExt tags, SpellTagExt check)
    {
       return std::to_underlying(tags & check) != 0;
    }
@@ -163,6 +217,7 @@ namespace Huginn::Spell
       std::string name;            // Spell name for display
       SpellType type;              // Primary type classification
       SpellTag tags;               // Contextual tags (bitflags)
+      SpellTagExt tagsExt = SpellTagExt::None;  // Extended tags — the four that didn't fit (#79)
       MagicSchool school;          // Magic school (v0.7.1)
       ElementType element;         // Element type for damage/resist (v0.7.1)
       uint32_t baseCost;           // Magicka cost (unmodified by perks)
@@ -174,13 +229,14 @@ namespace Huginn::Spell
       [[nodiscard]] std::string ToString() const
       {
       return std::format(
-        "SpellData[id={:08X}, name='{}', type={}, school={}, element={}, tags={:08X}, cost={}, concentration={}, range={}, fav={}]",
+        "SpellData[id={:08X}, name='{}', type={}, school={}, element={}, tags={:08X}, tagsExt={:04X}, cost={}, concentration={}, range={}, fav={}]",
         formID,
         name,
         SpellTypeToString(type),
         MagicSchoolToString(school),
         ElementTypeToString(element),
         std::to_underlying(tags),
+        std::to_underlying(tagsExt),
         baseCost,
         isConcentration,
         range,

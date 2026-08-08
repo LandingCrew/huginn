@@ -90,6 +90,7 @@ namespace Huginn::Candidate
     {
         Spell::SpellType type = Spell::SpellType::Unknown;
         Spell::SpellTag tags = Spell::SpellTag::None;
+        Spell::SpellTagExt tagsExt = Spell::SpellTagExt::None;  // #79: the four that didn't fit in 32 bits
         Spell::MagicSchool school = Spell::MagicSchool::Unknown;
         Spell::ElementType element = Spell::ElementType::None;
         uint32_t baseCost = 0;

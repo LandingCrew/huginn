@@ -36,8 +36,11 @@ namespace Huginn::Spell
       // @param primaryEffect Pre-computed costliest effect's base setting (may be null)
       [[nodiscard]] SpellType DetermineSpellType(RE::SpellItem* spell, RE::EffectSetting* primaryEffect) const;
 
-      // Derive SpellType from computed SpellTag bitflags (fallback when API fails)
-      [[nodiscard]] static SpellType DeriveSpellTypeFromTags(SpellTag tags) noexcept;
+      // Derive SpellType from computed tag bitflags (fallback when API fails).
+      // Takes BOTH sets: an Open Lock or Waterbreathing spell carries no
+      // primary tag at all now that the extended ones exist, so passing only
+      // `tags` would send it back out as Unknown (#79).
+      [[nodiscard]] static SpellType DeriveSpellTypeFromTags(SpellTag tags, SpellTagExt tagsExt) noexcept;
 
       // Derive ElementType from computed SpellTag bitflags (fallback when API fails)
       [[nodiscard]] static ElementType DeriveElementFromTags(SpellTag tags) noexcept;
@@ -52,6 +55,11 @@ namespace Huginn::Spell
 
       // Generate contextual tags based on effects and keywords
       [[nodiscard]] SpellTag DetermineSpellTags(RE::SpellItem* spell) const;
+
+      // Generate extended tags (#79). API-first — walks every effect rather
+      // than only the costliest, because these are frequently the cheap half
+      // of a multi-effect spell (a waterbreathing rider on an armour spell).
+      [[nodiscard]] SpellTagExt DetermineSpellTagsExt(RE::SpellItem* spell) const;
 
       // Extract base magicka cost (unmodified by perks/enchantments)
       [[nodiscard]] uint32_t GetBaseCost(RE::SpellItem* spell) const;

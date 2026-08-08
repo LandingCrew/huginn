@@ -39,9 +39,10 @@
       loads in the first draft — `ResetTrackingState` zeroes the poll timers, so
       loading into a low interior from a peak would have reported a
       ~20,000-unit fall at full weight.
-      **Still inert downstream:** no slot wears `Falling`, because
-      `slowFallWeight` is read by no candidate mapping (#79). The context is now
-      correct, not yet useful
+      **Was inert downstream:** no slot wore `Falling`, because
+      `slowFallWeight` was read by no candidate mapping. Closed by #79 —
+      `SpellTagExt::SlowFall` draws it, though only a modded slow-fall spell
+      can carry the tag (vanilla has none, and Become Ethereal is a shout)
 - [x] #62: context reason flickered for a single tick (`Sneaking`, `Undead`,
       `Falling`), repainting all 8 labels before they could be read. Each firing
       was CORRECT — the player really was crouching — so this was display
@@ -126,20 +127,36 @@
       boundary ("Silvered Sword" must still match, so no trailing boundary).
       bound/daedric keep the loose match — no observed collision, tags still
       drive nothing. Verified in-game: `tags=00000019` → `00000009`
-- [ ] #79: **NEXT.** `unlockWeight`, `slowFallWeight` and `antiDragonWeight` are
-      computed
+- [x] #79: `unlockWeight`, `slowFallWeight` and `antiDragonWeight` were computed
       by EvaluateRules and read by no candidate mapping — LookingAtLock,
-      Falling and TargetDragon have never moved a ranking. `SpellTag` is at
+      Falling and TargetDragon had never moved a ranking. `SpellTag` is at
       32/32 bits, so the spell side of those contexts was never wired
-      (`ItemTag` solved the same squeeze with `ItemTagExt`). Waterbreathing is
-      half-live for the same reason: the potion path works, the spell path
-      doesn't. Fix is a `SpellTagExt`; deleting the three is the honest
-      alternative. Surfaced by #64 removing their false label.
-      **Now the bottleneck for three landed PRs:** #60 makes `Falling` fire
-      correctly and it still surfaces nothing, because no candidate draws
-      `slowFallWeight` — verified in-game 2026-08-02, reason fires, no slot
-      wears the label. Same for LookingAtLock, TargetDragon, and the spell
-      half of Underwater. A `SpellTagExt` closes all four in one shape (M)
+      (`ItemTag` solved the same squeeze with `ItemTagExt`). Waterbreathing was
+      half-live for the same reason: the potion path worked, the spell path
+      didn't. It was the bottleneck for three landed PRs — #60 made `Falling`
+      fire correctly and it still surfaced nothing. Kept all four rather than
+      deleting them; `SpellTagExt` closes all four in one shape (PR #84).
+      **Detection is API-first, which the plan did not assume:** `kOpen` for
+      Unlock, `kEtherealize` for SlowFall (Become Ethereal negates fall damage),
+      `primaryAV == kWaterBreathing` for Waterbreathing. Only AntiDragon is
+      name-matched, because nothing in a spell's data says "for dragons" — and
+      it matches an explicit `dragonrend`/`dragonbane` list, since Dragonhide is
+      a vanilla self-armour spell that bare "dragon" would have tagged (the #81
+      Quicksilver shape, one enum over). Walks EVERY effect, not the costliest:
+      these are typically the cheap rider on a multi-effect spell.
+      **Two live bugs it turned up.** With no bit of their own, the classifier
+      had been reaching the right SpellType by mislabelling — `waterbreath` was
+      tagged `SpellTag::Stealth` and `open` was tagged `Telekinesis`. The first
+      was not cosmetic: the spell arm reads Stealth into `stealthWeight`, so
+      every waterbreathing spell was ranked as a SNEAKING tool. Waterbreathing
+      was not dead, it was wrong.
+      **Vanilla scope, honestly:** only Waterbreathing lights up unmodded.
+      Vanilla ships no castable Open or Slow Fall spell and Dragonrend is a
+      shout, which never reaches the spell registry. The other three are
+      mod-facing (Apocalypse, Ordinator) — hence archetype-first, since a
+      modded spell's name is unpredictable and its archetype is not.
+      `NameContainsWord` moved to `util/NameMatch.h` on the way: the spell side
+      needs the same word-boundary rule and must not depend on the weapon module
 - [ ] Scroll cold-start: all scrolls sit in the pool every tick but score
       `learn≈0` against trained items at `learn=7–8`, so one can never surface
       until used and can't be used until surfaced
