@@ -23,11 +23,14 @@ namespace Huginn::Context
     //
     // Deliberate consequence: a reason nothing can draw from labels NOTHING,
     // ever. That covers the three signal-only reasons with no weight at all
-    // (AllyInjured, LookingAtOre, InDarkness) and the weights no candidate
-    // mapping reads yet (unlock, slow-fall, anti-dragon — see the capacity TODOs
-    // in ContextWeightForCandidate.cpp). Those reasons were never ranking
-    // anything, so the label was never true; silence is the honest report, and
-    // it makes the gap visible as absence instead of hiding it behind a lie.
+    // (AllyInjured, LookingAtOre, InDarkness). It USED to cover unlock,
+    // slow-fall and anti-dragon as well, because SpellTag had no bit left for a
+    // candidate to match them on — those reasons were never ranking anything,
+    // so the label was never true, and silence made the gap visible as absence
+    // instead of hiding it behind a lie. #79 gave them SpellTagExt bits, so a
+    // spell or scroll carrying one now draws the weight and earns the label.
+    // Nothing here changed to make that work: the probe below runs the real
+    // WeightForCandidate, so wiring a weight into the scorer is the only step.
     // =========================================================================
 
     /// True when `candidate` draws context weight from the field behind

@@ -61,8 +61,9 @@ namespace Huginn::Context
                 if (HasTag(c.tags, SpellTag::AntiDaedra)) {
                     maxWeight = std::max(maxWeight, weights.antiDaedraWeight);
                 }
-                // TODO (Low priority): Add SpellTag::AntiDragon for Dragonrend
-                // Currently falls back to base relevance + Q-learning
+                if (HasTagExt(c.tagsExt, SpellTagExt::AntiDragon)) {
+                    maxWeight = std::max(maxWeight, weights.antiDragonWeight);
+                }
 
                 // Stealth
                 if (HasTag(c.tags, SpellTag::Stealth) || HasTag(c.tags, SpellTag::Invisibility) ||
@@ -92,11 +93,25 @@ namespace Huginn::Context
                     }
                 }
 
-                // TODO (Low priority): Environmental spells (Waterbreathing, Slow Fall, Unlock)
-                // SpellTag enum is at capacity (32 bits used). These would need:
-                //   1. SpellTagExt enum (like ItemTagExt), OR
-                //   2. Name matching as fallback
-                // For now, they fall back to base relevance + Q-learning
+                // Environmental (#79). These three, plus AntiDragon above, are
+                // why SpellTagExt exists: ContextRuleEngine has always computed
+                // their weights and DominantReason has always been willing to
+                // name them on the widget, but with SpellTag full there was no
+                // bit for a candidate to match, so LookingAtLock, Falling and
+                // TargetDragon never moved a ranking in their lives.
+                //
+                // Waterbreathing was the visible half-measure: the potion arm
+                // below reads ItemTag::Waterbreathing, so drinking was ranked
+                // and casting was not.
+                if (HasTagExt(c.tagsExt, SpellTagExt::Unlock)) {
+                    maxWeight = std::max(maxWeight, weights.unlockWeight);
+                }
+                if (HasTagExt(c.tagsExt, SpellTagExt::SlowFall)) {
+                    maxWeight = std::max(maxWeight, weights.slowFallWeight);
+                }
+                if (HasTagExt(c.tagsExt, SpellTagExt::Waterbreathing)) {
+                    maxWeight = std::max(maxWeight, weights.waterbreathingWeight);
+                }
 
                 return maxWeight;
             }
@@ -259,7 +274,25 @@ namespace Huginn::Context
                 if (HasTag(c.tags, Scroll::ScrollTag::AntiUndead) || HasTag(c.tags, Scroll::ScrollTag::Sun)) {
                     maxWeight = std::max(maxWeight, weights.antiUndeadWeight);
                 }
-                // Add more scroll-specific mappings as needed
+
+                // Extended tags, same four as the spell arm (#79). ScrollTagExt
+                // is an alias of SpellTagExt because a scroll IS classified by
+                // running the spell classifier over it — so a Scroll of
+                // Waterbreathing arrives here already tagged, and leaving this
+                // out would revive exactly the asymmetry this issue was about,
+                // one candidate type over.
+                if (HasTagExt(c.tagsExt, Scroll::ScrollTagExt::Unlock)) {
+                    maxWeight = std::max(maxWeight, weights.unlockWeight);
+                }
+                if (HasTagExt(c.tagsExt, Scroll::ScrollTagExt::SlowFall)) {
+                    maxWeight = std::max(maxWeight, weights.slowFallWeight);
+                }
+                if (HasTagExt(c.tagsExt, Scroll::ScrollTagExt::AntiDragon)) {
+                    maxWeight = std::max(maxWeight, weights.antiDragonWeight);
+                }
+                if (HasTagExt(c.tagsExt, Scroll::ScrollTagExt::Waterbreathing)) {
+                    maxWeight = std::max(maxWeight, weights.waterbreathingWeight);
+                }
 
                 return maxWeight;
             }

@@ -127,10 +127,17 @@ namespace Huginn::Slot
                        Spell::HasTag(spell.tags, SpellTag::BoundWeapon);
 
             case SlotClassification::Utility:
+                // The Unlock arm is not redundant with the type check. An unlock
+                // spell reaches SpellType::Utility only when DetermineSpellType
+                // returns Unknown and the tag fallback runs; if the API types it
+                // as anything else, the type check alone would drop it off
+                // utility slots entirely. Named here for the same reason Light
+                // and DetectLife are, rather than trusting the derivation (#79).
                 return spell.type == SpellType::Utility ||
                        Spell::HasTag(spell.tags, SpellTag::Light) ||
                        Spell::HasTag(spell.tags, SpellTag::DetectLife) ||
-                       Spell::HasTag(spell.tags, SpellTag::Telekinesis);
+                       Spell::HasTag(spell.tags, SpellTag::Telekinesis) ||
+                       Spell::HasTagExt(spell.tagsExt, Spell::SpellTagExt::Unlock);
 
             case SlotClassification::SpellsAny:
                 return true;  // All spells match SpellsAny

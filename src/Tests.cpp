@@ -18,6 +18,7 @@
 #include "learning/EquipSourceTracker.h"
 #include "learning/UsageMemory.h"
 #include "util/ScopedTimer.h"
+#include "util/NameMatch.h"
 #include "context/ContextRuleEngine.h"
 #include "context/ReasonHold.h"
 #include "context/ContextWeightForCandidate.h"
@@ -4447,7 +4448,7 @@ void RunRegressionTests()
             {"Steel Sword",            false},
         };
         for (const auto& tc : kSilverNames) {
-            const bool got = Weapon::WeaponClassifier::NameContainsWord(tc.name, "silver");
+            const bool got = Util::NameContainsWord(tc.name, "silver");
             if (got != tc.expected) {
                 logger::error("TC-15c FAIL: '{}' silver match = {}, expected {}"sv,
                     tc.name, got, tc.expected);
@@ -4455,6 +4456,123 @@ void RunRegressionTests()
             }
         }
         logger::info("  ✓ PASS: silver name match is word-bounded (Quicksilver excluded)"sv);
+    }
+
+    // =========================================================================
+    // TC-15d: SpellTagExt reaches the four dead context weights (#79)
+    // =========================================================================
+    // unlockWeight, slowFallWeight, antiDragonWeight and the spell half of
+    // waterbreathingWeight were computed by EvaluateRules and read by NO
+    // candidate mapping, because SpellTag had no bit left to match on. The
+    // contexts fired and named themselves on the widget while moving nothing.
+    // These assert the wiring, not the weights — TC-15 above covers those.
+    // =========================================================================
+    {
+        Context::ContextWeightMap w{};
+        w.baseRelevanceWeight = 0.05f;
+        w.spellWeight = 0.20f;
+        w.unlockWeight = 1.00f;
+        w.slowFallWeight = 0.80f;
+        w.antiDragonWeight = 0.70f;
+        w.waterbreathingWeight = 0.60f;
+        // Deliberately the HIGHEST weight in the map, and deliberately not one
+        // any of these spells should draw — see the waterbreathing case below.
+        w.stealthWeight = 0.90f;
+
+        struct Case {
+            std::string_view name;
+            Spell::SpellTagExt ext;
+            float expected;
+        };
+        const Case kCases[] = {
+            {"Open Lock",      Spell::SpellTagExt::Unlock,         1.00f},
+            {"Slow Fall",      Spell::SpellTagExt::SlowFall,       0.80f},
+            {"Dragonrend",     Spell::SpellTagExt::AntiDragon,     0.70f},
+            {"Waterbreathing", Spell::SpellTagExt::Waterbreathing, 0.60f},
+        };
+        for (const auto& tc : kCases) {
+            Candidate::SpellCandidate spell{};
+            spell.name = tc.name;
+            spell.tagsExt = tc.ext;
+            const float got = Context::WeightForCandidate(spell, w);
+            if (std::abs(got - tc.expected) > 0.001f) {
+                logger::error("TC-15d FAIL: '{}' should draw {:.2f}, got {:.3f}"sv,
+                    tc.name, tc.expected, got);
+                return;
+            }
+        }
+
+        // The waterbreathing case is the one with a live bug behind it. To reach
+        // SpellType::Buff with no bit of its own, the classifier used to tag
+        // "waterbreath" as SpellTag::Stealth — and the spell arm reads Stealth
+        // into stealthWeight, so a waterbreathing spell was ranked as a sneaking
+        // tool. If that ever comes back, this draws 0.90 instead of 0.60.
+        Candidate::SpellCandidate waterbreathing{};
+        waterbreathing.name = "Waterbreathing";
+        waterbreathing.tagsExt = Spell::SpellTagExt::Waterbreathing;
+        if (Context::WeightForCandidate(waterbreathing, w) >= w.stealthWeight - 0.001f) {
+            logger::error("TC-15d FAIL: waterbreathing must not draw stealthWeight"sv);
+            return;
+        }
+
+        // A spell carrying no extended tag must stay at the spell baseline, or
+        // this is a blanket bump and every spell wears the "Lock" label.
+        Candidate::SpellCandidate plain{};
+        plain.name = "Flames";
+        plain.type = Spell::SpellType::Damage;
+        if (std::abs(Context::WeightForCandidate(plain, w) - w.spellWeight) > 0.001f) {
+            logger::error("TC-15d FAIL: an untagged spell should stay at the baseline, got {:.3f}"sv,
+                Context::WeightForCandidate(plain, w));
+            return;
+        }
+
+        // A scroll is classified by running the SPELL classifier over it, so it
+        // arrives with the same extended tags — and ConvertToScrollData used to
+        // drop them on the floor, which is invisible from the spell side.
+        // Same four, same weights, or the asymmetry this issue is about just
+        // moves one candidate type over.
+        for (const auto& tc : kCases) {
+            Candidate::ScrollCandidate scroll{};
+            scroll.name = tc.name;
+            scroll.tagsExt = tc.ext;
+            scroll.count = 1;
+            const float got = Context::WeightForCandidate(scroll, w);
+            if (std::abs(got - tc.expected) > 0.001f) {
+                logger::error("TC-15d FAIL: scroll '{}' should draw {:.2f}, got {:.3f}"sv,
+                    tc.name, tc.expected, got);
+                return;
+            }
+        }
+
+        // The name fallbacks the classifier uses for the two effects no
+        // archetype describes. DetermineSpellTagsExt needs a live RE::SpellItem
+        // and cannot be reached from here, so this pins the predicate it is
+        // built out of — including the case-insensitivity that a raw find()
+        // would have quietly dropped.
+        struct { std::string_view name; std::string_view word; bool expected; } kNames[] = {
+            {"slow fall",             "slow fall",   true },   // lower case must match
+            {"Greater Featherfall",   "featherfall", true },
+            {"Slow Time",             "slow fall",   false},   // "slow" alone is a debuff
+            {"Unlock",                "unlock",      true },
+            {"Open Lock",             "open lock",   true },
+            {"Openness",              "open lock",   false},
+            // Why AntiDragon matches an explicit list and not bare "dragon":
+            // Dragonhide is a vanilla self-armour spell, and a loose match would
+            // tag it anti-dragon exactly as "silver" once tagged Quicksilver.
+            {"Dragonhide",            "dragon",      true },   // the premise
+            {"Dragonhide",            "dragonrend",  false},   // what we match instead
+            {"Dragonhide",            "dragonbane",  false},
+        };
+        for (const auto& tc : kNames) {
+            const bool got = Util::NameContainsWord(tc.name, tc.word);
+            if (got != tc.expected) {
+                logger::error("TC-15d FAIL: '{}' vs '{}' = {}, expected {}"sv,
+                    tc.name, tc.word, got, tc.expected);
+                return;
+            }
+        }
+
+        logger::info("  ✓ PASS: SpellTagExt → unlock/slowFall/antiDragon/waterbreathing (spells + scrolls)"sv);
     }
 
     // =========================================================================
