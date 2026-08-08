@@ -135,9 +135,12 @@ namespace Huginn::State
       inline constexpr float MAX_FALL_SPEED = 15000.0f;
 
       // Invalid water height sentinel value
-      // Why -1000000.0f: Skyrim engine uses this sentinel value to indicate
-      // "no water present" in a cell. Any value below this means no water check.
-      // Must match RE::TESObjectCELL::GetExteriorWaterHeight() behavior.
+      // Why -1000000.0f: Skyrim reports "no water here" as a large negative
+      // value, and any reading below this is treated as no water rather than as
+      // a water plane under the world. Covers both sources behind
+      // TESObjectREFR::GetWaterHeight() — the engine's relevantWaterHeight,
+      // which is -NI_INFINITY when the reference is in no water, and the cell
+      // plane it falls back to (#61).
       // Units: Skyrim distance units (Z-axis world position)
       inline constexpr float INVALID_WATER_HEIGHT_VALUE = -1000000.0f;
    }

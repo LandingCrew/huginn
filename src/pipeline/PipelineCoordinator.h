@@ -51,6 +51,9 @@ namespace Huginn::Pipeline
         // Falling is not in the GameState hash either — see the bypass in
         // CheckHashSkip and m_wasFalling below (#60).
         bool fallingActive = false;
+        // Nor is being underwater (#61). It only started mattering when the
+        // sensor began firing at all; before that the gap was invisible.
+        bool underwaterActive = false;
 
         // Pipeline outputs (built by successive steps)
         std::vector<Scoring::ScoredCandidate> scoredCandidates;
@@ -93,6 +96,7 @@ namespace Huginn::Pipeline
             stateHash = 0;
             elementalDamageActive = false;
             fallingActive = false;
+            underwaterActive = false;
 
             scoredCandidates.clear();
             overrides.activeOverrides.clear();
@@ -139,18 +143,26 @@ namespace Huginn::Pipeline
         /// one in RunPipelineIfNeeded (which returns before RunPipeline is ever
         /// called) and CheckHashSkip below.
         ///
-        /// Three latches have needed this so far — the elemental window,
-        /// falling (#60) and a pending reason downgrade (#62) — and the first
-        /// two were each wired into one gate at a time. A latch wired into only
-        /// the inner gate is silently dead in a static scene, which is exactly
-        /// where the reason hold needed it. Add the fourth here, not at a call
-        /// site.
+        /// Four latches have needed this so far — the elemental window, falling
+        /// (#60), a pending reason downgrade (#62) and underwater (#61) — and
+        /// the first two were each wired into one gate at a time. A latch wired
+        /// into only the inner gate is silently dead in a static scene, which is
+        /// exactly where the reason hold needed it. Add the fifth here, not at a
+        /// call site.
+        ///
+        /// Underwater is the cautionary one. It was missing from the hash the
+        /// whole time and nobody noticed, because the sensor never fired: #61's
+        /// water-height bug hid a second bug behind it. Both in-game
+        /// confirmations came from `Sneaking → Underwater` transitions, where
+        /// isSneaking — which IS hashed — moved the hash for an unrelated
+        /// reason. Submerge without touching a hashed field and the tick skips.
         ///
         /// Reads members written by the update thread; called from that same
         /// thread only.
         [[nodiscard]] bool NeedsForcedRun() const noexcept
         {
-            return m_wasElementalDamageActive || m_wasFalling || m_reasonHold.IsHolding();
+            return m_wasElementalDamageActive || m_wasFalling || m_wasUnderwater ||
+                   m_reasonHold.IsHolding();
         }
 
         /// Drop everything that describes the character being unloaded. The held
@@ -177,6 +189,7 @@ namespace Huginn::Pipeline
             m_lastLoggedState = {};
             m_wasElementalDamageActive = false;
             m_wasFalling = false;
+            m_wasUnderwater = false;
         }
 
         /// Queue a one-shot full-detail recommendation dump (console `hg recs`).
@@ -238,6 +251,11 @@ namespace Huginn::Pipeline
         // and never gets scored. The falling edge needs one more run to clear
         // slow-fall scoring once the player lands (#60).
         bool m_wasFalling = false;
+
+        // Same shape again for underwater (#61): surfacing must get one more run
+        // to clear the water-breathing weight and stand the drowning override
+        // down, and neither edge moves a hashed bucket.
+        bool m_wasUnderwater = false;
 
         // Holds the displayed reason so a momentary one stays readable.
         // Label-only: ScoreCandidates above it always sees the raw weights.

@@ -368,8 +368,14 @@ namespace Huginn::Slot
                         const bool unstamped = BypassDedup(override.condition);
                         if (unstamped || formID != lastLog.formID ||
                             priorityIdx != lastLog.slot || lastLog.displaced) {
-                            SKSE::log::info("[SlotAllocator] Override '{}' → Slot {} ({})",
-                                override.reason, priorityIdx,
+                            // Page index is not decoration: allocation runs once
+                            // per page (display page here, Wheeler pages in
+                            // WheelerBackend), so one override legitimately logs
+                            // several lines a tick with different slots. Without
+                            // the page that reads as the same override being
+                            // placed twice, which cost a wrong diagnosis once.
+                            SKSE::log::info("[SlotAllocator] Override '{}' → Page {} Slot {} ({})",
+                                override.reason, pageIndex, priorityIdx,
                                 SlotClassificationToString(config.classification));
                             lastLog = { formID, priorityIdx, false };
                         }
@@ -413,8 +419,8 @@ namespace Huginn::Slot
                     const bool unstamped = BypassDedup(override.condition);
                     if (unstamped || formID != lastLog.formID ||
                         priorityIdx != lastLog.slot || lastLog.displaced) {
-                        SKSE::log::info("[SlotAllocator] Override '{}' → Slot {} (fallback, {})",
-                            override.reason, priorityIdx,
+                        SKSE::log::info("[SlotAllocator] Override '{}' → Page {} Slot {} (fallback, {})",
+                            override.reason, pageIndex, priorityIdx,
                             SlotClassificationToString(config.classification));
                         lastLog = { formID, priorityIdx, false };
                     }

@@ -38,8 +38,17 @@ namespace Huginn::Display
         const auto* topOverride = ctx.overrides.GetTopOverride();
         const int autoFocusThreshold =
             Wheeler::WheelerSettings::GetSingleton().GetAutoFocusMinPriority();
+        // The candidate check is not belt-and-braces. An override activates on
+        // its CONDITION and carries whatever item answers it, which may be
+        // nothing: EvaluateDrowning fires on "underwater without waterbreathing"
+        // and calls FindWaterbreathingItem(), so drowning with no potion — the
+        // ordinary case — produces an active DROWNING override holding nullptr.
+        // Focus-stealing the wheel to show the player an empty answer while they
+        // drown is worse than staying out of the way. Latent until #61 made
+        // isUnderwater fire at all.
         const bool hasUrgentOverride =
-            topOverride && topOverride->priority >= autoFocusThreshold;
+            topOverride && topOverride->candidate &&
+            topOverride->priority >= autoFocusThreshold;
 
         if (hasUrgentOverride && wheelerClient.IsWheelOpen()) {
             wheelerClient.TryUrgentAutoFocus(topOverride->priority);

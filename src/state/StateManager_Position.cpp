@@ -57,14 +57,25 @@ namespace Huginn::State
 
       const float currentZ = player->GetPosition().z;
 
-      // Underwater check
-      auto* cell = player->GetParentCell();
-      if (cell) {
-      float waterHeight = cell->GetExteriorWaterHeight();
+      // Underwater check (#61). GetWaterHeight() reads the engine's
+      // relevantWaterHeight for THIS reference — the height of the water the
+      // player is actually in — and only falls back to the cell's plane when
+      // the engine has none.
+      //
+      // The cell plane was the whole bug. It describes one water level for the
+      // cell, so it is wrong wherever the local water is a placed object at its
+      // own height: verified 2026-08-08 fully submerged in the river at
+      // Graywinter Watch (exterior) with no Underwater reason logged all
+      // session, because the comparison ran against a sea level far below.
+      // Interiors were the documented half of that; rivers and ponds were the
+      // larger, undocumented half. Both are the same fix.
+      //
+      // Still head-relative, not feet: standing ankle-deep in a stream is not
+      // being underwater, and the +120 offset is what rejects it.
+      const float waterHeight = player->GetWaterHeight();
       if (waterHeight > PhysicsConstants::INVALID_WATER_HEIGHT_VALUE) {
-        float headHeight = currentZ + PhysicsConstants::HEAD_HEIGHT;
-        newIsUnderwater = (headHeight < waterHeight);
-      }
+      const float headHeight = currentZ + PhysicsConstants::HEAD_HEIGHT;
+      newIsUnderwater = (headHeight < waterHeight);
       }
 
       // Swimming check
