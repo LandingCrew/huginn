@@ -274,7 +274,25 @@ namespace Huginn::Context
                 if (HasTag(c.tags, Scroll::ScrollTag::AntiUndead) || HasTag(c.tags, Scroll::ScrollTag::Sun)) {
                     maxWeight = std::max(maxWeight, weights.antiUndeadWeight);
                 }
-                // Add more scroll-specific mappings as needed
+
+                // Extended tags, same four as the spell arm (#79). ScrollTagExt
+                // is an alias of SpellTagExt because a scroll IS classified by
+                // running the spell classifier over it — so a Scroll of
+                // Waterbreathing arrives here already tagged, and leaving this
+                // out would revive exactly the asymmetry this issue was about,
+                // one candidate type over.
+                if (HasTagExt(c.tagsExt, Scroll::ScrollTagExt::Unlock)) {
+                    maxWeight = std::max(maxWeight, weights.unlockWeight);
+                }
+                if (HasTagExt(c.tagsExt, Scroll::ScrollTagExt::SlowFall)) {
+                    maxWeight = std::max(maxWeight, weights.slowFallWeight);
+                }
+                if (HasTagExt(c.tagsExt, Scroll::ScrollTagExt::AntiDragon)) {
+                    maxWeight = std::max(maxWeight, weights.antiDragonWeight);
+                }
+                if (HasTagExt(c.tagsExt, Scroll::ScrollTagExt::Waterbreathing)) {
+                    maxWeight = std::max(maxWeight, weights.waterbreathingWeight);
+                }
 
                 return maxWeight;
             }

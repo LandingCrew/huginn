@@ -44,6 +44,10 @@ namespace Huginn::Scroll
       // Copy classification from spell
       data.type = static_cast<ScrollType>(spellData.type);
       data.tags = static_cast<ScrollTag>(spellData.tags);
+      // ClassifySpell computes these for a scroll exactly as it does for a
+      // spell — a Scroll of Waterbreathing is one — so not copying them was a
+      // silent drop rather than a decision (#79).
+      data.tagsExt = spellData.tagsExt;
       data.school = spellData.school;
       data.element = spellData.element;
       data.baseCost = spellData.baseCost;

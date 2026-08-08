@@ -14,6 +14,7 @@ namespace Huginn::Scroll
 
    using ScrollType = Spell::SpellType;      // Damage, Healing, Defensive, Utility, Summon, Buff, Debuff
    using ScrollTag = Spell::SpellTag;        // Fire, Frost, Shock, AOE, AntiUndead, etc. (reuse spell tags)
+   using ScrollTagExt = Spell::SpellTagExt;  // Unlock, SlowFall, AntiDragon, Waterbreathing (#79)
    using MagicSchool = Spell::MagicSchool;   // Destruction, Restoration, Alteration, Illusion, Conjuration
    using ElementType = Spell::ElementType;   // Fire, Frost, Shock, Poison, Sun, Magic
 
@@ -23,6 +24,11 @@ namespace Huginn::Scroll
       std::string name;                          // Scroll name for display
       ScrollType type = ScrollType::Unknown;     // Primary type classification
       ScrollTag tags = ScrollTag::None;          // Contextual tags (bitflags)
+      // A scroll is classified by running the SPELL classifier over it, so it
+      // gets extended tags for free — but only if they are carried across. The
+      // field existing on ScrollData is what makes dropping them a compile
+      // error's worth of visible rather than a silent nothing (#79).
+      ScrollTagExt tagsExt = ScrollTagExt::None;
       MagicSchool school = MagicSchool::Unknown; // Magic school
       ElementType element = ElementType::None;   // Element type for damage/resist
 
@@ -35,13 +41,14 @@ namespace Huginn::Scroll
       [[nodiscard]] std::string ToString() const
       {
       return std::format(
-        "ScrollData[id={:08X}, name='{}', type={}, school={}, element={}, tags={:08X}, magnitude={:.1f}, duration={:.1f}, cost={}]",
+        "ScrollData[id={:08X}, name='{}', type={}, school={}, element={}, tags={:08X}, tagsExt={:04X}, magnitude={:.1f}, duration={:.1f}, cost={}]",
         formID,
         name,
         Spell::SpellTypeToString(type),
         Spell::MagicSchoolToString(school),
         Spell::ElementTypeToString(element),
         std::to_underlying(tags),
+        std::to_underlying(tagsExt),
         magnitude,
         duration,
         baseCost);

@@ -4526,20 +4526,53 @@ void RunRegressionTests()
             return;
         }
 
-        // Why AntiDragon matches a short explicit list and not bare "dragon":
-        // Dragonhide is a vanilla self-armour spell, and a loose match would tag
-        // it anti-dragon exactly as "silver" once tagged Quicksilver (#81).
-        if (!Util::NameContainsWord("Dragonhide", "dragon")) {
-            logger::error("TC-15d FAIL: premise wrong — bare 'dragon' should match Dragonhide"sv);
-            return;
-        }
-        if (Util::NameContainsWord("Dragonhide", "dragonrend") ||
-            Util::NameContainsWord("Dragonhide", "dragonbane")) {
-            logger::error("TC-15d FAIL: Dragonhide must not match the anti-dragon words"sv);
-            return;
+        // A scroll is classified by running the SPELL classifier over it, so it
+        // arrives with the same extended tags — and ConvertToScrollData used to
+        // drop them on the floor, which is invisible from the spell side.
+        // Same four, same weights, or the asymmetry this issue is about just
+        // moves one candidate type over.
+        for (const auto& tc : kCases) {
+            Candidate::ScrollCandidate scroll{};
+            scroll.name = tc.name;
+            scroll.tagsExt = tc.ext;
+            scroll.count = 1;
+            const float got = Context::WeightForCandidate(scroll, w);
+            if (std::abs(got - tc.expected) > 0.001f) {
+                logger::error("TC-15d FAIL: scroll '{}' should draw {:.2f}, got {:.3f}"sv,
+                    tc.name, tc.expected, got);
+                return;
+            }
         }
 
-        logger::info("  ✓ PASS: SpellTagExt → unlock/slowFall/antiDragon/waterbreathing weights"sv);
+        // The name fallbacks the classifier uses for the two effects no
+        // archetype describes. DetermineSpellTagsExt needs a live RE::SpellItem
+        // and cannot be reached from here, so this pins the predicate it is
+        // built out of — including the case-insensitivity that a raw find()
+        // would have quietly dropped.
+        struct { std::string_view name; std::string_view word; bool expected; } kNames[] = {
+            {"slow fall",             "slow fall",   true },   // lower case must match
+            {"Greater Featherfall",   "featherfall", true },
+            {"Slow Time",             "slow fall",   false},   // "slow" alone is a debuff
+            {"Unlock",                "unlock",      true },
+            {"Open Lock",             "open lock",   true },
+            {"Openness",              "open lock",   false},
+            // Why AntiDragon matches an explicit list and not bare "dragon":
+            // Dragonhide is a vanilla self-armour spell, and a loose match would
+            // tag it anti-dragon exactly as "silver" once tagged Quicksilver.
+            {"Dragonhide",            "dragon",      true },   // the premise
+            {"Dragonhide",            "dragonrend",  false},   // what we match instead
+            {"Dragonhide",            "dragonbane",  false},
+        };
+        for (const auto& tc : kNames) {
+            const bool got = Util::NameContainsWord(tc.name, tc.word);
+            if (got != tc.expected) {
+                logger::error("TC-15d FAIL: '{}' vs '{}' = {}, expected {}"sv,
+                    tc.name, tc.word, got, tc.expected);
+                return;
+            }
+        }
+
+        logger::info("  ✓ PASS: SpellTagExt → unlock/slowFall/antiDragon/waterbreathing (spells + scrolls)"sv);
     }
 
     // =========================================================================

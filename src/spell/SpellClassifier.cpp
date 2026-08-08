@@ -159,20 +159,6 @@ namespace Huginn::Spell
       // Healing
       if (HasTag(tags, SpellTag::RestoreHealth)) return SpellType::Healing;
 
-      // Extended tags (#79). Placed high because each is a narrow, specific
-      // effect: a spell that opens locks is an unlock spell whatever else its
-      // name suggests. Before these existed the classifier reached the same
-      // types by mislabelling — "open" was tagged Telekinesis and
-      // "waterbreath" was tagged Stealth, purely so this function would derive
-      // Utility and Buff respectively. Both are now gone from
-      // DetermineSpellTags, and the Stealth one was actively wrong: it fed
-      // waterbreathing spells into stealthWeight, surfacing them for sneaking.
-      if (HasTagExt(tagsExt, SpellTagExt::Unlock)) return SpellType::Utility;
-      if (HasTagExt(tagsExt, SpellTagExt::AntiDragon)) return SpellType::Debuff;
-      if (HasTagExt(tagsExt, SpellTagExt::SlowFall) ||
-          HasTagExt(tagsExt, SpellTagExt::Waterbreathing)) {
-      return SpellType::Buff;
-      }
 
       // Summon (bound weapons + conjuration summons)
       if (HasTag(tags, SpellTag::BoundWeapon) ||
@@ -197,6 +183,27 @@ namespace Huginn::Spell
       // Buff (stealth, invisibility, muffle, waterbreathing)
       if (HasTag(tags, SpellTag::Invisibility) || HasTag(tags, SpellTag::Muffle) ||
           HasTag(tags, SpellTag::Stealth)) {
+      return SpellType::Buff;
+      }
+
+      // Extended tags (#79). BELOW every primary-role check, deliberately.
+      // DetermineSpellTagsExt walks every effect, not just the costliest, so an
+      // ext tag is often a RIDER — a ward that also grants waterbreathing, a
+      // summon with an unlock effect bolted on. The primary tags describe what
+      // the spell is FOR; these describe something it also happens to do, and
+      // typing a ward as a Buff because of its rider would be a regression.
+      // A pure Open Lock or Waterbreathing spell carries no primary tag at all,
+      // so it falls through to here, which is the case these exist to catch.
+      //
+      // Before SpellTagExt the classifier reached these same types by
+      // mislabelling: "open" was tagged Telekinesis and "waterbreath" was
+      // tagged Stealth, purely so this function would derive Utility and Buff.
+      // The Stealth one was actively wrong — the spell arm reads Stealth into
+      // stealthWeight, so waterbreathing spells ranked as sneaking tools.
+      if (HasTagExt(tagsExt, SpellTagExt::Unlock)) return SpellType::Utility;
+      if (HasTagExt(tagsExt, SpellTagExt::AntiDragon)) return SpellType::Debuff;
+      if (HasTagExt(tagsExt, SpellTagExt::SlowFall) ||
+          HasTagExt(tagsExt, SpellTagExt::Waterbreathing)) {
       return SpellType::Buff;
       }
 
@@ -421,7 +428,15 @@ namespace Huginn::Spell
       // modifier on the WaterBreathing actor value, which is exactly how the
       // vanilla Alteration spell is built. This is the one of the four that
       // lights up on an unmodded game.
-      if (base->data.primaryAV == RE::ActorValue::kWaterBreathing) {
+      //
+      // Hostile effects excluded: the actor value says WHICH stat is touched,
+      // not in which direction, so a curse that strips waterbreathing reads
+      // identically here. waterbreathingWeight surfaces something to CAST when
+      // drowning, and offering the player the spell that drowns them is the one
+      // outcome worse than offering nothing.
+      const bool isHostile = base->data.flags.any(
+        RE::EffectSetting::EffectSettingData::Flag::kHostile);
+      if (!isHostile && base->data.primaryAV == RE::ActorValue::kWaterBreathing) {
         tags |= SpellTagExt::Waterbreathing;
       }
       }
@@ -441,12 +456,24 @@ namespace Huginn::Spell
 
       // Slow Fall has no vanilla effect at all, so a modded one may be built
       // any which way. Whole-word again: "slow" alone is a debuff spell and
-      // must not match.
+      // must not match. Spaced and unspaced spellings both go through
+      // NameContainsWord — a raw find() here would be the only case-SENSITIVE
+      // name test in the classifier and would miss "slow fall" in lower case.
       if (Util::NameContainsWord(name, "slowfall") ||
+          Util::NameContainsWord(name, "slow fall") ||
           Util::NameContainsWord(name, "featherfall") ||
-          name.find("Slow Fall") != std::string_view::npos ||
-          name.find("Feather Fall") != std::string_view::npos) {
+          Util::NameContainsWord(name, "feather fall")) {
       tags |= SpellTagExt::SlowFall;
+      }
+
+      // Unlock keeps a name fallback where the others do not, because the
+      // archetype above is not the only way a mod builds one: several drive the
+      // unlock through kScript, which describes nothing. "open lock" and
+      // "unlock" are whole-word and specific — bare "open" is what this
+      // replaced, and it matched anything with "open" in the name.
+      if (Util::NameContainsWord(name, "unlock") ||
+          Util::NameContainsWord(name, "open lock")) {
+      tags |= SpellTagExt::Unlock;
       }
 
       return tags;

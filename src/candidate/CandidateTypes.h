@@ -183,6 +183,7 @@ namespace Huginn::Candidate
     {
         Scroll::ScrollType type = Scroll::ScrollType::Unknown;
         Scroll::ScrollTag tags = Scroll::ScrollTag::None;
+        Scroll::ScrollTagExt tagsExt = Scroll::ScrollTagExt::None;  // #79
         Scroll::MagicSchool school = Scroll::MagicSchool::Unknown;
         Scroll::ElementType element = Scroll::ElementType::None;
         float magnitude = 0.0f;
