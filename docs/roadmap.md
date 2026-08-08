@@ -57,9 +57,18 @@
       also covers the same-band swap (`Undead → Outnumbered → Undead`) that a
       plain release-delay would miss. Reset on save load — a held reason
       describes the character just unloaded
-- [ ] #61: `isUnderwater` uses exterior-only water height — interior water never
-      registers, so the drowning override and water-breathing weight are dead
-      indoors. Needs research (breath meter may beat geometry)
+- [ ] #61: `isUnderwater` compares the player's head against
+      `cell->GetExteriorWaterHeight()`, so the drowning override and
+      water-breathing weight are dead wherever that value does not describe the
+      water actually overhead. **Worse than "interior water never registers":**
+      observed 2026-08-08 fully submerged in the river at Graywinter Watch,
+      exterior, and it never fired — rivers and ponds are water objects at their
+      own height, not the cell's plane, so the test runs against a sea level far
+      below. Working set is effectively the sea and lakes on the worldspace
+      water level. Explains the "only detected in some places" report with a
+      cause unrelated to where you stand in a cell. Go straight to the breath
+      meter: it runs wherever the player is submerged and needs no geometry.
+      Blocks the last in-game check on #79's spell path
 
 - [x] #74: 13–15 `AddItemByFormID` rejects (`-6 UnsupportedFormType`) ~1s after
       save-load, then clean for the session. **Root cause found:** every failing
