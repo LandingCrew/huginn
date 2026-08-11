@@ -27,6 +27,11 @@ namespace Huginn::Item
       RE::FormID formID;  // OPTIMIZATION (S5): Captured once during scan
       int32_t count;
       int32_t filledCount = 0;  // v0.10.0: Count of gems with souls (for weapon recharge)
+      // Best soul actually held by any instance of this form, as RE::SOUL_LEVEL
+      // (0 = none). This, not the gem's capacity, is how much charge it returns —
+      // a Grand gem holding a petty soul recharges like a petty gem while costing
+      // you the Grand. The scan is the only place both fill paths are visible.
+      int32_t bestSoulLevel = 0;
    };
 
    // =============================================================================
@@ -463,7 +468,8 @@ namespace Huginn::Item
        * @param count Current inventory count
        * @note Soul gems are TESSoulGem, not AlchemyItem - handled separately
        */
-      void AddSoulGem(RE::TESSoulGem* soulGem, int32_t count, int32_t filledCount);
+      void AddSoulGem(RE::TESSoulGem* soulGem, int32_t count, int32_t filledCount,
+                      int32_t bestSoulLevel);
 
       /**
        * @brief Remove item from registry by FormID
@@ -483,6 +489,10 @@ namespace Huginn::Item
       // poll thread. Do not touch from any other path.
       std::unordered_map<RE::FormID, int32_t> m_scanCounts;
       std::unordered_map<RE::FormID, int32_t> m_scanFilledCounts;
+      // Parallel to m_scanFilledCounts: the delta scan refreshes fill state every
+      // 500ms, so the soul level behind it has to travel the same path or a gem
+      // filled by Soul Trap would rank on a stale value until the 30s reconcile.
+      std::unordered_map<RE::FormID, int32_t> m_scanSoulLevels;
 
       // Item classifier instance
       ItemClassifier m_classifier;

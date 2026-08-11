@@ -62,7 +62,7 @@ namespace Huginn::Item
            Config::MAX_TRACKED_ITEMS);
         break;
       }
-      AddSoulGem(scanned.soulGem, scanned.count, scanned.filledCount);
+      AddSoulGem(scanned.soulGem, scanned.count, scanned.filledCount, scanned.bestSoulLevel);
       }
 
       logger::info("Item registry built: {} items registered"sv, m_entries.size());
@@ -106,8 +106,10 @@ namespace Huginn::Item
       // clear() keeps the bucket arrays, so the 2 Hz scan is allocation-free.
       auto& currentCounts = m_scanCounts;
       auto& currentFilledCounts = m_scanFilledCounts;
+      auto& currentSoulLevels = m_scanSoulLevels;
       currentCounts.clear();
       currentFilledCounts.clear();
+      currentSoulLevels.clear();
       currentCounts.reserve(currentInventory.size() + currentSoulGems.size());
       for (const auto& scanned : currentInventory) {
       currentCounts[scanned.formID] = scanned.count;  // Use cached formID
@@ -116,6 +118,7 @@ namespace Huginn::Item
       for (const auto& scanned : currentSoulGems) {
       currentCounts[scanned.formID] = scanned.count;  // Use cached formID
       currentFilledCounts[scanned.formID] = scanned.filledCount;  // v0.10.0
+      currentSoulLevels[scanned.formID] = scanned.bestSoulLevel;
       }
 
       // Change events for this scan only; the caller (update loop) consumes
@@ -155,6 +158,16 @@ namespace Huginn::Item
       if (invItem.data.type == ItemType::SoulGem) {
         auto fillIt = currentFilledCounts.find(invItem.data.formID);
         bool currentlyFilled = (fillIt != currentFilledCounts.end() && fillIt->second > 0);
+
+        // Ranking value, refreshed every scan rather than only on a flip: the
+        // soul can change without the BOOL changing — trap a grand soul into a
+        // stack that already held a petty one and the gem is worth more while
+        // isFilled stays true. Kept outside the flip branch for that reason.
+        auto soulIt = currentSoulLevels.find(invItem.data.formID);
+        const float currentSoul = (soulIt != currentSoulLevels.end())
+            ? static_cast<float>(soulIt->second) : 0.0f;
+        invItem.data.magnitude = currentSoul;
+
         if (currentlyFilled != invItem.data.isFilled) {
            invItem.data.isFilled = currentlyFilled;
            // Fill state feeds GetBestSoulGem (filled gems only), so a flip must
@@ -254,7 +267,7 @@ namespace Huginn::Item
         }
 
         // New soul gem found - add it
-        AddSoulGem(scanned.soulGem, scanned.count, scanned.filledCount);
+        AddSoulGem(scanned.soulGem, scanned.count, scanned.filledCount, scanned.bestSoulLevel);
         itemsAdded++;
 
         logger::trace("[ItemRegistry] Added new soul gem: {} x{} (filled={})"sv,
@@ -598,7 +611,7 @@ namespace Huginn::Item
       logger::info("--- {} ({} items) ---"sv, ItemTypeToString(type), items.size());
       for (const auto* item : items) {
         if (item->data.type == ItemType::SoulGem) {
-           logger::debug("  {} x{} (capacity={:.0f}, filled={})"sv,
+           logger::debug("  {} x{} (soul={:.0f}, filled={})"sv,
             item->data.name,
             item->count,
             item->data.magnitude,
@@ -679,12 +692,18 @@ namespace Huginn::Item
       // Then try soul gem
       else if (auto* soulGem = obj->As<RE::TESSoulGem>()) {
         int32_t filledCount = 0;
+        // Best soul present, not the gem's capacity: capacity is the box, this
+        // is what is in it, and only this decides how much charge comes back.
+        // Max across the stack because the registry keeps one entry per form and
+        // GetBestSoulGem asks for the best available.
+        int32_t bestSoulLevel = 0;
 
         // Check 1: Pre-filled soul gems (vendor/loot) store the soul on the
         // base form itself. These are separate FormIDs from their empty variants
         // (e.g. SoulGemPettyFilled vs SoulGemPetty) and have no ExtraSoul data.
         if (soulGem->GetContainedSoul() != RE::SOUL_LEVEL::kNone) {
            filledCount = count;  // All instances of this base form are filled
+           bestSoulLevel = static_cast<int32_t>(soulGem->GetContainedSoul());
         }
         // Check 2: Player-filled gems (via Soul Trap) use ExtraSoul extra data
         // attached at runtime to an empty gem base form.
@@ -695,6 +714,7 @@ namespace Huginn::Item
               auto soulLevel = extraSoul->GetContainedSoul();
               if (soulLevel != RE::SOUL_LEVEL::kNone) {
                 ++filledCount;
+                bestSoulLevel = std::max(bestSoulLevel, static_cast<int32_t>(soulLevel));
               }
             }
            }
@@ -704,11 +724,12 @@ namespace Huginn::Item
            .soulGem = soulGem,
            .formID = soulGem->GetFormID(),
            .count = count,
-           .filledCount = filledCount
+           .filledCount = filledCount,
+           .bestSoulLevel = bestSoulLevel
         });
 
-        logger::trace("[ItemRegistry] Soul gem scan: {} total={}, filled={}"sv,
-           soulGem->GetName(), count, filledCount);
+        logger::trace("[ItemRegistry] Soul gem scan: {} total={}, filled={}, bestSoul={}"sv,
+           soulGem->GetName(), count, filledCount, bestSoulLevel);
       }
       }
 
@@ -756,7 +777,8 @@ namespace Huginn::Item
    // Add soul gem to registry (v0.7.8, v0.10.0: filledCount tracking)
    // Note: Soul gems use ClassifySoulGem() but are NOT cached (v0.7.10)
    // Rationale: Classification is trivial (just capacity lookup), caching overhead not justified
-   void ItemRegistry::AddSoulGem(RE::TESSoulGem* soulGem, int32_t count, int32_t filledCount)
+   void ItemRegistry::AddSoulGem(RE::TESSoulGem* soulGem, int32_t count, int32_t filledCount,
+                                 int32_t bestSoulLevel)
    {
       // NOTE: Assumes m_mutex is already held by caller (v0.7.12 - thread safety)
       if (!soulGem) return;
@@ -770,6 +792,9 @@ namespace Huginn::Item
       m_entries[it->second].count = count;
       // v0.10.0: Update fill state - filled if ANY gems of this type are filled
       m_entries[it->second].data.isFilled = (filledCount > 0);
+      // Ranking value travels with fill state — a gem filled since the last
+      // scan is worth what it now holds, not what it held before.
+      m_entries[it->second].data.magnitude = static_cast<float>(bestSoulLevel);
       return;
       }
 
@@ -786,6 +811,10 @@ namespace Huginn::Item
 
       // v0.10.0: Set fill state based on extraData scan
       itemData.isFilled = (filledCount > 0);
+      // Overrides the capacity ClassifySoulGem read off the base form. The scan
+      // is authoritative because it is the only place that sees ExtraSoul, which
+      // is where a player-filled gem keeps its soul.
+      itemData.magnitude = static_cast<float>(bestSoulLevel);
 
       // Create inventory item and add to registry via the shared core primitive.
       InventoryItem invItem{
@@ -796,7 +825,7 @@ namespace Huginn::Item
 
       PushEntryLocked(std::move(invItem), formID);
 
-      logger::info("[ItemRegistry] Registered soul gem: {} (capacity={:.0f}) x{} (filled={})"sv,
+      logger::info("[ItemRegistry] Registered soul gem: {} (soul={:.0f}) x{} (filled={})"sv,
       itemData.name,
       itemData.magnitude,
       count,

@@ -10,6 +10,7 @@
 #include "weapon/WeaponClassifier.h"
 #include "learning/UtilityScorer.h"
 #include "learning/ScoredCandidate.h"
+#include "learning/ScorerSettings.h"   // MINIMUM_UTILITY — the floor test 6i is about
 #include "candidate/CandidateGenerator.h"
 #include "persist/QLearnerSerializer.h"
 #include "learning/StateFeatures.h"
@@ -2617,6 +2618,174 @@ void RunUnitTests()
                     weights.fortifyAlchemyWeight);
                 return;
             }
+        }
+
+        // Test 6h: the workstation path end to end — weight → candidate → label (#63)
+        //
+        // 6d/6e/6f prove EvaluateRules RAISES these weights; 17k proves the label
+        // is gated on drawing them. Nothing joined the two, and the join is
+        // precisely what play-testing cannot check here: Requiem-based lists
+        // (LoreRim, what this is developed against) strip Fortify Smithing and
+        // Fortify Enchanting from alchemy outright, so no such potion exists
+        // in-game to rank. Every observed workstation session has therefore been
+        // the empty case. This test IS the vanilla coverage — if it goes, the
+        // path has none, and a regression would surface only for players on
+        // lists nobody here plays.
+        {
+            using WM = Context::ContextWeightMap;
+
+            struct Station {
+                std::string_view name;
+                int32_t type;
+                Context::ContextReason reason;
+                std::string_view label;
+                Candidate::ItemCandidate potion;
+                float WM::* field;
+            };
+
+            // The three fortify potions differ in WHICH discriminator field the
+            // item arm reads alongside the tag, so each needs its own build.
+            auto smithing = [] {
+                Candidate::ItemCandidate p{};
+                p.name = "Potion of Blacksmithing";
+                p.type = Item::ItemType::BuffPotion;
+                p.tags = Item::ItemTag::FortifyCombatSkill;
+                p.combatSkill = Item::CombatSkill::Smithing;
+                return p;
+            }();
+            auto enchanting = [] {
+                Candidate::ItemCandidate p{};
+                p.name = "Potion of Enchanting";
+                p.type = Item::ItemType::BuffPotion;
+                p.tags = Item::ItemTag::FortifyMagicSchool;
+                p.school = Item::MagicSchool::Enchanting;
+                return p;
+            }();
+            auto alchemy = [] {
+                Candidate::ItemCandidate p{};
+                p.name = "Potion of Alchemy";
+                p.type = Item::ItemType::BuffPotion;
+                p.tags = Item::ItemTag::FortifyUtilitySkill;
+                p.utilitySkill = Item::UtilitySkill::Alchemy;
+                return p;
+            }();
+
+            const Station kStations[] = {
+                {"Forge",       1, Context::ContextReason::AtForge,     "At Forge",
+                 smithing,   &WM::fortifySmithingWeight},
+                {"Enchanter",   3, Context::ContextReason::AtEnchanter, "At Enchanter",
+                 enchanting, &WM::fortifyEnchantingWeight},
+                {"Alchemy Lab", 5, Context::ContextReason::AtAlchemy,   "At Alchemy Lab",
+                 alchemy,    &WM::fortifyAlchemyWeight},
+            };
+
+            // Control: present in every real inventory, draws nothing from any
+            // workstation. Without it a blanket weight bump would pass 6h.
+            Candidate::WeaponCandidate control{};
+            control.name = "Iron Dagger";
+            control.tags = Weapon::WeaponTag::Melee | Weapon::WeaponTag::OneHanded;
+
+            for (const auto& st : kStations) {
+                State::PlayerActorState testPlayer{};
+                State::WorldState testWorld{};
+                testWorld.isLookingAtWorkstation = true;
+                testWorld.workstationType = st.type;
+
+                const auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
+                const float stationWeight = weights.*(st.field);
+
+                // The potion draws the station's weight, not the 0.15 buff-potion
+                // baseline it would otherwise sit at.
+                const float potionWeight = Context::WeightForCandidate(st.potion, weights);
+                if (std::abs(potionWeight - stationWeight) > 0.01f) {
+                    logger::error("TEST FAIL (6h): at {} the fortify potion should draw {:.2f}, got {:.3f}",
+                        st.name, stationWeight, potionWeight);
+                    return;
+                }
+
+                // ...and an unrelated item does not, or the context is just a
+                // page-wide bump wearing a label.
+                if (Context::WeightForCandidate(control, weights) >= stationWeight - 0.01f) {
+                    logger::error("TEST FAIL (6h): at {} an unrelated weapon reached the station weight",
+                        st.name);
+                    return;
+                }
+
+                // Drawing the weight is what earns the label — same gate the
+                // display uses, so this closes weight → candidate → subtext.
+                Slot::SlotAssignment assignment{};
+                Scoring::ScoredCandidate scored{};
+                scored.candidate = st.potion;
+                assignment.candidate = scored;
+                if (const auto got = Display::DeriveExplanationLabel(assignment, st.reason);
+                    got != st.label) {
+                    logger::error("TEST FAIL (6h): at {} the potion should read '{}', got '{}'",
+                        st.name, st.label, got);
+                    return;
+                }
+            }
+
+            logger::info("  ✓ PASS: workstation potions rank and label at forge/enchanter/alchemy"sv);
+        }
+
+        // Test 6i: a filled soul gem surfaces without an enchanted weapon
+        //
+        // The gem arm read only weaponChargeWeight, which needs an enchanted
+        // weapon EQUIPPED and drained. Carry filled gems with an ordinary weapon
+        // out and every gem sat at baseRelevance (0.05), under fMinimumUtility
+        // (0.1) — never displayed, and so never learned from either. Confirmed
+        // in-game: six gems registered, three of them filled, and not one ever
+        // reached a slot because the player had no enchanted weapon equipped.
+        {
+            State::PlayerActorState testPlayer{};   // no enchanted weapon
+            State::WorldState testWorld{};
+            const auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
+
+            if (weights.weaponChargeWeight != 0.0f) {
+                logger::error("TEST FAIL (6i): premise wrong — no enchanted weapon should mean "
+                    "weaponChargeWeight=0, got {:.3f}", weights.weaponChargeWeight);
+                return;
+            }
+
+            Candidate::ItemCandidate gem{};
+            gem.name = "Soul Gem III - Common";
+            gem.type = Item::ItemType::SoulGem;
+            gem.sourceType = Candidate::SourceType::SoulGem;
+
+            const float gemWeight = Context::WeightForCandidate(gem, weights);
+            if (gemWeight <= weights.baseRelevanceWeight + 0.001f) {
+                logger::error("TEST FAIL (6i): a gem should draw its baseline, got {:.3f} "
+                    "(baseRelevance {:.3f})", gemWeight, weights.baseRelevanceWeight);
+                return;
+            }
+            // The point of the number is clearing the floor — assert that, not
+            // the value, so retuning fWeightSoulGem does not break the test.
+            // The real constant, not a copy: if the floor is ever raised above
+            // the gem baseline the lockout comes straight back, and this test
+            // exists to catch exactly that.
+            constexpr float kMinimumUtility = Scoring::ScorerDefaults::MINIMUM_UTILITY;
+            if (gemWeight <= kMinimumUtility) {
+                logger::error("TEST FAIL (6i): gem weight {:.3f} does not clear fMinimumUtility {:.3f} — "
+                    "it would be filtered out before reaching a slot",
+                    gemWeight, kMinimumUtility);
+                return;
+            }
+
+            // Urgency still comes from the charge rules: with a drained
+            // enchanted weapon the gem must outrank its own baseline, or the
+            // override has nothing to promote.
+            State::PlayerActorState drained{};
+            drained.hasEnchantedWeapon = true;
+            drained.weaponChargePercent = 0.10f;
+            const auto urgentWeights = engine.EvaluateRules(drained, testTargets, testWorld);
+            if (Context::WeightForCandidate(gem, urgentWeights) <= gemWeight) {
+                logger::error("TEST FAIL (6i): a drained enchanted weapon should raise the gem above "
+                    "its baseline {:.3f}", gemWeight);
+                return;
+            }
+
+            logger::info("  ✓ PASS: soul gem baseline {:.2f} clears fMinimumUtility, charge still promotes"sv,
+                gemWeight);
         }
 
         // Test 6g: No environmental conditions → all weights zero

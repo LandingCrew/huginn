@@ -66,6 +66,9 @@ namespace Huginn::State
         weightSpell = ReadClampedFloat(ini, section, "fWeightSpell", ContextWeightDefaults::SPELL, 0.0f, 100.0f, "ContextWeightSettings"sv);
         weightSummon = ReadClampedFloat(ini, section, "fWeightSummon", ContextWeightDefaults::SUMMON, 0.0f, 100.0f, "ContextWeightSettings"sv);
 
+        // Soul gems (always-on baseline; urgency comes from fWeightWeaponCharge)
+        weightSoulGem = ReadClampedFloat(ini, section, "fWeightSoulGem", ContextWeightDefaults::SOUL_GEM, 0.0f, 100.0f, "ContextWeightSettings"sv);
+
         // Buff & resist potions
         weightBuffPotion = ReadClampedFloat(ini, section, "fWeightBuffPotion", ContextWeightDefaults::BUFF_POTION, 0.0f, 100.0f, "ContextWeightSettings"sv);
         weightBuffCombat = ReadClampedFloat(ini, section, "fWeightBuffCombat", ContextWeightDefaults::BUFF_COMBAT, 0.0f, 100.0f, "ContextWeightSettings"sv);
@@ -142,6 +145,7 @@ namespace Huginn::State
         weightSpell = ContextWeightDefaults::SPELL;
         weightSummon = ContextWeightDefaults::SUMMON;
 
+        weightSoulGem = ContextWeightDefaults::SOUL_GEM;
         weightBuffPotion = ContextWeightDefaults::BUFF_POTION;
         weightBuffCombat = ContextWeightDefaults::BUFF_COMBAT;
 
@@ -197,6 +201,7 @@ namespace Huginn::State
         config.weightSpell = weightSpell;
         config.weightSummon = weightSummon;
 
+        config.weightSoulGem = weightSoulGem;
         config.weightBuffPotion = weightBuffPotion;
         config.weightBuffCombat = weightBuffCombat;
 

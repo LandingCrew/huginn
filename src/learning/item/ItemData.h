@@ -340,7 +340,10 @@ namespace Huginn::Item
       ItemTagExt tagsExt = ItemTagExt::None;  // Extended tags (less common effects)
 
       // Effect specifics
-      float magnitude = 0.0f;             // Effect magnitude (for potency comparison)
+      // Effect magnitude (for potency comparison). For SOUL GEMS this is the
+      // SOUL_LEVEL currently held (0 = empty), not the gem's capacity — what
+      // comes back as charge, not how big the gem is.
+      float magnitude = 0.0f;
       float duration = 0.0f;              // Effect duration
       uint32_t value = 0;                 // Gold value
       bool isHostile = false;             // Poison vs beneficial

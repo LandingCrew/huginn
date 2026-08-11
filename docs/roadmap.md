@@ -95,6 +95,12 @@
       `slotRetries` (3 would poison the entry for 30s) nor log above trace (S)
 
 ## Known Mod Compatability Issues
+- [ ] Vanilla-build integration pass — a set of contexts is only ever exercised
+      on the Requiem-based list this is developed against, so anything vanilla
+      ships and Requiem strips is verified by unit test alone. Workstation is the
+      known case (test 6h stands in for it); the honest scope is "boot a vanilla
+      profile once and walk the contexts", which would also cover the #79 four
+      that no LoreRim character can carry. Wants a save with vanilla alchemy
 - [ ] #63: Requiem (LoreRim et al.) strips Fortify Smithing/Enchanting from
       alchemy, so the workstation context has no potion to rank — inert in the
       modlists that actually get play-tested. Live targets are filled soul gems

@@ -497,7 +497,10 @@ namespace Huginn::Override
         }
         s_loggedNoSoulGem = false;  // Reset when gems become available
 
-        logger::debug("[OverrideManager] FindSoulGem: Found {} (capacity={:.0f}, filled={})"sv,
+        // soul=, not capacity=: magnitude is the SOUL_LEVEL held, which is what
+        // decides the recharge. The two coincide for a grand soul in a grand
+        // gem, so the old wording read correctly by accident.
+        logger::debug("[OverrideManager] FindSoulGem: Found {} (soul={:.0f}, filled={})"sv,
             bestGem->data.name, bestGem->data.magnitude, bestGem->data.isFilled);
 
         // Convert to ItemCandidate
