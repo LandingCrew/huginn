@@ -356,6 +356,12 @@ namespace Huginn::Item
 
       // Soul gem fill state (v0.10.0)
       bool isFilled = false;  // True if soul gem contains a soul (for weapon recharge)
+      // How many instances in the stack are filled — NOT the stack size. Ten
+      // petty gems with one soul among them is a registry count of 10 and a
+      // filledCount of 1, and only the 1 can recharge anything. The candidate
+      // path carries this as its count so the scarcity penalty sees the gems
+      // that can actually be spent.
+      int32_t filledCount = 0;
 
       // =======================================================================
       // HELPER METHODS

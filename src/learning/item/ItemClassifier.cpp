@@ -107,15 +107,35 @@ namespace Huginn::Item
       //
       // SOUL_LEVEL runs kNone=0 … kGrand=5. There is no 6 — the old comment
       // claiming 1-6 came from the keyword table's SoulGemBlack=6, a value the
-      // API cannot return. The gem's own type survives in ItemTagExt for
-      // anything that wants it.
+      // API cannot return.
       //
       // Base form only, so this sees vendor/loot gems that ship with a soul.
       // Player-filled gems keep theirs in ExtraSoul, which is per-instance and
       // invisible here — ItemRegistry's scan reads that and overrides.
       data.magnitude = static_cast<float>(soulGem->GetContainedSoul());
 
-      logger::trace("Classified soul gem: {} (soul={:.0f})"sv, data.name, data.magnitude);
+      // Capacity moves to tagsExt rather than being dropped. It stopped being
+      // the magnitude above, and nothing else in the system recorded it, so
+      // "how big is this gem" became unanswerable — including for the black
+      // gem query, which asked magnitude >= 6 and could no longer ever be true.
+      // The AlchemyItem fallback path already sets these same bits from
+      // keywords; this makes real TESSoulGem forms agree with it.
+      switch (soulGem->GetMaximumCapacity()) {
+         case RE::SOUL_LEVEL::kPetty:   data.tagsExt |= ItemTagExt::SoulGemPetty;   break;
+         case RE::SOUL_LEVEL::kLesser:  data.tagsExt |= ItemTagExt::SoulGemLesser;  break;
+         case RE::SOUL_LEVEL::kCommon:  data.tagsExt |= ItemTagExt::SoulGemCommon;  break;
+         case RE::SOUL_LEVEL::kGreater: data.tagsExt |= ItemTagExt::SoulGemGreater; break;
+         case RE::SOUL_LEVEL::kGrand:   data.tagsExt |= ItemTagExt::SoulGemGrand;   break;
+         default: break;
+      }
+      // Black is a record flag, not a capacity — a black gem is a grand-capacity
+      // gem that may also hold NPC souls, so it carries both bits.
+      if (soulGem->CanHoldNPCSoul()) {
+         data.tagsExt |= ItemTagExt::SoulGemBlack;
+      }
+
+      logger::trace("Classified soul gem: {} (soul={:.0f}, capacity={})"sv,
+      data.name, data.magnitude, static_cast<int>(soulGem->GetMaximumCapacity()));
 
       return data;
    }

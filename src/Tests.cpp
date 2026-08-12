@@ -2737,9 +2737,19 @@ void RunUnitTests()
         // in-game: six gems registered, three of them filled, and not one ever
         // reached a slot because the player had no enchanted weapon equipped.
         {
+            // Shipped default, not the player's INI. fWeightSoulGem is a
+            // supported, documented tuning knob with a legal value of 0 — read
+            // live, a player who had turned gems off would fail this test, and
+            // the early return would silently take every test after it with it.
+            // The mechanism under test (a gem draws its own baseline and that
+            // baseline clears the floor) is a property of the shipped defaults.
+            auto gemConfig = settings.BuildConfig();
+            gemConfig.weightSoulGem = State::ContextWeightDefaults::SOUL_GEM;
+            Context::ContextRuleEngine gemEngine(gemConfig);
+
             State::PlayerActorState testPlayer{};   // no enchanted weapon
             State::WorldState testWorld{};
-            const auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
+            const auto weights = gemEngine.EvaluateRules(testPlayer, testTargets, testWorld);
 
             if (weights.weaponChargeWeight != 0.0f) {
                 logger::error("TEST FAIL (6i): premise wrong — no enchanted weapon should mean "
@@ -2777,7 +2787,7 @@ void RunUnitTests()
             State::PlayerActorState drained{};
             drained.hasEnchantedWeapon = true;
             drained.weaponChargePercent = 0.10f;
-            const auto urgentWeights = engine.EvaluateRules(drained, testTargets, testWorld);
+            const auto urgentWeights = gemEngine.EvaluateRules(drained, testTargets, testWorld);
             if (Context::WeightForCandidate(gem, urgentWeights) <= gemWeight) {
                 logger::error("TEST FAIL (6i): a drained enchanted weapon should raise the gem above "
                     "its baseline {:.3f}", gemWeight);

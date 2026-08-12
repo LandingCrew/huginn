@@ -351,6 +351,17 @@ namespace Huginn::Candidate
 
             ItemCandidate candidate = ItemCandidate::FromInventoryItem(item);
             candidate.sourceType = SourceType::SoulGem;
+            // Filled instances, not stack size. FromInventoryItem takes the
+            // whole count, which for gems includes the empty ones — a stack of
+            // ten petty gems holding one soul looked abundant and dodged the
+            // scarcity penalty in PriorCalculator, while a lone filled gem took
+            // it. Only the filled ones can be spent, so only they count.
+            // Guarded: filledCount is 0 for the AlchemyItem-form mod gems that
+            // never reach the ExtraSoul scan, and those reach here only when
+            // isFilled is already true, so fall back to the stack count.
+            if (item.data.filledCount > 0) {
+                candidate.count = item.data.filledCount;
+            }
             out.push_back(std::move(candidate));
             ++gathered;
         });

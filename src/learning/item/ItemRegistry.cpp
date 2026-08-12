@@ -163,17 +163,40 @@ namespace Huginn::Item
         // soul can change without the BOOL changing — trap a grand soul into a
         // stack that already held a petty one and the gem is worth more while
         // isFilled stays true. Kept outside the flip branch for that reason.
+        //
+        // Only when the scan actually saw this form. Absent means it is not a
+        // TESSoulGem at all — mod gems that are AlchemyItem forms wearing soul
+        // gem keywords classify as ItemType::SoulGem but never reach the soul
+        // scan, and an unguarded write zeroed the keyword-derived magnitude
+        // ItemClassifier gave them, 500 ms after every registration. A form
+        // that IS in the map with bestSoulLevel 0 is a real emptied gem, and
+        // still writes through.
+        bool soulChanged = false;
         auto soulIt = currentSoulLevels.find(invItem.data.formID);
-        const float currentSoul = (soulIt != currentSoulLevels.end())
-            ? static_cast<float>(soulIt->second) : 0.0f;
-        invItem.data.magnitude = currentSoul;
+        if (soulIt != currentSoulLevels.end()) {
+           const float currentSoul = static_cast<float>(soulIt->second);
+           if (invItem.data.magnitude != currentSoul) {
+              invItem.data.magnitude = currentSoul;
+              soulChanged = true;
+           }
+        }
 
-        if (currentlyFilled != invItem.data.isFilled) {
+        // v0.10.0: fill flip also updates the filled-instance count, which is
+        // what the candidate path treats as the usable quantity.
+        const int32_t currentFilledCount =
+           (fillIt != currentFilledCounts.end()) ? fillIt->second : 0;
+        invItem.data.filledCount = currentFilledCount;
+
+        const bool fillFlipped = (currentlyFilled != invItem.data.isFilled);
+        if (fillFlipped || soulChanged) {
            invItem.data.isFilled = currentlyFilled;
-           // Fill state feeds GetBestSoulGem (filled gems only), so a flip must
-           // reach the caller's inventoryChanged → MarkPageDirty signal even
-           // though the count is unchanged: emit a zero-delta event (delta == 0
-           // takes none of the consumption/lock-break paths in the consumer).
+           // Both feed ranking, and neither moves the count, so both need the
+           // zero-delta event to reach the caller's inventoryChanged →
+           // MarkPageDirty signal (delta == 0 takes none of the
+           // consumption/lock-break paths in the consumer). Without it the new
+           // value sits in the registry unread: the pipeline's skip gate holds,
+           // and a gem that just went from petty to grand keeps its old rank
+           // until something unrelated dirties the page.
            // Skipped when a count event for this gem was already emitted above.
            if (!countChanged) {
               changes.push_back(ItemChangeEvent{
@@ -183,8 +206,13 @@ namespace Huginn::Item
                  .delta = 0
               });
            }
-           logger::debug("[ItemRegistry] Soul gem fill state changed: {} -> {}"sv,
-            invItem.data.name, currentlyFilled ? "filled" : "empty");
+           if (fillFlipped) {
+              logger::debug("[ItemRegistry] Soul gem fill state changed: {} -> {}"sv,
+               invItem.data.name, currentlyFilled ? "filled" : "empty");
+           } else {
+              logger::debug("[ItemRegistry] Soul gem soul changed: {} -> {:.0f}"sv,
+               invItem.data.name, invItem.data.magnitude);
+           }
         }
       }
       }
@@ -546,20 +574,62 @@ namespace Huginn::Item
       [](const InventoryItem& i) { return i.data.magnitude; }, topK);
    }
 
-   std::vector<const InventoryItem*> ItemRegistry::GetSoulGemsByCapacity(float minCapacity, size_t topK) const
+   std::vector<const InventoryItem*> ItemRegistry::GetSoulGemsBySoulLevel(float minSoulLevel, size_t topK) const
    {
+      // Renamed from GetSoulGemsByCapacity: magnitude stopped being capacity
+      // and became the soul held, so the old name described the opposite of
+      // what the filter did. Capacity now lives in tagsExt — see
+      // GetSoulGemsByCapacity below, which asks the question the old name
+      // promised.
       return QueryTopK(
-      [minCapacity](const InventoryItem& i) {
-        return i.data.type == ItemType::SoulGem && i.count > 0 && i.data.magnitude >= minCapacity;
+      [minSoulLevel](const InventoryItem& i) {
+        return i.data.type == ItemType::SoulGem && i.count > 0 && i.data.magnitude >= minSoulLevel;
+      },
+      [](const InventoryItem& i) { return i.data.magnitude; }, topK);
+   }
+
+   std::vector<const InventoryItem*> ItemRegistry::GetSoulGemsByCapacity(ItemTagExt minCapacity, size_t topK) const
+   {
+      // Capacity is a tag bit now, and the bits are ordered petty → grand, so
+      // "at least this big" is "at or above this bit". Black carries the grand
+      // bit too, so it satisfies any threshold a grand gem does.
+      //
+      // The ordering is load-bearing — a reshuffle of ItemTagExt would silently
+      // invert this comparison, so assert it here rather than trust the enum.
+      static_assert(static_cast<uint32_t>(ItemTagExt::SoulGemPetty) <
+                    static_cast<uint32_t>(ItemTagExt::SoulGemLesser) &&
+                    static_cast<uint32_t>(ItemTagExt::SoulGemLesser) <
+                    static_cast<uint32_t>(ItemTagExt::SoulGemCommon) &&
+                    static_cast<uint32_t>(ItemTagExt::SoulGemCommon) <
+                    static_cast<uint32_t>(ItemTagExt::SoulGemGreater) &&
+                    static_cast<uint32_t>(ItemTagExt::SoulGemGreater) <
+                    static_cast<uint32_t>(ItemTagExt::SoulGemGrand),
+                    "GetSoulGemsByCapacity compares capacity bits numerically — "
+                    "they must stay ordered petty < lesser < common < greater < grand");
+      const auto minBit = static_cast<uint32_t>(minCapacity);
+      return QueryTopK(
+      [minBit](const InventoryItem& i) {
+        if (i.data.type != ItemType::SoulGem || i.count <= 0) return false;
+        constexpr uint32_t kCapacityMask =
+           static_cast<uint32_t>(ItemTagExt::SoulGemPetty) |
+           static_cast<uint32_t>(ItemTagExt::SoulGemLesser) |
+           static_cast<uint32_t>(ItemTagExt::SoulGemCommon) |
+           static_cast<uint32_t>(ItemTagExt::SoulGemGreater) |
+           static_cast<uint32_t>(ItemTagExt::SoulGemGrand);
+        const uint32_t capacityBits = static_cast<uint32_t>(i.data.tagsExt) & kCapacityMask;
+        return capacityBits >= minBit;
       },
       [](const InventoryItem& i) { return i.data.magnitude; }, topK);
    }
 
    std::vector<const InventoryItem*> ItemRegistry::GetBlackSoulGems() const
    {
-      // Black soul gem capacity == 6.0
+      // Was `magnitude >= 6.0`, which stopped being satisfiable the moment
+      // magnitude became SOUL_LEVEL (max 5) — the query returned nothing at
+      // all. The record flag is the real answer and always was.
       return Collect([](const InventoryItem& i) {
-      return i.data.type == ItemType::SoulGem && i.count > 0 && i.data.magnitude >= 6.0f;
+      return i.data.type == ItemType::SoulGem && i.count > 0 &&
+             HasTagExt(i.data.tagsExt, ItemTagExt::SoulGemBlack);
       });
    }
 
@@ -792,6 +862,7 @@ namespace Huginn::Item
       m_entries[it->second].count = count;
       // v0.10.0: Update fill state - filled if ANY gems of this type are filled
       m_entries[it->second].data.isFilled = (filledCount > 0);
+      m_entries[it->second].data.filledCount = filledCount;
       // Ranking value travels with fill state — a gem filled since the last
       // scan is worth what it now holds, not what it held before.
       m_entries[it->second].data.magnitude = static_cast<float>(bestSoulLevel);
@@ -811,6 +882,7 @@ namespace Huginn::Item
 
       // v0.10.0: Set fill state based on extraData scan
       itemData.isFilled = (filledCount > 0);
+      itemData.filledCount = filledCount;
       // Overrides the capacity ClassifySoulGem read off the base form. The scan
       // is authoritative because it is the only place that sees ExtraSoul, which
       // is where a player-filled gem keeps its soul.
