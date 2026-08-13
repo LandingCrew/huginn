@@ -271,10 +271,8 @@ namespace Huginn::Input
       // the slot rendered, the hotkey did nothing, and no reward ever reached
       // the learner. Every gem the player earned themselves was a dead tile.
       //
-      // The instance matters for removal too: a stack of ten petty gems with
-      // one filled is one registry entry, and RemoveItem with a null extraList
-      // takes an arbitrary instance — potentially an empty one, granting charge
-      // for free and leaving the filled gem in place.
+      // The instance also decides what happens to the gem afterwards — see the
+      // spend-or-empty branch below.
       auto soulLevel = soulGem->GetContainedSoul();
       RE::ExtraDataList* sourceInstance = nullptr;
 
@@ -304,20 +302,32 @@ namespace Huginn::Input
          return false;
       }
 
-      // Reusable gems (Azura's Star, The Black Star) are emptied, never spent.
-      // NAM0 pointing at itself is how the record marks that: an ordinary gem
-      // links to its filled variant, a reusable one links to itself so trapping
-      // a soul leaves the form unchanged. Getting this wrong destroys a unique
-      // quest item — and #87 is what made it reachable, by putting gems on the
-      // wheel where a keypress calls this.
-      const bool isReusable = (soulGem->linkedSoulGem == soulGem);
-      if (isReusable && !sourceInstance) {
-         // Reusable, but the soul is on the base form — clearing that would
-         // edit a shared record. Decline rather than consume the item.
-         logger::warn("[EquipManager] '{}' is reusable but its soul is not per-instance; "
-            "declining to consume it"sv, soulGem->GetName());
-         return false;
-      }
+      // Where the soul lives decides whether the gem is spent or emptied.
+      //
+      // Trapping a soul into an ordinary gem CONVERTS it: SoulGemPetty becomes
+      // SoulGemPettyFilled, a different form, which is what NAM0 exists for. So
+      // an ordinary filled gem always carries its soul on the base form, and
+      // spending it means removing the item.
+      //
+      // A gem still wearing the empty base form with a per-instance ExtraSoul
+      // is one the game declined to convert — which is what a reusable gem is.
+      // Those are emptied, not destroyed.
+      //
+      // This replaces a guess that `linkedSoulGem == soulGem` marks reusability.
+      // It does not: The Black Star failed that test in-game on 2026-08-12 and
+      // was consumed — a unique quest item destroyed by a keypress. The soul's
+      // location is observable rather than inferred, and it fails safe: an
+      // exotic gem misread this way survives with its soul spent, which is a
+      // bookkeeping error, not a lost item.
+      const bool isReusable = (sourceInstance != nullptr);
+
+      // The record's own linkage, logged rather than trusted — the vanilla
+      // meaning of NAM0 for reusable gems is not what it appeared to be, and
+      // this is the evidence needed to revisit it.
+      logger::debug("[EquipManager] '{}' soul={} source={} linked={:08X}"sv,
+         soulGem->GetName(), static_cast<int>(soulLevel),
+         sourceInstance ? "instance" : "baseform",
+         soulGem->linkedSoulGem ? soulGem->linkedSoulGem->GetFormID() : 0);
 
       // LIMITATION: Vanilla engine constants — not exposed as GMSTs, so mods that
       // alter soul gem charge/XP values via SKSE or script will diverge from these.
@@ -381,15 +391,15 @@ namespace Huginn::Input
       // Apply the charge
       player->AsActorValueOwner()->ModActorValue(chargeAV, restoreAmount);
 
-      // Spend the gem — or empty it, if it is one of the reusable ones.
-      // sourceInstance targets the exact filled instance; null means the base
-      // form itself is the filled variant, where any instance will do.
+      // Empty the instance, or spend the item. RemoveItem is only ever reached
+      // with sourceInstance == nullptr — the base form is the filled variant,
+      // so any instance of it is the right one to take.
       if (isReusable) {
          if (auto* extraSoul = sourceInstance->GetByType<RE::ExtraSoul>()) {
             extraSoul->soul = RE::SOUL_LEVEL::kNone;
          }
       } else {
-         player->RemoveItem(soulGem, 1, RE::ITEM_REMOVE_REASON::kRemove, sourceInstance, nullptr);
+         player->RemoveItem(soulGem, 1, RE::ITEM_REMOVE_REASON::kRemove, nullptr, nullptr);
       }
 
       // Award enchanting XP
