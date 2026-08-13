@@ -148,17 +148,12 @@ namespace Huginn::Display
                 bool       wild = !a.IsEmpty() && a.IsWildcard();
                 std::string sub = a.subtextLabel;
 
-                // Soul gems are display-only — Wheeler can't handle TESSoulGem
-                // forms. Zero them so Wheeler treats the slot as empty, and clear the
-                // subtext too — otherwise the now-empty slot would keep the soul gem's
-                // explanation label, showing an empty slot with a stale description.
-                if (a.HasCandidate() &&
-                    a.candidate->GetSourceType() == Candidate::SourceType::SoulGem) {
-                    formID = 0;
-                    uid = 0;
-                    wild = false;
-                    sub.clear();
-                }
+                // Soul gems used to be blanked here — Wheeler could not handle
+                // TESSoulGem forms, so Huginn allocated a gem and then zeroed it
+                // on the way out, leaving an empty tile where the widget showed
+                // one. Wheeler renders them now (observed 2026-08-11: a user
+                // wheel carrying Azura's Star and The Black Star), so the
+                // suppression is gone and gems push like any other item.
 
                 // Empty post-activation policy: blank the activated slot and
                 // relabel it "Equipped".

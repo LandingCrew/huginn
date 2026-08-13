@@ -324,17 +324,48 @@ namespace Huginn::Candidate
             return;
         }
 
-        // Get the single best soul gem (largest capacity) — zero allocation.
-        // Soul gems are informational — they tell the player their weapon needs
-        // recharging. Only one recommendation is needed.
-        const auto* bestGem = m_itemRegistry->GetBestSoulGem();
-        m_stats.soulGemsScanned = bestGem ? 1 : 0;
+        // Every FILLED gem, not the largest one.
+        //
+        // This used to call GetBestSoulGem() and emit exactly one candidate,
+        // picked by capacity. That is a hard-coded preference sitting in front
+        // of the one component whose job is preferences: a Petty gem was never
+        // a candidate, so it could never be scored, equipped from a slot, or
+        // rewarded, and FeatureQLearner could not discover that a player tops up
+        // with small gems and saves the Grands. Every other candidate type is
+        // gathered wholesale and ranked; gems were the exception.
+        //
+        // The urgent path is untouched and still decisive —
+        // OverrideManager::FindSoulGem() makes its own single pick, because when
+        // a weapon dies mid-fight the answer is "the biggest one, now", and
+        // overcharging is the right trade there.
+        //
+        // Empty gems stay out: they cannot recharge anything, so surfacing one
+        // is offering an action that does nothing.
+        //
+        // Cost is small — gems stack, so this is one candidate per filled TYPE
+        // (Petty/Lesser/Common/…), not per gem.
+        size_t gathered = 0;
+        m_itemRegistry->ForEachItem([&](const Item::InventoryItem& item) {
+            if (item.data.type != Item::ItemType::SoulGem) return;
+            if (item.count <= 0 || !item.data.isFilled) return;
 
-        if (bestGem && bestGem->count > 0) {
-            ItemCandidate candidate = ItemCandidate::FromInventoryItem(*bestGem);
+            ItemCandidate candidate = ItemCandidate::FromInventoryItem(item);
             candidate.sourceType = SourceType::SoulGem;
+            // Filled instances, not stack size. FromInventoryItem takes the
+            // whole count, which for gems includes the empty ones — a stack of
+            // ten petty gems holding one soul looked abundant and dodged the
+            // scarcity penalty in PriorCalculator, while a lone filled gem took
+            // it. Only the filled ones can be spent, so only they count.
+            // Guarded: filledCount is 0 for the AlchemyItem-form mod gems that
+            // never reach the ExtraSoul scan, and those reach here only when
+            // isFilled is already true, so fall back to the stack count.
+            if (item.data.filledCount > 0) {
+                candidate.count = item.data.filledCount;
+            }
             out.push_back(std::move(candidate));
-        }
+            ++gathered;
+        });
+        m_stats.soulGemsScanned = gathered;
     }
 
     // =========================================================================

@@ -59,11 +59,18 @@ namespace Huginn::Item
       data.duration = GetPrimaryDuration(item);
 
       // STEP 4: Soul gem capacity encoding (v0.7.8)
-      // For soul gems, magnitude encodes capacity level (1.0-6.0)
-      // Direct keyword scans — allocation-free, early-exit per check
+      //
+      // FALLBACK PATH ONLY — reached by mod items that are AlchemyItem forms
+      // wearing soul gem keywords, never by a real TESSoulGem (ClassifySoulGem
+      // handles those and reads the soul actually held). There is no soul data
+      // to read here at all, so capacity stands in for it: a rough proxy, and
+      // the best available. The tagsExt bits are the durable part.
+      //
+      // Black is 5, not 6: SOUL_LEVEL tops out at kGrand=5, so a 6 would rank
+      // these fallback items above anything the real API can produce.
       if (data.type == ItemType::SoulGem) {
       auto* keywordForm = item->As<RE::BGSKeywordForm>();
-      if      (HasKeyword(keywordForm, "SoulGemBlack"))   { data.magnitude = 6.0f; data.tagsExt |= ItemTagExt::SoulGemBlack; }
+      if      (HasKeyword(keywordForm, "SoulGemBlack"))   { data.magnitude = 5.0f; data.tagsExt |= ItemTagExt::SoulGemBlack; }
       else if (HasKeyword(keywordForm, "SoulGemGrand"))   { data.magnitude = 5.0f; data.tagsExt |= ItemTagExt::SoulGemGrand; }
       else if (HasKeyword(keywordForm, "SoulGemGreater")) { data.magnitude = 4.0f; data.tagsExt |= ItemTagExt::SoulGemGreater; }
       else if (HasKeyword(keywordForm, "SoulGemCommon"))  { data.magnitude = 3.0f; data.tagsExt |= ItemTagExt::SoulGemCommon; }
@@ -91,12 +98,44 @@ namespace Huginn::Item
       data.isHostile = false;
       data.duration = 0.0f;
 
-      // Encode capacity level as magnitude (1.0-6.0)
-      // GetMaximumCapacity() returns 1-6 directly
-      auto capacity = soulGem->GetMaximumCapacity();
-      data.magnitude = static_cast<float>(capacity);
+      // Magnitude is the soul the gem HOLDS, not the size of the gem.
+      //
+      // It used to be GetMaximumCapacity(), which ranked a Grand gem holding a
+      // petty soul above a Common gem holding a common one — less charge
+      // returned, and the expensive gem spent to do it. Capacity is the box;
+      // this is what is in it, and only this decides the recharge.
+      //
+      // SOUL_LEVEL runs kNone=0 … kGrand=5. There is no 6 — the old comment
+      // claiming 1-6 came from the keyword table's SoulGemBlack=6, a value the
+      // API cannot return.
+      //
+      // Base form only, so this sees vendor/loot gems that ship with a soul.
+      // Player-filled gems keep theirs in ExtraSoul, which is per-instance and
+      // invisible here — ItemRegistry's scan reads that and overrides.
+      data.magnitude = static_cast<float>(soulGem->GetContainedSoul());
 
-      logger::trace("Classified soul gem: {} (capacity={:.0f})"sv, data.name, data.magnitude);
+      // Capacity moves to tagsExt rather than being dropped. It stopped being
+      // the magnitude above, and nothing else in the system recorded it, so
+      // "how big is this gem" became unanswerable — including for the black
+      // gem query, which asked magnitude >= 6 and could no longer ever be true.
+      // The AlchemyItem fallback path already sets these same bits from
+      // keywords; this makes real TESSoulGem forms agree with it.
+      switch (soulGem->GetMaximumCapacity()) {
+         case RE::SOUL_LEVEL::kPetty:   data.tagsExt |= ItemTagExt::SoulGemPetty;   break;
+         case RE::SOUL_LEVEL::kLesser:  data.tagsExt |= ItemTagExt::SoulGemLesser;  break;
+         case RE::SOUL_LEVEL::kCommon:  data.tagsExt |= ItemTagExt::SoulGemCommon;  break;
+         case RE::SOUL_LEVEL::kGreater: data.tagsExt |= ItemTagExt::SoulGemGreater; break;
+         case RE::SOUL_LEVEL::kGrand:   data.tagsExt |= ItemTagExt::SoulGemGrand;   break;
+         default: break;
+      }
+      // Black is a record flag, not a capacity — a black gem is a grand-capacity
+      // gem that may also hold NPC souls, so it carries both bits.
+      if (soulGem->CanHoldNPCSoul()) {
+         data.tagsExt |= ItemTagExt::SoulGemBlack;
+      }
+
+      logger::trace("Classified soul gem: {} (soul={:.0f}, capacity={})"sv,
+      data.name, data.magnitude, static_cast<int>(soulGem->GetMaximumCapacity()));
 
       return data;
    }

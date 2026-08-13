@@ -198,10 +198,16 @@ namespace Huginn::Context
                     maxWeight = std::max(maxWeight, weights.stealthWeight);
                 }
 
-                // Soul gems (for weapon charging)
-                // Check if this is a soul gem by source type
+                // Soul gems. Two weights, not one: weaponChargeWeight is the
+                // urgent case and fires only with an enchanted weapon equipped
+                // and drained, while soulGemWeight is the always-on baseline
+                // that lets a gem appear on a slot that accepts it at all.
+                // Without the baseline a player with filled gems and no
+                // enchanted weapon equipped never saw one — the same lockout
+                // the weapon, spell and buff-potion baselines exist to fix.
                 if (c.sourceType == Candidate::SourceType::SoulGem) {
                     maxWeight = std::max(maxWeight, weights.weaponChargeWeight);
+                    maxWeight = std::max(maxWeight, weights.soulGemWeight);
                 }
 
                 return maxWeight;

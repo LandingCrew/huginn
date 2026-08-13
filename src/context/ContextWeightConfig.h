@@ -68,6 +68,7 @@ namespace Huginn::State
         float weightSummon = ContextWeightDefaults::SUMMON;
 
         // Buff & resist potions
+        float weightSoulGem = ContextWeightDefaults::SOUL_GEM;
         float weightBuffPotion = ContextWeightDefaults::BUFF_POTION;
         float weightBuffCombat = ContextWeightDefaults::BUFF_COMBAT;
 

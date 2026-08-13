@@ -86,6 +86,7 @@ namespace Huginn::Context
         // EQUIPMENT
         // =========================================================================
         float weaponChargeWeight = 0.0f;    // Soul gems (when weapon charge low)
+        float soulGemWeight = 0.0f;         // Soul gems (always-on baseline, mirrors weapon/spell/buff)
         float ammoWeight = 0.0f;            // Ammo (when bow equipped, low ammo)
         float boundWeaponWeight = 0.0f;     // Bound weapon spells (when no weapon equipped)
         float weaponWeight = 0.0f;          // Physical weapons (always-on baseline for weapon candidates)
@@ -136,6 +137,7 @@ namespace Huginn::Context
             maxWeight = std::max(maxWeight, antiDragonWeight);
             maxWeight = std::max(maxWeight, stealthWeight);
             maxWeight = std::max(maxWeight, weaponChargeWeight);
+            maxWeight = std::max(maxWeight, soulGemWeight);
             maxWeight = std::max(maxWeight, ammoWeight);
             maxWeight = std::max(maxWeight, boundWeaponWeight);
             maxWeight = std::max(maxWeight, weaponWeight);

@@ -27,6 +27,11 @@ namespace Huginn::Item
       RE::FormID formID;  // OPTIMIZATION (S5): Captured once during scan
       int32_t count;
       int32_t filledCount = 0;  // v0.10.0: Count of gems with souls (for weapon recharge)
+      // Best soul actually held by any instance of this form, as RE::SOUL_LEVEL
+      // (0 = none). This, not the gem's capacity, is how much charge it returns —
+      // a Grand gem holding a petty soul recharges like a petty gem while costing
+      // you the Grand. The scan is the only place both fill paths are visible.
+      int32_t bestSoulLevel = 0;
    };
 
    // =============================================================================
@@ -355,7 +360,7 @@ namespace Huginn::Item
       // =============================================================================
 
       /**
-       * @brief Get all soul gems sorted by capacity (highest first)
+       * @brief Get all soul gems sorted by soul held (highest first)
        * @param topK Maximum number of results (default 3, 0 = all)
        * @return Vector of pointers to soul gems, sorted by magnitude descending
        * @note OPTIMIZATION (v0.7.20 H4): Uses partial_sort for O(n log k) vs O(n log n)
@@ -363,23 +368,32 @@ namespace Huginn::Item
       [[nodiscard]] std::vector<const InventoryItem*> GetSoulGems(size_t topK = 3) const;
 
       /**
-       * @brief Get soul gems by minimum capacity (1=Petty, 6=Black)
-       * @param minCapacity Minimum capacity threshold
+       * @brief Get soul gems by minimum SOUL HELD (1=Petty ... 5=Grand, 0=empty)
+       * @param minSoulLevel Minimum soul level threshold
        * @param topK Maximum number of results (default 3, 0 = all)
-       * @return Vector of pointers to soul gems with capacity >= minCapacity, sorted descending
-       * @note OPTIMIZATION (v0.7.20 H4): Uses partial_sort for O(n log k) vs O(n log n)
+       * @return Vector of pointers to gems holding >= minSoulLevel, sorted descending
+       * @note Was GetSoulGemsByCapacity. magnitude is the soul held, not the
+       *       gem's capacity, so the old name described the opposite filter.
        */
-      [[nodiscard]] std::vector<const InventoryItem*> GetSoulGemsByCapacity(float minCapacity, size_t topK = 3) const;
+      [[nodiscard]] std::vector<const InventoryItem*> GetSoulGemsBySoulLevel(float minSoulLevel, size_t topK = 3) const;
+
+      /**
+       * @brief Get soul gems by minimum CAPACITY (the size of the gem itself)
+       * @param minCapacity Minimum capacity tag (ItemTagExt::SoulGemPetty ... SoulGemGrand)
+       * @param topK Maximum number of results (default 3, 0 = all)
+       * @return Vector of pointers to gems of at least that capacity, sorted by soul held
+       */
+      [[nodiscard]] std::vector<const InventoryItem*> GetSoulGemsByCapacity(ItemTagExt minCapacity, size_t topK = 3) const;
 
       /**
        * @brief Get black soul gems only (for future archetype tracking)
-       * @return Vector of pointers to black soul gems (magnitude >= 6.0)
+       * @return Vector of pointers to gems flagged as able to hold NPC souls
        */
       [[nodiscard]] std::vector<const InventoryItem*> GetBlackSoulGems() const;
 
       /**
-       * @brief Get best soul gem (highest capacity available)
-       * @return Pointer to highest capacity soul gem, or nullptr if none available
+       * @brief Get best soul gem for recharge (largest soul HELD, filled only)
+       * @return Pointer to the gem holding the largest soul, or nullptr if none
        */
       [[nodiscard]] const InventoryItem* GetBestSoulGem() const noexcept;
 
@@ -463,7 +477,8 @@ namespace Huginn::Item
        * @param count Current inventory count
        * @note Soul gems are TESSoulGem, not AlchemyItem - handled separately
        */
-      void AddSoulGem(RE::TESSoulGem* soulGem, int32_t count, int32_t filledCount);
+      void AddSoulGem(RE::TESSoulGem* soulGem, int32_t count, int32_t filledCount,
+                      int32_t bestSoulLevel);
 
       /**
        * @brief Remove item from registry by FormID
@@ -483,6 +498,10 @@ namespace Huginn::Item
       // poll thread. Do not touch from any other path.
       std::unordered_map<RE::FormID, int32_t> m_scanCounts;
       std::unordered_map<RE::FormID, int32_t> m_scanFilledCounts;
+      // Parallel to m_scanFilledCounts: the delta scan refreshes fill state every
+      // 500ms, so the soul level behind it has to travel the same path or a gem
+      // filled by Soul Trap would rank on a stale value until the 30s reconcile.
+      std::unordered_map<RE::FormID, int32_t> m_scanSoulLevels;
 
       // Item classifier instance
       ItemClassifier m_classifier;

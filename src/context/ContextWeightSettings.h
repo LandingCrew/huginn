@@ -75,6 +75,14 @@ namespace Huginn::State
         inline constexpr float BUFF_POTION = 0.15f;         // Always-on baseline (BuffsAny/DefensiveAny slots)
         inline constexpr float BUFF_COMBAT = 0.35f;         // In combat: pop fortify/resist potions
 
+        // Soul gems — the same lockout again. A gem read only weaponChargeWeight,
+        // which needs an ENCHANTED WEAPON EQUIPPED and drained, so a player
+        // carrying filled gems and no enchanted weapon had them pinned at
+        // BASE_RELEVANCE and never saw one. This number's job is to clear
+        // fMinimumUtility so gems can sit on slots that accept them and start
+        // learning; urgency still comes from WEAPON_CHARGE when a weapon needs it.
+        inline constexpr float SOUL_GEM = 0.15f;            // Always-on baseline (Regular slots)
+
         // Utility baseline
         inline constexpr float BASE_RELEVANCE = 0.05f;      // Noise floor for always-available items
 
@@ -178,6 +186,7 @@ namespace Huginn::State
         float weightSummon = ContextWeightDefaults::SUMMON;
 
         // --- Buff & resist potions ---
+        float weightSoulGem = ContextWeightDefaults::SOUL_GEM;
         float weightBuffPotion = ContextWeightDefaults::BUFF_POTION;
         float weightBuffCombat = ContextWeightDefaults::BUFF_COMBAT;
 

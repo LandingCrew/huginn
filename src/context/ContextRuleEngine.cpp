@@ -440,6 +440,14 @@ namespace Huginn::Context
         // baseRelevance and can never clear fMinimumUtility — or learn.
         result.buffPotionWeight = m_config.weightBuffPotion;
 
+        // Soul gems, for the same reason and one step worse: weaponChargeWeight
+        // below needs an enchanted weapon EQUIPPED and drained, so a player
+        // carrying filled gems with an unenchanted weapon out had them locked
+        // under fMinimumUtility permanently — never shown, never learned from.
+        // Always-on, so a gem can sit on a slot that accepts it; the charge
+        // rules below still raise it when a weapon actually needs one.
+        result.soulGemWeight = m_config.weightSoulGem;
+
         // =====================================================================
         // WEAPON CHARGE (Soul Gems)
         // =====================================================================

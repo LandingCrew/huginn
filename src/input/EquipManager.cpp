@@ -262,12 +262,72 @@ namespace Huginn::Input
          return false;
       }
 
-      // Determine soul level → charge value (matches vanilla Skyrim values)
+      // Resolve the soul actually held, and the INSTANCE holding it.
+      //
+      // The base form only carries a soul for vendor/loot gems, which ship as
+      // their own filled FormID (SoulGemPettyFilled). A gem the player filled
+      // with Soul Trap is the EMPTY base form plus a per-instance ExtraSoul, so
+      // reading the base form alone reports kNone and this function bailed —
+      // the slot rendered, the hotkey did nothing, and no reward ever reached
+      // the learner. Every gem the player earned themselves was a dead tile.
+      //
+      // The instance also decides what happens to the gem afterwards — see the
+      // spend-or-empty branch below.
       auto soulLevel = soulGem->GetContainedSoul();
+      RE::ExtraDataList* sourceInstance = nullptr;
+
+      if (soulLevel == RE::SOUL_LEVEL::kNone) {
+         auto* invChanges = player->GetInventoryChanges();
+         if (invChanges && invChanges->entryList) {
+            for (auto* entry : *invChanges->entryList) {
+               if (!entry || entry->object != soulGem || !entry->extraLists) continue;
+               for (auto* extraList : *entry->extraLists) {
+                  if (!extraList) continue;
+                  auto* extraSoul = extraList->GetByType<RE::ExtraSoul>();
+                  if (!extraSoul) continue;
+                  // Best instance in the stack — matches the ranking magnitude
+                  // ItemRegistry stores (max soul across the stack), so the gem
+                  // returns the charge it was scored on.
+                  if (extraSoul->GetContainedSoul() > soulLevel) {
+                     soulLevel = extraSoul->GetContainedSoul();
+                     sourceInstance = extraList;
+                  }
+               }
+            }
+         }
+      }
+
       if (soulLevel == RE::SOUL_LEVEL::kNone) {
          logger::debug("[EquipManager] Soul gem '{}' is empty"sv, soulGem->GetName());
          return false;
       }
+
+      // Where the soul lives decides whether the gem is spent or emptied.
+      //
+      // Trapping a soul into an ordinary gem CONVERTS it: SoulGemPetty becomes
+      // SoulGemPettyFilled, a different form, which is what NAM0 exists for. So
+      // an ordinary filled gem always carries its soul on the base form, and
+      // spending it means removing the item.
+      //
+      // A gem still wearing the empty base form with a per-instance ExtraSoul
+      // is one the game declined to convert — which is what a reusable gem is.
+      // Those are emptied, not destroyed.
+      //
+      // This replaces a guess that `linkedSoulGem == soulGem` marks reusability.
+      // It does not: The Black Star failed that test in-game on 2026-08-12 and
+      // was consumed — a unique quest item destroyed by a keypress. The soul's
+      // location is observable rather than inferred, and it fails safe: an
+      // exotic gem misread this way survives with its soul spent, which is a
+      // bookkeeping error, not a lost item.
+      const bool isReusable = (sourceInstance != nullptr);
+
+      // The record's own linkage, logged rather than trusted — the vanilla
+      // meaning of NAM0 for reusable gems is not what it appeared to be, and
+      // this is the evidence needed to revisit it.
+      logger::debug("[EquipManager] '{}' soul={} source={} linked={:08X}"sv,
+         soulGem->GetName(), static_cast<int>(soulLevel),
+         sourceInstance ? "instance" : "baseform",
+         soulGem->linkedSoulGem ? soulGem->linkedSoulGem->GetFormID() : 0);
 
       // LIMITATION: Vanilla engine constants — not exposed as GMSTs, so mods that
       // alter soul gem charge/XP values via SKSE or script will diverge from these.
@@ -331,14 +391,24 @@ namespace Huginn::Input
       // Apply the charge
       player->AsActorValueOwner()->ModActorValue(chargeAV, restoreAmount);
 
-      // Remove the soul gem (1 unit)
-      player->RemoveItem(soulGem, 1, RE::ITEM_REMOVE_REASON::kRemove, nullptr, nullptr);
+      // Empty the instance, or spend the item. RemoveItem is only ever reached
+      // with sourceInstance == nullptr — the base form is the filled variant,
+      // so any instance of it is the right one to take.
+      if (isReusable) {
+         if (auto* extraSoul = sourceInstance->GetByType<RE::ExtraSoul>()) {
+            extraSoul->soul = RE::SOUL_LEVEL::kNone;
+         }
+      } else {
+         player->RemoveItem(soulGem, 1, RE::ITEM_REMOVE_REASON::kRemove, nullptr, nullptr);
+      }
 
       // Award enchanting XP
       player->AddSkillExperience(RE::ActorValue::kEnchanting, expValue);
 
-      logger::info("[EquipManager] Recharged weapon with '{}' (+{:.0f} charge, {:.0f}/{:.0f})"sv,
-         soulGem->GetName(), restoreAmount, currentCharge + restoreAmount, maxCharge);
+      logger::info("[EquipManager] Recharged weapon with '{}' ({} soul, {}, +{:.0f} charge, {:.0f}/{:.0f})"sv,
+         soulGem->GetName(), static_cast<int>(soulLevel),
+         isReusable ? "emptied" : "consumed",
+         restoreAmount, currentCharge + restoreAmount, maxCharge);
 
       return true;
    }
