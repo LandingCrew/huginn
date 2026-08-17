@@ -26,6 +26,9 @@
 #include <concepts>
 #include <type_traits>
 
+// std::count_if for the teardown guard — same reasoning as the two above.
+#include <algorithm>
+
 using namespace Huginn;
 
 // =============================================================================
@@ -106,7 +109,8 @@ template <typename Registry>
     Registry& registry,
     std::string_view tag,
     RE::PlayerCharacter* player,
-    const Util::InventoryItemMap& inventory)
+    const Util::InventoryItemMap& inventory,
+    size_t trackedCount)
 {
     auto changes = registry.RefreshCounts(player, inventory);
 
@@ -125,6 +129,22 @@ template <typename Registry>
             requires std::same_as<std::remove_cvref_t<decltype(c.delta)>, int32_t>;
         },
         "Registry change event must expose formID (RE::FormID), name, delta (int32_t)");
+
+    // Teardown guard — see Config::TEARDOWN_MIN_DROPS. The IsWorldLoaded gate in
+    // OnUpdate is the primary defence and should mean this never fires; it stays
+    // because that gate infers "unloading" from UI and 3D state, and a window it
+    // does not cover would land here, silently, as training data. Counts are
+    // already written by RefreshCounts above — deliberately: the items reappear
+    // as delta > 0 on the next real scan, which the loop below ignores, so the
+    // registry self-heals without a second code path.
+    const size_t drops = static_cast<size_t>(std::count_if(
+        changes.begin(), changes.end(), [](const auto& c) { return c.delta < 0; }));
+    if (drops >= Config::TEARDOWN_MIN_DROPS &&
+        static_cast<float>(drops) >= static_cast<float>(trackedCount) * Config::TEARDOWN_DROP_RATIO) {
+        logger::warn("[{}] Teardown guard: {}/{} tracked items vanished in one scan — "
+                     "no rewards published"sv, tag, drops, trackedCount);
+        return false;
+    }
 
     for (const auto& change : changes) {
         if (change.delta >= 0) {
@@ -257,14 +277,20 @@ static void MaintainRegistries(RE::PlayerCharacter* player,
             // the pipeline never recomputes while the player is otherwise idle.
             bool inventoryChanged = false;
 
+            // Tracked count is read per registry (GetItemCount / GetScrollCount
+            // are the two public forwarders for the same FormRegistry::
+            // EntryCount, which is protected — hence passing it in rather than
+            // adding it to the constraint above).
             if (itemDeltaDue) {
                 inventoryChanged |= ProcessInventoryChanges(
-                    *g_itemRegistry, "ItemRegistry"sv, player, inventory);
+                    *g_itemRegistry, "ItemRegistry"sv, player, inventory,
+                    g_itemRegistry->GetItemCount());
                 g_registryTimers.itemDelta.Reset(now);
             }
             if (scrollDeltaDue) {
                 inventoryChanged |= ProcessInventoryChanges(
-                    *g_scrollRegistry, "ScrollRegistry"sv, player, inventory);
+                    *g_scrollRegistry, "ScrollRegistry"sv, player, inventory,
+                    g_scrollRegistry->GetScrollCount());
                 g_registryTimers.scrollDelta.Reset(now);
             }
 
@@ -369,6 +395,29 @@ static void RunPipelineIfNeeded(float deltaMs, RE::PlayerCharacter* player,
 // UPDATE LOOP ENTRY POINT
 // =============================================================================
 
+// Is the player in a world we may safely read?
+//
+// PlayerCharacter::GetSingleton() stays non-null through a quit-to-main-menu, so
+// a null check is NOT a liveness test. The actor's container is freed while the
+// menu transition runs, and MaintainRegistries walks that container 2x/second:
+// GetInventorySafe's base-container pass faulted on a freed ContainerObject
+// (EXCEPTION_ACCESS_VIOLATION in TESForm::Is, 2026-08-17). The tick before the
+// crash reported the whole inventory as consumed, for the same reason.
+//
+// Three signals, cheapest first. LoadingMenu and MainMenu cover the deliberate
+// transitions; Get3D() covers the window between teardown starting and any menu
+// appearing, which is where the observed crash landed. Get3D() is also null
+// during ordinary cell loads — which is equally a moment not to be reading the
+// inventory, so the over-broad case is the correct behaviour, not a cost.
+static bool IsWorldLoaded(RE::PlayerCharacter* player)
+{
+    auto* ui = RE::UI::GetSingleton();
+    if (!ui) return false;
+    if (ui->IsMenuOpen(RE::LoadingMenu::MENU_NAME)) return false;
+    if (ui->IsMenuOpen(RE::MainMenu::MENU_NAME)) return false;
+    return player->Get3D() != nullptr;
+}
+
 void OnUpdate(float deltaSeconds)
 {
     if (g_updateSystemFailed.load(std::memory_order_acquire)) {
@@ -388,6 +437,20 @@ void OnUpdate(float deltaSeconds)
 
     auto* player = RE::PlayerCharacter::GetSingleton();
     if (!player) return;
+
+    // Suspend the WHOLE tick, not just the inventory scan: StateManager's polls
+    // read the same dying actor, and the subsystem timers have nothing to
+    // measure while the world is gone. Logged as a transition (both edges), per
+    // the logging principles — a load screen must not produce a line per tick.
+    {
+        static bool wasLoaded = true;
+        const bool loaded = IsWorldLoaded(player);
+        if (loaded != wasLoaded) {
+            logger::info("[Huginn] Pipeline {}"sv, loaded ? "resumed"sv : "suspended (world unloaded)"sv);
+            wasLoaded = loaded;
+        }
+        if (!loaded) return;
+    }
 
     float deltaMs = deltaSeconds * 1000.0f;
 

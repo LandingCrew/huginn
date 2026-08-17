@@ -135,6 +135,20 @@ namespace Huginn::Config
    // few seconds after a load is rare and low-value to learn.
    inline constexpr float CONSUMPTION_POST_LOAD_GRACE_MS = 5000.0f;
 
+   // Mirror of the grace window above, for the UNLOAD side. Quitting to the main
+   // menu fires no SKSE message, so there is nothing to start a timer from: the
+   // only evidence is the shape of the scan itself. When the player's container
+   // is torn down, one delta scan sees every tracked stack drop to zero and
+   // reports the whole inventory as consumed (observed 2026-08-17: 72 phantom
+   // +5.0 rewards and 71 -3.0 misclick penalties in a 10 ms window).
+   //
+   // No player action empties most of the inventory inside one 500 ms scan —
+   // selling a full pack is the nearest real case and still a fraction of it.
+   // TEARDOWN_MIN_DROPS keeps a small registry (a fresh character with three
+   // potions) from tripping the ratio on a single ordinary drink.
+   inline constexpr size_t TEARDOWN_MIN_DROPS = 8;
+   inline constexpr float TEARDOWN_DROP_RATIO = 0.5f;
+
    // Maximum favorited weapons to track
    // Typical player: 5-15 favorites, Collector: 30-50
    inline constexpr size_t MAX_TRACKED_WEAPONS = 100;
