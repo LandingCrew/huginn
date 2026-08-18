@@ -139,14 +139,19 @@ namespace Huginn::Config
    // menu fires no SKSE message, so there is nothing to start a timer from: the
    // only evidence is the shape of the scan itself. When the player's container
    // is torn down, one delta scan sees every tracked stack drop to zero and
-   // reports the whole inventory as consumed (observed 2026-08-17: 72 phantom
-   // +5.0 rewards and 71 -3.0 misclick penalties in a 10 ms window).
+   // would report the whole inventory as consumed (observed 2026-08-17: 72
+   // phantom +5.0 rewards and 71 -3.0 misclick penalties in a 10 ms window).
    //
-   // No player action empties most of the inventory inside one 500 ms scan —
-   // selling a full pack is the nearest real case and still a fraction of it.
-   // TEARDOWN_MIN_DROPS keeps a small registry (a fresh character with three
-   // potions) from tripping the ratio on a single ordinary drink.
-   inline constexpr size_t TEARDOWN_MIN_DROPS = 8;
+   // The ratio is measured against LIVE entries (count > 0), not registry size —
+   // see the call site in UpdateLoop.cpp for why a stale zero-count tail would
+   // defeat it.
+   //
+   // The floor only has to exclude ordinary use, and nobody drinks three distinct
+   // stacks to exhaustion inside one 500 ms scan. It was 8 first, which made the
+   // guard dead code for ScrollRegistry: a player rarely holds eight scroll types
+   // at once, so the floor alone could never be met there and every phantom
+   // scroll reward would still have landed.
+   inline constexpr size_t TEARDOWN_MIN_DROPS = 3;
    inline constexpr float TEARDOWN_DROP_RATIO = 0.5f;
 
    // Maximum favorited weapons to track

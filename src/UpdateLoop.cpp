@@ -110,7 +110,7 @@ template <typename Registry>
     std::string_view tag,
     RE::PlayerCharacter* player,
     const Util::InventoryItemMap& inventory,
-    size_t trackedCount)
+    size_t liveCount)
 {
     auto changes = registry.RefreshCounts(player, inventory);
 
@@ -133,17 +133,26 @@ template <typename Registry>
     // Teardown guard — see Config::TEARDOWN_MIN_DROPS. The IsWorldLoaded gate in
     // OnUpdate is the primary defence and should mean this never fires; it stays
     // because that gate infers "unloading" from UI and 3D state, and a window it
-    // does not cover would land here, silently, as training data. Counts are
-    // already written by RefreshCounts above — deliberately: the items reappear
-    // as delta > 0 on the next real scan, which the loop below ignores, so the
-    // registry self-heals without a second code path.
+    // does not cover would land here, silently, as training data.
+    //
+    // Suppresses the REWARDS only. The lock-break below and the dirty-page return
+    // still run: if this was NOT a teardown but a real bulk strip (arrest, quest
+    // script), skipping them leaves SlotLocker pinning items the player no longer
+    // owns and nothing to force the recompute that would drop them — the
+    // GameState hash excludes inventory. Both are harmless during an actual
+    // teardown, where the pipeline is reset on the next load anyway.
+    //
+    // Counts are already written by RefreshCounts above, deliberately: the items
+    // reappear as delta > 0 on the next real scan, which the loop below ignores,
+    // so the registry self-heals without a second code path.
     const size_t drops = static_cast<size_t>(std::count_if(
         changes.begin(), changes.end(), [](const auto& c) { return c.delta < 0; }));
-    if (drops >= Config::TEARDOWN_MIN_DROPS &&
-        static_cast<float>(drops) >= static_cast<float>(trackedCount) * Config::TEARDOWN_DROP_RATIO) {
-        logger::warn("[{}] Teardown guard: {}/{} tracked items vanished in one scan — "
-                     "no rewards published"sv, tag, drops, trackedCount);
-        return false;
+    const bool teardown =
+        drops >= Config::TEARDOWN_MIN_DROPS &&
+        static_cast<float>(drops) >= static_cast<float>(liveCount) * Config::TEARDOWN_DROP_RATIO;
+    if (teardown) {
+        logger::warn("[{}] Teardown guard: {} of {} live stacks decreased in one scan — "
+                     "rewards suppressed"sv, tag, drops, liveCount);
     }
 
     for (const auto& change : changes) {
@@ -156,6 +165,10 @@ template <typename Registry>
         // expires and re-pins it through the recompute the caller triggers,
         // leaving a recommendation for an item the player no longer owns.
         Slot::SlotLocker::GetSingleton().OnItemUsed(change.formID, /*respectActivationLock=*/true);
+
+        if (teardown) {
+            continue;  // no reward, and no per-item log line for ~70 phantom drops
+        }
 
         if (!IsConsumption(change.formID, change.delta)) {
             logger::debug("[{}] Left inventory (drop/sell/store), no reward: {} x{}"sv,
@@ -277,20 +290,27 @@ static void MaintainRegistries(RE::PlayerCharacter* player,
             // the pipeline never recomputes while the player is otherwise idle.
             bool inventoryChanged = false;
 
-            // Tracked count is read per registry (GetItemCount / GetScrollCount
-            // are the two public forwarders for the same FormRegistry::
-            // EntryCount, which is protected — hence passing it in rather than
-            // adding it to the constraint above).
+            // The teardown guard's denominator is LIVE entries, not EntryCount():
+            // only a stack with count > 0 can produce a decrease, and zero-count
+            // entries linger until ReconcileItems prunes them on a 30 s timer. A
+            // stale tail would push a real teardown under the ratio — defeating
+            // the guard in exactly the case it exists for. Counted per registry
+            // because ForEachItem / ForEachScroll are two names for the same
+            // protected FormRegistry::ForEachEntry.
             if (itemDeltaDue) {
+                size_t liveItems = 0;
+                g_itemRegistry->ForEachItem(
+                    [&](const auto& e) { if (e.count > 0) ++liveItems; });
                 inventoryChanged |= ProcessInventoryChanges(
-                    *g_itemRegistry, "ItemRegistry"sv, player, inventory,
-                    g_itemRegistry->GetItemCount());
+                    *g_itemRegistry, "ItemRegistry"sv, player, inventory, liveItems);
                 g_registryTimers.itemDelta.Reset(now);
             }
             if (scrollDeltaDue) {
+                size_t liveScrolls = 0;
+                g_scrollRegistry->ForEachScroll(
+                    [&](const auto& e) { if (e.count > 0) ++liveScrolls; });
                 inventoryChanged |= ProcessInventoryChanges(
-                    *g_scrollRegistry, "ScrollRegistry"sv, player, inventory,
-                    g_scrollRegistry->GetScrollCount());
+                    *g_scrollRegistry, "ScrollRegistry"sv, player, inventory, liveScrolls);
                 g_registryTimers.scrollDelta.Reset(now);
             }
 
@@ -448,6 +468,29 @@ void OnUpdate(float deltaSeconds)
         if (loaded != wasLoaded) {
             logger::info("[Huginn] Pipeline {}"sv, loaded ? "resumed"sv : "suspended (world unloaded)"sv);
             wasLoaded = loaded;
+
+            if (loaded) {
+                // Two things stop advancing while suspended and must not be
+                // carried across the gap.
+                //
+                // PipelineStateCache's timestamp is only refreshed from the
+                // pipeline stage, which is skipped — so it now reads as stale by
+                // the length of the whole load screen. The delta timer was never
+                // reset either, so the very next MaintainRegistries call this
+                // same tick is guaranteed due, and every legitimate consumption
+                // it finds would be dropped as "stale cache". A cell load fires
+                // no kPostLoadGame, so CONSUMPTION_POST_LOAD_GRACE_MS does not
+                // cover this: the reward would be silently lost, not suppressed.
+                Learning::PipelineStateCache::GetSingleton().RefreshTimestamp();
+
+                // Slot locks are wall-clock timers that stopped decaying. Their
+                // whole purpose is short-term display stability, and what they
+                // pin describes the world from before the load — after a
+                // character switch, another character's FormIDs. Nothing else
+                // clears them: kPostLoadGame resets CandidateGenerator,
+                // UtilityScorer and OverrideManager, but never SlotLocker.
+                Slot::SlotLocker::GetSingleton().Reset();
+            }
         }
         if (!loaded) return;
     }
