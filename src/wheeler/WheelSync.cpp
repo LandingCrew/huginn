@@ -153,6 +153,105 @@ namespace Huginn::Wheeler
         }
     }
 
+    // =========================================================================
+    // #76 — census + recovery
+    // =========================================================================
+
+    namespace
+    {
+        // Bounded so a Wheeler that is absent, unloaded, or genuinely refusing
+        // cannot turn recovery into a rebuild loop. Three tries a few seconds
+        // apart covers a transient index shift; anything that survives that is
+        // not transient and the log already says so.
+        constexpr int  MAX_RECOVERY_ATTEMPTS = 3;
+        constexpr auto RECOVERY_COOLDOWN = std::chrono::seconds(5);
+    }
+
+    void WheelSync::LogWheelCensusLocked(size_t pageIndex)
+    {
+        if (m_censusLogged) {
+            return;
+        }
+        m_censusLogged = true;
+
+        auto* api = Api();
+        if (!api) {
+            return;
+        }
+
+        // What Wheeler holds right now, and what we think we hold. Reading these
+        // together is the whole point: "no longer managed" alone is compatible
+        // with three different causes, and the census separates them.
+        //
+        //   count dropped / no managed wheels  → they were DELETED (a teardown
+        //                                        racing our creation)
+        //   managed wheels at OTHER indices,
+        //   entry counts matching our pages    → the indices SHIFTED
+        //   our index managed, different size  → ownership moved to another mod
+        const int32_t total = api->GetWheelCount();
+
+        std::string managed;
+        for (int32_t i = 0; i < total; ++i) {
+            if (api->IsManagedWheel(i)) {
+                managed += std::format("{}({}) ", i, api->GetEntryCount(i));
+            }
+        }
+
+        std::string ours;
+        for (size_t p = 0; p < m_pageWheels.size(); ++p) {
+            ours += std::format("{}:{}/{} ", p, m_pageWheels[p].wheelIndex, m_pageWheels[p].slotCount);
+        }
+
+        spdlog::warn("[WheelerClient] #76 census (page {} invalidated): GetWheelCount={} | "
+                     "managed idx(entries)=[{}] | ours page:idx/slots=[{}]",
+                     pageIndex, total,
+                     managed.empty() ? "none" : managed,
+                     ours.empty() ? "none" : ours);
+    }
+
+    bool WheelSync::RecoverInvalidatedWheels()
+    {
+        int attempt = 0;
+        {
+            std::lock_guard<std::mutex> lock(m_pageDataMutex);
+            if (m_pageWheels.empty()) {
+                return false;
+            }
+
+            // A placeholder page never had a wheel and carries no label; an
+            // invalidated one keeps the label it was created with. That is what
+            // separates "this page was always empty" from "this page lost its
+            // wheel", and only the second is worth rebuilding for.
+            bool anyValid = false;
+            bool anyLost = false;
+            for (const auto& pw : m_pageWheels) {
+                if (pw.wheelIndex >= 0) {
+                    anyValid = true;
+                } else if (pw.wheelLabel) {
+                    anyLost = true;
+                }
+            }
+            if (anyValid || !anyLost) {
+                return false;
+            }
+
+            if (m_recoveryAttempts >= MAX_RECOVERY_ATTEMPTS) {
+                return false;
+            }
+            const auto now = std::chrono::steady_clock::now();
+            if (m_recoveryAttempts > 0 && (now - m_lastRecoveryAttempt) < RECOVERY_COOLDOWN) {
+                return false;
+            }
+            attempt = ++m_recoveryAttempts;
+            m_lastRecoveryAttempt = now;
+        }
+
+        // NOT under the lock: CreateWheels takes m_pageDataMutex itself.
+        spdlog::warn("[WheelerClient] #76 recovery: every page invalidated, rebuilding "
+                     "(attempt {}/{})", attempt, MAX_RECOVERY_ATTEMPTS);
+        return CreateWheels();
+    }
+
     bool WheelSync::CreateWheels()
     {
         auto* api = Api();
@@ -217,6 +316,10 @@ namespace Huginn::Wheeler
                 IssueWheelDeletes(DetachWheelsLocked());
             }
         }
+
+        // Fresh generation of wheels: new census, new retry budget (#76).
+        m_censusLogged = false;
+        m_recoveryAttempts = 0;
 
         // Create one wheel per page
         m_pageWheels.reserve(pageCount);
@@ -610,6 +713,7 @@ namespace Huginn::Wheeler
         if (!api->IsManagedWheel(pageWheel.wheelIndex)) {
             spdlog::warn("[WheelerClient] Page {} wheel {} no longer managed, marking invalid",
                 pageIndex, pageWheel.wheelIndex);
+            LogWheelCensusLocked(pageIndex);  // #76: record WHY, before the index is lost
             pageWheel.wheelIndex = -1;
             return;
         }
