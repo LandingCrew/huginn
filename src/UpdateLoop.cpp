@@ -483,12 +483,16 @@ void OnUpdate(float deltaSeconds)
                 // cover this: the reward would be silently lost, not suppressed.
                 Learning::PipelineStateCache::GetSingleton().RefreshTimestamp();
 
-                // Slot locks are wall-clock timers that stopped decaying. Their
-                // whole purpose is short-term display stability, and what they
-                // pin describes the world from before the load — after a
-                // character switch, another character's FormIDs. Nothing else
-                // clears them: kPostLoadGame resets CandidateGenerator,
-                // UtilityScorer and OverrideManager, but never SlotLocker.
+                // Slot locks are wall-clock timers that stopped decaying, and
+                // what they pin describes the world from before the gap.
+                //
+                // Redundant on the save-load path — ResetPipelineSubsystems()
+                // in Globals.cpp already clears them, so a resumed game logs
+                // "Reset complete" twice. Kept for the path that has no such
+                // cover: a cell transition suspends the tick (Get3D() is null
+                // through a load door) but fires no kPostLoadGame, so nothing
+                // else runs. Reset() is idempotent, so the overlap costs one
+                // log line per load.
                 Slot::SlotLocker::GetSingleton().Reset();
             }
         }
