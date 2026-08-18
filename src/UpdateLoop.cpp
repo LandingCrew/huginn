@@ -26,6 +26,9 @@
 #include <concepts>
 #include <type_traits>
 
+// std::count_if for the teardown guard — same reasoning as the two above.
+#include <algorithm>
+
 using namespace Huginn;
 
 // =============================================================================
@@ -106,7 +109,8 @@ template <typename Registry>
     Registry& registry,
     std::string_view tag,
     RE::PlayerCharacter* player,
-    const Util::InventoryItemMap& inventory)
+    const Util::InventoryItemMap& inventory,
+    size_t liveCount)
 {
     auto changes = registry.RefreshCounts(player, inventory);
 
@@ -126,6 +130,31 @@ template <typename Registry>
         },
         "Registry change event must expose formID (RE::FormID), name, delta (int32_t)");
 
+    // Teardown guard — see Config::TEARDOWN_MIN_DROPS. The IsWorldLoaded gate in
+    // OnUpdate is the primary defence and should mean this never fires; it stays
+    // because that gate infers "unloading" from UI and 3D state, and a window it
+    // does not cover would land here, silently, as training data.
+    //
+    // Suppresses the REWARDS only. The lock-break below and the dirty-page return
+    // still run: if this was NOT a teardown but a real bulk strip (arrest, quest
+    // script), skipping them leaves SlotLocker pinning items the player no longer
+    // owns and nothing to force the recompute that would drop them — the
+    // GameState hash excludes inventory. Both are harmless during an actual
+    // teardown, where the pipeline is reset on the next load anyway.
+    //
+    // Counts are already written by RefreshCounts above, deliberately: the items
+    // reappear as delta > 0 on the next real scan, which the loop below ignores,
+    // so the registry self-heals without a second code path.
+    const size_t drops = static_cast<size_t>(std::count_if(
+        changes.begin(), changes.end(), [](const auto& c) { return c.delta < 0; }));
+    const bool teardown =
+        drops >= Config::TEARDOWN_MIN_DROPS &&
+        static_cast<float>(drops) >= static_cast<float>(liveCount) * Config::TEARDOWN_DROP_RATIO;
+    if (teardown) {
+        logger::warn("[{}] Teardown guard: {} of {} live stacks decreased in one scan — "
+                     "rewards suppressed"sv, tag, drops, liveCount);
+    }
+
     for (const auto& change : changes) {
         if (change.delta >= 0) {
             continue;
@@ -136,6 +165,10 @@ template <typename Registry>
         // expires and re-pins it through the recompute the caller triggers,
         // leaving a recommendation for an item the player no longer owns.
         Slot::SlotLocker::GetSingleton().OnItemUsed(change.formID, /*respectActivationLock=*/true);
+
+        if (teardown) {
+            continue;  // no reward, and no per-item log line for ~70 phantom drops
+        }
 
         if (!IsConsumption(change.formID, change.delta)) {
             logger::debug("[{}] Left inventory (drop/sell/store), no reward: {} x{}"sv,
@@ -257,14 +290,27 @@ static void MaintainRegistries(RE::PlayerCharacter* player,
             // the pipeline never recomputes while the player is otherwise idle.
             bool inventoryChanged = false;
 
+            // The teardown guard's denominator is LIVE entries, not EntryCount():
+            // only a stack with count > 0 can produce a decrease, and zero-count
+            // entries linger until ReconcileItems prunes them on a 30 s timer. A
+            // stale tail would push a real teardown under the ratio — defeating
+            // the guard in exactly the case it exists for. Counted per registry
+            // because ForEachItem / ForEachScroll are two names for the same
+            // protected FormRegistry::ForEachEntry.
             if (itemDeltaDue) {
+                size_t liveItems = 0;
+                g_itemRegistry->ForEachItem(
+                    [&](const auto& e) { if (e.count > 0) ++liveItems; });
                 inventoryChanged |= ProcessInventoryChanges(
-                    *g_itemRegistry, "ItemRegistry"sv, player, inventory);
+                    *g_itemRegistry, "ItemRegistry"sv, player, inventory, liveItems);
                 g_registryTimers.itemDelta.Reset(now);
             }
             if (scrollDeltaDue) {
+                size_t liveScrolls = 0;
+                g_scrollRegistry->ForEachScroll(
+                    [&](const auto& e) { if (e.count > 0) ++liveScrolls; });
                 inventoryChanged |= ProcessInventoryChanges(
-                    *g_scrollRegistry, "ScrollRegistry"sv, player, inventory);
+                    *g_scrollRegistry, "ScrollRegistry"sv, player, inventory, liveScrolls);
                 g_registryTimers.scrollDelta.Reset(now);
             }
 
@@ -369,6 +415,29 @@ static void RunPipelineIfNeeded(float deltaMs, RE::PlayerCharacter* player,
 // UPDATE LOOP ENTRY POINT
 // =============================================================================
 
+// Is the player in a world we may safely read?
+//
+// PlayerCharacter::GetSingleton() stays non-null through a quit-to-main-menu, so
+// a null check is NOT a liveness test. The actor's container is freed while the
+// menu transition runs, and MaintainRegistries walks that container 2x/second:
+// GetInventorySafe's base-container pass faulted on a freed ContainerObject
+// (EXCEPTION_ACCESS_VIOLATION in TESForm::Is, 2026-08-17). The tick before the
+// crash reported the whole inventory as consumed, for the same reason.
+//
+// Three signals, cheapest first. LoadingMenu and MainMenu cover the deliberate
+// transitions; Get3D() covers the window between teardown starting and any menu
+// appearing, which is where the observed crash landed. Get3D() is also null
+// during ordinary cell loads — which is equally a moment not to be reading the
+// inventory, so the over-broad case is the correct behaviour, not a cost.
+static bool IsWorldLoaded(RE::PlayerCharacter* player)
+{
+    auto* ui = RE::UI::GetSingleton();
+    if (!ui) return false;
+    if (ui->IsMenuOpen(RE::LoadingMenu::MENU_NAME)) return false;
+    if (ui->IsMenuOpen(RE::MainMenu::MENU_NAME)) return false;
+    return player->Get3D() != nullptr;
+}
+
 void OnUpdate(float deltaSeconds)
 {
     if (g_updateSystemFailed.load(std::memory_order_acquire)) {
@@ -388,6 +457,47 @@ void OnUpdate(float deltaSeconds)
 
     auto* player = RE::PlayerCharacter::GetSingleton();
     if (!player) return;
+
+    // Suspend the WHOLE tick, not just the inventory scan: StateManager's polls
+    // read the same dying actor, and the subsystem timers have nothing to
+    // measure while the world is gone. Logged as a transition (both edges), per
+    // the logging principles — a load screen must not produce a line per tick.
+    {
+        static bool wasLoaded = true;
+        const bool loaded = IsWorldLoaded(player);
+        if (loaded != wasLoaded) {
+            logger::info("[Huginn] Pipeline {}"sv, loaded ? "resumed"sv : "suspended (world unloaded)"sv);
+            wasLoaded = loaded;
+
+            if (loaded) {
+                // Two things stop advancing while suspended and must not be
+                // carried across the gap.
+                //
+                // PipelineStateCache's timestamp is only refreshed from the
+                // pipeline stage, which is skipped — so it now reads as stale by
+                // the length of the whole load screen. The delta timer was never
+                // reset either, so the very next MaintainRegistries call this
+                // same tick is guaranteed due, and every legitimate consumption
+                // it finds would be dropped as "stale cache". A cell load fires
+                // no kPostLoadGame, so CONSUMPTION_POST_LOAD_GRACE_MS does not
+                // cover this: the reward would be silently lost, not suppressed.
+                Learning::PipelineStateCache::GetSingleton().RefreshTimestamp();
+
+                // Slot locks are wall-clock timers that stopped decaying, and
+                // what they pin describes the world from before the gap.
+                //
+                // Redundant on the save-load path — ResetPipelineSubsystems()
+                // in Globals.cpp already clears them, so a resumed game logs
+                // "Reset complete" twice. Kept for the path that has no such
+                // cover: a cell transition suspends the tick (Get3D() is null
+                // through a load door) but fires no kPostLoadGame, so nothing
+                // else runs. Reset() is idempotent, so the overlap costs one
+                // log line per load.
+                Slot::SlotLocker::GetSingleton().Reset();
+            }
+        }
+        if (!loaded) return;
+    }
 
     float deltaMs = deltaSeconds * 1000.0f;
 

@@ -135,6 +135,25 @@ namespace Huginn::Config
    // few seconds after a load is rare and low-value to learn.
    inline constexpr float CONSUMPTION_POST_LOAD_GRACE_MS = 5000.0f;
 
+   // Mirror of the grace window above, for the UNLOAD side. Quitting to the main
+   // menu fires no SKSE message, so there is nothing to start a timer from: the
+   // only evidence is the shape of the scan itself. When the player's container
+   // is torn down, one delta scan sees every tracked stack drop to zero and
+   // would report the whole inventory as consumed (observed 2026-08-17: 72
+   // phantom +5.0 rewards and 71 -3.0 misclick penalties in a 10 ms window).
+   //
+   // The ratio is measured against LIVE entries (count > 0), not registry size —
+   // see the call site in UpdateLoop.cpp for why a stale zero-count tail would
+   // defeat it.
+   //
+   // The floor only has to exclude ordinary use, and nobody drinks three distinct
+   // stacks to exhaustion inside one 500 ms scan. It was 8 first, which made the
+   // guard dead code for ScrollRegistry: a player rarely holds eight scroll types
+   // at once, so the floor alone could never be met there and every phantom
+   // scroll reward would still have landed.
+   inline constexpr size_t TEARDOWN_MIN_DROPS = 3;
+   inline constexpr float TEARDOWN_DROP_RATIO = 0.5f;
+
    // Maximum favorited weapons to track
    // Typical player: 5-15 favorites, Collector: 30-50
    inline constexpr size_t MAX_TRACKED_WEAPONS = 100;
