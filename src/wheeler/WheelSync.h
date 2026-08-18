@@ -63,6 +63,22 @@ namespace Huginn::Wheeler
         /// wheelIndex=-1 placeholder while later pages may hold real wheels.
         [[nodiscard]] bool HasAnyWheel() const;
 
+        /// #76 recovery. UpdatePage sets wheelIndex = -1 when IsManagedWheel
+        /// fails and nothing retries, so once every page is invalidated the
+        /// wheel is dead for the rest of the session — HasAnyWheel() then
+        /// returns false, the display push returns early, and UpdatePage is
+        /// never reached again to notice anything changed. But "every page
+        /// invalid" is indistinguishable from "wheels were never created",
+        /// which is a state CreateWheels already knows how to fix.
+        ///
+        /// Rebuilds rather than latching, bounded (attempts + cooldown) so a
+        /// genuinely absent or broken Wheeler cannot spin. No-op unless EVERY
+        /// page that once held a wheel has lost it: a single invalidated page
+        /// among healthy ones is a different problem and not this one's to fix.
+        /// Takes m_pageDataMutex, releases it, then calls CreateWheels — never
+        /// holds it across that call.
+        bool RecoverInvalidatedWheels();
+
         // ====================================================================
         // Content
         // ====================================================================
@@ -201,6 +217,14 @@ namespace Huginn::Wheeler
         // per-page: the same combo fails identically on every wheel.
         // GUARDED_BY(m_pageDataMutex).
         std::unordered_map<uint64_t, std::chrono::steady_clock::time_point> m_addFailCooldowns;
+
+        /// #76 diagnostics/recovery state. Poll thread only in practice, but they
+        /// live under m_pageDataMutex with everything else they are read beside.
+        /// All three are cleared by a successful CreateWheels, so each generation
+        /// of wheels gets its own census and its own retry budget.
+        bool m_censusLogged = false;                                  // one census per generation
+        int  m_recoveryAttempts = 0;
+        std::chrono::steady_clock::time_point m_lastRecoveryAttempt{};
         static constexpr std::chrono::seconds ADD_FAIL_COOLDOWN{30};
         [[nodiscard]] static constexpr uint64_t AddFailKey(RE::FormID formID, uint16_t uniqueID) noexcept
         {
@@ -225,5 +249,11 @@ namespace Huginn::Wheeler
         /// CreateWheels calls it under the lock on the documented assumption that
         /// already-invalidated wheels fire no callbacks.
         void IssueWheelDeletes(std::vector<PageWheel> staleWheels);
+
+        /// #76 census: dump what Wheeler actually holds at the moment a page is
+        /// invalidated. Call with m_pageDataMutex HELD (it reads m_pageWheels);
+        /// only touches the Wheeler API and this object. Once per generation —
+        /// the answer cannot change between pages of the same failure.
+        void LogWheelCensusLocked(size_t pageIndex);
     };
 }

@@ -54,6 +54,14 @@ namespace Huginn::Display
             wheelerClient.TryUrgentAutoFocus(topOverride->priority);
         }
 
+        // #76: every page invalidated is indistinguishable from "wheels were
+        // never created", and the guard below returns false in exactly that
+        // state — so the push gives up and UpdatePage, the only thing that could
+        // ever notice recovery, is never reached again. Dead wheel for the rest
+        // of the session unless the player types `hg reload`. Attempt the
+        // rebuild here, ahead of the guard, or it cannot happen at all.
+        wheelerClient.RecoverInvalidatedWheels();
+
         if (!wheelerClient.HasRecommendationWheel() ||
             (wheelerClient.IsWheelOpen() && !hasUrgentOverride)) {
             return;

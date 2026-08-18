@@ -123,6 +123,11 @@ namespace Huginn::Wheeler
             return WheelSync::GetSingleton().HasAnyWheel();
         }
 
+        // #76: rebuild if every page has been invalidated. Must be called BEFORE
+        // HasRecommendationWheel() gates the push — in that state it returns
+        // false, so anything downstream of it is unreachable.
+        bool RecoverInvalidatedWheels() { return WheelSync::GetSingleton().RecoverInvalidatedWheels(); }
+
         // Get wheel index for a page (returns -1 if invalid)
         [[nodiscard]] int32_t GetWheelIndexForPage(size_t pageIndex) const
         {
