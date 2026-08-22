@@ -375,12 +375,42 @@ now closed; #59–#65 are follow-ups it surfaced, not remaining critique work.
           to size the wheels. That is a config read, not a policy reach-up.**
 
 ### Tier 3 — hot-path perf (trace-prioritized; see docs/profiling/tracy-traces.md)
+- [x] O1: WeaponRegistry::RefreshCharges walked the WHOLE inventory every 500 ms
+      to refresh enchantment charge — 1.23 ms/call (2026-06-07) then 1.25 ms
+      (2026-06-13), the single largest Huginn line, more than all 11 state polls
+      combined, and the source of the ~1 s sawtooth in Tracy's memory plot (a
+      per-call InventoryEntryData map allocation). Charge only drains on EQUIPPED
+      weapons (<=2), so it now reads straight off GetEquippedEntryData: O(equipped)
+      plus one guarded entryList pass for ammo counts. Favorite DISCOVERY moved to
+      ReconcileWeapons' existing 30 s cadence, which already walks inventory.
+      **Measured after: 34.4 µs** for RefreshCharges and 791 ns for Refresh
+      (2026-07-24) — ~1.2 ms reclaimed per fire, sawtooth gone.
+      Ammo counts deliberately kept per-tick: the low-ammo override gates on the
+      cached count, so a stale one would surface ammo the player has run out of.
+      And NOT via RE::InventoryChanges::GetItemCount — that crashes on save-load
+      (bisected in PR #41; see the SKSE-gotcha note at WeaponRegistry.cpp:160)
 - [ ] #14: gate the display push paths — IntuitionBackend change-detect, WheelerBackend
       lazy per-page allocation, GetLockSnapshot, quantize lock-timer subtext.
       *Biggest per-call cost in the traces (Display::Wheeler).* Mostly S
-- [ ] #13: count-only two-phase GetInventorySafe variant — Inventory::DeltaScan
-      deep-copies InventoryEntryData per item at 2 Hz; plus PipelineContext container
-      reuse (documented-but-broken) (M)
+- [ ] #13 (= O1's sibling "O2"): count-only two-phase GetInventorySafe variant —
+      Inventory::DeltaScan deep-copies InventoryEntryData per item at 2 Hz; plus
+      PipelineContext container reuse (documented-but-broken). Now the biggest
+      CUMULATIVE cost in the traces: 685 µs x 1,118 = 766 ms on the 2026-07-25
+      real save, up from 161 µs/call on the small test save — it scales with
+      inventory size, so hoarder saves are the worst case. Constrained, not
+      eliminable: this is the consumption detector and it needs a count snapshot
+      (verified firing exactly once per consumption). The two levers are a longer
+      interval (trades detection latency) or a count-only query that skips
+      InventoryEntryData construction; the scratch maps are already allocation-free
+      (m_scanCounts reuse), so the remaining cost is the SKSE query itself (M)
+- [ ] O3: PollPlayerMagicEffects early-out — 113 µs x 6,916 = 780 ms on the
+      2026-07-25 capture, the biggest cumulative POLL and the steady-state floor
+      (every other poll is single- to low-double-digit µs). Runs on every tick by
+      necessity: it is not gated by the skip-check, it FEEDS it. Options are an
+      early-out when the active-effect list is unchanged, or caching by effect-list
+      revision. Adjacent to #12 but not covered by it — #12 is PollTargets. At
+      ~0.07% CPU this does not need fixing; it is where to look if the idle cost
+      ever matters (S/M)
 - [ ] #12: PollTargets — build outside the write lock, one classification pass (scanned
       up to 3×/tick), MAX_TRACKED_TARGETS 50→~12, squared-distance compares (M)
 - [ ] #11: cache SpellData.effectiveCost — CandidateGenerator calls LookupByID +
