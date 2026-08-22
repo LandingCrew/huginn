@@ -89,6 +89,22 @@
       player is rearranging wheels, not reading recommendations. Nothing gates on
       it today (`IsInEditMode` is called only by `LogAPIInfo`). Bounded and
       self-correcting — exit re-resolves and the next push repaints (XS/S)
+- [ ] `DeleteManagedWheelsForClient` reported deleting ZERO wheels for a client
+      that had one, orphaning it. Observed 2026-08-22 while testing #92: a
+      'Huginn: Regulars' wheel created at 12:30:55 (index 2) was still present
+      when the 12:32:39 teardown logged `Deleted 0 managed wheel(s) for client
+      'Huginn: Regulars'`; the next CreateWheels then added a SECOND wheel under
+      that name, and 12:34:48 found 2. Both were finally reaped at 12:34:59.
+      Sequence detail worth keeping: the failing call was the third in one
+      IssueWheelDeletes loop, after a call that deleted 2 wheels for a different
+      label — but that is correlation, not a diagnosis, and the logs have since
+      rotated. **Matters more under v4**, which no longer drops managed wheels on
+      load, so anything a teardown misses persists across the session and
+      accumulates. Huginn now survives it (PR #92's ambiguity handling keeps or
+      invalidates by index membership rather than adopting blind), so this is a
+      correctness/cleanliness issue, not a live breakage. Reproduce by cycling
+      page layouts through `hg reload` and watching the `Deleted N managed
+      wheel(s)` counts against what was created. Likely upstream (S)
 - [ ] Intuition menu shown during "cut scenes"
 - [ ] Intuition menu not hiding when commanded by external mod
 - [ ] New game wheelerAPI integration seems to fail

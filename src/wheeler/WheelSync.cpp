@@ -305,11 +305,10 @@ namespace Huginn::Wheeler
         }
 
         // Ask for several even though one page owns one wheel. A duplicate is a
-        // real, observed state — Wheeler's edit mode lets the player COPY a
-        // managed wheel, and the copy inherits the client name (seen 2026-08-22:
-        // one 'Huginn: Regulars' created, two found minutes later) — and the
-        // right answer to it depends on WHICH indices matched, not just how many.
-        // The return is the TOTAL match count and may still exceed the buffer.
+        // real, observed state (2026-08-22: one 'Huginn: Regulars' created, two
+        // found minutes later) and the right answer to it depends on WHICH
+        // indices matched, not just how many. The return is the TOTAL match
+        // count and may still exceed the buffer.
         constexpr size_t MAX_MATCHES = 8;
         int32_t matches[MAX_MATCHES] = {};
         const int32_t count = api->GetManagedWheelsForClient(pw.wheelLabel->c_str(), matches, MAX_MATCHES);
@@ -335,12 +334,15 @@ namespace Huginn::Wheeler
         }
 
         if (count > 1) {
-            // Ambiguous: more than one wheel answers to our name. Two causes seen
-            // in the wild — a duplicate sName across [PageN] (config), and the
-            // player copying a managed wheel in Wheeler's edit mode (not config
-            // at all). The message must not assert either, because the code
-            // cannot tell them apart and a wrong diagnosis sends the reader
-            // hunting through an INI that is fine.
+            // Ambiguous: more than one wheel answers to our name. Two causes are
+            // known, and only one is config. A duplicate sName across [PageN]
+            // does it. So does an ORPHAN: on 2026-08-22 a teardown reported
+            // "Deleted 0 managed wheel(s) for client 'Huginn: Regulars'" while
+            // such a wheel existed, and the next CreateWheels added a second
+            // under the same name. Why that delete missed is unresolved (see the
+            // roadmap); what matters here is that the code cannot tell the causes
+            // apart, so the message must not assert one — a wrong diagnosis sends
+            // the reader hunting through an INI that is fine.
             //
             // Which index is ours is undecidable in general, but ONE case is
             // decidable and it covers both causes: if the index we already hold
@@ -354,7 +356,7 @@ namespace Huginn::Wheeler
             if (stillOurs) {
                 spdlog::warn("[WheelerClient] Re-resolve: {} wheels match label '{}' (expected 1) — "
                              "keeping page {} at wheel {}, which is still among them "
-                             "(duplicate sName in [PageN], or a wheel copied in edit mode?)",
+                             "(duplicate sName in [PageN], or an orphaned wheel?)",
                     count, *pw.wheelLabel, pageIndex, pw.wheelIndex);
                 return ResolveOutcome::Unchanged;
             }
@@ -374,7 +376,7 @@ namespace Huginn::Wheeler
             // and let the rebuild path sort it out; that is what Gone is for.
             spdlog::warn("[WheelerClient] Re-resolve: {} wheels match label '{}' and page {}'s wheel {} "
                          "is not among them — invalidating rather than writing to a wheel that isn't ours "
-                         "(duplicate sName in [PageN], or a wheel copied in edit mode?)",
+                         "(duplicate sName in [PageN], or an orphaned wheel?)",
                 count, *pw.wheelLabel, pageIndex, pw.wheelIndex);
             pw.wheelIndex = -1;
             return ResolveOutcome::Gone;
