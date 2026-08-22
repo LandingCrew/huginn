@@ -276,8 +276,21 @@ namespace Huginn::Wheeler
         /// the answer cannot change between pages of the same failure.
         void LogWheelCensusLocked(size_t pageIndex);
 
+        enum class ResolveOutcome
+        {
+            Unchanged,  ///< the lookup agrees with the stored index
+            Moved,      ///< the index changed; the page was reset and re-adopted
+            Gone,       ///< no wheel carries our label; the index is now -1
+            Unknown     ///< the lookup could not answer; the stored index is untouched
+        };
+
         /// Re-derive ONE page's wheel index from its label. REQUIRES:
-        /// m_pageDataMutex held. Returns true if the stored index changed.
+        /// m_pageDataMutex held.
+        ///
+        /// Unknown is deliberately distinct from Gone. A negative Result means
+        /// Wheeler could not answer (not initialized, mid-reload); that is not
+        /// evidence the wheel moved OR vanished, and treating it as either would
+        /// re-create the #76 latch this exists to remove.
         ///
         /// Safe to call under the lock: GetManagedWheelsForClient is a pure read
         /// that takes Wheeler's wheel-data lock in shared mode and dispatches no
@@ -285,6 +298,18 @@ namespace Huginn::Wheeler
         /// CreateWheels and UpdatePage already rely on for IsManagedWheel and
         /// GetEntryCount, and upstream states it explicitly ("Wheeler never
         /// invokes a callback while holding its wheel-data lock").
-        bool ReResolvePageLocked(WheelerAPI::IWheelerAPI* api, size_t pageIndex);
+        ResolveOutcome ReResolvePageLocked(WheelerAPI::IWheelerAPI* api, size_t pageIndex);
+
+        /// Return a moved page to the state CreateWheels leaves it in: Wheeler
+        /// holds no pointers into it, its wheel is empty, and its cache says so.
+        /// REQUIRES: m_pageDataMutex held, and pw.wheelIndex still the OLD index.
+        ///
+        /// A move breaks an invariant the whole update path rests on — that the
+        /// cache describes the wheel at pw.wheelIndex. It stops being true the
+        /// moment the index changes, because pushes made before the move landed
+        /// somewhere else. Resetting is what makes it true again, and it is
+        /// cheaper to reason about than any partial resync: from empty, the
+        /// ordinary diff loop repopulates correctly with no special cases.
+        void ResetPageForMoveLocked(WheelerAPI::IWheelerAPI* api, PageWheel& pw, int32_t newIndex);
     };
 }

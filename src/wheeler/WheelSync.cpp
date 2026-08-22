@@ -213,11 +213,74 @@ namespace Huginn::Wheeler
     // Index re-resolve — wheel identity by client label, not by position
     // =========================================================================
 
-    bool WheelSync::ReResolvePageLocked(WheelerAPI::IWheelerAPI* api, size_t pageIndex)
+    void WheelSync::ResetPageForMoveLocked(WheelerAPI::IWheelerAPI* api, PageWheel& pw, int32_t newIndex)
+    {
+        const int32_t oldIndex = pw.wheelIndex;
+        const int32_t slots = static_cast<int32_t>(pw.slotCount);
+
+        // 1. Drop Wheeler's pointers into this record at BOTH indices, before
+        //    anything frees the strings they point at.
+        //
+        //    The old index matters because a push during the stale window
+        //    exported our buffers to a wheel we are about to stop addressing.
+        //    UpdatePage's subtext swap frees the retiring string right after
+        //    handing Wheeler the replacement AT pw.wheelIndex — an invariant that
+        //    silently held only while the index never moved. Without this clear,
+        //    the next subtext change frees a buffer the abandoned wheel is still
+        //    rendering from: a dangling const char* read with no breadcrumb.
+        //    IssueWheelDeletes would not catch it either — it clears only at the
+        //    current index.
+        //
+        //    The new index matters for the same reason in the other direction:
+        //    it is OUR wheel (it carries our label), so it holds pointers from
+        //    before the move into the very strings step 3 destroys.
+        //
+        //    Best-effort throughout: the old wheel may be gone or another mod's
+        //    by now, and Wheeler simply answers NotManagedWheel. That is a
+        //    successful outcome here — nothing of ours is left on it.
+        for (int32_t i = 0; i < slots; ++i) {
+            if (oldIndex >= 0) {
+                ClearEntrySubtext(api, oldIndex, i);
+            }
+            ClearEntrySubtext(api, newIndex, i);
+        }
+
+        // 2. Adopt the new index, then empty the wheel behind it.
+        pw.wheelIndex = newIndex;
+        for (int32_t i = 0; i < slots; ++i) {
+            api->ClearEntry(newIndex, i);
+        }
+
+        // 3. Zero the cache to match. Emptying the wheel and then claiming it is
+        //    empty is the whole point: the cache and the wheel disagree after a
+        //    move (pushes made before it landed elsewhere), and a partial resync
+        //    would leave the diff loop adding into entries it believes are free —
+        //    Wheeler answers EntryNotEmpty and the slot churns its retry budget.
+        //    From empty, the ordinary path repopulates on the next push with no
+        //    special case anywhere.
+        std::fill(pw.slotFormIDs.begin(), pw.slotFormIDs.end(), 0);
+        std::fill(pw.slotUniqueIDs.begin(), pw.slotUniqueIDs.end(), 0);
+        std::fill(pw.slotWildcard.begin(), pw.slotWildcard.end(), false);
+        std::fill(pw.slotRetries.begin(), pw.slotRetries.end(), 0);
+        std::fill(pw.slotUniqueIDDefers.begin(), pw.slotUniqueIDDefers.end(), 0);
+        for (auto& st : pw.slotSubtexts) {
+            st.reset();  // safe: step 1 dropped every exported pointer
+        }
+        // Clear rather than resize: this also defeats UpdatePage's
+        // content-unchanged early-out, which would otherwise compare the
+        // incoming vectors against the pre-move cache, match, and return before
+        // repainting — leaving the corrected wheel showing pre-edit contents for
+        // as long as the recommendations stayed stable.
+        for (auto& raw : pw.slotRawSubtexts) {
+            raw.clear();
+        }
+    }
+
+    WheelSync::ResolveOutcome WheelSync::ReResolvePageLocked(WheelerAPI::IWheelerAPI* api, size_t pageIndex)
     {
         auto& pw = m_pageWheels[pageIndex];
         if (!pw.wheelLabel) {
-            return false;  // placeholder — no wheel was ever created for this page
+            return ResolveOutcome::Unchanged;  // placeholder — no wheel was ever created
         }
 
         // maxCount 1: one page owns exactly one wheel, so a second match is a
@@ -229,7 +292,7 @@ namespace Huginn::Wheeler
         if (count < 0) {
             spdlog::warn("[WheelerClient] Re-resolve: GetManagedWheelsForClient('{}') failed: {}",
                 *pw.wheelLabel, count);
-            return false;  // leave the stored index alone; an error is not evidence of a move
+            return ResolveOutcome::Unknown;
         }
 
         if (count == 0) {
@@ -240,36 +303,41 @@ namespace Huginn::Wheeler
                 spdlog::warn("[WheelerClient] Re-resolve: page {} wheel '{}' no longer exists, marking invalid",
                     pageIndex, *pw.wheelLabel);
                 pw.wheelIndex = -1;
-                return true;
             }
-            return false;
+            return ResolveOutcome::Gone;
         }
 
         if (count > 1) {
-            // v4 stopped dropping managed wheels on load, so a client that
-            // recreates without deleting accumulates them. Huginn deletes first
-            // (see API_VERSION_MAX note in WheelerAPI.h), which makes this a real
-            // anomaly worth saying out loud rather than silently taking [0].
-            spdlog::warn("[WheelerClient] Re-resolve: {} wheels match label '{}' (expected 1); "
-                         "using the lowest index {}", count, *pw.wheelLabel, resolved);
+            // Two pages sharing an sName produce the same label, and adopting the
+            // lowest match would point both at ONE wheel: it would then be driven
+            // by two pages while the other stopped updating entirely. Refusing to
+            // move is strictly safer — each page keeps the distinct index it was
+            // created with, which is what happened before re-resolve existed.
+            spdlog::warn("[WheelerClient] Re-resolve: {} wheels match label '{}' (expected 1) — "
+                         "refusing to move page {}; check for duplicate sName in [PageN]",
+                count, *pw.wheelLabel, pageIndex);
+            return ResolveOutcome::Unknown;
+        }
+
+        if (resolved < 0) {
+            // A positive count with nothing written to the buffer. No server
+            // should do this, but the alternative is logging "2 -> -1" and
+            // killing a live page over a protocol slip.
+            spdlog::warn("[WheelerClient] Re-resolve: '{}' reported {} match(es) but wrote no index",
+                *pw.wheelLabel, count);
+            return ResolveOutcome::Unknown;
         }
 
         if (pw.wheelIndex == resolved) {
-            return false;  // steady state — the overwhelmingly common case, logs nothing
+            return ResolveOutcome::Unchanged;  // steady state — logs nothing
         }
 
         // Log transitions only: this runs on every edit-mode exit, and an unmoved
         // wheel is a non-event.
         spdlog::info("[WheelerClient] Re-resolve: page {} ('{}') wheel index {} -> {}",
             pageIndex, *pw.wheelLabel, pw.wheelIndex, resolved);
-        pw.wheelIndex = resolved;
-
-        // Deliberately NOT clearing the cached slot state. The wheel's CONTENTS
-        // moved with it — Wheeler reindexed the wheel, it did not empty it — so
-        // the cache still describes what is displayed, and dropping it would
-        // force a full re-push of every slot for no benefit. What changed is only
-        // where we address it.
-        return true;
+        ResetPageForMoveLocked(api, pw, resolved);
+        return ResolveOutcome::Moved;
     }
 
     bool WheelSync::ReResolveWheelIndices()
@@ -299,7 +367,7 @@ namespace Huginn::Wheeler
 
         bool anyMoved = false;
         for (size_t p = 0; p < m_pageWheels.size(); ++p) {
-            anyMoved |= ReResolvePageLocked(api, p);
+            anyMoved |= (ReResolvePageLocked(api, p) == ResolveOutcome::Moved);
         }
         return anyMoved;
     }
@@ -807,21 +875,44 @@ namespace Huginn::Wheeler
 
         // Validate wheel ownership - another mod may have deleted it or indices shifted
         if (!api->IsManagedWheel(pageWheel.wheelIndex)) {
-            spdlog::warn("[WheelerClient] Page {} wheel {} no longer managed, marking invalid",
-                pageIndex, pageWheel.wheelIndex);
-            LogWheelCensusLocked(pageIndex);  // #76: record WHY, before the index is lost
-
             // #76: try to re-derive the index from the label before writing the
             // wheel off. "No longer managed at this index" is compatible with
             // "the wheel moved", and on v4 that is a question with an answer —
             // latching -1 here is what turned a transient index shift into a
-            // dead wheel for the rest of the session. ReResolvePageLocked sets
-            // -1 itself when the wheel is genuinely gone, so the invalidation
-            // still happens; it just stops being the FIRST response.
-            if (api->version >= 4 && api->GetManagedWheelsForClient &&
-                ReResolvePageLocked(api, pageIndex) && pageWheel.wheelIndex >= 0) {
-                // Recovered — fall through and push to the corrected index.
-            } else {
+            // dead wheel for the rest of the session.
+            //
+            // Nothing is logged before the attempt. A recovered shift is a
+            // routine event, and warning "marking invalid" ahead of a successful
+            // recovery would make every log read as a failure; the census is
+            // once per generation, so spending it here would leave a LATER,
+            // genuine invalidation with no diagnostic at all.
+            const auto outcome = (api->version >= 4 && api->GetManagedWheelsForClient)
+                ? ReResolvePageLocked(api, pageIndex)
+                : ResolveOutcome::Unchanged;
+
+            switch (outcome) {
+            case ResolveOutcome::Moved:
+                // Recovered. The page was reset to empty, so fall through and let
+                // the diff loop below repopulate the wheel at its new index.
+                break;
+
+            case ResolveOutcome::Unknown:
+                // The lookup could not answer. Skip this push and try again next
+                // tick rather than destroying a live index over a transient — the
+                // helper deliberately left it alone.
+                return;
+
+            case ResolveOutcome::Gone:
+                // Already set to -1, with its own log line saying why.
+                LogWheelCensusLocked(pageIndex);
+                return;
+
+            case ResolveOutcome::Unchanged:
+                // Either no v4 lookup to consult, or it insists we are still at an
+                // index Wheeler just denied. Nothing left to try.
+                spdlog::warn("[WheelerClient] Page {} wheel {} no longer managed, marking invalid",
+                    pageIndex, pageWheel.wheelIndex);
+                LogWheelCensusLocked(pageIndex);  // #76: record WHY, before the index is lost
                 pageWheel.wheelIndex = -1;
                 return;
             }
