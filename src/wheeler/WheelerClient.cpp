@@ -239,8 +239,32 @@ namespace Huginn::Wheeler
 
     void WheelerClient::OnEditModeChanged(bool entered, const WheelerAPI::WheelChange* changes, size_t changeCount)
     {
-        // Log but don't act - Huginn doesn't need to respond to edit mode
         spdlog::debug("[WheelerClient] EditModeChanged: entered={}, changeCount={}", entered, changeCount);
+
+        if (entered) {
+            return;  // nothing has moved yet; the player is only opening the editor
+        }
+
+        // Edit mode is where the player reorders, adds and deletes wheels, and
+        // every one of those shifts the indices we stored at creation. Nothing
+        // else re-queries the layout, so without this our subtext writes keep
+        // going to the OLD index — which by then may be someone else's wheel.
+        // They are accepted there, because IsManagedWheel() cannot tell whose
+        // wheel it is; that is why this has to be a trigger and not a check.
+        //
+        // The payload is deliberately ignored. EditModeCallback is declared to
+        // carry a WheelChange list, but Wheeler::exitEditMode() always passes
+        // (nullptr, 0) — upstream has this as an open TODO. Every observed
+        // reorder reported changeCount=0 while the indices had in fact moved,
+        // so gating on the payload would gate on a constant. Re-resolving
+        // unconditionally is the only strategy that works against Wheeler as it
+        // actually behaves; it is one cheap read per page and it logs only when
+        // something moved.
+        //
+        // Takes no m_callbackMutex: this touches no wheel-session state and goes
+        // straight to WheelSync, which preserves the documented one-way
+        // callbackMutex -> pageDataMutex ordering.
+        GetSingleton().ReResolveWheelIndices();
     }
 
     // ============================================================================
