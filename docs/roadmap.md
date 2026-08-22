@@ -50,7 +50,31 @@
       contents moved with it, only the address changed. `count > 1` warns
       (the v4 duplicate hazard). v3 and below no-op with one warning per
       generation: no v3 call distinguishes our managed wheels from another mod's.
-      **Not yet verified in-game** (PR: wheeler-index-reresolve, 0.18.34)
+      **Verified in-game 2026-08-22** (0.18.34 @9aae02d, md5-matched deploy).
+      `ValidateWheelState` went clean -> broken -> clean across one edit-mode
+      cycle: at 10:23:48 it reported `Page 1 wheel 1 is no longer managed` plus
+      six page-2 slot desyncs in an unmistakable one-position shift (slots 1 and
+      2 holding each other's forms, `cached=FE803801/actual=0401CDAD` and the
+      exact mirror); at 10:23:55 exit fired `Re-resolve: page 2 ('Huginn:
+      Regulars') wheel index 2 -> 3`; every later validation pass is clean with
+      zero desyncs. wheeler.log confirms independently — three
+      `GetManagedWheelsForClient` hits, one per page, then `Switched to managed
+      wheel 3 (client: Huginn: Regulars)`. Both edit-mode events reported
+      `changeCount=0` while the indices HAD moved, so ignoring the payload was
+      load-bearing, not defensive. Inventory logged no re-resolve line (settled
+      back at 1) — unchanged pages are silent by design
+- [ ] Display push is not gated on Wheeler edit mode, so the ~7s a player spends
+      rearranging wheels is spent writing subtexts to indices that are already
+      stale. Observed in the same 2026-08-22 session that verified the
+      re-resolve: the shift was detectable at 10:23:48 but not corrected until
+      edit-mode exit at 10:23:55, and two pushes landed on the wrong wheel in
+      between (`[Subtext] page 1` at 10:23:48.342, `page 2` at 10:23:51.874).
+      NOT fixed by the re-resolve, which triggers on exit by design — mid-edit
+      indices are transient and re-resolving each intermediate state would chase
+      noise. The complement is to skip the push while `IsInEditMode()`: the
+      player is rearranging wheels, not reading recommendations. Nothing gates on
+      it today (`IsInEditMode` is called only by `LogAPIInfo`). Bounded and
+      self-correcting — exit re-resolves and the next push repaints (XS/S)
 - [ ] Intuition menu shown during "cut scenes"
 - [ ] Intuition menu not hiding when commanded by external mod
 - [ ] New game wheelerAPI integration seems to fail
