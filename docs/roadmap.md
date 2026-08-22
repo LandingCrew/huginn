@@ -62,7 +62,21 @@
       wheel 3 (client: Huginn: Regulars)`. Both edit-mode events reported
       `changeCount=0` while the indices HAD moved, so ignoring the payload was
       load-bearing, not defensive. Inventory logged no re-resolve line (settled
-      back at 1) — unchanged pages are silent by design
+      back at 1) — unchanged pages are silent by design.
+      **Re-verified 2026-08-22 after review fixes** (0.18.35 @0bf6e99): a wheel
+      inserted at position 0 shifted ALL THREE pages (0->1, 1->2, 2->3), so the
+      reset-on-move path ran three times. Repopulate produced a correct wheel —
+      8/8 slots `Confirmed`, subtexts rewritten, validation clean, and zero
+      AddItem rejects or retry suppression, which was the specific risk of
+      emptying rather than resyncing. Downstream mapping followed the move too,
+      not just the push path: `synced page to 0 (wheel 1)` and `Page 0 'Smart'
+      wheel opened` on `WheelStateChanged: wheel=1`.
+      **Not log-verifiable:** the dangling-`const char*` fix. A freed-string read
+      is silent corruption that may never fault, so a clean session is not
+      evidence — it rests on the code reasoning (UpdatePage frees a retiring
+      subtext right after exporting its replacement AT pw.wheelIndex, which only
+      held while the index never moved). Re-check it by reasoning, not by log,
+      if this code is touched again
 - [ ] Display push is not gated on Wheeler edit mode, so the ~7s a player spends
       rearranging wheels is spent writing subtexts to indices that are already
       stale. Observed in the same 2026-08-22 session that verified the
