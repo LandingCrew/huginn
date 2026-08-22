@@ -238,6 +238,24 @@ namespace Huginn::Wheeler
         //    Best-effort throughout: the old wheel may be gone or another mod's
         //    by now, and Wheeler simply answers NotManagedWheel. That is a
         //    successful outcome here — nothing of ours is left on it.
+        // Breadcrumb, deliberately paired. Everything from here to the "reset
+        // done" line is cross-DLL work on an index we are abandoning, and the
+        // failure mode it guards against — Wheeler rendering from a string we
+        // freed — is silent: it corrupts or hangs without ever naming this code.
+        // If a session dies with the line below as its last Huginn entry, the
+        // fault is inside ClearEntrySubtext/ClearEntry at one of these two
+        // indices, and `live` says how many exported pointers were outstanding.
+        // Two lines per move (edit-mode exit only), so this costs nothing.
+        int live = 0;
+        for (const auto& st : pw.slotSubtexts) {
+            if (st && !st->empty()) {
+                ++live;
+            }
+        }
+        spdlog::info("[WheelerClient] Re-resolve: resetting '{}' — dropping {} exported subtext(s) "
+                     "across wheels {} (old) and {} (new)",
+            pw.wheelLabel ? *pw.wheelLabel : "?", live, oldIndex, newIndex);
+
         for (int32_t i = 0; i < slots; ++i) {
             if (oldIndex >= 0) {
                 ClearEntrySubtext(api, oldIndex, i);
@@ -274,6 +292,9 @@ namespace Huginn::Wheeler
         for (auto& raw : pw.slotRawSubtexts) {
             raw.clear();
         }
+
+        // Pairs with the line above. Its ABSENCE is the signal.
+        spdlog::info("[WheelerClient] Re-resolve: reset done, wheel {} emptied and cache cleared", newIndex);
     }
 
     WheelSync::ResolveOutcome WheelSync::ReResolvePageLocked(WheelerAPI::IWheelerAPI* api, size_t pageIndex)
