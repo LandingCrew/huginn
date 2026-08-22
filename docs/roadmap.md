@@ -290,7 +290,21 @@
 ## UX / Feature Backlog
 - [ ] Read-only Intuition menu mode — display-only widget, hotkeys disabled, an
       external UI (Wheeler / 3rd-party) drives selection
-- [ ] Hide/toggle the Intuition menu on a hotkey — default key `x`
+- [x] Hide/toggle the Intuition menu on a hotkey — default `x` (scancode 45),
+      `iToggleWidgetKey` under `[Keybindings]`, 0 to unbind, exposed in dMenu.
+      **Had to be a latch, not a SetVisible(false):** HudVisibilityManager
+      recomputes visibility from scratch on every MenuOpenCloseEvent, so a bare
+      hide is undone by the next menu the player opens — which is exactly the
+      unmatched-hide behaviour seen while testing #14. Enforced inside
+      `SetVisible` itself rather than at the call sites, because three
+      independent paths re-show the widget (HudVisibilityManager, IntuitionBackend
+      on wheel-close, ReapplySettings on hot-reload) and gating one would let the
+      others undo the player. Hides are always allowed through.
+      Session-scoped and reset on load: a latch that survived a restart is
+      indistinguishable from a broken widget, with no on-screen affordance to
+      find the key again. `bEnableWidget` remains the actual preference.
+      Un-hiding routes through `UpdateVisibility()` rather than `SetVisible(true)`
+      so a paused game or a disabled widget still wins
 - [ ] Finer Intuition menu granularity — config sliders (position / scale / alpha)
       to one-decimal steps (00.0)  <!-- confirm: sliders, or on-widget numeric display? -->
 

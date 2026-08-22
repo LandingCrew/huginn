@@ -498,6 +498,10 @@ static void OnDataLoaded()
         },
         .markPageDirty = [] {
             Slot::SlotAllocator::GetSingleton().MarkPageDirty();
+            // A hotkey hide belongs to the session that set it. Carrying it into
+            // a freshly loaded game would present as "the widget is broken", with
+            // no on-screen affordance to discover the key that brings it back.
+            UI::IntuitionMenu::ResetUserHidden();
         },
     });
 
@@ -551,6 +555,10 @@ static void OnDataLoaded()
         });
 
         // Cycle key callback: cycle pages (v0.12.0 multi-page support)
+        inputHandler.SetToggleCallback([]() {
+            UI::IntuitionMenu::ToggleUserHidden();
+        });
+
         inputHandler.SetCycleCallback([](bool isPrevious, bool isHold) {
             if (isHold) {
                 // Hold action: reload/flush (future feature)

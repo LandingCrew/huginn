@@ -36,6 +36,7 @@ namespace Huginn::Input
       m_keyCodes[9] = settings.slot10Key;
       m_keyCodes[10] = settings.prevPageKey;
       m_keyCodes[11] = settings.nextPageKey;
+      m_keyCodes[12] = settings.toggleKey;
 
       // Request an input-state reset to prevent stale press/hold from misfiring
       // after rebind (e.g. old key held → rebind → new key sees ghost state).
@@ -47,6 +48,10 @@ namespace Huginn::Input
 
       // Warn about duplicate key codes (higher-index slot is silently unreachable)
       for (size_t i = 0; i < m_keyCodes.size(); ++i) {
+      // 0 means "unbound", not a scancode — two unbound actions are not a clash.
+      if (m_keyCodes[i] == KeybindingDefaults::TOGGLE_DISABLED) {
+        continue;
+      }
       for (size_t j = i + 1; j < m_keyCodes.size(); ++j) {
         if (m_keyCodes[i] == m_keyCodes[j]) {
            logger::warn("[InputHandler] Duplicate key code {} (0x{:02X}) bound to actions {} and {} — action {} will be unreachable"sv,
@@ -98,6 +103,8 @@ namespace Huginn::Input
         m_keyCodes[0], m_keyCodes[1], m_keyCodes[2], m_keyCodes[3], m_keyCodes[4],
         m_keyCodes[5], m_keyCodes[6], m_keyCodes[7], m_keyCodes[8], m_keyCodes[9],
         m_keyCodes[10], m_keyCodes[11]);
+      logger::info("[InputHandler] Visibility toggle: {}"sv,
+        m_keyCodes[12] == KeybindingDefaults::TOGGLE_DISABLED ? 0 : m_keyCodes[12]);
       logger::info("[InputHandler] Thresholds: hold={:.2f}s doubleTap={:.2f}s cycleHold={:.2f}s"sv,
         m_holdThreshold, m_doubleTapWindow, m_cycleHoldThreshold);
       m_loggedConfig = true;
@@ -110,6 +117,11 @@ namespace Huginn::Input
       {
       std::shared_lock lock(m_keyCodeMutex);
       for (size_t i = 0; i < m_keyCodes.size(); ++i) {
+        // Guard the unbound sentinel: without this, iToggleWidgetKey=0 would
+        // match any event whose scancode happened to be 0 rather than being off.
+        if (m_keyCodes[i] == KeybindingDefaults::TOGGLE_DISABLED) {
+           continue;
+        }
         if (keyCode == m_keyCodes[i]) {
            matchedIndex = static_cast<int>(i);
            break;
@@ -132,8 +144,15 @@ namespace Huginn::Input
       }
       if (matchedIndex < 10) {
       HandleEquipKey(matchedIndex, button);
-      } else {
+      } else if (matchedIndex < 12) {
       HandleCycleKey(matchedIndex - 10, button);
+      } else {
+      // Fire on key-DOWN only. IsHeld() repeats every frame while the key is
+      // down, so acting on anything else would flip the widget dozens of times
+      // per press; IsUp() would work but adds latency for no benefit.
+      if (button->IsDown() && m_toggleCallback) {
+        m_toggleCallback();
+      }
       }
       return true;  // Event consumed
    }

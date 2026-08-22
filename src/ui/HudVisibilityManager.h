@@ -14,8 +14,13 @@ namespace Huginn::UI
             const RE::MenuOpenCloseEvent* a_event,
             RE::BSTEventSource<RE::MenuOpenCloseEvent>* a_eventSource) override;
 
+        /// Recompute and apply widget visibility from current game state.
+        /// Public because the hotkey toggle re-shows through here rather than
+        /// calling SetVisible(true) directly — that way a paused game or a
+        /// disabled widget still wins over an un-hide.
+        void UpdateVisibility();
+
     private:
         HudVisibilityManager() = default;
-        void UpdateVisibility();
     };
 }

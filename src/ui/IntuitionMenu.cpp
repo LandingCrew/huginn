@@ -1,11 +1,13 @@
 #include "IntuitionMenu.h"
 #include "IntuitionSettings.h"
+#include "HudVisibilityManager.h"
 #include "slot/SlotAssignment.h"
 #include "candidate/CandidateTypes.h"
 #include "state/PlayerActorState.h"
 #include "weapon/WeaponData.h"
 
 #include <algorithm>
+#include <atomic>
 #include <format>
 
 namespace Huginn::UI
@@ -326,10 +328,57 @@ namespace Huginn::UI
 
     // ─── Visibility ─────────────────────────────────────────
 
+    namespace
+    {
+        /// Written from the input thread (ProcessButton), read from the UI and
+        /// pipeline threads, so atomic rather than a plain bool.
+        std::atomic<bool> g_userHidden{false};
+    }
+
+    bool IntuitionMenu::IsUserHidden() noexcept
+    {
+        return g_userHidden.load(std::memory_order_acquire);
+    }
+
+    void IntuitionMenu::ResetUserHidden() noexcept
+    {
+        g_userHidden.store(false, std::memory_order_release);
+    }
+
+    void IntuitionMenu::ToggleUserHidden()
+    {
+        const bool nowHidden = !g_userHidden.load(std::memory_order_acquire);
+        g_userHidden.store(nowHidden, std::memory_order_release);
+        logger::info("[Intuition] Widget {} by hotkey"sv, nowHidden ? "hidden" : "shown");
+
+        // Apply immediately rather than waiting for the next menu event or
+        // pipeline push — the player pressed a key and expects a response now.
+        // Re-show goes through UpdateVisibility rather than SetVisible(true) so a
+        // paused game or a disabled widget still wins: un-hiding must not force
+        // the widget up in a state that legitimately hides it.
+        if (nowHidden) {
+            if (auto* self = GetSingleton()) {
+                self->SetVisible(false);
+            }
+        } else {
+            HudVisibilityManager::GetSingleton().UpdateVisibility();
+        }
+    }
+
+
     void IntuitionMenu::SetVisible(bool a_visible)
     {
         auto* tasks = SKSE::GetTaskInterface();
         if (!tasks) return;
+
+        // The latch is enforced HERE, not only at the call sites, because several
+        // independent paths re-show the widget (HudVisibilityManager on every menu
+        // event, IntuitionBackend when a Wheeler wheel closes, ReapplySettings on
+        // hot-reload). Gating one of them would leave the others able to undo the
+        // player's hide. A hide is always allowed through.
+        if (a_visible && IsUserHidden()) {
+            return;
+        }
 
         // Only log when visibility actually changes
         static bool s_lastVisible = false;

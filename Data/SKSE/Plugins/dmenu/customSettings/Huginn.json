@@ -241,6 +241,18 @@
             "section": "Keybindings",
             "id": "iNextPageKey"
           }
+        },
+        {
+          "type": "keymap",
+          "text": {
+            "name": "Show/Hide Widget",
+            "desc": "Toggle the Intuition widget on screen (x key by default). Resets to visible on save load."
+          },
+          "default": 45,
+          "ini": {
+            "section": "Keybindings",
+            "id": "iToggleWidgetKey"
+          }
         }
       ]
     },

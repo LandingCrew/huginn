@@ -73,6 +73,22 @@ namespace Huginn::UI
         void SetPosition(float x, float y);
         void SetVisible(bool a_visible);
 
+        /// Player-facing hide toggle (default `x`), independent of the INI master
+        /// enable and of the automatic pause/menu hiding.
+        ///
+        /// It has to be a LATCH rather than a one-shot SetVisible(false), because
+        /// HudVisibilityManager recomputes visibility from scratch on every
+        /// MenuOpenCloseEvent — a bare hide would be undone by the next menu the
+        /// player opens. Everything that decides visibility consults this.
+        ///
+        /// Session-scoped on purpose: it is a "get out of my way for a moment"
+        /// control, not a preference. bEnableWidget in the INI is the preference,
+        /// and a latch that survived a restart would be indistinguishable from the
+        /// widget being broken. Reset on load for the same reason.
+        static void ToggleUserHidden();
+        [[nodiscard]] static bool IsUserHidden() noexcept;
+        static void ResetUserHidden() noexcept;
+
         /// Re-read IntuitionSettings from INI and push all values to the live widget.
         /// Called by `hg reload` console command for hot-tuning.
         void ReapplySettings();
