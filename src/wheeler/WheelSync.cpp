@@ -304,11 +304,17 @@ namespace Huginn::Wheeler
             return ResolveOutcome::Unchanged;  // placeholder — no wheel was ever created
         }
 
-        // maxCount 1: one page owns exactly one wheel, so a second match is a
-        // duplicate, not a wheel we want. The return is the TOTAL match count and
-        // may exceed the buffer, which is precisely how the duplicate is detected.
-        int32_t resolved = -1;
-        const int32_t count = api->GetManagedWheelsForClient(pw.wheelLabel->c_str(), &resolved, 1);
+        // Ask for several even though one page owns one wheel. A duplicate is a
+        // real, observed state — Wheeler's edit mode lets the player COPY a
+        // managed wheel, and the copy inherits the client name (seen 2026-08-22:
+        // one 'Huginn: Regulars' created, two found minutes later) — and the
+        // right answer to it depends on WHICH indices matched, not just how many.
+        // The return is the TOTAL match count and may still exceed the buffer.
+        constexpr size_t MAX_MATCHES = 8;
+        int32_t matches[MAX_MATCHES] = {};
+        const int32_t count = api->GetManagedWheelsForClient(pw.wheelLabel->c_str(), matches, MAX_MATCHES);
+        const int32_t seen = std::min(count, static_cast<int32_t>(MAX_MATCHES));
+        int32_t resolved = (count > 0) ? matches[0] : -1;
 
         if (count < 0) {
             spdlog::warn("[WheelerClient] Re-resolve: GetManagedWheelsForClient('{}') failed: {}",
@@ -329,15 +335,49 @@ namespace Huginn::Wheeler
         }
 
         if (count > 1) {
-            // Two pages sharing an sName produce the same label, and adopting the
-            // lowest match would point both at ONE wheel: it would then be driven
-            // by two pages while the other stopped updating entirely. Refusing to
-            // move is strictly safer — each page keeps the distinct index it was
-            // created with, which is what happened before re-resolve existed.
-            spdlog::warn("[WheelerClient] Re-resolve: {} wheels match label '{}' (expected 1) — "
-                         "refusing to move page {}; check for duplicate sName in [PageN]",
-                count, *pw.wheelLabel, pageIndex);
-            return ResolveOutcome::Unknown;
+            // Ambiguous: more than one wheel answers to our name. Two causes seen
+            // in the wild — a duplicate sName across [PageN] (config), and the
+            // player copying a managed wheel in Wheeler's edit mode (not config
+            // at all). The message must not assert either, because the code
+            // cannot tell them apart and a wrong diagnosis sends the reader
+            // hunting through an INI that is fine.
+            //
+            // Which index is ours is undecidable in general, but ONE case is
+            // decidable and it covers both causes: if the index we already hold
+            // is still among the matches, that wheel is still ours and staying
+            // put is right. Duplicate sName lands here for both pages — each
+            // keeps the distinct index it was created with, which is exactly the
+            // pre-re-resolve behaviour that worked.
+            const bool stillOurs = pw.wheelIndex >= 0 &&
+                std::find(matches, matches + seen, pw.wheelIndex) != matches + seen;
+
+            if (stillOurs) {
+                spdlog::warn("[WheelerClient] Re-resolve: {} wheels match label '{}' (expected 1) — "
+                             "keeping page {} at wheel {}, which is still among them "
+                             "(duplicate sName in [PageN], or a wheel copied in edit mode?)",
+                    count, *pw.wheelLabel, pageIndex, pw.wheelIndex);
+                return ResolveOutcome::Unchanged;
+            }
+
+            if (count > seen) {
+                // Never saw the whole list, so "not among them" is not established.
+                // Leave the index alone rather than invalidate on a partial view.
+                spdlog::warn("[WheelerClient] Re-resolve: {} wheels match label '{}', more than the {} "
+                             "inspected — leaving page {} at wheel {}",
+                    count, *pw.wheelLabel, seen, pageIndex, pw.wheelIndex);
+                return ResolveOutcome::Unknown;
+            }
+
+            // Our index is definitively not among the matches, so we are pointing
+            // at a wheel that is not ours. Keeping it is how page 1 and page 2
+            // ended up both addressing wheel 2 (observed 2026-08-22). Stop writing
+            // and let the rebuild path sort it out; that is what Gone is for.
+            spdlog::warn("[WheelerClient] Re-resolve: {} wheels match label '{}' and page {}'s wheel {} "
+                         "is not among them — invalidating rather than writing to a wheel that isn't ours "
+                         "(duplicate sName in [PageN], or a wheel copied in edit mode?)",
+                count, *pw.wheelLabel, pageIndex, pw.wheelIndex);
+            pw.wheelIndex = -1;
+            return ResolveOutcome::Gone;
         }
 
         if (resolved < 0) {
