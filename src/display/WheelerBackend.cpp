@@ -2,6 +2,7 @@
 #include "WheelerBackend.h"
 #include "../Profiling.h"
 
+#include <array>
 #include <cmath>   // std::ceil (lock-timer quantization)
 
 #include "slot/SlotAllocator.h"
@@ -86,7 +87,15 @@ namespace Huginn::Display
         // is exactly what GetLockSnapshot() was added to avoid (SlotLocker.h:147).
         // Hoisted above the page loop rather than per-page because only the
         // CURRENT page reads it, so one acquisition covers every use.
-        const auto lockSnapshot = slotLocker.GetLockSnapshot();
+        //
+        // Gated on the setting, which the first cut got wrong: the old per-slot
+        // calls sat behind `stConfig.showLockTimerLabel &&`, so with the label OFF
+        // (the default, and the config this was measured in) the old code took NO
+        // lock at all — an unconditional snapshot traded zero acquisitions for one.
+        const bool wantLockTimers = stConfig.showLockTimerLabel;
+        const auto lockSnapshot = wantLockTimers
+            ? slotLocker.GetLockSnapshot()
+            : std::array<Slot::SlotLocker::SlotLockView, Slot::MAX_SLOTS_PER_PAGE>{};
 
         for (size_t page = 0; page < pageCount; ++page) {
             // Skip placeholder pages (zero-slot or transient creation failure): they
@@ -121,7 +130,7 @@ namespace Huginn::Display
                     assignment.subtextLabel = Display::DeriveExplanationLabel(assignment, ctx.contextReason);
                     continue;
                 }
-                if (stConfig.showLockTimerLabel && page == currentPage
+                if (wantLockTimers && page == currentPage
                     && assignment.slotIndex < lockSnapshot.size()
                     && lockSnapshot[assignment.slotIndex].isLocked) {
                     const float remainingMs = lockSnapshot[assignment.slotIndex].remainingMs;

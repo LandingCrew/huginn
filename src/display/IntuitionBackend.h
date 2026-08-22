@@ -27,10 +27,24 @@ namespace Huginn::Display
         {
             std::string name;
             int type = 0;
-            double confidence = 0.0;
             std::string detail;
             int visualState = 0;
-            bool operator==(const SlotView&) const = default;
+
+            /// Sent to the widget but NOT compared. It is `assignment.utility`, a
+            /// float that moves on essentially every scoring run, so including it
+            /// made the cache miss every time — measured 2026-08-22: Display::
+            /// Intuition count stayed equal to ScoreCandidates count (188/188) and
+            /// MTPC went UP, 84 -> 92.76 us, because the comparison work was added
+            /// without ever paying off. It is safe to exclude because AS2's
+            /// applyItemContent (Intuition.as:707) takes the parameter and never
+            /// reads it — confidence drives nothing on screen.
+            double confidence = 0.0;
+
+            bool operator==(const SlotView& o) const
+            {
+                return name == o.name && type == o.type
+                    && detail == o.detail && visualState == o.visualState;
+            }
         };
         struct PushView
         {
@@ -40,7 +54,12 @@ namespace Huginn::Display
             size_t pageCount = 0;
             std::string pageName;
             std::vector<SlotView> slots;
-            bool operator==(const PushView&) const = default;
+            bool operator==(const PushView& o) const
+            {
+                return slotCount == o.slotCount && pageIndex == o.pageIndex
+                    && pageCount == o.pageCount && pageName == o.pageName
+                    && slots == o.slots;
+            }
         };
         PushView m_lastPush;
         PushView m_scratch;              ///< built each push, swapped in on a change (keeps capacity)

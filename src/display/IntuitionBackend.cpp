@@ -77,9 +77,9 @@ namespace Huginn::Display
             m_scratch.slots.push_back(SlotView{
                 .name = content.name,
                 .type = static_cast<int>(UI::IntuitionMenu::MapSlotContentType(content.type)),
-                .confidence = static_cast<double>(content.confidence),
                 .detail = UI::IntuitionMenu::BuildSlotDetail(assignment, displayMode, ctx.playerState),
                 .visualState = static_cast<int>(assignment.visualState),
+                .confidence = static_cast<double>(content.confidence),
             });
         }
 
