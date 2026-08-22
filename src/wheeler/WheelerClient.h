@@ -128,6 +128,10 @@ namespace Huginn::Wheeler
         // false, so anything downstream of it is unreachable.
         bool RecoverInvalidatedWheels() { return WheelSync::GetSingleton().RecoverInvalidatedWheels(); }
 
+        // Re-derive wheel indices from client labels after Wheeler may have
+        // reindexed. See WheelSync::ReResolveWheelIndices.
+        bool ReResolveWheelIndices() { return WheelSync::GetSingleton().ReResolveWheelIndices(); }
+
         // Get wheel index for a page (returns -1 if invalid)
         [[nodiscard]] int32_t GetWheelIndexForPage(size_t pageIndex) const
         {

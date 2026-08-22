@@ -7,7 +7,50 @@
       NOT self-correct — the wheel is empty until `hg reload` or another
       save-load. Same index-shift hazard the v3 delete-by-label path dodges on
       the delete side; the read side has no equivalent. Ruled out as #75 fallout
-      (same build produced clean sessions). Repro in the issue, unconfirmed
+      (same build produced clean sessions). Repro in the issue, unconfirmed.
+      **Expected closed by the re-resolve below (0.18.34), unverified in-game:**
+      `UpdatePage` no longer latches -1 as its first response — it re-derives the
+      index from the client label and only invalidates when the lookup reports
+      the wheel genuinely gone. Covers the shift case; a real deletion still
+      falls through to the existing `RecoverInvalidatedWheels` rebuild, so both
+      halves now have a path. Keep this open until a second-save-load session
+      shows either a `Re-resolve: page N ... index X -> Y` line or a clean run
+- [x] Wheel indices were never re-resolved after Wheeler reindexed, so subtext
+      writes landed on the wrong managed wheel. Same root cause as #76
+      (positional index used as identity), different trigger: #76 is a save-load
+      rebuild, this was an in-session edit-mode reorder.
+      **Observed 2026-08-21:** wheels created at 16:05:51 as Smart=0,
+      Inventory=1, Regulars=2; three edit-mode cycles each reported
+      `changeCount=0`; wheeler.log then showed Smart=1, Inventory=2, Regulars=3
+      with a player wheel displacing 0, while Huginn kept writing to 0/1/2. The
+      writes were ACCEPTED — `IsManagedWheel` answers "is this wheel managed",
+      not "is it MINE", so the ownership pre-check in `UpdatePage` passes on
+      another client's wheel and structurally cannot catch this.
+      **The plan's premise was off by one API version.** `GetManagedWheelsForClient`
+      is **v4**, not v3, and Huginn's mirrored `WheelerAPI.h` capped at
+      `API_VERSION_MAX = 3` — the live log was already warning "API version 4 is
+      newer than the 3 this build knows". The struct is append-only so nothing
+      was broken, but the fix needed the mirror bumped first, which also pulls in
+      v4's BEHAVIOUR CHANGE: managed wheels now survive Wheeler's load-time
+      reset, so a client that recreates every load must delete first or
+      accumulate duplicates. Huginn already deletes first (`InitializeGameSystems`
+      → `DestroyRecommendationWheels`); that ordering is now load-bearing and
+      documented at the version constant.
+      **Landed as `WheelSync::ReResolveWheelIndices()` on two triggers:**
+      (1) edit-mode EXIT, ignoring the payload entirely — `Wheeler::exitEditMode()`
+      always passes `(nullptr, 0)` (upstream TODO), so gating on it would gate on
+      a constant; (2) the `UpdatePage` invalidation site, which now tries to
+      re-derive the index before writing the wheel off. That second trigger is
+      what **also closes #76** — and it beats the planned `kPostLoadGame` hook,
+      which would have been a no-op: load already does Destroy+Create and assigns
+      fresh indices, while #76's failure lands ~1s LATER. Latching -1 as the
+      first response was the actual bug; it is now the answer only when the
+      lookup reports the wheel genuinely gone (count == 0).
+      Cached slot state is deliberately NOT cleared on a move — the wheel's
+      contents moved with it, only the address changed. `count > 1` warns
+      (the v4 duplicate hazard). v3 and below no-op with one warning per
+      generation: no v3 call distinguishes our managed wheels from another mod's.
+      **Not yet verified in-game** (PR: wheeler-index-reresolve, 0.18.34)
 - [ ] Intuition menu shown during "cut scenes"
 - [ ] Intuition menu not hiding when commanded by external mod
 - [ ] New game wheelerAPI integration seems to fail

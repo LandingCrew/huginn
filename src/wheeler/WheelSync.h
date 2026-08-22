@@ -79,6 +79,25 @@ namespace Huginn::Wheeler
         /// holds it across that call.
         bool RecoverInvalidatedWheels();
 
+        /// Re-derive every page's wheel index from its client label, which is the
+        /// only key that survives Wheeler reindexing. Returns true if any page's
+        /// index actually moved.
+        ///
+        /// WHY THIS IS NEEDED AT ALL: a stored wheel index is identity by
+        /// POSITION, and position is not stable. Wheeler shifts indices whenever
+        /// a wheel is inserted or removed — including by the player, in edit
+        /// mode, with no notification Huginn can act on. Observed 2026-08-21:
+        /// wheels created as Smart=0/Inventory=1/Regulars=2, a player wheel later
+        /// displacing 0, leaving ours at 1/2/3 while Huginn kept writing subtexts
+        /// to 0/1/2. Those writes were ACCEPTED — IsManagedWheel() only answers
+        /// "is this wheel managed", not "is it MINE", so the ownership pre-check
+        /// in UpdatePage passes on another client's wheel and cannot catch this.
+        ///
+        /// Requires API v4 (GetManagedWheelsForClient). On v3 and below there is
+        /// no lookup that distinguishes our managed wheels from another mod's, so
+        /// this is a no-op that warns once per generation.
+        bool ReResolveWheelIndices();
+
         // ====================================================================
         // Content
         // ====================================================================
@@ -223,6 +242,7 @@ namespace Huginn::Wheeler
         /// All three are cleared by a successful CreateWheels, so each generation
         /// of wheels gets its own census and its own retry budget.
         bool m_censusLogged = false;                                  // one census per generation
+        bool m_reResolveUnsupportedLogged = false;                    // one v3-server warning per generation
         int  m_recoveryAttempts = 0;
         std::chrono::steady_clock::time_point m_lastRecoveryAttempt{};
         static constexpr std::chrono::seconds ADD_FAIL_COOLDOWN{30};
@@ -255,5 +275,16 @@ namespace Huginn::Wheeler
         /// only touches the Wheeler API and this object. Once per generation —
         /// the answer cannot change between pages of the same failure.
         void LogWheelCensusLocked(size_t pageIndex);
+
+        /// Re-derive ONE page's wheel index from its label. REQUIRES:
+        /// m_pageDataMutex held. Returns true if the stored index changed.
+        ///
+        /// Safe to call under the lock: GetManagedWheelsForClient is a pure read
+        /// that takes Wheeler's wheel-data lock in shared mode and dispatches no
+        /// notifications, so it cannot re-enter us. That is the same premise
+        /// CreateWheels and UpdatePage already rely on for IsManagedWheel and
+        /// GetEntryCount, and upstream states it explicitly ("Wheeler never
+        /// invokes a callback while holding its wheel-data lock").
+        bool ReResolvePageLocked(WheelerAPI::IWheelerAPI* api, size_t pageIndex);
     };
 }

@@ -11,9 +11,17 @@
 namespace WheelerAPI
 {
     // Minimum API version we support (v1 = base Wheeler, v2 = subtext, v3 = batch
-    // delete-by-client + managed metadata on the wheel)
+    // delete-by-client + managed metadata on the wheel, v4 = batch lookup-by-client
+    // + managed wheels surviving Wheeler's load-time reset)
+    //
+    // v4 BEHAVIOUR CHANGE, per upstream: Wheeler no longer implicitly drops a
+    // client's wheels on save load, so a client that recreates its wheels every
+    // load MUST delete them first or accumulate duplicates. Huginn already does
+    // — InitializeGameSystems calls DestroyRecommendationWheels() before
+    // CreateRecommendationWheels() on the load path, and DestroyWheels() removes
+    // by client label. Do not drop that ordering.
     constexpr uint32_t API_VERSION_MIN = 1;
-    constexpr uint32_t API_VERSION_MAX = 3;
+    constexpr uint32_t API_VERSION_MAX = 4;
 
     enum class Result : int32_t
     {
@@ -148,5 +156,19 @@ namespace WheelerAPI
         // NOTE: Only valid when IWheelerAPI::version >= 3 — check before calling.
         // Returns the number of wheels deleted (>= 0), or a negative Result on error.
         int32_t (*DeleteManagedWheelsForClient)(const char* clientName);
+
+        // --- v4 Only: Batch lookup by client ---
+        // Read counterpart to DeleteManagedWheelsForClient: answers "which wheel
+        // indices are mine?" from the one key that stays stable across reindexing.
+        // NOTE: Only valid when IWheelerAPI::version >= 4 — check before calling.
+        //
+        // Indices are written ascending and are valid only until the next wheel
+        // insert or removal, so read them and use them promptly.
+        //
+        // Returns the TOTAL number of wheels managed for clientName (>= 0), which
+        // may EXCEED maxCount, or a negative Result on error. Pass nullptr/0 to
+        // query the count only; a return greater than maxCount means the buffer
+        // was too small and only the first maxCount entries were written.
+        int32_t (*GetManagedWheelsForClient)(const char* clientName, int32_t* outIndices, size_t maxCount);
     };
 }
