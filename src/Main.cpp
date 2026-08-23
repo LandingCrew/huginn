@@ -51,7 +51,6 @@
 #include "context/ContextWeightSettings.h"
 #include "context/ContextWeightConfig.h"
 #include "settings/SettingsReloader.h"
-#include "settings/DMenuWriteBack.h"
 #include "console/ConsoleCommands.h"
 #include "persist/QLearnerSerializer.h"
 #include "learning/EquipEventBus.h"
@@ -67,13 +66,13 @@ static std::atomic<bool> g_equipEventRegistered{false};
 // =============================================================================
 // HELPER: INI path accessors
 // =============================================================================
-// Main INI contains all sections (Scoring, ContextWeights, Slot, Override, etc.)
-// dMenu INI contains only dMenu-managed sections (Widget, Keybindings, Debug).
-// dMenu's flush_ini() creates a fresh CSimpleIniA and writes only its tracked
-// sections, so pointing it at the main INI would wipe all other sections.
-// Instead, dMenu writes to its own INI, and we read from both:
-//   - Non-dMenu settings: always from main INI
-//   - dMenu-managed settings: from dMenu INI if it exists, else main INI
+// Ownership is exclusive — one key, one home, nothing defined in both files:
+//   - dMenu INI  : [Widget], [Debug]        (dMenu writes these; we only read)
+//   - Main INI   : [Keybindings] + all 38 other sections
+// dMenu regenerates its file from its JSON schema, so pointing it at the main
+// INI would wipe every section its schema does not know about. Keeping the
+// split exclusive (rather than layering one file over the other) is what lets
+// a change made in the dMenu UI survive the reload dMenu fires to announce it.
 // =============================================================================
 // GetMainIniPath() and GetDMenuIniPath() are defined in Globals.cpp (shared
 // with the INI loaders there and with the `hg reload` console command).
@@ -348,20 +347,17 @@ static void InitializeGameSystems(bool isNewGame)
 #endif
 
     // ── 11. IntuitionMenu settings + show ──────────────────────────────
-    // dMenu writes its own copy of [Widget]/[Debug]/[Keybindings]; load that
-    // first and overlay the main INI so Huginn.ini stays authoritative. See
-    // SettingsReloader::ReloadAllSettingsExclusive for the full rationale.
+    // [Widget] and [Debug] belong to dMenu and are read ONLY from its INI; the
+    // main Huginn.ini does not define them. See GetDMenuIniPath in Globals.h.
     CSimpleIniA dmenuIni;
     const bool haveDMenuIni = LoadIniFile(dmenuIni, GetDMenuIniPath(), "InitDMenu"sv);
     if (haveDMenuIni) UI::IntuitionSettings::GetSingleton().LoadFromIni(dmenuIni);
-    if (haveMainIni) UI::IntuitionSettings::GetSingleton().LoadFromIni(mainIni);
     UI::IntuitionMenu::Show();
 
     // ── 11b. Debug widget visibility (debug builds only) ───────────────
-    if (haveDMenuIni || haveMainIni) {
+    if (haveDMenuIni) {
         auto& debugSettings = UI::DebugSettings::GetSingleton();
-        if (haveDMenuIni) debugSettings.LoadFromIni(dmenuIni);
-        if (haveMainIni) debugSettings.LoadFromIni(mainIni);
+        debugSettings.LoadFromIni(dmenuIni);
         debugSettings.ApplyToWidgets();  // Phase-2 apply (LoadFromIni is now a pure loader)
     }
 
@@ -456,15 +452,8 @@ static void OnDataLoaded()
     // Register SettingsReloader for dMenu integration (v0.13.0)
     Settings::SettingsReloader::GetSingleton().Register();
 
-    // Baseline for dMenu write-back: record the dMenu INI as it stands now, so
-    // the first in-game change diffs against it and only that change is copied
-    // into Huginn.ini. Without a baseline the first event has to no-op.
-    Settings::DMenuWriteBack::GetSingleton().RefreshSnapshot();
-
     // Load debug widget visibility early so dMenu changes apply before game load.
-    // dMenu file first, main INI overlaid — main wins (see SettingsReloader).
     UI::DebugSettings::GetSingleton().LoadFromFile(GetDMenuIniPath());
-    UI::DebugSettings::GetSingleton().LoadFromFile(GetMainIniPath());
 
     // Try to connect to Wheeler API
     auto& wheelerClient = Wheeler::WheelerClient::GetSingleton();
@@ -562,11 +551,9 @@ static void OnDataLoaded()
         auto& inputHandler = Input::InputHandler::GetSingleton();
         auto& equipManager = Input::EquipManager::GetSingleton();
 
-        // Load keybindings from INI and configure InputHandler.
-        // dMenu file first, main INI overlaid on top — Huginn.ini is the source
-        // of truth (see SettingsReloader::ReloadAllSettingsExclusive).
+        // Keybindings come from the main Huginn.ini only — dMenu does not
+        // declare them, so there is no second file to consult.
         Input::KeybindingSettings keybindings;
-        keybindings.LoadFromFile(GetDMenuIniPath());
         keybindings.LoadFromFile(GetMainIniPath());
         inputHandler.SetKeyCodes(keybindings);
 

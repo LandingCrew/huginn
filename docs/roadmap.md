@@ -291,7 +291,7 @@
 - [ ] Read-only Intuition menu mode — display-only widget, hotkeys disabled, an
       external UI (Wheeler / 3rd-party) drives selection
 - [x] Hide/toggle the Intuition menu on a hotkey — default `x` (scancode 45),
-      `iToggleWidgetKey` under `[Keybindings]`, 0 to unbind, exposed in dMenu.
+      `iToggleWidgetKey` under `[Keybindings]` in `Huginn.ini`, 0 to unbind.
       **Had to be a latch, not a SetVisible(false):** HudVisibilityManager
       recomputes visibility from scratch on every MenuOpenCloseEvent, so a bare
       hide is undone by the next menu the player opens — which is exactly the

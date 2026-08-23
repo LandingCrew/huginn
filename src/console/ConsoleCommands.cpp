@@ -311,9 +311,9 @@ namespace Huginn::Console
       // previously happened: this command silently skipped Keybindings/Debug
       // and read the widget settings from the wrong INI).
       //
-      // GetDMenuIniPath() resolves the dMenu-managed sections to the dMenu INI
-      // when dMenu is installed (so `hg reload` doesn't reset dMenu-managed
-      // customizations) and falls back to the main INI otherwise.
+      // GetDMenuIniPath() resolves [Widget]/[Debug] to the dMenu INI when dMenu
+      // is installed, so `hg reload` doesn't reset them. [Keybindings] and every
+      // other section are read from the main INI inside ReloadAllSettings.
       //
       // ReloadAllSettings serializes itself via RunExclusive — wrapping the
       // call here again would deadlock (the update mutex is not re-entrant).

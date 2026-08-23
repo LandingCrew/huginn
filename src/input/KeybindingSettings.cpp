@@ -12,28 +12,26 @@ namespace Huginn::Input
         }
     }
 
-    // Each key falls back to the CURRENT member value, not the compile-time
-    // default, so calls layer: load the main INI, then overlay the dMenu INI.
-    // A key absent from the second file keeps what the first one set instead of
-    // snapping back to the default. On a single call the members still hold the
-    // compile-time defaults, so behaviour is unchanged.
+    // Keybindings live in ONE file: the main Huginn.ini. dMenu no longer
+    // declares them, so there is nothing to layer and each key falls back to
+    // its compile-time default.
     void KeybindingSettings::LoadFromIni(const CSimpleIniA& ini)
     {
         const char* section = "Keybindings";
 
-        slot1Key  = static_cast<uint32_t>(ini.GetLongValue(section, "iSlot1Key", slot1Key));
-        slot2Key  = static_cast<uint32_t>(ini.GetLongValue(section, "iSlot2Key", slot2Key));
-        slot3Key  = static_cast<uint32_t>(ini.GetLongValue(section, "iSlot3Key", slot3Key));
-        slot4Key  = static_cast<uint32_t>(ini.GetLongValue(section, "iSlot4Key", slot4Key));
-        slot5Key  = static_cast<uint32_t>(ini.GetLongValue(section, "iSlot5Key", slot5Key));
-        slot6Key  = static_cast<uint32_t>(ini.GetLongValue(section, "iSlot6Key", slot6Key));
-        slot7Key  = static_cast<uint32_t>(ini.GetLongValue(section, "iSlot7Key", slot7Key));
-        slot8Key  = static_cast<uint32_t>(ini.GetLongValue(section, "iSlot8Key", slot8Key));
-        slot9Key  = static_cast<uint32_t>(ini.GetLongValue(section, "iSlot9Key", slot9Key));
-        slot10Key = static_cast<uint32_t>(ini.GetLongValue(section, "iSlot10Key", slot10Key));
-        prevPageKey = static_cast<uint32_t>(ini.GetLongValue(section, "iPreviousPageKey", prevPageKey));
-        nextPageKey = static_cast<uint32_t>(ini.GetLongValue(section, "iNextPageKey", nextPageKey));
-        toggleKey   = static_cast<uint32_t>(ini.GetLongValue(section, "iToggleWidgetKey", toggleKey));
+        slot1Key  = static_cast<uint32_t>(ini.GetLongValue(section, "iSlot1Key", KeybindingDefaults::SLOT1_KEY));
+        slot2Key  = static_cast<uint32_t>(ini.GetLongValue(section, "iSlot2Key", KeybindingDefaults::SLOT2_KEY));
+        slot3Key  = static_cast<uint32_t>(ini.GetLongValue(section, "iSlot3Key", KeybindingDefaults::SLOT3_KEY));
+        slot4Key  = static_cast<uint32_t>(ini.GetLongValue(section, "iSlot4Key", KeybindingDefaults::SLOT4_KEY));
+        slot5Key  = static_cast<uint32_t>(ini.GetLongValue(section, "iSlot5Key", KeybindingDefaults::SLOT5_KEY));
+        slot6Key  = static_cast<uint32_t>(ini.GetLongValue(section, "iSlot6Key", KeybindingDefaults::SLOT6_KEY));
+        slot7Key  = static_cast<uint32_t>(ini.GetLongValue(section, "iSlot7Key", KeybindingDefaults::SLOT7_KEY));
+        slot8Key  = static_cast<uint32_t>(ini.GetLongValue(section, "iSlot8Key", KeybindingDefaults::SLOT8_KEY));
+        slot9Key  = static_cast<uint32_t>(ini.GetLongValue(section, "iSlot9Key", KeybindingDefaults::SLOT9_KEY));
+        slot10Key = static_cast<uint32_t>(ini.GetLongValue(section, "iSlot10Key", KeybindingDefaults::SLOT10_KEY));
+        prevPageKey = static_cast<uint32_t>(ini.GetLongValue(section, "iPreviousPageKey", KeybindingDefaults::PREV_PAGE_KEY));
+        nextPageKey = static_cast<uint32_t>(ini.GetLongValue(section, "iNextPageKey", KeybindingDefaults::NEXT_PAGE_KEY));
+        toggleKey   = static_cast<uint32_t>(ini.GetLongValue(section, "iToggleWidgetKey", KeybindingDefaults::TOGGLE_KEY));
 
         logger::info("[KeybindingSettings] Loaded: Slots=[{},{},{},{},{},{},{},{},{},{}] Pages=[{},{}] Toggle={}"sv,
             slot1Key, slot2Key, slot3Key, slot4Key, slot5Key,

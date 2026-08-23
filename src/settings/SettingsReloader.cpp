@@ -1,6 +1,5 @@
 #include "SettingsReloader.h"
 
-#include "DMenuWriteBack.h"
 #include "Globals.h"
 #include "update/UpdateHandler.h"
 #include "slot/SlotAllocator.h"
@@ -62,12 +61,6 @@ namespace Huginn::Settings
             // strArg contains the mod name - only process if it's "Huginn"
             if (event->strArg == "Huginn"sv) {
                 logger::info("[SettingsReloader] dmenu_updateSettings received for Huginn"sv);
-                // Write the player's in-game change into Huginn.ini FIRST.
-                // Huginn.ini is loaded last and wins, so without this the reload
-                // below would immediately undo whatever they just adjusted.
-                // Done outside RunExclusive: this is file I/O against settings
-                // nothing else touches until the reload reads them back.
-                DMenuWriteBack::GetSingleton().PropagateChanges();
                 ReloadAllSettings(GetDMenuIniPath());
             }
             return RE::BSEventNotifyControl::kContinue;
@@ -163,33 +156,25 @@ namespace Huginn::Settings
             logger::debug("[SettingsReloader]   [Candidates] reloaded"sv);
         }
 
-        // 7-9. Widget / Keybindings / Debug.
+        // 7-9. Widget / Debug (dMenu's) and Keybindings (ours).
         //
-        // These three are the sections dMenu also writes, into its own file at
-        // dmenu/customSettings/ini/Huginn.ini. Load that FIRST, then overlay the
-        // main INI, so Huginn.ini is the single source of truth: it is the file
-        // that ships documented, that users open, and that survives — dMenu
-        // regenerates its own copy from scratch on every flush.
-        //
-        // The loaders fall back to their current member value, so a key the main
-        // INI omits keeps whatever the dMenu file set. Deleting a key from
-        // Huginn.ini is therefore how you hand that one setting back to the
-        // in-game dMenu UI.
-        Input::KeybindingSettings keybindings;
+        // One key, one home. dMenu owns [Widget] and [Debug] and stores them in
+        // its own file; the main Huginn.ini does not define those sections. It
+        // owns [Keybindings], which dMenu no longer declares. Nothing overlays
+        // anything, so a setting changed in the dMenu UI is not overwritten on
+        // the reload dMenu fires to announce it.
         if (haveDMenu) {
             UI::IntuitionSettings::GetSingleton().LoadFromIni(dMenuIni);
-            keybindings.LoadFromIni(dMenuIni);
             UI::DebugSettings::GetSingleton().LoadFromIni(dMenuIni);
+            logger::debug("[SettingsReloader]   [Widget]/[Debug] reloaded from dMenu INI"sv);
         }
+        // Keybindings apply unconditionally: with no main INI they are the
+        // compile-time defaults, matching the prior missing-file behavior.
+        Input::KeybindingSettings keybindings;
         if (haveMain) {
-            UI::IntuitionSettings::GetSingleton().LoadFromIni(mainIni);
             keybindings.LoadFromIni(mainIni);
-            UI::DebugSettings::GetSingleton().LoadFromIni(mainIni);
+            logger::debug("[SettingsReloader]   [Keybindings] reloaded from Huginn.ini"sv);
         }
-        logger::debug("[SettingsReloader]   [Widget]/[Keybindings]/[Debug] reloaded "
-                      "(dMenu={}, main={} — main wins)"sv, haveDMenu, haveMain);
-        // Apply keybindings (defaults if the dMenu INI was absent — matches the
-        // prior LoadFromFile-on-missing-file behavior of leaving defaults).
         Input::InputHandler::GetSingleton().SetKeyCodes(keybindings);
 
         // =====================================================================
