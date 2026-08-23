@@ -60,10 +60,11 @@ namespace Huginn::Input
       }
       }
 
-      logger::debug("[InputHandler] Key codes set: slots={},{},{},{},{},{},{},{},{},{} cycle={},{}"sv,
+      logger::debug("[InputHandler] Key codes set: slots={},{},{},{},{},{},{},{},{},{} cycle={},{} toggle={}"sv,
       settings.slot1Key, settings.slot2Key, settings.slot3Key, settings.slot4Key,
       settings.slot5Key, settings.slot6Key, settings.slot7Key, settings.slot8Key,
-      settings.slot9Key, settings.slot10Key, settings.prevPageKey, settings.nextPageKey);
+      settings.slot9Key, settings.slot10Key, settings.prevPageKey, settings.nextPageKey,
+      settings.toggleKey);
    }
 
    KeybindingSettings InputHandler::GetKeybindings() const

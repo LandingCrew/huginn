@@ -157,7 +157,17 @@ namespace Huginn::Settings
         }
 
         // 7. Intuition widget settings (dMenu-managed)
+        //
+        // Keybindings layer main INI -> dMenu INI. dMenu still wins where both
+        // define a key (it writes every key, so in practice it always does),
+        // but without this the main INI's [Keybindings] section was inert: with
+        // no dMenu installed it was skipped entirely and the compile-time
+        // defaults applied, so editing the file people actually open did
+        // nothing.
         Input::KeybindingSettings keybindings;
+        if (haveMain) {
+            keybindings.LoadFromIni(mainIni);
+        }
         if (haveDMenu) {
             UI::IntuitionSettings::GetSingleton().LoadFromIni(dMenuIni);
             logger::debug("[SettingsReloader]   [Widget] reloaded"sv);

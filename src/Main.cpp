@@ -551,8 +551,12 @@ static void OnDataLoaded()
         auto& inputHandler = Input::InputHandler::GetSingleton();
         auto& equipManager = Input::EquipManager::GetSingleton();
 
-        // Load keybindings from INI and configure InputHandler
+        // Load keybindings from INI and configure InputHandler.
+        // Main INI first, dMenu INI second so dMenu wins where both define a
+        // key — matches SettingsReloader, and keeps the main INI meaningful
+        // when dMenu is not installed.
         Input::KeybindingSettings keybindings;
+        keybindings.LoadFromFile(GetMainIniPath());
         keybindings.LoadFromFile(GetDMenuIniPath());
         inputHandler.SetKeyCodes(keybindings);
 
