@@ -360,11 +360,11 @@ namespace Huginn::UI
         g_userHidden.store(false, std::memory_order_release);
     }
 
-    void IntuitionMenu::ToggleUserHidden()
+    bool IntuitionMenu::ToggleUserHidden()
     {
         const bool nowHidden = !g_userHidden.load(std::memory_order_acquire);
         g_userHidden.store(nowHidden, std::memory_order_release);
-        logger::info("[Intuition] Widget {} by hotkey"sv, nowHidden ? "hidden" : "shown");
+        logger::info("[Intuition] Widget {}"sv, nowHidden ? "hidden" : "shown");
 
         // Apply immediately rather than waiting for the next menu event or
         // pipeline push — the player pressed a key and expects a response now.
@@ -378,6 +378,7 @@ namespace Huginn::UI
         } else {
             HudVisibilityManager::GetSingleton().UpdateVisibility();
         }
+        return nowHidden;
     }
 
 

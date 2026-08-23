@@ -191,7 +191,17 @@ namespace Huginn::Settings
         // NOTE: Button IDs use lowercase snake_case to match dMenu event naming convention
         // (dmenu_updateSettings, dmenu_buttonCallback, etc.)
 
-        if (buttonId == "Huginn_reset_qtable"sv) {
+        if (buttonId == "Huginn_toggle_widget"sv) {
+            // Deliberately the SAME flag the hotkey flips, not a parallel one.
+            // bEnabled gates only visibility (IntuitionBackend::IsEnabled is
+            // unconditionally true), so a second "is the widget showing" flag
+            // would just be this one under another name. Players without dMenu
+            // reach it via the hotkey; this is the equivalent for players who
+            // would rather click than learn a key.
+            const bool nowHidden = UI::IntuitionMenu::ToggleUserHidden();
+            RE::DebugNotification(nowHidden ? "Huginn: Widget hidden" : "Huginn: Widget shown");
+        }
+        else if (buttonId == "Huginn_reset_qtable"sv) {
             logger::info("[SettingsReloader] Resetting learning data"sv);
             if (const auto fqlItems = ResetLearningData()) {
                 logger::info("[SettingsReloader] Learning data reset complete ({} FQL items)"sv, *fqlItems);

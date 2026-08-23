@@ -248,6 +248,14 @@
         {
           "type": "button",
           "text": {
+            "name": "Show/Hide Widget",
+            "desc": "Flip the widget between shown and hidden. Same flag as the hotkey; resets to shown on load. Use Enable Widget above to turn it off for good."
+          },
+          "id": "Huginn_toggle_widget"
+        },
+        {
+          "type": "button",
+          "text": {
             "name": "Reset Q-Table",
             "desc": "Clear all learned preferences (rewards/penalties)"
           },

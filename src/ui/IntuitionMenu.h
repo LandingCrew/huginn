@@ -85,7 +85,8 @@ namespace Huginn::UI
         /// control, not a preference. bEnabled in the INI is the preference,
         /// and a latch that survived a restart would be indistinguishable from the
         /// widget being broken. Reset on load for the same reason.
-        static void ToggleUserHidden();
+        /// Flip the widget between shown and hidden. @return true if now hidden.
+        static bool ToggleUserHidden();
         [[nodiscard]] static bool IsUserHidden() noexcept;
         static void ResetUserHidden() noexcept;
 
