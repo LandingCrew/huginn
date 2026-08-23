@@ -31,7 +31,7 @@
           "style": {
             "min": 0.0,
             "max": 100.0,
-            "step": 1.0
+            "step": 0.1
           },
           "ini": {
             "section": "Widget",
@@ -48,7 +48,7 @@
           "style": {
             "min": 0.0,
             "max": 100.0,
-            "step": 1.0
+            "step": 0.1
           },
           "ini": {
             "section": "Widget",
@@ -65,7 +65,7 @@
           "style": {
             "min": 0.0,
             "max": 100.0,
-            "step": 5.0
+            "step": 0.1
           },
           "ini": {
             "section": "Widget",
@@ -82,11 +82,96 @@
           "style": {
             "min": 50.0,
             "max": 200.0,
-            "step": 5.0
+            "step": 0.1
           },
           "ini": {
             "section": "Widget",
             "id": "fScale"
+          }
+        },
+        {
+          "type": "slider",
+          "text": {
+            "name": "Child Opacity (%)",
+            "desc": "Opacity of secondary elements; compounds with Opacity"
+          },
+          "default": 70.0,
+          "style": {
+            "min": 0.0,
+            "max": 100.0,
+            "step": 0.1
+          },
+          "ini": {
+            "section": "Widget",
+            "id": "fAlphaChild"
+          }
+        },
+        {
+          "type": "dropdown",
+          "text": {
+            "name": "Display Mode",
+            "desc": "How much detail each slot shows"
+          },
+          "default": 0,
+          "options": [
+            "Minimal",
+            "Normal",
+            "Verbose"
+          ],
+          "ini": {
+            "section": "Widget",
+            "id": "sDisplayMode"
+          }
+        },
+        {
+          "type": "dropdown",
+          "text": {
+            "name": "Slot Change Effect",
+            "desc": "Animation when a slot's contents change"
+          },
+          "default": 0,
+          "options": [
+            "Slide",
+            "Fade",
+            "Instant"
+          ],
+          "ini": {
+            "section": "Widget",
+            "id": "sSlotEffect"
+          }
+        },
+        {
+          "type": "dropdown",
+          "text": {
+            "name": "Refresh Effect",
+            "desc": "Feedback when recommendations refresh"
+          },
+          "default": 0,
+          "options": [
+            "Tint",
+            "Pulse",
+            "None"
+          ],
+          "ini": {
+            "section": "Widget",
+            "id": "sRefreshEffect"
+          }
+        },
+        {
+          "type": "slider",
+          "text": {
+            "name": "Refresh Strength (%)",
+            "desc": "Intensity of the refresh effect"
+          },
+          "default": 15.0,
+          "style": {
+            "min": 0.0,
+            "max": 100.0,
+            "step": 0.1
+          },
+          "ini": {
+            "section": "Widget",
+            "id": "fRefreshStrength"
           }
         }
       ]
