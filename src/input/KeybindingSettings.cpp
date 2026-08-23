@@ -12,6 +12,9 @@ namespace Huginn::Input
         }
     }
 
+    // Keybindings live in ONE file: the main Huginn.ini. dMenu no longer
+    // declares them, so there is nothing to layer and each key falls back to
+    // its compile-time default.
     void KeybindingSettings::LoadFromIni(const CSimpleIniA& ini)
     {
         const char* section = "Keybindings";
@@ -28,11 +31,13 @@ namespace Huginn::Input
         slot10Key = static_cast<uint32_t>(ini.GetLongValue(section, "iSlot10Key", KeybindingDefaults::SLOT10_KEY));
         prevPageKey = static_cast<uint32_t>(ini.GetLongValue(section, "iPreviousPageKey", KeybindingDefaults::PREV_PAGE_KEY));
         nextPageKey = static_cast<uint32_t>(ini.GetLongValue(section, "iNextPageKey", KeybindingDefaults::NEXT_PAGE_KEY));
+        toggleKey   = static_cast<uint32_t>(ini.GetLongValue(section, "iToggleWidgetKey", KeybindingDefaults::TOGGLE_KEY));
 
-        logger::info("[KeybindingSettings] Loaded: Slots=[{},{},{},{},{},{},{},{},{},{}] Pages=[{},{}]"sv,
+        logger::info("[KeybindingSettings] Loaded: Slots=[{},{},{},{},{},{},{},{},{},{}] Pages=[{},{}] Toggle={}"sv,
             slot1Key, slot2Key, slot3Key, slot4Key, slot5Key,
             slot6Key, slot7Key, slot8Key, slot9Key, slot10Key,
-            prevPageKey, nextPageKey);
+            prevPageKey, nextPageKey,
+            toggleKey == KeybindingDefaults::TOGGLE_DISABLED ? 0 : toggleKey);
     }
 
     void KeybindingSettings::ResetToDefaults()
@@ -49,6 +54,7 @@ namespace Huginn::Input
         slot10Key = KeybindingDefaults::SLOT10_KEY;
         prevPageKey = KeybindingDefaults::PREV_PAGE_KEY;
         nextPageKey = KeybindingDefaults::NEXT_PAGE_KEY;
+        toggleKey   = KeybindingDefaults::TOGGLE_KEY;
 
         logger::info("[KeybindingSettings] Reset to defaults"sv);
     }

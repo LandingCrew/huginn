@@ -18,10 +18,16 @@ namespace Huginn::Settings
     /// - dmenu_updateSettings: Triggered when user changes any setting in dMenu UI
     /// - dmenu_buttonCallback: Triggered when user clicks action buttons
     ///
+    /// Ownership (exclusive — nothing is defined in both files):
+    /// - dMenu INI: [Widget], [Debug]
+    /// - Main Huginn.ini: [Keybindings] + every other section
+    ///
     /// Graceful degradation:
-    /// - If dMenu not installed: No events fire, Huginn loads from Huginn.ini normally
-    /// - If dMenu installed but no JSON: Huginn panel doesn't appear, still works from Huginn.ini
-    /// - If dMenu installed with JSON: Full hot-reload via dMenu UI
+    /// - If dMenu not installed: no events fire; [Widget]/[Debug] take compile-time
+    ///   defaults (configuring the widget UI requires dMenu), everything else
+    ///   loads from Huginn.ini as normal
+    /// - If dMenu installed but no JSON: Huginn panel doesn't appear, same as above
+    /// - If dMenu installed with JSON: full hot-reload via dMenu UI
     class SettingsReloader : public RE::BSTEventSink<SKSE::ModCallbackEvent>
     {
     public:
@@ -42,10 +48,10 @@ namespace Huginn::Settings
         /// event handler and the `hg reload` console command delegate here so
         /// they can never diverge (e.g. one path forgetting a settings class).
         ///
-        /// The path argument is the dMenu-managed INI (Widget, Keybindings,
-        /// Debug); non-dMenu sections always load from the main INI. Pass the
-        /// main INI path for a console reload — the dMenu-managed sections then
-        /// fall back to the main INI, which is the correct no-dMenu behavior.
+        /// The path argument is the dMenu-managed INI, which supplies [Widget]
+        /// and [Debug]; every other section — [Keybindings] included — always
+        /// loads from the main INI. Callers pass GetDMenuIniPath(), which falls
+        /// back to the main INI when dMenu is absent.
         ///
         /// Thread Safety:
         /// - Serializes itself against the update loop via

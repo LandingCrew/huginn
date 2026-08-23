@@ -66,13 +66,13 @@ static std::atomic<bool> g_equipEventRegistered{false};
 // =============================================================================
 // HELPER: INI path accessors
 // =============================================================================
-// Main INI contains all sections (Scoring, ContextWeights, Slot, Override, etc.)
-// dMenu INI contains only dMenu-managed sections (Widget, Keybindings, Debug).
-// dMenu's flush_ini() creates a fresh CSimpleIniA and writes only its tracked
-// sections, so pointing it at the main INI would wipe all other sections.
-// Instead, dMenu writes to its own INI, and we read from both:
-//   - Non-dMenu settings: always from main INI
-//   - dMenu-managed settings: from dMenu INI if it exists, else main INI
+// Ownership is exclusive — one key, one home, nothing defined in both files:
+//   - dMenu INI  : [Widget], [Debug]        (dMenu writes these; we only read)
+//   - Main INI   : [Keybindings] + all 38 other sections
+// dMenu regenerates its file from its JSON schema, so pointing it at the main
+// INI would wipe every section its schema does not know about. Keeping the
+// split exclusive (rather than layering one file over the other) is what lets
+// a change made in the dMenu UI survive the reload dMenu fires to announce it.
 // =============================================================================
 // GetMainIniPath() and GetDMenuIniPath() are defined in Globals.cpp (shared
 // with the INI loaders there and with the `hg reload` console command).
@@ -99,6 +99,17 @@ static void InitializeGameSystems(bool isNewGame)
     g_lastGameLoad = std::chrono::steady_clock::now();
     logger::info("Game load timestamp recorded ({})"sv,
         isNewGame ? "kNewGame" : "kPostLoadGame");
+
+    // ── Clear the hotkey hide latch ─────────────────────────────────────
+    // A hotkey hide belongs to the session that set it. Carrying it into a
+    // freshly loaded game would present as "the widget is broken", with no
+    // on-screen affordance to discover the key that brings it back.
+    //
+    // This must hang off the load message, NOT off markPageDirty: that
+    // callback is driven by Wheeler closing a wheel, so resetting there
+    // cleared the latch mid-session while the widget stayed visually
+    // hidden — desyncing the two so the next keypress did nothing.
+    UI::IntuitionMenu::ResetUserHidden();
 
     // ── 0. Parse the main INI ONCE, distribute to every settings loader ──
     // Each settings class used to re-open and re-parse Huginn.ini independently
@@ -336,8 +347,8 @@ static void InitializeGameSystems(bool isNewGame)
 #endif
 
     // ── 11. IntuitionMenu settings + show ──────────────────────────────
-    // Parse the dMenu INI once (falls back to the main INI inside GetDMenuIniPath),
-    // then distribute to the dMenu-managed loaders.
+    // [Widget] and [Debug] belong to dMenu and are read ONLY from its INI; the
+    // main Huginn.ini does not define them. See GetDMenuIniPath in Globals.h.
     CSimpleIniA dmenuIni;
     const bool haveDMenuIni = LoadIniFile(dmenuIni, GetDMenuIniPath(), "InitDMenu"sv);
     if (haveDMenuIni) UI::IntuitionSettings::GetSingleton().LoadFromIni(dmenuIni);
@@ -441,7 +452,7 @@ static void OnDataLoaded()
     // Register SettingsReloader for dMenu integration (v0.13.0)
     Settings::SettingsReloader::GetSingleton().Register();
 
-    // Load debug widget visibility early so dMenu changes apply before game load
+    // Load debug widget visibility early so dMenu changes apply before game load.
     UI::DebugSettings::GetSingleton().LoadFromFile(GetDMenuIniPath());
 
     // Try to connect to Wheeler API
@@ -540,9 +551,10 @@ static void OnDataLoaded()
         auto& inputHandler = Input::InputHandler::GetSingleton();
         auto& equipManager = Input::EquipManager::GetSingleton();
 
-        // Load keybindings from INI and configure InputHandler
+        // Keybindings come from the main Huginn.ini only — dMenu does not
+        // declare them, so there is no second file to consult.
         Input::KeybindingSettings keybindings;
-        keybindings.LoadFromFile(GetDMenuIniPath());
+        keybindings.LoadFromFile(GetMainIniPath());
         inputHandler.SetKeyCodes(keybindings);
 
         // Slot key callback: equip spell/item from slot
@@ -551,6 +563,10 @@ static void OnDataLoaded()
         });
 
         // Cycle key callback: cycle pages (v0.12.0 multi-page support)
+        inputHandler.SetToggleCallback([]() {
+            UI::IntuitionMenu::ToggleUserHidden();
+        });
+
         inputHandler.SetCycleCallback([](bool isPrevious, bool isHold) {
             if (isHold) {
                 // Hold action: reload/flush (future feature)

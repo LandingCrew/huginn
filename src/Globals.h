@@ -90,11 +90,14 @@ void ResetPipelineSubsystems();
 [[nodiscard]] std::filesystem::path GetMainIniPath();
 
 /// @brief Path to the dMenu-managed INI if it exists, else the main INI.
-/// @details dMenu writes only its tracked sections (Widget, Keybindings, Debug)
-/// to Data/SKSE/Plugins/dmenu/customSettings/ini/Huginn.ini. Every reader of
-/// dMenu-managed sections (game init, dMenu reload, `hg reload`) must resolve
-/// the path through here so a console reload can't silently reset dMenu-managed
-/// customizations by reading them from the wrong file.
+/// @details dMenu owns [Widget] and [Debug] and writes them to
+/// Data/SKSE/Plugins/dmenu/customSettings/ini/Huginn.ini. Every reader of those
+/// two sections (game init, dMenu reload, `hg reload`) must resolve the path
+/// through here so a console reload can't silently reset them by reading the
+/// wrong file. [Keybindings] is NOT here — it belongs to the main INI.
+/// @note The main-INI fallback is inert for these sections: Huginn.ini does not
+/// define [Widget] or [Debug], so with dMenu absent they take compile-time
+/// defaults. Configuring the widget UI requires dMenu.
 [[nodiscard]] std::filesystem::path GetDMenuIniPath();
 
 // LoadIniFile is declared in IniLoad.h (included above) — the shared parse front

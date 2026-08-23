@@ -156,22 +156,25 @@ namespace Huginn::Settings
             logger::debug("[SettingsReloader]   [Candidates] reloaded"sv);
         }
 
-        // 7. Intuition widget settings (dMenu-managed)
-        Input::KeybindingSettings keybindings;
+        // 7-9. Widget / Debug (dMenu's) and Keybindings (ours).
+        //
+        // One key, one home. dMenu owns [Widget] and [Debug] and stores them in
+        // its own file; the main Huginn.ini does not define those sections. It
+        // owns [Keybindings], which dMenu no longer declares. Nothing overlays
+        // anything, so a setting changed in the dMenu UI is not overwritten on
+        // the reload dMenu fires to announce it.
         if (haveDMenu) {
             UI::IntuitionSettings::GetSingleton().LoadFromIni(dMenuIni);
-            logger::debug("[SettingsReloader]   [Widget] reloaded"sv);
-
-            // 8. Keybindings (dMenu-managed)
-            keybindings.LoadFromIni(dMenuIni);
-            logger::debug("[SettingsReloader]   [Keybindings] reloaded"sv);
-
-            // 9. Debug widget visibility (dMenu-managed)
             UI::DebugSettings::GetSingleton().LoadFromIni(dMenuIni);
-            logger::debug("[SettingsReloader]   [Debug] reloaded"sv);
+            logger::debug("[SettingsReloader]   [Widget]/[Debug] reloaded from dMenu INI"sv);
         }
-        // Apply keybindings (defaults if the dMenu INI was absent — matches the
-        // prior LoadFromFile-on-missing-file behavior of leaving defaults).
+        // Keybindings apply unconditionally: with no main INI they are the
+        // compile-time defaults, matching the prior missing-file behavior.
+        Input::KeybindingSettings keybindings;
+        if (haveMain) {
+            keybindings.LoadFromIni(mainIni);
+            logger::debug("[SettingsReloader]   [Keybindings] reloaded from Huginn.ini"sv);
+        }
         Input::InputHandler::GetSingleton().SetKeyCodes(keybindings);
 
         // =====================================================================
@@ -188,7 +191,17 @@ namespace Huginn::Settings
         // NOTE: Button IDs use lowercase snake_case to match dMenu event naming convention
         // (dmenu_updateSettings, dmenu_buttonCallback, etc.)
 
-        if (buttonId == "Huginn_reset_qtable"sv) {
+        if (buttonId == "Huginn_toggle_widget"sv) {
+            // Deliberately the SAME flag the hotkey flips, not a parallel one.
+            // bEnabled gates only visibility (IntuitionBackend::IsEnabled is
+            // unconditionally true), so a second "is the widget showing" flag
+            // would just be this one under another name. Players without dMenu
+            // reach it via the hotkey; this is the equivalent for players who
+            // would rather click than learn a key.
+            const bool nowHidden = UI::IntuitionMenu::ToggleUserHidden();
+            RE::DebugNotification(nowHidden ? "Huginn: Widget hidden" : "Huginn: Widget shown");
+        }
+        else if (buttonId == "Huginn_reset_qtable"sv) {
             logger::info("[SettingsReloader] Resetting learning data"sv);
             if (const auto fqlItems = ResetLearningData()) {
                 logger::info("[SettingsReloader] Learning data reset complete ({} FQL items)"sv, *fqlItems);

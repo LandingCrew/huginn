@@ -31,7 +31,7 @@
           "style": {
             "min": 0.0,
             "max": 100.0,
-            "step": 1.0
+            "step": 0.1
           },
           "ini": {
             "section": "Widget",
@@ -48,7 +48,7 @@
           "style": {
             "min": 0.0,
             "max": 100.0,
-            "step": 1.0
+            "step": 0.1
           },
           "ini": {
             "section": "Widget",
@@ -65,7 +65,7 @@
           "style": {
             "min": 0.0,
             "max": 100.0,
-            "step": 5.0
+            "step": 0.1
           },
           "ini": {
             "section": "Widget",
@@ -82,164 +82,96 @@
           "style": {
             "min": 50.0,
             "max": 200.0,
-            "step": 5.0
+            "step": 0.1
           },
           "ini": {
             "section": "Widget",
             "id": "fScale"
           }
-        }
-      ]
-    },
-    {
-      "type": "group",
-      "text": {
-        "name": "Keybindings",
-        "desc": "Hotkeys for equipping items and cycling pages"
-      },
-      "entries": [
+        },
         {
-          "type": "keymap",
+          "type": "slider",
           "text": {
-            "name": "Equip Slot 1",
-            "desc": "Tap=right hand, Double-tap=left, Hold=both"
+            "name": "Child Opacity (%)",
+            "desc": "Opacity of secondary elements; compounds with Opacity"
           },
-          "default": 2,
+          "default": 70.0,
+          "style": {
+            "min": 0.0,
+            "max": 100.0,
+            "step": 0.1
+          },
           "ini": {
-            "section": "Keybindings",
-            "id": "iSlot1Key"
+            "section": "Widget",
+            "id": "fAlphaChild"
           }
         },
         {
-          "type": "keymap",
+          "type": "dropdown",
           "text": {
-            "name": "Equip Slot 2",
-            "desc": "Tap=right hand, Double-tap=left, Hold=both"
+            "name": "Display Mode",
+            "desc": "How much detail each slot shows"
           },
-          "default": 3,
+          "default": 0,
+          "options": [
+            "Minimal",
+            "Normal",
+            "Verbose"
+          ],
           "ini": {
-            "section": "Keybindings",
-            "id": "iSlot2Key"
+            "section": "Widget",
+            "id": "sDisplayMode"
           }
         },
         {
-          "type": "keymap",
+          "type": "dropdown",
           "text": {
-            "name": "Equip Slot 3",
-            "desc": "Tap=right hand, Double-tap=left, Hold=both"
+            "name": "Slot Change Effect",
+            "desc": "Animation when a slot's contents change"
           },
-          "default": 4,
+          "default": 0,
+          "options": [
+            "Slide",
+            "Fade",
+            "Instant"
+          ],
           "ini": {
-            "section": "Keybindings",
-            "id": "iSlot3Key"
+            "section": "Widget",
+            "id": "sSlotEffect"
           }
         },
         {
-          "type": "keymap",
+          "type": "dropdown",
           "text": {
-            "name": "Equip Slot 4",
-            "desc": "Tap=right hand, Double-tap=left, Hold=both"
+            "name": "Refresh Effect",
+            "desc": "Feedback when recommendations refresh"
           },
-          "default": 5,
+          "default": 0,
+          "options": [
+            "Tint",
+            "Pulse",
+            "None"
+          ],
           "ini": {
-            "section": "Keybindings",
-            "id": "iSlot4Key"
+            "section": "Widget",
+            "id": "sRefreshEffect"
           }
         },
         {
-          "type": "keymap",
+          "type": "slider",
           "text": {
-            "name": "Equip Slot 5",
-            "desc": "Tap=right hand, Double-tap=left, Hold=both"
+            "name": "Refresh Strength (%)",
+            "desc": "Intensity of the refresh effect"
           },
-          "default": 6,
-          "ini": {
-            "section": "Keybindings",
-            "id": "iSlot5Key"
-          }
-        },
-        {
-          "type": "keymap",
-          "text": {
-            "name": "Equip Slot 6",
-            "desc": "Tap=right hand, Double-tap=left, Hold=both"
+          "default": 15.0,
+          "style": {
+            "min": 0.0,
+            "max": 100.0,
+            "step": 0.1
           },
-          "default": 7,
           "ini": {
-            "section": "Keybindings",
-            "id": "iSlot6Key"
-          }
-        },
-        {
-          "type": "keymap",
-          "text": {
-            "name": "Equip Slot 7",
-            "desc": "Tap=right hand, Double-tap=left, Hold=both"
-          },
-          "default": 8,
-          "ini": {
-            "section": "Keybindings",
-            "id": "iSlot7Key"
-          }
-        },
-        {
-          "type": "keymap",
-          "text": {
-            "name": "Equip Slot 8",
-            "desc": "Tap=right hand, Double-tap=left, Hold=both"
-          },
-          "default": 9,
-          "ini": {
-            "section": "Keybindings",
-            "id": "iSlot8Key"
-          }
-        },
-        {
-          "type": "keymap",
-          "text": {
-            "name": "Equip Slot 9",
-            "desc": "Tap=right hand, Double-tap=left, Hold=both"
-          },
-          "default": 10,
-          "ini": {
-            "section": "Keybindings",
-            "id": "iSlot9Key"
-          }
-        },
-        {
-          "type": "keymap",
-          "text": {
-            "name": "Equip Slot 10",
-            "desc": "Tap=right hand, Double-tap=left, Hold=both (0 key)"
-          },
-          "default": 11,
-          "ini": {
-            "section": "Keybindings",
-            "id": "iSlot10Key"
-          }
-        },
-        {
-          "type": "keymap",
-          "text": {
-            "name": "Previous Page",
-            "desc": "Cycle to previous page (- key by default)"
-          },
-          "default": 12,
-          "ini": {
-            "section": "Keybindings",
-            "id": "iPreviousPageKey"
-          }
-        },
-        {
-          "type": "keymap",
-          "text": {
-            "name": "Next Page",
-            "desc": "Cycle to next page (= key by default)"
-          },
-          "default": 13,
-          "ini": {
-            "section": "Keybindings",
-            "id": "iNextPageKey"
+            "section": "Widget",
+            "id": "fRefreshStrength"
           }
         }
       ]
@@ -316,6 +248,14 @@
         {
           "type": "button",
           "text": {
+            "name": "Show/Hide Widget",
+            "desc": "Flip the widget between shown and hidden. Same flag as the hotkey; resets to shown on load. Use Enable Widget above to turn it off for good."
+          },
+          "id": "Huginn_toggle_widget"
+        },
+        {
+          "type": "button",
+          "text": {
             "name": "Reset Q-Table",
             "desc": "Clear all learned preferences (rewards/penalties)"
           },
@@ -333,7 +273,7 @@
           "type": "button",
           "text": {
             "name": "Reload INI",
-            "desc": "Reload settings from Huginn.ini (bypass dMenu changes)"
+            "desc": "Reload all settings from disk (Huginn.ini and this panel's INI)"
           },
           "id": "Huginn_reload_ini"
         }

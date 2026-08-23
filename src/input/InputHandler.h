@@ -24,6 +24,16 @@ namespace Huginn::Input
    using CycleCallback = std::function<void(bool isPrevious, bool isHold)>;
 
    /**
+    * @brief Callback when the widget-visibility toggle key is pressed
+    *
+    * Fires once per press (on key-down). No tap/hold/double-tap decoding: a
+    * show/hide toggle has exactly one gesture, and routing it through the
+    * tap-vs-hold machinery would add a hold-threshold delay to a key whose
+    * whole point is an instant response.
+    */
+   using ToggleCallback = std::function<void()>;
+
+   /**
     * @brief Input handler for widget keybindings
     *
     * Detects key presses for:
@@ -63,6 +73,11 @@ namespace Huginn::Input
        * @param callback Function to call when a cycle key is pressed
        */
       void SetCycleCallback(CycleCallback callback) { m_cycleCallback = std::move(callback); }
+
+      /**
+       * @brief Set callback for the widget-visibility toggle key
+       */
+      void SetToggleCallback(ToggleCallback callback) { m_toggleCallback = std::move(callback); }
 
       /**
        * @brief Enable or disable input handling
@@ -124,12 +139,13 @@ namespace Huginn::Input
       /// Callbacks
       SlotCallback m_slotCallback;
       CycleCallback m_cycleCallback;
+      ToggleCallback m_toggleCallback;
 
       /// Enabled state
       bool m_enabled = true;
 
       /// Key codes for each action (derived from m_keybindings for fast scan)
-      std::array<uint32_t, 12> m_keyCodes;
+      std::array<uint32_t, 13> m_keyCodes;  // [0-9] slots, [10-11] cycle, [12] visibility toggle
 
       /// Authoritative keybinding settings
       KeybindingSettings m_keybindings;

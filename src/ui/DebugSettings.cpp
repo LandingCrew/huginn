@@ -27,6 +27,7 @@ namespace Huginn::UI
         }
     }
 
+    // [Debug] lives in ONE file: dMenu's own INI. See IntuitionSettings::LoadFromIni.
     void DebugSettings::LoadFromIni(const CSimpleIniA& ini)
     {
         const char* section = "Debug";
