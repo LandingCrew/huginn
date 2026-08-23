@@ -115,10 +115,11 @@ All Tier 2 critique items have landed; see [roadmap-archive.md](roadmap-archive.
       100.21 ms total / **3.23 ms MTPC** over 31 calls — that is its OWN work on the
       main thread, not children. See docs/refactor/wheeler-push-spikes.md, which
       already describes this path. Mostly S.
-      **Three of four parts are written but STRANDED** on branch
-      `tier3-14-display-push` (0.18.40 @63b1a62): pushed, never PR'd, and now
-      behind main at 0.19.0 — it also carries the earlier roadmap prune. Decide
-      whether to rebase or redo before starting fresh work here.
+      **Three of four parts are written and REBASED** onto main on branch
+      `tier3-14-display-push` (0.19.0 @e81ff19, 2 commits): rebased 2026-08-23,
+      builds clean, not yet PR'd and NOT yet re-traced since the rebase. The
+      branch's own roadmap prune was dropped in the rebase as superseded, so it
+      now contributes `src/display/` only. Trace before opening the PR.
       Part 4 (lazy per-page allocation) was deferred pending a fresh capture.
       Two regressions in the first cut were caught ONLY by Tracy, not by the
       log: change-detect never fired because `confidence` (= `assignment.utility`)
@@ -169,13 +170,15 @@ All Tier 2 critique items have landed; see [roadmap-archive.md](roadmap-archive.
       firing. Silence it so a real rejection stays visible (Tests.cpp:4137).
       Still firing every session as of 0.19.0; it has now cost real time twice
       while triaging unrelated logs (XS)
-- [ ] Unmerged branches holding real work — decide rebase vs redo before either
-      area is touched again. Both predate 0.19.0 and will conflict on the version
-      bump at CMakeLists.txt:5:
-      * `tier3-14-display-push` (0.18.40 @63b1a62, 2 commits) — #14 parts 1-3 +
-        the two Tracy-caught regression fixes. Its roadmap prune is now
-        superseded, so take the `src/display/` changes only
-      * `build-verify-preset` (1 commit) — contents unreviewed
+- [ ] Unmerged branches, both REBASED onto main 2026-08-23 and building clean
+      at 0.19.0. Local only — the rebases rewrote history, so the remotes still
+      hold the pre-rebase commits and updating them needs a force-push:
+      * `tier3-14-display-push` (@e81ff19, 2 commits) — #14 parts 1-3 + the two
+        Tracy-caught regression fixes; see the #14 entry above. Contributes
+        `src/display/` only; three conflicts (CMakeLists.txt twice, both
+        roadmaps) were all resolved to main's side. Needs a trace, then a PR
+      * `build-verify-preset` (@da9801d, 1 commit) — no-deploy configure preset;
+        replayed with no conflicts, contents still unreviewed
       `docs-optimizations-fold` and `wheeler-index-reresolve` are fully merged
       (0 commits ahead) and can be deleted
 - [ ] Positive log line when the text-entry input gate engages — a
