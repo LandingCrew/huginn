@@ -1,5 +1,6 @@
 #include "SettingsReloader.h"
 
+#include "DMenuWriteBack.h"
 #include "Globals.h"
 #include "update/UpdateHandler.h"
 #include "slot/SlotAllocator.h"
@@ -61,6 +62,12 @@ namespace Huginn::Settings
             // strArg contains the mod name - only process if it's "Huginn"
             if (event->strArg == "Huginn"sv) {
                 logger::info("[SettingsReloader] dmenu_updateSettings received for Huginn"sv);
+                // Write the player's in-game change into Huginn.ini FIRST.
+                // Huginn.ini is loaded last and wins, so without this the reload
+                // below would immediately undo whatever they just adjusted.
+                // Done outside RunExclusive: this is file I/O against settings
+                // nothing else touches until the reload reads them back.
+                DMenuWriteBack::GetSingleton().PropagateChanges();
                 ReloadAllSettings(GetDMenuIniPath());
             }
             return RE::BSEventNotifyControl::kContinue;

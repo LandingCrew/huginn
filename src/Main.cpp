@@ -51,6 +51,7 @@
 #include "context/ContextWeightSettings.h"
 #include "context/ContextWeightConfig.h"
 #include "settings/SettingsReloader.h"
+#include "settings/DMenuWriteBack.h"
 #include "console/ConsoleCommands.h"
 #include "persist/QLearnerSerializer.h"
 #include "learning/EquipEventBus.h"
@@ -454,6 +455,11 @@ static void OnDataLoaded()
 
     // Register SettingsReloader for dMenu integration (v0.13.0)
     Settings::SettingsReloader::GetSingleton().Register();
+
+    // Baseline for dMenu write-back: record the dMenu INI as it stands now, so
+    // the first in-game change diffs against it and only that change is copied
+    // into Huginn.ini. Without a baseline the first event has to no-op.
+    Settings::DMenuWriteBack::GetSingleton().RefreshSnapshot();
 
     // Load debug widget visibility early so dMenu changes apply before game load.
     // dMenu file first, main INI overlaid — main wins (see SettingsReloader).
