@@ -11,33 +11,41 @@ namespace Huginn::UI
         }
     }
 
+    // Every key falls back to the CURRENT member value, not the compile-time
+    // default, so calls layer: load the dMenu INI, then overlay the main INI.
+    // A key absent from the second file keeps what the first one set. String
+    // keys use a nullptr probe for the same reason — GetValue with a default
+    // cannot distinguish "absent" from "set to the default".
     void IntuitionSettings::LoadFromIni(const CSimpleIniA& ini)
     {
         const char* section = "Widget";
 
-        enabled   = ini.GetBoolValue(section, "bEnabled", IntuitionDefaults::ENABLED);
-        positionX = static_cast<float>(ini.GetDoubleValue(section, "fPositionX", IntuitionDefaults::POSITION_X));
-        positionY = static_cast<float>(ini.GetDoubleValue(section, "fPositionY", IntuitionDefaults::POSITION_Y));
-        alpha     = static_cast<float>(ini.GetDoubleValue(section, "fAlpha", IntuitionDefaults::ALPHA));
-        scale        = static_cast<float>(ini.GetDoubleValue(section, "fScale", IntuitionDefaults::SCALE));
-        childAlpha   = static_cast<float>(ini.GetDoubleValue(section, "fAlphaChild", IntuitionDefaults::CHILD_ALPHA));
+        enabled   = ini.GetBoolValue(section, "bEnabled", enabled);
+        positionX = static_cast<float>(ini.GetDoubleValue(section, "fPositionX", positionX));
+        positionY = static_cast<float>(ini.GetDoubleValue(section, "fPositionY", positionY));
+        alpha     = static_cast<float>(ini.GetDoubleValue(section, "fAlpha", alpha));
+        scale        = static_cast<float>(ini.GetDoubleValue(section, "fScale", scale));
+        childAlpha   = static_cast<float>(ini.GetDoubleValue(section, "fAlphaChild", childAlpha));
 
-        const char* modeStr = ini.GetValue(section, "sDisplayMode", IntuitionDefaults::DISPLAY_MODE);
-        if (_stricmp(modeStr, "normal") == 0) displayMode = DisplayMode::Normal;
-        else if (_stricmp(modeStr, "verbose") == 0) displayMode = DisplayMode::Verbose;
-        else displayMode = DisplayMode::Minimal;
+        if (const char* modeStr = ini.GetValue(section, "sDisplayMode", nullptr)) {
+            if (_stricmp(modeStr, "normal") == 0) displayMode = DisplayMode::Normal;
+            else if (_stricmp(modeStr, "verbose") == 0) displayMode = DisplayMode::Verbose;
+            else displayMode = DisplayMode::Minimal;
+        }
 
-        const char* refreshStr = ini.GetValue(section, "sRefreshEffect", IntuitionDefaults::REFRESH_EFFECT);
-        if (_stricmp(refreshStr, "pulse") == 0 || _stricmp(refreshStr, "flash") == 0) refreshEffect = RefreshEffect::Pulse;
-        else if (_stricmp(refreshStr, "none") == 0) refreshEffect = RefreshEffect::None;
-        else refreshEffect = RefreshEffect::Tint;
+        if (const char* refreshStr = ini.GetValue(section, "sRefreshEffect", nullptr)) {
+            if (_stricmp(refreshStr, "pulse") == 0 || _stricmp(refreshStr, "flash") == 0) refreshEffect = RefreshEffect::Pulse;
+            else if (_stricmp(refreshStr, "none") == 0) refreshEffect = RefreshEffect::None;
+            else refreshEffect = RefreshEffect::Tint;
+        }
 
-        refreshStrength = std::clamp(static_cast<float>(ini.GetDoubleValue(section, "fRefreshStrength", IntuitionDefaults::REFRESH_STRENGTH)), 0.0f, 100.0f);
+        refreshStrength = std::clamp(static_cast<float>(ini.GetDoubleValue(section, "fRefreshStrength", refreshStrength)), 0.0f, 100.0f);
 
-        const char* slotStr = ini.GetValue(section, "sSlotEffect", IntuitionDefaults::SLOT_EFFECT);
-        if (_stricmp(slotStr, "fade") == 0) slotEffect = SlotEffect::Fade;
-        else if (_stricmp(slotStr, "instant") == 0) slotEffect = SlotEffect::Instant;
-        else slotEffect = SlotEffect::Slide;
+        if (const char* slotStr = ini.GetValue(section, "sSlotEffect", nullptr)) {
+            if (_stricmp(slotStr, "fade") == 0) slotEffect = SlotEffect::Fade;
+            else if (_stricmp(slotStr, "instant") == 0) slotEffect = SlotEffect::Instant;
+            else slotEffect = SlotEffect::Slide;
+        }
 
         logger::info("[IntuitionSettings] Enabled: {}, Position: ({}%, {}%), Alpha: {}, Scale: {}%, ChildAlpha: {}, DisplayMode: {}, RefreshEffect: {} ({}%), SlotEffect: {}",
             enabled, positionX, positionY, alpha, scale, childAlpha,

@@ -156,30 +156,31 @@ namespace Huginn::Settings
             logger::debug("[SettingsReloader]   [Candidates] reloaded"sv);
         }
 
-        // 7. Intuition widget settings (dMenu-managed)
+        // 7-9. Widget / Keybindings / Debug.
         //
-        // Keybindings layer main INI -> dMenu INI. dMenu still wins where both
-        // define a key (it writes every key, so in practice it always does),
-        // but without this the main INI's [Keybindings] section was inert: with
-        // no dMenu installed it was skipped entirely and the compile-time
-        // defaults applied, so editing the file people actually open did
-        // nothing.
+        // These three are the sections dMenu also writes, into its own file at
+        // dmenu/customSettings/ini/Huginn.ini. Load that FIRST, then overlay the
+        // main INI, so Huginn.ini is the single source of truth: it is the file
+        // that ships documented, that users open, and that survives — dMenu
+        // regenerates its own copy from scratch on every flush.
+        //
+        // The loaders fall back to their current member value, so a key the main
+        // INI omits keeps whatever the dMenu file set. Deleting a key from
+        // Huginn.ini is therefore how you hand that one setting back to the
+        // in-game dMenu UI.
         Input::KeybindingSettings keybindings;
-        if (haveMain) {
-            keybindings.LoadFromIni(mainIni);
-        }
         if (haveDMenu) {
             UI::IntuitionSettings::GetSingleton().LoadFromIni(dMenuIni);
-            logger::debug("[SettingsReloader]   [Widget] reloaded"sv);
-
-            // 8. Keybindings (dMenu-managed)
             keybindings.LoadFromIni(dMenuIni);
-            logger::debug("[SettingsReloader]   [Keybindings] reloaded"sv);
-
-            // 9. Debug widget visibility (dMenu-managed)
             UI::DebugSettings::GetSingleton().LoadFromIni(dMenuIni);
-            logger::debug("[SettingsReloader]   [Debug] reloaded"sv);
         }
+        if (haveMain) {
+            UI::IntuitionSettings::GetSingleton().LoadFromIni(mainIni);
+            keybindings.LoadFromIni(mainIni);
+            UI::DebugSettings::GetSingleton().LoadFromIni(mainIni);
+        }
+        logger::debug("[SettingsReloader]   [Widget]/[Keybindings]/[Debug] reloaded "
+                      "(dMenu={}, main={} — main wins)"sv, haveDMenu, haveMain);
         // Apply keybindings (defaults if the dMenu INI was absent — matches the
         // prior LoadFromFile-on-missing-file behavior of leaving defaults).
         Input::InputHandler::GetSingleton().SetKeyCodes(keybindings);

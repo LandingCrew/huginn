@@ -347,17 +347,20 @@ static void InitializeGameSystems(bool isNewGame)
 #endif
 
     // ── 11. IntuitionMenu settings + show ──────────────────────────────
-    // Parse the dMenu INI once (falls back to the main INI inside GetDMenuIniPath),
-    // then distribute to the dMenu-managed loaders.
+    // dMenu writes its own copy of [Widget]/[Debug]/[Keybindings]; load that
+    // first and overlay the main INI so Huginn.ini stays authoritative. See
+    // SettingsReloader::ReloadAllSettingsExclusive for the full rationale.
     CSimpleIniA dmenuIni;
     const bool haveDMenuIni = LoadIniFile(dmenuIni, GetDMenuIniPath(), "InitDMenu"sv);
     if (haveDMenuIni) UI::IntuitionSettings::GetSingleton().LoadFromIni(dmenuIni);
+    if (haveMainIni) UI::IntuitionSettings::GetSingleton().LoadFromIni(mainIni);
     UI::IntuitionMenu::Show();
 
     // ── 11b. Debug widget visibility (debug builds only) ───────────────
-    if (haveDMenuIni) {
+    if (haveDMenuIni || haveMainIni) {
         auto& debugSettings = UI::DebugSettings::GetSingleton();
-        debugSettings.LoadFromIni(dmenuIni);
+        if (haveDMenuIni) debugSettings.LoadFromIni(dmenuIni);
+        if (haveMainIni) debugSettings.LoadFromIni(mainIni);
         debugSettings.ApplyToWidgets();  // Phase-2 apply (LoadFromIni is now a pure loader)
     }
 
@@ -452,8 +455,10 @@ static void OnDataLoaded()
     // Register SettingsReloader for dMenu integration (v0.13.0)
     Settings::SettingsReloader::GetSingleton().Register();
 
-    // Load debug widget visibility early so dMenu changes apply before game load
+    // Load debug widget visibility early so dMenu changes apply before game load.
+    // dMenu file first, main INI overlaid — main wins (see SettingsReloader).
     UI::DebugSettings::GetSingleton().LoadFromFile(GetDMenuIniPath());
+    UI::DebugSettings::GetSingleton().LoadFromFile(GetMainIniPath());
 
     // Try to connect to Wheeler API
     auto& wheelerClient = Wheeler::WheelerClient::GetSingleton();
@@ -552,12 +557,11 @@ static void OnDataLoaded()
         auto& equipManager = Input::EquipManager::GetSingleton();
 
         // Load keybindings from INI and configure InputHandler.
-        // Main INI first, dMenu INI second so dMenu wins where both define a
-        // key — matches SettingsReloader, and keeps the main INI meaningful
-        // when dMenu is not installed.
+        // dMenu file first, main INI overlaid on top — Huginn.ini is the source
+        // of truth (see SettingsReloader::ReloadAllSettingsExclusive).
         Input::KeybindingSettings keybindings;
-        keybindings.LoadFromFile(GetMainIniPath());
         keybindings.LoadFromFile(GetDMenuIniPath());
+        keybindings.LoadFromFile(GetMainIniPath());
         inputHandler.SetKeyCodes(keybindings);
 
         // Slot key callback: equip spell/item from slot

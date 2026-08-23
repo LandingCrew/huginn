@@ -27,15 +27,17 @@ namespace Huginn::UI
         }
     }
 
+    // Keys fall back to the CURRENT member value so calls layer: dMenu INI
+    // first, main INI overlaid on top. See IntuitionSettings::LoadFromIni.
     void DebugSettings::LoadFromIni(const CSimpleIniA& ini)
     {
         const char* section = "Debug";
 
-        stateManagerVisible = ini.GetBoolValue(section, "bShowStateManager", DebugDefaults::STATE_MANAGER_VISIBLE);
-        registryVisible = ini.GetBoolValue(section, "bShowRegistry", DebugDefaults::REGISTRY_VISIBLE);
-        utilityScorerVisible = ini.GetBoolValue(section, "bShowUtilityScorer", DebugDefaults::UTILITY_SCORER_VISIBLE);
+        stateManagerVisible = ini.GetBoolValue(section, "bShowStateManager", stateManagerVisible);
+        registryVisible = ini.GetBoolValue(section, "bShowRegistry", registryVisible);
+        utilityScorerVisible = ini.GetBoolValue(section, "bShowUtilityScorer", utilityScorerVisible);
         recLogVerbosity = std::clamp(
-            static_cast<int>(ini.GetLongValue(section, "iRecommendationLog", DebugDefaults::REC_LOG_VERBOSITY)),
+            static_cast<int>(ini.GetLongValue(section, "iRecommendationLog", recLogVerbosity)),
             0, 2);
 
         logger::info("[DebugSettings] Loaded: StateManager={}, Registry={}, UtilityScorer={}, RecLog={}"sv,
