@@ -1,4 +1,6 @@
 #include "IntuitionMenu.h"
+
+#include "Globals.h"  // GetDMenuIniPath
 #include "IntuitionSettings.h"
 #include "HudVisibilityManager.h"
 #include "slot/SlotAssignment.h"
@@ -32,6 +34,19 @@ namespace Huginn::UI
     {
         if (!IntuitionSettings::GetSingleton().IsEnabled()) {
             logger::info("IntuitionMenu::Show() - disabled via INI, skipping"sv);
+            return;
+        }
+
+        // The hide latch has to be honoured HERE, not only in SetVisible.
+        // Skyrim destroys the menu across a cell transition, so on LoadingMenu
+        // close HudVisibilityManager reopens it through this path. The
+        // UpdateVisibility() that follows cannot correct it: GetSingleton() is
+        // still null because kShow is only queued, so it early-returns and no
+        // SetVisible(false) ever lands. The widget would come back through a
+        // doorway while the latch still read "hidden", leaving the next
+        // keypress dead — the same desync fixed for markPageDirty in 591b58d.
+        if (IsUserHidden()) {
+            logger::info("IntuitionMenu::Show() - hidden by hotkey, skipping"sv);
             return;
         }
 
@@ -409,9 +424,12 @@ namespace Huginn::UI
 
     void IntuitionMenu::ReapplySettings()
     {
-        // Re-read INI on calling thread (file I/O is thread-safe), then delegate
+        // Re-read INI on calling thread (file I/O is thread-safe), then delegate.
+        // MUST use GetDMenuIniPath(): dMenu owns [Widget] and the main Huginn.ini
+        // no longer defines it, so reading the main INI here would silently reset
+        // every widget setting to its compile-time default.
         auto& settings = IntuitionSettings::GetSingleton();
-        settings.LoadFromFile("Data/SKSE/Plugins/Huginn.ini");
+        settings.LoadFromFile(GetDMenuIniPath());
         ReapplySettings(settings.BuildConfig());
     }
 

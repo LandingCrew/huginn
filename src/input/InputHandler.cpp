@@ -11,10 +11,18 @@ namespace Huginn::Input
    InputHandler::InputHandler()
    {
       // Default key codes (DirectInput scancodes)
-      // 1=2, 2=3, 3=4, 4=5, 5=6, 6=7, 7=8, 8=9, 9=10, 0=11, -=12, ==13
-      // Layout: [slot1-10, cyclePrev, cycleNext]
-      // Keys 1-0 = equip slots 1-10, - = prev page, = = next page
-      m_keyCodes = { 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13 };
+      // Layout: [slot1-10, cyclePrev, cycleNext, toggle]
+      // Named constants, not literals: the array has 13 entries and listing only
+      // 12 left the toggle value-initialised to 0, which reads as UNBOUND rather
+      // than as TOGGLE_KEY until SetKeyCodes runs.
+      m_keyCodes = {
+         KeybindingDefaults::SLOT1_KEY, KeybindingDefaults::SLOT2_KEY,
+         KeybindingDefaults::SLOT3_KEY, KeybindingDefaults::SLOT4_KEY,
+         KeybindingDefaults::SLOT5_KEY, KeybindingDefaults::SLOT6_KEY,
+         KeybindingDefaults::SLOT7_KEY, KeybindingDefaults::SLOT8_KEY,
+         KeybindingDefaults::SLOT9_KEY, KeybindingDefaults::SLOT10_KEY,
+         KeybindingDefaults::PREV_PAGE_KEY, KeybindingDefaults::NEXT_PAGE_KEY,
+         KeybindingDefaults::TOGGLE_KEY };
 
       // Initialize state
       m_frameTime = std::chrono::steady_clock::now();
@@ -95,6 +103,19 @@ namespace Huginn::Input
       // Only process keyboard events - ignore mouse, gamepad, etc.
       if (button->GetDevice() != RE::INPUT_DEVICE::kKeyboard) {
       return false;
+      }
+
+      // Swallow nothing while the player is typing. Text entry (console, save
+      // naming, renaming an enchanted item) delivers characters as CharEvents,
+      // so clearing userEvent below does NOT stop the character being typed —
+      // but the bound action would still fire. That was survivable when every
+      // binding was a digit or punctuation; the default toggle is now a letter,
+      // so typing "player.additem" would flicker the widget on every 'x'. The
+      // digits have the same problem: typing a FormID would equip slots.
+      if (auto* controlMap = RE::ControlMap::GetSingleton()) {
+      if (controlMap->textEntryCount > 0) {
+         return false;
+      }
       }
 
       // Log config once after init or rebind

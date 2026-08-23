@@ -82,7 +82,7 @@ namespace Huginn::UI
         /// player opens. Everything that decides visibility consults this.
         ///
         /// Session-scoped on purpose: it is a "get out of my way for a moment"
-        /// control, not a preference. bEnableWidget in the INI is the preference,
+        /// control, not a preference. bEnabled in the INI is the preference,
         /// and a latch that survived a restart would be indistinguishable from the
         /// widget being broken. Reset on load for the same reason.
         static void ToggleUserHidden();

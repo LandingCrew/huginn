@@ -302,7 +302,7 @@
       others undo the player. Hides are always allowed through.
       Session-scoped and reset on load: a latch that survived a restart is
       indistinguishable from a broken widget, with no on-screen affordance to
-      find the key again. `bEnableWidget` remains the actual preference.
+      find the key again. `bEnabled` remains the actual preference.
       Un-hiding routes through `UpdateVisibility()` rather than `SetVisible(true)`
       so a paused game or a disabled widget still wins
 - [ ] Finer Intuition menu granularity — config sliders (position / scale / alpha)
