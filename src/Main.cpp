@@ -100,6 +100,17 @@ static void InitializeGameSystems(bool isNewGame)
     logger::info("Game load timestamp recorded ({})"sv,
         isNewGame ? "kNewGame" : "kPostLoadGame");
 
+    // ── Clear the hotkey hide latch ─────────────────────────────────────
+    // A hotkey hide belongs to the session that set it. Carrying it into a
+    // freshly loaded game would present as "the widget is broken", with no
+    // on-screen affordance to discover the key that brings it back.
+    //
+    // This must hang off the load message, NOT off markPageDirty: that
+    // callback is driven by Wheeler closing a wheel, so resetting there
+    // cleared the latch mid-session while the widget stayed visually
+    // hidden — desyncing the two so the next keypress did nothing.
+    UI::IntuitionMenu::ResetUserHidden();
+
     // ── 0. Parse the main INI ONCE, distribute to every settings loader ──
     // Each settings class used to re-open and re-parse Huginn.ini independently
     // (9+ full parses per game load). Parse it a single time here and hand the
@@ -498,10 +509,6 @@ static void OnDataLoaded()
         },
         .markPageDirty = [] {
             Slot::SlotAllocator::GetSingleton().MarkPageDirty();
-            // A hotkey hide belongs to the session that set it. Carrying it into
-            // a freshly loaded game would present as "the widget is broken", with
-            // no on-screen affordance to discover the key that brings it back.
-            UI::IntuitionMenu::ResetUserHidden();
         },
     });
 
