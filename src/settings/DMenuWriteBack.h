@@ -23,6 +23,23 @@ namespace Huginn::Settings
     /// iToggleWidgetKey by hand, then nudge an unrelated slider in-game, and the
     /// hand edit would be gone. So the propagation diffs the dMenu file against
     /// a snapshot of its previous contents and writes only what moved.
+    /// KNOWN LIMITATION (dMenu NG 1.3.0, observed 2026-08-23): dMenu does not
+    /// persist a player's in-game change to its INI, so this class has nothing
+    /// to diff and correctly does nothing. Verified two ways — a change made in
+    /// the menu does not survive a game restart, and across two
+    /// dmenu_updateSettings events every one of the 22 keys in dMenu's INI was
+    /// byte-identical to the baseline.
+    ///
+    /// Upstream D7ry/dMenu explains why: flush_ini() — the only function that
+    /// writes the INI — has exactly one caller, show_saveButton(), which is dead
+    /// code marked "not used anymore, we auto save". No auto-save replaced it.
+    /// dMenu's INI is effectively a one-time snapshot of the JSON defaults.
+    ///
+    /// Nothing here can fix that; the event carries only a mod name, never
+    /// values. This code is left in place because it is correct and dormant: it
+    /// starts working the moment dMenu persists a change, with no edit needed.
+    /// Until then Huginn.ini is the only durable store, which is why it is
+    /// loaded last and wins.
     class DMenuWriteBack
     {
     public:
