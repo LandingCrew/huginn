@@ -113,7 +113,30 @@ namespace Huginn::Settings
         }
         m_snapshot = Flatten(ini);
         m_haveSnapshot = true;
-        logger::debug("[DMenuWriteBack] Snapshot taken: {} key(s)"sv, m_snapshot.size());
+        logger::info("[DMenuWriteBack] Baseline: {} dMenu key(s) from {}"sv,
+            m_snapshot.size(), dmenuPath.string());
+
+        // Report where the two files disagree. Huginn.ini wins every one of
+        // these, so this is the line that explains a setting "not taking" —
+        // the confusion that two same-named INIs cause on their own.
+        CSimpleIniA mainIni;
+        if (!LoadIni(mainIni, GetMainIniPath())) return;
+        size_t conflicts = 0;
+        for (const auto& entry : m_snapshot) {
+            const auto slash = entry.first.find('/');
+            if (slash == std::string::npos) continue;
+            const std::string section = entry.first.substr(0, slash);
+            const std::string key = entry.first.substr(slash + 1);
+            const char* mainValue = mainIni.GetValue(section.c_str(), key.c_str(), nullptr);
+            if (!mainValue) continue;  // absent from main -> dMenu value falls through, no conflict
+            if (Normalize(key, entry.second) == mainValue) continue;
+            logger::info("[DMenuWriteBack] Differs: [{}] {} — dMenu={}, Huginn.ini={} (Huginn.ini wins)"sv,
+                section, key, entry.second, mainValue);
+            ++conflicts;
+        }
+        if (conflicts == 0) {
+            logger::info("[DMenuWriteBack] dMenu INI and Huginn.ini agree on all shared keys"sv);
+        }
     }
 
     size_t DMenuWriteBack::PropagateChanges()
@@ -121,7 +144,8 @@ namespace Huginn::Settings
         const auto dmenuPath = GetDMenuIniPath();
         const auto mainPath = GetMainIniPath();
         if (dmenuPath == mainPath) {
-            return 0;  // no dMenu file; nothing to propagate from
+            logger::info("[DMenuWriteBack] No dMenu INI on disk — nothing to propagate"sv);
+            return 0;
         }
 
         CSimpleIniA dmenuIni;
@@ -152,15 +176,24 @@ namespace Huginn::Settings
             }
         }
         if (changed.empty()) {
+            // The path that used to return silently, which made "write-back is
+            // broken" and "dMenu rewrote its file with identical values"
+            // indistinguishable in the log. Say which it is.
+            logger::info("[DMenuWriteBack] dMenu INI unchanged ({} key(s) compared) — nothing to write"sv,
+                current.size());
             m_snapshot = current;
             return 0;
         }
 
+        logger::info("[DMenuWriteBack] {} dMenu key(s) changed — propagating into {}"sv,
+            changed.size(), mainPath.string());
+
         CSimpleIniA mainIni;
         if (!LoadIni(mainIni, mainPath)) {
-            logger::warn("[DMenuWriteBack] Main INI {} not readable — {} dMenu change(s) will not persist"sv,
+            // Keep the OLD snapshot: the change has not landed anywhere, so the
+            // next event must still see it as new rather than as already seen.
+            logger::error("[DMenuWriteBack] Main INI {} not readable — {} dMenu change(s) NOT persisted"sv,
                 mainPath.string(), changed.size());
-            m_snapshot = current;
             return 0;
         }
 
@@ -193,13 +226,18 @@ namespace Huginn::Settings
             // Verified by round-tripping configs/Huginn.ini: with the default
             // the only content difference was that added BOM.
             if (mainIni.SaveFile(mainPath.string().c_str(), /*a_bAddSignature=*/false) != SI_OK) {
-                logger::error("[DMenuWriteBack] Failed to save {} — {} change(s) lost"sv,
+                // Snapshot deliberately NOT advanced — the values never reached
+                // disk, so the next event should retry rather than treat them as
+                // already propagated.
+                logger::error("[DMenuWriteBack] Failed to save {} — {} change(s) not persisted, will retry"sv,
                     mainPath.string(), written);
-                written = 0;
-            } else {
-                logger::info("[DMenuWriteBack] Wrote {} dMenu change(s) into {}"sv,
-                    written, mainPath.string());
+                return 0;
             }
+            logger::info("[DMenuWriteBack] Wrote {} dMenu change(s) into {}"sv,
+                written, mainPath.string());
+        } else {
+            logger::info("[DMenuWriteBack] {} changed dMenu key(s) already matched {} — nothing written"sv,
+                changed.size(), mainPath.string());
         }
 
         m_snapshot = current;
