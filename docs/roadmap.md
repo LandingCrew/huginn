@@ -111,28 +111,64 @@ All Tier 2 critique items have landed; see [roadmap-archive.md](roadmap-archive.
 ### Tier 3 — hot-path perf (trace-prioritized; see docs/profiling/tracy-traces.md)
 - [ ] #14: gate the display push paths — IntuitionBackend change-detect, WheelerBackend
       lazy per-page allocation, GetLockSnapshot, quantize lock-timer subtext.
-      **Now the top cost by both measures** (2026-08-23, Self-only): Display::Wheeler
-      100.21 ms total / **3.23 ms MTPC** over 31 calls — that is its OWN work on the
-      main thread, not children. See docs/refactor/wheeler-push-spikes.md, which
-      already describes this path. Mostly S.
-      **Three of four parts are written and REBASED** onto main on branch
-      `tier3-14-display-push` (0.19.0 @e81ff19, 2 commits): rebased 2026-08-23,
-      builds clean, not yet PR'd and NOT yet re-traced since the rebase. The
-      branch's own roadmap prune was dropped in the rebase as superseded, so it
-      now contributes `src/display/` only. Trace before opening the PR.
-      Part 4 (lazy per-page allocation) was deferred pending a fresh capture.
+      Parts 1-3 are on branch `tier3-14-display-push` (0.19.0 @e81ff19, 2 commits,
+      rebased 2026-08-23, builds clean, **now traced** — see below). The branch's
+      own roadmap prune was dropped in the rebase as superseded, so it contributes
+      `src/display/` only. Not yet PR'd. See docs/refactor/wheeler-push-spikes.md.
+      **TRACED 2026-08-24 on @e81ff19, Self-only. Three captures:**
+      | capture | Display::Wheeler | Display::Intuition |
+      |---|---|---|
+      | main baseline, 2026-08-23 | 3.23 ms MTPC / 100.21 ms / 31 | 84 µs (2026-08-22) |
+      | branch, lock label OFF, 5:25 | 3.87 ms / 255.14 ms / 66 | 80.62 µs / 66 |
+      | branch, lock label ON, 8:19 | 3.73 ms / 179.21 ms / 48 | 63.58 µs / 48 |
+      | branch, lock label ON, 15:24 | 3.60 ms / 180.04 ms / 50 | 63.12 µs / 50 |
+      Part 1 (Intuition change-detect) CONFIRMED: 92.76 µs in the broken cut →
+      63.12 µs, comfortably under the 84 µs baseline. Note the zone wraps the
+      whole of Push() including the m_scratch build (IntuitionBackend.cpp:68-84),
+      which runs whether the cache hits or not — so this zone structurally cannot
+      show the real win, which is UI-thread GFx work it never times. 3.16 ms of
+      180 ms either way; not where the time is.
+      Parts 2-3 (lock snapshot + quantization): enabling the label costs nothing
+      measurable (3.87 off vs 3.60 on). **Weak evidence** — locks were live only
+      ~44 s of the 15-minute capture (17:01:06-17:01:49, 43 events), so most
+      pushes never touched the label. Also `fLockDurationMs = 1000` makes
+      ceil(remaining/1000) yield only ever `1`, so the countdown never ticks;
+      raise it to ~4000 to exercise the 3 → 2 → 1 transitions the quantization
+      is designed around.
+      **Part 4's deferral rationale is now CONTRADICTED.** It was held back on
+      the theory that the quantization "may remove considerably more". It does
+      not: it removes the COST OF ENABLING the label, and leaves the baseline
+      untouched. With the label off — the shipped default — the whole Wheeler
+      half of #14 is inert. Part 4 is the only remaining lever on this zone.
+      **But re-rank it honestly before scheduling.** Display::Wheeler's aggregate
+      share is tiny: 180.04 ms is **0.02%** of a 15:24 capture, and PollTargets
+      (206.32 ms) now EXCEEDS it on total time. Its case rests entirely on the
+      per-call spike — 3.60 ms landing in one frame against a 16.7 ms budget at
+      60 fps — not on CPU it costs overall. Sample is thin either way: 50 pushes
+      in 15:24, ~1 per 18 s.
       Two regressions in the first cut were caught ONLY by Tracy, not by the
       log: change-detect never fired because `confidence` (= `assignment.utility`)
       varies every run, and `GetLockSnapshot` was hoisted unconditionally while
       the old per-slot calls sat behind `stConfig.showLockTimerLabel` — turning
       zero lock acquisitions into one in the default config. Re-measure, don't
       assume
+      Zone-count equality is NOT a diagnostic here, contrary to how the 188/188
+      observation above reads: Huginn_ZONE_NAMED sits at the top of Push(), ahead
+      of every early-out, so its count always equals the call count. MTPC is the
+      only signal.
+      The lock-timer label has NO log coverage: `[Subtext]` (PipelineCoordinator.cpp:645)
+      logs the coordinator's pre-derived labels and is deduped against the last
+      summary, while WheelerBackend clears and rewrites them on its own copy
+      (WheelerBackend.cpp:127). Grepping the log for lock labels finds nothing
+      even when the path ran — do not read that as the path being dead
 - [ ] #13 (= O1's sibling "O2"): count-only two-phase GetInventorySafe variant —
       Inventory::DeltaScan deep-copies InventoryEntryData per item at 2 Hz; plus
       PipelineContext container reuse (documented-but-broken).
-      **Overtaken by #14 — measure before scheduling.** The 2026-08-23 capture
-      puts DeltaScan at 257 µs MTPC / 24.46 ms total, well down from the figures
-      below and now behind Display::Wheeler on both axes. The numbers that
+      **Overtaken by #14 on MTPC, but climbing on total — measure before
+      scheduling.** 2026-08-23: 257 µs MTPC / 24.46 ms. 2026-08-24 (15:24
+      capture): **218.35 µs MTPC / 96.95 ms over 444 calls** — per-call cost keeps
+      falling, but it runs ~9x as often as Display::Wheeler, so its total is now
+      the second-largest of the pipeline zones and half of Wheeler's. The numbers that
       motivated this item, for reference: 685 µs x 1,118 = 766 ms on the 2026-07-25
       real save, up from 161 µs/call on the small test save — it scales with
       inventory size, so hoarder saves are the worst case. Constrained, not
@@ -150,7 +186,13 @@ All Tier 2 critique items have landed; see [roadmap-archive.md](roadmap-archive.
       ~0.07% CPU this does not need fixing; it is where to look if the idle cost
       ever matters (S/M)
 - [ ] #12: PollTargets — build outside the write lock, one classification pass (scanned
-      up to 3×/tick), MAX_TRACKED_TARGETS 50→~12, squared-distance compares (M)
+      up to 3×/tick), MAX_TRACKED_TARGETS 50→~12, squared-distance compares (M).
+      **Now the top zone by TOTAL time** (2026-08-24, 15:24 capture, Self-only):
+      206.32 ms over 2,217 calls at 93.06 µs MTPC — ahead of Display::Wheeler's
+      180.04 ms. Unlike Wheeler it is a steady per-tick cost rather than a spike,
+      so it never shows up as a hitch; at 0.02% of runtime it is a CPU-budget
+      item, not a stutter item. Rank it against #14 on which of those two
+      problems is worth solving, not on the totals alone
 - [ ] #11: cache SpellData.effectiveCost — CandidateGenerator calls LookupByID +
       CalculateMagickaCost per known spell per tick, inside the registry lock (M)
 
@@ -176,7 +218,8 @@ All Tier 2 critique items have landed; see [roadmap-archive.md](roadmap-archive.
       * `tier3-14-display-push` (@e81ff19, 2 commits) — #14 parts 1-3 + the two
         Tracy-caught regression fixes; see the #14 entry above. Contributes
         `src/display/` only; three conflicts (CMakeLists.txt twice, both
-        roadmaps) were all resolved to main's side. Needs a trace, then a PR
+        roadmaps) were all resolved to main's side. **Traced 2026-08-24** — part
+        1 confirmed, parts 2-3 no measurable cost. Ready to PR
       * `build-verify-preset` (@da9801d, 1 commit) — no-deploy configure preset;
         replayed with no conflicts, contents still unreviewed
       `docs-optimizations-fold` and `wheeler-index-reresolve` are fully merged
