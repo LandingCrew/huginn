@@ -29,6 +29,17 @@ namespace Huginn::Telemetry
         }
     }
 
+    void SoakMetrics::RecordEquipSkip(char reasonCode)
+    {
+        switch (reasonCode) {
+        case 'w': m_skipWheel.fetch_add(1, std::memory_order_relaxed); break;
+        case 's': m_skipStale.fetch_add(1, std::memory_order_relaxed); break;
+        case 'a': m_skipSpam.fetch_add(1, std::memory_order_relaxed); break;
+        case 'x': m_skipOff.fetch_add(1, std::memory_order_relaxed); break;
+        default: break;
+        }
+    }
+
     void SoakMetrics::RecordPipelineRun(std::size_t candidateCount, std::size_t displayedCount,
         bool overrideActive)
     {
@@ -84,6 +95,10 @@ namespace Huginn::Telemetry
         const uint32_t near_ = m_near.exchange(0, std::memory_order_relaxed);
         const uint32_t miss  = m_miss.exchange(0, std::memory_order_relaxed);
         const uint32_t novel = m_novel.exchange(0, std::memory_order_relaxed);
+        const uint32_t skipWheel = m_skipWheel.exchange(0, std::memory_order_relaxed);
+        const uint32_t skipStale = m_skipStale.exchange(0, std::memory_order_relaxed);
+        const uint32_t skipSpam  = m_skipSpam.exchange(0, std::memory_order_relaxed);
+        const uint32_t skipOff   = m_skipOff.exchange(0, std::memory_order_relaxed);
         const uint32_t ticks = m_ticks.exchange(0, std::memory_order_relaxed);
         const uint32_t recomputes   = m_recomputes.exchange(0, std::memory_order_relaxed);
         const uint32_t overrideRuns = m_overrideRuns.exchange(0, std::memory_order_relaxed);
@@ -96,6 +111,15 @@ namespace Huginn::Telemetry
         const float accept = 100.0f * static_cast<float>(hit) / std::max(totalEquips, 1u);
         const std::string acceptStr =
             totalEquips ? std::format("{:.0f}%", accept) : std::string("n/a");
+
+        // Breakdown only when something was actually filtered — a bare skipped=0
+        // keeps the common line short while still holding the column, so a soak
+        // log stays parseable across windows.
+        const uint32_t skipTotal = skipWheel + skipStale + skipSpam + skipOff;
+        const std::string skipStr = skipTotal
+            ? std::format("{} (wheel={} stale={} spam={} off={})",
+                  skipTotal, skipWheel, skipStale, skipSpam, skipOff)
+            : std::string("0");
         const float avgMs  = ticks ? (static_cast<float>(sumMicros) / 1000.0f / ticks) : 0.0f;
         const float peakMs = static_cast<float>(peakMicros) / 1000.0f;
 
@@ -115,10 +139,10 @@ namespace Huginn::Telemetry
         const int64_t upS = upSec % 60;
 
         logger::info(
-            "[Soak] up={}h{:02}m{:02}s | equips hit={} near={} miss={} novel={} accept={} | "
+            "[Soak] up={}h{:02}m{:02}s | equips hit={} near={} miss={} novel={} accept={} skipped={} | "
             "recompute={}/{} ticks override={} pageBail={} | learn items={} trains={} | tick avg={:.3f} peak={:.3f} ms"sv,
             upH, upM, upS,
-            hit, near_, miss, novel, acceptStr,
+            hit, near_, miss, novel, acceptStr, skipStr,
             recomputes, ticks, overrideRuns, pageBails,
             fqlItems, fqlTrains,
             avgMs, peakMs);

@@ -140,12 +140,25 @@ All Tier 2 critique items have landed; see [roadmap-archive.md](roadmap-archive.
       not: it removes the COST OF ENABLING the label, and leaves the baseline
       untouched. With the label off — the shipped default — the whole Wheeler
       half of #14 is inert. Part 4 is the only remaining lever on this zone.
-      **But re-rank it honestly before scheduling.** Display::Wheeler's aggregate
-      share is tiny: 180.04 ms is **0.02%** of a 15:24 capture, and PollTargets
-      (206.32 ms) now EXCEEDS it on total time. Its case rests entirely on the
-      per-call spike — 3.60 ms landing in one frame against a 16.7 ms budget at
-      60 fps — not on CPU it costs overall. Sample is thin either way: 50 pushes
-      in 15:24, ~1 per 18 s.
+      **The per-call figure was a SMALL-SAMPLE ARTIFACT — #14's whole ranking
+      premise is void.** A 44:40 playthrough on 2026-08-26 (874 pushes, vs
+      31-66 in every earlier capture) puts Display::Wheeler at **986.54 µs
+      MTPC** — under a third of the 3.23-3.87 ms the short runs reported. The
+      push fires every few seconds, so a handful of cold calls (wheel creation,
+      post-load) dominated those means. There is no 3.6 ms frame spike to fix.
+      Ranking on the 44-min capture, by total, Self-only:
+      | zone | total | % | MTPC | calls |
+      |---|---|---|---|---|
+      | PollPlayerMagicEffects (O3) | 2.61 s | 0.10% | 136.3 µs | 19,179 |
+      | PollTargets (#12) | 2.17 s | 0.08% | 113.34 µs | 19,179 |
+      | Inventory::DeltaScan (#13) | 1.03 s | 0.04% | 267.78 µs | 3,848 |
+      | Display::Wheeler (#14) | 862 ms | 0.03% | 986 µs | 874 |
+      Display::Wheeler is FOURTH, and O3 is confirmed as the real top cost —
+      which is what the 2026-07-25 capture said before the short runs pulled
+      attention here. Nothing in Tier 3 exceeds 0.10% of runtime; on CPU
+      grounds this tier has no work left in it. Part 4 (lazy per-page
+      allocation) should be dropped unless a felt stutter turns up that a
+      986 µs mean does not explain.
       Two regressions in the first cut were caught ONLY by Tracy, not by the
       log: change-detect never fired because `confidence` (= `assignment.utility`)
       varies every run, and `GetLockSnapshot` was hoisted unconditionally while
@@ -166,9 +179,10 @@ All Tier 2 critique items have landed; see [roadmap-archive.md](roadmap-archive.
       PipelineContext container reuse (documented-but-broken).
       **Overtaken by #14 on MTPC, but climbing on total — measure before
       scheduling.** 2026-08-23: 257 µs MTPC / 24.46 ms. 2026-08-24 (15:24
-      capture): **218.35 µs MTPC / 96.95 ms over 444 calls** — per-call cost keeps
-      falling, but it runs ~9x as often as Display::Wheeler, so its total is now
-      the second-largest of the pipeline zones and half of Wheeler's. The numbers that
+      capture): 218.35 µs / 96.95 ms / 444 calls. 2026-08-26 (44:40): **267.78 µs
+      MTPC / 1.03 s over 3,848 calls** — third by total, and now AHEAD of
+      Display::Wheeler (862 ms) rather than behind it, because it runs ~4x as
+      often. Still only 0.04% of runtime. The numbers that
       motivated this item, for reference: 685 µs x 1,118 = 766 ms on the 2026-07-25
       real save, up from 161 µs/call on the small test save — it scales with
       inventory size, so hoarder saves are the worst case. Constrained, not
@@ -182,17 +196,20 @@ All Tier 2 critique items have landed; see [roadmap-archive.md](roadmap-archive.
       (every other poll is single- to low-double-digit µs). Runs on every tick by
       necessity: it is not gated by the skip-check, it FEEDS it. Options are an
       early-out when the active-effect list is unchanged, or caching by effect-list
-      revision. Adjacent to #12 but not covered by it — #12 is PollTargets. At
-      ~0.07% CPU this does not need fixing; it is where to look if the idle cost
-      ever matters (S/M)
+      revision. Adjacent to #12 but not covered by it — #12 is PollTargets.
+      **RECONFIRMED as the #1 zone by total time** on the 2026-08-26 44:40
+      capture: 136.3 µs x 19,179 = **2.61 s (0.10%)**, ahead of PollTargets
+      (2.17 s) and 3x Display::Wheeler (862 ms). The 2026-08-23/24 captures that
+      ranked #14 above it were 5-15 min and too short for the per-tick pollers
+      to accumulate. At 0.10% CPU this still does not need fixing; it is simply
+      the honest top of Tier 3 and where to look first if idle cost ever
+      matters (S/M)
 - [ ] #12: PollTargets — build outside the write lock, one classification pass (scanned
       up to 3×/tick), MAX_TRACKED_TARGETS 50→~12, squared-distance compares (M).
-      **Now the top zone by TOTAL time** (2026-08-24, 15:24 capture, Self-only):
-      206.32 ms over 2,217 calls at 93.06 µs MTPC — ahead of Display::Wheeler's
-      180.04 ms. Unlike Wheeler it is a steady per-tick cost rather than a spike,
-      so it never shows up as a hitch; at 0.02% of runtime it is a CPU-budget
-      item, not a stutter item. Rank it against #14 on which of those two
-      problems is worth solving, not on the totals alone
+      **Second by total time**, behind O3 (2026-08-26, 44:40 capture, Self-only):
+      2.17 s over 19,179 calls at 113.34 µs MTPC, vs Display::Wheeler's 862 ms.
+      A steady per-tick cost, not a spike, so it never shows as a hitch — at
+      0.08% of runtime it is a CPU-budget item and not an urgent one
 - [ ] #11: cache SpellData.effectiveCost — CandidateGenerator calls LookupByID +
       CalculateMagickaCost per known spell per tick, inside the registry lock (M)
 
@@ -224,6 +241,20 @@ All Tier 2 critique items have landed; see [roadmap-archive.md](roadmap-archive.
         replayed with no conflicts, contents still unreviewed
       `docs-optimizations-fold` and `wheeler-index-reresolve` are fully merged
       (0 commits ahead) and can be deleted
+- [ ] Soak protocol needs deliberate MANUAL equips — accept% is fed only by
+      equips made outside Huginn, so a burst played through the wheel/hotkeys
+      produces no recommendation-quality data at all. Confirmed 2026-08-26: a
+      44-min session reported accept=n/a in every window while 21
+      external-equip events fired and were all filtered as wheel-open (each
+      coinciding with a src=Wheeler reward in the same second). The filter is
+      CORRECT — grading a wheel pick asks whether Huginn predicted the item the
+      player chose off Huginn's own list. v0.19.1 adds `skipped=N (wheel=…)` to
+      the heartbeat so n/a is self-explaining (branch `soak-skip-telemetry`
+      @067397b), and docs/playtest/LongPlaySoak.md now lists manual equips as a
+      coverage requirement and a void-run signal. Remaining: decide whether
+      accept% is the right headline metric for a wheel-driven player at all,
+      and whether to fold non-wheel consumption into it (5 of 50 events on that
+      session, not 50 — wheel/hotkey rewards must stay out)
 - [ ] Positive log line when the text-entry input gate engages — a
       transition-only `[InputHandler] Input suppressed — text entry active`.
       Today the gate is only verifiable by the ABSENCE of `KEY PRESS` lines,
