@@ -111,10 +111,9 @@ All Tier 2 critique items have landed; see [roadmap-archive.md](roadmap-archive.
 ### Tier 3 — hot-path perf (trace-prioritized; see docs/profiling/tracy-traces.md)
 - [ ] #14: gate the display push paths — IntuitionBackend change-detect, WheelerBackend
       lazy per-page allocation, GetLockSnapshot, quantize lock-timer subtext.
-      Parts 1-3 are on branch `tier3-14-display-push` (0.19.0 @e81ff19, 2 commits,
-      rebased 2026-08-23, builds clean, **now traced** — see below). The branch's
-      own roadmap prune was dropped in the rebase as superseded, so it contributes
-      `src/display/` only. Not yet PR'd. See docs/refactor/wheeler-push-spikes.md.
+      **Parts 1-3 MERGED** in PR #96 at 0.19.2 (2026-08-26). Part 4 is DROPPED
+      — see the measurement note below; reopen only if a felt stutter turns up
+      that a sub-1 ms mean cannot explain. See docs/refactor/wheeler-push-spikes.md.
       **TRACED 2026-08-24 on @e81ff19, Self-only. Three captures:**
       | capture | Display::Wheeler | Display::Intuition |
       |---|---|---|
@@ -229,18 +228,13 @@ All Tier 2 critique items have landed; see [roadmap-archive.md](roadmap-archive.
       firing. Silence it so a real rejection stays visible (Tests.cpp:4137).
       Still firing every session as of 0.19.0; it has now cost real time twice
       while triaging unrelated logs (XS)
-- [ ] Unmerged branches, both REBASED onto main 2026-08-23 and building clean
-      at 0.19.0. Local only — the rebases rewrote history, so the remotes still
-      hold the pre-rebase commits and updating them needs a force-push:
-      * `tier3-14-display-push` (@e81ff19, 2 commits) — #14 parts 1-3 + the two
-        Tracy-caught regression fixes; see the #14 entry above. Contributes
-        `src/display/` only; three conflicts (CMakeLists.txt twice, both
-        roadmaps) were all resolved to main's side. **Traced 2026-08-24** — part
-        1 confirmed, parts 2-3 no measurable cost. Ready to PR
-      * `build-verify-preset` (@da9801d, 1 commit) — no-deploy configure preset;
-        replayed with no conflicts, contents still unreviewed
-      `docs-optimizations-fold` and `wheeler-index-reresolve` are fully merged
-      (0 commits ahead) and can be deleted
+- [ ] `build-verify-preset` (1 commit) — no-deploy configure preset, rebased
+      onto main and replaying cleanly, but **contents never reviewed**. The last
+      unmerged branch holding work. Read the diff before merging; it needs a
+      version bump per the per-PR convention, which it does not currently carry.
+      Stale remote branches that can be deleted: `tier3-14-display-push` and
+      `soak-skip-telemetry` (merged 2026-08-26 as PR #96 / #95),
+      `docs-optimizations-fold` and `wheeler-index-reresolve` (merged earlier)
 - [ ] Soak protocol needs deliberate MANUAL equips — accept% is fed only by
       equips made outside Huginn, so a burst played through the wheel/hotkeys
       produces no recommendation-quality data at all. Confirmed 2026-08-26: a
