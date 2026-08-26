@@ -37,6 +37,23 @@ namespace Huginn::Telemetry
         // (a hit); A = player equipped something never surfaced (a miss).
         void RecordEquipCase(char caseClass);
 
+        // Count an external equip that a ShouldSkip filter caught BEFORE
+        // attribution, so it never reached RecordEquipCase. Codes are
+        // ExternalEquipLearner::SKIP_* (lowercase, so they cannot be confused
+        // with the 'A'..'E' case labels above).
+        //
+        // Without this the heartbeat cannot distinguish "the player equipped
+        // nothing this window" from "the player equipped a dozen things and
+        // every one was filtered" — both print accept=n/a. The second is the
+        // NORMAL case for a player who equips through the Huginn wheel: the
+        // wheel-open filter fires on every activation by design, because
+        // grading Huginn on items the player picked off Huginn's own
+        // recommendation list would be circular. Measured 2026-08-26: a 44-min
+        // session logged 21 external-equip events, all skipped (wheel open),
+        // and reported accept=n/a for its whole duration with no way to tell
+        // from the heartbeat alone that the path had run at all.
+        void RecordEquipSkip(char reasonCode);
+
         // One pipeline recompute produced `candidateCount` scored candidates and
         // `displayedCount` widget items; `overrideActive` = a safety override was
         // the top recommendation this run.
@@ -69,6 +86,14 @@ namespace Huginn::Telemetry
         std::atomic<uint32_t> m_near{0};   // C/D: near-miss or other page
         std::atomic<uint32_t> m_miss{0};   // B: candidate but low-ranked
         std::atomic<uint32_t> m_novel{0};  // A: not a candidate at all
+
+        // External equips filtered before attribution (window). These are NOT
+        // failures — wheel-open is the expected outcome for a wheel activation.
+        // They exist to make accept=n/a self-explaining.
+        std::atomic<uint32_t> m_skipWheel{0};  // w: Huginn/Wheeler wheel was open
+        std::atomic<uint32_t> m_skipStale{0};  // s: pipeline snapshot too old to attribute
+        std::atomic<uint32_t> m_skipSpam{0};   // a: same FormID re-equipped too soon
+        std::atomic<uint32_t> m_skipOff{0};    // x: external-equip learning disabled
 
         // Pipeline / perf (window).
         std::atomic<uint32_t> m_ticks{0};

@@ -121,8 +121,19 @@ namespace Huginn::Learning
         // telemetry rather than a misleading one.
         bool EnvironmentReady() const;
 
-        // Return true if this equip should be skipped (filtering heuristics)
-        bool ShouldSkip(RE::FormID formID) const;
+        // Skip reason codes for ShouldSkip / SoakMetrics::RecordEquipSkip.
+        // Deliberately lowercase: the 'A'..'E' space belongs to attribution
+        // case labels, and the two are recorded through different counters.
+        static constexpr char SKIP_NONE     = '\0';  // do not skip
+        static constexpr char SKIP_WHEEL    = 'w';    // wheel open — the normal wheel-activation path
+        static constexpr char SKIP_STALE    = 's';    // pipeline snapshot too old to attribute
+        static constexpr char SKIP_ANTISPAM = 'a';    // same FormID re-equipped too soon
+        static constexpr char SKIP_DISABLED = 'x';    // learnFromExternalEquips off
+
+        /// Which filter (if any) rejects this equip. SKIP_NONE = proceed to
+        /// attribution. Returns the reason rather than a bool so the caller can
+        /// record WHY nothing was attributed — see SoakMetrics::RecordEquipSkip.
+        char ShouldSkip(RE::FormID formID) const;
 
         // Determine reward multiplier and case label from pipeline state
         struct Attribution

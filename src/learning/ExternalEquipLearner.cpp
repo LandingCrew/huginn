@@ -33,7 +33,12 @@ namespace Huginn::Learning
             return;
         }
 
-        if (ShouldSkip(formID)) {
+        if (const char skip = ShouldSkip(formID); skip != SKIP_NONE) {
+            // Record WHY. A skipped equip never reaches RecordEquipCase, so
+            // without this the heartbeat reports accept=n/a identically for
+            // "nobody equipped anything" and "every equip was filtered" — and
+            // for a wheel-driven player the second is the normal case.
+            Telemetry::SoakMetrics::GetSingleton().RecordEquipSkip(skip);
             return;
         }
 
@@ -73,19 +78,19 @@ namespace Huginn::Learning
             formID, formType);
     }
 
-    bool ExternalEquipLearner::ShouldSkip(RE::FormID formID) const
+    char ExternalEquipLearner::ShouldSkip(RE::FormID formID) const
     {
         // 1. Master toggle
         if (!m_config.learnFromExternalEquips) {
             logger::trace("[ExternalEquipLearner] Skipped (disabled) {:08X}", formID);
-            return true;
+            return SKIP_DISABLED;
         }
 
         // 2. Cache staleness — pipeline data too old to attribute
         auto& cache = PipelineStateCache::GetSingleton();
         if (cache.IsStale(m_config.externalEquipTimeWindow)) {
             logger::debug("[ExternalEquipLearner] Skipped (stale cache) {:08X}", formID);
-            return true;
+            return SKIP_STALE;
         }
 
         // 3. Wheeler open — player might be mid-selection via Huginn wheel.
@@ -94,7 +99,7 @@ namespace Huginn::Learning
         // EnvironmentReady() gate in OnExternalEquip.
         if (m_env.isWheelOpen()) {
             logger::debug("[ExternalEquipLearner] Skipped (wheel open) {:08X}", formID);
-            return true;
+            return SKIP_WHEEL;
         }
 
         // 4. Anti-spam — same FormID learned too recently
@@ -107,7 +112,7 @@ namespace Huginn::Learning
                 if (elapsedSec < m_config.externalEquipMinInterval) {
                     logger::debug("[ExternalEquipLearner] Skipped (anti-spam, {:.1f}s < {:.1f}s) {:08X}",
                         elapsedSec, m_config.externalEquipMinInterval, formID);
-                    return true;
+                    return SKIP_ANTISPAM;
                 }
             }
         }
@@ -115,7 +120,7 @@ namespace Huginn::Learning
         // Note: Re-equip filter omitted — the anti-spam timer (3s default) already
         // prevents double-learning from rapid re-equips of the same item.
 
-        return false;
+        return SKIP_NONE;
     }
 
     ExternalEquipLearner::Attribution ExternalEquipLearner::ComputeAttribution(RE::FormID formID) const
