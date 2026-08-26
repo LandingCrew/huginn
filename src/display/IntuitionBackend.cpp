@@ -58,30 +58,62 @@ namespace Huginn::Display
         // SlotSettings. We just render the assignments we're given for that page.
         const auto& displayAssignments = ctx.assignments;
 
+        const auto displayMode = UI::IntuitionSettings::GetSingleton().GetDisplayMode();
+
+        // #14: build what we WOULD send, and bail if it matches the last push.
+        // Everything below this point allocates a UI task and copies strings into
+        // it, so the comparison has to cover every field that reaches the widget —
+        // including detail, which folds in displayMode, so a settings change still
+        // repaints. Built into a reused member so the vector keeps its capacity.
+        m_scratch.valid = true;
+        m_scratch.slotCount = ctx.slotCount;
+        m_scratch.pageIndex = ctx.pageIndex;
+        m_scratch.pageCount = ctx.pageCount;
+        m_scratch.pageName.assign(ctx.pageName);
+        m_scratch.slots.clear();
+        m_scratch.slots.reserve(displayAssignments.size());
+        for (const auto& assignment : displayAssignments) {
+            auto content = Slot::ToSlotContent(assignment);
+            m_scratch.slots.push_back(SlotView{
+                .name = content.name,
+                .type = static_cast<int>(UI::IntuitionMenu::MapSlotContentType(content.type)),
+                .detail = UI::IntuitionMenu::BuildSlotDetail(assignment, displayMode, ctx.playerState),
+                .visualState = static_cast<int>(assignment.visualState),
+                .confidence = static_cast<double>(content.confidence),
+            });
+        }
+
+        if (m_lastPush.valid && m_lastPush == m_scratch) {
+            return;  // identical frame — nothing for the widget to redraw
+        }
+        // Swap rather than assign: m_scratch inherits the old buffers, so neither
+        // side reallocates on the next push.
+        std::swap(m_lastPush, m_scratch);
+
         intuition->SetSlotCount(static_cast<int>(ctx.slotCount));
         intuition->SetPage(
             static_cast<int>(ctx.pageIndex),
             static_cast<int>(ctx.pageCount),
             ctx.pageName);  // SetPage takes string_view + copies into the UI task
 
-        const auto displayMode = UI::IntuitionSettings::GetSingleton().GetDisplayMode();
         logger::trace("[Intuition] displayMode={}"sv,
             displayMode == UI::DisplayMode::Verbose ? "verbose" :
             displayMode == UI::DisplayMode::Normal ? "normal" : "minimal");
 
-        for (const auto& assignment : displayAssignments) {
-            auto content = Slot::ToSlotContent(assignment);
-            auto type = UI::IntuitionMenu::MapSlotContentType(content.type);
-            auto detail = UI::IntuitionMenu::BuildSlotDetail(
-                assignment, displayMode, ctx.playerState);
+        // Send from m_lastPush, not by recomputing: ToSlotContent / BuildSlotDetail
+        // already ran during the change check above, and running them twice would
+        // hand the widget values the comparison never saw.
+        for (size_t i = 0; i < displayAssignments.size() && i < m_lastPush.slots.size(); ++i) {
+            const auto& assignment = displayAssignments[i];
+            const auto& view = m_lastPush.slots[i];
             logger::trace("[Intuition] slot={} formID={:08X} name='{}' detail='{}' hasCand={}"sv,
-                assignment.slotIndex, assignment.formID, content.name, detail, assignment.HasCandidate());
+                assignment.slotIndex, assignment.formID, view.name, view.detail, assignment.HasCandidate());
             intuition->SetSlot(
                 static_cast<int>(assignment.slotIndex),
-                content.name,
-                type,
-                static_cast<double>(content.confidence),
-                detail,
+                view.name,
+                static_cast<UI::IntuitionSlotType>(view.type),
+                view.confidence,
+                view.detail,
                 assignment.visualState);
         }
     }

@@ -2,6 +2,9 @@
 #include "WheelerBackend.h"
 #include "../Profiling.h"
 
+#include <array>
+#include <cmath>   // std::ceil (lock-timer quantization)
+
 #include "slot/SlotAllocator.h"
 #include "slot/SlotLocker.h"
 #include "slot/SlotUtils.h"
@@ -78,6 +81,22 @@ namespace Huginn::Display
         const bool emptyPolicy = Wheeler::WheelerSettings::GetSingleton().GetPostActivationPolicy()
             == Wheeler::PostActivationPolicy::Empty;
 
+        // #14: one lock snapshot for the whole push. The lock-timer branch below
+        // used to call IsSlotLocked() then GetRemainingLockTime() per slot, each
+        // taking m_mutex — up to 2 round-trips x slots x pages every push, which
+        // is exactly what GetLockSnapshot() was added to avoid (SlotLocker.h:147).
+        // Hoisted above the page loop rather than per-page because only the
+        // CURRENT page reads it, so one acquisition covers every use.
+        //
+        // Gated on the setting, which the first cut got wrong: the old per-slot
+        // calls sat behind `stConfig.showLockTimerLabel &&`, so with the label OFF
+        // (the default, and the config this was measured in) the old code took NO
+        // lock at all — an unconditional snapshot traded zero acquisitions for one.
+        const bool wantLockTimers = stConfig.showLockTimerLabel;
+        const auto lockSnapshot = wantLockTimers
+            ? slotLocker.GetLockSnapshot()
+            : std::array<Slot::SlotLocker::SlotLockView, Slot::MAX_SLOTS_PER_PAGE>{};
+
         for (size_t page = 0; page < pageCount; ++page) {
             // Skip placeholder pages (zero-slot or transient creation failure): they
             // hold no wheel, so AllocateSlotsForPage would be wasted work and
@@ -111,13 +130,22 @@ namespace Huginn::Display
                     assignment.subtextLabel = Display::DeriveExplanationLabel(assignment, ctx.contextReason);
                     continue;
                 }
-                if (stConfig.showLockTimerLabel && page == currentPage
-                    && slotLocker.IsSlotLocked(assignment.slotIndex)) {
-                    float remainingMs = slotLocker.GetRemainingLockTime(assignment.slotIndex);
+                if (wantLockTimers && page == currentPage
+                    && assignment.slotIndex < lockSnapshot.size()
+                    && lockSnapshot[assignment.slotIndex].isLocked) {
+                    const float remainingMs = lockSnapshot[assignment.slotIndex].remainingMs;
                     if (remainingMs > 0.0f) {
                         if (stConfig.lockTimerShowSeconds) {
-                            assignment.subtextLabel = std::format("{} {:.1f}s",
-                                stConfig.lockTimerPrefix, remainingMs / 1000.0f);
+                            // #14: WHOLE seconds, not tenths. The subtext feeds
+                            // WheelSync::UpdatePage's content-unchanged early-out,
+                            // and a tenths-place countdown changes on almost every
+                            // push — so with bShowLockTimerLabel=true the early-out
+                            // never fired while ANY slot was locked, and the whole
+                            // page paid the full diff + cross-DLL write instead.
+                            // Ceil so the label counts 3 -> 2 -> 1 and never shows
+                            // a "0s" that is really 400ms of remaining lock.
+                            assignment.subtextLabel = std::format("{} {:.0f}s",
+                                stConfig.lockTimerPrefix, std::ceil(remainingMs / 1000.0f));
                         } else {
                             assignment.subtextLabel = stConfig.lockTimerPrefix;
                         }
