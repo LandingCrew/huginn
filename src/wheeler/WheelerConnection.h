@@ -79,6 +79,15 @@ namespace Huginn::Wheeler
             return api && api->IsWheelOpen();
         }
 
+        /// True if the player has Wheeler's wheel editor open. Asks Wheeler
+        /// directly; there is no cached equivalent, and the edit-mode callback
+        /// only reports the transitions, not the state between them.
+        [[nodiscard]] bool IsInEditMode() const noexcept
+        {
+            auto* api = Api();
+            return api && api->IsInEditMode && api->IsInEditMode();
+        }
+
         /// Install Huginn's callback trampolines. Passing the function pointers
         /// in (rather than hard-coding them) keeps this class free of any
         /// knowledge of what Huginn does when a wheel opens or an item fires.

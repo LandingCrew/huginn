@@ -56,7 +56,19 @@ namespace Huginn::Wheeler
         /// Tear down every wheel. Detaches the records under the lock, then
         /// issues the Wheeler deletes with NO lock held — a delete can fire a
         /// synchronous callback that re-enters this class.
+        ///
+        /// Records where the player left our block first — see
+        /// m_rememberedAnchor. Teardown is the ONLY point that still knows,
+        /// so the read has to happen here rather than in CreateWheels.
         void DestroyWheels();
+
+        /// Drop the remembered wheel position, so the next CreateWheels honours
+        /// sWheelPosition again. Call when the player has re-stated where the
+        /// wheels belong — i.e. a settings reload that changed the wheel layout.
+        /// Without this the INI setting would go inert the first time anyone
+        /// dragged a wheel, which is a worse surprise than the one this whole
+        /// mechanism exists to remove.
+        void ForgetRememberedPosition();
 
         /// True if at least one page holds a real wheel. Scans all pages rather
         /// than only page 0: a failed or zero-slot page 0 is stored as a
@@ -241,6 +253,32 @@ namespace Huginn::Wheeler
         /// live under m_pageDataMutex with everything else they are read beside.
         /// All three are cleared by a successful CreateWheels, so each generation
         /// of wheels gets its own census and its own retry budget.
+        /// Where the player last left our block of wheels, as the index page 0
+        /// would occupy (i.e. normalized for the +pageIndex stagger below), or
+        /// -1 for "never moved, use the configured position".
+        ///
+        /// Huginn deletes and recreates every wheel on save load, and creation
+        /// passes sWheelPosition — so without this, any reordering the player
+        /// did in Wheeler's edit mode was silently undone on the next load and
+        /// our wheels jumped back to the front. Observed 2026-08-28: a reorder
+        /// at 13:04:52 put us at 2/3/4, and the loads at 13:05:54 and 13:06:44
+        /// both recreated at 0/1/2.
+        ///
+        /// SESSION-SCOPED, deliberately. This survives every save load while
+        /// the game is running, which is the case that gets reported; a full
+        /// restart starts from sWheelPosition again. Persisting across restarts
+        /// means a cosave record, which is a bigger change than the complaint
+        /// warrants and is not landable mid-soak.
+        ///
+        /// Stores ONE anchor for the whole block, not a position per page.
+        /// Creation already assumes our wheels are contiguous (basePosition +
+        /// pageIndex), and reproducing an arbitrary interleaving through
+        /// sequential inserts would need each recorded index to be corrected
+        /// for every insert before it. An anchor cannot drift that way, and a
+        /// player who interleaves their own wheels between ours gets the block
+        /// back contiguous rather than wrong. GUARDED_BY(m_pageDataMutex).
+        int32_t m_rememberedAnchor = -1;
+
         bool m_censusLogged = false;                                  // one census per generation
         bool m_reResolveUnsupportedLogged = false;                    // one v3-server warning per generation
         int  m_recoveryAttempts = 0;

@@ -349,7 +349,21 @@ namespace Huginn::Settings
         auto& wheelerClient = Wheeler::WheelerClient::GetSingleton();
         if (wheelerClient.IsConnected()) {
             if (CaptureWheelLayout() != beforeLayout) {
+                // The layout the player just edited INCLUDES sWheelPosition, so
+                // this is them re-stating where the wheels belong. Drop any
+                // position remembered from a drag, or the INI would have no way
+                // to move the wheels back once one had been moved by hand.
+                //
+                // AFTER the destroy, not before. DestroyWheels() re-reads the
+                // live indices and records the anchor again, so forgetting first
+                // is undone in the same breath — the forget has to land in the
+                // window between teardown and creation. Observed 2026-08-28 with
+                // the calls the other way round: `Forgetting remembered wheel
+                // position 1` at 14:42:13.256, `Remembering wheel position 1
+                // (was -1)` in the same millisecond, and the wheels recreated at
+                // 1/2/3 with sWheelPosition = 3.
                 wheelerClient.DestroyRecommendationWheels();
+                wheelerClient.ForgetWheelPositionMemory();
                 wheelerClient.CreateRecommendationWheels();
                 logger::debug("[SettingsReloader]   [Wheeler] wheels rebuilt (layout changed)"sv);
             } else {
