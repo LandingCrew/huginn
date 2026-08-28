@@ -279,6 +279,20 @@ namespace Huginn::Wheeler
         /// back contiguous rather than wrong. GUARDED_BY(m_pageDataMutex).
         int32_t m_rememberedAnchor = -1;
 
+        /// The base index our wheels actually occupied immediately after
+        /// creation, or -1 if none were created. Teardown compares the
+        /// observed anchor against this so that "still exactly where we put
+        /// them" is not mistaken for "the player moved them here". Without
+        /// it, sWheelPosition = -1 (append) records a concrete index on the
+        /// first save load and never appends again.
+        ///
+        /// LIMITATION: another mod inserting a wheel ahead of ours shifts our
+        /// indices with the player having touched nothing, and that still
+        /// reads as a move. Telling the two apart needs a signal Wheeler does
+        /// not expose; the recorded block is at least where the wheels
+        /// visibly are. GUARDED_BY(m_pageDataMutex).
+        int32_t m_createdAnchor = -1;
+
         bool m_censusLogged = false;                                  // one census per generation
         bool m_reResolveUnsupportedLogged = false;                    // one v3-server warning per generation
         int  m_recoveryAttempts = 0;
@@ -294,6 +308,11 @@ namespace Huginn::Wheeler
         mutable std::mutex m_pageDataMutex;
 
         void ClearEntrySubtext(WheelerAPI::IWheelerAPI* api, int32_t wheelIndex, int32_t entryIndex);
+
+        /// Base index of our wheel block: the first page holding a real
+        /// wheel, with its creation stagger normalized out. -1 when no page
+        /// holds one. REQUIRES: m_pageDataMutex held.
+        [[nodiscard]] int32_t CurrentAnchorLocked() const;
 
         /// Detach all page-wheel records for teardown. REQUIRES: m_pageDataMutex
         /// held. The returned vector keeps the subtext strings alive (addresses

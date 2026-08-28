@@ -76,32 +76,46 @@ namespace Huginn::Wheeler
         IssueWheelDeletes(std::move(stale));
     }
 
+    int32_t WheelSync::CurrentAnchorLocked() const
+    {
+        for (size_t p = 0; p < m_pageWheels.size(); ++p) {
+            if (m_pageWheels[p].wheelIndex < 0) {
+                continue;
+            }
+            return std::max(0, m_pageWheels[p].wheelIndex - static_cast<int32_t>(p));
+        }
+        return -1;
+    }
+
     std::vector<WheelSync::PageWheel> WheelSync::DetachWheelsLocked()
     {
         spdlog::info("[WheelerClient] Destroying {} recommendation wheels", m_pageWheels.size());
 
-        // Remember where the player left us, BEFORE the records go away. Read
-        // from the first page that still holds a real wheel and normalize out
-        // its stagger, so a placeholder page 0 doesn't cost us the anchor.
+        // Remember where the player left us, BEFORE the records go away.
+        //
+        // Only a CHANGE counts. m_createdAnchor is where this generation of
+        // wheels actually landed; finding them still there means the player
+        // moved nothing. Recording it anyway is what quietly converted
+        // sWheelPosition = -1 (append) into a fixed index on the first save
+        // load, after which the setting never appended again.
         //
         // A generation where every page was invalidated (#76, or another mod
         // deleting our wheels) yields nothing and must NOT clear an anchor we
         // already trust — "I can't see where they were" is not "they were at
         // the front". Hence the guard rather than an unconditional assignment.
-        for (size_t p = 0; p < m_pageWheels.size(); ++p) {
-            if (m_pageWheels[p].wheelIndex < 0) {
-                continue;
-            }
-            const int32_t anchor =
-                std::max(0, m_pageWheels[p].wheelIndex - static_cast<int32_t>(p));
+        const int32_t anchor = CurrentAnchorLocked();
+        if (anchor >= 0 && anchor != m_createdAnchor) {
             if (anchor != m_rememberedAnchor) {
-                spdlog::info("[WheelerClient] Remembering wheel position {} (was {}) — "
+                spdlog::info("[WheelerClient] Remembering wheel position {} (was {}, created at {}) — "
                              "wheels will be recreated there instead of at the configured position",
-                    anchor, m_rememberedAnchor);
+                    anchor, m_rememberedAnchor, m_createdAnchor);
             }
             m_rememberedAnchor = anchor;
-            break;
+        } else if (anchor >= 0) {
+            spdlog::debug("[WheelerClient] Wheels still at their created position {} — "
+                          "nothing to remember", anchor);
         }
+        m_createdAnchor = -1;  // this generation is over
 
         // Vector move steals the heap buffer, so element (and subtext string)
         // addresses stay stable for the deferred API calls in IssueWheelDeletes.
@@ -599,6 +613,36 @@ namespace Huginn::Wheeler
             spdlog::warn("[WheelerClient] Page {} wheel unavailable — inserting placeholder to preserve page mapping", page);
         };
 
+        // Position offset: When inserting at a fixed position (e.g. 0 = First),
+        // each subsequent wheel must be placed at basePosition + pageIndex to avoid
+        // shifting earlier wheels. For append (-1), all pages use -1 since
+        // appending preserves creation order.
+        //
+        // A remembered anchor outranks the configured position: it is where
+        // the player actually put the wheels, and sWheelPosition is only the
+        // default for wheels they have not moved. It is cleared whenever the
+        // player re-states the layout in the INI (ForgetRememberedPosition),
+        // so the setting never becomes unreachable.
+        //
+        // Clamped against the wheel count as it stands BEFORE the loop, which
+        // counts only other clients' wheels — ours are already deleted. The
+        // player can have removed wheels since we last looked, and an
+        // out-of-range insert position is not a contract Wheeler states.
+        // Clamping to the count appends, which is the closest honest answer
+        // to "further right than anything that still exists".
+        //
+        // Resolved ONCE, outside the loop: every CreateManagedWheel below
+        // raises GetWheelCount(), so re-clamping per page would let the base
+        // drift upward with our own wheels and push later pages past the end.
+        auto& wheelerSettings = WheelerSettings::GetSingleton();
+        int32_t basePosition = wheelerSettings.GetAPIPosition();
+        if (m_rememberedAnchor >= 0) {
+            const int32_t wheelCount = api->GetWheelCount ? api->GetWheelCount() : -1;
+            basePosition = (wheelCount >= 0)
+                ? std::min(m_rememberedAnchor, wheelCount)
+                : m_rememberedAnchor;
+        }
+
         for (size_t p = 0; p < pageCount; ++p) {
             const auto pageConfig = slotSettings.GetPage(p);
             size_t slotCount = pageConfig.slots.size();
@@ -639,31 +683,7 @@ namespace Huginn::Wheeler
             // NOTE: clientName points into heap storage owned by pageWheel.wheelLabel,
             // which must be populated BEFORE this export (see PageWheel declaration).
             //
-            // Position offset: When inserting at a fixed position (e.g. 0 = First),
-            // each subsequent wheel must be placed at basePosition + pageIndex to avoid
-            // shifting earlier wheels. For append (-1), all pages use -1 since
-            // appending preserves creation order.
-            //
-            // A remembered anchor outranks the configured position: it is where
-            // the player actually put the wheels, and sWheelPosition is only the
-            // default for wheels they have not moved. It is cleared whenever the
-            // player re-states the layout in the INI (ForgetRememberedPosition),
-            // so the setting never becomes unreachable.
-            //
-            // Clamped against the CURRENT wheel count, which at this point
-            // counts only other clients' wheels — ours are already deleted. The
-            // player can have removed wheels since we last looked, and an
-            // out-of-range insert position is not a contract Wheeler states.
-            // Clamping to the count appends, which is the closest honest answer
-            // to "further right than anything that still exists".
-            auto& wheelerSettings = WheelerSettings::GetSingleton();
-            int32_t basePosition = wheelerSettings.GetAPIPosition();
-            if (m_rememberedAnchor >= 0) {
-                const int32_t wheelCount = api->GetWheelCount ? api->GetWheelCount() : -1;
-                basePosition = (wheelCount >= 0)
-                    ? std::min(m_rememberedAnchor, wheelCount)
-                    : m_rememberedAnchor;
-            }
+            // basePosition is resolved once above the loop; see the comment there.
             int32_t pagePosition = (basePosition >= 0)
                 ? basePosition + static_cast<int32_t>(p)
                 : basePosition;
@@ -772,6 +792,11 @@ namespace Huginn::Wheeler
             m_pageWheels.clear();  // drop placeholder-only state
             return false;
         }
+
+        // Baseline for teardown: where the wheels actually landed. Compared
+        // against the observed anchor later so an untouched block is never
+        // recorded as a player move (see m_createdAnchor).
+        m_createdAnchor = CurrentAnchorLocked();
 
         spdlog::info("[WheelerClient] === Multi-Page Wheels Created ===");
         for (size_t i = 0; i < m_pageWheels.size(); ++i) {
