@@ -75,6 +75,14 @@ namespace Huginn::Wheeler
         /// wheelIndex=-1 placeholder while later pages may hold real wheels.
         [[nodiscard]] bool HasAnyWheel() const;
 
+        /// Detect "every wheel of ours is gone" and mark the pages invalid so
+        /// RecoverInvalidatedWheels() has the state it waits for. Asks by CLIENT
+        /// NAME, not by index, so a reorder — which shifts indices but never
+        /// renames our wheels — reads as "still there". Needs API v4; on older
+        /// Wheeler there is nothing to ask and it no-ops. Takes m_pageDataMutex.
+        /// @return true if any page was newly marked invalid.
+        bool DetectVanishedWheels();
+
         /// #76 recovery. UpdatePage sets wheelIndex = -1 when IsManagedWheel
         /// fails and nothing retries, so once every page is invalidated the
         /// wheel is dead for the rest of the session — HasAnyWheel() then
@@ -295,6 +303,7 @@ namespace Huginn::Wheeler
 
         bool m_censusLogged = false;                                  // one census per generation
         bool m_reResolveUnsupportedLogged = false;                    // one v3-server warning per generation
+        bool m_anchorUnsupportedLogged = false;                        // one v3-anchor notice per session
         int  m_recoveryAttempts = 0;
         std::chrono::steady_clock::time_point m_lastRecoveryAttempt{};
         static constexpr std::chrono::seconds ADD_FAIL_COOLDOWN{30};

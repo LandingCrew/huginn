@@ -63,6 +63,19 @@ namespace Huginn::Display
         // ever notice recovery, is never reached again. Dead wheel for the rest
         // of the session unless the player types `hg reload`. Attempt the
         // rebuild here, ahead of the guard, or it cannot happen at all.
+        // Detection has to run here too, or that recovery is inert for exactly
+        // the session it is meant to rescue. UpdatePage — the only other thing
+        // that sets wheelIndex = -1 — sits BELOW the edit-mode gate, so an
+        // editor the player never exits means no page is ever marked invalid,
+        // RecoverInvalidatedWheels finds a valid index on every tick and returns
+        // false forever. Ordering recovery above the gate bought nothing without
+        // this. Only while the editor is open, so it costs one cross-DLL lookup
+        // per tick and nothing at all the rest of the time; it asks by CLIENT
+        // NAME, so a reorder (which shifts indices but never renames our wheels)
+        // reads as "still there" and is left alone.
+        if (wheelerClient.IsInEditMode()) {
+            wheelerClient.DetectVanishedWheels();
+        }
         wheelerClient.RecoverInvalidatedWheels();
 
         if (!wheelerClient.HasRecommendationWheel() ||

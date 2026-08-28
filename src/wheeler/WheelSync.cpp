@@ -103,15 +103,36 @@ namespace Huginn::Wheeler
         // deleting our wheels) yields nothing and must NOT clear an anchor we
         // already trust — "I can't see where they were" is not "they were at
         // the front". Hence the guard rather than an unconditional assignment.
+        // On Wheeler API < 4 there is no GetManagedWheelsForClient, so
+        // ReResolveWheelIndices cannot run and pw.wheelIndex is stale by
+        // construction after any reorder — exactly the staleness that function
+        // warns about. Recording it would promote a known-wrong number to an
+        // anchor that OUTRANKS sWheelPosition for the rest of the session,
+        // which is worse than the pre-feature behaviour of simply honouring the
+        // INI. Leave the memory alone and let the setting stay in charge.
+        auto* api = Api();
+        const bool indicesTrustworthy =
+            api && api->version >= 4 && api->GetManagedWheelsForClient;
+
         const int32_t anchor = CurrentAnchorLocked();
-        if (anchor >= 0 && anchor != m_createdAnchor) {
+        if (anchor < 0) {
+            // Nothing observable; see the guard note above.
+        } else if (!indicesTrustworthy) {
+            if (!m_anchorUnsupportedLogged) {
+                m_anchorUnsupportedLogged = true;
+                spdlog::info("[WheelerClient] Not remembering wheel positions on Wheeler API v{} "
+                             "(needs v4): indices cannot be re-resolved, so an observed index may "
+                             "be stale — sWheelPosition stays in charge",
+                    api ? api->version : 0);
+            }
+        } else if (anchor != m_createdAnchor) {
             if (anchor != m_rememberedAnchor) {
                 spdlog::info("[WheelerClient] Remembering wheel position {} (was {}, created at {}) — "
                              "wheels will be recreated there instead of at the configured position",
                     anchor, m_rememberedAnchor, m_createdAnchor);
             }
             m_rememberedAnchor = anchor;
-        } else if (anchor >= 0) {
+        } else {
             spdlog::debug("[WheelerClient] Wheels still at their created position {} — "
                           "nothing to remember", anchor);
         }
@@ -470,6 +491,56 @@ namespace Huginn::Wheeler
             anyMoved |= (ReResolvePageLocked(api, p) == ResolveOutcome::Moved);
         }
         return anyMoved;
+    }
+
+    bool WheelSync::DetectVanishedWheels()
+    {
+        auto* api = Api();
+        if (!api || api->version < 4 || !api->GetManagedWheelsForClient) {
+            // Nothing to ask. IsManagedWheel answers "is this wheel managed",
+            // which a reorder leaves true for somebody else's wheel, so it cannot
+            // stand in for the client-name lookup here.
+            return false;
+        }
+
+        std::lock_guard<std::mutex> lock(m_pageDataMutex);
+        if (m_pageWheels.empty()) {
+            return false;
+        }
+
+        constexpr size_t MAX_MATCHES = 8;
+        int32_t matches[MAX_MATCHES] = {};
+
+        // One surviving wheel is enough to say we have not vanished; bail on the
+        // first hit so the healthy case costs a single cross-DLL call.
+        bool anyLabelled = false;
+        for (const auto& pw : m_pageWheels) {
+            if (!pw.wheelLabel) {
+                continue;  // placeholder page — never had a wheel to lose
+            }
+            anyLabelled = true;
+            const int32_t count =
+                api->GetManagedWheelsForClient(pw.wheelLabel->c_str(), matches, MAX_MATCHES);
+            if (count > 0) {
+                return false;
+            }
+        }
+        if (!anyLabelled) {
+            return false;
+        }
+
+        bool changed = false;
+        for (auto& pw : m_pageWheels) {
+            if (pw.wheelIndex >= 0) {
+                pw.wheelIndex = -1;
+                changed = true;
+            }
+        }
+        if (changed) {
+            spdlog::warn("[WheelerClient] No wheel of ours exists any more across {} page(s) — "
+                         "marking them invalid so recovery can rebuild", m_pageWheels.size());
+        }
+        return changed;
     }
 
     bool WheelSync::RecoverInvalidatedWheels()

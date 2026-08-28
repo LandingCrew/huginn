@@ -137,6 +137,11 @@ namespace Huginn::Wheeler
         // #76: rebuild if every page has been invalidated. Must be called BEFORE
         // HasRecommendationWheel() gates the push — in that state it returns
         // false, so anything downstream of it is unreachable.
+        // Mark every page invalid when none of our wheels exist any more, so
+        // RecoverInvalidatedWheels() can see the state it waits for. See
+        // WheelSync::DetectVanishedWheels.
+        bool DetectVanishedWheels() { return WheelSync::GetSingleton().DetectVanishedWheels(); }
+
         bool RecoverInvalidatedWheels() { return WheelSync::GetSingleton().RecoverInvalidatedWheels(); }
 
         // Re-derive wheel indices from client labels after Wheeler may have
