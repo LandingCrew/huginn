@@ -74,6 +74,13 @@ namespace Huginn::Wheeler
             return WheelerConnection::GetSingleton().IsWheelOpen();
         }
 
+        /// True while the player is rearranging wheels in Wheeler's editor.
+        /// Gates the display push — see WheelerBackend::Push.
+        [[nodiscard]] bool IsInEditMode() const noexcept
+        {
+            return WheelerConnection::GetSingleton().IsInEditMode();
+        }
+
         // Log API info
         void LogAPIInfo();
 
@@ -107,6 +114,10 @@ namespace Huginn::Wheeler
         // Tear down all recommendation wheels.
         void DestroyRecommendationWheels() { WheelSync::GetSingleton().DestroyWheels(); }
 
+        /// Drop the remembered wheel position so the next create honours
+        /// sWheelPosition. See WheelSync::ForgetRememberedPosition.
+        void ForgetWheelPositionMemory() { WheelSync::GetSingleton().ForgetRememberedPosition(); }
+
         // Update wheel for a SPECIFIC page (for cross-page updates)
         void UpdateRecommendationsForPage(size_t pageIndex,
                                           const std::vector<RE::FormID>& spellFormIDs,
@@ -126,6 +137,11 @@ namespace Huginn::Wheeler
         // #76: rebuild if every page has been invalidated. Must be called BEFORE
         // HasRecommendationWheel() gates the push — in that state it returns
         // false, so anything downstream of it is unreachable.
+        // Mark every page invalid when none of our wheels exist any more, so
+        // RecoverInvalidatedWheels() can see the state it waits for. See
+        // WheelSync::DetectVanishedWheels.
+        bool DetectVanishedWheels() { return WheelSync::GetSingleton().DetectVanishedWheels(); }
+
         bool RecoverInvalidatedWheels() { return WheelSync::GetSingleton().RecoverInvalidatedWheels(); }
 
         // Re-derive wheel indices from client labels after Wheeler may have
@@ -283,6 +299,17 @@ namespace Huginn::Wheeler
         std::atomic<bool> m_pendingWheelClose{false};
         std::atomic<int32_t> m_pendingCloseWheelIndex{-1};  // Wheel index from the last close callback
         std::atomic<bool> m_itemActivatedWhileOpen{false};  // Track if player activated an item while wheel was open
+
+        /// One-shot latch for the auto-focus stranding warning. Auto-focus
+        /// redirects EVERY fresh open that lands on a non-Huginn wheel, so
+        /// warning per open would spam a notification onto the screen the
+        /// player is trying to use. The condition is a property of the wheel
+        /// LAYOUT, not of any one open, so once is the right number — and the
+        /// existing per-open `Auto-focus requested` info line still records
+        /// every occurrence for the log. Re-armed on edit-mode exit, which is
+        /// the only in-session point where the layout can change.
+        std::atomic<bool> m_autoFocusStrandWarned{false};
+
         mutable std::mutex m_callbackMutex;     // Protects callback state (mutable for const methods)
 
         // Static callback trampolines (call into singleton instance)

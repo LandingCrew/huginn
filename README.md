@@ -65,6 +65,27 @@ spdlog, imgui (Win32 + DX11), simpleini, toml11, rapidcsv, freetype, rsm-binary-
 - **Wheeler** — native integration via [WHEELER - Refined](https://www.nexusmods.com/skyrimspecialedition/mods/167380)
 - **Other UI mods** — compatible, independent overlay
 
+### Wheeler: known behaviour with your own wheels
+
+Two things surprise people, both worth knowing before you rearrange anything.
+
+**Auto-focus skips past your own wheels.** With `bAutoFocusOnOpen = true` (the
+default) under `[Wheeler]`, opening Wheeler on any wheel that isn't Huginn's
+jumps straight to Huginn's first wheel. This bites hardest if you drag one of
+your own wheels to position 0: Wheeler opens at the front, Huginn immediately
+redirects, and that wheel can no longer be reached by opening at all — only by
+scrolling back to it. Huginn shows a one-time in-game notice the first time it
+redirects you. Set `bAutoFocusOnOpen = false` to keep the wheel you opened.
+
+**Wheel order is remembered for the rest of the session.** Huginn deletes and
+recreates its wheels on every save load. It recreates them where you last
+dragged them to, not at `sWheelPosition` — so reordering in Wheeler's edit mode
+survives loading a save. Two limits worth knowing: the memory is per-session, so
+restarting Skyrim starts from `sWheelPosition` again; and Huginn's wheels are
+restored as one contiguous block, so if you interleaved your own wheels between
+them they come back grouped. Editing `sWheelPosition` and running `hg reload`
+clears the memory and puts them where the INI says.
+
 ## Credits
 
 - [CommonLibSSE-NG](https://github.com/CharmedBaryon/CommonLibSSE-NG) by CharmedBaryon

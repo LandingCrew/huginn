@@ -4,32 +4,6 @@ Open work only. Completed items live in [roadmap-archive.md](roadmap-archive.md)
 rejected, so check there before re-opening something.
 
 ## Known Bugs
-- [ ] #76: loading a second save in one session (esp. a different character)
-      leaves Huginn's stored wheel indices stale; `UpdatePage` finds every page
-      unmanaged ~1s after creation and sets `wheelIndex=-1` permanently. Does
-      NOT self-correct — the wheel is empty until `hg reload` or another
-      save-load. Same index-shift hazard the v3 delete-by-label path dodges on
-      the delete side; the read side has no equivalent. Ruled out as #75 fallout
-      (same build produced clean sessions). Repro in the issue, unconfirmed.
-      **Expected closed by the re-resolve below (0.18.34), unverified in-game:**
-      `UpdatePage` no longer latches -1 as its first response — it re-derives the
-      index from the client label and only invalidates when the lookup reports
-      the wheel genuinely gone. Covers the shift case; a real deletion still
-      falls through to the existing `RecoverInvalidatedWheels` rebuild, so both
-      halves now have a path. Keep this open until a second-save-load session
-      shows either a `Re-resolve: page N ... index X -> Y` line or a clean run
-- [ ] Display push is not gated on Wheeler edit mode, so the ~7s a player spends
-      rearranging wheels is spent writing subtexts to indices that are already
-      stale. Observed in the same 2026-08-22 session that verified the
-      re-resolve: the shift was detectable at 10:23:48 but not corrected until
-      edit-mode exit at 10:23:55, and two pushes landed on the wrong wheel in
-      between (`[Subtext] page 1` at 10:23:48.342, `page 2` at 10:23:51.874).
-      NOT fixed by the re-resolve, which triggers on exit by design — mid-edit
-      indices are transient and re-resolving each intermediate state would chase
-      noise. The complement is to skip the push while `IsInEditMode()`: the
-      player is rearranging wheels, not reading recommendations. Nothing gates on
-      it today (`IsInEditMode` is called only by `LogAPIInfo`). Bounded and
-      self-correcting — exit re-resolves and the next push repaints (XS/S)
 - [ ] `DeleteManagedWheelsForClient` reported deleting ZERO wheels for a client
       that had one, orphaning it. Observed 2026-08-22 while testing #92: a
       'Huginn: Regulars' wheel created at 12:30:55 (index 2) was still present
@@ -95,6 +69,17 @@ rejected, so check there before re-opening something.
 ## UX / Feature Backlog
 - [ ] Read-only Intuition menu mode — display-only widget, hotkeys disabled, an
       external UI (Wheeler / 3rd-party) drives selection
+- [ ] Auto-focus makes a non-Huginn wheel unreachable by opening. With
+      `bAutoFocusOnOpen=true`, every fresh open that lands on someone else's
+      wheel is redirected to Huginn's first — so a player wheel dragged to
+      position 0 is skipped on every open, forever, and reads as Huginn having
+      eaten it. Wheeler opens at the front by default, which is why position 0
+      is the case that gets reported. **Mitigated, not fixed (0.19.3):** a
+      one-shot `RE::DebugNotification` fires the first time a redirect happens,
+      re-armed on edit-mode exit, and the README documents it. The behaviour is
+      still the default. Options if it stays a complaint: only auto-focus when
+      the opened wheel is not adjacent to ours, honour a "the player scrolled
+      here deliberately" signal, or default `bAutoFocusOnOpen` to false (XS/S)
 
 ## Architecture Critique — Backlog
 See [reviews/architecture-critique.md](reviews/architecture-critique.md).
@@ -213,6 +198,15 @@ All Tier 2 critique items have landed; see [roadmap-archive.md](roadmap-archive.
       CalculateMagickaCost per known spell per tick, inside the registry lock (M)
 
 ### Follow-ups
+- [ ] Remembered wheel position does not survive a game restart — it is a
+      session member (`WheelSync::m_rememberedAnchor`), so a player who drags
+      the wheels and quits finds them back at `sWheelPosition` next launch.
+      Fixing it means a cosave record for one int32_t, which is cheap in itself
+      but is a serialization change and so NOT landable during an active soak
+      run (same constraint parked #15/#16). The cheaper half-measure, if this
+      turns out to be what people actually hit, is writing the anchor back to
+      `sWheelPosition` in Huginn.ini on teardown — no cosave, but it edits the
+      player's config file behind their back, which is its own surprise (S)
 - [ ] Unit tests for Context::WeightForCandidate (Tests.cpp:2656/3374 currently
       hand-reimplement the weight mapping — call the real one). DominantReason /
       ReasonLabel are covered by unit test 17.

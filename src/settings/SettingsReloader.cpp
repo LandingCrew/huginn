@@ -348,10 +348,32 @@ namespace Huginn::Settings
         // scoring tweak) is wasteful cross-DLL work, so compare and skip when equal.
         auto& wheelerClient = Wheeler::WheelerClient::GetSingleton();
         if (wheelerClient.IsConnected()) {
-            if (CaptureWheelLayout() != beforeLayout) {
+            const WheelLayout afterLayout = CaptureWheelLayout();
+            // The REBUILD keys on the whole layout — a renamed page or a changed
+            // slot count needs new wheels. The FORGET must not: WheelLayout also
+            // carries every page's name and slot count, so keying the forget on
+            // the same comparison threw away a position the player had set by
+            // dragging whenever they edited something unrelated (iPage2Slots, a
+            // page rename) and ran `hg reload` — the wheels jumped back to
+            // sWheelPosition and the player had never said to move them. Only a
+            // changed sWheelPosition is them re-stating where the wheels belong.
+            const bool positionRestated = afterLayout.wheelPosition != beforeLayout.wheelPosition;
+            if (afterLayout != beforeLayout) {
+                // AFTER the destroy, not before. DestroyWheels() re-reads the
+                // live indices and can record the anchor again, so forgetting
+                // first is undone in the same breath — the forget has to land in
+                // the window between teardown and creation. Observed 2026-08-28
+                // with the calls the other way round: `Forgetting remembered
+                // wheel position 1` at 14:42:13.256, `Remembering wheel position
+                // 1 (was -1)` in the same millisecond, and the wheels recreated
+                // at 1/2/3 with sWheelPosition = 3.
                 wheelerClient.DestroyRecommendationWheels();
+                if (positionRestated) {
+                    wheelerClient.ForgetWheelPositionMemory();
+                }
                 wheelerClient.CreateRecommendationWheels();
-                logger::debug("[SettingsReloader]   [Wheeler] wheels rebuilt (layout changed)"sv);
+                logger::debug("[SettingsReloader]   [Wheeler] wheels rebuilt (layout changed, "
+                              "position restated: {})"sv, positionRestated);
             } else {
                 // Structure unchanged: don't tear down valid wheels. Create is
                 // idempotent — it no-ops when wheels are valid, or recreates them

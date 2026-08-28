@@ -6,6 +6,147 @@ was rejected or what a fix turned up, which is the part that stops it being
 re-litigated. Section headings mirror the roadmap's.
 
 ## Known Bugs
+- [x] Display push was not gated on Wheeler edit mode, so the seconds a player
+      spends rearranging wheels were spent writing subtexts to indices that were
+      already stale. NOT covered by the re-resolve, which triggers on edit-mode
+      EXIT by design — mid-edit indices are transient and re-resolving each
+      intermediate state would chase noise — so the entire editor session was a
+      window where a stored index could name another client's wheel. And
+      `IsManagedWheel()` cannot catch it: it answers "is this wheel managed",
+      not "is it ours", so the write is accepted on someone else's wheel.
+      **First observed 2026-08-22**, in the session that verified the re-resolve:
+      the shift was detectable at 10:23:48 but not corrected until 10:23:55, with
+      `[Subtext] page 1` at 10:23:48.342 and `page 2` at 10:23:51.874 in between.
+      Those two lines were read at the time as pushes landing on the wrong wheel.
+      They are not: `[Subtext] page N` is emitted by `PipelineCoordinator`
+      UPSTREAM of `WheelerBackend::Push` and fires whether or not the push runs,
+      so it is evidence the pipeline ticked, not that Wheeler was written to.
+      Treat the 08-22 wrong-wheel writes as unproven — the hazard below stands on
+      its own.
+      **Much better evidence 2026-08-28.** `ValidateWheelState` caught the whole
+      stale state in one tick at 13:27:46.652: `Page 0 wheel 1 is no longer
+      managed!` followed by 13 slot desyncs whose FormIDs show a clean
+      off-by-one — page 1 reading page 0's contents, page 2 reading page 1's.
+      Edit mode opened 13:27:41.098, exit re-resolve repaired it at 13:27:49.849:
+      a 3.2 s stale window inside an 8.7 s editor session. Note the wheel was
+      CLOSED (`isOpen=false` at 13:27:46.594) while edit mode was still active,
+      which is why the existing `IsWheelOpen()` early-out never covered this.
+      No push happened to land inside that particular window, so the hazard was
+      confirmed live while the harm stayed conditional.
+      **Fixed in 0.19.4** by an `IsInEditMode()` early-out in
+      `WheelerBackend::Push`, placed deliberately AFTER
+      `RecoverInvalidatedWheels()` — recovery is what rescues a dead wheel, and
+      gating it behind edit mode would let an editor session the player never
+      exits strand the wheels for good. Bounded and self-correcting either way:
+      the exit re-resolve clears the slot cache, so the next push repaints from
+      scratch with no special case in the backend.
+      **Verified in-game 0.19.5**, once the gate was given a transition log of
+      its own — it had none, and the `[Subtext]` line cannot stand in for one
+      (see above). 2026-08-28: `WheelStateChanged: wheel=3, isOpen=false` at
+      14:56:44.801, `[Wheeler] Push suppressed — edit mode entered` at
+      14:56:44.813. Note how narrow the gate's real scope is: the open-guard
+      above it covers most of an editor session, leaving only the
+      closed-but-still-editing tail (this one, plus 1.8 s and 3.9 s tails in the
+      14:31 and 14:32 sessions) and the urgent-override path, which bypasses the
+      open-guard by design. Both are real and neither is covered elsewhere, but
+      the gate is not the whole-editor-session shield the original entry implied
+- [x] Wheel ORDER was not preserved across a save load. Huginn deletes and
+      recreates its wheels in `InitializeGameSystems`, and creation passed
+      `sWheelPosition` (default `First`) — so any reordering the player did in
+      Wheeler's edit mode was silently undone on the next load and our wheels
+      jumped back to the front. **Observed 2026-08-28** across two sessions: the
+      11:27:49 reorder put us at 1/2/3 and all four following loads recreated at
+      0/1/2; the 13:04:52 reorder put us at 2/3/4 and the 13:05:54 and 13:06:44
+      loads did the same. In-session reordering was already handled (that is
+      what the re-resolve landed for) — this was purely the create path ignoring
+      where the wheels had ended up.
+      **Fixed in 0.19.4** by `WheelSync::m_rememberedAnchor`: `DetachWheelsLocked`
+      records where the player left the block, and `CreateWheels` prefers that
+      over `sWheelPosition`. Three decisions worth keeping:
+      (1) ONE anchor for the block, not a position per page. Creation already
+      assumes our wheels are contiguous (`basePosition + pageIndex`), and
+      replaying an arbitrary interleaving through sequential inserts would need
+      every recorded index corrected for each insert before it. An anchor cannot
+      drift that way; a player who interleaved gets the block back grouped
+      rather than scattered wrong.
+      (2) The anchor is read at TEARDOWN, not creation — teardown is the last
+      point that still knows. A generation where every page was invalidated
+      yields nothing and deliberately does NOT clear an anchor already held:
+      "I can't see where they were" is not "they were at the front".
+      (3) `ForgetRememberedPosition()` fires from `SettingsReloader` whenever
+      the captured `WheelLayout` changed — which includes `sWheelPosition` — so
+      editing the INI still moves the wheels. Without it the setting would go
+      inert the first time anyone dragged a wheel: a worse surprise than the one
+      being fixed.
+      **0.19.4 shipped (3) in the wrong order and it did not work.** The forget
+      ran BEFORE `DestroyRecommendationWheels()`, and the destroy re-reads the
+      live indices and records the anchor again — so the forget was undone in the
+      same breath and the INI stayed inert, which is precisely the surprise (3)
+      exists to prevent. Caught by reading the call order, then confirmed
+      in-game: with `sWheelPosition = 3` and the block dragged to 1,
+      `Forgetting remembered wheel position 1` at 14:42:13.256 was followed by
+      `Remembering wheel position 1 (was -1)` in the same millisecond and the
+      wheels were recreated at 1/2/3. **Fixed in 0.19.5** by moving the forget
+      after the destroy, so it lands in the window between teardown and creation
+      where nothing can re-record. Same setup now logs Remember -> Forget ->
+      `Created wheel for page 0 'Smart': index=3` (14:56:28.359), wheels at
+      3/4/5. Worth remembering as a shape, not just a bug: `DestroyWheels()` has
+      a side effect that any "reset this state" call placed near it must be
+      sequenced against.
+      Session-scoped by choice. Surviving a restart needs a cosave record, which
+      is a serialization change and not landable mid-soak; left as a follow-up
+      on the roadmap with the INI-writeback alternative noted and rejected for
+      editing the player's config behind their back
+- [x] #76: loading a second save in one session (esp. a different character)
+      left Huginn's stored wheel indices stale; `UpdatePage` found every page
+      unmanaged ~1s after creation and set `wheelIndex=-1` permanently, with no
+      self-correction — the wheel stayed empty until `hg reload` or another
+      save-load. Root cause was the same one behind the edit-mode entry below:
+      a positional index used as identity. Fixed in 0.18.34 by making
+      `UpdatePage` re-derive the index from the client label before writing the
+      wheel off, so -1 is latched only when `GetManagedWheelsForClient` reports
+      the wheel genuinely gone (count == 0); a real deletion still falls through
+      to `RecoverInvalidatedWheels`.
+      **VERIFIED IN-GAME 2026-08-28**, one session, v0.19.2 (30a99a3) Debug,
+      Wheeler API v4, `_Huginn_Debug.log` 11:17:46–11:40:20. The entry asked for
+      "either a `Re-resolve: page N ... index X -> Y` line or a clean run"; the
+      session produced both.
+      *Re-resolve, edit-mode trigger* — 11:27:40 enter, 11:27:49.919 exit with a
+      player wheel inserted at the front. All three pages shifted +1
+      (`Smart 0 -> 1`, `Inventory 1 -> 2`, `Regulars 2 -> 3`), each with its
+      paired `resetting … dropping N exported subtext(s)` / `reset done`
+      bracket — no unpaired first line, so no dangling-pointer window. Drop
+      counts 1, 6, 0: seven live `const char*` exports the old code would have
+      left Wheeler rendering from. Post-shift the mapping was correct in both
+      directions — opening wheel 0 logged `not an Huginn wheel` and auto-focused
+      wheel 1 (11:27:55, 11:28:31), opening wheel 1 logged `Page 0 'Smart' wheel
+      opened` (11:28:21/24/26) — and three activations on `wheel=1` resolved to
+      `Item activated on page 0 wheel`, so the wheel repopulated and stayed
+      usable at its new index.
+      *Clean run, the actual #76 repro* — four loads alternating characters,
+      identified by cosave restore size: 11:29:18 and 11:35:17 (17 FQL entries),
+      11:30:12 and 11:37:17 (1 entry). All four recreated at 0/1/2. The
+      11:37:17 load got ~3 minutes: wheel opens mapping correctly to pages 0 and
+      1, four activations, five `[Subtext]` pushes across both pages (so the
+      content path churned rather than sitting behind `UpdatePage`'s
+      content-unchanged early-out), and 13 `ValidateWheelState: checked 3 pages`
+      passes. Across all 3,612 lines: zero `no longer managed`, zero
+      `#76 census`, zero `#76 recovery`, zero `Re-resolve … marking invalid`,
+      zero ambiguity warnings.
+      Worth keeping: the shift case was observed on the EDIT-MODE trigger, not
+      the save-load one. The load path never went stale here — it destroys and
+      recreates, and the indices came back identical every time — so the
+      `UpdatePage` re-resolve that the fix was written for remains unexercised
+      by a real shift. It is closed on the strength of the mechanism being
+      proven on the other trigger plus four clean loads, not on having watched
+      the original failure recover.
+      One false positive turned up and is NOT a bug: `ValidateWheelState: Page 1
+      slot 3 desync: cached=FE00E9E7, actual=00000000` at 11:40:11.829, 87 ms
+      after an activation and before the deferred close handler ran at
+      11:40:12.044. The diagnostic has no guard against the activation window,
+      so it fires whenever it lands between an activation and
+      `MarkActivationEmptied`. Debug-only, self-correcting; gating it on a
+      pending close would silence the class
 - [x] Wheel indices were never re-resolved after Wheeler reindexed, so subtext
       writes landed on the wrong managed wheel. Same root cause as #76
       (positional index used as identity), different trigger: #76 is a save-load

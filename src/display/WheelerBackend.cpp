@@ -63,11 +63,81 @@ namespace Huginn::Display
         // ever notice recovery, is never reached again. Dead wheel for the rest
         // of the session unless the player types `hg reload`. Attempt the
         // rebuild here, ahead of the guard, or it cannot happen at all.
+        // Detection has to run here too, or that recovery is inert for exactly
+        // the session it is meant to rescue. UpdatePage — the only other thing
+        // that sets wheelIndex = -1 — sits BELOW the edit-mode gate, so an
+        // editor the player never exits means no page is ever marked invalid,
+        // RecoverInvalidatedWheels finds a valid index on every tick and returns
+        // false forever. Ordering recovery above the gate bought nothing without
+        // this. Only while the editor is open, so it costs one cross-DLL lookup
+        // per tick and nothing at all the rest of the time; it asks by CLIENT
+        // NAME, so a reorder (which shifts indices but never renames our wheels)
+        // reads as "still there" and is left alone.
+        if (wheelerClient.IsInEditMode()) {
+            wheelerClient.DetectVanishedWheels();
+        }
         wheelerClient.RecoverInvalidatedWheels();
 
         if (!wheelerClient.HasRecommendationWheel() ||
             (wheelerClient.IsWheelOpen() && !hasUrgentOverride)) {
             return;
+        }
+
+        // Don't push while the player is rearranging wheels. Every move in the
+        // editor shifts our indices, and nothing corrects them until edit-mode
+        // EXIT — the re-resolve triggers there by design, because mid-edit
+        // indices are transient and chasing each intermediate state would be
+        // chasing noise. So the whole editor session is a window where our
+        // stored indices may name someone else's wheel, and IsManagedWheel()
+        // cannot tell us that: it answers "is this wheel managed", not "is it
+        // ours", so the write is ACCEPTED on another client's wheel.
+        //
+        // NARROWER THAN IT LOOKS, and deliberately kept anyway. Wheeler's editor
+        // is entered from an OPEN wheel, so for most of an edit session the
+        // open-guard above has already returned and this is never reached. What
+        // is left is exactly two cases: the tail where the player closes the
+        // wheel without leaving the editor (2026-08-28 14:56:44.801 close ->
+        // 14:56:44.813 suppressed, and 1.8 s / 3.9 s tails in the 14:31 and
+        // 14:32 sessions), and an urgent override, which bypasses the
+        // open-guard by design and would otherwise write mid-edit. Both are
+        // real; neither is covered anywhere else.
+        //
+        // Observed 2026-08-28: edit mode opened 13:27:41.098, the player moved a
+        // wheel, and at 13:27:46.652 ValidateWheelState reported page 0's wheel
+        // unmanaged with pages 1 and 2 reading the contents of the pages below
+        // them — a clean off-by-one, stale for the 3.2 s until the exit
+        // re-resolve at 13:27:49.849 repaired it. The two "pushes" the 2026-08-22
+        // session recorded were `[Subtext] page N` lines, which come from
+        // PipelineCoordinator UPSTREAM of this function — so they are evidence
+        // that the pipeline ran, not that Wheeler was written to. Treat the
+        // wrong-wheel writes as unproven; the two windows above are the case.
+        //
+        // Cheap to skip: the player is rearranging wheels, not reading
+        // recommendations, and the exit re-resolve clears the slot cache — so
+        // the next push repaints from scratch with no special case here.
+        //
+        // Deliberately AFTER RecoverInvalidatedWheels() above: recovery is what
+        // rescues a dead wheel, and gating it behind edit mode would let an
+        // editor session the player never exits strand the wheels for good.
+        //
+        // Bracketed by a transition log because nothing else in this file logs,
+        // and the gate is otherwise invisible: the `[Subtext] page N` line the
+        // roadmap cited as evidence of wrong-wheel pushes lives upstream in
+        // PipelineCoordinator and still fires with the gate in place, so its
+        // absence proves nothing. Two lines per editor session, not one per
+        // tick — at ~10 Hz the naive version buries the log. Single-threaded:
+        // the push runs on the update thread only.
+        static bool s_editGateActive = false;
+        if (wheelerClient.IsInEditMode()) {
+            if (!s_editGateActive) {
+                s_editGateActive = true;
+                spdlog::debug("[Wheeler] Push suppressed — edit mode entered");
+            }
+            return;
+        }
+        if (s_editGateActive) {
+            s_editGateActive = false;
+            spdlog::debug("[Wheeler] Push resumed — edit mode exited");
         }
 
         const auto& stConfig = Wheeler::WheelerSettings::GetSingleton().GetSubtextLabels();
