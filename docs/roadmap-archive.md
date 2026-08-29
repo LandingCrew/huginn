@@ -233,7 +233,7 @@ re-litigated. Section headings mirror the roadmap's.
       Masked before, because jumps happen mid-combat where the hash moves
       anyway; a real fall changes no hashed bucket. Fixed with the same
       bypass + falling-edge run the elemental window uses, NOT by adding a
-      Q-learner state dimension (cosave bump). And the take-off Z survived save
+      learner state dimension (cosave bump). And the take-off Z survived save
       loads in the first draft — `ResetTrackingState` zeroes the poll timers, so
       loading into a low interior from a peak would have reported a
       ~20,000-unit fall at full weight.

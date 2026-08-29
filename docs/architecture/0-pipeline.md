@@ -4,7 +4,7 @@ This document describes the data flow from game state to slot recommendations as
 
 > **Related documentation:**
 > - [1-states.md](1-states.md) - State models (WorldState, PlayerActorState, TargetCollection, tracking states)
-> - [4-qlearning.md](4-qlearning.md) - Q-learning implementation
+> - [4-contextual-bandits.md](4-contextual-bandits.md) - contextual bandit learning implementation
 > - [5-slots.md](5-slots.md) - Slot classification and overrides
 
 ---
@@ -27,7 +27,7 @@ Where `λ(confidence) = lambdaMin + confidence × (lambdaMax − lambdaMin)`. Co
 - ✅ UsageMemory — event-driven short-term recency boost
 - ✅ SlotAllocator with multi-page support
 - ✅ Two-tier lazy decay (replaces skip penalties)
-- ✅ Q-learning persistence via SKSE cosave
+- ✅ contextual bandit learning persistence via SKSE cosave
 - ✅ PipelineStateCache for external equip attribution
 - ✅ ExternalEquipLearner for learning from vanilla/hotkey equips
 - ✅ Cold-start UCB context boost for empty-slot prevention
@@ -74,7 +74,7 @@ graph TB
     CRE -->|context weights| US
 
     GS --> QL[FeatureQLearner]
-    QL -->|Q-values| US
+    QL -->|reward estimates| US
 
     UM[UsageMemory] -->|recency boost| US
 
@@ -170,7 +170,7 @@ graph TD
         CW4[Multiple enemies → AOE +2.0]
     end
 
-    subgraph Tier3[Tier 3: Q-Learning Player Preference]
+    subgraph Tier3[Tier 3: Contextual Bandit Learning Player Preference]
         QL1[Fireball vs Ice Spike]
         QL2[Oakflesh usage patterns]
         QL3[Scroll preferences]
@@ -191,7 +191,7 @@ graph TD
 |------|---------|----------|----------------|
 | **Override** | Urgent situations with obvious answer | Critical HP, drowning, on fire | `OverrideManager` hard rules, bypass scoring |
 | **Context Weight** | Situational relevance (rule-based) | Combat buffs, workstation potions | `ContextRuleEngine` + `CandidateGenerator` |
-| **Q-Learning** | Player-specific preference | Item choice within context | `FeatureQLearner` Q-value lookup |
+| **Contextual Bandit Learning** | Player-specific preference | Item choice within context | `FeatureQLearner` reward estimate lookup |
 
 ---
 
@@ -263,11 +263,11 @@ graph LR
 | `StaminaTrackingState` | Stamina usage events, rates, source classification | See [1-states.md](1-states.md) |
 | `MagickaTrackingState` | Magicka usage events, rates, casting state | See [1-states.md](1-states.md) |
 
-**Discretized State** (for Q-learning):
+**Discretized State** (for contextual bandit learning):
 
 | Struct | Purpose | Details |
 |--------|---------|---------|
-| `GameState` | Discretized buckets for Q-table lookup (36,288 states) | See [4-qlearning.md](4-qlearning.md) |
+| `GameState` | Discretized buckets for the pipeline skip-check (36,288 states) | See [4-contextual-bandits.md](4-contextual-bandits.md) |
 
 ### Stage 2: Candidate Generator
 
@@ -432,7 +432,7 @@ The scorer combines context weights, learning, and other factors into final util
 graph TB
     subgraph Inputs[Scoring Inputs]
         CW[contextWeight]
-        Q[Q-value]
+        Q[reward estimate]
         Prior[prior heuristic]
         UCB[exploration bonus]
         Rec[recency boost]
@@ -596,7 +596,7 @@ Adding a new display target: implement `IDisplayBackend` (`Push`, `IsEnabled`, a
 
 ## Feedback Loop
 
-> **Design Principle (v0.13.0+):** Learning is decoupled from the presentation layer (Wheeler/Widget). The system learns from all equip events — both Huginn-mediated (Wheeler, hotkeys) and external (vanilla menu, favorites). Negative signals come from L2 regularization and time-based decay, not from Wheeler open/close events or skip penalties. See [../refactor/roadmap.md](../refactor/roadmap.md) for rationale.
+> **Design Principle (v0.13.0+):** Learning is decoupled from the presentation layer (Wheeler/Widget). The system learns from all equip events — both Huginn-mediated (Wheeler, hotkeys) and external (vanilla menu, favorites). Negative signals come from L2 regularization and time-based decay, not from Wheeler open/close events or skip penalties. See [../refactor/roadmap.md](../roadmap.md) for rationale.
 
 ```mermaid
 graph LR
@@ -679,7 +679,7 @@ graph LR
 | Skip penalty (-1.0 on wheel close) | Punished correct recommendations during state transitions. Learning should not be coupled to presentation layer. |
 | Cast bonus (+3.0) | Never implemented (CAST_BONUS defined but unused). |
 
-See [4-qlearning.md](4-qlearning.md) for learning update details and [../refactor/roadmap.md](../refactor/roadmap.md) for design rationale.
+See [4-contextual-bandits.md](4-contextual-bandits.md) for learning update details and [../refactor/roadmap.md](../roadmap.md) for design rationale.
 
 ---
 
@@ -748,6 +748,6 @@ graph TB
 ## See Also
 
 - [../ARCHITECTURE.md](../ARCHITECTURE.md) - Overall system design
-- [4-qlearning.md](4-qlearning.md) - Learning system (FeatureQLearner architecture)
+- [4-contextual-bandits.md](4-contextual-bandits.md) - Learning system (FeatureQLearner architecture)
 - [5-slots.md](5-slots.md) - Slot classification and overrides
 - [1-states.md](1-states.md) - State model architecture

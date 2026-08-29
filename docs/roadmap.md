@@ -74,7 +74,7 @@ rejected, so check there before re-opening something.
       to false (XS/S)
 
 ## Architecture Critique — Backlog
-See [reviews/architecture-critique.md](reviews/architecture-critique.md).
+See `reviews/architecture-critique.md` — **the file is missing from the repo**; it was never committed and is not in the recovered docs snapshot.
 **Landed:** Tier 1 (all); Tier 2 #8 registry consolidation (PR #55), #9 display
 abstraction (PR #56), #10 safe pieces — GetContextWeight move + ComputeRelevanceTags
 dedup (PR #57), #10 leftover — relevance-tag encoding unified on ContextRuleEngine
