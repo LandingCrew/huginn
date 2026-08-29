@@ -134,6 +134,16 @@ namespace Huginn::Slot
         /// Get the number of slots in a specific page
         [[nodiscard]] size_t GetSlotCount(size_t pageIndex) const;
 
+        /// Number of slots on a page whose config permits wildcards
+        /// (bWildcardsEnabled). This is a page-level CAPACITY, not a per-index
+        /// map: FindBestCandidate skips wildcard candidates for slots that
+        /// forbid them, but which slot takes a given wildcard is decided by
+        /// classification and priority, so no caller can know in advance. What
+        /// it can know is that a page with N such slots can never display more
+        /// than N wildcards — WildcardManager rolls against this so it cannot
+        /// cache one that has no seat. 0 if the page index is out of range.
+        [[nodiscard]] size_t GetWildcardSlotCount(size_t pageIndex) const;
+
         /// Get configuration for a specific slot in current page (returns copy)
         [[nodiscard]] SlotConfig GetSlotConfig(size_t slotIndex) const;
 

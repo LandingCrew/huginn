@@ -76,6 +76,10 @@ namespace Huginn::Pipeline
         size_t displayPageIndex = 0;
         size_t displayPageCount = 0;
         size_t displaySlotCount = 0;
+        // How many of displaySlotCount accept wildcards. Snapshotted alongside
+        // the rest so the wildcard cache is keyed and bounded by one coherent
+        // description of the page — see Scoring::WildcardPage.
+        size_t displayWildcardSlots = 0;
         std::string displayPageName;
 
         /// Reset all fields for reuse, preserving allocated container capacity.
@@ -106,6 +110,7 @@ namespace Huginn::Pipeline
             displayPageIndex = 0;
             displayPageCount = 0;
             displaySlotCount = 0;
+            displayWildcardSlots = 0;
             displayPageName.clear();
         }
     };

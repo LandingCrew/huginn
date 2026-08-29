@@ -293,6 +293,107 @@ re-litigated. Section headings mirror the roadmap's.
       `slotRetries` (3 would poison the entry for 30s) nor log above trace (S)
 
 ## Known Recommendation Issues
+- [x] #70 + the wildcard cluster — three entries, one root cause: the wildcard
+      cache was a single global position-indexed array shared by every page, so
+      an entry could sit at an index nothing currently displayed could reach
+      while the liveness scan still counted it and suppressed the re-roll that
+      would have produced a usable one. Reachable three ways: **#70**, a switch
+      to a smaller page stranding entries above its slot count (30s + refractory
+      of no wildcard at all, not self-correcting); a page whose slots all set
+      `bWildcardsEnabled=false`, which WildcardManager could not see because it
+      received a slot COUNT and never per-slot enablement; and the `slotCount <
+      2` guard returning before #70's bounds repair, so a 1-slot page kept
+      whatever was already there.
+      **Fixed in 0.19.6** by the pageIndex → array cache the open entries named.
+      Each page owns its entries, its cooldown and its refractory timer, and
+      records the page SHAPE (slot count + wildcard-capable slot count) it was
+      rolled against; a shape change discards that page's cache wholesale. A
+      page switch therefore needs no repair at all — page A's entries stay under
+      page A's key — and the only surviving invalidation path is an INI reload
+      actually reshaping a page, which is a real event rather than a routine one.
+      Enablement arrives as `SlotAllocator::GetWildcardSlotCount(page)`,
+      snapshotted into `PipelineContext::displayWildcardSlots` and passed with
+      the index and slot count as one `Scoring::WildcardPage` value.
+      Note it is a page-level CAPACITY, not a per-index map, and deliberately so:
+      allocation walks slots in priority order and hands a wildcard to whichever
+      slot's classification matches, so which slot takes it is unknowable in
+      advance — what is knowable is that a page with N wildcard-accepting slots
+      can never display more than N, and the roll loop stops there.
+      The `slotCount < 2` guard is now `slotCount == 0`: slot 0 is already
+      unreachable on its own terms (excluded by `bFirstSlotExcluded`, and scored
+      at `base × 0 == 0` even when it is not), so a 1-slot page rolls nothing
+      without needing a special case to say so.
+      Two behaviour changes worth knowing. Per-page timers mean one page's
+      expiry no longer imposes a refractory on another. And `UpdateExpiry()`
+      still ages EVERY page — a wildcard on a page the player has switched away
+      from must lapse on its own clock — but now reports a lapse only for the
+      page last applied, so ageing out a background page no longer forces a
+      pipeline run that changes nothing on screen.
+      The `bWildcardsEnabled` case was logged as unconfirmed and "needs a config
+      with wildcards disabled on some slots to reproduce"; it now has a unit test
+      instead (Tests.cpp, "Wildcard page cache"), which pins probability to 1.0
+      and refractory to 0 and asserts bounds across all four shapes plus the
+      reshape and all-page expiry.
+      **Verified in-game 2026-08-28**, 0.19.6 Debug. The suite passed at
+      19:11:22 with the whole roll trace visible: page 0 (7 slots) rolled
+      indices 1-6; page 1 (4 slots) rolled 1-3 with nothing above its bound —
+      the #70 case; pages 2 (0 wildcard-capable) and 3 (1 slot) logged no roll
+      at all; page 4 (6 slots / 2 capable) stopped at two; the reshape logged
+      `Page 0 reshaped (3 slots / 3 wildcard-capable, was 7 / 7) — dropped 6
+      cached wildcard(s)` and re-rolled within the new bound; and expiry fired
+      once per live page, three lines for the three pages holding entries.
+      Live play then exercised the normal path at 19:13:19 on the 3-page /
+      8-slot LoreRim config: two rolls (Iron Battleaxe at ranking index 2, 33%;
+      Unarmed at index 7, 50%), the battleaxe surfacing as `[WC]` in the Recs
+      dump and displaying at `1:Wildcard` — display slot 1, not ranking index
+      2, which is the capacity-not-index-map behaviour above showing up in the
+      wild — then expiring at exactly 30 s into the configured 60 s refractory
+      with the slot reverting to the ranked pick. No reshape log fired during
+      play, so the invalidation check does not spam a stable config.
+      **All five cases then verified against a live 3-page config** the same
+      evening, with `fBaseProbability = 1.0` and a long cooldown so rolls were
+      deterministic. Shapes: page 0 = 8 slots / 0 wildcard-capable, page 1 = 4
+      slots / 4, page 2 = 8 slots / 8 (later 3).
+      1. **#70** — 20:23:01.598 switched to page 2 (8 slots), rolled indices
+         1-7; 20:23:02.674 switched to page 1 (4 slots) and it rolled indices
+         1-3 within 2 ms, nothing above its bound. On the old shared array page
+         2's entries at 4-7 would have kept `HasActiveWildcard()` true and
+         suppressed that roll for the whole cooldown + refractory.
+      2. **bWildcardsEnabled=false** — page 0 rolled ZERO wildcards across the
+         entire session at probability 1.0, having rolled 7 at 19:43:43 and
+         19:43:57 on the same page before the flags were flipped. Clean
+         before/after on one page.
+      3. **1-slot page** — page 1 at `iSlotCount = 1` with wildcards ENABLED on
+         its only slot (so the slot-count path is isolated from the enablement
+         one) rolled nothing at 19:57:45 and 19:58:06, and did not block pages
+         0 or 2.
+      4. **Per-page timers** — 20:23:20.831 logged `Wildcards expired` TWICE in
+         the same millisecond: pages 1 and 2 ageing out on independent clocks
+         while the player stood on page 0. A single global cache can only ever
+         print that line once. Page 1's own 2 s refractory was then honoured on
+         return (no roll at 20:23:21.532, roll at 20:23:23.375).
+      5. **Reshape** — 20:34:53.507, `Page 2 reshaped (3 slots / 3
+         wildcard-capable, was 8 / 8) — dropped 7 cached wildcard(s)`, followed
+         immediately by rolls at indices 1-2 only and `[Recs] 3. Steel
+         Rapier … [WC]`. Fired exactly once; no repeat on later ticks.
+      Negative control worth keeping: at 20:33:11 a reload left page 1's shape
+      untouched (4 slots before and after) and it correctly logged NO reshape
+      line and did not re-roll — it kept the three wildcards it already held.
+      Two gotchas for anyone re-running this. The cooldown is measured on
+      `steady_clock`, so it keeps running while the game is alt-tabbed — a 10 s
+      cooldown expires during any INI edit, and the reshape drop is gated on the
+      page actually HOLDING wildcards, which is why that line took several
+      attempts to catch. And the drop is lazy: it fires when `ApplyWildcards`
+      next runs for that page, so reshaping a page you are not standing on logs
+      nothing until you switch to it.
+      One pre-existing behaviour this made visible, NOT introduced here and not
+      fixed here: the second roll (Unarmed, index 7) displayed as
+      `7:Confirmed`, not as a wildcard. `ApplyWildcardsToRanking` skips the
+      swap when `foundIdx <= slotIdx` — the candidate was already at or above
+      that position on merit — and the `isWildcard` flag is only set by the
+      swap, so a wildcard that rolls onto a candidate already sitting there is
+      silently indistinguishable from a normal pick. It costs a roll against
+      the cap and shows nothing for it
 - [x] Need to split Alcohol and food for recommendation engine slots
 - [x] #80: weapons were outside contextual scoring entirely — the
       WeaponCandidate arm of `WeightForCandidate` read only `weaponWeight` /

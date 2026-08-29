@@ -20,6 +20,31 @@ rejected, so check there before re-opening something.
       correctness/cleanliness issue, not a live breakage. Reproduce by cycling
       page layouts through `hg reload` and watching the `Deleted N managed
       wheel(s)` counts against what was created. Likely upstream (S)
+- [ ] Wheeler's content-unchanged early-out goes stale when Wheeler itself
+      mutates the wheel. With `PostActivation = Backfill`, activating an entry
+      makes Wheeler shift the remaining entries internally — Huginn is never
+      told, so `WheelSync`'s `slotFormIDs`/`slotWildcard`/`slotUniqueIDs`/
+      `slotRawSubtexts` cache still describes the pre-activation wheel. The
+      early-out (WheelSync.cpp:1081) then compares the incoming vectors against
+      that cache, matches, and returns before repainting, so the wheel keeps a
+      blank where the shifted-out entry was for as long as the recommendations
+      stay stable. **Observed 2026-08-28, 0.19.6:** page 1 activation at
+      20:33:33.456 (`entry=0, formID=00013986`); the last push to that wheel at
+      20:33:38.501 carried `0:Steel Dagger, 1:Wildcard(Iron War Axe),
+      2:Staff of the Skeletal Soldier, 3:empty`; the Intuition widget rendered
+      all four correctly while the wheel showed slot 1 blank. `hg refresh`
+      repaired it. NOT self-correcting, which is what separates this from the
+      two deferrals the early-out's own comment already accepts as "rare and
+      self-correcting" — those resolve on the next content change; this one
+      survives it, because the content never changed. The edit-mode re-resolve
+      already clears `slotRawSubtexts` for exactly this reason
+      (WheelSync.cpp:350) — the activation path needs the same clear, keyed on
+      the wheel Wheeler actually mutated. Only bites under Backfill: the `Empty`
+      policy blanks the activated slot in WheelerBackend
+      (WheelerBackend.cpp:264) so the pushed arrays differ and the early-out
+      misses. Independent of the wildcard work — the assignment was correct
+      throughout — but a wildcard is a low-scored pick the player is more likely
+      to activate, so raising the wildcard rate raises exposure (S)
 - [ ] Intuition menu shown during "cut scenes"
 - [ ] Intuition menu not hiding when commanded by external mod
 - [ ] New game wheelerAPI integration seems to fail
@@ -39,27 +64,6 @@ rejected, so check there before re-opening something.
 ## Known Recommendation Issues
 - [ ] #65: apparel is not a candidate source (`SourceType` has no armor entry),
       so fortify gear can never be recommended — blocks the Requiem answer to #63
-- [ ] A wildcard can also go unreachable *without* being out of index range:
-      SlotAllocator.cpp:571 skips wildcard candidates for slots with
-      bWildcardsEnabled=false, and WildcardManager only ever receives a slot
-      COUNT, never per-slot enablement — so it can roll one for a slot that
-      forbids them. If no other slot picks it up, HasActiveWildcard() reports it
-      live while nothing displays: the same stall #70 fixed for the index case.
-      Unconfirmed — needs a config with wildcards disabled on some slots to
-      reproduce. Root cause for both is one global position-indexed cache; a
-      pageIndex → array cache would make stranding structurally impossible (S/M)
-- [ ] WildcardManager's slotCount < 2 guard returns before the #70 drop, so a
-      1-slot page leaves stranded entries in place. Bounded — nothing displays
-      there and UpdateExpiry() still ages the cache out on its own timer — so
-      the stall can't outlive the cooldown. Not worth restructuring the guard
-      for; noted so the invariant isn't assumed unconditional (XS)
-- [ ] #70: cached wildcards above a smaller page's slot count block re-rolls
-      invisibly — HasActiveWildcard() scans the whole cache while
-      ApplyWildcardsToRanking bounds by slotCount, so a wildcard stranded at
-      index 6 suppresses rolling on a 4-slot page for 30s + refractory. Same
-      differing-slot-count trigger as #10b, but not one tick and not
-      self-correcting. Repro config (one 4-slot page) is in the issue and also
-      re-verifies #69 (S)
 - [ ] Scroll cold-start: all scrolls sit in the pool every tick but score
       `learn≈0` against trained items at `learn=7–8`, so one can never surface
       until used and can't be used until surfaced
@@ -219,7 +223,8 @@ All Tier 2 critique items have landed; see [roadmap-archive.md](roadmap-archive.
       they describe can now drift with nothing to catch it
 - [ ] Cosave decode negative test logs `[E] DecodeV2EntryBlob: byteLen 83 != stride
       84` at every Debug startup. The test passes — the error is the assertion
-      firing. Silence it so a real rejection stays visible (Tests.cpp:4137).
+      firing. Silence it so a real rejection stays visible (the negative case is the
+      byteLen-mismatch block in RunCosaveTests, Tests.cpp:5159).
       Still firing every session as of 0.19.0; it has now cost real time twice
       while triaging unrelated logs (XS)
 - [ ] `build-verify-preset` (1 commit) — no-deploy configure preset, rebased

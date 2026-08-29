@@ -29,7 +29,7 @@ namespace Huginn::Scoring
         const State::PlayerActorState& player,
         const State::TargetCollection& targets,
         const State::WorldState& world,  // Stage 1f: Added WorldState
-        size_t displaySlotCount,
+        const WildcardPage& displayPage,
         Context::ContextWeightMap* outWeights)
     {
         SCOPED_TIMER("UtilityScorer::ScoreCandidates");
@@ -188,12 +188,12 @@ namespace Huginn::Scoring
             }
         }
 
-        // Apply wildcards for exploration, sized against the page THIS tick
-        // allocates. Previously this called an overload that read
+        // Apply wildcards for exploration, keyed and sized against the page
+        // THIS tick allocates. Previously this called an overload that read
         // SlotAllocator::GetSlotCount() live, so a page switch landing mid-tick
         // could size wildcards against the new page while the pipeline allocated
         // the snapshotted one — resolves TODO(page-consistency).
-        m_wildcardMgr.ApplyWildcards(scored, displaySlotCount);
+        m_wildcardMgr.ApplyWildcards(scored, displayPage);
 
         return scored;
     }
