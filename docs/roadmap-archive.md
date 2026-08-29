@@ -340,6 +340,16 @@ re-litigated. Section headings mirror the roadmap's.
       always-on addition — the post-create re-resolve — was verified across nine
       page-resolutions in both `First` and `Last` positions
 ## Known Recommendation Issues
+- [x] `lookingAtOre` did not surface a pickaxe even with one in inventory.
+      **NOT A BUG — closed 2026-08-29 without a fix, deliberately.** Mining does
+      not require an equipped pickaxe; activating the vein works as long as one
+      is in inventory. So there is nothing for a recommendation to accomplish
+      here: surfacing a pickaxe would ask the player to do something the game
+      does not require, which is worse than staying quiet.
+      Recorded because the observation will recur — "I stood at an ore vein with
+      a pickaxe and Huginn showed nothing" reads like a gap every time, and it
+      is the correct behaviour. If `lookingAtOre` should drive anything, it is
+      not the pickaxe.
 - [x] #70 + the wildcard cluster — three entries, one root cause: the wildcard
       cache was a single global position-indexed array shared by every page, so
       an entry could sit at an index nothing currently displayed could reach

@@ -56,8 +56,6 @@ rejected, so check there before re-opening something.
       is most visible, because a player rarely uses one unprompted. The two
       candidate fixes are under Follow-ups, "Share learning across similar
       items"; fixing either closes this
-- [ ] `lookingAtOre` did not surface a pickaxe even with one in inventory —
-      whether that context ranks mining tools at all is unchecked (noted on #64)
 
 ## UX / Feature Backlog
 - [ ] Read-only Intuition menu mode — display-only widget, hotkeys disabled, an
