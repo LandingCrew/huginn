@@ -65,7 +65,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for full system design.
 
 **INI settings** — `Data/SKSE/Plugins/Huginn.ini`:
 - `[Scoring]` — Utility scoring params (loaded by `ScorerSettings`)
-- `[ContextWeights]` — 17 context weight multipliers (loaded by `ContextWeightSettings`)
+- `[ContextWeights]` — context weight multipliers (loaded by `ContextWeightSettings`)
 - `[Widget]` — Scaleform HUD position, alpha, scale, display mode
 - `[Wheeler]` — Wheeler integration settings
 - `[Candidates]` — Uncastable spell policy

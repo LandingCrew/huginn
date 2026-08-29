@@ -1,360 +1,148 @@
-# Huginn - Lorerim Compatibility
+# LoreRim
 
-This document provides Lorerim-specific compatibility information and plugin configurations for Huginn.
+**Verified against `src/` at v0.19.10.**
 
----
+LoreRim is the modlist Huginn is developed and play-tested against. That makes it
+important to this project, but it is important as a **test environment**, not as
+a supported target: there is no LoreRim-specific code, no LoreRim detection, and
+no LoreRim configuration profile.
 
-## Overview
-
-Lorerim is a comprehensive modpack built on **Requiem** with **Magic Redone** layered on top. This fundamentally changes how magic works compared to vanilla Skyrim.
-
-### Key Differences from Vanilla
-
-| Aspect | Vanilla | Lorerim (Requiem + Magic Redone) |
-|--------|---------|----------------------------------|
-| Magicka Regen | Always regenerates | **Stops in combat** |
-| Spell Costs | Fixed by spell level | Scales with skill level (high at low skill) |
-| Perk Gating | Minor bonuses | **Perks required for effectiveness** |
-| Spell Balance | Per-spell | Entire magic system rebalanced |
-| Survival | Optional CC | Integrated survival needs |
+The previous version of this file specified all three, plus a weight-adjustment
+table and a plugin JSON file. None of it was ever implemented — see
+[mod-compatibility.md § What does not exist](mod-compatibility.md#what-does-not-exist).
+This rewrite covers what is actually true: what LoreRim exercises, what it hides,
+and where its shape has bent the project's testing coverage.
 
 ---
 
-## Core Systems
+## There is no LoreRim integration
 
-### Requiem Detection
+`grep -rn LookupModByName src/` returns one hit, and it is a comment in
+`Tests.cpp`. Nothing in the plugin knows which modlist it is running under.
+Concretely, none of the following exist:
 
-```cpp
-bool IsRequiemLoaded() {
-    auto* dh = RE::TESDataHandler::GetSingleton();
-    return dh->LookupModByName("Requiem.esp") != nullptr;
-}
+- `IsRequiemLoaded()` / `IsLorerimLoaded()`
+- A magicka-value multiplier that reacts to Requiem's combat regen behaviour
+- An earlier melee-fallback threshold for "magicka won't come back"
+- A per-modlist weight profile, or any weight that varies by installed mods
+- A race-to-`TargetType` mapping table for Mihail creatures
 
-bool IsLorerimLoaded() {
-    auto* dh = RE::TESDataHandler::GetSingleton();
-    return dh->LookupModByName("Requiem.esp") != nullptr &&
-           dh->LookupModByName("Requiem - Magic Redone.esp") != nullptr;
-}
-```
-
-### Magicka Weight Adjustments
-
-Since magicka doesn't regenerate in combat, remaining magicka is more valuable:
-
-```cpp
-float GetMagickaValueMultiplier(const ContextState& ctx) {
-    if (!IsLorerimLoaded()) return 1.0f;
-    if (!ctx.inCombat) return 1.0f;
-
-    // In combat, magicka is finite - weight remaining pool heavily
-    if (ctx.magickaPercent < 0.2f) return 2.5f;  // Critical
-    if (ctx.magickaPercent < 0.4f) return 1.8f;  // Low
-    if (ctx.magickaPercent < 0.6f) return 1.3f;  // Moderate
-    return 1.0f;
-}
-```
-
-### Melee Fallback
-
-Melee weapons become important earlier when magicka won't regenerate:
-
-```cpp
-float GetWeight_MeleeWeapon_Lorerim(const ContextState& ctx) {
-    if (!ctx.inCombat) return 0.1f;
-
-    // Earlier threshold than vanilla (40% vs 10%)
-    if (ctx.magickaPercent < 0.15f) return 8.0f;  // Almost empty
-    if (ctx.magickaPercent < 0.30f) return 5.0f;  // Low
-    if (ctx.magickaPercent < 0.45f) return 2.0f;  // Getting low
-
-    return 0.1f;
-}
-```
+Every context weight is normalized to `[0,1]` and read from `[ContextWeights]` in
+`Huginn.ini`. The same values apply on every install.
 
 ---
 
-## Relevant Mods
+## What LoreRim actually exercises
 
-### Framework Mods (Runtime Distribution)
+Because LoreRim is where the play-testing happens, these are the paths with real
+in-game coverage:
 
-These mods distribute spells, keywords, or items at runtime - Huginn needs to be aware of dynamically added content.
-
-- **Spell Perk Item Distributor (SPID)** - Distributes spells/perks to NPCs at runtime
-- **Keyword Item Distributor (KID)** - Distributes keywords at runtime
-- **Keyword Patch Collection** - Adds keywords to items
-- **FormList Manipulator (FLM)** - Modifies formlists at runtime
-- **SkyPatcher** - Runtime patching framework
-- **Object Categorization Framework** - Categorizes objects with keywords
-
-### Perk/Magic Overhauls
-
-| Mod | Notes |
-|-----|-------|
-| Requiem - The Roleplaying Overhaul | Complete gameplay overhaul |
-| Requiem - Magic Redone | Major magic system changes |
-| Requiem - Alchemy Redone | Changes potion effects |
-| Ordinator - Perks of Skyrim | Perk overhaul affecting magic perks |
-| Spell Absorption Rework | Changes spell absorption mechanics |
-
-### Spell Mods
-
-#### Major Spell Packs
-
-| Mod | ESP Name | Notes |
-|-----|----------|-------|
-| Apocalypse | `Apocalypse - Magic of Skyrim.esp` | 100+ spells, all schools |
-| Triumvirate | `Triumvirate - Mage Archetypes.esp` | Class-based spell packs |
-
-#### Specialized Magic Mods
-
-| Mod | ESP Name | Magic Type |
-|-----|----------|------------|
-| Runemaster | `Runemaster.esp` | Rune-based |
-| Wizarding Traversal | `WizardingTraversal.esp` | Movement/teleport |
-| Holy Templar | `HolyTemplarMagic.esp` | Paladin/Restoration |
-| Elemental Mastery | `ElementalMastery.esp` | Elemental |
-| Wildwaker | `WildwakerMagic.esp` | Nature/beast |
-| Frostbitten Dreams | `FrostbittenDreams.esp` | Ice-themed |
-| Ancient Blood Magic II | `AncientBloodII.esp` | Blood magic (health cost) |
-| Dark Hierophant | `DarkHierophant.esp` | Death/dark |
-| Obscure Magic | `ObscureMagic.esp` | Miscellaneous |
-| Sonic Magic | `SonicMage.esp` | Sound-based |
-| Constellation Magic | `ConstellationMagic.esp` | Star-themed |
-| Abyssal Tides | `AbyssalTides.esp` | Water/ocean |
-| Survival Spells | `SurvivalSpells.esp` | Utility |
-
-### Vampire/Werewolf
-
-Lorerim uses **Sacrilege** (vampires) and **Growl** (werewolves).
-
-```cpp
-// Vampire sun damage is enhanced - Resist Fire/Sun spells more valuable
-float GetWeight_ResistSun_Vampire(const ContextState& ctx) {
-    if (!IsPlayerVampire()) return 0.0f;
-    if (ctx.isInterior) return 0.0f;
-
-    // Check time of day
-    if (ctx.timeOfDay > 6.0f && ctx.timeOfDay < 20.0f) {
-        return 8.0f;  // Daytime = high priority
-    }
-    return 0.0f;
-}
-```
+| Area | Why LoreRim covers it |
+|---|---|
+| Large spell registries | The spell-mod stack puts 200+ spells in the registry, which is the load-time classification and reconciliation stress case |
+| `SpellType::Unknown` handling | A modded spell stack is where unclassifiable spells actually occur — see [unknown-spell-patterns.md](unknown-spell-patterns.md) |
+| Runtime spell distribution | SPID is present, so the 5-second reconcile path is exercised constantly rather than theoretically |
+| Survival contexts | Survival Mode Improved is present, so the SMI stage-global path (not the CC-threshold fallback) is the one that gets play-tested |
+| Weapon charge / soul gems | Enchanted-weapon play with filled gems is the live path for the soul-gem and weapon-charge weights |
 
 ---
 
-## Creature Classification
+## What LoreRim hides
 
-Lorerim adds many creatures via Mihail mods that need proper classification.
+This is the part worth reading. Being Requiem-based, LoreRim removes content that
+vanilla ships, and Huginn has contexts that only fire on that content. Those
+contexts have **never been exercised in play**.
 
-### Mihail Creature Mods
+### The workstation context is inert (roadmap #63)
 
-- Mammoth Expansion, Giants Overhaul, Kagoutis and Guars, Nix-Hounds
-- Undead Werewolves, Wraiths, Sea Giants, Minotaurs SE, Cliff Racers
+The workstation context exists to rank Fortify Smithing / Fortify Enchanting
+potions when the player stands at the matching bench. Requiem-based alchemy does
+not produce those effects, so on LoreRim the context fires, labels itself, and
+has nothing to rank.
 
-### New Creature Types
+<!-- UNVERIFIED: that Requiem specifically strips Fortify Smithing and Fortify
+     Enchanting from its alchemy effect list. This is Requiem's content, not
+     Huginn's, and cannot be checked from this repository. It is recorded as the
+     working explanation for the observed emptiness on LoreRim. -->
 
-```json
-{
-  "actor_types": {
-    "races": {
-      "MihailSeaGiantRace": "Beast",
-      "MihailMinotaurRace": "Beast",
-      "MihailGoblinRace": "Beast",
-      "MihailWraithRace": "Undead",
-      "MihailUndeadWerewolfRace": "Undead",
-      "MihailCliffRacerRace": "Beast",
-      "MihailNixHoundRace": "Beast",
-      "MihailKagoutiRace": "Beast",
-      "MihailGuarRace": "Beast",
-      "ForswornMinotaurRace": "Beast",
-      "GRAHLIceTrollRace": "Beast",
-      "BloodHorkerRace": "Beast",
-      "CannibalDraugrRace": "Undead",
-      "FireTonguedDaedrothRace": "Construct",
-      "FairyRace": "Construct"
-    }
-  }
-}
-```
+The live targets on a Requiem list would be filled soul gems and fortify apparel
+instead — and **apparel is not a candidate source at all** (`SourceType` has no
+armor entry, roadmap #65), so that answer is unavailable. The vanilla path has
+unit-test coverage (test 6h) and no play coverage.
 
----
+### Three of the four extended spell tags are unreachable
 
-## Survival Integration
+`SpellTagExt` covers `Unlock`, `SlowFall`, `AntiDragon` and `Waterbreathing`.
+Only `Waterbreathing` corresponds to a spell a LoreRim character routinely
+carries. The other three cover spells the list either does not ship or does not
+give the player, so `unlockWeight`, `slowFallWeight` and `antiDragonWeight` have
+code-verified detection and no play coverage.
 
-Lorerim uses **Survival Mode Improved** (enhanced CC Survival).
+### The CC threshold fallback never runs
 
-### Survival State Detection
+With SMI installed, `PollPlayerSurvival()` reads pre-computed stage globals and
+never reaches the raw-value conversion branch. The CC-only thresholds documented
+in [Survival-Mode-Improved-SKSE.md](Survival-Mode-Improved-SKSE.md) are therefore
+verified against UESP and the code, not against play.
 
-```json
-{
-  "context": {
-    "survival": {
-      "active_when": {
-        "global": "Survival_ModeEnabled",
-        "value": "> 0"
-      },
-      "needs": {
-        "hunger": {
-          "actor_value": "Survival_HungerNeed",
-          "buckets": [
-            { "name": "Full", "max": 100 },
-            { "name": "Satisfied", "max": 300 },
-            { "name": "Peckish", "max": 500 },
-            { "name": "Hungry", "max": 700 },
-            { "name": "Starving", "max": 999999 }
-          ]
-        },
-        "cold": {
-          "actor_value": "Survival_ColdNeed",
-          "buckets": [
-            { "name": "Warm", "max": 100 },
-            { "name": "Chilly", "max": 300 },
-            { "name": "Cold", "max": 500 },
-            { "name": "Freezing", "max": 999999 }
-          ]
-        },
-        "fatigue": {
-          "actor_value": "Survival_ExhaustionNeed",
-          "buckets": [
-            { "name": "Rested", "max": 100 },
-            { "name": "Tired", "max": 400 },
-            { "name": "Exhausted", "max": 999999 }
-          ]
-        }
-      }
-    }
-  }
-}
-```
+### The open item
+
+The roadmap carries a **vanilla-build integration pass** whose honest scope is
+"boot a vanilla profile once and walk the contexts". Until that happens, any
+claim in these docs about vanilla behaviour should be read as *code-verified*,
+not *play-verified*.
 
 ---
 
-## Weight Adjustment Summary
+## Creature classification on LoreRim
 
-| Context | Vanilla | Lorerim | Reason |
-|---------|---------|---------|--------|
-| Melee fallback (MP < 15%) | +4.0 | +8.0 | No regen, critical |
-| Melee fallback (MP < 30%) | 0.0 | +5.0 | Earlier threshold |
-| Melee fallback (MP < 45%) | 0.0 | +2.0 | Even earlier |
-| Restore Magicka potion | +2.0 | +5.0 | Much more valuable |
-| Low-cost spells in combat | ×1.0 | ×1.5 | Efficiency critical |
-| High-cost spells (can't afford) | ×0.1 | ×0.0 | Don't show |
-| Sun resistance (vampire, day) | +8.0 | +10.0 | Enhanced sun damage |
+LoreRim includes a large set of Mihail creature mods. Huginn classifies target
+actors by **race EditorID substring**, not by keyword, and the substring table is
+compiled in — see
+[mod-compatibility.md § Enemy and creature mods](mod-compatibility.md#enemy-and-creature-mods)
+for the full list.
 
----
+The consequence for a list like this one: creatures whose race EditorID contains
+a recognised substring (wolves, bears, trolls, spiders, mammoths, skeevers) type
+correctly; the rest — sea giants, minotaurs, wraiths, guars, nix-hounds — fall
+through to `Humanoid`. That costs relevance on the anti-undead and anti-daedra
+contexts for those encounters. It cannot be fixed from configuration.
 
-## Lorerim Plugin File
-
-Complete plugin configuration for Lorerim:
-
-```json
-{
-  "plugin_name": "Lorerim",
-  "plugin_version": "1.0.0",
-  "Huginn_min_version": "0.6.0",
-  "required_esp": "Requiem - Magic Redone.esp",
-  "depends_on": ["Requiem.esp"],
-
-  "settings": {
-    "magicka_regen_in_combat": false,
-    "melee_fallback_threshold": 0.45,
-    "melee_fallback_weight_base": 2.0,
-    "melee_fallback_weight_critical": 8.0,
-    "restore_magicka_weight_boost": 2.5,
-    "spell_cost_efficiency_multiplier": 1.5,
-    "unaffordable_spell_weight": 0.0
-  },
-
-  "spell_mods": [
-    "Apocalypse - Magic of Skyrim.esp",
-    "Triumvirate - Mage Archetypes.esp",
-    "AncientBloodII.esp",
-    "HolyTemplarMagic.esp",
-    "WildwakerMagic.esp",
-    "Runemaster.esp",
-    "ConstellationMagic.esp",
-    "SonicMage.esp",
-    "AbyssalTides.esp",
-    "DarkHierophant.esp",
-    "ObscureMagic.esp",
-    "FrostbittenDreams.esp",
-    "WizardingTraversal.esp",
-    "ElementalMastery.esp",
-    "SurvivalSpells.esp"
-  ],
-
-  "actor_types": {
-    "races": {
-      "MihailSeaGiantRace": "Beast",
-      "MihailMinotaurRace": "Beast",
-      "MihailGoblinRace": "Beast",
-      "MihailWraithRace": "Undead",
-      "MihailUndeadWerewolfRace": "Undead",
-      "ForswornMinotaurRace": "Beast",
-      "GRAHLIceTrollRace": "Beast",
-      "CannibalDraugrRace": "Undead",
-      "FireTonguedDaedrothRace": "Construct"
-    }
-  },
-
-  "items": {
-    "food": {
-      "keywords": ["VendorItemFood", "VendorItemFoodRaw"],
-      "weight_overrides": {
-        "hunger_hungry": 6.0,
-        "hunger_starving": 10.0
-      }
-    },
-    "warming": {
-      "keywords": ["MAG_FortifyResistFrost", "Survival_WarmingItem"],
-      "weight_overrides": {
-        "cold_cold": 6.0,
-        "cold_freezing": 10.0
-      }
-    },
-    "restore_magicka": {
-      "keywords": ["VendorItemPotion"],
-      "effects": ["AlchRestoreMagicka"],
-      "weight_multiplier": 2.5
-    }
-  }
-}
-```
+The old race-mapping JSON block in this file (`"MihailSeaGiantRace": "Beast"` and
+so on) described a configuration format that does not exist, and asserted
+classifications the code does not produce. It has been removed rather than
+corrected, because there is nowhere to put it.
 
 ---
 
-## Framework Considerations
+## Requiem's effect on scoring
 
-### SPID (Spell Perk Item Distributor)
+Requiem changes spell costs. The one place that matters is affordability, and it
+is handled generically: `CandidateGenerator` recomputes
+`spellItem->CalculateMagickaCost(playerRef)` every gather pass, so whatever
+Requiem's perks and skill scaling do to a spell's cost is what the affordability
+filter sees. The `[Candidates]` uncastable-spell policy (`Disallow` / `Penalize`
+/ `Allow`) is the knob for how a spell you cannot currently afford is treated.
 
-Lorerim uses SPID to distribute spells at runtime. Huginn needs to:
-- Refresh spell registry after game load (1-2 second delay)
-- Re-scan when spell list changes
-
-### KID (Keyword Item Distributor)
-
-Keywords may be added at runtime. Huginn should:
-- Not cache keyword lookups permanently
-- Refresh classification on reconciliation
-
----
-
-## Integration Notes
-
-1. **Requiem** is the core overhaul - all magic costs, regeneration, and spell scaling flows through it
-2. **SPID/KID** mean spells may be added to NPCs/player at runtime - static form detection may miss these
-3. **Survival Mode Improved** provides the survival state hooks
-4. **Mihail creatures** add many new creature types needing classification
-5. **Wintersun** blessings provide passive magical effects that may affect recommendations
-6. **Sacrilege/Growl** transformations provide alternate ability sets
-7. **Magic Redone** patches affect most spell mod integrations
+There is no modelling of combat magicka regeneration and no "magicka is scarce"
+weighting. If Requiem's economy makes the defaults feel wrong, the adjustment is
+`[ContextWeights]`, applied globally.
 
 ---
 
-## See Also
+## The modlist itself
 
-- [mod-compatibility.md](mod-compatibility.md) - General mod compatibility
+A snapshot of LoreRim's Gameplay – Spells & Magic section is kept at
+[lorerim-spelllist.md](lorerim-spelllist.md). It is a capture of the list at one
+point in time, not a compatibility statement — none of those mods has a Huginn
+patch, and none needs one, because classification is generic.
+
 ---
 
-*This document is specific to Lorerim. For other modpacks, create similar compatibility files.*
+## See also
+
+- [mod-compatibility.md](mod-compatibility.md) — how classification and overrides actually work
+- [unknown-spell-patterns.md](unknown-spell-patterns.md) — spells this stack leaves unclassified
+- [Survival-Mode-Improved-SKSE.md](Survival-Mode-Improved-SKSE.md) — the SMI path LoreRim uses
+- [../architecture/2-classifiers.md](../architecture/2-classifiers.md) — classifier internals
+- [../roadmap.md](../roadmap.md) — #63, #65 and the vanilla integration pass

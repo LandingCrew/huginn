@@ -1,865 +1,456 @@
-# Huginn Mod Compatibility Guide
+# Mod Compatibility
 
-This document provides compatibility information for popular Skyrim mods and INI override templates.
+**Verified against `src/` at v0.19.10.**
 
----
-
-## Compatibility Overview
-
-| Mod Category | Risk Level | Mitigation Strategy |
-|--------------|------------|---------------------|
-| Spell Mods | Medium-High | Multi-effect analysis, keyword fallback, override INI |
-| Perk Overhauls | Low-Medium | Player-relative cost calculation |
-| Combat Mods | Low | Binary combat state is transparent |
-| Enemy Mods | Medium | Keyword-based TargetType detection |
-| UI Mods | Low | Wheeler API handles UI layer |
-| Framework Mods | Medium | Event hooks, cache invalidation |
+This file was written around v0.6–v0.7 and described an extension system that was
+never built. It has been rewritten to describe what the plugin actually does. If
+you are looking for the JSON plugin format, the per-mod `[ModName_Overrides]` INI
+sections, or the Requiem/LoreRim weight profiles that used to be documented here,
+none of them exist in the code and none of them ever did — see
+[What does not exist](#what-does-not-exist).
 
 ---
 
-## Spell Mods
+## The short version
 
-### Apocalypse - Magic of Skyrim
+Huginn contains **no per-mod code**. There is no `LookupModByName` call anywhere
+in `src/`, so nothing branches on Requiem, LoreRim, Apocalypse, Frostfall or
+anything else. Compatibility comes from three places instead:
 
-**Impact:** Major - 100+ new spells across all schools
+| Mechanism | Where |
+|---|---|
+| Engine-API classification, with name-based fallbacks | `src/spell/`, `src/learning/item/`, `src/scroll/`, `src/weapon/` |
+| One user override file | `Data/SKSE/Plugins/Huginn_Overrides.ini` |
+| Two hardcoded survival-mod integrations | `src/state/StateManager_Survival.cpp` (CC Survival Mode + SMI) |
 
-**Compatibility Notes:**
-- Most spells use standard archetypes and will auto-classify
-- Some unique spell types need manual override
-- Concentration spells work normally
-
-**Override Template:**
-```ini
-[Apocalypse_Overrides]
-; Alteration
-"Entomb"=type:Utility,tags:Crowd Control
-"Deep Storage"=type:Utility,tags:Storage
-"Fabricate Object"=type:Utility,tags:Crafting
-
-; Conjuration - Unique summons
-"Conjure Ash Guardian"=type:SummonCreature,tags:Summon,Defensive
-"Conjure Avenger"=type:SummonCreature,tags:Summon,Offensive
-"Conjure Herne"=type:SummonCreature,tags:Summon,Beast
-"Conjure Xivilai"=type:SummonCreature,tags:Summon,Daedric
-
-; Destruction - Special damage types
-"Bolide"=type:DamageFire,tags:AOE,Ranged,Projectile
-"Forbidden Sun"=type:DamageFire,tags:AOE,Ranged
-"Incendiary Flow"=type:DamageFire,tags:AOE,Hazard
-"Twister"=type:DamagePhysical,tags:AOE,Crowd Control
-"Sleet Storm"=type:DamageFrost,tags:AOE,Slow
-"Electrosphere"=type:DamageShock,tags:AOE,Sustained
-
-; Illusion
-"Pale Shadow"=type:Illusion,tags:Summon,Clone
-"Evil Twin"=type:Illusion,tags:Summon,Clone
-"Compelling Whispers"=type:Illusion,tags:Crowd Control
-
-; Restoration
-"Circle of Strength"=type:RestoreStamina,tags:AOE,Buff
-"Leech Seed"=type:RestoreHealth,tags:Drain,DOT
-"Welling Blood"=type:RestoreHealth,tags:Buff
-```
+Everything else is generic. A modded spell is treated exactly like a vanilla one.
 
 ---
 
-### Triumvirate - Mage Archetypes
+## How a modded thing gets classified
 
-**Impact:** Major - Archetype-specific spell packs (Druid, Warlock, Shaman, etc.)
+All four classifiers use the same shape: **engine API first, tags second,
+user override on top of both.**
 
-**Compatibility Notes:**
-- Nature spells may not match standard archetypes
-- Some spells have multiple effect types
-- Archetype-specific mechanics
+### Spells (`src/spell/SpellClassifier.cpp`)
 
+`ClassifySpell()` runs in this order:
 
-**Override Template:**
-```ini
-[Triumvirate_Overrides]
-; Druid spells
-"Overgrowth"=type:SummonCreature,tags:Nature,Summon
-"Wild Spirits"=type:SummonCreature,tags:Nature,Summon
-"Ensnaring Vines"=type:Utility,tags:Nature,Crowd Control
-"Nature's Bounty"=type:RestoreHealth,tags:Nature,HOT
+1. **Override lookup** — by FormID first, then by exact name.
+2. **Tags** — `DetermineSpellTags()` matches ~50 substrings against the
+   lowercased spell name (`fire`, `frost`, `ward`, `conjure`, `muffle`, …).
+   Overridable.
+3. **Extended tags** — `DetermineSpellTagsExt()` walks *every* effect (not just
+   the costliest) looking for the `kOpen` and `kEtherealize` archetypes and for
+   a non-hostile value modifier on `kWaterBreathing`, plus whole-word name
+   matches for `dragonrend`/`dragonbane`/`slowfall`/`unlock`/`open lock`.
+   **Not overridable from the INI.**
+4. **Type** — `DetermineSpellType()` reads the costliest effect's archetype,
+   hostility flag, school and primary actor value. If that returns `Unknown`,
+   `DeriveSpellTypeFromTags()` falls back to the tags from step 2/3.
+5. **School** — API only (`GetMagickSkill()` on the costliest effect). No name
+   fallback, so a modded spell in a custom school reads as `Unknown`.
+6. **Element** — API `resistVariable` first, then derived from tags.
 
-; Shaman spells
-"Ancestral Guardian"=type:SummonCreature,tags:Spirit,Summon
-"Spirit Walk"=type:Utility,tags:Spirit,Movement
-"Totem of Wrath"=type:DamageMagic,tags:Spirit,AOE
+The practical consequence: a modded spell with a **vanilla-shaped effect record**
+classifies correctly regardless of which mod added it, and a modded spell with an
+unusual name and a scripted or custom effect lands in `SpellType::Unknown`.
 
-; Warlock spells
-"Eldritch Blast"=type:DamageMagic,tags:Eldritch,Ranged
-"Hex"=type:Debuff,tags:Curse,DOT
-"Dark Pact"=type:Buff,tags:Blood,Self
-```
+### What `Unknown` actually costs you
 
----
+An `Unknown` spell is **not filtered out**. It stays in the candidate pool and is
+still eligible for every slot classified `SpellsAny` (`SlotClassifier.cpp:143`
+returns `true` for all spells) and for the per-school slots if its school
+resolved. What it loses is context relevance: `WeightForCandidate()`
+(`src/context/ContextWeightForCandidate.cpp`) starts every spell at
+`max(spellWeight, baseRelevanceWeight)` and then raises that only for tags and
+types it recognises. A spell with no tags and no type never rises above the
+baseline, so in practice it surfaces only on a permissive slot, as a wildcard
+exploration pick, or once the contextual bandit has learned you use it.
 
-### Mysticism - A Magic Overhaul
+So: an unclassified spell is *quiet*, not *invisible*. See
+[unknown-spell-patterns.md](unknown-spell-patterns.md).
 
-**Impact:** Major - Overhauls vanilla magic, adds new spells
+### Scrolls (`src/scroll/ScrollClassifier.cpp`)
 
-**Compatibility Notes:**
-- Modifies vanilla spell costs and effects
-- New spell archetypes (Sun damage, etc.)
-- Better balanced for vanilla+ gameplay
+`ScrollItem` derives from `SpellItem`, so the scroll classifier delegates
+straight to `SpellClassifier::ClassifySpell()` and copies the result across,
+then overwrites magnitude/duration from the scroll's own costliest effect.
+Anything true of spell classification is true of scrolls.
 
-**Override Template:**
-```ini
-[Mysticism_Overrides]
-; Sun damage spells (anti-undead)
-"Sun Fire"=type:DamageSun,tags:Holy,Anti-Undead
-"Vampire's Bane"=type:DamageSun,tags:Holy,Anti-Undead
-"Stendarr's Aura"=type:Cloak,tags:Holy,Anti-Undead
+Note that scrolls have a **separate, open problem** that is not a compatibility
+issue: they sit in the pool every tick but score near zero against trained items,
+so a scroll can rarely surface before it has been used (roadmap, "Scroll
+cold-start").
 
-; New utility spells
-"Spelldancer"=type:Buff,tags:Movement,Alteration
-```
+### Potions, food and ingredients (`src/learning/item/ItemClassifier.cpp`)
 
----
+Same shape — override, then `PopulateItemTags()`, then `DetermineItemType()`
+with `DeriveItemTypeFromTags()` as fallback, then an alcohol sub-classification
+pass on anything typed `Food`.
 
-### Ancient Blood Magic II
+Two places explicitly accommodate mods:
 
-**Impact:** Major - Unique blood magic school
+- **Alcohol** is detected by keyword first — `VendorItemAlcohol`,
+  `CACO_IsAlcohol`, `VendorItemSkooma` — before falling back to name matching
+  (`ale`, `mead`, `wine`, `skooma`, `brandy`, `mazte`, `flin`, …).
+- **Survival food** is detected by the CC Survival keywords
+  `Survival_FoodRestoreHunger[Small|Medium|Large]` and
+  `Survival_FoodWarm[Small|Medium|Large]`.
 
-**Compatibility Notes:**
-- Blood spells cost health instead of magicka
-- Self-damage mechanics require special handling
-- Override health cost detection
+A mod that ships those keywords works with no configuration. A mod that ships its
+own equivalents needs an override entry per item.
 
-**Override Template:**
-```ini
-[BloodMagic_Overrides]
-; Blood damage spells
-"Blood Bolt"=type:DamageMagic,tags:Blood,Ranged,HealthCost
-"Hemorrhage"=type:DamageMagic,tags:Blood,DOT,HealthCost
-"Blood Storm"=type:DamageMagic,tags:Blood,AOE,HealthCost
+### Weapons (`src/weapon/WeaponClassifier.cpp`)
 
-; Blood healing (drains enemies)
-"Sanguine Drain"=type:RestoreHealth,tags:Blood,Drain,HealthCost
-"Blood Pact"=type:RestoreHealth,tags:Blood,Self,HealthCost
+`DetermineWeaponType()` switches on `GetWeaponType()` — pure engine data, so any
+weapon mod that registers a normal weapon type classifies correctly. Anything
+outside the nine known types logs a warning and becomes `WeaponType::Unknown`.
 
-; Blood buffs
-"Blood Frenzy"=type:Buff,tags:Blood,Damage,HealthCost
-"Crimson Aegis"=type:ArmorBuff,tags:Blood,Defensive,HealthCost
-```
+**Weapons and ammo have no override file.** `LoadOverrides` exists only on
+`SpellRegistry` and `ItemRegistry`.
 
----
+### Apparel
 
-### Other Spell Mods
-
-| Mod | Notes | Override Priority |
-|-----|-------|-------------------|
-| **Odin** | Vanilla+ style, mostly auto-classifies | Low |
-| **Elemental Destruction Magic** | New elements (Earth, Water, Wind) | Medium |
-| **Arcanum** | Complex multi-school spells | High |
-| **Forgotten Magic Redone** | Leveling spells, special effects | Medium |
-| **Phenderix Magic Evolved** | Many spells, mixed quality | Medium |
-| **Lost Grimoire** | Standard spell types | Low |
+Not a candidate source at all. `SourceType` (`src/candidate/CandidateTypes.h`)
+covers Spell, Potion, Scroll, Weapon, Ammo, SoulGem, Food and Staff — there is
+no armor entry, so fortify gear can never be recommended no matter how it is
+classified. This is roadmap item #65 and it is open.
 
 ---
 
-## Perk Overhauls
+## The override file
 
-### Requiem - The Roleplaying Overhaul
+**One file, one location:** `Data/SKSE/Plugins/Huginn_Overrides.ini`. Both
+`SpellRegistry` and `ItemRegistry` load that same path
+(`SpellRegistry.cpp:14`, `ItemRegistry.cpp:13`). There is no `overrides/`
+directory, no per-mod file, and no load-order priority between files. A template
+with worked examples ships at `configs/Huginn_Overrides.ini`.
 
-**Impact:** Critical - Complete game overhaul
+### Syntax
 
-**Compatibility Notes:**
-- Spell costs completely reworked
-- Magicka regeneration stops in combat
-- Perks dramatically affect spell effectiveness
-- Level-gated spell effectiveness
-
-**Required Adaptations:**
-```cpp
-// Requiem-specific cost calculation
-float GetRequiemMagickaCost(RE::SpellItem* spell) {
-    auto* player = RE::PlayerCharacter::GetSingleton();
-
-    // Requiem modifies costs based on skill level and perks
-    // Standard CalculateMagickaCost should capture this
-    float cost = spell->CalculateMagickaCost(player);
-
-    // Requiem stops magicka regen in combat - factor this in
-    if (IsInCombat() && !HasRegenPerk()) {
-        // Weight spells by remaining magicka more heavily
-        cost *= 1.5f;  // Effective cost higher when no regen
-    }
-
-    return cost;
-}
-
-// Detect Requiem presence
-bool IsRequiemLoaded() {
-    return RE::TESDataHandler::GetSingleton()
-        ->LookupModByName("Requiem.esp") != nullptr;
-}
-```
-
-**Override Template:**
-```ini
-[Requiem_Settings]
-; Requiem-specific weight adjustments
-MagickaRegenInCombat=false
-SpellCostMultiplier=1.5
-LowMagickaPenaltyThreshold=0.3
-
-; Requiem makes melee fallback more important
-MeleeWeaponWeightBoost=2.0
-```
-
----
-
-### Ordinator - Perks of Skyrim
-
-**Impact:** Major - Complete perk overhaul
-
-**Compatibility Notes:**
-- Dynamic cost modifiers (Quadratic Wizard, etc.)
-- Conditional bonuses not detectable
-- Dual-cast multipliers changed
-- Perk-added spell effects
-
-**Notes:**
-- `CalculateMagickaCost(player)` captures most perk reductions
-- Some perks add effects at cast time (undetectable)
-- Vancian Magic completely changes magicka system
-
----
-
-### Adamant / Vokrii
-
-**Impact:** Medium - Lighter perk touches
-
-**Compatibility Notes:**
-- Mostly compatible with standard cost calculation
-- Minor conditional bonuses
-
----
-
-### Lorerim (Requiem + Magic Redone)
-
-**Impact:** Critical - Complete overhaul stack
-
-Lorerim uses Requiem as its base with **Requiem - Magic Redone** layered on top, plus numerous patches for spell mods.
-
-**Key Differences from Vanilla:**
-- Magicka regeneration **stops in combat** (Requiem)
-- Spell costs are **dramatically higher** at low skill levels
-- Perks **gate spell effectiveness** (novice spells weak without perks)
-- Magic Redone rebalances all spell schools
-- Many spell mods have specific Magic Redone patches
-
-**Required Adaptations:**
-
-```cpp
-// Lorerim-specific detection
-bool IsLorerimLoaded() {
-    auto* dataHandler = RE::TESDataHandler::GetSingleton();
-    return dataHandler->LookupModByName("Requiem.esp") != nullptr &&
-           dataHandler->LookupModByName("Requiem - Magic Redone.esp") != nullptr;
-}
-
-// Lorerim magicka is precious - weight by remaining pool more heavily
-float GetLorerimMagickaWeight(float magickaPercent, bool inCombat) {
-    float weight = 1.0f;
-
-    // No regen in combat = magicka is finite resource
-    if (inCombat) {
-        if (magickaPercent < 0.3f) weight = 2.0f;      // Very precious
-        else if (magickaPercent < 0.5f) weight = 1.5f; // Conserve
-    }
-
-    return weight;
-}
-
-// Melee fallback is more important in Lorerim
-float GetLorerimMeleeWeight(const ContextState& ctx) {
-    if (!ctx.inCombat) return 0.1f;
-
-    // Earlier fallback threshold since magicka won't regen
-    if (ctx.magickaPercent < 0.2f) return 6.0f;  // Higher than vanilla
-    if (ctx.magickaPercent < 0.4f) return 3.0f;
-
-    return 0.1f;
-}
-```
-
-**Plugin Example:**
-
-```json
-{
-  "plugin_name": "Lorerim",
-  "required_esp": "Requiem - Magic Redone.esp",
-  "depends_on": ["Requiem.esp"],
-
-  "settings": {
-    "magicka_regen_in_combat": false,
-    "melee_fallback_threshold": 0.4,
-    "melee_fallback_weight_boost": 2.0,
-    "spell_cost_weight_multiplier": 1.5
-  },
-
-  "spell_mods": {
-    "comment": "These spell mods have Magic Redone patches in Lorerim",
-    "patched": [
-      "Apocalypse - Magic of Skyrim.esp",
-      "Triumvirate - Mage Archetypes.esp",
-      "AncientBloodII.esp",
-      "HolyTemplarMagic.esp",
-      "WildwakerMagic.esp",
-      "Runemaster.esp",
-      "ConstellationMagic.esp",
-      "SonicMage.esp",
-      "AbyssalTides.esp",
-      "DarkHierophant.esp",
-      "ObscureMagic.esp",
-      "FrostbittenDreams.esp",
-      "WizardingTraversal.esp"
-    ]
-  }
-}
-```
-
-**Lorerim-Specific Weight Adjustments:**
-
-| Context | Vanilla Weight | Lorerim Weight | Reason |
-|---------|---------------|----------------|--------|
-| Melee fallback (magicka < 20%) | +4.0 | +6.0 | No regen in combat |
-| Melee fallback (magicka < 40%) | 0.0 | +3.0 | Earlier threshold |
-| Restore Magicka potion | +2.0 | +4.0 | More valuable |
-| Low-cost spells | ×1.0 | ×1.3 | Efficiency matters |
-| High-cost spells (can't afford) | ×0.1 | ×0.0 | Don't tease |
-
----
-
-## Combat Mods
-
-### MCO / Precision / Chocolate Poise
-
-**Impact:** Major for combat state detection
-
-**Compatibility Notes:**
-- Combat state uses vanilla `IsInCombat()` - still works
-- Stagger states may be more frequent
-- Hit detection unchanged for spell feedback
-
-**Detection Strategy:**
-```cpp
-// Combat mods don't change these APIs
-bool inCombat = player->IsInCombat();  // Still works
-float health = player->GetActorValue(RE::ActorValue::kHealth);  // Still works
-
-// Poise mods add stagger - we detect via taking damage
-bool isStaggered = player->IsStaggered();  // May fire more often
-```
-
----
-
-### TK Dodge / DMCO
-
-**Impact:** Low - Adds dodge mechanics
-
-**Compatibility Notes:**
-- Stamina tracking may need adjustment
-- Dodge i-frames don't affect recommendations
-
----
-
-## Enemy Mods
-
-### Keyword-Based Detection
-
-All enemy mods should work with keyword detection. Standard keywords:
-
-```cpp
-// Vanilla keywords - work with all mods that follow convention
-constexpr RE::FormID ActorTypeDragon   = 0x00035D59;
-constexpr RE::FormID ActorTypeUndead   = 0x00013797;
-constexpr RE::FormID ActorTypeDaedra   = 0x000131F8;
-constexpr RE::FormID ActorTypeAnimal   = 0x00013795;
-constexpr RE::FormID ActorTypeCreature = 0x00013794;
-constexpr RE::FormID ActorTypeNPC      = 0x00013794;
-
-// Detection order matters - check specific before general
-TargetType GetTargetType(RE::Actor* actor) {
-    if (actor->HasKeywordID(ActorTypeDragon))   return TargetType::Dragon;
-    if (actor->HasKeywordID(ActorTypeUndead))   return TargetType::Undead;
-    if (actor->HasKeywordID(ActorTypeDaedra))   return TargetType::Construct;
-    if (actor->HasKeywordID(ActorTypeAnimal))   return TargetType::Beast;
-    if (actor->HasKeywordID(ActorTypeCreature)) return TargetType::Beast;
-    return TargetType::Humanoid;
-}
-```
-
-### Mod-Specific Creatures
-
-| Mod | Creatures | Classification |
-|-----|-----------|----------------|
-| **Mihail Monsters** | Goblins, Sea Giants, Wraiths | Use vanilla keywords |
-| **Immersive Creatures** | Many new types | Most use vanilla keywords |
-| **OBIS** | Bandit variants | Humanoid (default) |
-| **Diverse Dragons** | Dragon variants | Dragon keyword present |
-
----
-
-## UI Mods
-
-### ImmersiveHUD SKSE
-compatible
-
-### Wheeler Integration
-
-Huginn uses Wheeler for its action wheel.
-
-**API Version Differences:**
-
-| Feature | Wheeler v1 | Wheeler v2 |
-|---------|------------|------------|
-| Managed wheels | ✓ | ✓ |
-| WheelStateCallback | ✓ | ✓ |
-| ItemActivatedCallback | ⚠️ May not fire | ✓ |
-| Entry subtext | ✗ | ✓ |
-| Custom styling | ✗ | ✓ |
-
-**Important:** The `ItemActivatedCallback` is required for contextual bandit learning feedback. If using Wheeler v1 (C0kAdam's version), Huginn may not receive notifications when players select items from the wheel, which means:
-- Positive rewards for selecting recommended spells won't be applied
-- Skip penalties may incorrectly trigger when scrolling between wheels
-
-**Recommendation:** Use Wheeler v2 (dTry's version) for full Huginn integration.
-
-**Potential Conflicts:**
-- Other Wheeler clients sharing wheel space
-- HUD position overlap with TrueHUD
-
-**Resolution:**
-- Huginn creates its own managed wheels (primary + alternate)
-- Position configurable via dMenu (future)
-
-### TrueHUD
-
-**Impact:** Low - Separate HUD layer
-
-**Compatibility Notes:**
-- Boss bars don't conflict
-- Target info doesn't conflict
-- Widget positions may need adjustment
-
-### Casting Bar Mods
-
-**Impact:** Medium - Visual overlap potential
-
-**Compatibility Notes:**
-- Huginn's spell recommendations are separate from casting UI
-- May want to hide Huginn widget while casting
-
----
-
-## Framework Mods
-
-### SPID (Spell Perk Item Distributor)
-
-**Impact:** Medium - Distributes spells at runtime
-
-**Compatibility Notes:**
-- Spells distributed after game load
-- 5-second reconciliation interval catches new spells
-- May want faster initial scan
-
-**Detection:**
-```cpp
-// Force spell registry refresh after SPID distribution
-void OnDataLoaded() {
-    // SPID runs during data load
-    // Schedule reconciliation after short delay
-    ScheduleReconciliation(1.0f);  // 1 second after load
-}
-```
-
-### KID (Keyword Item Distributor)
-
-**Impact:** Medium - Adds keywords at runtime
-
-**Compatibility Notes:**
-- Keywords may change after initial classification
-- Cache invalidation needed if keywords change
-
----
-
-## Survival Mode Detection
-
-Huginn detects survival states (cold, hunger, fatigue) to provide contextual recommendations.
-
-### Supported
-
-| Mod | Support Level | Notes |
-|-----|---------------|-------|
-| **CC Survival Mode** | Full | Reads globals directly from `ccqdrsse001-survivalmode.esl` |
-| **Survival Mode Improved** | Full | Uses same globals as CC Survival Mode |
-
-### Not Supported
-
-| Mod | Reason |
-|-----|--------|
-| **Frostfall** | Uses different global variables |
-| **Sunhelm** | Uses different global variables |
-| **iNeed** | Uses different tracking system |
-| **Other survival mods** | Unless they modify CC Survival globals |
-
-### Graceful Fallback
-
-If CC Survival Mode is not installed:
-- Cold/hunger/fatigue default to neutral (Warm/Satisfied/Refreshed)
-- `survivalModeActive` stays `false`
-- No errors or warnings
-
-See [Survival-Mode-Improved-SKSE.md](Survival-Mode-Improved-SKSE.md) for detailed technical information.
-
----
-
-## Extension System
-
-Huginn supports two approaches for mod compatibility:
-
-1. **INI Overrides** - Simple text-based spell classification (user-editable)
-2. **Classification Plugins** - Community-maintained JSON plugins (auto-loaded)
-
-### Design Philosophy
-
-Rather than maintaining hardcoded checks for every mod, Huginn loads external classification data. This allows:
-- Mod authors to ship Huginn compatibility files
-- Community patches without Huginn updates
-- User overrides for edge cases
-
-### Plugin Architecture
-
-```
-Data/SKSE/Plugins/Huginn/
-├── overrides/                    # User INI overrides (highest priority)
-│   └── Huginn_Overrides.ini
-├── plugins/                      # Community JSON plugins (auto-loaded)
-│   ├── apocalypse.Huginn.json
-│   ├── triumvirate.Huginn.json
-│   ├── mysticism.Huginn.json
-│   └── survival_mode.Huginn.json
-└── Huginn.ini                     # Main config
-```
-
-### Plugin JSON Format
-
-```json
-{
-  "plugin_name": "Apocalypse",
-  "plugin_version": "1.0.0",
-  "Huginn_min_version": "0.6.0",
-  "required_esp": "Apocalypse - Magic of Skyrim.esp",
-
-  "spells": {
-    "by_name": {
-      "Entomb": { "type": "Utility", "tags": ["CrowdControl"] },
-      "Bolide": { "type": "DamageFire", "tags": ["AOE", "Ranged", "Projectile"] }
-    },
-    "by_formid": {
-      "0x12345678": { "type": "DamageFrost", "tags": ["AOE"] }
-    }
-  },
-
-  "keywords": {
-    "add": {
-      "MagicDamageNature": { "maps_to": "DamageMagic" }
-    }
-  },
-
-  "actor_types": {
-    "races": {
-      "MyModGoblinRace": "Beast",
-      "MyModWraithRace": "Undead"
-    }
-  },
-
-  "context": {
-    "survival_mode": {
-      "detection": "global_variable",
-      "form_id": "0x000ABC12",
-      "hunger_av": "Survival_HungerNeed",
-      "cold_av": "Survival_ColdNeed",
-      "fatigue_av": "Survival_ExhaustionNeed"
-    }
-  }
-}
-```
-
-### Plugin Loading Priority
-
-1. **Built-in defaults** (lowest) - Vanilla spell classification
-2. **Community plugins** (medium) - `plugins/*.Huginn.json`
-3. **User INI overrides** (highest) - `overrides/*.ini`
-
-### Conditional Loading
-
-Plugins only load if their required ESP is present:
-
-```cpp
-void LoadPlugins() {
-    auto* dataHandler = RE::TESDataHandler::GetSingleton();
-
-    for (const auto& pluginFile : GetPluginFiles()) {
-        auto plugin = LoadJSON(pluginFile);
-
-        // Skip if required ESP not loaded
-        if (!plugin.required_esp.empty()) {
-            if (!dataHandler->LookupModByName(plugin.required_esp)) {
-                SKSE::log::info("Skipping {} - {} not loaded",
-                    pluginFile, plugin.required_esp);
-                continue;
-            }
-        }
-
-        RegisterPlugin(plugin);
-    }
-}
-```
-
-### Feature Flags
-
-For optional features (like Survival Mode), plugins can expose feature flags:
-
-```json
-{
-  "features": {
-    "survival_mode": {
-      "enabled_when": {
-        "type": "global_variable",
-        "form_id": "0x000ABC12",
-        "condition": "> 0"
-      },
-      "context_fields": ["hunger", "cold", "fatigue"]
-    }
-  }
-}
-```
-
-### Survival Mode Plugin Example
-
-```json
-{
-  "plugin_name": "Survival Mode (CC)",
-  "required_esp": "ccqdrsse001-survivalmode.esl",
-
-  "context": {
-    "survival": {
-      "active_when": {
-        "global": "Survival_ModeEnabled",
-        "value": "> 0"
-      },
-      "needs": {
-        "hunger": {
-          "actor_value": "Survival_HungerNeed",
-          "buckets": [
-            { "name": "Full", "max": 100 },
-            { "name": "Satisfied", "max": 300 },
-            { "name": "Peckish", "max": 500 },
-            { "name": "Hungry", "max": 700 },
-            { "name": "Starving", "max": 999999 }
-          ]
-        },
-        "cold": {
-          "actor_value": "Survival_ColdNeed",
-          "buckets": [
-            { "name": "Warm", "max": 100 },
-            { "name": "Chilly", "max": 300 },
-            { "name": "Cold", "max": 500 },
-            { "name": "Freezing", "max": 999999 }
-          ]
-        },
-        "fatigue": {
-          "actor_value": "Survival_ExhaustionNeed",
-          "buckets": [
-            { "name": "Rested", "max": 100 },
-            { "name": "Tired", "max": 400 },
-            { "name": "Exhausted", "max": 999999 }
-          ]
-        }
-      }
-    }
-  },
-
-  "items": {
-    "food": {
-      "keywords": ["VendorItemFood", "VendorItemFoodRaw"],
-      "survival_weight": {
-        "hunger_hungry": 6.0,
-        "hunger_starving": 10.0
-      }
-    },
-    "warming": {
-      "keywords": ["MAG_FortifyResistFrost", "Survival_WarmingItem"],
-      "survival_weight": {
-        "cold_cold": 6.0,
-        "cold_freezing": 10.0
-      }
-    }
-  }
-}
-```
-
-### Sunhelm/Frostfall Plugin Example
-
-```json
-{
-  "plugin_name": "Sunhelm",
-  "required_esp": "SunhelmSurvival.esp",
-
-  "context": {
-    "survival": {
-      "active_when": {
-        "global": "SH_SurvivalEnabled",
-        "value": "> 0"
-      },
-      "needs": {
-        "hunger": { "actor_value": "SH_HungerLevel" },
-        "cold": { "actor_value": "SH_ColdLevel" },
-        "fatigue": { "actor_value": "SH_FatigueLevel" }
-      }
-    }
-  }
-}
-```
-
----
-
-## Override INI Format
-
-### File Location
-
-```
-Data/SKSE/Plugins/Huginn/overrides/
-├── Huginn_Overrides.ini          # User overrides (highest priority)
-├── Apocalypse_Overrides.ini     # Mod-specific overrides (legacy)
-├── Triumvirate_Overrides.ini
-└── ...
-```
-
-### INI Syntax
+Each **section** is one spell or item, named either by its exact display name or
+by an 8-digit hex FormID:
 
 ```ini
-[ModName_Overrides]
-; By spell name (partial match)
-"Spell Name"=type:EffectType,tags:Tag1,Tag2,Tag3
+[Blinding Spores]
+type = Debuff
+tags = Poison, Ranged
 
-; By FormID (exact match, higher priority)
-0x12345678=type:EffectType,tags:Tag1,Tag2
-
-[ModName_Settings]
-; Mod-specific settings
-SettingName=value
+[0x0004DBA4]
+type = Utility
 ```
 
-### Effect Types
+Both keys are optional. A section with only `type` keeps auto-detected tags; a
+section with only `tags` keeps the auto-detected type — but note that supplying
+`tags` replaces the whole auto-detected tag set rather than adding to it.
 
-| Type | Description |
-|------|-------------|
-| `DamageFire` | Fire damage |
-| `DamageFrost` | Frost damage |
-| `DamageShock` | Shock damage |
-| `DamageSun` | Sun/holy damage (anti-undead) |
-| `DamageMagic` | Generic magic damage |
-| `DamagePoison` | Poison damage |
-| `DamagePhysical` | Physical/force damage |
-| `RestoreHealth` | Health restoration |
-| `RestoreMagicka` | Magicka restoration |
-| `RestoreStamina` | Stamina restoration |
-| `ArmorBuff` | Armor/flesh spells |
-| `ResistFire` | Fire resistance |
-| `ResistFrost` | Frost resistance |
-| `ResistShock` | Shock resistance |
-| `ResistMagic` | Magic resistance |
-| `SummonCreature` | Conjuration summons |
-| `BoundWeapon` | Bound weapon spells |
-| `Cloak` | Cloak spells |
-| `Illusion` | Calm/Fear/Frenzy |
-| `Buff` | Generic buff |
-| `Debuff` | Generic debuff |
-| `Utility` | Utility spells |
-| `Unknown` | Unclassified (uses contextual bandit learning) |
+FormID matching wins over name matching. Name matching is **exact and
+case-sensitive** — `HasOverride(data.name)` is a hash-map lookup, not a substring
+test, despite what the old version of this file claimed.
 
-### Tags
+Hot-reload: `hg rebuild` re-reads the file (`SpellRegistry.cpp:77`), and loading
+is idempotent — the spell side clears previous entries first.
 
-Tags provide additional context for slot filtering:
+### Spell `type` values
 
-| Tag | Description |
-|-----|-------------|
-| `AOE` | Area of effect |
-| `DOT` | Damage over time |
-| `HOT` | Heal over time |
-| `Ranged` | Long range |
-| `Melee` | Close range |
-| `Self` | Self-targeted |
-| `Summon` | Summons something |
-| `Crowd Control` | CC effects |
-| `Anti-Undead` | Effective vs undead |
-| `HealthCost` | Costs health (blood magic) |
+`Unknown`, `Healing`, `Damage`, `Defensive`, `Utility`, `Summon`, `Buff`,
+`Debuff`. That is the complete `SpellType` enum; there is no `DamageFire`,
+`SummonCreature` or `Cloak`.
+
+### Spell `tags` values
+
+Parsed case-insensitively by `SpellOverrides::ParseSingleTag`. An unrecognised
+tag logs a warning and is skipped.
+
+| | |
+|---|---|
+| Damage | `Fire`, `Frost`, `Shock`, `Poison`, `Sun` |
+| Range/area | `Ranged`, `Melee` (or `Touch`), `AOE`, `Concentration` |
+| Special | `AntiUndead`, `AntiDaedra`, `Stealth`, `Conjuration` |
+| Restoration | `RestoreHealth` (or `Restoration`), `RestoreMagicka`, `RestoreStamina`, `Ward`, `TurnUndead` |
+| Alteration | `Armor` (or `Alteration`, `Defensive`), `DetectLife`, `Light`, `Telekinesis`, `Paralysis` |
+| Illusion | `Calm` (or `Illusion`, `Charm`), `Fear`, `Frenzy`, `Invisibility`, `Muffle` |
+| Aliases | `Destruction` and `Offensive` both map to `Fire` |
+
+The four extended tags — `Unlock`, `SlowFall`, `AntiDragon`, `Waterbreathing` —
+are deliberately **not** settable from the INI. If auto-detection misses one, set
+`type` instead and accept the loss of the matching context weight.
+
+### Item `type` values
+
+`Unknown`, `HealthPotion` (`Health`), `MagickaPotion` (`Magicka`),
+`StaminaPotion` (`Stamina`), `ResistPotion` (`Resist`), `BuffPotion`
+(`Buff`/`Fortify`), `CurePotion` (`Cure`), `Poison`, `Food`, `Alcohol`,
+`Ingredient`.
+
+`ItemOverrides::ParseItemType` does **not** accept `SoulGem` or `Scroll`, even
+though the shipped template's comment block lists `SoulGem` and one example uses
+`Scroll`. Those entries log "Unknown item type" and are ignored — the template is
+wrong, not the code.
+
+### Item `tags` values
+
+`RestoreHealth`, `RestoreMagicka`, `RestoreStamina`; `ResistFire`, `ResistFrost`,
+`ResistShock`, `ResistMagic`, `ResistPoison`, `ResistDisease`; `FortifyHealth`,
+`FortifyMagicka`, `FortifyStamina`, `FortifyMagicSchool`, `FortifyCombatSkill`,
+`FortifyUtilitySkill`, `FortifyCarryWeight`; `RegenHealth`, `RegenMagicka`,
+`RegenStamina`; `CureDisease`, `CurePoison`; `SatisfiesHunger` (`Hunger`),
+`SatisfiesCold` (`Warm`/`Warming`); `DamageHealth`, `DamageMagicka`,
+`DamageStamina`, `Paralyze`, `Slow`, `Frenzy`, `Fear`, `Invisibility`,
+`Waterbreathing`.
+
+Two legacy names warn rather than work: `FortifySkill` is deprecated and silently
+becomes `FortifyCombatSkill`; `Lingering` moved to an extended tag that the INI
+cannot reach.
 
 ---
 
-## Lorerim Modlist Reference
+## Enemy and creature mods
 
-The following mods are included in the Lorerim modlist and have been analyzed:
+Target classification is **race EditorID substring matching**, not keywords.
+`StateEvaluator::ClassifyActor()` (`src/state/StateEvaluator.cpp:133`) reads
+`GetRace()->GetFormEditorID()` and tests it case-insensitively in this order:
 
-### Spell Mods (Require Override INI)
+| `TargetType` | Matches |
+|---|---|
+| `Dragon` | contains `dragon`, **or** the race carries `RACE_DATA::Flag::kFlies` |
+| `Undead` | `draugr`, `skeleton`, `vampire`, `ghost`, `zombie` |
+| `Daedra` | `atronach`, `dremora`, `daedra`, `scamp`, `daedroth`, `seeker`, `lurker` |
+| `Construct` | `dwarven`, `dwemer`, `sphere`, `centurion`, `ballista` |
+| `Beast` | `wolf`, `bear`, `saber`/`sabre`, `spider`, `troll`, `mammoth`, `skeever`, `horker`, `mudcrab`, `slaughterfish` |
+| `Humanoid` | everything else, including a null race or null EditorID |
 
-| Mod | Priority | Status |
-|-----|----------|--------|
-| Apocalypse | High | Template provided |
-| Triumvirate | High | Template provided |
-| Ancient Blood Magic II | High | Template provided |
-| Mysticism | Medium | Template provided |
-| Runemaster Magic | Medium | TODO |
-| Holy Templar Magic | Medium | TODO |
-| Wildwaker Magic | Medium | TODO |
-| Constellation Magic | Low | TODO |
-| Sonic Magic | Low | TODO |
+There are no keyword checks and no `ActorTypeDragon` FormID constants — the old
+version of this file invented both.
 
-### Frameworks (Auto-Compatible)
+What this means for creature mods:
 
-- SPID - Works with reconciliation
-- KID - Works with keyword detection
-- OAR - No interaction
-- PapyrusUtil - No interaction
+- A creature whose race EditorID happens to contain one of those substrings
+  classifies correctly with no patch. A Mihail wolf variant reads as `Beast`.
+- A creature whose race EditorID does not — most Mihail additions, e.g. a sea
+  giant, minotaur or wraith race — falls through to `Humanoid`. There is no way
+  to fix this from configuration; the race table is compiled in.
+- Two false positives fall out of the substring rule: any flying race is typed
+  `Dragon` (a modded cliff racer would be), and a dragon-priest race is typed
+  `Dragon` rather than `Undead` because the `dragon` test runs first.
 
-### Combat (Auto-Compatible)
+`TargetType` feeds `antiUndeadWeight`/`antiDaedraWeight`/`antiDragonWeight` in
+`ContextRuleEngine` and one feature in the bandit's state vector
+(`StateFeatures.h`), so a misclassification costs relevance on a niche context —
+it does not break anything.
 
-- MCO/Precision - Binary combat state works
-- Chocolate Poise - No interaction
-- TK Dodge - No interaction
+---
+
+## Perk and magic overhauls (Requiem, Ordinator, Adamant, Vokrii)
+
+Nothing detects these. What actually adapts:
+
+- **Affordability uses perk-aware cost.** `CandidateGenerator` calls
+  `spellItem->CalculateMagickaCost(playerRef)` for every spell every gather pass
+  (`CandidateGenerator.cpp:158`) and caches it as `effectiveCost`. Whatever the
+  overhaul does to cost through perks and enchantments is reflected there.
+- **The registry's `baseCost` is not perk-aware.** `SpellClassifier::GetBaseCost`
+  calls `CalculateMagickaCost(nullptr)`. It is display/priors data, not the
+  filter input.
+- **The uncastable-spell policy is configurable** — `[Candidates]` in
+  `Huginn.ini`, values `Disallow` (drop spells you cannot afford), `Penalize`
+  (keep, scaled down by the magicka shortfall) or `Allow`.
+
+What does **not** adapt: there is no model of combat magicka regeneration, no
+"magicka is precious" multiplier, and no earlier melee fallback threshold. The
+weight tables in the old version of this file — "+4.0 vanilla / +8.0 LoreRim" and
+so on — described nothing that was ever implemented. Real context weights are
+normalized to `[0,1]` and configured in `[ContextWeights]`; see
+[../architecture/5-slots.md](../architecture/5-slots.md) and the INI comments.
+
+<!-- UNVERIFIED: Requiem's combat magicka-regen behaviour, its skill-scaled spell
+     costs, and Ordinator's Vancian Magic are claims about those mods' internals.
+     They are plausible and widely reported but nothing in this repository can
+     confirm them, and no Huginn behaviour depends on them being true. -->
+
+---
+
+## Combat mods (MCO, Precision, poise mods, dodge mods)
+
+No interaction. Combat state is `IsInCombat()` and vitals are read through
+`ActorValueOwner`; neither is something a combat animation or poise mod replaces.
+Nothing in `src/` reads stagger state, dodge i-frames or attack commitment.
+
+---
+
+## Framework mods
+
+### SPID — Spell Perk Item Distributor
+
+Spells added after load are picked up by reconciliation, not by a one-shot scan.
+`SPELL_RECONCILE_INTERVAL_MS = 5000` (`src/Config.h:18`), so a distributed spell
+enters the registry within five seconds. `ScanPlayerSpells` reads both the actor
+base spell list and `addedSpells`, deduplicating by FormID, which is the case
+SPID and perk-granted spells actually hit.
+
+Items and weapons reconcile more slowly — `ITEM_RECONCILE_INTERVAL_MS` and
+`WEAPON_RECONCILE_INTERVAL_MS` are both 30000.
+
+### KID — Keyword Item Distributor
+
+Keywords are read at classification time and the result is **cached in the
+registry**. If KID adds a keyword after a form has been classified, the cached
+classification is stale until the registry is rebuilt. `hg rebuild` forces that.
+In practice KID runs at data load, before the registries are built on
+`kPostLoadGame`, so this is a theoretical rather than an observed problem.
+
+### FLM, SkyPatcher, OAR, PapyrusUtil, Object Categorization Framework
+
+No interaction — Huginn reads final form data, so whatever these produce is what
+gets classified.
+
+---
+
+## UI mods
+
+### Wheeler
+
+Huginn drives Wheeler through the exported `GetWheelerAPI` entry point
+(`src/wheeler/WheelerConnection.cpp`), creating its own **managed** wheels, one
+per configured page. The API headers Huginn mirrors are C0kAdam's
+(`src/wheeler/WheelerAPI.h`).
+
+Supported API versions are **1 through 4** (`API_VERSION_MIN`/`MAX`). What each
+level adds:
+
+| API version | Adds | Degradation below it |
+|---|---|---|
+| v1 | Managed wheels, all three callbacks | — |
+| v2 | `SetManagedWheelEntrySubtext` | No subtexts: no wildcard, override, lock-timer or explanation labels under entries |
+| v3 | `DeleteManagedWheelsForClient` | Wheels are deleted one at a time by index |
+| v4 | `GetManagedWheelsForClient`; Wheeler no longer drops client wheels on save load | Huginn re-finds its wheels by scanning instead of asking |
+
+A version below 1 is rejected outright. A version **above 4** is accepted with a
+warning on the assumption that the interface was only appended to — if a future
+Wheeler reorders `IWheelerAPI`, that warning is the only breadcrumb before a
+crash.
+
+`ItemActivatedCallback` is the learning feedback path.
+`WheelerClient::OnItemActivated` sets `m_itemActivatedWhileOpen` (which
+suppresses the skip penalty), applies the post-activation policy, and publishes
+to the equip bus, where the `FeatureQLearner` subscriber applies the reward. It
+is registered on **every** supported API version, not just v2+ — the old claim
+that v1 "may not fire" it is not something this repository can confirm, and it is
+not reflected in the version gate.
+
+<!-- UNVERIFIED: which Wheeler builds actually export which API version, and
+     whether any shipped Wheeler build fails to invoke ItemActivatedCallback.
+     That is Wheeler-side behaviour; the header here declares the callback from
+     v1 onward. -->
+
+Known Wheeler-adjacent issue, open on the roadmap: with `bAutoFocusOnOpen = true`
+(the default), a non-Huginn wheel sitting at position 0 is skipped on every open.
+0.19.3 added a one-shot warning when a redirect actually skips a wheel; the
+behaviour itself is unchanged. Set `bAutoFocusOnOpen = false` if it bites.
+
+### TrueHUD, casting-bar mods, other HUD mods
+
+Separate draw layers; no code interaction. The Scaleform widget's position, alpha
+and scale are configurable under `[Widget]` if something overlaps.
+
+<!-- UNVERIFIED: that TrueHUD's boss bars and target info do not visually collide
+     with the Intuition widget at default positions. Nobody has checked this
+     against a current build. -->
+
+---
+
+## Survival mods
+
+Two are integrated, by hardcoded FormID lookup:
+
+| Mod | Support |
+|---|---|
+| CC Survival Mode (`ccqdrsse001-survivalmode.esl`) | Raw 0–1000 need globals, converted to stages by compiled-in thresholds |
+| Survival Mode Improved SKSE (`SurvivalModeImproved.esp`) | Pre-computed stage globals plus per-need enable flags; takes precedence when present |
+
+Everything else — Frostfall, Sunhelm, iNeed, Campfire — is unsupported, because
+`CacheSurvivalGlobals()` looks up only those two plugins. When neither is
+installed every lookup returns `nullptr`, all three need levels stay neutral,
+`survivalModeActive` stays `false`, and nothing warns.
+
+Full detail, including the exact FormIDs and thresholds:
+[Survival-Mode-Improved-SKSE.md](Survival-Mode-Improved-SKSE.md).
+
+---
+
+## What does not exist
+
+Listed explicitly because the previous version of this document specified all of
+it in detail, and a reader who saw that version will otherwise go looking.
+
+| Documented in the old file | Reality |
+|---|---|
+| `Data/SKSE/Plugins/Huginn/plugins/*.Huginn.json` community plugins | No JSON parsing anywhere in `src/` |
+| `required_esp` conditional plugin loading | No `LookupModByName` call in `src/` |
+| Per-mod override files and a three-tier priority chain | One file: `Huginn_Overrides.ini` |
+| `[Apocalypse_Overrides]` with `"Name"=type:X,tags:Y` lines | Section-per-spell, `type =` / `tags =` keys |
+| Effect types `DamageFire`, `SummonCreature`, `Cloak`, `ArmorBuff`, `ResistFire`… | Eight `SpellType` values only |
+| `IsRequiemLoaded()` / `IsLorerimLoaded()` and per-modlist weight profiles | No mod detection, no per-mod weights |
+| `HasKeywordID(ActorTypeDragon)` keyword-based enemy classification | Race EditorID substrings |
+| `actor_types.races` race-to-type mapping | Compiled-in substring table, not configurable |
+| Feature flags, `context.survival` need bucket configuration | Compiled-in thresholds |
+
+---
+
+## Testing status
+
+Huginn is developed and play-tested against a Requiem-based modlist (LoreRim).
+**Everything in this document that concerns vanilla behaviour is verified by
+reading the code and by unit test, not by play.** There is an open roadmap item
+for a vanilla-build integration pass whose honest scope is "boot a vanilla
+profile once and walk the contexts".
+
+Two known consequences:
+
+- The **workstation context** ranks Fortify Smithing/Enchanting potions.
+  Requiem-based lists strip those effects from alchemy, so the context has
+  nothing to rank and is inert on exactly the modlists that get play-tested
+  (roadmap #63). Test 6h stands in for it.
+- Three of the four extended spell tags — `Unlock`, `SlowFall`, `AntiDragon` —
+  cover spells no LoreRim character can carry. Only `Waterbreathing` lights up on
+  an unmodded game, and none of the four has been exercised in play.
+
+Treat vanilla-only claims here as code-verified rather than play-verified.
 
 ---
 
 ## Troubleshooting
 
-### Spell Not Appearing in Recommendations
+**A spell never appears.**
+Check, in order: it is in the player's spell list and player-castable
+(`ScanPlayerSpells` filters to player-castable spell types); you can afford it,
+or the `[Candidates]` uncastable policy is not `Disallow`; it is not already
+equipped on a slot with `bSkipEquipped`; some configured slot's classification
+accepts it. `hg recs 20` dumps the scored breakdown to the log.
 
-1. Check if spell is in player's spell list
-2. Check if spell cost exceeds current magicka
-3. Check spell classification in logs
-4. Add manual override in INI if needed
+**A spell or potion is classified wrongly.**
+Find its logged `SpellData[...]`/`ItemData[...]` line, then add a section to
+`Huginn_Overrides.ini` keyed on the exact name or the FormID, and `hg rebuild`.
 
-### Wrong Classification
+**Nothing in the log lists my spells.**
+`LogAllSpells()` — the `--- Damage (N spells) ---` grouped dump — runs only in
+**Debug builds**, only on a load-game, from `Main.cpp:367`. A Release build will
+not produce it.
 
-1. Check spell name in logs
-2. Add override INI entry with correct type
-3. Report to Huginn team for future default
+**A creature gets the wrong anti-X weighting.**
+Its race EditorID does not contain a matching substring. Not fixable from
+configuration.
 
-### Performance Issues
-
-1. Check total spell count (200+ may slow scoring)
-2. Enable spell caching in config
-3. Increase update interval if needed
+Console commands: [../reference/ConsoleCommands.md](../reference/ConsoleCommands.md).
 
 ---
 
-## See Also
+## See also
 
-- [../architecture/pipeline.md](../architecture/0-pipeline.md) - Classification pipeline
-- [../architecture/slots.md](../architecture/5-slots.md) - Slot types and filtering
+- [../architecture/2-classifiers.md](../architecture/2-classifiers.md) — classifier internals
+- [../architecture/0-pipeline.md](../architecture/0-pipeline.md) — where classification sits in the update loop
+- [../architecture/5-slots.md](../architecture/5-slots.md) — slot classifications and filtering
+- [unknown-spell-patterns.md](unknown-spell-patterns.md) — what still lands in `Unknown`
+- [lorerim.md](lorerim.md) — the reference play-test modlist
+- [Survival-Mode-Improved-SKSE.md](Survival-Mode-Improved-SKSE.md) — survival integration

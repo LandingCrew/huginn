@@ -66,7 +66,7 @@ Release:
 | `skipped=N (wheel/stale/spam/off)` | equips that a filter caught BEFORE attribution, so they never entered the buckets | **read this whenever `accept=n/a`.** `skipped=0` = nothing was equipped. A large `wheel=` = you played through the wheel and produced no acceptance data at all (v0.19.1+) |
 | `recompute/ticks` | pipeline recomputes vs total ticks | very high ratio = state hashing thrashing (churn); near-zero = pipeline may be stuck skipping |
 | `override` | recomputes where a safety override took top slot | sanity-check against how often you actually hit low-health/charge/drowning |
-| `learn items/trains` | FQL learned-item count + total train count | **items must plateau, not climb linearly** across 50 hr — linear climb = unbounded Q-table |
+| `learn items/trains` | FQL learned-item count + total train count | **items must plateau, not climb linearly** across 50 hr — linear climb = unbounded weight table |
 | `tick avg/peak` | per-tick cost this window | avg < 0.1 ms target; **peak stable across bursts** — a peak that grows hour-over-hour is the interesting bug |
 
 Attribution buckets come from `ExternalEquipLearner` cases: **E** displayed
@@ -155,7 +155,7 @@ carry the rest.
 |--------|------|-------------|
 | Crashes | zero | any — correlate crash-log timestamp with Huginn log tail |
 | Memory (Tracy) | flat / bounded | rising slope over hours → Tracy memory view |
-| `learn items` | plateaus | linear climb over 50 hr → unbounded Q-table |
+| `learn items` | plateaus | linear climb over 50 hr → unbounded weight table |
 | Cosave size | plateaus | grows every save without bound |
 | `tick avg` | < 0.1 ms | sustained rise across bursts |
 | `tick peak` | stable across bursts | grows hour-over-hour |

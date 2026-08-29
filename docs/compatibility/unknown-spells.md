@@ -1,3 +1,66 @@
+# Unknown spells — captured log
+
+**This file is a data capture, not documentation.** It is the `LogAllSpells()`
+dump of the `Unknown` bucket from one Debug session on the LoreRim modlist, dated
+**2026-02-07** — roughly v0.7.x. The plugin is at v0.19.10 and this capture has
+not been retaken.
+
+It is kept because it is the only recorded sample of what a real modded spell
+stack leaves unclassified. The analysis derived from it lives in
+[unknown-spell-patterns.md](unknown-spell-patterns.md); read that first. This
+file is the raw evidence behind it.
+
+---
+
+## Reading it
+
+Each line is one `SpellData::ToString()`. Every entry here has `type=Unknown`,
+meaning both `DetermineSpellType()` (engine API) and `DeriveSpellTypeFromTags()`
+(name tags) declined to label it. `school` and `element` are often still
+populated — those come from separate API reads and are unaffected by the type
+failing.
+
+`Unknown` does not mean filtered out. See
+[mod-compatibility.md § What `Unknown` actually costs you](mod-compatibility.md#what-unknown-actually-costs-you).
+
+## Format drift since the capture
+
+`SpellData::ToString()` gained a `tagsExt={:04X}` field in #79, between the
+`tags` and `cost` fields. Lines captured today have one more column than the ones
+below. Nothing else about the format changed.
+
+## What would classify differently now
+
+Not re-measured — inferred from the current classifier, and each depends on the
+engine-API path still declining, as it did in this capture:
+
+- **`Featherfall`** — `DetermineSpellTagsExt` matches the whole word
+  `featherfall`, sets `SpellTagExt::SlowFall`, and the derivation returns
+  `Buff`.
+- **`Knock`** — has no name match (the ext name tests are `unlock` and
+  `open lock`, not `knock`), but if the effect uses the `kOpen` archetype it now
+  picks up `SpellTagExt::Unlock` and derives to `Utility`. Archetype-dependent.
+- Any waterbreathing spell in a stack like this would now be tagged
+  `Waterbreathing` and typed `Buff` rather than being mislabelled `Stealth`.
+  There is no such spell in this particular capture.
+
+Everything else in the dump — reanimation, soul trap, dispel, detection,
+transmute variants, non-hostile Illusion buffs, scripted mod spells — still
+lands in `Unknown`. The categories are tabulated in
+[unknown-spell-patterns.md § Still unclassified](unknown-spell-patterns.md#still-unclassified).
+
+## Retaking the capture
+
+`LogAllSpells()` is called from `Main.cpp:367`, which is inside an
+`#ifndef NDEBUG` block on the load-game path. So: a **Debug** build, and a
+**load game** rather than a new game. A Release build produces nothing, and there
+is no console command that triggers it.
+
+---
+
+## The capture
+
+```text
 [2026-02-07 16:25:06.089][SpellRegistry.cpp:426 ][I]: --- Unknown (68 spells) ---
 [2026-02-07 16:25:06.089][SpellRegistry.cpp:428 ][D]:   SpellData[id=6E0159D8, name='Ruin', type=Unknown, school=Restoration, element=Magic, tags=00000000, cost=250, concentration=false, range=10000, fav=false]
 [2026-02-07 16:25:06.089][SpellRegistry.cpp:428 ][D]:   SpellData[id=9202852F, name='Distraction', type=Unknown, school=Illusion, element=None, tags=00000000, cost=50, concentration=false, range=10000, fav=false]
@@ -67,3 +130,12 @@
 [2026-02-07 16:25:06.091][SpellRegistry.cpp:428 ][D]:   SpellData[id=9900086C, name='Pack Mule on Target', type=Unknown, school=Alteration, element=None, tags=00000000, cost=150, concentration=false, range=4096, fav=false]
 [2026-02-07 16:25:06.091][SpellRegistry.cpp:428 ][D]:   SpellData[id=6F1E7427, name='Aura of Might', type=Unknown, school=Restoration, element=None, tags=00000100, cost=80, concentration=true, range=0, fav=false]
 [2026-02-07 16:25:06.091][SpellRegistry.cpp:428 ][D]:   SpellData[id=6E00AB69, name='Detonate Lock', type=Unknown, school=Alteration, element=None, tags=00000000, cost=800, concentration=false, range=500, fav=false]
+```
+
+---
+
+## See also
+
+- [unknown-spell-patterns.md](unknown-spell-patterns.md) — the analysis of this capture
+- [mod-compatibility.md](mod-compatibility.md) — overrides, and what `Unknown` costs
+- [../architecture/2-classifiers.md](../architecture/2-classifiers.md) — classifier architecture

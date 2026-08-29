@@ -81,7 +81,7 @@ conan.lock
 graph_info.json
 
 # Test output
-Testing/
+/Testing/
 coverage/
 
 # Temporary files

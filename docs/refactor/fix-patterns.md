@@ -58,7 +58,7 @@ Name the private one `*Locked()` and state the lock precondition in a comment.
 
 ## P4 — RunExclusive inside the callee
 
-**When:** any entry point that mutates what the pipeline reads per tick (settings reload, reset, wheel destroy/create, Q-table clear).
+**When:** any entry point that mutates what the pipeline reads per tick (settings reload, reset, wheel destroy/create, learned-weight clear).
 
 **Idiom:** the *callee* wraps its own mutation in `UpdateHandler::RunExclusive` (`UpdateHandler.h:72-81`), so no caller can forget:
 

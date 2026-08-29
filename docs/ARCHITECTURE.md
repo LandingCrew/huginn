@@ -4,7 +4,7 @@
 
 ## Vision
 
-A **contextual quick-access system** that surfaces the a spell, potion, weapon, or item exactly when you need it - without menu diving.
+A **contextual quick-access system** that surfaces the right spell, potion, weapon, or item exactly when you need it - without menu diving.
 
 That's it.
 
@@ -18,7 +18,7 @@ It is a just-in-time affordance surface.
 
 > **Core Principle:** Only recommend based on information the player already has or could easily perceive. This is a convenience tool, not a cheat tool.
 
-> **Architecture Version:** v0.13.x uses StateManager with 11 poll methods producing 6 state types (3 core: WorldState, PlayerActorState, TargetCollection; 3 tracking: HealthTrackingState, StaminaTrackingState, MagickaTrackingState). Orchestrated by PipelineCoordinator (v0.14.x). The legacy ContextSensor system has been fully removed. See [docs/architecture/1-states.md](architecture/1-states.md) for full state model reference.
+> **Architecture Version:** verified against **v0.19.10** (`CMakeLists.txt:5`). `StateManager` runs 11 poll methods (`GetPollTable()` in `src/state/StateManager.cpp`) producing 6 state types (3 core: WorldState, PlayerActorState, TargetCollection; 3 tracking: HealthTrackingState, StaminaTrackingState, MagickaTrackingState). The recommendation tick is orchestrated by `PipelineCoordinator` (`src/pipeline/PipelineCoordinator.cpp`). The legacy ContextSensor system has been fully removed. See [docs/architecture/1-states.md](architecture/1-states.md) for the full state model reference.
 
 > **On the naming:** precisely, this is `a linear contextual bandit with implicit feedback, per-action linear reward models, UCB-style exploration, and heuristic priors`. The docs use that vocabulary throughout. We deliberately avoid state transitions, TD learning, MDP framing and policy optimization — long-horizon planning is neither required nor desirable here, and the learned values are immediate preference scores, not long-term action values.
 >
@@ -91,7 +91,7 @@ It is a just-in-time affordance surface.
                                      │
                                      ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                           6 State Types (v0.6.9+)                           │
+│                     6 State Types (3 core + 3 tracking)                     │
 │           (Structured representation of observable game state)              │
 ├─────────────────────────────────────────────────────────────────────────────┤
 │  WorldState           - Environment, interactables (locks, ore, stations)   │
@@ -101,11 +101,11 @@ It is a just-in-time affordance surface.
 │  StaminaTrackingState - Stamina usage events, rates, source classification  │
 │  MagickaTrackingState - Magicka usage events, rates, casting state          │
 │                                                                             │
-│  StateEvaluator converts raw state -> GameState (36,288 hash states)        │
+│  StateEvaluator converts raw state -> GameState (72,576 hash states)        │
 │    - health/magicka buckets (6 levels each), stamina (6, excluded from hash)│
 │    - distance bucket (3 levels), targetType (7 types)                       │
 │    - enemyCount (4 levels), allyStatus (3 levels: None/Present/Injured)     │
-│    - inCombat, isSneaking (boolean)                                         │
+│    - anyCasting (hostile casting), inCombat, isSneaking (boolean)           │
 │                                                                             │
 │  See: docs/architecture/1-states.md for full state model reference          │
 └────────────────────────────────────┬────────────────────────────────────────┘
@@ -135,21 +135,27 @@ It is a just-in-time affordance surface.
                                     │
                                     ▼
          ┌──────────────────────────────────────────────────────────┐
-         │          PipelineCoordinator (v0.14.x)                   │
-         │       Orchestrates 8 pipeline steps per update tick      │
+         │                   PipelineCoordinator                    │
+         │      Orchestrates 11 pipeline steps per update tick      │
          ├──────────────────────────────────────────────────────────┤
-         │  1. GatherState          - Copy state snapshots          │
-         │  2. HashSkip             - Skip if state unchanged       │
-         │  3. LogStateTransition   - Debug logging                 │
-         │  4. EnrichElementalDamage - Elemental hit detection      │
-         │  5. ScoreCandidates      - CandidateGenerator ->         │
-         │                            ContextRuleEngine ->          │
-         │                            UtilityScorer                 │
-         │  6. AllocateAndLock      - OverrideManager ->            │
-         │                            SlotAllocator ->              │
-         │                            SlotLocker                    │
-         │  7. UpdateCaches         - PipelineStateCache            │
-         │  8. PushDisplay          - IDisplayBackend               │
+         │   1. GatherState           - Copy state snapshots        │
+         │   2. ResolveDisplayPage    - Snapshot the active page    │
+         │   3. CheckHashSkip         - Skip if nothing changed     │
+         │   4. LogStateTransition    - Log the GameState diff      │
+         │   5. EnrichElementalDamage - Elemental hit detection     │
+         │   6. ScoreCandidates       - CandidateGenerator ->       │
+         │                                ContextRuleEngine ->      │
+         │                                UtilityScorer             │
+         │   7. AllocateAndLock       - OverrideManager ->          │
+         │                                SlotAllocator ->          │
+         │                                SlotLocker                │
+         │   8. DeriveDisplayLabels   - Subtext label per slot      │
+         │   9. UpdateCaches          - PipelineStateCache          │
+         │  10. PushDisplay           - IDisplayBackend             │
+         │  11. LogRecommendations    - Top-N log / `hg recs`       │
+         │                                                          │
+         │  A step may abandon the tick: CheckHashSkip when nothing │
+         │  changed, AllocateAndLock on a mid-tick page switch.     │
          │                                                          │
          │  See: docs/architecture/0-pipeline.md for details        │
          └────────────────────────────┬─────────────────────────────┘
@@ -159,41 +165,43 @@ It is a just-in-time affordance surface.
               ▼                       ▼                       ▼
 ┌──────────────────────┐  ┌────────────────────┐  ┌────────────────────────┐
 │  Utility Scorer      │  │  Override Manager  │  │   Slot Allocator       │
-│  (Step 5)            │  │  (Step 6)          │  │   + SlotLocker         │
+│  (Step 6)            │  │  (Step 7)          │  │   + SlotLocker         │
 ├──────────────────────┤  ├────────────────────┤  ├────────────────────────┤
-│  utility = context   │  │ Hard overrides for │  │ Top N by utility ->    │
-│   × (1 + λ × learn)  │  │ critical states:   │  │ classified slots       │
-│   × correlation      │  │ - Critical HP      │  │                        │
-│   × potionMult       │  │ - Drowning         │  │ Multi-page: up to 10   │
-│   × favoritesMult    │  │ - Taking element   │  │ pages × 10 slots       │
-│                      │  │   damage           │  │                        │
-│  learningScore =     │  │ - Low weapon charge│  │ SlotLocker: temporal   │
-│  α·Q + (1-α)·prior   │  │                    │  │ stability (3s locks,   │
-│  + β·UCB + recency   │  │ Hysteresis-based   │  │ priority-based break)  │
-│                      │  │ enter/exit with     │  │                        │
-│ See: architecture/   │  │ priority levels     │  │ See: architecture/     │
-│ 4-contextual-bandits.md       │  │                    │  │ 5-slots.md             │
+│  utility = context   │  │ Hard overrides for │  │ Best-scoring           │
+│   × (1 + λ × learn)  │  │ critical states:   │  │ candidate per slot,    │
+│   × correlation      │  │ - Critical HP      │  │ by classification      │
+│   × potionMult       │  │ - Critical MP / SP │  │                        │
+│   × favoritesMult    │  │ - Drowning         │  │ Multi-page: up to      │
+│                      │  │ - Low ammo         │  │ 10 pages × 10 slots    │
+│  learningScore =     │  │ - Low weapon charge│  │                        │
+│  α·Q + (1-α)·prior   │  │                    │  │ SlotLocker: temporal   │
+│  + β·UCB + recency   │  │ Hysteresis-based   │  │ stability (3s locks,   │
+│                      │  │ enter/exit with    │  │ priority-based break)  │
+│ See: architecture/   │  │ priority levels    │  │                        │
+│ 4-contextual-        │  │                    │  │ See: architecture/     │
+│ bandits.md           │  │ See: 5-slots.md    │  │ 5-slots.md             │
 └──────────┬───────────┘  └────────┬───────────┘  └──────────┬─────────────┘
            │                       │                         │
            └───────────────────────┼─────────────────────────┘
                                    │
                                    ▼
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                   IDisplayBackend (Step 8: PushDisplay)                     │
+│                    IDisplayBackend (Step 10: PushDisplay)                   │
 │              Renders slot assignments to player-facing displays             │
 ├─────────────────────────────────────────────────────────────────────────────┤
-│  ┌─────────────────────────────────┐  ┌────────────────────────────┐       │
-│  │ IntuitionBackend               │  │ WheelerBackend             │       │
-│  │ (Scaleform HUD — Primary)      │  │ (Radial Menu — Optional)   │       │
-│  │  IntuitionMenu -> Intuition.as  │  │   WheelerClient -> API     │       │
-│  │  9 slot types with colors       │  │   v1/v2 API compatible     │       │
-│  │  Slide/fade/instant animations  │  │   Subtext labels (v2)      │       │
-│  │  See: architecture/6-ui-ux.md   │  │   See: architecture/       │       │
-│  │                                 │  │   6-ui-ux.md               │       │
-│  └─────────────────────────────────┘  └────────────────────────────┘       │
+│  ┌─────────────────────────────────┐  ┌──────────────────────────────┐      │
+│  │ IntuitionBackend                │  │ WheelerBackend               │      │
+│  │ (Scaleform HUD — Primary)       │  │ (Radial Menu — Optional)     │      │
+│  │  IntuitionMenu -> Intuition.as  │  │  WheelerClient -> API        │      │
+│  │  12 slot content types          │  │  API v1-v4 compatible        │      │
+│  │  Slide/fade/instant animations  │  │  Subtext labels (v2+)        │      │
+│  │  See: architecture/             │  │  See: architecture/          │      │
+│  │  6-ui-ux.md                     │  │  6-ui-ux.md                  │      │
+│  └─────────────────────────────────┘  └──────────────────────────────┘      │
 │                                                                             │
 │  ImGui Debug Widgets (debug builds only):                                   │
-│    UtilityScorerDebugWidget, StateManagerDebugWidget, RegistryDebugWidget   │
+│    UtilityScorerDebugWidget, StateManagerDebugWidget,                       │
+│    RegistryDebugWidget                                                      │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -214,11 +222,20 @@ Equip sources:
   Rapid equip-then-switch (<3s)   ──► -3.0 MISCLICK_PENALTY
 
 Weight decay:
-  L2 regularization (λ=0.01) during gradient descent — continuous per-update dampening
+  L2 regularization (FeatureQLearner::L2_LAMBDA = 0.01) folded into each weight update
   Time-based MaybeDecay() — 2%/hr exponential decay on items idle > 5 min
+
+Update rule (FeatureQLearner::Update):
+  error = reward - w·φ            (no bootstrapped successor term — see "On the naming")
+  w[i] += α·error·φ[i] - α·λ·w[i] (18-float φ, clamped)
 
 See: docs/architecture/4-contextual-bandits.md for full learning system details
 ```
+
+Constants live in `src/Config.h` (`EQUIP_REWARD`, `CONSUME_REWARD`, `MISCLICK_PENALTY`,
+`MISCLICK_WINDOW_SECONDS`, `DECAY_RATE_PER_HOUR`, `DECAY_THRESHOLD_MINUTES`); the
+subscribers in `src/learning/EquipSubscribers.h`; the attribution tiers in
+`src/learning/ExternalEquipLearner.h`.
 
 ---
 
@@ -226,10 +243,10 @@ See: docs/architecture/4-contextual-bandits.md for full learning system details
 
 Huginn settings are split across two INI files to support dMenu integration:
 
-- **Main INI** (`Huginn.ini`) — All sections: Scoring, ContextWeights, Slot, Override, Learning, Wheeler, Candidates, etc.
-- **dMenu INI** (`dmenu/.../ini/Huginn.ini`) — Widget, Keybindings, Debug only (dMenu-managed subset)
+- **Main INI** (`Data/SKSE/Plugins/Huginn.ini`, shipped as `configs/Huginn.ini`) — `[Overrides]`, `[Candidates]`, `[Scoring]`, `[Favorites]`, `[ContextWeights]`, `[Wildcards]`, `[Subtexts]`, `[Wheeler]`, `[Pages]` + `[PageN]` / `[PageN.SlotM]`, `[Learning]`, `[SlotLocker]`, `[Keybindings]`
+- **dMenu INI** (`Data/SKSE/Plugins/dmenu/customSettings/ini/Huginn.ini`) — `[Widget]` and `[Debug]` only, when dMenu is installed (`GetDMenuIniPath()` in `src/Globals.cpp`). `[Keybindings]` stays in the main INI
 
-`SettingsReloader` handles hot-reload via SKSE `ModCallbackEvent`. See [docs/architecture/7-dmenu-integration.md](architecture/7-dmenu-integration.md) for details.
+One key, one home: dMenu owns `[Widget]` and `[Debug]`; nothing is overlaid from both files. `SettingsReloader` handles hot-reload via the SKSE `ModCallbackEvent`s `dmenu_updateSettings` and `dmenu_buttonCallback`, serializing itself through `UpdateHandler::RunExclusive`. See [docs/architecture/7-dmenu-integration.md](architecture/7-dmenu-integration.md) for details.
 
 ---
 
@@ -245,4 +262,16 @@ For detailed documentation on specific subsystems, see [docs/architecture/](arch
 | [5-slots.md](architecture/5-slots.md) | Slot types, overrides, wildcards, multi-page |
 | [6-ui-ux.md](architecture/6-ui-ux.md) | Intuition widget and Wheeler integration |
 | [7-dmenu-integration.md](architecture/7-dmenu-integration.md) | dMenu integration and two-INI architecture |
-| [8-future-work.md](architecture/8-future-work.md) | Future work: temporal prediction, SARSA, HMM |
+| [8-future-work.md](architecture/8-future-work.md) | Deferred ideas: temporal prediction, urgency multipliers, HMM combat states |
+
+And the reference material in [docs/reference/](reference/):
+
+| Document | Contents |
+|----------|----------|
+| [ConsoleCommands.md](reference/ConsoleCommands.md) | The `hg` console commands |
+| [candidate-system.md](reference/candidate-system.md) | Candidate registries and generation |
+| [Performance.md](reference/Performance.md) | Performance budget and measurements |
+| [intuition-scaleform-build.md](reference/intuition-scaleform-build.md) | Building `Intuition.swf` from `src/swf/Intuition.as` |
+| [WheelerAPI_minimal.h](reference/WheelerAPI_minimal.h), [WheelerAPIClient.h](reference/WheelerAPIClient.h) | Vendored Wheeler API headers for reference |
+
+Provenance and staleness for the whole tree: [docs/README.md](README.md).

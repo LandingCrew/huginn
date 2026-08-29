@@ -1,940 +1,546 @@
+# Performance and Timing
+
+**Applies to v0.19.x.** Code claims verified against `src/` on 2026-08-29; the
+measurements are from the captures named below and nowhere else.
+
+> **Related documentation**
+> - [../profiling/tracy-traces.md](../profiling/tracy-traces.md) — the capture log. Every number here traces back to an entry there or to the roadmap items that cite one.
+> - [../roadmap.md](../roadmap.md) — "Tier 3 — hot-path perf" carries the current ranking and the 2026-08-26 figures.
+> - [../roadmap-archive.md](../roadmap-archive.md) — the archived O1 and #14 entries: what shipped, what was dropped, and why.
+> - [../refactor/wheeler-push-spikes.md](../refactor/wheeler-push-spikes.md) — the Wheeler push analysis whose ranking premise the long capture overturned.
+> - [../architecture/0-pipeline.md](../architecture/0-pipeline.md) — the pipeline these zones measure.
+> - [../testing/performance-profiling-guide.md](../testing/performance-profiling-guide.md) — how to build with Tracy and take a capture.
 
 ---
 
-## Performance & Timing
-
-### Update Loop Architecture
-
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                           UPDATE LOOP TIERS                                 │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  TIER 1: FAST PATH (Every Frame / 16ms)                                     │
-│  ───────────────────────────────────────                                    │
-│  Critical checks only - must not block game thread                          │
-│                                                                              │
-│  • Override condition check (health critical, drowning, falling)            │
-│  • UI render (already-computed recommendations)                             │
-│  • Input handling (slot activation)                                         │
-│                                                                              │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  TIER 2: CONTEXT POLLING (Configurable: 100-500ms)                          │
-│  ─────────────────────────────────────────────────                          │
-│  Full context state refresh - triggers re-scoring if state changed          │
-│                                                                              │
-│  • Read player stats (health%, magicka%, stamina%)                          │
-│  • Check active effects                                                     │
-│  • Evaluate crosshair target                                                │
-│  • Combat state check                                                       │
-│                                                                              │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  TIER 3: RECOMMENDATION REFRESH (Configurable: 200-1000ms)                  │
-│  ──────────────────────────────────────────────────────────                 │
-│  Full pipeline run - only when context has meaningfully changed             │
-│                                                                              │
-│  • Gather candidates                                                        │
-│  • Score candidates                                                         │
-│  • Allocate to slots                                                        │
-│  • Update Wheeler wheel                                                     │
-│                                                                              │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  TIER 4: LEARNING UPDATES (Async / Queued)                                  │
-│  ─────────────────────────────────────────                                  │
-│  Non-blocking - can be delayed without affecting recommendations            │
-│                                                                              │
-│  • reward estimate updates from feedback events                                     │
-│  • Training count increments                                                │
-│  • Dynamic threshold adjustments                                            │
-│  • Persistence (auto-save)                                                  │
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
-
-### Configurable Refresh Rates
-
-```cpp
-struct TimingConfig {
-    // ─────────────────────────────────────────────────────
-    // Context Polling
-    // ─────────────────────────────────────────────────────
-    float contextPollIntervalMs = 200.0f;   // How often to read game state
-    float minContextPollMs = 50.0f;         // Minimum (for combat)
-    float maxContextPollMs = 500.0f;        // Maximum (out of combat)
-
-    // ─────────────────────────────────────────────────────
-    // Recommendation Refresh
-    // ─────────────────────────────────────────────────────
-    float recommendationRefreshMs = 300.0f; // Full pipeline run interval
-    bool refreshOnContextChange = true;     // Immediate refresh when state changes
-    bool refreshOnCombatStart = true;       // Immediate refresh on combat enter
-
-    // ─────────────────────────────────────────────────────
-    // Learning Queue
-    // ─────────────────────────────────────────────────────
-    float learningBatchIntervalMs = 1000.0f; // Process learning queue every 1s
-    int maxLearningBatchSize = 10;           // Max events per batch
-    bool asyncLearning = true;               // Process on background thread
-
-    // ─────────────────────────────────────────────────────
-    // Adaptive Timing
-    // ─────────────────────────────────────────────────────
-    bool adaptiveTiming = true;             // Adjust rates based on context
-    float combatSpeedMultiplier = 0.5f;     // 2x faster in combat
-    float idleSpeedMultiplier = 2.0f;       // 2x slower when idle
-};
-```
-
-### Adaptive Timing
-
-Context-aware polling rates:
-
-```cpp
-float GetEffectivePollInterval(const TimingConfig& config, const ContextState& ctx) {
-    float base = config.contextPollIntervalMs;
-
-    if (!config.adaptiveTiming) return base;
-
-    if (ctx.inCombat) {
-        // Combat: faster polling, player needs responsive recommendations
-        return std::max(config.minContextPollMs, base * config.combatSpeedMultiplier);
-    }
-
-    if (!ctx.inCombat && ctx.timeSinceCombatEnd > 30.0f) {
-        // Long idle: slower polling, conserve resources
-        return std::min(config.maxContextPollMs, base * config.idleSpeedMultiplier);
-    }
-
-    return base;
-}
-```
-
-### Event Queue System
-
-Events are queued for batch processing to avoid frame drops:
-
-```cpp
-struct LearningEvent {
-    enum class Type { Equip, Cast, Skip, OverrideUsed };
-
-    Type type;
-    RE::FormID formID;
-    StateFeatures features;
-    float reward;
-    float timestamp;
-};
-
-class LearningQueue {
-    std::queue<LearningEvent> m_queue;
-    std::mutex m_mutex;
-    std::atomic<bool> m_processing{false};
-
-public:
-    // Called from game thread - non-blocking
-    void Push(LearningEvent event) {
-        std::lock_guard lock(m_mutex);
-        m_queue.push(std::move(event));
-    }
-
-    // Called from background thread or during idle
-    void ProcessBatch(FeatureQLearner& learner, int maxEvents) {
-        if (m_processing.exchange(true)) return; // Already processing
-
-        std::vector<LearningEvent> batch;
-        {
-            std::lock_guard lock(m_mutex);
-            while (!m_queue.empty() && batch.size() < maxEvents) {
-                batch.push_back(std::move(m_queue.front()));
-                m_queue.pop();
-            }
-        }
-
-        // Process outside lock
-        for (const auto& event : batch) {
-            learner.Update(event.formID, event.features, event.reward);
-        }
-
-        m_processing = false;
-    }
-
-    size_t Size() const {
-        std::lock_guard lock(m_mutex);
-        return m_queue.size();
-    }
-};
-```
-
-### Sync vs Async Decisions
-
-| Operation | Sync/Async | Rationale |
-|-----------|------------|-----------|
-| Override check | **Sync** | Must be immediate (life/death) |
-| Context read | **Sync** | Cheap, needed for decisions |
-| Candidate gather | **Sync** | Needed for scoring |
-| Utility scoring | **Sync** | Cheap (dot products) |
-| UI render | **Sync** | Must be every frame |
-| Learning update | **Async** | Can be delayed, no user impact |
-| Persistence save | **Async** | Slow I/O, don't block game |
-| Inventory scan | **Sync*** | *Can be cached, refresh on change |
-| Wheeler update | **Sync** | API call, but fast |
-
-### Dirty Flag Optimization
-
-Only re-run expensive operations when needed:
-
-```cpp
-class ContextSensor {
-    ContextState m_context;
-    uint32_t m_contextHash = 0;
-    bool m_dirty = true;
-
-    // Cached results
-    std::vector<Candidate> m_cachedCandidates;
-    std::vector<SlotRecommendation> m_cachedSlots;
-
-public:
-    void Update() {
-        auto newContext = ReadGameState();
-        uint32_t newHash = HashContext(newContext);
-
-        if (newHash != m_contextHash) {
-            m_context = newContext;
-            m_contextHash = newHash;
-            m_dirty = true;
-        }
-    }
-
-    bool IsDirty() const { return m_dirty; }
-
-    void RefreshRecommendations() {
-        if (!m_dirty) return;
-
-        m_cachedCandidates = GatherCandidates(m_context);
-        ScoreCandidates(m_cachedCandidates);
-        m_cachedSlots = AllocateSlots(m_cachedCandidates);
-
-        m_dirty = false;
-    }
-
-    const std::vector<SlotRecommendation>& GetSlots() const {
-        return m_cachedSlots;
-    }
-};
-```
-
-### Per-Slot Update Cooldowns
-
-Each slot manages its own update state independently:
-
-```cpp
-struct SlotState {
-    RE::FormID currentFormID = 0;
-    float lastUpdateTime = 0.0f;
-    float cooldownMs = 500.0f;          // Minimum time before slot can change
-    bool isOverridden = false;
-    bool isWildcard = false;
-
-    bool CanUpdate(float currentTime) const {
-        return (currentTime - lastUpdateTime) >= cooldownMs;
-    }
-
-    void Update(RE::FormID newFormID, float currentTime) {
-        currentFormID = newFormID;
-        lastUpdateTime = currentTime;
-    }
-};
-
-class SlotManager {
-    std::vector<SlotState> m_slots;
-
-public:
-    void UpdateSlot(int slotIndex, RE::FormID newFormID, float currentTime) {
-        auto& slot = m_slots[slotIndex];
-
-        // Respect cooldown - don't flicker
-        if (!slot.CanUpdate(currentTime)) return;
-
-        // Only update if actually changed
-        if (slot.currentFormID == newFormID) return;
-
-        slot.Update(newFormID, currentTime);
-    }
-};
-```
-
-### Override Hysteresis
-
-Prevent flickering when values hover near thresholds:
-
-```cpp
-struct OverrideState {
-    bool isActive = false;
-    float activationThreshold = 0.25f;   // Trigger when health < 25%
-    float deactivationThreshold = 0.35f; // Clear when health > 35%
-    float lastTriggerTime = 0.0f;
-    float minActiveTimeMs = 2000.0f;     // Stay active for at least 2s
-
-    bool ShouldActivate(float healthPercent) const {
-        if (isActive) return true;  // Already active
-        return healthPercent < activationThreshold;
-    }
-
-    bool ShouldDeactivate(float healthPercent, float currentTime) const {
-        if (!isActive) return false;
-
-        // Must stay active for minimum time
-        if ((currentTime - lastTriggerTime) < minActiveTimeMs) return false;
-
-        // Hysteresis: need to be ABOVE deactivation threshold to clear
-        return healthPercent > deactivationThreshold;
-    }
-};
-```
-
-**Example: Health override at 25%**
-
-```
-Health:  30% → 24% → 26% → 24% → 40%
-         ↓     ↓     ↓     ↓     ↓
-Active:  No   YES   YES   YES   No
-                     ↑     ↑
-            Hysteresis prevents flicker
-```
-
-| Threshold Type | Value | Purpose |
-|----------------|-------|---------|
-| Activation | 25% | Trigger override |
-| Deactivation | 35% | Clear override (10% hysteresis band) |
-| Min active time | 2000ms | Don't clear immediately even if healed |
-
-### Wildcard Rate Limiting
-
-Prevent multiple wildcards from triggering simultaneously:
-
-```cpp
-struct WildcardState {
-    float lastTriggerTime = 0.0f;
-    float globalCooldownMs = 30000.0f;  // 30s between ANY wildcard
-    int triggersThisSession = 0;
-    int maxTriggersPerSession = 10;     // Cap total wildcards
-
-    // Per-slot wildcard tracking
-    std::unordered_map<int, float> slotLastWildcard;
-    float perSlotCooldownMs = 60000.0f; // 60s per slot
-
-    bool CanTriggerWildcard(int slotIndex, float currentTime) {
-        // Global rate limit
-        if ((currentTime - lastTriggerTime) < globalCooldownMs) return false;
-
-        // Session limit
-        if (triggersThisSession >= maxTriggersPerSession) return false;
-
-        // Per-slot limit
-        auto it = slotLastWildcard.find(slotIndex);
-        if (it != slotLastWildcard.end()) {
-            if ((currentTime - it->second) < perSlotCooldownMs) return false;
-        }
-
-        return true;
-    }
-
-    void OnWildcardTriggered(int slotIndex, float currentTime) {
-        lastTriggerTime = currentTime;
-        slotLastWildcard[slotIndex] = currentTime;
-        triggersThisSession++;
-    }
-};
-```
-
-**Wildcard constraints:**
-- Global cooldown: Only one wildcard every 30s across all slots
-- Per-slot cooldown: Same slot can't wildcard again for 60s
-- Session limit: Max 10 wildcards per play session
-- Probability still applies (30% chance when eligible)
-
-### Slot Update Priority
-
-When multiple slots want to update, process in priority order:
-
-```cpp
-enum class UpdatePriority {
-    Override = 0,    // Highest - life/death situations
-    ContextChange,   // Context meaningfully changed
-    Scheduled,       // Regular refresh interval
-    Wildcard         // Lowest - exploration picks
-};
-
-struct PendingUpdate {
-    int slotIndex;
-    RE::FormID newFormID;
-    UpdatePriority priority;
-    float requestTime;
-};
-
-class UpdateScheduler {
-    std::priority_queue<PendingUpdate> m_pending;
-    int m_maxUpdatesPerFrame = 2;  // Don't update all slots at once
-
-public:
-    void ProcessUpdates(float currentTime) {
-        int processed = 0;
-
-        while (!m_pending.empty() && processed < m_maxUpdatesPerFrame) {
-            auto update = m_pending.top();
-            m_pending.pop();
-
-            if (m_slots[update.slotIndex].CanUpdate(currentTime)) {
-                ApplyUpdate(update);
-                processed++;
-            }
-        }
-    }
-};
-```
-
-**Why stagger updates:**
-1. Prevents UI "popping" when all slots change at once
-2. Smoother visual transitions
-3. Spreads CPU work across frames
-
-### Learning Latency Tolerance
-
-contextual bandit learning updates don't need to be immediate:
-
-```
-Timeline:
-  T+0ms:    Player equips Fireball (event queued)
-  T+0ms:    Recommendation still shows Fireball (current slot unchanged)
-  T+500ms:  Learning batch processed
-  T+500ms:  Fireball reward estimate updated
-  T+800ms:  Next recommendation refresh
-  T+800ms:  Updated reward estimate now affects scoring
-
-Result: 800ms delay from action to learning effect
-Impact: Negligible - player doesn't notice, recommendations still work
-```
-
-**Why this is acceptable:**
-1. Player sees immediate feedback (item equipped)
-2. Next recommendation will reflect learned preference
-3. Learning is for long-term personalization, not instant response
-4. Avoids blocking game thread during combat
-
-### Data Structure Choices
-
-**Use Hash Maps (`std::unordered_map`) for:**
-
-| Data | Key | Value | Reason |
-|------|-----|-------|--------|
-| reward estimate weights | `FormID` | `float[16]` | O(1) lookup, sparse (not all items trained) |
-| Training counts | `FormID` | `int` | Same as weights, 1:1 correspondence |
-| Effect type cache | `FormID` | `EffectType` | Avoid re-classifying every frame |
-| Spell cost cache | `FormID` | `float` | Avoid recalculating magicka cost |
-| Active effect lookup | `EffectID` | `bool` | Fast "is player on fire?" check |
-| Override state | `OverrideCondition` | `OverrideState` | Few conditions, but need fast lookup |
-
-**Use Arrays/Vectors for:**
-
-| Data | Size | Reason |
-|------|------|--------|
-| Slot states | 6 (fixed) | Small, contiguous, cache-friendly |
-| Candidates per refresh | ~50-200 | Rebuilt each cycle, sort in place |
-| Feature vector | 16 floats | Fixed size, stack allocated |
-| Override rules | ~10 | Small, rarely changes |
-
-**Use Flat Maps (`std::flat_map`) for:**
-
-| Data | Size | Reason |
-|------|------|--------|
-| Allowed effects per slot | ~5-10 | Small, sorted, frequent iteration |
-| Allowed schools per slot | ~3-5 | Same |
-
-```cpp
-// learner: hash map for sparse FormID → weights
-class FeatureQLearner {
-    std::unordered_map<RE::FormID, std::array<float, 16>> m_weights;
-    std::unordered_map<RE::FormID, int> m_trainCount;
-};
-
-// Effect cache: avoid re-classifying every frame
-class EffectClassifier {
-    mutable std::unordered_map<RE::FormID, EffectType> m_cache;
-
-    EffectType GetEffectType(RE::FormID formID) const {
-        auto it = m_cache.find(formID);
-        if (it != m_cache.end()) return it->second;
-
-        // Expensive classification
-        EffectType type = ClassifyByEffect(formID);
-        m_cache[formID] = type;
-        return type;
-    }
-
-    void InvalidateCache() { m_cache.clear(); }  // On game load
-};
-
-// Slots: fixed array, not hash map
-class SlotManager {
-    std::array<SlotState, 6> m_slots;  // Fixed, cache-friendly
-
-    SlotState& GetSlot(int index) {
-        return m_slots[index];  // O(1), no hash
-    }
-};
-
-// Candidates: vector, rebuilt each cycle
-class CandidateGenerator {
-    std::vector<Candidate> m_candidates;  // Reserve capacity
-
-    void GatherCandidates() {
-        m_candidates.clear();
-        m_candidates.reserve(200);  // Avoid reallocation
-        // ... gather ...
-    }
-};
-```
-
-**Cache Invalidation:**
-
-| Cache | Invalidate When |
-|-------|-----------------|
-| Effect type cache | Game load (mods may change) |
-| Spell cost cache | Game load, perk change |
-| Active effects | Never (re-query each poll) |
-| Candidate list | Every refresh cycle |
-
-### Performance Targets
-
-| Metric | Target | Notes |
-|--------|--------|-------|
-| Frame impact | < 1ms | Total per-frame processing |
-| Context poll | < 5ms | Game state reads |
-| Full pipeline | < 15ms | Gather + score + allocate |
-| Memory overhead | < 5MB | Candidates + reward estimates + cache |
-| Queue depth | < 100 | Learning events before flush |
-| Hash map lookups | < 0.1ms | Per FormID lookup |
-| Effect cache hit rate | > 95% | Most items seen repeatedly |
-
-### Configuration in Settings
-
-```json
-{
-  "timing": {
-    "context_poll_ms": 200,
-    "recommendation_refresh_ms": 300,
-    "learning_batch_ms": 1000,
-    "adaptive_timing": true,
-    "combat_speed_multiplier": 0.5,
-    "async_learning": true
-  },
-  "slots": {
-    "cooldown_ms": 500,
-    "max_updates_per_frame": 2
-  },
-  "overrides": {
-    "hysteresis_band": 0.10,
-    "min_active_time_ms": 2000
-  },
-  "wildcards": {
-    "global_cooldown_ms": 30000,
-    "per_slot_cooldown_ms": 60000,
-    "max_per_session": 10,
-    "probability": 0.3
-  }
-}
-```
+## Read this before citing any number
+
+**A measurement without its capture length is not trustworthy.** This is the
+single most expensive lesson the project has learned about its own profiling,
+and it is why every table below states how long the run was.
+
+Four rules, in the order they bite:
+
+1. **Capture length dominates MTPC for infrequent zones.** A zone that fires
+   every few seconds accumulates a handful of samples in a 5-minute run, and
+   cold calls — wheel creation, the first push after a load, a page the player
+   has never opened — are *all* of them. `Display::Wheeler` measured
+   **3.23–3.87 ms** MTPC across short captures of 31–66 pushes. The 44:40
+   capture of 2026-08-26, with **874 pushes**, puts the same zone at **986 µs**.
+   There was never a 3.6 ms frame spike to fix; there was a small sample. See
+   the archived #14 entry in [../roadmap-archive.md](../roadmap-archive.md).
+2. **Per-tick pollers need length for the opposite reason.** They fire ~10 Hz,
+   so their *totals* are what matter, and a short run under-reports them
+   relative to the spiky zones. The 2026-08-23/24 captures ranked the display
+   push above `PollPlayerMagicEffects`; the long capture inverted that.
+3. **These are DEBUG + Tracy-instrumented builds.** Absolute times are inflated
+   by missing inlining and by capture overhead. Use them for **relative ranking
+   and cross-build comparison**, never as a release frame budget.
+4. **Zone counts are not a diagnostic.** `Huginn_ZONE_NAMED` sits at the top of
+   `Push()` ahead of every early-out, so its count always equals the call count
+   whether or not the early-out fires. MTPC is the only signal that a gate
+   worked.
+
+**MTPC** = mean time per call, i.e. what causes a visible *spike*. **Total** =
+MTPC × count over the capture, i.e. cumulative CPU. A large total spread over
+~19,000 ticks on a 100 ms budget is cheap per tick even when the total looks
+alarming.
 
 ---
 
-## Logging and Error Handling
+## Current measured cost — 2026-08-26, 44:40 capture
 
-**Silent failures are not an option.** All failures must be logged and handled gracefully.
+This is the only capture long enough to trust, and it supersedes everything
+earlier in this document's history. Self-only timing, DEBUG + Tracy build.
 
-### Logging Principles
+| Zone | MTPC | Calls | Total | % of runtime | Tier-3 item |
+|---|---|---|---|---|---|
+| `PollPlayerMagicEffects` | 136.3 µs | 19,179 | **2.61 s** | 0.10% | O3 |
+| `PollTargets` | 113.34 µs | 19,179 | 2.17 s | 0.08% | #12 |
+| `Inventory::DeltaScan` | 267.78 µs | 3,848 | 1.03 s | 0.04% | #13 |
+| `Display::Wheeler` | 986 µs | 874 | 862 ms | 0.03% | #14 (closed) |
 
-1. **Every failure path must log** - If a function can fail, log why it failed
-2. **Use appropriate log levels** - `error` for failures, `warn` for recoverable issues, `info` for state changes, `debug` for diagnostics
-3. **Include context** - Log FormIDs, indices, counts, and other relevant data
-4. **Don't spam** - Use rate limiting for high-frequency operations
+**Nothing in the hot path exceeds 0.10% of runtime.** The two per-tick pollers
+lead on total precisely because they run on every tick — `PollPlayerMagicEffects`
+is not gated by the pipeline skip-check, it *feeds* it. `Inventory::DeltaScan`
+overtook `Display::Wheeler` on total not by getting slower but by running ~4×
+as often (a 2 Hz delta scan vs. a push every few seconds).
 
-### Log Levels
+**Consequence for planning:** on CPU grounds Tier 3 is a budget list, not a work
+list. The trigger to pick any of it up is a felt stutter, not a µs figure.
 
-| Level | When to Use | Example |
-|-------|-------------|---------|
-| `error` | Operation failed, feature degraded | `"Failed to create wheel: {}"` |
-| `warn` | Unexpected but recoverable | `"Wheeler API not available, recommendations disabled"` |
-| `info` | State changes, initialization | `"Created recommendation wheel at index {}"` |
-| `debug` | Diagnostic info (disabled in release) | `"Scored {} spells, top: {} (score: {})"` |
-| `trace` | High-frequency diagnostics | `"Context poll: health={}%, magicka={}%"` |
+### Superseded captures — do not cite these as current
 
-### Error Handling Patterns
+Kept only so a stale number can be recognised as stale. Full entries, with
+session context and save size, are in
+[../profiling/tracy-traces.md](../profiling/tracy-traces.md).
 
-```cpp
-// BAD: Silent failure
-void UpdateWheel() {
-    if (!m_api) return;  // Silent - user has no idea why it's not working
-}
-
-// GOOD: Log and gracefully degrade
-void UpdateWheel() {
-    if (!m_api) {
-        spdlog::warn("[WheelerClient] API not connected, skipping wheel update");
-        return;
-    }
-}
-
-// BAD: Crash on unexpected state
-auto* spell = GetSpell(formID);
-spell->GetName();  // Crash if null
-
-// GOOD: Defensive with logging
-auto* spell = GetSpell(formID);
-if (!spell) {
-    spdlog::error("[SpellRegistry] Spell {:08X} not found", formID);
-    return;
-}
-```
-
-### Critical Logging Points
-
-| Operation | Log Level | What to Log |
-|-----------|-----------|-------------|
-| Plugin initialization | `info` | Version, API connection status |
-| API connection failure | `warn` | Which API, why it failed |
-| Wheel creation | `info` | Index, entry count, client name |
-| Wheel creation failure | `error` | Error code, config values |
-| Spell not found | `warn` | FormID (may be mod conflict) |
-| Q-table load/save | `info` | Path, entry count |
-| Q-table load failure | `error` | Path, error details |
-| Invalid state detected | `error` | What was expected vs actual |
-
-### Rate-Limited Logging
-
-For high-frequency operations, use rate limiting to avoid log spam:
-
-```cpp
-// Log at most once per second
-static auto lastLogTime = std::chrono::steady_clock::now();
-auto now = std::chrono::steady_clock::now();
-if (std::chrono::duration_cast<std::chrono::seconds>(now - lastLogTime).count() >= 1) {
-    spdlog::debug("[Update] Processing {} candidates", candidates.size());
-    lastLogTime = now;
-}
-```
-
-### Graceful Degradation
-
-When a subsystem fails, the rest of Huginn should continue working:
-
-| Failure | Graceful Behavior |
-|---------|-------------------|
-| Wheeler API unavailable | Recommendations computed but not displayed |
-| Q-table load fails | Use default priors, start fresh learning |
-| Spell registry empty | Log warning, no recommendations shown |
-| Invalid FormID from callback | Log and ignore, don't crash |
+| Capture | Length | What it said | Why it is wrong now |
+|---|---|---|---|
+| 2026-08-23 / 2026-08-24 | 5–15 min | `Display::Wheeler` 3.23–3.87 ms MTPC, ranked #1 | 31–66 pushes; cold calls dominated. Long run: 986 µs |
+| 2026-07-25 (`99cbb48`) | ~17:29 | `Display::Wheeler` 2.54 ms × 176; `Inventory::DeltaScan` 685 µs × 1,118 = 766 ms | Same small-sample problem on the push. The DeltaScan figure survives as a *large-inventory* data point — the hoarder worst case |
+| 2026-07-24 (`4791318`) | ~11:17 | `Inventory::DeltaScan` 161.3 µs × 157 | Tiny test save (3 items / 0 spells / 2 weapons) — this zone scales with inventory size |
+| 2026-06-13 (`slot-cleanup`) | ~13.8 min | `WeaponRegistry::Refresh` 1.25 ms × 736 = 918 ms, the #1 cost | This is the **before** side of O1, which shipped. The zone no longer walks the inventory at 2 Hz |
+| 2026-02-28 (v0.13.x) | ~30 s | `ScoreCandidates` 16.49 ms, `Display::Wheeler` 5.25 ms | Thirty seconds. Recorded in [../refactor/performance-optimizations.md](../refactor/performance-optimizations.md); treat as archaeology |
 
 ---
 
-## Thread Safety
+## The update loop, as actually implemented
 
-Huginn interacts with multiple threads and must protect shared state appropriately.
+### One thread
 
-### Thread Model
+`UpdateHandler` is a `BSInputDeviceManager` event sink
+(`src/update/UpdateHandler.cpp`). Input events arrive every frame; the handler
+throttles internally and calls `OnUpdate` once `Config::UPDATE_INTERVAL_MS`
+(100 ms) has elapsed. There is no timer thread, no worker pool and no background
+learning thread — a search of `src/` finds **no `std::thread`, `std::jthread` or
+`std::async` anywhere**.
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              THREAD MODEL                                    │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  GAME THREAD (Main)                                                         │
-│  ─────────────────                                                          │
-│  • SKSE event handlers (OnEquip, OnSpellCast, etc.)                        │
-│  • Context polling (read game state)                                        │
-│  • Override detection                                                       │
-│  • UI rendering                                                             │
-│                                                                              │
-│  UPDATE THREAD (Background)                                                 │
-│  ──────────────────────────                                                 │
-│  • Recommendation refresh (full pipeline)                                   │
-│  • Wheeler API calls                                                        │
-│  • Candidate scoring                                                        │
-│                                                                              │
-│  LEARNING THREAD (Background)                                               │
-│  ────────────────────────────                                               │
-│  • reward estimate updates from event queue                                         │
-│  • Batch processing                                                         │
-│  • Persistence (auto-save)                                                  │
-│                                                                              │
-│  WHEELER CALLBACK THREAD                                                    │
-│  ────────────────────────                                                   │
-│  • ItemActivatedCallback                                                    │
-│  • WheelStateCallback                                                       │
-│  • EditModeCallback                                                         │
-│  • May be any thread - treat as foreign                                     │
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
-```
+`deltaSeconds` is clamped to 1.0 s before dispatch, so an alt-tab or a long
+pause cannot produce a burst of expired timers.
 
-### Synchronization Primitives
+### Three stages per tick
 
-```cpp
-class HuginnCore {
-    // ─────────────────────────────────────────────────────
-    // State Protection
-    // ─────────────────────────────────────────────────────
+`OnUpdate` (`src/UpdateLoop.cpp`) runs, in order:
 
-    // Context state - read often, write during poll
-    mutable std::shared_mutex m_contextMutex;
-    ContextState m_context;
+| Stage | Tracy zone | What it does | Gated? |
+|---|---|---|---|
+| World-loaded guard | — | `IsWorldLoaded()`: LoadingMenu / MainMenu / `Get3D()`. Suspends the **whole** tick, not just the inventory scan | Every tick |
+| `UpdateSubsystems` | `Update::Subsystems` | Cooldowns, scorer, override manager, `SlotLocker::Update` (wall-clock lock decay) | Every tick, unconditionally |
+| `MaintainRegistries` | `Update::Registries` | Interval-gated registry work (see the interval table below) | Per-registry timers |
+| `RunPipelineIfNeeded` | `Update::PipelineCheck` → `RunPipeline` | The recommendation pipeline | Two skip gates |
+| Soak telemetry | — | `SoakMetrics::RecordTick(tickMs)` | Every tick |
 
-    // Slot state - read by UI, write by update thread
-    mutable std::shared_mutex m_slotMutex;
-    std::array<SlotState, NUM_SLOTS> m_slots;
+Lock decay and wildcard expiry deliberately sit *outside* the skip gates: a lock
+that only aged on non-skipped ticks would outlive its wall-clock duration in a
+static scene.
 
-    // learner - accessed by learning thread and scoring
-    mutable std::shared_mutex m_learnerMutex;
-    FeatureQLearner m_qLearner;
+### Two skip gates
 
-    // ─────────────────────────────────────────────────────
-    // Event Queue Protection
-    // ─────────────────────────────────────────────────────
+**Outer gate — `RunPipelineIfNeeded`.** Returns before `RunPipeline` is ever
+called unless one of these is true:
 
-    // Learning queue - producer/consumer pattern
-    std::mutex m_queueMutex;
-    std::queue<LearningEvent> m_learningQueue;
+- the state manager reports a sensor change (`DidLastUpdateChangeState()`),
+- a page was cycled (`PeekPageChanged()`),
+- the elemental-damage window is live,
+- `PipelineCoordinator::NeedsForcedRun()` — state the `GameState` hash cannot
+  see: the elemental falling edge, falling (#60), underwater (#61), or a pending
+  reason downgrade (#62).
 
-    // ─────────────────────────────────────────────────────
-    // Callback Serialization
-    // ─────────────────────────────────────────────────────
+**Inner gate — `CheckHashSkip`.** Compares a discretized `GameState` hash
+against the last run's. It consults the same forced-run list, because the outer
+gate returns first in a quiet scene and a latch wired into only one gate is
+silently dead exactly where it is needed.
 
-    // Wheeler callbacks may fire from any thread
-    std::mutex m_callbackMutex;
+Recorded skip rates (both from `tracy-traces.md`, with their capture lengths):
 
-public:
-    // ─────────────────────────────────────────────────────
-    // Game Thread Operations
-    // ─────────────────────────────────────────────────────
+| Capture | Length | Ticks | Passed outer gate | Reached `ScoreCandidates` |
+|---|---|---|---|---|
+| 2026-06-07 | ~11.5 min | 4,336 | 1,559 (64% skipped) | 52 (96.7% of pipeline runs skipped) |
+| 2026-06-13 | ~13.8 min | 4,743 | 1,195 (~75% skipped) | 65 (~94.5% skipped) |
 
-    void PollGameState() {
-        ContextState newContext = ReadFromGame();
+Full scoring therefore runs on the order of **tens of times per session**, not
+per second. That is why nothing in the scoring path appears in the hot list.
 
-        std::unique_lock lock(m_contextMutex);
-        m_context = newContext;
-    }
+### Fixed intervals (`src/Config.h`)
 
-    bool CheckOverride() {
-        std::shared_lock lock(m_contextMutex);
-        return m_context.healthPercent < 0.25f;  // etc.
-    }
+All compile-time `constexpr`. There is no adaptive or combat-scaled timing — see
+"What this document used to claim" below.
 
-    // ─────────────────────────────────────────────────────
-    // Update Thread Operations
-    // ─────────────────────────────────────────────────────
+| Constant | Value | Governs |
+|---|---|---|
+| `UPDATE_INTERVAL_MS` | 100 ms | The whole tick |
+| `ITEM_COUNT_REFRESH_INTERVAL_MS` | 500 ms | `Inventory::DeltaScan` (the consumption detector) |
+| `ITEM_RECONCILE_INTERVAL_MS` | 30,000 ms | Full item add/remove reconcile |
+| `WEAPON_REFRESH_INTERVAL_MS` | 500 ms | Weapon charge delta scan |
+| `WEAPON_RECONCILE_INTERVAL_MS` | 30,000 ms | Weapon favorites reconcile |
+| `WEAPON_RECONCILE_RETRY_MS` | 1,000 ms | Retry for a load-time reconcile that could not read extraLists |
+| `SPELL_RECONCILE_INTERVAL_MS` | 5,000 ms | Newly learned spells |
+| `SPELL_FAVORITES_REFRESH_INTERVAL_MS` | 500 ms | Spell favorites delta |
+| `EXTRALIST_STABILIZATION_MS` | 500 ms | Post-load window before extraLists may be touched |
+| `CONSUMPTION_POST_LOAD_GRACE_MS` | 5,000 ms | Removals not rewarded as consumption after a load |
+| `REASON_HOLD_MS` | 1,500 ms | Longest a downgraded context label may linger (#62) |
+| `SOAK_HEARTBEAT_INTERVAL_MS` | 300,000 ms | `[Soak]` heartbeat line |
 
-    void RefreshRecommendations() {
-        ContextState ctx;
-        {
-            std::shared_lock lock(m_contextMutex);
-            ctx = m_context;  // Copy for use outside lock
-        }
-
-        auto candidates = GatherCandidates(ctx);
-
-        {
-            std::shared_lock lock(m_learnerMutex);
-            ScoreCandidates(candidates, ctx, m_qLearner);
-        }
-
-        auto newSlots = AllocateSlots(candidates);
-
-        {
-            std::unique_lock lock(m_slotMutex);
-            UpdateSlotsIfAllowed(newSlots);
-        }
-    }
-
-    // ─────────────────────────────────────────────────────
-    // Wheeler Callback Handlers
-    // ─────────────────────────────────────────────────────
-
-    void OnItemActivated(int32_t wheelId, int32_t entryId,
-                         int32_t itemId, uint32_t formId, bool wasEquipped) {
-        std::lock_guard lock(m_callbackMutex);
-
-        // Push to queue - don't block callback thread
-        LearningEvent event{
-            .type = LearningEvent::Type::Equip,
-            .formID = formId,
-            .features = GetCurrentFeatures(),  // Uses shared_lock internally
-            .reward = EQUIP_REWARD,
-        };
-
-        {
-            std::lock_guard qLock(m_queueMutex);
-            m_learningQueue.push(std::move(event));
-        }
-    }
-
-    // ─────────────────────────────────────────────────────
-    // Learning Thread Operations
-    // ─────────────────────────────────────────────────────
-
-    void ProcessLearningBatch(int maxEvents) {
-        std::vector<LearningEvent> batch;
-
-        {
-            std::lock_guard lock(m_queueMutex);
-            while (!m_learningQueue.empty() && batch.size() < maxEvents) {
-                batch.push_back(std::move(m_learningQueue.front()));
-                m_learningQueue.pop();
-            }
-        }
-
-        if (!batch.empty()) {
-            std::unique_lock lock(m_learnerMutex);
-            for (const auto& event : batch) {
-                m_qLearner.Update(event.formID, event.features, event.reward);
-            }
-        }
-    }
-};
-```
-
-### Lock Ordering
-
-To prevent deadlocks, always acquire locks in this order:
-
-1. `m_callbackMutex` (outermost)
-2. `m_contextMutex`
-3. `m_slotMutex`
-4. `m_learnerMutex`
-5. `m_queueMutex` (innermost)
-
-### Thread Safety Summary
-
-| Resource | Mutex Type | Readers | Writers |
-|----------|------------|---------|---------|
-| ContextState | `shared_mutex` | Override check, UI, scoring | Context poll |
-| SlotState | `shared_mutex` | UI render, Wheeler sync | Recommendation refresh |
-| FeatureQLearner | `shared_mutex` | Scoring | Learning batch |
-| LearningQueue | `mutex` | - | Push (events), Pop (batch) |
-| Wheeler callbacks | `mutex` | - | Callback handlers |
-
-### Wheeler Thread Safety
-
-Wheeler is thread-safe internally (uses `shared_mutex`). Huginn can call Wheeler API from any thread. See `src/wheeler/WheelerAPI.h` and the thread-safety notes in CLAUDE.md; there is no Wheeler integration doc yet.
+Registry limits: `MAX_TRACKED_TARGETS` 50, `MAX_TRACKED_ITEMS` 500,
+`MAX_TRACKED_WEAPONS` 100, `MAX_TRACKED_AMMO` 50, `TARGET_DETECTION_RANGE` 2048
+game units. `MAX_TRACKED_TARGETS` is a stress-test value; #12 proposes lowering
+it to ~12.
 
 ---
 
-## Known Limitations & Edge Cases
+## What this document used to claim, and what the code does instead
 
-### Design Trade-offs
+Earlier revisions of this file described a design that was **never built**. Every
+row below was checked against `src/` on 2026-08-29.
 
-#### Temporal Prediction Lag
-
-**Issue:** EMA velocity smoothing (α=0.3) introduces ~300ms lag.
-
-**Trade-off:**
-- **Smoothing benefits:** Filters combat jitter, prevents overreaction to noise
-- **Lag downside:** Slow to react to dragon breath, combat start
-
-**Resolution:** Acceptable for gradual health drain. Regime change detection (combat start → reset predictor) documented in Future Work section.
-
-#### Wildcard Recommendations
-
-**Issue:** Exploration picks may show random spells during intense combat.
-
-**Trade-off:**
-- **Benefits:** Helps discover underused spells, prevents reward estimate stagnation
-- **Annoyance:** Random spells during boss fights
-
-**Mitigation:** Context-aware wildcards (disable when health < 30%) and user-configurable wildcard rate.
-
-#### State Representation Granularity
-
-**Issue:** Bucketing thresholds (e.g., 25% vs 26% health) create discontinuities.
-
-**Trade-off:**
-- **Buckets benefit:** Reduces state space, enabled the tabular QLearner (removed in v0.13.x)
-- **Discontinuity problem:** Similar states treated as completely different
-
-**Resolution:** Hysteresis bands (25% on, 35% off) reduce oscillation at boundaries. Feature-based learning (see Future Work) would eliminate need for bucketing.
-
-### User Experience Considerations
-
-#### Recommendation Flickering
-
-**Issue:** Rapid context changes (health 34% → 36% → 34%) cause UI flicker.
-
-**Mitigation (current):**
-- Hysteresis bands (25% on, 35% off)
-- Slot cooldowns (500ms minimum)
-
-**Additional improvements:**
-- Wider hysteresis (25% on, 45% off)
-- Visual smoothing (fade transitions)
-- Sticky recommendations (persist until explicitly replaced)
-
-#### Mod Spell Compatibility
-
-**Issue:** Large spell packs (200+ spells) with no prior reward estimates cause confusion.
-
-**Considerations:**
-- Prior system may misclassify mod spell effects
-- contextual bandit learning cold start for all new spells
-
-**Improvements:**
-1. Better effect keyword detection for auto-classification
-2. Metadata learning (track usage patterns)
-3. User curation (mark "never recommend")
-
-### Edge Cases
-
-#### Fast Travel / Loading Screens
-
-**Handling:** Reset context sensors, clear learning queue on cell change.
-
-**Implementation:** Requires SKSE event hooks for `kPostLoadGame` and cell transition events.
-
-#### Player Death
-
-**Handling:** Should recent recommendations be penalized?
-
-**Consideration:** Death attribution is complex (many factors contribute). Currently does not penalize spells on death. Future versions may implement optional death penalty with configurable lookback window.
-
-#### Mod Load Order Changes
-
-**Issue:** FormIDs may change between sessions if mod load order changes.
-
-**Mitigation:** Per-save Q-table includes plugin name + local FormID for resilience.
-
-**Edge case:** If mod is removed or replaced, reward estimates become orphaned and are ignored.
-
-#### Memory Growth (Tabular Contextual Bandit Learning)
-
-**Issue:** Q-table grows as O(states × items) with tabular learning.
-
-**Monitoring:**
-- Track Q-table size over long play sessions
-- Log memory usage in debug builds
-
-**Mitigation:**
-1. Sparse storage (only non-zero values) - Implemented
-2. LRU eviction policy - Planned
-3. Visit-count thresholding (remove rarely-visited state-action pairs) - Planned
+| Claimed | Reality |
+|---|---|
+| Four update tiers (16 ms fast path / 100–500 ms polling / 200–1000 ms refresh / async learning) | **One** 100 ms tick, three sequential stages, two skip gates. No per-frame tier — the override check runs inside the pipeline, not every frame |
+| `struct TimingConfig` with `contextPollIntervalMs`, `minContextPollMs`, `maxContextPollMs`, `recommendationRefreshMs` | No such type. Fixed `constexpr` intervals in `Config.h` |
+| Adaptive timing: `combatSpeedMultiplier = 0.5`, `idleSpeedMultiplier = 2.0`, `GetEffectivePollInterval()` | Does not exist. No identifier matching `adaptiveTiming` or `combatSpeedMultiplier` appears in `src/` |
+| `class LearningQueue`, batched events, `asyncLearning = true`, `learningBatchIntervalMs = 1000` | Does not exist. Learning updates run synchronously — `FeatureQLearner::Update` is called directly from the equip and consumption paths |
+| A background **update thread** and a background **learning thread** | Neither exists. Everything is the game thread, plus Wheeler's callback thread and Scaleform's UI thread |
+| "800 ms delay from action to learning effect" | No queue, so no such delay. The reward lands on the call; the *display* changes on the next non-skipped pipeline run |
+| `class UpdateScheduler`, `UpdatePriority` enum, `maxUpdatesPerFrame = 2`, staggered slot updates | Does not exist. All slots on the current page are pushed together |
+| `SlotState::cooldownMs = 500` per-slot cooldown | The mechanism is `SlotLocker`, with different semantics and different numbers — see below |
+| Override activation 25% / deactivation 35% | Real defaults are 10% activation with a 15-point hysteresis *gap* (deactivating at 25%) — see below |
+| Wildcards: 30 s global cooldown, 60 s per-slot cooldown, 10 per session, 30% probability | Real model is per-page, probability scales with slot index, and there is no session cap — see below |
+| Effect-type cache and spell-cost cache keyed by FormID | Neither exists. Caching `SpellData.effectiveCost` is still **open** as Tier-3 item #11: `CandidateGenerator` calls `LookupByID` + `CalculateMagickaCost` per known spell per tick, inside the registry lock |
+| 16-float feature vector | **18** floats (`StateFeatures::NUM_FEATURES = 18`), append-only because the order is the cosave wire order |
+| Six fixed slots | `MAX_PAGES = 10`, `MAX_SLOTS_PER_PAGE = 10`; the shipped `Huginn.ini` configures 3 pages × 8 slots |
+| JSON settings file | INI: `Data/SKSE/Plugins/Huginn.ini`, sections `[Overrides] [Candidates] [Scoring] [Favorites] [ContextWeights] [Wildcards] [Subtexts] [Wheeler] [Pages] [PageN] [PageN.SlotM] [Learning] [SlotLocker] [Keybindings]` |
+| EMA velocity smoothing at α = 0.3 causing ~300 ms prediction lag | No EMA predictor exists. `HealthTrackingState` is a 10-entry ring buffer with exponentially decayed 2-second aggregates |
 
 ---
 
-## Related Documentation
+## Stability mechanisms that do exist
 
-| Document | Description |
-|----------|-------------|
-| [learning/qlearning.md](../architecture/4-contextual-bandits.md) | Feature-based learning design (target for v2.0) |
-| [architecture/pipeline.md](../architecture/0-pipeline.md) | Detailed data flow: context → candidates → scoring → slots |
-| [architecture/slots.md](../architecture/5-slots.md) | Slot classification, overrides, wildcards, Wheeler integration |
-| _(not written)_ | Wheeler API contract and thread safety — see `src/wheeler/WheelerAPI.h` |
+These are what actually prevent flicker. All three trade responsiveness for
+steadiness, and all three are configurable.
+
+### Slot locking (`src/slot/SlotLocker.h`, `[SlotLocker]`)
+
+A slot that receives new content is held for a duration, so the player has time
+to act on a recommendation whose triggering context has already passed.
+
+| Setting | Code default | Shipped `Huginn.ini` |
+|---|---|---|
+| `fLockDurationMs` | 3000 | **1000** |
+| `fMinLockDurationMs` | 500 | 500 |
+| `bLockOnFill` | true | true |
+| `bOverridesBreakLock` | true | true |
+| `iImmediateBreakPriority` | 50 | 50 |
+
+A post-activation lock (`LockSlotForActivation`) uses a longer 10 s hold so a
+just-used item stays visible even after it is consumed; `OnItemUsed` will not
+break it. `SlotLocker::Update` returns true when any lock expired, and the caller
+forces a pipeline run so the freed slot refills without waiting for an unrelated
+state change.
+
+> **Measurement note.** With `fLockDurationMs = 1000`, `ceil(remaining / 1000)`
+> only ever yields 1, so the lock-timer subtext never counts down. Any attempt to
+> measure the 3 → 2 → 1 transitions needs the value raised to ~4000 first. This
+> is why the #14 lock-label measurements are recorded as weak evidence — locks
+> were live for only ~44 s of the 15-minute capture that produced them.
+
+### Override hysteresis (`src/override/OverrideConfig.h`, `[Overrides]`)
+
+Activation is `value < threshold`; deactivation is `value >= threshold + gap`,
+and no override may clear before `minOverrideDurationMs` has elapsed.
+
+| Condition | Activation threshold | Hysteresis gap | Effective deactivation |
+|---|---|---|---|
+| Critical health | 0.10 | 0.15 | 0.25 |
+| Critical magicka | 0.10 | 0.15 | 0.25 |
+| Critical stamina | 0.10 | 0.15 | 0.25 |
+| Weapon charge | 0.25 | 0.05 | 0.30 |
+| Low ammo | 10 (absolute count) | 15 | 25 |
+
+`MIN_OVERRIDE_DURATION_MS = 2000`. Drowning is condition-based rather than
+threshold-based and has no hysteresis band.
+
+Weapon charge is deliberately nonzero: activation is `charge < threshold`, and a
+drained enchanted weapon keeps a sub-cost remainder rather than reaching exactly
+zero, so a zero threshold would never fire.
+
+### Wildcards (`src/learning/WildcardManager.h`, `[Wildcards]`)
+
+Exploration picks, so the learner can discover preferences it would otherwise
+never see ranked.
+
+| Setting | Value | Meaning |
+|---|---|---|
+| `fBaseProbability` | 0.165 | `P(slot i) = base × i`, capped |
+| `fMaxProbability` | 0.5 | The cap |
+| `fCooldownSeconds` | 30 | How long a rolled wildcard persists |
+| `fRefractorySeconds` | 60 (INI) / 5 (code default) | Gap before a new roll |
+| First slot excluded | true | Slot 0 is always the top-scored pick |
+
+There is **no session cap**. Since v0.19.6 the cache is **per page**: each page
+owns its entries, its cooldown and its refractory timer, and records the page
+*shape* (`slotCount`, `wildcardSlots`) it was rolled against — a shape change
+from an INI hot-reload discards that page's cache wholesale. This closed three
+bugs of one kind (#70 and its two siblings), all "a cached wildcard nothing can
+display", which suppressed re-rolls because the liveness check scanned the whole
+cache while only a bounded prefix could ever be shown.
+
+`UpdateExpiry()` runs unconditionally every tick across **all** pages, because
+`ApplyWildcards` only runs on non-skipped pipeline ticks and a wildcard on a page
+the player has switched away from must still age out on its own timer.
+
+### Context reason hold
+
+`REASON_HOLD_MS = 1500` damps only a *downgrade* of the displayed context label;
+a more urgent reason is adopted instantly. It is clamped to the live lock
+duration so a label can never outlive the slot contents it explains.
 
 ---
+
+## Data structures
+
+Verified against the headers named.
+
+| Data | Structure | Where | Why |
+|---|---|---|---|
+| Per-item learning state | `std::unordered_map<FormID, ItemLearningData>` | `FeatureQLearner.h` | Sparse — most items are never trained. Weights, train count and last-update timestamp are **colocated in one struct**: one hash lookup per candidate, not three parallel maps |
+| Feature vector | `std::array<float, 18>` | `StateFeatures.h` | Fixed size, stack allocated, append-only wire order |
+| Wildcard state | `std::array<PageWildcards, MAX_PAGES>` | `WildcardManager.h` | Fixed, per-page; each holds `std::array<WildcardSlot, MAX_SLOTS_PER_PAGE>` |
+| Lock state | `std::array<LockedSlot, MAX_SLOTS_PER_PAGE>` | `SlotLocker.h` | Small, contiguous, snapshot-copyable under one lock acquisition |
+| Damage / healing history | `EventRingBuffer<T, 10>` | `StateTypes.h` | Fixed-size circular buffer, so the whole state copies out cheaply under a shared lock |
+| Delta-scan scratch | three reused `std::unordered_map<FormID, int32_t>` | `ItemRegistry.h` | `m_scanCounts` / `m_scanFilledCounts` / `m_scanSoulLevels` are members, cleared not reallocated — the scan itself is allocation-free |
+| Wheeler push arrays | four member `std::vector`s, `clear()` + `reserve()` | `WheelerBackend.h` | Was four fresh allocations per page per tick |
+| Pipeline context | `PipelineContext m_ctx`, `Reset()` rather than reconstruct | `PipelineCoordinator.h` | Preserves container capacity across ticks. **Note:** roadmap #13 records this container reuse as "documented-but-broken" — verify before relying on it |
+| Candidates | `std::vector<ScoredCandidate>`, rebuilt per scoring run | `ScoredCandidate.h` | Sorted in place; scoring runs tens of times a session, not per tick |
+
+**Caches that do not exist:** there is no effect-type classification cache and no
+spell magicka-cost cache. Adding the latter is open Tier-3 item #11.
+
+---
+
+## Thread model
+
+Three threads touch Huginn state. None of them belong to Huginn.
+
+| Thread | Origin | What runs on it |
+|---|---|---|
+| **Game thread** | Skyrim | `OnUpdate` and everything it calls: polling, registries, the whole pipeline, scoring, allocation, locking, the display push, learning updates, cosave serialization |
+| **Wheeler callback thread** | Wheeler's DLL | `ItemActivatedCallback`, wheel-state and edit-mode callbacks. Treat as foreign |
+| **Scaleform UI thread** | GFx | Everything `IntuitionMenu` defers via `SKSE::GetTaskInterface()->AddUITask()` |
+
+The rule that follows: **never call `Invoke` or `CreateString` from the update
+thread.** All `IntuitionMenu` public API methods defer their GFx work.
+
+### Synchronization inventory
+
+| Owner | Primitive | Protects |
+|---|---|---|
+| `State::StateManager` | 4 × `shared_mutex` (`m_worldMutex`, `m_playerMutex`, `m_targetsMutex`, `m_trackingMutex`) | Split by state type so a target poll does not block a vitals read. Copy-out accessors |
+| `Learning::FeatureQLearner` | `shared_mutex` | `m_items`, `m_totalTrainCount`. A batch-query handle acquires the shared lock once and the caller loops N candidates under it |
+| `Registry::FormRegistry` and the per-type registries | `shared_mutex` each | Registry contents. Accessors are deliberately **un-zoned** in Tracy — absent `QueryTopK` / `FindBest` zones are expected, not missing data |
+| `Slot::SlotLocker` | `mutex` | Lock state — Wheeler callbacks reach `OnItemUsed` / `LockSlotForActivation` from the callback thread. `GetLockSnapshot()` exists so a push takes the lock once instead of up to 2 × slots × pages round-trips |
+| `Slot::SlotAllocator` | `m_cacheMutex`, `m_logMutex` | Page cache and log dedup |
+| `Wheeler::WheelSync` | `m_pageDataMutex` | Page-wheel mapping and add-fail cooldowns. Owns this state exclusively; callbacks get query/mutator methods, never a reference into it |
+| `Wheeler::WheelerClient` | `m_callbackMutex` | Callback state |
+| `Wheeler::WheelerConnection` | atomic | The API pointer — single writer (`TryConnect`), everyone else reads |
+| `Learning::PipelineStateCache` | `shared_mutex` | The snapshot consumed by the consumption/attribution path |
+| `Learning::EquipEventBus`, `EquipSourceTracker`, `ExternalEquipLearner`, `InventoryExitTracker` | `mutex` each | Equip attribution state, written from callbacks |
+| `Input::InputHandler`, `Input::EquipManager` | `shared_mutex` each | Keycode map, slot contents |
+| `Update::UpdateHandler` | `mutex` | `m_lastUpdate` and callback invocation |
+| `State::DamageEventSink` | `m_queueMutex` | Damage event queue filled from the game's event dispatch |
+
+### The StateManager pattern
+
+- Accessors return **copies**, not references.
+- `shared_lock` for reads, `unique_lock` for writes.
+- Build the new state **outside** the lock, then copy in — short critical
+  sections.
+
+`PipelineCoordinator::ResetCrossSaveState()` is documented as **not uniformly
+serialized**: the console path (`hg reset all`) runs under
+`UpdateHandler::RunExclusive`, but the save-load path does not, so a reset can
+land while the update thread is inside the pipeline. The worst case is one tick
+reading a mix of both sides — a stale label or one redundant pipeline run, not a
+torn structure.
+
+### Wheeler
+
+Wheeler is thread-safe internally. Huginn may call its API from any thread. The
+contract lives in `src/wheeler/WheelerAPI.h` and the thread-safety notes in
+`CLAUDE.md`; there is no separate Wheeler integration document.
+
+---
+
+## Optimization status
+
+### Shipped
+
+| Item | What changed | Evidence |
+|---|---|---|
+| **O1** — `WeaponRegistry::Refresh` | The full inventory walk at 2 Hz is gone; ~1.2 ms reclaimed per fire, and the ~1 s memory sawtooth from per-call `InventoryEntryData` map allocation went with it. Ammo counts stay per-tick on purpose: the low-ammo override gates on the cached count | Before: 2026-06-13, ~13.8 min, 1.25 ms × 736 = 918 ms, the #1 zone. After: 2026-07-24 capture |
+| **#14 part 1** — `IntuitionBackend` change-detect | `Push()` compares the built frame against the last and returns on an identical one, then sends from `m_lastPush` rather than recomputing | 92.76 µs → 63.12 µs. Structurally understates the win: the zone wraps the scratch build but never the UI-thread GFx work it saves |
+| **#14 part 2** — `GetLockSnapshot` hoist | One snapshot per push instead of `IsSlotLocked()` + `GetRemainingLockTime()` per slot per page | Gated on `showLockTimerLabel`, because the old per-slot calls were too — an unconditional hoist traded zero lock acquisitions for one in the default config |
+| **#14 part 3** — lock-timer quantization | Whole seconds, not tenths. A tenths-place countdown changed on nearly every push, so `WheelSync::UpdatePage`'s content-unchanged early-out never fired while any slot was locked | — |
+| **P3** — Wheeler push allocations | The four `Extract*` passes became one loop into four reused member vectors, with the soul-gem and Empty-policy fixups folded in | `WheelerBackend.h:24-27` |
+| **#8** — registry consolidation | Perf-neutral, confirmed on a dense real save: every `*Registry::Reconcile` zone stays in the hundreds of µs | 2026-07-25, ~17:29 |
+| **#9** — display abstraction | `Pipeline::PushDisplay` dropped to 1.85 µs/call; mid-tick re-allocation left the push path entirely | 2026-07-25, ~17:29 |
+
+### Dropped
+
+**#14 part 4 — lazy per-page allocation in `WheelerBackend`** (the same idea as
+P1 in [../refactor/wheeler-push-spikes.md](../refactor/wheeler-push-spikes.md)).
+Dropped on the 2026-08-26 measurement: the ranking that motivated it was a
+small-sample artifact. `WheelerBackend::Push` still calls `AllocateSlotsForPage`
+for every non-current page on every push, and at a 986 µs mean that is
+affordable. Reopen only if a felt stutter turns up that a sub-1 ms mean cannot
+explain.
+
+Two lessons from that work are worth more than the code was:
+
+1. **Both regressions in the first cut were caught only by Tracy, never by the
+   log.** Change-detect never fired because `confidence`
+   (= `assignment.utility`) varies every run; the lock snapshot was hoisted
+   unconditionally past a setting gate, turning zero lock acquisitions into one.
+2. **Zone-count equality proves nothing** — see rule 4 at the top of this
+   document.
+
+### Open (a budget list, not a work list)
+
+| Item | Zone | 2026-08-26 figure | Note |
+|---|---|---|---|
+| **O3** | `PollPlayerMagicEffects` | 136.3 µs × 19,179 = 2.61 s (0.10%) | The honest top of Tier 3. Not gated by the skip-check — it *feeds* it. Options: early-out on an unchanged active-effect list, or cache by effect-list revision |
+| **#12** | `PollTargets` | 113.34 µs × 19,179 = 2.17 s (0.08%) | Build outside the write lock; one classification pass instead of up to 3×/tick; `MAX_TRACKED_TARGETS` 50 → ~12; squared-distance compares. A steady per-tick cost, never a hitch |
+| **#13** | `Inventory::DeltaScan` | 267.78 µs × 3,848 = 1.03 s (0.04%) | Count-only two-phase `GetInventorySafe`. Constrained, not eliminable — this is the consumption detector and it needs a count snapshot (verified to fire exactly once per consumption). The scratch maps are already allocation-free, so what is left is the SKSE query itself. Scales with inventory size: 685 µs/call on the 2026-07-25 hoarder save vs 161 µs on the small test save |
+| **#11** | (un-zoned) | — | Cache `SpellData.effectiveCost`. `CandidateGenerator` calls `LookupByID` + `CalculateMagickaCost` per known spell per tick, inside the registry lock |
+
+Squared-distance comparison (`distanceSq < threshold * threshold`), early-exit
+loops and pre-computed `constexpr` thresholds are the standing conventions in
+the polling code.
+
+---
+
+## Performance targets
+
+The project has **no formally agreed frame-budget targets.** Earlier revisions of
+this file listed a table of them; none of those figures can be traced to a
+decision or a measurement, and one of them refers to a cache that does not exist.
+
+<!-- UNVERIFIED: the numeric performance targets in the pre-2026-08-29 revision
+     of this document (frame impact < 1 ms, context poll < 5 ms, full pipeline
+     < 15 ms, memory overhead < 5 MB, learning queue depth < 100, hash-map
+     lookup < 0.1 ms, effect-cache hit rate > 95%) have no traceable source and
+     are not reproduced here. If targets are wanted, set them against a long
+     capture. -->
+
+What *is* measured, and can stand in until real targets are set:
+
+- **The 0.10% ceiling.** No zone on the 2026-08-26 capture exceeded 0.10% of
+  runtime. A future capture where one does is the signal to act.
+- **`[Soak]` heartbeat tick cost.** `SoakMetrics` emits
+  `tick avg=… peak=… ms` every 5 minutes, alongside recompute/tick counts,
+  override runs, page bails and learned-item growth. This is the cheapest
+  continuous perf signal the project has, it runs in release builds, and unlike
+  a Tracy capture it covers 20–50 hour sessions. See
+  [../playtest/LongPlaySoak.md](../playtest/LongPlaySoak.md).
+- **Memory** was stable with no leaks on every capture that recorded it, and the
+  ~1 s allocation sawtooth visible in the pre-O1 Memory plot is gone.
+
+---
+
+## Logging and error handling
+
+**Silent failures are not an option**, but neither is a log line per tick. The
+debug log runs at roughly 10 lines/sec; the governing rule is **log transitions,
+not ticks** (see `CLAUDE.md`).
+
+1. **No "nothing happened" logs.** The absence of a line is itself the signal.
+2. **Dedup periodic logs** — only log when the result changes, typically with a
+   `static` last-value. `PipelineCoordinator` keeps both the raw and the
+   displayed context reason for exactly this purpose: deduping on the displayed
+   label alone would swallow every raw change a hold was masking.
+3. **Every failure path logs why**, with FormIDs, indices and counts.
+4. **Rate-limit anything high-frequency.** The Wheeler edit-mode push gate logs
+   two lines per editor session, not one per tick.
+
+| Level | Use | Example |
+|---|---|---|
+| `error` | Operation failed, feature degraded | `"[SpellRegistry] Spell {:08X} not found"` |
+| `warn` | Unexpected but recoverable | `"[WheelerClient] API not connected, skipping wheel update"` |
+| `info` | Transitions, summaries, initialization | `"[Huginn] Pipeline suspended (world unloaded)"` |
+| `debug` | Diagnostics (debug builds) | `"[Wheeler] Push suppressed — edit mode entered"` |
+| `trace` | Per-item / per-tick | Registration lines. Effectively off; a summary count at `info` is sufficient |
+
+### Graceful degradation
+
+| Failure | Behavior |
+|---|---|
+| Wheeler API unavailable | Recommendations still computed and shown on the Intuition widget |
+| Cosave record absent or fails to load | Start from priors, learn fresh |
+| Spell registry empty or still loading | The pipeline gate declines to run |
+| Invalid FormID from a callback | Logged and ignored |
+| Update handler registration failed | Degraded mode: `OnUpdate` returns early and warns at most once a minute |
+| World unloaded mid-session | The whole tick is suspended; both edges logged as transitions |
+| Every Wheeler page invalidated | `RecoverInvalidatedWheels()` runs *ahead* of the has-wheel guard, so recovery is reachable from the state that looks identical to "wheels never created" (#76) |
+
+---
+
+## Known limitations and trade-offs
+
+### Design trade-offs
+
+**Recommendation lag is deliberate.** The pipeline is gated twice and slots are
+locked for at least `fLockDurationMs` after they fill, so a recommendation can be
+up to a lock duration stale. That is the entire point: without it, surfacing
+Waterbreathing while the player is underwater removes it the instant they surface
+to cast.
+
+**Wildcards can surface a low-ranked pick during a hard fight.** They exist so
+the learner sees items the ranking would otherwise bury, and the probability
+scales with slot index so slot 0 is never affected. The cooldown/refractory pair
+bounds how often it happens.
+
+<!-- UNVERIFIED: an earlier revision claimed wildcards are disabled below 30%
+     health. No such gate exists in WildcardManager. -->
+
+**Threshold discontinuities.** Bucketed thresholds mean 25% and 26% health can be
+treated differently. Hysteresis bands reduce oscillation at the boundaries; the
+18-float continuous feature vector is what removed the need for bucketing inside
+the learner itself — the discrete 36,288-state hash it replaced is gone.
+
+**Mod spell packs cold-start.** A 200-spell pack arrives with no learned weights,
+so ranking falls back entirely on `PriorCalculator` until the player uses things.
+Effect-keyword classification and the `[Overrides]` INI mechanism are the current
+mitigations.
+
+### Edge cases
+
+**Cell transitions and load screens.** No `kPostLoadGame` fires for a cell
+change, so the tick guard is the only signal. On resume, `PipelineStateCache`'s
+timestamp is refreshed (otherwise the next delta scan would drop every legitimate
+consumption as "stale cache") and slot locks are reset — they are wall-clock
+timers that stopped decaying and pin a world that no longer exists.
+
+**Quit to main menu.** `PlayerCharacter::GetSingleton()` stays non-null through a
+quit-to-menu, so a null check is *not* a liveness test. `IsWorldLoaded()` gates
+on LoadingMenu, MainMenu and `Get3D()`. Before that guard existed, the registry
+walk faulted on a freed `ContainerObject`, and the tick before the crash reported
+the entire inventory as consumed.
+
+**Bulk inventory strips.** `TEARDOWN_MIN_DROPS = 3` plus
+`TEARDOWN_DROP_RATIO = 0.5` — measured against **live** entries, not registry
+size — catch the teardown-shaped scan. `CONSUMPTION_POST_LOAD_GRACE_MS = 5000`
+covers alternate-start mods stripping starter items shortly after a load.
+
+**Player death** is not penalized. Death attribution is genuinely ambiguous, and
+a wrong penalty is worse than no signal.
+
+**Mod load-order changes.** The cosave stores plugin name plus local FormID, so
+weights survive a reorder. If a mod is removed, its weights are orphaned and
+ignored.
+
+**Learning-table growth.** `m_items` is keyed by FormID, not by state — it grows
+with the number of *items the player has used*, not with the state space, so it
+is bounded by the load order in practice. Growth is reported in the `[Soak]`
+heartbeat (`learn items=… trains=…`). No eviction policy is implemented, and
+none has been needed.
+
+---
+
+## Related documentation
+
+| Document | Contents |
+|---|---|
+| [../architecture/0-pipeline.md](../architecture/0-pipeline.md) | Data flow: context → candidates → scoring → slots |
+| [../architecture/4-contextual-bandits.md](../architecture/4-contextual-bandits.md) | The learner's update rule and feature vector |
+| [../architecture/5-slots.md](../architecture/5-slots.md) | Slot classification, overrides, wildcards, locking |
+| [../profiling/tracy-traces.md](../profiling/tracy-traces.md) | Capture log — the source for every number above |
+| [../testing/performance-profiling-guide.md](../testing/performance-profiling-guide.md) | How to build with Tracy and take a capture |
+| [../playtest/LongPlaySoak.md](../playtest/LongPlaySoak.md) | Long-play soak protocol and the `[Soak]` heartbeat |
+| [../refactor/wheeler-push-spikes.md](../refactor/wheeler-push-spikes.md) | Wheeler push analysis (its P1 was dropped; P2–P3 landed) |
+| [../refactor/performance-optimizations.md](../refactor/performance-optimizations.md) | The 2026-02 optimization pass — archaeology, from a 30-second capture |
+| [ConsoleCommands.md](ConsoleCommands.md) | `hg status`, `hg recs`, `hg reload` and the rest |
+
+> **Terminology.** The learner is a **contextual bandit**. The identifiers
+> `FeatureQLearner`, `QLearnerSerializer`, the `FQLW` cosave record and
+> `hg reset qvalues` keep their historical names, because renaming them would
+> break the cosave format and a documented console command.
