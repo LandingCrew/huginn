@@ -558,6 +558,24 @@ re-litigated. Section headings mirror the roadmap's.
       needs the same word-boundary rule and must not depend on the weapon module
 
 ## UX / Feature Backlog
+- [x] `build-verify-preset` — a no-deploy configure preset. **Dropped 2026-08-29
+      without merging**; PR #67 closed, branch deleted.
+      The diff was finally read on the way out, which settles the "contents never
+      reviewed" note this carried for weeks: 12 lines, a
+      `vs2022-windows-verify` preset inheriting `vs2022-windows` with
+      `COPY_OUTPUT=FALSE` and its own `build-verify/` binary dir, plus the
+      matching `.gitignore` line. `CompiledPluginsPath` was set to null
+      deliberately rather than inherited — with `COPY_OUTPUT` off nothing reads
+      it, and leaving it set makes CMake warn about an unused variable on every
+      configure. Self-contained, and it did what it said.
+      **The problem it addressed is real**, which is the part worth keeping: a
+      normal `cmake --build` deploys straight to
+      `<modlist>/overwrite/SKSE/Plugins/Huginn.dll`, so building while a
+      playtest is running silently swaps the DLL under the session. That is a
+      live hazard — it has already caused a stale build to nearly pass as a
+      branch test — and the workaround today is just to not build during a
+      playtest. If someone hits it again, this is the prior art rather than
+      something to reinvent: PR #67 in the closed list.
 - [x] Auto-focus makes a non-Huginn wheel unreachable by opening.
       **NOT A BUG — closed 2026-08-29 without a behaviour change.** The title
       overstated it, and the entry's own body gave the reason away: the wheel is
