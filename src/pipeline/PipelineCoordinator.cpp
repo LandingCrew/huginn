@@ -278,11 +278,17 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
     auto candidates = candidateGen.GenerateCandidates(ctx.playerState, ctx.currentMagicka);
 
     Context::ContextWeightMap contextWeights{};
-    // displaySlotCount comes from ResolveDisplayPage, which ran earlier this
-    // tick — so wildcards size against the same page AllocateAndLock will fill.
+    // The display page comes from ResolveDisplayPage, which ran earlier this
+    // tick — so wildcards key and size against the same page AllocateAndLock
+    // will fill.
     ctx.scoredCandidates = g_utilityScorer->ScoreCandidates(
         candidates, ctx.currentState, ctx.playerState, ctx.targets, ctx.worldState,
-        ctx.displaySlotCount, &contextWeights);
+        Scoring::WildcardPage{
+            .index = ctx.displayPageIndex,
+            .slotCount = ctx.displaySlotCount,
+            .wildcardSlots = ctx.displayWildcardSlots,
+        },
+        &contextWeights);
 
     // Name the dominant reason once per tick, off the weights the ranking just
     // used — the display explanation can't disagree with the scoring (#10).
@@ -547,6 +553,7 @@ bool PipelineCoordinator::ResolveDisplayPage(PipelineContext& ctx)
     ctx.displayPageIndex = slotAllocator.GetCurrentPage();
     ctx.displayPageCount = pageCount;
     ctx.displaySlotCount = slotAllocator.GetSlotCount(ctx.displayPageIndex);
+    ctx.displayWildcardSlots = slotAllocator.GetWildcardSlotCount(ctx.displayPageIndex);
     ctx.displayPageName  = slotAllocator.GetPageName(ctx.displayPageIndex);
 
     return changed;

@@ -175,6 +175,17 @@ namespace Huginn::Slot
         return (*snap)[pageIndex].slots.size();
     }
 
+    size_t SlotAllocator::GetWildcardSlotCount(size_t pageIndex) const
+    {
+        auto snap = GetConfigSnapshot();
+        if (pageIndex >= snap->size()) {
+            return 0;
+        }
+        const auto& slots = (*snap)[pageIndex].slots;
+        return static_cast<size_t>(std::count_if(slots.begin(), slots.end(),
+            [](const SlotConfig& c) { return c.wildcardsEnabled; }));
+    }
+
     SlotConfig SlotAllocator::GetSlotConfig(size_t slotIndex) const
     {
         const auto configs = GetSlotConfigs();
