@@ -117,7 +117,6 @@ namespace Huginn::UI
         config.alpha = alpha;
         config.scale = scale;
         config.childAlpha = childAlpha;
-        config.readOnly = readOnly;
         config.displayMode = displayMode;
         config.refreshEffect = refreshEffect;
         config.refreshStrength = refreshStrength;

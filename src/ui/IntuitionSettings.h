@@ -96,7 +96,6 @@ namespace Huginn::UI
         float alpha = IntuitionDefaults::ALPHA;
         float scale = IntuitionDefaults::SCALE;
         float childAlpha = IntuitionDefaults::CHILD_ALPHA;
-        bool readOnly = IntuitionDefaults::READ_ONLY;
         DisplayMode displayMode = DisplayMode::Minimal;
         RefreshEffect refreshEffect = RefreshEffect::Tint;
         float refreshStrength = IntuitionDefaults::REFRESH_STRENGTH;
@@ -134,6 +133,11 @@ namespace Huginn::UI
         [[nodiscard]] float GetAlpha() const noexcept { return alpha; }
         [[nodiscard]] float GetScale() const noexcept { return scale; }
         [[nodiscard]] float GetChildAlpha() const noexcept { return childAlpha; }
+        /// Deliberately NOT carried on IntuitionConfig. The widget does not
+        /// render differently in read-only mode — only InputHandler cares — and
+        /// putting it in the snapshot would imply it flows through
+        /// ReapplySettings, which it does not. One path: this accessor, read by
+        /// whoever pushes InputHandler::SetReadOnly.
         [[nodiscard]] bool  IsReadOnly() const noexcept { return readOnly; }
         [[nodiscard]] DisplayMode GetDisplayMode() const noexcept { return displayMode; }
         [[nodiscard]] RefreshEffect GetRefreshEffect() const noexcept { return refreshEffect; }
