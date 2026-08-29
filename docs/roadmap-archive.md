@@ -394,14 +394,48 @@ re-litigated. Section headings mirror the roadmap's.
       attempts to catch. And the drop is lazy: it fires when `ApplyWildcards`
       next runs for that page, so reshaping a page you are not standing on logs
       nothing until you switch to it.
-      One pre-existing behaviour this made visible, NOT introduced here and not
-      fixed here: the second roll (Unarmed, index 7) displayed as
-      `7:Confirmed`, not as a wildcard. `ApplyWildcardsToRanking` skips the
-      swap when `foundIdx <= slotIdx` — the candidate was already at or above
-      that position on merit — and the `isWildcard` flag is only set by the
-      swap, so a wildcard that rolls onto a candidate already sitting there is
-      silently indistinguishable from a normal pick. It costs a roll against
-      the cap and shows nothing for it
+      One pre-existing behaviour this surfaced, and then fixed in review: the
+      second roll (Unarmed, index 7) displayed as `7:Confirmed`, not as a
+      wildcard. `ApplyWildcardsToRanking` only ever surfaces a wildcard by
+      SWAPPING it up and skips the swap when `foundIdx <= slotIdx` — the
+      candidate was already at or above that position on merit — and the
+      `isWildcard` flag is set only by the swap. So a roll that drew a
+      candidate already sitting at its own target cached an entry nothing
+      displayed, while the cache read as active and suppressed the re-roll for
+      a full cooldown. The origin predates this change; the CONSEQUENCE does
+      not. The old loop rolled up to `slotCount - 1` entries, so a wasted draw
+      was masked by its neighbours; under the new per-page capacity a page with
+      one wildcard-capable slot rolls exactly once, and that draw IS the stall.
+      `SelectRandomCandidate` now takes a `minIndex` and is called with `i + 1`,
+      so every roll is surfaceable by construction rather than by luck. Note
+      the trade this makes deliberately: when no eligible candidate exists below
+      the target slot the roll produces nothing, which is correct — declining to
+      roll is strictly better than caching something unshowable.
+      **Post-fix verification, 2026-08-29 (Debug `e6e1174`)** — the trace above
+      was taken before the review fixes, so the shipped code was re-walked.
+      Unit suite green, and its own debug output corroborates each assertion
+      independently: pages rolled 4 / 3 / 0 / 0 / 2 / 1 against shapes 7-of-7,
+      4-of-4, 5-of-0, 1-slot, 6-of-2, 6-of-1, with nothing above page 1's bound;
+      one reshape line; and exactly four `Wildcards expired` lines, pages 0, 1,
+      4 and 5 — pages 2 and 3 had nothing to expire because they correctly
+      cached nothing.
+      In-game, 10:22:45 on an 8-slot / 8-capable page: four rolls at ranking
+      indices 1-4, and `[VisualState]` the same millisecond reading
+      `4:Wildcard … 5:Wildcard … 6:Wildcard … 7:Wildcard`, names matching
+      one-for-one. Cached == surfaced, with the 1-4 → 4-7 offset showing
+      ranking index and display slot diverging exactly as the capacity design
+      assumes. Only four of a possible seven rolled: all four were potions, the
+      draw filters to the top candidate's source type, and `minIndex` exhausted
+      the pool below slots 5-7 — the decline-to-roll case above, observed.
+      The `bWildcardsEnabled=false` case, logged as unconfirmed when the entries
+      were opened, is now confirmed live: page 1 at 8 slots / 0 wildcard-capable
+      displayed from 10:22:57 with every `[VisualState]` entry `Confirmed` and
+      not one roll line for the rest of the session, while page 0 held four
+      cached wildcards with ~290 s left. On the old shared array those entries
+      were in-bounds for an 8-slot page, so `HasActiveWildcard()` read true
+      while SlotAllocator refused to seat them on `w0` slots. A second negative
+      control: `hg reload` at 10:22:54 with all three page shapes unchanged
+      logged no reshape line and dropped nothing
 - [x] Need to split Alcohol and food for recommendation engine slots
 - [x] #80: weapons were outside contextual scoring entirely — the
       WeaponCandidate arm of `WeightForCandidate` read only `weaponWeight` /
