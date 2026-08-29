@@ -4,50 +4,6 @@ Open work only. Completed items live in [roadmap-archive.md](roadmap-archive.md)
 rejected, so check there before re-opening something.
 
 ## Known Bugs
-- [ ] `DeleteManagedWheelsForClient` reported deleting ZERO wheels for a client
-      that had one, orphaning it. Observed 2026-08-22 while testing #92: a
-      'Huginn: Regulars' wheel created at 12:30:55 (index 2) was still present
-      when the 12:32:39 teardown logged `Deleted 0 managed wheel(s) for client
-      'Huginn: Regulars'`; the next CreateWheels then added a SECOND wheel under
-      that name, and 12:34:48 found 2. Both were finally reaped at 12:34:59.
-      **DIAGNOSED 2026-08-29, upstream.** `API_DeleteManagedWheelsForClient`
-      (wheelerAPI `src/bin/API/WheelerAPI.cpp`, erase loop ~341-357) collects its
-      matches, then breaks out when the TOTAL wheel count reaches 1 and returns
-      however many it managed — a short count, possibly 0, with no error and no
-      way to tell it from "you had none". The single-wheel `DeleteManagedWheel`
-      enforces the same invariant honestly, returning `LastWheel` (-8); the batch
-      path has the guard with no signal. The "third call, after a call that
-      deleted 2 wheels" detail is causation, not the correlation this entry
-      previously called it — that call is what drove the count to 1. The
-      all-wheels-are-ours state that arms it is ordinary: `clearUnmanagedLocked`
-      keeps managed wheels and drops unmanaged ones from `_wheels` entirely, so
-      after a load there is a window where every wheel present is a client's.
-      Ruled out on the way: `WheelManagedInfo::clientName` is a `std::string`, so
-      Wheeler copies the name and the match is a content compare — no pointer
-      lifetime issue.
-      **Huginn-side fix landed 0.19.7:** `IssueWheelDeletes` now verifies each
-      delete with `GetManagedWheelsForClient` instead of trusting the count, and
-      carries anything that survived to `CreateWheels`, which ADOPTS a wheel
-      already answering to a page's label rather than creating a second one, then
-      reaps whatever no live page claimed (by then the new wheels have raised the
-      count, so the guard no longer bites). v4 only — v3 servers cannot answer the
-      verification query and behave exactly as before.
-      **Upstream fix landed** (wheelerAPI `ca2e2f2`): every match is erased and
-      the count is now exactly the number that matched. It kept a non-empty
-      `_wheels` by pushing an empty UNMANAGED wheel when the last one would go —
-      `MoveEntryForwardInCurrentWheel`/`MoveEntryBackInCurrentWheel` index
-      `_wheels[_activeWheelIdx]` behind an `_activeWheelIdx != -1` test that never
-      fires, so emptying the vector outright was not safe. The placeholder carries
-      no client name, so it never answers `GetManagedWheelsForClient`.
-      The Huginn-side verification stays regardless: the fix ships inside API v4
-      with no version bump to detect it by, so a v4 server may or may not have it
-      and players run whatever Wheeler build they have.
-      **Remaining: in-game verification only.** Cycle page layouts through
-      `hg reload` with no non-Huginn wheels present and confirm the log carries no
-      `Delete reported N ... but M wheel(s) still carry that label` warn and no
-      `adopting wheel N instead of creating a duplicate` on a patched Wheeler;
-      on an unpatched one both should appear and the wheel count should stay
-      correct (XS)
 - [ ] Wheeler's content-unchanged early-out goes stale when Wheeler itself
       mutates the wheel. With `PostActivation = Backfill`, activating an entry
       makes Wheeler shift the remaining entries internally — Huginn is never
@@ -106,12 +62,16 @@ rejected, so check there before re-opening something.
       wheel is redirected to Huginn's first — so a player wheel dragged to
       position 0 is skipped on every open, forever, and reads as Huginn having
       eaten it. Wheeler opens at the front by default, which is why position 0
-      is the case that gets reported. **Mitigated, not fixed (0.19.3):** a
-      one-shot `RE::DebugNotification` fires the first time a redirect happens,
-      re-armed on edit-mode exit, and the README documents it. The behaviour is
-      still the default. Options if it stays a complaint: only auto-focus when
-      the opened wheel is not adjacent to ours, honour a "the player scrolled
-      here deliberately" signal, or default `bAutoFocusOnOpen` to false (XS/S)
+      is the case that gets reported. **Mitigated, not fixed (0.19.3, corrected
+      in 0.19.9):** a one-shot log warn + `RE::DebugNotification` fires when a
+      redirect actually skips a wheel — gated on `wheelIndex < autoFocusTarget`,
+      once per run. The original fired on ANY redirect and re-armed on every
+      edit-mode exit, so it warned about wheels BEHIND ours that were reachable
+      by scrolling right, four times in nine minutes. The behaviour it warns
+      about is still the default. Options if it stays a complaint: only
+      auto-focus when the opened wheel is not adjacent to ours, honour a "the
+      player scrolled here deliberately" signal, or default `bAutoFocusOnOpen`
+      to false (XS/S)
 
 ## Architecture Critique — Backlog
 See [reviews/architecture-critique.md](reviews/architecture-critique.md).
@@ -126,70 +86,12 @@ now closed; #59–#65 are follow-ups it surfaced, not remaining critique work.
 All Tier 2 critique items have landed; see [roadmap-archive.md](roadmap-archive.md).
 
 ### Tier 3 — hot-path perf (trace-prioritized; see docs/profiling/tracy-traces.md)
-- [ ] #14: gate the display push paths — IntuitionBackend change-detect, WheelerBackend
-      lazy per-page allocation, GetLockSnapshot, quantize lock-timer subtext.
-      **Parts 1-3 MERGED** in PR #96 at 0.19.2 (2026-08-26). Part 4 is DROPPED
-      — see the measurement note below; reopen only if a felt stutter turns up
-      that a sub-1 ms mean cannot explain. See docs/refactor/wheeler-push-spikes.md.
-      **TRACED 2026-08-24 on @e81ff19, Self-only. Three captures:**
-      | capture | Display::Wheeler | Display::Intuition |
-      |---|---|---|
-      | main baseline, 2026-08-23 | 3.23 ms MTPC / 100.21 ms / 31 | 84 µs (2026-08-22) |
-      | branch, lock label OFF, 5:25 | 3.87 ms / 255.14 ms / 66 | 80.62 µs / 66 |
-      | branch, lock label ON, 8:19 | 3.73 ms / 179.21 ms / 48 | 63.58 µs / 48 |
-      | branch, lock label ON, 15:24 | 3.60 ms / 180.04 ms / 50 | 63.12 µs / 50 |
-      Part 1 (Intuition change-detect) CONFIRMED: 92.76 µs in the broken cut →
-      63.12 µs, comfortably under the 84 µs baseline. Note the zone wraps the
-      whole of Push() including the m_scratch build (IntuitionBackend.cpp:68-84),
-      which runs whether the cache hits or not — so this zone structurally cannot
-      show the real win, which is UI-thread GFx work it never times. 3.16 ms of
-      180 ms either way; not where the time is.
-      Parts 2-3 (lock snapshot + quantization): enabling the label costs nothing
-      measurable (3.87 off vs 3.60 on). **Weak evidence** — locks were live only
-      ~44 s of the 15-minute capture (17:01:06-17:01:49, 43 events), so most
-      pushes never touched the label. Also `fLockDurationMs = 1000` makes
-      ceil(remaining/1000) yield only ever `1`, so the countdown never ticks;
-      raise it to ~4000 to exercise the 3 → 2 → 1 transitions the quantization
-      is designed around.
-      **Part 4's deferral rationale is now CONTRADICTED.** It was held back on
-      the theory that the quantization "may remove considerably more". It does
-      not: it removes the COST OF ENABLING the label, and leaves the baseline
-      untouched. With the label off — the shipped default — the whole Wheeler
-      half of #14 is inert. Part 4 is the only remaining lever on this zone.
-      **The per-call figure was a SMALL-SAMPLE ARTIFACT — #14's whole ranking
-      premise is void.** A 44:40 playthrough on 2026-08-26 (874 pushes, vs
-      31-66 in every earlier capture) puts Display::Wheeler at **986.54 µs
-      MTPC** — under a third of the 3.23-3.87 ms the short runs reported. The
-      push fires every few seconds, so a handful of cold calls (wheel creation,
-      post-load) dominated those means. There is no 3.6 ms frame spike to fix.
-      Ranking on the 44-min capture, by total, Self-only:
-      | zone | total | % | MTPC | calls |
-      |---|---|---|---|---|
-      | PollPlayerMagicEffects (O3) | 2.61 s | 0.10% | 136.3 µs | 19,179 |
-      | PollTargets (#12) | 2.17 s | 0.08% | 113.34 µs | 19,179 |
-      | Inventory::DeltaScan (#13) | 1.03 s | 0.04% | 267.78 µs | 3,848 |
-      | Display::Wheeler (#14) | 862 ms | 0.03% | 986 µs | 874 |
-      Display::Wheeler is FOURTH, and O3 is confirmed as the real top cost —
-      which is what the 2026-07-25 capture said before the short runs pulled
-      attention here. Nothing in Tier 3 exceeds 0.10% of runtime; on CPU
-      grounds this tier has no work left in it. Part 4 (lazy per-page
-      allocation) should be dropped unless a felt stutter turns up that a
-      986 µs mean does not explain.
-      Two regressions in the first cut were caught ONLY by Tracy, not by the
-      log: change-detect never fired because `confidence` (= `assignment.utility`)
-      varies every run, and `GetLockSnapshot` was hoisted unconditionally while
-      the old per-slot calls sat behind `stConfig.showLockTimerLabel` — turning
-      zero lock acquisitions into one in the default config. Re-measure, don't
-      assume
-      Zone-count equality is NOT a diagnostic here, contrary to how the 188/188
-      observation above reads: Huginn_ZONE_NAMED sits at the top of Push(), ahead
-      of every early-out, so its count always equals the call count. MTPC is the
-      only signal.
-      The lock-timer label has NO log coverage: `[Subtext]` (PipelineCoordinator.cpp:645)
-      logs the coordinator's pre-derived labels and is deduped against the last
-      summary, while WheelerBackend clears and rewrites them on its own copy
-      (WheelerBackend.cpp:127). Grepping the log for lock labels finds nothing
-      even when the path ran — do not read that as the path being dead
+**Nothing in this tier exceeds 0.10% of runtime** on the 44:40 capture of
+2026-08-26, which is the only capture long enough to trust — the 5-15 minute
+runs that set the original ranking were dominated by cold calls. #14 is archived
+(parts 1-3 merged, part 4 dropped on that measurement). On CPU grounds the rest
+is a budget list, not a work list; treat a felt stutter, not a µs figure, as the
+trigger to pick any of it up.
 - [ ] #13 (= O1's sibling "O2"): count-only two-phase GetInventorySafe variant —
       Inventory::DeltaScan deep-copies InventoryEntryData per item at 2 Hz; plus
       PipelineContext container reuse (documented-but-broken).
@@ -230,6 +132,28 @@ All Tier 2 critique items have landed; see [roadmap-archive.md](roadmap-archive.
       CalculateMagickaCost per known spell per tick, inside the registry lock (M)
 
 ### Follow-ups
+- [ ] Wheeler leaves an empty unmanaged wheel behind when a client's wheels were
+      the only ones, and it PERSISTS — `SerializeIntoJsonObj` skips only managed
+      wheels, so the placeholder is written to the co-save as `{"entries": []}`
+      and rebuilt on load like a user wheel. Bounded at one (the next teardown
+      finds it still there, so the list never empties again), but permanent once
+      a player has it, and confirmed in-game 2026-08-29 at index 3 after a
+      teardown+recreate. Upstream introduced it in `ca2e2f2` because
+      `MoveEntryForward/BackInCurrentWheel` (Wheeler.cpp ~911/926) deref
+      `_wheels[_activeWheelIdx]` behind an `_activeWheelIdx != -1` test that
+      never fires — a full audit confirmed those are the only two unguarded
+      `_wheels` accesses. Fix: guard both on `_wheels.empty()`, then drop the
+      `push_back`. NOT `_activeWheelIdx = -1` — `AddWheel`/`PushWheel` never
+      touch the index and `API_CreateManagedWheel`'s `if (activeIdx >= index)`
+      fixup misses -1, so a -1 would survive into a non-empty list. Dropping the
+      push does not retroactively remove one already saved; decide whether that
+      needs a cleanup path (S)
+- [ ] `ValidateWheelState` emits ~11 desync warns during a Wheeler edit-mode
+      session — stale by construction, since Huginn has no signal that indices
+      moved until edit mode exits, and the exit re-resolve corrects everything
+      1.4 s later. Observed 2026-08-29 13:03:18 against a 13:03:20 re-resolve.
+      Skip the check while `IsInEditMode()` — the diagnostic cannot say anything
+      true there (XS)
 - [ ] Remembered wheel position does not survive a game restart — it is a
       session member (`WheelSync::m_rememberedAnchor`), so a player who drags
       the wheels and quits finds them back at `sWheelPosition` next launch.
@@ -259,9 +183,11 @@ All Tier 2 critique items have landed; see [roadmap-archive.md](roadmap-archive.
       onto main and replaying cleanly, but **contents never reviewed**. The last
       unmerged branch holding work. Read the diff before merging; it needs a
       version bump per the per-PR convention, which it does not currently carry.
-      Stale remote branches that can be deleted: `tier3-14-display-push` and
-      `soak-skip-telemetry` (merged 2026-08-26 as PR #96 / #95),
-      `docs-optimizations-fold` and `wheeler-index-reresolve` (merged earlier)
+      Stale remote branches that can be deleted, all merged: `tier3-14-display-push`
+      and `soak-skip-telemetry` (PR #96 / #95, 2026-08-26),
+      `wheeler-respect-moved-wheels` (PR #97), `docs-optimizations-fold` and
+      `wheeler-index-reresolve` (earlier). Verified against `git ls-remote`
+      2026-08-29 — `build-verify-preset` is the only one still holding work
 - [ ] Soak protocol needs deliberate MANUAL equips — accept% is fed only by
       equips made outside Huginn, so a burst played through the wheel/hotkeys
       produces no recommendation-quality data at all. Confirmed 2026-08-26: a

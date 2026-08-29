@@ -292,6 +292,53 @@ re-litigated. Section headings mirror the roadmap's.
       has `uniqueID==0` rather than spending a retry; must not consume
       `slotRetries` (3 would poison the entry for 30s) nor log above trace (S)
 
+- [x] `DeleteManagedWheelsForClient` reported deleting ZERO wheels for a client
+      that had one, orphaning it, after which the next CreateWheels added a
+      SECOND under the same name. Observed 2026-08-22 while testing #92.
+      **Cause, upstream.** `API_DeleteManagedWheelsForClient` collected its
+      matches, then broke out of the erase loop when the TOTAL wheel count
+      reached 1 and returned however many it managed — a short count, possibly
+      0, with no error and nothing to distinguish it from "you had none". The
+      single-wheel `DeleteManagedWheel` enforces the same invariant honestly,
+      returning `LastWheel`. The "third call, after a call that deleted 2
+      wheels" detail was causation, not the correlation this was filed as: that
+      call is what drove the count to 1. The arming state is ordinary —
+      `clearUnmanagedLocked` keeps managed wheels and drops unmanaged ones from
+      `_wheels`, so after a load every wheel present can belong to a client.
+      **Ruled out on the way, and worth keeping:** `WheelManagedInfo::clientName`
+      is a `std::string` and `EntrySubtext::text` is a `std::string` — Wheeler
+      COPIES both exported strings. Huginn's comments had modelled them as
+      indefinite borrows; that model was wrong, and adoption (below) silently
+      depends on it being wrong. Corrected in place; the heap-stable storage
+      stays because unwinding it would touch every export path to buy nothing.
+      **Fixed upstream** (wheelerAPI `ca2e2f2`, merged `567f947`): every match is
+      erased and the count is exactly the number that matched. `_wheels` is kept
+      non-empty by pushing an empty UNMANAGED wheel when the last would go —
+      `MoveEntryForward/BackInCurrentWheel` deref `_wheels[_activeWheelIdx]`
+      behind an `_activeWheelIdx != -1` test that never fires, so emptying the
+      vector outright was unsafe. See the open follow-up on that placeholder.
+      **Fixed Huginn-side in PR #99** (0.19.7–0.19.10), kept regardless because
+      the upstream fix ships inside API v4 with no version bump to detect it by:
+      `IssueWheelDeletes` verifies each delete with `GetManagedWheelsForClient`
+      instead of trusting the count; `CreateWheels` ADOPTS a wheel already
+      answering to a page's label rather than creating a second one; anything no
+      live page claimed is reaped after creation, where the count has risen past
+      the old guard. v4 only.
+      **The review round is the part worth remembering.** Both the retry and
+      adoption could leave a stored index describing the wrong wheel — the retry
+      by deleting a wheel below ours (shifting every higher index down), adoption
+      by taking a wheel at an arbitrary index that later pages' inserts then push
+      along. Neither self-corrects, because both leave the stale index pointing
+      at a wheel that is still MANAGED, and `UpdatePage` only attempts recovery
+      when `IsManagedWheel` says otherwise — so a page would write into the next
+      page's wheel indefinitely. Fixed by re-deriving every index from its label
+      after the retry and BEFORE `m_createdAnchor` is computed, which was reading
+      the stale indices too. Any future insert/delete during creation needs the
+      same treatment.
+      Adoption and the retry cannot fire against a patched Wheeler (nothing is
+      ever stranded), so they rest on review rather than in-game evidence. The
+      always-on addition — the post-create re-resolve — was verified across nine
+      page-resolutions in both `First` and `Last` positions
 ## Known Recommendation Issues
 - [x] #70 + the wildcard cluster — three entries, one root cause: the wildcard
       cache was a single global position-indexed array shared by every page, so
@@ -643,3 +690,33 @@ re-litigated. Section headings mirror the roadmap's.
       cached count, so a stale one would surface ammo the player has run out of.
       And NOT via RE::InventoryChanges::GetItemCount — that crashes on save-load
       (bisected in PR #41; see the SKSE-gotcha note at WeaponRegistry.cpp:160)
+- [x] #14: gate the display push paths. **Parts 1-3 merged** in PR #96 at 0.19.2
+      (2026-08-26): IntuitionBackend change-detect, GetLockSnapshot hoist, lock-
+      timer subtext quantization. **Part 4 (WheelerBackend lazy per-page
+      allocation) DROPPED** — the whole ranking premise turned out to be a
+      small-sample artifact.
+      The short captures that motivated this item (31-66 pushes) put
+      `Display::Wheeler` at 3.23-3.87 ms MTPC. A 44:40 playthrough on 2026-08-26
+      with 874 pushes puts it at **986 µs** — the push fires every few seconds,
+      so a handful of cold calls (wheel creation, post-load) dominated the short
+      runs. There is no 3.6 ms frame spike to fix. Ranked by total on that
+      capture: PollPlayerMagicEffects 2.61 s (0.10%), PollTargets 2.17 s (0.08%),
+      Inventory::DeltaScan 1.03 s (0.04%), Display::Wheeler 862 ms (0.03%) —
+      FOURTH, and nothing in Tier 3 exceeds 0.10% of runtime. Reopen only if a
+      felt stutter turns up that a sub-1 ms mean cannot explain.
+      Part 1 confirmed at 92.76 µs → 63.12 µs, though the zone wraps the whole of
+      `Push()` including the m_scratch build, so it structurally cannot show the
+      real win (UI-thread GFx work it never times). Parts 2-3: enabling the lock
+      label costs nothing measurable, on weak evidence — locks were live only
+      ~44 s of a 15-minute capture, and `fLockDurationMs = 1000` makes
+      `ceil(remaining/1000)` yield only ever 1, so the countdown never ticks.
+      Raise it to ~4000 to exercise the 3 → 2 → 1 transitions.
+      **Two lessons worth keeping.** Both regressions in the first cut were
+      caught ONLY by Tracy, never by the log: change-detect never fired because
+      `confidence` (= `assignment.utility`) varies every run, and
+      `GetLockSnapshot` was hoisted unconditionally while the old per-slot calls
+      sat behind `stConfig.showLockTimerLabel`, turning zero lock acquisitions
+      into one in the default config. And zone-count equality is NOT a
+      diagnostic: `Huginn_ZONE_NAMED` sits at the top of `Push()` ahead of every
+      early-out, so its count always equals the call count. MTPC is the only
+      signal. See docs/refactor/wheeler-push-spikes.md
