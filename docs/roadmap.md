@@ -50,7 +50,12 @@ rejected, so check there before re-opening something.
       so fortify gear can never be recommended — blocks the Requiem answer to #63
 - [ ] Scroll cold-start: all scrolls sit in the pool every tick but score
       `learn≈0` against trained items at `learn=7–8`, so one can never surface
-      until used and can't be used until surfaced
+      until used and can't be used until surfaced.
+      **Not scroll-specific** — it is the general no-transfer-between-items
+      problem, and it bites every newly acquired item. Scrolls are just where it
+      is most visible, because a player rarely uses one unprompted. The two
+      candidate fixes are under Follow-ups, "Share learning across similar
+      items"; fixing either closes this
 - [ ] `lookingAtOre` did not surface a pickaxe even with one in inventory —
       whether that context ranks mining tools at all is unchecked (noted on #64)
 
@@ -328,5 +333,52 @@ trigger to pick any of it up.
       which is indistinguishable from any other reason input stopped, and
       unbound letters never log at all. Verified once by watching the widget
       instead; a log line makes it checkable and catches a regression (XS)
+- [ ] **Share learning across similar items** — two versions of one idea, pick
+      one. Today every item learns alone: `m_items[formID]` zero-initialises on
+      first access, so a new item's `learningScore` is 0 and cannot compete with
+      a trained item at 7-8. Nothing a player teaches Huginn about one healing
+      potion transfers to another. This is the mechanism behind the scroll
+      cold-start entry under Known Recommendation Issues, and it will bite any
+      newly acquired item, not just scrolls.
+      Huginn already has the right SHAPE — `ContextRuleEngine` and
+      `PriorCalculator` are shared across all items, `FeatureQLearner` is
+      per-item — but the shared layer is hand-authored rules, not fitted to
+      data, so nothing LEARNED is ever pooled.
+      Prompted by poLinUCB (arXiv:2309.13896), whose post-serving-context
+      machinery does NOT fit Huginn (its `z` must be arm-independent, and it
+      adds a second per-arm vector when our arms are already starved — see the
+      session note below). The transferable part is its structure: the shared
+      mapping is fitted from every round regardless of arm, so it sees ~K times
+      more data than any per-arm parameter. Find what is common, fit it from
+      everything, leave only the genuinely item-specific part to each item's
+      scarce data.
+      **A. Warm start (cheap, no format change).** Seed a first-seen item's
+      weights from the mean of trained items sharing its classification instead
+      of zero. Huginn is well set up for this — the taxonomy already exists and
+      is already load-bearing for slot filters. No model change and no cosave
+      format change; it is a different initialisation where `operator[]`
+      currently default-constructs, so the SHAPE of what gets serialised is
+      unchanged.
+      Wrinkle that decides whether it works: `trainCount` is still 0, and
+      confidence gates the learned term (50% at 5 trains), so seeded weights
+      would be suppressed anyway. It needs a small pseudo-count — "worth about
+      two observations". That number is the whole risk: too low and nothing
+      changes, too high and an untried item inherits confidence it has not
+      earned. Measure before believing any specific value.
+      Note it changes learning BEHAVIOUR even though it does not change the
+      format, so it would invalidate a soak run in progress even though it is
+      technically landable during one (S)
+      **B. Hierarchical weights (the real fix, cosave change).** Split each
+      item's vector into a class part and a deviation, `w_item = w_class +
+      delta_item`. Fit `w_class` from every item sharing a classification, and
+      `delta_item` as a small heavily regularised per-item correction. Same
+      pooling asymmetry as (A) but learned continuously rather than only at
+      first sight, and it keeps improving the shared part as play continues.
+      Needs a cosave format bump to store per-class vectors alongside per-item
+      deltas, so it sits in the same parked bucket as #15/#16 — NOT landable
+      during an active soak run (M/L)
+      Neither is measured. (A) is cheap enough to try and discard; (B) should
+      not be started until (A) has shown that pooling helps at all on real play
+      data.
 - [ ] Addendum #15/#16 (Kalman FQL / learnable context weights) — **parked**: needs a v3
       cosave bump, NOT landable during an active soak run
