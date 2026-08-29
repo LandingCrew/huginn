@@ -60,21 +60,6 @@ rejected, so check there before re-opening something.
 ## UX / Feature Backlog
 - [ ] Read-only Intuition menu mode — display-only widget, hotkeys disabled, an
       external UI (Wheeler / 3rd-party) drives selection
-- [ ] Auto-focus makes a non-Huginn wheel unreachable by opening. With
-      `bAutoFocusOnOpen=true`, every fresh open that lands on someone else's
-      wheel is redirected to Huginn's first — so a player wheel dragged to
-      position 0 is skipped on every open, forever, and reads as Huginn having
-      eaten it. Wheeler opens at the front by default, which is why position 0
-      is the case that gets reported. **Mitigated, not fixed (0.19.3, corrected
-      in 0.19.9):** a one-shot log warn + `RE::DebugNotification` fires when a
-      redirect actually skips a wheel — gated on `wheelIndex < autoFocusTarget`,
-      once per run. The original fired on ANY redirect and re-armed on every
-      edit-mode exit, so it warned about wheels BEHIND ours that were reachable
-      by scrolling right, four times in nine minutes. The behaviour it warns
-      about is still the default. Options if it stays a complaint: only
-      auto-focus when the opened wheel is not adjacent to ours, honour a "the
-      player scrolled here deliberately" signal, or default `bAutoFocusOnOpen`
-      to false (XS/S)
 
 ## Doc-migration findings (2026-08-29)
 Surfaced by the one-agent-per-doc migration pass. Every one is a code or config
@@ -255,6 +240,22 @@ trigger to pick any of it up.
       CalculateMagickaCost per known spell per tick, inside the registry lock (M)
 
 ### Follow-ups
+- [ ] Decide whether the auto-focus skip NOTIFICATION should still exist. The
+      behaviour it warns about was closed as correct on 2026-08-29 (see the
+      archive), which leaves an on-screen `RE::DebugNotification` telling players
+      about something that is working as intended, and pointing them at
+      `bAutoFocusOnOpen=false` as if it were a remedy. That is the same shape as
+      the dMenu Refresh Effect control under Doc-migration findings: a
+      user-facing artifact that implies a problem that is not there.
+      Not obvious either way. It fires once per run, and it does answer a real
+      question a confused player might have ("why does Wheeler always open on
+      Huginn's wheel?"). But it fires for everyone with a wheel ahead of ours,
+      confused or not.
+      Suggested split if it comes to a decision: keep the log warn — it costs
+      nothing, fires once, and is genuinely useful when someone reports "Huginn
+      ate my wheel" — and drop the on-screen notification, which is the half that
+      addresses a player who mostly is not asking. `WheelerClient.cpp`, inside
+      the `skipsWheel && !m_autoFocusStrandWarned.exchange(true)` block (XS)
 - [ ] Wheeler leaves an empty unmanaged wheel behind when a client's wheels were
       the only ones, and it PERSISTS — `SerializeIntoJsonObj` skips only managed
       wheels, so the placeholder is written to the co-save as `{"entries": []}`

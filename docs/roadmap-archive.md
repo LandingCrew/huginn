@@ -549,6 +549,24 @@ re-litigated. Section headings mirror the roadmap's.
       needs the same word-boundary rule and must not depend on the weapon module
 
 ## UX / Feature Backlog
+- [x] Auto-focus makes a non-Huginn wheel unreachable by opening.
+      **NOT A BUG — closed 2026-08-29 without a behaviour change.** The title
+      overstated it, and the entry's own body gave the reason away: the wheel is
+      still reachable by scrolling. `bAutoFocusOnOpen=true` changes where Wheeler
+      OPENS, not what exists. Nothing is lost and nothing is hidden.
+      Recorded because the report reads convincingly — a player wheel dragged to
+      position 0 is skipped on every open and looks eaten — and because the
+      wording ("unreachable") is what made it sound like data loss rather than a
+      navigation preference. If it is re-filed, the question to ask is whether
+      the player can reach the wheel at all, not whether opening lands on it.
+      The three mitigations proposed here (auto-focus only when non-adjacent,
+      honour a deliberate-scroll signal, default the setting to false) are all
+      unnecessary on this reasoning and were never built.
+      **What DID land, and stays:** the one-shot warn and on-screen notification
+      when a redirect actually skips a wheel (0.19.3, corrected in 0.19.9 to gate
+      on `wheelIndex < autoFocusTarget` and fire once per run). See the open
+      Follow-ups entry on whether the player-facing half of that is still
+      warranted now that the behaviour is deemed correct.
 - [x] Two INI files defined `[Widget]`, `[Keybindings]` and `[Debug]` in BOTH
       `Huginn.ini` and dMenu's same-named copy, with nothing stating which won —
       and settings changed in the dMenu UI did not survive a restart.
