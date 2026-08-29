@@ -48,6 +48,10 @@ namespace WheelerAPI
         int32_t numEntries;
         int32_t position;
         bool managed;
+        // COPIED by Wheeler on receipt into WheelManagedInfo::clientName, a
+        // std::string (verified 2026-08-29 against the Wheeler source). The
+        // caller need not keep the buffer alive past the call. Upstream states
+        // no lifetime contract, hence the note.
         const char* clientName;
         bool showLabel;  // If true, show clientName as label when viewing this wheel
     };

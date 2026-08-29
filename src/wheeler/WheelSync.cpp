@@ -830,10 +830,10 @@ namespace Huginn::Wheeler
             pageWheel.slotUniqueIDDefers.resize(slotCount, 0);
             pageWheel.slotActivationEmptied.resize(slotCount, false);
 
-            // Build wheel label. Wheeler holds the exported const char* indefinitely,
-            // so it lives in heap storage whose address survives the push_back move
-            // below AND any later m_pageWheels reallocation (a plain std::string
-            // member would relocate its SSO bytes on move, dangling Wheeler's copy).
+            // Build wheel label. Heap storage whose address survives the
+            // push_back below and any later m_pageWheels reallocation — kept
+            // for the reason given on PageWheel::wheelLabel, which also records
+            // that Wheeler in fact COPIES this string rather than borrowing it.
             if (pageCount > 1) {
                 pageWheel.wheelLabel = std::make_unique<std::string>(std::format("Huginn: {}", pageConfig.name));
             } else {
@@ -898,10 +898,15 @@ namespace Huginn::Wheeler
                 // They cost nothing but a duplicate under our name, the #76
                 // census reports them, and the next teardown removes them: the
                 // by-name delete takes every wheel with the label at once.
-                if (count > 1) {
-                    spdlog::warn("[WheelerClient] Page {} '{}': {} wheels carry label '{}'; adopting one "
-                                 "and leaving the rest for the next teardown to reap",
-                        p, pageConfig.name, count, *pageWheel.wheelLabel);
+                //
+                // Gated on having adopted: three or more [PageN] entries sharing
+                // an sName leave page 2 with count == 2 and BOTH matches already
+                // claimed by earlier pages, so nothing was adopted and nothing is
+                // surplus. Saying "adopting one" there asserts something false.
+                if (adopted >= 0 && count > 1) {
+                    spdlog::warn("[WheelerClient] Page {} '{}': the other {} wheel(s) under label '{}' are "
+                                 "surplus — left for the next teardown to reap",
+                        p, pageConfig.name, count - 1, *pageWheel.wheelLabel);
                 }
             }
 
@@ -1034,9 +1039,39 @@ namespace Huginn::Wheeler
         // this generation adopted is skipped — it is a live page's wheel now.
         RetryStrandedDeletesLocked(api);
 
+        // Re-derive every index from its label before anything is recorded.
+        //
+        // Two paths above can leave a stored index describing the wrong wheel,
+        // and NEITHER is self-correcting, because both leave the stale index
+        // pointing at a wheel that is still MANAGED — UpdatePage only attempts
+        // recovery when IsManagedWheel says otherwise, so the page would write
+        // its recommendations into the next page's wheel indefinitely:
+        //
+        //  - The retry above deletes a wheel, which shifts every higher index
+        //    down one. Harmless when our wheels are ahead of the stranded one
+        //    (position First), silent corruption when they are behind it
+        //    (append, or a remembered anchor past the survivor).
+        //  - Adoption takes a wheel at an ARBITRARY index, not at
+        //    basePosition + p. The "insert at basePosition + p never shifts an
+        //    earlier wheel" invariant documented above the loop holds only for
+        //    wheels we created there, so each later page's insert can push an
+        //    adopted wheel further along after page p already recorded it.
+        //
+        // Cheap and quiet in the ordinary case: nothing moved, so every page
+        // resolves to the index it already holds and ReResolvePageLocked logs
+        // nothing. Both hazards are v4-only (they need adoption or the retry),
+        // and so is the fix.
+        if (api->version >= 4 && api->GetManagedWheelsForClient) {
+            for (size_t p = 0; p < m_pageWheels.size(); ++p) {
+                ReResolvePageLocked(api, p);
+            }
+        }
+
         // Baseline for teardown: where the wheels actually landed. Compared
         // against the observed anchor later so an untouched block is never
-        // recorded as a player move (see m_createdAnchor).
+        // recorded as a player move (see m_createdAnchor). MUST follow the
+        // re-resolve — computed from stale indices it would poison the
+        // remembered-anchor comparison for the rest of the session.
         m_createdAnchor = CurrentAnchorLocked();
 
         spdlog::info("[WheelerClient] === Multi-Page Wheels Created ===");

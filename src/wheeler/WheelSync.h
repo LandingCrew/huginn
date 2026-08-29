@@ -228,12 +228,26 @@ namespace Huginn::Wheeler
             int32_t wheelIndex = -1;                    // Wheeler wheel index
             size_t slotCount = 0;                       // Number of slots for this page
             std::string pageName;                       // Page name (e.g., "Combat")
-            // Strings whose c_str() is exported to Wheeler are indefinite borrows:
-            // Wheeler stores the pointer and reads it while rendering, so the
-            // buffer must stay alive AND address-stable until replaced/cleared
-            // through the API. Heap-owned (unique_ptr) storage survives PageWheel
-            // moves and m_pageWheels reallocation; a plain std::string does not
-            // (MSVC SSO relocates short-string bytes on every move).
+            // Strings whose c_str() is exported to Wheeler were modelled here as
+            // indefinite borrows — Wheeler storing the pointer and reading it
+            // while rendering, so the buffer had to stay alive AND
+            // address-stable until replaced/cleared through the API. Heap-owned
+            // (unique_ptr) storage survives PageWheel moves and m_pageWheels
+            // reallocation; a plain std::string does not (MSVC SSO relocates
+            // short-string bytes on every move).
+            //
+            // THAT MODEL IS WRONG, verified 2026-08-29 against the Wheeler
+            // source: both exported strings are COPIED on receipt —
+            // WheelManagedInfo::clientName is a std::string (Wheel.h) and
+            // EntrySubtext::text is a std::string (WheelEntry.h). Nothing here
+            // is a borrow, and no lifetime hazard exists.
+            //
+            // The storage stays as written. It is correct under either model,
+            // the ordering it implies costs nothing, and unwinding it would be
+            // a refactor of every export path to buy nothing. Do not, however,
+            // reason from the old model: adoption in CreateWheels depends on a
+            // STRANDED wheel still matching its label after the PageWheel that
+            // exported it was destroyed, which is only true because of the copy.
             std::unique_ptr<std::string> wheelLabel;    // Full wheel label (e.g., "Huginn: Combat"); non-null iff a wheel was ever created for this record (survives index invalidation — Wheeler may still hold the pointer)
             std::vector<RE::FormID> slotFormIDs;        // Cached FormIDs per slot
             std::vector<bool> slotWildcard;             // Wildcard flags per slot
