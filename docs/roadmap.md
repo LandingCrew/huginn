@@ -73,6 +73,126 @@ rejected, so check there before re-opening something.
       player scrolled here deliberately" signal, or default `bAutoFocusOnOpen`
       to false (XS/S)
 
+## Doc-migration findings (2026-08-29)
+Surfaced by the one-agent-per-doc migration pass. Every one is a code or config
+defect the docs exposed, not a documentation problem. Ordered by what a player
+would notice.
+
+- [ ] **`[Candidates]` INI never reaches the code that reads it.**
+      `LoadCandidateConfigFromINI` (`Globals.cpp:181`) writes
+      `sUncastableSpellPolicy` and `bEnableSoulGemRecharge` into the global
+      `g_candidateConfig`, but `CandidateGenerator::m_config` is
+      default-constructed and never assigned from it — `Initialize()` does not
+      copy it and `RefreshConfigFromGlobal()` (`CandidateGenerator.h:150`) has
+      ZERO callers. Both `kPostLoadGame` and `hg reload` update a struct nothing
+      reads, so `bEnableSoulGemRecharge = false` silently does nothing. Hidden
+      today only because the shipped values equal the compile-time defaults.
+      Consequences: `Penalize` and `Allow` are behaviourally identical (both
+      filters branch only on `Disallow`), and `fUncastablePenaltyFloor = 0.05`
+      ships in the INI read by no code (S)
+- [ ] **The dMenu Refresh Effect dropdown and strength slider do nothing.**
+      `_flashTimer` in `src/swf/Intuition.as` is initialised to 0 and decremented
+      but never set positive — the `setSlot` path that armed it was removed when
+      per-slot visual states landed, and the `tick()` branch is self-labelled
+      legacy. So `sRefreshEffect`, `fRefreshStrength`, both AS2 setters,
+      `_refreshMode`, `_baseColor`, `_tintDirty` and `lerpColor` are live wiring
+      to nothing, and two user-facing controls have no effect. `_tintDirty` is
+      never set true either, so the tint-restore loop is unreachable. Decide
+      whether to rewire or remove — shipping a control that does nothing is the
+      worse of the two (S)
+- [ ] **`hg reload` silently yanks the player to page 1.** `ApplySideEffects`
+      calls `SlotAllocator::Initialize()`, which assigns `m_currentPage = 0`
+      (`SlotAllocator.cpp:51`). A player on page 3 who reloads settings is moved
+      with no notice and no log line. May be intended; nothing says so (XS)
+- [ ] **`SlotLocker::Reset()` leaks state across a save load**
+      (`SlotLocker.cpp:~298`). It clears `isLocked`, `remainingMs`,
+      `totalDurationMs` and `assignment` but NOT `isActivationLock`,
+      `previousFormID` or `hadContent`. A slot can carry a stale `previousFormID`
+      (spurious `Confirmed` flash) and a stale `isActivationLock = true`, which
+      makes the next `OnItemUsed(..., respectActivationLock=true)` decline to
+      break a lock that was never an activation lock (S)
+- [ ] **`[ContextWeights]` INI and `ContextWeightConfig` do not line up.** The
+      shipped INI has 33 `fWeight*` keys; the struct has 31 weight fields.
+      `weightSummon` and `fWeaponChargeSmoothingExponent` have no key in that
+      section, while `fWeightWeaponChargeModerate/Low/Critical` have no matching
+      single field. Whether those are read elsewhere is unchecked — if not, they
+      are settings a player can edit that are silently ignored. Establish the
+      real mapping before trusting either side (S)
+- [ ] **Two override files, one INI, no namespacing.** `SpellOverrides` and
+      `ItemOverrides` both parse `Huginn_Overrides.ini` walking every section, so
+      an item override section also registers as a spell override — unrecognised
+      tag names parse to `SpellTag::None` but the `optional` is still ENGAGED, so
+      it overwrites. A spell and a potion sharing a display name share one entry.
+      Reload is also asymmetric: `SpellRegistry` re-loads on every
+      `RebuildRegistry()`, `ItemRegistry` loads only in its constructor, so item
+      overrides need a game restart and `hg reload` touches neither (M)
+- [ ] **The shipped `Huginn_Overrides.ini` template documents types that are
+      rejected.** It documents item type `SoulGem` and shows a `type = Scroll`
+      example; `ItemOverrides::ParseItemType` accepts neither and logs "Unknown
+      item type". `ItemType::Ingredient` is likewise advertised but unreachable —
+      ingredients are not in the item registry's inventory filter at all (XS)
+- [ ] **Shipped INI comments are wrong in `[Overrides]`** — three identical
+      comments say the health, magicka and stamina potions are each "forced into
+      slot 1". They are pinned to slots 0, 1 and 2 on Page 0 (XS)
+- [ ] **`fNotCandidateRewardMult` is absent from the shipped INI** and silently
+      falls back to 1.0 — a reward multiplier that reads as configured and is not
+      (XS)
+- [ ] **#79 landed on the spell arm and not the scroll arm.** Scroll `Utility`
+      does not check ext `Unlock` although `ScrollData` carries `tagsExt`, and
+      scroll `SummonsAny` omits `BoundWeapon` where the spell arm includes it.
+      Likely oversight rather than intent (XS)
+- [ ] **Three tag values have no writer.** `ItemTagExt::Ravage*` and
+      `Damage*Regen` are read by `HasHarmfulSideEffects()` but `PopulateItemTags`
+      never sets them; `WeaponTag::EnchantSilence` has no writer anywhere in
+      `src/`. Either wire them or delete them — as they stand,
+      `HasHarmfulSideEffects()` cannot fire on those grounds (S)
+- [ ] **`[Dedup] COLLISION` logs at `warn`, per candidate, per tick**
+      (`CandidateFilters.cpp:305`), for a normal outcome. Against this repo's own
+      "log transitions, not ticks" rule. Trace, or a per-pass summary (XS)
+- [ ] **Dead work in Release builds:** `damageRate`, `healingRate`,
+      `damageIncreasing` and `damageDecreasing` are computed unconditionally
+      every tick (`StateManager_HealthTracking.cpp:283-330`, no `_DEBUG` guard)
+      and their only consumer is an ImGui debug widget. Either guard it or wire
+      it — it is also exactly the substrate a future trend feature would need.
+      Adjacent dead code: `SlotAllocator::AllocateSlots` (both overloads), kept
+      as a legacy/test entry point; `IntuitionMenu::SetUrgent` / `setUrgent` /
+      `_urgentSlots`, vestigial with no caller; `iMaxCandidatesPerCycle`, parsed,
+      clamped, stored on `ScorerConfig` and never read;
+      `FilterStats::filteredByRelevance`, never incremented but still summed;
+      `StateEvaluator::EvaluateCurrentState()`, which takes a
+      `const WorldState&` it never reads (S)
+- [ ] **Code comments that actively mislead**, all found because a doc repeated
+      them. Fixing these is what stops the docs rotting again.
+      `StateManager_Targets.cpp:498` says "Scan ALL process levels (high,
+      middleHigh, middleLow)" above a loop reading `highActorHandles` only — the
+      middle lists were removed for cost, and the doc's headline ally-scanning
+      claim came straight from this line. `ContextRuleEngine.cpp` says "Stage 1a
+      (skeleton): Returns all zeros — no rules implemented yet" above a fully
+      implemented method. `StateManager.h` says "3 locks" and "7 float
+      accumulators"; it is 4 and 11. `StateFeatures.h:17` cites the stale
+      36,288-state figure (it is 72,576). `SettingsReloader.cpp:94` says the
+      dMenu INI holds "Widget, Keybindings, Debug" — keybindings moved to the
+      main INI in the 0.19.0 split. `ContextWeightConfig.h:14-16` gives a stale
+      field breakdown. `FeatureQLearner.h:132` says "~90% confidence at 15
+      trains"; the sigmoid gives 95.3%. `FeatureQLearner.h:30` and `.cpp:38`
+      call the rule "Semi-gradient TD(0)" — there is no TD bootstrapping, and
+      this is the one place a reader would go to check the contextual-bandit
+      claim (XS each)
+- [ ] Spell-pattern override file (`reviews/magic-classification.md`) was
+      proposed and never implemented — no `m_patterns`, no `pattern=true`
+      parsing, no `Huginn_SpellPatterns.ini`. Recorded here because the finding
+      was previously tracked nowhere. Its 29%-unknown figure is one 2026-02-07
+      capture on one modlist, taken before the classification pipeline changed
+      underneath it, so the current rate is genuinely unknown — measure before
+      scheduling. Related: `Huginn_Overrides.ini` is shared by `SpellRegistry`
+      and `ItemRegistry` but the shipped template documents only item types, so
+      the spell-type vocabulary `SpellOverrides` parses is undocumented (M)
+- [ ] **Suppress-mode favorites are fully scored every tick to be discarded.**
+      Favorites bypass the `minimumContextWeight` early filter
+      (`UtilityScorer.cpp:77`), then `GetFavoritesMultiplier` returns 0.0, then
+      `minimumUtility` drops them. Low severity, but note that with
+      `fMinimumUtility = 0` suppressed favorites would reappear at utility 0 (XS)
+
 ## Architecture Critique — Backlog
 See `reviews/architecture-critique.md` — **the file is missing from the repo**; it was never committed and is not in the recovered docs snapshot.
 **Landed:** Tier 1 (all); Tier 2 #8 registry consolidation (PR #55), #9 display
