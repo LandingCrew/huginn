@@ -100,10 +100,17 @@ namespace Huginn::Scoring
         // timer. ApplyWildcards (which normally drives expiry) runs only on
         // non-skipped pipeline ticks, so without this an expired wildcard stays
         // displayed while the pipeline is idle.
-        // @return true if the wildcards on the page LAST APPLIED — the one on
-        //         screen — lapsed this call (caller must force a pipeline run so
-        //         the slot content can swap). Ageing a background page out is
-        //         not a display change and deliberately does not report one.
+        // @return true if ANY page's wildcards lapsed this call (caller must
+        //         force a pipeline run so the slot content can swap).
+        //         Deliberately not narrowed to "the page on screen": this class
+        //         only learns which page that is when ApplyWildcards runs, i.e.
+        //         on non-skipped pipeline ticks, and SlotAllocator::Initialize()
+        //         resets m_currentPage directly without raising m_pageChanged
+        //         (SlotAllocator.cpp:70) — so after an `hg reload` a remembered
+        //         page can be stale exactly while the pipeline is skipped, which
+        //         is the one situation this return value exists to break out of.
+        //         Over-reporting costs one pipeline run that repaints the same
+        //         thing; under-reporting leaves an expired wildcard on screen.
         [[nodiscard]] bool UpdateExpiry();
 
         // Configuration
@@ -181,11 +188,16 @@ namespace Huginn::Scoring
         // Calculate wildcard probability for a given slot index
         [[nodiscard]] float GetProbabilityForSlot(size_t slotIndex, size_t slotCount) const;
 
-        // Find a random candidate from the list (excluding already used)
+        // Find a random candidate from the list (excluding already used).
+        // @param minIndex Lowest ranking position worth drawing from. A wildcard
+        //        is only ever surfaced by SWAPPING a lower-ranked candidate UP
+        //        into the slot, so a draw from at or above the target slot is a
+        //        roll that can never be displayed — see the call site.
         [[nodiscard]] RE::FormID SelectRandomCandidate(
             const ScoredCandidateList& candidates,
             Candidate::SourceType sourceType,
-            const std::vector<RE::FormID>& excludeFormIDs);
+            const std::vector<RE::FormID>& excludeFormIDs,
+            size_t minIndex);
 
         // Settings
         bool m_enabled = true;
@@ -196,10 +208,6 @@ namespace Huginn::Scoring
         float m_refractorySeconds = 5.0f;
 
         std::array<PageWildcards, MAX_WILDCARD_PAGES> m_pages;
-
-        // The page ApplyWildcards last ran for — i.e. the one on screen. Only
-        // used to decide whether an expiry is worth forcing a pipeline run for.
-        size_t m_lastAppliedPage = 0;
 
         // Random number generator (thread-local for safety)
         std::mt19937& GetRNG();

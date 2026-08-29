@@ -18,10 +18,6 @@ namespace Huginn::Scoring
             return;
         }
 
-        // Record the on-screen page for UpdateExpiry's "worth a pipeline run?"
-        // question. Set before any early-out: a page that rolls nothing is still
-        // the page being displayed.
-        m_lastAppliedPage = page.index;
         auto& cache = m_pages[page.index];
 
         // Clamp to what this class can track. Both bounds come from the same
@@ -105,17 +101,29 @@ namespace Huginn::Scoring
     {
         const auto now = std::chrono::steady_clock::now();
 
-        // Whether the DISPLAYED page lapsed is the answer the caller wants; a
-        // background page ageing out changes nothing on screen and must not
-        // force a pipeline run.
-        const auto& displayed = m_pages[m_lastAppliedPage];
-        const bool displayedWasActive = PageHasActiveWildcard(displayed);
-
+        // Reports a lapse on ANY page. An earlier cut narrowed this to the page
+        // ApplyWildcards last ran for, on the reasoning that ageing out a page
+        // nobody is looking at changes nothing on screen. That is true right up
+        // until the remembered page is WRONG: ApplyWildcards only runs on
+        // non-skipped pipeline ticks, and SlotAllocator::Initialize() drops the
+        // display back to page 0 by assigning m_currentPage directly, without
+        // raising m_pageChanged (SlotAllocator.cpp:70). So after an `hg reload`
+        // the remembered page stays stale for as long as the pipeline is
+        // hash-skipped — which is precisely the window this return value exists
+        // to break out of, and the expired wildcard would sit on screen until
+        // some unrelated state change woke the pipeline.
+        //
+        // The asymmetry decides it: over-reporting costs one pipeline run that
+        // repaints the same content (~1 ms, at most once per page per cooldown,
+        // against the 10 Hz the pipeline already runs at); under-reporting is a
+        // visible stale recommendation. Not worth a remembered page to avoid.
+        bool anyLapsed = false;
         for (auto& cache : m_pages) {
+            const bool wasActive = PageHasActiveWildcard(cache);
             UpdateWildcardExpiry(cache, now);
+            anyLapsed = anyLapsed || (wasActive && !PageHasActiveWildcard(cache));
         }
-
-        return displayedWasActive && !PageHasActiveWildcard(displayed);
+        return anyLapsed;
     }
 
     bool WildcardManager::HasActiveWildcard(size_t pageIndex) const
@@ -162,7 +170,6 @@ namespace Huginn::Scoring
             cache.lastWildcardTime = now;
             cache.wildcardEndTime = now;
         }
-        m_lastAppliedPage = 0;
     }
 
     // =========================================================================
@@ -266,7 +273,17 @@ namespace Huginn::Scoring
             float probability = GetProbabilityForSlot(i, slotCount);
 
             if (probDist(rng) < probability) {
-                RE::FormID wildcardID = SelectRandomCandidate(rankedCandidates, topType, usedFormIDs);
+                // Draw only from BELOW this slot (index > i). ApplyWildcardsToRanking
+                // surfaces a wildcard by swapping it UP into the slot and skips the
+                // swap when `foundIdx <= slotIdx`, so a draw from at or above i is a
+                // roll that caches an entry nothing will ever display — and, because
+                // the cache then reads as active, suppresses the re-roll for a whole
+                // cooldown. Harmless-looking before the capacity cap below, which
+                // could mask it by rolling several slots; on a page with one
+                // wildcard-capable slot that single wasted roll IS the stall this
+                // class exists to prevent.
+                RE::FormID wildcardID =
+                    SelectRandomCandidate(rankedCandidates, topType, usedFormIDs, i + 1);
 
                 if (wildcardID != 0) {
                     cache.slots[i].formID = wildcardID;
@@ -358,13 +375,15 @@ namespace Huginn::Scoring
     RE::FormID WildcardManager::SelectRandomCandidate(
         const ScoredCandidateList& candidates,
         Candidate::SourceType sourceType,
-        const std::vector<RE::FormID>& excludeFormIDs)
+        const std::vector<RE::FormID>& excludeFormIDs,
+        size_t minIndex)
     {
         // Reuse buffer to avoid heap allocation in hot path
         m_eligibleBuffer.clear();
 
-        // Skip slot 0 (top pick) - start from index 1
-        for (size_t i = 1; i < candidates.size(); ++i) {
+        // Start below the target slot. minIndex is always >= 1, so this also
+        // keeps the old "slot 0 (top pick) is never a wildcard source" rule.
+        for (size_t i = minIndex; i < candidates.size(); ++i) {
             RE::FormID formID = candidates[i].GetFormID();
 
             // Check source type matches

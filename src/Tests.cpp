@@ -4214,10 +4214,17 @@ void RunUnitTests()
         mgr.SetCooldown(1000.0f);      // nothing expires mid-test
         mgr.SetRefractoryPeriod(0.0f); // every eligible page rolls on first apply
 
-        // Applying mutates the list (swaps + isWildcard), so each case gets a copy.
+        // Applying mutates the list (swaps + isWildcard), so each case gets a
+        // copy. Returned so a case can assert what was SURFACED, not just cached.
         auto apply = [&](const WildcardPage& page) {
             ScoredCandidateList work = pool;
             mgr.ApplyWildcards(work, page);
+            return work;
+        };
+
+        auto surfacedCount = [](const ScoredCandidateList& list) {
+            return static_cast<size_t>(std::count_if(list.begin(), list.end(),
+                [](const ScoredCandidate& s) { return s.isWildcard; }));
         };
 
         // Highest cached index with a wildcard on a page, or SIZE_MAX if none.
@@ -4279,12 +4286,41 @@ void RunUnitTests()
 
         // Page 4: 6 slots but only 2 accepting wildcards. A page can display at
         // most as many wildcards as it has seats for them; the surplus would
-        // strand.
+        // strand. Asserted as EQUALITY, not just an upper bound: at probability
+        // 1.0 the count is deterministic, and a cap that is too tight (an
+        // off-by-one, or one applied before startSlot) would leave a
+        // wildcard-capable page rolling nothing while an upper-bound check
+        // still passed.
         apply({ .index = 4, .slotCount = 6, .wildcardSlots = 2 });
-        if (mgr.GetActiveWildcardCount(4) > 2) {
-            logger::error("TEST FAIL: page with 2 wildcard-capable slots cached {} wildcards"sv,
+        if (mgr.GetActiveWildcardCount(4) != 2) {
+            logger::error("TEST FAIL: page with 2 wildcard-capable slots cached {} wildcards, expected 2"sv,
                 mgr.GetActiveWildcardCount(4));
             return;
+        }
+
+        // Page 5: 6 slots, ONE wildcard-capable. Every cached entry must also be
+        // surfaced — the invariant this whole class exists to hold.
+        //
+        // RollNewWildcards draws for slot i, and ApplyWildcardsToRanking only
+        // surfaces a wildcard by swapping it UP (it skips when foundIdx <=
+        // slotIdx). A draw from at or above i is therefore a roll that caches an
+        // entry nothing displays, while the cache reads as active and suppresses
+        // the re-roll for a full cooldown. With several slots rolling, a wasted
+        // draw is masked by its neighbours; with exactly one seat it IS the
+        // stall. Checks the surfaced count, not just the cached one, because
+        // cached-but-invisible is precisely the failure being excluded.
+        {
+            const auto work = apply({ .index = 5, .slotCount = 6, .wildcardSlots = 1 });
+            const size_t cached = mgr.GetActiveWildcardCount(5);
+            if (cached != 1) {
+                logger::error("TEST FAIL: 1-seat page cached {} wildcards, expected 1"sv, cached);
+                return;
+            }
+            if (surfacedCount(work) != cached) {
+                logger::error("TEST FAIL: 1-seat page cached {} wildcard(s) but surfaced {}"sv,
+                    cached, surfacedCount(work));
+                return;
+            }
         }
 
         // Reshape: page 0 shrinks under an INI reload. Its own cache is the one
@@ -4303,7 +4339,7 @@ void RunUnitTests()
             logger::error("TEST FAIL: expiry did not report the displayed page lapsing"sv);
             return;
         }
-        for (size_t page = 0; page < 5; ++page) {
+        for (size_t page = 0; page < 6; ++page) {
             if (mgr.HasActiveWildcard(page)) {
                 logger::error("TEST FAIL: page {} survived expiry"sv, page);
                 return;
@@ -4311,7 +4347,7 @@ void RunUnitTests()
         }
 
         logger::info("TEST PASS: Wildcard page cache (per-page bounds, wildcard-capable "
-            "seats, 1-slot page, reshape, all-page expiry)"sv);
+            "seats, cached==surfaced, 1-slot page, reshape, all-page expiry)"sv);
     }
 
     logger::info("=== All unit tests passed! ==="sv);

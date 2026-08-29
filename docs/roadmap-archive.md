@@ -323,12 +323,20 @@ re-litigated. Section headings mirror the roadmap's.
       unreachable on its own terms (excluded by `bFirstSlotExcluded`, and scored
       at `base × 0 == 0` even when it is not), so a 1-slot page rolls nothing
       without needing a special case to say so.
-      Two behaviour changes worth knowing. Per-page timers mean one page's
-      expiry no longer imposes a refractory on another. And `UpdateExpiry()`
-      still ages EVERY page — a wildcard on a page the player has switched away
-      from must lapse on its own clock — but now reports a lapse only for the
-      page last applied, so ageing out a background page no longer forces a
-      pipeline run that changes nothing on screen.
+      Behaviour change worth knowing: per-page timers mean one page's expiry no
+      longer imposes a refractory on another. `UpdateExpiry()` still ages EVERY
+      page — a wildcard on a page the player has switched away from must lapse
+      on its own clock — and still REPORTS a lapse on any page. An intermediate
+      cut narrowed that report to the page last applied, on the reasoning that
+      ageing out a page nobody is looking at changes nothing on screen; review
+      of PR #98 found the remembered page can be wrong, because
+      `SlotAllocator::Initialize()` drops the display back to page 0 by
+      assigning `m_currentPage` directly without raising `m_pageChanged`
+      (SlotAllocator.cpp:70), so after an `hg reload` it stays stale for as long
+      as the pipeline is hash-skipped — exactly the window the return value
+      exists to break out of. Reverted: over-reporting costs one pipeline run
+      that repaints the same content, under-reporting leaves an expired wildcard
+      on screen.
       The `bWildcardsEnabled` case was logged as unconfirmed and "needs a config
       with wildcards disabled on some slots to reproduce"; it now has a unit test
       instead (Tests.cpp, "Wildcard page cache"), which pins probability to 1.0
