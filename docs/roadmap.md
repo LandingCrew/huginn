@@ -240,22 +240,6 @@ trigger to pick any of it up.
       CalculateMagickaCost per known spell per tick, inside the registry lock (M)
 
 ### Follow-ups
-- [ ] Decide whether the auto-focus skip NOTIFICATION should still exist. The
-      behaviour it warns about was closed as correct on 2026-08-29 (see the
-      archive), which leaves an on-screen `RE::DebugNotification` telling players
-      about something that is working as intended, and pointing them at
-      `bAutoFocusOnOpen=false` as if it were a remedy. That is the same shape as
-      the dMenu Refresh Effect control under Doc-migration findings: a
-      user-facing artifact that implies a problem that is not there.
-      Not obvious either way. It fires once per run, and it does answer a real
-      question a confused player might have ("why does Wheeler always open on
-      Huginn's wheel?"). But it fires for everyone with a wheel ahead of ours,
-      confused or not.
-      Suggested split if it comes to a decision: keep the log warn — it costs
-      nothing, fires once, and is genuinely useful when someone reports "Huginn
-      ate my wheel" — and drop the on-screen notification, which is the half that
-      addresses a player who mostly is not asking. `WheelerClient.cpp`, inside
-      the `skipsWheel && !m_autoFocusStrandWarned.exchange(true)` block (XS)
 - [ ] Wheeler leaves an empty unmanaged wheel behind when a client's wheels were
       the only ones, and it PERSISTS — `SerializeIntoJsonObj` skips only managed
       wheels, so the placeholder is written to the co-save as `{"entries": []}`
@@ -278,15 +262,6 @@ trigger to pick any of it up.
       1.4 s later. Observed 2026-08-29 13:03:18 against a 13:03:20 re-resolve.
       Skip the check while `IsInEditMode()` — the diagnostic cannot say anything
       true there (XS)
-- [ ] Remembered wheel position does not survive a game restart — it is a
-      session member (`WheelSync::m_rememberedAnchor`), so a player who drags
-      the wheels and quits finds them back at `sWheelPosition` next launch.
-      Fixing it means a cosave record for one int32_t, which is cheap in itself
-      but is a serialization change and so NOT landable during an active soak
-      run (same constraint parked #15/#16). The cheaper half-measure, if this
-      turns out to be what people actually hit, is writing the anchor back to
-      `sWheelPosition` in Huginn.ini on teardown — no cosave, but it edits the
-      player's config file behind their back, which is its own surprise (S)
 - [ ] Unit tests for Context::WeightForCandidate (Tests.cpp:2656/3374 currently
       hand-reimplement the weight mapping — call the real one). DominantReason /
       ReasonLabel are covered by unit test 17.

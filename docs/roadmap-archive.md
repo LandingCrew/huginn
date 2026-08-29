@@ -93,10 +93,19 @@ re-litigated. Section headings mirror the roadmap's.
       3/4/5. Worth remembering as a shape, not just a bug: `DestroyWheels()` has
       a side effect that any "reset this state" call placed near it must be
       sequenced against.
-      Session-scoped by choice. Surviving a restart needs a cosave record, which
-      is a serialization change and not landable mid-soak; left as a follow-up
-      on the roadmap with the INI-writeback alternative noted and rejected for
-      editing the player's config behind their back
+      Session-scoped by choice, and **that is where it stays — decided
+      2026-08-29.** Surviving a full restart was carried as a follow-up for a
+      while, on the theory that a player who drags the wheels and quits would be
+      annoyed to find them back at `sWheelPosition`. Closed without persisting
+      it: the complaint this whole thread came from was wheels being REORDERED,
+      not positions being forgotten, and session scope already covers that — a
+      reorder survives every save load for the rest of the session, which is the
+      case that was actually reported. A fresh launch honouring the configured
+      `sWheelPosition` is the setting doing its job.
+      So the cosave record is unnecessary, and so is the INI-writeback
+      alternative, which was separately unattractive for editing the player's
+      config file behind their back. Re-open only on a report of the RESTART
+      case specifically, not the reorder case
 - [x] #76: loading a second save in one session (esp. a different character)
       left Huginn's stored wheel indices stale; `UpdatePage` found every page
       unmanaged ~1s after creation and set `wheelIndex=-1` permanently, with no
@@ -564,9 +573,12 @@ re-litigated. Section headings mirror the roadmap's.
       unnecessary on this reasoning and were never built.
       **What DID land, and stays:** the one-shot warn and on-screen notification
       when a redirect actually skips a wheel (0.19.3, corrected in 0.19.9 to gate
-      on `wheelIndex < autoFocusTarget` and fire once per run). See the open
-      Follow-ups entry on whether the player-facing half of that is still
-      warranted now that the behaviour is deemed correct.
+      on `wheelIndex < autoFocusTarget` and fire once per run).
+      Whether to keep the player-facing half was raised and **decided on
+      2026-08-29: keep it.** It is INFORMATIONAL, not a defect warning — it says
+      what is happening and names the setting that changes it. Do not remove it
+      on the grounds that the behaviour it describes is not a bug; describing
+      correct-but-surprising behaviour is the whole job of that notification.
 - [x] Two INI files defined `[Widget]`, `[Keybindings]` and `[Debug]` in BOTH
       `Huginn.ini` and dMenu's same-named copy, with nothing stating which won —
       and settings changed in the dMenu UI did not survive a restart.
