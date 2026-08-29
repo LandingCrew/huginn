@@ -306,6 +306,30 @@ namespace Huginn::Wheeler
         bool m_anchorUnsupportedLogged = false;                        // one v3-anchor notice per session
         int  m_recoveryAttempts = 0;
         std::chrono::steady_clock::time_point m_lastRecoveryAttempt{};
+
+        /// Labels whose wheels survived a teardown that reported success.
+        ///
+        /// Wheeler used to refuse to erase the last remaining wheel, and its
+        /// batch delete enforced that by breaking out of the erase loop and
+        /// returning a SHORT COUNT — possibly 0 — with no error. When our wheels
+        /// were the only ones left, the final one was silently kept. Observed
+        /// 2026-08-22: a teardown logged "Deleted 0 managed wheel(s) for client
+        /// 'Huginn: Regulars'" while that wheel existed, and the next
+        /// CreateWheels added a second under the same name.
+        ///
+        /// FIXED UPSTREAM (wheelerAPI ca2e2f2 — every match is now erased, with
+        /// an empty unmanaged wheel left behind if that would empty the list).
+        /// This stays because the fix ships inside API v4 with no version bump to
+        /// detect it by, and players run whatever Wheeler build they have.
+        ///
+        /// Nothing here was recoverable at teardown time on those builds — the
+        /// wheel could not be deleted while it was the last one, by name OR by
+        /// index (the single-wheel path has the same guard and answers
+        /// LastWheel). So the labels are carried to CreateWheels, which either
+        /// adopts the survivor for the page that claims it or, once the new
+        /// wheels have raised the count, deletes it.
+        /// GUARDED_BY(m_pageDataMutex).
+        std::vector<std::string> m_strandedLabels;
         static constexpr std::chrono::seconds ADD_FAIL_COOLDOWN{30};
         [[nodiscard]] static constexpr uint64_t AddFailKey(RE::FormID formID, uint16_t uniqueID) noexcept
         {
@@ -334,7 +358,23 @@ namespace Huginn::Wheeler
         /// (a delete may fire a synchronous callback that re-acquires it);
         /// CreateWheels calls it under the lock on the documented assumption that
         /// already-invalidated wheels fire no callbacks.
-        void IssueWheelDeletes(std::vector<PageWheel> staleWheels);
+        ///
+        /// Returns the labels whose wheels Wheeler did NOT actually remove — a
+        /// non-negative return from DeleteManagedWheelsForClient is a count, not
+        /// a promise (see the verification block in the body). The result is
+        /// RETURNED rather than stored because the unlocked caller must not
+        /// touch members; both callers hand it to RecordStrandedLabelsLocked.
+        [[nodiscard]] std::vector<std::string> IssueWheelDeletes(std::vector<PageWheel> staleWheels);
+
+        /// Merge undeleted labels into m_strandedLabels, de-duplicated.
+        /// REQUIRES: m_pageDataMutex held.
+        void RecordStrandedLabelsLocked(std::vector<std::string> labels);
+
+        /// Retry the deletes that teardown could not complete, now that this
+        /// generation's wheels exist and Wheeler's last-wheel guard no longer
+        /// bites. Skips any label a live page has adopted. REQUIRES:
+        /// m_pageDataMutex held, and called AFTER the creation loop.
+        void RetryStrandedDeletesLocked(WheelerAPI::IWheelerAPI* api);
 
         /// #76 census: dump what Wheeler actually holds at the moment a page is
         /// invalidated. Call with m_pageDataMutex HELD (it reads m_pageWheels);

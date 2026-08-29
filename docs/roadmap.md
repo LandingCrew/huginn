@@ -10,16 +10,44 @@ rejected, so check there before re-opening something.
       when the 12:32:39 teardown logged `Deleted 0 managed wheel(s) for client
       'Huginn: Regulars'`; the next CreateWheels then added a SECOND wheel under
       that name, and 12:34:48 found 2. Both were finally reaped at 12:34:59.
-      Sequence detail worth keeping: the failing call was the third in one
-      IssueWheelDeletes loop, after a call that deleted 2 wheels for a different
-      label — but that is correlation, not a diagnosis, and the logs have since
-      rotated. **Matters more under v4**, which no longer drops managed wheels on
-      load, so anything a teardown misses persists across the session and
-      accumulates. Huginn now survives it (PR #92's ambiguity handling keeps or
-      invalidates by index membership rather than adopting blind), so this is a
-      correctness/cleanliness issue, not a live breakage. Reproduce by cycling
-      page layouts through `hg reload` and watching the `Deleted N managed
-      wheel(s)` counts against what was created. Likely upstream (S)
+      **DIAGNOSED 2026-08-29, upstream.** `API_DeleteManagedWheelsForClient`
+      (wheelerAPI `src/bin/API/WheelerAPI.cpp`, erase loop ~341-357) collects its
+      matches, then breaks out when the TOTAL wheel count reaches 1 and returns
+      however many it managed — a short count, possibly 0, with no error and no
+      way to tell it from "you had none". The single-wheel `DeleteManagedWheel`
+      enforces the same invariant honestly, returning `LastWheel` (-8); the batch
+      path has the guard with no signal. The "third call, after a call that
+      deleted 2 wheels" detail is causation, not the correlation this entry
+      previously called it — that call is what drove the count to 1. The
+      all-wheels-are-ours state that arms it is ordinary: `clearUnmanagedLocked`
+      keeps managed wheels and drops unmanaged ones from `_wheels` entirely, so
+      after a load there is a window where every wheel present is a client's.
+      Ruled out on the way: `WheelManagedInfo::clientName` is a `std::string`, so
+      Wheeler copies the name and the match is a content compare — no pointer
+      lifetime issue.
+      **Huginn-side fix landed 0.19.7:** `IssueWheelDeletes` now verifies each
+      delete with `GetManagedWheelsForClient` instead of trusting the count, and
+      carries anything that survived to `CreateWheels`, which ADOPTS a wheel
+      already answering to a page's label rather than creating a second one, then
+      reaps whatever no live page claimed (by then the new wheels have raised the
+      count, so the guard no longer bites). v4 only — v3 servers cannot answer the
+      verification query and behave exactly as before.
+      **Upstream fix landed** (wheelerAPI `ca2e2f2`): every match is erased and
+      the count is now exactly the number that matched. It kept a non-empty
+      `_wheels` by pushing an empty UNMANAGED wheel when the last one would go —
+      `MoveEntryForwardInCurrentWheel`/`MoveEntryBackInCurrentWheel` index
+      `_wheels[_activeWheelIdx]` behind an `_activeWheelIdx != -1` test that never
+      fires, so emptying the vector outright was not safe. The placeholder carries
+      no client name, so it never answers `GetManagedWheelsForClient`.
+      The Huginn-side verification stays regardless: the fix ships inside API v4
+      with no version bump to detect it by, so a v4 server may or may not have it
+      and players run whatever Wheeler build they have.
+      **Remaining: in-game verification only.** Cycle page layouts through
+      `hg reload` with no non-Huginn wheels present and confirm the log carries no
+      `Delete reported N ... but M wheel(s) still carry that label` warn and no
+      `adopting wheel N instead of creating a duplicate` on a patched Wheeler;
+      on an unpatched one both should appear and the wheel count should stay
+      correct (XS)
 - [ ] Wheeler's content-unchanged early-out goes stale when Wheeler itself
       mutates the wheel. With `PostActivation = Backfill`, activating an entry
       makes Wheeler shift the remaining entries internally — Huginn is never

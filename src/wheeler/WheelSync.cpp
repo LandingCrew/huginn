@@ -73,7 +73,11 @@ namespace Huginn::Wheeler
             std::lock_guard<std::mutex> lock(m_pageDataMutex);
             stale = DetachWheelsLocked();
         }
-        IssueWheelDeletes(std::move(stale));
+        auto stranded = IssueWheelDeletes(std::move(stale));
+        if (!stranded.empty()) {
+            std::lock_guard<std::mutex> lock(m_pageDataMutex);
+            RecordStrandedLabelsLocked(std::move(stranded));
+        }
     }
 
     int32_t WheelSync::CurrentAnchorLocked() const
@@ -148,14 +152,16 @@ namespace Huginn::Wheeler
         return stale;
     }
 
-    void WheelSync::IssueWheelDeletes(std::vector<PageWheel> staleWheels)
+    std::vector<std::string> WheelSync::IssueWheelDeletes(std::vector<PageWheel> staleWheels)
     {
+        std::vector<std::string> stranded;
+
         auto* api = Api();
         if (!api) {
             // Nothing to tell Wheeler. staleWheels is destroyed on return, which
             // is safe precisely because there is no Wheeler holding pointers
             // into it.
-            return;
+            return stranded;
         }
 
         // Clear all subtexts BEFORE deleting wheels. Wheeler may hold const char*
@@ -192,8 +198,35 @@ namespace Huginn::Wheeler
                 if (n < 0) {
                     spdlog::warn("[WheelerClient] DeleteManagedWheelsForClient('{}') failed: {}",
                         *pw.wheelLabel, n);
-                } else {
-                    spdlog::debug("[WheelerClient] Deleted {} managed wheel(s) for '{}'", n, *pw.wheelLabel);
+                    continue;
+                }
+                spdlog::debug("[WheelerClient] Deleted {} managed wheel(s) for '{}'", n, *pw.wheelLabel);
+
+                // VERIFY, don't trust the count. Wheeler builds before ca2e2f2
+                // stopped erasing when the wheel list was down to its last entry
+                // and returned however many they managed — no error, no
+                // distinction from "you had none". Ours are frequently the only
+                // wheels present (Wheeler drops unmanaged wheels from the list on
+                // load and keeps managed ones), so the final teardown call could
+                // report 0 with the wheel still there. See m_strandedLabels.
+                //
+                // Fixed upstream, but the version field cannot express it: the
+                // fix ships inside v4, so a v4 server may or may not have it and
+                // players run whatever Wheeler they have. One count-only query
+                // per label per teardown is cheap enough to just ask.
+                //
+                // Only v4 can answer this. On v3 the count is all there is, and
+                // the orphan stays undetected exactly as before.
+                if (api->version >= 4 && api->GetManagedWheelsForClient) {
+                    const int32_t left =
+                        api->GetManagedWheelsForClient(pw.wheelLabel->c_str(), nullptr, 0);
+                    if (left > 0) {
+                        spdlog::warn("[WheelerClient] Delete reported {} for '{}' but {} wheel(s) still "
+                                     "carry that label — deferring to wheel creation "
+                                     "(Wheeler build predates the last-wheel delete fix?)",
+                            n, *pw.wheelLabel, left);
+                        stranded.push_back(*pw.wheelLabel);
+                    }
                 }
             }
         } else {
@@ -209,6 +242,60 @@ namespace Huginn::Wheeler
                 spdlog::debug("[WheelerClient] Deleted wheel {}: {}", idx, static_cast<int>(result));
             }
         }
+
+        return stranded;
+    }
+
+    void WheelSync::RecordStrandedLabelsLocked(std::vector<std::string> labels)
+    {
+        for (auto& label : labels) {
+            // De-duplicated: a label that survives repeated reloads would
+            // otherwise accumulate one entry per teardown, and the retry only
+            // ever needs to name it once.
+            if (std::find(m_strandedLabels.begin(), m_strandedLabels.end(), label) ==
+                m_strandedLabels.end()) {
+                m_strandedLabels.push_back(std::move(label));
+            }
+        }
+    }
+
+    void WheelSync::RetryStrandedDeletesLocked(WheelerAPI::IWheelerAPI* api)
+    {
+        if (m_strandedLabels.empty()) {
+            return;
+        }
+        if (!api || api->version < 3 || !api->DeleteManagedWheelsForClient) {
+            m_strandedLabels.clear();  // nothing can act on them; don't grow the list
+            return;
+        }
+
+        // The wheels just created raised the wheel count, so the last-wheel guard
+        // that blocked these deletes at teardown no longer applies.
+        for (const auto& label : m_strandedLabels) {
+            // A label a live page adopted is NOT stranded any more, and deleting
+            // by name here would take that page's wheel with it — the adoption
+            // above is what resolved it.
+            const bool claimed = std::any_of(m_pageWheels.begin(), m_pageWheels.end(),
+                [&label](const PageWheel& pw) {
+                    return pw.wheelIndex >= 0 && pw.wheelLabel && *pw.wheelLabel == label;
+                });
+            if (claimed) {
+                continue;
+            }
+
+            const int32_t n = api->DeleteManagedWheelsForClient(label.c_str());
+            if (n > 0) {
+                spdlog::info("[WheelerClient] Reaped {} stranded wheel(s) for '{}' left over from "
+                             "a previous teardown", n, label);
+            } else {
+                // Gone by other means, or refused again. Either way it is not
+                // this generation's problem; the census reports what is really
+                // there if it still matters.
+                spdlog::debug("[WheelerClient] Stranded label '{}': retry deleted {}", label, n);
+            }
+        }
+
+        m_strandedLabels.clear();
     }
 
     // =========================================================================
@@ -397,10 +484,13 @@ namespace Huginn::Wheeler
             // does it. So does an ORPHAN: on 2026-08-22 a teardown reported
             // "Deleted 0 managed wheel(s) for client 'Huginn: Regulars'" while
             // such a wheel existed, and the next CreateWheels added a second
-            // under the same name. Why that delete missed is unresolved (see the
-            // roadmap); what matters here is that the code cannot tell the causes
-            // apart, so the message must not assert one — a wrong diagnosis sends
-            // the reader hunting through an INI that is fine.
+            // under the same name. That delete missed because Wheeler will not
+            // erase its last remaining wheel and reports the refusal as a short
+            // count; CreateWheels now adopts the survivor rather than duplicating
+            // it, so this path should stop seeing the orphan cause. It can still
+            // see the config one, and the code cannot tell them apart, so the
+            // message must not assert one — a wrong diagnosis sends the reader
+            // hunting through an INI that is fine.
             //
             // Which index is ours is undecidable in general, but ONE case is
             // decidable and it covers both causes: if the index we already hold
@@ -655,10 +745,10 @@ namespace Huginn::Wheeler
                 // synchronous callbacks, so issuing them under m_pageDataMutex is
                 // safe here — mirrors the CreateManagedWheel calls below, which
                 // run under the same lock for the same reason.
-                IssueWheelDeletes(DetachWheelsLocked());
+                RecordStrandedLabelsLocked(IssueWheelDeletes(DetachWheelsLocked()));
             } else {
                 // Only stale placeholder/invalid indices — clean up before recreating
-                IssueWheelDeletes(DetachWheelsLocked());
+                RecordStrandedLabelsLocked(IssueWheelDeletes(DetachWheelsLocked()));
             }
         }
 
@@ -759,7 +849,80 @@ namespace Huginn::Wheeler
                 ? basePosition + static_cast<int32_t>(p)
                 : basePosition;
 
-            if (api->version >= 2) {
+            // ADOPT before creating. A wheel may already answer to this label: a
+            // teardown can leave one of ours behind while reporting success (see
+            // m_strandedLabels), and any other route to a surviving wheel lands
+            // here too. Creating a second wheel under the same name is what
+            // turned that into the duplicate observed on 2026-08-22; taking over
+            // the survivor cannot, whatever stranded it.
+            //
+            // The adopted wheel keeps its current POSITION rather than moving to
+            // basePosition, and keeps the styling it was created with — both are
+            // ours from the previous generation and identical to what we would
+            // pass now. Its CONTENTS are stale and are wiped below.
+            //
+            // v4 only: GetManagedWheelsForClient is the sole way to ask "does a
+            // wheel with my name exist". v3 servers create as before.
+            int32_t adopted = -1;
+            if (api->version >= 4 && api->GetManagedWheelsForClient) {
+                constexpr size_t MAX_MATCHES = 8;
+                int32_t matches[MAX_MATCHES] = {};
+                const int32_t count =
+                    api->GetManagedWheelsForClient(pageWheel.wheelLabel->c_str(), matches, MAX_MATCHES);
+                const int32_t seen = std::min(count, static_cast<int32_t>(MAX_MATCHES));
+
+                // Skip anything an EARLIER PAGE OF THIS LOOP already holds. Two
+                // [PageN] entries sharing an sName share a label, so page 1's
+                // lookup finds the wheel page 0 just created — adopting it would
+                // point both pages at one wheel and leave page 1 without one.
+                // Duplicate sName must keep producing a wheel per page, which is
+                // the behaviour ReResolvePageLocked's "stillOurs" case handles.
+                for (int32_t m = 0; m < seen && adopted < 0; ++m) {
+                    const bool claimed = std::any_of(m_pageWheels.begin(), m_pageWheels.end(),
+                        [&matches, m](const PageWheel& prev) { return prev.wheelIndex == matches[m]; });
+                    if (!claimed) {
+                        adopted = matches[m];
+                    }
+                }
+
+                if (adopted >= 0) {
+                    spdlog::warn("[WheelerClient] Page {} '{}': {} wheel(s) already carry label '{}' — "
+                                 "adopting wheel {} instead of creating a duplicate",
+                        p, pageConfig.name, count, *pageWheel.wheelLabel, adopted);
+                }
+
+                // Surplus matches are deliberately LEFT ALONE. Deleting one here
+                // would shift every higher index down, including those the pages
+                // already processed in this loop are holding — the exact
+                // index-shift class of bug the by-name delete exists to avoid.
+                // They cost nothing but a duplicate under our name, the #76
+                // census reports them, and the next teardown removes them: the
+                // by-name delete takes every wheel with the label at once.
+                if (count > 1) {
+                    spdlog::warn("[WheelerClient] Page {} '{}': {} wheels carry label '{}'; adopting one "
+                                 "and leaving the rest for the next teardown to reap",
+                        p, pageConfig.name, count, *pageWheel.wheelLabel);
+                }
+            }
+
+            if (adopted >= 0) {
+                pageWheel.wheelIndex = adopted;
+
+                // Wipe it. The cache built above is all zeros and the ordinary
+                // push path repopulates from empty; leaving the previous
+                // generation's items in place would make the cache describe a
+                // wheel it does not match, and the diff loop would then add into
+                // entries Wheeler still considers occupied (EntryNotEmpty,
+                // burning the slot's retry budget). Clear every entry the wheel
+                // actually has, not just slotCount of them — the repair below
+                // may be about to delete the excess, and a stale entry that
+                // survives into a later resize is the same bug one page over.
+                const int32_t have = api->GetEntryCount(adopted);
+                for (int32_t e = 0; e < have; ++e) {
+                    ClearEntrySubtext(api, adopted, e);
+                    api->ClearEntry(adopted, e);
+                }
+            } else if (api->version >= 2) {
                 WheelerAPI::WheelConfig config = {
                     .numEntries = static_cast<int32_t>(slotCount),
                     .position = pagePosition,
@@ -844,12 +1007,13 @@ namespace Huginn::Wheeler
                 }
             }
 
+            const char* const verb = (adopted >= 0) ? "Adopted" : "Created";
             if (pageWheel.slotCount != slotCount)
-                spdlog::info("[WheelerClient] Created wheel for page {} '{}': index={}, {} slots (requested {})",
-                    p, pageConfig.name, pageWheel.wheelIndex, pageWheel.slotCount, slotCount);
+                spdlog::info("[WheelerClient] {} wheel for page {} '{}': index={}, {} slots (requested {})",
+                    verb, p, pageConfig.name, pageWheel.wheelIndex, pageWheel.slotCount, slotCount);
             else
-                spdlog::info("[WheelerClient] Created wheel for page {} '{}': index={}, {} slots",
-                    p, pageConfig.name, pageWheel.wheelIndex, pageWheel.slotCount);
+                spdlog::info("[WheelerClient] {} wheel for page {} '{}': index={}, {} slots",
+                    verb, p, pageConfig.name, pageWheel.wheelIndex, pageWheel.slotCount);
 
             m_pageWheels.push_back(std::move(pageWheel));
         }
@@ -863,6 +1027,12 @@ namespace Huginn::Wheeler
             m_pageWheels.clear();  // drop placeholder-only state
             return false;
         }
+
+        // Sweep up anything a previous teardown could not delete. Runs HERE, not
+        // at teardown: the wheels above have raised the wheel count, so the
+        // last-wheel guard that blocked those deletes no longer applies. A label
+        // this generation adopted is skipped — it is a live page's wheel now.
+        RetryStrandedDeletesLocked(api);
 
         // Baseline for teardown: where the wheels actually landed. Compared
         // against the observed anchor later so an untouched block is never
