@@ -177,6 +177,12 @@ namespace Huginn::Settings
         }
         Input::InputHandler::GetSingleton().SetKeyCodes(keybindings);
 
+        // Read-only comes from [Widget] (dMenu's file), not from the keybindings
+        // it suppresses — so it must be pushed AFTER the dMenu INI is reloaded
+        // above, or a toggle made in dMenu would not take effect until restart.
+        Input::InputHandler::GetSingleton().SetReadOnly(
+            UI::IntuitionSettings::GetSingleton().IsReadOnly());
+
         // =====================================================================
         // Phase 2: Apply side effects (reuse the already-parsed main INI)
         // =====================================================================
@@ -281,6 +287,11 @@ namespace Huginn::Settings
         keybindings.ResetToDefaults();
         auto& inputHandler = Input::InputHandler::GetSingleton();
         inputHandler.SetKeyCodes(keybindings);
+
+        // Follows IntuitionSettings::ResetToDefaults() above, so this picks up
+        // the reset value. Without it, "reset all to defaults" would restore
+        // every key and leave them all inert.
+        inputHandler.SetReadOnly(UI::IntuitionSettings::GetSingleton().IsReadOnly());
 
         logger::debug("[SettingsReloader]   All settings reset to compile-time defaults"sv);
 

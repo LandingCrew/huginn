@@ -481,6 +481,7 @@ fPositionY = 83             ; Vertical position (screen %)
 fAlpha = 100                ; Widget opacity (0-100)
 fScale = 70                 ; Widget scale % (50=half, 100=native, 200=double)
 fAlphaChild = 70            ; Secondary element opacity (page pips/label)
+bReadOnly = false           ; Display-only: slot hotkeys ignored (0.19.11)
 sDisplayMode = minimal      ; minimal | normal | verbose   (or 0 | 1 | 2)
 sRefreshEffect = tint       ; tint | pulse | none          (or 0 | 1 | 2) — inert
 sSlotEffect = slide         ; slide | fade | instant       (or 0 | 1 | 2)
@@ -490,6 +491,31 @@ fRefreshStrength = 15       ; 0-100, clamped — inert
 The values above are the compile-time defaults in `IntuitionDefaults`
 (`src/ui/IntuitionSettings.h`); with no dMenu INI present, these are what you
 get.
+
+### Read-only mode (`bReadOnly`, 0.19.11)
+
+The widget keeps rendering recommendations; the ten slot hotkeys stop equipping.
+Intended for a player who drives selection from Wheeler or another UI and wants
+Huginn's ranking on screen without a second set of live bindings.
+
+**Scope is deliberately narrow.** Only slots 0-9 are suppressed. Page cycling
+(`-`/`=`) and the visibility toggle still work, because those are ways of
+*looking* at the widget rather than ways of acting through it — someone who has
+handed selection to Wheeler still wants to page through the recommendations and
+still wants to be able to hide the thing.
+
+A suppressed key is still **consumed**, not passed through. It is bound to
+Huginn, so letting it fall to whatever else claims that scancode would be a
+worse surprise than doing nothing. Nothing is logged per press in the ordinary
+case; in read-only mode a key-down logs once at `debug`, naming the setting, so
+a player who turned this on months ago and forgot has something to find.
+
+Lives in `[Widget]` because dMenu owns that section and this needs to be a
+toggle — see the dMenu entry "Read-Only Mode". Note it is read from the WIDGET
+settings, not from the `[Keybindings]` it suppresses, so `SettingsReloader` must
+push it after the dMenu INI reload; otherwise a toggle would not take effect
+until restart. The reset-to-defaults path pushes it too, or "reset all" would
+restore every binding and leave them inert.
 
 The three `s*` keys accept either the name or the dMenu dropdown **index**. The
 index order must match the `options` arrays in

@@ -108,6 +108,21 @@ namespace Huginn::Input
        */
       void SetKeyCodes(const KeybindingSettings& settings);
 
+      /// Read-only mode: the equip keys stop acting, everything else stays.
+      ///
+      /// Deliberately NOT the whole keyboard. Page cycling and the visibility
+      /// toggle are ways of looking at the widget, not ways of using it, and a
+      /// player who has handed selection to Wheeler still wants to page through
+      /// the recommendations and still wants to be able to hide the thing.
+      /// Only slots 0-9 — the keys that actually equip — are suppressed.
+      ///
+      /// Atomic rather than mutex-guarded: it is one bool read once per matched
+      /// key press on the input thread, written from the game thread on load and
+      /// on every settings reload. It shares no invariant with m_keyCodes, so it
+      /// does not need to be consistent with them.
+      void SetReadOnly(bool readOnly) noexcept { m_readOnly.store(readOnly, std::memory_order_relaxed); }
+      [[nodiscard]] bool IsReadOnly() const noexcept { return m_readOnly.load(std::memory_order_relaxed); }
+
       /**
        * @brief Get the current keybinding settings (copy-out for thread safety)
        */
@@ -189,5 +204,8 @@ namespace Huginn::Input
       /// SetKeyCodes must not clear the arrays itself — it can run from the
       /// dMenu reload context while the game thread is mid-ProcessButton.
       std::atomic<bool> m_pendingStateReset = false;
+
+      /// Read-only mode. See SetReadOnly.
+      std::atomic<bool> m_readOnly = false;
    };
 }

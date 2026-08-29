@@ -557,6 +557,11 @@ static void OnDataLoaded()
         keybindings.LoadFromFile(GetMainIniPath());
         inputHandler.SetKeyCodes(keybindings);
 
+        // Read-only lives in [Widget], which dMenu owns, so it is read from the
+        // widget settings rather than from the keybindings it suppresses. Those
+        // settings are already loaded by this point (see kDataLoaded above).
+        inputHandler.SetReadOnly(UI::IntuitionSettings::GetSingleton().IsReadOnly());
+
         // Slot key callback: equip spell/item from slot
         inputHandler.SetSlotCallback([&equipManager](size_t slotIndex, Input::EquipHand hand) {
             equipManager.EquipSlot(slotIndex, hand);

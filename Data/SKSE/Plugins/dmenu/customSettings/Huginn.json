@@ -107,6 +107,18 @@
           }
         },
         {
+          "type": "checkbox",
+          "text": {
+            "name": "Read-Only Mode",
+            "desc": "Show recommendations but ignore the slot hotkeys, leaving Wheeler or another UI to equip. Page cycling and the hide key still work."
+          },
+          "default": false,
+          "ini": {
+            "section": "Widget",
+            "id": "bReadOnly"
+          }
+        },
+        {
           "type": "dropdown",
           "text": {
             "name": "Display Mode",
