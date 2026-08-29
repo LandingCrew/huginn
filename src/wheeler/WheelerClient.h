@@ -306,8 +306,18 @@ namespace Huginn::Wheeler
         /// player is trying to use. The condition is a property of the wheel
         /// LAYOUT, not of any one open, so once is the right number — and the
         /// existing per-open `Auto-focus requested` info line still records
-        /// every occurrence for the log. Re-armed on edit-mode exit, which is
-        /// the only in-session point where the layout can change.
+        /// every occurrence for the log.
+        ///
+        /// ONCE PER RUN — never re-armed. It used to re-arm on edit-mode exit
+        /// (the only in-session point where wheel order changes), but the
+        /// warning states a property of the FEATURE — auto-focus skips wheels
+        /// that sit BEFORE ours, because Wheeler navigates left to right — not
+        /// of any one layout, so repeating it per edit session is noise. See
+        /// OnEditModeChanged.
+        ///
+        /// Only consumed by a redirect that actually skips a wheel
+        /// (wheelIndex < autoFocusTarget); a redirect off a wheel BEHIND ours
+        /// leaves it armed, so a later genuine skip still reports.
         std::atomic<bool> m_autoFocusStrandWarned{false};
 
         mutable std::mutex m_callbackMutex;     // Protects callback state (mutable for const methods)
