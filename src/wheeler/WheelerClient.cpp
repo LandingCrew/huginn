@@ -245,11 +245,15 @@ namespace Huginn::Wheeler
             return;  // nothing has moved yet; the player is only opening the editor
         }
 
-        // Re-arm the auto-focus stranding warning. Edit-mode exit is the only
-        // in-session point where wheel ORDER can change, so it is the only
-        // point where a player who has already been warned can newly strand a
-        // wheel — or fix one and want to know if they got it right.
-        GetSingleton().m_autoFocusStrandWarned.store(false);
+        // NOT re-armed here any more. Edit-mode exit is the only in-session
+        // point where wheel ORDER can change, so re-arming here was the honest
+        // way to catch a player who newly strands a wheel after being warned —
+        // but "auto-focus skips wheels ahead of ours" is one fact about the
+        // feature, not a per-layout event, and repeating it every time the
+        // player leaves the editor is noise. Observed 2026-08-29: four warns in
+        // nine minutes across three edit-mode exits, all saying the same thing.
+        // One per run; the per-open `Auto-focus requested` info line still
+        // records every occurrence.
 
         // Edit mode is where the player reorders, adds and deletes wheels, and
         // every one of those shifts the indices we stored at creation. Nothing
@@ -329,27 +333,31 @@ namespace Huginn::Wheeler
             spdlog::info("[WheelerClient] Auto-focus requested: Huginn wheel {} (opened on non-Huginn wheel {})",
                 autoFocusTarget, wheelIndex);
 
-            // Auto-focus makes the wheel the player actually opened unreachable
-            // BY OPENING: every fresh open that lands on a non-Huginn wheel is
-            // redirected here, so the only way back to that wheel is to scroll
-            // to it. Nothing on screen says why, and the redirect is
-            // instantaneous — from the player's side Wheeler simply refuses to
-            // open where they left it.
+            // Warn only when a wheel is actually SKIPPED — that is, when it sits
+            // BEFORE ours (wheelIndex < autoFocusTarget). Wheeler navigates left
+            // to right, so a wheel ahead of our block is the one the redirect
+            // jumps over: the player scrolls right from our first wheel and never
+            // passes it, and it reads as Huginn having eaten it.
             //
-            // The case that actually gets reported is a player wheel moved in
-            // FRONT of ours (wheelIndex < autoFocusTarget), because Wheeler
-            // opens at the front by default: that wheel is then skipped on
-            // every single open, forever, and reads as Huginn having eaten it.
-            // The warning does not gate on that, though — being redirected off
-            // a wheel BEHIND ours is the same surprise with the same fix, and
-            // gating would just make the message miss half its audience.
+            // A wheel BEHIND ours is a different situation and must not warn.
+            // The redirect still moves the player off it, but it stays reachable
+            // by scrolling right in the ordinary way — nothing is skipped.
+            // Observed 2026-08-29: Huginn at 0/1/2, the player opened on wheel 3
+            // and got the stranding warning about a wheel that was never
+            // stranded. This gate is what the earlier version deliberately left
+            // out, on the theory that being redirected at all was the same
+            // surprise; it is not, and the ungated message was wrong in the more
+            // common direction.
             //
-            // Once per layout. See m_autoFocusStrandWarned for why not per open.
-            if (!m_autoFocusStrandWarned.exchange(true)) {
-                spdlog::warn("[WheelerClient] Auto-focus redirected an open from non-Huginn wheel {} to "
-                             "Huginn wheel {}. While bAutoFocusOnOpen=true that wheel cannot be reached by "
-                             "opening Wheeler — scroll to it, or set bAutoFocusOnOpen=false under [Wheeler] "
-                             "in Huginn.ini.",
+            // Once per RUN. See m_autoFocusStrandWarned for why not per open,
+            // and OnEditModeChanged for why it is no longer re-armed per layout.
+            const bool skipsWheel = wheelIndex < autoFocusTarget;
+            if (skipsWheel && !m_autoFocusStrandWarned.exchange(true)) {
+                spdlog::warn("[WheelerClient] Auto-focus is skipping wheel {}, which sits before Huginn's "
+                             "first wheel ({}). Wheeler opens on it and bAutoFocusOnOpen=true redirects "
+                             "past it, so it is skipped on every open and can only be reached by scrolling "
+                             "back. Set bAutoFocusOnOpen=false under [Wheeler] in Huginn.ini to open where "
+                             "Wheeler left off.",
                     wheelIndex, autoFocusTarget);
 
                 // Callback thread: RE::DebugNotification queues onto the UI
@@ -357,7 +365,9 @@ namespace Huginn::Wheeler
                 // Same deferral the widget uses two blocks up.
                 if (auto* tasks = SKSE::GetTaskInterface()) {
                     tasks->AddUITask([]() {
-                        RE::DebugNotification("Huginn: auto-focus is skipping your own wheel on open "
+                        // Not "your own wheel": the skipped wheel is whatever sits
+                        // before ours, which is not always one the player made.
+                        RE::DebugNotification("Huginn: auto-focus is skipping a wheel before ours on open "
                                               "(set bAutoFocusOnOpen=false in Huginn.ini to stop this)");
                     });
                 }
