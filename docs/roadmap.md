@@ -141,7 +141,14 @@ would notice.
       Adjacent dead code: `SlotAllocator::AllocateSlots` (both overloads), kept
       as a legacy/test entry point; `IntuitionMenu::SetUrgent` / `setUrgent` /
       `_urgentSlots`, vestigial with no caller;
-      `FilterStats::filteredByRelevance`, never incremented but still summed;
+      `maxCandidatesPerCycle` on `ScorerConfig`, still parsed by
+      `ScorerSettings.cpp:47` and read by nothing (0.19.13 removed the INI key
+      only, not the code); `weightWeaponChargeModerate/Low/Critical` on
+      `ContextWeightSettings`, loaded but absent from `ContextWeightConfig` so
+      they reach no consumer — the weapon-charge weight became a continuous
+      `pow()` curve and these three tiers stayed behind (their INI keys were
+      removed in 0.19.13); `FilterStats::filteredByRelevance`, never incremented
+      but still summed;
       `StateEvaluator::EvaluateCurrentState()`, which takes a
       `const WorldState&` it never reads (S)
 - [ ] **Code comments that actively mislead**, all found because a doc repeated

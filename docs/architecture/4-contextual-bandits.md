@@ -1255,7 +1255,6 @@ fMinimumUtility = 0.1
 fMinimumContextWeight = 0.05
 fColdStartUCBBoost = 0.2      ; 0.0 disables the cold-start fallback
 
-iMaxCandidatesPerCycle = 500
 iTopNCandidates = 10          ; must be >= max slots per page
 ```
 

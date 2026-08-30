@@ -289,12 +289,11 @@ namespace Huginn::Settings
         UI::IntuitionSettings::GetSingleton().ResetToDefaults();
         UI::DebugSettings::GetSingleton().ResetToDefaults();
 
-        // CandidateConfig is a plain struct with no ResetToDefaults, so a
-        // default-constructed copy IS the reset. This was previously absent and
-        // harmless, because nothing read g_candidateConfig; now that the
-        // generator is refreshed from it, "reset all to defaults" has to reach
-        // it or the generator would keep the old INI's candidate settings.
-        Candidate::g_candidateConfig = Candidate::CandidateConfig{};
+        // Previously absent and harmless, because nothing read
+        // g_candidateConfig; now that the generator is refreshed from it,
+        // "reset all to defaults" has to reach it or the generator would keep
+        // the old INI's candidate settings.
+        Candidate::g_candidateConfig.ResetToDefaults();
         Candidate::CandidateGenerator::GetSingleton().RefreshConfigFromGlobal();
         logger::debug("[SettingsReloader]   [Candidates] reset to defaults"sv);
 
