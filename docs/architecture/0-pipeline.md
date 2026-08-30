@@ -517,8 +517,14 @@ graph TB
 > in one immutable 35-float snapshot — 31 weights plus 4 smoothing exponents — and there
 > is no normalization pass at the end of `ComputeWeights()`.
 >
-> Configuration lives in the `[ContextWeights]` INI section (33 `fWeight*` keys plus 3
-> smoothing exponents; the shipped INI and the config struct do not line up one-to-one).
+> Configuration lives in the `[ContextWeights]` INI section: **31 `fWeight*` keys plus 4
+> smoothing exponents**, which as of 0.19.14 is exactly the 35 fields
+> `ContextWeightConfig` carries. The loader still READS three more —
+> `fWeightWeaponChargeModerate/Low/Critical` — whose keys were removed because they
+> land in `ContextWeightSettings` and never reach the config, so nothing consumes
+> them; the weapon-charge weight is a continuous `pow()` curve now. Auditing this
+> section needs all three legs (INI key → loader → consumer); the first two alone
+> pass those three.
 > `resistScale()` damps a resist weight by the resistance the player already has, and
 > clamps negative resistances (weaknesses) so they cannot over-amplify.
 

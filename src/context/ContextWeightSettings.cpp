@@ -99,8 +99,13 @@ namespace Huginn::State
             weightCriticalHealth, weightLowHealth, weightInCombat, weightMultipleEnemies,
             weightAtForge, weightBuffPotion, weightBuffCombat, weightBaseRelevance);
 
-        logger::info("[ContextWeightSettings] Loaded smoothing: health^{:.1f}, magicka^{:.1f}, stamina^{:.1f}",
-            fHealthSmoothingExponent, fMagickaSmoothingExponent, fStaminaSmoothingExponent);
+        // All FOUR exponents. weaponCharge was omitted here for as long as it was
+        // also missing from the shipped INI, so a setting nobody could see was
+        // also a setting nobody could confirm had loaded. Adding a key without
+        // adding it to the line that proves it loaded only half-solves it.
+        logger::info("[ContextWeightSettings] Loaded smoothing: health^{:.1f}, magicka^{:.1f}, stamina^{:.1f}, weaponCharge^{:.1f}",
+            fHealthSmoothingExponent, fMagickaSmoothingExponent, fStaminaSmoothingExponent,
+            fWeaponChargeSmoothingExponent);
     }
 
     void ContextWeightSettings::ResetToDefaults()

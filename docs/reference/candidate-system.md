@@ -78,6 +78,14 @@ The remaining fields are code-level tunables:
 snapshot and re-syncs the cooldown durations. Call it only while the update loop
 is paused.
 
+**It must actually be called.** Until 0.19.13 it had no callers at all, so
+`LoadCandidateConfigFromINI` wrote a global nothing read and the whole
+`[Candidates]` section was inert — invisible only because the shipped values
+matched the compile-time defaults. It is now called from `InitializeGameSystems`
+(every game load, outside the `IsInitialized` guard so a save load re-pushes)
+and from `SettingsReloader` (every reload, and on reset-to-defaults). Anything
+that writes `g_candidateConfig` and does not follow with this call is a no-op.
+
 ## Thread safety
 
 - **Config** — read-only during `GenerateCandidates()`; the generator holds a

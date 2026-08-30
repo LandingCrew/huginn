@@ -1255,7 +1255,6 @@ fMinimumUtility = 0.1
 fMinimumContextWeight = 0.05
 fColdStartUCBBoost = 0.2      ; 0.0 disables the cold-start fallback
 
-iMaxCandidatesPerCycle = 500
 iTopNCandidates = 10          ; must be >= max slots per page
 ```
 
@@ -1291,7 +1290,8 @@ fDifferentPageRewardMult = 0.5
 
 ; fNotCandidateRewardMult: Case A (not a candidate).
 ; 1.0 = strongest signal (player went out of their way).
-; NOT present in the shipped configs/Huginn.ini — falls back to the compiled 1.0.
+; Added to the shipped configs/Huginn.ini in 0.19.13; it was read-but-undefined
+; before that, silently taking the compiled 1.0.
 fNotCandidateRewardMult = 1.0
 ```
 

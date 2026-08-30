@@ -10,10 +10,19 @@ namespace Huginn::State
     // POD struct produced by ContextWeightSettings::BuildConfig().
     // Consumers store a copy via SetConfig() for consistent, race-free reads.
     //
-    // Mirrors all public fields from ContextWeightSettings (35 fields total):
-    //   - 17 legacy weights (0-10 scale, for CandidateGenerator compatibility)
-    //   - 15 normalized weights [0,1] (for ContextRuleEngine)
-    //   - 3 smoothing exponents (for continuous vital curves)
+    // A SUBSET of ContextWeightSettings, not a mirror. 35 float fields here
+    // against 38 there, and the gap is deliberate: weightWeaponChargeModerate /
+    // Low / Critical stayed behind when the weapon-charge weight became a
+    // continuous curve (ContextRuleEngine.cpp, pow(chargeDeficit, exponent)).
+    // Their keys were removed from the shipped INI on 2026-08-29; the three
+    // fields in ContextWeightSettings are dead and tracked on the roadmap.
+    //
+    // AUDITING THIS IS A THREE-WAY CHECK, not two. Comparing INI keys against
+    // the keys the loader reads finds keys nobody reads and keys nobody can
+    // see — but it passes a key that is read into a settings field which then
+    // reaches no consumer, which is exactly how the three above survived an
+    // audit that declared [ContextWeights] clean. The third leg is: does the
+    // loaded field reach ContextWeightConfig, and does anything read it there.
     // =========================================================================
 
     struct ContextWeightConfig

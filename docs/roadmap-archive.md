@@ -6,6 +6,54 @@ was rejected or what a fix turned up, which is the part that stops it being
 re-litigated. Section headings mirror the roadmap's.
 
 ## Known Bugs
+- [x] **Settings that did not do what they said** — five findings from the doc
+      migration, fixed together in 0.19.13 because the answers interacted.
+      **`[Candidates]` never reached the code that read it.**
+      `LoadCandidateConfigFromINI` wrote to the global `g_candidateConfig`, but
+      `CandidateGenerator` keeps its own copy and `RefreshConfigFromGlobal()` had
+      ZERO callers, so `bEnableSoulGemRecharge = false` silently did nothing.
+      Invisible because the shipped values equalled the compile-time defaults.
+      Fixed by calling it from `InitializeGameSystems` (outside the
+      `IsInitialized` guard — on a save load the generator already exists, so an
+      init-only refresh would keep the previous game's values) and from the
+      reloader. That in turn exposed a second gap: `ResetAllToDefaults` never
+      touched `g_candidateConfig`, harmless while nothing read it and wrong the
+      moment something did. `CandidateConfig` has no `ResetToDefaults`, so a
+      default-constructed copy is the reset.
+      **`[ContextWeights]` — the filed claim was WRONG, in the useful direction.**
+      It said 33 keys vs 31 fields with settings silently ignored. Traced: 36
+      keys, 35 fields, and **every key in the shipped INI is read** — nothing was
+      being ignored. `fWeightWeaponChargeModerate/Low/Critical` do have matching
+      fields (`ContextWeightSettings.cpp:32-34`); that part of the entry was
+      simply false. The real mismatch ran the other way: two keys the loader
+      READS were absent from the INI —
+      `fWeightSummon` (consumed at `ContextRuleEngine.cpp:324`) and
+      `fWeaponChargeSmoothingExponent` (the exponent in the weapon-charge
+      `std::pow` at `:466`) — so both silently took defaults because nobody could
+      see they existed. Same class as `fNotCandidateRewardMult`, which was
+      likewise read and undefined. All three added.
+      Worth keeping as a method: the audit is two `comm` passes, INI keys against
+      the quoted key strings in the loader, run both directions. Neither
+      direction alone would have found this — one finds ignored settings, the
+      other finds invisible ones.
+      **Three config lies fixed.** The `[Overrides]` comments said the health,
+      magicka and stamina potions were each "forced into slot 1"; they go to the
+      slot whose `bOverridesEnabled` accepts HP / MP / SP, which is Page0.Slot0 /
+      1 / 2 shipped, and the soul gem goes to the `Other` slot (Slot6), not slot
+      1 either. Reworded by POLICY rather than slot number so they cannot rot
+      again when a layout changes. `Huginn_Overrides.ini` advertised item types
+      `SoulGem` and `Scroll` that `ParseItemType` rejects outright, and omitted
+      `Fortify`, which it accepts.
+      **Two genuinely dead keys removed** from the shipped INI:
+      `fUncastablePenaltyFloor` (read by no code) and `iMaxCandidatesPerCycle`
+      (parsed, clamped, stored on `ScorerConfig`, never read).
+      NOT fixed here and split into its own open item: `Penalize` still behaves
+      as `Allow`, because the penalty mechanism the docs described was never
+      built. Wiring the setting through could not conjure it.
+      Note for anyone testing: `configs/Huginn.ini` is the template. A player's
+      deployed INI does not gain the three new keys automatically — but their
+      defaults are what the template now states, so behaviour is unchanged until
+      someone edits them.
 - [x] Display push was not gated on Wheeler edit mode, so the seconds a player
       spends rearranging wheels were spent writing subtexts to indices that were
       already stale. NOT covered by the re-resolve, which triggers on edit-mode

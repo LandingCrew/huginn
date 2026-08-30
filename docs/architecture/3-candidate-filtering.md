@@ -190,8 +190,10 @@ concentration spells `CalculateMagickaCost` returns a per-second cost; if it com
 > multiplier anywhere in `src/`. `PassesAffordabilityFilter` and `RunVisitorFilters` both
 > branch only on `policy == Disallow`, so `Penalize` and `Allow` are behaviorally
 > identical. The `penaltyFloor` field that used to hold this has been removed from
-> `CandidateConfig`, but `fUncastablePenaltyFloor = 0.05` is **still shipped in
-> `configs/Huginn.ini` and read by no code**. Treat it as a stale INI key.
+> `CandidateConfig`, and `fUncastablePenaltyFloor` was removed from
+> `configs/Huginn.ini` in 0.19.13 rather than left implying it works. `Penalize`
+> remains behaviourally identical to `Allow`; that is tracked on the roadmap as a
+> scoring feature to design, not a settings bug.
 
 ---
 
@@ -360,9 +362,11 @@ These two thresholds are what replaced the removed `baseRelevance` filter:
 | `coldStartUCBBoost` | `fColdStartUCBBoost` | `0.2` |
 | `topNCandidates` | `iTopNCandidates` | `10` |
 
-> `maxCandidatesPerCycle` / `iMaxCandidatesPerCycle` (500) is parsed by `ScorerSettings` and
+> `maxCandidatesPerCycle` is parsed by `ScorerSettings` and
 > stored on `ScorerConfig`, but nothing reads it — the scoring loop is bounded only by
-> `maxCandidatesAfterFilter` upstream. Dead setting.
+> `maxCandidatesAfterFilter` upstream. Dead setting — the `iMaxCandidatesPerCycle`
+> KEY was removed from the shipped INI in 0.19.13; the parsing code and the
+> `ScorerConfig` field are still there and still dead, tracked on the roadmap.
 
 ---
 
@@ -428,20 +432,26 @@ The only field candidates carry for this is `CandidateBase::overrideReason`
 ```ini
 [Candidates]
 sUncastableSpellPolicy = Disallow    ; Disallow / Penalize / Allow (case-insensitive)
-fUncastablePenaltyFloor = 0.05       ; STALE — read by no code, see §3
 bEnableSoulGemRecharge = true
 ```
 
 It is called on `kPostLoadGame`/`kNewGame` (`src/Main.cpp:221`) and again on
 `hg reload` (`src/settings/SettingsReloader.cpp:155`).
 
-> **Known defect: the `[Candidates]` section is inert.** `CandidateGenerator` keeps its own
-> `CandidateConfig m_config`, which is default-constructed and never assigned from
-> `g_candidateConfig`. `Initialize()` does not copy it, and the method that would —
-> `RefreshConfigFromGlobal()` (`CandidateGenerator.h:150`) — has no callers anywhere in
-> `src/`. The filters therefore always run on compile-time defaults. This is invisible today
-> only because the shipped INI values match those defaults (`Disallow`, soul gem recharge on);
-> changing either in the INI has no effect.
+> **Was inert until 0.19.13; fixed.** `CandidateGenerator` keeps its own
+> `CandidateConfig m_config`, and nothing assigned it from `g_candidateConfig` —
+> `Initialize()` did not copy it and `RefreshConfigFromGlobal()` had no callers,
+> so the filters ran on compile-time defaults and changing either value in the
+> INI had no effect. Invisible because the shipped values matched those defaults.
+> `RefreshConfigFromGlobal()` is now called from `InitializeGameSystems` (outside
+> the `IsInitialized` guard, so a save load re-pushes rather than keeping the
+> previous game's values) and from `SettingsReloader`, and `ResetAllToDefaults`
+> resets the global too.
+>
+> Note what this did NOT fix: `bEnableSoulGemRecharge` gates
+> `GatherSoulGemCandidates` and nothing else, so `OverrideManager::FindSoulGem`
+> still surfaces a gem on the urgent weapon-charge path with the setting off.
+> Roadmap item.
 
 ### 8.2 `[Scoring]` — thresholds that do apply
 

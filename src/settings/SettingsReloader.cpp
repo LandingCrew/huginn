@@ -18,6 +18,7 @@
 #include "ui/DebugSettings.h"
 #include "input/KeybindingSettings.h"
 #include "input/InputHandler.h"
+#include "candidate/CandidateGenerator.h"
 
 #include <filesystem>
 
@@ -153,6 +154,12 @@ namespace Huginn::Settings
 
             // 6. Candidate config
             LoadCandidateConfigFromINI(mainIni);
+            // ...and push it into the generator, which keeps its own copy.
+            // Reloading the global alone left the generator on its old values;
+            // see the matching call in InitializeGameSystems. Safe here because
+            // ReloadAllSettings runs under UpdateHandler::RunExclusive, which is
+            // the "update loop is paused" precondition this method documents.
+            Candidate::CandidateGenerator::GetSingleton().RefreshConfigFromGlobal();
             logger::debug("[SettingsReloader]   [Candidates] reloaded"sv);
         }
 
@@ -281,6 +288,14 @@ namespace Huginn::Settings
         Wheeler::WheelerSettings::GetSingleton().ResetToDefaults();
         UI::IntuitionSettings::GetSingleton().ResetToDefaults();
         UI::DebugSettings::GetSingleton().ResetToDefaults();
+
+        // Previously absent and harmless, because nothing read
+        // g_candidateConfig; now that the generator is refreshed from it,
+        // "reset all to defaults" has to reach it or the generator would keep
+        // the old INI's candidate settings.
+        Candidate::g_candidateConfig.ResetToDefaults();
+        Candidate::CandidateGenerator::GetSingleton().RefreshConfigFromGlobal();
+        logger::debug("[SettingsReloader]   [Candidates] reset to defaults"sv);
 
         // Reset keybindings to defaults
         Input::KeybindingSettings keybindings;
