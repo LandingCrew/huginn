@@ -96,9 +96,16 @@ reload cannot overwrite the value the player just changed.
 | `[Overrides]` | Main INI | `Override::Settings` |
 | `[Learning]` | Main INI | `Learning::LearningSettings` |
 | `[Wheeler]`, `[Subtexts]` | Main INI | `Wheeler::WheelerSettings` |
-| `[Candidates]` | Main INI | `LoadCandidateConfigFromINI` |
+| `[Candidates]` | Main INI | `LoadCandidateConfigFromINI` **+ `CandidateGenerator::RefreshConfigFromGlobal()`** |
 | `[Wildcards]` | Main INI | `LoadWildcardConfigFromINI` |
 | `[SlotLocker]` | Main INI | `LoadSlotLockerConfigFromINI` |
+
+`[Candidates]` is the one row with two entries, and it is a warning rather than
+trivia. Its loader writes a **global**, and `CandidateGenerator` keeps a private
+copy — so loading alone changes nothing. Until 0.19.13 the refresh call did not
+exist anywhere, and the entire section was inert on both the reload path and the
+game-load path. If another setting group ever grows a private consumer copy, it
+needs the same second call, and the reload table is where that has to be visible.
 
 ### Why two files at all?
 
