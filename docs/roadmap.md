@@ -62,24 +62,6 @@ Surfaced by the one-agent-per-doc migration pass. Every one is a code or config
 defect the docs exposed, not a documentation problem. Ordered by what a player
 would notice.
 
-- [ ] **`bEnableSoulGemRecharge = false` does not stop the weapon-charge
-      override.** Found by testing the 0.19.13 wiring fix, which did work — the
-      setting now reaches `CandidateGenerator` and gates
-      `GatherSoulGemCandidates` (`CandidateGenerator.cpp:323`, the only place in
-      `src/` that reads it). But `OverrideManager::FindSoulGem` has no such
-      check: it is gated on weapon-charge threshold + hysteresis alone.
-      Observed 2026-08-29 21:21:33 with the setting OFF —
-      `FindSoulGem: Found Soul Gem III - Common` followed by
-      `Override 'WEAPON EMPTY: Need Soul Gem!' -> Page 0 Slot 6`, and the widget
-      showed `6:Override(Soul Gem III - Common)`.
-      The INI comment says gems "appear as CANDIDATES", so the override is
-      arguably outside the promise — but a player cannot tell the two paths
-      apart on screen, and the override is literally titled "Need Soul Gem".
-      A genuine design call, not an obvious bug: suppressing gems from normal
-      ranking while keeping the emergency prompt is a defensible thing to want.
-      Either make `FindSoulGem` honour the flag, or split it into two settings,
-      or reword the INI to say the override is exempt. Doing nothing is the one
-      option that leaves a player unable to predict the behaviour (S)
 - [ ] **`sUncastableSpellPolicy = Penalize` behaves identically to `Allow`.**
       Split out of the `[Candidates]` wiring fix (0.19.13), which got the setting
       to `CandidateGenerator` but could not make `Penalize` mean anything: both

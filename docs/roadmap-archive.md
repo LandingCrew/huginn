@@ -6,6 +6,31 @@ was rejected or what a fix turned up, which is the part that stops it being
 re-litigated. Section headings mirror the roadmap's.
 
 ## Known Bugs
+- [x] `bEnableSoulGemRecharge = false` does not stop the weapon-charge override.
+      **NOT A DEFECT — closed 2026-08-29 as a documentation fix, and the entry
+      that filed it was wrong about the mechanism.**
+      It was filed as "the setting covers half its scope", implying the other
+      half had no switch. It does: `bEnableWeaponCharge` under `[Overrides]`
+      gates the entire weapon-charge override at `OverrideManager.cpp:91` —
+      evaluator and all, not just `FindSoulGem`. So the split the entry proposed
+      as one of three fixes was already implemented:
+      | Setting | Section | Gates |
+      |---|---|---|
+      | `bEnableSoulGemRecharge` | `[Candidates]` | soul gems in normal ranking |
+      | `bEnableWeaponCharge` | `[Overrides]` | the urgent "weapon empty" prompt |
+      One switch per path, independent, which is a coherent design — wanting gems
+      out of routine recommendations while keeping the "your weapon is dead"
+      prompt is reasonable, and so is the reverse.
+      **Gating `FindSoulGem` on the candidates flag — the option that looked
+      obvious — would have made it worse**, giving the override two switches with
+      undefined precedence. That is the thing worth remembering: the observed
+      behaviour was real and the diagnosis was not, because the log shows the
+      override firing but not that it has its own control.
+      Fixed by saying so in both INI blocks: `[Candidates]` now states its scope
+      is normal ranking ONLY and names the other switch; `[Overrides]` states it
+      is the only thing gating that override and that the candidates flag is not.
+      Both say to turn off BOTH to stop soul gems entirely, which is the question
+      a player actually has.
 - [x] **Settings that did not do what they said** — five findings from the doc
       migration, fixed together in 0.19.13 because the answers interacted.
       **`[Candidates]` never reached the code that read it.**

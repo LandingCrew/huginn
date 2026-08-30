@@ -448,10 +448,14 @@ It is called on `kPostLoadGame`/`kNewGame` (`src/Main.cpp:221`) and again on
 > previous game's values) and from `SettingsReloader`, and `ResetAllToDefaults`
 > resets the global too.
 >
-> Note what this did NOT fix: `bEnableSoulGemRecharge` gates
-> `GatherSoulGemCandidates` and nothing else, so `OverrideManager::FindSoulGem`
-> still surfaces a gem on the urgent weapon-charge path with the setting off.
-> Roadmap item.
+> **Scope of `bEnableSoulGemRecharge`:** it gates `GatherSoulGemCandidates` and
+> nothing else, so with it off, `OverrideManager::FindSoulGem` still surfaces a
+> gem on the urgent weapon-charge path. That is by design, not a gap — the
+> override has its own switch, `bEnableWeaponCharge` under `[Overrides]`, which
+> gates the whole evaluator at `OverrideManager.cpp:91`. One switch per path.
+> Turning off both is what stops soul gems being suggested at all; both INI
+> blocks now say so, since the log shows the override firing without showing
+> that it has its own control.
 
 ### 8.2 `[Scoring]` — thresholds that do apply
 
