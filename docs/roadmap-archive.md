@@ -13,19 +13,23 @@ re-litigated. Section headings mirror the roadmap's.
       half had no switch. It does: `bEnableWeaponCharge` under `[Overrides]`
       gates the entire weapon-charge override at `OverrideManager.cpp:91` —
       evaluator and all, not just `FindSoulGem`. So the split the entry proposed
-      as one of three fixes was already implemented:
-      | Setting | Section | Gates |
-      |---|---|---|
-      | `bEnableSoulGemRecharge` | `[Candidates]` | soul gems in normal ranking |
-      | `bEnableWeaponCharge` | `[Overrides]` | the urgent "weapon empty" prompt |
-      One switch per path, independent, which is a coherent design — wanting gems
-      out of routine recommendations while keeping the "your weapon is dead"
-      prompt is reasonable, and so is the reverse.
+      as one of three fixes was already implemented — `bEnableSoulGemRecharge`
+      under `[Candidates]` gates soul gems in normal ranking, and
+      `bEnableWeaponCharge` under `[Overrides]` gates the urgent "weapon empty"
+      prompt. One switch per path, independent, which is a coherent design —
+      wanting gems out of routine recommendations while keeping the "your weapon
+      is dead" prompt is reasonable, and so is the reverse.
       **Gating `FindSoulGem` on the candidates flag — the option that looked
       obvious — would have made it worse**, giving the override two switches with
       undefined precedence. That is the thing worth remembering: the observed
-      behaviour was real and the diagnosis was not, because the log shows the
-      override firing but not that it has its own control.
+      behaviour was real and the diagnosis was not.
+      And the reason for the wrong diagnosis was NOT that the log hides the
+      switch — it does not. `OverrideSettings.cpp:73` prints
+      `Weapon Charge: threshold=25%, hysteresis=5%, enabled=true` at `info` on
+      every settings load. That line was in the very log the finding was filed
+      from, several hundred lines above the firing lines, and was read past. The
+      firing lines name the override and not its control, the control is printed
+      once at load, and connecting the two is on the reader.
       Fixed by saying so in both INI blocks: `[Candidates]` now states its scope
       is normal ranking ONLY and names the other switch; `[Overrides]` states it
       is the only thing gating that override and that the candidates flag is not.

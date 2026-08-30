@@ -453,9 +453,11 @@ It is called on `kPostLoadGame`/`kNewGame` (`src/Main.cpp:221`) and again on
 > gem on the urgent weapon-charge path. That is by design, not a gap — the
 > override has its own switch, `bEnableWeaponCharge` under `[Overrides]`, which
 > gates the whole evaluator at `OverrideManager.cpp:91`. One switch per path.
-> Turning off both is what stops soul gems being suggested at all; both INI
-> blocks now say so, since the log shows the override firing without showing
-> that it has its own control.
+> Turning off both is what stops soul gems being suggested at all, and both INI
+> blocks now say so. Note the switch IS visible in the log — `OverrideSettings`
+> prints `Weapon Charge: ... enabled={}` at `info` on every settings load — but
+> it is printed once at load, hundreds of lines above the `FindSoulGem` /
+> `WEAPON EMPTY` lines that name the override without naming its control.
 
 ### 8.2 `[Scoring]` — thresholds that do apply
 

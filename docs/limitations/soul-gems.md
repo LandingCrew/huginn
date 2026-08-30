@@ -59,8 +59,17 @@ key did nothing, and no reward ever reached the learner. Both the fill scan
 - **Slot hotkey recharge** — a slot key routes through
   `EquipManager::EquipSlot` → `UseSoulGem`, restoring charge, spending or
   emptying the gem, and awarding Enchanting XP.
-- **INI toggle** — `bEnableSoulGemRecharge` in the `[Candidates]` section of
-  `Data/SKSE/Plugins/Huginn.ini` (parsed in `src/Globals.cpp`, default `true`).
+- **INI toggles — there are TWO, and one is not enough.**
+  `bEnableSoulGemRecharge` in `[Candidates]` gates soul gems in **normal
+  ranking** only (`CandidateGenerator.cpp:323`). The urgent weapon-charge
+  override has its own switch, `bEnableWeaponCharge` in `[Overrides]`, which
+  gates the whole evaluator at `OverrideManager.cpp:91`. Turning off only the
+  first leaves the "WEAPON EMPTY: Need Soul Gem!" prompt still forcing a gem
+  into a slot.
+  **To stop soul gems being suggested at all, turn off both.** That split is
+  deliberate — wanting gems out of routine recommendations while keeping the
+  emergency prompt is reasonable, and so is the reverse — but it is not
+  guessable from either setting's name.
 
 ### Wheeler now renders soul gems — the old workaround is gone
 
@@ -137,6 +146,10 @@ The urgent path is unchanged and still decisive.
 `OverrideManager::FindSoulGem()` makes its own single pick via
 `GetBestSoulGem()`, because when a weapon dies mid-fight the answer is "the
 biggest one, now", and overcharging is the right trade there.
+
+This path is gated by `bEnableWeaponCharge` (`[Overrides]`), **not** by
+`bEnableSoulGemRecharge` — see the toggle note above. It is a separate switch,
+not an oversight.
 
 Two ranking details follow from the soul-location rule:
 
