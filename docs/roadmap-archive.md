@@ -560,7 +560,7 @@ re-litigated. Section headings mirror the roadmap's.
 ## UX / Feature Backlog
 - [x] Read-only Intuition menu mode — display-only widget, hotkeys disabled, an
       external UI (Wheeler / 3rd-party) drives selection.
-      **Shipped 0.19.11** as `bReadOnly` under `[Widget]`, with a dMenu checkbox
+      **Shipped 0.19.11, fixed in 0.19.12** as `bReadOnly` under `[Widget]`, with a dMenu checkbox
       ("Read-Only Mode"). Suppresses slots 0-9 only; page cycling and the
       visibility toggle stay live, because those are ways of LOOKING at the
       widget rather than acting through it. A suppressed key is still consumed
@@ -568,11 +568,42 @@ re-litigated. Section headings mirror the roadmap's.
       whatever else claims that scancode would be the worse surprise — and logs
       once at `debug` on key-down naming the setting, so a player who turned it
       on months ago has something to find.
-      Two wiring details worth keeping: it lives in `[Widget]` (dMenu-owned) but
-      suppresses `[Keybindings]` (main INI), so `SettingsReloader` must push it
-      AFTER the dMenu reload or a toggle would not apply until restart; and the
-      reset-to-defaults path has to push it too, or "reset all" would restore
-      every binding and leave them all inert
+      Three wiring details worth keeping, because 0.19.11 shipped with the third
+      wrong. It lives in `[Widget]` (dMenu-owned) but suppresses `[Keybindings]`
+      (main INI), so (1) `SettingsReloader` must push it AFTER the dMenu reload
+      or a toggle would not apply until restart; (2) the reset-to-defaults path
+      has to push it too, or "reset all" would restore every binding and leave
+      them all inert; and (3) **the load-time push belongs in
+      `InitializeGameSystems`, not `OnDataLoaded`.** The only
+      `IntuitionSettings::LoadFromIni` outside `SettingsReloader` is in
+      `InitializeGameSystems` (kNewGame/kPostLoadGame), which runs AFTER
+      kDataLoaded — so pushing at kDataLoaded reads a compile-time default and
+      nothing pushes the real value afterwards. 0.19.11 did exactly that, with a
+      comment asserting the opposite, and the setting silently did nothing on a
+      fresh launch while the log printed `ReadOnly: true`.
+      Caught in review, not in testing, and the reason is worth remembering: the
+      verification pass had five rows and every one was a live dMenu toggle,
+      which goes through `SettingsReloader` and always worked. Nothing restarted
+      the game. When a setting has two delivery paths, testing one of them twice
+      is not testing two paths
+- [x] `build-verify-preset` — a no-deploy configure preset. **Dropped 2026-08-29
+      without merging**; PR #67 closed, branch deleted.
+      The diff was finally read on the way out, which settles the "contents never
+      reviewed" note this carried for weeks: 12 lines, a
+      `vs2022-windows-verify` preset inheriting `vs2022-windows` with
+      `COPY_OUTPUT=FALSE` and its own `build-verify/` binary dir, plus the
+      matching `.gitignore` line. `CompiledPluginsPath` was set to null
+      deliberately rather than inherited — with `COPY_OUTPUT` off nothing reads
+      it, and leaving it set makes CMake warn about an unused variable on every
+      configure. Self-contained, and it did what it said.
+      **The problem it addressed is real**, which is the part worth keeping: a
+      normal `cmake --build` deploys straight to
+      `<modlist>/overwrite/SKSE/Plugins/Huginn.dll`, so building while a
+      playtest is running silently swaps the DLL under the session. That is a
+      live hazard — it has already caused a stale build to nearly pass as a
+      branch test — and the workaround today is just to not build during a
+      playtest. If someone hits it again, this is the prior art rather than
+      something to reinvent: PR #67 in the closed list.
 - [x] Auto-focus makes a non-Huginn wheel unreachable by opening.
       **NOT A BUG — closed 2026-08-29 without a behaviour change.** The title
       overstated it, and the entry's own body gave the reason away: the wheel is

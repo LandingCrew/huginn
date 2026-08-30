@@ -274,15 +274,11 @@ trigger to pick any of it up.
       byteLen-mismatch block in RunCosaveTests, Tests.cpp:5159).
       Still firing every session as of 0.19.0; it has now cost real time twice
       while triaging unrelated logs (XS)
-- [ ] `build-verify-preset` (1 commit) — no-deploy configure preset, rebased
-      onto main and replaying cleanly, but **contents never reviewed**. The last
-      unmerged branch holding work. Read the diff before merging; it needs a
-      version bump per the per-PR convention, which it does not currently carry.
-      Stale remote branches that can be deleted, all merged: `tier3-14-display-push`
-      and `soak-skip-telemetry` (PR #96 / #95, 2026-08-26),
-      `wheeler-respect-moved-wheels` (PR #97), `docs-optimizations-fold` and
-      `wheeler-index-reresolve` (earlier). Verified against `git ls-remote`
-      2026-08-29 — `build-verify-preset` is the only one still holding work
+- [ ] Delete the merged remote branches: `tier3-14-display-push` and
+      `soak-skip-telemetry` (PR #96 / #95), `wheeler-respect-moved-wheels`
+      (PR #97), `docs-optimizations-fold` and `wheeler-index-reresolve`
+      (earlier). All merged, none holding work. Verified against `git ls-remote`
+      2026-08-29. Nothing depends on this; it is tidying (XS)
 - [ ] Soak protocol needs deliberate MANUAL equips — accept% is fed only by
       equips made outside Huginn, so a burst played through the wheel/hotkeys
       produces no recommendation-quality data at all. Confirmed 2026-08-26: a
