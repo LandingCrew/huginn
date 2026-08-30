@@ -93,10 +93,19 @@ re-litigated. Section headings mirror the roadmap's.
       3/4/5. Worth remembering as a shape, not just a bug: `DestroyWheels()` has
       a side effect that any "reset this state" call placed near it must be
       sequenced against.
-      Session-scoped by choice. Surviving a restart needs a cosave record, which
-      is a serialization change and not landable mid-soak; left as a follow-up
-      on the roadmap with the INI-writeback alternative noted and rejected for
-      editing the player's config behind their back
+      Session-scoped by choice, and **that is where it stays — decided
+      2026-08-29.** Surviving a full restart was carried as a follow-up for a
+      while, on the theory that a player who drags the wheels and quits would be
+      annoyed to find them back at `sWheelPosition`. Closed without persisting
+      it: the complaint this whole thread came from was wheels being REORDERED,
+      not positions being forgotten, and session scope already covers that — a
+      reorder survives every save load for the rest of the session, which is the
+      case that was actually reported. A fresh launch honouring the configured
+      `sWheelPosition` is the setting doing its job.
+      So the cosave record is unnecessary, and so is the INI-writeback
+      alternative, which was separately unattractive for editing the player's
+      config file behind their back. Re-open only on a report of the RESTART
+      case specifically, not the reorder case
 - [x] #76: loading a second save in one session (esp. a different character)
       left Huginn's stored wheel indices stale; `UpdatePage` found every page
       unmanaged ~1s after creation and set `wheelIndex=-1` permanently, with no
@@ -233,7 +242,7 @@ re-litigated. Section headings mirror the roadmap's.
       Masked before, because jumps happen mid-combat where the hash moves
       anyway; a real fall changes no hashed bucket. Fixed with the same
       bypass + falling-edge run the elemental window uses, NOT by adding a
-      Q-learner state dimension (cosave bump). And the take-off Z survived save
+      learner state dimension (cosave bump). And the take-off Z survived save
       loads in the first draft — `ResetTrackingState` zeroes the poll timers, so
       loading into a low interior from a peak would have reported a
       ~20,000-unit fall at full weight.
@@ -340,6 +349,16 @@ re-litigated. Section headings mirror the roadmap's.
       always-on addition — the post-create re-resolve — was verified across nine
       page-resolutions in both `First` and `Last` positions
 ## Known Recommendation Issues
+- [x] `lookingAtOre` did not surface a pickaxe even with one in inventory.
+      **NOT A BUG — closed 2026-08-29 without a fix, deliberately.** Mining does
+      not require an equipped pickaxe; activating the vein works as long as one
+      is in inventory. So there is nothing for a recommendation to accomplish
+      here: surfacing a pickaxe would ask the player to do something the game
+      does not require, which is worse than staying quiet.
+      Recorded because the observation will recur — "I stood at an ore vein with
+      a pickaxe and Huginn showed nothing" reads like a gap every time, and it
+      is the correct behaviour. If `lookingAtOre` should drive anything, it is
+      not the pickaxe.
 - [x] #70 + the wildcard cluster — three entries, one root cause: the wildcard
       cache was a single global position-indexed array shared by every page, so
       an entry could sit at an index nothing currently displayed could reach
@@ -539,6 +558,45 @@ re-litigated. Section headings mirror the roadmap's.
       needs the same word-boundary rule and must not depend on the weapon module
 
 ## UX / Feature Backlog
+- [x] `build-verify-preset` — a no-deploy configure preset. **Dropped 2026-08-29
+      without merging**; PR #67 closed, branch deleted.
+      The diff was finally read on the way out, which settles the "contents never
+      reviewed" note this carried for weeks: 12 lines, a
+      `vs2022-windows-verify` preset inheriting `vs2022-windows` with
+      `COPY_OUTPUT=FALSE` and its own `build-verify/` binary dir, plus the
+      matching `.gitignore` line. `CompiledPluginsPath` was set to null
+      deliberately rather than inherited — with `COPY_OUTPUT` off nothing reads
+      it, and leaving it set makes CMake warn about an unused variable on every
+      configure. Self-contained, and it did what it said.
+      **The problem it addressed is real**, which is the part worth keeping: a
+      normal `cmake --build` deploys straight to
+      `<modlist>/overwrite/SKSE/Plugins/Huginn.dll`, so building while a
+      playtest is running silently swaps the DLL under the session. That is a
+      live hazard — it has already caused a stale build to nearly pass as a
+      branch test — and the workaround today is just to not build during a
+      playtest. If someone hits it again, this is the prior art rather than
+      something to reinvent: PR #67 in the closed list.
+- [x] Auto-focus makes a non-Huginn wheel unreachable by opening.
+      **NOT A BUG — closed 2026-08-29 without a behaviour change.** The title
+      overstated it, and the entry's own body gave the reason away: the wheel is
+      still reachable by scrolling. `bAutoFocusOnOpen=true` changes where Wheeler
+      OPENS, not what exists. Nothing is lost and nothing is hidden.
+      Recorded because the report reads convincingly — a player wheel dragged to
+      position 0 is skipped on every open and looks eaten — and because the
+      wording ("unreachable") is what made it sound like data loss rather than a
+      navigation preference. If it is re-filed, the question to ask is whether
+      the player can reach the wheel at all, not whether opening lands on it.
+      The three mitigations proposed here (auto-focus only when non-adjacent,
+      honour a deliberate-scroll signal, default the setting to false) are all
+      unnecessary on this reasoning and were never built.
+      **What DID land, and stays:** the one-shot warn and on-screen notification
+      when a redirect actually skips a wheel (0.19.3, corrected in 0.19.9 to gate
+      on `wheelIndex < autoFocusTarget` and fire once per run).
+      Whether to keep the player-facing half was raised and **decided on
+      2026-08-29: keep it.** It is INFORMATIONAL, not a defect warning — it says
+      what is happening and names the setting that changes it. Do not remove it
+      on the grounds that the behaviour it describes is not a bug; describing
+      correct-but-surprising behaviour is the whole job of that notification.
 - [x] Two INI files defined `[Widget]`, `[Keybindings]` and `[Debug]` in BOTH
       `Huginn.ini` and dMenu's same-named copy, with nothing stating which won —
       and settings changed in the dMenu UI did not survive a restart.

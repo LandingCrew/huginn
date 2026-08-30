@@ -36,7 +36,7 @@ utility(item) = contextWeight × (1 + λ(confidence) × learningScore)
 **Key architectural separation:**
 - `ContextRuleEngine` — "What matters RIGHT NOW?" (game state → relevance weights)
 - `PriorCalculator` — "Which item is intrinsically better?" (item properties → quality)
-- `FeatureQLearner` — "What does THIS PLAYER prefer?" (learned preferences, 18-float feature vectors)
+- `FeatureQLearner` — "What does THIS PLAYER prefer?" (contextual bandit over 18-float feature vectors; the class name is historical, see [docs/architecture/4-contextual-bandits.md](docs/architecture/4-contextual-bandits.md))
 - `UtilityScorer` — Combines all three into final utility
 
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for full system design.
@@ -56,7 +56,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for full system design.
 | `src/wheeler/` | Wheeler mod integration (v1/v2 API) |
 | `src/console/` | In-game console commands (`hg`) |
 | `src/override/` | Override system (urgent potion surfacing) |
-| `src/persist/` | Q-learner serialization (cosave) |
+| `src/persist/` | Learner weight serialization (cosave) |
 | `src/settings/` | SettingsReloader (dMenu hot-reload) |
 
 ## Configuration
@@ -65,7 +65,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for full system design.
 
 **INI settings** — `Data/SKSE/Plugins/Huginn.ini`:
 - `[Scoring]` — Utility scoring params (loaded by `ScorerSettings`)
-- `[ContextWeights]` — 17 context weight multipliers (loaded by `ContextWeightSettings`)
+- `[ContextWeights]` — context weight multipliers (loaded by `ContextWeightSettings`)
 - `[Widget]` — Scaleform HUD position, alpha, scale, display mode
 - `[Wheeler]` — Wheeler integration settings
 - `[Candidates]` — Uncastable spell policy
@@ -85,7 +85,7 @@ Registered as `Huginn` with short alias `hg` (in-game `~` console):
 | `hg rebuild` | Force rebuild all registries |
 | `hg weights <FormID>` | Show FQL weight vector (hex FormID) |
 | `hg page <N>` | Switch to page N |
-| `hg reset qvalues` | Clear Q-learning tables |
+| `hg reset qvalues` | Clear learned item weights |
 | `hg reset all` | Full system reset |
 
 ## Update Loop
@@ -162,4 +162,5 @@ All `IntuitionMenu` public API methods defer GFx work via `SKSE::GetTaskInterfac
 - [docs/architecture/](docs/architecture/) — Deep-dive docs (pipeline, states, classifiers, scoring, slots, UI, dMenu)
 - [docs/compatibility/](docs/compatibility/) — Mod compatibility guides
 - [docs/reference/ConsoleCommands.md](docs/reference/ConsoleCommands.md) — Console command reference
-- [docs/ROADMAP.md](docs/ROADMAP.md) — Development roadmap and backlog
+- [docs/testing/TESTING-INDEX.md](docs/testing/TESTING-INDEX.md) — Test suite index and profiling guide
+- [docs/roadmap.md](docs/roadmap.md) — Development roadmap and backlog
