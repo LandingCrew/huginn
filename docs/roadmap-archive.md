@@ -558,6 +558,34 @@ re-litigated. Section headings mirror the roadmap's.
       needs the same word-boundary rule and must not depend on the weapon module
 
 ## UX / Feature Backlog
+- [x] Read-only Intuition menu mode — display-only widget, hotkeys disabled, an
+      external UI (Wheeler / 3rd-party) drives selection.
+      **Shipped 0.19.11, fixed in 0.19.12** as `bReadOnly` under `[Widget]`, with a dMenu checkbox
+      ("Read-Only Mode"). Suppresses slots 0-9 only; page cycling and the
+      visibility toggle stay live, because those are ways of LOOKING at the
+      widget rather than acting through it. A suppressed key is still consumed
+      rather than passed through — it is bound to Huginn, so letting it fall to
+      whatever else claims that scancode would be the worse surprise — and logs
+      once at `debug` on key-down naming the setting, so a player who turned it
+      on months ago has something to find.
+      Three wiring details worth keeping, because 0.19.11 shipped with the third
+      wrong. It lives in `[Widget]` (dMenu-owned) but suppresses `[Keybindings]`
+      (main INI), so (1) `SettingsReloader` must push it AFTER the dMenu reload
+      or a toggle would not apply until restart; (2) the reset-to-defaults path
+      has to push it too, or "reset all" would restore every binding and leave
+      them all inert; and (3) **the load-time push belongs in
+      `InitializeGameSystems`, not `OnDataLoaded`.** The only
+      `IntuitionSettings::LoadFromIni` outside `SettingsReloader` is in
+      `InitializeGameSystems` (kNewGame/kPostLoadGame), which runs AFTER
+      kDataLoaded — so pushing at kDataLoaded reads a compile-time default and
+      nothing pushes the real value afterwards. 0.19.11 did exactly that, with a
+      comment asserting the opposite, and the setting silently did nothing on a
+      fresh launch while the log printed `ReadOnly: true`.
+      Caught in review, not in testing, and the reason is worth remembering: the
+      verification pass had five rows and every one was a live dMenu toggle,
+      which goes through `SettingsReloader` and always worked. Nothing restarted
+      the game. When a setting has two delivery paths, testing one of them twice
+      is not testing two paths
 - [x] `build-verify-preset` — a no-deploy configure preset. **Dropped 2026-08-29
       without merging**; PR #67 closed, branch deleted.
       The diff was finally read on the way out, which settles the "contents never

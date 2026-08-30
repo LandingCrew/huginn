@@ -57,10 +57,6 @@ rejected, so check there before re-opening something.
       candidate fixes are under Follow-ups, "Share learning across similar
       items"; fixing either closes this
 
-## UX / Feature Backlog
-- [ ] Read-only Intuition menu mode — display-only widget, hotkeys disabled, an
-      external UI (Wheeler / 3rd-party) drives selection
-
 ## Doc-migration findings (2026-08-29)
 Surfaced by the one-agent-per-doc migration pass. Every one is a code or config
 defect the docs exposed, not a documentation problem. Ordered by what a player

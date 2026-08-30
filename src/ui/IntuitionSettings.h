@@ -70,6 +70,12 @@ namespace Huginn::UI
         // Child element opacity (0-100) for secondary elements like page labels
         inline constexpr float CHILD_ALPHA = 70.0f;
 
+        // Read-only mode: the widget still shows recommendations, but the equip
+        // hotkeys do nothing, leaving selection to Wheeler or another UI.
+        // OFF by default — turning it on silently disables ten keys the player
+        // configured, which must be a deliberate choice rather than a default.
+        inline constexpr bool READ_ONLY = false;
+
         // SWF stage dimensions (must match intuition.xml)
         inline constexpr float STAGE_WIDTH  = 1280.0f;
         inline constexpr float STAGE_HEIGHT = 720.0f;
@@ -127,6 +133,12 @@ namespace Huginn::UI
         [[nodiscard]] float GetAlpha() const noexcept { return alpha; }
         [[nodiscard]] float GetScale() const noexcept { return scale; }
         [[nodiscard]] float GetChildAlpha() const noexcept { return childAlpha; }
+        /// Deliberately NOT carried on IntuitionConfig. The widget does not
+        /// render differently in read-only mode — only InputHandler cares — and
+        /// putting it in the snapshot would imply it flows through
+        /// ReapplySettings, which it does not. One path: this accessor, read by
+        /// whoever pushes InputHandler::SetReadOnly.
+        [[nodiscard]] bool  IsReadOnly() const noexcept { return readOnly; }
         [[nodiscard]] DisplayMode GetDisplayMode() const noexcept { return displayMode; }
         [[nodiscard]] RefreshEffect GetRefreshEffect() const noexcept { return refreshEffect; }
         [[nodiscard]] float GetRefreshStrength() const noexcept { return refreshStrength; }
@@ -144,6 +156,7 @@ namespace Huginn::UI
         float alpha     = IntuitionDefaults::ALPHA;
         float scale        = IntuitionDefaults::SCALE;
         float childAlpha   = IntuitionDefaults::CHILD_ALPHA;
+        bool  readOnly     = IntuitionDefaults::READ_ONLY;
         DisplayMode displayMode = DisplayMode::Minimal;
         RefreshEffect refreshEffect = RefreshEffect::Tint;
         float refreshStrength = IntuitionDefaults::REFRESH_STRENGTH;

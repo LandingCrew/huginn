@@ -165,6 +165,21 @@ namespace Huginn::Input
         keyCode, keyCode, matchedIndex);
       }
       if (matchedIndex < 10) {
+      // Read-only: swallow the equip keys and act on nothing. Returning TRUE
+      // still consumes the event, which is the point — the key is bound to
+      // Huginn, so letting it fall through to whatever else claims that
+      // scancode would be a worse surprise than doing nothing.
+      //
+      // Logged at debug on key-DOWN only, and only in read-only mode, so the
+      // ordinary case stays silent: a player who has turned this on and forgotten
+      // will otherwise find a dead key and no explanation anywhere.
+      if (m_readOnly.load(std::memory_order_relaxed)) {
+         if (button->IsDown()) {
+            logger::debug("[InputHandler] Slot key {} ignored — read-only mode (bReadOnly=true under [Widget])"sv,
+              matchedIndex + 1);
+         }
+         return true;
+      }
       HandleEquipKey(matchedIndex, button);
       } else if (matchedIndex < 12) {
       HandleCycleKey(matchedIndex - 10, button);

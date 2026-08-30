@@ -354,6 +354,17 @@ static void InitializeGameSystems(bool isNewGame)
     if (haveDMenuIni) UI::IntuitionSettings::GetSingleton().LoadFromIni(dmenuIni);
     UI::IntuitionMenu::Show();
 
+    // Read-only must be pushed HERE, not at kDataLoaded, because this is the
+    // first point where [Widget] has actually been read — the line above is the
+    // only IntuitionSettings load outside SettingsReloader, and kDataLoaded runs
+    // before it. Pushing at kDataLoaded reads compile-time defaults, so a player
+    // who set bReadOnly=true and restarted got working hotkeys and a log line
+    // claiming ReadOnly: true. Unconditional rather than inside haveDMenuIni:
+    // with no dMenu file the settings hold their defaults, and pushing those is
+    // still correct.
+    Input::InputHandler::GetSingleton().SetReadOnly(
+        UI::IntuitionSettings::GetSingleton().IsReadOnly());
+
     // ── 11b. Debug widget visibility (debug builds only) ───────────────
     if (haveDMenuIni) {
         auto& debugSettings = UI::DebugSettings::GetSingleton();
@@ -556,6 +567,12 @@ static void OnDataLoaded()
         Input::KeybindingSettings keybindings;
         keybindings.LoadFromFile(GetMainIniPath());
         inputHandler.SetKeyCodes(keybindings);
+
+        // NOTE: read-only is deliberately NOT pushed here. [Widget] has not been
+        // read at kDataLoaded — the only load outside SettingsReloader is in
+        // InitializeGameSystems, which runs at kNewGame/kPostLoadGame — so this
+        // would push a compile-time default and mask the real value. It is
+        // pushed there instead, and by SettingsReloader on every reload.
 
         // Slot key callback: equip spell/item from slot
         inputHandler.SetSlotCallback([&equipManager](size_t slotIndex, Input::EquipHand hand) {

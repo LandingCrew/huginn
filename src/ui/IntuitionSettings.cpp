@@ -25,6 +25,7 @@ namespace Huginn::UI
         alpha     = static_cast<float>(ini.GetDoubleValue(section, "fAlpha", IntuitionDefaults::ALPHA));
         scale        = static_cast<float>(ini.GetDoubleValue(section, "fScale", IntuitionDefaults::SCALE));
         childAlpha   = static_cast<float>(ini.GetDoubleValue(section, "fAlphaChild", IntuitionDefaults::CHILD_ALPHA));
+        readOnly     = ini.GetBoolValue(section, "bReadOnly", IntuitionDefaults::READ_ONLY);
 
         // These three are dMenu dropdowns, and dMenu serializes a dropdown as its
         // integer INDEX ("0"), not its label. Hand-written INIs and every version
@@ -82,8 +83,8 @@ namespace Huginn::UI
             break;
         }
 
-        logger::info("[IntuitionSettings] Enabled: {}, Position: ({}%, {}%), Alpha: {}, Scale: {}%, ChildAlpha: {}, DisplayMode: {}, RefreshEffect: {} ({}%), SlotEffect: {}",
-            enabled, positionX, positionY, alpha, scale, childAlpha,
+        logger::info("[IntuitionSettings] Enabled: {}, Position: ({}%, {}%), Alpha: {}, Scale: {}%, ChildAlpha: {}, ReadOnly: {}, DisplayMode: {}, RefreshEffect: {} ({}%), SlotEffect: {}",
+            enabled, positionX, positionY, alpha, scale, childAlpha, readOnly,
             displayMode == DisplayMode::Verbose ? "verbose" : displayMode == DisplayMode::Normal ? "normal" : "minimal",
             refreshEffect == RefreshEffect::Pulse ? "pulse" : refreshEffect == RefreshEffect::None ? "none" : "tint",
             refreshStrength,
@@ -98,6 +99,7 @@ namespace Huginn::UI
         alpha     = IntuitionDefaults::ALPHA;
         scale        = IntuitionDefaults::SCALE;
         childAlpha     = IntuitionDefaults::CHILD_ALPHA;
+        readOnly       = IntuitionDefaults::READ_ONLY;
         displayMode    = DisplayMode::Minimal;
         refreshEffect  = RefreshEffect::Tint;
         refreshStrength = IntuitionDefaults::REFRESH_STRENGTH;
