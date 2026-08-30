@@ -62,18 +62,18 @@ Surfaced by the one-agent-per-doc migration pass. Every one is a code or config
 defect the docs exposed, not a documentation problem. Ordered by what a player
 would notice.
 
-- [ ] **`[Candidates]` INI never reaches the code that reads it.**
-      `LoadCandidateConfigFromINI` (`Globals.cpp:181`) writes
-      `sUncastableSpellPolicy` and `bEnableSoulGemRecharge` into the global
-      `g_candidateConfig`, but `CandidateGenerator::m_config` is
-      default-constructed and never assigned from it — `Initialize()` does not
-      copy it and `RefreshConfigFromGlobal()` (`CandidateGenerator.h:150`) has
-      ZERO callers. Both `kPostLoadGame` and `hg reload` update a struct nothing
-      reads, so `bEnableSoulGemRecharge = false` silently does nothing. Hidden
-      today only because the shipped values equal the compile-time defaults.
-      Consequences: `Penalize` and `Allow` are behaviourally identical (both
-      filters branch only on `Disallow`), and `fUncastablePenaltyFloor = 0.05`
-      ships in the INI read by no code (S)
+- [ ] **`sUncastableSpellPolicy = Penalize` behaves identically to `Allow`.**
+      Split out of the `[Candidates]` wiring fix (0.19.13), which got the setting
+      to `CandidateGenerator` but could not make `Penalize` mean anything: both
+      `RunVisitorFilters` and `PassesAffordabilityFilter` branch only on
+      `Disallow`, and there is no penalty mechanism to reconnect. The docs
+      described one — a shortfall ratio and a `penaltyFloor` — but it was never
+      built, and `fUncastablePenaltyFloor` has now been removed from the shipped
+      INI rather than left implying it works.
+      So this is a scoring FEATURE, not a settings bug: decide whether a partial
+      relevance penalty for an unaffordable spell is wanted at all, and if so
+      what the curve is. Until then the option is honest but has only two
+      distinct behaviours (M)
 - [ ] **The dMenu Refresh Effect dropdown and strength slider do nothing.**
       `_flashTimer` in `src/swf/Intuition.as` is initialised to 0 and decremented
       but never set positive — the `setSlot` path that armed it was removed when
@@ -95,13 +95,6 @@ would notice.
       (spurious `Confirmed` flash) and a stale `isActivationLock = true`, which
       makes the next `OnItemUsed(..., respectActivationLock=true)` decline to
       break a lock that was never an activation lock (S)
-- [ ] **`[ContextWeights]` INI and `ContextWeightConfig` do not line up.** The
-      shipped INI has 33 `fWeight*` keys; the struct has 31 weight fields.
-      `weightSummon` and `fWeaponChargeSmoothingExponent` have no key in that
-      section, while `fWeightWeaponChargeModerate/Low/Critical` have no matching
-      single field. Whether those are read elsewhere is unchecked — if not, they
-      are settings a player can edit that are silently ignored. Establish the
-      real mapping before trusting either side (S)
 - [ ] **Two override files, one INI, no namespacing.** `SpellOverrides` and
       `ItemOverrides` both parse `Huginn_Overrides.ini` walking every section, so
       an item override section also registers as a spell override — unrecognised
@@ -110,17 +103,6 @@ would notice.
       Reload is also asymmetric: `SpellRegistry` re-loads on every
       `RebuildRegistry()`, `ItemRegistry` loads only in its constructor, so item
       overrides need a game restart and `hg reload` touches neither (M)
-- [ ] **The shipped `Huginn_Overrides.ini` template documents types that are
-      rejected.** It documents item type `SoulGem` and shows a `type = Scroll`
-      example; `ItemOverrides::ParseItemType` accepts neither and logs "Unknown
-      item type". `ItemType::Ingredient` is likewise advertised but unreachable —
-      ingredients are not in the item registry's inventory filter at all (XS)
-- [ ] **Shipped INI comments are wrong in `[Overrides]`** — three identical
-      comments say the health, magicka and stamina potions are each "forced into
-      slot 1". They are pinned to slots 0, 1 and 2 on Page 0 (XS)
-- [ ] **`fNotCandidateRewardMult` is absent from the shipped INI** and silently
-      falls back to 1.0 — a reward multiplier that reads as configured and is not
-      (XS)
 - [ ] **#79 landed on the spell arm and not the scroll arm.** Scroll `Utility`
       does not check ext `Unlock` although `ScrollData` carries `tagsExt`, and
       scroll `SummonsAny` omits `BoundWeapon` where the spell arm includes it.
@@ -140,8 +122,7 @@ would notice.
       it — it is also exactly the substrate a future trend feature would need.
       Adjacent dead code: `SlotAllocator::AllocateSlots` (both overloads), kept
       as a legacy/test entry point; `IntuitionMenu::SetUrgent` / `setUrgent` /
-      `_urgentSlots`, vestigial with no caller; `iMaxCandidatesPerCycle`, parsed,
-      clamped, stored on `ScorerConfig` and never read;
+      `_urgentSlots`, vestigial with no caller;
       `FilterStats::filteredByRelevance`, never incremented but still summed;
       `StateEvaluator::EvaluateCurrentState()`, which takes a
       `const WorldState&` it never reads (S)

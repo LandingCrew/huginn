@@ -225,6 +225,16 @@ static void InitializeGameSystems(bool isNewGame)
             candidateGen.Initialize(*g_spellRegistry, *g_itemRegistry,
                                     *g_weaponRegistry, *g_scrollRegistry);
         }
+        // The generator holds its own copy of the config; nothing else pushes
+        // g_candidateConfig into it. Without this, LoadCandidateConfigFromINI
+        // above wrote to a struct the generator never read, and every
+        // [Candidates] key silently did nothing — invisible only because the
+        // shipped values happened to equal the compile-time defaults.
+        //
+        // Unconditional, and outside the IsInitialized guard: on a save load the
+        // generator already exists, so an init-only refresh would leave it on
+        // whatever the previous game's INI said.
+        candidateGen.RefreshConfigFromGlobal();
     }
 
     // ── 5. FeatureQLearner + UtilityScorer + ScorerSettings ──────────────

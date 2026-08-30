@@ -11,9 +11,15 @@ namespace Huginn::State
     // Consumers store a copy via SetConfig() for consistent, race-free reads.
     //
     // Mirrors all public fields from ContextWeightSettings (35 fields total):
-    //   - 17 legacy weights (0-10 scale, for CandidateGenerator compatibility)
-    //   - 15 normalized weights [0,1] (for ContextRuleEngine)
-    //   - 3 smoothing exponents (for continuous vital curves)
+    //   - 31 weights (legacy 0-10 for CandidateGenerator, normalized [0,1] for
+    //     ContextRuleEngine; the split is not a clean 17/15 and never was)
+    //   - 4 smoothing exponents: health, magicka, stamina, weapon charge
+    //
+    // Verified against [ContextWeights] 2026-08-29: the 36 keys the loader reads
+    // and the keys the shipped configs/Huginn.ini defines are now in agreement
+    // both directions. If you add a field here, add its key to that file too —
+    // a read-but-undefined key silently takes its compile-time default, which is
+    // how fWeightSummon and fWeaponChargeSmoothingExponent went unnoticed.
     // =========================================================================
 
     struct ContextWeightConfig
