@@ -16,6 +16,7 @@
 #include "util/InventoryUtil.h"
 #include "weapon/WeaponRegistry.h"
 #include "telemetry/SoakMetrics.h"
+#include "ui/HudVisibilityManager.h"
 
 // For the ProcessInventoryChanges constraint: std::same_as / std::convertible_to
 // from <concepts>, std::remove_cvref_t from <type_traits>. Both explicit because
@@ -498,6 +499,13 @@ void OnUpdate(float deltaSeconds)
         }
         if (!loaded) return;
     }
+
+    // Widget visibility, polled. The MenuOpenCloseEvent sink cannot see a cut
+    // scene start — entering the cinematic camera opens no menu — so without a
+    // tick here the widget sits on screen for the whole sequence. Placed after
+    // the world-loaded gate so it does not run against a torn-down player, and
+    // it is transition-gated internally.
+    UI::HudVisibilityManager::GetSingleton().Poll();
 
     float deltaMs = deltaSeconds * 1000.0f;
 

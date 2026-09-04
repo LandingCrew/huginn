@@ -42,16 +42,36 @@ namespace Huginn::UI
         return RE::BSEventNotifyControl::kContinue;
     }
 
-    void HudVisibilityManager::UpdateVisibility()
+    // The game has taken the camera and the player is watching, not playing.
+    //
+    // kAnimated is the scripted/cinematic camera — quest cut scenes and
+    // killmoves. kAutoVanity is the idle orbit that takes over when the controls
+    // go untouched. Neither pauses the game, which is why GameIsPaused() alone
+    // left the widget on screen through both.
+    //
+    // Two neighbours are deliberately NOT here. kFurniture (beds, chairs,
+    // crafting stations) would hide the widget at an alchemy table, which is
+    // precisely where the workstation context has something to say — hiding
+    // there would suppress the feature, not a cut scene. kBleedout is not a cut
+    // scene either; it is its own question, and folding it in here would decide
+    // it silently.
+    static bool IsCinematicCamera()
     {
-        auto* menu = IntuitionMenu::GetSingleton();
-        if (!menu) {
-    
-            return;
+        auto* camera = RE::PlayerCamera::GetSingleton();
+        if (!camera || !camera->currentState) {
+            return false;
         }
+        // QCameraEquals is private in CommonLibSSE-NG; currentState->id is the
+        // public route to the same answer.
+        const auto id = camera->currentState->id;
+        return id == RE::CameraState::kAnimated
+            || id == RE::CameraState::kAutoVanity;
+    }
 
+    bool HudVisibilityManager::ComputeVisible() const
+    {
         auto* ui = RE::UI::GetSingleton();
-        if (!ui) return;
+        if (!ui) return false;
 
         // Widget visible when no game-pausing menu is open AND the master enable
         // toggle is on. Console and Favorites don't set kPausesGame, so the widget
@@ -60,9 +80,40 @@ namespace Huginn::UI
         // IsUserHidden() is also enforced inside SetVisible(), so this line is
         // belt-and-braces — but computing it here keeps the predicate honest for
         // anyone reading UpdateVisibility to find out when the widget shows.
-        bool visible = !ui->GameIsPaused()
-                    && IntuitionSettings::GetSingleton().IsEnabled()
-                    && !IntuitionMenu::IsUserHidden();
+        return !ui->GameIsPaused()
+            && !IsCinematicCamera()
+            && IntuitionSettings::GetSingleton().IsEnabled()
+            && !IntuitionMenu::IsUserHidden();
+    }
+
+    void HudVisibilityManager::Poll()
+    {
+        const bool visible = ComputeVisible();
+        if (visible == m_lastPolled) {
+            return;
+        }
+        m_lastPolled = visible;
+
+        // A transition, so it logs — one line per cut scene, not per tick.
+        logger::info("HudVisibilityManager: widget {} (cinematic camera: {})"sv,
+            visible ? "shown"sv : "hidden"sv,
+            IsCinematicCamera() ? "yes"sv : "no"sv);
+
+        UpdateVisibility();
+    }
+
+    void HudVisibilityManager::UpdateVisibility()
+    {
+        auto* menu = IntuitionMenu::GetSingleton();
+        if (!menu) {
+
+            return;
+        }
+
+        auto* ui = RE::UI::GetSingleton();
+        if (!ui) return;
+
+        bool visible = ComputeVisible();
 
         // SetVisible already defers the GFx work via AddUITask internally, so
         // call it directly — wrapping it in another AddUITask here would add a
