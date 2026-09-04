@@ -527,6 +527,16 @@ static void OnDataLoaded()
                 formID, Learning::EquipSource::Wheeler, 1.0f, /*wasRecommended=*/true);
         },
         .setWidgetVisible = [](bool visible) {
+            // Gated here rather than in WheelerClient so that class keeps no UI
+            // dependency — this lambda is the wiring layer that already knows
+            // about UI. The channel exists only for Wheeler's open/close, so
+            // suppressing the hide is exactly "don't hide for the wheel".
+            // The SHOW still goes through: a widget hidden by an open that
+            // happened before the setting was toggled would otherwise be
+            // stranded off-screen with no way back.
+            if (!visible && !UI::IntuitionSettings::GetSingleton().HideWhileWheelOpen()) {
+                return;
+            }
             // SetVisible defers to the UI thread via AddUITask, so this is safe
             // from Wheeler's callback thread.
             if (auto* intuition = UI::IntuitionMenu::GetSingleton()) {

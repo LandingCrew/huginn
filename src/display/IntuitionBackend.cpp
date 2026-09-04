@@ -36,7 +36,13 @@ namespace Huginn::Display
             return;
         }
 
-        if (wheelIsOpen) {
+        // bHideWhileWheelOpen=false keeps both displays up so they can be read
+        // against each other. Deliberately skips the early return as well, not
+        // just the hide: a visible widget that stops updating while the wheel is
+        // open would show stale content, which is worse than showing none.
+        const bool hideWhileWheelOpen = UI::IntuitionSettings::GetSingleton().HideWhileWheelOpen();
+
+        if (wheelIsOpen && hideWhileWheelOpen) {
             // Re-assert hidden every tick while the wheel is open. A game menu
             // opening/closing (inventory, map) makes HudVisibilityManager call
             // SetVisible(true); without re-hiding here the widget would surface
