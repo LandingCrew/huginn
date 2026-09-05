@@ -76,6 +76,13 @@ namespace Huginn::UI
         // configured, which must be a deliberate choice rather than a default.
         inline constexpr bool READ_ONLY = false;
 
+        // Hide the widget while a Wheeler wheel is open. ON by default: the
+        // widget draws BEHIND the wheel, so leaving both up overlaps them.
+        // Turning it off is for reading the two displays against each other —
+        // diagnosing a wheel that disagrees with the recommendations — and for
+        // a layout that has moved the widget clear of the wheel.
+        inline constexpr bool HIDE_WHILE_WHEEL_OPEN = true;
+
         // SWF stage dimensions (must match intuition.xml)
         inline constexpr float STAGE_WIDTH  = 1280.0f;
         inline constexpr float STAGE_HEIGHT = 720.0f;
@@ -139,6 +146,16 @@ namespace Huginn::UI
         /// ReapplySettings, which it does not. One path: this accessor, read by
         /// whoever pushes InputHandler::SetReadOnly.
         [[nodiscard]] bool  IsReadOnly() const noexcept { return readOnly; }
+        /// Same reasoning as IsReadOnly: not on IntuitionConfig. It changes WHEN
+        /// the widget is shown, not how it renders, so it never flows through
+        /// ReapplySettings — the two visibility gates read it directly.
+        /// Read from Wheeler's callback thread (Main.cpp's setWidgetVisible),
+        /// written from the update thread by LoadFromIni on hg reload / dMenu
+        /// apply — hence atomic, unlike readOnly which is main-thread only.
+        [[nodiscard]] bool  HideWhileWheelOpen() const noexcept
+        {
+            return hideWhileWheelOpen.load(std::memory_order_acquire);
+        }
         [[nodiscard]] DisplayMode GetDisplayMode() const noexcept { return displayMode; }
         [[nodiscard]] RefreshEffect GetRefreshEffect() const noexcept { return refreshEffect; }
         [[nodiscard]] float GetRefreshStrength() const noexcept { return refreshStrength; }
@@ -157,6 +174,7 @@ namespace Huginn::UI
         float scale        = IntuitionDefaults::SCALE;
         float childAlpha   = IntuitionDefaults::CHILD_ALPHA;
         bool  readOnly     = IntuitionDefaults::READ_ONLY;
+        std::atomic<bool> hideWhileWheelOpen{IntuitionDefaults::HIDE_WHILE_WHEEL_OPEN};
         DisplayMode displayMode = DisplayMode::Minimal;
         RefreshEffect refreshEffect = RefreshEffect::Tint;
         float refreshStrength = IntuitionDefaults::REFRESH_STRENGTH;

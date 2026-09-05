@@ -29,7 +29,6 @@ rejected, so check there before re-opening something.
       misses. Independent of the wildcard work — the assignment was correct
       throughout — but a wildcard is a low-scored pick the player is more likely
       to activate, so raising the wildcard rate raises exposure (S)
-- [ ] Intuition menu shown during "cut scenes"
 - [ ] Intuition menu not hiding when commanded by external mod
 - [ ] New game wheelerAPI integration seems to fail
 

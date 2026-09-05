@@ -119,6 +119,18 @@
           }
         },
         {
+          "type": "checkbox",
+          "text": {
+            "name": "Hide While Wheel Open",
+            "desc": "Hide the widget while a Wheeler wheel is open. On by default — the widget draws behind the wheel, so leaving both up overlaps them. Turn off to read the two against each other, or if you have moved the widget clear of the wheel."
+          },
+          "default": true,
+          "ini": {
+            "section": "Widget",
+            "id": "bHideWhileWheelOpen"
+          }
+        },
+        {
           "type": "dropdown",
           "text": {
             "name": "Display Mode",

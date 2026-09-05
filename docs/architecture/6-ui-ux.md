@@ -482,6 +482,7 @@ fAlpha = 100                ; Widget opacity (0-100)
 fScale = 70                 ; Widget scale % (50=half, 100=native, 200=double)
 fAlphaChild = 70            ; Secondary element opacity (page pips/label)
 bReadOnly = false           ; Display-only: slot hotkeys ignored (0.19.11)
+bHideWhileWheelOpen = true  ; Hide while a Wheeler wheel is open (0.19.18)
 sDisplayMode = minimal      ; minimal | normal | verbose   (or 0 | 1 | 2)
 sRefreshEffect = tint       ; tint | pulse | none          (or 0 | 1 | 2) — inert
 sSlotEffect = slide         ; slide | fade | instant       (or 0 | 1 | 2)
