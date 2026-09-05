@@ -4,31 +4,6 @@ Open work only. Completed items live in [roadmap-archive.md](roadmap-archive.md)
 rejected, so check there before re-opening something.
 
 ## Known Bugs
-- [ ] Wheeler's content-unchanged early-out goes stale when Wheeler itself
-      mutates the wheel. With `PostActivation = Backfill`, activating an entry
-      makes Wheeler shift the remaining entries internally — Huginn is never
-      told, so `WheelSync`'s `slotFormIDs`/`slotWildcard`/`slotUniqueIDs`/
-      `slotRawSubtexts` cache still describes the pre-activation wheel. The
-      early-out (WheelSync.cpp:1081) then compares the incoming vectors against
-      that cache, matches, and returns before repainting, so the wheel keeps a
-      blank where the shifted-out entry was for as long as the recommendations
-      stay stable. **Observed 2026-08-28, 0.19.6:** page 1 activation at
-      20:33:33.456 (`entry=0, formID=00013986`); the last push to that wheel at
-      20:33:38.501 carried `0:Steel Dagger, 1:Wildcard(Iron War Axe),
-      2:Staff of the Skeletal Soldier, 3:empty`; the Intuition widget rendered
-      all four correctly while the wheel showed slot 1 blank. `hg refresh`
-      repaired it. NOT self-correcting, which is what separates this from the
-      two deferrals the early-out's own comment already accepts as "rare and
-      self-correcting" — those resolve on the next content change; this one
-      survives it, because the content never changed. The edit-mode re-resolve
-      already clears `slotRawSubtexts` for exactly this reason
-      (WheelSync.cpp:350) — the activation path needs the same clear, keyed on
-      the wheel Wheeler actually mutated. Only bites under Backfill: the `Empty`
-      policy blanks the activated slot in WheelerBackend
-      (WheelerBackend.cpp:264) so the pushed arrays differ and the early-out
-      misses. Independent of the wildcard work — the assignment was correct
-      throughout — but a wildcard is a low-scored pick the player is more likely
-      to activate, so raising the wildcard rate raises exposure (S)
 - [ ] Intuition menu not hiding when commanded by external mod
 - [ ] New game wheelerAPI integration seems to fail
 
