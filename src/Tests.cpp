@@ -25,6 +25,7 @@
 #include "context/ContextWeightForCandidate.h"
 #include "display/ExplanationLabel.h"
 #include "slot/SlotLocker.h"          // THROWAWAY: RunSlotLockerResetTest (0.19.21)
+#include "slot/SlotSettings.h"         // THROWAWAY: MAX_SLOTS_PER_PAGE for the same
 #include "override/OverrideConditions.h"  // THROWAWAY: OverrideCollection for the same
 
 #include <random>
@@ -5024,41 +5025,57 @@ void RunSlotLockerResetTest()
 
     locker.Reset();  // known-clean start
 
-    constexpr RE::FormID kProbeForm = 0x0BADF00D;
+    // EVERY slot gets a distinct probe, not just slot 0. Arming one slot would
+    // make the all-slots assertion below vacuous: the Reset above already left
+    // slots 1..N clean, so they would pass whatever the Reset under test did —
+    // including a hypothetical m_lockedSlots[0] = LockedSlot{} that walked one
+    // slot. Distinct FormIDs also catch a Reset that copied slot 0 over the rest.
+    constexpr RE::FormID kProbeFormBase = 0x0BADF000;
+    const auto ProbeFormFor = [](size_t i) -> RE::FormID {
+        return kProbeFormBase + static_cast<RE::FormID>(i);
+    };
 
     // Dirty every field. ApplyLocks fills assignment/previousFormID/hadContent
-    // and locks the slot (empty -> non-empty trips lockOnFill);
+    // and locks each slot (empty -> non-empty trips lockOnFill);
     // LockSlotForActivation then sets isActivationLock and rewrites the timers.
-    SlotAssignment probe = SlotAssignment::Empty(0, SlotClassification::Regular);
-    probe.type = AssignmentType::Normal;
-    probe.formID = kProbeForm;
-    probe.name = "ResetLeakProbe";
-
     SlotAssignments assignments;
-    assignments.push_back(probe);
+    for (size_t i = 0; i < MAX_SLOTS_PER_PAGE; ++i) {
+        SlotAssignment probe = SlotAssignment::Empty(i, SlotClassification::Regular);
+        probe.type = AssignmentType::Normal;
+        probe.formID = ProbeFormFor(i);
+        probe.name = "ResetLeakProbe" + std::to_string(i);
+        assignments.push_back(std::move(probe));
+    }
 
     const Override::OverrideCollection noOverrides{};
-    locker.ApplyLocks(assignments, noOverrides);
+    (void)locker.ApplyLocks(assignments, noOverrides);  // [[nodiscard]]: stable list unused here
+
+    // Activation-lock both ends, so isActivationLock is dirty on more than the
+    // first slot and a partial reset cannot hide behind slot 0 alone.
     locker.LockSlotForActivation(0);
+    locker.LockSlotForActivation(MAX_SLOTS_PER_PAGE - 1);
 
     // Arm check: if the setup silently failed to dirty the state, the assertions
     // below would pass against a locker that was never dirty in the first place.
     {
         const auto armed = locker.GetLockSnapshot();
-        if (!armed[0].isLocked || armed[0].previousFormID != kProbeForm || !armed[0].hadContent) {
-            logger::error("TEST FAIL: SlotLocker probe did not arm "
-                          "(isLocked={}, previousFormID={:08X}, hadContent={}) — "
-                          "test proves nothing"sv,
-                armed[0].isLocked, armed[0].previousFormID, armed[0].hadContent);
-            locker.SetConfig(savedConfig);
-            locker.Reset();
-            return;
-        }
-        if (!locker.WasConfirmed(0, kProbeForm)) {
-            logger::error("TEST FAIL: WasConfirmed should be true while armed"sv);
-            locker.SetConfig(savedConfig);
-            locker.Reset();
-            return;
+        for (size_t i = 0; i < armed.size(); ++i) {
+            if (!armed[i].isLocked || armed[i].previousFormID != ProbeFormFor(i) ||
+                !armed[i].hadContent) {
+                logger::error("TEST FAIL: SlotLocker probe did not arm slot {} "
+                              "(isLocked={}, previousFormID={:08X}, hadContent={}) — "
+                              "test proves nothing"sv,
+                    i, armed[i].isLocked, armed[i].previousFormID, armed[i].hadContent);
+                locker.SetConfig(savedConfig);
+                locker.Reset();
+                return;
+            }
+            if (!locker.WasConfirmed(i, ProbeFormFor(i))) {
+                logger::error("TEST FAIL: WasConfirmed should be true for slot {} while armed"sv, i);
+                locker.SetConfig(savedConfig);
+                locker.Reset();
+                return;
+            }
         }
     }
 
@@ -5069,34 +5086,25 @@ void RunSlotLockerResetTest()
     bool passed = true;
     const auto after = locker.GetLockSnapshot();
 
-    if (after[0].previousFormID != 0) {
-        logger::error("TEST FAIL: Reset left previousFormID = {:08X}, expected 0"sv,
-            after[0].previousFormID);
-        passed = false;
-    }
-    if (after[0].hadContent) {
-        logger::error("TEST FAIL: Reset left hadContent = true, expected false"sv);
-        passed = false;
-    }
-    if (after[0].isLocked) {
-        logger::error("TEST FAIL: Reset left isLocked = true, expected false"sv);
-        passed = false;
-    }
-    // Contract-level restatement of the same leak: a stale previousFormID is
-    // exactly what would make a survived Reset report a phantom confirmation.
-    if (locker.WasConfirmed(0, kProbeForm)) {
-        logger::error("TEST FAIL: WasConfirmed still true for {:08X} after Reset "
-                      "— previousFormID/hadContent leaked"sv, kProbeForm);
-        passed = false;
-    }
-
-    // Every other slot must be clean too — Reset is all-slots, and a loop that
-    // walked only slot 0 would pass everything above.
-    for (size_t i = 1; i < after.size(); ++i) {
-        if (after[i].isLocked || after[i].previousFormID != 0 || after[i].hadContent) {
-            logger::error("TEST FAIL: Reset left slot {} dirty "
-                          "(isLocked={}, previousFormID={:08X}, hadContent={})"sv,
-                i, after[i].isLocked, after[i].previousFormID, after[i].hadContent);
+    for (size_t i = 0; i < after.size(); ++i) {
+        if (after[i].previousFormID != 0) {
+            logger::error("TEST FAIL: Reset left slot {} previousFormID = {:08X}, expected 0"sv,
+                i, after[i].previousFormID);
+            passed = false;
+        }
+        if (after[i].hadContent) {
+            logger::error("TEST FAIL: Reset left slot {} hadContent = true, expected false"sv, i);
+            passed = false;
+        }
+        if (after[i].isLocked) {
+            logger::error("TEST FAIL: Reset left slot {} isLocked = true, expected false"sv, i);
+            passed = false;
+        }
+        // Contract-level restatement of the same leak: a stale previousFormID is
+        // exactly what would make a survived Reset report a phantom confirmation.
+        if (locker.WasConfirmed(i, ProbeFormFor(i))) {
+            logger::error("TEST FAIL: WasConfirmed still true for slot {} ({:08X}) after Reset "
+                          "— previousFormID/hadContent leaked"sv, i, ProbeFormFor(i));
             passed = false;
         }
     }

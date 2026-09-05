@@ -299,12 +299,22 @@ namespace Huginn::Slot
         std::lock_guard<std::mutex> lock(m_mutex);
 
         // Whole-struct reset, deliberately. Clearing fields one by one leaked
-        // isActivationLock, previousFormID and hadContent across a save load:
-        // a stale previousFormID made the next tick flash Confirmed for an item
-        // the player never activated, and a stale isActivationLock made
-        // OnItemUsed(..., respectActivationLock = true) refuse to break a lock
-        // that was never an activation lock. Assigning a default-constructed
-        // LockedSlot means a field added later cannot reintroduce the same bug.
+        // isActivationLock, previousFormID and hadContent across a save load.
+        //
+        // That leak was LATENT, not a bug anyone could observe. OnItemUsed
+        // guards on slot.isLocked && before it consults isActivationLock (:284),
+        // and every path that re-sets isLocked writes the flag anyway (:117,
+        // :157, :174); previousFormID/hadContent have one reader outside this
+        // class (SlotUtils.h ComputeVisualStates), and PipelineCoordinator runs
+        // ApplyLocks three lines upstream of it, which rewrites both for every
+        // slot. Do not re-file this as a Confirmed-flash or stuck-lock defect
+        // without re-checking those consumers first.
+        //
+        // Fixed regardless, because both safeties are arrangement rather than
+        // construction: the "isActivationLock is only meaningful while isLocked"
+        // invariant is unenforced, and previousFormID is safe only while every
+        // reader sits downstream of ApplyLocks. Assigning a default-constructed
+        // LockedSlot means a field added later cannot reintroduce the omission.
         for (auto& slot : m_lockedSlots) {
             slot = LockedSlot{};
         }

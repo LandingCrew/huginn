@@ -435,7 +435,7 @@ re-litigated. Section headings mirror the roadmap's.
       it ever consults `isActivationLock` (`SlotLocker.cpp:281-284`), and
       `Reset()` leaves `isLocked` false. Every path that sets `isLocked = true`
       again writes `isActivationLock` explicitly: `ApplyLocks`' `ShouldLock`
-      branch (`:119`), `LockSlot` (`:157`), `LockSlotForActivation` (`:174`).
+      branch (`:117`), `LockSlot` (`:157`), `LockSlotForActivation` (`:174`).
       No state exists where `isLocked` is true and `isActivationLock` is stale,
       so the `respectActivationLock` guard cannot be wrongly satisfied.
       **`previousFormID`/`hadContent`** — the only consumer outside the class is
@@ -443,8 +443,11 @@ re-litigated. Section headings mirror the roadmap's.
       filing cited, has NO callers at all. `PipelineCoordinator` runs
       `ApplyLocks` at `:427` and `ComputeVisualStates` at `:430`, and
       `ApplyLocks` rewrites both fields for every slot on both of its branches
-      (`:128-129` locked, `:125-126` fall-through). Stale values never survive
-      to a read, so no spurious `Confirmed` flash is possible.
+      (`:101-102` in the kept-lock branch, `:128-129` on the common path). Stale
+      values never survive to a read, so no spurious `Confirmed` flash is
+      possible. (Line numbers are post-fix; a first pass at this entry had the
+      two branches inverted, which matters because the entry's whole point is
+      that following the citations is what proves the claim.)
       Fixed anyway, because both safeties are arrangement rather than
       construction: the "`isActivationLock` is only meaningful while `isLocked`"
       invariant is implicit and unenforced, and `previousFormID` is safe only
