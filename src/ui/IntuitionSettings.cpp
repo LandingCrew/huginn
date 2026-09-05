@@ -85,8 +85,9 @@ namespace Huginn::UI
             break;
         }
 
-        logger::info("[IntuitionSettings] Enabled: {}, Position: ({}%, {}%), Alpha: {}, Scale: {}%, ChildAlpha: {}, ReadOnly: {}, DisplayMode: {}, RefreshEffect: {} ({}%), SlotEffect: {}",
+        logger::info("[IntuitionSettings] Enabled: {}, Position: ({}%, {}%), Alpha: {}, Scale: {}%, ChildAlpha: {}, ReadOnly: {}, HideWhileWheelOpen: {}, DisplayMode: {}, RefreshEffect: {} ({}%), SlotEffect: {}",
             enabled, positionX, positionY, alpha, scale, childAlpha, readOnly,
+            HideWhileWheelOpen(),
             displayMode == DisplayMode::Verbose ? "verbose" : displayMode == DisplayMode::Normal ? "normal" : "minimal",
             refreshEffect == RefreshEffect::Pulse ? "pulse" : refreshEffect == RefreshEffect::None ? "none" : "tint",
             refreshStrength,

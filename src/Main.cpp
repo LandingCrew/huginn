@@ -535,6 +535,10 @@ static void OnDataLoaded()
             // happened before the setting was toggled would otherwise be
             // stranded off-screen with no way back.
             if (!visible && !UI::IntuitionSettings::GetSingleton().HideWhileWheelOpen()) {
+                // Logged here because this is the only place that knows the hide
+                // was declined: WheelerClient reads no settings, so its line can
+                // only ever say it asked.
+                logger::debug("Wheel-open hide declined (bHideWhileWheelOpen=false)"sv);
                 return;
             }
             // SetVisible defers to the UI thread via AddUITask, so this is safe

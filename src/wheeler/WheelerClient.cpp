@@ -293,11 +293,18 @@ namespace Huginn::Wheeler
             m_itemActivatedWhileOpen = false;  // Reset activation tracking
             spdlog::debug("[WheelerClient] Fresh open: reset m_itemActivatedWhileOpen=false");
 
-            // Observer notification: hide IntuitionMenu when Wheeler opens
-            // (the provider defers to the UI thread via AddUITask — safe from
-            // the callback thread)
+            // Observer notification: ask for the widget to be hidden while the
+            // wheel is up (the provider defers to the UI thread via AddUITask —
+            // safe from the callback thread).
+            //
+            // A request, not an outcome, and the log says so. bHideWhileWheelOpen
+            // is read on the provider side — this class deliberately knows
+            // nothing about UI — so the hide can be declined without this ever
+            // hearing about it. The old line claimed the widget had been
+            // notified, which read as a hide that did not happen. The provider
+            // logs the decline.
             m_env.setWidgetVisible(false);
-            spdlog::debug("[WheelerClient] Notified IntuitionMenu: SetVisible(false)");
+            spdlog::debug("[WheelerClient] Requested widget hide for wheel open");
         } else {
             spdlog::debug("[WheelerClient] Scroll to wheel {} (not a fresh open)", wheelIndex);
         }
