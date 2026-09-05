@@ -24,6 +24,8 @@
 #include "context/ReasonHold.h"
 #include "context/ContextWeightForCandidate.h"
 #include "display/ExplanationLabel.h"
+#include "slot/SlotLocker.h"          // THROWAWAY: RunSlotLockerResetTest (0.19.21)
+#include "override/OverrideConditions.h"  // THROWAWAY: OverrideCollection for the same
 
 #include <random>
 #include <algorithm>
@@ -4976,6 +4978,137 @@ void RunRegressionTests()
 // Tests FeatureQLearner ExportData/ImportData round-trip without requiring
 // actual SKSE cosave infrastructure. FormID resolution is verified via manual testing.
 // =============================================================================
+
+// =============================================================================
+// THROWAWAY: SlotLocker::Reset() field-completeness backstop (0.19.21)
+// =============================================================================
+// Delete this whole block, its Tests.h declaration, and its Main.cpp call site
+// together — it exists only to pin one fix and has no long-term home here.
+//
+// The fix: Reset() cleared 4 of LockedSlot's 7 fields, leaving isActivationLock,
+// previousFormID and hadContent standing. That leak is LATENT in the shipped
+// pipeline (ApplyLocks rewrites previousFormID/hadContent three lines before the
+// only reader, and OnItemUsed's isLocked guard makes isActivationLock
+// unreachable), so nothing in-game can observe it. This test can, because it
+// reads the locker directly instead of through the pipeline that hides it.
+//
+// LIMITATION, and it is the same fact the fix rests on: isActivationLock has no
+// public reader — not a getter, not GetLockSnapshot. So this test CANNOT assert
+// it was cleared. It asserts the two observable leaked fields and trusts the
+// whole-struct reset to carry the third. Exposing the flag just to test it would
+// widen the API to prove a property the assignment already guarantees.
+//
+// SECOND LIMITATION: this drives the LIVE singleton, so a pipeline tick landing
+// between the Reset and the assertions would repopulate previousFormID and read
+// as a spurious failure. It should not happen — this runs at kPostLoadGame with
+// the loading menu still up, which gates the update loop — but if this test ever
+// fails intermittently and only under load, suspect interleaving before the fix.
+// The arm check below covers the mirror case (a tick dirtying the probe before
+// Reset), and reports "test proves nothing" rather than passing vacuously.
+void RunSlotLockerResetTest()
+{
+#ifndef NDEBUG
+    using namespace Huginn::Slot;
+
+    logger::info("Running SlotLocker::Reset field-completeness test..."sv);
+
+    auto& locker = SlotLocker::GetSingleton();
+
+    // This runs on a loaded game with the pipeline already ticking, so save and
+    // restore anything mutated and leave the locker Reset — which is exactly the
+    // state the load path expects anyway.
+    const SlotLockConfig savedConfig = locker.GetConfig();
+    SlotLockConfig cfg = savedConfig;
+    cfg.lockDurationMs = 5000.0f;  // non-zero so ShouldLock can fire
+    locker.SetConfig(cfg);
+
+    locker.Reset();  // known-clean start
+
+    constexpr RE::FormID kProbeForm = 0x0BADF00D;
+
+    // Dirty every field. ApplyLocks fills assignment/previousFormID/hadContent
+    // and locks the slot (empty -> non-empty trips lockOnFill);
+    // LockSlotForActivation then sets isActivationLock and rewrites the timers.
+    SlotAssignment probe = SlotAssignment::Empty(0, SlotClassification::Regular);
+    probe.type = AssignmentType::Normal;
+    probe.formID = kProbeForm;
+    probe.name = "ResetLeakProbe";
+
+    SlotAssignments assignments;
+    assignments.push_back(probe);
+
+    const Override::OverrideCollection noOverrides{};
+    locker.ApplyLocks(assignments, noOverrides);
+    locker.LockSlotForActivation(0);
+
+    // Arm check: if the setup silently failed to dirty the state, the assertions
+    // below would pass against a locker that was never dirty in the first place.
+    {
+        const auto armed = locker.GetLockSnapshot();
+        if (!armed[0].isLocked || armed[0].previousFormID != kProbeForm || !armed[0].hadContent) {
+            logger::error("TEST FAIL: SlotLocker probe did not arm "
+                          "(isLocked={}, previousFormID={:08X}, hadContent={}) — "
+                          "test proves nothing"sv,
+                armed[0].isLocked, armed[0].previousFormID, armed[0].hadContent);
+            locker.SetConfig(savedConfig);
+            locker.Reset();
+            return;
+        }
+        if (!locker.WasConfirmed(0, kProbeForm)) {
+            logger::error("TEST FAIL: WasConfirmed should be true while armed"sv);
+            locker.SetConfig(savedConfig);
+            locker.Reset();
+            return;
+        }
+    }
+
+    locker.Reset();
+
+    // The assertions. previousFormID and hadContent are the two leaked fields a
+    // caller can actually see; before the fix both survived this Reset.
+    bool passed = true;
+    const auto after = locker.GetLockSnapshot();
+
+    if (after[0].previousFormID != 0) {
+        logger::error("TEST FAIL: Reset left previousFormID = {:08X}, expected 0"sv,
+            after[0].previousFormID);
+        passed = false;
+    }
+    if (after[0].hadContent) {
+        logger::error("TEST FAIL: Reset left hadContent = true, expected false"sv);
+        passed = false;
+    }
+    if (after[0].isLocked) {
+        logger::error("TEST FAIL: Reset left isLocked = true, expected false"sv);
+        passed = false;
+    }
+    // Contract-level restatement of the same leak: a stale previousFormID is
+    // exactly what would make a survived Reset report a phantom confirmation.
+    if (locker.WasConfirmed(0, kProbeForm)) {
+        logger::error("TEST FAIL: WasConfirmed still true for {:08X} after Reset "
+                      "— previousFormID/hadContent leaked"sv, kProbeForm);
+        passed = false;
+    }
+
+    // Every other slot must be clean too — Reset is all-slots, and a loop that
+    // walked only slot 0 would pass everything above.
+    for (size_t i = 1; i < after.size(); ++i) {
+        if (after[i].isLocked || after[i].previousFormID != 0 || after[i].hadContent) {
+            logger::error("TEST FAIL: Reset left slot {} dirty "
+                          "(isLocked={}, previousFormID={:08X}, hadContent={})"sv,
+                i, after[i].isLocked, after[i].previousFormID, after[i].hadContent);
+            passed = false;
+        }
+    }
+
+    locker.SetConfig(savedConfig);
+    locker.Reset();  // leave the live singleton as the load path expects
+
+    if (passed) {
+        logger::info("  SlotLocker::Reset test PASSED (all observable fields cleared)"sv);
+    }
+#endif
+}
 
 void RunCosaveTests()
 {

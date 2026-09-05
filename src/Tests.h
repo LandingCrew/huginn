@@ -15,6 +15,10 @@ void RunStateFeaturesTests();
 void RunFeatureQLearnerTests();
 void RunUnitTests();
 
+// THROWAWAY (0.19.21): backstops SlotLocker::Reset() clearing every LockedSlot
+// field. Delete with its Tests.cpp body and Main.cpp call site.
+void RunSlotLockerResetTest();
+
 // =============================================================================
 // CONSOLE COMMANDS - Manual testing via Skyrim console (debug mode only)
 // =============================================================================
