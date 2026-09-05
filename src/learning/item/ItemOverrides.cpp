@@ -14,31 +14,74 @@ namespace Huginn::Item
 
       logger::info("Loading item overrides from: {}"sv, iniPath.string());
 
+      // Clear previously-loaded overrides so a re-load is idempotent rather than
+      // accumulating stale entries — SpellOverrides has always done this, and
+      // ItemOverrides now re-loads too (ItemRegistry::RebuildRegistry).
+      m_nameOverrides.clear();
+      m_formIDOverrides.clear();
+
       // Iterate through all sections (each section is an item name or FormID)
       CSimpleIniA::TNamesDepend sections;
       ini.GetAllSections(sections);
 
+      size_t sharedSections = 0;  // unprefixed, so also parsed as spell overrides
+
       for (const auto& section : sections) {
-      std::string sectionName = section.pItem;
+      const std::string rawSection = section.pItem;
 
       // Skip comments and empty sections
-      if (sectionName.empty() || sectionName[0] == ';' || sectionName[0] == '#') {
+      if (rawSection.empty() || rawSection[0] == ';' || rawSection[0] == '#') {
+        continue;
+      }
+
+      // This file is shared with SpellOverrides. Skip anything explicitly
+      // namespaced for the spell domain, and keep the bare name for the rest.
+      const auto match = MatchOverrideSection(rawSection, OverrideDomain::Item);
+      if (!match.belongs) {
+        continue;
+      }
+      if (!match.prefixed) {
+        ++sharedSections;
+      }
+      const std::string& sectionName = match.name;
+      if (sectionName.empty()) {
         continue;
       }
 
       ItemOverride override;
       override.name = sectionName;
 
-      // Read type
-      const char* typeStr = ini.GetValue(sectionName.c_str(), "type", nullptr);
+      // Read type. Keys are read from the RAW section name — the prefix is part
+      // of the INI's section header, only the stored key drops it.
+      const char* typeStr = ini.GetValue(rawSection.c_str(), "type", nullptr);
       if (typeStr) {
         override.type = ParseItemType(typeStr);
       }
 
-      // Read tags
-      const char* tagsStr = ini.GetValue(sectionName.c_str(), "tags", nullptr);
+      // Read tags. Engage the optional ONLY if something actually parsed:
+      // an unrecognised list (or one written in the spell vocabulary) yields
+      // ItemTag::None, and an ENGAGED None would beat auto-detection in
+      // ItemClassifier's value_or and silently blank the item's tags.
+      const char* tagsStr = ini.GetValue(rawSection.c_str(), "tags", nullptr);
       if (tagsStr) {
-        override.tags = ParseItemTags(tagsStr);
+        const ItemTag parsed = ParseItemTags(tagsStr);
+        if (parsed != ItemTag::None) {
+           override.tags = parsed;
+        } else {
+           logger::warn("[ItemOverrides] '{}': no recognised item tags in '{}' — "
+                        "keeping auto-detection"sv, sectionName, tagsStr);
+        }
+      }
+
+      // A section that produced neither a type nor tags contributes nothing.
+      // Storing it is harmless today (the classifier tests each field) but it
+      // inflates the counts and hides typos, so drop it and say so.
+      if (!override.type && !override.tags) {
+        if (typeStr || tagsStr) {
+           logger::debug("[ItemOverrides] '{}': nothing usable for the item domain, skipped"sv,
+              sectionName);
+        }
+        continue;
       }
 
       // Determine if this is a FormID or item name
@@ -62,6 +105,12 @@ namespace Huginn::Item
 
       logger::info("Loaded {} item overrides ({} by name, {} by FormID)"sv,
       GetOverrideCount(), m_nameOverrides.size(), m_formIDOverrides.size());
+
+      if (sharedSections > 0) {
+      logger::info("[ItemOverrides] {} unprefixed section(s) are also offered to "
+                   "SpellOverrides — prefix with 'Spell:' or 'Item:' to disambiguate"sv,
+         sharedSections);
+      }
 
       return true;
    }

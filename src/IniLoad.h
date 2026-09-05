@@ -1,7 +1,9 @@
 #pragma once
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
+#include <string>
 #include <filesystem>
 #include <string_view>
 #include <SimpleIni.h>
@@ -29,6 +31,77 @@ enum class IniMissing { Info, Warn };
 /// @return true if the file was found and parsed; false (caller keeps defaults) otherwise.
 [[nodiscard]] bool LoadIniFile(CSimpleIniA& out, const std::filesystem::path& path,
                                std::string_view tag, IniMissing missing = IniMissing::Info);
+
+// =============================================================================
+// Override-file section namespacing
+// =============================================================================
+// Huginn_Overrides.ini is shared by SpellOverrides and ItemOverrides, and both
+// used to walk EVERY section. A section written for one domain therefore also
+// registered in the other: its `type` and `tags` were parsed against the wrong
+// vocabulary, and because several token names exist in both (RestoreHealth,
+// Fear, Frenzy, Invisibility, and `type = buff`), a section could silently
+// apply to a spell and a potion sharing a display name.
+//
+// Sections may now be namespaced -- `[Spell:Fireball]`, `[Item:Potion of
+// Healing]` -- and a prefixed section is visible ONLY to its own domain. An
+// unprefixed section stays visible to both, so existing files keep working;
+// each loader reports how many it saw so the ambiguity is greppable.
+
+enum class OverrideDomain { Spell, Item };
+
+struct OverrideSectionMatch
+{
+   bool belongs = false;   ///< Does this section apply to the domain asked about?
+   bool prefixed = false;  ///< Was it explicitly namespaced (vs. legacy shared)?
+   std::string name;       ///< Section name with any prefix stripped and trimmed.
+};
+
+/// @brief Decide whether an override section belongs to `domain`, and strip its prefix.
+/// @details Prefix match is case-insensitive and tolerates spaces around the colon.
+/// A section carrying the OTHER domain's prefix returns `belongs = false`.
+[[nodiscard]] inline OverrideSectionMatch MatchOverrideSection(
+   std::string_view section, OverrideDomain domain)
+{
+   const auto trim = [](std::string_view v) {
+      const auto first = v.find_first_not_of(" 	");
+      if (first == std::string_view::npos) return std::string_view{};
+      const auto last = v.find_last_not_of(" 	");
+      return v.substr(first, last - first + 1);
+   };
+
+   const auto startsWithCI = [](std::string_view hay, std::string_view needle) {
+      if (hay.size() < needle.size()) return false;
+      for (size_t i = 0; i < needle.size(); ++i) {
+         const auto a = static_cast<unsigned char>(hay[i]);
+         const auto b = static_cast<unsigned char>(needle[i]);
+         if (std::tolower(a) != std::tolower(b)) return false;
+      }
+      return true;
+   };
+
+   const std::string_view trimmed = trim(section);
+
+   struct { std::string_view prefix; OverrideDomain domain; } kPrefixes[] = {
+      { "Spell:"sv, OverrideDomain::Spell },
+      { "Item:"sv,  OverrideDomain::Item  },
+   };
+
+   for (const auto& p : kPrefixes) {
+      if (!startsWithCI(trimmed, p.prefix)) {
+         continue;
+      }
+      const std::string_view bare = trim(trimmed.substr(p.prefix.size()));
+      // A prefix with nothing after it names no item; treat it as not ours so
+      // it cannot register an empty-named override in either domain.
+      if (bare.empty()) {
+         return { false, true, {} };
+      }
+      return { p.domain == domain, true, std::string(bare) };
+   }
+
+   // Unprefixed: legacy shared section, visible to both domains.
+   return { true, false, std::string(trimmed) };
+}
 
 /// @brief Read a float INI value and clamp it to [lo, hi].
 /// @details Warns (prefixed with `tag`) when the raw value was outside the range,

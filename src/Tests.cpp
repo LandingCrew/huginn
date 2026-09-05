@@ -24,6 +24,7 @@
 #include "context/ReasonHold.h"
 #include "context/ContextWeightForCandidate.h"
 #include "display/ExplanationLabel.h"
+#include "IniLoad.h"                   // MatchOverrideSection (override namespacing tests)
 #include "slot/SlotLocker.h"          // THROWAWAY: RunSlotLockerResetTest (0.19.21)
 #include "slot/SlotSettings.h"         // THROWAWAY: MAX_SLOTS_PER_PAGE for the same
 #include "override/OverrideConditions.h"  // THROWAWAY: OverrideCollection for the same
@@ -4979,6 +4980,76 @@ void RunRegressionTests()
 // Tests FeatureQLearner ExportData/ImportData round-trip without requiring
 // actual SKSE cosave infrastructure. FormID resolution is verified via manual testing.
 // =============================================================================
+
+// =============================================================================
+// OVERRIDE SECTION NAMESPACING (0.19.22)
+// =============================================================================
+// Huginn_Overrides.ini is shared by SpellOverrides and ItemOverrides. Sections
+// may be namespaced [Spell:X] / [Item:X] so each is visible to exactly one
+// loader; unprefixed sections stay visible to both for backward compatibility.
+// MatchOverrideSection is the single place that decides, so it is worth pinning
+// directly — the alternative is inferring prefix handling from classifier
+// output two layers up.
+void RunOverrideNamespaceTests()
+{
+#ifndef NDEBUG
+    logger::info("Running override-section namespacing tests..."sv);
+
+    int failures = 0;
+    const auto check = [&](std::string_view section, OverrideDomain domain,
+                           bool wantBelongs, bool wantPrefixed, std::string_view wantName,
+                           std::string_view what) {
+        const auto m = MatchOverrideSection(section, domain);
+        if (m.belongs != wantBelongs || m.prefixed != wantPrefixed || m.name != wantName) {
+            logger::error("TEST FAIL: [{}] {} — got (belongs={}, prefixed={}, name='{}'), "
+                          "expected ({}, {}, '{}')"sv,
+                section, what, m.belongs, m.prefixed, m.name,
+                wantBelongs, wantPrefixed, wantName);
+            ++failures;
+        }
+    };
+
+    // Prefixed sections are visible to their own domain only. This is the whole
+    // point of the change: before it, both of these registered in both loaders.
+    check("Spell:Fireball", OverrideDomain::Spell, true, true, "Fireball", "spell sees own prefix");
+    check("Spell:Fireball", OverrideDomain::Item, false, true, "Fireball", "item ignores spell prefix");
+    check("Item:Potion of Healing", OverrideDomain::Item, true, true, "Potion of Healing", "item sees own prefix");
+    check("Item:Potion of Healing", OverrideDomain::Spell, false, true, "Potion of Healing", "spell ignores item prefix");
+
+    // Unprefixed: legacy shared behaviour, visible to both, reported as such.
+    check("Healing", OverrideDomain::Spell, true, false, "Healing", "legacy shared (spell)");
+    check("Healing", OverrideDomain::Item, true, false, "Healing", "legacy shared (item)");
+
+    // Case-insensitive, and tolerant of spaces around the colon — an INI a human
+    // typed should not fail silently over capitalisation.
+    check("spell:Fireball", OverrideDomain::Spell, true, true, "Fireball", "lowercase prefix");
+    check("SPELL:Fireball", OverrideDomain::Spell, true, true, "Fireball", "uppercase prefix");
+    check("Spell: Fireball", OverrideDomain::Spell, true, true, "Fireball", "space after colon");
+    check("  Item:Foo  ", OverrideDomain::Item, true, true, "Foo", "outer whitespace trimmed");
+
+    // A prefix with no name behind it must register in NEITHER domain — storing
+    // it would create an empty-named override that matches every unnamed form.
+    check("Spell:", OverrideDomain::Spell, false, true, "", "bare prefix, own domain");
+    check("Spell:", OverrideDomain::Item, false, true, "", "bare prefix, other domain");
+    check("Item:   ", OverrideDomain::Item, false, true, "", "prefix + whitespace only");
+
+    // FormID sections survive prefixing: the 8-char hex test downstream runs on
+    // the STRIPPED name, so [Item:00012FCD] must yield exactly "00012FCD".
+    check("Item:00012FCD", OverrideDomain::Item, true, true, "00012FCD", "prefixed FormID");
+    check("00012FCD", OverrideDomain::Spell, true, false, "00012FCD", "unprefixed FormID");
+
+    // A name that merely CONTAINS a colon is not a prefix — a modded item called
+    // "Potion: Extra Strong" must stay an ordinary unprefixed section.
+    check("Potion: Extra Strong", OverrideDomain::Item, true, false, "Potion: Extra Strong",
+        "colon in name is not a prefix");
+
+    if (failures == 0) {
+        logger::info("  TEST PASS: override namespacing (17 cases)"sv);
+    } else {
+        logger::error("TEST FAIL: {} override-namespacing case(s) failed"sv, failures);
+    }
+#endif
+}
 
 // =============================================================================
 // THROWAWAY: SlotLocker::Reset() field-completeness backstop (0.19.21)
