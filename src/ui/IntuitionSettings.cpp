@@ -102,6 +102,7 @@ namespace Huginn::UI
         scale        = IntuitionDefaults::SCALE;
         childAlpha     = IntuitionDefaults::CHILD_ALPHA;
         readOnly       = IntuitionDefaults::READ_ONLY;
+        hideWhileWheelOpen = IntuitionDefaults::HIDE_WHILE_WHEEL_OPEN;
         displayMode    = DisplayMode::Minimal;
         refreshEffect  = RefreshEffect::Tint;
         refreshStrength = IntuitionDefaults::REFRESH_STRENGTH;

@@ -149,7 +149,13 @@ namespace Huginn::UI
         /// Same reasoning as IsReadOnly: not on IntuitionConfig. It changes WHEN
         /// the widget is shown, not how it renders, so it never flows through
         /// ReapplySettings — the two visibility gates read it directly.
-        [[nodiscard]] bool  HideWhileWheelOpen() const noexcept { return hideWhileWheelOpen; }
+        /// Read from Wheeler's callback thread (Main.cpp's setWidgetVisible),
+        /// written from the update thread by LoadFromIni on hg reload / dMenu
+        /// apply — hence atomic, unlike readOnly which is main-thread only.
+        [[nodiscard]] bool  HideWhileWheelOpen() const noexcept
+        {
+            return hideWhileWheelOpen.load(std::memory_order_acquire);
+        }
         [[nodiscard]] DisplayMode GetDisplayMode() const noexcept { return displayMode; }
         [[nodiscard]] RefreshEffect GetRefreshEffect() const noexcept { return refreshEffect; }
         [[nodiscard]] float GetRefreshStrength() const noexcept { return refreshStrength; }
@@ -168,7 +174,7 @@ namespace Huginn::UI
         float scale        = IntuitionDefaults::SCALE;
         float childAlpha   = IntuitionDefaults::CHILD_ALPHA;
         bool  readOnly     = IntuitionDefaults::READ_ONLY;
-        bool  hideWhileWheelOpen = IntuitionDefaults::HIDE_WHILE_WHEEL_OPEN;
+        std::atomic<bool> hideWhileWheelOpen{IntuitionDefaults::HIDE_WHILE_WHEEL_OPEN};
         DisplayMode displayMode = DisplayMode::Minimal;
         RefreshEffect refreshEffect = RefreshEffect::Tint;
         float refreshStrength = IntuitionDefaults::REFRESH_STRENGTH;
