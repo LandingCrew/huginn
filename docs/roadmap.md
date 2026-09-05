@@ -4,8 +4,6 @@ Open work only. Completed items live in [roadmap-archive.md](roadmap-archive.md)
 rejected, so check there before re-opening something.
 
 ## Known Bugs
-- [ ] Intuition menu not hiding when commanded by external mod
-- [ ] New game wheelerAPI integration seems to fail
 
 ## Known Mod Compatability Issues
 - [ ] Vanilla-build integration pass — a set of contexts is only ever exercised
