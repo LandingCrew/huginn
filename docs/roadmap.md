@@ -60,13 +60,6 @@ would notice.
       calls `SlotAllocator::Initialize()`, which assigns `m_currentPage = 0`
       (`SlotAllocator.cpp:51`). A player on page 3 who reloads settings is moved
       with no notice and no log line. May be intended; nothing says so (XS)
-- [ ] **`SlotLocker::Reset()` leaks state across a save load**
-      (`SlotLocker.cpp:~298`). It clears `isLocked`, `remainingMs`,
-      `totalDurationMs` and `assignment` but NOT `isActivationLock`,
-      `previousFormID` or `hadContent`. A slot can carry a stale `previousFormID`
-      (spurious `Confirmed` flash) and a stale `isActivationLock = true`, which
-      makes the next `OnItemUsed(..., respectActivationLock=true)` decline to
-      break a lock that was never an activation lock (S)
 - [ ] **Two override files, one INI, no namespacing.** `SpellOverrides` and
       `ItemOverrides` both parse `Huginn_Overrides.ini` walking every section, so
       an item override section also registers as a spell override — unrecognised
