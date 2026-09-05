@@ -403,6 +403,7 @@ static void InitializeGameSystems(bool isNewGame)
         RunCosaveTests();                 // FeatureQLearner serialization round-trip
         RunStateFeaturesTests();          // Phase 3.5a: StateFeatures extraction tests
         RunFeatureQLearnerTests();        // Phase 3.5b: Feature-based Q-learner tests
+        RunOverrideNamespaceTests();      // Huginn_Overrides.ini section namespacing
         RunSlotLockerResetTest();         // THROWAWAY (0.19.21): Reset() field completeness
         logger::info("Debug build ready. Console command functions available for hotkey integration"sv);
     }

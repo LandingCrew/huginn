@@ -466,6 +466,41 @@ re-litigated. Section headings mirror the roadmap's.
       turned out to be dead, and the one live reader sits three lines downstream
       of the code that overwrites what it reads. Check reachability before
       believing a filed symptom, and before promising an in-game test for one
+- [x] **Two override files, one INI, no namespacing.** **Fixed 0.19.22.**
+      `SpellOverrides` and `ItemOverrides` both walked every section of
+      `Huginn_Overrides.ini`, so a section written for one domain registered in
+      the other too. The vocabularies genuinely overlap — `RestoreHealth`,
+      `RestoreMagicka`, `RestoreStamina`, `Fear`, `Frenzy`, `Invisibility` and
+      `type = buff` all parse in both — so a spell and a potion sharing a display
+      name shared one entry.
+      **The engaged-`optional` was what made it destructive**, and it is the part
+      worth remembering: `override.tags = ParseSpellTags(str)` engaged the
+      optional even when NOTHING parsed, yielding an engaged `SpellTag::None`.
+      `SpellClassifier` then does `override->tags.value_or(auto-detect)`, and an
+      engaged None beats the fallback — so a potion section silently BLANKED a
+      same-named spell's auto-detected tags. `ItemClassifier` has the identical
+      shape at `:37`. Cross-registration alone would have been noisy;
+      cross-registration plus this was data loss.
+      Four changes: (1) `MatchOverrideSection` in `IniLoad.h` adds
+      `[Spell:X]` / `[Item:X]` prefixes, case-insensitive and tolerant of spaces,
+      with a prefixed section visible to one domain only; unprefixed sections stay
+      shared for backward compatibility and each loader logs how many it saw.
+      (2) Both parsers now engage `tags` only if at least one token parsed,
+      warning otherwise — this alone defuses most unprefixed collisions, since a
+      cross-domain section becomes a no-op override rather than a blanking one.
+      (3) `ItemRegistry` retains `m_overridesPath` and re-loads in
+      `RebuildRegistry()`, matching `SpellRegistry` — item overrides previously
+      needed a game restart. `ItemOverrides::LoadFromFile` also now clears its
+      maps first, which it never did: latent while it loaded once, a leak the
+      moment it re-loaded. (4) The shipped template documents the spell
+      vocabulary, the prefixes, and which commands reload the file.
+      **Deliberate non-change:** unprefixed sections stay shared rather than
+      being assigned to items. Routing them to items would silently break
+      undocumented-but-working spell overrides; keeping them shared with the
+      engaged-`optional` fixed makes the overlap harmless and lets people opt in.
+      Note `hg reload` still does not reload classifications — it reloads INI
+      settings. `hg rebuild` / `hg reset all` are the commands for this file,
+      and the template now says so
 ## Known Recommendation Issues
 - [x] `lookingAtOre` did not surface a pickaxe even with one in inventory.
       **NOT A BUG — closed 2026-08-29 without a fix, deliberately.** Mining does

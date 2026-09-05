@@ -23,27 +23,64 @@ namespace Huginn::Spell
       CSimpleIniA::TNamesDepend sections;
       ini.GetAllSections(sections);
 
+      size_t sharedSections = 0;  // unprefixed, so also parsed as item overrides
+
       for (const auto& section : sections) {
-      std::string sectionName = section.pItem;
+      const std::string rawSection = section.pItem;
 
       // Skip comments and empty sections
-      if (sectionName.empty() || sectionName[0] == ';' || sectionName[0] == '#') {
+      if (rawSection.empty() || rawSection[0] == ';' || rawSection[0] == '#') {
+        continue;
+      }
+
+      // This file is shared with ItemOverrides. Skip anything explicitly
+      // namespaced for the item domain, and keep the bare name for the rest.
+      const auto match = MatchOverrideSection(rawSection, OverrideDomain::Spell);
+      if (!match.belongs) {
+        continue;
+      }
+      if (!match.prefixed) {
+        ++sharedSections;
+      }
+      const std::string& sectionName = match.name;
+      if (sectionName.empty()) {
         continue;
       }
 
       SpellOverride override;
       override.name = sectionName;
 
-      // Read type
-      const char* typeStr = ini.GetValue(sectionName.c_str(), "type", nullptr);
+      // Read type. Keys are read from the RAW section name — the prefix is part
+      // of the INI's section header, only the stored key drops it.
+      const char* typeStr = ini.GetValue(rawSection.c_str(), "type", nullptr);
       if (typeStr) {
         override.type = ParseSpellType(typeStr);
       }
 
-      // Read tags
-      const char* tagsStr = ini.GetValue(sectionName.c_str(), "tags", nullptr);
+      // Read tags. Engage the optional ONLY if something actually parsed:
+      // an unrecognised list (or one written in the item vocabulary) yields
+      // SpellTag::None, and an ENGAGED None would beat auto-detection in
+      // SpellClassifier's value_or and silently blank the spell's tags.
+      const char* tagsStr = ini.GetValue(rawSection.c_str(), "tags", nullptr);
       if (tagsStr) {
-        override.tags = ParseSpellTags(tagsStr);
+        const SpellTag parsed = ParseSpellTags(tagsStr);
+        if (parsed != SpellTag::None) {
+           override.tags = parsed;
+        } else {
+           logger::warn("[SpellOverrides] '{}': no recognised spell tags in '{}' — "
+                        "keeping auto-detection"sv, sectionName, tagsStr);
+        }
+      }
+
+      // A section that produced neither a type nor tags contributes nothing.
+      // Storing it is harmless today (the classifier tests each field) but it
+      // inflates the counts and hides typos, so drop it and say so.
+      if (!override.type && !override.tags) {
+        if (typeStr || tagsStr) {
+           logger::debug("[SpellOverrides] '{}': nothing usable for the spell domain, skipped"sv,
+              sectionName);
+        }
+        continue;
       }
 
       // Determine if this is a FormID or spell name
@@ -67,6 +104,12 @@ namespace Huginn::Spell
 
       logger::info("Loaded {} spell overrides ({} by name, {} by FormID)"sv,
       GetOverrideCount(), m_nameOverrides.size(), m_formIDOverrides.size());
+
+      if (sharedSections > 0) {
+      logger::info("[SpellOverrides] {} unprefixed section(s) are also offered to "
+                   "ItemOverrides — prefix with 'Spell:' or 'Item:' to disambiguate"sv,
+         sharedSections);
+      }
 
       return true;
    }
