@@ -4996,9 +4996,11 @@ void RunOverrideNamespaceTests()
     logger::info("Running override-section namespacing tests..."sv);
 
     int failures = 0;
+    int cases = 0;  // counted, not hardcoded — the pass line is cited as coverage
     const auto check = [&](std::string_view section, OverrideDomain domain,
                            bool wantBelongs, bool wantPrefixed, std::string_view wantName,
                            std::string_view what) {
+        ++cases;
         const auto m = MatchOverrideSection(section, domain);
         if (m.belongs != wantBelongs || m.prefixed != wantPrefixed || m.name != wantName) {
             logger::error("TEST FAIL: [{}] {} — got (belongs={}, prefixed={}, name='{}'), "
@@ -5043,8 +5045,24 @@ void RunOverrideNamespaceTests()
     check("Potion: Extra Strong", OverrideDomain::Item, true, false, "Potion: Extra Strong",
         "colon in name is not a prefix");
 
+    // Ambiguous `type` tokens: these parse in BOTH vocabularies, which is why an
+    // unprefixed section carrying one warns. Pins the pair IsAmbiguousTypeToken
+    // hardcodes against the two ParseXType functions it must stay in sync with.
+    const auto checkAmbig = [&](std::string_view token, bool want) {
+        ++cases;
+        if (IsAmbiguousTypeToken(token) != want) {
+            logger::error("TEST FAIL: IsAmbiguousTypeToken('{}') should be {}"sv, token, want);
+            ++failures;
+        }
+    };
+    checkAmbig("buff", true);
+    checkAmbig("unknown", true);
+    checkAmbig("BUFF", true);              // case-insensitive
+    checkAmbig("HealthPotion", false);     // item-only
+    checkAmbig("Summon", false);           // spell-only
+
     if (failures == 0) {
-        logger::info("  TEST PASS: override namespacing (17 cases)"sv);
+        logger::info("  TEST PASS: override namespacing ({} cases)"sv, cases);
     } else {
         logger::error("TEST FAIL: {} override-namespacing case(s) failed"sv, failures);
     }

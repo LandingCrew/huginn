@@ -56,6 +56,27 @@ struct OverrideSectionMatch
    std::string name;       ///< Section name with any prefix stripped and trimmed.
 };
 
+/// @brief Does this `type =` token parse in BOTH override vocabularies?
+/// @details The tag guard (engage only when something parsed) cannot help for
+/// `type`: a token that parses is not evidence it was meant for this domain.
+/// These two parse in both `ItemOverrides::ParseItemType` and
+/// `SpellOverrides::ParseSpellType`, so an UNPREFIXED section carrying one sets
+/// the type for a spell AND an item sharing the name. Ambiguous rather than
+/// wrong, so it warns instead of being skipped -- the user may well mean both.
+/// KEEP IN SYNC with those two functions; a test pins the current pair.
+[[nodiscard]] inline bool IsAmbiguousTypeToken(std::string_view token)
+{
+   const auto eqCI = [](std::string_view a, std::string_view b) {
+      if (a.size() != b.size()) return false;
+      for (size_t i = 0; i < a.size(); ++i) {
+         if (std::tolower(static_cast<unsigned char>(a[i])) !=
+             std::tolower(static_cast<unsigned char>(b[i]))) return false;
+      }
+      return true;
+   };
+   return eqCI(token, "buff"sv) || eqCI(token, "unknown"sv);
+}
+
 /// @brief Decide whether an override section belongs to `domain`, and strip its prefix.
 /// @details Prefix match is case-insensitive and tolerates spaces around the colon.
 /// A section carrying the OTHER domain's prefix returns `belongs = false`.

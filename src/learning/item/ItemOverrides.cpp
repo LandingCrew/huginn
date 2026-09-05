@@ -7,18 +7,19 @@ namespace Huginn::Item
 {
    bool ItemOverrides::LoadFromFile(const std::filesystem::path& iniPath)
    {
+      // Clear BEFORE the early return, not after: a player who deletes or renames
+      // the file to turn overrides off and runs `hg rebuild` must actually get
+      // them off. Keeping last-known-good on a missing file would leave every
+      // stale override live for the rest of the session with no way to clear it.
+      m_nameOverrides.clear();
+      m_formIDOverrides.clear();
+
       CSimpleIniA ini;
       if (!LoadIniFile(ini, iniPath, "ItemOverrides"sv, IniMissing::Warn)) {
       return false;
       }
 
       logger::info("Loading item overrides from: {}"sv, iniPath.string());
-
-      // Clear previously-loaded overrides so a re-load is idempotent rather than
-      // accumulating stale entries — SpellOverrides has always done this, and
-      // ItemOverrides now re-loads too (ItemRegistry::RebuildRegistry).
-      m_nameOverrides.clear();
-      m_formIDOverrides.clear();
 
       // Iterate through all sections (each section is an item name or FormID)
       CSimpleIniA::TNamesDepend sections;
@@ -56,6 +57,17 @@ namespace Huginn::Item
       const char* typeStr = ini.GetValue(rawSection.c_str(), "type", nullptr);
       if (typeStr) {
         override.type = ParseItemType(typeStr);
+        // The tag guard cannot cover `type`: a token that parses is not evidence
+        // it was meant for this domain. `buff` and `unknown` parse in BOTH
+        // vocabularies, so an unprefixed section carrying one silently sets the
+        // type for a spell of the same name too. Ambiguous rather than wrong --
+        // the user may mean both -- so warn and let it stand.
+        if (override.type && !match.prefixed && IsAmbiguousTypeToken(typeStr)) {
+           logger::warn("[ItemOverrides] '{}': type '{}' parses in both the spell and item "
+                        "vocabularies, and this section is unprefixed — it will also "
+                        "set the type for a spell named '{}'. Prefix with 'Spell:' or "
+                        "'Item:' to scope it"sv, sectionName, typeStr, sectionName);
+        }
       }
 
       // Read tags. Engage the optional ONLY if something actually parsed:

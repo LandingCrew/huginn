@@ -20,6 +20,10 @@ namespace Huginn::Item
 
    void ItemRegistry::LoadOverrides(const std::filesystem::path& iniPath)
    {
+      // Remember the path RebuildRegistry() will re-load from. Without this a
+      // caller passing a custom path had it silently discarded on the first
+      // rebuild, which fell back to the constructor's hardcoded default.
+      m_overridesPath = iniPath;
       m_classifier.LoadOverrides(iniPath);
    }
 
