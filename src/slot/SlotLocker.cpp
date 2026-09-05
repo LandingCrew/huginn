@@ -298,11 +298,15 @@ namespace Huginn::Slot
     {
         std::lock_guard<std::mutex> lock(m_mutex);
 
+        // Whole-struct reset, deliberately. Clearing fields one by one leaked
+        // isActivationLock, previousFormID and hadContent across a save load:
+        // a stale previousFormID made the next tick flash Confirmed for an item
+        // the player never activated, and a stale isActivationLock made
+        // OnItemUsed(..., respectActivationLock = true) refuse to break a lock
+        // that was never an activation lock. Assigning a default-constructed
+        // LockedSlot means a field added later cannot reintroduce the same bug.
         for (auto& slot : m_lockedSlots) {
-            slot.isLocked = false;
-            slot.remainingMs = 0.0f;
-            slot.totalDurationMs = 0.0f;
-            slot.assignment = SlotAssignment::Empty(0, SlotClassification::Regular);
+            slot = LockedSlot{};
         }
         spdlog::info("[SlotLocker] Reset complete");
     }

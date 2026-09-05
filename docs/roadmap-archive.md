@@ -425,6 +425,44 @@ re-litigated. Section headings mirror the roadmap's.
       ever stranded), so they rest on review rather than in-game evidence. The
       always-on addition — the post-create re-resolve — was verified across nine
       page-resolutions in both `First` and `Last` positions
+- [x] `SlotLocker::Reset()` leaked state across a save load. **Fixed 0.19.21 —
+      but LATENT, not observable, and the entry that filed it overstated the
+      impact.** `Reset()` did clear only four of `LockedSlot`'s seven fields,
+      leaving `isActivationLock`, `previousFormID` and `hadContent` standing.
+      That part was true. The two player-visible symptoms it claimed were both
+      traced to their consumers, and NEITHER is reachable:
+      **`isActivationLock`** — `OnItemUsed` guards on `slot.isLocked &&` before
+      it ever consults `isActivationLock` (`SlotLocker.cpp:281-284`), and
+      `Reset()` leaves `isLocked` false. Every path that sets `isLocked = true`
+      again writes `isActivationLock` explicitly: `ApplyLocks`' `ShouldLock`
+      branch (`:119`), `LockSlot` (`:157`), `LockSlotForActivation` (`:174`).
+      No state exists where `isLocked` is true and `isActivationLock` is stale,
+      so the `respectActivationLock` guard cannot be wrongly satisfied.
+      **`previousFormID`/`hadContent`** — the only consumer outside the class is
+      `ComputeVisualStates` (`SlotUtils.h:189`); `WasConfirmed()`, which the
+      filing cited, has NO callers at all. `PipelineCoordinator` runs
+      `ApplyLocks` at `:427` and `ComputeVisualStates` at `:430`, and
+      `ApplyLocks` rewrites both fields for every slot on both of its branches
+      (`:128-129` locked, `:125-126` fall-through). Stale values never survive
+      to a read, so no spurious `Confirmed` flash is possible.
+      Fixed anyway, because both safeties are arrangement rather than
+      construction: the "`isActivationLock` is only meaningful while `isLocked`"
+      invariant is implicit and unenforced, and `previousFormID` is safe only
+      because every read happens to sit downstream of `ApplyLocks`. A future
+      lock path that forgets the flag, or any lock-state read that is not
+      downstream of `ApplyLocks`, turns this back into a real bug.
+      Fixed by assigning a default-constructed `LockedSlot` rather than
+      extending the field-by-field list. The four fields it already cleared were
+      being set to exactly their defaults — `SlotAssignment::Empty(0, Regular)`
+      is field-for-field identical to a default-constructed `SlotAssignment` —
+      so the whole-struct reset is a strict superset of the old behaviour, and a
+      field added to `LockedSlot` later cannot reintroduce the omission.
+      **Method note worth keeping:** the filing named a symptom and a line
+      number and both looked right in isolation. What made it latent was only
+      visible by grepping for the CONSUMERS of each leaked field — `WasConfirmed`
+      turned out to be dead, and the one live reader sits three lines downstream
+      of the code that overwrites what it reads. Check reachability before
+      believing a filed symptom, and before promising an in-game test for one
 ## Known Recommendation Issues
 - [x] `lookingAtOre` did not surface a pickaxe even with one in inventory.
       **NOT A BUG — closed 2026-08-29 without a fix, deliberately.** Mining does
