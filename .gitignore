@@ -88,3 +88,5 @@ coverage/
 *.tmp
 *.temp
 *.bak
+
+.claude
