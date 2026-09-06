@@ -104,14 +104,14 @@ Normalized feature vector extracted from the state models
 |  +--------+--------+--------+                                                |
 |  | [0]    | [1]    | [2]    |                                                |
 |  |health% |magicka%|stamina%|                                                |
-|  | 0.45   | 0.80   | 0.60   |  <- Example: 45% HP, 80% MP, 60% SP           |
+|  | 0.45   | 0.80   | 0.60   |  <- Example: 45% HP, 80% MP, 60% SP            |
 |  +--------+--------+--------+                                                |
 |                                                                              |
 |  COMBAT STATE (binary 0/1 + normalized distance)                             |
 |  +--------+--------+--------+                                                |
 |  | [3]    | [4]    | [5]    |                                                |
-|  |inCombat|sneaking|distNorm|  <- distNorm: 0=melee, 0.5=mid, 1=far         |
-|  | 1.0    | 0.0    | 0.75   |  <- Example: fighting at range                |
+|  |inCombat|sneaking|distNorm|  <- distNorm: 0=melee, 0.5=mid, 1=far          |
+|  | 1.0    | 0.0    | 0.75   |  <- Example: fighting at range                 |
 |  +--------+--------+--------+                                                |
 |                                                                              |
 |  TARGET TYPE (one-hot: exactly one is 1.0, others 0.0)                       |
@@ -655,10 +655,10 @@ for version differences.
 |            +-------------------+-------------------+                         |
 |            |                   |                   |                         |
 |            v                   v                   v                         |
-|   +----------------+  +----------------+  +----------------+                |
-|   | Context Weight |  | Reward est. Q  |  |  Exploration   |                |
-|   |  (heuristic)   |  |  (w . phi)     |  |    (UCB)       |                |
-|   +-------+--------+  +-------+--------+  +-------+--------+                |
+|   +----------------+  +----------------+  +----------------+                 |
+|   | Context Weight |  | Reward est. Q  |  |  Exploration   |                 |
+|   |  (heuristic)   |  |  (w . phi)     |  |    (UCB)       |                 |
+|   +-------+--------+  +-------+--------+  +-------+--------+                 |
 |           |                   |                   |                          |
 |           |              +----+----+              |                          |
 |           |              | Decay:  |              |                          |
@@ -687,16 +687,16 @@ for version differences.
 |                    |   (equip or ignore)     |                               |
 |                    +-----------+-------------+                               |
 |                                |                                             |
-|                    +-----------+-----------+                                  |
-|                    |                       |                                  |
-|                    v                       v                                  |
+|                    +-----------+-----------+                                 |
+|                    |                       |                                 |
+|                    v                       v                                 |
 |             +-------------+        +-------------+                           |
 |             |   EQUIP     |        |   IGNORE    |                           |
 |             |   +8.0      |        |  (time decay|                           |
 |             |  (via Bus)  |        |   handles)  |                           |
 |             +------+------+        +-------------+                           |
-|                    |                                                          |
-|                    v                                                          |
+|                    |                                                         |
+|                    v                                                         |
 |          +-------------------------+                                         |
 |          |   EQUIP EVENT BUS       |                                         |
 |          |  -> FQL reward          |                                         |
@@ -707,7 +707,7 @@ for version differences.
 |                      v                                                       |
 |          +-------------------------+                                         |
 |          |   WEIGHT UPDATE         |                                         |
-|          | w += alpha(r - w.phi)phi |                                         |
+|          | w += alpha(r - w.phi)phi |                                        |
 |          |     - alpha*lambda*w    |                                         |
 |          +-------------------------+                                         |
 |                                                                              |
@@ -921,21 +921,21 @@ as favorited in Skyrim's own favorites menu.
 
 ```
 +-------------------------------------------------------------+
-|  BANDIT (learns from actions)                                |
-|  v                                                           |
-|  learningScore = alpha*Q + (1-alpha)*prior + beta*UCB        |
-|                  + recencyBoost                              |
-|                                                              |
-|  FAVORITES (manual preference override)                      |
-|  v                                                           |
-|  favoritesMultiplier = 1.0 (non-favorited)                   |
-|                     or 1.3-2.5 (favorited, rank-scaled)      |
-|                                                              |
-|  COMBINED                                                    |
-|  v                                                           |
-|  utility = contextWeight * (1 + lambda*learningScore)        |
-|            * correlationBonus * potionMultiplier              |
-|            * favoritesMultiplier  <-- Applied at the end     |
+|  BANDIT (learns from actions)                               |
+|  v                                                          |
+|  learningScore = alpha*Q + (1-alpha)*prior + beta*UCB       |
+|                  + recencyBoost                             |
+|                                                             |
+|  FAVORITES (manual preference override)                     |
+|  v                                                          |
+|  favoritesMultiplier = 1.0 (non-favorited)                  |
+|                     or 1.3-2.5 (favorited, rank-scaled)     |
+|                                                             |
+|  COMBINED                                                   |
+|  v                                                          |
+|  utility = contextWeight * (1 + lambda*learningScore)       |
+|            * correlationBonus * potionMultiplier            |
+|            * favoritesMultiplier  <-- Applied at the end    |
 +-------------------------------------------------------------+
 ```
 

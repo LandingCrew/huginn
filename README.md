@@ -4,28 +4,21 @@
 
 Huginn is an SKSE plugin that watches what you can see — health, enemies, environment — and surfaces the right spell, potion, weapon, or item before you need to dig through menus. It learns your preferences over time through lightweight reinforcement learning. It never acts on its own.
 
-<!-- TODO: replace placeholder paths with actual gifs -->
-
-| Combat | Workstation | Learning |
-|:------:|:-----------:|:--------:|
-| ![Combat recommendations](docs/media/combat.gif) | ![Workstation awareness](docs/media/workstation.gif) | ![Learning adaptation](docs/media/learning.gif) |
-| *Healing and resistances surface under pressure* | *Fortify potions appear at the right crafting station* | *Recommendations adapt to your playstyle* |
-
 ## Features
 
 - **Context-aware recommendations** — analyzes health, magicka, stamina, distance, enemy type, combat state, and sneak to suggest relevant equipment
 - **Learns as you play** — observes what you equip in each situation, bootstrapped with sensible defaults
 - **Scaleform HUD widget** — minimal overlay with keybinds, auto-hides outside combat
-- **Wheeler integration** — optional [Wheeler](https://www.nexusmods.com/skyrimspecialedition/mods/97345) radial menu support
+- **Wheeler integration** — optional radial menu support via [wheelerAPI](https://github.com/LandingCrew/wheelerAPI) or 
 - **Multi-page slots** — organize recommendations by role (up to 10 pages, 10 slots each)
 - **Workstation awareness** — Fortify Smithing at forges, Fortify Enchanting at enchanters
 - **INI-configurable** — context weights, scoring, slot layout, keybindings, display mode
 
 ## Requirements
 
-- Skyrim SE 1.5.39+ or Skyrim AE
-- SKSE
-- Address Library for SKSE Plugins
+- [Skyrim SE 1.5.39+ or Skyrim AE](https://store.steampowered.com/app/489830/The_Elder_Scrolls_V_Skyrim_Special_Edition/)
+- [SKSE](https://skse.silverlock.org/)
+- [Address Library for SKSE Plugins](https://www.nexusmods.com/skyrimspecialedition/mods/32444)
 
 ## Building
 
@@ -62,29 +55,15 @@ spdlog, imgui (Win32 + DX11), simpleini, toml11, rapidcsv, freetype, rsm-binary-
 ## Compatibility
 
 - **ENB/ReShade** — independent D3D11 rendering, no conflicts
-- **Wheeler** — native integration via [WHEELER - Refined](https://www.nexusmods.com/skyrimspecialedition/mods/167380)
+- **Wheeler** — native integration through the Wheeler API, which base
+  [Wheeler](https://www.nexusmods.com/skyrimspecialedition/mods/97345) does not export.
+  Install [wheelerAPI](https://github.com/LandingCrew/wheelerAPI) (v4) over it; it also
+  folds in the CTD-Fix patches. [WHEELER - Refined](https://www.nexusmods.com/skyrimspecialedition/mods/167380)
+  works as an alternative at v2 — entry subtexts still work, but wheel re-resolution by
+  client name (`GetManagedWheelsForClient`) does not, so dragged wheel positions are not
+  remembered. Huginn supports v1–v4 and degrades feature-by-feature; with no API present
+  it stays disconnected.
 - **Other UI mods** — compatible, independent overlay
-
-### Wheeler: known behaviour with your own wheels
-
-Two things surprise people, both worth knowing before you rearrange anything.
-
-**Auto-focus skips past your own wheels.** With `bAutoFocusOnOpen = true` (the
-default) under `[Wheeler]`, opening Wheeler on any wheel that isn't Huginn's
-jumps straight to Huginn's first wheel. This bites hardest if you drag one of
-your own wheels to position 0: Wheeler opens at the front, Huginn immediately
-redirects, and that wheel can no longer be reached by opening at all — only by
-scrolling back to it. Huginn shows a one-time in-game notice the first time it
-redirects you. Set `bAutoFocusOnOpen = false` to keep the wheel you opened.
-
-**Wheel order is remembered for the rest of the session.** Huginn deletes and
-recreates its wheels on every save load. It recreates them where you last
-dragged them to, not at `sWheelPosition` — so reordering in Wheeler's edit mode
-survives loading a save. Two limits worth knowing: the memory is per-session, so
-restarting Skyrim starts from `sWheelPosition` again; and Huginn's wheels are
-restored as one contiguous block, so if you interleaved your own wheels between
-them they come back grouped. Editing `sWheelPosition` and running `hg reload`
-clears the memory and puts them where the INI says.
 
 ## Credits
 
