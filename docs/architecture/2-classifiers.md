@@ -413,7 +413,7 @@ magnitude, which ranked a Grand gem holding a petty soul above a Common gem
 holding a common one. `SOUL_LEVEL` tops out at `kGrand = 5` — there is no 6, so
 the keyword-fallback path clamps Black to 5 as well. Base-form souls only;
 player-filled gems keep theirs in `ExtraSoul`, which `ItemRegistry`'s scan reads
-and overrides (see [limitations/soul-gems.md](../limitations/soul-gems.md)).
+and overrides.
 
 `ItemData::filledCount` is how many instances in the stack hold a soul — **not**
 the stack size. Ten petty gems with one soul among them is a registry count of
@@ -816,7 +816,7 @@ Spells and alchemy items can have their classification forced from
 | **Applies to** | Spells (`SpellOverrides`) and alchemy items (`ItemOverrides`). Not weapons or ammo. Scrolls DO apply, via the spell path — `ScrollClassifier` delegates to `ClassifySpell` with the scroll's own name and FormID, so a `[Spell:Scroll of ...]` section overrides it |
 | **Section key** | `[Spell:Name]`, `[Item:Name]`, or unprefixed `[Name]` — plus the same three forms with an 8-hex-digit FormID (`00012345`, or `0x00012345`). FormID is matched first. Prefixes are case-insensitive and tolerate spaces around the colon |
 | **Keys** | `type = <TypeName>`, `tags = Tag1,Tag2,...` |
-| **Not overridable** | `SpellTagExt`, school, element, magnitude, duration, cost — all still computed from the API |
+| **Not overridable** | `SpellTagExt`, magnitude, duration, cost — still computed from the API. **Item carve-out:** an engaged `tags` override takes `ItemClassifier.cpp:37` and skips `PopulateItemTags` entirely, which is also what fills `tagsExt`, `school`, `combatSkill`, `utilitySkill` and `element` — so those stay at their defaults for an overridden item. Spells are unaffected: `SpellClassifier` computes `tagsExt` unconditionally (`SpellClassifier.cpp:45`) and school/element from the API |
 
 Two things to know:
 
@@ -825,7 +825,7 @@ Two things to know:
   `ItemOverrides`. An UNPREFIXED `[X]` is still offered to both, for backward
   compatibility; each loader logs how many it saw so the ambiguity is greppable.
   This matters because the vocabularies overlap — `RestoreHealth`,
-  `RestoreMagicka`, `RestoreStamina`, `Fear`, `Frenzy`, `Invisibility` as tags,
+  `RestoreMagicka`, `RestoreStamina`, `Fear`, `Frenzy`, `Invisibility`, `Paralysis` as tags,
   and `buff` / `unknown` as types, all parse in both.
 - **Tags no longer blank auto-detection.** Each parser engages its `tags`
   optional only when at least one token parsed. Before 0.19.22 an unparseable

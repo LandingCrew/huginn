@@ -4,6 +4,8 @@
 #include <cctype>
 #include <cmath>
 #include <string>
+#include <cstdint>
+#include <optional>
 #include <filesystem>
 #include <string_view>
 #include <SimpleIni.h>
@@ -75,6 +77,81 @@ struct OverrideSectionMatch
       return true;
    };
    return eqCI(token, "buff"sv) || eqCI(token, "unknown"sv);
+}
+
+/// @brief Does this `tags =` token parse in BOTH override vocabularies?
+/// @details The larger half of the overlap: the tag guard only neutralises a
+/// cross-domain section when NOTHING parses, so a token common to both still
+/// applies to a spell and an item sharing a name. KEEP IN SYNC with both
+/// `ParseSingleTag` implementations; a test pins the current set.
+[[nodiscard]] inline bool IsAmbiguousTagToken(std::string_view token)
+{
+   const auto eqCI = [](std::string_view a, std::string_view b) {
+      if (a.size() != b.size()) return false;
+      for (size_t i = 0; i < a.size(); ++i) {
+         if (std::tolower(static_cast<unsigned char>(a[i])) !=
+             std::tolower(static_cast<unsigned char>(b[i]))) return false;
+      }
+      return true;
+   };
+   // Item ParseSingleTag accepts "paralysis" as an alias for Paralyze, and the
+   // spell arm has SpellTag::Paralysis -- so it is shared despite the different
+   // enumerator names.
+   static constexpr std::string_view kShared[] = {
+      "restorehealth"sv, "restoremagicka"sv, "restorestamina"sv,
+      "fear"sv, "frenzy"sv, "invisibility"sv, "paralysis"sv,
+   };
+   for (const auto& t : kShared) {
+      if (eqCI(token, t)) return true;
+   }
+   return false;
+}
+
+/// Whitespace trimmed from each token of a `tags =` list.
+inline constexpr std::string_view kTagTrim = " \t\n\r"sv;
+
+/// @brief Does any token in a comma-separated `tags =` list parse in both?
+[[nodiscard]] inline bool AnyAmbiguousTagToken(std::string_view tagList)
+{
+   size_t start = 0;
+   while (start <= tagList.size()) {
+      const auto comma = tagList.find(',', start);
+      const auto end = (comma == std::string_view::npos) ? tagList.size() : comma;
+      std::string_view tok = tagList.substr(start, end - start);
+      const auto f = tok.find_first_not_of(kTagTrim);
+      if (f != std::string_view::npos) {
+         const auto l = tok.find_last_not_of(kTagTrim);
+         if (IsAmbiguousTagToken(tok.substr(f, l - f + 1))) return true;
+      }
+      if (comma == std::string_view::npos) break;
+      start = comma + 1;
+   }
+   return false;
+}
+
+/// @brief Parse a section name as an 8-hex-digit FormID, strictly.
+/// @details `std::stoul` stops at the first invalid character instead of
+/// throwing, so a name like `Deadwood` used to register as FormID 0x0000DEAD
+/// and match nothing. Requires all-hex and full consumption; an optional `0x`
+/// prefix is allowed.
+[[nodiscard]] inline std::optional<std::uint32_t> TryParseFormID(std::string_view name)
+{
+   std::string_view body = name;
+   if (body.size() > 2 && (body[0] == '0') && (body[1] == 'x' || body[1] == 'X')) {
+      body = body.substr(2);
+   }
+   if (body.empty() || body.size() > 8) return std::nullopt;
+   std::uint32_t value = 0;
+   for (const char c : body) {
+      const auto u = static_cast<unsigned char>(c);
+      int digit;
+      if (u >= '0' && u <= '9')      digit = u - '0';
+      else if (u >= 'a' && u <= 'f') digit = u - 'a' + 10;
+      else if (u >= 'A' && u <= 'F') digit = u - 'A' + 10;
+      else return std::nullopt;
+      value = (value << 4) | static_cast<std::uint32_t>(digit);
+   }
+   return value;
 }
 
 /// @brief Decide whether an override section belongs to `domain`, and strip its prefix.

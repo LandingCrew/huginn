@@ -5061,6 +5061,41 @@ void RunOverrideNamespaceTests()
     checkAmbig("HealthPotion", false);     // item-only
     checkAmbig("Summon", false);           // spell-only
 
+    // Ambiguous TAG tokens -- the wider half of the overlap (7 vs 2). Pins the
+    // set IsAmbiguousTagToken hardcodes against both ParseSingleTag arms.
+    const auto checkTag = [&](std::string_view list, bool want) {
+        ++cases;
+        if (AnyAmbiguousTagToken(list) != want) {
+            logger::error("TEST FAIL: AnyAmbiguousTagToken('{}') should be {}"sv, list, want);
+            ++failures;
+        }
+    };
+    checkTag("RestoreHealth", true);
+    checkTag("Paralysis", true);              // item alias for Paralyze, spell tag proper
+    checkTag("Fire,Ranged", false);           // spell-only
+    checkTag("SatisfiesHunger,SatisfiesCold", false);  // item-only
+    checkTag("Fire, Invisibility ", true);    // ambiguous token mid-list, spaced
+    checkTag("", false);
+
+    // Strict FormID parse: std::stoul stopped at the first invalid character, so
+    // a name whose leading chars are hex used to register as a FormID.
+    const auto checkForm = [&](std::string_view name, bool wantParsed, std::uint32_t wantVal) {
+        ++cases;
+        const auto got = TryParseFormID(name);
+        if (got.has_value() != wantParsed || (wantParsed && *got != wantVal)) {
+            logger::error("TEST FAIL: TryParseFormID('{}') parsed={} value={:08X}, expected parsed={}"sv,
+                name, got.has_value(), got.value_or(0), wantParsed);
+            ++failures;
+        }
+    };
+    checkForm("00012FCD", true, 0x00012FCD);
+    checkForm("0x00012FCD", true, 0x00012FCD);
+    checkForm("Deadwood", false, 0);   // 8 chars, leading hex -- used to become 0x0000DEAD
+    checkForm("0xNotHex", false, 0);   // used to become FormID 0
+    checkForm("Fireball", false, 0);
+    checkForm("", false, 0);
+
+
     if (failures == 0) {
         logger::info("  TEST PASS: override namespacing ({} cases)"sv, cases);
     } else {

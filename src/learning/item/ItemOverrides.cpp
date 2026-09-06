@@ -2,28 +2,49 @@
 #include "IniLoad.h"
 #include <algorithm>
 #include <cctype>
+#include <unordered_set>
+#include <system_error>
 
 namespace Huginn::Item
 {
    bool ItemOverrides::LoadFromFile(const std::filesystem::path& iniPath)
    {
-      // Clear BEFORE the early return, not after: a player who deletes or renames
-      // the file to turn overrides off and runs `hg rebuild` must actually get
-      // them off. Keeping last-known-good on a missing file would leave every
-      // stale override live for the rest of the session with no way to clear it.
+      // Two different failures, two different answers. A file that is GONE means
+      // the player turned overrides off -- clear, or every stale entry stays live
+      // for the session with no way to drop it. A file that exists but fails to
+      // PARSE (held open by an editor, caught mid-save, truncated) is a transient
+      // read error, and wiping good overrides on it would silently reclassify the
+      // whole registry. Keep last-known-good there, and say so.
+      std::error_code existsEc;
+      const bool filePresent = std::filesystem::exists(iniPath, existsEc) && !existsEc;
+      if (!filePresent) {
       m_nameOverrides.clear();
       m_formIDOverrides.clear();
+      }
 
       CSimpleIniA ini;
       if (!LoadIniFile(ini, iniPath, "ItemOverrides"sv, IniMissing::Warn)) {
+      if (filePresent) {
+        logger::warn("[ItemOverrides] Parse failed — KEEPING the {} override(s) already loaded. "
+                     "Fix the file and re-run `hg rebuild`"sv, GetOverrideCount());
+      }
       return false;
       }
+
+      // Parsed cleanly: now replace wholesale.
+      m_nameOverrides.clear();
+      m_formIDOverrides.clear();
 
       logger::info("Loading item overrides from: {}"sv, iniPath.string());
 
       // Iterate through all sections (each section is an item name or FormID)
       CSimpleIniA::TNamesDepend sections;
       ini.GetAllSections(sections);
+
+      // Keys claimed by an explicitly prefixed section, so precedence does not
+      // depend on SimpleIni's section ordering.
+      std::unordered_set<std::string> prefixedNames;
+      std::unordered_set<RE::FormID> prefixedFormIDs;
 
       size_t sharedSections = 0;  // unprefixed, so also parsed as spell overrides
 
@@ -83,6 +104,16 @@ namespace Huginn::Item
            logger::warn("[ItemOverrides] '{}': no recognised item tags in '{}' — "
                         "keeping auto-detection"sv, sectionName, tagsStr);
         }
+        // The tag guard only neutralises a cross-domain section when NOTHING
+        // parses. Seven tokens parse in BOTH vocabularies, so an unprefixed
+        // section using one silently sets the tags for a spell of the same name.
+        // This is the WIDER half of the overlap -- `type` shares only two.
+        if (override.tags && !match.prefixed && AnyAmbiguousTagToken(tagsStr)) {
+           logger::warn("[ItemOverrides] '{}': tags '{}' include token(s) that parse in both the "
+                        "spell and item vocabularies, and this section is unprefixed — "
+                        "it will also set the tags for a spell named '{}'. Prefix with "
+                        "'Spell:' or 'Item:' to scope it"sv, sectionName, tagsStr, sectionName);
+        }
       }
 
       // A section that produced neither a type nor tags contributes nothing.
@@ -96,20 +127,46 @@ namespace Huginn::Item
         continue;
       }
 
-      // Determine if this is a FormID or item name
-      // FormIDs are hex strings like "00012FCD" or "0x00012FCD"
-      if (sectionName.length() == 8 || sectionName.substr(0, 2) == "0x") {
-        try {
-           RE::FormID formID = std::stoul(sectionName, nullptr, 16);
-           m_formIDOverrides[formID] = override;
-           logger::debug("Loaded FormID override: {:08X}"sv, formID);
-        } catch (const std::exception&) {
-           // Not a valid FormID, treat as name
-           m_nameOverrides[sectionName] = override;
-           logger::debug("Loaded name override: {}"sv, sectionName);
+      // FormID or name? Strict all-hex parse -- std::stoul stops at the first
+      // invalid character instead of throwing, so a name like "Deadwood" used to
+      // register as FormID 0x0000DEAD and match nothing, and any name starting
+      // "0x" registered as FormID 0.
+      if (const auto formID = TryParseFormID(sectionName)) {
+        // Prefixed beats unprefixed, whatever order SimpleIni hands us the
+        // sections in. Stripping makes [X] and [Item:X] the same key, and
+        // last-write-wins would otherwise be decided by alphabetical order of
+        // the RAW name -- so [Fireball] would lose to [Item:Fireball] but
+        // [Whirlwind] would BEAT [Item:Whirlwind]. Half-migrated files are
+        // exactly what backward compatibility invites, so make it deterministic
+        // and say when it happens.
+        if (!match.prefixed && prefixedFormIDs.contains(*formID)) {
+           logger::warn("[ItemOverrides] '{}': ignored — a prefixed section already defines "
+                        "FormID {:08X}. Delete the unprefixed duplicate"sv,
+              rawSection, *formID);
+           continue;
         }
+        if (match.prefixed) {
+           if (m_formIDOverrides.contains(*formID)) {
+              logger::warn("[ItemOverrides] '{}': overriding an earlier unprefixed section for "
+                           "FormID {:08X} — the prefixed one wins"sv, rawSection, *formID);
+           }
+           prefixedFormIDs.insert(*formID);
+        }
+        m_formIDOverrides[*formID] = override;
+        logger::debug("Loaded FormID override: {:08X}"sv, *formID);
       } else {
-        // Item name
+        if (!match.prefixed && prefixedNames.contains(sectionName)) {
+           logger::warn("[ItemOverrides] '{}': ignored — a prefixed section already defines "
+                        "'{}'. Delete the unprefixed duplicate"sv, rawSection, sectionName);
+           continue;
+        }
+        if (match.prefixed) {
+           if (m_nameOverrides.contains(sectionName)) {
+              logger::warn("[ItemOverrides] '{}': overriding an earlier unprefixed section for "
+                           "'{}' — the prefixed one wins"sv, rawSection, sectionName);
+           }
+           prefixedNames.insert(sectionName);
+        }
         m_nameOverrides[sectionName] = override;
         logger::debug("Loaded name override: {}"sv, sectionName);
       }
