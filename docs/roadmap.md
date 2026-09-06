@@ -60,14 +60,6 @@ would notice.
       calls `SlotAllocator::Initialize()`, which assigns `m_currentPage = 0`
       (`SlotAllocator.cpp:51`). A player on page 3 who reloads settings is moved
       with no notice and no log line. May be intended; nothing says so (XS)
-- [ ] **Two override files, one INI, no namespacing.** `SpellOverrides` and
-      `ItemOverrides` both parse `Huginn_Overrides.ini` walking every section, so
-      an item override section also registers as a spell override — unrecognised
-      tag names parse to `SpellTag::None` but the `optional` is still ENGAGED, so
-      it overwrites. A spell and a potion sharing a display name share one entry.
-      Reload is also asymmetric: `SpellRegistry` re-loads on every
-      `RebuildRegistry()`, `ItemRegistry` loads only in its constructor, so item
-      overrides need a game restart and `hg reload` touches neither (M)
 - [ ] **#79 landed on the spell arm and not the scroll arm.** Scroll `Utility`
       does not check ext `Unlock` although `ScrollData` carries `tagsExt`, and
       scroll `SummonsAny` omits `BoundWeapon` where the spell arm includes it.

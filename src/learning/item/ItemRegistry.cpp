@@ -9,13 +9,21 @@ namespace Huginn::Item
 {
    ItemRegistry::ItemRegistry()
    {
-      // Load overrides from default location
-      auto overridesPath = std::filesystem::path("Data/SKSE/Plugins/Huginn_Overrides.ini");
-      LoadOverrides(overridesPath);
+      // Load overrides from default location.
+      // Path is retained so RebuildRegistry() can re-load on demand (hot-reload),
+      // matching SpellRegistry — before this, item overrides loaded ONCE at
+      // construction, so editing them needed a full game restart while spell
+      // overrides picked up on `hg rebuild`.
+      m_overridesPath = std::filesystem::path("Data/SKSE/Plugins/Huginn_Overrides.ini");
+      LoadOverrides(m_overridesPath);
    }
 
    void ItemRegistry::LoadOverrides(const std::filesystem::path& iniPath)
    {
+      // Remember the path RebuildRegistry() will re-load from. Without this a
+      // caller passing a custom path had it silently discarded on the first
+      // rebuild, which fell back to the constructor's hardcoded default.
+      m_overridesPath = iniPath;
       m_classifier.LoadOverrides(iniPath);
    }
 
@@ -26,6 +34,13 @@ namespace Huginn::Item
 
       // E3 (v0.7.21): RAII guard to ensure m_isLoading gets cleared even on exception
       Util::AtomicBoolGuard guard{ m_isLoading, false };
+
+      // Re-load classification overrides so edits to the INI are picked up on
+      // `hg rebuild` / `hg reset all` without a game restart. Cheap (small file).
+      // Mirrors SpellRegistry::RebuildRegistry.
+      if (!m_overridesPath.empty()) {
+      m_classifier.LoadOverrides(m_overridesPath);
+      }
 
       // OPTIMIZATION (v0.7.19): Single traversal for both item types
       auto scanResult = ScanPlayerInventoryAll();

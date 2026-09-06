@@ -413,7 +413,7 @@ magnitude, which ranked a Grand gem holding a petty soul above a Common gem
 holding a common one. `SOUL_LEVEL` tops out at `kGrand = 5` — there is no 6, so
 the keyword-fallback path clamps Black to 5 as well. Base-form souls only;
 player-filled gems keep theirs in `ExtraSoul`, which `ItemRegistry`'s scan reads
-and overrides (see [limitations/soul-gems.md](../limitations/soul-gems.md)).
+and overrides.
 
 `ItemData::filledCount` is how many instances in the stack hold a soul — **not**
 the stack size. Ten petty gems with one soul among them is a registry count of
@@ -813,24 +813,32 @@ Spells and alchemy items can have their classification forced from
 
 | | |
 |---|---|
-| **Applies to** | Spells (`SpellOverrides`) and alchemy items (`ItemOverrides`). Not scrolls, weapons or ammo |
-| **Section key** | Item/spell name, or an 8-hex-digit FormID (`00012345`, or `0x00012345`). FormID is matched first |
+| **Applies to** | Spells (`SpellOverrides`) and alchemy items (`ItemOverrides`). Not weapons or ammo. Scrolls DO apply, via the spell path — `ScrollClassifier` delegates to `ClassifySpell` with the scroll's own name and FormID, so a `[Spell:Scroll of ...]` section overrides it |
+| **Section key** | `[Spell:Name]`, `[Item:Name]`, or unprefixed `[Name]` — plus the same three forms with an 8-hex-digit FormID (`00012345`, or `0x00012345`). FormID is matched first. Prefixes are case-insensitive and tolerate spaces around the colon |
 | **Keys** | `type = <TypeName>`, `tags = Tag1,Tag2,...` |
-| **Not overridable** | `SpellTagExt`, school, element, magnitude, duration, cost — all still computed from the API |
+| **Not overridable** | `SpellTagExt`, magnitude, duration, cost — still computed from the API. **Item carve-out:** an engaged `tags` override takes `ItemClassifier.cpp:37` and skips `PopulateItemTags` entirely, which is also what fills `tagsExt`, `school`, `combatSkill`, `utilitySkill` and `element` — so those stay at their defaults for an overridden item. Spells are unaffected: `SpellClassifier` computes `tagsExt` unconditionally (`SpellClassifier.cpp:45`) and school/element from the API |
 
 Two things to know:
 
-- **Both parsers read the same file.** `SpellOverrides::LoadFromFile` and
-  `ItemOverrides::LoadFromFile` each walk *every* section, so an item section
-  also becomes a spell override (with unrecognised tag names parsing to `None`)
-  and vice versa. There is no `[Spells]`/`[Items]` namespacing, so a spell and a
-  potion sharing a display name share an override entry.
-- **Reload is uneven.** `SpellRegistry` remembers the path and re-loads it at
+- **Both parsers read the same file, and sections are namespaced (0.19.22).**
+  A `[Spell:X]` section is visible only to `SpellOverrides`, `[Item:X]` only to
+  `ItemOverrides`. An UNPREFIXED `[X]` is still offered to both, for backward
+  compatibility; each loader logs how many it saw so the ambiguity is greppable.
+  This matters because the vocabularies overlap — `RestoreHealth`,
+  `RestoreMagicka`, `RestoreStamina`, `Fear`, `Frenzy`, `Invisibility`, `Paralysis` as tags,
+  and `buff` / `unknown` as types, all parse in both.
+- **Tags no longer blank auto-detection.** Each parser engages its `tags`
+  optional only when at least one token parsed. Before 0.19.22 an unparseable
+  list yielded an ENGAGED `None`, which beat auto-detection in `value_or` — so a
+  potion section silently blanked a same-named spell's tags. `type` gets no such
+  guard (a token that parses is not evidence of intent), so an unprefixed
+  section using `buff` or `unknown` warns instead.
+- **Reload is now even.** Both registries remember the path and re-load it at
   the top of every `RebuildRegistry()`, so `hg rebuild` / `hg reset all` pick up
-  INI edits without a restart. `ItemRegistry` loads overrides **only in its
-  constructor** — item classification edits need a game restart. `hg reload`
-  does not touch either: its `[Overrides]` step reloads
-  `Override::Settings` (the urgent-potion override system), not classification.
+  INI edits without a restart. (`ItemRegistry` loaded only in its constructor
+  before 0.19.22, so item edits needed a game restart.) `hg reload` still does
+  not touch either: its `[Overrides]` step reloads `Override::Settings` (the
+  urgent-potion override system), not classification.
 
 ---
 

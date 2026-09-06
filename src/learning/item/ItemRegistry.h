@@ -131,6 +131,7 @@ namespace Huginn::Item
        */
       void LoadOverrides(const std::filesystem::path& iniPath);
 
+
       /**
        * @brief Full inventory scan and rebuild on game load
        * @note Clears existing registry and reclassifies all items
@@ -435,6 +436,12 @@ namespace Huginn::Item
       void LogAllItems() const;
 
    private:
+      /// Path the overrides came from, retained so RebuildRegistry() can re-load
+      /// them without a game restart (mirrors SpellRegistry::m_overridesPath,
+      /// which is likewise private — a public path would let any caller change
+      /// what the registry silently reloads on every rebuild).
+      std::filesystem::path m_overridesPath;
+
       // =============================================================================
       // INTERNAL HELPERS
       // =============================================================================
