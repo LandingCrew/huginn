@@ -1376,5 +1376,5 @@ scene.
 - [2-classifiers.md](2-classifiers.md) - How candidates are typed and classified
 - [4-contextual-bandits.md](4-contextual-bandits.md) - `StateFeatures` and the learning update rule
 - [5-slots.md](5-slots.md) - Slot allocation and locking
-- [../ARCHITECTURE.md](../ARCHITECTURE.md) - Overall system design
+- [../README.md](../README.md) - Overall system design
 - [../profiling/tracy-traces.md](../profiling/tracy-traces.md) - Measured poll costs

@@ -1202,4 +1202,4 @@ reason from the old one.
 - [7-dmenu-integration.md](7-dmenu-integration.md) — the dMenu panel that owns `[Widget]`
 - [../reference/intuition-scaleform-build.md](../reference/intuition-scaleform-build.md) — SWF toolchain
 - [../reference/ConsoleCommands.md](../reference/ConsoleCommands.md) — `hg reload`, `hg recs`, `hg page`
-- [../ARCHITECTURE.md](../ARCHITECTURE.md) — overall system design
+- [../README.md](../README.md) — overall system design

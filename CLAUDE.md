@@ -39,7 +39,7 @@ utility(item) = contextWeight × (1 + λ(confidence) × learningScore)
 - `FeatureQLearner` — "What does THIS PLAYER prefer?" (contextual bandit over 18-float feature vectors; the class name is historical, see [docs/architecture/4-contextual-bandits.md](docs/architecture/4-contextual-bandits.md))
 - `UtilityScorer` — Combines all three into final utility
 
-See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for full system design.
+See [docs/README.md](docs/README.md) for full system design.
 
 ## Key Directories
 
@@ -158,7 +158,7 @@ All `IntuitionMenu` public API methods defer GFx work via `SKSE::GetTaskInterfac
 
 ## Documentation
 
-- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) — Full system design
+- [docs/README.md](docs/README.md) — Full system design
 - [docs/architecture/](docs/architecture/) — Deep-dive docs (pipeline, states, classifiers, scoring, slots, UI, dMenu)
 - [docs/compatibility/](docs/compatibility/) — Mod compatibility guides
 - [docs/reference/ConsoleCommands.md](docs/reference/ConsoleCommands.md) — Console command reference
