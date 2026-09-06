@@ -5,6 +5,31 @@ rejected, so check there before re-opening something.
 
 ## Known Bugs
 
+- [ ] **Widget renders at the compile-time default position until something
+      re-applies settings.** `IntuitionMenu`'s constructor applies position from
+      the `IntuitionSettings` singleton (`IntuitionMenu.cpp:146`), but the menu is
+      opened by `HudVisibilityManager` when the loading screen closes — BEFORE
+      `Main.cpp:372` reads the dMenu INI at `kPostLoadGame`. So the constructor
+      gets `IntuitionDefaults::POSITION_X = 28.0f` rather than the player's value.
+      `Main.cpp:373` then calls `Show()`, which is a no-op for an already-open
+      menu and re-applies nothing.
+      Observed 2026-09-05: SWF loaded 11:06:31.744, `position 28%,83%` at
+      11:06:31.746, `[IntuitionSettings] Position: (20.6%, 83%)` at 11:08:41.722
+      — and no position line in between. The widget sat at the default for ~2.5
+      minutes until an `hg reload` moved it.
+      **Player-visible as "the widget jumps when I save"**: it sits at the
+      default until the menu is destroyed and recreated (a save opens a menu,
+      which drives `HudVisibilityManager`) or something fires `ReapplySettings`,
+      at which point it snaps to the configured value. One-time per session, so
+      easy to misread as a save-related glitch.
+      Fix: push settings to an already-open menu right after the `LoadFromIni` at
+      `Main.cpp:372`. `Main.cpp:375-382` already documents this exact bug class
+      for `bReadOnly` — "this is the first point where `[Widget]` has actually
+      been read ... pushing at kDataLoaded reads compile-time defaults" — and
+      `SetReadOnly` is pushed at `:383` for that reason. Position, alpha and
+      scale were never given the same treatment. Alpha and scale come from the
+      same constructor path, so check whether they are wrong too (S)
+
 ## Known Mod Compatability Issues
 - [ ] Vanilla-build integration pass — a set of contexts is only ever exercised
       on the Requiem-based list this is developed against, so anything vanilla
@@ -181,6 +206,18 @@ trigger to pick any of it up.
       CalculateMagickaCost per known spell per tick, inside the registry lock (M)
 
 ### Follow-ups
+- [ ] Modifier-key bindings (Ctrl+1, Alt+1, Shift+1) — every binding is a bare
+      DirectInput scancode in a single `uint32_t` (`KeybindingSettings.cpp:22-31`,
+      0 = unbound), so a slot key cannot be qualified and the ten slot keys must
+      each own a whole key. Wants a modifier field per binding (or a packed
+      scancode+modifier word, which keeps the INI a single value per slot but
+      makes 0-means-unbound less obvious) plus modifier state in
+      `InputHandler::ProcessButton`. The real design question is the interaction
+      with the existing tap / double-tap / hold gestures: Ctrl+1 held is
+      ambiguous against 1 held, and the modifier can be released mid-gesture, so
+      decide whether the modifier is latched at key-down or sampled throughout.
+      Also needs a conflict story for modifiers the game itself binds. Nexus page
+      currently states "only single keypresses" — update it when this lands (M)
 - [ ] Wheeler leaves an empty unmanaged wheel behind when a client's wheels were
       the only ones, and it PERSISTS — `SerializeIntoJsonObj` skips only managed
       wheels, so the placeholder is written to the co-save as `{"entries": []}`
