@@ -91,3 +91,4 @@ coverage/
 
 .claude
 *.tracy
+traces/
