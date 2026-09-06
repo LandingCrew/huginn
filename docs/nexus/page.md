@@ -11,7 +11,7 @@ Huginn also provides a HUD widget showing the rolling state of each hotkey.
 * **Context-aware recommendations** — analyzes health, magicka, stamina, distance, enemy type, combat state, and sneak to suggest relevant equipment
 * **Learns as you play** — observes what you equip in each situation, bootstrapped with sensible defaults
 * **On-screen widget** — a small overlay showing what is on each key; hides itself outside combat
-* **Wheeler integration** — optional [Wheeler](https://www.nexusmods.com/skyrimspecialedition/mods/97345) radial menu support or [Wheeler](https://www.nexusmods.com/skyrimspecialedition/mods/97345)
+* **Wheeler integration** — optional [Wheeler](https://www.nexusmods.com/skyrimspecialedition/mods/97345) radial menu support
 * **Multi-page slots** — organize recommendations by role (up to 10 pages, 10 slots each)
 * **Workstation awareness** — Fortify Smithing at forges, Fortify Enchanting at enchanters
 * **INI-configurable** — context weights, scoring, slot layout, keybindings, display mode
@@ -24,15 +24,15 @@ Huginn also provides a HUD widget showing the rolling state of each hotkey.
 - [SKSE](https://skse.silverlock.org/)
 - [Address Library for SKSE Plugins](https://www.nexusmods.com/skyrimspecialedition/mods/32444)
 
-Huggin uses dMenu as its settings GUI
+Huginn uses dMenu as its settings GUI
 
 ### Install
 
-Huggin is entirely self contained with its own rendering pipeline. Install the dependencies then install Huggin using your favorite mod manager.
+Huginn is entirely self contained with its own rendering pipeline. Install the dependencies then install Huginn using your favorite mod manager.
 
 ### Uninstall
 
-Huggin can be installed and uninstalled at anytime. Just delete or disable the mod from your mod manager
+Huginn can be installed and uninstalled at anytime. Just delete or disable the mod from your mod manager
 
 ## Configuration and Usage
 
@@ -166,7 +166,7 @@ Vital thresholds are fractions (`0.35` = 35%). Ammo is a plain count (`10` arrow
 
 #### Algorithm Configuration
 
-These setting are a bit more advance and tuning is a bit of a "best guess" effort and require a some knowledge of reinforcement learning systems, Huggins particular implmentation, and skyrim quirks in general. 
+These settings are more advanced, and tuning them is a best-guess effort that needs some knowledge of reinforcement learning systems, Huginn's particular implementation, and Skyrim quirks in general.
 
 `Fiddle at your own risk`, documentation on the algorithm can be [found in the source code](https://github.com/LandingCrew/huginn/blob/main/docs/README.md)
 
