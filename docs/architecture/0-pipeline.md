@@ -1,6 +1,6 @@
 # Huginn Recommendation Pipeline
 
-This document describes the data flow from game state to slot recommendations as currently implemented in v0.19.10.
+This document describes the data flow from game state to slot recommendations as currently implemented in v0.19.24.
 
 > **Related documentation:**
 > - [1-states.md](1-states.md) - State models (WorldState, PlayerActorState, TargetCollection, tracking states)
@@ -231,17 +231,19 @@ character's recommendations.
 ```mermaid
 graph TD
     subgraph Tier1[Tier 1: Override Hard Rules]
-        OR1[Health < 10% → Health potion]
-        OR2[Drowning → Waterbreathing]
-        OR3[On fire → Resist Fire]
-        OR4[Weapon charge low → Soul gem]
+        OR1[Health low → Health potion]
+        OR2[Magicka low → Magicka potion]
+        OR3[Stamina low → Stamina potion]
+        OR4[Drowning → Waterbreathing]
+        OR5[Ammo low → Best ammo]
+        OR6[Weapon charge low → Soul gem]
     end
 
     subgraph Tier2[Tier 2: Context Weights Soft Heuristics]
         CW1[In combat → Damage +2.0]
         CW2[Sneaking → Muffle +3.0]
         CW3[At forge → Fortify Smithing +8.0]
-        CW4[Multiple enemies → AOE +2.0]
+        CW4[Taking fire damage → Resist Fire +8.0]
     end
 
     subgraph Tier3[Tier 3: Contextual Bandit Learning Player Preference]
@@ -263,7 +265,7 @@ graph TD
 
 | Tier | Purpose | Examples | Implementation |
 |------|---------|----------|----------------|
-| **Override** | Urgent situations with obvious answer | Critical HP, drowning, on fire | `OverrideManager` hard rules, bypass scoring |
+| **Override** | Urgent situations with obvious answer | Critical HP, drowning, low ammo | `OverrideManager` hard rules, bypass scoring |
 | **Context Weight** | Situational relevance (rule-based) | Combat buffs, workstation potions | `ContextRuleEngine` + `CandidateGenerator` |
 | **Contextual Bandit Learning** | Player-specific preference | Item choice within context | `FeatureQLearner` reward estimate lookup |
 
@@ -518,7 +520,7 @@ graph TB
 > is no normalization pass at the end of `ComputeWeights()`.
 >
 > Configuration lives in the `[ContextWeights]` INI section: **31 `fWeight*` keys plus 4
-> smoothing exponents**, which as of 0.19.14 is exactly the 35 fields
+> smoothing exponents**, which as of 0.19.24 is exactly the 35 fields
 > `ContextWeightConfig` carries. The loader still READS three more —
 > `fWeightWeaponChargeModerate/Low/Critical` — whose keys were removed because they
 > land in `ContextWeightSettings` and never reach the config, so nothing consumes
@@ -902,7 +904,7 @@ graph TB
 
 ## See Also
 
-- [../ARCHITECTURE.md](../ARCHITECTURE.md) - Overall system design
+- [../README.md](../README.md) - Overall system design
 - [4-contextual-bandits.md](4-contextual-bandits.md) - Learning system (FeatureQLearner architecture)
 - [5-slots.md](5-slots.md) - Slot classification and overrides
 - [1-states.md](1-states.md) - State model architecture
