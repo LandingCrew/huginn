@@ -64,14 +64,14 @@ namespace Huginn::Settings
         /// - Side effects are ordered to prevent inconsistent state
         void ReloadAllSettings(const std::filesystem::path& iniPath);
 
-        /// Clear the FeatureQLearner AND reset SlotLocker, under the update mutex.
+        /// Clear the FeatureBanditLearner AND reset SlotLocker, under the update mutex.
         ///
-        /// Single source of truth shared by `hg reset qvalues` and the dMenu
+        /// Single source of truth shared by `hg reset weights` and the dMenu
         /// "reset learning data" button — both must reset SlotLocker too, or
         /// locked slots keep pinning recommendations scored by the just-cleared
         /// table. Do not call from inside RunExclusive (not re-entrant).
         ///
-        /// @return Number of FQL items cleared, or nullopt if the FeatureQLearner
+        /// @return Number of learner items cleared, or nullopt if the FeatureBanditLearner
         ///         is not initialized (nothing was reset).
         static std::optional<size_t> ResetLearningData();
 
@@ -90,7 +90,7 @@ namespace Huginn::Settings
         SettingsReloader& operator=(const SettingsReloader&) = delete;
         SettingsReloader& operator=(SettingsReloader&&) = delete;
 
-        /// Handle button callbacks (Reset Q-Table, Reset Defaults, Reload INI)
+        /// Handle button callbacks (Reset Learned Weights, Reset Defaults, Reload INI)
         void HandleButtonCallback(std::string_view buttonId);
 
         /// Reset all settings to compile-time defaults.

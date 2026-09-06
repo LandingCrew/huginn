@@ -16,7 +16,7 @@ for in-game settings management, and what a settings reload actually does.
 > - [0-pipeline.md](0-pipeline.md) — recommendation pipeline (the reload serializes against its update loop)
 > - [5-slots.md](5-slots.md) — slot system (page layout comes from the main INI)
 > - [6-ui-ux.md](6-ui-ux.md) — Intuition widget and Wheeler integration
-> - [../reference/ConsoleCommands.md](../reference/ConsoleCommands.md) — `hg reload`, `hg rebuild`, `hg reset qvalues`
+> - [../reference/ConsoleCommands.md](../reference/ConsoleCommands.md) — `hg reload`, `hg rebuild`, `hg reset weights`
 
 ---
 
@@ -152,7 +152,7 @@ The descriptor defines:
 - **`"ini"` path** — `Data\SKSE\Plugins\dmenu\customSettings\ini\Huginn.ini`
 - **Groups** — *Intuition Widget*, *Debug & Logging*, *Actions*
 - **Setting types** — `checkbox`, `slider`, `dropdown`, `button`
-- **Action buttons** — Show/Hide Widget, Reset Q-Table, Reset to Defaults, Reload INI
+- **Action buttons** — Show/Hide Widget, Reset Learned Weights, Reset to Defaults, Reload INI
 
 The *Intuition Widget* group covers all ten `[Widget]` keys (`bEnabled`,
 `fPositionX`, `fPositionY`, `fAlpha`, `fScale`, `fAlphaChild`, `sDisplayMode`,
@@ -197,7 +197,7 @@ sequenceDiagram
 | Button ID | dMenu label | Action |
 |---|---|---|
 | `Huginn_toggle_widget` | Show/Hide Widget | `IntuitionMenu::ToggleUserHidden()` — deliberately the *same* latch the hotkey flips, not a parallel flag. Resets to shown on load; use `bEnabled` to turn the widget off for good |
-| `Huginn_reset_qtable` | Reset Q-Table | `ResetLearningData()` — clears `FeatureQLearner` **and** resets `SlotLocker`, so locked slots stop pinning recommendations scored by the just-cleared table. Shared with `hg reset qvalues` |
+| `Huginn_reset_qtable` | Reset Learned Weights | `ResetLearningData()` — clears `FeatureBanditLearner` **and** resets `SlotLocker`, so locked slots stop pinning recommendations scored by the just-cleared table. Shared with `hg reset weights` |
 | `Huginn_reset_defaults` | Reset to Defaults | `ResetAllToDefaults()` — every settings singleton back to compile-time defaults, then the same side effects as a reload |
 | `Huginn_reload_ini` | Reload INI | `ReloadAllSettings(GetDMenuIniPath())`. dMenu-managed sections still come from the dMenu INI, so a manual reload does **not** reset the player's widget customizations |
 
@@ -228,7 +228,7 @@ An unknown button ID logs a warning and shows "Huginn: Unknown action (check log
 |---|---|
 | Spell/item/weapon/scroll registries | `hg rebuild` (or `hg reset all`) |
 | `Huginn_Overrides.ini` classification overrides — read at registry build time only | `hg rebuild`, which re-reads the file (`SpellRegistry.cpp:74`) |
-| Learned weights in `FeatureQLearner` | `hg reset qvalues`, or the Reset Q-Table button |
+| Learned weights in `FeatureBanditLearner` | `hg reset weights`, or the Reset Learned Weights button |
 | Wheeler wheels, **when the wheel layout is unchanged** | see below |
 | Cosave contents | untouched; a reload is settings-only |
 
@@ -348,8 +348,8 @@ SettingsReloader
 |       |               CandidateConfig, KeybindingSettings
 |       |     dMenuIni: IntuitionSettings, DebugSettings
 |       +-- Phase 2: ApplySideEffects(&mainIni, layoutBefore)
-|-- ResetLearningData()         <- STATIC; clears FeatureQLearner + resets SlotLocker.
-|                                  Shared by `hg reset qvalues` and the dMenu button.
+|-- ResetLearningData()         <- STATIC; clears FeatureBanditLearner + resets SlotLocker.
+|                                  Shared by `hg reset weights` and the dMenu button.
 |                                  Returns nullopt when the learner isn't initialized
 |-- HandleButtonCallback()      <- dispatches the four action buttons
 |-- ResetAllToDefaults()        <- wraps RunExclusive
@@ -408,7 +408,7 @@ locks; the update mutex is what makes that safe.
 | `src/Globals.cpp` | `GetMainIniPath()`, `GetDMenuIniPath()`, `LoadIniFile()`, `LoadCandidateConfigFromINI()`, `LoadSlotLockerConfigFromINI()`, `LoadWildcardConfigFromINI()` |
 | `src/IniLoad.h` | Shared INI parse front door + `ReadClampedFloat` |
 | `src/Main.cpp` | `InitializeGameSystems()` (parse-once load at game init), early `DebugSettings` + `KeybindingSettings` load at `kDataLoaded` |
-| `src/console/ConsoleCommands.cpp` | `hg reload`, `hg rebuild`, `hg reset qvalues` — all delegating to the shared entry points |
+| `src/console/ConsoleCommands.cpp` | `hg reload`, `hg rebuild`, `hg reset weights` — all delegating to the shared entry points |
 | `Data/SKSE/Plugins/dmenu/customSettings/Huginn.json` | dMenu UI descriptor |
 | `configs/Huginn.ini` | Main INI shipped with the mod |
 

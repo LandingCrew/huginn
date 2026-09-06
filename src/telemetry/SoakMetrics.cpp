@@ -3,7 +3,7 @@
 #include "Config.h"
 #include "Globals.h"
 #include "Profiling.h"
-#include "learning/FeatureQLearner.h"
+#include "learning/FeatureBanditLearner.h"
 
 #include <algorithm>
 #include <format>
@@ -123,11 +123,11 @@ namespace Huginn::Telemetry
         const float avgMs  = ticks ? (static_cast<float>(sumMicros) / 1000.0f / ticks) : 0.0f;
         const float peakMs = static_cast<float>(peakMicros) / 1000.0f;
 
-        std::size_t fqlItems = 0;
+        std::size_t learnerItems = 0;
         uint32_t fqlTrains = 0;
-        if (g_featureQLearner) {
-            fqlItems  = g_featureQLearner->GetItemCount();
-            fqlTrains = g_featureQLearner->GetTotalTrainCount();
+        if (g_featureBanditLearner) {
+            learnerItems  = g_featureBanditLearner->GetItemCount();
+            fqlTrains = g_featureBanditLearner->GetTotalTrainCount();
         }
 
         const int64_t upTicks = now.time_since_epoch().count() -
@@ -144,10 +144,10 @@ namespace Huginn::Telemetry
             upH, upM, upS,
             hit, near_, miss, novel, acceptStr, skipStr,
             recomputes, ticks, overrideRuns, pageBails,
-            fqlItems, fqlTrains,
+            learnerItems, fqlTrains,
             avgMs, peakMs);
 
-        Huginn_PLOT("Huginn/FQL Items", static_cast<int64_t>(fqlItems));
+        Huginn_PLOT("Huginn/Learner Items", static_cast<int64_t>(learnerItems));
         // Only plot windows that carry signal — zero-equip windows would drag the
         // Tracy trend line to 0 and read as rejection.
         if (totalEquips > 0) {

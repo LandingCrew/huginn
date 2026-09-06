@@ -9,7 +9,7 @@ namespace Huginn::Scroll
    // SCROLL CLASSIFIER (v0.7.7)
    // =============================================================================
    // ScrollClassifier analyzes scroll FormIDs from the game and classifies them
-   // by type and tags for use in the Q-learning recommendation system.
+   // by type and tags for use in the contextual bandit recommendation system.
    //
    // ARCHITECTURE:
    // - Scrolls are consumable spell casts with no magicka cost

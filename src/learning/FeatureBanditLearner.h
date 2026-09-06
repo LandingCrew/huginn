@@ -10,33 +10,39 @@
 
 namespace Huginn::Learning
 {
-   // Batched metrics for feature-based Q-learner (mirrors ItemMetrics shape)
+   // Batched metrics for feature-based bandit learner (mirrors ItemMetrics shape)
    struct FeatureItemMetrics
    {
-      float qValue;      // w . phi(s)
+      float rewardEstimate;      // w . phi(s)
       float ucb;         // Exploration bonus (per-item train count)
       float confidence;  // Sigmoid on per-item train count
    };
 
    // =============================================================================
-   // FEATURE Q-LEARNER (Phase 3.5b-d)
+   // FEATURE BANDIT LEARNER (Phase 3.5b-d)
    // =============================================================================
-   // Linear function approximation: Q(s, item) = w_item . phi(s)
+   // A linear contextual bandit: each item is an arm, the 18-float feature
+   // vector is the context, and the target is the reward observed for that one
+   // decision. There is no gamma, no successor state and no trajectory — the
+   // update never bootstraps off a future estimate, which is what separates
+   // this from Q-learning.
+   //
+   // Linear function approximation: R(context, item) = w_item . phi(context)
    // Each item gets its own 18-element weight vector. Learning in one state
    // automatically generalizes to similar states because shared features
    // carry the knowledge.
    //
    // Update rule: w += alpha * (reward - w.phi) * phi - alpha * lambda * w
-   //   - Semi-gradient TD(0) with L2 regularization
+   //   - Least-squares step on immediate reward, with L2 regularization.
    //   - Weight clamping prevents unbounded drift
    //
    // Wired into UtilityScorer (Phase 3.5c). Cosave persistence (Phase 3.5d).
    // =============================================================================
-   class FeatureQLearner
+   class FeatureBanditLearner
    {
    public:
       // Core API
-      [[nodiscard]] float GetQValue(RE::FormID formID, const StateFeatures& features) const;
+      [[nodiscard]] float GetRewardEstimate(RE::FormID formID, const StateFeatures& features) const;
       void Update(RE::FormID formID, const StateFeatures& features, float reward);
 
       // Lazy decay, batched: apply time-based weight decay to the given items
@@ -69,10 +75,10 @@ namespace Huginn::Learning
             const std::array<float, StateFeatures::NUM_FEATURES>& phi) const;
 
       private:
-         friend class FeatureQLearner;
-         explicit LockedReader(const FeatureQLearner& owner);
+         friend class FeatureBanditLearner;
+         explicit LockedReader(const FeatureBanditLearner& owner);
 
-         const FeatureQLearner& m_owner;
+         const FeatureBanditLearner& m_owner;
          std::shared_lock<std::shared_mutex> m_lock;
       };
 

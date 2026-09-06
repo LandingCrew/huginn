@@ -214,13 +214,13 @@ namespace Huginn::Settings
             const bool nowHidden = UI::IntuitionMenu::ToggleUserHidden();
             RE::DebugNotification(nowHidden ? "Huginn: Widget hidden" : "Huginn: Widget shown");
         }
-        else if (buttonId == "Huginn_reset_qtable"sv) {
+        else if (buttonId == "Huginn_reset_weights"sv) {
             logger::info("[SettingsReloader] Resetting learning data"sv);
-            if (const auto fqlItems = ResetLearningData()) {
-                logger::info("[SettingsReloader] Learning data reset complete ({} FQL items)"sv, *fqlItems);
+            if (const auto learnerItems = ResetLearningData()) {
+                logger::info("[SettingsReloader] Learning data reset complete ({} learner items)"sv, *learnerItems);
                 RE::DebugNotification("Huginn: Learning data reset");
             } else {
-                logger::warn("[SettingsReloader] g_featureQLearner is null, cannot reset"sv);
+                logger::warn("[SettingsReloader] g_featureBanditLearner is null, cannot reset"sv);
             }
         }
         else if (buttonId == "Huginn_reset_defaults"sv) {
@@ -244,22 +244,22 @@ namespace Huginn::Settings
 
     std::optional<size_t> SettingsReloader::ResetLearningData()
     {
-        auto* fql = g_featureQLearner.get();
-        if (!fql) {
+        auto* learner = g_featureBanditLearner.get();
+        if (!learner) {
             return std::nullopt;
         }
 
-        size_t fqlItems = 0;
+        size_t learnerItems = 0;
         Update::UpdateHandler::GetSingleton()->RunExclusive([&] {
-            fqlItems = fql->GetItemCount();
-            fql->Clear();
+            learnerItems = learner->GetItemCount();
+            learner->Clear();
 
             // Unlock all slots so the next scoring cycle can reassign immediately —
             // otherwise locked slots keep pinning recommendations scored by the
             // just-cleared table for the remainder of their lock duration.
             Slot::SlotLocker::GetSingleton().Reset();
         });
-        return fqlItems;
+        return learnerItems;
     }
 
     void SettingsReloader::ResetAllToDefaults()

@@ -25,7 +25,7 @@ namespace Huginn::Learning
     // Lock ordering (must be respected to avoid deadlocks):
     //   StateManager shared locks (acquired in BuildEvent)
     //   → m_mutex (acquired for subscriber dispatch)
-    //   → subscriber internal locks (FQL m_mutex, UsageMemory m_mutex, etc.)
+    //   → subscriber internal locks (learner m_mutex, UsageMemory m_mutex, etc.)
     //
     // BuildEvent runs OUTSIDE m_mutex to avoid holding the bus lock while
     // acquiring StateManager locks.

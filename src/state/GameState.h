@@ -149,7 +149,7 @@ namespace Huginn::State
       CombatStatus inCombat;      // 2 states
       SneakStatus isSneaking;     // 2 states
 
-      // Generate unique hash for Q-table lookup
+      // Generate unique hash for weight table lookup
       // Returns value in range [0, kTotalStates - 1]
       // Stamina excluded: PotionDiscriminator reads it directly, ContextRuleEngine uses raw float
       // Multi-radix bases: [6, 6, 3, 7, 4, 3, 2, 2, 2]

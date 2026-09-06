@@ -9,7 +9,7 @@ namespace Huginn::Scoring
     // PRIOR CALCULATOR
     // =============================================================================
     // Provides INTRINSIC quality heuristics for all candidate types.
-    // These priors bootstrap the Q-learning system before sufficient data is collected.
+    // These priors bootstrap the contextual bandit system before sufficient data is collected.
     //
     // IMPORTANT: Priors are NOT context-aware. Context is handled by ContextRuleEngine.
     // Priors evaluate INTRINSIC item properties only:

@@ -1,9 +1,9 @@
 # Huginn Learning System
 
-> **Implementation Status (v0.19.x):** **FeatureQLearner** is the sole learning
-> system (linear reward model, 18-float context vectors). The tabular QLearner
+> **Implementation Status (v0.19.x):** **FeatureBanditLearner** is the sole learning
+> system (linear reward model, 18-float context vectors). The tabular the learner
 > was removed in v0.13.x and no trace of it remains in `src/`. See
-> `src/learning/FeatureQLearner.h` / `.cpp` for the implementation and
+> `src/learning/FeatureBanditLearner.h` / `.cpp` for the implementation and
 > `src/learning/UtilityScorer.cpp` for how its output enters the final score.
 
 This document details the feature-based reward learning architecture for learning player preferences.
@@ -16,24 +16,29 @@ This document details the feature-based reward learning architecture for learnin
 > | Q-learning | `Q(s,a) <- r + gamma * max Q(s', a')` | Yes — bootstraps off the next state |
 > | Contextual bandit | `r_hat(context, arm) <- r` | No — immediate reward only |
 >
-> `FeatureQLearner::Update` computes `error = reward - prediction` and takes a
+> `FeatureBanditLearner::Update` computes `error = reward - prediction` and takes a
 > semi-gradient step on it. There is no `gamma`, no `s'`, no trajectory: each
 > item is an arm, the 18-float feature vector is the context, and the target is
 > the reward observed for that one decision. Nothing in Huginn models what state
 > the player transitions into after using an item, which is the whole content of
 > the Q-learning update.
 >
-> **The class names do not match the algorithm.** `FeatureQLearner`,
-> `QLearnerSerializer`, the `FQLW` cosave record and `hg reset qvalues` all keep
-> the historical name — renaming them would break the cosave format and a
-> documented console command. Read "QLearner" in an identifier as "the learner";
-> the docs use bandit vocabulary because that is what the code does.
+> **The identifiers now match the algorithm.** As of 0.20.0 the code says what
+> it does: `FeatureBanditLearner`, `BanditSerializer`, the `BNDW` cosave record
+> and `hg reset weights`. Before that they were `FeatureQLearner`,
+> `QLearnerSerializer`, `FQLW` and `hg reset qvalues`, which named an algorithm
+> the code has never run.
+>
+> **This was a deliberate breaking change.** The cosave record tag changed, so
+> saves written before 0.20.0 lose their learned weights — the old `FQLW` record
+> is not read and no migration path was written. Learning restarts from zero on
+> an existing character; nothing else in the save is affected.
 
 ---
 
 ## Overview
 
-Huginn uses **feature-based reward learning** (linear function approximation) instead of the tabular QLearner it replaced. This provides:
+Huginn uses **feature-based reward learning** (linear function approximation) instead of the tabular the learner it replaced. This provides:
 
 1. **Generalization** - Similar states behave similarly
 2. **No cold start** - New states work immediately
@@ -44,9 +49,9 @@ Huginn uses **feature-based reward learning** (linear function approximation) in
 
 ## Why Feature-Based? (Tabular Deprecation Rationale)
 
-### Problem with the Tabular QLearner
+### Problem with the Tabular the learner
 
-The tabular QLearner (v0.6-v0.13) mapped `(discrete_state_hash, FormID) -> reward estimate`. This approach had five fundamental problems that couldn't be fixed without changing the representation:
+The tabular the learner (v0.6-v0.13) mapped `(discrete_state_hash, FormID) -> reward estimate`. This approach had five fundamental problems that couldn't be fixed without changing the representation:
 
 **1. State sparsity -- most states are never visited.**
 Even after aggressive dimensionalization reduction (v0.13.0), the Q-table has 36,288 states -- but a typical play session visits <0.07% of them. Learning "heal at 30% HP in combat with undead" taught the system nothing about "heal at 31% HP in combat with undead" because those are different hash buckets.
@@ -175,7 +180,7 @@ struct StateFeatures {
 
 ### The APPEND-ONLY contract
 
-`ToArray()`'s order **is** the cosave wire order, and `QLearnerSerializer`
+`ToArray()`'s order **is** the cosave wire order, and `BanditSerializer`
 migrates saved weights *positionally* when `NUM_FEATURES` changes. New features
 must be appended at the **end** of `ToArray()`; positions must never be
 reordered or removed, or saved weights would silently apply to the wrong
@@ -232,13 +237,13 @@ proximity; target type encodes what the player is focused on. `inCombat` and
 
 ---
 
-## FeatureQLearner
+## FeatureBanditLearner
 
 Contextual bandit with a linear reward model — one weight vector per item (arm),
-scored against the 18-float context. `src/learning/FeatureQLearner.h`.
+scored against the 18-float context. `src/learning/FeatureBanditLearner.h`.
 
 ```cpp
-class FeatureQLearner {
+class FeatureBanditLearner {
 public:
     // Reward estimate: w_item . phi(context). Unknown item → 0.0
     [[nodiscard]] float GetQValue(RE::FormID formID, const StateFeatures&) const;
@@ -307,7 +312,7 @@ private:
 
 ### The update rule — why this is a bandit
 
-`FeatureQLearner::Update` (`src/learning/FeatureQLearner.cpp:23`):
+`FeatureBanditLearner::Update` (`src/learning/FeatureBanditLearner.cpp:23`):
 
 ```cpp
 auto phi = features.ToArray();          // computed OUTSIDE the lock
@@ -338,7 +343,7 @@ per-arm linear reward model — a contextual bandit.
 
 ### Confidence and UCB
 
-`ComputeConfidence` (`FeatureQLearner.cpp:127`) is a logistic on the *per-item*
+`ComputeConfidence` (`FeatureBanditLearner.cpp:127`) is a logistic on the *per-item*
 train count:
 
 ```
@@ -346,7 +351,7 @@ confidence(n) = 1 / (1 + exp(-0.3 * (n - 5)))
    0 trains → ~18%     5 → 50%     10 → ~82%     15 → ~95%
 ```
 
-`ComputeUCB` (`FeatureQLearner.cpp:135`) is UCB1, normalized and clamped:
+`ComputeUCB` (`FeatureBanditLearner.cpp:135`) is UCB1, normalized and clamped:
 
 ```
 UCB(n) = clamp(0.2 * sqrt(2 * ln(totalTrains) / n), 0, 1)
@@ -379,8 +384,8 @@ raw parameters; the bus evaluates state once (`BuildEvent`) and dispatches an
 ```
 Equip Sources (publishers):              Subscribers:
 +---------------------------+            +----------------------------+
-| WheelerClient             |---+        | FQLSubscriber              |
-| EquipManager (hotkeys)    |   |        |   -> FeatureQLearner       |
+| WheelerClient             |---+        | BanditSubscriber              |
+| EquipManager (hotkeys)    |   |        |   -> FeatureBanditLearner       |
 | ExternalEquipLearner      |   |  Pub   +----------------------------+
 | UpdateLoop (consumption)  |---+------->| UsageMemorySubscriber      |
 +---------------------------+   |        |   -> UsageMemory + misclick|
@@ -400,7 +405,7 @@ Publish sites (verified):
 | External | `src/learning/ExternalEquipLearner.cpp:59` | `External, attributionMult, false` |
 
 Subscribers are registered once, in `src/Main.cpp` step 5b, after
-`g_featureQLearner` and `g_usageMemory` exist.
+`g_featurethe learner` and `g_usageMemory` exist.
 
 **Lock ordering** (documented in `EquipEventBus.h`): StateManager shared locks
 (inside `BuildEvent`) → bus `m_mutex` → subscriber internal locks. `BuildEvent`
@@ -432,11 +437,11 @@ and stated in the code.
 
 | Subscriber | Fires For | Action |
 |------------|-----------|--------|
-| **FQLSubscriber** | Hotkey/Wheeler (only if `wasRecommended`), External, Consumption | `FeatureQLearner::Update(formID, features, reward)` |
+| **BanditSubscriber** | Hotkey/Wheeler (only if `wasRecommended`), External, Consumption | `FeatureBanditLearner::Update(formID, features, reward)` |
 | **UsageMemorySubscriber** | All sources | `UsageMemory::RecordUsage` (recency boost) + misclick penalty |
 | **CooldownSubscriber** | Consumption only | `CandidateGenerator::StartCooldown` |
 
-### Reward Calculation (FQLSubscriber)
+### Reward Calculation (BanditSubscriber)
 
 `src/learning/EquipSubscribers.h`:
 
@@ -544,7 +549,7 @@ entries older than `CLEANUP_AGE_SECONDS` (600) are erased.
 
 ### Weight Decay
 
-FeatureQLearner uses **two complementary decay mechanisms**:
+FeatureBanditLearner uses **two complementary decay mechanisms**:
 
 **1. L2 regularization (on every update).**
 The `- LEARNING_RATE * L2_LAMBDA * w[i]` term in `Update` pulls weights toward
@@ -552,7 +557,7 @@ zero. Items that keep being equipped outpace this pull; items that stop
 receiving updates keep their last-trained weights until time decay takes over.
 
 **2. Lazy time-based decay (once per scoring pass).**
-`MaybeDecayBatch` (`FeatureQLearner.cpp:54`) is called once per
+`MaybeDecayBatch` (`FeatureBanditLearner.cpp:54`) is called once per
 `ScoreCandidates` with the whole candidate pool
 (`UtilityScorer.cpp:56-63`). Items idle longer than
 `DECAY_THRESHOLD_MINUTES` (5) have their weights multiplied by
@@ -699,7 +704,7 @@ for version differences.
 |                    v                                                         |
 |          +-------------------------+                                         |
 |          |   EQUIP EVENT BUS       |                                         |
-|          |  -> FQL reward          |                                         |
+|          |  -> bandit reward          |                                         |
 |          |  -> Usage memory        |                                         |
 |          |  -> Misclick detect     |                                         |
 |          +-----------+-------------+                                         |
@@ -765,7 +770,7 @@ used by both the normal path and the cold-start fallback.
 float contextWeight = Context::WeightForCandidate(candidate, weights);
 
 // Step 2: Learning metrics — from the LockedReader in the batch path,
-//         or FeatureQLearner::GetMetrics on the single-candidate path.
+//         or FeatureBanditLearner::GetMetrics on the single-candidate path.
 //         metrics.qValue, metrics.ucb, metrics.confidence
 
 // Step 3: Intrinsic quality prior. NOTE: no GameState parameter —
@@ -878,7 +883,7 @@ Huginn explores in two independent places, and it is worth keeping them apart:
 
 | | UCB term | Wildcards |
 |---|---|---|
-| Owner | `FeatureQLearner::ComputeUCB` | `WildcardManager` (`src/learning/WildcardManager.h/.cpp`) |
+| Owner | `FeatureBanditLearner::ComputeUCB` | `WildcardManager` (`src/learning/WildcardManager.h/.cpp`) |
 | Granularity | Per item, continuous | Per slot, stochastic |
 | Where it acts | Inside `learningScore` (β·UCB) and the cold-start context floor | *After* the top-N sort, by swapping a lower-ranked candidate up into a slot |
 | Decays with | Per-item train count | A cooldown timer, not learning |
@@ -1096,7 +1101,7 @@ context.
 
 `EquipEvent` carries a `FormID`, an `EquipSource`, a reward multiplier, the
 18-float context and the discretized `GameState` — and no slot index. Nothing in
-`FeatureQLearner`, `StateFeatures` or the cosave record references a slot or a
+`FeatureBanditLearner`, `StateFeatures` or the cosave record references a slot or a
 page. The learner is told *what* was equipped in *what situation*; the slot only
 determined visibility.
 
@@ -1119,24 +1124,24 @@ for an equip Huginn did not mediate — it never becomes a feature.
 ### SKSE Cosave
 
 All learning data is persisted via SKSE's cosave system, which saves/loads
-alongside the player's save files. `QLearnerSerializer`
-(`src/persist/QLearnerSerializer.h/.cpp`) uses the static buffer pattern,
-handling the case where `Load` fires before the global `g_featureQLearner`
-exists: `LoadCallback` fills `s_pendingFQLData`, and `ApplyPendingFQLData` moves
+alongside the player's save files. `BanditSerializer`
+(`src/persist/BanditSerializer.h/.cpp`) uses the static buffer pattern,
+handling the case where `Load` fires before the global `g_featurethe learner`
+exists: `LoadCallback` fills `s_pendingBanditData`, and `ApplyPendingBanditData` moves
 it into the learner once `Main.cpp` has constructed it.
 
 **Record types:**
-- `FQLW` — FeatureQLearner weight vectors plus the global train count
-  (`kRecordType_FQLWeights = 'WLQF'`, `'FQLW'` on disk;
+- `BNDW` — FeatureBanditLearner weight vectors plus the global train count
+  (`kRecordType_BNDWeights = 'WLQF'`, `'BNDW'` on disk;
   `kUniqueID = 'QCNO'`, `'ONCQ'` on disk)
 
 **Serialization callbacks** (registered from `SKSEPlugin_Load` via
 `RegisterSerialization`):
-- `Save` → export FQL weights to the cosave
+- `Save` → export learner weights to the cosave
 - `Load` → import into the static buffer, applied after learner construction
 - `Revert` → drop the buffer and `Clear()` the learner
 
-**FQLW record format (version 2):**
+**BNDW record format (version 2):**
 ```
 [version: uint32]                = 2   (also in the SKSE record header; cross-checked)
 [numFeatures: uint32]            = 18  (validated, then MIGRATED if it differs)
@@ -1161,8 +1166,8 @@ between the batch and per-field code paths.
 | Guard | Behaviour |
 |---|---|
 | Version | Accepts 1 and 2. v1 entries lack `minutesSinceLastUpdate` and are read per field, treated as fresh (`0` minutes). A SKSE-header/in-data version mismatch is logged, and the in-data version is trusted |
-| Feature count | **Migrated positionally, not rejected.** Fewer features on disk → tail zero-pads (new features start untrained); more → tail truncates. Sound only because the vector is APPEND-ONLY. `numFeatures` outside `[1, kMaxFQLFeatures=256]` is treated as corrupt and the record is skipped |
-| Item cap | `numItems > kMaxFQLItems` (50,000) → record skipped wholesale |
+| Feature count | **Migrated positionally, not rejected.** Fewer features on disk → tail zero-pads (new features start untrained); more → tail truncates. Sound only because the vector is APPEND-ONLY. `numFeatures` outside `[1, kMaxBanditFeatures=256]` is treated as corrupt and the record is skipped |
+| Item cap | `numItems > kMaxBanditItems` (50,000) → record skipped wholesale |
 | Short read | v2 bulk read or v1 per-field read that comes up short rejects the record wholesale — never a silent partial import |
 | Non-finite weights | Entries containing any non-finite weight are dropped before they can reach the scorer |
 | FormID resolution | `ResolveFormID` on every FormID (mod reordering); unresolvable entries are dropped and counted |
@@ -1174,8 +1179,8 @@ first). `ImportData` reconstructs each `lastUpdate` as
 apply time-based decay across a save/load boundary — items idle before saving
 keep decaying proportionally after loading.
 
-`hg reset qvalues` and the dMenu "reset learning data" button both route through
-`SettingsReloader::ResetLearningData`, which runs `FeatureQLearner::Clear()`
+`hg reset weights` and the dMenu "reset learning data" button both route through
+`SettingsReloader::ResetLearningData`, which runs `FeatureBanditLearner::Clear()`
 under the update handler's exclusive lock and also resets `SlotLocker` — without
 that, locked slots would keep pinning recommendations scored by the
 just-cleared table for the remainder of their lock duration.
@@ -1184,7 +1189,7 @@ just-cleared table for the remainder of their lock duration.
 
 ## Hyperparameters
 
-### FeatureQLearner (compile-time, `src/learning/FeatureQLearner.h:128-133`)
+### FeatureBanditLearner (compile-time, `src/learning/FeatureBanditLearner.h:128-133`)
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
@@ -1230,7 +1235,7 @@ just-cleared table for the remainder of their lock duration.
 | Parameter | Old Default | Reason Removed |
 |-----------|-------------|----------------|
 | SKIP_PENALTY | -1.0 | Replaced by L2 regularization + time-based decay. Skip penalties punished correct recommendations during state transitions. |
-| Tabular hyperparameters | various | Tabular QLearner fully removed in v0.13.x (alpha, activeDecayRate, passiveDecayRate, etc.) |
+| Tabular hyperparameters | various | Tabular the learner fully removed in v0.13.x (alpha, activeDecayRate, passiveDecayRate, etc.) |
 
 ---
 
@@ -1310,7 +1315,7 @@ opinion is weighted in only as it earns it.
 
 | Command | What it shows |
 |---|---|
-| `hg status` | FQL item count and total trains |
+| `hg status` | the learner item count and total trains |
 | `hg weights <hex FormID>` | Per-feature weights, train count, live Q / confidence / UCB |
 | `hg recs [N]` | Top-N breakdown (N = 1–50, default 10), plus the current slot assignments; `[WC]` marks wildcards, `[COLD]` cold-start boosts |
 
@@ -1348,9 +1353,9 @@ learns": an item reaches 50% confidence at **5** rewarded uses and ~95% at
 
 | Action | Effect |
 |---|---|
-| `hg reset qvalues` | `FeatureQLearner::Clear()` + slot-lock reset. Config untouched |
+| `hg reset weights` | `FeatureBanditLearner::Clear()` + slot-lock reset. Config untouched |
 | `hg reset all` | The above, plus a full registry rebuild and a reset of every stateful pipeline subsystem |
-| dMenu "reset learning data" | Same path as `hg reset qvalues` (`SettingsReloader::ResetLearningData`) |
+| dMenu "reset learning data" | Same path as `hg reset weights` (`SettingsReloader::ResetLearningData`) |
 | dMenu "reset to defaults" | Settings only — learned weights untouched |
 | `hg reload` | Re-reads the INI; learned weights untouched |
 

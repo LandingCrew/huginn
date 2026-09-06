@@ -385,7 +385,7 @@ with (`UtilityScorer.cpp:263`, `:334`)
 
 ```
 learningScore = α·Q + (1 − α)·prior + β·UCB + recencyBoost
-α             = confidence          (from FeatureQLearner visit counts, not configurable)
+α             = confidence          (from FeatureBanditLearner visit counts, not configurable)
 β             = explorationWeight   (fExplorationWeight, default 0.2)
 λ(confidence) = lambdaMin + confidence × (lambdaMax − lambdaMin)   (0.5 → 3.0)
 ```

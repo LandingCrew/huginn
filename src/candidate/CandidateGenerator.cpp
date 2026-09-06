@@ -330,7 +330,7 @@ namespace Huginn::Candidate
         // picked by capacity. That is a hard-coded preference sitting in front
         // of the one component whose job is preferences: a Petty gem was never
         // a candidate, so it could never be scored, equipped from a slot, or
-        // rewarded, and FeatureQLearner could not discover that a player tops up
+        // rewarded, and FeatureBanditLearner could not discover that a player tops up
         // with small gems and saves the Grands. Every other candidate type is
         // gathered wholesale and ranked; gems were the exception.
         //

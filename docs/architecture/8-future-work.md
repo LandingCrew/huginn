@@ -17,8 +17,8 @@ one-off ideas kept here so they are not lost.
 > - [1-states.md](1-states.md) — the state models the prediction ideas below would draw on
 
 > **Terminology:** Huginn's learner is a **contextual bandit**. The code
-> identifiers (`FeatureQLearner`, `QLearnerSerializer`, the `FQLW` cosave record,
-> `hg reset qvalues`) keep the historical "Q" name and will not be renamed — the
+> identifiers (`FeatureBanditLearner`, `BanditSerializer`, the `BNDW` cosave record,
+> `hg reset weights`) keep the historical "Q" name and will not be renamed — the
 > cosave format and a documented console command depend on them.
 
 ---
@@ -38,7 +38,7 @@ one-off ideas kept here so they are not lost.
 | Experience replay / batch learning | Deferred | No |
 | Combat outcome rewards | Not implemented | **No** |
 | Category-level negative signal | Not implemented | **No** |
-| Kalman FQL / learnable context weights (Addendum #15/#16) | Not implemented | **Yes — parked** (needs a v3 cosave bump; not landable during an active soak run) |
+| Kalman the learner / learnable context weights (Addendum #15/#16) | Not implemented | **Yes — parked** (needs a v3 cosave bump; not landable during an active soak run) |
 
 > **Dead reference, removed:** earlier revisions of this document pointed at
 > the v0.13.x roadmap's "Phase 5" for the implementation order of the four
@@ -57,11 +57,11 @@ Kept here because the "why" is useful and the constants move.
 
 | Original issue | Resolution (verified at 0.19.10) |
 |---|---|
-| Skip penalty punishes exploration | No skip penalties exist. `FeatureQLearner::Update` applies L2 regularization (`L2_LAMBDA = 0.01f`) on every gradient step, so weights for unused items shrink toward zero naturally (`FeatureQLearner.cpp:41`) |
-| Double-dipping (equip + cast) | A cast bonus was never implemented. `EQUIP_REWARD = 8.0f` and `CONSUME_REWARD = 5.0f` are the only positive signals (`Config.h:46`, `Config.h:51`), both scaled by `event.rewardMultiplier` in `FQLSubscriber` |
+| Skip penalty punishes exploration | No skip penalties exist. `FeatureBanditLearner::Update` applies L2 regularization (`L2_LAMBDA = 0.01f`) on every gradient step, so weights for unused items shrink toward zero naturally (`FeatureBanditLearner.cpp:41`) |
+| Double-dipping (equip + cast) | A cast bonus was never implemented. `EQUIP_REWARD = 8.0f` and `CONSUME_REWARD = 5.0f` are the only positive signals (`Config.h:46`, `Config.h:51`), both scaled by `event.rewardMultiplier` in `BanditSubscriber` |
 | Skip penalty ambiguity | Not applicable — reasonable alternatives are never penalized |
 | Weight drift across build changes | L2 pulls weights toward zero without reinforcement; a lazy time-based decay adds explicit staleness handling (`DECAY_RATE_PER_HOUR = 0.02f`, `DECAY_THRESHOLD_MINUTES = 5.0f`, `Config.h:179`) |
-| Positive feedback loop | Mitigated by per-feature clamping (`WEIGHT_CLAMP = 10.0f`, `FeatureQLearner.h:130`) applied immediately after each update |
+| Positive feedback loop | Mitigated by per-feature clamping (`WEIGHT_CLAMP = 10.0f`, `FeatureBanditLearner.h:130`) applied immediately after each update |
 | Misclick detection | Implemented: a rapid equip-then-switch inside `MISCLICK_WINDOW_SECONDS = 3.0f` in the same context applies `MISCLICK_PENALTY = -3.0f` to the discarded item (`UsageMemory::RecordUsage` → `UsageMemorySubscriber`, `EquipSubscribers.h:66`) |
 
 Two identifier corrections against older revisions of this document:
@@ -69,9 +69,9 @@ Two identifier corrections against older revisions of this document:
 - **`MaybeDecay()` is now `MaybeDecayBatch()`.** Per-candidate decay cost ~N lock
   acquisitions per scoring tick; it is now one shared-lock collection pass plus one
   unique-lock apply pass, skipped entirely when nothing qualifies
-  (`FeatureQLearner.h:49`, called from `UtilityScorer.cpp:63`).
+  (`FeatureBanditLearner.h:49`, called from `UtilityScorer.cpp:63`).
 - Rewards are dispatched through the `EquipEventBus` subscriber pattern, not from
-  the update loop: `FQLSubscriber` (rewards), `UsageMemorySubscriber` (recency +
+  the update loop: `BanditSubscriber` (rewards), `UsageMemorySubscriber` (recency +
   misclick penalty), `CooldownSubscriber` (consumption cooldown). Hotkey and
   Wheeler equips are rewarded **only when the item was recommended**
   (`event.wasRecommended`); external equips always apply, with attribution
@@ -130,7 +130,7 @@ The other constraint is the feature vector. `StateFeatures` is 18 floats and
 carries **no trend or velocity feature** — vitals, combat/sneak flags, normalized
 enemy distance, a 7-way target-type one-hot, four equipment flags, and a bias
 term. It is **APPEND-ONLY**: `ToArray()` order is the cosave wire order and
-`QLearnerSerializer` migrates saved weights positionally
+`BanditSerializer` migrates saved weights positionally
 (`StateFeatures.h:61`). Adding a velocity feature is therefore a cosave-format
 change, which puts it in the same bucket as the parked Addendum #15/#16 — not
 landable during an active soak run.
@@ -236,7 +236,7 @@ Q(s,a) <- Q(s,a) + alpha[r + gamma*Q(s',a') - Q(s,a)]
 ```
 
 This is exactly the update Huginn does *not* perform, and it is what makes the
-current system a contextual bandit rather than Q-learning: `FeatureQLearner::Update`
+current system a contextual bandit rather than Q-learning: `FeatureBanditLearner::Update`
 computes `error = reward - prediction` and takes a semi-gradient step on it —
 no `gamma`, no `s'`, no trajectory (see [4-contextual-bandits.md](4-contextual-bandits.md)).
 A feature-based SARSA variant would keep `Q(s,a) = w_a · phi(s)` and update using
@@ -321,7 +321,7 @@ accept% is the right quality metric for a wheel-driven player at all.
 Read [../roadmap.md](../roadmap.md) for the live list. The learning-adjacent
 entries as of 2026-08-29:
 
-- **Addendum #15/#16 — Kalman FQL / learnable context weights: parked.** Needs a
+- **Addendum #15/#16 — Kalman the learner / learnable context weights: parked.** Needs a
   v3 cosave bump, which is not landable during an active soak run. This is the
   only learning-system item with a real plan behind it.
 - **Scroll cold-start** — every scroll sits in the candidate pool each tick but

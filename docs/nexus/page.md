@@ -256,7 +256,7 @@ Changes take effect on `hg rebuild` — no game restart needed, and `hg reload` 
 
 This controls the in-game Intuition widget's appearance and, on a debug build, its debugging output. dMenu owns these settings exclusively — position, opacity, scale, display mode, and the widget on/off switch — and you edit them from Huginn's panel in the dMenu UI rather than by hand. Without dMenu installed, the widget uses its built-in defaults.
 
-The panel also has three buttons: Show/Hide Widget, Reset Q-Table (makes Huginn forget everything it has learned about your preferences), and Reset to Defaults.
+The panel also has three buttons: Show/Hide Widget, Reset Learned Weights (makes Huginn forget everything it has learned about your preferences), and Reset to Defaults.
 
 ### Console commands
 
@@ -273,7 +273,7 @@ Open the console with `~` and type `hg` (or `Huginn`):
 | `hg unlock` | Unstick every slot, so all of them are free to change again |
 | `hg recs [N]` | Write the top N picks, and why they scored as they did, to the log |
 | `hg weights <FormID>` | Show what Huginn has learned about one specific spell or item |
-| `hg reset qvalues` | Forget everything Huginn has learned about your preferences |
+| `hg reset weights` | Forget everything Huginn has learned about your preferences |
 | `hg reset all` | Full system reset |
 
 Log output goes to `Documents/My Games/Skyrim Special Edition/SKSE/Huginn.log`.

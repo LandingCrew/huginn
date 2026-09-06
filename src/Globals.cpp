@@ -24,8 +24,8 @@ std::unique_ptr<Huginn::State::StateEvaluator> g_stateEvaluator;
 // Spell registry instance
 std::unique_ptr<Huginn::Spell::SpellRegistry> g_spellRegistry;
 
-// Feature-based Q-learner - Linear function approximation
-std::unique_ptr<Huginn::Learning::FeatureQLearner> g_featureQLearner;
+// Feature-based bandit learner - Linear function approximation
+std::unique_ptr<Huginn::Learning::FeatureBanditLearner> g_featureBanditLearner;
 
 // Usage memory (v0.13.x) - Short-term situational recall for recency boosting
 std::unique_ptr<Huginn::Learning::UsageMemory> g_usageMemory;
@@ -79,7 +79,7 @@ std::atomic<bool> g_updateSystemFailed{false};
 // =============================================================================
 namespace Huginn {
     State::StateEvaluator* GetStateEvaluator() { return g_stateEvaluator.get(); }
-    Learning::FeatureQLearner* GetFeatureQLearner() { return g_featureQLearner.get(); }
+    Learning::FeatureBanditLearner* GetFeatureBanditLearner() { return g_featureBanditLearner.get(); }
     Learning::UsageMemory* GetUsageMemory() { return g_usageMemory.get(); }
 }
 

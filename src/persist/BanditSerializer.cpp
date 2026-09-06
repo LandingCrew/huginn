@@ -1,4 +1,4 @@
-#include "QLearnerSerializer.h"
+#include "BanditSerializer.h"
 #include "Globals.h"
 
 #include <algorithm>
@@ -8,7 +8,7 @@
 
 namespace Huginn::Persist
 {
-   using FQLEntry = Learning::FeatureQLearner::SerializedEntry;
+   using BanditEntry = Learning::FeatureBanditLearner::SerializedEntry;
 
    // The batch (single-blob) cosave path memcpy's the whole entry array, so the
    // on-disk layout IS SerializedEntry's memory layout. These asserts lock that
@@ -18,20 +18,20 @@ namespace Huginn::Persist
    // of silently writing an incompatible blob. The byte order also matches the
    // legacy per-field format (formID, weights[18], trainCount, minutes), so v2
    // saves round-trip identically between the batch and per-field code paths.
-   static_assert(std::is_trivially_copyable_v<FQLEntry>,
+   static_assert(std::is_trivially_copyable_v<BanditEntry>,
       "SerializedEntry must be trivially copyable for batch cosave I/O");
-   static_assert(sizeof(FQLEntry) ==
+   static_assert(sizeof(BanditEntry) ==
          sizeof(RE::FormID)
        + sizeof(float) * Learning::StateFeatures::NUM_FEATURES
        + sizeof(uint32_t)   // trainCount
        + sizeof(uint32_t),  // minutesSinceLastUpdate (v2)
       "SerializedEntry layout changed — batch cosave I/O assumes tight packing; "
-      "bump kFQLSerializationVersion and update the wire format");
+      "bump kBanditSerializationVersion and update the wire format");
 
-   // Static buffer — populated by LoadCallback, consumed by ApplyPendingFQLData
-   static std::optional<LoadedFQLData> s_pendingFQLData;
+   // Static buffer — populated by LoadCallback, consumed by ApplyPendingBanditData
+   static std::optional<LoadedBanditData> s_pendingBanditData;
 
-   std::vector<FQLEntry> DecodeV2EntryBlob(
+   std::vector<BanditEntry> DecodeV2EntryBlob(
       const std::byte* data, size_t byteLen, uint32_t numItems, uint32_t diskFeatureCount)
    {
       constexpr auto compiled = static_cast<uint32_t>(Learning::StateFeatures::NUM_FEATURES);
@@ -47,7 +47,7 @@ namespace Huginn::Persist
 
       // Value-init zeroes every weight, so positions >= copyCount stay 0
       // (new features start untrained).
-      std::vector<FQLEntry> out(numItems);
+      std::vector<BanditEntry> out(numItems);
       const std::byte* p = data;
       for (uint32_t i = 0; i < numItems; ++i, p += stride) {
          auto& e = out[i];
@@ -62,24 +62,24 @@ namespace Huginn::Persist
    }
 
    // =========================================================================
-   // SaveCallback — serialize FeatureQLearner data into cosave records
+   // SaveCallback — serialize FeatureBanditLearner data into cosave records
    // =========================================================================
    static void SaveCallback(SKSE::SerializationInterface* a_intfc)
    {
-      // ── FQLW record: FeatureQLearner weights + train counts ──────────
-      if (g_featureQLearner) {
-         if (!a_intfc->OpenRecord(kRecordType_FQLWeights, kFQLSerializationVersion)) {
-            logger::error("[Cosave] Failed to open FQLW record"sv);
+      // ── BNDW record: FeatureBanditLearner weights + train counts ──────────
+      if (g_featureBanditLearner) {
+         if (!a_intfc->OpenRecord(kRecordType_BanditWeights, kBanditSerializationVersion)) {
+            logger::error("[Cosave] Failed to open BNDW record"sv);
             return;
          }
 
          // Collect entries into a contiguous buffer for a single bulk write.
-         std::vector<FQLEntry> fqlEntries;
-         fqlEntries.reserve(g_featureQLearner->GetItemCount());
+         std::vector<BanditEntry> fqlEntries;
+         fqlEntries.reserve(g_featureBanditLearner->GetItemCount());
          uint32_t fqlTotalTrains = 0;
 
-         g_featureQLearner->ExportData(
-            [&](FQLEntry entry) {
+         g_featureBanditLearner->ExportData(
+            [&](BanditEntry entry) {
                fqlEntries.push_back(std::move(entry));
             },
             fqlTotalTrains
@@ -91,36 +91,36 @@ namespace Huginn::Persist
          // side cross-checks the two.)
          uint32_t numFeatures = Learning::StateFeatures::NUM_FEATURES;
          uint32_t numItems = static_cast<uint32_t>(fqlEntries.size());
-         if (!a_intfc->WriteRecordData(kFQLSerializationVersion) ||
+         if (!a_intfc->WriteRecordData(kBanditSerializationVersion) ||
              !a_intfc->WriteRecordData(numFeatures) ||
              !a_intfc->WriteRecordData(fqlTotalTrains) ||
              !a_intfc->WriteRecordData(numItems)) {
-            logger::error("[Cosave] Failed to write FQLW header"sv);
+            logger::error("[Cosave] Failed to write BNDW header"sv);
             return;
          }
 
          // The write side trusts numItems: no cap and no byteLen overflow guard.
          // Both are bounded by reality — GetItemCount() is one entry per distinct
-         // trained FormID, so numItems > kMaxFQLItems (50k), let alone the ~51M
-         // where numItems * sizeof(FQLEntry) overflows uint32_t, cannot occur in a
+         // trained FormID, so numItems > kMaxBanditItems (50k), let alone the ~51M
+         // where numItems * sizeof(BanditEntry) overflows uint32_t, cannot occur in a
          // real playthrough. If a corrupt/oversized count somehow reached here, the
-         // load side rejects numItems > kMaxFQLItems wholesale (see LoadCallback).
+         // load side rejects numItems > kMaxBanditItems wholesale (see LoadCallback).
 
          // Entries: one contiguous blob instead of 21 calls/item. The array is
          // byte-identical to the old per-field layout (see static_asserts above),
          // so existing v2 saves remain compatible in both directions.
          if (numItems > 0) {
-            const uint32_t byteLen = numItems * static_cast<uint32_t>(sizeof(FQLEntry));
+            const uint32_t byteLen = numItems * static_cast<uint32_t>(sizeof(BanditEntry));
             if (!a_intfc->WriteRecordData(fqlEntries.data(), byteLen)) {
-               logger::error("[Cosave] Failed to write FQLW entry blob ({} bytes)"sv, byteLen);
+               logger::error("[Cosave] Failed to write BNDW entry blob ({} bytes)"sv, byteLen);
                return;
             }
          }
 
-         logger::info("[Cosave] Saved {} FQL weight entries, {} total trains"sv,
+         logger::info("[Cosave] Saved {} learner weight entries, {} total trains"sv,
             numItems, fqlTotalTrains);
       } else {
-         logger::warn("[Cosave] SaveCallback: g_featureQLearner is null, skipping"sv);
+         logger::warn("[Cosave] SaveCallback: g_featureBanditLearner is null, skipping"sv);
       }
    }
 
@@ -129,43 +129,45 @@ namespace Huginn::Persist
    // =========================================================================
    static void LoadCallback(SKSE::SerializationInterface* a_intfc)
    {
-      s_pendingFQLData = LoadedFQLData{};
+      s_pendingBanditData = LoadedBanditData{};
 
       uint32_t type, version, length;
       while (a_intfc->GetNextRecordInfo(type, version, length)) {
          switch (type) {
-         case kRecordType_FQLWeights:
+         case kRecordType_BanditWeights:
          {
-            auto& fqlData = *s_pendingFQLData;
+            auto& banditData = *s_pendingBanditData;
 
             uint32_t recVersion;
             if (!a_intfc->ReadRecordData(recVersion)) {
-               logger::error("[Cosave] Failed to read FQLW version"sv);
+               logger::error("[Cosave] Failed to read BNDW version"sv);
                break;
             }
             if (recVersion != 1 && recVersion != 2) {
-               logger::warn("[Cosave] FQLW version unsupported: got {} (expected 1 or 2) — skipping"sv,
+               logger::warn("[Cosave] BNDW version unsupported: got {} (expected 1 or 2) — skipping"sv,
                   recVersion);
                break;
             }
-            // The two copies have been written from the same constant since the
-            // repo import, but pre-import v1 writers are not provably identical —
-            // so a mismatch is only logged, and the in-data version (the original
-            // wire format) is trusted. The version check, bounds checks, and
+            // Nothing has ever written a v1 BNDW record — the tag is new as of
+            // 0.20.0, and every writer under it emits v2. The v1 branch below is
+            // kept only because the decode path and its tests already existed
+            // under the old FQLW tag; it is unreachable in practice.
+            // A header/in-data mismatch is logged rather than rejected, and the
+            // in-data version is trusted. The version check, bounds checks, and
             // exact-length reads below validate everything decode relies on.
             if (recVersion != version) {
-               logger::warn("[Cosave] FQLW version mismatch: SKSE header {} vs in-data {} — trusting in-data version"sv,
+               logger::warn("[Cosave] BNDW version mismatch: SKSE header {} vs in-data {} — trusting in-data version"sv,
                   version, recVersion);
             }
 
             uint32_t numFeatures;
             if (!a_intfc->ReadRecordData(numFeatures)) {
-               logger::error("[Cosave] Failed to read FQLW numFeatures"sv);
+               logger::error("[Cosave] Failed to read BNDW numFeatures"sv);
                break;
             }
-            if (numFeatures == 0 || numFeatures > kMaxFQLFeatures) {
-               logger::error("[Cosave] FQLW numFeatures {} out of range [1, {}] — corrupt record, skipping"sv,
-                  numFeatures, kMaxFQLFeatures);
+            if (numFeatures == 0 || numFeatures > kMaxBanditFeatures) {
+               logger::error("[Cosave] BNDW numFeatures {} out of range [1, {}] — corrupt record, skipping"sv,
+                  numFeatures, kMaxBanditFeatures);
                break;
             }
             constexpr auto compiledFeatures = static_cast<uint32_t>(Learning::StateFeatures::NUM_FEATURES);
@@ -173,38 +175,38 @@ namespace Huginn::Persist
                // Positional migration (append-only convention, see header/StateFeatures.h):
                // smaller on-disk count → tail zero-pads (new features untrained);
                // larger → tail truncates (removed features dropped).
-               logger::info("[Cosave] FQLW feature-count migration: {} on disk -> {} compiled ({})"sv,
+               logger::info("[Cosave] BNDW feature-count migration: {} on disk -> {} compiled ({})"sv,
                   numFeatures, compiledFeatures,
                   numFeatures < compiledFeatures ? "zero-padding new features"sv
                                                  : "truncating removed features"sv);
             }
 
-            if (!a_intfc->ReadRecordData(fqlData.totalTrainCount)) {
-               logger::error("[Cosave] Failed to read FQLW totalTrainCount"sv);
+            if (!a_intfc->ReadRecordData(banditData.totalTrainCount)) {
+               logger::error("[Cosave] Failed to read BNDW totalTrainCount"sv);
                break;
             }
 
             uint32_t numItems;
             if (!a_intfc->ReadRecordData(numItems)) {
-               logger::error("[Cosave] Failed to read FQLW numItems"sv);
+               logger::error("[Cosave] Failed to read BNDW numItems"sv);
                break;
             }
-            if (numItems > kMaxFQLItems) {
-               logger::error("[Cosave] FQLW numItems {} exceeds cap {} — skipping"sv,
-                  numItems, kMaxFQLItems);
+            if (numItems > kMaxBanditItems) {
+               logger::error("[Cosave] BNDW numItems {} exceeds cap {} — skipping"sv,
+                  numItems, kMaxBanditItems);
                break;
             }
 
-            fqlData.entries.reserve(numItems);
+            banditData.entries.reserve(numItems);
             size_t droppedCorrupt = 0;
 
             // Validate + resolve one decoded entry, keeping only survivors.
-            auto acceptEntry = [&](FQLEntry& entry) {
+            auto acceptEntry = [&](BanditEntry& entry) {
                // Reject non-finite weights before corrupt data reaches the scorer.
                for (float w : entry.weights) {
                   if (!std::isfinite(w)) {
                      ++droppedCorrupt;
-                     logger::warn("[Cosave] FQL entry {:08X} has non-finite weight — dropping"sv,
+                     logger::warn("[Cosave] learner entry {:08X} has non-finite weight — dropping"sv,
                         entry.formID);
                      return;
                   }
@@ -213,30 +215,30 @@ namespace Huginn::Persist
                RE::FormID newFormID;
                if (a_intfc->ResolveFormID(entry.formID, newFormID)) {
                   entry.formID = newFormID;
-                  fqlData.resolvedFormIDs++;
-                  fqlData.entries.push_back(entry);
+                  banditData.resolvedFormIDs++;
+                  banditData.entries.push_back(entry);
                } else {
-                  fqlData.failedFormIDs++;
-                  logger::debug("[Cosave] FQL FormID {:08X} failed to resolve"sv, entry.formID);
+                  banditData.failedFormIDs++;
+                  logger::debug("[Cosave] learner FormID {:08X} failed to resolve"sv, entry.formID);
                }
             };
 
             if (recVersion >= 2) {
                // v2: fixed-stride entries — read the whole array in one call, using
-               // the stride the record was WRITTEN with (differs from sizeof(FQLEntry)
+               // the stride the record was WRITTEN with (differs from sizeof(BanditEntry)
                // during feature-count migration). A short read rejects the record
                // wholesale (no silent partial import). byteLen cannot overflow:
                // numItems <= 50k and stride <= 4 + 4*256 + 8, product < 52 MB.
                const size_t diskStride = sizeof(RE::FormID)
                                        + sizeof(float) * numFeatures
                                        + sizeof(uint32_t) * 2;
-               std::vector<FQLEntry> raw;
+               std::vector<BanditEntry> raw;
                if (numItems > 0) {
                   const uint32_t byteLen = numItems * static_cast<uint32_t>(diskStride);
                   std::vector<std::byte> blob(byteLen);
                   const uint32_t got = a_intfc->ReadRecordData(blob.data(), byteLen);
                   if (got != byteLen) {
-                     logger::error("[Cosave] FQLW bulk read short: got {} of {} bytes — skipping"sv,
+                     logger::error("[Cosave] BNDW bulk read short: got {} of {} bytes — skipping"sv,
                         got, byteLen);
                      break;
                   }
@@ -252,21 +254,21 @@ namespace Huginn::Persist
                // Like v2, an incomplete read rejects the record wholesale (no
                // silent partial import): entries are buffered and committed only
                // after every read succeeded.
-               std::vector<FQLEntry> raw;
+               std::vector<BanditEntry> raw;
                raw.reserve(numItems);
                bool readOk = true;
                for (uint32_t i = 0; i < numItems && readOk; ++i) {
-                  FQLEntry entry{};                  // weights zeroed for migration pad
+                  BanditEntry entry{};                  // weights zeroed for migration pad
                   entry.minutesSinceLastUpdate = 0;  // v1: treat as fresh
                   if (!a_intfc->ReadRecordData(entry.formID)) {
-                     logger::error("[Cosave] Failed to read FQLW formID at index {}"sv, i);
+                     logger::error("[Cosave] Failed to read BNDW formID at index {}"sv, i);
                      readOk = false;
                      break;
                   }
                   for (uint32_t f = 0; f < numFeatures; ++f) {
                      float w;
                      if (!a_intfc->ReadRecordData(w)) {
-                        logger::error("[Cosave] Failed to read FQLW weight at item {}, feature {}"sv, i, f);
+                        logger::error("[Cosave] Failed to read BNDW weight at item {}, feature {}"sv, i, f);
                         readOk = false;
                         break;
                      }
@@ -276,14 +278,14 @@ namespace Huginn::Persist
                   }
                   if (!readOk) break;
                   if (!a_intfc->ReadRecordData(entry.trainCount)) {
-                     logger::error("[Cosave] Failed to read FQLW trainCount at index {}"sv, i);
+                     logger::error("[Cosave] Failed to read BNDW trainCount at index {}"sv, i);
                      readOk = false;
                      break;
                   }
                   raw.push_back(entry);
                }
                if (!readOk) {
-                  logger::error("[Cosave] FQLW v1 read incomplete — skipping record"sv);
+                  logger::error("[Cosave] BNDW v1 read incomplete — skipping record"sv);
                   break;
                }
                for (auto& entry : raw) {
@@ -296,17 +298,17 @@ namespace Huginn::Persist
             // Invariant: m_totalTrainCount == sum of per-item trainCounts (the
             // learner increments both together on every train).
             uint32_t survivingTrains = 0;
-            for (const auto& e : fqlData.entries) {
+            for (const auto& e : banditData.entries) {
                survivingTrains += e.trainCount;
             }
-            if (survivingTrains != fqlData.totalTrainCount) {
+            if (survivingTrains != banditData.totalTrainCount) {
                logger::info("[Cosave] Adjusted totalTrainCount {} -> {} ({} failed, {} corrupt)"sv,
-                  fqlData.totalTrainCount, survivingTrains, fqlData.failedFormIDs, droppedCorrupt);
-               fqlData.totalTrainCount = survivingTrains;
+                  banditData.totalTrainCount, survivingTrains, banditData.failedFormIDs, droppedCorrupt);
+               banditData.totalTrainCount = survivingTrains;
             }
 
-            logger::info("[Cosave] Loaded {} FQL entries ({} resolved, {} failed, {} corrupt)"sv,
-               fqlData.entries.size(), fqlData.resolvedFormIDs, fqlData.failedFormIDs, droppedCorrupt);
+            logger::info("[Cosave] Loaded {} learner entries ({} resolved, {} failed, {} corrupt)"sv,
+               banditData.entries.size(), banditData.resolvedFormIDs, banditData.failedFormIDs, droppedCorrupt);
             break;
          }
          default:
@@ -317,17 +319,17 @@ namespace Huginn::Persist
    }
 
    // =========================================================================
-   // RevertCallback — clear buffer and FeatureQLearner on revert (new game / load)
+   // RevertCallback — clear buffer and FeatureBanditLearner on revert (new game / load)
    // =========================================================================
    static void RevertCallback([[maybe_unused]] SKSE::SerializationInterface* a_intfc)
    {
-      s_pendingFQLData.reset();
+      s_pendingBanditData.reset();
 
-      if (g_featureQLearner) {
-         g_featureQLearner->Clear();
+      if (g_featureBanditLearner) {
+         g_featureBanditLearner->Clear();
       }
 
-      logger::info("[Cosave] FeatureQLearner cleared on revert"sv);
+      logger::info("[Cosave] FeatureBanditLearner cleared on revert"sv);
    }
 
    // =========================================================================
@@ -343,28 +345,28 @@ namespace Huginn::Persist
       intfc->SetRevertCallback(RevertCallback);
    }
 
-   bool HasPendingFQLData()
+   bool HasPendingBanditData()
    {
-      return s_pendingFQLData.has_value() && !s_pendingFQLData->entries.empty();
+      return s_pendingBanditData.has_value() && !s_pendingBanditData->entries.empty();
    }
 
-   bool ApplyPendingFQLData(Learning::FeatureQLearner& fql)
+   bool ApplyPendingBanditData(Learning::FeatureBanditLearner& learner)
    {
-      if (!s_pendingFQLData.has_value()) {
+      if (!s_pendingBanditData.has_value()) {
          return false;
       }
 
-      auto data = std::move(*s_pendingFQLData);
-      s_pendingFQLData.reset();
+      auto data = std::move(*s_pendingBanditData);
+      s_pendingBanditData.reset();
 
       if (data.entries.empty()) {
-         logger::info("[Cosave] No FQL data to apply (empty save or all FormIDs failed)"sv);
+         logger::info("[Cosave] No learner data to apply (empty save or all FormIDs failed)"sv);
          return false;
       }
 
-      fql.ImportData(data.entries, data.totalTrainCount);
+      learner.ImportData(data.entries, data.totalTrainCount);
 
-      logger::info("[Cosave] Applied {} FQL entries, {} total trains ({} resolved, {} failed)"sv,
+      logger::info("[Cosave] Applied {} learner entries, {} total trains ({} resolved, {} failed)"sv,
          data.entries.size(), data.totalTrainCount, data.resolvedFormIDs, data.failedFormIDs);
 
       return true;

@@ -2,7 +2,7 @@
 #include "update/UpdateHandler.h"
 
 #include "Globals.h"
-#include "learning/FeatureQLearner.h"
+#include "learning/FeatureBanditLearner.h"
 #include "learning/StateFeatures.h"
 #include "learning/PipelineStateCache.h"
 #include "state/StateManager.h"
@@ -67,23 +67,23 @@ namespace Huginn::Console
    // =========================================================================
 
    struct CommandEntry {
-      std::string_view name;      // "refresh", "reset qvalues", etc.
+      std::string_view name;      // "refresh", "reset weights", etc.
       std::string_view helpText;  // "Force immediate recommendation update"
       bool takesArg;              // true for "weights", "page"
       void (*execute)(std::string_view);  // raw fn pointer (zero overhead)
    };
 
-   static void Cmd_ResetQValues(std::string_view /*arg*/)
+   static void Cmd_ResetWeights(std::string_view /*arg*/)
    {
       // Shared with the dMenu "reset learning data" button; serializes itself
-      // via RunExclusive and resets SlotLocker alongside the Q-table.
-      const auto fqlItems = Settings::SettingsReloader::ResetLearningData();
-      if (!fqlItems) {
-         Print("FeatureQLearner not initialized (load a game first)");
+      // via RunExclusive and resets SlotLocker alongside the weight table.
+      const auto learnerItems = Settings::SettingsReloader::ResetLearningData();
+      if (!learnerItems) {
+         Print("FeatureBanditLearner not initialized (load a game first)");
          return;
       }
 
-      auto msg = std::format("Learning data cleared ({} FQL items)", *fqlItems);
+      auto msg = std::format("Learning data cleared ({} learner items)", *learnerItems);
       Print(msg.c_str());
       logger::info("[Console] {}"sv, msg);
    }
@@ -133,10 +133,10 @@ namespace Huginn::Console
       // Without this, the console thread could reset subsystems mid-update.
       Huginn::Update::UpdateHandler::GetSingleton()->RunExclusive([&] {
          // 1. Clear learning data (console-specific — init path restores from cosave)
-         size_t fqlItems = 0;
-         if (g_featureQLearner) {
-            fqlItems = g_featureQLearner->GetItemCount();
-            g_featureQLearner->Clear();
+         size_t learnerItems = 0;
+         if (g_featureBanditLearner) {
+            learnerItems = g_featureBanditLearner->GetItemCount();
+            g_featureBanditLearner->Clear();
          }
 
          // 2. Rebuild all registries (console does full rebuild; init path reconciles)
@@ -145,8 +145,8 @@ namespace Huginn::Console
          // 3. Reset all stateful pipeline subsystems (shared with InitializeGameSystems)
          ResetPipelineSubsystems();
 
-         auto msg = std::format("Full reset complete (FQL: {} items, all subsystems reset)",
-            fqlItems);
+         auto msg = std::format("Full reset complete (Learner: {} items, all subsystems reset)",
+            learnerItems);
          Print(msg.c_str());
          logger::info("[Console] {}"sv, msg);
       });
@@ -199,10 +199,10 @@ namespace Huginn::Console
 
    static void Cmd_Status(std::string_view /*arg*/)
    {
-      // Feature Q-learning
-      if (g_featureQLearner) {
-      auto msg = std::format("FQL: {} items, {} total trains",
-        g_featureQLearner->GetItemCount(), g_featureQLearner->GetTotalTrainCount());
+      // Feature contextual bandit
+      if (g_featureBanditLearner) {
+      auto msg = std::format("Learner: {} items, {} total trains",
+        g_featureBanditLearner->GetItemCount(), g_featureBanditLearner->GetTotalTrainCount());
       Print(msg.c_str());
       }
 
@@ -238,8 +238,8 @@ namespace Huginn::Console
 
    static void Cmd_Weights(std::string_view arg)
    {
-      if (!g_featureQLearner) {
-         Print("FeatureQLearner not initialized (load a game first)");
+      if (!g_featureBanditLearner) {
+         Print("FeatureBanditLearner not initialized (load a game first)");
          return;
       }
 
@@ -261,8 +261,8 @@ namespace Huginn::Console
       auto* form = RE::TESForm::LookupByID(formID);
       const char* name = form ? form->GetName() : "???";
 
-      auto weights = g_featureQLearner->GetWeights(formID);
-      uint32_t trains = g_featureQLearner->GetTrainCount(formID);
+      auto weights = g_featureBanditLearner->GetWeights(formID);
+      uint32_t trains = g_featureBanditLearner->GetTrainCount(formID);
 
       if (trains == 0) {
          auto msg = std::format("{:08X} '{}': no training data", formID, name);
@@ -270,13 +270,13 @@ namespace Huginn::Console
          return;
       }
 
-      // Compute current Q-value using live state features
+      // Compute current reward estimate using live state features
       auto& stateMgr = State::StateManager::GetSingleton();
       auto features = Learning::StateFeatures::FromState(
          stateMgr.GetPlayerState(), stateMgr.GetTargets());
-      float qNow = g_featureQLearner->GetQValue(formID, features);
-      float conf = g_featureQLearner->GetConfidence(formID);
-      float ucb = g_featureQLearner->GetUCB(formID);
+      float qNow = g_featureBanditLearner->GetRewardEstimate(formID, features);
+      float conf = g_featureBanditLearner->GetConfidence(formID);
+      float ucb = g_featureBanditLearner->GetUCB(formID);
 
       // Header
       auto header = std::format("{:08X} '{}' ({} trains, Q={:.3f}, conf={:.2f}, ucb={:.2f}):",
@@ -365,12 +365,12 @@ namespace Huginn::Console
       { "recs",          "Dump top-N recommendation breakdown to log",  true,  Cmd_Recs },
       { "unlock",        "Clear all slot locks",                        false, Cmd_Unlock },
       { "status",        "Show system status",                          false, Cmd_Status },
-      { "weights",       "Show FQL weight vector for FormID",           true,  Cmd_Weights },
+      { "weights",       "Show learner weight vector for FormID",          true,  Cmd_Weights },
       { "rebuild",       "Force rebuild all registries",                false, Cmd_Rebuild },
       { "reload",        "Hot-reload all settings from INI",            false, Cmd_Reload },
       { "page",          "Switch to page N (or show current)",          true,  Cmd_Page },
-      { "reset qvalues", "Clear Q-learning tables",                    false, Cmd_ResetQValues },
-      { "reset q",       "Clear Q-learning tables",                    false, Cmd_ResetQValues },
+      { "reset weights", "Clear learned item weights",                  false, Cmd_ResetWeights },
+      { "reset w",       "Clear learned item weights",                  false, Cmd_ResetWeights },
       { "reset all",     "Full system reset",                          false, Cmd_ResetAll },
    };
 
@@ -379,7 +379,7 @@ namespace Huginn::Console
       Print("Huginn console commands:");
       Print("  hg help             - Show this help message");
       for (const auto& cmd : kCommands) {
-         if (cmd.name == "reset q") continue;  // Skip alias in help
+         if (cmd.name == "reset w") continue;  // Skip alias in help
          auto line = std::format("  hg {:<16s} - {}", cmd.name, cmd.helpText);
          Print(line.c_str());
       }
@@ -394,7 +394,7 @@ namespace Huginn::Console
       double&, std::uint32_t&)
    {
       // Parse from the raw command text (reliable, unlike chunk pointer arithmetic).
-      // a_scriptObj->text contains the full line, e.g. "hg reset qvalues".
+      // a_scriptObj->text contains the full line, e.g. "hg reset weights".
       // The 2-param registration ensures the console parser accepts multi-word input;
       // we do our own tokenization here for robustness.
       std::string subcmd;
@@ -442,7 +442,7 @@ namespace Huginn::Console
       }
       if (!handled) {
         if (subcmd == "reset") {
-          Print("Usage: hg reset <qvalues|all>");
+          Print("Usage: hg reset <weights|all>");
         } else {
           auto msg = std::format("Unknown command: '{}'. Type 'hg help' for available commands.", subcmd);
           Print(msg.c_str());
@@ -467,7 +467,7 @@ namespace Huginn::Console
       }
 
       // Two optional string params: "hg <command> <argument>"
-      // e.g. "hg reset qvalues" → param1="reset", param2="qvalues"
+      // e.g. "hg reset weights" → param1="reset", param2="weights"
       static RE::SCRIPT_PARAMETER params[] = {
       { "Command", RE::SCRIPT_PARAM_TYPE::kChar, true },
       { "Argument", RE::SCRIPT_PARAM_TYPE::kChar, true }

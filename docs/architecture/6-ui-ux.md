@@ -344,10 +344,9 @@ Type-specific detail (`IntuitionMenu::BuildSlotDetail`,
 | Item / Scroll | `"x{count}"` |
 | Ammo | `"{baseDamage} dmg · x{count}"`, or just `"x{count}"` |
 
-Verbose appends `ctx:{contextWeight} q:{qValue} p:{prior}` and, when non-zero,
-` rec:{recencyBoost}`. (`qValue` is the contextual bandit's learned value; the
-identifier keeps its historical name — see
-[../README.md](../README.md).) Verbose does **not** show a lock timer; that
+Verbose appends `ctx:{contextWeight} est:{rewardEstimate} p:{prior}` and, when
+non-zero, ` rec:{recencyBoost}`. (`rewardEstimate` is the bandit's learned value
+for the item in this context.) Verbose does **not** show a lock timer; that
 label is a Wheeler subtext only.
 
 ### Visual states

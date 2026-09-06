@@ -1,7 +1,7 @@
 #pragma once
 
 #include "EquipEventBus.h"
-#include "FeatureQLearner.h"
+#include "FeatureBanditLearner.h"
 #include "UsageMemory.h"
 #include "Config.h"
 #include "candidate/CandidateGenerator.h"
@@ -12,17 +12,17 @@
 namespace Huginn::Learning
 {
     // =========================================================================
-    // FQL SUBSCRIBER - Applies FeatureQLearner rewards
+    // BANDIT SUBSCRIBER - Applies FeatureBanditLearner rewards
     // =========================================================================
     // Source filtering:
     //   Hotkey/Wheeler: reward only if wasRecommended (player chose our suggestion)
     //   External: always reward (attribution scaling via rewardMultiplier)
     //   Consumption: uses CONSUME_REWARD constant
     // =========================================================================
-    class FQLSubscriber final : public IEquipSubscriber
+    class BanditSubscriber final : public IEquipSubscriber
     {
     public:
-        explicit FQLSubscriber(FeatureQLearner& fql) : m_fql(fql) {}
+        explicit BanditSubscriber(FeatureBanditLearner& learner) : m_learner(learner) {}
 
         void OnEquipEvent(const EquipEvent& event) override
         {
@@ -45,15 +45,15 @@ namespace Huginn::Learning
                 break;
             }
 
-            m_fql.Update(event.formID, event.features, reward);
+            m_learner.Update(event.formID, event.features, reward);
 
-            logger::info("[FQLSubscriber] Reward {:08X} +{:.1f} (src={}, mult={:.2f})"sv,
+            logger::info("[BanditSubscriber] Reward {:08X} +{:.1f} (src={}, mult={:.2f})"sv,
                 event.formID, reward,
                 EquipSourceToString(event.source), event.rewardMultiplier);
         }
 
     private:
-        FeatureQLearner& m_fql;
+        FeatureBanditLearner& m_learner;
     };
 
     // =========================================================================
@@ -66,15 +66,15 @@ namespace Huginn::Learning
     class UsageMemorySubscriber final : public IEquipSubscriber
     {
     public:
-        UsageMemorySubscriber(UsageMemory& memory, FeatureQLearner& fql)
-            : m_memory(memory), m_fql(fql) {}
+        UsageMemorySubscriber(UsageMemory& memory, FeatureBanditLearner& learner)
+            : m_memory(memory), m_learner(learner) {}
 
         void OnEquipEvent(const EquipEvent& event) override
         {
             auto misclick = m_memory.RecordUsage(event.formID, event.gameState);
 
             if (misclick.detected) {
-                m_fql.Update(misclick.previousFormID, event.features, Config::MISCLICK_PENALTY);
+                m_learner.Update(misclick.previousFormID, event.features, Config::MISCLICK_PENALTY);
                 logger::debug("[Misclick] Penalized {:08X} ({:.1f})"sv,
                     misclick.previousFormID, Config::MISCLICK_PENALTY);
             }
@@ -82,7 +82,7 @@ namespace Huginn::Learning
 
     private:
         UsageMemory& m_memory;
-        FeatureQLearner& m_fql;
+        FeatureBanditLearner& m_learner;
     };
 
     // =========================================================================

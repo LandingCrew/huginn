@@ -7,7 +7,7 @@
 
 namespace Huginn::Scoring
 {
-    UtilityScorer::UtilityScorer(Learning::FeatureQLearner& featureLearner, Learning::UsageMemory& usageMemory, const ScorerConfig& config)
+    UtilityScorer::UtilityScorer(Learning::FeatureBanditLearner& featureLearner, Learning::UsageMemory& usageMemory, const ScorerConfig& config)
         : m_featureLearner(featureLearner)
         , m_usageMemory(usageMemory)
         , m_config(config)
@@ -48,7 +48,7 @@ namespace Huginn::Scoring
             *outWeights = weights;
         }
 
-        // Phase 3.5c: Pre-compute StateFeatures for FeatureQLearner (once per scoring pass)
+        // Phase 3.5c: Pre-compute StateFeatures for FeatureBanditLearner (once per scoring pass)
         auto stateFeatures = Learning::StateFeatures::FromState(player, targets);
         auto phi = stateFeatures.ToArray();  // Pre-compute once for locked reader
 
@@ -111,7 +111,7 @@ namespace Huginn::Scoring
 
         // Cold-start fallback: if too few candidates passed to fill slots, boost context
         // via UCB so untried items can surface. Triggers when scored < topNCandidates (10),
-        // which covers both "Top 0" (empty Q-table) and "Top 1" (only 1 item has real
+        // which covers both "Top 0" (empty weight table) and "Top 1" (only 1 item has real
         // context weight, e.g. a favorited weapon). The fallback self-heals as UCB decays.
         if (scored.size() < m_config.topNCandidates && m_config.coldStartUCBBoost > 0.0f) {
             // Dedup against already-scored candidates by linear scan — this branch
@@ -131,7 +131,7 @@ namespace Huginn::Scoring
 
                 float contextWeight = Context::WeightForCandidate(candidate, weights);
 
-                // UCB-driven context floor for untried/low-visit items (Phase 3.5c: FeatureQLearner)
+                // UCB-driven context floor for untried/low-visit items (Phase 3.5c: FeatureBanditLearner)
                 // Uses locked reader — no per-candidate lock acquisition
                 auto metrics = qReader.GetMetrics(formID, phi);
                 float boostedContext = std::max(contextWeight,
@@ -250,7 +250,7 @@ namespace Huginn::Scoring
         // =====================================================================
         // Step 2: Use pre-computed learning metrics (from LockedReader or direct API)
         // =====================================================================
-        result.breakdown.qValue = metrics.qValue;
+        result.breakdown.rewardEstimate = metrics.rewardEstimate;
         result.breakdown.ucb = metrics.ucb;
         result.breakdown.confidence = metrics.confidence;
 
@@ -260,13 +260,13 @@ namespace Huginn::Scoring
         result.breakdown.prior = m_priorCalc.CalculatePrior(player, candidate);
 
         // =====================================================================
-        // Step 4: Compute learning score: α*Q + (1-α)*prior + β*UCB
+        // Step 4: Compute learning score: α*R + (1-α)*prior + β*UCB
         // =====================================================================
         float alpha = result.breakdown.confidence;
         float beta = m_config.explorationWeight;
 
         result.breakdown.learningScore =
-            alpha * result.breakdown.qValue +
+            alpha * result.breakdown.rewardEstimate +
             (1.0f - alpha) * result.breakdown.prior +
             beta * result.breakdown.ucb;
 

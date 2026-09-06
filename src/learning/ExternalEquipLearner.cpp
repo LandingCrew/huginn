@@ -55,7 +55,7 @@ namespace Huginn::Learning
             return;
         }
 
-        // Publish to EquipEventBus (subscribers handle FQL reward + UsageMemory + misclick)
+        // Publish to EquipEventBus (subscribers handle bandit reward + UsageMemory + misclick)
         EquipEventBus::GetSingleton().Publish(
             formID, EquipSource::External, attribution.multiplier, false);
 

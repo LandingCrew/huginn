@@ -59,7 +59,7 @@ namespace Huginn::Learning
       float bias = 1.0f;
 
       // APPEND-ONLY: the ToArray() order is the cosave wire order, and
-      // QLearnerSerializer migrates saved weights positionally when
+      // BanditSerializer migrates saved weights positionally when
       // NUM_FEATURES changes. New features must be appended at the END of
       // ToArray() (after the current last index); never reorder or remove
       // positions — saved weights would silently apply to the wrong

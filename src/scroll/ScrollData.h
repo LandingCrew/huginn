@@ -7,7 +7,7 @@ namespace Huginn::Scroll
    // =============================================================================
    // SCROLL DATA (v0.7.7)
    // =============================================================================
-   // Scroll metadata for Q-learning and filtering.
+   // Scroll metadata for contextual bandit and filtering.
    // Scrolls are consumable spell casts - they reuse spell classification.
    // A scroll is essentially a one-time spell with no magicka cost.
    // =============================================================================

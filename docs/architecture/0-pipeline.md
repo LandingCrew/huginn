@@ -1,6 +1,6 @@
 # Huginn Recommendation Pipeline
 
-This document describes the data flow from game state to slot recommendations as currently implemented in v0.19.24.
+This document describes the data flow from game state to slot recommendations as currently implemented in v0.20.0.
 
 > **Related documentation:**
 > - [1-states.md](1-states.md) - State models (WorldState, PlayerActorState, TargetCollection, tracking states)
@@ -86,7 +86,7 @@ graph TB
     TC --> CRE
     CRE -->|context weights| US
 
-    GS --> QL[FeatureQLearner]
+    GS --> QL[FeatureBanditLearner]
     QL -->|reward estimates| US
 
     UM[UsageMemory] -->|recency boost| US
@@ -267,7 +267,7 @@ graph TD
 |------|---------|----------|----------------|
 | **Override** | Urgent situations with obvious answer | Critical HP, drowning, low ammo | `OverrideManager` hard rules, bypass scoring |
 | **Context Weight** | Situational relevance (rule-based) | Combat buffs, workstation potions | `ContextRuleEngine` + `CandidateGenerator` |
-| **Contextual Bandit Learning** | Player-specific preference | Item choice within context | `FeatureQLearner` reward estimate lookup |
+| **Contextual Bandit Learning** | Player-specific preference | Item choice within context | `FeatureBanditLearner` reward estimate lookup |
 
 ---
 
@@ -520,7 +520,7 @@ graph TB
 > is no normalization pass at the end of `ComputeWeights()`.
 >
 > Configuration lives in the `[ContextWeights]` INI section: **31 `fWeight*` keys plus 4
-> smoothing exponents**, which as of 0.19.24 is exactly the 35 fields
+> smoothing exponents**, which as of 0.20.0 is exactly the 35 fields
 > `ContextWeightConfig` carries. The loader still READS three more —
 > `fWeightWeaponChargeModerate/Low/Critical` — whose keys were removed because they
 > land in `ContextWeightSettings` and never reach the config, so nothing consumes
@@ -584,7 +584,7 @@ Where:
 - `contextWeight` = From ContextRuleEngine [0,1] — zero context = zero utility
 - `learningScore` = `α×Q + (1-α)×prior + β×UCB + recencyBoost`
 - `λ` = Confidence-adaptive: `lambdaMin + confidence × (lambdaMax - lambdaMin)` (0.5 at cold start → 3.0 at full confidence)
-- `Q` = Learned preference from FeatureQLearner (18-float linear function approximation)
+- `Q` = Learned preference from FeatureBanditLearner (18-float linear function approximation)
 - `α` = Confidence (more training → trust Q more)
 - `prior` = Intrinsic quality heuristic from PriorCalculator (magnitude, cost, charge)
 - `UCB` = Exploration bonus for untried items
@@ -758,7 +758,7 @@ graph LR
     Event -->|From consumption| E2b[+5.0 reward]
     Event -->|From vanilla menu| E3[Tiered reward<br/>0.0-8.0]
 
-    E1 --> QL[FeatureQLearner<br/>Update weights]
+    E1 --> QL[FeatureBanditLearner<br/>Update weights]
     E2 --> QL
     E2b --> QL
 
@@ -859,7 +859,7 @@ graph TB
     CG --> US[UtilityScorer]
     GS --> CRE[ContextRuleEngine]
     CRE --> US
-    GS --> QL[FeatureQLearner]
+    GS --> QL[FeatureBanditLearner]
     QL --> US
 
     US -->|7. AllocateAndLock| OvM[OverrideManager]
@@ -905,6 +905,6 @@ graph TB
 ## See Also
 
 - [../README.md](../README.md) - Overall system design
-- [4-contextual-bandits.md](4-contextual-bandits.md) - Learning system (FeatureQLearner architecture)
+- [4-contextual-bandits.md](4-contextual-bandits.md) - Learning system (FeatureBanditLearner architecture)
 - [5-slots.md](5-slots.md) - Slot classification and overrides
 - [1-states.md](1-states.md) - State model architecture

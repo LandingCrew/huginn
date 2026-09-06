@@ -42,7 +42,7 @@ Top hot zones + analysis + finding mapping.
 ## 2026-07-25 — `99cbb48` — critique #9 (display abstraction) complete
 
 - Session: SkyrimSE.exe @ 2026-07-25 14:19:22, Tracy 0.13.1, 53,835 frames, ~17:29 program time, 100.7 MB.
-- Save: real playthrough (~78 FQL items; poll counts ~6,916 ticks — a long, dense session).
+- Save: real playthrough (~78 learner items; poll counts ~6,916 ticks — a long, dense session).
 - Notes: DEBUG + TRACY (relative only). `99cbb48` = PR #56 HEAD (all four review passes). **0 page switches
   this session**, so the #9 race bail was not exercised (`pageBail=0` in the heartbeat, as expected).
 

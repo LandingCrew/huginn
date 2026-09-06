@@ -804,11 +804,11 @@ graph TB
     CRE --> Weights[ContextWeightMap]
 
     Models --> FV[StateFeatures<br/>18 floats]
-    FV --> FQL[FeatureQLearner<br/>reward estimate]
+    FV --> BL[FeatureBanditLearner<br/>reward estimate]
 
     Candidates --> US
     Weights --> US
-    FQL --> US
+    BL --> US
     GS --> PD[PotionDiscriminator]
     PD --> US
 
@@ -828,7 +828,7 @@ graph TB
 | **StateEvaluator** | PlayerActorState, TargetCollection | Discretize to `GameState` + hash (72,576 states) |
 | **CandidateGenerator** | PlayerActorState | Gather available spells/potions/weapons/ammo/scrolls/soul gems |
 | **ContextRuleEngine** | PlayerActorState, TargetCollection, WorldState | Evaluate context rules → `ContextWeightMap`; also names the tick's `ContextReason` |
-| **StateFeatures** | PlayerActorState, TargetCollection | Build the 18-float feature vector for `FeatureQLearner` |
+| **StateFeatures** | PlayerActorState, TargetCollection | Build the 18-float feature vector for `FeatureBanditLearner` |
 | **PotionDiscriminator** | GameState (bucketed vitals + enemy count) | Potion value/timing multiplier |
 | **UtilityScorer** | All of the above | Combine context weight, learning score, priors, multipliers |
 | **OverrideManager** | PlayerActorState, WorldState | Override condition checks |
@@ -988,10 +988,10 @@ graph TB
     GS --> Skip[Pipeline hash-skip<br/>+ PotionDiscriminator]
 
     Raw --> FV[Feature Vector<br/>18 normalized floats]
-    FV --> FQL[FeatureQLearner<br/>Linear Function Approximation]
+    FV --> BL[FeatureBanditLearner<br/>Linear Function Approximation]
 
     CW --> Scorer[UtilityScorer]
-    FQL --> Scorer
+    BL --> Scorer
 
     style Raw fill:#e1ffe1
     style GS fill:#fff4e1
@@ -1004,7 +1004,7 @@ graph TB
 |-------|---------|-------------|----------|
 | **Raw State** (6 state types) | Context weights, candidate gathering, slot allocation | Continuous floats, booleans | ContextRuleEngine, CandidateGenerator, OverrideManager |
 | **Discretized State** (`GameState`) | Pipeline skip gate + potion discrimination | Bucketed enums, 9 hashed dimensions (stamina excluded from the hash but kept in the struct) | `CheckHashSkip`, `PotionDiscriminator` |
-| **Feature Vector** (`StateFeatures`) | Feature-based contextual bandit learning | 18 normalized floats | FeatureQLearner (linear function approximation) |
+| **Feature Vector** (`StateFeatures`) | Feature-based contextual bandit learning | 18 normalized floats | FeatureBanditLearner (linear function approximation) |
 
 **`GameState` dimensions** ([GameState.h](../../src/state/GameState.h)):
 
@@ -1045,7 +1045,7 @@ in `ToArray()` order — which is also the cosave wire order:
 | 17 | `bias` | Always 1.0 (intercept) |
 
 `NUM_FEATURES = 18`, asserted inside `ToArray()`. The layout is **append-only**:
-`QLearnerSerializer` migrates saved `FQLW` weights positionally, so a new feature
+`BanditSerializer` migrates saved `BNDW` weights positionally, so a new feature
 goes at the end and a retired feature keeps its slot fed with a constant 0.
 Reordering silently reassigns every player's learned weights.
 
@@ -1062,7 +1062,7 @@ intentional — proximity and focus are different signals.
    - `health = 0.23f` → `HealthBucket::VeryLow` (11-25% bucket)
    - A drift from 0.23 → 0.24 produces the same hash, so the pipeline skips
 
-3. **Feature Vector** (FeatureQLearner): smooth generalization
+3. **Feature Vector** (FeatureBanditLearner): smooth generalization
    - `health = 0.23f` → feature stays 0.23 (continuous)
    - Linear model interpolates between similar states
 
@@ -1313,9 +1313,9 @@ source of TargetSource::Crosshair. -->
 | **Pipeline Skip** | Two-tier: sensor dirty flag + hash comparison, with unhashed-state bypasses | Implemented | ✅ Complete |
 | **State Space** | 72,576 hashed states (12× reduction from the un-reduced 870,912) | Skip gate + potion discrimination only | ✅ Complete |
 | **Memory Usage** | ~6 KB (hand-computed) | Within the 10 KB budget | ✅ Complete |
-| **Learning Persistence** | SKSE cosave, `FQLW` records, positional feature migration | Per-character persistence | ✅ Complete |
+| **Learning Persistence** | SKSE cosave, `BNDW` records, positional feature migration | Per-character persistence | ✅ Complete |
 | **Pipeline State Cache** | Caches scored candidates per cycle; timestamp refreshed even on a skip | External equip attribution | ✅ Complete |
-| **Feature Learning** | `FeatureQLearner`, 18-float linear model — the only learner | No tabular fallback remains | ✅ Complete |
+| **Feature Learning** | `FeatureBanditLearner`, 18-float linear model — the only learner | No tabular fallback remains | ✅ Complete |
 
 ### Pipeline Skip Optimization
 

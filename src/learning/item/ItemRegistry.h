@@ -76,7 +76,7 @@ namespace Huginn::Item
    // =============================================================================
    // ITEM CHANGE EVENT (v0.7.4)
    // =============================================================================
-   // Emitted when item counts change. Used for Q-learning feedback:
+   // Emitted when item counts change. Used for contextual bandit feedback:
    // - Consumed item (delta < 0) → potential reward signal
    // - Acquired item (delta > 0) → inventory update notification
    // =============================================================================

@@ -127,11 +127,9 @@ would notice.
       36,288-state figure (it is 72,576). `SettingsReloader.cpp:94` says the
       dMenu INI holds "Widget, Keybindings, Debug" — keybindings moved to the
       main INI in the 0.19.0 split. `ContextWeightConfig.h:14-16` gives a stale
-      field breakdown. `FeatureQLearner.h:132` says "~90% confidence at 15
-      trains"; the sigmoid gives 95.3%. `FeatureQLearner.h:30` and `.cpp:38`
-      call the rule "Semi-gradient TD(0)" — there is no TD bootstrapping, and
-      this is the one place a reader would go to check the contextual-bandit
-      claim (XS each)
+      field breakdown. `FeatureBanditLearner.h` says "~90% confidence at 15
+      trains"; the sigmoid gives 95.3%. The "Semi-gradient TD(0)" claim in the
+      same file was fixed in 0.20.0 along with the identifier rename (XS each)
 - [ ] Spell-pattern override file (`reviews/magic-classification.md`) was
       proposed and never implemented — no `m_patterns`, no `pattern=true`
       parsing, no `Huginn_SpellPatterns.ini`. Recorded here because the finding
@@ -289,7 +287,7 @@ trigger to pick any of it up.
       cold-start entry under Known Recommendation Issues, and it will bite any
       newly acquired item, not just scrolls.
       Huginn already has the right SHAPE — `ContextRuleEngine` and
-      `PriorCalculator` are shared across all items, `FeatureQLearner` is
+      `PriorCalculator` are shared across all items, `FeatureBanditLearner` is
       per-item — but the shared layer is hand-authored rules, not fitted to
       data, so nothing LEARNED is ever pooled.
       Prompted by poLinUCB (arXiv:2309.13896), whose post-serving-context
@@ -328,5 +326,5 @@ trigger to pick any of it up.
       Neither is measured. (A) is cheap enough to try and discard; (B) should
       not be started until (A) has shown that pooling helps at all on real play
       data.
-- [ ] Addendum #15/#16 (Kalman FQL / learnable context weights) — **parked**: needs a v3
+- [ ] Addendum #15/#16 (Kalman the learner / learnable context weights) — **parked**: needs a v3
       cosave bump, NOT landable during an active soak run

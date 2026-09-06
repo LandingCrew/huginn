@@ -258,10 +258,10 @@ zones stays meaningful even when each zone's own Count includes early-outs.
 |---|---|
 | `Huginn/Candidates` | per pipeline recompute |
 | `Huginn/Displayed` | per pipeline recompute |
-| `Huginn/FQL Items` | per heartbeat |
+| `Huginn/the learner Items` | per heartbeat |
 | `Huginn/Accept %` | per heartbeat |
 
-`Huginn/FQL Items` is the leak watch: the learned-item count must **plateau**
+`Huginn/the learner Items` is the leak watch: the learned-item count must **plateau**
 across a long session, not climb linearly. See
 [../playtest/LongPlaySoak.md](../playtest/LongPlaySoak.md) for the full heartbeat
 field guide.

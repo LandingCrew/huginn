@@ -27,7 +27,7 @@ namespace Huginn::Learning
         auto event = BuildEvent(formID, source, rewardMultiplier, wasRecommended);
 
         // 2. Snapshot subscriber list under m_mutex, then dispatch OUTSIDE it.
-        //    Subscribers acquire their own internal locks (FQL::m_mutex, UsageMemory::m_mutex),
+        //    Subscribers acquire their own internal locks (learner m_mutex, UsageMemory::m_mutex),
         //    so dispatching under m_mutex would create a lock-inversion risk if any code path
         //    ever holds those locks and calls Publish() or Subscribe().
         std::vector<IEquipSubscriber*> snapshot;
@@ -54,7 +54,7 @@ namespace Huginn::Learning
         event.wasRecommended = wasRecommended;
 
         // Evaluate state once for all subscribers. StateFeatures are extracted
-        // directly (continuous features for FQL); GameState is the discretized
+        // directly (continuous features for the learner); GameState is the discretized
         // version (for UsageMemory context hashing). Both derive from the SAME
         // player/targets copies below, so features and gameState can't disagree.
         // NOTE: each accessor takes its own shared_lock — this is NOT one atomic

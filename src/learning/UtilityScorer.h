@@ -12,7 +12,7 @@
 #include "state/WorldState.h"        // For ContextRuleEngine (Stage 1f)
 #include "context/ContextWeightConfig.h"    // For ContextRuleEngine config
 #include "context/ContextRuleEngine.h"    // For ContextRuleEngine (Stage 1f)
-#include "FeatureQLearner.h"
+#include "FeatureBanditLearner.h"
 #include "UsageMemory.h"
 #include "StateFeatures.h"
 #include "candidate/CandidateTypes.h"
@@ -40,7 +40,7 @@ namespace Huginn::Scoring
     //
     // Where:
     //   - contextWeight: From ContextRuleEngine (how relevant now) [0,1]
-    //   - learningScore: α*Q + (1-α)*prior + β*UCB (learned + heuristic + exploration)
+    //   - learningScore: α*R + (1-α)*prior + β*UCB (learned + heuristic + exploration)
     //   - correlationBonus: Equipment synergy bonuses (multiplicative in v1.0)
     //   - potionMultiplier: Combat timing and value discrimination
     //   - favoritesMultiplier: Boost/suppress favorited items
@@ -56,7 +56,7 @@ namespace Huginn::Scoring
     class UtilityScorer
     {
     public:
-        UtilityScorer(Learning::FeatureQLearner& featureLearner, Learning::UsageMemory& usageMemory, const ScorerConfig& config = DefaultScorerConfig);
+        UtilityScorer(Learning::FeatureBanditLearner& featureLearner, Learning::UsageMemory& usageMemory, const ScorerConfig& config = DefaultScorerConfig);
         ~UtilityScorer() = default;
 
         // Main scoring method: Score all candidates and return ranked list
@@ -174,7 +174,7 @@ namespace Huginn::Scoring
         [[nodiscard]] float ComputeUtility(const ScoreBreakdown& breakdown) const;
 
         // Components
-        Learning::FeatureQLearner& m_featureLearner;
+        Learning::FeatureBanditLearner& m_featureLearner;
         Learning::UsageMemory& m_usageMemory;
         ScorerConfig m_config;
         PriorCalculator m_priorCalc;

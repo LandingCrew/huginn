@@ -44,7 +44,7 @@ namespace Huginn::Scoring
     // =============================================================================
     // Manages wildcard exploration for recommendations.
     // Wildcards allow untried or lower-scored candidates to occasionally appear
-    // in recommendation slots, promoting exploration of the Q-learning space.
+    // in recommendation slots, promoting exploration of the contextual bandit space.
     //
     // Design:
     //   - Slot 0 (index 0) is always the top-scored pick (no wildcard by default)

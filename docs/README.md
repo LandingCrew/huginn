@@ -17,11 +17,11 @@ It is a just-in-time affordance surface.
 
 > **Core Principle:** Only recommend based on information the player already has or could easily perceive. This is a convenience tool, not a cheat tool.
 
-> **Architecture Version:** verified against **v0.19.10** (`CMakeLists.txt:5`). `StateManager` runs 11 poll methods (`GetPollTable()` in `src/state/StateManager.cpp`) producing 6 state types (3 core: WorldState, PlayerActorState, TargetCollection; 3 tracking: HealthTrackingState, StaminaTrackingState, MagickaTrackingState). The recommendation tick is orchestrated by `PipelineCoordinator` (`src/pipeline/PipelineCoordinator.cpp`). The legacy ContextSensor system has been fully removed. See [docs/architecture/1-states.md](architecture/1-states.md) for the full state model reference.
+> **Architecture Version:** verified against **v0.20.0** (`CMakeLists.txt:5`). `StateManager` runs 11 poll methods (`GetPollTable()` in `src/state/StateManager.cpp`) producing 6 state types (3 core: WorldState, PlayerActorState, TargetCollection; 3 tracking: HealthTrackingState, StaminaTrackingState, MagickaTrackingState). The recommendation tick is orchestrated by `PipelineCoordinator` (`src/pipeline/PipelineCoordinator.cpp`). The legacy ContextSensor system has been fully removed. See [docs/architecture/1-states.md](architecture/1-states.md) for the full state model reference.
 
 > **On the naming:** precisely, this is `a linear contextual bandit with implicit feedback, per-action linear reward models, UCB-style exploration, and heuristic priors`. The docs use that vocabulary throughout. We deliberately avoid state transitions, TD learning, MDP framing and policy optimization — long-horizon planning is neither required nor desirable here, and the learned values are immediate preference scores, not long-term action values.
 >
-> **The code still says QLearner** — `FeatureQLearner`, `QLearnerSerializer`, the `FQLW` cosave record, `hg reset qvalues`. That name is historical and is kept only because renaming it would break the cosave format and a documented console command. See [4-contextual-bandits.md](architecture/4-contextual-bandits.md) for the update rule that settles which algorithm this actually is.
+> **The code says the same thing.** As of 0.20.0 the identifiers match the algorithm: `FeatureBanditLearner`, `BanditSerializer`, the `BNDW` cosave record, `hg reset weights`. They were previously `FeatureQLearner`, `QLearnerSerializer`, `FQLW` and `hg reset qvalues`. Renaming the cosave record was a deliberate break — saves written before 0.20.0 lose their learned weights, and no migration path reads the old tag. See [4-contextual-bandits.md](architecture/4-contextual-bandits.md) for the update rule that settles which algorithm this actually is.
 
 
 ---
@@ -210,7 +210,7 @@ It is a just-in-time affordance surface.
 
 ```
 Player equips item ──► EquipEventBus ──► Subscribers:
-                                          ├── FQLSubscriber (FeatureQLearner weight update)
+                                          ├── BanditSubscriber (FeatureBanditLearner weight update)
                                           ├── UsageMemorySubscriber (recency tracking + misclick)
                                           └── CooldownSubscriber (candidate cooldown)
 
@@ -221,10 +221,10 @@ Equip sources:
   Rapid equip-then-switch (<3s)   ──► -3.0 MISCLICK_PENALTY
 
 Weight decay:
-  L2 regularization (FeatureQLearner::L2_LAMBDA = 0.01) folded into each weight update
+  L2 regularization (FeatureBanditLearner::L2_LAMBDA = 0.01) folded into each weight update
   Time-based MaybeDecay() — 2%/hr exponential decay on items idle > 5 min
 
-Update rule (FeatureQLearner::Update):
+Update rule (FeatureBanditLearner::Update):
   error = reward - w·φ            (no bootstrapped successor term — see "On the naming")
   w[i] += α·error·φ[i] - α·λ·w[i] (18-float φ, clamped)
 
@@ -319,13 +319,13 @@ as a specification. Where a doc and the code disagree, the code is right.
 
 Known-current, because they are maintained alongside the work:
 
-- This page, verified against v0.19.10
+- This page, verified against v0.20.0
 - [roadmap.md](roadmap.md)
 - [profiling/tracy-traces.md](profiling/tracy-traces.md)
 - [playtest/LongPlaySoak.md](playtest/LongPlaySoak.md)
-- [architecture/0-pipeline.md](architecture/0-pipeline.md) (v0.19.24)
+- [architecture/0-pipeline.md](architecture/0-pipeline.md) (v0.20.0)
 - [refactor/wheeler-push-spikes.md](refactor/wheeler-push-spikes.md)
 
 The docs were converted from Q-learning to contextual-bandit vocabulary on
-2026-08-29; see "On the naming" above for why the code identifiers were left
-alone.
+2026-08-29, and the code identifiers followed in 0.20.0 — see "On the naming"
+above, including the cosave break that came with it.

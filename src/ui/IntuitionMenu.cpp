@@ -595,8 +595,8 @@ namespace Huginn::UI
         // === Verbose mode: append score breakdown ===
         if (mode == DisplayMode::Verbose) {
             const auto& b = scored.breakdown;
-            std::string scores = std::format("ctx:{:.1f} q:{:.1f} p:{:.1f}",
-                b.contextWeight, b.qValue, b.prior);
+            std::string scores = std::format("ctx:{:.1f} est:{:.1f} p:{:.1f}",
+                b.contextWeight, b.rewardEstimate, b.prior);
             if (b.recencyBoost > 0.0f) {
                 scores += std::format(" rec:{:.1f}", b.recencyBoost);
             }

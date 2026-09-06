@@ -280,10 +280,10 @@
         {
           "type": "button",
           "text": {
-            "name": "Reset Q-Table",
+            "name": "Reset Learned Weights",
             "desc": "Clear all learned preferences (rewards/penalties)"
           },
-          "id": "Huginn_reset_qtable"
+          "id": "Huginn_reset_weights"
         },
         {
           "type": "button",

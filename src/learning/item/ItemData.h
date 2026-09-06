@@ -326,7 +326,7 @@ namespace Huginn::Item
    // =============================================================================
    // ITEM DATA STRUCT
    // =============================================================================
-   // Complete item metadata for Q-learning and filtering.
+   // Complete item metadata for contextual bandit and filtering.
    // The grouped tag fields (school, combatSkill, etc.) specify WHICH
    // skill/school when the corresponding grouped tag is set.
    // =============================================================================
