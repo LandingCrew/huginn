@@ -166,9 +166,9 @@ Vital thresholds are fractions (`0.35` = 35%). Ammo is a plain count (`10` arrow
 
 #### Algorithm Configuration
 
-These settings are more advanced, and tuning them is a best-guess effort that needs some knowledge of reinforcement learning systems, Huginn's particular implementation, and Skyrim quirks in general.
+These settings are the ones that decide how Huginn makes up its mind. Tuning them is guesswork even with a good sense of how it works, so change one thing at a time and see what happens.
 
-`Fiddle at your own risk`, documentation on the algorithm can be [found in the source code](https://github.com/LandingCrew/huginn/blob/main/docs/README.md)
+Fiddle at your own risk. If you want to know what each number actually feeds into, [the full write-up is here](https://github.com/LandingCrew/huginn/blob/main/docs/README.md).
 
 ##### What Huginn pays attention to — `[ContextWeights]`
 
@@ -246,7 +246,7 @@ type = Damage
 tags = Fire,Ranged
 ```
 
-The `Item:` / `Spell:` prefix matters. One file feeds two classifiers, and several token names exist in both vocabularies, so an unprefixed section is offered to *both* and can silently apply to a potion and a spell that share a name. Prefix every section. The file itself documents the full type and tag vocabulary for each domain.
+The `Item:` / `Spell:` prefix matters. This one file covers both items and spells, and some type and tag names mean something in each, so a section without a prefix is tried against *both* — and can quietly reclassify a potion and a spell that happen to share a name. Prefix every section. The file itself lists every type and tag you can use, for items and for spells.
 
 Changes take effect on `hg rebuild` — no game restart needed, and `hg reload` is not enough (it reloads settings, not classifications).
 
@@ -303,23 +303,30 @@ wheelerAPI works alongside:
 * [Dragonborn Reskin - Wheeler](https://www.nexusmods.com/skyrimspecialedition/mods/100043)
 * [Wheeler Icon Embellishment - Naturally Exquisite Refinement](https://www.nexusmods.com/skyrimspecialedition/mods/100692)
 
-If you would rather not use Huginn's Wheeler variant, [WHEELER - Refined](https://www.nexusmods.com/skyrimspecialedition/mods/167380) works too. It provides the v2 API where wheelerAPI is on v4, so you keep entry labels but give up two conveniences: Huginn cannot find its wheels again by name after you rearrange them, so it will not remember where you dragged them (`sWheelPosition` stays in charge), and it cannot recover on its own if something else displaces them mid-session.
+If you would rather not use Huginn's Wheeler variant, [WHEELER - Refined](https://www.nexusmods.com/skyrimspecialedition/mods/167380) works too. You keep the labels under each entry, but give up two conveniences: Huginn loses track of its wheels once you rearrange them, so it will not remember where you dragged them — `sWheelPosition` stays in charge — and if another mod shuffles them mid-game, Huginn cannot put them back on its own.
 
 #### Usage
 
 Huginn attempts to connect to Wheeler automatically and manages its own wheels based on the `[Wheeler]` section of `Huginn.ini`. Two behaviours are worth knowing before you rearrange anything:
 
-* **Auto-focus skips past your own wheels.** With `bAutoFocusOnOpen = true` (the default), opening Wheeler on any wheel that isn't Huginn's jumps straight to Huginn's first wheel. This bites hardest if you drag one of your own wheels to position 0: Wheeler opens at the front, Huginn immediately redirects, and that wheel can only be reached by scrolling back to it. Huginn shows a one-time in-game notice the first time it redirects you. Set `bAutoFocusOnOpen = false` to keep the wheel you opened.
+* **Opening Wheeler jumps you to Huginn's wheels.** Open Wheeler on any wheel that isn't Huginn's and it takes you straight to Huginn's first one. That stings most if you have moved one of your own wheels to the very front — Wheeler opens on it, Huginn moves you along, and the only way back is to scroll. You get an in-game notice the first time it happens. Set `bAutoFocusOnOpen = false` to stay on whichever wheel you opened.
 
-* **Wheel order is remembered for the rest of the session (wheelerAPI only).** Huginn deletes and recreates its wheels on every save load. It recreates them where you last dragged them to, not at `sWheelPosition` — so reordering in Wheeler's edit mode survives loading a save. Two limits: the memory is per-session, so restarting Skyrim starts from `sWheelPosition` again, and Huginn's wheels are restored as one contiguous block, so if you interleaved your own wheels between them they come back grouped. Editing `sWheelPosition` and running `hg reload` clears the memory and puts them where the INI says. On Refined this does not apply at all — the v2 API cannot tell Huginn where its wheels ended up, so `sWheelPosition` always wins.
+* **Where you drag Huginn's wheels sticks until you quit.** Rearrange them in Wheeler's edit mode and they will still be there after you load a save. Two catches: restarting Skyrim puts them back where `sWheelPosition` says, and they always come back as one group, so if you had tucked your own wheels in among them they will not stay in between. To set the order deliberately, change `sWheelPosition` and run `hg reload`. None of this applies with WHEELER - Refined, which cannot tell Huginn where its wheels ended up — there `sWheelPosition` always wins.
 
-Other `[Wheeler]` settings: `sWheelPosition` (First / Last / index), `bAutoFocusOnOverride`, `iAutoFocusMinPriority`, and `sPostActivationPolicy` (Backfill / Sticky / Empty — what happens to a slot after you use its item).
+The rest of the `[Wheeler]` settings:
+
+| Setting | What it does |
+|---|---|
+| `sWheelPosition` | Where Huginn's wheels sit in the rotation — `First`, `Last`, or a number |
+| `bAutoFocusOnOverride` | Jump to Huginn's wheel when an emergency fires. On by default |
+| `iAutoFocusMinPriority` | How serious an emergency has to be before that jump happens. Drowning counts as 50, low magicka 70, low health 100 — so the default of 50 jumps for anything, and raising it to 100 jumps only when you are about to die |
+| `sPostActivationPolicy` | What the slot does after you use what was in it. `Backfill` puts the next-best thing there, `Sticky` leaves the used item showing until the situation changes, `Empty` clears the slot and shows "Equipped" |
 
 #### Wheel entry labels — `[Subtexts]`
 
 Wheeler entries can carry a small line of text under the item name, explaining why it is there. `[Subtexts]` controls those: whether to mark wildcard picks and emergencies, whether to show the lock countdown, and whether to show Huginn's one-line reason for the pick. `fOffsetX` and `fOffsetY` nudge the label's position in pixels if it collides with your Wheeler skin.
 
-Labels need the v2 API or newer, which both wheelerAPI (v4) and Refined (v2) provide. If they never appear, check `Huginn.log` — the line reading `Connected to Wheeler API v...` tells you what Huginn connected to.
+Both wheelerAPI and WHEELER - Refined support these labels. If they never appear, check `Huginn.log` for the line beginning `Connected to Wheeler API` — it tells you what Huginn found.
 
 
 ## Mod Compability
