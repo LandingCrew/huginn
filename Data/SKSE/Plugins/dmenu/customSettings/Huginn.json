@@ -163,40 +163,6 @@
             "section": "Widget",
             "id": "sSlotEffect"
           }
-        },
-        {
-          "type": "dropdown",
-          "text": {
-            "name": "Refresh Effect",
-            "desc": "Feedback when recommendations refresh"
-          },
-          "default": 0,
-          "options": [
-            "Tint",
-            "Pulse",
-            "None"
-          ],
-          "ini": {
-            "section": "Widget",
-            "id": "sRefreshEffect"
-          }
-        },
-        {
-          "type": "slider",
-          "text": {
-            "name": "Refresh Strength (%)",
-            "desc": "Intensity of the refresh effect"
-          },
-          "default": 15.0,
-          "style": {
-            "min": 0.0,
-            "max": 100.0,
-            "step": 0.1
-          },
-          "ini": {
-            "section": "Widget",
-            "id": "fRefreshStrength"
-          }
         }
       ]
     },

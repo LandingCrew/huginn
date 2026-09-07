@@ -193,16 +193,14 @@ widget.Invoke("setSlot", nullptr, args.data(), args.size());
 | `setUrgent(index, active)` | int, bool | Legacy pulse flag (superseded by `visualState`) |
 | `setWidgetAlpha(alpha)` | float | Overall opacity (0-100) |
 | `setChildAlpha(alpha)` | float | Secondary-element opacity (0-100), e.g. page label |
-| `setRefreshEffect(mode)` | int | 0 = none, 1 = flash, 2 = tint |
 | `setSlotEffect(mode)` | int | 0 = slide, 1 = fade, 2 = instant |
-| `setRefreshStrength(pct)` | float | Effect strength, 0-100 |
 | `tick(dt)` | float | Per-frame animation step, called from `AdvanceMovie` with the engine delta (AS2 `onEnterFrame` is unreliable here) |
 
 `confidence` is accepted and queued through the animation path but is not
 currently rendered — there are no confidence pips in the AS2.
 
-`setChildAlpha`, `setRefreshEffect`, `setSlotEffect` and `setRefreshStrength` are
-pushed from the `[Widget]` INI section on load and on every `hg reload`.
+`setChildAlpha` and `setSlotEffect` are pushed from the `[Widget]` INI section on
+load and on every `hg reload`.
 
 ### Slot type enum
 
