@@ -10,7 +10,7 @@ namespace Huginn::Scroll
    // =============================================================================
    // SCROLL CHANGE EVENT (v0.7.7)
    // =============================================================================
-   // Emitted when scroll counts change. Used for Q-learning feedback:
+   // Emitted when scroll counts change. Used for contextual bandit feedback:
    // - Consumed scroll (delta < 0) → potential reward signal
    // - Acquired scroll (delta > 0) → inventory update notification
    // =============================================================================

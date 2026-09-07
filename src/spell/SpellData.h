@@ -210,7 +210,7 @@ namespace Huginn::Spell
       }
    }
 
-   // Spell metadata for Q-learning and filtering
+   // Spell metadata for contextual bandit and filtering
    struct SpellData
    {
       RE::FormID formID;           // Unique spell form ID

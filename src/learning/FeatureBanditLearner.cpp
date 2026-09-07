@@ -1,11 +1,11 @@
-#include "FeatureQLearner.h"
+#include "FeatureBanditLearner.h"
 #include "Config.h"
 #include <cmath>
 #include <algorithm>
 
 namespace Huginn::Learning
 {
-   float FeatureQLearner::GetQValue(RE::FormID formID, const StateFeatures& features) const
+   float FeatureBanditLearner::GetRewardEstimate(RE::FormID formID, const StateFeatures& features) const
    {
       // Compute feature array outside lock (no shared state needed)
       auto phi = features.ToArray();
@@ -14,13 +14,13 @@ namespace Huginn::Learning
 
       auto it = m_items.find(formID);
       if (it == m_items.end()) [[unlikely]] {
-         return 0.0f;  // Unknown item → zero Q-value
+         return 0.0f;  // Unknown item → zero reward estimate
       }
 
       return DotProduct(it->second.weights, phi);
    }
 
-   void FeatureQLearner::Update(RE::FormID formID, const StateFeatures& features, float reward)
+   void FeatureBanditLearner::Update(RE::FormID formID, const StateFeatures& features, float reward)
    {
       // Compute feature array outside lock (pure computation, no shared state)
       auto phi = features.ToArray();
@@ -31,11 +31,11 @@ namespace Huginn::Learning
       auto& data = m_items[formID];
       auto& w = data.weights;
 
-      // Prediction error: delta = reward - Q(s, item)
+      // Prediction error: delta = reward - R(context, item)
       float prediction = DotProduct(w, phi);
       float error = reward - prediction;
 
-      // Semi-gradient update with L2 regularization:
+      // Gradient step on the immediate-reward error, with L2 regularization:
       //   w[i] += alpha * error * phi[i] - alpha * lambda * w[i]
       for (size_t i = 0; i < StateFeatures::NUM_FEATURES; ++i) {
          w[i] += LEARNING_RATE * error * phi[i] - LEARNING_RATE * L2_LAMBDA * w[i];
@@ -47,11 +47,11 @@ namespace Huginn::Learning
       m_totalTrainCount++;
       data.lastUpdate = std::chrono::steady_clock::now();
 
-      logger::trace("FQL update: item={:08X}, reward={:.2f}, error={:.3f}, Q {:.3f}->{:.3f}"sv,
+      logger::trace("Learner update: item={:08X}, reward={:.2f}, error={:.3f}, est {:.3f}->{:.3f}"sv,
          formID, reward, error, prediction, DotProduct(w, phi));
    }
 
-   size_t FeatureQLearner::MaybeDecayBatch(
+   size_t FeatureBanditLearner::MaybeDecayBatch(
       const std::vector<RE::FormID>& formIDs,
       std::chrono::steady_clock::time_point now)
    {
@@ -113,7 +113,7 @@ namespace Huginn::Learning
             data.lastUpdate = now;
             ++decayed;
 
-            logger::debug("FQL decay: item={:08X}, elapsed={:.1f}min, factor={:.4f}"sv,
+            logger::debug("Learner decay: item={:08X}, elapsed={:.1f}min, factor={:.4f}"sv,
                formID, elapsedMinutes, decayFactor);
          }
       }
@@ -124,7 +124,7 @@ namespace Huginn::Learning
    // Private helpers — formulas shared by GetConfidence/GetUCB/GetMetrics.
    // Callers MUST hold m_mutex before calling (ComputeUCB reads m_totalTrainCount).
 
-   float FeatureQLearner::ComputeConfidence(uint32_t trains) const noexcept
+   float FeatureBanditLearner::ComputeConfidence(uint32_t trains) const noexcept
    {
       // Sigmoid: 1 / (1 + exp(-steepness * (x - midpoint)))
       // 50% at 5 trains, ~90% at 15 trains
@@ -132,7 +132,7 @@ namespace Huginn::Learning
       return 1.0f / (1.0f + std::exp(-CONFIDENCE_STEEPNESS * (x - CONFIDENCE_MIDPOINT)));
    }
 
-   float FeatureQLearner::ComputeUCB(uint32_t itemTrains) const noexcept
+   float FeatureBanditLearner::ComputeUCB(uint32_t itemTrains) const noexcept
    {
       if (itemTrains == 0 || m_totalTrainCount == 0) [[unlikely]] {
          return 1.0f;
@@ -142,7 +142,7 @@ namespace Huginn::Learning
       return std::clamp(ucb * UCB_NORMALIZATION_FACTOR, 0.0f, 1.0f);
    }
 
-   float FeatureQLearner::GetConfidence(RE::FormID formID) const
+   float FeatureBanditLearner::GetConfidence(RE::FormID formID) const
    {
       std::shared_lock lock(m_mutex);
       uint32_t trains = 0;
@@ -152,7 +152,7 @@ namespace Huginn::Learning
       return ComputeConfidence(trains);
    }
 
-   float FeatureQLearner::GetUCB(RE::FormID formID) const
+   float FeatureBanditLearner::GetUCB(RE::FormID formID) const
    {
       std::shared_lock lock(m_mutex);
       uint32_t itemTrains = 0;
@@ -162,7 +162,7 @@ namespace Huginn::Learning
       return ComputeUCB(itemTrains);
    }
 
-   FeatureItemMetrics FeatureQLearner::GetMetrics(RE::FormID formID, const StateFeatures& features) const
+   FeatureItemMetrics FeatureBanditLearner::GetMetrics(RE::FormID formID, const StateFeatures& features) const
    {
       // Compute feature array outside lock
       auto phi = features.ToArray();
@@ -174,7 +174,7 @@ namespace Huginn::Learning
       // ONE lookup yields weights + train count (previously two parallel maps)
       uint32_t itemTrains = 0;
       if (auto it = m_items.find(formID); it != m_items.end()) {
-         metrics.qValue = DotProduct(it->second.weights, phi);
+         metrics.rewardEstimate = DotProduct(it->second.weights, phi);
          itemTrains = it->second.trainCount;
       }
 
@@ -185,11 +185,11 @@ namespace Huginn::Learning
    }
 
    // ── LockedReader ──────────────────────────────────────────────────
-   FeatureQLearner::LockedReader::LockedReader(const FeatureQLearner& owner)
+   FeatureBanditLearner::LockedReader::LockedReader(const FeatureBanditLearner& owner)
       : m_owner(owner), m_lock(owner.m_mutex)
    {}
 
-   FeatureItemMetrics FeatureQLearner::LockedReader::GetMetrics(
+   FeatureItemMetrics FeatureBanditLearner::LockedReader::GetMetrics(
       RE::FormID formID,
       const std::array<float, StateFeatures::NUM_FEATURES>& phi) const
    {
@@ -199,7 +199,7 @@ namespace Huginn::Learning
       // ONE lookup per candidate (previously two parallel-map finds)
       uint32_t itemTrains = 0;
       if (auto it = m_owner.m_items.find(formID); it != m_owner.m_items.end()) {
-         metrics.qValue = DotProduct(it->second.weights, phi);
+         metrics.rewardEstimate = DotProduct(it->second.weights, phi);
          itemTrains = it->second.trainCount;
       }
 
@@ -209,24 +209,24 @@ namespace Huginn::Learning
       return metrics;
    }
 
-   FeatureQLearner::LockedReader FeatureQLearner::AcquireReader() const
+   FeatureBanditLearner::LockedReader FeatureBanditLearner::AcquireReader() const
    {
       return LockedReader(*this);
    }
 
-   size_t FeatureQLearner::GetItemCount() const
+   size_t FeatureBanditLearner::GetItemCount() const
    {
       std::shared_lock lock(m_mutex);
       return m_items.size();
    }
 
-   uint32_t FeatureQLearner::GetTotalTrainCount() const
+   uint32_t FeatureBanditLearner::GetTotalTrainCount() const
    {
       std::shared_lock lock(m_mutex);
       return m_totalTrainCount;
    }
 
-   uint32_t FeatureQLearner::GetTrainCount(RE::FormID formID) const
+   uint32_t FeatureBanditLearner::GetTrainCount(RE::FormID formID) const
    {
       std::shared_lock lock(m_mutex);
 
@@ -237,7 +237,7 @@ namespace Huginn::Learning
       return it->second.trainCount;
    }
 
-   std::array<float, StateFeatures::NUM_FEATURES> FeatureQLearner::GetWeights(RE::FormID formID) const
+   std::array<float, StateFeatures::NUM_FEATURES> FeatureBanditLearner::GetWeights(RE::FormID formID) const
    {
       std::shared_lock lock(m_mutex);
 
@@ -248,7 +248,7 @@ namespace Huginn::Learning
       return it->second.weights;
    }
 
-   void FeatureQLearner::Clear()
+   void FeatureBanditLearner::Clear()
    {
       std::unique_lock lock(m_mutex);
 
@@ -258,11 +258,11 @@ namespace Huginn::Learning
       m_items.clear();
       m_totalTrainCount = 0;
 
-      logger::info("FeatureQLearner cleared: {} items, {} total trains removed"sv,
+      logger::info("FeatureBanditLearner cleared: {} items, {} total trains removed"sv,
          itemCount, totalTrains);
    }
 
-   void FeatureQLearner::ExportData(
+   void FeatureBanditLearner::ExportData(
       const std::function<void(SerializedEntry entry)>& entryCallback,
       uint32_t& outTotalTrainCount) const
    {
@@ -287,7 +287,7 @@ namespace Huginn::Learning
       }
    }
 
-   void FeatureQLearner::ImportData(
+   void FeatureBanditLearner::ImportData(
       const std::vector<SerializedEntry>& entries,
       uint32_t totalTrainCount)
    {
@@ -307,11 +307,11 @@ namespace Huginn::Learning
             now - std::chrono::minutes(entry.minutesSinceLastUpdate)};
       }
 
-      logger::info("FeatureQLearner imported: {} items, {} total trains"sv,
+      logger::info("FeatureBanditLearner imported: {} items, {} total trains"sv,
          m_items.size(), m_totalTrainCount);
    }
 
-   float FeatureQLearner::DotProduct(
+   float FeatureBanditLearner::DotProduct(
       const std::array<float, StateFeatures::NUM_FEATURES>& a,
       const std::array<float, StateFeatures::NUM_FEATURES>& b)
    {

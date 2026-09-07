@@ -90,7 +90,7 @@ terminal marker is as much a signal as an explicit `TEST FAIL` line. Two
 | GameState hash | Test 1 minimum hash, Test 2 maximum hash, Test 3 uniqueness across all `GameState::kTotalStates` = 72,576 states (6×6×3×7×4×3×2×2×2), Test 3b stamina is excluded from the hash |
 | SpellRegistry | Registry starts empty (basic construction; the real coverage is the integration suite) |
 | PriorCalculator context independence | Tests 1–8: healing and damage priors identical in/out of context; magnitude, scarcity, spell cost, weapon charge, ammo matching and scroll magnitude *do* affect the prior. This is the guard on the `ContextRuleEngine` / `PriorCalculator` separation |
-| Optimization + engine | Test 1 partial-sort correctness, Test 3 `SCOPED_TIMER` compiles and runs, Tests 4–9 `ContextRuleEngine` vital / elemental / environmental / combat / target / equipment rules, Test 10 end-to-end `ContextRuleEngine` → `UtilityScorer` (subtests 1a/1b/2–5: forge, enchanter, resist-fire, healing at 30% HP, AOE damage, soul gem), Test 11 `TargetCollection` cache invariant, Test 12 `PipelineStateCache` rank clamping, Test 13 `EquipSourceTracker` FormID keying, Test 14 `UsageMemory` snapshot reader, Test 15 dedup equivalence (`IsFavorited`, fortify-school parity), Test 16 `FeatureQLearner` batch decay, Test 17 `ContextReason` derivation, and an unnumbered wildcard-page-cache block |
+| Optimization + engine | Test 1 partial-sort correctness, Test 3 `SCOPED_TIMER` compiles and runs, Tests 4–9 `ContextRuleEngine` vital / elemental / environmental / combat / target / equipment rules, Test 10 end-to-end `ContextRuleEngine` → `UtilityScorer` (subtests 1a/1b/2–5: forge, enchanter, resist-fire, healing at 30% HP, AOE damage, soul gem), Test 11 `TargetCollection` cache invariant, Test 12 `PipelineStateCache` rank clamping, Test 13 `EquipSourceTracker` FormID keying, Test 14 `UsageMemory` snapshot reader, Test 15 dedup equivalence (`IsFavorited`, fortify-school parity), Test 16 `FeatureBanditLearner` batch decay, Test 17 `ContextReason` derivation, and an unnumbered wildcard-page-cache block |
 
 The wildcard-page-cache block (`src/Tests.cpp:4187` ff.) is the regression guard
 for issue #70 and its two siblings: it pins roll probabilities to 1.0 and the
@@ -107,9 +107,9 @@ asserts bounds, not randomness.
 | `RunWeaponRegistryTests()` | `Tests.cpp:715` | Weapon registry against real inventory |
 | `RunMultiplicativeScoringTests()` | `Tests.cpp:44` | 6 tests: zero context gates utility, adaptive lambda vs confidence, learning amplification, correlation compounding, full integration, favorites boost by rank |
 | `RunRegressionTests()` | `Tests.cpp:4370` | See below |
-| `RunCosaveTests()` | `Tests.cpp:4980` | 4 tests: `FeatureQLearner` export/import round-trip, empty round-trip, import clears existing data, feature-count migration (pad / truncate / equal / reject) |
+| `RunCosaveTests()` | `Tests.cpp:4980` | 4 tests: `FeatureBanditLearner` export/import round-trip, empty round-trip, import clears existing data, feature-count migration (pad / truncate / equal / reject) |
 | `RunStateFeaturesTests()` | `Tests.cpp:872` | 8 tests: default state, low-health combat, one-hot correctness across all 7 target types, distance normalisation, `ToArray` round-trip, normalisation bounds, no-enemy fallback, vital clamping |
-| `RunFeatureQLearnerTests()` | `Tests.cpp:1199` | 8 tests: cold start, convergence, weight interpretability, regularisation prevents explosion, weight clamping, generalisation across states, item independence, `Clear()` |
+| `RunFeatureBanditLearnerTests()` | `Tests.cpp:1199` | 8 tests: cold start, convergence, weight interpretability, regularisation prevents explosion, weight clamping, generalisation across states, item independence, `Clear()` |
 
 **`RunRegressionTests()`** carries numbered `TC-*` cases (numbering has gaps —
 TC-04, 06, 08, 09 and 13 are not present). Terminal marker:
@@ -131,12 +131,9 @@ TC-04, 06, 08, 09 and 13 are not present). Terminal marker:
 
 ### 2.3 Terminology
 
-The learning system is a **contextual bandit** — see
+The learning system is a linear contextual bandit — see
 [../architecture/4-contextual-bandits.md](../architecture/4-contextual-bandits.md).
-The identifiers `FeatureQLearner`, `QLearnerSerializer`, the `FQLW` cosave record
-and `hg reset qvalues` keep their historical names and are **not** renamed; read
-"QLearner" in an identifier as "the learner". Suite names above use the real
-identifiers.
+Suite names above use the real identifiers.
 
 ---
 

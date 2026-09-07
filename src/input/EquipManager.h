@@ -22,7 +22,7 @@ namespace Huginn::Input
     * Handles:
     * - Equipping spells to left/right/both hands
     * - Playing equip sounds
-    * - Triggering learning callbacks (for Q-value updates)
+    * - Triggering learning callbacks (for reward-estimate updates)
     */
    class EquipManager
    {
@@ -51,7 +51,7 @@ namespace Huginn::Input
 
       /**
        * @brief Set callback for when a spell is equipped
-       * Used to trigger Q-learning updates
+       * Used to trigger contextual bandit updates
        * @param callback Function to call after successful equip
        */
       void SetEquipCallback(EquipCallback callback) { m_equipCallback = std::move(callback); }

@@ -15,7 +15,7 @@ namespace Huginn::Telemetry
     // line per window (Config::SOAK_HEARTBEAT_INTERVAL_MS). Sampled across a
     // multi-hour session, the heartbeat line shows whether Huginn is surfacing
     // what the player actually reaches for (accept%), whether it thrashes
-    // (recompute count), whether learning grows unbounded (FQL item count), and
+    // (recompute count), whether learning grows unbounded (learner item count), and
     // whether per-tick cost holds (avg/peak).
     //
     // Thread-safety: RecordEquipCase fires on the game thread (equip events);

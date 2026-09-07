@@ -6,7 +6,7 @@
 namespace Huginn::Spell
 {
    // SpellClassifier analyzes spell FormIDs from the game and classifies them
-   // by type and tags for use in the Q-learning recommendation system
+   // by type and tags for use in the contextual bandit recommendation system
    class SpellClassifier
    {
    public:

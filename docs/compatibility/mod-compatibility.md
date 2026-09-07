@@ -334,7 +334,7 @@ crash.
 `ItemActivatedCallback` is the learning feedback path.
 `WheelerClient::OnItemActivated` sets `m_itemActivatedWhileOpen` (which
 suppresses the skip penalty), applies the post-activation policy, and publishes
-to the equip bus, where the `FeatureQLearner` subscriber applies the reward. It
+to the equip bus, where the `FeatureBanditLearner` subscriber applies the reward. It
 is registered on **every** supported API version, not just v2+ — the old claim
 that v1 "may not fire" it is not something this repository can confirm, and it is
 not reflected in the version gate.

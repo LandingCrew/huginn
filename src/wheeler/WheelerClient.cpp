@@ -202,7 +202,7 @@ namespace Huginn::Wheeler
             }
         }
 
-        // Publish to EquipEventBus OUTSIDE the mutex (subscribers handle FQL + UsageMemory).
+        // Publish to EquipEventBus OUTSIDE the mutex (subscribers handle learner + UsageMemory).
         // Lock ordering: bus acquires StateManager shared locks in BuildEvent, then bus m_mutex,
         // then subscriber internal locks — all outside m_callbackMutex.
         // No pageIndex guard: the locked block above returns early when the

@@ -15,7 +15,7 @@
 #include "learning/item/ItemRegistry.h"
 #include "weapon/WeaponRegistry.h"
 #include "scroll/ScrollRegistry.h"
-#include "learning/FeatureQLearner.h"
+#include "learning/FeatureBanditLearner.h"
 #include "learning/UsageMemory.h"
 #include "learning/UtilityScorer.h"
 #include "slot/SlotLocker.h"
@@ -30,7 +30,7 @@ extern std::chrono::high_resolution_clock::time_point start;
 // Core system instances
 extern std::unique_ptr<Huginn::State::StateEvaluator> g_stateEvaluator;
 extern std::unique_ptr<Huginn::Spell::SpellRegistry> g_spellRegistry;
-extern std::unique_ptr<Huginn::Learning::FeatureQLearner> g_featureQLearner;
+extern std::unique_ptr<Huginn::Learning::FeatureBanditLearner> g_featureBanditLearner;
 extern std::unique_ptr<Huginn::Learning::UsageMemory> g_usageMemory;
 extern std::unique_ptr<Huginn::Scoring::UtilityScorer> g_utilityScorer;
 extern std::unique_ptr<Huginn::Item::ItemRegistry> g_itemRegistry;
@@ -126,6 +126,6 @@ void LoadWildcardConfigFromINI(Huginn::Scoring::WildcardManager& wildcardMgr);
 // =============================================================================
 namespace Huginn {
     State::StateEvaluator* GetStateEvaluator();
-    Learning::FeatureQLearner* GetFeatureQLearner();
+    Learning::FeatureBanditLearner* GetFeatureBanditLearner();
     Learning::UsageMemory* GetUsageMemory();
 }

@@ -26,15 +26,15 @@ before dispatch.
 | `hg recs [N]` | Dump top-N recommendation breakdown to the log (default 10, max 50) |
 | `hg unlock` | Clear all slot locks |
 | `hg status` | Show system status |
-| `hg weights <FormID>` | Show the FeatureQLearner weight vector for a form |
+| `hg weights <FormID>` | Show the FeatureBanditLearner weight vector for a form |
 | `hg rebuild` | Force rebuild all registries |
 | `hg reload` | Hot-reload all settings from INI |
 | `hg page [N]` | Switch to page N, or show the current page |
-| `hg reset qvalues` | Clear learned preference data (alias: `hg reset q`) |
+| `hg reset weights` | Clear learned preference data (alias: `hg reset w`) |
 | `hg reset all` | Full system reset |
 
 The help text is generated from the same table that dispatches the commands, so
-`hg help` cannot drift from what is implemented. `hg reset q` is hidden from the
+`hg help` cannot drift from what is implemented. `hg reset w` is hidden from the
 help listing because it is an alias.
 
 ---
@@ -45,7 +45,7 @@ Prints all available subcommands to the console. This is also the default when
 no subcommand is given — typing just `hg` shows help.
 
 Anything unrecognised prints `Unknown command: '<x>'. Type 'hg help' for
-available commands.`; a bare `hg reset` prints `Usage: hg reset <qvalues|all>`.
+available commands.`; a bare `hg reset` prints `Usage: hg reset <weights|all>`.
 
 ### `hg refresh`
 
@@ -92,7 +92,7 @@ immediately.
 
 Prints a three-line system summary:
 
-- `FQL: N items, M total trains` — FeatureQLearner size and lifetime training
+- `Learner: N items, M total trains` — FeatureBanditLearner size and lifetime training
   count (omitted entirely if the learner is not yet initialized)
 - `Registries: N spells, N items, N weapons, N scrolls`
 - `Page: C of T ('Name'), N slots, L locked`
@@ -101,7 +101,7 @@ Prints a three-line system summary:
 
 ### `hg weights <FormID>`
 
-Prints the FeatureQLearner's learned weight vector for one form. The FormID is
+Prints the FeatureBanditLearner's learned weight vector for one form. The FormID is
 parsed as **hex**, e.g. `hg weights 12FCC`.
 
 The header line reports the form name, training count, the learned score
@@ -119,7 +119,7 @@ bias
 
 If the form has never been trained, the output is
 `<FormID> '<Name>': no training data`. If no game is loaded,
-`FeatureQLearner not initialized (load a game first)`.
+`FeatureBanditLearner not initialized (load a game first)`.
 
 ### `hg rebuild`
 
@@ -158,33 +158,34 @@ current page instead.
 `Current page: N of T ('PageName')`. An out-of-range page prints
 `Invalid page number. Use 1-T`.
 
-### `hg reset qvalues`
+### `hg reset weights`
 
-Clears all learned preference data — the FeatureQLearner's per-item weight
+Clears all learned preference data — the FeatureBanditLearner's per-item weight
 vectors and training counts — and resets the SlotLocker so the next scoring
 cycle can reassign immediately. Runs under the update mutex.
 
-Alias: `hg reset q`
+Alias: `hg reset w`
 
-The command name keeps the historical "qvalues" spelling; see the
-[terminology note](../README.md#terminology). This is the same operation as the
-dMenu "reset learning data" button — both call
-`SettingsReloader::ResetLearningData()`.
+Renamed from `hg reset qvalues` in 0.20.0, when the learner's identifiers were
+brought in line with the algorithm — see the
+[terminology note](../README.md#terminology). The old spelling no longer works.
+This is the same operation as the dMenu "Reset Learned Weights" button — both
+call `SettingsReloader::ResetLearningData()`.
 
 **When to use:** If recommendations feel biased by old learning data and you
 want a fresh baseline. Note that the learned term is only one component of
 scoring — context relevance and priors also contribute. Use `hg refresh`
 afterwards to see the effect immediately.
 
-**Output:** `Learning data cleared (N FQL items)`, or
-`FeatureQLearner not initialized (load a game first)`.
+**Output:** `Learning data cleared (N learner items)`, or
+`FeatureBanditLearner not initialized (load a game first)`.
 
 ### `hg reset all`
 
 Performs a complete system reset under the update mutex — every subsystem
 returns to the state it would have just after a save load:
 
-1. Clears the FeatureQLearner (all learned weights)
+1. Clears the FeatureBanditLearner (all learned weights)
 2. Rebuilds all registries (spells, items, weapons, scrolls)
 3. Calls `ResetPipelineSubsystems()`, which resets the UtilityScorer, usage
    memory, OverrideManager, CandidateGenerator, SlotAllocator, SlotLocker
@@ -197,7 +198,7 @@ subsystem added there is reset by this command too.
 **When to use:** When something is clearly wrong and you want to start fresh
 without reloading a save.
 
-**Output:** `Full reset complete (FQL: N items, all subsystems reset)`
+**Output:** `Full reset complete (Learner: N items, all subsystems reset)`
 
 ## Technical Details
 
@@ -206,7 +207,7 @@ command in Skyrim's script function table during `kDataLoaded`, using
 `RE::SCRIPT_FUNCTION::LocateConsoleCommand()` from CommonLibSSE-NG.
 
 Two optional `kChar` string parameters are declared so Skyrim's console parser
-accepts multi-word input (`hg reset qvalues`), but the actual parsing reads the
+accepts multi-word input (`hg reset weights`), but the actual parsing reads the
 raw command text from `Script::text` and tokenizes it directly, which is more
 reliable than walking the parsed chunks.
 

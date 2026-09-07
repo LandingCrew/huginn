@@ -129,8 +129,8 @@ namespace Huginn::Config
    // Grace window after a game load / new game during which item removals are
    // NOT rewarded as consumption. Alternate-start mods and settling scripts
    // strip starter/quest items in bulk shortly after load; without this window
-   // those removals train the Q-learner as if the player drank them (observed:
-   // 6 starter potions each +5.0 FQL reward ~1.1 s after kNewGame). Must exceed
+   // those removals train the learner as if the player drank them (observed:
+   // 6 starter potions each +5.0 bandit reward ~1.1 s after kNewGame). Must exceed
    // the observed strip delay with margin; real player consumption in the first
    // few seconds after a load is rare and low-value to learn.
    inline constexpr float CONSUMPTION_POST_LOAD_GRACE_MS = 5000.0f;

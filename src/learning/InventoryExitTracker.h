@@ -16,7 +16,7 @@ namespace Huginn::Learning
    //
    // PROBLEM:
    // - UpdateLoop's delta scan rewards ANY count decrease as a consumption,
-   //   so dropping or selling scrolls/potions teaches the Q-learner the player
+   //   so dropping or selling scrolls/potions teaches the learner the player
    //   favors items they are actually discarding.
    //
    // SOLUTION:

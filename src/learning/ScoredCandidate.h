@@ -14,13 +14,13 @@ namespace Huginn::Scoring
     {
         // Input components
         float contextWeight = 0.0f;     // From ContextRuleEngine (relevance to current situation)
-        float qValue = 0.0f;            // From FeatureQLearner (learned preference)
+        float rewardEstimate = 0.0f;            // From FeatureBanditLearner (learned preference)
         float prior = 0.0f;             // From PriorCalculator (intrinsic quality heuristic)
         float ucb = 0.0f;               // Upper Confidence Bound (exploration bonus)
-        float confidence = 0.0f;        // α: How much to trust Q vs prior (0-1)
+        float confidence = 0.0f;        // α: How much to trust reward estimate vs prior (0-1)
 
         // Computed components
-        float learningScore = 0.0f;     // α*Q + (1-α)*prior + β*UCB
+        float learningScore = 0.0f;     // α*R + (1-α)*prior + β*UCB
         float lambda = 0.0f;            // λ(confidence) — learning amplification actually applied
         float recencyBoost = 0.0f;      // From UsageMemory (event-driven short-term recall)
         float correlationBonus = 0.0f;  // From CorrelationBooster
@@ -36,12 +36,12 @@ namespace Huginn::Scoring
         }
 
         // Log string, detailed: compact plus the inputs that produced learn
-        // (learn = α*Q + (1-α)*P + β*UCB, rec additive when present).
+        // (learn = α*R + (1-α)*P + β*UCB, rec additive when present).
         [[nodiscard]] std::string ToDetailString() const
         {
-            return std::format("ctx={:.2f} λ={:.2f} learn={:.2f} (Q={:+.2f} P={:.2f} UCB={:.2f} α={:.2f}{}){}",
+            return std::format("ctx={:.2f} λ={:.2f} learn={:.2f} (est={:+.2f} P={:.2f} UCB={:.2f} α={:.2f}{}){}",
                 contextWeight, lambda, learningScore,
-                qValue, prior, ucb, confidence,
+                rewardEstimate, prior, ucb, confidence,
                 recencyBoost > 0.0f ? std::format(" rec={:.2f}", recencyBoost) : "",
                 MultiplierSuffix());
         }

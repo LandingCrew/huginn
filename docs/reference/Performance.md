@@ -179,7 +179,7 @@ row below was checked against `src/` on 2026-08-29.
 | Four update tiers (16 ms fast path / 100–500 ms polling / 200–1000 ms refresh / async learning) | **One** 100 ms tick, three sequential stages, two skip gates. No per-frame tier — the override check runs inside the pipeline, not every frame |
 | `struct TimingConfig` with `contextPollIntervalMs`, `minContextPollMs`, `maxContextPollMs`, `recommendationRefreshMs` | No such type. Fixed `constexpr` intervals in `Config.h` |
 | Adaptive timing: `combatSpeedMultiplier = 0.5`, `idleSpeedMultiplier = 2.0`, `GetEffectivePollInterval()` | Does not exist. No identifier matching `adaptiveTiming` or `combatSpeedMultiplier` appears in `src/` |
-| `class LearningQueue`, batched events, `asyncLearning = true`, `learningBatchIntervalMs = 1000` | Does not exist. Learning updates run synchronously — `FeatureQLearner::Update` is called directly from the equip and consumption paths |
+| `class LearningQueue`, batched events, `asyncLearning = true`, `learningBatchIntervalMs = 1000` | Does not exist. Learning updates run synchronously — `FeatureBanditLearner::Update` is called directly from the equip and consumption paths |
 | A background **update thread** and a background **learning thread** | Neither exists. Everything is the game thread, plus Wheeler's callback thread and Scaleform's UI thread |
 | "800 ms delay from action to learning effect" | No queue, so no such delay. The reward lands on the call; the *display* changes on the next non-skipped pipeline run |
 | `class UpdateScheduler`, `UpdatePriority` enum, `maxUpdatesPerFrame = 2`, staggered slot updates | Does not exist. All slots on the current page are pushed together |
@@ -283,7 +283,7 @@ Verified against the headers named.
 
 | Data | Structure | Where | Why |
 |---|---|---|---|
-| Per-item learning state | `std::unordered_map<FormID, ItemLearningData>` | `FeatureQLearner.h` | Sparse — most items are never trained. Weights, train count and last-update timestamp are **colocated in one struct**: one hash lookup per candidate, not three parallel maps |
+| Per-item learning state | `std::unordered_map<FormID, ItemLearningData>` | `FeatureBanditLearner.h` | Sparse — most items are never trained. Weights, train count and last-update timestamp are **colocated in one struct**: one hash lookup per candidate, not three parallel maps |
 | Feature vector | `std::array<float, 18>` | `StateFeatures.h` | Fixed size, stack allocated, append-only wire order |
 | Wildcard state | `std::array<PageWildcards, MAX_PAGES>` | `WildcardManager.h` | Fixed, per-page; each holds `std::array<WildcardSlot, MAX_SLOTS_PER_PAGE>` |
 | Lock state | `std::array<LockedSlot, MAX_SLOTS_PER_PAGE>` | `SlotLocker.h` | Small, contiguous, snapshot-copyable under one lock acquisition |
@@ -316,7 +316,7 @@ thread.** All `IntuitionMenu` public API methods defer their GFx work.
 | Owner | Primitive | Protects |
 |---|---|---|
 | `State::StateManager` | 4 × `shared_mutex` (`m_worldMutex`, `m_playerMutex`, `m_targetsMutex`, `m_trackingMutex`) | Split by state type so a target poll does not block a vitals read. Copy-out accessors |
-| `Learning::FeatureQLearner` | `shared_mutex` | `m_items`, `m_totalTrainCount`. A batch-query handle acquires the shared lock once and the caller loops N candidates under it |
+| `Learning::FeatureBanditLearner` | `shared_mutex` | `m_items`, `m_totalTrainCount`. A batch-query handle acquires the shared lock once and the caller loops N candidates under it |
 | `Registry::FormRegistry` and the per-type registries | `shared_mutex` each | Registry contents. Accessors are deliberately **un-zoned** in Tracy — absent `QueryTopK` / `FindBest` zones are expected, not missing data |
 | `Slot::SlotLocker` | `mutex` | Lock state — Wheeler callbacks reach `OnItemUsed` / `LockSlotForActivation` from the callback thread. `GetLockSnapshot()` exists so a push takes the lock once instead of up to 2 × slots × pages round-trips |
 | `Slot::SlotAllocator` | `m_cacheMutex`, `m_logMutex` | Page cache and log dedup |
@@ -540,7 +540,5 @@ none has been needed.
 | [../refactor/performance-optimizations.md](../refactor/performance-optimizations.md) | The 2026-02 optimization pass — archaeology, from a 30-second capture |
 | [ConsoleCommands.md](ConsoleCommands.md) | `hg status`, `hg recs`, `hg reload` and the rest |
 
-> **Terminology.** The learner is a **contextual bandit**. The identifiers
-> `FeatureQLearner`, `QLearnerSerializer`, the `FQLW` cosave record and
-> `hg reset qvalues` keep their historical names, because renaming them would
-> break the cosave format and a documented console command.
+> **The learner** is a linear contextual bandit — `FeatureBanditLearner`,
+> serialized by `BanditSerializer` into the `BNDW` cosave record.

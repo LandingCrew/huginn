@@ -29,7 +29,7 @@ namespace Huginn::Scoring
         float lambdaMax = 3.0f;   // Learning weight at full confidence (well-trained)
 
         // Alpha decay rate: How confidence affects learning vs prior balance
-        // α = confidence (from FeatureQLearner), used in: α*Q + (1-α)*prior
+        // α = confidence (from FeatureBanditLearner), used in: α*R + (1-α)*prior
         // This is automatic based on visit counts, not configurable
 
         // Beta (β): Exploration weight for UCB bonus

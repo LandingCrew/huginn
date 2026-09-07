@@ -160,7 +160,7 @@ namespace Huginn::Weapon
    // =============================================================================
    // WEAPON DATA (v0.7.6)
    // =============================================================================
-   // Weapon metadata for Q-learning and filtering.
+   // Weapon metadata for contextual bandit and filtering.
    // Represents a favorited weapon in the player's inventory.
    // =============================================================================
 

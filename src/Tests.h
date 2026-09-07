@@ -12,7 +12,7 @@ void RunItemRegistryTests();
 void RunWeaponRegistryTests();
 void RunCosaveTests();
 void RunStateFeaturesTests();
-void RunFeatureQLearnerTests();
+void RunFeatureBanditLearnerTests();
 void RunUnitTests();
 void RunOverrideNamespaceTests();      // Huginn_Overrides.ini section namespacing
 

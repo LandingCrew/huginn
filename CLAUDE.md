@@ -36,7 +36,7 @@ utility(item) = contextWeight × (1 + λ(confidence) × learningScore)
 **Key architectural separation:**
 - `ContextRuleEngine` — "What matters RIGHT NOW?" (game state → relevance weights)
 - `PriorCalculator` — "Which item is intrinsically better?" (item properties → quality)
-- `FeatureQLearner` — "What does THIS PLAYER prefer?" (contextual bandit over 18-float feature vectors; the class name is historical, see [docs/architecture/4-contextual-bandits.md](docs/architecture/4-contextual-bandits.md))
+- `FeatureBanditLearner` — "What does THIS PLAYER prefer?" (contextual bandit over 18-float feature vectors, see [docs/architecture/4-contextual-bandits.md](docs/architecture/4-contextual-bandits.md))
 - `UtilityScorer` — Combines all three into final utility
 
 See [docs/README.md](docs/README.md) for full system design.
@@ -47,7 +47,7 @@ See [docs/README.md](docs/README.md) for full system design.
 |-----------|---------|
 | `src/state/` | StateManager + 11 poll methods, 6 state types |
 | `src/candidate/` | Candidate generation and filtering |
-| `src/learning/` | FeatureQLearner, PriorCalculator, UtilityScorer |
+| `src/learning/` | FeatureBanditLearner, PriorCalculator, UtilityScorer |
 | `src/spell/`, `src/learning/item/`, `src/weapon/`, `src/scroll/` | Registries and classifiers |
 | `src/slot/` | Slot allocation, locking, classification |
 | `src/context/` | ContextRuleEngine (context weight computation) |
@@ -83,9 +83,9 @@ Registered as `Huginn` with short alias `hg` (in-game `~` console):
 | `hg status` | Show system status |
 | `hg unlock` | Clear all slot locks |
 | `hg rebuild` | Force rebuild all registries |
-| `hg weights <FormID>` | Show FQL weight vector (hex FormID) |
+| `hg weights <FormID>` | Show learner weight vector (hex FormID) |
 | `hg page <N>` | Switch to page N |
-| `hg reset qvalues` | Clear learned item weights |
+| `hg reset weights` | Clear learned item weights |
 | `hg reset all` | Full system reset |
 
 ## Update Loop
@@ -104,7 +104,7 @@ Registered as `Huginn` with short alias `hg` (in-game `~` console):
 In `Main.cpp`:
 - `SKSEPlugin_Load` — Registers messaging listener
 - `kDataLoaded` — D3D hook, ImGui, StateEvaluator, IntuitionMenu, console commands
-- `kPostLoadGame`/`kNewGame` — Registries, FeatureQLearner, shows IntuitionMenu
+- `kPostLoadGame`/`kNewGame` — Registries, FeatureBanditLearner, shows IntuitionMenu
 
 ## Forbidden Information (Cheating Prevention)
 

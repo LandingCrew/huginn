@@ -6,7 +6,7 @@
 namespace Huginn::Item
 {
    // ItemClassifier analyzes alchemy items (potions, poisons, food) and classifies them
-   // by type and tags for use in the Q-learning recommendation system.
+   // by type and tags for use in the contextual bandit recommendation system.
    // Mirrors SpellClassifier API-first, tag-fallback pattern.
    class ItemClassifier
    {

@@ -12,9 +12,9 @@
 #include "learning/ScoredCandidate.h"
 #include "learning/ScorerSettings.h"   // MINIMUM_UTILITY — the floor test 6i is about
 #include "candidate/CandidateGenerator.h"
-#include "persist/QLearnerSerializer.h"
+#include "persist/BanditSerializer.h"
 #include "learning/StateFeatures.h"
-#include "learning/FeatureQLearner.h"
+#include "learning/FeatureBanditLearner.h"
 #include "learning/PipelineStateCache.h"
 #include "learning/EquipSourceTracker.h"
 #include "learning/UsageMemory.h"
@@ -88,7 +88,7 @@ void RunMultiplicativeScoringTests()
         config.lambdaMin = 0.5f;
         config.lambdaMax = 3.0f;
 
-        // Mock learning score (high Q-value to test that context gates it)
+        // Mock learning score (high reward estimate to test that context gates it)
         float learningScore = 0.8f;
         float confidence = 1.0f;
         float lambda = config.lambdaMin + confidence * (config.lambdaMax - config.lambdaMin);  // 3.0
@@ -253,7 +253,7 @@ void RunMultiplicativeScoringTests()
 }
 
 // ============================================================================
-// Console Commands for Manual Q-Learning Testing (Debug Mode Only)
+// Console Commands for Manual Contextual Bandit Testing (Debug Mode Only)
 // ============================================================================
 
 #ifndef NDEBUG
@@ -1197,31 +1197,31 @@ void RunStateFeaturesTests()
 }
 
 // =============================================================================
-// FEATURE Q-LEARNER TESTS (Phase 3.5b)
+// FEATURE BANDIT LEARNER TESTS (Phase 3.5b)
 // =============================================================================
 
-void RunFeatureQLearnerTests()
+void RunFeatureBanditLearnerTests()
 {
 #ifndef NDEBUG
     using namespace Huginn::Learning;
 
-    logger::info("Running FeatureQLearner unit tests..."sv);
+    logger::info("Running FeatureBanditLearner unit tests..."sv);
 
     constexpr float EPS = 0.001f;
     auto feq = [EPS](float a, float b) { return std::abs(a - b) < EPS; };
 
     // ── Test 1: Cold start ────────────────────────────────────────────────
     {
-        FeatureQLearner fql;
+        FeatureBanditLearner learner;
         StateFeatures defaultState;  // Full health, no combat, no targets
 
         RE::FormID unknownItem = 0xDEAD0001;
-        float q = fql.GetQValue(unknownItem, defaultState);
-        float conf = fql.GetConfidence(unknownItem);
-        float ucb = fql.GetUCB(unknownItem);
+        float q = learner.GetRewardEstimate(unknownItem, defaultState);
+        float conf = learner.GetConfidence(unknownItem);
+        float ucb = learner.GetUCB(unknownItem);
 
         if (!feq(q, 0.0f)) {
-            logger::error("TEST FAIL: Cold start Q should be 0.0, got {:.4f}"sv, q);
+            logger::error("TEST FAIL: Cold-start reward estimate should be 0.0, got {:.4f}"sv, q);
             return;
         }
         // Confidence at 0 trains: 1/(1+exp(-0.3*(0-5))) = 1/(1+exp(1.5)) ≈ 0.182
@@ -1238,7 +1238,7 @@ void RunFeatureQLearnerTests()
 
     // ── Test 2: Learning convergence ──────────────────────────────────────
     {
-        FeatureQLearner fql;
+        FeatureBanditLearner learner;
         RE::FormID healSpell = 0xDEAD0002;
 
         // Low health state
@@ -1248,26 +1248,26 @@ void RunFeatureQLearnerTests()
 
         // Train 20 times with reward=1.0
         for (int i = 0; i < 20; ++i) {
-            fql.Update(healSpell, lowHealth, 1.0f);
+            learner.Update(healSpell, lowHealth, 1.0f);
         }
 
-        float q = fql.GetQValue(healSpell, lowHealth);
-        float conf = fql.GetConfidence(healSpell);
+        float q = learner.GetRewardEstimate(healSpell, lowHealth);
+        float conf = learner.GetConfidence(healSpell);
 
         if (q < 0.5f) {
-            logger::error("TEST FAIL: After 20 trains with reward=1.0, Q should be >0.5, got {:.4f}"sv, q);
+            logger::error("TEST FAIL: After 20 trains with reward=1.0, reward estimate should be >0.5, got {:.4f}"sv, q);
             return;
         }
         if (conf < 0.9f) {
             logger::error("TEST FAIL: After 20 trains, confidence should be >0.9, got {:.4f}"sv, conf);
             return;
         }
-        logger::info("  Test 2 PASS: Learning convergence (Q={:.3f}, conf={:.3f})"sv, q, conf);
+        logger::info("  Test 2 PASS: Learning convergence (est={:.3f}, conf={:.3f})"sv, q, conf);
     }
 
     // ── Test 3: Weight interpretability ───────────────────────────────────
     {
-        FeatureQLearner fql;
+        FeatureBanditLearner learner;
         RE::FormID healSpell = 0xDEAD0003;
 
         // Contrastive training: healing rewarded at LOW health, not rewarded at
@@ -1283,11 +1283,11 @@ void RunFeatureQLearnerTests()
         fullHealthCombat.inCombat = 1.0f;
 
         for (int i = 0; i < 30; ++i) {
-            fql.Update(healSpell, lowHealthCombat, 1.0f);
-            fql.Update(healSpell, fullHealthCombat, 0.0f);
+            learner.Update(healSpell, lowHealthCombat, 1.0f);
+            learner.Update(healSpell, fullHealthCombat, 0.0f);
         }
 
-        auto weights = fql.GetWeights(healSpell);
+        auto weights = learner.GetWeights(healSpell);
 
         // To fit Q(low)=1 and Q(full)=0 simultaneously, the model must assign
         // healthPct a negative weight (lower health = higher Q) and offset it
@@ -1301,13 +1301,13 @@ void RunFeatureQLearnerTests()
             return;
         }
 
-        // Q at low health should be much higher than Q at full health
+        // Reward estimate at low health should be much higher than at full health
         StateFeatures fullHealth;
         fullHealth.healthPct = 1.0f;
         fullHealth.inCombat = 1.0f;
 
-        float qLow = fql.GetQValue(healSpell, lowHealthCombat);
-        float qHigh = fql.GetQValue(healSpell, fullHealth);
+        float qLow = learner.GetRewardEstimate(healSpell, lowHealthCombat);
+        float qHigh = learner.GetRewardEstimate(healSpell, fullHealth);
 
         if (qLow <= qHigh) {
             logger::error("TEST FAIL: Q(low health) should > Q(full health), got {:.4f} vs {:.4f}"sv, qLow, qHigh);
@@ -1319,7 +1319,7 @@ void RunFeatureQLearnerTests()
 
     // ── Test 4: Regularization prevents explosion ─────────────────────────
     {
-        FeatureQLearner fql;
+        FeatureBanditLearner learner;
         RE::FormID item = 0xDEAD0004;
 
         StateFeatures state;
@@ -1328,28 +1328,28 @@ void RunFeatureQLearnerTests()
 
         // Train with extreme reward 200 times
         for (int i = 0; i < 200; ++i) {
-            fql.Update(item, state, 100.0f);
+            learner.Update(item, state, 100.0f);
         }
 
-        float q = fql.GetQValue(item, state);
+        float q = learner.GetRewardEstimate(item, state);
         if (!std::isfinite(q)) {
-            logger::error("TEST FAIL: Q should be finite after extreme training, got {:.4f}"sv, q);
+            logger::error("TEST FAIL: reward estimate should be finite after extreme training, got {:.4f}"sv, q);
             return;
         }
 
-        auto weights = fql.GetWeights(item);
+        auto weights = learner.GetWeights(item);
         for (size_t i = 0; i < StateFeatures::NUM_FEATURES; ++i) {
             if (weights[i] > 10.0f || weights[i] < -10.0f) {
                 logger::error("TEST FAIL: Weight[{}] = {:.4f} exceeds clamp bounds"sv, i, weights[i]);
                 return;
             }
         }
-        logger::info("  Test 4 PASS: Regularization prevents explosion (Q={:.3f})"sv, q);
+        logger::info("  Test 4 PASS: Regularization prevents explosion (est={:.3f})"sv, q);
     }
 
     // ── Test 5: Weight clamping ───────────────────────────────────────────
     {
-        FeatureQLearner fql;
+        FeatureBanditLearner learner;
         RE::FormID item = 0xDEAD0005;
 
         // Force weights toward extremes with alternating high rewards on different states
@@ -1357,10 +1357,10 @@ void RunFeatureQLearnerTests()
             StateFeatures s;
             s.healthPct = (i % 2 == 0) ? 0.0f : 1.0f;
             s.inCombat = 1.0f;
-            fql.Update(item, s, (i % 2 == 0) ? 50.0f : -50.0f);
+            learner.Update(item, s, (i % 2 == 0) ? 50.0f : -50.0f);
         }
 
-        auto weights = fql.GetWeights(item);
+        auto weights = learner.GetWeights(item);
         bool allClamped = true;
         for (size_t i = 0; i < StateFeatures::NUM_FEATURES; ++i) {
             if (weights[i] > 10.0f + EPS || weights[i] < -10.0f - EPS) {
@@ -1374,7 +1374,7 @@ void RunFeatureQLearnerTests()
 
     // ── Test 6: Generalization ────────────────────────────────────────────
     {
-        FeatureQLearner fql;
+        FeatureBanditLearner learner;
         RE::FormID bow = 0xDEAD0006;
 
         // State A: combat + sneaking + low health
@@ -1384,7 +1384,7 @@ void RunFeatureQLearnerTests()
         stateA.isSneaking = 1.0f;
 
         for (int i = 0; i < 20; ++i) {
-            fql.Update(bow, stateA, 1.0f);
+            learner.Update(bow, stateA, 1.0f);
         }
 
         // State B: combat + standing + low health (NOT trained)
@@ -1393,10 +1393,10 @@ void RunFeatureQLearnerTests()
         stateB.inCombat = 1.0f;
         stateB.isSneaking = 0.0f;  // Different from A
 
-        float qA = fql.GetQValue(bow, stateA);
-        float qB = fql.GetQValue(bow, stateB);
+        float qA = learner.GetRewardEstimate(bow, stateA);
+        float qB = learner.GetRewardEstimate(bow, stateB);
 
-        // B shares combat + low health features → should generalize (Q > 0)
+        // B shares combat + low health features → should generalize (estimate > 0)
         if (qB <= 0.0f) {
             logger::error("TEST FAIL: Generalization — Q(B) should be >0 from shared features, got {:.4f}"sv, qB);
             return;
@@ -1411,7 +1411,7 @@ void RunFeatureQLearnerTests()
 
     // ── Test 7: Independent items ─────────────────────────────────────────
     {
-        FeatureQLearner fql;
+        FeatureBanditLearner learner;
         RE::FormID item1 = 0xDEAD0007;
         RE::FormID item2 = 0xDEAD0008;
 
@@ -1420,63 +1420,63 @@ void RunFeatureQLearnerTests()
 
         // Train item1 with positive reward, item2 with negative
         for (int i = 0; i < 15; ++i) {
-            fql.Update(item1, state, 1.0f);
-            fql.Update(item2, state, -1.0f);
+            learner.Update(item1, state, 1.0f);
+            learner.Update(item2, state, -1.0f);
         }
 
-        float q1 = fql.GetQValue(item1, state);
-        float q2 = fql.GetQValue(item2, state);
+        float q1 = learner.GetRewardEstimate(item1, state);
+        float q2 = learner.GetRewardEstimate(item2, state);
 
         if (q1 <= 0.0f) {
-            logger::error("TEST FAIL: Item1 Q should be positive, got {:.4f}"sv, q1);
+            logger::error("TEST FAIL: Item1 reward estimate should be positive, got {:.4f}"sv, q1);
             return;
         }
         if (q2 >= 0.0f) {
-            logger::error("TEST FAIL: Item2 Q should be negative, got {:.4f}"sv, q2);
+            logger::error("TEST FAIL: Item2 reward estimate should be negative, got {:.4f}"sv, q2);
             return;
         }
-        if (fql.GetItemCount() != 2) {
-            logger::error("TEST FAIL: Item count should be 2, got {}"sv, fql.GetItemCount());
+        if (learner.GetItemCount() != 2) {
+            logger::error("TEST FAIL: Item count should be 2, got {}"sv, learner.GetItemCount());
             return;
         }
         logger::info("  Test 7 PASS: Independent items (Q1={:.3f}, Q2={:.3f}, count={})"sv,
-            q1, q2, fql.GetItemCount());
+            q1, q2, learner.GetItemCount());
     }
 
     // ── Test 8: Clear ─────────────────────────────────────────────────────
     {
-        FeatureQLearner fql;
+        FeatureBanditLearner learner;
         RE::FormID item = 0xDEAD0009;
         StateFeatures state;
         state.inCombat = 1.0f;
 
-        fql.Update(item, state, 1.0f);
-        fql.Update(item, state, 1.0f);
+        learner.Update(item, state, 1.0f);
+        learner.Update(item, state, 1.0f);
 
-        if (fql.GetItemCount() == 0 || fql.GetTotalTrainCount() == 0) {
+        if (learner.GetItemCount() == 0 || learner.GetTotalTrainCount() == 0) {
             logger::error("TEST FAIL: Should have data before Clear()"sv);
             return;
         }
 
-        fql.Clear();
+        learner.Clear();
 
-        if (fql.GetItemCount() != 0) {
-            logger::error("TEST FAIL: After Clear(), itemCount should be 0, got {}"sv, fql.GetItemCount());
+        if (learner.GetItemCount() != 0) {
+            logger::error("TEST FAIL: After Clear(), itemCount should be 0, got {}"sv, learner.GetItemCount());
             return;
         }
-        if (fql.GetTotalTrainCount() != 0) {
-            logger::error("TEST FAIL: After Clear(), totalTrains should be 0, got {}"sv, fql.GetTotalTrainCount());
+        if (learner.GetTotalTrainCount() != 0) {
+            logger::error("TEST FAIL: After Clear(), totalTrains should be 0, got {}"sv, learner.GetTotalTrainCount());
             return;
         }
-        float q = fql.GetQValue(item, state);
+        float q = learner.GetRewardEstimate(item, state);
         if (!feq(q, 0.0f)) {
-            logger::error("TEST FAIL: After Clear(), Q should be 0.0, got {:.4f}"sv, q);
+            logger::error("TEST FAIL: After Clear(), reward estimate should be 0.0, got {:.4f}"sv, q);
             return;
         }
         logger::info("  Test 8 PASS: Clear"sv);
     }
 
-    logger::info("TEST PASS: All FeatureQLearner tests passed! (8 tests)"sv);
+    logger::info("TEST PASS: All FeatureBanditLearner tests passed! (8 tests)"sv);
 #endif
 }
 
@@ -3678,29 +3678,29 @@ void RunUnitTests()
         logger::info("TEST PASS: Dedup equivalence holds (IsFavorited, fortify parity)"sv);
     }
 
-    // Test 16: FeatureQLearner batch decay — one call decays multiple idle items,
+    // Test 16: FeatureBanditLearner batch decay — one call decays multiple idle items,
     // leaves unlisted/fresh items untouched, preserves train counts, and is
     // idempotent (re-decay at the same injected time is a no-op).
     {
-        logger::info("TEST: FeatureQLearner batch decay..."sv);
+        logger::info("TEST: FeatureBanditLearner batch decay..."sv);
 
-        Learning::FeatureQLearner fql;
+        Learning::FeatureBanditLearner learner;
         Learning::StateFeatures s{};
         s.healthPct = 0.5f;
         s.inCombat = 1.0f;
 
-        fql.Update(0xD001, s, 1.0f);
-        fql.Update(0xD002, s, 1.0f);
-        fql.Update(0xD003, s, 1.0f);
+        learner.Update(0xD001, s, 1.0f);
+        learner.Update(0xD002, s, 1.0f);
+        learner.Update(0xD003, s, 1.0f);
 
-        const auto wBefore1 = fql.GetWeights(0xD001);
-        const auto wBefore3 = fql.GetWeights(0xD003);
+        const auto wBefore1 = learner.GetWeights(0xD001);
+        const auto wBefore3 = learner.GetWeights(0xD003);
 
         // Inject a future "now" well past the decay threshold (~60 min idle)
         const auto future = std::chrono::steady_clock::now() + std::chrono::minutes(60);
         const std::vector<RE::FormID> batch = {0xD001, 0xD002, 0xD999 /* never trained */};
 
-        const size_t decayed = fql.MaybeDecayBatch(batch, future);
+        const size_t decayed = learner.MaybeDecayBatch(batch, future);
         if (decayed != 2) {
             logger::error("TEST FAIL: batch decay should decay exactly 2 items, got {}", decayed);
             return;
@@ -3709,7 +3709,7 @@ void RunUnitTests()
         // ~60 min idle → factor ≈ (1 - rate)^1.0; allow slack for the microseconds
         // between the Update stamp and the test's now() baseline
         const float expectedFactor = std::pow(1.0f - Config::DECAY_RATE_PER_HOUR, 1.0f);
-        const auto wAfter1 = fql.GetWeights(0xD001);
+        const auto wAfter1 = learner.GetWeights(0xD001);
         for (size_t i = 0; i < Learning::StateFeatures::NUM_FEATURES; ++i) {
             if (std::abs(wAfter1[i] - wBefore1[i] * expectedFactor) > 0.001f) {
                 logger::error("TEST FAIL: weight[{}] should decay by ~{:.4f}: {:.4f} -> {:.4f}",
@@ -3719,24 +3719,24 @@ void RunUnitTests()
         }
 
         // Unlisted item untouched
-        if (fql.GetWeights(0xD003) != wBefore3) {
+        if (learner.GetWeights(0xD003) != wBefore3) {
             logger::error("TEST FAIL: item not in batch must not decay");
             return;
         }
 
         // Train counts unaffected by decay
-        if (fql.GetTrainCount(0xD001) != 1 || fql.GetTotalTrainCount() != 3) {
+        if (learner.GetTrainCount(0xD001) != 1 || learner.GetTotalTrainCount() != 3) {
             logger::error("TEST FAIL: decay must not change train counts");
             return;
         }
 
         // Idempotent: lastUpdate was stamped to `future`, so re-decay is a no-op
-        if (fql.MaybeDecayBatch(batch, future) != 0) {
+        if (learner.MaybeDecayBatch(batch, future) != 0) {
             logger::error("TEST FAIL: immediate re-decay at same time should be a no-op");
             return;
         }
 
-        logger::info("TEST PASS: FeatureQLearner batch decay (selective, count-preserving, idempotent)"sv);
+        logger::info("TEST PASS: FeatureBanditLearner batch decay (selective, count-preserving, idempotent)"sv);
     }
 
     // Test 17: ContextReason derivation (architecture-critique #10) — the display
@@ -4366,7 +4366,7 @@ void RunUnitTests()
 //   1. Double-scoring (context in CandidateGenerator + PriorCalculator)
 //   2. 10× discontinuity cliff at health thresholds
 //   3. Last-match-wins multi-tag assignment bug
-//   4. Q-learning <6% contribution (multiplicative formula empowerment)
+//   4. contextual bandit <6% contribution (multiplicative formula empowerment)
 //
 // Each test case (TC-XX) maps to the regression test spec from Agent 1.
 // =============================================================================
@@ -4940,7 +4940,7 @@ void RunRegressionTests()
         config.lambdaMin = 0.5f;
         config.lambdaMax = 3.0f;
 
-        // Scenario: Full health (healingWeight = 0.0), but high Q-value
+        // Scenario: Full health (healingWeight = 0.0), but high reward estimate
         float contextWeight = 0.0f;       // Zero context
         float learningScore = 0.8f;       // High learning
         float confidence = 1.0f;          // High confidence
@@ -4960,14 +4960,14 @@ void RunRegressionTests()
 
         logger::info("  ✓ PASS: Zero context gates learning: 0.0 × (1+3.0×0.8) = 0.0"sv);
         logger::info("  ✓ REGRESSION PREVENTED: Learning no longer leaks through zero context"sv);
-        logger::info("  ✓ Q-learning empowered from <6%% to meaningful tiebreaker within relevant items"sv);
+        logger::info("  ✓ contextual bandit empowered from <6%% to meaningful tiebreaker within relevant items"sv);
     }
 
     logger::info("=== Regression Test Suite PASSED ===");
     logger::info("All critical v1.0 refactor fixes validated:");
     logger::info("  ✓ No 10× health cliff (TC-01)");
     logger::info("  ✓ Multi-tag max() accumulation (TC-05)");
-    logger::info("  ✓ Multiplicative gate empowers Q-learning (TC-16)");
+    logger::info("  ✓ Multiplicative gate empowers contextual bandit (TC-16)");
     logger::info("  ✓ Smooth continuous curves (TC-01, TC-02, TC-03)");
     logger::info("  ✓ Context scoring parity with v0.12.x (TC-07, TC-10, TC-11, TC-12, TC-14, TC-15)");
 
@@ -4977,7 +4977,7 @@ void RunRegressionTests()
 // =============================================================================
 // COSAVE SERIALIZATION TESTS
 // =============================================================================
-// Tests FeatureQLearner ExportData/ImportData round-trip without requiring
+// Tests FeatureBanditLearner ExportData/ImportData round-trip without requiring
 // actual SKSE cosave infrastructure. FormID resolution is verified via manual testing.
 // =============================================================================
 
@@ -5249,9 +5249,9 @@ void RunCosaveTests()
 
     logger::info("=== Running Cosave Serialization Tests ==="sv);
 
-    // ── Test 1: FeatureQLearner round-trip ──────────────────────────────
+    // ── Test 1: FeatureBanditLearner round-trip ──────────────────────────────
     {
-        FeatureQLearner source;
+        FeatureBanditLearner source;
 
         // Train two items with different rewards in different states
         StateFeatures combatFeatures;
@@ -5269,91 +5269,91 @@ void RunCosaveTests()
         source.Update(0x00030001, peacefulFeatures, 1.0f); // 1 train
 
         // Export
-        std::vector<FeatureQLearner::SerializedEntry> exported;
+        std::vector<FeatureBanditLearner::SerializedEntry> exported;
         uint32_t totalTrains = 0;
         source.ExportData(
-            [&](FeatureQLearner::SerializedEntry entry) { exported.push_back(std::move(entry)); },
+            [&](FeatureBanditLearner::SerializedEntry entry) { exported.push_back(std::move(entry)); },
             totalTrains
         );
 
         if (exported.size() != 2) {
-            logger::error("[Cosave Test] FAIL: FQL should export 2 items, got {}"sv, exported.size());
+            logger::error("[Cosave Test] FAIL: learner should export 2 items, got {}"sv, exported.size());
             return;
         }
         if (totalTrains != 3) {
-            logger::error("[Cosave Test] FAIL: FQL total trains should be 3, got {}"sv, totalTrains);
+            logger::error("[Cosave Test] FAIL: learner total trains should be 3, got {}"sv, totalTrains);
             return;
         }
 
         // Import into fresh learner
-        FeatureQLearner dest;
+        FeatureBanditLearner dest;
         dest.ImportData(exported, totalTrains);
 
         if (dest.GetItemCount() != 2) {
-            logger::error("[Cosave Test] FAIL: FQL import should have 2 items, got {}"sv, dest.GetItemCount());
+            logger::error("[Cosave Test] FAIL: learner import should have 2 items, got {}"sv, dest.GetItemCount());
             return;
         }
         if (dest.GetTotalTrainCount() != 3) {
-            logger::error("[Cosave Test] FAIL: FQL import total trains should be 3, got {}"sv, dest.GetTotalTrainCount());
+            logger::error("[Cosave Test] FAIL: learner import total trains should be 3, got {}"sv, dest.GetTotalTrainCount());
             return;
         }
         if (dest.GetTrainCount(0x00030000) != 2) {
-            logger::error("[Cosave Test] FAIL: FQL item 30000 train count should be 2, got {}"sv, dest.GetTrainCount(0x00030000));
+            logger::error("[Cosave Test] FAIL: learner item 30000 train count should be 2, got {}"sv, dest.GetTrainCount(0x00030000));
             return;
         }
 
-        // Verify Q-values match
-        float srcQ = source.GetQValue(0x00030000, combatFeatures);
-        float dstQ = dest.GetQValue(0x00030000, combatFeatures);
+        // Verify reward estimates match
+        float srcQ = source.GetRewardEstimate(0x00030000, combatFeatures);
+        float dstQ = dest.GetRewardEstimate(0x00030000, combatFeatures);
         if (std::abs(srcQ - dstQ) > 0.001f) {
-            logger::error("[Cosave Test] FAIL: FQL Q-value mismatch: {:.4f} vs {:.4f}"sv, srcQ, dstQ);
+            logger::error("[Cosave Test] FAIL: learner reward-estimate mismatch: {:.4f} vs {:.4f}"sv, srcQ, dstQ);
             return;
         }
 
-        logger::info("  PASS: FQL round-trip preserves weights, train counts, Q-values"sv);
+        logger::info("  PASS: learner round-trip preserves weights, train counts, reward estimates"sv);
     }
 
     // ── Test 2: Empty round-trip (no crash) ────────────────────────────
     {
-        FeatureQLearner empty;
+        FeatureBanditLearner empty;
 
-        std::vector<FeatureQLearner::SerializedEntry> exported;
+        std::vector<FeatureBanditLearner::SerializedEntry> exported;
         uint32_t totalTrains = 0;
         empty.ExportData(
-            [&](FeatureQLearner::SerializedEntry entry) { exported.push_back(std::move(entry)); },
+            [&](FeatureBanditLearner::SerializedEntry entry) { exported.push_back(std::move(entry)); },
             totalTrains
         );
 
         if (!exported.empty() || totalTrains != 0) {
-            logger::error("[Cosave Test] FAIL: Empty FQL should export 0 entries"sv);
+            logger::error("[Cosave Test] FAIL: Empty learner should export 0 entries"sv);
             return;
         }
 
-        FeatureQLearner dest;
+        FeatureBanditLearner dest;
         dest.ImportData(exported, totalTrains);
         if (dest.GetItemCount() != 0) {
-            logger::error("[Cosave Test] FAIL: Empty FQL import should have 0 items"sv);
+            logger::error("[Cosave Test] FAIL: Empty learner import should have 0 items"sv);
             return;
         }
 
-        logger::info("  PASS: Empty FQL exports/imports without crash"sv);
+        logger::info("  PASS: Empty learner exports/imports without crash"sv);
     }
 
     // ── Test 3: Import clears existing data ─────────────────────────────
     {
-        FeatureQLearner learner;
+        FeatureBanditLearner learner;
         StateFeatures f;
         f.healthPct = 0.5f;
         learner.Update(0x00031000, f, 3.0f);
 
         if (learner.GetItemCount() != 1) {
-            logger::error("[Cosave Test] FAIL: FQL pre-import should have 1 item"sv);
+            logger::error("[Cosave Test] FAIL: learner pre-import should have 1 item"sv);
             return;
         }
 
         // Import different data
-        std::vector<FeatureQLearner::SerializedEntry> newEntries;
-        FeatureQLearner::SerializedEntry entry;
+        std::vector<FeatureBanditLearner::SerializedEntry> newEntries;
+        FeatureBanditLearner::SerializedEntry entry;
         entry.formID = 0x00032000;
         entry.weights = {};
         entry.weights[0] = 0.5f;  // healthPct weight
@@ -5364,16 +5364,16 @@ void RunCosaveTests()
 
         // Old data gone
         if (learner.GetTrainCount(0x00031000) != 0) {
-            logger::error("[Cosave Test] FAIL: FQL old data should be cleared after import"sv);
+            logger::error("[Cosave Test] FAIL: learner old data should be cleared after import"sv);
             return;
         }
         // New data present
         if (learner.GetItemCount() != 1 || learner.GetTrainCount(0x00032000) != 5) {
-            logger::error("[Cosave Test] FAIL: FQL new data should be present after import"sv);
+            logger::error("[Cosave Test] FAIL: learner new data should be present after import"sv);
             return;
         }
 
-        logger::info("  PASS: FQL import clears old data and replaces with new"sv);
+        logger::info("  PASS: learner import clears old data and replaces with new"sv);
     }
 
     // ── Test 4: Feature-count migration decode (pad / truncate) ─────────
@@ -5444,7 +5444,7 @@ void RunCosaveTests()
         {
             auto blob = makeBlob(compiled, 1);
             auto entries = DecodeV2EntryBlob(blob.data(), blob.size(), 1, compiled);
-            FeatureQLearner::SerializedEntry direct;
+            FeatureBanditLearner::SerializedEntry direct;
             std::memcpy(&direct, blob.data(), sizeof(direct));
             bool ok = entries.size() == 1
                    && entries[0].formID == direct.formID
@@ -5467,7 +5467,7 @@ void RunCosaveTests()
             }
         }
 
-        logger::info("  PASS: FQL feature-count migration pads, truncates, round-trips"sv);
+        logger::info("  PASS: learner feature-count migration pads, truncates, round-trips"sv);
     }
 
     logger::info("=== Cosave Serialization Tests PASSED ==="sv);

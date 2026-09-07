@@ -15,7 +15,7 @@
 #include "weapon/WeaponRegistry.h"
 #include "util/ExtraListStability.h"
 #include "scroll/ScrollRegistry.h"
-#include "learning/FeatureQLearner.h"
+#include "learning/FeatureBanditLearner.h"
 #include "learning/StateFeatures.h"
 #include "learning/UtilityScorer.h"
 #include "update/UpdateHandler.h"
@@ -52,7 +52,7 @@
 #include "context/ContextWeightConfig.h"
 #include "settings/SettingsReloader.h"
 #include "console/ConsoleCommands.h"
-#include "persist/QLearnerSerializer.h"
+#include "persist/BanditSerializer.h"
 #include "learning/EquipEventBus.h"
 #include "learning/EquipSourceTracker.h"  // MarkHuginnEquip (Wheeler environment)
 #include "learning/EquipSubscribers.h"
@@ -245,16 +245,16 @@ static void InitializeGameSystems(bool isNewGame)
         candidateGen.RefreshConfigFromGlobal();
     }
 
-    // ── 5. FeatureQLearner + UtilityScorer + ScorerSettings ──────────────
-    if (!g_featureQLearner) {
-        g_featureQLearner = std::make_unique<Huginn::Learning::FeatureQLearner>();
-        logger::info("FeatureQLearner initialized"sv);
+    // ── 5. FeatureBanditLearner + UtilityScorer + ScorerSettings ──────────────
+    if (!g_featureBanditLearner) {
+        g_featureBanditLearner = std::make_unique<Huginn::Learning::FeatureBanditLearner>();
+        logger::info("FeatureBanditLearner initialized"sv);
     }
 
-    // Apply any pending FQL cosave data (load game only — new game starts fresh)
-    if (!isNewGame && Persist::HasPendingFQLData()) {
-        if (Persist::ApplyPendingFQLData(*g_featureQLearner)) {
-            logger::info("FeatureQLearner restored from cosave ({} items)"sv, g_featureQLearner->GetItemCount());
+    // Apply any pending learner cosave data (load game only — new game starts fresh)
+    if (!isNewGame && Persist::HasPendingBanditData()) {
+        if (Persist::ApplyPendingBanditData(*g_featureBanditLearner)) {
+            logger::info("FeatureBanditLearner restored from cosave ({} items)"sv, g_featureBanditLearner->GetItemCount());
         }
     }
 
@@ -265,16 +265,16 @@ static void InitializeGameSystems(bool isNewGame)
 
     // ── 5b. EquipEventBus subscribers (once-only registration) ────────
     {
-        static std::optional<Learning::FQLSubscriber> s_fqlSub;
+        static std::optional<Learning::BanditSubscriber> s_banditSub;
         static std::optional<Learning::UsageMemorySubscriber> s_usageMemSub;
         static std::optional<Learning::CooldownSubscriber> s_cooldownSub;
 
-        if (!s_fqlSub.has_value()) {
-            s_fqlSub.emplace(*g_featureQLearner);
-            s_usageMemSub.emplace(*g_usageMemory, *g_featureQLearner);
+        if (!s_banditSub.has_value()) {
+            s_banditSub.emplace(*g_featureBanditLearner);
+            s_usageMemSub.emplace(*g_usageMemory, *g_featureBanditLearner);
             s_cooldownSub.emplace();
             auto& bus = Learning::EquipEventBus::GetSingleton();
-            bus.Subscribe(&*s_fqlSub);
+            bus.Subscribe(&*s_banditSub);
             bus.Subscribe(&*s_usageMemSub);
             bus.Subscribe(&*s_cooldownSub);
             logger::info("EquipEventBus subscribers registered"sv);
@@ -282,7 +282,7 @@ static void InitializeGameSystems(bool isNewGame)
     }
 
     if (!g_utilityScorer) {
-        g_utilityScorer = std::make_unique<Huginn::Scoring::UtilityScorer>(*g_featureQLearner, *g_usageMemory);
+        g_utilityScorer = std::make_unique<Huginn::Scoring::UtilityScorer>(*g_featureBanditLearner, *g_usageMemory);
         logger::info("UtilityScorer initialized"sv);
     }
 
@@ -400,9 +400,9 @@ static void InitializeGameSystems(bool isNewGame)
         RunWeaponRegistryTests();
         RunMultiplicativeScoringTests();  // Stage 2d: Test multiplicative scoring formula
         RunRegressionTests();             // Regression suite for v1.0 refactor validation
-        RunCosaveTests();                 // FeatureQLearner serialization round-trip
+        RunCosaveTests();                 // FeatureBanditLearner serialization round-trip
         RunStateFeaturesTests();          // Phase 3.5a: StateFeatures extraction tests
-        RunFeatureQLearnerTests();        // Phase 3.5b: Feature-based Q-learner tests
+        RunFeatureBanditLearnerTests();        // Phase 3.5b: Feature-based bandit learner tests
         RunOverrideNamespaceTests();      // Huginn_Overrides.ini section namespacing
         RunSlotLockerResetTest();         // THROWAWAY (0.19.21): Reset() field completeness
         logger::info("Debug build ready. Console command functions available for hotkey integration"sv);
@@ -644,7 +644,7 @@ static void OnDataLoaded()
                 slotAllocator.GetCurrentPageName());
         });
 
-        // Equip callback: publish to EquipEventBus (subscribers handle FQL + UsageMemory)
+        // Equip callback: publish to EquipEventBus (subscribers handle learner + UsageMemory)
         // MarkHuginnEquip is already called in EquipManager.cpp before this callback
         equipManager.SetEquipCallback([](RE::FormID formID, bool wasRecommended) {
             Learning::EquipEventBus::GetSingleton().Publish(
