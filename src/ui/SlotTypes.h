@@ -21,7 +21,8 @@ namespace Huginn::UI
         MeleeWeapon,    // Favorited melee weapon
         RangedWeapon,   // Favorited ranged weapon
         Ammo,           // Arrow or bolt (equip as ammo, not weapon)
-        SoulGem         // Soul gem (informational - weapon needs charging)
+        SoulGem,        // Soul gem (informational - weapon needs charging)
+        Apparel         // #65: fortify-crafting gear (equip, don't consume)
     };
 
     /**
@@ -69,6 +70,10 @@ namespace Huginn::UI
         }
         static SlotContent SoulGem(const std::string& name, RE::FormID formID = 0) {
             return { SlotContentType::SoulGem, name, 0.0f, formID };
+        }
+
+        static SlotContent Apparel(const std::string& name, RE::FormID formID = 0) {
+            return { SlotContentType::Apparel, name, 0.0f, formID };
         }
 
         bool IsEmpty() const { return type == SlotContentType::Empty; }

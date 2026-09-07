@@ -308,6 +308,33 @@ namespace Huginn::Context
             else if constexpr (std::is_same_v<T, Candidate::AmmoCandidate>) {
                 return std::max(weights.ammoWeight, weights.baseRelevanceWeight);
             }
+            // =====================================================================
+            // APPAREL CANDIDATES (#65)
+            // =====================================================================
+            // The ONLY source with no baseline. Every other arm floors at
+            // baseRelevanceWeight so it can surface on a typed slot without a
+            // matching context; apparel must not. A Fortify Smithing ring is
+            // relevant at a forge and worthless everywhere else, and giving it a
+            // floor would park crafting gear in the pool during combat.
+            //
+            // Returning 0.0 away from a workstation puts it below
+            // minimumContextWeight, so it is dropped by the early filter in
+            // UtilityScorer rather than scored and discarded.
+            else if constexpr (std::is_same_v<T, Candidate::ApparelCandidate>) {
+                switch (c.craftSkill) {
+                case Apparel::CraftSkill::Smithing:
+                    return weights.fortifySmithingWeight;
+                case Apparel::CraftSkill::Enchanting:
+                    return weights.fortifyEnchantingWeight;
+                case Apparel::CraftSkill::Alchemy:
+                    return weights.fortifyAlchemyWeight;
+                case Apparel::CraftSkill::None:
+                default:
+                    // Unreachable: ApparelRegistry rejects CraftSkill::None at
+                    // classification, so no such candidate is ever generated.
+                    return 0.0f;
+                }
+            }
             else {
                 // Compile-time exhaustiveness: adding a new CandidateVariant
                 // alternative must force a context-weight mapping here.

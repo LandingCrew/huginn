@@ -12,6 +12,7 @@
 #include "weapon/WeaponData.h"
 #include "scroll/ScrollData.h"
 #include "scroll/ScrollRegistry.h" // For InventoryScroll
+#include "apparel/ApparelData.h"        // #65: craft-relevant wearables
 #include "context/ContextReason.h" // Context::ContextReason (override reason)
 
 namespace Huginn::Candidate
@@ -28,6 +29,7 @@ namespace Huginn::Candidate
     //   SoulGem -> ItemCandidate   (sourceType = SoulGem)
     //   Food    -> ItemCandidate   (sourceType = Food)
     //   Staff   -> WeaponCandidate (sourceType = Staff)
+    //   Apparel -> ApparelCandidate
     // =============================================================================
     enum class SourceType : uint8_t
     {
@@ -39,6 +41,7 @@ namespace Huginn::Candidate
         SoulGem = 5,
         Food = 6,
         Staff = 7,
+        Apparel = 8,   // #65: fortify-crafting gear (workstation contexts only)
         _Count       // Sentinel for array sizing - must be last
     };
 
@@ -200,6 +203,30 @@ namespace Huginn::Candidate
     };
 
     // =============================================================================
+    // APPAREL CANDIDATE - Wraps ApparelData for fortify-crafting gear (#65)
+    // =============================================================================
+    // Unlike every other candidate this one is EQUIPPED AND LEFT ON rather than
+    // used up: there is no cooldown (see CandidateGenerator) and no consumption
+    // event, so `isEquipped` is what keeps a piece you are already wearing out of
+    // the pool. It is also the only source with no baseline context weight — a
+    // Fortify Smithing ring is relevant at a forge and nowhere else, so
+    // WeightForCandidate returns 0 away from a workstation instead of falling
+    // back to baseRelevanceWeight.
+    // =============================================================================
+    struct ApparelCandidate : CandidateBase
+    {
+        Apparel::CraftSkill  craftSkill = Apparel::CraftSkill::None;
+        Apparel::ApparelSlot slot = Apparel::ApparelSlot::Unknown;
+        float                magnitude = 0.0f;  // Fortify magnitude — the ranking key
+
+        ApparelCandidate() { sourceType = SourceType::Apparel; }
+
+        // Factory: Create ApparelCandidate from InventoryApparel
+        [[nodiscard]] static ApparelCandidate FromInventoryApparel(
+            const Apparel::InventoryApparel& invApparel);
+    };
+
+    // =============================================================================
     // CANDIDATE VARIANT - Unified type for polymorphic candidate handling
     // Using std::variant avoids virtual dispatch overhead
     // =============================================================================
@@ -208,7 +235,8 @@ namespace Huginn::Candidate
         ItemCandidate,
         WeaponCandidate,
         AmmoCandidate,
-        ScrollCandidate
+        ScrollCandidate,
+        ApparelCandidate
     >;
 
     // Helper for compile-time exhaustiveness checks in CandidateVariant visitors:
@@ -306,6 +334,7 @@ namespace Huginn::Candidate
             case SourceType::SoulGem: return "SoulGem";
             case SourceType::Food:    return "Food";
             case SourceType::Staff:   return "Staff";
+            case SourceType::Apparel: return "Apparel";
             default:                  return "Unknown";
         }
     }
@@ -313,7 +342,7 @@ namespace Huginn::Candidate
     // =============================================================================
     // STATIC ASSERTIONS - Compile-time verification
     // =============================================================================
-    static_assert(SOURCE_TYPE_COUNT == 8, "SOURCE_TYPE_COUNT must match number of SourceType values");
+    static_assert(SOURCE_TYPE_COUNT == 9, "SOURCE_TYPE_COUNT must match number of SourceType values");
     // CandidateBase::name is a string_view borrowing from persistent registry data.
     static_assert(sizeof(CandidateBase) <= 56, "CandidateBase struct size check");
 

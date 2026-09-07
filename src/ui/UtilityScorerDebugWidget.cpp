@@ -24,6 +24,7 @@ namespace Huginn::UI
         constexpr ImVec4 SOULGEM_COLOR{0.7f, 0.4f, 0.9f, 1.0f};    // Purple
         constexpr ImVec4 FOOD_COLOR{0.9f, 0.7f, 0.4f, 1.0f};       // Tan
         constexpr ImVec4 STAFF_COLOR{0.6f, 0.5f, 0.3f, 1.0f};      // Brown
+        constexpr ImVec4 APPAREL_COLOR{0.8f, 0.7f, 0.4f, 1.0f};    // Gold (#65)
 
         // Score component colors
         constexpr ImVec4 CONTEXT_COLOR{0.4f, 0.8f, 0.4f, 1.0f};    // Green
@@ -409,6 +410,7 @@ namespace Huginn::UI
             case Candidate::SourceType::SoulGem: return "SoulGem";
             case Candidate::SourceType::Food:    return "Food";
             case Candidate::SourceType::Staff:   return "Staff";
+            case Candidate::SourceType::Apparel: return "Apparel";
             default:                             return "???";
         }
     }
@@ -424,6 +426,7 @@ namespace Huginn::UI
             case Candidate::SourceType::SoulGem: return ScorerColors::SOULGEM_COLOR;
             case Candidate::SourceType::Food:    return ScorerColors::FOOD_COLOR;
             case Candidate::SourceType::Staff:   return ScorerColors::STAFF_COLOR;
+            case Candidate::SourceType::Apparel: return ScorerColors::APPAREL_COLOR;
             default:                             return ImVec4(1.0f, 1.0f, 1.0f, 1.0f);
         }
     }

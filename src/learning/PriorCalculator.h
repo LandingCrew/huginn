@@ -54,6 +54,9 @@ namespace Huginn::Scoring
         [[nodiscard]] float CalculateScrollPrior(
             const Candidate::ScrollCandidate& scroll) const;
 
+        [[nodiscard]] float CalculateApparelPrior(
+            const Candidate::ApparelCandidate& apparel) const;
+
         // =============================================================================
         // INTRINSIC PROPERTY CONSTANTS
         // =============================================================================
@@ -69,6 +72,16 @@ namespace Huginn::Scoring
         // Example: 200 HP potion vs 50 HP potion → ~0.1 difference in prior
         static constexpr float MAGNITUDE_REFERENCE_VALUE = 100.0f;  // Major healing potion
         static constexpr float MAGNITUDE_SCALE_FACTOR = 0.15f;      // Max bonus from magnitude
+
+        // Apparel fortify magnitude (#65). A separate reference from
+        // MAGNITUDE_REFERENCE_VALUE because the units are unrelated: a potion's
+        // magnitude is points of health, a fortify enchantment's is a PERCENT.
+        // 25% is roughly a strong vanilla-scale craft enchantment, so gear at or
+        // above that saturates the bonus and everything weaker ranks below it.
+        // GUESS, NOT MEASUREMENT: Requiem and LoreRim rescale these effects, and
+        // no capture has been taken. Revisit against real inventories before
+        // treating the ordering it produces as meaningful.
+        static constexpr float APPAREL_MAGNITUDE_REFERENCE = 25.0f;
 
         // Spell cost scaling (linear - higher cost generally means more powerful spell)
         // Example: Expert spell (cost 200) vs Novice spell (cost 20) → ~0.09 difference

@@ -217,13 +217,26 @@ static void InitializeGameSystems(bool isNewGame)
         g_scrollRegistry->ReconcileScrolls();
     }
 
+    // ApparelRegistry (#65)
+    if (!g_apparelRegistry) {
+        g_apparelRegistry = std::make_unique<Huginn::Apparel::ApparelRegistry>();
+    }
+    // Both paths only clear. Unlike the other registries there is no useful
+    // scan to do here: a player-applied enchantment lives in extraLists, which
+    // are not readable this early, and apparel is classified BY its enchantment.
+    // The first periodic reconcile past the stabilization window fills it — see
+    // ApparelRegistry.h. Nothing is waiting on it; apparel only matters at a
+    // workstation.
+    g_apparelRegistry->RebuildRegistry();
+
     // ── 4. CandidateConfig + CandidateGenerator ────────────────────────
     if (haveMainIni) LoadCandidateConfigFromINI(mainIni);
     {
         auto& candidateGen = Candidate::CandidateGenerator::GetSingleton();
         if (!candidateGen.IsInitialized()) {
             candidateGen.Initialize(*g_spellRegistry, *g_itemRegistry,
-                                    *g_weaponRegistry, *g_scrollRegistry);
+                                    *g_weaponRegistry, *g_scrollRegistry,
+                                    *g_apparelRegistry);
         }
         // The generator holds its own copy of the config; nothing else pushes
         // g_candidateConfig into it. Without this, LoadCandidateConfigFromINI

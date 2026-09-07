@@ -8,6 +8,7 @@
 #include "learning/item/ItemRegistry.h"
 #include "weapon/WeaponRegistry.h"
 #include "scroll/ScrollRegistry.h"
+#include "apparel/ApparelRegistry.h"   // #65
 #include "state/PlayerActorState.h"    // GenerateCandidates / Gather* take PlayerActorState
 #include <chrono>
 #include <memory>
@@ -25,6 +26,7 @@ namespace Huginn::Candidate
         size_t scrollsScanned = 0;
         size_t ammoScanned = 0;
         size_t soulGemsScanned = 0;
+        size_t apparelScanned = 0;
         FilterStats filterStats;
         float generationTimeMs = 0.0f;
 
@@ -35,6 +37,7 @@ namespace Huginn::Candidate
             scrollsScanned = 0;
             ammoScanned = 0;
             soulGemsScanned = 0;
+            apparelScanned = 0;
             filterStats.Reset();
             generationTimeMs = 0.0f;
         }
@@ -87,7 +90,8 @@ namespace Huginn::Candidate
             Spell::SpellRegistry& spellRegistry,
             Item::ItemRegistry& itemRegistry,
             Weapon::WeaponRegistry& weaponRegistry,
-            Scroll::ScrollRegistry& scrollRegistry
+            Scroll::ScrollRegistry& scrollRegistry,
+            Apparel::ApparelRegistry& apparelRegistry
         );
 
         /**
@@ -180,6 +184,7 @@ namespace Huginn::Candidate
         Item::ItemRegistry* m_itemRegistry = nullptr;
         Weapon::WeaponRegistry* m_weaponRegistry = nullptr;
         Scroll::ScrollRegistry* m_scrollRegistry = nullptr;
+        Apparel::ApparelRegistry* m_apparelRegistry = nullptr;
 
         bool m_initialized = false;
 
@@ -232,6 +237,12 @@ namespace Huginn::Candidate
             std::vector<CandidateVariant>& out,
             const State::PlayerActorState& player
         );
+
+        /// #65: craft-relevant apparel. Only fires at a workstation — see
+        /// WeightForCandidate, which gives apparel no baseline weight.
+        void GatherApparelCandidates(
+            std::vector<CandidateVariant>& out,
+            const State::PlayerActorState& player);
 
         // =========================================================================
         // RELEVANCE SCORING HELPERS - REMOVED (Stage 1g)
