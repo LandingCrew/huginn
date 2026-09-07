@@ -16,10 +16,9 @@ one-off ideas kept here so they are not lost.
 > - [4-contextual-bandits.md](4-contextual-bandits.md) — the learner as it exists
 > - [1-states.md](1-states.md) — the state models the prediction ideas below would draw on
 
-> **Terminology:** Huginn's learner is a **contextual bandit**. The code
-> identifiers (`FeatureBanditLearner`, `BanditSerializer`, the `BNDW` cosave record,
-> `hg reset weights`) keep the historical "Q" name and will not be renamed — the
-> cosave format and a documented console command depend on them.
+> **Terminology:** Huginn's learner is a **contextual bandit**, and since 0.20.0
+> the identifiers say so: `FeatureBanditLearner`, `BanditSerializer`, the `BNDW`
+> cosave record, `hg reset weights`.
 
 ---
 
@@ -38,7 +37,7 @@ one-off ideas kept here so they are not lost.
 | Experience replay / batch learning | Deferred | No |
 | Combat outcome rewards | Not implemented | **No** |
 | Category-level negative signal | Not implemented | **No** |
-| Kalman the learner / learnable context weights (Addendum #15/#16) | Not implemented | **Yes — parked** (needs a v3 cosave bump; not landable during an active soak run) |
+| Kalman learner / learnable context weights (Addendum #15/#16) | Not implemented | **Yes — parked** (needs a v3 cosave bump; not landable during an active soak run) |
 
 > **Dead reference, removed:** earlier revisions of this document pointed at
 > the v0.13.x roadmap's "Phase 5" for the implementation order of the four
@@ -321,7 +320,7 @@ accept% is the right quality metric for a wheel-driven player at all.
 Read [../roadmap.md](../roadmap.md) for the live list. The learning-adjacent
 entries as of 2026-08-29:
 
-- **Addendum #15/#16 — Kalman the learner / learnable context weights: parked.** Needs a
+- **Addendum #15/#16 — Kalman learner / learnable context weights: parked.** Needs a
   v3 cosave bump, which is not landable during an active soak run. This is the
   only learning-system item with a real plan behind it.
 - **Scroll cold-start** — every scroll sits in the candidate pool each tick but

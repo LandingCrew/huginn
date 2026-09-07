@@ -197,7 +197,7 @@ sequenceDiagram
 | Button ID | dMenu label | Action |
 |---|---|---|
 | `Huginn_toggle_widget` | Show/Hide Widget | `IntuitionMenu::ToggleUserHidden()` — deliberately the *same* latch the hotkey flips, not a parallel flag. Resets to shown on load; use `bEnabled` to turn the widget off for good |
-| `Huginn_reset_qtable` | Reset Learned Weights | `ResetLearningData()` — clears `FeatureBanditLearner` **and** resets `SlotLocker`, so locked slots stop pinning recommendations scored by the just-cleared table. Shared with `hg reset weights` |
+| `Huginn_reset_weights` | Reset Learned Weights | `ResetLearningData()` — clears `FeatureBanditLearner` **and** resets `SlotLocker`, so locked slots stop pinning recommendations scored by the just-cleared table. Shared with `hg reset weights` |
 | `Huginn_reset_defaults` | Reset to Defaults | `ResetAllToDefaults()` — every settings singleton back to compile-time defaults, then the same side effects as a reload |
 | `Huginn_reload_ini` | Reload INI | `ReloadAllSettings(GetDMenuIniPath())`. dMenu-managed sections still come from the dMenu INI, so a manual reload does **not** reset the player's widget customizations |
 

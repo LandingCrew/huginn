@@ -66,7 +66,7 @@ Release:
 | `skipped=N (wheel/stale/spam/off)` | equips that a filter caught BEFORE attribution, so they never entered the buckets | **read this whenever `accept=n/a`.** `skipped=0` = nothing was equipped. A large `wheel=` = you played through the wheel and produced no acceptance data at all (v0.19.1+) |
 | `recompute/ticks` | pipeline recomputes vs total ticks | very high ratio = state hashing thrashing (churn); near-zero = pipeline may be stuck skipping |
 | `override` | recomputes where a safety override took top slot | sanity-check against how often you actually hit low-health/charge/drowning |
-| `learn items/trains` | the learner learned-item count + total train count | **items must plateau, not climb linearly** across 50 hr — linear climb = unbounded weight table |
+| `learn items/trains` | learned-item count + total train count | **items must plateau, not climb linearly** across 50 hr — linear climb = unbounded weight table |
 | `tick avg/peak` | per-tick cost this window | avg < 0.1 ms target; **peak stable across bursts** — a peak that grows hour-over-hour is the interesting bug |
 
 Attribution buckets come from `ExternalEquipLearner` cases: **E** displayed
@@ -90,7 +90,7 @@ denominator by design.
 ### Tracy plots (Release+Tracy runs)
 
 Charted time series for eyeballing drift/leaks directly in the profiler:
-`Huginn/Candidates`, `Huginn/Displayed` (per recompute), `Huginn/the learner Items`,
+`Huginn/Candidates`, `Huginn/Displayed` (per recompute), `Huginn/Learner Items`,
 `Huginn/Accept %` (per heartbeat). Plus the existing per-tick zones and the
 `FrameMark` at `UpdateHandler.cpp` (one Tracy "frame" = one 100 ms Huginn tick,
 **not** a render frame — the FPS graph is ~10 Hz by design).

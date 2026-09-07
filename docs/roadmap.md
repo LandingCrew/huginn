@@ -326,5 +326,5 @@ trigger to pick any of it up.
       Neither is measured. (A) is cheap enough to try and discard; (B) should
       not be started until (A) has shown that pooling helps at all on real play
       data.
-- [ ] Addendum #15/#16 (Kalman the learner / learnable context weights) — **parked**: needs a v3
+- [ ] Addendum #15/#16 (Kalman learner / learnable context weights) — **parked**: needs a v3
       cosave bump, NOT landable during an active soak run

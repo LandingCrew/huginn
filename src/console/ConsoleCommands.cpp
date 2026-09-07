@@ -279,7 +279,7 @@ namespace Huginn::Console
       float ucb = g_featureBanditLearner->GetUCB(formID);
 
       // Header
-      auto header = std::format("{:08X} '{}' ({} trains, Q={:.3f}, conf={:.2f}, ucb={:.2f}):",
+      auto header = std::format("{:08X} '{}' ({} trains, est={:.3f}, conf={:.2f}, ucb={:.2f}):",
          formID, name, trains, qNow, conf, ucb);
       Print(header.c_str());
 

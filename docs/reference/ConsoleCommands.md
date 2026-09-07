@@ -30,11 +30,11 @@ before dispatch.
 | `hg rebuild` | Force rebuild all registries |
 | `hg reload` | Hot-reload all settings from INI |
 | `hg page [N]` | Switch to page N, or show the current page |
-| `hg reset weights` | Clear learned preference data (alias: `hg reset q`) |
+| `hg reset weights` | Clear learned preference data (alias: `hg reset w`) |
 | `hg reset all` | Full system reset |
 
 The help text is generated from the same table that dispatches the commands, so
-`hg help` cannot drift from what is implemented. `hg reset q` is hidden from the
+`hg help` cannot drift from what is implemented. `hg reset w` is hidden from the
 help listing because it is an alias.
 
 ---
@@ -92,7 +92,7 @@ immediately.
 
 Prints a three-line system summary:
 
-- `the learner: N items, M total trains` — FeatureBanditLearner size and lifetime training
+- `Learner: N items, M total trains` — FeatureBanditLearner size and lifetime training
   count (omitted entirely if the learner is not yet initialized)
 - `Registries: N spells, N items, N weapons, N scrolls`
 - `Page: C of T ('Name'), N slots, L locked`
@@ -198,7 +198,7 @@ subsystem added there is reset by this command too.
 **When to use:** When something is clearly wrong and you want to start fresh
 without reloading a save.
 
-**Output:** `Full reset complete (the learner: N items, all subsystems reset)`
+**Output:** `Full reset complete (Learner: N items, all subsystems reset)`
 
 ## Technical Details
 

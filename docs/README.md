@@ -225,7 +225,7 @@ Weight decay:
   Time-based MaybeDecay() — 2%/hr exponential decay on items idle > 5 min
 
 Update rule (FeatureBanditLearner::Update):
-  error = reward - w·φ            (no bootstrapped successor term — see "On the naming")
+  error = reward - w·φ            (no bootstrapped successor term — see "The learner")
   w[i] += α·error·φ[i] - α·λ·w[i] (18-float φ, clamped)
 
 See: docs/architecture/4-contextual-bandits.md for full learning system details

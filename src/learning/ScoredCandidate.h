@@ -39,7 +39,7 @@ namespace Huginn::Scoring
         // (learn = α*R + (1-α)*P + β*UCB, rec additive when present).
         [[nodiscard]] std::string ToDetailString() const
         {
-            return std::format("ctx={:.2f} λ={:.2f} learn={:.2f} (Q={:+.2f} P={:.2f} UCB={:.2f} α={:.2f}{}){}",
+            return std::format("ctx={:.2f} λ={:.2f} learn={:.2f} (est={:+.2f} P={:.2f} UCB={:.2f} α={:.2f}{}){}",
                 contextWeight, lambda, learningScore,
                 rewardEstimate, prior, ucb, confidence,
                 recencyBoost > 0.0f ? std::format(" rec={:.2f}", recencyBoost) : "",

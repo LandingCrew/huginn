@@ -29,7 +29,7 @@ Huginn uses **feature-based reward learning** (linear function approximation) in
 
 ## Why Feature-Based? (Tabular Deprecation Rationale)
 
-### Problem with the Tabular the learner
+### Problem with the Tabular Learner
 
 The tabular learner (v0.6-v0.13) mapped `(discrete_state_hash, FormID) -> reward estimate`. This approach had five fundamental problems that couldn't be fixed without changing the representation:
 
@@ -226,7 +226,7 @@ scored against the 18-float context. `src/learning/FeatureBanditLearner.h`.
 class FeatureBanditLearner {
 public:
     // Reward estimate: w_item . phi(context). Unknown item → 0.0
-    [[nodiscard]] float GetQValue(RE::FormID formID, const StateFeatures&) const;
+    [[nodiscard]] float GetRewardEstimate(RE::FormID formID, const StateFeatures&) const;
 
     // Semi-gradient step on (reward - prediction). No gamma, no next state.
     void Update(RE::FormID formID, const StateFeatures& features, float reward);
@@ -382,7 +382,7 @@ Publish sites (verified):
 | External | `src/learning/ExternalEquipLearner.cpp:59` | `External, attributionMult, false` |
 
 Subscribers are registered once, in `src/Main.cpp` step 5b, after
-`g_featurethe learner` and `g_usageMemory` exist.
+`g_featureBanditLearner` and `g_usageMemory` exist.
 
 **Lock ordering** (documented in `EquipEventBus.h`): StateManager shared locks
 (inside `BuildEvent`) → bus `m_mutex` → subscriber internal locks. `BuildEvent`
@@ -747,7 +747,7 @@ float contextWeight = Context::WeightForCandidate(candidate, weights);
 
 // Step 2: Learning metrics — from the LockedReader in the batch path,
 //         or FeatureBanditLearner::GetMetrics on the single-candidate path.
-//         metrics.qValue, metrics.ucb, metrics.confidence
+//         metrics.rewardEstimate, metrics.ucb, metrics.confidence
 
 // Step 3: Intrinsic quality prior. NOTE: no GameState parameter —
 //         priors are deliberately not context-aware.
@@ -756,7 +756,7 @@ float prior = m_priorCalc.CalculatePrior(player, candidate);
 // Step 4: learningScore = α*Q + (1-α)*prior + β*UCB
 float alpha = metrics.confidence;
 float beta  = m_config.explorationWeight;          // fExplorationWeight = 0.2
-float learningScore = alpha * metrics.qValue
+float learningScore = alpha * metrics.rewardEstimate
                     + (1.0f - alpha) * prior
                     + beta * metrics.ucb;
 
@@ -1102,13 +1102,13 @@ for an equip Huginn did not mediate — it never becomes a feature.
 All learning data is persisted via SKSE's cosave system, which saves/loads
 alongside the player's save files. `BanditSerializer`
 (`src/persist/BanditSerializer.h/.cpp`) uses the static buffer pattern,
-handling the case where `Load` fires before the global `g_featurethe learner`
+handling the case where `Load` fires before the global `g_featureBanditLearner`
 exists: `LoadCallback` fills `s_pendingBanditData`, and `ApplyPendingBanditData` moves
 it into the learner once `Main.cpp` has constructed it.
 
 **Record types:**
 - `BNDW` — FeatureBanditLearner weight vectors plus the global train count
-  (`kRecordType_BNDWeights = 'WLQF'`, `'BNDW'` on disk;
+  (`kRecordType_BanditWeights = 'WDNB'`, `'BNDW'` on disk;
   `kUniqueID = 'QCNO'`, `'ONCQ'` on disk)
 
 **Serialization callbacks** (registered from `SKSEPlugin_Load` via
@@ -1211,7 +1211,7 @@ just-cleared table for the remainder of their lock duration.
 | Parameter | Old Default | Reason Removed |
 |-----------|-------------|----------------|
 | SKIP_PENALTY | -1.0 | Replaced by L2 regularization + time-based decay. Skip penalties punished correct recommendations during state transitions. |
-| Tabular hyperparameters | various | Tabular the learner fully removed in v0.13.x (alpha, activeDecayRate, passiveDecayRate, etc.) |
+| Tabular hyperparameters | various | Tabular learner fully removed in v0.13.x (alpha, activeDecayRate, passiveDecayRate, etc.) |
 
 ---
 
@@ -1291,7 +1291,7 @@ opinion is weighted in only as it earns it.
 
 | Command | What it shows |
 |---|---|
-| `hg status` | the learner item count and total trains |
+| `hg status` | Learner item count and total trains |
 | `hg weights <hex FormID>` | Per-feature weights, train count, live Q / confidence / UCB |
 | `hg recs [N]` | Top-N breakdown (N = 1–50, default 10), plus the current slot assignments; `[WC]` marks wildcards, `[COLD]` cold-start boosts |
 
