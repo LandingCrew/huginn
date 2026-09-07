@@ -510,8 +510,14 @@ static void OnDataLoaded()
     // IntuitionDefaults (POSITION_X = 28.0f) and the widget renders at the wrong
     // place for the whole load sequence. Both are plain file reads with no
     // game-data dependency, so they are safe this early.
-    UI::DebugSettings::GetSingleton().LoadFromFile(GetDMenuIniPath());
-    UI::IntuitionSettings::GetSingleton().LoadFromFile(GetDMenuIniPath());
+    // Parsed once and handed to both loaders, matching the pattern the rest of
+    // this file uses — two LoadFromFile calls would parse the same file twice and
+    // log "not found" twice for a player without dMenu.
+    CSimpleIniA earlyDMenuIni;
+    if (LoadIniFile(earlyDMenuIni, GetDMenuIniPath(), "InitDMenuEarly"sv)) {
+        UI::DebugSettings::GetSingleton().LoadFromIni(earlyDMenuIni);
+        UI::IntuitionSettings::GetSingleton().LoadFromIni(earlyDMenuIni);
+    }
 
     // Try to connect to Wheeler API
     auto& wheelerClient = Wheeler::WheelerClient::GetSingleton();

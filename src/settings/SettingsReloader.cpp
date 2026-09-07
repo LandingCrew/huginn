@@ -420,6 +420,16 @@ namespace Huginn::Settings
             // ReapplySettings has nothing to talk to. The player has just turned the
             // widget ON, and Show() is the only way to construct it — without this the
             // toggle appears to do nothing until the next loading screen.
+            //
+            // Clear the hide latch first. Show() also early-returns on IsUserHidden()
+            // (IntuitionMenu.cpp:48), and that latch can be set with no menu present —
+            // the hotkey and dMenu's Show/Hide button both flip it unconditionally. A
+            // player who pressed either while the widget was disabled would tick
+            // Enable Widget, see this log line claim it was showing, and get nothing.
+            // Ticking the checkbox is an explicit request to see the widget, so it
+            // outranks a session-scoped latch; kPostLoadGame clears it per load
+            // anyway (Main.cpp:112).
+            UI::IntuitionMenu::ResetUserHidden();
             logger::info("[SettingsReloader]   [Widget] enabled with no menu — showing"sv);
             UI::IntuitionMenu::Show();
         } else {
