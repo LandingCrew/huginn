@@ -105,13 +105,14 @@ namespace Huginn::Scoring
         // ApplyWildcards last ran for, on the reasoning that ageing out a page
         // nobody is looking at changes nothing on screen. That is true right up
         // until the remembered page is WRONG: ApplyWildcards only runs on
-        // non-skipped pipeline ticks, and SlotAllocator::Initialize() drops the
+        // non-skipped pipeline ticks, and SlotAllocator::Reset() drops the
         // display back to page 0 by assigning m_currentPage directly, without
-        // raising m_pageChanged (SlotAllocator.cpp:70). So after an `hg reload`
-        // the remembered page stays stale for as long as the pipeline is
-        // hash-skipped — which is precisely the window this return value exists
-        // to break out of, and the expired wildcard would sit on screen until
-        // some unrelated state change woke the pipeline.
+        // raising m_pageChanged. So after a game load the remembered page stays
+        // stale for as long as the pipeline is hash-skipped — which is precisely
+        // the window this return value exists to break out of, and the expired
+        // wildcard would sit on screen until some unrelated state change woke
+        // the pipeline. (Initialize() was the cited path until 0.20.3, when it
+        // stopped resetting the page on every `hg reload`.)
         //
         // The asymmetry decides it: over-reporting costs one pipeline run that
         // repaints the same content (~1 ms, at most once per page per cooldown,
