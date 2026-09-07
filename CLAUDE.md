@@ -36,7 +36,7 @@ utility(item) = contextWeight × (1 + λ(confidence) × learningScore)
 **Key architectural separation:**
 - `ContextRuleEngine` — "What matters RIGHT NOW?" (game state → relevance weights)
 - `PriorCalculator` — "Which item is intrinsically better?" (item properties → quality)
-- `FeatureBanditLearner` — "What does THIS PLAYER prefer?" (contextual bandit over 18-float feature vectors; the class name is historical, see [docs/architecture/4-contextual-bandits.md](docs/architecture/4-contextual-bandits.md))
+- `FeatureBanditLearner` — "What does THIS PLAYER prefer?" (contextual bandit over 18-float feature vectors, see [docs/architecture/4-contextual-bandits.md](docs/architecture/4-contextual-bandits.md))
 - `UtilityScorer` — Combines all three into final utility
 
 See [docs/README.md](docs/README.md) for full system design.

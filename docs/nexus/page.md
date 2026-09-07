@@ -30,6 +30,19 @@ Huginn uses dMenu as its settings GUI
 
 Huginn is entirely self contained with its own rendering pipeline. Install the dependencies then install Huginn using your favorite mod manager.
 
+### Upgrading to 0.20.0
+
+**0.20.0 resets what Huginn has learned about you.** It stores its learned
+preferences in the co-save under a record name, and that name changed — so on an
+existing character it starts from scratch and learns you again from your next few
+equips. Everything else in your save is untouched, and nothing needs
+reinstalling. A fresh character is unaffected.
+
+Also in 0.20.0: the console command `hg reset qvalues` is now `hg reset weights`,
+and the dMenu button "Reset Q-Table" is now "Reset Learned Weights". If you use
+dMenu, let the new `Huginn.json` overwrite the old one — the button stops working
+if the file and the plugin are from different versions.
+
 ### Uninstall
 
 Huginn can be installed and uninstalled at anytime. Just delete or disable the mod from your mod manager
