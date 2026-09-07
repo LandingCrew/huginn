@@ -1262,7 +1262,7 @@ void RunFeatureBanditLearnerTests()
             logger::error("TEST FAIL: After 20 trains, confidence should be >0.9, got {:.4f}"sv, conf);
             return;
         }
-        logger::info("  Test 2 PASS: Learning convergence (Q={:.3f}, conf={:.3f})"sv, q, conf);
+        logger::info("  Test 2 PASS: Learning convergence (est={:.3f}, conf={:.3f})"sv, q, conf);
     }
 
     // ── Test 3: Weight interpretability ───────────────────────────────────
@@ -1344,7 +1344,7 @@ void RunFeatureBanditLearnerTests()
                 return;
             }
         }
-        logger::info("  Test 4 PASS: Regularization prevents explosion (Q={:.3f})"sv, q);
+        logger::info("  Test 4 PASS: Regularization prevents explosion (est={:.3f})"sv, q);
     }
 
     // ── Test 5: Weight clamping ───────────────────────────────────────────
