@@ -126,7 +126,8 @@ namespace Huginn::Settings
         ///   themselves, preserving the prior behavior.
         /// @param beforeLayout Wheel layout captured before the reload/reset; the
         ///   Wheeler rebuild is skipped when the post-reload layout matches it.
-        void ApplySideEffects(const CSimpleIniA* mainIni, const WheelLayout& beforeLayout);
+        void ApplySideEffects(const CSimpleIniA* mainIni, const WheelLayout& beforeLayout,
+                              bool wasEnabled);
 
         /// Registration state (atomic for thread safety)
         std::atomic<bool> m_registered{false};
