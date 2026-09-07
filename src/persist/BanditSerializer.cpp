@@ -74,15 +74,15 @@ namespace Huginn::Persist
          }
 
          // Collect entries into a contiguous buffer for a single bulk write.
-         std::vector<BanditEntry> fqlEntries;
-         fqlEntries.reserve(g_featureBanditLearner->GetItemCount());
-         uint32_t fqlTotalTrains = 0;
+         std::vector<BanditEntry> banditEntries;
+         banditEntries.reserve(g_featureBanditLearner->GetItemCount());
+         uint32_t banditTotalTrains = 0;
 
          g_featureBanditLearner->ExportData(
             [&](BanditEntry entry) {
-               fqlEntries.push_back(std::move(entry));
+               banditEntries.push_back(std::move(entry));
             },
-            fqlTotalTrains
+            banditTotalTrains
          );
 
          // Header: version + numFeatures + totalTrainCount + numItems
@@ -90,10 +90,10 @@ namespace Huginn::Persist
          // in-data copy is the original wire format and must stay — the load
          // side cross-checks the two.)
          uint32_t numFeatures = Learning::StateFeatures::NUM_FEATURES;
-         uint32_t numItems = static_cast<uint32_t>(fqlEntries.size());
+         uint32_t numItems = static_cast<uint32_t>(banditEntries.size());
          if (!a_intfc->WriteRecordData(kBanditSerializationVersion) ||
              !a_intfc->WriteRecordData(numFeatures) ||
-             !a_intfc->WriteRecordData(fqlTotalTrains) ||
+             !a_intfc->WriteRecordData(banditTotalTrains) ||
              !a_intfc->WriteRecordData(numItems)) {
             logger::error("[Cosave] Failed to write BNDW header"sv);
             return;
@@ -111,14 +111,14 @@ namespace Huginn::Persist
          // so existing v2 saves remain compatible in both directions.
          if (numItems > 0) {
             const uint32_t byteLen = numItems * static_cast<uint32_t>(sizeof(BanditEntry));
-            if (!a_intfc->WriteRecordData(fqlEntries.data(), byteLen)) {
+            if (!a_intfc->WriteRecordData(banditEntries.data(), byteLen)) {
                logger::error("[Cosave] Failed to write BNDW entry blob ({} bytes)"sv, byteLen);
                return;
             }
          }
 
          logger::info("[Cosave] Saved {} learner weight entries, {} total trains"sv,
-            numItems, fqlTotalTrains);
+            numItems, banditTotalTrains);
       } else {
          logger::warn("[Cosave] SaveCallback: g_featureBanditLearner is null, skipping"sv);
       }

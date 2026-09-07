@@ -1212,13 +1212,13 @@ void RunFeatureBanditLearnerTests()
 
     // ── Test 1: Cold start ────────────────────────────────────────────────
     {
-        FeatureBanditLearner fql;
+        FeatureBanditLearner learner;
         StateFeatures defaultState;  // Full health, no combat, no targets
 
         RE::FormID unknownItem = 0xDEAD0001;
-        float q = fql.GetRewardEstimate(unknownItem, defaultState);
-        float conf = fql.GetConfidence(unknownItem);
-        float ucb = fql.GetUCB(unknownItem);
+        float q = learner.GetRewardEstimate(unknownItem, defaultState);
+        float conf = learner.GetConfidence(unknownItem);
+        float ucb = learner.GetUCB(unknownItem);
 
         if (!feq(q, 0.0f)) {
             logger::error("TEST FAIL: Cold-start reward estimate should be 0.0, got {:.4f}"sv, q);
@@ -1238,7 +1238,7 @@ void RunFeatureBanditLearnerTests()
 
     // ── Test 2: Learning convergence ──────────────────────────────────────
     {
-        FeatureBanditLearner fql;
+        FeatureBanditLearner learner;
         RE::FormID healSpell = 0xDEAD0002;
 
         // Low health state
@@ -1248,11 +1248,11 @@ void RunFeatureBanditLearnerTests()
 
         // Train 20 times with reward=1.0
         for (int i = 0; i < 20; ++i) {
-            fql.Update(healSpell, lowHealth, 1.0f);
+            learner.Update(healSpell, lowHealth, 1.0f);
         }
 
-        float q = fql.GetRewardEstimate(healSpell, lowHealth);
-        float conf = fql.GetConfidence(healSpell);
+        float q = learner.GetRewardEstimate(healSpell, lowHealth);
+        float conf = learner.GetConfidence(healSpell);
 
         if (q < 0.5f) {
             logger::error("TEST FAIL: After 20 trains with reward=1.0, reward estimate should be >0.5, got {:.4f}"sv, q);
@@ -1267,7 +1267,7 @@ void RunFeatureBanditLearnerTests()
 
     // ── Test 3: Weight interpretability ───────────────────────────────────
     {
-        FeatureBanditLearner fql;
+        FeatureBanditLearner learner;
         RE::FormID healSpell = 0xDEAD0003;
 
         // Contrastive training: healing rewarded at LOW health, not rewarded at
@@ -1283,11 +1283,11 @@ void RunFeatureBanditLearnerTests()
         fullHealthCombat.inCombat = 1.0f;
 
         for (int i = 0; i < 30; ++i) {
-            fql.Update(healSpell, lowHealthCombat, 1.0f);
-            fql.Update(healSpell, fullHealthCombat, 0.0f);
+            learner.Update(healSpell, lowHealthCombat, 1.0f);
+            learner.Update(healSpell, fullHealthCombat, 0.0f);
         }
 
-        auto weights = fql.GetWeights(healSpell);
+        auto weights = learner.GetWeights(healSpell);
 
         // To fit Q(low)=1 and Q(full)=0 simultaneously, the model must assign
         // healthPct a negative weight (lower health = higher Q) and offset it
@@ -1306,8 +1306,8 @@ void RunFeatureBanditLearnerTests()
         fullHealth.healthPct = 1.0f;
         fullHealth.inCombat = 1.0f;
 
-        float qLow = fql.GetRewardEstimate(healSpell, lowHealthCombat);
-        float qHigh = fql.GetRewardEstimate(healSpell, fullHealth);
+        float qLow = learner.GetRewardEstimate(healSpell, lowHealthCombat);
+        float qHigh = learner.GetRewardEstimate(healSpell, fullHealth);
 
         if (qLow <= qHigh) {
             logger::error("TEST FAIL: Q(low health) should > Q(full health), got {:.4f} vs {:.4f}"sv, qLow, qHigh);
@@ -1319,7 +1319,7 @@ void RunFeatureBanditLearnerTests()
 
     // ── Test 4: Regularization prevents explosion ─────────────────────────
     {
-        FeatureBanditLearner fql;
+        FeatureBanditLearner learner;
         RE::FormID item = 0xDEAD0004;
 
         StateFeatures state;
@@ -1328,16 +1328,16 @@ void RunFeatureBanditLearnerTests()
 
         // Train with extreme reward 200 times
         for (int i = 0; i < 200; ++i) {
-            fql.Update(item, state, 100.0f);
+            learner.Update(item, state, 100.0f);
         }
 
-        float q = fql.GetRewardEstimate(item, state);
+        float q = learner.GetRewardEstimate(item, state);
         if (!std::isfinite(q)) {
             logger::error("TEST FAIL: reward estimate should be finite after extreme training, got {:.4f}"sv, q);
             return;
         }
 
-        auto weights = fql.GetWeights(item);
+        auto weights = learner.GetWeights(item);
         for (size_t i = 0; i < StateFeatures::NUM_FEATURES; ++i) {
             if (weights[i] > 10.0f || weights[i] < -10.0f) {
                 logger::error("TEST FAIL: Weight[{}] = {:.4f} exceeds clamp bounds"sv, i, weights[i]);
@@ -1349,7 +1349,7 @@ void RunFeatureBanditLearnerTests()
 
     // ── Test 5: Weight clamping ───────────────────────────────────────────
     {
-        FeatureBanditLearner fql;
+        FeatureBanditLearner learner;
         RE::FormID item = 0xDEAD0005;
 
         // Force weights toward extremes with alternating high rewards on different states
@@ -1357,10 +1357,10 @@ void RunFeatureBanditLearnerTests()
             StateFeatures s;
             s.healthPct = (i % 2 == 0) ? 0.0f : 1.0f;
             s.inCombat = 1.0f;
-            fql.Update(item, s, (i % 2 == 0) ? 50.0f : -50.0f);
+            learner.Update(item, s, (i % 2 == 0) ? 50.0f : -50.0f);
         }
 
-        auto weights = fql.GetWeights(item);
+        auto weights = learner.GetWeights(item);
         bool allClamped = true;
         for (size_t i = 0; i < StateFeatures::NUM_FEATURES; ++i) {
             if (weights[i] > 10.0f + EPS || weights[i] < -10.0f - EPS) {
@@ -1374,7 +1374,7 @@ void RunFeatureBanditLearnerTests()
 
     // ── Test 6: Generalization ────────────────────────────────────────────
     {
-        FeatureBanditLearner fql;
+        FeatureBanditLearner learner;
         RE::FormID bow = 0xDEAD0006;
 
         // State A: combat + sneaking + low health
@@ -1384,7 +1384,7 @@ void RunFeatureBanditLearnerTests()
         stateA.isSneaking = 1.0f;
 
         for (int i = 0; i < 20; ++i) {
-            fql.Update(bow, stateA, 1.0f);
+            learner.Update(bow, stateA, 1.0f);
         }
 
         // State B: combat + standing + low health (NOT trained)
@@ -1393,8 +1393,8 @@ void RunFeatureBanditLearnerTests()
         stateB.inCombat = 1.0f;
         stateB.isSneaking = 0.0f;  // Different from A
 
-        float qA = fql.GetRewardEstimate(bow, stateA);
-        float qB = fql.GetRewardEstimate(bow, stateB);
+        float qA = learner.GetRewardEstimate(bow, stateA);
+        float qB = learner.GetRewardEstimate(bow, stateB);
 
         // B shares combat + low health features → should generalize (estimate > 0)
         if (qB <= 0.0f) {
@@ -1411,7 +1411,7 @@ void RunFeatureBanditLearnerTests()
 
     // ── Test 7: Independent items ─────────────────────────────────────────
     {
-        FeatureBanditLearner fql;
+        FeatureBanditLearner learner;
         RE::FormID item1 = 0xDEAD0007;
         RE::FormID item2 = 0xDEAD0008;
 
@@ -1420,12 +1420,12 @@ void RunFeatureBanditLearnerTests()
 
         // Train item1 with positive reward, item2 with negative
         for (int i = 0; i < 15; ++i) {
-            fql.Update(item1, state, 1.0f);
-            fql.Update(item2, state, -1.0f);
+            learner.Update(item1, state, 1.0f);
+            learner.Update(item2, state, -1.0f);
         }
 
-        float q1 = fql.GetRewardEstimate(item1, state);
-        float q2 = fql.GetRewardEstimate(item2, state);
+        float q1 = learner.GetRewardEstimate(item1, state);
+        float q2 = learner.GetRewardEstimate(item2, state);
 
         if (q1 <= 0.0f) {
             logger::error("TEST FAIL: Item1 reward estimate should be positive, got {:.4f}"sv, q1);
@@ -1435,40 +1435,40 @@ void RunFeatureBanditLearnerTests()
             logger::error("TEST FAIL: Item2 reward estimate should be negative, got {:.4f}"sv, q2);
             return;
         }
-        if (fql.GetItemCount() != 2) {
-            logger::error("TEST FAIL: Item count should be 2, got {}"sv, fql.GetItemCount());
+        if (learner.GetItemCount() != 2) {
+            logger::error("TEST FAIL: Item count should be 2, got {}"sv, learner.GetItemCount());
             return;
         }
         logger::info("  Test 7 PASS: Independent items (Q1={:.3f}, Q2={:.3f}, count={})"sv,
-            q1, q2, fql.GetItemCount());
+            q1, q2, learner.GetItemCount());
     }
 
     // ── Test 8: Clear ─────────────────────────────────────────────────────
     {
-        FeatureBanditLearner fql;
+        FeatureBanditLearner learner;
         RE::FormID item = 0xDEAD0009;
         StateFeatures state;
         state.inCombat = 1.0f;
 
-        fql.Update(item, state, 1.0f);
-        fql.Update(item, state, 1.0f);
+        learner.Update(item, state, 1.0f);
+        learner.Update(item, state, 1.0f);
 
-        if (fql.GetItemCount() == 0 || fql.GetTotalTrainCount() == 0) {
+        if (learner.GetItemCount() == 0 || learner.GetTotalTrainCount() == 0) {
             logger::error("TEST FAIL: Should have data before Clear()"sv);
             return;
         }
 
-        fql.Clear();
+        learner.Clear();
 
-        if (fql.GetItemCount() != 0) {
-            logger::error("TEST FAIL: After Clear(), itemCount should be 0, got {}"sv, fql.GetItemCount());
+        if (learner.GetItemCount() != 0) {
+            logger::error("TEST FAIL: After Clear(), itemCount should be 0, got {}"sv, learner.GetItemCount());
             return;
         }
-        if (fql.GetTotalTrainCount() != 0) {
-            logger::error("TEST FAIL: After Clear(), totalTrains should be 0, got {}"sv, fql.GetTotalTrainCount());
+        if (learner.GetTotalTrainCount() != 0) {
+            logger::error("TEST FAIL: After Clear(), totalTrains should be 0, got {}"sv, learner.GetTotalTrainCount());
             return;
         }
-        float q = fql.GetRewardEstimate(item, state);
+        float q = learner.GetRewardEstimate(item, state);
         if (!feq(q, 0.0f)) {
             logger::error("TEST FAIL: After Clear(), reward estimate should be 0.0, got {:.4f}"sv, q);
             return;
@@ -3684,23 +3684,23 @@ void RunUnitTests()
     {
         logger::info("TEST: FeatureBanditLearner batch decay..."sv);
 
-        Learning::FeatureBanditLearner fql;
+        Learning::FeatureBanditLearner learner;
         Learning::StateFeatures s{};
         s.healthPct = 0.5f;
         s.inCombat = 1.0f;
 
-        fql.Update(0xD001, s, 1.0f);
-        fql.Update(0xD002, s, 1.0f);
-        fql.Update(0xD003, s, 1.0f);
+        learner.Update(0xD001, s, 1.0f);
+        learner.Update(0xD002, s, 1.0f);
+        learner.Update(0xD003, s, 1.0f);
 
-        const auto wBefore1 = fql.GetWeights(0xD001);
-        const auto wBefore3 = fql.GetWeights(0xD003);
+        const auto wBefore1 = learner.GetWeights(0xD001);
+        const auto wBefore3 = learner.GetWeights(0xD003);
 
         // Inject a future "now" well past the decay threshold (~60 min idle)
         const auto future = std::chrono::steady_clock::now() + std::chrono::minutes(60);
         const std::vector<RE::FormID> batch = {0xD001, 0xD002, 0xD999 /* never trained */};
 
-        const size_t decayed = fql.MaybeDecayBatch(batch, future);
+        const size_t decayed = learner.MaybeDecayBatch(batch, future);
         if (decayed != 2) {
             logger::error("TEST FAIL: batch decay should decay exactly 2 items, got {}", decayed);
             return;
@@ -3709,7 +3709,7 @@ void RunUnitTests()
         // ~60 min idle → factor ≈ (1 - rate)^1.0; allow slack for the microseconds
         // between the Update stamp and the test's now() baseline
         const float expectedFactor = std::pow(1.0f - Config::DECAY_RATE_PER_HOUR, 1.0f);
-        const auto wAfter1 = fql.GetWeights(0xD001);
+        const auto wAfter1 = learner.GetWeights(0xD001);
         for (size_t i = 0; i < Learning::StateFeatures::NUM_FEATURES; ++i) {
             if (std::abs(wAfter1[i] - wBefore1[i] * expectedFactor) > 0.001f) {
                 logger::error("TEST FAIL: weight[{}] should decay by ~{:.4f}: {:.4f} -> {:.4f}",
@@ -3719,19 +3719,19 @@ void RunUnitTests()
         }
 
         // Unlisted item untouched
-        if (fql.GetWeights(0xD003) != wBefore3) {
+        if (learner.GetWeights(0xD003) != wBefore3) {
             logger::error("TEST FAIL: item not in batch must not decay");
             return;
         }
 
         // Train counts unaffected by decay
-        if (fql.GetTrainCount(0xD001) != 1 || fql.GetTotalTrainCount() != 3) {
+        if (learner.GetTrainCount(0xD001) != 1 || learner.GetTotalTrainCount() != 3) {
             logger::error("TEST FAIL: decay must not change train counts");
             return;
         }
 
         // Idempotent: lastUpdate was stamped to `future`, so re-decay is a no-op
-        if (fql.MaybeDecayBatch(batch, future) != 0) {
+        if (learner.MaybeDecayBatch(batch, future) != 0) {
             logger::error("TEST FAIL: immediate re-decay at same time should be a no-op");
             return;
         }

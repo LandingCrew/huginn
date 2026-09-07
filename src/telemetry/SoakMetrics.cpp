@@ -124,10 +124,10 @@ namespace Huginn::Telemetry
         const float peakMs = static_cast<float>(peakMicros) / 1000.0f;
 
         std::size_t learnerItems = 0;
-        uint32_t fqlTrains = 0;
+        uint32_t learnerTrains = 0;
         if (g_featureBanditLearner) {
             learnerItems  = g_featureBanditLearner->GetItemCount();
-            fqlTrains = g_featureBanditLearner->GetTotalTrainCount();
+            learnerTrains = g_featureBanditLearner->GetTotalTrainCount();
         }
 
         const int64_t upTicks = now.time_since_epoch().count() -
@@ -144,7 +144,7 @@ namespace Huginn::Telemetry
             upH, upM, upS,
             hit, near_, miss, novel, acceptStr, skipStr,
             recomputes, ticks, overrideRuns, pageBails,
-            learnerItems, fqlTrains,
+            learnerItems, learnerTrains,
             avgMs, peakMs);
 
         Huginn_PLOT("Huginn/Learner Items", static_cast<int64_t>(learnerItems));
