@@ -295,12 +295,20 @@ namespace Huginn::Slot
                        Spell::HasTag(scroll.tags, SpellTag::Conjuration) ||
                        Spell::HasTag(scroll.tags, SpellTag::SummonDaedra) ||
                        Spell::HasTag(scroll.tags, SpellTag::SummonUndead) ||
-                       Spell::HasTag(scroll.tags, SpellTag::SummonCreature);
+                       Spell::HasTag(scroll.tags, SpellTag::SummonCreature) ||
+                       Spell::HasTag(scroll.tags, SpellTag::BoundWeapon);
 
             case SlotClassification::Utility:
+                // Same arms as the spell case above, for the same reason: a
+                // scroll is classified by running the SPELL classifier over it
+                // and copying tags/tagsExt wholesale (ScrollClassifier.cpp:46,50),
+                // so every tag the spell arm names is equally reachable here.
+                // #79 landed on the spell arm only; these three were the gap.
                 return scroll.type == ScrollType::Utility ||
                        Spell::HasTag(scroll.tags, SpellTag::Light) ||
-                       Spell::HasTag(scroll.tags, SpellTag::DetectLife);
+                       Spell::HasTag(scroll.tags, SpellTag::DetectLife) ||
+                       Spell::HasTag(scroll.tags, SpellTag::Telekinesis) ||
+                       Spell::HasTagExt(scroll.tagsExt, Scroll::ScrollTagExt::Unlock);
 
             case SlotClassification::ScrollsAny:
                 return true;  // All scrolls match ScrollsAny

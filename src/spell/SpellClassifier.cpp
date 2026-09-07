@@ -384,7 +384,12 @@ namespace Huginn::Spell
         tags |= SpellTag::SummonCreature;
       }
       }
-      if (contains("bound")) {
+      // Whole-word, not a raw substring: "bound" appears inside "Unbound Fire"
+      // and "Unbounded Flames/Freezing/Storms", four LoreRim DESTRUCTION scrolls
+      // that a find() tags BoundWeapon|Conjuration and so types Summon. Same
+      // trap the Unlock arm below already avoids, and for the same reason bare
+      // "open" was replaced there.
+      if (Util::NameContainsWord(name, "bound")) {
       tags |= SpellTag::BoundWeapon;
       tags |= SpellTag::Conjuration;
       }

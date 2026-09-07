@@ -67,7 +67,25 @@ namespace Huginn::Slot
             SKSE::log::info("[SlotAllocator] Page {} '{}': [{}]", p, page.name, slotSummary);
         }
 
-        m_currentPage = 0;
+        // Keep the player where they are. Initialize() runs at startup, where
+        // m_currentPage is already 0, and again on every `hg reload` — so zeroing
+        // it unconditionally moved a player off page 3 with no notice and no log
+        // line. Only the reloaded layout having FEWER pages forces a move, and
+        // that one is announced. SlotAllocator::Reset() remains the deliberate
+        // "go to page 0" path, and still runs on game load.
+        const size_t pageCount = settings.GetPageCount();
+        const size_t currentPage = m_currentPage.load();
+        if (pageCount == 0) {
+            m_currentPage = 0;
+        } else if (currentPage >= pageCount) {
+            SKSE::log::info("[SlotAllocator] Page {} no longer exists ({} page(s) configured) — moving to page {}",
+                currentPage, pageCount, pageCount - 1);
+            m_currentPage = pageCount - 1;
+            // A forced move IS a page change. Raising the flag keeps anything
+            // caching "the page on screen" (WildcardManager) from going stale
+            // while the pipeline is hash-skipped.
+            m_pageChanged = true;
+        }
 
         // Config changed (startup or reload): re-arm the unplaced-override warn
         // latch, then re-validate placeability against the new page layout.

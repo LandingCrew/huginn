@@ -104,11 +104,11 @@ namespace Huginn::Scoring
         //         force a pipeline run so the slot content can swap).
         //         Deliberately not narrowed to "the page on screen": this class
         //         only learns which page that is when ApplyWildcards runs, i.e.
-        //         on non-skipped pipeline ticks, and SlotAllocator::Initialize()
+        //         on non-skipped pipeline ticks, and SlotAllocator::Reset()
         //         resets m_currentPage directly without raising m_pageChanged
-        //         (SlotAllocator.cpp:70) — so after an `hg reload` a remembered
-        //         page can be stale exactly while the pipeline is skipped, which
-        //         is the one situation this return value exists to break out of.
+        //         — so after a game load a remembered page can be stale exactly
+        //         while the pipeline is skipped, which is the one situation this
+        //         return value exists to break out of.
         //         Over-reporting costs one pipeline run that repaints the same
         //         thing; under-reporting leaves an expired wildcard on screen.
         [[nodiscard]] bool UpdateExpiry();

@@ -48,22 +48,11 @@ would notice.
       relevance penalty for an unaffordable spell is wanted at all, and if so
       what the curve is. Until then the option is honest but has only two
       distinct behaviours (M)
-- [ ] **`hg reload` silently yanks the player to page 1.** `ApplySideEffects`
-      calls `SlotAllocator::Initialize()`, which assigns `m_currentPage = 0`
-      (`SlotAllocator.cpp:51`). A player on page 3 who reloads settings is moved
-      with no notice and no log line. May be intended; nothing says so (XS)
-- [ ] **#79 landed on the spell arm and not the scroll arm.** Scroll `Utility`
-      does not check ext `Unlock` although `ScrollData` carries `tagsExt`, and
-      scroll `SummonsAny` omits `BoundWeapon` where the spell arm includes it.
-      Likely oversight rather than intent (XS)
 - [ ] **Three tag values have no writer.** `ItemTagExt::Ravage*` and
       `Damage*Regen` are read by `HasHarmfulSideEffects()` but `PopulateItemTags`
       never sets them; `WeaponTag::EnchantSilence` has no writer anywhere in
       `src/`. Either wire them or delete them — as they stand,
       `HasHarmfulSideEffects()` cannot fire on those grounds (S)
-- [ ] **`[Dedup] COLLISION` logs at `warn`, per candidate, per tick**
-      (`CandidateFilters.cpp:305`), for a normal outcome. Against this repo's own
-      "log transitions, not ticks" rule. Trace, or a per-pass summary (XS)
 - [ ] **Dead work in Release builds:** `damageRate`, `healingRate`,
       `damageIncreasing` and `damageDecreasing` are computed unconditionally
       every tick (`StateManager_HealthTracking.cpp:283-330`, no `_DEBUG` guard)

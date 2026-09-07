@@ -304,7 +304,10 @@ namespace Huginn::Candidate
             if (!inserted) {
                 ++stats.filteredByDuplication;
                 if (isWeapon) ++weaponsDeduplicated;
-                logger::warn("[Dedup] COLLISION: '{}' formID={:08X} sourceType={} key={:016X} isWeapon={}",
+                // Trace, not warn: a duplicate is a normal outcome, and this
+                // fires per candidate per tick. The per-pass count is already
+                // reported as "{} dupe" in PrintStats.
+                logger::trace("[Dedup] COLLISION: '{}' formID={:08X} sourceType={} key={:016X} isWeapon={}",
                     base.name, base.formID, static_cast<int>(base.sourceType), key, isWeapon);
                 continue;
             }
