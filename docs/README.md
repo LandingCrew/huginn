@@ -19,9 +19,9 @@ It is a just-in-time affordance surface.
 
 > **Architecture Version:** verified against **v0.20.0** (`CMakeLists.txt:5`). `StateManager` runs 11 poll methods (`GetPollTable()` in `src/state/StateManager.cpp`) producing 6 state types (3 core: WorldState, PlayerActorState, TargetCollection; 3 tracking: HealthTrackingState, StaminaTrackingState, MagickaTrackingState). The recommendation tick is orchestrated by `PipelineCoordinator` (`src/pipeline/PipelineCoordinator.cpp`). The legacy ContextSensor system has been fully removed. See [docs/architecture/1-states.md](architecture/1-states.md) for the full state model reference.
 
-> **On the naming:** precisely, this is `a linear contextual bandit with implicit feedback, per-action linear reward models, UCB-style exploration, and heuristic priors`. The docs use that vocabulary throughout. We deliberately avoid state transitions, TD learning, MDP framing and policy optimization — long-horizon planning is neither required nor desirable here, and the learned values are immediate preference scores, not long-term action values.
+> **The learner:** a linear contextual bandit with implicit feedback, per-action linear reward models, UCB-style exploration, and heuristic priors. The learned values are immediate preference scores — nothing here plans over a horizon. See [4-contextual-bandits.md](architecture/4-contextual-bandits.md) for the update rule.
 >
-> **The code says the same thing.** As of 0.20.0 the identifiers match the algorithm: `FeatureBanditLearner`, `BanditSerializer`, the `BNDW` cosave record, `hg reset weights`. They were previously `FeatureQLearner`, `QLearnerSerializer`, `FQLW` and `hg reset qvalues`. Renaming the cosave record was a deliberate break — saves written before 0.20.0 lose their learned weights, and no migration path reads the old tag. See [4-contextual-bandits.md](architecture/4-contextual-bandits.md) for the update rule that settles which algorithm this actually is.
+> **Upgrading to 0.20.0 resets learning.** The cosave record tag changed to `BNDW` when the learner's identifiers were renamed, and nothing reads the old tag. Saves written before 0.20.0 lose their learned weights and start over; nothing else in the save is affected.
 
 
 ---
@@ -326,6 +326,6 @@ Known-current, because they are maintained alongside the work:
 - [architecture/0-pipeline.md](architecture/0-pipeline.md) (v0.20.0)
 - [refactor/wheeler-push-spikes.md](refactor/wheeler-push-spikes.md)
 
-The docs were converted from Q-learning to contextual-bandit vocabulary on
-2026-08-29, and the code identifiers followed in 0.20.0 — see "On the naming"
-above, including the cosave break that came with it.
+The docs moved to contextual-bandit vocabulary on 2026-08-29 and the code
+identifiers followed in 0.20.0; see "The learner" above for the cosave break
+that came with it.

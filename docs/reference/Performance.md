@@ -540,6 +540,5 @@ none has been needed.
 | [../refactor/performance-optimizations.md](../refactor/performance-optimizations.md) | The 2026-02 optimization pass — archaeology, from a 30-second capture |
 | [ConsoleCommands.md](ConsoleCommands.md) | `hg status`, `hg recs`, `hg reload` and the rest |
 
-> **Terminology.** The learner is a **contextual bandit**, and since 0.20.0 the
-> identifiers say so: `FeatureBanditLearner`, `BanditSerializer`, the `BNDW`
-> cosave record and `hg reset weights`.
+> **The learner** is a linear contextual bandit — `FeatureBanditLearner`,
+> serialized by `BanditSerializer` into the `BNDW` cosave record.

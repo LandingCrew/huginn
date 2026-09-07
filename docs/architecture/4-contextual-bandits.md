@@ -1,44 +1,24 @@
 # Huginn Learning System
 
 > **Implementation Status (v0.19.x):** **FeatureBanditLearner** is the sole learning
-> system (linear reward model, 18-float context vectors). The tabular the learner
+> system (linear reward model, 18-float context vectors). The tabular learner
 > was removed in v0.13.x and no trace of it remains in `src/`. See
 > `src/learning/FeatureBanditLearner.h` / `.cpp` for the implementation and
 > `src/learning/UtilityScorer.cpp` for how its output enters the final score.
 
 This document details the feature-based reward learning architecture for learning player preferences.
 
-> **Terminology:** Huginn runs a **contextual bandit**, not Q-learning. The
-> distinction is the update target:
->
-> | | Target | Models the future? |
-> |---|---|---|
-> | Q-learning | `Q(s,a) <- r + gamma * max Q(s', a')` | Yes — bootstraps off the next state |
-> | Contextual bandit | `r_hat(context, arm) <- r` | No — immediate reward only |
->
-> `FeatureBanditLearner::Update` computes `error = reward - prediction` and takes a
-> semi-gradient step on it. There is no `gamma`, no `s'`, no trajectory: each
-> item is an arm, the 18-float feature vector is the context, and the target is
-> the reward observed for that one decision. Nothing in Huginn models what state
-> the player transitions into after using an item, which is the whole content of
-> the Q-learning update.
->
-> **The identifiers now match the algorithm.** As of 0.20.0 the code says what
-> it does: `FeatureBanditLearner`, `BanditSerializer`, the `BNDW` cosave record
-> and `hg reset weights`. Before that they were `FeatureQLearner`,
-> `QLearnerSerializer`, `FQLW` and `hg reset qvalues`, which named an algorithm
-> the code has never run.
->
-> **This was a deliberate breaking change.** The cosave record tag changed, so
-> saves written before 0.20.0 lose their learned weights — the old `FQLW` record
-> is not read and no migration path was written. Learning restarts from zero on
-> an existing character; nothing else in the save is affected.
+> **Upgrading to 0.20.0 resets learning.** The cosave record tag changed to
+> `BNDW` when the learner's identifiers were renamed, and nothing reads the old
+> tag. Saves written before 0.20.0 lose their learned weights and start over;
+> nothing else in the save is affected. The console command is now
+> `hg reset weights`.
 
 ---
 
 ## Overview
 
-Huginn uses **feature-based reward learning** (linear function approximation) instead of the tabular the learner it replaced. This provides:
+Huginn uses **feature-based reward learning** (linear function approximation) instead of the tabular learner it replaced. This provides:
 
 1. **Generalization** - Similar states behave similarly
 2. **No cold start** - New states work immediately
@@ -51,7 +31,7 @@ Huginn uses **feature-based reward learning** (linear function approximation) in
 
 ### Problem with the Tabular the learner
 
-The tabular the learner (v0.6-v0.13) mapped `(discrete_state_hash, FormID) -> reward estimate`. This approach had five fundamental problems that couldn't be fixed without changing the representation:
+The tabular learner (v0.6-v0.13) mapped `(discrete_state_hash, FormID) -> reward estimate`. This approach had five fundamental problems that couldn't be fixed without changing the representation:
 
 **1. State sparsity -- most states are never visited.**
 Even after aggressive dimensionalization reduction (v0.13.0), the Q-table has 36,288 states -- but a typical play session visits <0.07% of them. Learning "heal at 30% HP in combat with undead" taught the system nothing about "heal at 31% HP in combat with undead" because those are different hash buckets.
@@ -333,13 +313,10 @@ m_totalTrainCount++;
 data.lastUpdate = std::chrono::steady_clock::now();
 ```
 
-That single line — `error = reward - prediction` — is the whole argument. A
-Q-learning update would need a *successor* state `s'` and a bootstrapped term
-`gamma * max_a' Q(s', a')`. Huginn has neither: `Update` receives one context,
-one arm and one scalar reward, and nothing anywhere in `src/learning/` records
-a state transition or a discount factor. The `error` term is a one-step
-regression residual, which makes this least-mean-squares regression on a
-per-arm linear reward model — a contextual bandit.
+`Update` receives one context, one arm and one scalar reward. Nothing in
+`src/learning/` records a state transition or a discount factor, so `error` is
+a one-step regression residual: least-mean-squares regression on a per-arm
+linear reward model.
 
 ### Confidence and UCB
 
@@ -721,8 +698,7 @@ for version differences.
 
 Note the loop closes on **immediate reward only**. The "PLAYER ACTION" box feeds
 a reward back into the weight update for the *same* context that produced the
-recommendation; no arrow carries a successor state forward, which is exactly
-what distinguishes this from a Q-learning loop.
+recommendation; no arrow carries a successor state forward.
 
 ---
 

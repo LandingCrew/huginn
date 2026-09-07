@@ -131,11 +131,9 @@ TC-04, 06, 08, 09 and 13 are not present). Terminal marker:
 
 ### 2.3 Terminology
 
-The learning system is a **contextual bandit** — see
+The learning system is a linear contextual bandit — see
 [../architecture/4-contextual-bandits.md](../architecture/4-contextual-bandits.md).
-The identifiers were brought in line with the algorithm in 0.20.0:
-`FeatureBanditLearner`, `BanditSerializer`, the `BNDW` cosave record and
-`hg reset weights`. Suite names above use the real identifiers.
+Suite names above use the real identifiers.
 
 ---
 

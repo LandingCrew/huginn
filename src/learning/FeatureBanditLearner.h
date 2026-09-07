@@ -23,9 +23,8 @@ namespace Huginn::Learning
    // =============================================================================
    // A linear contextual bandit: each item is an arm, the 18-float feature
    // vector is the context, and the target is the reward observed for that one
-   // decision. There is no gamma, no successor state and no trajectory — the
-   // update never bootstraps off a future estimate, which is what separates
-   // this from Q-learning.
+   // decision. No gamma, no successor state, no trajectory — the update never
+   // bootstraps off a future estimate.
    //
    // Linear function approximation: R(context, item) = w_item . phi(context)
    // Each item gets its own 18-element weight vector. Learning in one state
