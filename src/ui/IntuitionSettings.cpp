@@ -59,20 +59,6 @@ namespace Huginn::UI
             break;
         }
 
-        const char* refreshStr = ini.GetValue(section, "sRefreshEffect", IntuitionDefaults::REFRESH_EFFECT);
-        switch (dropdownIndex(refreshStr)) {
-        case 0:  refreshEffect = RefreshEffect::Tint;  break;
-        case 1:  refreshEffect = RefreshEffect::Pulse; break;
-        case 2:  refreshEffect = RefreshEffect::None;  break;
-        default:
-            if (_stricmp(refreshStr, "pulse") == 0 || _stricmp(refreshStr, "flash") == 0) refreshEffect = RefreshEffect::Pulse;
-            else if (_stricmp(refreshStr, "none") == 0) refreshEffect = RefreshEffect::None;
-            else refreshEffect = RefreshEffect::Tint;
-            break;
-        }
-
-        refreshStrength = std::clamp(static_cast<float>(ini.GetDoubleValue(section, "fRefreshStrength", IntuitionDefaults::REFRESH_STRENGTH)), 0.0f, 100.0f);
-
         const char* slotStr = ini.GetValue(section, "sSlotEffect", IntuitionDefaults::SLOT_EFFECT);
         switch (dropdownIndex(slotStr)) {
         case 0:  slotEffect = SlotEffect::Slide;   break;
@@ -85,12 +71,10 @@ namespace Huginn::UI
             break;
         }
 
-        logger::info("[IntuitionSettings] Enabled: {}, Position: ({}%, {}%), Alpha: {}, Scale: {}%, ChildAlpha: {}, ReadOnly: {}, HideWhileWheelOpen: {}, DisplayMode: {}, RefreshEffect: {} ({}%), SlotEffect: {}",
+        logger::info("[IntuitionSettings] Enabled: {}, Position: ({}%, {}%), Alpha: {}, Scale: {}%, ChildAlpha: {}, ReadOnly: {}, HideWhileWheelOpen: {}, DisplayMode: {}, SlotEffect: {}",
             enabled, positionX, positionY, alpha, scale, childAlpha, readOnly,
             HideWhileWheelOpen(),
             displayMode == DisplayMode::Verbose ? "verbose" : displayMode == DisplayMode::Normal ? "normal" : "minimal",
-            refreshEffect == RefreshEffect::Pulse ? "pulse" : refreshEffect == RefreshEffect::None ? "none" : "tint",
-            refreshStrength,
             slotEffect == SlotEffect::Fade ? "fade" : slotEffect == SlotEffect::Instant ? "instant" : "slide");
     }
 
@@ -105,8 +89,6 @@ namespace Huginn::UI
         readOnly       = IntuitionDefaults::READ_ONLY;
         hideWhileWheelOpen = IntuitionDefaults::HIDE_WHILE_WHEEL_OPEN;
         displayMode    = DisplayMode::Minimal;
-        refreshEffect  = RefreshEffect::Tint;
-        refreshStrength = IntuitionDefaults::REFRESH_STRENGTH;
         slotEffect     = SlotEffect::Slide;
 
         logger::info("[IntuitionSettings] Reset to defaults"sv);
@@ -122,8 +104,6 @@ namespace Huginn::UI
         config.scale = scale;
         config.childAlpha = childAlpha;
         config.displayMode = displayMode;
-        config.refreshEffect = refreshEffect;
-        config.refreshStrength = refreshStrength;
         config.slotEffect = slotEffect;
         return config;
     }

@@ -16,16 +16,6 @@ namespace Huginn::UI
     };
 
     // =========================================================================
-    // REFRESH EFFECT MODE
-    // =========================================================================
-
-    enum class RefreshEffect : uint8_t {
-        None  = 0,   // No collective refresh signal
-        Pulse = 1,   // Alpha dip on idle slots
-        Tint  = 2    // Color shift toward gray on idle slots (default)
-    };
-
-    // =========================================================================
     // SLOT EFFECT MODE
     // =========================================================================
 
@@ -58,14 +48,8 @@ namespace Huginn::UI
         // Display mode: how much detail to show per slot
         inline constexpr const char* DISPLAY_MODE = "minimal";
 
-        // Refresh effect: visual signal on idle slots when any slot's content changes
-        inline constexpr const char* REFRESH_EFFECT = "tint";
-
         // Slot effect: animation style when a slot's content changes
         inline constexpr const char* SLOT_EFFECT = "slide";
-
-        // Refresh effect strength: max percentage of tint blend or alpha dip (0 = invisible, 100 = full)
-        inline constexpr float REFRESH_STRENGTH = 15.0f;
 
         // Child element opacity (0-100) for secondary elements like page labels
         inline constexpr float CHILD_ALPHA = 70.0f;
@@ -104,8 +88,6 @@ namespace Huginn::UI
         float scale = IntuitionDefaults::SCALE;
         float childAlpha = IntuitionDefaults::CHILD_ALPHA;
         DisplayMode displayMode = DisplayMode::Minimal;
-        RefreshEffect refreshEffect = RefreshEffect::Tint;
-        float refreshStrength = IntuitionDefaults::REFRESH_STRENGTH;
         SlotEffect slotEffect = SlotEffect::Slide;
     };
 
@@ -157,8 +139,6 @@ namespace Huginn::UI
             return hideWhileWheelOpen.load(std::memory_order_acquire);
         }
         [[nodiscard]] DisplayMode GetDisplayMode() const noexcept { return displayMode; }
-        [[nodiscard]] RefreshEffect GetRefreshEffect() const noexcept { return refreshEffect; }
-        [[nodiscard]] float GetRefreshStrength() const noexcept { return refreshStrength; }
         [[nodiscard]] SlotEffect GetSlotEffect() const noexcept { return slotEffect; }
 
     private:
@@ -176,8 +156,6 @@ namespace Huginn::UI
         bool  readOnly     = IntuitionDefaults::READ_ONLY;
         std::atomic<bool> hideWhileWheelOpen{IntuitionDefaults::HIDE_WHILE_WHEEL_OPEN};
         DisplayMode displayMode = DisplayMode::Minimal;
-        RefreshEffect refreshEffect = RefreshEffect::Tint;
-        float refreshStrength = IntuitionDefaults::REFRESH_STRENGTH;
         SlotEffect slotEffect = SlotEffect::Slide;
     };
 

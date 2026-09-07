@@ -221,9 +221,7 @@ to the UI thread.
 | `SetUrgent` | `setUrgent` | index, active | **Inert** — see below |
 | `SetWidgetAlpha` | `setWidgetAlpha` | alpha (0–100) | Overall widget opacity |
 | — | `setChildAlpha` | alpha (0–100) | Secondary element opacity (page pips/label). Invoked directly from the constructor and `ReapplySettings`; no dedicated C++ method |
-| — | `setRefreshEffect` | 0=none, 1=pulse, 2=tint | Refresh effect mode (**currently inert** — see below) |
 | — | `setSlotEffect` | 0=slide, 1=fade, 2=instant | Slot change animation |
-| — | `setRefreshStrength` | pct (0–100) | Refresh effect strength (**currently inert**) |
 | `AdvanceMovie` | `tick` | dt | Per-render-frame animation driver |
 
 **C++-only methods** (no direct AS2 counterpart):
@@ -418,14 +416,11 @@ detail text, and only if the detail itself changed. `_slotReady[]` suppresses th
 animation on a slot's first population, so the widget does not slide in when it
 first appears.
 
-**The refresh effect is currently inert.** `sRefreshEffect` and
-`fRefreshStrength` still load, still push to AS2 via `setRefreshEffect` /
-`setRefreshStrength`, and the tint/pulse code still exists in `tick()` — but
-`_flashTimer` is only ever initialised to 0 and decremented; nothing sets it
-positive any more. The `setSlot` comment records why: *"refresh flash removed —
-now handled by per-slot states"*, and the `tick()` branch is labelled
-`Priority 4: Global refresh flash (legacy, for backward compat)`. The INI keys
-and the dMenu dropdown remain, and changing them has no visible effect.
+The collective **refresh effect** (a tint or alpha dip on idle slots whenever any
+slot changed) was removed in 0.20.2. It had been dead since per-slot visual
+states landed — nothing armed `_flashTimer` — so `sRefreshEffect`,
+`fRefreshStrength`, their two dMenu controls, both AS2 setters and the `tick()`
+branch are all gone. Per-slot states now carry the "something changed" signal.
 
 ### Type mapping
 
@@ -483,9 +478,7 @@ fAlphaChild = 70            ; Secondary element opacity (page pips/label)
 bReadOnly = false           ; Display-only: slot hotkeys ignored (0.19.11)
 bHideWhileWheelOpen = true  ; Hide while a Wheeler wheel is open (0.19.18)
 sDisplayMode = minimal      ; minimal | normal | verbose   (or 0 | 1 | 2)
-sRefreshEffect = tint       ; tint | pulse | none          (or 0 | 1 | 2) — inert
 sSlotEffect = slide         ; slide | fade | instant       (or 0 | 1 | 2)
-fRefreshStrength = 15       ; 0-100, clamped — inert
 ```
 
 The values above are the compile-time defaults in `IntuitionDefaults`
@@ -1118,7 +1111,6 @@ graph TB
 | Hot reload | Implemented | `hg reload` and the dMenu Reload INI button |
 | Player hide latch | Implemented | `iToggleWidgetKey` (default `x`), session-scoped |
 | Auto-hide behind Wheeler | Implemented | Re-asserted per tick while a wheel is open |
-| Refresh effect (tint/pulse) | **Inert** | Settings load and push, but nothing arms `_flashTimer` |
 | `setUrgent` | **Inert** | Superseded by `SlotVisualState`; no C++ caller |
 
 ### Wheeler integration
@@ -1144,44 +1136,39 @@ graph TB
 
 ## Known Limitations
 
-1. **The refresh effect is dead code.** `sRefreshEffect` / `fRefreshStrength` and
-   the dMenu dropdown still exist and still reach AS2, but no code path arms
-   `_flashTimer`, so the tint/pulse branch in `tick()` never runs. Either re-arm
-   it on a slot change or retire the setting and its AS2 branch.
+1. **`setUrgent` is vestigial.** `_urgentSlots` is written and never read.
 
-2. **`setUrgent` is vestigial.** `_urgentSlots` is written and never read.
-
-3. **EditModeCallback carries no payload.** Wheeler always passes
+2. **EditModeCallback carries no payload.** Wheeler always passes
    `(nullptr, 0)`; Huginn re-resolves indices unconditionally instead.
 
-4. **Single subtext per entry** — a Wheeler API limit. When several labels apply,
+3. **Single subtext per entry** — a Wheeler API limit. When several labels apply,
    only the highest-priority one shows.
 
-5. **Lock-timer noise** — `bShowLockTimerLabel` is off by default. Even quantized
+4. **Lock-timer noise** — `bShowLockTimerLabel` is off by default. Even quantized
    to whole seconds it changes once a second while a slot is locked, and each
    change costs a page diff plus a cross-DLL write.
 
-6. **`IsManagedWheel` cannot answer "is it mine".** It reports only that a wheel
+5. **`IsManagedWheel` cannot answer "is it mine".** It reports only that a wheel
    is managed by *someone*, so a stale index can be written to another client's
    wheel. Index re-resolution (v4) is the mitigation; on v3 and below there is no
    lookup that distinguishes them.
 
-7. **Another mod inserting a wheel ahead of ours** shifts our indices with the
+6. **Another mod inserting a wheel ahead of ours** shifts our indices with the
    player having touched nothing, and the position-memory heuristic reads that as
    a deliberate move. Telling the two apart needs a signal Wheeler does not
    expose.
 
-8. **Scaleform string passing** — always `CreateString()` to copy into the
+7. **Scaleform string passing** — always `CreateString()` to copy into the
    movie's managed heap. A raw `const char*` causes silent text disappearance if
    the backing string dies before render.
 
-9. **`onEnterFrame` is unreliable** in Skyrim's Scaleform GFx, so all animation
+8. **`onEnterFrame` is unreliable** in Skyrim's Scaleform GFx, so all animation
    is driven by C++ calling `tick(dt)` from `AdvanceMovie()`.
 
-10. **A missing dMenu INI silently defaults the widget.** `[Widget]` and
-    `[Debug]` live only in dMenu's file; if it is absent, `GetDMenuIniPath()`
-    falls back to the main INI, which does not define those keys, and every value
-    lands on its compile-time default.
+9. **A missing dMenu INI silently defaults the widget.** `[Widget]` and
+   `[Debug]` live only in dMenu's file; if it is absent, `GetDMenuIniPath()`
+   falls back to the main INI, which does not define those keys, and every value
+   lands on its compile-time default.
 
 **No longer a limitation:** strings exported to Wheeler were once modelled as
 indefinite borrows, requiring address-stable storage for the lifetime of the

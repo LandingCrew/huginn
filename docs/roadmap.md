@@ -48,16 +48,6 @@ would notice.
       relevance penalty for an unaffordable spell is wanted at all, and if so
       what the curve is. Until then the option is honest but has only two
       distinct behaviours (M)
-- [ ] **The dMenu Refresh Effect dropdown and strength slider do nothing.**
-      `_flashTimer` in `src/swf/Intuition.as` is initialised to 0 and decremented
-      but never set positive — the `setSlot` path that armed it was removed when
-      per-slot visual states landed, and the `tick()` branch is self-labelled
-      legacy. So `sRefreshEffect`, `fRefreshStrength`, both AS2 setters,
-      `_refreshMode`, `_baseColor`, `_tintDirty` and `lerpColor` are live wiring
-      to nothing, and two user-facing controls have no effect. `_tintDirty` is
-      never set true either, so the tint-restore loop is unreachable. Decide
-      whether to rewire or remove — shipping a control that does nothing is the
-      worse of the two (S)
 - [ ] **`hg reload` silently yanks the player to page 1.** `ApplySideEffects`
       calls `SlotAllocator::Initialize()`, which assigns `m_currentPage = 0`
       (`SlotAllocator.cpp:51`). A player on page 3 who reloads settings is moved

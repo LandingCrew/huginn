@@ -161,14 +161,8 @@ namespace Huginn::UI
                 RE::GFxValue caArg{ static_cast<double>(settings.GetChildAlpha()) };
                 m_widget.Invoke("setChildAlpha", nullptr, &caArg, 1);
 
-                RE::GFxValue reArg{ static_cast<double>(static_cast<int>(settings.GetRefreshEffect())) };
-                m_widget.Invoke("setRefreshEffect", nullptr, &reArg, 1);
-
                 RE::GFxValue seArg{ static_cast<double>(static_cast<int>(settings.GetSlotEffect())) };
                 m_widget.Invoke("setSlotEffect", nullptr, &seArg, 1);
-
-                RE::GFxValue rsArg{ static_cast<double>(settings.GetRefreshStrength()) };
-                m_widget.Invoke("setRefreshStrength", nullptr, &rsArg, 1);
             }
         } else {
             logger::error("IntuitionMenu: failed to load {}.swf"sv, FILE_NAME);
@@ -454,15 +448,13 @@ namespace Huginn::UI
         // Capture remaining settings for a single deferred GFx batch
         float scalePct = config.scale;
         double childAlpha = config.childAlpha;
-        int refreshEffect = static_cast<int>(config.refreshEffect);
         int slotEffect = static_cast<int>(config.slotEffect);
-        double refreshStrength = config.refreshStrength;
 
         auto* tasks = SKSE::GetTaskInterface();
         if (!tasks) return;
 
         tasks->AddUITask(
-            [scalePct, childAlpha, refreshEffect, slotEffect, refreshStrength]() {
+            [scalePct, childAlpha, slotEffect]() {
                 auto* self = GetSingleton();
                 if (!self || !self->uiMovie || !self->m_widget.IsObject()) {
                     logger::warn("IntuitionMenu::ReapplySettings(config): widget not ready"sv);
@@ -477,18 +469,11 @@ namespace Huginn::UI
                     root.SetMember("_yscale", static_cast<double>(scalePct));
                 }
 
-                // Effect modes + strength
                 RE::GFxValue caArg{ childAlpha };
                 self->m_widget.Invoke("setChildAlpha", nullptr, &caArg, 1);
 
-                RE::GFxValue reArg{ static_cast<double>(refreshEffect) };
-                self->m_widget.Invoke("setRefreshEffect", nullptr, &reArg, 1);
-
                 RE::GFxValue seArg{ static_cast<double>(slotEffect) };
                 self->m_widget.Invoke("setSlotEffect", nullptr, &seArg, 1);
-
-                RE::GFxValue rsArg{ refreshStrength };
-                self->m_widget.Invoke("setRefreshStrength", nullptr, &rsArg, 1);
 
                 logger::info("IntuitionMenu: settings reapplied from config snapshot"sv);
             });

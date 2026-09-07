@@ -10,15 +10,11 @@
  *   setUrgent(index, active)                - Enable/disable pulse on slot
  *   setWidgetAlpha(alpha)                   - Overall widget opacity (0-100)
  *   setChildAlpha(alpha)                    - Set secondary element opacity (0-100)
- *   setRefreshEffect(mode)                  - Refresh effect: 0=none, 1=pulse, 2=tint
- *   setRefreshStrength(pct)                 - Refresh effect strength (0-100%)
  *   setSlotEffect(mode)                     - Slot change anim: 0=slide, 1=fade, 2=instant
  *
  * Animations:
  *   - Slide reveal: when slot content changes, old text slides up + fades out,
  *     new text rises in from below with ease-out deceleration.
- *   - Refresh effect: when ANY slot changes, idle slots signal a collective
- *     refresh. Mode: tint (color shift to black), pulse (alpha dip), or none.
  *   - Urgent pulse: override slots do a slow sine pulse.
  */
 class Intuition extends MovieClip
@@ -45,7 +41,6 @@ class Intuition extends MovieClip
     private static var ANIM_OUT_SEC:Number     = 0.30;  // Slide-out duration
     private static var ANIM_IN_SEC:Number      = 0.35;  // Slide-in duration
     private static var ANIM_SLIDE_PX:Number    = 14;    // Vertical slide distance
-    private static var FLASH_SEC:Number        = 0.50;  // Refresh flash duration
 
     // ── Confirm flash timing ──
     private static var CONFIRM_FLASH_SEC:Number = 0.5;   // Single dip duration
@@ -99,23 +94,11 @@ class Intuition extends MovieClip
     private var _pendingDetail:Array;   // Queued detail for after slideOut
     private var _baseAlpha:Array;       // Base alpha per slot (for proportional flash)
     private var _slotReady:Array;       // true after first setSlot (suppresses initial anim)
-    private var _flashTimer:Number;     // Global refresh flash countdown
 
     private var _childAlpha:Number;      // INI: secondary element opacity (0-100)
 
     // ── Slot effect state ──────────────────────────────────────────
     private var _slotMode:Number;        // 0=slide, 1=fade, 2=instant
-
-    // ── Refresh effect state ────────────────────────────────────
-    private var _refreshMode:Number;     // 0=none, 1=pulse, 2=tint
-    private var _baseColor:Array;        // Base text color per slot (for tint restore)
-    private var _tintDirty:Boolean;      // True while tint is active, cleared after restore
-
-    // ── Effect strength (from INI, 0-100 → 0.0-1.0) ─────────
-    private var _refreshStrength:Number; // Max blend/dip for refresh effect
-
-    // ── Tint target ──────────────────────────────────────────────
-    private static var TINT_COLOR:Number = 0x000000;  // Black (darkens each slot's own color)
 
     // ── Dynamic width tracking ─────────────────────────────────
     private var _bgWidth:Number;         // Current background width (auto-sized to content)
@@ -157,7 +140,6 @@ class Intuition extends MovieClip
         _pendingDetail = [];
         _baseAlpha = [];
         _slotReady = [];
-        _flashTimer = 0;
 
         // Visual state tracking
         _visualState = [];       // Visual state per slot
@@ -167,14 +149,6 @@ class Intuition extends MovieClip
 
         // Slot effect state
         _slotMode = 0;           // Default slide; C++ can override via setSlotEffect()
-
-        // Refresh effect state
-        _refreshMode = 2;        // Default tint; C++ can override via setRefreshEffect()
-        _baseColor = [];
-        _tintDirty = false;
-
-        // Effect strength (INI percentage → 0.0-1.0 fraction)
-        _refreshStrength = 0.15; // Default 15%; C++ can override via setRefreshStrength()
         _bgWidth = SLOT_WIDTH + PADDING * 2;  // Initial width; auto-resizes on content
         _pipStripWidth = 0;
 
@@ -255,7 +229,6 @@ class Intuition extends MovieClip
 
             // Only reset alpha when no active effects
             var hasEffect:Boolean = (_animPhase[index] != 0) ||
-                                    (_flashTimer > 0) ||
                                     (_confirmTimer[index] > 0) ||
                                     (_visualState[index] == STATE_OVERRIDE) ||
                                     (_visualState[index] == STATE_WILDCARD) ||
@@ -270,7 +243,6 @@ class Intuition extends MovieClip
         }
 
         // Content changed — trigger slide animation
-        // (refresh flash removed — now handled by per-slot states)
 
         if (_slotMode == 2) {
             // Instant mode: swap content immediately, no animation
@@ -393,22 +365,10 @@ class Intuition extends MovieClip
         _childAlpha = alpha;
     }
 
-    /** Set refresh effect mode (0=none, 1=flash, 2=tint). */
-    public function setRefreshEffect(mode:Number):Void
-    {
-        _refreshMode = mode;
-    }
-
     /** Set slot content change effect (0=slide, 1=fade, 2=instant). */
     public function setSlotEffect(mode:Number):Void
     {
         _slotMode = mode;
-    }
-
-    /** Set refresh effect strength (0-100%). Controls max tint blend or alpha dip. */
-    public function setRefreshStrength(pct:Number):Void
-    {
-        _refreshStrength = pct / 100;
     }
 
     // ===========================================================
@@ -491,9 +451,6 @@ class Intuition extends MovieClip
             // Visual state tracking
             _visualState.push(STATE_NORMAL);
             _confirmTimer.push(0);
-
-            // Refresh effect: base color for tint restore
-            _baseColor.push(COLOR_SPELL);
         }
     }
 
@@ -621,49 +578,12 @@ class Intuition extends MovieClip
                     _confirmTimer[i] -= dt;
                     if (_confirmTimer[i] < 0) _confirmTimer[i] = 0;
                 }
-                // Priority 4: Global refresh flash (legacy, for backward compat)
-                else if (_flashTimer > 0) {
-                    var ft:Number = 1 - (_flashTimer / FLASH_SEC);
-
-                    if (_refreshMode == 1) {
-                        // Pulse mode: alpha dip (strength controls dip depth)
-                        var fdip:Number = 1 - _refreshStrength * Math.sin(Math.PI * ft);
-                        _slotClips[i].itemName._alpha = _baseAlpha[i] * fdip;
-                    }
-                    else if (_refreshMode == 2) {
-                        // Tint mode: color darkening (strength controls blend amount)
-                        var tintAmount:Number = _refreshStrength * Math.sin(Math.PI * ft);
-                        _slotClips[i].itemName.textColor = lerpColor(_baseColor[i], TINT_COLOR, tintAmount);
-                    }
-                    // mode 0 (none): do nothing
-                }
                 // No effect: base alpha
                 else {
                     _slotClips[i].itemName._alpha = _baseAlpha[i];
                 }
             }
 
-        }
-
-        // Decrement global flash timer
-        if (_flashTimer > 0) {
-            _flashTimer -= dt;
-            if (_flashTimer < 0) _flashTimer = 0;
-        }
-
-        // Tint ended — restore base colors on all idle slots (no active visual effects)
-        if (_flashTimer <= 0 && _tintDirty) {
-            _tintDirty = false;
-            for (var j:Number = 0; j < _activeSlotCount; j++) {
-                var hasVisualEffect:Boolean = (_animPhase[j] != 0) ||
-                                              (_confirmTimer[j] > 0) ||
-                                              (_visualState[j] == STATE_OVERRIDE) ||
-                                              (_visualState[j] == STATE_WILDCARD) ||
-                                              (_visualState[j] == STATE_EXPIRING);
-                if (!hasVisualEffect) {
-                    _slotClips[j].itemName.textColor = _baseColor[j];
-                }
-            }
         }
     }
 
@@ -678,7 +598,6 @@ class Intuition extends MovieClip
     {
         var nf:TextField = _slotClips[index].itemName;
         var color:Number = getColorForType(type, index);
-        _baseColor[index] = color;
 
         // Compose display text: "Name · detail", just "Name", or just detail
         if (detail.length > 0 && name.length > 0) {
@@ -741,21 +660,6 @@ class Intuition extends MovieClip
             needed = SLOT_WIDTH + PADDING * 2;
         }
         _bgWidth = needed;
-    }
-
-    /** Linearly interpolate between two RGB colors. t=0 returns c1, t=1 returns c2. */
-    private function lerpColor(c1:Number, c2:Number, t:Number):Number
-    {
-        var r1:Number = (c1 >> 16) & 0xFF;
-        var g1:Number = (c1 >> 8) & 0xFF;
-        var b1:Number = c1 & 0xFF;
-        var r2:Number = (c2 >> 16) & 0xFF;
-        var g2:Number = (c2 >> 8) & 0xFF;
-        var b2:Number = c2 & 0xFF;
-        var r:Number = r1 + (r2 - r1) * t;
-        var g:Number = g1 + (g2 - g1) * t;
-        var b:Number = b1 + (b2 - b1) * t;
-        return (Math.round(r) << 16) | (Math.round(g) << 8) | Math.round(b);
     }
 
     private function getColorForType(type:Number, index:Number):Number
