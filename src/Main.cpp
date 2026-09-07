@@ -372,6 +372,22 @@ static void InitializeGameSystems(bool isNewGame)
     if (haveDMenuIni) UI::IntuitionSettings::GetSingleton().LoadFromIni(dmenuIni);
     UI::IntuitionMenu::Show();
 
+    // Push [Widget] to an already-open menu, for the same reason SetReadOnly is
+    // pushed below: this is the first point where [Widget] has been read.
+    // HudVisibilityManager opens the menu when the loading screen closes, which
+    // is BEFORE this — so IntuitionMenu's constructor applied the compile-time
+    // defaults (POSITION_X = 28.0f), and Show() above is a no-op on an already-
+    // open menu, so it re-applies nothing. The widget then sat at the default
+    // until something else happened to call ReapplySettings — a save opens a
+    // menu, which drives HudVisibilityManager, which is why this read as "the
+    // widget jumps when I save". Covers position, alpha and scale, which all
+    // come from that same constructor path.
+    if (auto* menu = UI::IntuitionMenu::GetSingleton()) {
+        menu->ReapplySettings(UI::IntuitionSettings::GetSingleton().BuildConfig());
+    } else {
+        logger::debug("[Init] IntuitionMenu unavailable, skipping [Widget] push"sv);
+    }
+
     // Read-only must be pushed HERE, not at kDataLoaded, because this is the
     // first point where [Widget] has actually been read — the line above is the
     // only IntuitionSettings load outside SettingsReloader, and kDataLoaded runs
@@ -584,6 +600,16 @@ static void OnDataLoaded()
         // the reliable signal; the notification is a bonus when a HUD is present.
         RE::DebugNotification("Huginn: update system failed to start - recommendations disabled. See log.");
     }
+
+    // Load [Widget] BEFORE the menu can be constructed. HudVisibilityManager
+    // opens the menu when the loading screen closes, which is well before
+    // kPostLoadGame reads the dMenu INI — so without this the constructor
+    // applies IntuitionDefaults (POSITION_X = 28.0f) and the widget renders at
+    // the wrong place for the whole load sequence. This is a plain file read
+    // with no game-data dependency, so it is safe this early. kPostLoadGame
+    // still re-applies: that is the authoritative push, and the only one that
+    // runs when settings change mid-session.
+    UI::IntuitionSettings::GetSingleton().LoadFromFile(GetDMenuIniPath());
 
     // Register IntuitionMenu (Scaleform HUD widget)
     UI::IntuitionMenu::Register();
