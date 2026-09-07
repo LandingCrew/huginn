@@ -115,6 +115,10 @@ namespace Huginn::Settings
         // whether a Wheeler rebuild is actually needed (vs. e.g. a scoring tweak).
         const WheelLayout wheelLayoutBefore = CaptureWheelLayout();
 
+        // Snapshot bEnabled too: the hide latch is cleared only on a false->true
+        // transition, never on an ordinary reload.
+        const bool wasEnabled = UI::IntuitionSettings::GetSingleton().IsEnabled();
+
         // =====================================================================
         // Phase 1: Reload all settings from INI
         // =====================================================================
@@ -193,7 +197,7 @@ namespace Huginn::Settings
         // =====================================================================
         // Phase 2: Apply side effects (reuse the already-parsed main INI)
         // =====================================================================
-        ApplySideEffects(haveMain ? &mainIni : nullptr, wheelLayoutBefore);
+        ApplySideEffects(haveMain ? &mainIni : nullptr, wheelLayoutBefore, wasEnabled);
 
         logger::info("[SettingsReloader] Reload complete"sv);
         RE::DebugNotification("Huginn: Settings reloaded");
@@ -279,6 +283,10 @@ namespace Huginn::Settings
         // defaults happen to match the current wheel layout.
         const WheelLayout wheelLayoutBefore = CaptureWheelLayout();
 
+        // Snapshot bEnabled too: the hide latch is cleared only on a false->true
+        // transition, never on an ordinary reload.
+        const bool wasEnabled = UI::IntuitionSettings::GetSingleton().IsEnabled();
+
         Slot::SlotSettings::GetSingleton().ResetToDefaults();
         Scoring::ScorerSettings::GetSingleton().ResetToDefaults();
         State::ContextWeightSettings::GetSingleton().ResetToDefaults();
@@ -311,7 +319,7 @@ namespace Huginn::Settings
         logger::debug("[SettingsReloader]   All settings reset to compile-time defaults"sv);
 
         // Apply side effects (same as reload)
-        ApplySideEffects(nullptr, wheelLayoutBefore);
+        ApplySideEffects(nullptr, wheelLayoutBefore, wasEnabled);
 
         logger::info("[SettingsReloader] Reset to defaults complete"sv);
     }
@@ -331,7 +339,8 @@ namespace Huginn::Settings
         return layout;
     }
 
-    void SettingsReloader::ApplySideEffects(const CSimpleIniA* mainIni, const WheelLayout& beforeLayout)
+    void SettingsReloader::ApplySideEffects(const CSimpleIniA* mainIni, const WheelLayout& beforeLayout,
+                                           bool wasEnabled)
     {
         // REQUIRES: update mutex held (RunExclusive) — reached only via
         // ReloadAllSettingsExclusive / ResetAllToDefaultsExclusive. That lock is
@@ -411,9 +420,31 @@ namespace Huginn::Settings
 
         // 5. Reapply Intuition widget settings (position, alpha, scale)
         auto intuitionConfig = UI::IntuitionSettings::GetSingleton().BuildConfig();
+
+        // Turning the widget ON is an explicit request to see it, so it outranks the
+        // session hide latch — which Show() honours (IntuitionMenu.cpp:49) and which
+        // both the hotkey and dMenu's Show/Hide button can set even with no menu
+        // present. Without this, re-enabling after a hide leaves the widget invisible
+        // whether or not the menu still exists: the no-menu path never constructs it,
+        // and the menu path's ReapplySettings->Show() silently no-ops. Gated on the
+        // transition so an ordinary reload never overrides a deliberate hide.
+        if (intuitionConfig.enabled && !wasEnabled && UI::IntuitionMenu::IsUserHidden()) {
+            logger::info("[SettingsReloader]   [Widget] re-enabled — clearing hide latch"sv);
+            UI::IntuitionMenu::ResetUserHidden();
+        }
+
         auto* menu = UI::IntuitionMenu::GetSingleton();
         if (menu) {
             menu->ReapplySettings(intuitionConfig);
+        } else if (intuitionConfig.enabled) {
+            // No singleton because bEnabled was false at load: Show() early-returns
+            // on !IsEnabled() (IntuitionMenu.cpp:35), so the menu was never built and
+            // ReapplySettings has nothing to talk to. The player has just turned the
+            // widget ON, and Show() is the only way to construct it — without this the
+            // toggle appears to do nothing until the next loading screen.
+            //
+            logger::info("[SettingsReloader]   [Widget] enabled with no menu — showing"sv);
+            UI::IntuitionMenu::Show();
         } else {
             logger::debug("[SettingsReloader]   [Widget] IntuitionMenu unavailable, skipping ReapplySettings"sv);
         }

@@ -269,7 +269,16 @@ Changes take effect on `hg rebuild` — no game restart needed, and `hg reload` 
 
 This controls the in-game Intuition widget's appearance and, on a debug build, its debugging output. dMenu owns these settings exclusively — position, opacity, scale, display mode, and the widget on/off switch — and you edit them from Huginn's panel in the dMenu UI rather than by hand. Without dMenu installed, the widget uses its built-in defaults.
 
-The panel also has three buttons: Show/Hide Widget, Reset Learned Weights (makes Huginn forget everything it has learned about your preferences), and Reset to Defaults.
+The panel also has four buttons: **Show/Hide Widget**, **Reset Learned Weights**
+(makes Huginn forget everything it has learned about your preferences), **Reset to
+Defaults**, and **Reload INI**.
+
+Two controls turn the widget off:
+
+* **Enable Widget** — the checkbox. A saved setting; off means the widget is never
+  built. Leave it on unless you want it gone for good.
+* **Show/Hide Widget** — the button. An ephemeral runtime toggle: same as the hotkey,
+  not saved, back to shown on the next load.
 
 ### Console commands
 

@@ -372,12 +372,32 @@ static void InitializeGameSystems(bool isNewGame)
     if (haveDMenuIni) UI::IntuitionSettings::GetSingleton().LoadFromIni(dmenuIni);
     UI::IntuitionMenu::Show();
 
-    // Read-only must be pushed HERE, not at kDataLoaded, because this is the
-    // first point where [Widget] has actually been read — the line above is the
-    // only IntuitionSettings load outside SettingsReloader, and kDataLoaded runs
-    // before it. Pushing at kDataLoaded reads compile-time defaults, so a player
-    // who set bReadOnly=true and restarted got working hotkeys and a log line
-    // claiming ReadOnly: true. Unconditional rather than inside haveDMenuIni:
+    // Push [Widget] to an already-open menu, for the same reason SetReadOnly is
+    // pushed below: this is the first point where [Widget] has been read.
+    // HudVisibilityManager opens the menu when the loading screen closes, which
+    // is BEFORE this — so IntuitionMenu's constructor applied the compile-time
+    // defaults (POSITION_X = 28.0f), and Show() above is a no-op on an already-
+    // open menu, so it re-applies nothing. The widget then sat at the default
+    // until something else happened to call ReapplySettings — a save opens a
+    // menu, which drives HudVisibilityManager, which is why this read as "the
+    // widget jumps when I save". Covers position, alpha and scale, which all
+    // come from that same constructor path.
+    // This is the per-game-load push. It is NOT the mid-session path — settings
+    // edited while playing come through SettingsReloader::ApplySideEffects,
+    // which makes the same call. Do not remove either one for the other.
+    if (auto* menu = UI::IntuitionMenu::GetSingleton()) {
+        menu->ReapplySettings(UI::IntuitionSettings::GetSingleton().BuildConfig());
+    } else {
+        logger::debug("[Init] IntuitionMenu unavailable, skipping [Widget] push"sv);
+    }
+
+    // Read-only is pushed HERE so it reflects the load this function just did.
+    // It used to be the ONLY point where [Widget] had been read; kDataLoaded now
+    // reads it too, but this push still matters — it is the one that runs per
+    // game load, so a value edited between sessions lands before play. Pushing
+    // only at kDataLoaded once gave a player who set bReadOnly=true working
+    // hotkeys and a log line claiming ReadOnly: true.
+    // Unconditional rather than inside haveDMenuIni:
     // with no dMenu file the settings hold their defaults, and pushing those is
     // still correct.
     Input::InputHandler::GetSingleton().SetReadOnly(
@@ -483,8 +503,21 @@ static void OnDataLoaded()
     // Register SettingsReloader for dMenu integration (v0.13.0)
     Settings::SettingsReloader::GetSingleton().Register();
 
-    // Load debug widget visibility early so dMenu changes apply before game load.
-    UI::DebugSettings::GetSingleton().LoadFromFile(GetDMenuIniPath());
+    // Load the dMenu-owned sections early so dMenu changes apply before game
+    // load. [Widget] must be read before IntuitionMenu::Register() below:
+    // HudVisibilityManager opens the menu when the loading screen closes, well
+    // before kPostLoadGame, so without this the constructor applies
+    // IntuitionDefaults (POSITION_X = 28.0f) and the widget renders at the wrong
+    // place for the whole load sequence. Both are plain file reads with no
+    // game-data dependency, so they are safe this early.
+    // Parsed once and handed to both loaders, matching the pattern the rest of
+    // this file uses — two LoadFromFile calls would parse the same file twice and
+    // log "not found" twice for a player without dMenu.
+    CSimpleIniA earlyDMenuIni;
+    if (LoadIniFile(earlyDMenuIni, GetDMenuIniPath(), "InitDMenuEarly"sv)) {
+        UI::DebugSettings::GetSingleton().LoadFromIni(earlyDMenuIni);
+        UI::IntuitionSettings::GetSingleton().LoadFromIni(earlyDMenuIni);
+    }
 
     // Try to connect to Wheeler API
     auto& wheelerClient = Wheeler::WheelerClient::GetSingleton();
@@ -602,11 +635,12 @@ static void OnDataLoaded()
         keybindings.LoadFromFile(GetMainIniPath());
         inputHandler.SetKeyCodes(keybindings);
 
-        // NOTE: read-only is deliberately NOT pushed here. [Widget] has not been
-        // read at kDataLoaded — the only load outside SettingsReloader is in
-        // InitializeGameSystems, which runs at kNewGame/kPostLoadGame — so this
-        // would push a compile-time default and mask the real value. It is
-        // pushed there instead, and by SettingsReloader on every reload.
+        // NOTE: read-only is not pushed here. [Widget] IS now read at
+        // kDataLoaded (see the LoadFromFile pair above), so pushing here would
+        // no longer mask the real value — but InitializeGameSystems re-reads the
+        // same file at kNewGame/kPostLoadGame and pushes there, which is the
+        // point that matters: nothing can act on the flag before a game loads.
+        // SettingsReloader pushes it again on every reload.
 
         // Slot key callback: equip spell/item from slot
         inputHandler.SetSlotCallback([&equipManager](size_t slotIndex, Input::EquipHand hand) {
