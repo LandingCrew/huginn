@@ -1,7 +1,9 @@
 # Huginn Roadmap
 
-Open work only. Completed items live in [roadmap-archive.md](roadmap-archive.md) — several record why an approach was
-rejected, so check there before re-opening something.
+Open work only. There is no completed-items archive any more — `roadmap-archive.md`
+was deleted on 2026-09-07 — so a rejected approach is no longer recorded anywhere
+once its entry leaves this file. Git history is the only record; check it before
+re-opening something that looks obviously undone.
 
 ## Known Bugs
 
@@ -80,16 +82,20 @@ would notice.
       (skeleton): Returns all zeros — no rules implemented yet" above a fully
       implemented method. `StateManager.h` says "3 locks" and "7 float
       accumulators"; it is 4 and 11. `StateFeatures.h:17` cites the stale
-      36,288-state figure (it is 72,576). `SettingsReloader.cpp:94` says the
-      dMenu INI holds "Widget, Keybindings, Debug" — keybindings moved to the
-      main INI in the 0.19.0 split. `ContextWeightConfig.h:14-16` gives a stale
-      field breakdown. `FeatureBanditLearner.h` says "~90% confidence at 15
-      trains"; the sigmoid gives 95.3%. The "Semi-gradient TD(0)" claim in the
-      same file was fixed in 0.20.0 along with the identifier rename (XS each)
-- [ ] Spell-pattern override file (`reviews/magic-classification.md`) was
-      proposed and never implemented — no `m_patterns`, no `pattern=true`
-      parsing, no `Huginn_SpellPatterns.ini`. Recorded here because the finding
-      was previously tracked nowhere. Its 29%-unknown figure is one 2026-02-07
+      36,288-state figure (it is 72,576 — and the file is `src/learning/`, not
+      `src/state/`). `SettingsReloader.cpp:94` says the dMenu INI holds "Widget,
+      Keybindings, Debug" — keybindings moved to the main INI in the 0.19.0
+      split. `FeatureBanditLearner.h` says "~90% confidence at 15 trains"; the
+      sigmoid gives 95.3%. Each verified still present 2026-09-07.
+      Two are already fixed and dropped from this list: the "Semi-gradient
+      TD(0)" claim (0.20.0, with the identifier rename) and
+      `ContextWeightConfig.h`, whose field breakdown now correctly reads 35
+      against 38 (XS each)
+- [ ] Spell-pattern override file was proposed and never implemented — no
+      `m_patterns`, no `pattern=true` parsing, no `Huginn_SpellPatterns.ini`.
+      The proposal lived in `reviews/magic-classification.md`, deleted
+      2026-09-07; this entry is now the only record. Its 29%-unknown figure is
+      one 2026-02-07
       capture on one modlist, taken before the classification pipeline changed
       underneath it, so the current rate is genuinely unknown — measure before
       scheduling. Related: `Huginn_Overrides.ini` is shared by `SpellRegistry`
@@ -111,7 +117,8 @@ observed, threshold parity exact on both smoothing exponents). Critique #10 is
 now closed; #59–#65 are follow-ups it surfaced, not remaining critique work.
 
 ### Tier 2 — COMPLETE
-All Tier 2 critique items have landed; see [roadmap-archive.md](roadmap-archive.md).
+All Tier 2 critique items have landed (PRs #55–#58); the detail was in the deleted
+archive and is now only in git history.
 
 ### Tier 3 — hot-path perf (trace-prioritized; see docs/profiling/tracy-traces.md)
 **Nothing in this tier exceeds 0.10% of runtime** on the 44:40 capture of
@@ -197,24 +204,18 @@ trigger to pick any of it up.
 - [ ] Unit tests for Context::WeightForCandidate (Tests.cpp:2656/3374 currently
       hand-reimplement the weight mapping — call the real one). DominantReason /
       ReasonLabel are covered by unit test 17.
-- [ ] #59: get docs/ under version control — `docs/ARCHITECTURE.md` is linked from
-      CLAUDE.md and is still untracked, along with all of `docs/architecture/`,
-      `docs/reference/`, `docs/reviews/`, `docs/compatibility/`, `docs/limitations/`
-      and `docs/changelog/`. The 0.19.0 ownership split had to edit four of these
-      (7-dmenu-integration.md, ARCHITECTURE.md, ConsoleCommands.md) and none of
-      those edits are in the PR that made them necessary — the docs and the code
-      they describe can now drift with nothing to catch it
 - [ ] Cosave decode negative test logs `[E] DecodeV2EntryBlob: byteLen 83 != stride
       84` at every Debug startup. The test passes — the error is the assertion
       firing. Silence it so a real rejection stays visible (the negative case is the
       byteLen-mismatch block in RunCosaveTests, Tests.cpp:5159).
-      Still firing every session as of 0.19.0; it has now cost real time twice
+      Still firing every session as of 0.20.3; it has now cost real time twice
       while triaging unrelated logs (XS)
-- [ ] Delete the merged remote branches: `tier3-14-display-push` and
-      `soak-skip-telemetry` (PR #96 / #95), `wheeler-respect-moved-wheels`
-      (PR #97), `docs-optimizations-fold` and `wheeler-index-reresolve`
-      (earlier). All merged, none holding work. Verified against `git ls-remote`
-      2026-08-29. Nothing depends on this; it is tidying (XS)
+- [ ] Delete the merged remote branches: `docs-pass`, `override-ini-namespacing`
+      and `rename-bandit-learner` — all zero commits ahead of `main`. Keep
+      `widget-hide-while-wheel-open`, which is 1 ahead and still holds work.
+      (The five branches this entry used to name are already gone.) Verified
+      against `git ls-remote` 2026-09-07. Nothing depends on this; it is
+      tidying (XS)
 - [ ] Soak protocol needs deliberate MANUAL equips — accept% is fed only by
       equips made outside Huginn, so a burst played through the wheel/hotkeys
       produces no recommendation-quality data at all. Confirmed 2026-08-26: a
