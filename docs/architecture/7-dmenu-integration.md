@@ -154,9 +154,9 @@ The descriptor defines:
 - **Setting types** — `checkbox`, `slider`, `dropdown`, `button`
 - **Action buttons** — Show/Hide Widget, Reset Learned Weights, Reset to Defaults, Reload INI
 
-The *Intuition Widget* group covers all eight `[Widget]` keys (`bEnabled`,
-`fPositionX`, `fPositionY`, `fAlpha`, `fScale`, `fAlphaChild`, `sDisplayMode`,
-`sSlotEffect`); *Debug & Logging* covers
+The *Intuition Widget* group covers all ten `[Widget]` keys (`bEnabled`,
+`fPositionX`, `fPositionY`, `fAlpha`, `fScale`, `fAlphaChild`, `bReadOnly`,
+`bHideWhileWheelOpen`, `sDisplayMode`, `sSlotEffect`); *Debug & Logging* covers
 `iRecommendationLog`, `bShowStateManager`, `bShowRegistry`, `bShowUtilityScorer`.
 
 **Dropdowns serialize as an integer index, not a label.** dMenu writes

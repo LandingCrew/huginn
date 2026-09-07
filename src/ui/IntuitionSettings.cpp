@@ -29,7 +29,7 @@ namespace Huginn::UI
         hideWhileWheelOpen = ini.GetBoolValue(section, "bHideWhileWheelOpen",
                                               IntuitionDefaults::HIDE_WHILE_WHEEL_OPEN);
 
-        // These three are dMenu dropdowns, and dMenu serializes a dropdown as its
+        // These two are dMenu dropdowns, and dMenu serializes a dropdown as its
         // integer INDEX ("0"), not its label. Hand-written INIs and every version
         // of this file before dMenu owned [Widget] use the name ("minimal"), so
         // both spellings are accepted. DropdownIndex returns -1 for a non-numeric
