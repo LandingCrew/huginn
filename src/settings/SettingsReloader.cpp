@@ -414,6 +414,14 @@ namespace Huginn::Settings
         auto* menu = UI::IntuitionMenu::GetSingleton();
         if (menu) {
             menu->ReapplySettings(intuitionConfig);
+        } else if (intuitionConfig.enabled) {
+            // No singleton because bEnabled was false at load: Show() early-returns
+            // on !IsEnabled() (IntuitionMenu.cpp:35), so the menu was never built and
+            // ReapplySettings has nothing to talk to. The player has just turned the
+            // widget ON, and Show() is the only way to construct it — without this the
+            // toggle appears to do nothing until the next loading screen.
+            logger::info("[SettingsReloader]   [Widget] enabled with no menu — showing"sv);
+            UI::IntuitionMenu::Show();
         } else {
             logger::debug("[SettingsReloader]   [Widget] IntuitionMenu unavailable, skipping ReapplySettings"sv);
         }
