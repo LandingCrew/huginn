@@ -1,5 +1,8 @@
 #include "ApparelRegistry.h"
 
+#include <format>
+#include <string>
+
 #include "util/AtomicGuard.h"
 #include "util/ExtraListStability.h"
 #include "util/InventoryUtil.h"
@@ -38,9 +41,32 @@ namespace Huginn::Apparel
 
       std::vector<InventoryApparel> classified;
       classified.reserve(scanned.size());
+      size_t enchantedSeen = 0;
       for (const auto& sa : scanned) {
          ApparelData data = m_classifier.ClassifyApparel(sa.armor, sa.enchantment);
-         if (!data.IsCraftRelevant()) continue;  // the scope guard (#65)
+         if (!data.IsCraftRelevant()) {
+            // Report ENCHANTED rejects with the actor values we actually saw.
+            // Unenchanted gear is the overwhelming majority and says nothing, but
+            // a rejected enchanted piece is the one case where the AV vocabulary
+            // in ApparelClassifier may simply not cover what this modlist uses —
+            // and without the numbers there is no way to tell that from "the
+            // scan never ran". Debug-level, at most once per 30s reconcile.
+            if (sa.enchantment) {
+               ++enchantedSeen;
+               std::string avs;
+               for (const auto* effect : sa.enchantment->effects) {
+                  if (!effect || !effect->baseEffect) continue;
+                  if (!avs.empty()) avs += ", ";
+                  avs += std::format("AV={} mag={:.1f}{}",
+                     static_cast<int>(effect->baseEffect->data.primaryAV),
+                     effect->effectItem.magnitude,
+                     effect->baseEffect->IsHostile() ? " (hostile)" : "");
+               }
+               logger::debug("[ApparelRegistry] Rejected enchanted '{}': [{}]"sv,
+                  sa.armor ? sa.armor->GetName() : "?", avs);
+            }
+            continue;  // the scope guard (#65)
+         }
 
          data.uniqueID = sa.uniqueID;
 
@@ -67,9 +93,20 @@ namespace Huginn::Apparel
 
       const size_t after = m_apparel.size();
       const size_t churn = (after > before) ? (after - before) : (before - after);
-      if (churn > 0) {
-         logger::debug("[ApparelRegistry] Reconciled: {} -> {} craft-relevant items"sv, before, after);
+
+      // Log UNCONDITIONALLY, not just on churn. The first version only spoke when
+      // the count changed, which made "scanned and found nothing" look exactly
+      // like "never ran" — and that cost a debugging session, because the only
+      // apparel line in a whole log was "Rebuilding apparel registry".
+      // An empty result is a finding, so it gets a line.
+      size_t equipped = 0;
+      for (const auto& a : m_apparel) {
+         if (a.isEquipped) ++equipped;
       }
+      logger::info("[ApparelRegistry] Reconciled: {} armor scanned, {} enchanted rejected, "
+                   "{} craft-relevant ({} of them currently worn, so not offered)"sv,
+         scanned.size(), enchantedSeen, after, equipped);
+
       return churn;
    }
 
