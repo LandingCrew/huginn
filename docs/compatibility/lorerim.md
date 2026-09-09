@@ -53,22 +53,79 @@ This is the part worth reading. Being Requiem-based, LoreRim removes content tha
 vanilla ships, and Huginn has contexts that only fire on that content. Those
 contexts have **never been exercised in play**.
 
-### The workstation context is inert (roadmap #63)
+### The workstation context (roadmap #63, #65)
 
-The workstation context exists to rank Fortify Smithing / Fortify Enchanting
-potions when the player stands at the matching bench. Requiem-based alchemy does
-not produce those effects, so on LoreRim the context fires, labels itself, and
-has nothing to rank.
+The workstation context exists to rank fortify-crafting items when the player
+stands at the matching bench. Requiem-based alchemy does not produce Fortify
+Smithing / Fortify Enchanting potions, so the POTION half of that context fires,
+labels itself, and has nothing to rank on LoreRim.
 
 <!-- UNVERIFIED: that Requiem specifically strips Fortify Smithing and Fortify
      Enchanting from its alchemy effect list. This is Requiem's content, not
      Huginn's, and cannot be checked from this repository. It is recorded as the
      working explanation for the observed emptiness on LoreRim. -->
 
-The live targets on a Requiem list would be filled soul gems and fortify apparel
-instead — and **apparel is not a candidate source at all** (`SourceType` has no
-armor entry, roadmap #65), so that answer is unavailable. The vanilla path has
-unit-test coverage (test 6h) and no play coverage.
+Apparel is now a candidate source (#65 landed), which was the intended Requiem
+answer. Filled soul gems are the other one. The vanilla potion path has unit-test
+coverage (test 6h) and no play coverage; the apparel path has test 6j.
+
+#### Measured: LoreRim apparel enchantments use a different actor-value series
+
+Play-test 2026-09-08, one character, 21 armor pieces scanned, 13 enchanted. This
+is the first real data on what fortify apparel looks like on this list, and it
+corrected a wrong assumption in Huginn.
+
+`ApparelClassifier` originally reused the actor values from
+`ItemClassifier::DetermineFortifySkillType`. That vocabulary was built for
+**potions**. Skyrim carries each skill three times — the skill itself, a "+90"
+modifier series, and a power-modifier series — and apparel enchantments use the
++90 series, which was not mapped at all. Result: 21 scanned, 13 enchanted, 0
+recognised. The feature was completely inert on its first play-test.
+
+Six independent confirmations in that one inventory, each exactly skill index+90:
+
+| Item | AV | Skill |
+|------|----|-------|
+| Circlet of Minor Alchemy | 106 | Alchemy (16) |
+| Amulet of Zenithar | 107 | Speechcraft (17) |
+| Circlet of Eminent Alteration | 108 | Alteration (18) |
+| Apprentice Robes of Destruction | 110 | Destruction (20) |
+| Apprentice Robes of Illusion | 111 | Illusion (21) |
+| Adept Robes of Restoration | 112 | Restoration (22) |
+
+which puts Fortify Smithing at 100 and Fortify Enchanting at 113. All three are
+now matched, derived from the base skill rather than hardcoded, with
+static_asserts pinning the derivation.
+
+**Magnitudes are much smaller than vanilla.** "Circlet of Minor Alchemy" is
+**2%**, and the largest skill fortify observed on any piece was 20 ("Eminent"
+tier). Anything tuned against vanilla's ~25% assumption will compress the whole
+ranking into the bottom of its curve.
+
+#### Fortify Smithing apparel may not exist on Requiem lists either
+
+<!-- REPORTED BY A PLAYER OF THIS LIST, NOT VERIFIED HERE: that Requiem removes
+     Fortify Smithing outright, i.e. as an ENCHANTMENT as well as an alchemy
+     effect. Requiem's content, not checkable from this repository. -->
+
+Consistent with, but not proven by, the measurement above: no Fortify Smithing
+and no Fortify Enchanting apparel appeared among 13 enchanted pieces, while
+Fortify Alchemy did. One inventory is not a survey — the player may simply not
+own any — so this is recorded as a lead, not a fact.
+
+If it holds, the consequence for #63 is that **apparel rescues the alchemy lab
+but not necessarily the forge**, and the forge context would be inert on Requiem
+lists through both its potion and its apparel path. The honest status per bench
+on LoreRim is then:
+
+| Bench | Potion payload | Apparel payload |
+|-------|----------------|-----------------|
+| Alchemy lab | none (Requiem) | **confirmed present** (Circlet of Minor Alchemy) |
+| Forge | none (Requiem) | none seen — possibly removed |
+| Enchanter | none (Requiem) | none seen — unknown |
+
+Settling this needs a second LoreRim inventory, or a look at Requiem's enchanting
+effect list. Until then the forge weight should not be assumed live on this list.
 
 ### Three of the four extended spell tags are unreachable
 
