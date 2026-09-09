@@ -16,14 +16,47 @@ None open.
       known case (test 6h stands in for it); the honest scope is "boot a vanilla
       profile once and walk the contexts", which would also cover the #79 four
       that no LoreRim character can carry. Wants a save with vanilla alchemy
-- [ ] #63: Requiem (LoreRim et al.) strips Fortify Smithing/Enchanting from
-      alchemy, so the workstation context has no potion to rank — inert in the
-      modlists that actually get play-tested. Live targets are filled soul gems
-      and fortify apparel (#65); vanilla path needs its own regression test
+- [ ] #63: the workstation context has no fortify POTION to rank on Requiem-based
+      lists — inert in the modlists that actually get play-tested. Vanilla path
+      still needs its own regression test (test 6h is the unit coverage).
+      Two corrections from the #65 work, both in docs/compatibility/lorerim.md:
+      the alchemy overhaul is attributed to Alchemy Redone rather than Requiem
+      alone; and a MUCH bigger cause was found and fixed — walking up to a bench
+      changed no GameState hash dimension, so the pipeline skip-gate discarded
+      the whole workstation context unless an unrelated dimension moved on the
+      same tick. That hit fortify potions on vanilla too, so re-check how much
+      of "inert" was ever about Requiem's content. Apparel now answers the
+      alchemy lab (#65, PR #114); the forge may still have no live payload
 
 ## Known Recommendation Issues
-- [ ] #65: apparel is not a candidate source (`SourceType` has no armor entry),
-      so fortify gear can never be recommended — blocks the Requiem answer to #63
+- [ ] Recommend enchanted apparel beyond the three craft skills — the #65
+      follow-up. #65 itself is DONE (PR #114): apparel is a candidate source,
+      verified in-game, but deliberately narrow — only gear fortifying Alchemy,
+      Smithing or Enchanting, because classification is what keeps the pool from
+      growing by the size of the wardrobe.
+      A real inventory has far more that is contextually useful. Sorted by cost:
+      **Tier 1, free** — existing weight AND existing detection, pure
+      classification: resist fire/frost/shock/poison/disease
+      (`resistXWeight`), magicka/health/stamina regen (`magickaRestoreWeight`
+      et al.), muffle/sneak (`stealthWeight`), waterbreathing.
+      **Tier 2, new weight but the signal exists** — carry weight
+      (`isOverencumbered` is already polled and `ItemTag::FortifyCarryWeight`
+      already exists); per-school spell cost reduction (school is known, but
+      there is no per-school weight); weapon-skill fortifies (equipped weapon
+      type is tracked).
+      **Tier 3, needs new detection** — haggling/speechcraft. There is NO
+      merchant or barter context anywhere in `src/`; it wants BarterMenu
+      detection, which is state plumbing rather than classification.
+      **BLOCKER, settle before any of the above.** Apparel is currently safe
+      only because it is narrow: one circlet, swapped deliberately at a bench,
+      out of combat. Tier 1 is exactly the combat case — recommending resist
+      robes while the player wears 258-armor Orcish Berserk means `EquipApparel`
+      strips the armor mid-fight, and nothing restores it. Needs (a) slot
+      grouping so two rings do not both surface — `ApparelData::slot` is already
+      classified, the candidate field was dropped in PR #114 for having no
+      consumer and comes back here; (b) a worn-vs-candidate comparison, is the
+      enchantment worth the armor lost, which is scoring not filtering; and
+      (c) a restore story, or an explicit decision not to have one (M/L)
 - [ ] Scroll cold-start: all scrolls sit in the pool every tick but score
       `learn≈0` against trained items at `learn=7–8`, so one can never surface
       until used and can't be used until surfaced.
@@ -32,6 +65,21 @@ None open.
       is most visible, because a player rarely uses one unprompted. The two
       candidate fixes are under Follow-ups, "Share learning across similar
       items"; fixing either closes this
+
+- [ ] Two duplication findings from the PR #114 review, neither blocking:
+      `ItemClassifier::DetermineFortifySkillType` has no case for the
+      "Modifier" actor-value series, so a POTION carrying `kAlchemyModifier`
+      falls into its default and is never tagged — the same bug class that made
+      apparel inert, still live for potions. `ApparelClassifier` copied that
+      vocabulary rather than sharing it, and the two have already drifted in
+      opposite directions; one shared AV -> craft-skill function fixes both.
+      Separately, `ApparelRegistry` hand-copies the key-agnostic half of
+      `Registry::FormRegistry` (`ForEachEntry`, `IsLoading`, `EntryCount`) — the
+      CRTP base whose own comment says it exists to stop exactly that. Its
+      composite (formID, uniqueID) key genuinely does not fit the FormID-keyed
+      index, which is why it was copied, but the visitor half could be adopted.
+      Both grow in value if the apparel expansion above lands, since it
+      multiplies the effect types being classified (S each)
 
 ## Doc-migration findings (2026-08-29)
 Surfaced by the one-agent-per-doc migration pass. Every one is a code or config
