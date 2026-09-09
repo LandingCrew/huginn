@@ -8,6 +8,7 @@
 #include "learning/item/ItemRegistry.h"
 #include "weapon/WeaponRegistry.h"
 #include "weapon/WeaponClassifier.h"
+#include "apparel/ApparelClassifier.h"   // #65: test 6k
 #include "learning/UtilityScorer.h"
 #include "learning/ScoredCandidate.h"
 #include "learning/ScorerSettings.h"   // MINIMUM_UTILITY — the floor test 6i is about
@@ -2817,7 +2818,173 @@ void RunUnitTests()
             }
         }
 
+        // Test 6j: fortify APPAREL ranks at a workstation and nowhere else (#65)
+        //
+        // The sibling of 6h, and the half that actually runs on the modlists
+        // played here. 6h covers fortify POTIONS, which Requiem strips from
+        // alchemy outright (#63) — so on LoreRim that path is provably correct
+        // and permanently inert. Apparel is the live payload: a player-enchanted
+        // Fortify Alchemy ring exists in a Requiem inventory and is what the
+        // alchemy-lab context is supposed to surface.
+        //
+        // It also pins the property that makes apparel different from every
+        // other source: NO BASELINE. Each other arm floors at baseRelevanceWeight
+        // so it can appear on a typed slot without a matching context. Craft gear
+        // must not — a Fortify Smithing ring in the pool during a fight is noise.
+        // The away-from-workstation leg below is the real regression guard; if
+        // someone later "fixes" the apparel arm by giving it a floor like its
+        // neighbours, this is what catches it.
+        {
+            using WM = Context::ContextWeightMap;
+
+            struct Station {
+                std::string_view name;
+                int32_t type;
+                Apparel::CraftSkill skill;
+                float WM::* field;
+            };
+
+            const Station kStations[] = {
+                {"Forge",       1, Apparel::CraftSkill::Smithing,   &WM::fortifySmithingWeight},
+                {"Enchanter",   3, Apparel::CraftSkill::Enchanting, &WM::fortifyEnchantingWeight},
+                {"Alchemy Lab", 5, Apparel::CraftSkill::Alchemy,    &WM::fortifyAlchemyWeight},
+            };
+
+            for (const auto& st : kStations) {
+                Candidate::ApparelCandidate gear{};
+                gear.name = "Fortify Ring";
+                gear.craftSkill = st.skill;
+                gear.magnitude = 25.0f;
+
+                State::PlayerActorState testPlayer{};
+                State::WorldState testWorld{};
+                testWorld.isLookingAtWorkstation = true;
+                testWorld.workstationType = st.type;
+
+                const auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
+                const float stationWeight = weights.*(st.field);
+
+                if (std::abs(Context::WeightForCandidate(gear, weights) - stationWeight) > 0.01f) {
+                    logger::error("TEST FAIL (6j): at {} the fortify apparel should draw {:.2f}, got {:.3f}",
+                        st.name, stationWeight, Context::WeightForCandidate(gear, weights));
+                    return;
+                }
+
+                // Gear for a DIFFERENT craft must not ride the same station. The
+                // three weights are separate fields; reading the wrong one would
+                // offer Fortify Alchemy gloves at a forge.
+                Candidate::ApparelCandidate wrongCraft{};
+                wrongCraft.name = "Unrelated Fortify Ring";
+                wrongCraft.craftSkill = (st.skill == Apparel::CraftSkill::Smithing)
+                    ? Apparel::CraftSkill::Alchemy
+                    : Apparel::CraftSkill::Smithing;
+                wrongCraft.magnitude = 25.0f;
+
+                if (Context::WeightForCandidate(wrongCraft, weights) >= stationWeight - 0.01f) {
+                    logger::error("TEST FAIL (6j): at {} apparel for another craft reached the station weight",
+                        st.name);
+                    return;
+                }
+            }
+
+            // Away from any workstation every craft skill scores exactly 0 — not
+            // a small number, zero. minimumContextWeight drops it before scoring
+            // rather than after, which is the whole reason apparel costs nothing
+            // in the 99% of play that happens away from a bench.
+            {
+                State::PlayerActorState testPlayer{};
+                State::WorldState testWorld{};   // isLookingAtWorkstation stays false
+
+                const auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
+
+                for (const auto skill : {Apparel::CraftSkill::Smithing,
+                                         Apparel::CraftSkill::Enchanting,
+                                         Apparel::CraftSkill::Alchemy}) {
+                    Candidate::ApparelCandidate gear{};
+                    gear.name = "Fortify Ring";
+                    gear.craftSkill = skill;
+                    gear.magnitude = 25.0f;
+
+                    if (const float w = Context::WeightForCandidate(gear, weights); w != 0.0f) {
+                        logger::error("TEST FAIL (6j): {} apparel away from a workstation should "
+                            "score 0.0, got {:.3f}", Apparel::CraftSkillToString(skill), w);
+                        return;
+                    }
+                }
+            }
+
+            logger::info("  ✓ PASS: fortify apparel ranks at its own workstation only"sv);
+        }
+
         logger::info("TEST PASS: ContextRuleEngine environmental rules work correctly"sv);
+    }
+
+    // Test 6k: ApparelClassifier ActorValue vocabulary and the #65 scope guard
+    //
+    // Pure mapping, no game objects — the half of classification that can be
+    // tested outside a running Skyrim. The guard matters more than the mapping:
+    // every AV that is NOT craft-relevant must return None, because None is what
+    // keeps the candidate pool from growing by the size of the player's wardrobe.
+    // A well-meaning "also recommend my resist-fire gear" change would show up
+    // here first.
+    {
+        logger::info("TEST: ApparelClassifier craft-skill mapping (#65)..."sv);
+
+        using Apparel::ApparelClassifier;
+        using Apparel::CraftSkill;
+
+        struct Case { RE::ActorValue av; CraftSkill expected; std::string_view what; };
+        const Case kCases[] = {
+            // The three craft skills, vanilla AVs...
+            {RE::ActorValue::kAlchemy,                CraftSkill::Alchemy,    "Alchemy"},
+            {RE::ActorValue::kSmithing,               CraftSkill::Smithing,   "Smithing"},
+            {RE::ActorValue::kEnchanting,             CraftSkill::Enchanting, "Enchanting"},
+            // ...and the LoreRim PowerModifier variants, which is how the list
+            // this is developed against actually expresses them. Miss these and
+            // the feature is silently dead on the only modlist play-tested here.
+            {RE::ActorValue::kAlchemyPowerModifier,   CraftSkill::Alchemy,    "Alchemy (LoreRim)"},
+            {RE::ActorValue::kSmithingPowerModifier,  CraftSkill::Smithing,   "Smithing (LoreRim)"},
+
+            // ...and the Modifier series, which is what APPAREL enchantments
+            // carry. Missing it made the whole feature inert on its first
+            // play-test: 21 armor pieces scanned, 13 enchanted, 0 recognised.
+            {RE::ActorValue::kSmithingModifier,   CraftSkill::Smithing,   "Fortify Smithing (apparel)"},
+            {RE::ActorValue::kAlchemyModifier,    CraftSkill::Alchemy,    "Fortify Alchemy (apparel)"},
+            {RE::ActorValue::kEnchantingModifier, CraftSkill::Enchanting, "Fortify Enchanting (apparel)"},
+
+            // Neighbours in the same series that must still be rejected — this is
+            // the guard against widening the match to the whole 96-113 block.
+            // Every one of these was observed on real gear in the same log.
+            {RE::ActorValue::kSpeechcraftModifier, CraftSkill::None, "Fortify Speechcraft (apparel)"},
+            {RE::ActorValue::kAlterationModifier,  CraftSkill::None, "Fortify Alteration (apparel)"},
+            {RE::ActorValue::kDestructionModifier, CraftSkill::None, "Fortify Destruction (apparel)"},
+            {RE::ActorValue::kIllusionModifier,    CraftSkill::None, "Fortify Illusion (apparel)"},
+            {RE::ActorValue::kRestorationModifier, CraftSkill::None, "Fortify Restoration (apparel)"},
+
+            // The scope guard. Each of these is a real fortify effect that a
+            // player owns gear for, and none may enter the pool.
+            {RE::ActorValue::kHealth,        CraftSkill::None, "Fortify Health"},
+            {RE::ActorValue::kMagicka,       CraftSkill::None, "Fortify Magicka"},
+            {RE::ActorValue::kStamina,       CraftSkill::None, "Fortify Stamina"},
+            {RE::ActorValue::kCarryWeight,   CraftSkill::None, "Fortify Carry Weight"},
+            {RE::ActorValue::kSneak,         CraftSkill::None, "Fortify Sneak"},
+            {RE::ActorValue::kDestruction,   CraftSkill::None, "Fortify Destruction"},
+            {RE::ActorValue::kOneHanded,     CraftSkill::None, "Fortify One-Handed"},
+            {RE::ActorValue::kHeavyArmor,    CraftSkill::None, "Fortify Heavy Armor"},
+        };
+
+        for (const auto& c : kCases) {
+            const auto got = ApparelClassifier::CraftSkillForActorValue(c.av);
+            if (got != c.expected) {
+                logger::error("TEST FAIL (6k): {} (AV {}) should map to {}, got {}",
+                    c.what, static_cast<int>(c.av),
+                    Apparel::CraftSkillToString(c.expected),
+                    Apparel::CraftSkillToString(got));
+                return;
+            }
+        }
+
+        logger::info("TEST PASS: ApparelClassifier maps craft skills and rejects the rest"sv);
     }
 
     // Test 7: ContextRuleEngine combat rules (Stage 1e - Binary Weights)

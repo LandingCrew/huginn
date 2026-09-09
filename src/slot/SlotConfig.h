@@ -43,6 +43,7 @@ namespace Huginn::Slot
         FoodAny,        // Food items (CC Survival Mode)
         AlcoholAny,     // Alcoholic beverages (ale, mead, wine, skooma)
         AmmoAny,        // Ammunition (arrows, bolts)
+        ApparelAny,     // #65: fortify-crafting gear (only scores at a workstation)
 
         // Unrestricted
         Regular,        // No restriction - accepts any candidate (legacy behavior)
@@ -119,7 +120,7 @@ namespace Huginn::Slot
 
     [[nodiscard]] inline constexpr std::string_view SlotClassificationToString(SlotClassification c) noexcept
     {
-        static_assert(SLOT_CLASSIFICATION_COUNT == 21,
+        static_assert(SLOT_CLASSIFICATION_COUNT == 22,
             "SlotClassification changed — add the new case to this switch and its siblings");
         switch (c) {
             case SlotClassification::DamageAny:   return "DamageAny";
@@ -142,6 +143,7 @@ namespace Huginn::Slot
             case SlotClassification::FoodAny:      return "FoodAny";
             case SlotClassification::AlcoholAny:   return "AlcoholAny";
             case SlotClassification::AmmoAny:      return "AmmoAny";
+            case SlotClassification::ApparelAny:   return "ApparelAny";
             case SlotClassification::Regular:      return "Regular";
             default:                              return "Unknown";
         }

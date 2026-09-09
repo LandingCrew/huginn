@@ -29,12 +29,14 @@ namespace Huginn::Candidate
         Spell::SpellRegistry& spellRegistry,
         Item::ItemRegistry& itemRegistry,
         Weapon::WeaponRegistry& weaponRegistry,
-        Scroll::ScrollRegistry& scrollRegistry)
+        Scroll::ScrollRegistry& scrollRegistry,
+        Apparel::ApparelRegistry& apparelRegistry)
     {
         m_spellRegistry = &spellRegistry;
         m_itemRegistry = &itemRegistry;
         m_weaponRegistry = &weaponRegistry;
         m_scrollRegistry = &scrollRegistry;
+        m_apparelRegistry = &apparelRegistry;
 
         // Initialize cooldown durations from config
         m_cooldownMgr.SetDuration(SourceType::Spell, m_config.spellCooldown);
@@ -44,6 +46,10 @@ namespace Huginn::Candidate
         m_cooldownMgr.SetDuration(SourceType::Ammo, m_config.ammoCooldown);
         m_cooldownMgr.SetDuration(SourceType::SoulGem, m_config.soulGemCooldown);
         m_cooldownMgr.SetDuration(SourceType::Food, m_config.foodCooldown);
+        // No SourceType::Apparel duration on purpose. A cooldown means "you just
+        // used this, stop offering it"; apparel is not used, it is worn, and the
+        // isEquipped filter already removes what is on the player. The array
+        // entry defaults to 0 (no cooldown), which is the correct behaviour.
 
         // Create filters
         m_filters = std::make_unique<CandidateFilters>(m_cooldownMgr, m_config);
@@ -74,6 +80,10 @@ namespace Huginn::Candidate
         m_cooldownMgr.SetDuration(SourceType::Ammo, m_config.ammoCooldown);
         m_cooldownMgr.SetDuration(SourceType::SoulGem, m_config.soulGemCooldown);
         m_cooldownMgr.SetDuration(SourceType::Food, m_config.foodCooldown);
+        // No SourceType::Apparel duration on purpose. A cooldown means "you just
+        // used this, stop offering it"; apparel is not used, it is worn, and the
+        // isEquipped filter already removes what is on the player. The array
+        // entry defaults to 0 (no cooldown), which is the correct behaviour.
     }
 
     // =========================================================================
@@ -117,6 +127,7 @@ namespace Huginn::Candidate
         GatherWeaponCandidates(m_gatherBuffer, player);
         GatherAmmoCandidates(m_gatherBuffer, player);
         GatherSoulGemCandidates(m_gatherBuffer, player);
+        GatherApparelCandidates(m_gatherBuffer, player);
 
         // Step 3: Filter gathered candidates into a local output vector.
         // Survivors are moved from m_gatherBuffer into output (one move per
@@ -366,6 +377,40 @@ namespace Huginn::Candidate
             ++gathered;
         });
         m_stats.soulGemsScanned = gathered;
+    }
+
+    void CandidateGenerator::GatherApparelCandidates(
+        std::vector<CandidateVariant>& out,
+        const State::PlayerActorState& player)
+    {
+        (void)player;
+
+        if (!m_apparelRegistry) {
+            logger::warn("[CandidateGenerator] GatherApparelCandidates: m_apparelRegistry is null");
+            return;
+        }
+        if (m_apparelRegistry->IsLoading()) {
+            logger::debug("[CandidateGenerator] GatherApparelCandidates: registry is loading, skipping");
+            return;
+        }
+
+        // No context gate here, deliberately. Every other source is gathered
+        // unconditionally and filtered by weight downstream, and apparel follows
+        // the same path: WeightForCandidate returns 0.0 away from a workstation,
+        // so minimumContextWeight drops these before scoring. Gating the GATHER
+        // on world.isLookingAtWorkstation would be a second, redundant policy in
+        // a second place — and the pool is tiny by construction, because
+        // ApparelRegistry only ever holds craft-relevant pieces.
+        size_t gathered = 0;
+        m_apparelRegistry->ForEachApparel([&](const Apparel::InventoryApparel& apparel) {
+            // Already worn — nothing to recommend. Cheaper to skip here than to
+            // build a candidate for PassesBasicFilters() to throw away.
+            if (apparel.isEquipped) return;
+
+            out.push_back(ApparelCandidate::FromInventoryApparel(apparel));
+            ++gathered;
+        });
+        m_stats.apparelScanned = gathered;
     }
 
     // =========================================================================

@@ -361,6 +361,17 @@ static void MaintainRegistries(RE::PlayerCharacter* player,
             g_scrollRegistry->ReconcileScrolls(player);
         }
     }
+
+    // Apparel registry (#65) — reconcile only, on the same 30s interval. There is
+    // no delta scan: craft gear is not consumed, so there is no consumption event
+    // to detect, and picking up a new fortify ring mid-fight is not urgent. The
+    // reconcile is a no-op until extraLists stabilize (ApparelRegistry.h).
+    if (g_apparelRegistry) {
+        if (g_registryTimers.apparelReconcile.CheckAndReset(now, Config::ITEM_RECONCILE_INTERVAL_MS)) {
+            Huginn_ZONE_NAMED("ApparelRegistry::Reconcile");
+            g_apparelRegistry->ReconcileApparel();
+        }
+    }
 }
 
 // =============================================================================

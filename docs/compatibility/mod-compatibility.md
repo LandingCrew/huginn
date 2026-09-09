@@ -112,10 +112,37 @@ outside the nine known types logs a warning and becomes `WeaponType::Unknown`.
 
 ### Apparel
 
-Not a candidate source at all. `SourceType` (`src/candidate/CandidateTypes.h`)
-covers Spell, Potion, Scroll, Weapon, Ammo, SoulGem, Food and Staff — there is
-no armor entry, so fortify gear can never be recommended no matter how it is
-classified. This is roadmap item #65 and it is open.
+A candidate source since #65, but a deliberately narrow one. `SourceType`
+(`src/candidate/CandidateTypes.h`) now covers Spell, Potion, Scroll, Weapon,
+Ammo, SoulGem, Food, Staff and Apparel.
+
+**Only gear that fortifies Alchemy, Smithing or Enchanting is a candidate.**
+Classification is the scope guard: `ApparelClassifier::CraftSkillForActorValue`
+returns `None` for everything else and `ApparelRegistry` never stores it, so the
+pool grows by the size of the player's fortify set rather than their wardrobe.
+Resist, carry-weight and combat-skill enchantments are out of scope by design —
+widening that is a change to one function.
+
+Apparel is also the only source with **no baseline context weight**: it scores
+0.0 away from a matching workstation, so it is dropped by `minimumContextWeight`
+before scoring rather than after. It costs nothing in the rest of play, and it
+cannot surface on a typed slot the way every other source can.
+
+**Enchantment actor values differ from potions.** Apparel enchantments use
+Skyrim's "+90" skill-modifier series (Smithing 100, Alchemy 106, Enchanting 113),
+NOT the values `ItemClassifier` uses for potions. Mapping only the potion
+vocabulary made the feature inert on its first play-test — see
+[lorerim.md](lorerim.md#measured-lorerim-apparel-enchantments-use-a-different-actor-value-series)
+for the measurement.
+
+**Both enchantment sources are read**: the base form's `formEnchanting` (vanilla
+pre-enchanted gear) and `ExtraEnchantment` on the inventory stack (player-made).
+Because the player-applied one lives in extraLists, `ApparelRegistry` defers its
+first scan until those stabilize instead of degrading — a scan before then would
+classify every player-enchanted piece as non-craft and reject it.
+
+**No slot-conflict handling.** Two Fortify Alchemy rings can both be recommended,
+and nothing restores the gear a recommendation displaces.
 
 ---
 

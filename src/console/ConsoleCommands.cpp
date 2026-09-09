@@ -207,11 +207,15 @@ namespace Huginn::Console
       }
 
       // Registries
-      auto regMsg = std::format("Registries: {} spells, {} items, {} weapons, {} scrolls",
+      auto regMsg = std::format("Registries: {} spells, {} items, {} weapons, {} scrolls, {} craft apparel",
       g_spellRegistry ? g_spellRegistry->GetSpellCount() : 0,
       g_itemRegistry ? g_itemRegistry->GetItemCount() : 0,
       g_weaponRegistry ? g_weaponRegistry->GetWeaponCount() : 0,
-      g_scrollRegistry ? g_scrollRegistry->GetScrollCount() : 0);
+      g_scrollRegistry ? g_scrollRegistry->GetScrollCount() : 0,
+      // #65. Worth reading as a diagnostic: 0 here on a character who owns
+      // fortify gear means classification rejected it, which is the first thing
+      // to check when apparel never surfaces at a bench.
+      g_apparelRegistry ? g_apparelRegistry->GetApparelCount() : 0);
       Print(regMsg.c_str());
 
       // Pages (query before slot locks so we know the actual count)

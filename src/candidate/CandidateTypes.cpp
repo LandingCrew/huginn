@@ -181,4 +181,30 @@ namespace Huginn::Candidate
         return FromScrollData(invScroll.data, invScroll.count);
     }
 
+
+    // =============================================================================
+    // APPAREL CANDIDATE FACTORY (#65)
+    // =============================================================================
+    ApparelCandidate ApparelCandidate::FromInventoryApparel(
+        const Apparel::InventoryApparel& invApparel)
+    {
+        ApparelCandidate candidate;
+        candidate.formID = invApparel.data.formID;
+        candidate.name = invApparel.data.name;
+        candidate.sourceType = SourceType::Apparel;
+        // Carried so two player-enchanted copies of one base form stay distinct
+        // through GetDeduplicationKey(); Wheeler needs it to activate the right
+        // inventory stack.
+        candidate.uniqueID = invApparel.data.uniqueID;
+
+        candidate.craftSkill = invApparel.data.craftSkill;
+        candidate.magnitude = invApparel.data.magnitude;
+
+        // Worn gear is the apparel equivalent of an active buff: re-recommending
+        // what the player already has on is pure noise. PassesBasicFilters() drops
+        // it on this flag alone, which is why apparel needs no cooldown.
+        candidate.isEquipped = invApparel.isEquipped;
+
+        return candidate;
+    }
 }  // namespace Huginn::Candidate

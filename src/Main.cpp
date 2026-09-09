@@ -217,13 +217,26 @@ static void InitializeGameSystems(bool isNewGame)
         g_scrollRegistry->ReconcileScrolls();
     }
 
+    // ApparelRegistry (#65)
+    if (!g_apparelRegistry) {
+        g_apparelRegistry = std::make_unique<Huginn::Apparel::ApparelRegistry>();
+    }
+    // Both paths only clear. Unlike the other registries there is no useful
+    // scan to do here: a player-applied enchantment lives in extraLists, which
+    // are not readable this early, and apparel is classified BY its enchantment.
+    // The first periodic reconcile past the stabilization window fills it — see
+    // ApparelRegistry.h. Nothing is waiting on it; apparel only matters at a
+    // workstation.
+    g_apparelRegistry->RebuildRegistry();
+
     // ── 4. CandidateConfig + CandidateGenerator ────────────────────────
     if (haveMainIni) LoadCandidateConfigFromINI(mainIni);
     {
         auto& candidateGen = Candidate::CandidateGenerator::GetSingleton();
         if (!candidateGen.IsInitialized()) {
             candidateGen.Initialize(*g_spellRegistry, *g_itemRegistry,
-                                    *g_weaponRegistry, *g_scrollRegistry);
+                                    *g_weaponRegistry, *g_scrollRegistry,
+                                    *g_apparelRegistry);
         }
         // The generator holds its own copy of the config; nothing else pushes
         // g_candidateConfig into it. Without this, LoadCandidateConfigFromINI
@@ -355,6 +368,15 @@ static void InitializeGameSystems(bool isNewGame)
             std::chrono::steady_clock::now() - std::chrono::milliseconds(static_cast<int64_t>(
                 Config::WEAPON_RECONCILE_INTERVAL_MS - Config::WEAPON_RECONCILE_RETRY_MS)));
     }
+
+    // ApparelRegistry never scans on the load path at all (see step 3 and
+    // Config::APPAREL_RECONCILE_RETRY_MS), so unlike the weapon case above this
+    // is unconditional: there is no degraded data to tide us over, the registry
+    // is simply empty until the first reconcile. Prime it to come due just after
+    // the stabilization window rather than a full 30 s later.
+    g_registryTimers.apparelReconcile.Reset(
+        std::chrono::steady_clock::now() - std::chrono::milliseconds(static_cast<int64_t>(
+            Config::ITEM_RECONCILE_INTERVAL_MS - Config::APPAREL_RECONCILE_RETRY_MS)));
 
     // ── 10. StateManager force update (debug only) ────────────────────
     // ResetTrackingState() already called by ResetPipelineSubsystems() above.

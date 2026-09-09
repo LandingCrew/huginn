@@ -54,6 +54,9 @@ namespace Huginn::Scoring
         [[nodiscard]] float CalculateScrollPrior(
             const Candidate::ScrollCandidate& scroll) const;
 
+        [[nodiscard]] float CalculateApparelPrior(
+            const Candidate::ApparelCandidate& apparel) const;
+
         // =============================================================================
         // INTRINSIC PROPERTY CONSTANTS
         // =============================================================================
@@ -69,6 +72,24 @@ namespace Huginn::Scoring
         // Example: 200 HP potion vs 50 HP potion → ~0.1 difference in prior
         static constexpr float MAGNITUDE_REFERENCE_VALUE = 100.0f;  // Major healing potion
         static constexpr float MAGNITUDE_SCALE_FACTOR = 0.15f;      // Max bonus from magnitude
+
+        // Apparel fortify magnitude (#65). A separate reference from
+        // MAGNITUDE_REFERENCE_VALUE because the units are unrelated: a potion's
+        // magnitude is points of health, a fortify enchantment's is a PERCENT.
+        //
+        // Was 25.0 as a vanilla-scale guess. Now 15.0, from the first real
+        // measurement (LoreRim, 2026-09-08, 13 enchanted pieces): skill fortifies
+        // on that list run 2% at the "Minor" tier to 20% at "Eminent", so a 25
+        // reference put essentially the whole list in the bottom of the curve.
+        // 15 centres the saturating range on the tiers actually seen.
+        //
+        // STILL THIN: one character, one modlist, and only ONE of the pieces was
+        // a craft skill (Circlet of Minor Alchemy, 2%) — the rest of the range is
+        // inferred from non-craft fortifies sharing the tier naming. Treat the
+        // ordering between two craft pieces as provisional until more inventories
+        // are sampled. The log curve is forgiving, so this mostly affects how much
+        // a strong piece outranks a weak one, not whether either surfaces.
+        static constexpr float APPAREL_MAGNITUDE_REFERENCE = 15.0f;
 
         // Spell cost scaling (linear - higher cost generally means more powerful spell)
         // Example: Expert spell (cost 200) vs Novice spell (cost 20) → ~0.09 difference

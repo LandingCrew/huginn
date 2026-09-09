@@ -54,6 +54,7 @@ class Intuition extends MovieClip
     private static var COLOR_MAGICKA_POT:Number = 0x6699FF;  // Soft blue
     private static var COLOR_STAMINA_POT:Number = 0x66FF66;  // Soft green
     private static var COLOR_WEAPON:Number      = 0xE6B84D;  // Warm gold
+    private static var COLOR_APPAREL:Number     = 0xC99BFF;  // Soft violet (#65 craft gear)
     private static var COLOR_EMPTY:Number       = 0x808080;  // Gray
     private static var COLOR_KEY:Number         = 0x999999;  // Dim
 
@@ -67,6 +68,7 @@ class Intuition extends MovieClip
     private static var TYPE_STAMINA_POTION:Number = 6;
     private static var TYPE_MELEE_WEAPON:Number   = 7;
     private static var TYPE_RANGED_WEAPON:Number  = 8;
+    private static var TYPE_APPAREL:Number        = 9;
 
     // ── Instance references ───────────────────────────────────
     private var _background:MovieClip;
@@ -671,6 +673,7 @@ class Intuition extends MovieClip
         if (type == TYPE_STAMINA_POTION) return COLOR_STAMINA_POT;
         if (type == TYPE_MELEE_WEAPON)   return COLOR_WEAPON;
         if (type == TYPE_RANGED_WEAPON)  return COLOR_WEAPON;
+        if (type == TYPE_APPAREL)        return COLOR_APPAREL;
         return COLOR_EMPTY;
     }
 

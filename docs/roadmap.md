@@ -179,22 +179,6 @@ trigger to pick any of it up.
       decide whether the modifier is latched at key-down or sampled throughout.
       Also needs a conflict story for modifiers the game itself binds. Nexus page
       currently states "only single keypresses" — update it when this lands (M)
-- [ ] Wheeler leaves an empty unmanaged wheel behind when a client's wheels were
-      the only ones, and it PERSISTS — `SerializeIntoJsonObj` skips only managed
-      wheels, so the placeholder is written to the co-save as `{"entries": []}`
-      and rebuilt on load like a user wheel. Bounded at one (the next teardown
-      finds it still there, so the list never empties again), but permanent once
-      a player has it, and confirmed in-game 2026-08-29 at index 3 after a
-      teardown+recreate. Upstream introduced it in `ca2e2f2` because
-      `MoveEntryForward/BackInCurrentWheel` (Wheeler.cpp ~911/926) deref
-      `_wheels[_activeWheelIdx]` behind an `_activeWheelIdx != -1` test that
-      never fires — a full audit confirmed those are the only two unguarded
-      `_wheels` accesses. Fix: guard both on `_wheels.empty()`, then drop the
-      `push_back`. NOT `_activeWheelIdx = -1` — `AddWheel`/`PushWheel` never
-      touch the index and `API_CreateManagedWheel`'s `if (activeIdx >= index)`
-      fixup misses -1, so a -1 would survive into a non-empty list. Dropping the
-      push does not retroactively remove one already saved; decide whether that
-      needs a cleanup path (S)
 - [ ] `ValidateWheelState` emits ~11 desync warns during a Wheeler edit-mode
       session — stale by construction, since Huginn has no signal that indices
       moved until edit mode exits, and the exit re-resolve corrects everything

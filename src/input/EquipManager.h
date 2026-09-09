@@ -86,6 +86,13 @@ namespace Huginn::Input
       /// Use a soul gem to recharge the equipped enchanted weapon
       bool UseSoulGem(RE::FormID formID);
 
+      /// Equip fortify-crafting apparel by FormID (#65).
+      /// Unlike every other entry point here this one is not "use" — the piece
+      /// goes on and STAYS on. Huginn does not track or restore what it replaced;
+      /// taking it off again is the player's business. See the note on
+      /// ApparelCandidate.
+      bool EquipApparel(RE::FormID formID);
+
       /// Callback for learning system
       EquipCallback m_equipCallback;
 

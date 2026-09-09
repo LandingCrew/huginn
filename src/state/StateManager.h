@@ -415,6 +415,7 @@ namespace Huginn::State
       std::unordered_set<RE::FormID> m_oreVeinCache;
       std::unordered_set<RE::FormID> m_notOreVeinCache;
 
+
       // =============================================================================
       // CROSSHAIR HYSTERESIS STATE (v0.6.7 - Prevents target flickering)
       // =============================================================================

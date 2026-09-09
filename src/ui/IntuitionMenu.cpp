@@ -496,6 +496,12 @@ namespace Huginn::UI
             case SlotContentType::RangedWeapon:  return IntuitionSlotType::kRangedWeapon;
             case SlotContentType::Ammo:          return IntuitionSlotType::kRangedWeapon;  // Arrows/bolts use ranged visual
             case SlotContentType::SoulGem:       return IntuitionSlotType::kSpell;  // Use spell visual for soul gems
+            // Craft gear gets its own colour (soft violet #C99BFF) rather than
+            // borrowing the weapon gold, so a fortify piece is not mistaken for a
+            // weapon at a glance. Without a case here it falls to the default and
+            // renders as kEmpty — #808080 at 50% ALPHA, the styling for a slot
+            // holding nothing, which reads to a player as "no recommendation".
+            case SlotContentType::Apparel:       return IntuitionSlotType::kApparel;
             default:                             return IntuitionSlotType::kEmpty;
         }
     }

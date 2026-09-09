@@ -197,6 +197,52 @@ namespace Huginn::Input
       return true;
    }
 
+   bool EquipManager::EquipApparel(RE::FormID formID)
+   {
+      if (formID == 0) {
+      logger::warn("[EquipManager] Cannot equip apparel with FormID 0"sv);
+      return false;
+      }
+
+      auto* player = RE::PlayerCharacter::GetSingleton();
+      if (!player) {
+      logger::warn("[EquipManager] Player not found"sv);
+      return false;
+      }
+
+      auto* equipManager = RE::ActorEquipManager::GetSingleton();
+      if (!equipManager) {
+      logger::warn("[EquipManager] ActorEquipManager not found"sv);
+      return false;
+      }
+
+      auto* form = RE::TESForm::LookupByID(formID);
+      if (!form) {
+      logger::warn("[EquipManager] Apparel FormID {:08X} not found"sv, formID);
+      return false;
+      }
+
+      auto* armor = form->As<RE::TESObjectARMO>();
+      if (!armor) {
+      logger::warn("[EquipManager] FormID {:08X} is not apparel"sv, formID);
+      return false;
+      }
+
+      // No equipSlot argument, unlike EquipWeapon. Armor declares its own biped
+      // slots on the form and the engine resolves them; passing a hand slot here
+      // is what makes EquipObject silently no-op.
+      //
+      // Whatever already occupies those slots is unequipped by the game as a
+      // side effect. That is the intended behaviour for a fortify swap, but note
+      // it is not undone: nothing here remembers the displaced piece.
+      equipManager->EquipObject(player, armor);
+
+      logger::info("[EquipManager] Equipped apparel '{}' (FormID: {:08X})"sv,
+      armor->GetName(), formID);
+
+      return true;
+   }
+
    bool EquipManager::EquipAmmo(RE::FormID formID)
    {
       if (formID == 0) {
@@ -532,6 +578,10 @@ namespace Huginn::Input
 
       case UI::SlotContentType::SoulGem:
       success = UseSoulGem(content.formID);
+      break;
+
+      case UI::SlotContentType::Apparel:
+      success = EquipApparel(content.formID);
       break;
 
       default:

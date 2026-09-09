@@ -121,6 +121,17 @@ namespace Huginn::Config
    // of waiting a full WEAPON_RECONCILE_INTERVAL_MS.
    inline constexpr float WEAPON_RECONCILE_RETRY_MS = 1000.0f;
 
+   // Same idea for apparel (#65), and for a stronger reason. WeaponRegistry does
+   // a DEGRADED scan on the load path — weapons are present, just without
+   // favorites or charge. ApparelRegistry does none at all: a piece is classified
+   // by its enchantment, a player enchantment lives in extraLists, so a load-path
+   // scan would reject every player-made item permanently. RebuildRegistry
+   // therefore only clears, and the registry is EMPTY until the first reconcile.
+   // Without priming that is a full 30 s after every save load, during which
+   // walking to a workstation shows nothing — observed 2026-09-08: load at
+   // 22:17:11, first reconcile 22:17:41, slot populated 22:17:43.
+   inline constexpr float APPAREL_RECONCILE_RETRY_MS = 1000.0f;
+
    // Minimum time to wait after save load before accessing extraLists (v0.7.9)
    // During this window, extraLists pointers may be stale/uninitialized
    // Accessing them causes EXCEPTION_ACCESS_VIOLATION crashes
