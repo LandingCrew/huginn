@@ -216,8 +216,11 @@ namespace Huginn::Candidate
     struct ApparelCandidate : CandidateBase
     {
         Apparel::CraftSkill  craftSkill = Apparel::CraftSkill::None;
-        Apparel::ApparelSlot slot = Apparel::ApparelSlot::Unknown;
         float                magnitude = 0.0f;  // Fortify magnitude — the ranking key
+        // No `slot` here on purpose. ApparelData carries one for its ToString(),
+        // which the registry logs; nothing outside that reads an ApparelSlot, and
+        // a field on the candidate with no consumer is the exact dead weight the
+        // roadmap's "three tag values have no writer" entry is about.
 
         ApparelCandidate() { sourceType = SourceType::Apparel; }
 

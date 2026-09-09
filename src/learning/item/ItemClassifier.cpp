@@ -379,7 +379,7 @@ namespace Huginn::Item
       data.combatSkill = CombatSkill::LightArmor;
       break;
       case RE::ActorValue::kSmithing:
-      case RE::ActorValue::kSmithingPowerModifier:    // LORERIM (141)
+      case RE::ActorValue::kSmithingPowerModifier:    // 139 (141 is kLightArmorPowerModifier)
       data.tags |= ItemTag::FortifyCombatSkill;
       data.combatSkill = CombatSkill::Smithing;
       break;
@@ -410,7 +410,7 @@ namespace Huginn::Item
       data.utilitySkill = UtilitySkill::Speech;
       break;
       case RE::ActorValue::kAlchemy:
-      case RE::ActorValue::kAlchemyPowerModifier:     // LORERIM (148)
+      case RE::ActorValue::kAlchemyPowerModifier:     // 145 (148 is kConjurationPowerModifier)
       data.tags |= ItemTag::FortifyUtilitySkill;
       data.utilitySkill = UtilitySkill::Alchemy;
       break;

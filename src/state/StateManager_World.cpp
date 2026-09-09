@@ -117,33 +117,7 @@ namespace Huginn::State
         if (benchType != RE::TESFurniture::WorkBenchData::BenchType::kNone) {
            state.isLookingAtWorkstation = true;
            state.workstationType = static_cast<uint8_t>(benchType);
-           return;
         }
-      }
-      }
-
-      // DIAGNOSTIC (#65): say what we looked at and rejected.
-      //
-      // Detection requires Furniture with a non-kNone benchType. A forge on
-      // LoreRim satisfies that; an alchemy lab on the same list did not fire at
-      // all, and there was no way to tell "wrong form type" from "benchType is
-      // kNone" from "no crosshair ref" — the failure was silent, exactly like
-      // the apparel actor-value problem was.
-      //
-      // Overhauls do replace crafting stations with Activators, or leave the
-      // furniture's bench data empty and drive crafting from a script, so the
-      // form type and bench type are the two facts worth having.
-      //
-      // Once per distinct base form, debug level only.
-      if (formType == RE::FormType::Furniture || formType == RE::FormType::Activator) {
-      const RE::FormID baseID = baseObj->GetFormID();
-      if (m_workstationProbeCache.insert(baseID).second) {
-        int bench = -1;
-        if (auto* furniture = baseObj->As<RE::TESFurniture>(); furniture) {
-           bench = static_cast<int>(furniture->workBenchData.benchType.get());
-        }
-        logger::debug("[Workstation] Not a workstation: '{}' ({:08X}) formType={} benchType={}"sv,
-           baseObj->GetName(), baseID, static_cast<int>(formType), bench);
       }
       }
    }

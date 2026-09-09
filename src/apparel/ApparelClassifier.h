@@ -47,6 +47,11 @@ namespace Huginn::Apparel
        *       including the LoreRim *PowerModifier variants.
        */
       [[nodiscard]] static CraftSkill CraftSkillForActorValue(RE::ActorValue av) noexcept;
+      // NOTE: this is NOT shared with ItemClassifier::DetermineFortifySkillType,
+      // despite what an earlier version of this comment claimed. The two have
+      // already drifted: ItemClassifier has no case for the Modifier series, so a
+      // potion carrying kAlchemyModifier falls into its default and is never
+      // tagged. Unifying them is open work, not a description of today.
 
    private:
       /// Biped slot from the armor's slot mask (display/logging only).

@@ -10,63 +10,35 @@ namespace Huginn::Apparel
    // Keep the two in step: a fortify effect that a potion recognises should be
    // recognised on a ring too.
    // =============================================================================
-   namespace
-   {
-      // Skyrim carries each skill THREE times: the skill itself, a "+90" modifier
-      // series, and a power-modifier series. Apparel enchantments overwhelmingly
-      // use the +90 one, and the original version of this function did not map it
-      // at all — it reused the vocabulary from ItemClassifier, which was written
-      // for POTIONS, so every enchanted piece in a real inventory was rejected.
-      //
-      // Measured 2026-09-08 on LoreRim, six independent confirmations in one
-      // inventory: Alchemy 106, Speechcraft 107, Alteration 108, Destruction 110,
-      // Illusion 111, Restoration 112 — each exactly its skill index + 90. That
-      // puts Smithing at 100 and Enchanting at 113.
-      constexpr int kSkillModifierOffset = 90;
-
-      /// The +90 modifier AV for a base skill AV.
-      [[nodiscard]] constexpr RE::ActorValue SkillModifier(RE::ActorValue skill) noexcept
-      {
-         return static_cast<RE::ActorValue>(static_cast<int>(skill) + kSkillModifierOffset);
-      }
-
-      // Pin the derivation to the value actually observed in the log, so this
-      // cannot drift on a CommonLib enum change without the build saying so.
-      // 106 is 'Circlet of Minor Alchemy' as logged by ApparelRegistry.
-      static_assert(static_cast<int>(SkillModifier(RE::ActorValue::kAlchemy)) == 106,
-         "Fortify Alchemy apparel was measured at AV 106 — the +90 skill-modifier "
-         "derivation no longer produces it");
-      static_assert(static_cast<int>(SkillModifier(RE::ActorValue::kSmithing)) == 100,
-         "Fortify Smithing apparel is expected at AV 100");
-      static_assert(static_cast<int>(SkillModifier(RE::ActorValue::kEnchanting)) == 113,
-         "Fortify Enchanting apparel is expected at AV 113");
-   }
-
    CraftSkill ApparelClassifier::CraftSkillForActorValue(RE::ActorValue av) noexcept
    {
-      // Not a switch any more: the modifier values are computed from the base
-      // skill rather than written as literals, so they cannot be case labels.
-      // Keeping them derived is the point — a bare `case 100:` would be a magic
-      // number no one could check.
-
-      if (av == RE::ActorValue::kAlchemy ||
-          av == RE::ActorValue::kAlchemyPowerModifier ||          // LORERIM (148)
-          av == SkillModifier(RE::ActorValue::kAlchemy)) {        // 106 — apparel
+      // Skyrim carries each skill several times over: the skill itself, a
+      // "Modifier" series, and a "PowerModifier" series. Apparel enchantments
+      // use the Modifier series (kSmithingModifier = 100, kAlchemyModifier = 106,
+      // kEnchantingModifier = 113); potions use the other two. Mapping only the
+      // potion vocabulary — this function's first version copied it wholesale
+      // from ItemClassifier::DetermineFortifySkillType — made the whole feature
+      // inert on its first play-test: 21 armor pieces scanned, 13 enchanted, 0
+      // recognised.
+      switch (av) {
+      case RE::ActorValue::kAlchemy:
+      case RE::ActorValue::kAlchemyPowerModifier:     // 145
+      case RE::ActorValue::kAlchemyModifier:          // 106 — apparel
          return CraftSkill::Alchemy;
-      }
 
-      if (av == RE::ActorValue::kSmithing ||
-          av == RE::ActorValue::kSmithingPowerModifier ||         // LORERIM (141)
-          av == SkillModifier(RE::ActorValue::kSmithing)) {       // 100 — apparel
+      case RE::ActorValue::kSmithing:
+      case RE::ActorValue::kSmithingPowerModifier:    // 139
+      case RE::ActorValue::kSmithingModifier:         // 100 — apparel
          return CraftSkill::Smithing;
-      }
 
-      if (av == RE::ActorValue::kEnchanting ||
-          av == SkillModifier(RE::ActorValue::kEnchanting)) {     // 113 — apparel
+      case RE::ActorValue::kEnchanting:
+      case RE::ActorValue::kEnchantingPowerModifier:  // 152
+      case RE::ActorValue::kEnchantingModifier:       // 113 — apparel
          return CraftSkill::Enchanting;
-      }
 
-      return CraftSkill::None;
+      default:
+         return CraftSkill::None;
+      }
    }
 
    ApparelSlot ApparelClassifier::DetermineSlot(RE::TESObjectARMO* armor) noexcept

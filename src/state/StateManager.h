@@ -415,10 +415,6 @@ namespace Huginn::State
       std::unordered_set<RE::FormID> m_oreVeinCache;
       std::unordered_set<RE::FormID> m_notOreVeinCache;
 
-      /// Forms already reported by the workstation probe (#65 diagnostics).
-      /// One line per distinct base form, not per tick — the crosshair changes
-      /// constantly and this must not become a log firehose.
-      std::unordered_set<RE::FormID> m_workstationProbeCache;
 
       // =============================================================================
       // CROSSHAIR HYSTERESIS STATE (v0.6.7 - Prevents target flickering)

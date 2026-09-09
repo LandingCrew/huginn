@@ -198,7 +198,6 @@ namespace Huginn::Candidate
         candidate.uniqueID = invApparel.data.uniqueID;
 
         candidate.craftSkill = invApparel.data.craftSkill;
-        candidate.slot = invApparel.data.slot;
         candidate.magnitude = invApparel.data.magnitude;
 
         // Worn gear is the apparel equivalent of an active buff: re-recommending

@@ -112,7 +112,12 @@ namespace Huginn::Apparel
 
    const InventoryApparel* ApparelRegistry::GetApparel(RE::FormID formID, uint16_t uniqueID) const
    {
-      const uint64_t key = (static_cast<uint64_t>(uniqueID) << 32) | static_cast<uint64_t>(formID);
+      // Build the key through InventoryApparel::Key() rather than re-inlining the
+      // bit layout — two copies of a packing expression drift.
+      InventoryApparel probe{};
+      probe.data.formID = formID;
+      probe.data.uniqueID = uniqueID;
+      const uint64_t key = probe.Key();
 
       std::shared_lock lock(m_mutex);
       auto it = m_index.find(key);

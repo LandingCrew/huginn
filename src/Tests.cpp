@@ -2945,29 +2945,21 @@ void RunUnitTests()
             {RE::ActorValue::kAlchemyPowerModifier,   CraftSkill::Alchemy,    "Alchemy (LoreRim)"},
             {RE::ActorValue::kSmithingPowerModifier,  CraftSkill::Smithing,   "Smithing (LoreRim)"},
 
-            // ...and the "+90" skill-modifier series, which is what APPAREL
-            // enchantments actually carry. Deliberately written as raw numbers
-            // rather than derived: these are the values measured in-game on
-            // 2026-09-08, and the point of the test is to pin the observation
-            // independently of the arithmetic in ApparelClassifier. If someone
-            // changes the offset, the static_assert there and this test must
-            // BOTH be re-justified against a real inventory.
-            //
-            // 106 is logged verbatim as 'Circlet of Minor Alchemy'. Missing this
-            // series is what made the whole feature inert on first play-test:
-            // 19 armor pieces scanned, 11 enchanted, 0 recognised.
-            {static_cast<RE::ActorValue>(100), CraftSkill::Smithing,   "Fortify Smithing (apparel, AV 100)"},
-            {static_cast<RE::ActorValue>(106), CraftSkill::Alchemy,    "Fortify Alchemy (apparel, AV 106)"},
-            {static_cast<RE::ActorValue>(113), CraftSkill::Enchanting, "Fortify Enchanting (apparel, AV 113)"},
+            // ...and the Modifier series, which is what APPAREL enchantments
+            // carry. Missing it made the whole feature inert on its first
+            // play-test: 21 armor pieces scanned, 13 enchanted, 0 recognised.
+            {RE::ActorValue::kSmithingModifier,   CraftSkill::Smithing,   "Fortify Smithing (apparel)"},
+            {RE::ActorValue::kAlchemyModifier,    CraftSkill::Alchemy,    "Fortify Alchemy (apparel)"},
+            {RE::ActorValue::kEnchantingModifier, CraftSkill::Enchanting, "Fortify Enchanting (apparel)"},
 
             // Neighbours in the same series that must still be rejected — this is
             // the guard against widening the match to the whole 96-113 block.
             // Every one of these was observed on real gear in the same log.
-            {static_cast<RE::ActorValue>(107), CraftSkill::None, "Fortify Speechcraft (apparel)"},
-            {static_cast<RE::ActorValue>(108), CraftSkill::None, "Fortify Alteration (apparel)"},
-            {static_cast<RE::ActorValue>(110), CraftSkill::None, "Fortify Destruction (apparel)"},
-            {static_cast<RE::ActorValue>(111), CraftSkill::None, "Fortify Illusion (apparel)"},
-            {static_cast<RE::ActorValue>(112), CraftSkill::None, "Fortify Restoration (apparel)"},
+            {RE::ActorValue::kSpeechcraftModifier, CraftSkill::None, "Fortify Speechcraft (apparel)"},
+            {RE::ActorValue::kAlterationModifier,  CraftSkill::None, "Fortify Alteration (apparel)"},
+            {RE::ActorValue::kDestructionModifier, CraftSkill::None, "Fortify Destruction (apparel)"},
+            {RE::ActorValue::kIllusionModifier,    CraftSkill::None, "Fortify Illusion (apparel)"},
+            {RE::ActorValue::kRestorationModifier, CraftSkill::None, "Fortify Restoration (apparel)"},
 
             // The scope guard. Each of these is a real fortify effect that a
             // player owns gear for, and none may enter the pool.
