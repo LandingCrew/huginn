@@ -496,6 +496,13 @@ namespace Huginn::UI
             case SlotContentType::RangedWeapon:  return IntuitionSlotType::kRangedWeapon;
             case SlotContentType::Ammo:          return IntuitionSlotType::kRangedWeapon;  // Arrows/bolts use ranged visual
             case SlotContentType::SoulGem:       return IntuitionSlotType::kSpell;  // Use spell visual for soul gems
+            // Apparel reuses the weapon visual: warm gold #E6B84D at full alpha,
+            // the "equippable gear" colour, and the closest honest match in an
+            // enum the SWF fixes at 9 values. Without a case here it fell to the
+            // default and rendered as kEmpty — #808080 gray at 50% ALPHA, which
+            // is the dimmed styling for a slot holding nothing. The name was
+            // there and legitimately unreadable.
+            case SlotContentType::Apparel:       return IntuitionSlotType::kMeleeWeapon;
             default:                             return IntuitionSlotType::kEmpty;
         }
     }

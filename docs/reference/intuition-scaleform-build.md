@@ -221,8 +221,11 @@ which must match the AS2 `TYPE_*` constants:
 
 The pipeline's own `UI::SlotContentType` (`src/ui/SlotTypes.h`) is wider than
 this and is narrowed by `IntuitionMenu::MapSlotContentType()`: generic `Potion`
-falls back to the health-potion visual, `Ammo` uses the ranged-weapon visual, and
-`SoulGem` uses the spell visual.
+falls back to the health-potion visual, `Ammo` uses the ranged-weapon visual,
+`SoulGem` uses the spell visual, and `Apparel` uses the melee-weapon visual (the
+gear colour). Anything with NO case here renders as `kEmpty` — gray at 50% alpha
+— so a new `SlotContentType` that forgets this mapping shows up as an unreadable
+slot rather than an obvious error.
 
 ### Visual state enum
 

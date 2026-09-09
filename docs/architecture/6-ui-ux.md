@@ -444,6 +444,7 @@ sync with `Intuition.as`'s `TYPE_*` constants.
 | `RangedWeapon` | `kRangedWeapon` (8) | |
 | `Ammo` | `kRangedWeapon` (8) | Arrows/bolts share the ranged visual |
 | `SoulGem` | `kSpell` (2) | No gem visual; reuses the spell styling |
+| `Apparel` | `kMeleeWeapon` (7) | No gear visual; reuses the warm-gold equipment styling |
 
 **Colors** (`Intuition.as`, `getColorForType` / `getAlphaForType`):
 
