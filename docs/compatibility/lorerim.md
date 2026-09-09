@@ -127,6 +127,54 @@ on LoreRim is then:
 Settling this needs a second LoreRim inventory, or a look at Requiem's enchanting
 effect list. Until then the forge weight should not be assumed live on this list.
 
+#### The alchemy overhaul is Alchemy Redone, not (only) Requiem
+
+<!-- SOURCE: the mod's own Nexus description, supplied by a player of this list
+     2026-09-08. Not verified against the plugin from this repository. It is
+     recorded because it attributes LoreRim's alchemy behaviour better than the
+     bare "Requiem strips fortify effects" claim above, which nothing here ever
+     confirmed. -->
+
+LoreRim ships [Alchemy Redone](https://www.nexusmods.com/skyrimspecialedition/mods/42591),
+which rewrites the ingredient and effect system wholesale rather than trimming it:
+"Existing effects are changed, and new effects are added. All potions and poisons
+are patched along with ingredient changes." Ingredient scaling is reduced to
+magnitude OR duration, with -1/+1/+2 potency modifiers at 0.5x/2x/3x.
+
+So the working explanation for #63 should be "LoreRim's alchemy is overhauled by
+Alchemy Redone, on top of Requiem" rather than pinning it on Requiem alone. Both
+statements are still unverified from this repo; this one at least names a mod
+whose description says it rewrites the effect list.
+
+It also rebalances downward — "crafted potions are weaker at the beginning" —
+which is the same direction as the apparel magnitudes measured above (a "Minor"
+fortify at 2%). If potion magnitudes are scaled down too, `MAGNITUDE_REFERENCE_VALUE`
+(100.0, a vanilla major healing potion) is likely mis-centred on this list in the
+same way `APPAREL_MAGNITUDE_REFERENCE` was. Not measured; worth a capture.
+
+**Three new item shapes to check against the classifiers**, from its Elemental
+Alchemy feature. Each is described as behaving like a category Huginn already has
+a registry for, so the question is whether they classify as that category or fall
+through:
+
+| Item | Described as | Huginn path it should land in |
+|------|--------------|-------------------------------|
+| Oils | poison | `ItemClassifier` poison tagging |
+| Powders | scroll | `ScrollRegistry` / `ScrollClassifier` |
+| Weapon oils | enchantment | not a candidate source — see below |
+
+Weapon oils are the interesting one: an "enchantment" applied to a weapon is a
+USE-once consumable in inventory, and Huginn has no source type for that. If they
+are `AlchemyItem` forms they will be classified as potions or poisons; if they are
+something else they are invisible. Unmeasured — the check is whether a LoreRim
+character carrying oils and powders sees them in the registry counts at all
+(`hg status`).
+
+Requiem's alchemy perks are also reworked into "mutagen perks, granting the player
+creature-like traits with side effects". Side effects on a PERK rather than an
+item are outside anything `HasHarmfulSideEffects()` inspects, which only reads
+item tags.
+
 ### Three of the four extended spell tags are unreachable
 
 `SpellTagExt` covers `Unlock`, `SlowFall`, `AntiDragon` and `Waterbreathing`.
