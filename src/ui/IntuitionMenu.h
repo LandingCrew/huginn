@@ -27,7 +27,12 @@ namespace Huginn::UI
         kMagickaPotion  = 5,
         kStaminaPotion  = 6,
         kMeleeWeapon    = 7,
-        kRangedWeapon   = 8
+        kRangedWeapon   = 8,
+        // #65 craft gear. Adding a value here is only half the change — the AS2
+        // TYPE_* constants in src/swf/Intuition.as must match, and Intuition.swf
+        // must be REBUILT and committed (docs/reference/intuition-scaleform-build.md).
+        // The C++ build only copies the committed artifact.
+        kApparel        = 9
     };
 
     /**

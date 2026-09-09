@@ -444,7 +444,7 @@ sync with `Intuition.as`'s `TYPE_*` constants.
 | `RangedWeapon` | `kRangedWeapon` (8) | |
 | `Ammo` | `kRangedWeapon` (8) | Arrows/bolts share the ranged visual |
 | `SoulGem` | `kSpell` (2) | No gem visual; reuses the spell styling |
-| `Apparel` | `kMeleeWeapon` (7) | No gear visual; reuses the warm-gold equipment styling |
+| `Apparel` | `kApparel` (9) | Craft gear; own colour so it is not mistaken for a weapon |
 
 **Colors** (`Intuition.as`, `getColorForType` / `getAlphaForType`):
 
@@ -459,6 +459,7 @@ sync with `Intuition.as`'s `TYPE_*` constants.
 | `kStaminaPotion` | `#66FF66` soft green | 100% |
 | `kMeleeWeapon` | `#E6B84D` warm gold | 100% |
 | `kRangedWeapon` | `#E6B84D` warm gold | 100% |
+| `kApparel` | `#C99BFF` soft violet | 100% |
 
 Slot key labels are drawn in `#999999` and show `index + 1`. The background is a
 40%-alpha black panel with a 15%-alpha white border, auto-sized to the widest
@@ -1106,7 +1107,7 @@ graph TB
 | Urgent pulse | Implemented | Override/Wildcard, 2 s cycle, 60–100% alpha |
 | Expiring pulse | Implemented | 2.5 s cycle, 70–100% alpha |
 | Confirm flash | Implemented | Single 0.5 s dip on state entry |
-| Type-specific colors | Implemented | 9 widget types |
+| Type-specific colors | Implemented | 10 widget types |
 | Auto-sizing background | Implemented | Widens to the longest visible name |
 | Display modes | Implemented | minimal / normal / verbose |
 | Hot reload | Implemented | `hg reload` and the dMenu Reload INI button |
