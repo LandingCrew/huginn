@@ -169,6 +169,22 @@ void PipelineCoordinator::GatherState(PipelineContext& ctx)
     // the tick that flips it can hash-skip and the context never gets named.
     ctx.underwaterActive = ctx.playerState.isUnderwater;
 
+    // Standing at a crafting station, for the same reason (#63/#65). Walking up
+    // to a forge changes no hashed bucket — a bench is not a target, an enemy or
+    // a vital — so the tick that flips it hash-skips and the fortify weights
+    // never reach a slot.
+    //
+    // This is why the workstation context looked inert in play while unit test
+    // 6h passed: 6h calls EvaluateRules directly and never goes through the skip
+    // gate. Observed 2026-09-08 — the player stood at an alchemy lab with a
+    // recognised craft item in the registry and the pipeline last scored 17
+    // seconds before they arrived.
+    //
+    // Held ACTIVE rather than edge-latched, matching underwaterActive: a player
+    // can stand at a bench for minutes, and the slot has to stay populated the
+    // whole time, not just on the tick they walk up.
+    ctx.workstationActive = ctx.worldState.isLookingAtWorkstation;
+
     // The third instance of this shape — a pending reason downgrade (#62) — has
     // no ctx field: unlike these two it has no "current" reading to take here,
     // because ReasonHold only advances in ScoreCandidates, below the skip check.
@@ -195,7 +211,7 @@ bool PipelineCoordinator::CheckHashSkip(PipelineContext& ctx, bool pageChanged)
     // fixed-length, and a hold expires within REASON_HOLD_MS / UPDATE_INTERVAL_MS
     // runs (~15) and self-clears the moment the downgrade lands.
     const bool unhashedStateActive = ctx.elementalDamageActive || ctx.fallingActive ||
-                                     ctx.underwaterActive;
+                                     ctx.underwaterActive || ctx.workstationActive;
 
     if (ctx.stateHash == m_lastPipelineHash && !pageChanged &&
         !unhashedStateActive && !NeedsForcedRun()) {

@@ -54,6 +54,13 @@ namespace Huginn::Pipeline
         // Nor is being underwater (#61). It only started mattering when the
         // sensor began firing at all; before that the gap was invisible.
         bool underwaterActive = false;
+        // Nor is standing at a crafting station (#63/#65). Same shape as the two
+        // above, and the one that actually reaches a player: the workstation
+        // weights are the ONLY thing fortify gear and fortify potions score on,
+        // so while this was missing the whole workstation context could only
+        // surface when some unrelated dimension happened to move at the same
+        // moment.
+        bool workstationActive = false;
 
         // Pipeline outputs (built by successive steps)
         std::vector<Scoring::ScoredCandidate> scoredCandidates;
@@ -101,6 +108,7 @@ namespace Huginn::Pipeline
             elementalDamageActive = false;
             fallingActive = false;
             underwaterActive = false;
+            workstationActive = false;
 
             scoredCandidates.clear();
             overrides.activeOverrides.clear();
