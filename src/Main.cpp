@@ -369,6 +369,15 @@ static void InitializeGameSystems(bool isNewGame)
                 Config::WEAPON_RECONCILE_INTERVAL_MS - Config::WEAPON_RECONCILE_RETRY_MS)));
     }
 
+    // ApparelRegistry never scans on the load path at all (see step 3 and
+    // Config::APPAREL_RECONCILE_RETRY_MS), so unlike the weapon case above this
+    // is unconditional: there is no degraded data to tide us over, the registry
+    // is simply empty until the first reconcile. Prime it to come due just after
+    // the stabilization window rather than a full 30 s later.
+    g_registryTimers.apparelReconcile.Reset(
+        std::chrono::steady_clock::now() - std::chrono::milliseconds(static_cast<int64_t>(
+            Config::ITEM_RECONCILE_INTERVAL_MS - Config::APPAREL_RECONCILE_RETRY_MS)));
+
     // ── 10. StateManager force update (debug only) ────────────────────
     // ResetTrackingState() already called by ResetPipelineSubsystems() above.
 #ifdef _DEBUG
