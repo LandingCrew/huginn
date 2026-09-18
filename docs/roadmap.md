@@ -29,6 +29,25 @@ None open.
       alchemy lab (#65, PR #114); the forge may still have no live payload
 
 ## Known Recommendation Issues
+- [ ] Take craft gear back OFF when the crafting is done — the #65 follow-on.
+      Apparel is the one source that CHANGES THE PLAYER and leaves it changed:
+      every other recommendation is spent when used, but a fortify ring stays on
+      the finger after you walk away from the bench, and Huginn deliberately
+      tracks nothing about what it replaced ("taking it off again is the
+      player's business", CandidateTypes.h). Gear up at an alchemy lab with a
+      circlet and a ring and you leave wearing +6% alchemy and whatever armour
+      those two slots used to hold is in your pack.
+      Wants a decision before it wants code, roughly in order of nerve:
+      remember the displaced piece and offer to restore it once the workstation
+      context closes (a recommendation, so the player still chooses); surface a
+      "take it off" entry in the same slot while the gear is worn and the bench
+      is gone; or restore automatically on leaving, which is the only option
+      that acts on the player without being asked and should probably stay off
+      by default.
+      Note the restore target is an INSTANCE, not a form — it needs the
+      ExtraUniqueID plumbing from #65, and ApparelRegistry::MarkEquipped already
+      knows which piece each equip displaced (that is what the slot sweep is).
+      Raised 2026-09-18 after the swap loop was fixed.
 - [ ] Recommend enchanted apparel beyond the three craft skills — the #65
       follow-up. #65 itself is DONE (PR #114): apparel is a candidate source,
       verified in-game, but deliberately narrow — only gear fortifying Alchemy,
