@@ -125,8 +125,13 @@ namespace Huginn::Candidate
         // Timestamp of the previous Update() expiry scan (update thread only)
         std::chrono::steady_clock::time_point m_lastExpiryScan;
 
-        // Default durations indexed by SourceType
-        std::array<float, SOURCE_TYPE_COUNT> m_durations;
+        // Default durations indexed by SourceType.
+        // Value-initialized: the constructor only assigns the source types that
+        // have a configured cooldown, and SourceType::Apparel deliberately has
+        // none (see CandidateGenerator::Initialize). Without the {} that entry
+        // would hold whatever was in the memory, and the first StartCooldown for
+        // it would pin the piece for an indeterminate time.
+        std::array<float, SOURCE_TYPE_COUNT> m_durations{};
 
         // Timestamp of last cleanup pass
         std::chrono::steady_clock::time_point m_lastCleanup;

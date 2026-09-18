@@ -17,6 +17,13 @@ namespace Huginn::Input
    using EquipCallback = std::function<void(RE::FormID formID, bool wasRecommended)>;
 
    /**
+    * @brief Callback when fortify-crafting apparel is equipped (#65)
+    * @param formID Base form of the equipped piece
+    * @param uniqueID ExtraUniqueID of the stack that was worn (0 if none)
+    */
+   using ApparelEquippedCallback = std::function<void(RE::FormID formID, uint16_t uniqueID)>;
+
+   /**
     * @brief Manages spell equipping from widget slot selections
     *
     * Handles:
@@ -62,6 +69,20 @@ namespace Huginn::Input
        */
       void SetSoundsEnabled(bool enabled) { m_soundsEnabled = enabled; }
 
+      /**
+       * @brief Set the callback fired after apparel is successfully equipped
+       *
+       * Separate from SetEquipCallback, which feeds the learner. This one exists
+       * so ApparelRegistry's isEquipped flag can be true the moment the piece
+       * goes on rather than up to 30 s later — apparel has no cooldown, so that
+       * flag is the only thing that stops Huginn re-recommending what it just
+       * equipped. Wired in Main.cpp, which is the layer that knows about both
+       * input/ and apparel/.
+       */
+      void SetApparelEquippedCallback(ApparelEquippedCallback callback) {
+         m_apparelEquippedCallback = std::move(callback);
+      }
+
    private:
       EquipManager() = default;
       ~EquipManager() = default;
@@ -86,15 +107,19 @@ namespace Huginn::Input
       /// Use a soul gem to recharge the equipped enchanted weapon
       bool UseSoulGem(RE::FormID formID);
 
-      /// Equip fortify-crafting apparel by FormID (#65).
+      /// Equip fortify-crafting apparel by FormID and ExtraUniqueID (#65).
       /// Unlike every other entry point here this one is not "use" — the piece
       /// goes on and STAYS on. Huginn does not track or restore what it replaced;
       /// taking it off again is the player's business. See the note on
       /// ApparelCandidate.
-      bool EquipApparel(RE::FormID formID);
+      /// @param uniqueID Which inventory stack to wear; 0 lets the engine choose.
+      bool EquipApparel(RE::FormID formID, uint16_t uniqueID = 0);
 
       /// Callback for learning system
       EquipCallback m_equipCallback;
+
+      /// Callback so the apparel registry can mark the piece worn immediately
+      ApparelEquippedCallback m_apparelEquippedCallback;
 
       /// Sound settings
       bool m_soundsEnabled = true;

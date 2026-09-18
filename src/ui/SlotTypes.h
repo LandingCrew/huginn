@@ -36,6 +36,14 @@ namespace Huginn::UI
         float confidence = 0.0f;  // Only used for Spell/Wildcard types
         RE::FormID formID = 0;    // FormID for direct spell lookup (avoids name collisions)
 
+        // ExtraUniqueID of the specific inventory stack, when the recommendation
+        // is about an instance rather than a base form (#65: apparel). formID
+        // alone cannot name one of two player-enchanted Gold Rings, so an equip
+        // driven by formID would let the engine pick whichever stack it liked and
+        // the player would put on the plain ring the widget was not offering.
+        // 0 means "no instance in particular", which is right for every other type.
+        uint16_t uniqueID = 0;
+
         // Factory methods
         static SlotContent Empty() { return {}; }
         static SlotContent NoMatch(const std::string& slotTypeName) {
@@ -72,8 +80,9 @@ namespace Huginn::UI
             return { SlotContentType::SoulGem, name, 0.0f, formID };
         }
 
-        static SlotContent Apparel(const std::string& name, RE::FormID formID = 0) {
-            return { SlotContentType::Apparel, name, 0.0f, formID };
+        static SlotContent Apparel(const std::string& name, RE::FormID formID = 0,
+                                   uint16_t uniqueID = 0) {
+            return { SlotContentType::Apparel, name, 0.0f, formID, uniqueID };
         }
 
         bool IsEmpty() const { return type == SlotContentType::Empty; }

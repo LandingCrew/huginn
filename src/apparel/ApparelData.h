@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>   // std::max (CraftMagnitudes::Set)
+#include <array>
 #include <cstdint>
 #include <format>
 #include <string>
@@ -22,6 +24,9 @@ namespace Huginn::Apparel
       Smithing,     // At a forge / workbench / grindstone
       Enchanting    // At an arcane enchanter
    };
+
+   /// Number of CraftSkill values, including None — the width of CraftMagnitudes.
+   inline constexpr size_t CRAFT_SKILL_COUNT = 4;
 
    [[nodiscard]] constexpr const char* CraftSkillToString(CraftSkill skill) noexcept
    {
@@ -71,16 +76,68 @@ namespace Huginn::Apparel
    }
 
    // =============================================================================
+   // CRAFT MAGNITUDES - What this piece fortifies, per skill
+   // =============================================================================
+   // One float per CraftSkill rather than a single (skill, magnitude) pair. A
+   // player-made piece can carry two fortify effects for DIFFERENT crafts, and
+   // collapsing that to the largest magnitude made the item invisible at the
+   // other one of its own benches: "Fortify Alchemy 5 / Fortify Smithing 20"
+   // classified as Smithing, so at an alchemy lab WeightForCandidate read the
+   // alchemy weight for CraftSkill::Smithing, got 0.0, and never offered a ring
+   // that was genuinely useful there.
+   // =============================================================================
+   struct CraftMagnitudes
+   {
+      // Indexed by CraftSkill. Index 0 (None) is never written and never read.
+      std::array<float, CRAFT_SKILL_COUNT> values{};
+
+      [[nodiscard]] float For(CraftSkill skill) const noexcept {
+         return values[static_cast<size_t>(skill)];
+      }
+
+      void Set(CraftSkill skill, float magnitude) noexcept {
+         if (skill == CraftSkill::None) return;
+         auto& slot = values[static_cast<size_t>(skill)];
+         // Keep the strongest per skill: a piece can carry two effects on the
+         // same craft, and the larger is the honest representative.
+         slot = std::max(slot, magnitude);
+      }
+
+      [[nodiscard]] bool Fortifies(CraftSkill skill) const noexcept {
+         return For(skill) > 0.0f;
+      }
+
+      /// The craft with the largest magnitude, and that magnitude. Used for
+      /// display, logging and prior ranking — NOT for the context-weight lookup,
+      /// which must consider every skill the piece fortifies.
+      [[nodiscard]] CraftSkill Primary() const noexcept {
+         CraftSkill best = CraftSkill::None;
+         float bestMagnitude = 0.0f;
+         for (size_t i = 1; i < CRAFT_SKILL_COUNT; ++i) {
+            if (values[i] > bestMagnitude) {
+               bestMagnitude = values[i];
+               best = static_cast<CraftSkill>(i);
+            }
+         }
+         return best;
+      }
+
+      [[nodiscard]] bool Any() const noexcept { return Primary() != CraftSkill::None; }
+   };
+
+   // =============================================================================
    // APPAREL DATA - Classification result for one wearable
    // =============================================================================
    struct ApparelData
    {
-      RE::FormID  formID = 0;
-      std::string name;                              // Display name
-      CraftSkill  craftSkill = CraftSkill::None;     // Which craft it fortifies
-      float       magnitude = 0.0f;                  // Fortify magnitude (ranking key)
-      ApparelSlot slot = ApparelSlot::Unknown;
-      uint16_t    uniqueID = 0;                      // ExtraUniqueID — distinguishes
+      RE::FormID     formID = 0;
+      std::string    name;                           // Display name (per-instance
+                                                     // if the player renamed it)
+      CraftSkill     craftSkill = CraftSkill::None;  // Strongest craft — display/ranking
+      float          magnitude = 0.0f;               // ...and its magnitude
+      CraftMagnitudes magnitudes;                    // Every craft it fortifies
+      ApparelSlot    slot = ApparelSlot::Unknown;
+      uint16_t       uniqueID = 0;                   // ExtraUniqueID — distinguishes
                                                      // two enchanted copies of one base form
 
       [[nodiscard]] bool IsCraftRelevant() const noexcept {
@@ -89,8 +146,19 @@ namespace Huginn::Apparel
 
       [[nodiscard]] std::string ToString() const
       {
-         return std::format("ApparelData[{}, {}+{:.0f}, slot={}]",
-            name, CraftSkillToString(craftSkill), magnitude, ApparelSlotToString(slot));
+         // Name the second craft when there is one — a dual-fortify ring reading
+         // as plain "Smithing+20" in the log is how the classification bug hid.
+         std::string extra;
+         for (size_t i = 1; i < CRAFT_SKILL_COUNT; ++i) {
+            const auto skill = static_cast<CraftSkill>(i);
+            if (skill == craftSkill || !magnitudes.Fortifies(skill)) continue;
+            extra += std::format(" +{}{:.0f}",
+               CraftSkillToString(skill), magnitudes.For(skill));
+         }
+
+         return std::format("ApparelData[{}, {}+{:.0f}{}, slot={}]",
+            name, CraftSkillToString(craftSkill), magnitude, extra,
+            ApparelSlotToString(slot));
       }
    };
 

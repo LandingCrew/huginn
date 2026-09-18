@@ -707,6 +707,20 @@ static void OnDataLoaded()
                 formID, Learning::EquipSource::Hotkey, 1.0f, wasRecommended);
         });
 
+        // Apparel is worn, not used, so it has no cooldown to stop it being
+        // re-offered: the registry's isEquipped flag is the whole mechanism, and
+        // the 30 s reconcile is far too slow to be it on its own. Mark the piece
+        // worn here and force a re-allocation, so the slot swaps to the next
+        // useful thing instead of showing the ring the player is now wearing.
+        // Wired here rather than inside EquipManager because this is the layer
+        // that knows about both input/ and apparel/.
+        equipManager.SetApparelEquippedCallback([](RE::FormID formID, uint16_t uniqueID) {
+            if (!g_apparelRegistry) return;
+            if (g_apparelRegistry->MarkEquipped(formID, uniqueID)) {
+                Slot::SlotAllocator::GetSingleton().MarkPageDirty();
+            }
+        });
+
         logger::info("Input handler and equip manager initialized (keys 1-5)"sv);
     }
 }

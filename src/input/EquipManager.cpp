@@ -197,7 +197,7 @@ namespace Huginn::Input
       return true;
    }
 
-   bool EquipManager::EquipApparel(RE::FormID formID)
+   bool EquipManager::EquipApparel(RE::FormID formID, uint16_t uniqueID)
    {
       if (formID == 0) {
       logger::warn("[EquipManager] Cannot equip apparel with FormID 0"sv);
@@ -228,6 +228,45 @@ namespace Huginn::Input
       return false;
       }
 
+      // Resolve the SPECIFIC inventory stack the widget offered, the same way
+      // UseSoulGem resolves the gem instance it was scored on. Two rings the
+      // player enchanted themselves share a base form, and passing only the form
+      // lets the engine pick whichever stack it likes: press the hotkey on
+      // "Fortify Alchemy ring" and end up wearing the plain Gold Ring, with no
+      // feedback that anything went wrong. uniqueID is exactly what the registry
+      // keys on to keep those two apart, so it has to reach the equip.
+      //
+      // uniqueID == 0 means the recommendation was not about a particular
+      // instance (unenchanted stock, or a game that never assigned one), and the
+      // engine's own choice is then the right one.
+      RE::ExtraDataList* sourceInstance = nullptr;
+      if (uniqueID != 0) {
+      auto* invChanges = player->GetInventoryChanges();
+      if (invChanges && invChanges->entryList) {
+        for (auto* entry : *invChanges->entryList) {
+           if (!entry || entry->object != armor || !entry->extraLists) continue;
+           for (auto* extraList : *entry->extraLists) {
+              if (!extraList) continue;
+              auto* extraUnique = extraList->GetByType<RE::ExtraUniqueID>();
+              if (extraUnique && extraUnique->uniqueID == uniqueID) {
+                 sourceInstance = extraList;
+                 break;
+              }
+           }
+           if (sourceInstance) break;
+        }
+      }
+
+      if (!sourceInstance) {
+        // Not fatal: the stack may have been dropped or sold since the pipeline
+        // last ran. Equipping the base form is still closer to what the player
+        // asked for than doing nothing, but say so -- a run of these means the
+        // registry and the inventory have drifted.
+        logger::debug("[EquipManager] No stack with uniqueID {} for '{}' ({:08X}); "
+          "falling back to the base form"sv, uniqueID, armor->GetName(), formID);
+      }
+      }
+
       // No equipSlot argument, unlike EquipWeapon. Armor declares its own biped
       // slots on the form and the engine resolves them; passing a hand slot here
       // is what makes EquipObject silently no-op.
@@ -235,10 +274,19 @@ namespace Huginn::Input
       // Whatever already occupies those slots is unequipped by the game as a
       // side effect. That is the intended behaviour for a fortify swap, but note
       // it is not undone: nothing here remembers the displaced piece.
-      equipManager->EquipObject(player, armor);
+      equipManager->EquipObject(player, armor, sourceInstance);
 
-      logger::info("[EquipManager] Equipped apparel '{}' (FormID: {:08X})"sv,
-      armor->GetName(), formID);
+      logger::info("[EquipManager] Equipped apparel '{}' (FormID: {:08X}, uniqueID: {})"sv,
+      armor->GetName(), formID, uniqueID);
+
+      // Tell the registry the piece is on NOW. Apparel has no cooldown -- the
+      // isEquipped flag is the only thing keeping a worn piece out of the pool --
+      // and that flag is otherwise only refreshed by the 30 s reconcile. Without
+      // this the slot lock expires a few seconds later and the ring Huginn just
+      // equipped is scored and re-assigned for the rest of the interval.
+      if (m_apparelEquippedCallback) {
+      m_apparelEquippedCallback(formID, uniqueID);
+      }
 
       return true;
    }
@@ -581,7 +629,7 @@ namespace Huginn::Input
       break;
 
       case UI::SlotContentType::Apparel:
-      success = EquipApparel(content.formID);
+      success = EquipApparel(content.formID, content.uniqueID);
       break;
 
       default:

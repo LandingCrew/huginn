@@ -82,11 +82,9 @@ namespace Huginn::Apparel
       // the registry rejects it without walking anything.
       if (!enchantment) return data;
 
-      // Pick the STRONGEST craft-relevant effect. Fortify-crafting enchantments
-      // are usually single-effect, but a player-made piece can carry two, and the
-      // magnitude is what the scorer ranks on — so the larger one is the honest
-      // representative of the item.
-      float bestMagnitude = -1.0f;
+      // Record EVERY craft-relevant effect, one magnitude per skill. Keeping only
+      // the single largest across unrelated skills is what made a dual-fortify
+      // piece invisible at one of its own benches — see CraftMagnitudes.
       for (const auto* effect : enchantment->effects) {
          if (!effect || !effect->baseEffect) continue;
 
@@ -97,13 +95,15 @@ namespace Huginn::Apparel
          const CraftSkill skill = CraftSkillForActorValue(effect->baseEffect->data.primaryAV);
          if (skill == CraftSkill::None) continue;
 
-         const float magnitude = effect->effectItem.magnitude;
-         if (magnitude > bestMagnitude) {
-            bestMagnitude = magnitude;
-            data.craftSkill = skill;
-            data.magnitude = magnitude;
-         }
+         data.magnitudes.Set(skill, effect->effectItem.magnitude);
       }
+
+      // The primary is the strongest craft overall: what the widget shows, what
+      // the log names, and what PriorCalculator ranks on. The context weight does
+      // NOT come from it — WeightForCandidate reads the whole triple, so a piece
+      // still surfaces at the bench for its weaker craft.
+      data.craftSkill = data.magnitudes.Primary();
+      data.magnitude = data.magnitudes.For(data.craftSkill);
 
       return data;
    }

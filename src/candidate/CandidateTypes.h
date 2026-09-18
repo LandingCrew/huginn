@@ -215,8 +215,12 @@ namespace Huginn::Candidate
     // =============================================================================
     struct ApparelCandidate : CandidateBase
     {
-        Apparel::CraftSkill  craftSkill = Apparel::CraftSkill::None;
-        float                magnitude = 0.0f;  // Fortify magnitude — the ranking key
+        Apparel::CraftSkill  craftSkill = Apparel::CraftSkill::None;  // Strongest craft
+        float                magnitude = 0.0f;  // ...and its magnitude — the ranking key
+        // Every craft this piece fortifies. WeightForCandidate reads this rather
+        // than craftSkill: a "Fortify Alchemy 5 / Fortify Smithing 20" ring has a
+        // Smithing primary but must still surface at an alchemy lab.
+        Apparel::CraftMagnitudes magnitudes;
         // No `slot` here on purpose. ApparelData carries one for its ToString(),
         // which the registry logs; nothing outside that reads an ApparelSlot, and
         // a field on the candidate with no consumer is the exact dead weight the

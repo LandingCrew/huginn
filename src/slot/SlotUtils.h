@@ -141,7 +141,10 @@ namespace Huginn::Slot
                 return UI::SlotContent::SoulGem(name, formID);
 
             case Candidate::SourceType::Apparel:
-                return UI::SlotContent::Apparel(name, formID);
+                // uniqueID as well as formID: two player-enchanted copies of one
+                // base form share a formID, and EquipApparel needs to know which
+                // stack the widget is actually offering.
+                return UI::SlotContent::Apparel(name, formID, candidate.GetUniqueID());
 
             default:
                 return UI::SlotContent::Spell(name, confidence, formID);

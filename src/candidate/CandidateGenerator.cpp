@@ -48,8 +48,10 @@ namespace Huginn::Candidate
         m_cooldownMgr.SetDuration(SourceType::Food, m_config.foodCooldown);
         // No SourceType::Apparel duration on purpose. A cooldown means "you just
         // used this, stop offering it"; apparel is not used, it is worn, and the
-        // isEquipped filter already removes what is on the player. The array
-        // entry defaults to 0 (no cooldown), which is the correct behaviour.
+        // isEquipped filter already removes what is on the player. The entry is
+        // 0 because CooldownManager value-initializes m_durations -- it is not
+        // 0 by virtue of being unassigned, which is what an earlier version of
+        // this comment claimed of an array that had no initializer at all.
 
         // Create filters
         m_filters = std::make_unique<CandidateFilters>(m_cooldownMgr, m_config);
@@ -82,8 +84,10 @@ namespace Huginn::Candidate
         m_cooldownMgr.SetDuration(SourceType::Food, m_config.foodCooldown);
         // No SourceType::Apparel duration on purpose. A cooldown means "you just
         // used this, stop offering it"; apparel is not used, it is worn, and the
-        // isEquipped filter already removes what is on the player. The array
-        // entry defaults to 0 (no cooldown), which is the correct behaviour.
+        // isEquipped filter already removes what is on the player. The entry is
+        // 0 because CooldownManager value-initializes m_durations -- it is not
+        // 0 by virtue of being unassigned, which is what an earlier version of
+        // this comment claimed of an array that had no initializer at all.
     }
 
     // =========================================================================

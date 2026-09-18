@@ -2855,6 +2855,9 @@ void RunUnitTests()
                 gear.name = "Fortify Ring";
                 gear.craftSkill = st.skill;
                 gear.magnitude = 25.0f;
+                // magnitudes, not craftSkill, is what WeightForCandidate reads —
+                // a candidate built with only the primary set scores 0 everywhere.
+                gear.magnitudes.Set(st.skill, 25.0f);
 
                 State::PlayerActorState testPlayer{};
                 State::WorldState testWorld{};
@@ -2873,16 +2876,46 @@ void RunUnitTests()
                 // Gear for a DIFFERENT craft must not ride the same station. The
                 // three weights are separate fields; reading the wrong one would
                 // offer Fortify Alchemy gloves at a forge.
-                Candidate::ApparelCandidate wrongCraft{};
-                wrongCraft.name = "Unrelated Fortify Ring";
-                wrongCraft.craftSkill = (st.skill == Apparel::CraftSkill::Smithing)
+                const auto otherSkill = (st.skill == Apparel::CraftSkill::Smithing)
                     ? Apparel::CraftSkill::Alchemy
                     : Apparel::CraftSkill::Smithing;
+
+                Candidate::ApparelCandidate wrongCraft{};
+                wrongCraft.name = "Unrelated Fortify Ring";
+                wrongCraft.craftSkill = otherSkill;
                 wrongCraft.magnitude = 25.0f;
+                wrongCraft.magnitudes.Set(otherSkill, 25.0f);
 
                 if (Context::WeightForCandidate(wrongCraft, weights) >= stationWeight - 0.01f) {
                     logger::error("TEST FAIL (6j): at {} apparel for another craft reached the station weight",
                         st.name);
+                    return;
+                }
+
+                // A piece that fortifies TWO crafts must draw the full station
+                // weight at EITHER bench, including the one its weaker effect
+                // belongs to. Classifying by the single largest magnitude across
+                // unrelated skills made a "Fortify Alchemy 5 / Fortify Smithing
+                // 20" ring invisible at an alchemy lab: craftSkill said Smithing,
+                // the alchemy weight was never read, and the ring scored 0 at its
+                // own bench.
+                Candidate::ApparelCandidate dual{};
+                dual.name = "Dual Fortify Ring";
+                dual.magnitudes.Set(st.skill, 5.0f);        // the WEAK effect here
+                dual.magnitudes.Set(otherSkill, 20.0f);     // the strong one elsewhere
+                dual.craftSkill = dual.magnitudes.Primary();
+                dual.magnitude = dual.magnitudes.For(dual.craftSkill);
+
+                if (dual.craftSkill != otherSkill) {
+                    logger::error("TEST FAIL (6j): CraftMagnitudes::Primary() should pick the "
+                        "strongest craft, got {}", Apparel::CraftSkillToString(dual.craftSkill));
+                    return;
+                }
+
+                if (std::abs(Context::WeightForCandidate(dual, weights) - stationWeight) > 0.01f) {
+                    logger::error("TEST FAIL (6j): at {} a dual-fortify piece whose PRIMARY is "
+                        "another craft should still draw {:.2f}, got {:.3f}",
+                        st.name, stationWeight, Context::WeightForCandidate(dual, weights));
                     return;
                 }
             }
@@ -2904,10 +2937,66 @@ void RunUnitTests()
                     gear.name = "Fortify Ring";
                     gear.craftSkill = skill;
                     gear.magnitude = 25.0f;
+                    gear.magnitudes.Set(skill, 25.0f);
 
                     if (const float w = Context::WeightForCandidate(gear, weights); w != 0.0f) {
                         logger::error("TEST FAIL (6j): {} apparel away from a workstation should "
                             "score 0.0, got {:.3f}", Apparel::CraftSkillToString(skill), w);
+                        return;
+                    }
+
+                    // ...and that 0.0 must be read as a CLOSED GATE, not as
+                    // "nothing is known about this yet". UtilityScorer's
+                    // cold-start pass re-admits skipped candidates at
+                    // max(contextWeight, coldStartUCBBoost * ucb), and an untried
+                    // ring has a high UCB by construction — so without this flag
+                    // the boost quietly undid the no-baseline rule and put
+                    // crafting gear in a dungeon slot.
+                    if (!Context::IsHardContextGated(Candidate::CandidateVariant{gear})) {
+                        logger::error("TEST FAIL (6j): apparel must be hard context-gated, "
+                            "or the cold-start UCB boost re-admits it away from a bench");
+                        return;
+                    }
+                }
+
+                // Nothing else may claim the gate: every other source floors at
+                // baseRelevanceWeight, so its 0 really does mean "untried".
+                Candidate::SpellCandidate spell{};
+                spell.name = "Firebolt";
+                if (Context::IsHardContextGated(Candidate::CandidateVariant{spell})) {
+                    logger::error("TEST FAIL (6j): spells have a baseline and must NOT be "
+                        "hard context-gated — cold start would be disabled for them");
+                    return;
+                }
+            }
+
+            // The bench-type case list has two readers now: EvaluateRules picks
+            // which fortify weight to raise, and PipelineCoordinator decides
+            // whether to defeat the hash skip. A bench that raises no weight must
+            // report None, or the pipeline runs the full gather/score/allocate
+            // path every 100 ms for as long as the crosshair rests on a cooking
+            // spit.
+            {
+                struct BenchCase { int32_t type; Apparel::CraftSkill expected; };
+                const BenchCase kBenches[] = {
+                    {1, Apparel::CraftSkill::Smithing},     // kCreateObject
+                    {2, Apparel::CraftSkill::Smithing},     // kSmithingWeapon
+                    {7, Apparel::CraftSkill::Smithing},     // kSmithingArmor
+                    {3, Apparel::CraftSkill::Enchanting},   // kEnchanting
+                    {4, Apparel::CraftSkill::Enchanting},   // kEnchantingExperiment
+                    {5, Apparel::CraftSkill::Alchemy},      // kAlchemy
+                    {6, Apparel::CraftSkill::Alchemy},      // kAlchemyExperiment
+                    {0, Apparel::CraftSkill::None},         // kNone
+                    {8, Apparel::CraftSkill::None},         // past the vanilla enum
+                    {99, Apparel::CraftSkill::None},        // a modded bench type
+                };
+
+                for (const auto& bench : kBenches) {
+                    const auto got = Context::CraftSkillForWorkstation(bench.type);
+                    if (got != bench.expected) {
+                        logger::error("TEST FAIL (6j): bench type {} should map to {}, got {}",
+                            bench.type, Apparel::CraftSkillToString(bench.expected),
+                            Apparel::CraftSkillToString(got));
                         return;
                     }
                 }

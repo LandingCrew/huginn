@@ -5,6 +5,7 @@
 
 #include <atomic>
 #include <shared_mutex>
+#include <string>
 #include <type_traits>
 #include <unordered_map>
 #include <vector>
@@ -86,6 +87,22 @@ namespace Huginn::Apparel
       [[nodiscard]] const InventoryApparel* GetApparel(RE::FormID formID, uint16_t uniqueID = 0) const;
 
       /**
+       * @brief Mark one entry as worn (or no longer worn) without a full scan
+       * @return true if any tracked entry changed - the equipped piece, or one
+       *         this equip displaced from the same body slot
+       *
+       * WHY THIS EXISTS: apparel has no cooldown, because isEquipped is supposed
+       * to be what removes a piece from the pool once it is on the player. But
+       * isEquipped is only refreshed by ReconcileApparel() on a 30 s tick, so
+       * after Huginn equipped a ring the registry went on reporting it available:
+       * the slot lock expired a few seconds later and the same ring was scored
+       * and re-assigned for the rest of the interval. The equip path calls this
+       * so the flag is true the moment the piece goes on. Equipping also clears
+       * the flag on whatever this piece displaces; see the note on the sweep.
+       */
+      bool MarkEquipped(RE::FormID formID, uint16_t uniqueID, bool equipped = true);
+
+      /**
        * @brief Iterate all tracked apparel without copying
        * @tparam Func void(const InventoryApparel&) or bool(const InventoryApparel&)
        * @note Holds the shared_lock for the whole visit; returning false stops early.
@@ -114,13 +131,21 @@ namespace Huginn::Apparel
       void LogAllApparel() const;
 
    private:
-      /// One inventory stack, resolved far enough to classify.
+      /// One inventory STACK, resolved far enough to classify.
+      ///
+      /// One per ExtraDataList, not one per base form. An earlier version emitted
+      /// one per TESBoundObject and filled these fields last-wins across every
+      /// extraList in the stack, which defeated the whole point of the uniqueID
+      /// key: two player-enchanted Gold Rings collapsed into a single entry, and
+      /// the surviving one could pair the first ring's enchantment with the
+      /// second ring's uniqueID.
       struct ScannedApparel
       {
          RE::TESObjectARMO*    armor = nullptr;
          RE::EnchantmentItem*  enchantment = nullptr;  // player-applied if present, else base form
          bool                  isEquipped = false;
          uint16_t              uniqueID = 0;
+         std::string           displayName;            // ExtraTextDisplayData, empty if not renamed
       };
 
       /// Walk the player's armor inventory. Requires stable extraLists; the

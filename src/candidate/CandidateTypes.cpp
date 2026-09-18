@@ -199,6 +199,7 @@ namespace Huginn::Candidate
 
         candidate.craftSkill = invApparel.data.craftSkill;
         candidate.magnitude = invApparel.data.magnitude;
+        candidate.magnitudes = invApparel.data.magnitudes;
 
         // Worn gear is the apparel equivalent of an active buff: re-recommending
         // what the player already has on is pure noise. PassesBasicFilters() drops

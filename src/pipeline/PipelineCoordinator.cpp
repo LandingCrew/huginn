@@ -183,7 +183,17 @@ void PipelineCoordinator::GatherState(PipelineContext& ctx)
     // Held ACTIVE rather than edge-latched, matching underwaterActive: a player
     // can stand at a bench for minutes, and the slot has to stay populated the
     // whole time, not just on the tick they walk up.
-    ctx.workstationActive = ctx.worldState.isLookingAtWorkstation;
+    //
+    // Gated on the bench actually producing a fortify weight, not merely on
+    // being furniture with a bench type. EvaluateRules only raises a weight for
+    // the seven vanilla craft benches; for a cooking spit or a modded bench
+    // outside that enum there is nothing for the pipeline to find, and holding
+    // this true would run the full gather/score/allocate path every 100 ms for
+    // as long as the player's crosshair rested on it — exactly the workload the
+    // skip gate exists to avoid.
+    ctx.workstationActive = ctx.worldState.isLookingAtWorkstation &&
+        Context::CraftSkillForWorkstation(ctx.worldState.workstationType) !=
+            Apparel::CraftSkill::None;
 
     // The third instance of this shape — a pending reason downgrade (#62) — has
     // no ctx field: unlike these two it has no "current" reading to take here,

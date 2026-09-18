@@ -89,7 +89,7 @@ namespace Huginn::Console
    }
 
    struct RegistryCounts {
-      size_t spells = 0, items = 0, weapons = 0, scrolls = 0;
+      size_t spells = 0, items = 0, weapons = 0, scrolls = 0, apparel = 0;
    };
 
    static RegistryCounts RebuildRegistries()
@@ -110,6 +110,17 @@ namespace Huginn::Console
       if (g_scrollRegistry) {
          g_scrollRegistry->RebuildRegistry();
          c.scrolls = g_scrollRegistry->GetScrollCount();
+      }
+      if (g_apparelRegistry) {
+         // RebuildRegistry() alone would leave this EMPTY: for apparel it only
+         // clears, because a load-path scan cannot read player enchantments (see
+         // ApparelRegistry.h). Reconcile immediately afterwards so `hg rebuild`
+         // ends with a populated registry like every other line it prints —
+         // otherwise the command silently contradicts the apparel count that
+         // `hg status` reports, and the player is told to wait 30s by nothing.
+         g_apparelRegistry->RebuildRegistry();
+         g_apparelRegistry->ReconcileApparel();
+         c.apparel = g_apparelRegistry->GetApparelCount();
       }
       return c;
    }
@@ -301,8 +312,9 @@ namespace Huginn::Console
       Huginn::Update::UpdateHandler::GetSingleton()->RunExclusive([&] {
          auto c = RebuildRegistries();
 
-         auto msg = std::format("Registries rebuilt ({} spells, {} items, {} weapons, {} scrolls)",
-            c.spells, c.items, c.weapons, c.scrolls);
+         auto msg = std::format("Registries rebuilt ({} spells, {} items, {} weapons, {} scrolls, "
+            "{} craft apparel)",
+            c.spells, c.items, c.weapons, c.scrolls, c.apparel);
          Print(msg.c_str());
          logger::info("[Console] {}"sv, msg);
       });
