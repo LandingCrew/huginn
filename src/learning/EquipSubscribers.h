@@ -87,8 +87,19 @@ namespace Huginn::Learning
             // Phrased as "still worn" rather than "both are apparel" because that
             // is the honest form of the rule: a switch means the first thing is no
             // longer on. It holds for weapons too.
-            if (misclick.detected && IsWornByPlayer(misclick.previousFormID)) {
-                logger::debug("[Misclick] {:08X} still worn - not a switch, no penalty"sv,
+            //
+            // The body-slot test is what makes "still worn" trustworthy HERE.
+            // ActorEquipManager has not applied this equip yet, so a piece being
+            // displaced by it still reads as worn - swapping circlet A for circlet
+            // B is a genuine switch that reported "still worn" and escaped its
+            // penalty (seen 2026-09-18: 000166FE, displaced by 000FC000 in the same
+            // instant, logged as still worn). Overlapping slot masks mean the two
+            // cannot be worn together, so it was a switch whatever the game has
+            // got round to yet.
+            if (misclick.detected &&
+                IsWornByPlayer(misclick.previousFormID) &&
+                !SharesBodySlot(misclick.previousFormID, event.formID)) {
+                logger::debug("[Misclick] {:08X} still worn elsewhere - not a switch, no penalty"sv,
                     misclick.previousFormID);
                 return;
             }
@@ -130,6 +141,21 @@ namespace Huginn::Learning
             }
 
             return false;
+        }
+
+        /// Do these two forms compete for the same body slot? Two armors whose
+        /// biped slot masks overlap cannot be worn at once, so choosing one right
+        /// after the other IS a switch. Anything that is not armor - a potion, a
+        /// spell, a weapon - answers true, which keeps the original penalty
+        /// behaviour for every source that had it before.
+        [[nodiscard]] static bool SharesBodySlot(RE::FormID previousID, RE::FormID newID)
+        {
+            const auto* previous = RE::TESForm::LookupByID<RE::TESObjectARMO>(previousID);
+            const auto* current = RE::TESForm::LookupByID<RE::TESObjectARMO>(newID);
+            if (!previous || !current) return true;
+
+            return (static_cast<uint32_t>(previous->GetSlotMask()) &
+                    static_cast<uint32_t>(current->GetSlotMask())) != 0;
         }
 
         UsageMemory& m_memory;
