@@ -6,6 +6,7 @@
 #include "Config.h"
 #include "candidate/CandidateGenerator.h"
 #include "candidate/CandidateTypes.h"
+#include "util/InventoryUtil.h"
 
 #include <spdlog/spdlog.h>
 
@@ -73,6 +74,25 @@ namespace Huginn::Learning
         {
             auto misclick = m_memory.RecordUsage(event.formID, event.gameState);
 
+            // A piece you are STILL WEARING was not a misclick. UsageMemory
+            // infers the penalty from "different item, same context, inside three
+            // seconds", which reads as a switch - true for two spells in one hand
+            // or two potions, false for gear in different body slots. A fortify
+            // circlet and a fortify ring are worn TOGETHER; that is the point of
+            // them. Without this, the ordinary act of gearing up for a crafting
+            // session penalised whichever piece went on first by -3.0 against its
+            // own +8.0 reward (observed 2026-09-18: 000FC000 then 0003B97C at an
+            // alchemy lab, 2.2 s apart).
+            //
+            // Phrased as "still worn" rather than "both are apparel" because that
+            // is the honest form of the rule: a switch means the first thing is no
+            // longer on. It holds for weapons too.
+            if (misclick.detected && IsWornByPlayer(misclick.previousFormID)) {
+                logger::debug("[Misclick] {:08X} still worn - not a switch, no penalty"sv,
+                    misclick.previousFormID);
+                return;
+            }
+
             if (misclick.detected) {
                 m_learner.Update(misclick.previousFormID, event.features, Config::MISCLICK_PENALTY);
                 logger::debug("[Misclick] Penalized {:08X} ({:.1f})"sv,
@@ -81,6 +101,37 @@ namespace Huginn::Learning
         }
 
     private:
+        /// Is this base form on the player right now? Reads ExtraWorn off the
+        /// inventory rather than a registry, so it answers for every source, not
+        /// just apparel. Safe to ask here: the equip that raised THIS event has
+        /// not been applied yet (see ApparelRegistry::MarkEquipped), but the
+        /// previous item went on seconds ago, so its worn flag has settled.
+        [[nodiscard]] static bool IsWornByPlayer(RE::FormID formID)
+        {
+            if (formID == 0) return false;
+
+            auto* player = RE::PlayerCharacter::GetSingleton();
+            if (!player) return false;
+
+            auto inventory = Util::GetInventorySafe(player,
+                [formID](RE::TESBoundObject& obj) { return obj.GetFormID() == formID; });
+
+            for (const auto& [obj, data] : inventory) {
+                const auto& [count, entry] = data;
+                if (!entry || !entry->extraLists) continue;
+
+                for (const auto* extraList : *entry->extraLists) {
+                    if (!extraList) continue;
+                    if (extraList->HasType<RE::ExtraWorn>() ||
+                        extraList->HasType<RE::ExtraWornLeft>()) {
+                        return true;
+                    }
+                }
+            }
+
+            return false;
+        }
+
         UsageMemory& m_memory;
         FeatureBanditLearner& m_learner;
     };
