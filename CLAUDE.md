@@ -160,7 +160,7 @@ All `IntuitionMenu` public API methods defer GFx work via `SKSE::GetTaskInterfac
 
 - [docs/README.md](docs/README.md) — Full system design
 - [docs/architecture/](docs/architecture/) — Deep-dive docs (pipeline, states, classifiers, scoring, slots, UI, dMenu)
-- [docs/compatibility/](docs/compatibility/) — Mod compatibility guides
-- [docs/reference/ConsoleCommands.md](docs/reference/ConsoleCommands.md) — Console command reference
+- [Mod compatibility](https://github.com/LandingCrew/huginn/wiki/Mod-Compatibility) — mod compatibility guides (wiki)
+- [Console commands](https://github.com/LandingCrew/huginn/wiki/Console-Commands) — console command reference (wiki)
 - [docs/testing/TESTING-INDEX.md](docs/testing/TESTING-INDEX.md) — Test suite index and profiling guide
 - [docs/roadmap.md](docs/roadmap.md) — Development roadmap and backlog

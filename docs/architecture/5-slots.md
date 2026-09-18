@@ -758,4 +758,4 @@ Wheeler Callback Thread
 - [6-ui-ux.md](6-ui-ux.md) - Intuition widget and Wheeler display
 - [7-dmenu-integration.md](7-dmenu-integration.md) - dMenu-owned settings
 - [8-future-work.md](8-future-work.md) - Planned work
-- [../reference/ConsoleCommands.md](../reference/ConsoleCommands.md) - `hg page`, `hg unlock`, `hg reload`
+- [Console commands](https://github.com/LandingCrew/huginn/wiki/Console-Commands) - `hg page`, `hg unlock`, `hg reload`

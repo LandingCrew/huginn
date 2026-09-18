@@ -16,7 +16,7 @@ for in-game settings management, and what a settings reload actually does.
 > - [0-pipeline.md](0-pipeline.md) — recommendation pipeline (the reload serializes against its update loop)
 > - [5-slots.md](5-slots.md) — slot system (page layout comes from the main INI)
 > - [6-ui-ux.md](6-ui-ux.md) — Intuition widget and Wheeler integration
-> - [../reference/ConsoleCommands.md](../reference/ConsoleCommands.md) — `hg reload`, `hg rebuild`, `hg reset weights`
+> - [Console commands](https://github.com/LandingCrew/huginn/wiki/Console-Commands) — `hg reload`, `hg rebuild`, `hg reset weights`
 
 ---
 

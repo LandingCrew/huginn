@@ -19,7 +19,7 @@ None open.
 - [ ] #63: the workstation context has no fortify POTION to rank on Requiem-based
       lists — inert in the modlists that actually get play-tested. Vanilla path
       still needs its own regression test (test 6h is the unit coverage).
-      Two corrections from the #65 work, both in docs/compatibility/lorerim.md:
+      Two corrections from the #65 work, both on the [LoreRim wiki page](https://github.com/LandingCrew/huginn/wiki/LoreRim):
       the alchemy overhaul is attributed to Alchemy Redone rather than Requiem
       alone; and a MUCH bigger cause was found and fixed — walking up to a bench
       changed no GameState hash dimension, so the pipeline skip-gate discarded

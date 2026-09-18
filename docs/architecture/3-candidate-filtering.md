@@ -604,7 +604,7 @@ There is no automated test suite in the repository; these are in-game checks
 - [4-contextual-bandits.md](4-contextual-bandits.md) — Contextual bandit learning implementation
 - [5-slots.md](5-slots.md) — Slot classification and overrides
 - [../reference/candidate-system.md](../reference/candidate-system.md) — Candidate system reference
-- [../reference/ConsoleCommands.md](../reference/ConsoleCommands.md) — `hg recs`, `hg reload`
+- [Console commands](https://github.com/LandingCrew/huginn/wiki/Console-Commands) — `hg recs`, `hg reload`
 - `src/candidate/CandidateGenerator.cpp` — Gathering from the registries
 - `src/candidate/CandidateFilters.cpp` — All hard filters
 - `src/candidate/CandidateTypes.h` — `SourceType`, `CandidateVariant`, dedup key

@@ -598,7 +598,7 @@ behaviour (page sync, focus, edit-mode handling) and read live by
 `API_VERSION_MAX = 4` (`src/wheeler/WheelerAPI.h:23-24`). Both callbacks are
 registered on any accepted version; v2+ adds subtext, v3 batch delete, v4 batch
 lookup plus managed wheels surviving Wheeler's load-time reset. See
-[../compatibility/mod-compatibility.md](../compatibility/mod-compatibility.md#wheeler-integration)
+[Mod Compatibility](https://github.com/LandingCrew/huginn/wiki/Mod-Compatibility#wheeler-integration)
 for version differences.
 
 ---
@@ -1351,5 +1351,5 @@ callback also clears the learner whenever SKSE reverts (new game or load).
 - [1-states.md](1-states.md) — State models (WorldState, PlayerActorState, TargetCollection)
 - [3-candidate-filtering.md](3-candidate-filtering.md) — Where the candidates being scored come from
 - [5-slots.md](5-slots.md) — Slot classification, locking and the multi-page layout
-- [../reference/ConsoleCommands.md](../reference/ConsoleCommands.md) — Full console command reference
-- [../compatibility/mod-compatibility.md](../compatibility/mod-compatibility.md#wheeler-integration) — Wheeler integration notes
+- [Console commands](https://github.com/LandingCrew/huginn/wiki/Console-Commands) — Full console command reference
+- [Mod Compatibility](https://github.com/LandingCrew/huginn/wiki/Mod-Compatibility#wheeler-integration) — Wheeler integration notes

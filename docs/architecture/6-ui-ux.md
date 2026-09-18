@@ -1189,5 +1189,5 @@ reason from the old one.
 - [3-candidate-filtering.md](3-candidate-filtering.md) — candidate scoring pipeline
 - [7-dmenu-integration.md](7-dmenu-integration.md) — the dMenu panel that owns `[Widget]`
 - [../reference/intuition-scaleform-build.md](../reference/intuition-scaleform-build.md) — SWF toolchain
-- [../reference/ConsoleCommands.md](../reference/ConsoleCommands.md) — `hg reload`, `hg recs`, `hg page`
+- [Console commands](https://github.com/LandingCrew/huginn/wiki/Console-Commands) — `hg reload`, `hg recs`, `hg page`
 - [../README.md](../README.md) — overall system design
