@@ -60,6 +60,10 @@ namespace Huginn::Apparel
       Other
    };
 
+   /// Number of ApparelSlot values, including Unknown - the width of any
+   /// per-slot array. Keep in step with the enum above.
+   inline constexpr size_t APPAREL_SLOT_COUNT = 9;
+
    [[nodiscard]] constexpr const char* ApparelSlotToString(ApparelSlot slot) noexcept
    {
       switch (slot) {
