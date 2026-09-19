@@ -538,7 +538,7 @@ none has been needed.
 | [../playtest/LongPlaySoak.md](../playtest/LongPlaySoak.md) | Long-play soak protocol and the `[Soak]` heartbeat |
 | [../refactor/wheeler-push-spikes.md](../refactor/wheeler-push-spikes.md) | Wheeler push analysis (its P1 was dropped; P2–P3 landed) |
 | [../refactor/performance-optimizations.md](../refactor/performance-optimizations.md) | The 2026-02 optimization pass — archaeology, from a 30-second capture |
-| [ConsoleCommands.md](ConsoleCommands.md) | `hg status`, `hg recs`, `hg reload` and the rest |
+| [Console commands](https://github.com/LandingCrew/huginn/wiki/Console-Commands) | `hg status`, `hg recs`, `hg reload` and the rest |
 
 > **The learner** is a linear contextual bandit — `FeatureBanditLearner`,
 > serialized by `BanditSerializer` into the `BNDW` cosave record.

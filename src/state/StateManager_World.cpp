@@ -181,8 +181,14 @@ namespace Huginn::State
       bool changed = UpdateStateIfChanged(m_worldMutex, m_worldState, newState);
 #ifdef _DEBUG
       if (changed) {
-      logger::info("[StateManager] WorldState changed - time:{:.1f} interior:{} light:{:.2f}"sv,
-        newState.timeOfDay, newState.isInterior, newState.lightLevel);
+      // workstationType is in the equality check that gates this line but was not
+      // in the line itself, so a session spent walking on and off an alchemy
+      // lab logged ten identical "changed" lines and the one field that moved
+      // was invisible (it logs at trace, which is effectively off). 0 = not
+      // looking at a bench; otherwise it is the BenchType the craft weight
+      // comes from, so the apparel/potion gate can be read straight off this.
+      logger::info("[StateManager] WorldState changed - time:{:.1f} interior:{} light:{:.2f} workstation:{}"sv,
+        newState.timeOfDay, newState.isInterior, newState.lightLevel, newState.workstationType);
       }
 #endif
       return changed;

@@ -308,6 +308,37 @@ namespace Huginn::Context
             else if constexpr (std::is_same_v<T, Candidate::AmmoCandidate>) {
                 return std::max(weights.ammoWeight, weights.baseRelevanceWeight);
             }
+            // =====================================================================
+            // APPAREL CANDIDATES (#65)
+            // =====================================================================
+            // The ONLY source with no baseline. Every other arm floors at
+            // baseRelevanceWeight so it can surface on a typed slot without a
+            // matching context; apparel must not. A Fortify Smithing ring is
+            // relevant at a forge and worthless everywhere else, and giving it a
+            // floor would park crafting gear in the pool during combat.
+            //
+            // Returning 0.0 away from a workstation puts it below
+            // minimumContextWeight, so it is dropped by the early filter in
+            // UtilityScorer rather than scored and discarded.
+            else if constexpr (std::is_same_v<T, Candidate::ApparelCandidate>) {
+                // Every craft the piece fortifies, not just the strongest one. A
+                // player-made "Fortify Alchemy 5 / Fortify Smithing 20" ring has a
+                // Smithing primary; reading craftSkill alone returned 0.0 at an
+                // alchemy lab and hid a ring that was genuinely useful there.
+                // std::max over the applicable weights matches how every other
+                // arm combines multiple applicable contexts.
+                float maxWeight = 0.0f;
+                if (c.magnitudes.Fortifies(Apparel::CraftSkill::Smithing)) {
+                    maxWeight = std::max(maxWeight, weights.fortifySmithingWeight);
+                }
+                if (c.magnitudes.Fortifies(Apparel::CraftSkill::Enchanting)) {
+                    maxWeight = std::max(maxWeight, weights.fortifyEnchantingWeight);
+                }
+                if (c.magnitudes.Fortifies(Apparel::CraftSkill::Alchemy)) {
+                    maxWeight = std::max(maxWeight, weights.fortifyAlchemyWeight);
+                }
+                return maxWeight;
+            }
             else {
                 // Compile-time exhaustiveness: adding a new CandidateVariant
                 // alternative must force a context-weight mapping here.
@@ -315,5 +346,15 @@ namespace Huginn::Context
                     "Unhandled CandidateVariant alternative in WeightForCandidate");
             }
         }, candidate);
+    }
+
+    bool IsHardContextGated(const Candidate::CandidateVariant& candidate) noexcept
+    {
+        // Deliberately a source-type test rather than "WeightForCandidate
+        // returned 0.0". baseRelevanceWeight is INI-settable and can legitimately
+        // be 0, which would make every source look hard-gated and disable the
+        // cold-start pass wholesale. Keep this in step with the arms above: a new
+        // source that skips the baseRelevanceWeight floor belongs here too.
+        return std::holds_alternative<Candidate::ApparelCandidate>(candidate);
     }
 }

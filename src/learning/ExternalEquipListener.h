@@ -78,7 +78,22 @@ namespace Huginn::Learning
                 formType = "Torch";
                 break;
             case RE::FormType::Armor:
-                // Armor equips aren't relevant for Huginn learning — skip
+                // Still skipped after #65 made apparel recommendable, and the
+                // reason changed — so has this comment, which used to claim armor
+                // was simply irrelevant.
+                //
+                // Huginn DOES learn from apparel it recommended: EquipSlot fires
+                // m_equipCallback on success, so taking a suggestion is rewarded
+                // on the internal path. What is dropped here is the EXTERNAL
+                // signal — the player opening their inventory and putting gear on
+                // themselves. Almost all of that traffic is ordinary dressing
+                // (armor, clothes, a helmet) with nothing to do with crafting,
+                // and feeding it in would train on noise and move accept% for
+                // reasons unrelated to recommendation quality.
+                //
+                // Turning it on is a one-line change plus a craft-relevance check
+                // against ApparelRegistry, but it shifts a soak metric, so it
+                // wants its own decision and its own run. See #65.
                 return RE::BSEventNotifyControl::kContinue;
             default:
                 // Misc forms (books, keys, ingredients, ...) — not Huginn candidates

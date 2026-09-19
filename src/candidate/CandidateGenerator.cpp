@@ -29,12 +29,14 @@ namespace Huginn::Candidate
         Spell::SpellRegistry& spellRegistry,
         Item::ItemRegistry& itemRegistry,
         Weapon::WeaponRegistry& weaponRegistry,
-        Scroll::ScrollRegistry& scrollRegistry)
+        Scroll::ScrollRegistry& scrollRegistry,
+        Apparel::ApparelRegistry& apparelRegistry)
     {
         m_spellRegistry = &spellRegistry;
         m_itemRegistry = &itemRegistry;
         m_weaponRegistry = &weaponRegistry;
         m_scrollRegistry = &scrollRegistry;
+        m_apparelRegistry = &apparelRegistry;
 
         // Initialize cooldown durations from config
         m_cooldownMgr.SetDuration(SourceType::Spell, m_config.spellCooldown);
@@ -44,6 +46,12 @@ namespace Huginn::Candidate
         m_cooldownMgr.SetDuration(SourceType::Ammo, m_config.ammoCooldown);
         m_cooldownMgr.SetDuration(SourceType::SoulGem, m_config.soulGemCooldown);
         m_cooldownMgr.SetDuration(SourceType::Food, m_config.foodCooldown);
+        // No SourceType::Apparel duration on purpose. A cooldown means "you just
+        // used this, stop offering it"; apparel is not used, it is worn, and the
+        // isEquipped filter already removes what is on the player. The entry is
+        // 0 because CooldownManager value-initializes m_durations -- it is not
+        // 0 by virtue of being unassigned, which is what an earlier version of
+        // this comment claimed of an array that had no initializer at all.
 
         // Create filters
         m_filters = std::make_unique<CandidateFilters>(m_cooldownMgr, m_config);
@@ -74,6 +82,12 @@ namespace Huginn::Candidate
         m_cooldownMgr.SetDuration(SourceType::Ammo, m_config.ammoCooldown);
         m_cooldownMgr.SetDuration(SourceType::SoulGem, m_config.soulGemCooldown);
         m_cooldownMgr.SetDuration(SourceType::Food, m_config.foodCooldown);
+        // No SourceType::Apparel duration on purpose. A cooldown means "you just
+        // used this, stop offering it"; apparel is not used, it is worn, and the
+        // isEquipped filter already removes what is on the player. The entry is
+        // 0 because CooldownManager value-initializes m_durations -- it is not
+        // 0 by virtue of being unassigned, which is what an earlier version of
+        // this comment claimed of an array that had no initializer at all.
     }
 
     // =========================================================================
@@ -117,6 +131,7 @@ namespace Huginn::Candidate
         GatherWeaponCandidates(m_gatherBuffer, player);
         GatherAmmoCandidates(m_gatherBuffer, player);
         GatherSoulGemCandidates(m_gatherBuffer, player);
+        GatherApparelCandidates(m_gatherBuffer, player);
 
         // Step 3: Filter gathered candidates into a local output vector.
         // Survivors are moved from m_gatherBuffer into output (one move per
@@ -366,6 +381,89 @@ namespace Huginn::Candidate
             ++gathered;
         });
         m_stats.soulGemsScanned = gathered;
+    }
+
+    void CandidateGenerator::GatherApparelCandidates(
+        std::vector<CandidateVariant>& out,
+        const State::PlayerActorState& player)
+    {
+        (void)player;
+
+        if (!m_apparelRegistry) {
+            logger::warn("[CandidateGenerator] GatherApparelCandidates: m_apparelRegistry is null");
+            return;
+        }
+        if (m_apparelRegistry->IsLoading()) {
+            logger::debug("[CandidateGenerator] GatherApparelCandidates: registry is loading, skipping");
+            return;
+        }
+
+        // No context gate here, deliberately. Every other source is gathered
+        // unconditionally and filtered by weight downstream, and apparel follows
+        // the same path: WeightForCandidate returns 0.0 away from a workstation,
+        // so minimumContextWeight drops these before scoring. Gating the GATHER
+        // on world.isLookingAtWorkstation would be a second, redundant policy in
+        // a second place — and the pool is tiny by construction, because
+        // ApparelRegistry only ever holds craft-relevant pieces.
+        // WHAT IS ALREADY ON THE PLAYER, per body slot. A piece can only be
+        // worth offering if wearing it would leave the player better off, and
+        // for gear that occupies an OCCUPIED slot that means beating what is
+        // there - putting it on takes the other one off.
+        //
+        // Without this the widget ping-ponged between two circlets: wearing the
+        // +5%, it offered the +1% (unworn, so a candidate); equipping that
+        // displaced the +5%, which was now unworn and outranked everything, so
+        // it came straight back. Two of the three pieces in the pool traded one
+        // head slot forever and a Fortify Alchemy RING - a free, strictly
+        // additive upgrade sitting in an empty slot - never once surfaced.
+        // Observed at an alchemy lab, 2026-09-18.
+        //
+        // Element-wise per craft rather than on the single strongest magnitude:
+        // a worn Fortify Smithing ring must not block a Fortify Alchemy one.
+        std::array<Apparel::CraftMagnitudes, Apparel::APPAREL_SLOT_COUNT> wornBySlot{};
+        m_apparelRegistry->ForEachApparel([&](const Apparel::InventoryApparel& apparel) {
+            if (!apparel.isEquipped) return;
+            auto& worn = wornBySlot[static_cast<size_t>(apparel.data.slot)];
+            for (size_t i = 1; i < Apparel::CRAFT_SKILL_COUNT; ++i) {
+                const auto craft = static_cast<Apparel::CraftSkill>(i);
+                worn.Set(craft, apparel.data.magnitudes.For(craft));
+            }
+        });
+
+        size_t gathered = 0;
+        m_apparelRegistry->ForEachApparel([&](const Apparel::InventoryApparel& apparel) {
+            // Already worn — nothing to recommend. Cheaper to skip here than to
+            // build a candidate for PassesBasicFilters() to throw away.
+            if (apparel.isEquipped) return;
+
+            // Unknown and Other lump unrelated body slots under one value, so a
+            // suppression there could hide a piece that conflicts with nothing.
+            // Offer those and let the scorer rank them.
+            const auto slot = apparel.data.slot;
+            if (slot != Apparel::ApparelSlot::Unknown &&
+                slot != Apparel::ApparelSlot::Other) {
+                const auto& worn = wornBySlot[static_cast<size_t>(slot)];
+
+                bool improves = false;
+                for (size_t i = 1; i < Apparel::CRAFT_SKILL_COUNT && !improves; ++i) {
+                    const auto craft = static_cast<Apparel::CraftSkill>(i);
+                    improves = apparel.data.magnitudes.For(craft) > worn.For(craft);
+                }
+
+                if (!improves) {
+                    // Per-item per-tick, so trace: the interesting event is the
+                    // slot staying empty, which the allocator already reports.
+                    logger::trace("[CandidateGenerator] {} suppressed - does not beat "
+                        "what is worn on {}"sv,
+                        apparel.data.name, Apparel::ApparelSlotToString(slot));
+                    return;
+                }
+            }
+
+            out.push_back(ApparelCandidate::FromInventoryApparel(apparel));
+            ++gathered;
+        });
+        m_stats.apparelScanned = gathered;
     }
 
     // =========================================================================

@@ -23,7 +23,7 @@ namespace Huginn::Slot
         // Tripwire: adding a SlotClassification means this switch (and the other
         // classification switches in SlotConfig.h/SlotClassifier.cpp/SlotSettings.cpp)
         // may need a new case — they default to a generic fallback otherwise.
-        static_assert(SLOT_CLASSIFICATION_COUNT == 21,
+        static_assert(SLOT_CLASSIFICATION_COUNT == 22,
             "SlotClassification changed — review GetClassificationDisplayName and sibling switches");
         switch (c) {
             case SlotClassification::DamageAny:   return "damage";
@@ -41,6 +41,7 @@ namespace Huginn::Slot
             case SlotClassification::SpellsIllusion:    return "illusion spells";
             case SlotClassification::SpellsAlteration:  return "alteration spells";
             case SlotClassification::WeaponsAny:  return "weapons";
+            case SlotClassification::ApparelAny:  return "craft gear";
             default:                              return "match";
         }
     }
@@ -138,6 +139,12 @@ namespace Huginn::Slot
 
             case Candidate::SourceType::SoulGem:
                 return UI::SlotContent::SoulGem(name, formID);
+
+            case Candidate::SourceType::Apparel:
+                // uniqueID as well as formID: two player-enchanted copies of one
+                // base form share a formID, and EquipApparel needs to know which
+                // stack the widget is actually offering.
+                return UI::SlotContent::Apparel(name, formID, candidate.GetUniqueID());
 
             default:
                 return UI::SlotContent::Spell(name, confidence, formID);

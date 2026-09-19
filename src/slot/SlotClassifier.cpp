@@ -8,7 +8,7 @@ namespace Huginn::Slot
     // Tripwire: a new SlotClassification means each Matches*/Classify switch
     // below may need a case — they default to `return false`, so a forgotten
     // case silently never matches. Bump the count here after auditing them all.
-    static_assert(SLOT_CLASSIFICATION_COUNT == 21,
+    static_assert(SLOT_CLASSIFICATION_COUNT == 22,
         "SlotClassification changed — audit MatchesSpell/Item/Scroll/Weapon and Classify()");
 
     bool SlotClassifier::Matches(
@@ -46,6 +46,14 @@ namespace Huginn::Slot
                 return classification == SlotClassification::AmmoAny ||
                        classification == SlotClassification::Regular;
             }
+            else if constexpr (std::is_same_v<T, Candidate::ApparelCandidate>) {
+                // #65. Note ApparelAny does NOT subdivide by craft skill: the
+                // context already decides that, since a Fortify Smithing piece
+                // only scores above zero at a forge. A per-skill slot type would
+                // encode the same restriction twice.
+                return classification == SlotClassification::ApparelAny ||
+                       classification == SlotClassification::Regular;
+            }
             else {
                 return false;
             }
@@ -71,6 +79,7 @@ namespace Huginn::Slot
             SlotClassification::WeaponsRanged,
             SlotClassification::WeaponsAny,
             SlotClassification::AmmoAny,
+            SlotClassification::ApparelAny,
             SlotClassification::SpellsDestruction,
             SlotClassification::SpellsRestoration,
             SlotClassification::SpellsConjuration,
@@ -163,6 +172,7 @@ namespace Huginn::Slot
             case SlotClassification::FoodAny:
             case SlotClassification::AlcoholAny:
             case SlotClassification::AmmoAny:
+            case SlotClassification::ApparelAny:
                 return false;
 
             case SlotClassification::Regular:
@@ -248,6 +258,7 @@ namespace Huginn::Slot
             case SlotClassification::WeaponsMelee:
             case SlotClassification::WeaponsRanged:
             case SlotClassification::AmmoAny:
+            case SlotClassification::ApparelAny:
                 return false;
 
             case SlotClassification::Regular:
@@ -333,6 +344,7 @@ namespace Huginn::Slot
             case SlotClassification::FoodAny:
             case SlotClassification::AlcoholAny:
             case SlotClassification::AmmoAny:
+            case SlotClassification::ApparelAny:
                 return false;
 
             case SlotClassification::Regular:
@@ -382,6 +394,7 @@ namespace Huginn::Slot
             case SlotClassification::FoodAny:
             case SlotClassification::AlcoholAny:
             case SlotClassification::AmmoAny:
+            case SlotClassification::ApparelAny:
                 return false;
 
             case SlotClassification::Regular:

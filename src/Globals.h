@@ -15,6 +15,7 @@
 #include "learning/item/ItemRegistry.h"
 #include "weapon/WeaponRegistry.h"
 #include "scroll/ScrollRegistry.h"
+#include "apparel/ApparelRegistry.h"
 #include "learning/FeatureBanditLearner.h"
 #include "learning/UsageMemory.h"
 #include "learning/UtilityScorer.h"
@@ -36,6 +37,7 @@ extern std::unique_ptr<Huginn::Scoring::UtilityScorer> g_utilityScorer;
 extern std::unique_ptr<Huginn::Item::ItemRegistry> g_itemRegistry;
 extern std::unique_ptr<Huginn::Weapon::WeaponRegistry> g_weaponRegistry;
 extern std::unique_ptr<Huginn::Scroll::ScrollRegistry> g_scrollRegistry;
+extern std::unique_ptr<Huginn::Apparel::ApparelRegistry> g_apparelRegistry;
 
 // Registry maintenance timers (grouped via IntervalTimer)
 struct RegistryTimers {
@@ -47,6 +49,7 @@ struct RegistryTimers {
     Huginn::Util::IntervalTimer weaponReconcile;
     Huginn::Util::IntervalTimer scrollDelta;
     Huginn::Util::IntervalTimer scrollReconcile;
+    Huginn::Util::IntervalTimer apparelReconcile;
 
     void ResetAll() noexcept;
     void ResetAll(std::chrono::steady_clock::time_point now) noexcept;

@@ -18,4 +18,21 @@ namespace Huginn::Context
     [[nodiscard]] float WeightForCandidate(
         const Candidate::CandidateVariant& candidate,
         const ContextWeightMap& weights);
+
+    // =========================================================================
+    // HARD CONTEXT GATE (#65)
+    // =========================================================================
+    // True for sources whose WeightForCandidate arm has NO baseline: a zero from
+    // them means "the context forbids this", not "the context has nothing to say
+    // about it yet". Every other arm floors at baseRelevanceWeight, so its zero
+    // can only mean the latter.
+    //
+    // The distinction exists for UtilityScorer's cold-start pass, which re-admits
+    // skipped candidates at max(contextWeight, coldStartUCBBoost * ucb). That
+    // floor is the right answer for an untried spell nobody has cast; applied to
+    // apparel it silently undoes the gate, because an untried piece has a high
+    // UCB by definition and 0.2 * ucb clears minimumContextWeight. The observable
+    // result is fortify-crafting gear offered in a dungeon -- the exact noise the
+    // no-baseline arm exists to prevent.
+    [[nodiscard]] bool IsHardContextGated(const Candidate::CandidateVariant& candidate) noexcept;
 }

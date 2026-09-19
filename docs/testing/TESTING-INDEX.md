@@ -169,7 +169,7 @@ Both are recorded in [../roadmap.md](../roadmap.md) under *Follow-ups*.
 | **Capture history** (what previous traces measured) | [../profiling/tracy-traces.md](../profiling/tracy-traces.md) |
 | **Long-play soak** (20–50 hr endurance, `[Soak]` heartbeat, accept%) | [../playtest/LongPlaySoak.md](../playtest/LongPlaySoak.md) |
 | **Timing targets and update-loop tiers** | [../reference/Performance.md](../reference/Performance.md) |
-| **Console commands** for manual poking (`hg refresh`, `hg recs`, `hg status`, `hg weights`) | [../reference/ConsoleCommands.md](../reference/ConsoleCommands.md) |
+| **Console commands** for manual poking (`hg refresh`, `hg recs`, `hg status`, `hg weights`) | [Console commands](https://github.com/LandingCrew/huginn/wiki/Console-Commands) |
 
 ### In-game verification gotchas
 
@@ -209,4 +209,4 @@ Listed so nobody reintroduces a reference to it:
 - No `docs/ROADMAP.md` — the roadmap is [../roadmap.md](../roadmap.md), with
   [../roadmap-archive.md](../roadmap-archive.md) beside it
 - No `huginn.reload` console command — the command is registered as `Huginn`
-  with the short alias `hg`, so the syntax is `hg reload`; see [../reference/ConsoleCommands.md](../reference/ConsoleCommands.md)
+  with the short alias `hg`, so the syntax is `hg reload`; see [Console commands](https://github.com/LandingCrew/huginn/wiki/Console-Commands)

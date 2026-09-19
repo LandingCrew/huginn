@@ -5,6 +5,36 @@
 namespace Huginn::Context
 {
     // =============================================================================
+    // WORKSTATION -> CRAFT SKILL (#63/#65)
+    // =============================================================================
+    // RE::TESFurniture::WorkBenchData::BenchType enum values:
+    //   kCreateObject(1), kSmithingWeapon(2), kSmithingArmor(7) -> Fortify Smithing
+    //   kEnchanting(3), kEnchantingExperiment(4)                -> Fortify Enchanting
+    //   kAlchemy(5), kAlchemyExperiment(6)                      -> Fortify Alchemy
+    // Everything else -- kNone, cooking, and any bench a mod declares outside the
+    // vanilla enum -- is None. See the header for why this list has two readers.
+    // =============================================================================
+    Apparel::CraftSkill CraftSkillForWorkstation(int32_t benchType) noexcept
+    {
+        using BenchType = RE::TESFurniture::WorkBenchData::BenchType;
+
+        switch (static_cast<BenchType>(benchType)) {
+        case BenchType::kCreateObject:
+        case BenchType::kSmithingWeapon:
+        case BenchType::kSmithingArmor:
+            return Apparel::CraftSkill::Smithing;
+        case BenchType::kEnchanting:
+        case BenchType::kEnchantingExperiment:
+            return Apparel::CraftSkill::Enchanting;
+        case BenchType::kAlchemy:
+        case BenchType::kAlchemyExperiment:
+            return Apparel::CraftSkill::Alchemy;
+        default:
+            return Apparel::CraftSkill::None;
+        }
+    }
+
+    // =============================================================================
     // MAIN EVALUATION METHOD
     // =============================================================================
     // Stage 1a (skeleton): Returns all zeros — no rules implemented yet.
@@ -247,28 +277,19 @@ namespace Huginn::Context
         // =====================================================================
         // WORKSTATION → Fortify Crafting
         // =====================================================================
-        // RE::TESFurniture::WorkBenchData::BenchType enum values:
-        //   kCreateObject(1), kSmithingWeapon(2), kSmithingArmor(7) → Fortify Smithing
-        //   kEnchanting(3), kEnchantingExperiment(4)                → Fortify Enchanting
-        //   kAlchemy(5), kAlchemyExperiment(6)                      → Fortify Alchemy
+        // The bench-type case list lives in CraftSkillForWorkstation, above.
         if (world.isLookingAtWorkstation) {
-            using BenchType = RE::TESFurniture::WorkBenchData::BenchType;
-            const auto type = static_cast<BenchType>(world.workstationType);
-
-            switch (type) {
-            case BenchType::kCreateObject:
-            case BenchType::kSmithingWeapon:
-            case BenchType::kSmithingArmor:
+            switch (CraftSkillForWorkstation(world.workstationType)) {
+            case Apparel::CraftSkill::Smithing:
                 result.fortifySmithingWeight = m_config.weightAtForge;
                 break;
-            case BenchType::kEnchanting:
-            case BenchType::kEnchantingExperiment:
+            case Apparel::CraftSkill::Enchanting:
                 result.fortifyEnchantingWeight = m_config.weightAtEnchanter;
                 break;
-            case BenchType::kAlchemy:
-            case BenchType::kAlchemyExperiment:
+            case Apparel::CraftSkill::Alchemy:
                 result.fortifyAlchemyWeight = m_config.weightAtAlchemyLab;
                 break;
+            case Apparel::CraftSkill::None:
             default:
                 break;
             }

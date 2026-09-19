@@ -20,6 +20,8 @@ namespace Huginn::Scoring
                 return CalculateAmmoPrior(player, c);
             } else if constexpr (std::is_same_v<T, Candidate::ScrollCandidate>) {
                 return CalculateScrollPrior(c);
+            } else if constexpr (std::is_same_v<T, Candidate::ApparelCandidate>) {
+                return CalculateApparelPrior(c);
             } else {
                 // Compile-time exhaustiveness: adding a new CandidateVariant
                 // alternative must force a prior decision here.
@@ -119,6 +121,39 @@ namespace Huginn::Scoring
         // - NO state.targetType checks (Silver vs Undead is context, not intrinsic)
         // - NO state.distance checks (ranged vs melee range is context)
         // - NO damage comparisons (would require equipped weapon data for context)
+
+        return std::clamp(prior, 0.0f, 1.0f);
+    }
+
+    // =========================================================================
+    // APPAREL PRIORS (#65) - Intrinsic quality heuristics only
+    // =========================================================================
+    // For craft gear "quality" is just the fortify magnitude: a +25% Alchemy ring
+    // is intrinsically better than a +5% one, whatever the player is doing.
+    //
+    // There is no scarcity penalty here, unlike potions and scrolls. Those are
+    // spent — "I only have two left" is a real reason to hold back. Apparel is
+    // worn and taken off again, so wearing it costs nothing and having one of
+    // something is not a reason to prefer a weaker alternative.
+    // =========================================================================
+
+    float PriorCalculator::CalculateApparelPrior(
+        const Candidate::ApparelCandidate& apparel) const
+    {
+        float prior = BASE_PRIOR;
+
+        // Same log curve as potions/scrolls, against an apparel-scale reference:
+        // saturating rather than linear, so a modded +200% piece does not swamp
+        // everything else in the pool.
+        if (apparel.magnitude > 0.0f) {
+            float magRatio = std::log(1.0f + apparel.magnitude) /
+                             std::log(1.0f + APPAREL_MAGNITUDE_REFERENCE);
+            prior += std::min(magRatio, 1.0f) * MAGNITUDE_SCALE_FACTOR;
+        }
+
+        // No context checks here — whether the player is AT a forge is
+        // ContextRuleEngine's call, and it is already the only thing that lets
+        // apparel score above zero at all (WeightForCandidate).
 
         return std::clamp(prior, 0.0f, 1.0f);
     }

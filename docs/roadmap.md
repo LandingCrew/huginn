@@ -6,8 +6,47 @@ once its entry leaves this file. Git history is the only record; check it before
 re-opening something that looks obviously undone.
 
 ## Known Bugs
-
-None open.
+- [ ] Wheeler's add-failure cooldown never engages for a slot that already holds
+      something, so a permanently-unaddable item hammers the API at ~10 Hz.
+      `WheelSync.cpp:1461` resets `slotRetries` whenever the incoming FormID
+      differs from the one cached for that slot, reading "cached differs" as "a
+      genuinely different item is being recommended now". But a FAILED add
+      deliberately leaves `slotFormIDs[idx]` at the old value — that is how the
+      restore path keeps the good entry — so the next pass sees the same
+      mismatch, resets the counter, and the three-strikes rule never reaches
+      strike two. Every pass then pays a full RemoveItem → failing
+      AddItemByFormID → restore-the-old-item cycle.
+      Seen 2026-09-18 on a plain Long Bow (0003B562). Weapons and armour need an
+      ExtraUniqueID before Wheeler will take them, and an untempered,
+      unenchanted weapon never gets one, so the #74 defer budget expires exactly
+      as designed and drops the item to the reject path — which then cannot
+      quiet down: 23 logged `result=-6` failures across two short bursts, every
+      one of them "attempt 1/3", plus two `ValidateWheelState` desyncs. The
+      neighbouring slot escaped only because its cached FormID was 0, which
+      skips the reset and lets the counter climb to 3 and suppress correctly.
+      Fix is to reset on the last ATTEMPTED target rather than on what is
+      cached: remember (formID, uniqueID) per slot at attempt time and compare
+      the incoming pair against that. Pre-existing on main (introduced in
+      `60ea74d`, the WheelSync extraction) — not an apparel-branch regression.
+      Raised 2026-09-18.
+- [ ] Double-tap-to-left-hand reported not firing. NOT reproduced in the
+      2026-09-18 log, and that is the useful half of the report: earlier in the
+      same session double-tap worked five times out of five (`Slot 1 DOUBLE-TAP
+      -> equip left hand ONLY` → `Equipped weapon 'Iron Sword' to left hand`),
+      and in the later stretch where it was reported failing the second press
+      never arrived at all — two `KEY PRESS` lines in total, both resolving as
+      deferred SINGLE taps once the 300ms window closed. InputHandler cannot
+      miss a double-tap it was never told about, so the open question is what
+      swallowed the second press, not what the tap timer did with it.
+      Cheapest thing to rule out first is which key was actually under the
+      thumb. Key '1' (scancode 2) drives InputHandler slot 1, which resolves to
+      VISUAL slot 0 — confirmed in both directions in that log, and the sword sat
+      in visual slot 0 the whole time. A press on a key bound to nothing logs
+      nothing, which is indistinguishable from a dropped press.
+      Next repro wants two facts: which key was pressed, and whether
+      `[InputHandler] KEY PRESS` appears TWICE for it. Twice with no DOUBLE-TAP
+      following means the bug is ours; once means it is upstream of us.
+      Raised 2026-09-18.
 
 ## Known Mod Compatability Issues
 - [ ] Vanilla-build integration pass — a set of contexts is only ever exercised
@@ -16,14 +55,66 @@ None open.
       known case (test 6h stands in for it); the honest scope is "boot a vanilla
       profile once and walk the contexts", which would also cover the #79 four
       that no LoreRim character can carry. Wants a save with vanilla alchemy
-- [ ] #63: Requiem (LoreRim et al.) strips Fortify Smithing/Enchanting from
-      alchemy, so the workstation context has no potion to rank — inert in the
-      modlists that actually get play-tested. Live targets are filled soul gems
-      and fortify apparel (#65); vanilla path needs its own regression test
+- [ ] #63: the workstation context has no fortify POTION to rank on Requiem-based
+      lists — inert in the modlists that actually get play-tested. Vanilla path
+      still needs its own regression test (test 6h is the unit coverage).
+      Two corrections from the #65 work, both on the [LoreRim wiki page](https://github.com/LandingCrew/huginn/wiki/LoreRim):
+      the alchemy overhaul is attributed to Alchemy Redone rather than Requiem
+      alone; and a MUCH bigger cause was found and fixed — walking up to a bench
+      changed no GameState hash dimension, so the pipeline skip-gate discarded
+      the whole workstation context unless an unrelated dimension moved on the
+      same tick. That hit fortify potions on vanilla too, so re-check how much
+      of "inert" was ever about Requiem's content. Apparel now answers the
+      alchemy lab (#65, PR #114); the forge may still have no live payload
 
 ## Known Recommendation Issues
-- [ ] #65: apparel is not a candidate source (`SourceType` has no armor entry),
-      so fortify gear can never be recommended — blocks the Requiem answer to #63
+- [ ] Take craft gear back OFF when the crafting is done — the #65 follow-on.
+      Apparel is the one source that CHANGES THE PLAYER and leaves it changed:
+      every other recommendation is spent when used, but a fortify ring stays on
+      the finger after you walk away from the bench, and Huginn deliberately
+      tracks nothing about what it replaced ("taking it off again is the
+      player's business", CandidateTypes.h). Gear up at an alchemy lab with a
+      circlet and a ring and you leave wearing +6% alchemy and whatever armour
+      those two slots used to hold is in your pack.
+      Wants a decision before it wants code, roughly in order of nerve:
+      remember the displaced piece and offer to restore it once the workstation
+      context closes (a recommendation, so the player still chooses); surface a
+      "take it off" entry in the same slot while the gear is worn and the bench
+      is gone; or restore automatically on leaving, which is the only option
+      that acts on the player without being asked and should probably stay off
+      by default.
+      Note the restore target is an INSTANCE, not a form — it needs the
+      ExtraUniqueID plumbing from #65, and ApparelRegistry::MarkEquipped already
+      knows which piece each equip displaced (that is what the slot sweep is).
+      Raised 2026-09-18 after the swap loop was fixed.
+- [ ] Recommend enchanted apparel beyond the three craft skills — the #65
+      follow-up. #65 itself is DONE (PR #114): apparel is a candidate source,
+      verified in-game, but deliberately narrow — only gear fortifying Alchemy,
+      Smithing or Enchanting, because classification is what keeps the pool from
+      growing by the size of the wardrobe.
+      A real inventory has far more that is contextually useful. Sorted by cost:
+      **Tier 1, free** — existing weight AND existing detection, pure
+      classification: resist fire/frost/shock/poison/disease
+      (`resistXWeight`), magicka/health/stamina regen (`magickaRestoreWeight`
+      et al.), muffle/sneak (`stealthWeight`), waterbreathing.
+      **Tier 2, new weight but the signal exists** — carry weight
+      (`isOverencumbered` is already polled and `ItemTag::FortifyCarryWeight`
+      already exists); per-school spell cost reduction (school is known, but
+      there is no per-school weight); weapon-skill fortifies (equipped weapon
+      type is tracked).
+      **Tier 3, needs new detection** — haggling/speechcraft. There is NO
+      merchant or barter context anywhere in `src/`; it wants BarterMenu
+      detection, which is state plumbing rather than classification.
+      **BLOCKER, settle before any of the above.** Apparel is currently safe
+      only because it is narrow: one circlet, swapped deliberately at a bench,
+      out of combat. Tier 1 is exactly the combat case — recommending resist
+      robes while the player wears 258-armor Orcish Berserk means `EquipApparel`
+      strips the armor mid-fight, and nothing restores it. Needs (a) slot
+      grouping so two rings do not both surface — `ApparelData::slot` is already
+      classified, the candidate field was dropped in PR #114 for having no
+      consumer and comes back here; (b) a worn-vs-candidate comparison, is the
+      enchantment worth the armor lost, which is scoring not filtering; and
+      (c) a restore story, or an explicit decision not to have one (M/L)
 - [ ] Scroll cold-start: all scrolls sit in the pool every tick but score
       `learn≈0` against trained items at `learn=7–8`, so one can never surface
       until used and can't be used until surfaced.
@@ -32,6 +123,21 @@ None open.
       is most visible, because a player rarely uses one unprompted. The two
       candidate fixes are under Follow-ups, "Share learning across similar
       items"; fixing either closes this
+
+- [ ] Two duplication findings from the PR #114 review, neither blocking:
+      `ItemClassifier::DetermineFortifySkillType` has no case for the
+      "Modifier" actor-value series, so a POTION carrying `kAlchemyModifier`
+      falls into its default and is never tagged — the same bug class that made
+      apparel inert, still live for potions. `ApparelClassifier` copied that
+      vocabulary rather than sharing it, and the two have already drifted in
+      opposite directions; one shared AV -> craft-skill function fixes both.
+      Separately, `ApparelRegistry` hand-copies the key-agnostic half of
+      `Registry::FormRegistry` (`ForEachEntry`, `IsLoading`, `EntryCount`) — the
+      CRTP base whose own comment says it exists to stop exactly that. Its
+      composite (formID, uniqueID) key genuinely does not fit the FormID-keyed
+      index, which is why it was copied, but the visitor half could be adopted.
+      Both grow in value if the apparel expansion above lands, since it
+      multiplies the effect types being classified (S each)
 
 ## Doc-migration findings (2026-08-29)
 Surfaced by the one-agent-per-doc migration pass. Every one is a code or config
@@ -179,22 +285,6 @@ trigger to pick any of it up.
       decide whether the modifier is latched at key-down or sampled throughout.
       Also needs a conflict story for modifiers the game itself binds. Nexus page
       currently states "only single keypresses" — update it when this lands (M)
-- [ ] Wheeler leaves an empty unmanaged wheel behind when a client's wheels were
-      the only ones, and it PERSISTS — `SerializeIntoJsonObj` skips only managed
-      wheels, so the placeholder is written to the co-save as `{"entries": []}`
-      and rebuilt on load like a user wheel. Bounded at one (the next teardown
-      finds it still there, so the list never empties again), but permanent once
-      a player has it, and confirmed in-game 2026-08-29 at index 3 after a
-      teardown+recreate. Upstream introduced it in `ca2e2f2` because
-      `MoveEntryForward/BackInCurrentWheel` (Wheeler.cpp ~911/926) deref
-      `_wheels[_activeWheelIdx]` behind an `_activeWheelIdx != -1` test that
-      never fires — a full audit confirmed those are the only two unguarded
-      `_wheels` accesses. Fix: guard both on `_wheels.empty()`, then drop the
-      `push_back`. NOT `_activeWheelIdx = -1` — `AddWheel`/`PushWheel` never
-      touch the index and `API_CreateManagedWheel`'s `if (activeIdx >= index)`
-      fixup misses -1, so a -1 would survive into a non-empty list. Dropping the
-      push does not retroactively remove one already saved; decide whether that
-      needs a cleanup path (S)
 - [ ] `ValidateWheelState` emits ~11 desync warns during a Wheeler edit-mode
       session — stale by construction, since Huginn has no signal that indices
       moved until edit mode exits, and the exit re-resolve corrects everything

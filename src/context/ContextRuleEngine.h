@@ -1,5 +1,6 @@
 #pragma once
 
+#include "apparel/ApparelData.h"   // Apparel::CraftSkill (#65)
 #include "state/PlayerActorState.h"
 #include "state/TargetActorState.h"
 #include "state/WorldState.h"
@@ -10,6 +11,21 @@
 
 namespace Huginn::Context
 {
+    // =============================================================================
+    // WORKSTATION -> CRAFT SKILL (#63/#65)
+    // =============================================================================
+    // The single case list mapping RE::TESFurniture::WorkBenchData::BenchType to
+    // the craft a bench fortifies. CraftSkill::None means "this furniture has a
+    // bench type, but not one that produces a fortify weight" — a modded bench
+    // outside the vanilla enum, or one of the cooking/other types.
+    //
+    // Two readers, deliberately sharing one list: EvaluateRules picks which
+    // fortify weight to raise, and PipelineCoordinator decides whether standing
+    // at this bench is worth defeating the hash skip for. When those drifted, the
+    // coordinator kept the full pipeline running at 100 ms for benches that
+    // raised no weight at all.
+    [[nodiscard]] Apparel::CraftSkill CraftSkillForWorkstation(int32_t benchType) noexcept;
+
     // =============================================================================
     // CONTEXT WEIGHT MAP
     // =============================================================================

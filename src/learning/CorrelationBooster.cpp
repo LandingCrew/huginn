@@ -53,6 +53,21 @@ namespace Huginn::Scoring
                 return CalculateWeaponCorrelation(player, targets, c);
             } else if constexpr (std::is_same_v<T, Candidate::AmmoCandidate>) {
                 return CalculateAmmoCorrelation(player, targets, c);
+            } else if constexpr (std::is_same_v<T, Candidate::ApparelCandidate>) {
+                // #65: no correlation for craft gear, deliberately — 1.0 is neutral.
+                //
+                // Every correlation in this class pairs a candidate with COMBAT
+                // state: bow→arrow, undead→silver, low health→healing. Apparel is
+                // a workstation source; by the time it can score at all the player
+                // is standing at a forge, and none of those pairings exist there.
+                // A boost would have to be invented rather than observed.
+                //
+                // The obvious future one — "fortify Smithing correlates with
+                // holding an improvable weapon" — needs equipped-item data this
+                // class does not take, so it belongs in a later change, not a
+                // placeholder here.
+                (void)c;
+                return 1.0f;
             } else if constexpr (std::is_same_v<T, Candidate::ScrollCandidate>) {
                 return CalculateScrollCorrelation(player, targets, c);
             } else {

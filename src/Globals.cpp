@@ -44,6 +44,7 @@ std::unique_ptr<Huginn::Weapon::WeaponRegistry> g_weaponRegistry;
 
 // Scroll registry instance (v0.7.7)
 std::unique_ptr<Huginn::Scroll::ScrollRegistry> g_scrollRegistry;
+std::unique_ptr<Huginn::Apparel::ApparelRegistry> g_apparelRegistry;
 
 // Registry maintenance timers (grouped via IntervalTimer)
 RegistryTimers g_registryTimers;
@@ -62,6 +63,7 @@ void RegistryTimers::ResetAll(std::chrono::steady_clock::time_point now) noexcep
     weaponReconcile.Reset(now);
     scrollDelta.Reset(now);
     scrollReconcile.Reset(now);
+    apparelReconcile.Reset(now);
 }
 
 // Global game load timestamp for extraLists stabilization guard (v0.7.9)

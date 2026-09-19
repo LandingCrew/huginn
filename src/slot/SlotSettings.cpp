@@ -8,7 +8,7 @@ namespace Huginn::Slot
     // Tripwire: a new SlotClassification needs a parse alias + ToIniString case
     // below (ParseClassification / ClassificationToIniString), else it can't be
     // configured from INI and round-trips to Regular.
-    static_assert(SLOT_CLASSIFICATION_COUNT == 21,
+    static_assert(SLOT_CLASSIFICATION_COUNT == 22,
         "SlotClassification changed — update ParseClassification and ClassificationToIniString");
 
     void SlotSettings::LoadFromFile(const std::filesystem::path& iniPath)
@@ -243,6 +243,7 @@ namespace Huginn::Slot
         if (lower == "foodany" || lower == "food") return SlotClassification::FoodAny;
         if (lower == "alcoholany" || lower == "alcohol" || lower == "drinks") return SlotClassification::AlcoholAny;
         if (lower == "ammoany" || lower == "ammo" || lower == "ammunition") return SlotClassification::AmmoAny;
+        if (lower == "apparelany" || lower == "apparel" || lower == "armor") return SlotClassification::ApparelAny;
         if (lower == "regular" || lower == "any" || lower == "all") return SlotClassification::Regular;
 
         // Parse error - log and default to Regular (open slot)
@@ -273,6 +274,7 @@ namespace Huginn::Slot
             case SlotClassification::FoodAny:      return "FoodAny";
             case SlotClassification::AlcoholAny:   return "AlcoholAny";
             case SlotClassification::AmmoAny:      return "AmmoAny";
+            case SlotClassification::ApparelAny:   return "ApparelAny";
             case SlotClassification::Regular:      return "Regular";
             default:                              return "Regular";
         }

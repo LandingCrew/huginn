@@ -131,6 +131,18 @@ namespace Huginn::Scoring
 
                 float contextWeight = Context::WeightForCandidate(candidate, weights);
 
+                // A closed hard gate is not a cold start. For a source with no
+                // baseline (apparel) a sub-minimum context weight means the
+                // context FORBIDS the candidate, not that nobody has tried it —
+                // and an untried piece has a high UCB by construction, so the
+                // floor below would clear minimumContextWeight and put a fortify
+                // ring in a dungeon slot. Above the minimum the gate is open and
+                // the boost applies as it does everywhere else.
+                if (Context::IsHardContextGated(candidate) &&
+                    contextWeight < m_config.minimumContextWeight) {
+                    continue;
+                }
+
                 // UCB-driven context floor for untried/low-visit items (Phase 3.5c: FeatureBanditLearner)
                 // Uses locked reader — no per-candidate lock acquisition
                 auto metrics = qReader.GetMetrics(formID, phi);

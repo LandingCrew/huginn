@@ -263,22 +263,27 @@ For detailed documentation on specific subsystems, see [docs/architecture/](arch
 | [7-dmenu-integration.md](architecture/7-dmenu-integration.md) | dMenu integration and two-INI architecture |
 | [8-future-work.md](architecture/8-future-work.md) | Deferred ideas: temporal prediction, urgency multipliers, HMM combat states |
 
-And the reference material in [docs/reference/](reference/):
+And the reference material in [docs/reference/](reference/), plus the console
+command reference now on the wiki:
 
 | Document | Contents |
 |----------|----------|
-| [ConsoleCommands.md](reference/ConsoleCommands.md) | The `hg` console commands |
+| [Console commands](https://github.com/LandingCrew/huginn/wiki/Console-Commands) | The `hg` console commands |
 | [candidate-system.md](reference/candidate-system.md) | Candidate registries and generation |
 | [Performance.md](reference/Performance.md) | Performance budget and measurements |
 | [intuition-scaleform-build.md](reference/intuition-scaleform-build.md) | Building `Intuition.swf` from `src/swf/Intuition.as` |
 | [WheelerAPI_minimal.h](reference/WheelerAPI_minimal.h), [WheelerAPIClient.h](reference/WheelerAPIClient.h) | Vendored Wheeler API headers for reference |
 
-And the rest of the tree:
+And the rest of the tree. Player-facing material — compatibility guides, the
+console command reference, the changelog and the Nexus page copy — lives on the
+[wiki](https://github.com/LandingCrew/huginn/wiki), which anyone can edit; the
+docs that cite source files and change with commits stay here.
+
 
 | Path | Contents |
 |---|---|
-| [compatibility/](compatibility/) | LoreRim, Survival Mode, unknown-spell handling, general mod compatibility |
-| [changelog/](changelog/) | v0.5 through v0.13 release notes |
+| [Compatibility (wiki)](https://github.com/LandingCrew/huginn/wiki/Mod-Compatibility) | LoreRim, Survival Mode, unknown-spell handling, general mod compatibility |
+| [Changelog (wiki)](https://github.com/LandingCrew/huginn/wiki/Home#changelog) | v0.5 through v0.13 release notes |
 | [testing/](testing/) | Test index and profiling guide |
 | [refactor/](refactor/) | Fix patterns, form registry, performance work, Wheeler push spikes |
 | [limitations/](limitations/) | Known limits (soul gems) |
