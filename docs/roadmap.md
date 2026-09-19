@@ -6,8 +6,47 @@ once its entry leaves this file. Git history is the only record; check it before
 re-opening something that looks obviously undone.
 
 ## Known Bugs
-
-None open.
+- [ ] Wheeler's add-failure cooldown never engages for a slot that already holds
+      something, so a permanently-unaddable item hammers the API at ~10 Hz.
+      `WheelSync.cpp:1461` resets `slotRetries` whenever the incoming FormID
+      differs from the one cached for that slot, reading "cached differs" as "a
+      genuinely different item is being recommended now". But a FAILED add
+      deliberately leaves `slotFormIDs[idx]` at the old value — that is how the
+      restore path keeps the good entry — so the next pass sees the same
+      mismatch, resets the counter, and the three-strikes rule never reaches
+      strike two. Every pass then pays a full RemoveItem → failing
+      AddItemByFormID → restore-the-old-item cycle.
+      Seen 2026-09-18 on a plain Long Bow (0003B562). Weapons and armour need an
+      ExtraUniqueID before Wheeler will take them, and an untempered,
+      unenchanted weapon never gets one, so the #74 defer budget expires exactly
+      as designed and drops the item to the reject path — which then cannot
+      quiet down: 23 logged `result=-6` failures across two short bursts, every
+      one of them "attempt 1/3", plus two `ValidateWheelState` desyncs. The
+      neighbouring slot escaped only because its cached FormID was 0, which
+      skips the reset and lets the counter climb to 3 and suppress correctly.
+      Fix is to reset on the last ATTEMPTED target rather than on what is
+      cached: remember (formID, uniqueID) per slot at attempt time and compare
+      the incoming pair against that. Pre-existing on main (introduced in
+      `60ea74d`, the WheelSync extraction) — not an apparel-branch regression.
+      Raised 2026-09-18.
+- [ ] Double-tap-to-left-hand reported not firing. NOT reproduced in the
+      2026-09-18 log, and that is the useful half of the report: earlier in the
+      same session double-tap worked five times out of five (`Slot 1 DOUBLE-TAP
+      -> equip left hand ONLY` → `Equipped weapon 'Iron Sword' to left hand`),
+      and in the later stretch where it was reported failing the second press
+      never arrived at all — two `KEY PRESS` lines in total, both resolving as
+      deferred SINGLE taps once the 300ms window closed. InputHandler cannot
+      miss a double-tap it was never told about, so the open question is what
+      swallowed the second press, not what the tap timer did with it.
+      Cheapest thing to rule out first is which key was actually under the
+      thumb. Key '1' (scancode 2) drives InputHandler slot 1, which resolves to
+      VISUAL slot 0 — confirmed in both directions in that log, and the sword sat
+      in visual slot 0 the whole time. A press on a key bound to nothing logs
+      nothing, which is indistinguishable from a dropped press.
+      Next repro wants two facts: which key was pressed, and whether
+      `[InputHandler] KEY PRESS` appears TWICE for it. Twice with no DOUBLE-TAP
+      following means the bug is ours; once means it is upstream of us.
+      Raised 2026-09-18.
 
 ## Known Mod Compatability Issues
 - [ ] Vanilla-build integration pass — a set of contexts is only ever exercised
