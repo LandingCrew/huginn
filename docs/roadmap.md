@@ -6,24 +6,6 @@ once its entry leaves this file. Git history is the only record; check it before
 re-opening something that looks obviously undone.
 
 ## Known Bugs
-- [ ] FIXED in this PR, kept as the record of a wrong diagnosis twice over.
-      The survival widget's fatigue names were swapped against SurvivalThreshold's
-      own constants: rank 2 (FATIGUE_TIRED) printed "Weary", rank 3
-      (FATIGUE_WEARY, the rank IsExhausted() gates on) printed "Tired", rank 4
-      (FATIGUE_DEBILITATED, critical) printed "Very Tired", and case 5 was dead
-      because the vanilla path tops out at 4.
-      Diagnosed first as "our thresholds are wrong" -- measured against Skyrim's
-      display stages, which Huginn never claimed to mirror. Then as "the names
-      are Survival Mode Improved's vocabulary on a non-SMI path". Both wrong:
-      the names were the code's OWN, one row out of alignment.
-      The observation that started it -- exhaustion 302 showing "Weary" when the
-      game said "Drained" -- was the swap, not a scale disagreement. And cold and
-      hunger "agreeing" was not coincidence, as the second diagnosis claimed;
-      their tables are simply correct, which is the tell that should have pointed
-      at fatigue's table rather than at the thresholds.
-      Both earlier readings survive in this file's git history. Neither survived
-      a look at the two tables side by side.
-
 - [ ] WeaponRegistry keeps one record per BASE FORM, so a tempered instance and
       an untempered one cannot both exist and the record's instance fields
       thrash between them.
