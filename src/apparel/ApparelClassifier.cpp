@@ -2,43 +2,14 @@
 
 namespace Huginn::Apparel
 {
-   // =============================================================================
-   // ACTOR VALUE -> CRAFT SKILL
-   // =============================================================================
-   // The AV vocabulary is shared with ItemClassifier::DetermineFortifySkillType,
-   // which is where the LoreRim-specific *PowerModifier values were first found.
-   // Keep the two in step: a fortify effect that a potion recognises should be
-   // recognised on a ring too.
-   // =============================================================================
+   // The mapping now lives in ApparelData.h so ItemClassifier can share it —
+   // the two copies had already drifted, and it was this one being wrong that
+   // made #65 inert on its first play-test. Kept as a forwarder rather than
+   // deleted: it is a declared member of the class and the classifier reads
+   // better asking itself the question.
    CraftSkill ApparelClassifier::CraftSkillForActorValue(RE::ActorValue av) noexcept
    {
-      // Skyrim carries each skill several times over: the skill itself, a
-      // "Modifier" series, and a "PowerModifier" series. Apparel enchantments
-      // use the Modifier series (kSmithingModifier = 100, kAlchemyModifier = 106,
-      // kEnchantingModifier = 113); potions use the other two. Mapping only the
-      // potion vocabulary — this function's first version copied it wholesale
-      // from ItemClassifier::DetermineFortifySkillType — made the whole feature
-      // inert on its first play-test: 21 armor pieces scanned, 13 enchanted, 0
-      // recognised.
-      switch (av) {
-      case RE::ActorValue::kAlchemy:
-      case RE::ActorValue::kAlchemyPowerModifier:     // 145
-      case RE::ActorValue::kAlchemyModifier:          // 106 — apparel
-         return CraftSkill::Alchemy;
-
-      case RE::ActorValue::kSmithing:
-      case RE::ActorValue::kSmithingPowerModifier:    // 139
-      case RE::ActorValue::kSmithingModifier:         // 100 — apparel
-         return CraftSkill::Smithing;
-
-      case RE::ActorValue::kEnchanting:
-      case RE::ActorValue::kEnchantingPowerModifier:  // 152
-      case RE::ActorValue::kEnchantingModifier:       // 113 — apparel
-         return CraftSkill::Enchanting;
-
-      default:
-         return CraftSkill::None;
-      }
+      return Apparel::CraftSkillForActorValue(av);
    }
 
    ApparelSlot ApparelClassifier::DetermineSlot(RE::TESObjectARMO* armor) noexcept

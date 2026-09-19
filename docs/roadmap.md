@@ -6,24 +6,9 @@ once its entry leaves this file. Git history is the only record; check it before
 re-opening something that looks obviously undone.
 
 ## Known Bugs
-- [ ] A cosave learner record can be rejected whole, silently losing every
-      learned weight on that save. Seen 2026-09-18 on LoreRim:
-      `[Cosave] DecodeV2EntryBlob: byteLen 83 != stride 84 x numItems 1 —
-      rejecting`. The arithmetic says the record is one byte short of a single
-      entry: stride is `4 (FormID) + 4 * diskFeatureCount + 8`, so 84 means the
-      header's feature count read back as 18, which is right — and the blob
-      that followed was 83 bytes, not 84.
-      The guard itself is correct and should stay; decoding a short buffer at a
-      fixed stride walks off the end. What is not established is which side is
-      wrong. Worth ruling out in order: a stale cosave written by a build with
-      a different entry layout (most likely, and harmless once that character
-      re-saves); a short `ReadRecordData`; a writer that computes `byteLen`
-      differently from `DecodeV2EntryBlob` (BanditSerializer.cpp:24 vs :38 —
-      two separate spellings of the same sum, which is how they drift).
-      Cheap tells: whether it recurs after a fresh save on that character, and
-      whether numItems in the failing record matches the count the previous
-      `[Cosave] Saved N learner weight entries` line reported.
-      Raised 2026-09-18.
+
+None open.
+
 ## Known Mod Compatability Issues
 - [ ] Vanilla-build integration pass — a set of contexts is only ever exercised
       on the Requiem-based list this is developed against, so anything vanilla

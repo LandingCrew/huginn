@@ -3073,7 +3073,26 @@ void RunUnitTests()
             }
         }
 
-        logger::info("TEST PASS: ApparelClassifier maps craft skills and rejects the rest"sv);
+        // These cases now guard BOTH callers. The mapping moved to
+        // ApparelData.h and ItemClassifier::DetermineFortifySkillType consults
+        // it too, so a craft AV missing from this table is a potion that goes
+        // untagged as well as a ring that goes unrecognised.
+        //
+        // That is not hypothetical. The potion side kept its own copy until
+        // this was shared, and its copy never learned the Modifier series --
+        // the identical omission that made #65 inert on its first play-test,
+        // sitting live on potions the whole time.
+        //
+        // What the table does NOT assert is where each craft LANDS: Alchemy is
+        // a utility skill, Smithing a combat skill, Enchanting a magic school,
+        // and those three destinations are deliberately different. Asserting
+        // them means reaching DetermineFortifySkillType, which is private and
+        // should stay that way -- ItemClassifier exposes only ClassifyItem and
+        // ClassifySoulGem on purpose. Verified by inspection instead; if a
+        // refactor ever unifies the answer along with the question, that is
+        // where it will go wrong.
+
+        logger::info("TEST PASS: one craft-skill vocabulary maps for apparel and potions alike"sv);
     }
 
     // Test 7: ContextRuleEngine combat rules (Stage 1e - Binary Weights)

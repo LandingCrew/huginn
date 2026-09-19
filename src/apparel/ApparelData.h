@@ -40,6 +40,49 @@ namespace Huginn::Apparel
    }
 
    // =============================================================================
+   // ACTOR VALUE -> CRAFT SKILL
+   // =============================================================================
+   // The single vocabulary for "which craft does this effect fortify". Shared
+   // deliberately: apparel and potions each had their own copy, the copies had
+   // already drifted, and the drift is not cosmetic — mapping only the potion
+   // vocabulary onto apparel made #65 completely inert on its first play-test
+   // (21 armor pieces scanned, 13 enchanted, 0 recognised).
+   //
+   // Skyrim carries each skill three times over: the skill itself, a "Modifier"
+   // series, and a "PowerModifier" series. Apparel enchantments use Modifier
+   // (kSmithingModifier = 100, kAlchemyModifier = 106, kEnchantingModifier =
+   // 113); potions use the other two. Recognise all three everywhere — a
+   // fortify effect a ring understands should not be invisible on a potion.
+   //
+   // Callers keep their own destination for the answer: apparel records a
+   // magnitude per craft, while ItemClassifier files Alchemy under utility,
+   // Smithing under combat and Enchanting under magic school. Only the
+   // vocabulary is shared, not what anyone does with it.
+   // =============================================================================
+   [[nodiscard]] constexpr CraftSkill CraftSkillForActorValue(RE::ActorValue av) noexcept
+   {
+      switch (av) {
+      case RE::ActorValue::kAlchemy:
+      case RE::ActorValue::kAlchemyPowerModifier:     // 145
+      case RE::ActorValue::kAlchemyModifier:          // 106 — apparel
+         return CraftSkill::Alchemy;
+
+      case RE::ActorValue::kSmithing:
+      case RE::ActorValue::kSmithingPowerModifier:    // 139
+      case RE::ActorValue::kSmithingModifier:         // 100 — apparel
+         return CraftSkill::Smithing;
+
+      case RE::ActorValue::kEnchanting:
+      case RE::ActorValue::kEnchantingPowerModifier:  // 152
+      case RE::ActorValue::kEnchantingModifier:       // 113 — apparel
+         return CraftSkill::Enchanting;
+
+      default:
+         return CraftSkill::None;
+      }
+   }
+
+   // =============================================================================
    // APPAREL SLOT
    // =============================================================================
    // Which body slot the piece occupies, from the biped object template. Carried
