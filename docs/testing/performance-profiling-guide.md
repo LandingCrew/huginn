@@ -78,7 +78,7 @@ directory. -->
 early-out**. Verify it yourself: `src/state/StateManager_MagicEffects.cpp:71`
 opens `PollPlayerMagicEffects` with the zone macro, and the null-player and
 null-`AsMagicTarget` bails come *after* it. `src/display/WheelerBackend.cpp:33`
-and `src/pipeline/PipelineCoordinator.cpp:275` do the same.
+and `src/pipeline/PipelineCoordinator.cpp:301` do the same.
 
 Consequences:
 
@@ -100,8 +100,26 @@ the skip is structural — see §6.
 ## 3. Building a profiling build
 
 Tracy is already vendored as a submodule (`extern/tracy`, per `.gitmodules`;
-currently Tracy **0.13.1**). **Do not run `git submodule add`** — the old version
+currently Tracy **0.14.1**). **Do not run `git submodule add`** — the old version
 of this guide told you to, and it will fail.
+
+What you **do** need on an existing clone is a submodule sync — git does not
+update submodule working trees on checkout, so a clone made before the 0.14.1
+bump silently keeps 0.13.1 in `extern/tracy`:
+
+```sh
+git submodule update --init extern/tracy
+```
+
+Skipping this fails in the worst possible way: the build succeeds, the load line
+still shows ` [TRACY]`, and the 0.14.x GUI simply never lists the client — the
+0.13.1 protocol (76) cannot handshake with a 0.14.x server (82), and nothing
+reports an error. If §4 shows no client, check the submodule before anything
+else:
+
+```sh
+git -C extern/tracy describe --tags   # must print v0.14.1
+```
 
 ```sh
 # Ordinary Debug build (no Tracy) — the CLAUDE.md build line
@@ -150,9 +168,9 @@ so captures stay comparable with the recorded history.
 
 ## 4. Capturing
 
-1. Launch the **Tracy profiler GUI** (0.13.x, matching the vendored client) and
+1. Launch the **Tracy profiler GUI** (0.14.x, matching the vendored client) and
    click *Connect*.
-2. Launch Skyrim. The load line stamps the build (`src/Main.cpp:697–705`):
+2. Launch Skyrim. The load line stamps the build (`src/Main.cpp:817–826`):
    `Huginn vX.Y.Z (<git-sha>) [RELEASE] [TRACY] Loading`, or
    `… [DEBUG BUILD] [TRACY] Loading` for a Debug+Tracy build. The ` [TRACY]` tag
    is present only when `Huginn_TRACY_ENABLED` is defined — **if it is missing,
@@ -170,6 +188,36 @@ so captures stay comparable with the recorded history.
 **One tool at a time.** Tracy + the VSCode debugger + `debug`-level logging
 simultaneously destroys the profile you are trying to measure. See "One tool ≠ one
 run" in `../playtest/LongPlaySoak.md`.
+
+### If Statistics shows one zone, you captured a menu
+
+Check **Statistics → Total zone count** before you read anything else. If it says
+**1** — only `OnUpdate` — throw the capture away and take another.
+
+This is not a broken build, and the ` [TRACY]` tag will not warn you. `OnUpdate`
+and the three zones nested directly inside it (`Update::Subsystems` :193,
+`Update::Registries` :249, `Update::PipelineCheck` :388) live in the *same*
+translation unit, so if `OnUpdate` emitted, the others were compiled too. The only
+way to get one without the rest is the early return at `src/UpdateLoop.cpp:510`:
+
+```cpp
+if (!loaded) return;   // IsWorldLoaded: LoadingMenu / MainMenu / Get3D() == nullptr
+```
+
+Everything downstream was skipped for every tick. The `OnUpdate` MTPC you are
+looking at is the cost of the early-return path — quoting it as Huginn's tick cost
+understates the real figure by a wide margin.
+
+Two tells, both visible without leaving the capture:
+
+- **Frame rate far above the in-game cap.** A menu renders uncapped; in-world sits
+  at the cap. A 2026-09-19 discard ran 207 fps against 131 fps for the good capture.
+- **Memory usage near-flat at a few KB.** The `operator new`/`delete` overrides in
+  `src/TracyMemory.cpp` flood during real gameplay. The discard showed 2 data
+  points / 7.8 KB; the good capture showed 4,494 points / 193 KB.
+
+Fix: connect, **then load a save**, play a representative slice, and stop the
+capture without returning to the main menu.
 
 ### Frames are ticks, not render frames
 
@@ -198,20 +246,22 @@ tick. The FPS graph reads ~10 Hz by design — that is not a performance problem
 
 ## 6. Zone inventory
 
-40 `Huginn_ZONE_NAMED` call sites exist as of v0.19.10. The ones you will
+**46** `Huginn_ZONE_NAMED` call sites resolving to **41 distinct zone names** exist
+as of v0.20.16 (some names are hit from more than one site). A healthy in-world
+capture shows most of them — the 2026-09-19 capture saw 38. The ones you will
 actually look at:
 
 | Zone | Source | What it wraps |
 |---|---|---|
-| `OnUpdate` | `src/UpdateLoop.cpp:454` | The whole ~100 ms tick |
+| `OnUpdate` | `src/UpdateLoop.cpp:465` | The whole ~100 ms tick |
 | `Update::Subsystems` | `src/UpdateLoop.cpp:193` | Per-tick subsystem updates |
 | `Update::Registries` | `src/UpdateLoop.cpp:249` | Registry reconcile/refresh block |
-| `Update::PipelineCheck` | `src/UpdateLoop.cpp:377` | Skip decision |
+| `Update::PipelineCheck` | `src/UpdateLoop.cpp:388` | Skip decision |
 | `RunPipeline` | `src/pipeline/PipelineCoordinator.cpp:74` | Pipeline past the dirty-flag skip |
 | `Pipeline::GatherState` | `PipelineCoordinator.cpp:138` | State snapshot |
-| `Pipeline::ScoreCandidates` | `PipelineCoordinator.cpp:275` | Candidate generation + utility scoring |
-| `Pipeline::AllocateAndLock` | `PipelineCoordinator.cpp:381` | Slot allocation + locks |
-| `Pipeline::PushDisplay` | `PipelineCoordinator.cpp:462` | Hand-off to display backends |
+| `Pipeline::ScoreCandidates` | `PipelineCoordinator.cpp:301` | Candidate generation + utility scoring |
+| `Pipeline::AllocateAndLock` | `PipelineCoordinator.cpp:407` | Slot allocation + locks |
+| `Pipeline::PushDisplay` | `PipelineCoordinator.cpp:488` | Hand-off to display backends |
 | `Display::Wheeler` | `src/display/WheelerBackend.cpp:33` | Wheeler push |
 | `Display::Intuition` | `src/display/IntuitionBackend.cpp:19` | Scaleform widget push |
 | `StateManager::Update` | `src/state/StateManager.cpp:77` | Interval-gated poll dispatch |
@@ -286,11 +336,12 @@ Two things the old guide got wrong about it:
 2. **Debug-only means Debug-build timings**, inflated the same way Debug+Tracy is,
    without any of Tracy's aggregation.
 
-Current call sites (12): `src/UpdateLoop.cpp:453` (`MainUpdate`),
-`src/update/UpdateHandler.cpp:127`, `src/learning/UtilityScorer.cpp:35`,
-`src/state/StateEvaluator.cpp:45`, `src/learning/item/ItemRegistry.cpp:97,233`,
-`src/scroll/ScrollRegistry.cpp:80,137`, `src/spell/SpellRegistry.cpp:181`,
-`src/weapon/WeaponRegistry.cpp:112,257`, plus one in `src/Tests.cpp:1903` that only
+Current call sites (11, verified at v0.20.16): `src/UpdateLoop.cpp:464`
+(`MainUpdate`), `src/update/UpdateHandler.cpp:127`,
+`src/learning/UtilityScorer.cpp:35`, `src/state/StateEvaluator.cpp:45`,
+`src/learning/item/ItemRegistry.cpp:112,248`,
+`src/scroll/ScrollRegistry.cpp:80,137`, `src/spell/SpellRegistry.cpp:185`,
+`src/weapon/WeaponRegistry.cpp:112,257`, plus one in `src/Tests.cpp` that only
 asserts the macro compiles and runs.
 
 **Use Tracy.** `SCOPED_TIMER` is worth reaching for only when you want a single
@@ -333,6 +384,15 @@ concluding the roadmap is stale.
 
 Note that #12 and #13 **scale with inventory size** — a small test save and a
 hoarder save are not comparable. Always record the save scale with a capture.
+
+The 2026-09-19 **Release + Tracy** capture is the first absolute measurement of the
+whole system rather than a relative ranking: `OnUpdate` inclusive totalled 39.97 ms
+over 189.5 s, i.e. **0.021% of one core**. It confirms the Tier 3 order above
+(`PollPlayerMagicEffects` ahead of `PollTargets` ahead of `Inventory::DeltaScan`)
+and adds one item the MTPC ranking hides — **41% of all cost is `OnUpdate`'s own
+per-tick preamble**, which no zone attributes to a subsystem because it is self
+time spread over 1,742 ticks. Still inside the "budget list, not a work list"
+headline.
 
 ---
 
