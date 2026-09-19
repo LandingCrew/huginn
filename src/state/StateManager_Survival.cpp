@@ -240,6 +240,42 @@ namespace Huginn::State
           }
           // 0-149 = Refreshed (default FATIGUE_REFRESHED = 0)
           }
+
+          // The raw globals beside the ranks they produced, deduped so this
+          // only prints when some rank actually moves.
+          //
+          // info, not debug: Release pins the logger to info (Main.cpp), and a
+          // Release play session is exactly where this is wanted. At debug it
+          // would produce nothing there, and the silence would read as "no rank
+          // ever changed" rather than "the line is filtered".
+          //
+          // The gate is an OR across all three needs, which matters more than
+          // it looks: cold moves constantly, so its changes carry the exhaustion
+          // and hunger raw values along and mid-band samples do get logged. One
+          // session produced exhaustion at 212, 221, 230 and 302 -- three of
+          // those nowhere near a rank boundary.
+          //
+          // This exists to settle one question that cannot be answered from
+          // the stage alone: the widget read "Fatigue: Slightly Tired (lvl 1)"
+          // while the game's own Active Effects said "Fatigue - Drained" at the
+          // same moment. Our stage NAMES come from Survival Mode Improved,
+          // which is not installed on this path, and the BOUNDARIES come from
+          // UESP — so either it is a harmless naming mismatch, or a window sits
+          // a stage low against vanilla CC. Printing the number next to the
+          // stage says which, without a console read.
+          static int lastCold = -1, lastHunger = -1, lastFatigue = -1;
+          if (newColdLevel != lastCold || newHungerLevel != lastHunger ||
+              newFatigueLevel != lastFatigue) {
+              lastCold = newColdLevel;
+              lastHunger = newHungerLevel;
+              lastFatigue = newFatigueLevel;
+              logger::info("[StateManager] Survival (vanilla CC) - "
+                            "cold {:.0f}->lvl{} hunger {:.0f}->lvl{} exhaustion {:.0f}->lvl{}"sv,
+                  m_survivalColdNeedValue ? m_survivalColdNeedValue->value : -1.0f, newColdLevel,
+                  m_survivalHungerNeedValue ? m_survivalHungerNeedValue->value : -1.0f, newHungerLevel,
+                  m_survivalExhaustionNeedValue ? m_survivalExhaustionNeedValue->value : -1.0f,
+                  newFatigueLevel);
+          }
       }
 
       // ====================================================================

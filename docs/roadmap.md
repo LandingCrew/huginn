@@ -6,9 +6,66 @@ once its entry leaves this file. Git history is the only record; check it before
 re-opening something that looks obviously undone.
 
 ## Known Bugs
+- [ ] FIXED in this PR, kept as the record of a wrong diagnosis twice over.
+      The survival widget's fatigue names were swapped against SurvivalThreshold's
+      own constants: rank 2 (FATIGUE_TIRED) printed "Weary", rank 3
+      (FATIGUE_WEARY, the rank IsExhausted() gates on) printed "Tired", rank 4
+      (FATIGUE_DEBILITATED, critical) printed "Very Tired", and case 5 was dead
+      because the vanilla path tops out at 4.
+      Diagnosed first as "our thresholds are wrong" -- measured against Skyrim's
+      display stages, which Huginn never claimed to mirror. Then as "the names
+      are Survival Mode Improved's vocabulary on a non-SMI path". Both wrong:
+      the names were the code's OWN, one row out of alignment.
+      The observation that started it -- exhaustion 302 showing "Weary" when the
+      game said "Drained" -- was the swap, not a scale disagreement. And cold and
+      hunger "agreeing" was not coincidence, as the second diagnosis claimed;
+      their tables are simply correct, which is the tell that should have pointed
+      at fatigue's table rather than at the thresholds.
+      Both earlier readings survive in this file's git history. Neither survived
+      a look at the two tables side by side.
 
-None open.
-
+- [ ] WeaponRegistry keeps one record per BASE FORM, so a tempered instance and
+      an untempered one cannot both exist and the record's instance fields
+      thrash between them.
+      The collapse is in the SCAN, not the index. `Util::GetInventorySafe`
+      returns `RE::TESObjectREFR::InventoryItemMap`, keyed by `TESBoundObject*`
+      -- one entry per base form (WeaponRegistry.cpp:283-308) -- and
+      `ExtractWeaponMetadata` (:713-731) then walks every extraList on that
+      entry keeping the LAST ExtraUniqueID and ExtraCharge it sees. So only one
+      ScannedWeapon per base form is ever produced, and re-keying
+      `m_weaponIndex` on `(uniqueID << 32) | formID` by itself would change
+      nothing. The scan has to emit one record per ExtraDataList first.
+      Observed 2026-09-19 on the simonrim profile, inventory vs registry:
+        Iron Dagger (dam 4) AND "Iron Dagger - Okay" (dam 6)  -> one entry, dmg=4.0
+        Iron Sword  (dam 8) AND "Iron Sword - Okay"  (dam 9)  -> one entry, dmg=7.0
+        "Iron Mace - Okay"  (dam 11), the ONLY mace owned     -> "Iron Mace", dmg=9.0
+      Seven weapons carried, five in the registry.
+      Four defects, and the Mace shows the first three are separable: with only
+      ONE instance there is nothing to collapse, yet name and damage are still
+      the base form's.
+      1. COLLAPSE. One record per base form; the other instance is unreachable.
+      2. NAME. `weapon->GetName()` answers the base form. The tempered name is
+         in ExtraTextDisplayData, which is what the player reads. The widget
+         says "Iron Mace" for an item the game calls "Iron Mace - Okay".
+      3. DAMAGE. The prior ranks base damage, so both instances score the same
+         and Huginn can recommend the WORSE one from the same pack.
+      4. THRASH -- the one with a gameplay-visible wrong ACTION rather than a
+         wrong label. ReconcileWeapons (:376-388) overwrites the single
+         record's isFavorited, isEquipped, uniqueID and charge from whichever
+         instance the scan resolved last, every reconcile. Since the Wheeler
+         push keys on uniqueID (the uid-less filter from #118), Huginn can hand
+         Wheeler a uid pointing at the instance the player did not want; a
+         wrong isEquipped can offer an equipped weapon or suppress an unequipped
+         one in the candidate filter.
+      Smaller than the apparel work it resembles: weapons ALREADY have the
+      ExtraUniqueID plumbing (WeaponData.h:170, populated at
+      WeaponRegistry.cpp:728 and threaded through AddWeapon/ReconcileWeapons for
+      the Wheeler push). Only the composite key and the per-ExtraDataList
+      records remain -- two of #65's three parts, not three.
+      The learner is FormID-keyed too, so both instances share one weight
+      vector. That half may be right -- tempering does not change what a weapon
+      is FOR -- and should be decided rather than inherited.
+      Raised 2026-09-19.
 ## Known Mod Compatability Issues
 - [ ] Vanilla-build integration pass — a set of contexts is only ever exercised
       on the Requiem-based list this is developed against, so anything vanilla

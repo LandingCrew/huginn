@@ -158,15 +158,26 @@ namespace Huginn::UI
       }
    }
 
+   // Names taken from SurvivalThreshold's own constants, which this table used
+   // to contradict: ranks 2 and 3 were swapped, so FATIGUE_TIRED printed
+   // "Weary" and FATIGUE_WEARY -- the rank IsExhausted() gates on -- printed
+   // "Tired". FATIGUE_DEBILITATED, the critical state, printed "Very Tired",
+   // and case 5 was dead code because the vanilla path tops out at 4.
+   //
+   // That swap is what made the widget look like it was speaking some other
+   // mod's vocabulary. It was speaking its own, one row out.
+   //
+   // Negative ranks are the well-rested bonuses (FATIGUE_LOVERS_COMFORT = -3),
+   // which the default arm still covers.
    constexpr const char* GetFatigueLevelName(int level) noexcept
    {
       switch (level) {
-         case 5: return "Exhausted";
-         case 4: return "Very Tired";
-         case 3: return "Tired";
-         case 2: return "Weary";
-         case 1: return "Slightly Tired";
-         default: return "Rested";
+         case 4: return "Debilitated";     // FATIGUE_DEBILITATED - critical
+         case 3: return "Weary";           // FATIGUE_WEARY - IsExhausted()
+         case 2: return "Tired";           // FATIGUE_TIRED
+         case 1: return "Slightly Tired";  // FATIGUE_SLIGHTLY_TIRED
+         case 0: return "Refreshed";       // FATIGUE_REFRESHED
+         default: return "Well Rested";    // negative: bonus states
       }
    }
 
