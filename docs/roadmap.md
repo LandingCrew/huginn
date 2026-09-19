@@ -6,61 +6,66 @@ once its entry leaves this file. Git history is the only record; check it before
 re-opening something that looks obviously undone.
 
 ## Known Bugs
-- [ ] The survival debug widget prints a stage NAME that implies it mirrors
-      Skyrim's, and it does not. Huginn consumes the RANK and never the name --
-      the ranks are its own quantization of the 0-1000 need scale, chosen so
-      context weights and IsExhausted() have something ordered to work with,
-      and they have no reason to coincide with Bethesda's display bands.
-      Observed on vanilla+AE: exhaustion 212 and 302 both showed as
-      "Fatigue - Drained" in Active Effects while Huginn's rank crossed its own
-      boundary at 300. Cold and hunger agreed at the same moment, which is
-      coincidence, not confirmation -- the three tables are independent.
-      That is not a malfunction, so this is a widget honesty problem, not a
-      threshold one. GetFatigueLevelName returns Survival Mode Improved's
-      vocabulary (Rested / Slightly Tired / Weary / ...) even on a path where
-      SMI is absent, so it cannot print "Drained" at all and will contradict
-      the game whenever the two disagree.
-      Fix is to stop claiming the game's vocabulary: show the rank and the raw
-      value, which the survival log line already carries, or label the ranks
-      neutrally. Do NOT re-cut the boundaries to chase the display stages --
-      UESP publishes no numeric ranges (Skyrim:Exhaustion 404s), and matching a
-      UI convention was never the goal.
-      Documented on the wiki: Survival-Mode-Compatibility, "These ranks are
-      Huginn's, not the game's".
-      Raised 2026-09-19.
-- [ ] WeaponRegistry treats a weapon as a FORM, not an instance, so tempered
-      gear is invisible three different ways. `m_weaponIndex` is
-      `unordered_map<RE::FormID, size_t>` (WeaponRegistry.h:408) — the exact
-      keying #65 had to replace for apparel, where two self-enchanted rings
-      sharing one base form collapsed into a single entry. Apparel now keys on
-      `(uniqueID << 32) | formID` (ApparelData.h). Weapons never changed.
+- [ ] FIXED in this PR, kept as the record of a wrong diagnosis twice over.
+      The survival widget's fatigue names were swapped against SurvivalThreshold's
+      own constants: rank 2 (FATIGUE_TIRED) printed "Weary", rank 3
+      (FATIGUE_WEARY, the rank IsExhausted() gates on) printed "Tired", rank 4
+      (FATIGUE_DEBILITATED, critical) printed "Very Tired", and case 5 was dead
+      because the vanilla path tops out at 4.
+      Diagnosed first as "our thresholds are wrong" -- measured against Skyrim's
+      display stages, which Huginn never claimed to mirror. Then as "the names
+      are Survival Mode Improved's vocabulary on a non-SMI path". Both wrong:
+      the names were the code's OWN, one row out of alignment.
+      The observation that started it -- exhaustion 302 showing "Weary" when the
+      game said "Drained" -- was the swap, not a scale disagreement. And cold and
+      hunger "agreeing" was not coincidence, as the second diagnosis claimed;
+      their tables are simply correct, which is the tell that should have pointed
+      at fatigue's table rather than at the thresholds.
+      Both earlier readings survive in this file's git history. Neither survived
+      a look at the two tables side by side.
+
+- [ ] WeaponRegistry keeps one record per BASE FORM, so a tempered instance and
+      an untempered one cannot both exist and the record's instance fields
+      thrash between them.
+      The collapse is in the SCAN, not the index. `Util::GetInventorySafe`
+      returns `RE::TESObjectREFR::InventoryItemMap`, keyed by `TESBoundObject*`
+      -- one entry per base form (WeaponRegistry.cpp:283-308) -- and
+      `ExtractWeaponMetadata` (:713-731) then walks every extraList on that
+      entry keeping the LAST ExtraUniqueID and ExtraCharge it sees. So only one
+      ScannedWeapon per base form is ever produced, and re-keying
+      `m_weaponIndex` on `(uniqueID << 32) | formID` by itself would change
+      nothing. The scan has to emit one record per ExtraDataList first.
       Observed 2026-09-19 on the simonrim profile, inventory vs registry:
         Iron Dagger (dam 4) AND "Iron Dagger - Okay" (dam 6)  -> one entry, dmg=4.0
         Iron Sword  (dam 8) AND "Iron Sword - Okay"  (dam 9)  -> one entry, dmg=7.0
         "Iron Mace - Okay"  (dam 11), the ONLY mace owned     -> "Iron Mace", dmg=9.0
-      Seven weapons carried, five in the registry — the two duplicate pairs
-      collapsing accounts for the difference exactly.
-      Three separable defects, and the Mace shows they are separable: with only
-      ONE instance owned there is nothing to collapse, yet the name and damage
-      are still the base form's.
-      1. COLLAPSE. The second instance of a base form is lost. Whichever the
-         scan reaches first wins and the other is unreachable.
-      2. NAME. `weapon->GetName()` answers the base form. A tempered instance
-         carries its display name in ExtraTextDisplayData, which is what the
-         player reads in their inventory and what the widget should echo. Right
-         now the widget says "Iron Mace" for an item the game calls "Iron Mace
-         - Okay", so the player cannot tell which weapon is meant.
-      3. DAMAGE. Base-form damage is what the prior ranks on, so the untempered
-         instance and the tempered one score identically and Huginn can
-         recommend the WORSE weapon while a better one sits in the same pack.
-      Note the learner is FormID-keyed too, so both instances already share one
-      weight vector — that half may be acceptable (tempering does not change
-      what the weapon is FOR) and should be decided rather than assumed.
-      The apparel work is the template: ExtraUniqueID plumbing, a composite key,
-      and one record per ExtraDataList. #65 did all three (PR #114).
+      Seven weapons carried, five in the registry.
+      Four defects, and the Mace shows the first three are separable: with only
+      ONE instance there is nothing to collapse, yet name and damage are still
+      the base form's.
+      1. COLLAPSE. One record per base form; the other instance is unreachable.
+      2. NAME. `weapon->GetName()` answers the base form. The tempered name is
+         in ExtraTextDisplayData, which is what the player reads. The widget
+         says "Iron Mace" for an item the game calls "Iron Mace - Okay".
+      3. DAMAGE. The prior ranks base damage, so both instances score the same
+         and Huginn can recommend the WORSE one from the same pack.
+      4. THRASH -- the one with a gameplay-visible wrong ACTION rather than a
+         wrong label. ReconcileWeapons (:376-388) overwrites the single
+         record's isFavorited, isEquipped, uniqueID and charge from whichever
+         instance the scan resolved last, every reconcile. Since the Wheeler
+         push keys on uniqueID (the uid-less filter from #118), Huginn can hand
+         Wheeler a uid pointing at the instance the player did not want; a
+         wrong isEquipped can offer an equipped weapon or suppress an unequipped
+         one in the candidate filter.
+      Smaller than the apparel work it resembles: weapons ALREADY have the
+      ExtraUniqueID plumbing (WeaponData.h:170, populated at
+      WeaponRegistry.cpp:728 and threaded through AddWeapon/ReconcileWeapons for
+      the Wheeler push). Only the composite key and the per-ExtraDataList
+      records remain -- two of #65's three parts, not three.
+      The learner is FormID-keyed too, so both instances share one weight
+      vector. That half may be right -- tempering does not change what a weapon
+      is FOR -- and should be decided rather than inherited.
       Raised 2026-09-19.
-
-
 ## Known Mod Compatability Issues
 - [ ] Vanilla-build integration pass — a set of contexts is only ever exercised
       on the Requiem-based list this is developed against, so anything vanilla
