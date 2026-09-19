@@ -1419,6 +1419,38 @@ namespace Huginn::Wheeler
                     if (auto it = m_addFailCooldowns.find(AddFailKey(newFormID, newUniqueID));
                         it != m_addFailCooldowns.end()) {
                         if (nowTime - it->second < ADD_FAIL_COOLDOWN) {
+                            // Empty the entry rather than leave the slot showing
+                            // whatever occupied it before this item was
+                            // recommended. Skipping a slot leaves the wheel
+                            // untouched, which is right while a uniqueID might
+                            // still arrive — but this combo has already proved it
+                            // never will, and the stale content reads to the
+                            // player as a DUPLICATE: the previous occupant is
+                            // still drawn here while also appearing in whatever
+                            // slot it moved to. Observed as two Long Bows and two
+                            // healing potions on one wheel, with the item that
+                            // actually owns this slot nowhere on it.
+                            //
+                            // Nothing else would ever clean it up: ValidateWheelState
+                            // reports a desync and does not repair one, and it is
+                            // compiled out of release builds entirely, so on a
+                            // release build this is silent and permanent.
+                            //
+                            // Once only. Zeroing the cache to match means the next
+                            // pass takes the cachedFormID == 0 path and makes no
+                            // API call, so a 30s suppression costs one ClearEntry
+                            // rather than ~300.
+                            if (cachedFormID != 0) {
+                                api->ClearEntry(pageWheel.wheelIndex, i);
+                                ClearEntrySubtext(api, pageWheel.wheelIndex, i);
+                                pageWheel.slotFormIDs[idx] = 0;
+                                pageWheel.slotUniqueIDs[idx] = 0;
+                                pageWheel.slotSubtexts[idx].reset();
+                                pageWheel.slotRawSubtexts[idx].clear();
+                                spdlog::debug("[WheelerClient] Page {} slot {} emptied: {:08X} is suppressed "
+                                              "and the slot was still showing {:08X}",
+                                    pageIndex, idx, newFormID, cachedFormID);
+                            }
                             continue;
                         }
                         // Cooldown served — hand the combo a fresh budget rather
