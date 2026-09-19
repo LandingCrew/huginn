@@ -171,14 +171,31 @@ namespace Huginn::Input
       return false;
       }
 
-      // One-handed weapons declare the EitherHand slot — the caller picks the
-      // hand. Everything else (2H melee, bows, crossbows) declares its own slot
-      // (BothHands etc.), and forcing a hand slot makes EquipObject silently
-      // no-op: no TESEquipEvent, nothing rendered, hotkey appears dead.
+      // A weapon that declares a slot which is not a hand must keep it: a bow
+      // or a 2H melee declares BothHands, and forcing a hand slot onto one
+      // makes EquipObject silently no-op — no TESEquipEvent, nothing rendered,
+      // the hotkey just looks dead. That is the case 5c67e70 fixed and it still
+      // holds.
+      //
+      // What that fix got wrong is the other half. It assumed a one-handed
+      // weapon declares EitherHand, so anything else must be the weapon knowing
+      // better. Vanilla 1H weapons declare RightHand (0x13F42) instead, so the
+      // guard adopted the weapon's slot and discarded the hand the CALLER asked
+      // for: double-tap logged "equip left hand ONLY" and then put the sword in
+      // the right hand, for every one-handed weapon in the game.
+      //
+      // So: every hand slot means "the caller picks", and none of them may win
+      // over leftHand. Only a non-hand slot is the weapon's own business.
+      constexpr RE::FormID kRightHandSlot  = 0x00013F42;
+      constexpr RE::FormID kLeftHandSlot   = 0x00013F43;
       constexpr RE::FormID kEitherHandSlot = 0x00013F44;
       auto* equipSlot = GetEquipSlot(EquipHand::Right, leftHand);
-      if (auto* declared = weapon->equipSlot; declared && declared->GetFormID() != kEitherHandSlot) {
-      equipSlot = declared;
+      if (auto* declared = weapon->equipSlot; declared) {
+      const auto declaredID = declared->GetFormID();
+      if (declaredID != kRightHandSlot && declaredID != kLeftHandSlot &&
+        declaredID != kEitherHandSlot) {
+        equipSlot = declared;
+      }
       }
 
       // Equip the weapon

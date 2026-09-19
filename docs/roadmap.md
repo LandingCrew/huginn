@@ -29,25 +29,6 @@ re-opening something that looks obviously undone.
       the incoming pair against that. Pre-existing on main (introduced in
       `60ea74d`, the WheelSync extraction) — not an apparel-branch regression.
       Raised 2026-09-18.
-- [ ] Double-tap-to-left-hand reported not firing. NOT reproduced in the
-      2026-09-18 log, and that is the useful half of the report: earlier in the
-      same session double-tap worked five times out of five (`Slot 1 DOUBLE-TAP
-      -> equip left hand ONLY` → `Equipped weapon 'Iron Sword' to left hand`),
-      and in the later stretch where it was reported failing the second press
-      never arrived at all — two `KEY PRESS` lines in total, both resolving as
-      deferred SINGLE taps once the 300ms window closed. InputHandler cannot
-      miss a double-tap it was never told about, so the open question is what
-      swallowed the second press, not what the tap timer did with it.
-      Cheapest thing to rule out first is which key was actually under the
-      thumb. Key '1' (scancode 2) drives InputHandler slot 1, which resolves to
-      VISUAL slot 0 — confirmed in both directions in that log, and the sword sat
-      in visual slot 0 the whole time. A press on a key bound to nothing logs
-      nothing, which is indistinguishable from a dropped press.
-      Next repro wants two facts: which key was pressed, and whether
-      `[InputHandler] KEY PRESS` appears TWICE for it. Twice with no DOUBLE-TAP
-      following means the bug is ours; once means it is upstream of us.
-      Raised 2026-09-18.
-
 ## Known Mod Compatability Issues
 - [ ] Vanilla-build integration pass — a set of contexts is only ever exercised
       on the Requiem-based list this is developed against, so anything vanilla
