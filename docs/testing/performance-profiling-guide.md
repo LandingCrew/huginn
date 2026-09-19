@@ -100,7 +100,7 @@ the skip is structural — see §6.
 ## 3. Building a profiling build
 
 Tracy is already vendored as a submodule (`extern/tracy`, per `.gitmodules`;
-currently Tracy **0.13.1**). **Do not run `git submodule add`** — the old version
+currently Tracy **0.14.1**). **Do not run `git submodule add`** — the old version
 of this guide told you to, and it will fail.
 
 ```sh
@@ -150,7 +150,7 @@ so captures stay comparable with the recorded history.
 
 ## 4. Capturing
 
-1. Launch the **Tracy profiler GUI** (0.13.x, matching the vendored client) and
+1. Launch the **Tracy profiler GUI** (0.14.x, matching the vendored client) and
    click *Connect*.
 2. Launch Skyrim. The load line stamps the build (`src/Main.cpp:697–705`):
    `Huginn vX.Y.Z (<git-sha>) [RELEASE] [TRACY] Loading`, or
