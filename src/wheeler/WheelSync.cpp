@@ -1392,6 +1392,44 @@ namespace Huginn::Wheeler
             }
 
             if (newFormID != cachedFormID || newUniqueID != cachedUniqueID) {
+                // Negative-cache check, ahead of the #74 defer guard below: a
+                // (formID, uniqueID) Wheeler already
+                // rejected MAX_SLOT_RETRIES times must not clear the current entry
+                // or hit the API again until its cooldown expires.
+                //
+                // Skip the slot WITHOUT adopting the cache. Adopting used to be
+                // how the diff was quietened, but it makes slotFormIDs claim an
+                // item the entry does not hold — the restore path below put the
+                // OLD one back — and the lie has three consequences: the entry
+                // wears the new item's subtext, ValidateWheelState reports a
+                // desync, and, because cached then equals incoming forever, the
+                // slot is never re-examined, so the combo never retries when the
+                // cooldown lapses. That last one is the opposite of what the
+                // cooldown is for. Skipping costs the page's content-unchanged
+                // early-out for the 30s, and no API calls at all — the same
+                // trade the #74 defer path already makes for up to 50 passes.
+                //
+                // It runs BEFORE the defer guard so a suppressed combo costs
+                // nothing and says nothing. Since the cache is no longer
+                // adopted this block is re-entered every pass for the whole
+                // 30s; behind the guard, the guard's budget-spent line would
+                // print on every one of them - ~300 debug lines per cooldown,
+                // for a slot where by construction nothing is happening.
+                if (newFormID != 0) {
+                    if (auto it = m_addFailCooldowns.find(AddFailKey(newFormID, newUniqueID));
+                        it != m_addFailCooldowns.end()) {
+                        if (nowTime - it->second < ADD_FAIL_COOLDOWN) {
+                            continue;
+                        }
+                        // Cooldown served — hand the combo a fresh budget rather
+                        // than letting the count that earned the suppression push
+                        // it straight back over the line on the first failure.
+                        m_addFailCooldowns.erase(it);
+                        pageWheel.slotRetries[idx] = 0;
+                        pageWheel.slotRetryTargets[idx] = AddFailKey(newFormID, newUniqueID);
+                    }
+                }
+
                 // Certain-reject guard (#74). Wheeler answers uid=0 for weapons
                 // and armour with UnsupportedFormType (-6) — see RequiresUniqueID.
                 //
@@ -1439,36 +1477,6 @@ namespace Huginn::Wheeler
                     spdlog::debug("[WheelerClient] Page {} slot {}: {:08X} still has no uniqueID after {} passes, "
                                   "letting the normal reject path handle it",
                         pageIndex, idx, newFormID, MAX_UNIQUEID_DEFERS);
-                }
-
-                // Negative-cache check FIRST: a (formID, uniqueID) Wheeler already
-                // rejected MAX_SLOT_RETRIES times must not clear the current entry
-                // or hit the API again until its cooldown expires.
-                //
-                // Skip the slot WITHOUT adopting the cache. Adopting used to be
-                // how the diff was quietened, but it makes slotFormIDs claim an
-                // item the entry does not hold — the restore path below put the
-                // OLD one back — and the lie has three consequences: the entry
-                // wears the new item's subtext, ValidateWheelState reports a
-                // desync, and, because cached then equals incoming forever, the
-                // slot is never re-examined, so the combo never retries when the
-                // cooldown lapses. That last one is the opposite of what the
-                // cooldown is for. Skipping costs the page's content-unchanged
-                // early-out for the 30s, and no API calls at all — the same
-                // trade the #74 defer path already makes for up to 50 passes.
-                if (newFormID != 0) {
-                    if (auto it = m_addFailCooldowns.find(AddFailKey(newFormID, newUniqueID));
-                        it != m_addFailCooldowns.end()) {
-                        if (nowTime - it->second < ADD_FAIL_COOLDOWN) {
-                            continue;
-                        }
-                        // Cooldown served — hand the combo a fresh budget rather
-                        // than letting the count that earned the suppression push
-                        // it straight back over the line on the first failure.
-                        m_addFailCooldowns.erase(it);
-                        pageWheel.slotRetries[idx] = 0;
-                        pageWheel.slotRetryTargets[idx] = AddFailKey(newFormID, newUniqueID);
-                    }
                 }
 
                 // Reset the retry counter when the TARGET changes — not when the
