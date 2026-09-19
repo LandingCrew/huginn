@@ -353,24 +353,38 @@ namespace Huginn::Item
 
       switch (av) {
       // Magic Schools
+      // Magic schools take the PowerModifier series too, for the same reason
+      // every other group below already does: LoreRim expresses fortify
+      // effects that way, and StateManager_MagicEffects.cpp:251+ has handled
+      // all five variants for as long as it has existed. Without them a
+      // Fortify Destruction potion on that list falls to default, never gets
+      // FortifyMagicSchool, and DeriveItemTypeFromTags answers Unknown rather
+      // than BuffPotion -- the state layer sees the buff while the item layer
+      // cannot recommend the potion that produces it. Same failure shape as
+      // the craft drift above, one switch group over.
       case RE::ActorValue::kAlteration:
+      case RE::ActorValue::kAlterationPowerModifier:   // LORERIM (148)
       data.tags |= ItemTag::FortifyMagicSchool;
       data.school = MagicSchool::Alteration;
       logger::debug("[DetermineFortifySkillType] {} -> FortifyMagicSchool, school=Alteration"sv, data.name);
       break;
       case RE::ActorValue::kConjuration:
+      case RE::ActorValue::kConjurationPowerModifier:  // LORERIM (149)
       data.tags |= ItemTag::FortifyMagicSchool;
       data.school = MagicSchool::Conjuration;
       break;
       case RE::ActorValue::kDestruction:
+      case RE::ActorValue::kDestructionPowerModifier:  // LORERIM (150)
       data.tags |= ItemTag::FortifyMagicSchool;
       data.school = MagicSchool::Destruction;
       break;
       case RE::ActorValue::kIllusion:
+      case RE::ActorValue::kIllusionPowerModifier:     // LORERIM (151)
       data.tags |= ItemTag::FortifyMagicSchool;
       data.school = MagicSchool::Illusion;
       break;
       case RE::ActorValue::kRestoration:
+      case RE::ActorValue::kRestorationPowerModifier:  // LORERIM (153)
       data.tags |= ItemTag::FortifyMagicSchool;
       data.school = MagicSchool::Restoration;
       break;

@@ -13,8 +13,12 @@ namespace Huginn::Apparel
    // CLASSIFICATION IS THE SCOPE GUARD. Anything that does not fortify Alchemy,
    // Smithing or Enchanting classifies as CraftSkill::None and is rejected by the
    // registry, so the candidate pool never grows by the size of the wardrobe.
-   // Widening the feature to resist/carry-weight gear is a change to
-   // CraftSkillForActorValue and nothing else.
+   // Widening the feature to resist/carry-weight gear starts at
+   // Apparel::CraftSkillForActorValue (ApparelData.h) — but it is NOT "and
+   // nothing else" any more. ItemClassifier::DetermineFortifySkillType shares
+   // that function, so an actor value added there changes how POTIONS are
+   // tagged and classified as well. That is the point of sharing it, and it is
+   // the thing to check before widening.
    //
    // BOTH ENCHANTMENT SOURCES MATTER: base-form enchantments (TESEnchantableForm::
    // formEnchanting, e.g. vanilla's pre-enchanted circlets) and player-applied

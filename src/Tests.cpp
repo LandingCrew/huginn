@@ -3033,6 +3033,7 @@ void RunUnitTests()
             // the feature is silently dead on the only modlist play-tested here.
             {RE::ActorValue::kAlchemyPowerModifier,   CraftSkill::Alchemy,    "Alchemy (LoreRim)"},
             {RE::ActorValue::kSmithingPowerModifier,  CraftSkill::Smithing,   "Smithing (LoreRim)"},
+            {RE::ActorValue::kEnchantingPowerModifier, CraftSkill::Enchanting, "Enchanting (LoreRim)"},
 
             // ...and the Modifier series, which is what APPAREL enchantments
             // carry. Missing it made the whole feature inert on its first
