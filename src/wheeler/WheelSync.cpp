@@ -1585,14 +1585,29 @@ namespace Huginn::Wheeler
                 if (newFormID != 0) {
                     int32_t result = api->AddItemByFormID(pageWheel.wheelIndex, i, newFormID, newUniqueID);
                     if (result < 0) {
-                        // A3: Use IsEntryEmpty to decide recovery strategy
-                        bool entryEmpty = api->IsEntryEmpty(pageWheel.wheelIndex, i);
-                        if (entryEmpty && cachedFormID != 0) {
-                            // Entry is empty after removal — restore previous item
-                            api->AddItemByFormID(pageWheel.wheelIndex, i, cachedFormID, cachedUniqueID);
-                        } else if (!entryEmpty) {
-                            spdlog::debug("[WheelerClient] Entry {} not empty after AddItem failure, skipping restore", i);
+                        // Leave the entry EMPTY rather than restoring what was
+                        // here before. Restoring looks like damage control and is
+                        // actually how the duplicate is manufactured: this slot is
+                        // being repainted because the allocator moved its previous
+                        // occupant somewhere else, so putting that item back draws
+                        // it twice — once where it now belongs and once here.
+                        // Photographed as two healing potions with the Iron Dagger
+                        // that owns this slot nowhere on the wheel.
+                        //
+                        // Emptying from the FIRST failure matters because strikes
+                        // are state-gated: 4.4s between attempt 1 and 2 in a quiet
+                        // session, so waiting for all three and then for the
+                        // negative cache to clear the slot leaves the duplicate up
+                        // for ten seconds or more. An empty slot is honest at the
+                        // first failure and needs no further passes to become so.
+                        if (!api->IsEntryEmpty(pageWheel.wheelIndex, i)) {
+                            api->ClearEntry(pageWheel.wheelIndex, i);
                         }
+                        ClearEntrySubtext(api, pageWheel.wheelIndex, i);
+                        pageWheel.slotFormIDs[idx] = 0;
+                        pageWheel.slotUniqueIDs[idx] = 0;
+                        pageWheel.slotSubtexts[idx].reset();
+                        pageWheel.slotRawSubtexts[idx].clear();
 
                         ++pageWheel.slotRetries[idx];
                         if (pageWheel.slotRetries[idx] >= MAX_SLOT_RETRIES) {
