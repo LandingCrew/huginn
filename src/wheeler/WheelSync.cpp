@@ -425,7 +425,10 @@ namespace Huginn::Wheeler
         std::fill(pw.slotUniqueIDs.begin(), pw.slotUniqueIDs.end(), 0);
         std::fill(pw.slotWildcard.begin(), pw.slotWildcard.end(), false);
         std::fill(pw.slotRetries.begin(), pw.slotRetries.end(), 0);
+        std::fill(pw.slotRetryTargets.begin(), pw.slotRetryTargets.end(), 0);
         std::fill(pw.slotUniqueIDDefers.begin(), pw.slotUniqueIDDefers.end(), 0);
+        std::fill(pw.slotUniqueIDDeferStart.begin(), pw.slotUniqueIDDeferStart.end(),
+            std::chrono::steady_clock::time_point{});
         for (auto& st : pw.slotSubtexts) {
             st.reset();  // safe: step 1 dropped every exported pointer
         }
@@ -827,7 +830,9 @@ namespace Huginn::Wheeler
             pageWheel.slotSubtexts.resize(slotCount);
             pageWheel.slotRawSubtexts.resize(slotCount);
             pageWheel.slotRetries.resize(slotCount, 0);
+            pageWheel.slotRetryTargets.resize(slotCount, 0);
             pageWheel.slotUniqueIDDefers.resize(slotCount, 0);
+            pageWheel.slotUniqueIDDeferStart.resize(slotCount);
             pageWheel.slotActivationEmptied.resize(slotCount, false);
 
             // Build wheel label. Heap storage whose address survives the
@@ -1007,7 +1012,9 @@ namespace Huginn::Wheeler
                     pageWheel.slotSubtexts.resize(pageWheel.slotCount);
                     pageWheel.slotRawSubtexts.resize(pageWheel.slotCount);
                     pageWheel.slotRetries.resize(pageWheel.slotCount, 0);
+                    pageWheel.slotRetryTargets.resize(pageWheel.slotCount, 0);
                     pageWheel.slotUniqueIDDefers.resize(pageWheel.slotCount, 0);
+                    pageWheel.slotUniqueIDDeferStart.resize(pageWheel.slotCount);
                     pageWheel.slotActivationEmptied.resize(pageWheel.slotCount, false);
                 }
             }
@@ -1362,7 +1369,22 @@ namespace Huginn::Wheeler
         // in that slot. A second uid-less weapon rotating into an already-spent
         // slot therefore skips straight to the normal reject path, which is the
         // pre-fix behaviour and the right fallback.
-        static constexpr uint8_t MAX_UNIQUEID_DEFERS = 50;
+        static constexpr uint8_t MAX_UNIQUEID_DEFERS = 30;
+
+        // ...and the wall-clock half of the same bound, which is the one that
+        // actually holds. A pipeline pass happens on STATE CHANGE, so the pass
+        // rate spans three orders of magnitude: ~10/s in combat, and 40 passes
+        // in a whole five-minute session standing around (measured, [Soak]
+        // recompute=40/2828 ticks). 50 passes was therefore five seconds in a
+        // fight and over six minutes in a quiet field — and for those six
+        // minutes the slot kept drawing its previous occupant, which the player
+        // sees as that item duplicated onto a slot it does not own.
+        //
+        // Three seconds is ~3x the real case this guard exists for: every
+        // weapon reads uid=0 for about a second after a save load, with the
+        // first push measured at 981ms, 982ms and 998ms across three loads.
+        // Whichever bound trips first ends the defer.
+        static constexpr std::chrono::seconds UNIQUEID_GRACE{3};
         const auto nowTime = std::chrono::steady_clock::now();
 
         // Update each slot (bounds-check all vectors to prevent out-of-range access)
@@ -1389,6 +1411,76 @@ namespace Huginn::Wheeler
             }
 
             if (newFormID != cachedFormID || newUniqueID != cachedUniqueID) {
+                // Negative-cache check, ahead of the #74 defer guard below: a
+                // (formID, uniqueID) Wheeler already
+                // rejected MAX_SLOT_RETRIES times must not clear the current entry
+                // or hit the API again until its cooldown expires.
+                //
+                // Skip the slot WITHOUT adopting the cache. Adopting used to be
+                // how the diff was quietened, but it makes slotFormIDs claim an
+                // item the entry does not hold — the restore path below put the
+                // OLD one back — and the lie has three consequences: the entry
+                // wears the new item's subtext, ValidateWheelState reports a
+                // desync, and, because cached then equals incoming forever, the
+                // slot is never re-examined, so the combo never retries when the
+                // cooldown lapses. That last one is the opposite of what the
+                // cooldown is for. Skipping costs the page's content-unchanged
+                // early-out for the 30s, and no API calls at all — the same
+                // trade the #74 defer path already makes for up to 50 passes.
+                //
+                // It runs BEFORE the defer guard so a suppressed combo costs
+                // nothing and says nothing. Since the cache is no longer
+                // adopted this block is re-entered every pass for the whole
+                // 30s; behind the guard, the guard's budget-spent line would
+                // print on every one of them - ~300 debug lines per cooldown,
+                // for a slot where by construction nothing is happening.
+                if (newFormID != 0) {
+                    if (auto it = m_addFailCooldowns.find(AddFailKey(newFormID, newUniqueID));
+                        it != m_addFailCooldowns.end()) {
+                        if (nowTime - it->second < ADD_FAIL_COOLDOWN) {
+                            // Empty the entry rather than leave the slot showing
+                            // whatever occupied it before this item was
+                            // recommended. Skipping a slot leaves the wheel
+                            // untouched, which is right while a uniqueID might
+                            // still arrive — but this combo has already proved it
+                            // never will, and the stale content reads to the
+                            // player as a DUPLICATE: the previous occupant is
+                            // still drawn here while also appearing in whatever
+                            // slot it moved to. Observed as two Long Bows and two
+                            // healing potions on one wheel, with the item that
+                            // actually owns this slot nowhere on it.
+                            //
+                            // Nothing else would ever clean it up: ValidateWheelState
+                            // reports a desync and does not repair one, and it is
+                            // compiled out of release builds entirely, so on a
+                            // release build this is silent and permanent.
+                            //
+                            // Once only. Zeroing the cache to match means the next
+                            // pass takes the cachedFormID == 0 path and makes no
+                            // API call, so a 30s suppression costs one ClearEntry
+                            // rather than ~300.
+                            if (cachedFormID != 0) {
+                                api->ClearEntry(pageWheel.wheelIndex, i);
+                                ClearEntrySubtext(api, pageWheel.wheelIndex, i);
+                                pageWheel.slotFormIDs[idx] = 0;
+                                pageWheel.slotUniqueIDs[idx] = 0;
+                                pageWheel.slotSubtexts[idx].reset();
+                                pageWheel.slotRawSubtexts[idx].clear();
+                                spdlog::debug("[WheelerClient] Page {} slot {} emptied: {:08X} is suppressed "
+                                              "and the slot was still showing {:08X}",
+                                    pageIndex, idx, newFormID, cachedFormID);
+                            }
+                            continue;
+                        }
+                        // Cooldown served — hand the combo a fresh budget rather
+                        // than letting the count that earned the suppression push
+                        // it straight back over the line on the first failure.
+                        m_addFailCooldowns.erase(it);
+                        pageWheel.slotRetries[idx] = 0;
+                        pageWheel.slotRetryTargets[idx] = AddFailKey(newFormID, newUniqueID);
+                    }
+                }
+
                 // Certain-reject guard (#74). Wheeler answers uid=0 for weapons
                 // and armour with UnsupportedFormType (-6) — see RequiresUniqueID.
                 //
@@ -1418,7 +1510,16 @@ namespace Huginn::Wheeler
                 // strikes would suppress the combo for 30s, which is the
                 // opposite of what a late uniqueID wants.
                 if (newFormID != 0 && newUniqueID == 0 && RequiresUniqueID(newFormID)) {
-                    if (pageWheel.slotUniqueIDDefers[idx] < MAX_UNIQUEID_DEFERS) {
+                    // Stamp the start of this defer run. The counter returning to
+                    // 0 (on success, or a fresh wheel) is what re-arms it, so the
+                    // clock measures one continuous run and not the slot's life.
+                    if (pageWheel.slotUniqueIDDefers[idx] == 0) {
+                        pageWheel.slotUniqueIDDeferStart[idx] = nowTime;
+                    }
+                    const auto deferredFor = nowTime - pageWheel.slotUniqueIDDeferStart[idx];
+
+                    if (pageWheel.slotUniqueIDDefers[idx] < MAX_UNIQUEID_DEFERS &&
+                        deferredFor < UNIQUEID_GRACE) {
                         ++pageWheel.slotUniqueIDDefers[idx];
                         // trace, not debug: this is a per-slot, per-pass event
                         // in the common case, and the guard was verified in-game
@@ -1432,33 +1533,36 @@ namespace Huginn::Wheeler
                         continue;
                     }
                     // Budget spent — fall through and let Wheeler reject it for
-                    // real, so the negative cache can quiet the page down.
-                    spdlog::debug("[WheelerClient] Page {} slot {}: {:08X} still has no uniqueID after {} passes, "
-                                  "letting the normal reject path handle it",
-                        pageIndex, idx, newFormID, MAX_UNIQUEID_DEFERS);
+                    // real, so the negative cache can quiet the page down and
+                    // empty the slot instead of leaving the stale occupant in it.
+                    spdlog::debug("[WheelerClient] Page {} slot {}: {:08X} still has no uniqueID after "
+                                  "{} passes / {:.1f}s, letting the normal reject path handle it",
+                        pageIndex, idx, newFormID, pageWheel.slotUniqueIDDefers[idx],
+                        std::chrono::duration<float>(deferredFor).count());
                 }
 
-                // Negative-cache check FIRST: a (formID, uniqueID) Wheeler already
-                // rejected MAX_SLOT_RETRIES times must not clear the current entry
-                // or hit the API again until its cooldown expires. Adopt the cache
-                // so the diff goes quiet; the combo retries naturally afterwards.
-                if (newFormID != 0) {
-                    if (auto it = m_addFailCooldowns.find(AddFailKey(newFormID, newUniqueID));
-                        it != m_addFailCooldowns.end()) {
-                        if (nowTime - it->second < ADD_FAIL_COOLDOWN) {
-                            pageWheel.slotFormIDs[idx] = newFormID;
-                            pageWheel.slotUniqueIDs[idx] = newUniqueID;
-                            pageWheel.slotRetries[idx] = 0;
-                            continue;
-                        }
-                        m_addFailCooldowns.erase(it);
-                    }
-                }
-
-                // Reset retry counter when a genuinely different item is recommended.
-                // Don't reset when cachedFormID is 0 — that means we never successfully
-                // populated this slot, so the retry counter should keep accumulating.
-                if (newFormID != cachedFormID && cachedFormID != 0) {
+                // Reset the retry counter when the TARGET changes — not when the
+                // slot's cached content differs from it. Those two tests agree on
+                // the first attempt and diverge on every one after, because a
+                // FAILED add deliberately leaves slotFormIDs holding the old item
+                // (that is how the restore path below keeps a good entry alive).
+                // Reading "cached differs" as "a different item is being
+                // recommended now" therefore re-zeroed the counter on every pass,
+                // so strike two never arrived and m_addFailCooldowns never
+                // engaged. An item Wheeler can never accept — a weapon carrying
+                // no ExtraUniqueID, say, which is every untempered unenchanted
+                // one — then churned RemoveItem → failing AddItemByFormID →
+                // restore at the pipeline's full rate for as long as it stayed
+                // recommended. Observed at ~10 Hz, every line reading "attempt
+                // 1/3", plus the ValidateWheelState desyncs that churn leaves.
+                //
+                // A slot that had never been populated (cachedFormID == 0) was
+                // exempt from the old reset, which is the only reason the bug was
+                // not universal: those slots did reach three strikes and did go
+                // quiet. Keying on the target makes every slot behave that way.
+                const uint64_t retryTarget = AddFailKey(newFormID, newUniqueID);
+                if (pageWheel.slotRetryTargets[idx] != retryTarget) {
+                    pageWheel.slotRetryTargets[idx] = retryTarget;
                     pageWheel.slotRetries[idx] = 0;
                 }
 
@@ -1481,14 +1585,29 @@ namespace Huginn::Wheeler
                 if (newFormID != 0) {
                     int32_t result = api->AddItemByFormID(pageWheel.wheelIndex, i, newFormID, newUniqueID);
                     if (result < 0) {
-                        // A3: Use IsEntryEmpty to decide recovery strategy
-                        bool entryEmpty = api->IsEntryEmpty(pageWheel.wheelIndex, i);
-                        if (entryEmpty && cachedFormID != 0) {
-                            // Entry is empty after removal — restore previous item
-                            api->AddItemByFormID(pageWheel.wheelIndex, i, cachedFormID, cachedUniqueID);
-                        } else if (!entryEmpty) {
-                            spdlog::debug("[WheelerClient] Entry {} not empty after AddItem failure, skipping restore", i);
+                        // Leave the entry EMPTY rather than restoring what was
+                        // here before. Restoring looks like damage control and is
+                        // actually how the duplicate is manufactured: this slot is
+                        // being repainted because the allocator moved its previous
+                        // occupant somewhere else, so putting that item back draws
+                        // it twice — once where it now belongs and once here.
+                        // Photographed as two healing potions with the Iron Dagger
+                        // that owns this slot nowhere on the wheel.
+                        //
+                        // Emptying from the FIRST failure matters because strikes
+                        // are state-gated: 4.4s between attempt 1 and 2 in a quiet
+                        // session, so waiting for all three and then for the
+                        // negative cache to clear the slot leaves the duplicate up
+                        // for ten seconds or more. An empty slot is honest at the
+                        // first failure and needs no further passes to become so.
+                        if (!api->IsEntryEmpty(pageWheel.wheelIndex, i)) {
+                            api->ClearEntry(pageWheel.wheelIndex, i);
                         }
+                        ClearEntrySubtext(api, pageWheel.wheelIndex, i);
+                        pageWheel.slotFormIDs[idx] = 0;
+                        pageWheel.slotUniqueIDs[idx] = 0;
+                        pageWheel.slotSubtexts[idx].reset();
+                        pageWheel.slotRawSubtexts[idx].clear();
 
                         ++pageWheel.slotRetries[idx];
                         if (pageWheel.slotRetries[idx] >= MAX_SLOT_RETRIES) {
@@ -1503,8 +1622,12 @@ namespace Huginn::Wheeler
                                 });
                             }
                             m_addFailCooldowns[AddFailKey(newFormID, newUniqueID)] = nowTime;
-                            pageWheel.slotFormIDs[idx] = newFormID;
-                            pageWheel.slotUniqueIDs[idx] = newUniqueID;
+                            // Deliberately NOT adopting slotFormIDs/slotUniqueIDs
+                            // here. The cache must keep describing what is really
+                            // in the entry — the restore above put the old item
+                            // back — or the desync this used to create outlives
+                            // the cooldown. The negative-cache check above is what
+                            // keeps the slot quiet now, and it does so honestly.
                         } else {
                             spdlog::debug("[WheelerClient] AddItemByFormID {:08X} uid={} slot {} failed (attempt {}/{}, result={})",
                                 newFormID, newUniqueID, i, pageWheel.slotRetries[idx], MAX_SLOT_RETRIES, result);

@@ -24,29 +24,6 @@ re-opening something that looks obviously undone.
       whether numItems in the failing record matches the count the previous
       `[Cosave] Saved N learner weight entries` line reported.
       Raised 2026-09-18.
-- [ ] Wheeler's add-failure cooldown never engages for a slot that already holds
-      something, so a permanently-unaddable item hammers the API at ~10 Hz.
-      `WheelSync.cpp:1461` resets `slotRetries` whenever the incoming FormID
-      differs from the one cached for that slot, reading "cached differs" as "a
-      genuinely different item is being recommended now". But a FAILED add
-      deliberately leaves `slotFormIDs[idx]` at the old value — that is how the
-      restore path keeps the good entry — so the next pass sees the same
-      mismatch, resets the counter, and the three-strikes rule never reaches
-      strike two. Every pass then pays a full RemoveItem → failing
-      AddItemByFormID → restore-the-old-item cycle.
-      Seen 2026-09-18 on a plain Long Bow (0003B562). Weapons and armour need an
-      ExtraUniqueID before Wheeler will take them, and an untempered,
-      unenchanted weapon never gets one, so the #74 defer budget expires exactly
-      as designed and drops the item to the reject path — which then cannot
-      quiet down: 23 logged `result=-6` failures across two short bursts, every
-      one of them "attempt 1/3", plus two `ValidateWheelState` desyncs. The
-      neighbouring slot escaped only because its cached FormID was 0, which
-      skips the reset and lets the counter climb to 3 and suppress correctly.
-      Fix is to reset on the last ATTEMPTED target rather than on what is
-      cached: remember (formID, uniqueID) per slot at attempt time and compare
-      the incoming pair against that. Pre-existing on main (introduced in
-      `60ea74d`, the WheelSync extraction) — not an apparel-branch regression.
-      Raised 2026-09-18.
 ## Known Mod Compatability Issues
 - [ ] Vanilla-build integration pass — a set of contexts is only ever exercised
       on the Requiem-based list this is developed against, so anything vanilla
@@ -54,6 +31,27 @@ re-opening something that looks obviously undone.
       known case (test 6h stands in for it); the honest scope is "boot a vanilla
       profile once and walk the contexts", which would also cover the #79 four
       that no LoreRim character can carry. Wants a save with vanilla alchemy
+      ingredients and vanilla survival needs — the simonrim-essentials profile
+      is that save, and the sentence this replaces had been cut off mid-thought
+      since before the profile existed.
+      Still open, hence the unticked box: #79's four contexts, the fortify
+      POTION payload from #63, and the rest of the context walk. What follows is
+      what the profile has actually closed.
+      Progress 2026-09-19, on the simonrim-essentials profile (vanilla+AE):
+      workstation is DONE — all four bench types answered live (forge 1,
+      grindstone 2, armor workbench 7, alchemy lab 5) with apparel payloads, so
+      test 6h is no longer standing in alone. Survival is confirmed working on
+      the vanilla CC path: all four globals resolve, the native warmth function
+      caches, `SMI not installed` takes the 0-1000 threshold fallback, and
+      Hunger/Cold/Fatigue/Warmth all read live in the debug widget.
+      One thing to check while a vanilla survival save exists: the widget read
+      `Fatigue: Slightly Tired (lvl 1)` while the game's Active Effects said
+      `Fatigue - Drained` at the same moment. Our stage names come from Survival
+      Mode Improved and the boundaries from UESP, so this may be nothing worse
+      than a naming mismatch on a path where SMI is absent — or the 150-299
+      window for level 1 may sit a stage low against vanilla CC. Settles with
+      one console read of the Exhaustion global (Survival.esl 0x816, 0-1000)
+      next to what the widget shows.
 - [ ] #63: the workstation context has no fortify POTION to rank on Requiem-based
       lists — inert in the modlists that actually get play-tested. Vanilla path
       still needs its own regression test (test 6h is the unit coverage).
