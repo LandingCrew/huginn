@@ -5713,8 +5713,21 @@ void RunCosaveTests()
             }
         }
 
-        // Length mismatch: wrong byteLen must decode to nothing
+        // Length mismatch: wrong byteLen must decode to nothing.
+        //
+        // The guard being tested logs at ERROR, so this passing test prints
+        //   [Cosave] DecodeV2EntryBlob: byteLen 83 != stride 84 x numItems 1
+        // into every debug log at startup. That line cost a roadmap entry and
+        // an afternoon: it reads as silent loss of a learner record, it sits
+        // right under a healthy "Loaded 16 learner entries", and it recurs on
+        // every character because the tests always run. Say so here rather
+        // than leave the next reader to re-derive it -- 83 is 84 minus the one
+        // byte this line removes, and 84 is 4 + 4*18 + 8.
+        //
+        // The level is right for production: a short record there IS an error.
         {
+            logger::info("  (the DecodeV2EntryBlob error on the next line is this test "
+                         "asserting a short buffer is rejected)"sv);
             auto blob = makeBlob(compiled, 1);
             auto entries = DecodeV2EntryBlob(blob.data(), blob.size() - 1, 1, compiled);
             if (!entries.empty()) {
