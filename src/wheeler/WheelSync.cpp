@@ -425,6 +425,7 @@ namespace Huginn::Wheeler
         std::fill(pw.slotUniqueIDs.begin(), pw.slotUniqueIDs.end(), 0);
         std::fill(pw.slotWildcard.begin(), pw.slotWildcard.end(), false);
         std::fill(pw.slotRetries.begin(), pw.slotRetries.end(), 0);
+        std::fill(pw.slotRetryTargets.begin(), pw.slotRetryTargets.end(), 0);
         std::fill(pw.slotUniqueIDDefers.begin(), pw.slotUniqueIDDefers.end(), 0);
         for (auto& st : pw.slotSubtexts) {
             st.reset();  // safe: step 1 dropped every exported pointer
@@ -827,6 +828,7 @@ namespace Huginn::Wheeler
             pageWheel.slotSubtexts.resize(slotCount);
             pageWheel.slotRawSubtexts.resize(slotCount);
             pageWheel.slotRetries.resize(slotCount, 0);
+            pageWheel.slotRetryTargets.resize(slotCount, 0);
             pageWheel.slotUniqueIDDefers.resize(slotCount, 0);
             pageWheel.slotActivationEmptied.resize(slotCount, false);
 
@@ -1007,6 +1009,7 @@ namespace Huginn::Wheeler
                     pageWheel.slotSubtexts.resize(pageWheel.slotCount);
                     pageWheel.slotRawSubtexts.resize(pageWheel.slotCount);
                     pageWheel.slotRetries.resize(pageWheel.slotCount, 0);
+                    pageWheel.slotRetryTargets.resize(pageWheel.slotCount, 0);
                     pageWheel.slotUniqueIDDefers.resize(pageWheel.slotCount, 0);
                     pageWheel.slotActivationEmptied.resize(pageWheel.slotCount, false);
                 }
@@ -1455,10 +1458,28 @@ namespace Huginn::Wheeler
                     }
                 }
 
-                // Reset retry counter when a genuinely different item is recommended.
-                // Don't reset when cachedFormID is 0 — that means we never successfully
-                // populated this slot, so the retry counter should keep accumulating.
-                if (newFormID != cachedFormID && cachedFormID != 0) {
+                // Reset the retry counter when the TARGET changes — not when the
+                // slot's cached content differs from it. Those two tests agree on
+                // the first attempt and diverge on every one after, because a
+                // FAILED add deliberately leaves slotFormIDs holding the old item
+                // (that is how the restore path below keeps a good entry alive).
+                // Reading "cached differs" as "a different item is being
+                // recommended now" therefore re-zeroed the counter on every pass,
+                // so strike two never arrived and m_addFailCooldowns never
+                // engaged. An item Wheeler can never accept — a weapon carrying
+                // no ExtraUniqueID, say, which is every untempered unenchanted
+                // one — then churned RemoveItem → failing AddItemByFormID →
+                // restore at the pipeline's full rate for as long as it stayed
+                // recommended. Observed at ~10 Hz, every line reading "attempt
+                // 1/3", plus the ValidateWheelState desyncs that churn leaves.
+                //
+                // A slot that had never been populated (cachedFormID == 0) was
+                // exempt from the old reset, which is the only reason the bug was
+                // not universal: those slots did reach three strikes and did go
+                // quiet. Keying on the target makes every slot behave that way.
+                const uint64_t retryTarget = AddFailKey(newFormID, newUniqueID);
+                if (pageWheel.slotRetryTargets[idx] != retryTarget) {
+                    pageWheel.slotRetryTargets[idx] = retryTarget;
                     pageWheel.slotRetries[idx] = 0;
                 }
 
