@@ -6,6 +6,37 @@ once its entry leaves this file. Git history is the only record; check it before
 re-opening something that looks obviously undone.
 
 ## Known Bugs
+- [ ] The vanilla-CC fatigue thresholds do not match the game's own stages, so
+      IsExhausted() and the fatigue scoring multiplier fire on boundaries
+      Skyrim does not recognise. Cold and hunger are fine; only exhaustion is.
+      Paired readings, widget against the game's Active Effects at the same
+      moment (the raw values come from the vanilla-CC survival log line):
+        exhaustion 212 -> our lvl1 "Slightly Tired"  | game: "Fatigue - Drained"
+        exhaustion 302 -> our lvl2 "Weary"           | game: "Fatigue - Drained"
+        cold 0         -> our lvl0 "Warm"            | game: "Cold - Warm"      OK
+        hunger 413     -> our lvl3 "Hungry"          | game: "Hunger - Hungry"  OK
+      One vanilla stage spans at least 212-302, so our 300 boundary sits inside
+      it. Cold and hunger matching is what made this look like a naming problem
+      at first; it is not, and their agreeing proves nothing about exhaustion
+      because the three threshold tables are independent.
+      Two distinct things are wrong, and the second is the one that matters:
+      1. NAMES. GetFatigueLevelName returns Survival Mode Improved's vocabulary
+         (Rested / Slightly Tired / Weary / Tired / Very Tired / Exhausted) on a
+         path where SMI is not installed. "Drained" is not in that list, so the
+         widget can never print what the game is showing. Cosmetic -- nothing
+         reads the string -- but it is a debug widget contradicting the game.
+      2. BOUNDARIES. StateManager_Survival.cpp uses 150/300/450/600 for the
+         0-1000 exhaustion global. At least the 300 is wrong. This is NOT
+         cosmetic: PlayerActorState.h:503 gates IsExhausted() on
+         fatigueLevel >= FATIGUE_WEARY, and :557 returns a 0.30 multiplier at
+         the same threshold, so scoring moves when the game's state has not.
+      What it needs is the real boundaries, which UESP does not publish -- the
+      Survival Mode page has no numeric ranges and Skyrim:Exhaustion 404s. The
+      cheap path is more paired readings: the survival log line prints the raw
+      value on every stage change, so a few screenshots of Active Effects
+      alongside it pin the whole table. Do not rename from one data point; that
+      only swaps one wrong vocabulary for a half-guessed one.
+      Raised 2026-09-19.
 - [ ] WeaponRegistry treats a weapon as a FORM, not an instance, so tempered
       gear is invisible three different ways. `m_weaponIndex` is
       `unordered_map<RE::FormID, size_t>` (WeaponRegistry.h:408) — the exact
