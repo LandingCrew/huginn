@@ -190,11 +190,34 @@ namespace Huginn::Input
       constexpr RE::FormID kLeftHandSlot   = 0x00013F43;
       constexpr RE::FormID kEitherHandSlot = 0x00013F44;
       auto* equipSlot = GetEquipSlot(EquipHand::Right, leftHand);
+      bool callerPicksHand = true;
       if (auto* declared = weapon->equipSlot; declared) {
       const auto declaredID = declared->GetFormID();
       if (declaredID != kRightHandSlot && declaredID != kLeftHandSlot &&
         declaredID != kEitherHandSlot) {
         equipSlot = declared;
+        callerPicksHand = false;
+      }
+      }
+
+      // One physical item cannot be in both hands, and asking for it anyway
+      // duplicates it. EquipObject resolves a null ExtraDataList itself, and
+      // the only entry it can find here is the one already marked worn by the
+      // other hand — so rather than move it, the engine splits the stack and
+      // the player watches their single wand become two. A real duplication
+      // bug: the copy persists in the save.
+      //
+      // Take it off the other hand first. That leaves exactly one unworn entry
+      // for the equip below to move, which is the case EquipObject handles
+      // correctly. Only meaningful when WE are choosing the hand — a BothHands
+      // weapon occupies both by definition and must not be disturbed.
+      if (callerPicksHand) {
+      if (auto* otherHand = player->GetEquippedObject(!leftHand);
+        otherHand && otherHand->GetFormID() == formID) {
+        logger::debug("[EquipManager] '{}' is in the {} hand — taking it off before the swap"sv,
+           weapon->GetName(), leftHand ? "right" : "left");
+        equipManager->UnequipObject(player, weapon, nullptr, 1,
+           GetEquipSlot(EquipHand::Right, !leftHand));
       }
       }
 
