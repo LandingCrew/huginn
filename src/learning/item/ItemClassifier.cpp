@@ -1,4 +1,5 @@
 #include "ItemClassifier.h"
+#include "apparel/ApparelData.h"   // CraftSkillForActorValue - one AV vocabulary, two callers
 
 namespace Huginn::Item
 {
@@ -319,34 +320,74 @@ namespace Huginn::Item
       // DEBUG v0.8: Log which AV we're trying to classify
       logger::debug("[DetermineFortifySkillType] {} - AV={}"sv, data.name, static_cast<int>(av));
 
+      // Craft skills come first, through the shared vocabulary in ApparelData.h.
+      // They used to be three groups in the switch below, hand-maintained
+      // against a second copy in ApparelClassifier, and the two had drifted:
+      // this side never learned the "Modifier" series that apparel enchantments
+      // use, so a potion carrying kAlchemyModifier fell to the default and was
+      // never tagged. That is the same omission that made #65 inert on its
+      // first play-test, still live here.
+      //
+      // Each craft keeps the destination it always had — Alchemy is a utility
+      // skill, Smithing a combat skill, Enchanting a magic school. Sharing the
+      // question does not mean sharing the answer.
+      if (const auto craft = Apparel::CraftSkillForActorValue(av);
+          craft != Apparel::CraftSkill::None) {
+         switch (craft) {
+         case Apparel::CraftSkill::Alchemy:
+            data.tags |= ItemTag::FortifyUtilitySkill;
+            data.utilitySkill = UtilitySkill::Alchemy;
+            return;
+         case Apparel::CraftSkill::Smithing:
+            data.tags |= ItemTag::FortifyCombatSkill;
+            data.combatSkill = CombatSkill::Smithing;
+            return;
+         case Apparel::CraftSkill::Enchanting:
+            data.tags |= ItemTag::FortifyMagicSchool;
+            data.school = MagicSchool::Enchanting;
+            return;
+         case Apparel::CraftSkill::None:
+            break;
+         }
+      }
+
       switch (av) {
       // Magic Schools
+      // Magic schools take the PowerModifier series too, for the same reason
+      // every other group below already does: LoreRim expresses fortify
+      // effects that way, and StateManager_MagicEffects.cpp:251+ has handled
+      // all five variants for as long as it has existed. Without them a
+      // Fortify Destruction potion on that list falls to default, never gets
+      // FortifyMagicSchool, and DeriveItemTypeFromTags answers Unknown rather
+      // than BuffPotion -- the state layer sees the buff while the item layer
+      // cannot recommend the potion that produces it. Same failure shape as
+      // the craft drift above, one switch group over.
       case RE::ActorValue::kAlteration:
+      case RE::ActorValue::kAlterationPowerModifier:   // LORERIM (148)
       data.tags |= ItemTag::FortifyMagicSchool;
       data.school = MagicSchool::Alteration;
       logger::debug("[DetermineFortifySkillType] {} -> FortifyMagicSchool, school=Alteration"sv, data.name);
       break;
       case RE::ActorValue::kConjuration:
+      case RE::ActorValue::kConjurationPowerModifier:  // LORERIM (149)
       data.tags |= ItemTag::FortifyMagicSchool;
       data.school = MagicSchool::Conjuration;
       break;
       case RE::ActorValue::kDestruction:
+      case RE::ActorValue::kDestructionPowerModifier:  // LORERIM (150)
       data.tags |= ItemTag::FortifyMagicSchool;
       data.school = MagicSchool::Destruction;
       break;
       case RE::ActorValue::kIllusion:
+      case RE::ActorValue::kIllusionPowerModifier:     // LORERIM (151)
       data.tags |= ItemTag::FortifyMagicSchool;
       data.school = MagicSchool::Illusion;
       break;
       case RE::ActorValue::kRestoration:
+      case RE::ActorValue::kRestorationPowerModifier:  // LORERIM (153)
       data.tags |= ItemTag::FortifyMagicSchool;
       data.school = MagicSchool::Restoration;
       break;
-      case RE::ActorValue::kEnchanting:
-      data.tags |= ItemTag::FortifyMagicSchool;
-      data.school = MagicSchool::Enchanting;
-      break;
-
       // Combat Skills (base + PowerModifier variants for LORERIM compatibility)
       case RE::ActorValue::kOneHanded:
       case RE::ActorValue::kOneHandedPowerModifier:   // LORERIM (135)
@@ -378,11 +419,6 @@ namespace Huginn::Item
       data.tags |= ItemTag::FortifyCombatSkill;
       data.combatSkill = CombatSkill::LightArmor;
       break;
-      case RE::ActorValue::kSmithing:
-      case RE::ActorValue::kSmithingPowerModifier:    // 139 (141 is kLightArmorPowerModifier)
-      data.tags |= ItemTag::FortifyCombatSkill;
-      data.combatSkill = CombatSkill::Smithing;
-      break;
       case RE::ActorValue::kUnarmedDamage:            // LORERIM Fortify Unarmed (35)
       data.tags |= ItemTag::FortifyCombatSkill;
       data.combatSkill = CombatSkill::OneHanded;  // Map to OneHanded (closest combat skill)
@@ -409,12 +445,6 @@ namespace Huginn::Item
       data.tags |= ItemTag::FortifyUtilitySkill;
       data.utilitySkill = UtilitySkill::Speech;
       break;
-      case RE::ActorValue::kAlchemy:
-      case RE::ActorValue::kAlchemyPowerModifier:     // 145 (148 is kConjurationPowerModifier)
-      data.tags |= ItemTag::FortifyUtilitySkill;
-      data.utilitySkill = UtilitySkill::Alchemy;
-      break;
-
       // Special cases
       case RE::ActorValue::kCarryWeight:
       data.tags |= ItemTag::FortifyCarryWeight;
