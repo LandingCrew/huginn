@@ -124,6 +124,15 @@ namespace Huginn::Wheeler
 
         /// Push a page's slot contents to its wheel. No-op if the page has no
         /// wheel, or if nothing displayed has changed since the last call.
+        /// True if Wheeler needs a non-zero uniqueID to accept this form —
+        /// weapons and armour, whose instances differ by tempering and
+        /// enchantment. See the certain-reject guard in UpdatePage (#74).
+        ///
+        /// Public because the question is worth asking BEFORE building a push:
+        /// an item this returns true for, carrying uniqueID 0, is one Wheeler
+        /// will reject however politely it is offered.
+        [[nodiscard]] static bool RequiresUniqueID(RE::FormID formID);
+
         void UpdatePage(size_t pageIndex,
                         const std::vector<RE::FormID>& formIDs,
                         const std::vector<bool>& isWildcard,
@@ -218,10 +227,6 @@ namespace Huginn::Wheeler
         /// function into a local; see WheelerConnection.h for why.
         [[nodiscard]] static WheelerAPI::IWheelerAPI* Api() noexcept;
 
-        /// True if Wheeler needs a non-zero uniqueID to accept this form —
-        /// weapons and armour, whose instances differ by tempering and
-        /// enchantment. See the certain-reject guard in UpdatePage (#74).
-        [[nodiscard]] static bool RequiresUniqueID(RE::FormID formID);
 
         struct PageWheel
         {

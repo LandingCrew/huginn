@@ -11,6 +11,7 @@
 #include "ExplanationLabel.h"
 #include "wheeler/WheelerClient.h"
 #include "wheeler/WheelerSettings.h"
+#include "wheeler/WheelSync.h"   // RequiresUniqueID - what Wheeler will refuse
 
 namespace Huginn::Display
 {
@@ -260,6 +261,37 @@ namespace Huginn::Display
                 // one. Wheeler renders them now (observed 2026-08-11: a user
                 // wheel carrying Azura's Star and The Black Star), so the
                 // suppression is gone and gems push like any other item.
+
+                // Never offer Wheeler a weapon or armour with no uniqueID.
+                // WheelItemFactory hard-rejects uniqueID 0 for those two form
+                // types, because every question a wheel item has to answer --
+                // is it still carried, what is the stack count, which
+                // ExtraDataList to equip, is this instance active -- resolves
+                // the instance BY uniqueID and by nothing else. It answers
+                // UnsupportedFormType (-6), which misleads: the form type is
+                // supported, the instance is what cannot be found.
+                //
+                // An item acquires ExtraUniqueID along with its ExtraDataList,
+                // so a plain stacked weapon that has never been equipped,
+                // tempered or enchanted has neither, and there is no uniqueID
+                // for anyone to pass. Not a Huginn limitation: the same items
+                // cannot be added to a wheel by hand through Wheeler's own UI.
+                //
+                // Offering it anyway was not harmless. Each one burned the #74
+                // defer window, then three rejects, then a slot clear -- API
+                // calls and log lines spent to arrive at the blank slot we can
+                // simply push. The widget still lists the item; only the wheel
+                // skips it, because only the wheel cannot draw it.
+                if (formID != 0 && uid == 0 &&
+                    Wheeler::WheelSync::RequiresUniqueID(formID)) {
+                    logger::trace("[WheelerBackend] Page {} slot {}: {:08X} has no uniqueID - "
+                                  "Wheeler cannot take it, pushing an empty slot"sv,
+                        page, s, formID);
+                    formID = 0;
+                    uid = 0;
+                    wild = false;
+                    sub.clear();
+                }
 
                 // Empty post-activation policy: blank the activated slot and
                 // relabel it "Equipped".
