@@ -9,14 +9,26 @@ verify that refactors don't regress. Newest entry first.
   zones come from `Huginn_ZONE_NAMED` / `SCOPED_TIMER` in `src/Profiling.h`).
 - Play a representative slice (combat + inventory churn), then in Tracy:
   **Statistics** panel → **Timing: Self only** → sort by **MTPC** (mean time per call).
-- The load line stamps the build: `Huginn vX.Y.Z (<git-sha>) [DEBUG BUILD] [TRACY]`.
-  Always record that SHA — it's the provenance for the numbers.
+- The load line stamps the build: `Huginn vX.Y.Z (<git-sha>) [DEBUG BUILD] [TRACY]`,
+  or `… [RELEASE] [TRACY]` for a release capture. Always record that SHA — it's the
+  provenance for the numbers. Caveat: the SHA bakes at CMake *configure* time from
+  HEAD, so a capture built from an uncommitted tree stamps the commit *before* the
+  work. Record what the tree actually contained when that matters.
+- **Load a save before you stop the capture.** `OnUpdate` early-returns on
+  `IsWorldLoaded` (`src/UpdateLoop.cpp:510`), so a capture taken at the main menu
+  or on a load screen contains exactly one zone and is worthless. See §4 of the
+  profiling guide.
 
 ## How to read these numbers
 
-- **These are DEBUG + Tracy-instrumented builds.** Absolute times are inflated vs. a
-  release build (no inlining/opt, plus Tracy capture overhead). Use them for **relative
-  ranking and cross-build comparison**, never as absolute frame-budget claims.
+- **Check the build flavour on each entry before comparing.** Entries dated
+  2026-07-25 and earlier are **DEBUG + Tracy**: absolute times are inflated vs. a
+  release build (no inlining/opt, plus Tracy capture overhead), so use them for
+  **relative ranking and cross-build comparison**, never as absolute frame-budget
+  claims. The 2026-09-19 entry is the first **RELEASE + Tracy** capture and *is*
+  quotable as an absolute cost — but it is ~40x cheaper per call than the Debug
+  entries, so **never rank a Debug zone against a Release one.** Compare within a
+  flavour only.
 - **MTPC** = mean time per call = per-invocation cost → what causes a visible *spike*.
 - **Total time** = MTPC × Counts over the capture → cumulative CPU. A big total with a
   huge Count (e.g. a poll at ~1,941 ticks) is spread across every tick on the ~100 ms
@@ -38,6 +50,92 @@ Top hot zones + analysis + finding mapping.
 ```
 
 ---
+
+## 2026-09-19 — `1516c34` (tree = `6953c6d`) — first RELEASE capture; Tracy 0.14.1 baseline
+
+- Session: SkyrimSE.exe @ 2026-09-19 14:27:45, Tracy 0.14.1, 24,925 frames, ~3:09.5 program time, 65.06 MB (0.10%).
+- Save: scale not recorded (see caveat below).
+- Notes: **RELEASE + TRACY** — the first non-Debug entry in this file. PR #117
+  (`extern/tracy` v0.13.1 → v0.14.1). Provenance caveat: the load line stamps
+  `1516c34` because the binary was configured before the branch was committed; the
+  source tree it was built from is exactly `6953c6d`. Version stamp `v0.20.16`.
+- Zones seen: **38 of 41** distinct zone names. The 3 absent are paths this session
+  never exercised.
+
+### Headline: the whole system costs **0.021% of one core**
+
+`OnUpdate` inclusive total is **39.97 ms across 189.5 s**. That figure bounds
+everything nested under it. Tick cadence measured 1,742 ticks / 189.5 s = 9.19/s
+≈ **109 ms**, matching the documented ~100 ms loop.
+
+### Biggest per-call cost (spike risk), by MTPC — Self only
+
+| Zone | MTPC | Count | Total | Note |
+|---|---|---|---|---|
+| `Pipeline::ScoreCandidates` | **75.83 µs** | 2 | 151.65 µs | Biggest per-call, and still 0.45% of a 16.7 ms frame. |
+| `ApparelRegistry::Reconcile` | 73.92 µs | 1 | 73.92 µs | New in #114. One call — treat as unmeasured, not cheap (§2.1). |
+| `Pipeline::AllocateAndLock` | 71.02 µs | 2 | 142.03 µs | |
+| `ReconcileWeapons::Apply` | 30.98 µs | 2 | 61.97 µs | |
+| `PollPlayerMagicEffects` | 25.58 µs | 212 | **5.42 ms** | Biggest cumulative — still roadmap Tier 3 O3. ✅ ranking holds. |
+| `RunPipeline` | 23.03 µs | 7 | 161.23 µs | |
+| `Inventory::DeltaScan` | 22.68 µs | 42 | 952.53 µs | #13. Scales with inventory — save scale not recorded here. |
+| `PollTargets` | 22.68 µs | 212 | **4.81 ms** | #12. Second-biggest cumulative. ✅ |
+| `WeaponRegistry::ReconcileWeapons` | 17.31 µs | 2 | 34.62 µs | |
+| `PollPlayerSurvival` | 16.85 µs | 21 | 353.75 µs | |
+| `SpellRegistry::Reconcile` | 16.01 µs | 4 | 64.04 µs | |
+| `PollPlayerVitals` | 15.25 µs | 212 | 3.23 ms | |
+| `Display::Intuition` | 13.05 µs | 2 | 26.1 µs | |
+| `ReconcileWeapons::GetInventory` | 11.28 µs | 2 | 22.55 µs | |
+| `OnUpdate` | 9.41 µs | **1,742** | **16.4 ms** | Self time. See below — this is the real cost centre. |
+| `PollPlayerPosition` | 7.23 µs | 212 | 1.53 ms | |
+| `SpellRegistry::RefreshFavorites` | 6.28 µs | 42 | 263.68 µs | |
+| `PollPlayerEquipment` | 6.16 µs | 212 | 1.31 ms | |
+| `WeaponRegistry::RefreshCharges` | 4.99 µs | 42 | 209.49 µs | |
+
+Rows below 4.99 µs MTPC were not transcribed; the 39.97 ms inclusive figure bounds them.
+
+### Finding: 41% of all cost is `OnUpdate`'s own preamble
+
+Tracy's Find Zone puts `OnUpdate` self time at **41.03%** of its inclusive time —
+16.4 ms of 39.97 ms. It outweighs every child zone, because it runs 1,742 times
+while everything downstream runs 212× or fewer.
+
+That body (`src/UpdateLoop.cpp:464-522`) is only: `SCOPED_TIMER`, two
+`steady_clock::now()` calls, a singleton fetch, `IsWorldLoaded` (two `IsMenuOpen`
+string-hash lookups + `Get3D`), and `SoakMetrics::RecordTick`. **If per-tick cost
+ever matters, that preamble is the target — not `ScoreCandidates`,** which is
+where the MTPC ranking points you. This is the one place where the guide's
+"MTPC is the only signal" rule needs MTPC × Count to see the answer.
+
+Not worth acting on at 0.021%. Recorded so the next person does not re-derive it.
+
+### Tail: bimodal, as the skip architecture intends
+
+`OnUpdate` inclusive distribution: mean 22.95 µs, median 8.42 µs, mode 7.96 µs,
+**σ 47.78 µs (208% of mean)**, P75 11.22 µs, P90 82.15 µs, P99 184.17 µs,
+**P99.9 334.5 µs**.
+
+Mode ≈ 8 µs is a skipped tick; P90 ≈ 82 µs is a tick doing real work. Worst case
+334.5 µs is 2% of a 16.7 ms frame — **no hitch risk**.
+
+### Skip funnel is internally consistent
+
+```
+OnUpdate 1,742  →  RunPipeline 7  →  ScoreCandidates 2  →  AllocateAndLock 2  →  Display::Intuition 2
+                   (99.6% skipped     (5 of 7 bailed at
+                    at dirty flag)     the hash compare)
+```
+
+Two full pipeline runs produced exactly two display pushes — no orphaned stages.
+Note the skip rate is far higher than the 2026-06-07 capture (64% / 96.7%); this
+was a quiet session, not evidence of a change.
+
+### Memory
+
+Peak **193.07 KB**, 4,494 data points, flat after a single step at save-load. No
+growth across ~3 minutes — but that window says **nothing** about the 20–50 hr
+soak. Its real value: it confirms the `src/TracyMemory.cpp` `operator new`/`delete`
+overrides work under 0.14.1, which the discarded menu-only capture could not show.
 
 ## 2026-07-25 — `99cbb48` — critique #9 (display abstraction) complete
 
