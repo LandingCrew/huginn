@@ -160,7 +160,12 @@ All `IntuitionMenu` public API methods defer GFx work via `SKSE::GetTaskInterfac
 
 - [docs/README.md](docs/README.md) — Full system design
 - [docs/architecture/](docs/architecture/) — Deep-dive docs (pipeline, states, classifiers, scoring, slots, UI, dMenu)
-- [Mod compatibility](https://github.com/LandingCrew/huginn/wiki/Mod-Compatibility) — mod compatibility guides (wiki)
-- [Console commands](https://github.com/LandingCrew/huginn/wiki/Console-Commands) — console command reference (wiki)
+- [Mod compatibility](https://github.com/LandingCrew/huginn/wiki/Mod-Compatibility) — mod compatibility guides (wiki).
+  Player-facing; the Wheeler instance-identity rule lives here rather than in
+  the repo. A wiki link that 404s means the page has not been created yet —
+  GitHub only creates the wiki repo on the first page saved through the web UI.
+- Console commands — the table under [Console Commands](#console-commands)
+  above is the reference. There is no wiki page; the earlier link here pointed
+  at one that was never created, for content already in this file.
 - [docs/testing/TESTING-INDEX.md](docs/testing/TESTING-INDEX.md) — Test suite index and profiling guide
 - [docs/roadmap.md](docs/roadmap.md) — Development roadmap and backlog
