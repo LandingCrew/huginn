@@ -1443,18 +1443,31 @@ namespace Huginn::Wheeler
 
                 // Negative-cache check FIRST: a (formID, uniqueID) Wheeler already
                 // rejected MAX_SLOT_RETRIES times must not clear the current entry
-                // or hit the API again until its cooldown expires. Adopt the cache
-                // so the diff goes quiet; the combo retries naturally afterwards.
+                // or hit the API again until its cooldown expires.
+                //
+                // Skip the slot WITHOUT adopting the cache. Adopting used to be
+                // how the diff was quietened, but it makes slotFormIDs claim an
+                // item the entry does not hold — the restore path below put the
+                // OLD one back — and the lie has three consequences: the entry
+                // wears the new item's subtext, ValidateWheelState reports a
+                // desync, and, because cached then equals incoming forever, the
+                // slot is never re-examined, so the combo never retries when the
+                // cooldown lapses. That last one is the opposite of what the
+                // cooldown is for. Skipping costs the page's content-unchanged
+                // early-out for the 30s, and no API calls at all — the same
+                // trade the #74 defer path already makes for up to 50 passes.
                 if (newFormID != 0) {
                     if (auto it = m_addFailCooldowns.find(AddFailKey(newFormID, newUniqueID));
                         it != m_addFailCooldowns.end()) {
                         if (nowTime - it->second < ADD_FAIL_COOLDOWN) {
-                            pageWheel.slotFormIDs[idx] = newFormID;
-                            pageWheel.slotUniqueIDs[idx] = newUniqueID;
-                            pageWheel.slotRetries[idx] = 0;
                             continue;
                         }
+                        // Cooldown served — hand the combo a fresh budget rather
+                        // than letting the count that earned the suppression push
+                        // it straight back over the line on the first failure.
                         m_addFailCooldowns.erase(it);
+                        pageWheel.slotRetries[idx] = 0;
+                        pageWheel.slotRetryTargets[idx] = AddFailKey(newFormID, newUniqueID);
                     }
                 }
 
@@ -1524,8 +1537,12 @@ namespace Huginn::Wheeler
                                 });
                             }
                             m_addFailCooldowns[AddFailKey(newFormID, newUniqueID)] = nowTime;
-                            pageWheel.slotFormIDs[idx] = newFormID;
-                            pageWheel.slotUniqueIDs[idx] = newUniqueID;
+                            // Deliberately NOT adopting slotFormIDs/slotUniqueIDs
+                            // here. The cache must keep describing what is really
+                            // in the entry — the restore above put the old item
+                            // back — or the desync this used to create outlives
+                            // the cooldown. The negative-cache check above is what
+                            // keeps the slot quiet now, and it does so honestly.
                         } else {
                             spdlog::debug("[WheelerClient] AddItemByFormID {:08X} uid={} slot {} failed (attempt {}/{}, result={})",
                                 newFormID, newUniqueID, i, pageWheel.slotRetries[idx], MAX_SLOT_RETRIES, result);

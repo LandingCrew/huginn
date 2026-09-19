@@ -31,6 +31,12 @@ re-opening something that looks obviously undone.
       known case (test 6h stands in for it); the honest scope is "boot a vanilla
       profile once and walk the contexts", which would also cover the #79 four
       that no LoreRim character can carry. Wants a save with vanilla alchemy
+      ingredients and vanilla survival needs — the simonrim-essentials profile
+      is that save, and the sentence this replaces had been cut off mid-thought
+      since before the profile existed.
+      Still open, hence the unticked box: #79's four contexts, the fortify
+      POTION payload from #63, and the rest of the context walk. What follows is
+      what the profile has actually closed.
       Progress 2026-09-19, on the simonrim-essentials profile (vanilla+AE):
       workstation is DONE — all four bench types answered live (forge 1,
       grindstone 2, armor workbench 7, alchemy lab 5) with apparel payloads, so
