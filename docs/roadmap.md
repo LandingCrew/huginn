@@ -6,8 +6,38 @@ once its entry leaves this file. Git history is the only record; check it before
 re-opening something that looks obviously undone.
 
 ## Known Bugs
+- [ ] WeaponRegistry treats a weapon as a FORM, not an instance, so tempered
+      gear is invisible three different ways. `m_weaponIndex` is
+      `unordered_map<RE::FormID, size_t>` (WeaponRegistry.h:408) — the exact
+      keying #65 had to replace for apparel, where two self-enchanted rings
+      sharing one base form collapsed into a single entry. Apparel now keys on
+      `(uniqueID << 32) | formID` (ApparelData.h). Weapons never changed.
+      Observed 2026-09-19 on the simonrim profile, inventory vs registry:
+        Iron Dagger (dam 4) AND "Iron Dagger - Okay" (dam 6)  -> one entry, dmg=4.0
+        Iron Sword  (dam 8) AND "Iron Sword - Okay"  (dam 9)  -> one entry, dmg=7.0
+        "Iron Mace - Okay"  (dam 11), the ONLY mace owned     -> "Iron Mace", dmg=9.0
+      Seven weapons carried, five in the registry — the two duplicate pairs
+      collapsing accounts for the difference exactly.
+      Three separable defects, and the Mace shows they are separable: with only
+      ONE instance owned there is nothing to collapse, yet the name and damage
+      are still the base form's.
+      1. COLLAPSE. The second instance of a base form is lost. Whichever the
+         scan reaches first wins and the other is unreachable.
+      2. NAME. `weapon->GetName()` answers the base form. A tempered instance
+         carries its display name in ExtraTextDisplayData, which is what the
+         player reads in their inventory and what the widget should echo. Right
+         now the widget says "Iron Mace" for an item the game calls "Iron Mace
+         - Okay", so the player cannot tell which weapon is meant.
+      3. DAMAGE. Base-form damage is what the prior ranks on, so the untempered
+         instance and the tempered one score identically and Huginn can
+         recommend the WORSE weapon while a better one sits in the same pack.
+      Note the learner is FormID-keyed too, so both instances already share one
+      weight vector — that half may be acceptable (tempering does not change
+      what the weapon is FOR) and should be decided rather than assumed.
+      The apparel work is the template: ExtraUniqueID plumbing, a composite key,
+      and one record per ExtraDataList. #65 did all three (PR #114).
+      Raised 2026-09-19.
 
-None open.
 
 ## Known Mod Compatability Issues
 - [ ] Vanilla-build integration pass — a set of contexts is only ever exercised
