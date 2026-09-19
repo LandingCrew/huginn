@@ -31,6 +31,21 @@ re-opening something that looks obviously undone.
       known case (test 6h stands in for it); the honest scope is "boot a vanilla
       profile once and walk the contexts", which would also cover the #79 four
       that no LoreRim character can carry. Wants a save with vanilla alchemy
+      Progress 2026-09-19, on the simonrim-essentials profile (vanilla+AE):
+      workstation is DONE — all four bench types answered live (forge 1,
+      grindstone 2, armor workbench 7, alchemy lab 5) with apparel payloads, so
+      test 6h is no longer standing in alone. Survival is confirmed working on
+      the vanilla CC path: all four globals resolve, the native warmth function
+      caches, `SMI not installed` takes the 0-1000 threshold fallback, and
+      Hunger/Cold/Fatigue/Warmth all read live in the debug widget.
+      One thing to check while a vanilla survival save exists: the widget read
+      `Fatigue: Slightly Tired (lvl 1)` while the game's Active Effects said
+      `Fatigue - Drained` at the same moment. Our stage names come from Survival
+      Mode Improved and the boundaries from UESP, so this may be nothing worse
+      than a naming mismatch on a path where SMI is absent — or the 150-299
+      window for level 1 may sit a stage low against vanilla CC. Settles with
+      one console read of the Exhaustion global (Survival.esl 0x816, 0-1000)
+      next to what the widget shows.
 - [ ] #63: the workstation context has no fortify POTION to rank on Requiem-based
       lists — inert in the modlists that actually get play-tested. Vanilla path
       still needs its own regression test (test 6h is the unit coverage).
