@@ -427,6 +427,8 @@ namespace Huginn::Wheeler
         std::fill(pw.slotRetries.begin(), pw.slotRetries.end(), 0);
         std::fill(pw.slotRetryTargets.begin(), pw.slotRetryTargets.end(), 0);
         std::fill(pw.slotUniqueIDDefers.begin(), pw.slotUniqueIDDefers.end(), 0);
+        std::fill(pw.slotUniqueIDDeferStart.begin(), pw.slotUniqueIDDeferStart.end(),
+            std::chrono::steady_clock::time_point{});
         for (auto& st : pw.slotSubtexts) {
             st.reset();  // safe: step 1 dropped every exported pointer
         }
@@ -830,6 +832,7 @@ namespace Huginn::Wheeler
             pageWheel.slotRetries.resize(slotCount, 0);
             pageWheel.slotRetryTargets.resize(slotCount, 0);
             pageWheel.slotUniqueIDDefers.resize(slotCount, 0);
+            pageWheel.slotUniqueIDDeferStart.resize(slotCount);
             pageWheel.slotActivationEmptied.resize(slotCount, false);
 
             // Build wheel label. Heap storage whose address survives the
@@ -1011,6 +1014,7 @@ namespace Huginn::Wheeler
                     pageWheel.slotRetries.resize(pageWheel.slotCount, 0);
                     pageWheel.slotRetryTargets.resize(pageWheel.slotCount, 0);
                     pageWheel.slotUniqueIDDefers.resize(pageWheel.slotCount, 0);
+                    pageWheel.slotUniqueIDDeferStart.resize(pageWheel.slotCount);
                     pageWheel.slotActivationEmptied.resize(pageWheel.slotCount, false);
                 }
             }
@@ -1365,7 +1369,22 @@ namespace Huginn::Wheeler
         // in that slot. A second uid-less weapon rotating into an already-spent
         // slot therefore skips straight to the normal reject path, which is the
         // pre-fix behaviour and the right fallback.
-        static constexpr uint8_t MAX_UNIQUEID_DEFERS = 50;
+        static constexpr uint8_t MAX_UNIQUEID_DEFERS = 30;
+
+        // ...and the wall-clock half of the same bound, which is the one that
+        // actually holds. A pipeline pass happens on STATE CHANGE, so the pass
+        // rate spans three orders of magnitude: ~10/s in combat, and 40 passes
+        // in a whole five-minute session standing around (measured, [Soak]
+        // recompute=40/2828 ticks). 50 passes was therefore five seconds in a
+        // fight and over six minutes in a quiet field — and for those six
+        // minutes the slot kept drawing its previous occupant, which the player
+        // sees as that item duplicated onto a slot it does not own.
+        //
+        // Three seconds is ~3x the real case this guard exists for: every
+        // weapon reads uid=0 for about a second after a save load, with the
+        // first push measured at 981ms, 982ms and 998ms across three loads.
+        // Whichever bound trips first ends the defer.
+        static constexpr std::chrono::seconds UNIQUEID_GRACE{3};
         const auto nowTime = std::chrono::steady_clock::now();
 
         // Update each slot (bounds-check all vectors to prevent out-of-range access)
@@ -1491,7 +1510,16 @@ namespace Huginn::Wheeler
                 // strikes would suppress the combo for 30s, which is the
                 // opposite of what a late uniqueID wants.
                 if (newFormID != 0 && newUniqueID == 0 && RequiresUniqueID(newFormID)) {
-                    if (pageWheel.slotUniqueIDDefers[idx] < MAX_UNIQUEID_DEFERS) {
+                    // Stamp the start of this defer run. The counter returning to
+                    // 0 (on success, or a fresh wheel) is what re-arms it, so the
+                    // clock measures one continuous run and not the slot's life.
+                    if (pageWheel.slotUniqueIDDefers[idx] == 0) {
+                        pageWheel.slotUniqueIDDeferStart[idx] = nowTime;
+                    }
+                    const auto deferredFor = nowTime - pageWheel.slotUniqueIDDeferStart[idx];
+
+                    if (pageWheel.slotUniqueIDDefers[idx] < MAX_UNIQUEID_DEFERS &&
+                        deferredFor < UNIQUEID_GRACE) {
                         ++pageWheel.slotUniqueIDDefers[idx];
                         // trace, not debug: this is a per-slot, per-pass event
                         // in the common case, and the guard was verified in-game
@@ -1505,10 +1533,12 @@ namespace Huginn::Wheeler
                         continue;
                     }
                     // Budget spent — fall through and let Wheeler reject it for
-                    // real, so the negative cache can quiet the page down.
-                    spdlog::debug("[WheelerClient] Page {} slot {}: {:08X} still has no uniqueID after {} passes, "
-                                  "letting the normal reject path handle it",
-                        pageIndex, idx, newFormID, MAX_UNIQUEID_DEFERS);
+                    // real, so the negative cache can quiet the page down and
+                    // empty the slot instead of leaving the stale occupant in it.
+                    spdlog::debug("[WheelerClient] Page {} slot {}: {:08X} still has no uniqueID after "
+                                  "{} passes / {:.1f}s, letting the normal reject path handle it",
+                        pageIndex, idx, newFormID, pageWheel.slotUniqueIDDefers[idx],
+                        std::chrono::duration<float>(deferredFor).count());
                 }
 
                 // Reset the retry counter when the TARGET changes — not when the
