@@ -103,6 +103,24 @@ Tracy is already vendored as a submodule (`extern/tracy`, per `.gitmodules`;
 currently Tracy **0.14.1**). **Do not run `git submodule add`** — the old version
 of this guide told you to, and it will fail.
 
+What you **do** need on an existing clone is a submodule sync — git does not
+update submodule working trees on checkout, so a clone made before the 0.14.1
+bump silently keeps 0.13.1 in `extern/tracy`:
+
+```sh
+git submodule update --init extern/tracy
+```
+
+Skipping this fails in the worst possible way: the build succeeds, the load line
+still shows ` [TRACY]`, and the 0.14.x GUI simply never lists the client — the
+0.13.1 protocol (76) cannot handshake with a 0.14.x server (82), and nothing
+reports an error. If §4 shows no client, check the submodule before anything
+else:
+
+```sh
+git -C extern/tracy describe --tags   # must print v0.14.1
+```
+
 ```sh
 # Ordinary Debug build (no Tracy) — the CLAUDE.md build line
 cmake --preset vs2022-windows && cmake --build build --config Debug
