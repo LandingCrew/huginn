@@ -21,7 +21,7 @@ namespace WheelerAPI
     // CreateRecommendationWheels() on the load path, and DestroyWheels() removes
     // by client label. Do not drop that ordering.
     constexpr uint32_t API_VERSION_MIN = 1;
-    constexpr uint32_t API_VERSION_MAX = 4;
+    constexpr uint32_t API_VERSION_MAX = 5;
 
     enum class Result : int32_t
     {
@@ -38,6 +38,13 @@ namespace WheelerAPI
         NotManagedWheel = -10,
         InEditMode = -11,
         EntryNotEmpty = -12,
+        // v5. Before it existed, a weapon or armour offered without a
+        // uniqueID came back as UnsupportedFormType (-6), which pointed at
+        // the form type when the form type was never the problem — the
+        // INSTANCE is what Wheeler cannot find. Both codes mean the same
+        // thing to us and both are handled by the generic result < 0 path;
+        // the value is in the log line naming the real cause.
+        MissingUniqueID = -13,
         InternalError = -100
     };
 

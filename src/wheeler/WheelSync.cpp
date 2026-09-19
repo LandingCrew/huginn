@@ -30,10 +30,18 @@ namespace Huginn::Wheeler
     {
         // Weapon and armour instances are distinguished by ExtraUniqueID —
         // tempering and enchantment make two copies of one base form different
-        // items — so Wheeler will not accept them with uid=0, answering
-        // UnsupportedFormType (-6). Everything else Huginn recommends (spells,
+        // items — so Wheeler will not accept them with uid=0. It answers
+        // MissingUniqueID (-13) on API v5+, and UnsupportedFormType (-6) on
+        // older builds, which pointed at the form type when the form type was
+        // never the problem. Everything else Huginn recommends (spells,
         // potions, scrolls, food, ammo) is identified by base form alone and
-        // adds fine with uid=0. Documented in changelog v0.11.3.
+        // adds fine with uid=0.
+        //
+        // Wheeler's own client reference now states the rule outright and ships
+        // a ResolveUniqueID() helper: "a weapon the player is not carrying
+        // cannot go on a wheel ... filter those out before you offer them as
+        // recommendations". WheelerBackend does exactly that on the way in; the
+        // guard below is what catches anything that slips past.
         //
         // WHY THIS EXISTS (#74): for ~1s after every save load, every weapon
         // has uniqueID=0. ExtraUniqueID lives in the extraList; the load-time
