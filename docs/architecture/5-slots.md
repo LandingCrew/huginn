@@ -329,10 +329,21 @@ transition logs once at `info`.
 
 ## Slot Allocation Pipeline
 
-`SlotAllocator::AllocateSlotsInternal()` (`src/slot/SlotAllocator.cpp:268`) is a
-two-pass fill over a priority-ordered slot list. It is `const` and stateless
-with respect to allocation; the only mutable members are log-dedup caches and
-the config snapshot cache.
+`SlotAllocator::AllocateSlotsInternal()` (`src/slot/SlotAllocator.cpp`) is a
+five-pass fill over a priority-ordered slot list. Passes 1-2 decide WHICH items
+are shown, by rank; passes 3-5 decide WHERE they sit.
+
+1. **Overrides** take a slot whose filter and classification accept them.
+2. **Rank fill** gives every remaining slot the best candidate it accepts.
+3. **Seating** puts items that were already on screen back in the slots they
+   held (see [Seating](#seating-anti-juggling) below).
+4. **Refill** gives the next best candidate to any slot seating vacated.
+5. **Record** stores the arrangement for the next allocation of this page.
+
+Passes 3-5 run only while `bKeepSlotPositions` is on (the default). They are the
+one part of allocation that is NOT stateless: the seating memory is a per-page
+array of dedup keys on the allocator, guarded by `m_seatingMutex`. Everything
+else about a call is still a pure function of its inputs.
 
 ```
    scored candidates            active overrides
@@ -458,12 +469,65 @@ uncomment one and raise `iPageCount` to enable it.
 
 ---
 
+## Seating (anti-juggling)
+
+Ranking decides which items are shown. Seating decides where they sit, and its
+whole job is that the answer stops changing.
+
+Without it, one item arriving or leaving shifted every item below it by a slot.
+The recommendations stayed correct and every key under the player's fingers
+changed meaning — dropping an Iron Mace moved Flames from key 3 to key 4, and
+picking the mace back up moved it back (2026-09-19 log, 22:57:26 and 22:57:56).
+
+**The memory.** One dedup key (`formID + uniqueID + sourceType`, the same key
+the registries and `GetDeduplicationKey()` use) per slot, per page, on the
+allocator. The allocator has to own it: `SlotLocker` is keyed by slot index and
+knows only the display page, and the Wheeler pages never reach the locker at
+all, so nothing else sees every page.
+
+**Pass 3 resolves chains, not swaps.** A departure shifts a run of items up by
+one, so putting them back starts at the bottom: the last item drops into the
+hole the departure left, which frees the seat the item above it wants, and so on
+up the run. The pass is therefore rounds of "move into an empty seat you own"
+until nothing moves, followed by one pass for genuine two-item cycles — which a
+chain cannot produce, and which no number of rounds can resolve because neither
+seat is ever empty.
+
+**What seating will not do:**
+
+- **Move an override, or move into one.** The override pass chose that slot for
+  that item and the subtext says so.
+- **Seat an item where the layout forbids it.** A returner must pass the same
+  classification, wildcard and skip-equipped tests `FindBestCandidate` applies
+  when picking one in the first place.
+- **Survive a layout reload.** A slot whose classification changed is not the
+  slot the memory is about, so a generation bump clears every seat.
+- **Let an override rehome its neighbour.** An override slot keeps the seat of
+  whatever normally lives there, and the item it displaced keeps its claim
+  rather than taking a seat where it was pushed. Otherwise a single low-health
+  potion would permanently move the displaced item's key, which is the failure
+  this feature exists to prevent.
+
+**The visible cost.** Pass 4 refills the slot a departure freed, so normally one
+slot changes and nothing else moves. With fewer candidates than slots there is
+nothing to refill with, and the gap stays where the departed item was instead of
+everything sliding up. `bKeepSlotPositions = 0` in `[SlotLocker]` turns seating
+off for a player who prefers the shuffle.
+
+---
+
 ## SlotLocker: Temporal Stability
 
 Prevents UI flicker from brief state oscillations by holding slot content for a
 configurable duration.
 
-**Pipeline position:** `SlotAllocator (stateless)` → `[SlotLocker (stateful)]` → widget/Wheeler
+**Pipeline position:** `SlotAllocator` → `[SlotLocker (stateful)]` → widget/Wheeler
+
+SlotLocker and seating stabilise different axes and do not compete: the locker
+holds a SLOT'S CONTENT for a second against the content changing, while seating
+keeps an ITEM'S SLOT the same across passes. In the steady state they agree, and
+seating removes lock churn — slots whose content would have shifted no longer
+change at all.
 
 ```
   [Empty]  --new content-->                     [Locked]
@@ -643,6 +707,7 @@ per-slot defaults described under
 
 ```ini
 [SlotLocker]
+bKeepSlotPositions = true       ; Keep an item in the slot it was already in (seating)
 fLockDurationMs = 1000          ; Shipped value; code default 3000. 0 = disable locking
 fMinLockDurationMs = 500        ; Minimum time before a lock can break
 bLockOnFill = true              ; Lock when a slot fills from empty
@@ -707,9 +772,9 @@ iNextPageKey = 13                ; '=' key
 from every accessor. A monotonic atomic `m_generation` is bumped on every config
 change, so consumers can detect staleness without re-copying.
 
-**SlotAllocator** allocation is stateless: `AllocateSlotsForPage()` takes its
-inputs and returns a fresh `SlotAssignments`. Its mutable members are all
-incidental and individually guarded:
+**SlotAllocator** allocation is a pure function of its inputs apart from
+seating: `AllocateSlotsForPage()` takes its inputs and returns a fresh
+`SlotAssignments`. Its mutable members are individually guarded:
 
 - `m_currentPage` / `m_pageChanged` — `std::atomic` (input thread writes, update
   thread reads).
@@ -723,6 +788,12 @@ incidental and individually guarded:
   generation trailing by one, which only forces a redundant rebuild on the next
   call — it can never serve stale data, because the writer bumps the generation
   only after committing pages.
+- `m_seatingMutex` — guards the per-page seating memory (`m_seating`) and the
+  generation it was recorded under. Allocation reads a page's row, works on a
+  copy, and writes the result back; the lock is never held across the moves.
+  The generation compared against is the one `GetConfigSnapshot()` reported for
+  the configs this call is using, not a later re-read, so a reload on another
+  thread cannot stamp old-layout seats with the new layout's number.
 
 **SlotLocker** guards its per-slot lock array with `std::mutex`; every public
 method takes a `lock_guard`. `GetLockSnapshot()` exists so a caller needing
@@ -737,7 +808,7 @@ Input Thread (- / = keys)
 Update Thread (~100ms tick)
   -> OverrideManager::Update() / SlotLocker::Update()   [unconditional]
   -> WildcardManager::ApplyWildcards()                  [pipeline ticks only]
-  -> SlotAllocator::AllocateSlotsForPage()              [stateless]
+  -> SlotAllocator::AllocateSlotsForPage()              [seating: mutex-guarded]
   -> SlotLocker::ApplyLocks()                           [mutex-guarded]
   -> Slot::ComputeVisualStates() -> IntuitionMenu / Wheeler
 

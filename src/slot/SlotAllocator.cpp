@@ -106,9 +106,12 @@ namespace Huginn::Slot
         }
         {
             // Seats are a memory of a layout that may not be the one coming
-            // back. Reset is also what a settings reload calls, and a page whose
-            // slots changed underneath would otherwise hand items back to seats
-            // that mean something else now.
+            // back: Reset runs on a game load, where the next save's inventory
+            // and pages have nothing to do with this one's.
+            //
+            // It is NOT the reload path -- SettingsReloader calls Initialize(),
+            // not this -- so the generation check in ApplySeating is what covers
+            // an INI reload, and is not redundant with this.
             std::lock_guard<std::mutex> seatLock(m_seatingMutex);
             for (auto& page : m_seating) {
                 page.fill(0);
@@ -171,7 +174,8 @@ namespace Huginn::Slot
     // CONFIGURATION ACCESS
     // =========================================================================
 
-    std::shared_ptr<const std::vector<PageConfig>> SlotAllocator::GetConfigSnapshot() const
+    std::shared_ptr<const std::vector<PageConfig>> SlotAllocator::GetConfigSnapshot(
+        uint32_t* outGeneration) const
     {
         auto& settings = SlotSettings::GetSingleton();
 
@@ -186,6 +190,9 @@ namespace Huginn::Slot
         if (!m_configCache || m_cacheGeneration != gen) {
             m_configCache = std::make_shared<const std::vector<PageConfig>>(settings.GetAllPages());
             m_cacheGeneration = gen;
+        }
+        if (outGeneration) {
+            *outGeneration = m_cacheGeneration;
         }
         return m_configCache;
     }
@@ -272,12 +279,14 @@ namespace Huginn::Slot
     {
         // Hold the snapshot for the duration of the call so the config refs
         // passed to AllocateSlotsInternal stay valid even across a concurrent reload.
-        auto snap = GetConfigSnapshot();
+        uint32_t generation = UINT32_MAX;
+        auto snap = GetConfigSnapshot(&generation);
         if (snap->empty()) {
             return {};
         }
         const size_t page = pageIndex < snap->size() ? pageIndex : 0;
-        return AllocateSlotsInternal(page, (*snap)[page].slots, candidates, overrides, player, world);
+        return AllocateSlotsInternal(page, generation, (*snap)[page].slots,
+            candidates, overrides, player, world);
     }
 
     SlotAssignments SlotAllocator::AllocateSlots(
@@ -296,6 +305,7 @@ namespace Huginn::Slot
 
     SlotAssignments SlotAllocator::AllocateSlotsInternal(
         size_t pageIndex,
+        uint32_t configGeneration,
         const std::vector<SlotConfig>& slotConfigs,
         const Scoring::ScoredCandidateList& candidates,
         const Override::OverrideCollection& overrides,
@@ -576,10 +586,11 @@ namespace Huginn::Slot
         // a slot -- the recommendations stay right and every key under the
         // player's fingers changes meaning.
         if (SlotSettings::GetSingleton().KeepSlotPositions()) {
-            const uint32_t generation = [this] {
-                std::lock_guard<std::mutex> lock(m_cacheMutex);
-                return m_cacheGeneration;
-            }();
+            // The generation of the snapshot slotConfigs came from, not whatever
+            // the cache holds now: a reload on another thread between the two
+            // would stamp seats taken under this layout with the number of the
+            // next one, and the mismatch check below would then miss it.
+            const uint32_t generation = configGeneration;
 
             ApplySeating(pageIndex, generation, slotConfigs, assignments, &player);
 
@@ -762,16 +773,57 @@ namespace Huginn::Slot
         if (pageIndex >= MAX_PAGES) {
             return;
         }
-        std::array<uint64_t, MAX_SLOTS_PER_PAGE> seats{};
         const size_t slotCount = std::min(assignments.size(), MAX_SLOTS_PER_PAGE);
-        for (size_t i = 0; i < slotCount; ++i) {
-            const auto& a = assignments[i];
-            seats[i] = (a.IsEmpty() || !a.candidate)
-                ? 0
-                : Candidate::GetBase(a.candidate->candidate).GetDeduplicationKey();
-        }
 
         std::lock_guard<std::mutex> lock(m_seatingMutex);
+        const auto& previous = m_seating[pageIndex];
+
+        auto keyOf = [](const SlotAssignment& a) -> uint64_t {
+            if (a.IsEmpty() || !a.candidate) return 0;
+            return Candidate::GetBase(a.candidate->candidate).GetDeduplicationKey();
+        };
+        auto previousSeatOf = [&](uint64_t key) -> size_t {
+            if (key == 0) return SIZE_MAX;
+            for (size_t j = 0; j < slotCount; ++j) {
+                if (previous[j] == key) return j;
+            }
+            return SIZE_MAX;
+        };
+
+        std::array<uint64_t, MAX_SLOTS_PER_PAGE> seats{};
+
+        // An override is a guest. The slot still belongs to whatever was living
+        // there, so its claim carries over untouched and the override takes no
+        // seat of its own.
+        for (size_t i = 0; i < slotCount; ++i) {
+            if (assignments[i].IsOverride()) {
+                seats[i] = previous[i];
+            }
+        }
+
+        for (size_t i = 0; i < slotCount; ++i) {
+            if (assignments[i].IsOverride()) {
+                continue;  // handled above
+            }
+            const uint64_t key = keyOf(assignments[i]);
+            if (key == 0) {
+                continue;  // empty slot: no claim, and nothing to preserve
+            }
+
+            // Displaced, not rehomed: this item has a seat, ApplySeating could
+            // not give it back because an override is sitting in it, and where it
+            // is standing instead is not where it lives. Leaving this slot
+            // unclaimed also keeps the map injective -- the key is already
+            // recorded at its real seat by the override pass above.
+            const size_t home = previousSeatOf(key);
+            if (home != SIZE_MAX && home != i && home < slotCount &&
+                assignments[home].IsOverride()) {
+                continue;
+            }
+
+            seats[i] = key;
+        }
+
         m_seatingGeneration = generation;
         m_seating[pageIndex] = seats;
     }
