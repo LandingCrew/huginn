@@ -57,9 +57,15 @@ namespace Huginn::Weapon
       /**
        * @brief Refresh weapon charge levels and equipped status (with cached equipped weapons)
        * @param equipped Pre-queried equipped weapons (avoids redundant GetEquippedObject calls)
+       * @param depletedAmmo Optional out-param, appended to: ammo FormIDs whose
+       *        count went from positive to zero on THIS pass. The update loop
+       *        uses them the same way it uses ReconcileWeapons' departedForms -
+       *        break the slot lock, force one recompute - so an empty quiver
+       *        leaves the widget in 500 ms rather than at the 30 s reconcile.
        * @note OPTIMIZATION (v0.7.19): Use when caller already has equipped weapons cached
        */
-      void RefreshCharges(const EquippedWeapons& equipped);
+      void RefreshCharges(const EquippedWeapons& equipped,
+                          std::vector<RE::FormID>* depletedAmmo = nullptr);
 
       /**
        * @brief Full reconciliation - add new favorites, remove unfavorited
@@ -71,10 +77,19 @@ namespace Huginn::Weapon
       /**
        * @brief Full reconciliation with cached equipped weapons
        * @param equipped Pre-queried equipped weapons (avoids redundant GetEquippedObject calls)
+       * @param departedForms Optional out-param, appended to: base FormIDs that
+       *        left the inventory ENTIRELY this pass - every tracked stack of
+       *        that weapon gone, or the ammo type depleted. The update loop
+       *        hands these to SlotLocker::OnItemUsed so a lock stops pinning a
+       *        weapon the player no longer owns. A form whose other stacks are
+       *        still tracked is deliberately absent: a lock names a form, not a
+       *        stack, so reporting it would break the surviving instance's lock
+       *        as well.
        * @return Number of weapons added or removed
        * @note OPTIMIZATION (v0.7.19): Use when caller already has equipped weapons cached
        */
-      size_t ReconcileWeapons(const EquippedWeapons& equipped);
+      size_t ReconcileWeapons(const EquippedWeapons& equipped,
+                              std::vector<RE::FormID>* departedForms = nullptr);
 
       // =============================================================================
       // WEAPON ACCESSORS

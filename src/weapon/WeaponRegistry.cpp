@@ -127,10 +127,11 @@ namespace Huginn::Weapon
       if (!player) return;
 
       // OPTIMIZATION (v0.7.19): Query equipped weapons once and delegate
-      RefreshCharges(EquippedWeapons::Query(player));
+      RefreshCharges(EquippedWeapons::Query(player), nullptr);
    }
 
-   void WeaponRegistry::RefreshCharges(const EquippedWeapons& equipped)
+   void WeaponRegistry::RefreshCharges(const EquippedWeapons& equipped,
+                                       std::vector<RE::FormID>* depletedAmmo)
    {
       Huginn_ZONE_NAMED("WeaponRegistry::RefreshCharges");
       SCOPED_TIMER("WeaponRegistry::RefreshCharges");
@@ -213,8 +214,14 @@ namespace Huginn::Weapon
       const RE::FormID equippedAmmoID = equippedAmmo ? equippedAmmo->GetFormID() : 0;
 
       std::unordered_map<RE::FormID, int32_t> ammoCounts;
+      // Whether the list was actually readable, which is NOT the same as "every
+      // count came back 0". The counts below treat an absent type as depleted
+      // and that is right for filtering, but reporting a depletion to the caller
+      // breaks a slot lock, so that only happens on a scan that really ran.
+      bool ammoCountsRead = false;
       if (auto* invChanges = player->GetInventoryChanges();
       invChanges && invChanges->entryList) {
+      ammoCountsRead = true;
       for (auto* entry : *invChanges->entryList) {
         if (!entry || !entry->object || !entry->object->Is(RE::FormType::Ammo)) {
         continue;
@@ -287,7 +294,21 @@ namespace Huginn::Weapon
       // the player no longer has.
       for (auto& invAmmo : m_ammo) {
       auto it = ammoCounts.find(invAmmo.data.formID);
-      invAmmo.count = (it != ammoCounts.end()) ? it->second : 0;
+      const int32_t newCount = (it != ammoCounts.end()) ? it->second : 0;
+
+      // A type that just hit zero stops being a candidate on the next pipeline
+      // run (the affordability filter drops count <= 0), but the slot lock
+      // pinning it does not care, and nothing about running out of arrows moves
+      // the GameState hash. Report the transition so the caller can break the
+      // lock and force one recompute; the record itself lives on until the 30 s
+      // reconcile, which is what restores it if the player picks more up.
+      if (depletedAmmo && ammoCountsRead && invAmmo.count > 0 && newCount <= 0) {
+        depletedAmmo->push_back(invAmmo.data.formID);
+        logger::debug("[WeaponRegistry] Ammo depleted: {} ({} -> 0)"sv,
+           invAmmo.data.name, invAmmo.count);
+      }
+
+      invAmmo.count = newCount;
       invAmmo.isEquipped = (equippedAmmoID != 0 && invAmmo.data.formID == equippedAmmoID);
       }
       }  // end RefreshCharges::Apply zone
@@ -299,10 +320,11 @@ namespace Huginn::Weapon
       if (!player) return 0;
 
       // OPTIMIZATION (v0.7.19): Query equipped weapons once and delegate
-      return ReconcileWeapons(EquippedWeapons::Query(player));
+      return ReconcileWeapons(EquippedWeapons::Query(player), nullptr);
    }
 
-   size_t WeaponRegistry::ReconcileWeapons(const EquippedWeapons& equipped)
+   size_t WeaponRegistry::ReconcileWeapons(const EquippedWeapons& equipped,
+                                          std::vector<RE::FormID>* departedForms)
    {
       Huginn_ZONE_NAMED("WeaponRegistry::ReconcileWeapons");
       SCOPED_TIMER("WeaponRegistry::ReconcileWeapons");
@@ -314,6 +336,9 @@ namespace Huginn::Weapon
 
       size_t weaponsAdded = 0;
       size_t weaponsRemoved = 0;
+      // Base forms of the stacks removed below, before the "any stack left?"
+      // filter that turns them into the caller's departed list.
+      std::vector<RE::FormID> removedWeaponForms;
       size_t favoriteChanges = 0;
       size_t ammoAdded = 0;
       size_t ammoRemoved = 0;
@@ -491,6 +516,7 @@ namespace Huginn::Weapon
       for (auto key : weaponsToRemove) {
         if (RemoveWeapon(key)) {
            weaponsRemoved++;
+           removedWeaponForms.push_back(static_cast<RE::FormID>(key & 0xFFFFFFFFull));
         }
       }
       }
@@ -528,6 +554,23 @@ namespace Huginn::Weapon
       for (auto formID : ammoToRemove) {
       if (RemoveAmmo(formID)) {
         ammoRemoved++;
+        // Ammo is keyed by form, so a removal is always the whole form leaving.
+        if (departedForms) departedForms->push_back(formID);
+      }
+      }
+
+      // Report a weapon form as departed only once NO stack of it is tracked.
+      // The caller's consumer (SlotLocker) matches on FormID alone, so a player
+      // who drops one of two Iron Daggers would otherwise have the lock on the
+      // one still in the pack broken too. Computed here, inside the lock, while
+      // m_weapons already reflects every removal above.
+      if (departedForms) {
+      for (RE::FormID formID : removedWeaponForms) {
+        const bool stillHeld = std::any_of(m_weapons.begin(), m_weapons.end(),
+           [formID](const InventoryWeapon& w) { return w.data.formID == formID; });
+        if (!stillHeld) {
+           departedForms->push_back(formID);
+        }
       }
       }
       }  // end ReconcileWeapons::Apply zone

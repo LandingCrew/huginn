@@ -348,8 +348,41 @@ static void MaintainRegistries(RE::PlayerCharacter* player,
                     Huginn_ZONE_NAMED("EquippedWeapons::Query");
                     return Huginn::Weapon::EquippedWeapons::Query(player);
                 }();
-                if (needsCharge) { g_weaponRegistry->RefreshCharges(equipped); g_registryTimers.weaponCharge.Reset(now); }
-                if (needsReconcile) { g_weaponRegistry->ReconcileWeapons(equipped); g_registryTimers.weaponReconcile.Reset(now); }
+                // Collected across both refreshes below, then acted on once:
+                // a form that left inventory must stop holding its slot, and
+                // the pipeline has to be told to look, because nothing about
+                // inventory reaches the GameState hash the skip gate reads.
+                std::vector<RE::FormID> departedForms;
+                bool weaponSetChanged = false;
+
+                if (needsCharge) {
+                    // 2 Hz: the only path that notices a quiver hitting zero
+                    // between reconciles.
+                    g_weaponRegistry->RefreshCharges(equipped, &departedForms);
+                    g_registryTimers.weaponCharge.Reset(now);
+                    weaponSetChanged |= !departedForms.empty();
+                }
+                if (needsReconcile) {
+                    // 30 s: the pass that actually removes a dropped, sold or
+                    // stashed weapon. Its return value counts adds, removes and
+                    // favorite changes — every one of which changes what belongs
+                    // on the widget, and was until now discarded.
+                    weaponSetChanged |=
+                        g_weaponRegistry->ReconcileWeapons(equipped, &departedForms) > 0;
+                    g_registryTimers.weaponReconcile.Reset(now);
+                }
+
+                // Break any lock still pinning a form the player no longer owns,
+                // then force one recompute. Mirrors the item/scroll delta scan
+                // above; respectActivationLock for the same reason it does —
+                // a just-activated item keeps its deliberate 10 s hold.
+                for (RE::FormID formID : departedForms) {
+                    Slot::SlotLocker::GetSingleton().OnItemUsed(
+                        formID, /*respectActivationLock=*/true);
+                }
+                if (weaponSetChanged) {
+                    Slot::SlotAllocator::GetSingleton().MarkPageDirty();
+                }
             }
         }
     }
