@@ -215,7 +215,13 @@ namespace Huginn::Slot
 
         /// Get the current page-config snapshot, refreshing from SlotSettings
         /// only when the generation changed. Thread-safe; cheap on the hot path.
-        [[nodiscard]] std::shared_ptr<const std::vector<PageConfig>> GetConfigSnapshot() const;
+        /// @param outGeneration Receives the generation THIS snapshot belongs to.
+        ///   Callers that later compare a generation must use this rather than
+        ///   re-reading m_cacheGeneration: another thread refreshing the cache in
+        ///   between would hand them a number that describes a different layout
+        ///   than the configs they are holding.
+        [[nodiscard]] std::shared_ptr<const std::vector<PageConfig>> GetConfigSnapshot(
+            uint32_t* outGeneration = nullptr) const;
 
         // =========================================================================
         // INTERNAL HELPERS
@@ -226,6 +232,7 @@ namespace Huginn::Slot
         /// for per-page log dedup and the config-wide unplaced-override check.
         [[nodiscard]] SlotAssignments AllocateSlotsInternal(
             size_t pageIndex,
+            uint32_t configGeneration,
             const std::vector<SlotConfig>& slotConfigs,
             const Scoring::ScoredCandidateList& candidates,
             const Override::OverrideCollection& overrides,
@@ -275,6 +282,14 @@ namespace Huginn::Slot
         /// Remember where everything ended up, for the next allocation of this
         /// page. Called after the refill, so an item that has just arrived gets
         /// a seat of its own straight away.
+        ///
+        /// An override slot keeps the seat of whatever normally lives there, and
+        /// the item the override displaced keeps its claim on it rather than
+        /// taking a new seat where it is standing. Otherwise one low-health
+        /// potion would permanently rehome the item it pushed aside -- the
+        /// override clears, the displaced item's seat now says "where I was
+        /// pushed to", and seating holds it there for good. Overrides fire
+        /// routinely, so that is the feature quietly undoing itself.
         void RecordSeating(
             size_t pageIndex,
             uint32_t generation,
