@@ -69,11 +69,16 @@ namespace Huginn::State
       }
       // Remove if out of detection range - apply differentiated ranges (v0.6.12)
       // Followers/hostiles: 2048 range, Non-follower allies: 512 range
+      //
+      // RELEASE radius, not the acquisition radius. Pruning at the same 512 an
+      // ally is acquired at is what made the boundary flap: added on one poll,
+      // dropped on the next, for an NPC doing nothing but standing there. See
+      // TargetTracking::RANGE_RELEASE_MARGIN.
       else {
-        float maxRangeSq = (target.isHostile || target.isFollower)
-                               ? TargetTracking::DETECTION_RANGE_SQ
-                               : TargetTracking::ALLY_DETECTION_RANGE_SQ;
-        if (target.distanceToPlayerSq > maxRangeSq) {
+        float releaseRangeSq = (target.isHostile || target.isFollower)
+                               ? TargetTracking::DETECTION_RELEASE_RANGE_SQ
+                               : TargetTracking::ALLY_RELEASE_RANGE_SQ;
+        if (target.distanceToPlayerSq > releaseRangeSq) {
            toRemove.push_back(target.actorFormID);
         }
       }
@@ -554,14 +559,26 @@ namespace Huginn::State
 
             // Apply tighter range for non-followers after hostility check
             bool isTeammate = ally->IsPlayerTeammate();
-            float maxRangeSq = isTeammate ? TargetTracking::DETECTION_RANGE_SQ
+            RE::FormID allyFormID = ally->GetFormID();
+
+            // Hysteresis: acquire at the detection range, hold to the release
+            // range. The prune below uses the same wider radius, so the two
+            // agree; relaxing only the prune would not help, because an ally
+            // that stops being re-acquired stops refreshing lastSeenTime and
+            // dies to LAST_SEEN_TIMEOUT three seconds later instead.
+            const bool alreadyTracked = m_targets.Find(allyFormID) != nullptr;
+            float maxRangeSq;
+            if (isTeammate) {
+              maxRangeSq = alreadyTracked ? TargetTracking::DETECTION_RELEASE_RANGE_SQ
+                                          : TargetTracking::DETECTION_RANGE_SQ;
+            } else {
+              maxRangeSq = alreadyTracked ? TargetTracking::ALLY_RELEASE_RANGE_SQ
                                           : TargetTracking::ALLY_DETECTION_RANGE_SQ;
+            }
 
             if (distSq > maxRangeSq) {
               return false;
             }
-
-            RE::FormID allyFormID = ally->GetFormID();
 
             if (m_processedAllies.contains(allyFormID)) {
               return false;

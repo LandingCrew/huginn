@@ -77,7 +77,12 @@ namespace Huginn::UI
       void UpdateScrollCache(const Scroll::ScrollRegistry* registry);
       bool ShouldUpdateCache();
 
-      bool m_isVisible = true;  // Visible by default in Debug builds
+      bool m_isVisible = false;  // OFF until DebugSettings says otherwise.
+      // Must match DebugDefaults::REGISTRY_VISIBLE. It did not: the
+      // default here was true while the setting default was false, so the
+      // widget rendered over the main menu and the whole loading sequence
+      // and only went away at kPostLoadGame, when ApplyToWidgets() finally
+      // ran -- or never, for a player with no dMenu INI to load.
       float m_posX = 10.0f;     // Top-left corner (v0.7.7)
       float m_posY = 10.0f;     // Top-left corner (v0.7.7)
 

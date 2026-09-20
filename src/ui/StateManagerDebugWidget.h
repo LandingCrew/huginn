@@ -87,7 +87,12 @@ namespace Huginn::UI
                              const char* label3, bool active3, ImVec4 activeColor3,
                              float spacing = 12.0f) const;
 
-      bool m_isVisible = true;  // Visible by default in Debug builds
+      bool m_isVisible = false;  // OFF until DebugSettings says otherwise.
+      // Must match DebugDefaults::STATE_MANAGER_VISIBLE. It did not: the
+      // default here was true while the setting default was false, so the
+      // widget rendered over the main menu and the whole loading sequence
+      // and only went away at kPostLoadGame, when ApplyToWidgets() finally
+      // ran -- or never, for a player with no dMenu INI to load.
       float m_posX = Config::STATE_MANAGER_DEBUG_POS_X;
       float m_posY = Config::STATE_MANAGER_DEBUG_POS_Y;
    };

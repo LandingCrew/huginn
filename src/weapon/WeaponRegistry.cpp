@@ -25,9 +25,11 @@ namespace Huginn::Weapon
       Util::AtomicBoolGuard guard{ m_isLoading, false };
 
       // Scan BEFORE acquiring lock (SKSE API calls)
-      // Note: ScanPlayerWeapons() doesn't access extraLists for safety during early load.
-      // Favorites/charge are recovered by the primed short-retry reconcile
-      // (Main.cpp step 9) shortly after the stabilization window passes.
+      // Note: ScanPlayerWeapons() reads extraLists only when they are safe to
+      // read. On the load path they are not, so favorites/charge/instances are
+      // recovered by the primed short-retry reconcile (Main.cpp step 9) just
+      // after the stabilization window passes. A rebuild at any other time
+      // (`hg rebuild`) gets the full per-stack picture immediately.
       auto scannedWeapons = ScanPlayerWeapons();
       size_t favCount = std::count_if(scannedWeapons.begin(), scannedWeapons.end(),
       [](const auto& w) { return w.isFavorited; });
@@ -73,7 +75,7 @@ namespace Huginn::Weapon
         break;
       }
 
-      AddWeapon(sw.weapon, sw.isFavorited, sw.isEquipped, sw.currentCharge, sw.maxCharge, sw.uniqueID);
+      AddWeapon(sw);
       }
 
       // Add all ammo (AddAmmo assumes lock is held by caller)
@@ -133,19 +135,44 @@ namespace Huginn::Weapon
       // (30s); ammo *counts* are refreshed below from the inventory-changes list.
       // This method was the #1 Huginn CPU cost (~1.2ms/call of full-inventory walk
       // at 2Hz); it is now O(equipped) for charge plus one guarded entryList pass.
-      std::unordered_map<RE::FormID, ScannedWeapon> equippedCharge;
+      // Keyed by InventoryWeapon::Key(), not by FormID. Two instances of one
+      // base form are two records now, and only the key says which of them is
+      // the one in hand -- a formID compare would mark both equipped and drain
+      // the charge of whichever the loop reached first.
+      std::unordered_map<uint64_t, ScannedWeapon> equippedCharge;
+      uint64_t equippedKeys[2] = { 0, 0 };
       for (const bool leftHand : { false, true }) {
       RE::TESObjectWEAP* weapon = leftHand ? equipped.leftHand : equipped.rightHand;
       if (!weapon) {
         continue;
       }
+
+      // GetEquippedEntryData returns the hand's own entry, so its extraLists
+      // are the worn stack's. Prefer the list that says ExtraWorn outright and
+      // fall back to the first one -- a hand entry normally carries exactly one.
       RE::InventoryEntryData* entry = player->GetEquippedEntryData(leftHand);
-      equippedCharge[weapon->GetFormID()] =
-        ExtractWeaponMetadata(weapon, entry, true, equipped);
+      RE::ExtraDataList* wornList = nullptr;
+      if (entry && entry->extraLists) {
+        for (auto* extraList : *entry->extraLists) {
+           if (!extraList) continue;
+           if (!wornList) {
+            wornList = extraList;
+           }
+           if (extraList->HasType<RE::ExtraWorn>() || extraList->HasType<RE::ExtraWornLeft>()) {
+            wornList = extraList;
+            break;
+           }
+        }
       }
 
-      const RE::FormID rightID = equipped.rightHand ? equipped.rightHand->GetFormID() : 0;
-      const RE::FormID leftID = equipped.leftHand ? equipped.leftHand->GetFormID() : 0;
+      // resolveName = false: this path wants a charge and a uniqueID, and it
+      // wants them twice a second.
+      ScannedWeapon sw = ExtractWeaponMetadata(weapon, wornList, equipped, false);
+      sw.isEquipped = true;  // it is in hand; nothing read below can argue
+      const uint64_t key = MakeWeaponKey(weapon->GetFormID(), sw.uniqueID);
+      equippedKeys[leftHand ? 1 : 0] = key;
+      equippedCharge[key] = std::move(sw);
+      }
 
       // Ammo counts still need per-tick freshness: the low-ammo override's
       // FindBestAmmo gates on the cached count via GetBestArrow/GetBestBolt, so a
@@ -185,22 +212,24 @@ namespace Huginn::Weapon
       std::unique_lock lock(m_mutex);
 
       for (auto& invWeapon : m_weapons) {
-      // Equipped status: cheap FormID compare against the <=2 equipped weapons
+      // Equipped status: cheap key compare against the <=2 equipped stacks
       // (no inventory walk needed to know which tracked weapons are equipped).
-      const RE::FormID fid = invWeapon.data.formID;
-      invWeapon.isEquipped = (fid != 0 && (fid == rightID || fid == leftID));
+      // This is also the authority on isEquipped at 2 Hz -- the 30 s reconcile
+      // reads ExtraWorn per stack, but only this runs often enough to matter.
+      const uint64_t key = invWeapon.Key();
+      invWeapon.isEquipped =
+        (invWeapon.data.formID != 0 && (key == equippedKeys[0] || key == equippedKeys[1]));
 
       // Charge only needs refreshing for the equipped enchanted weapons.
-      auto it = equippedCharge.find(fid);
+      auto it = equippedCharge.find(key);
       if (it == equippedCharge.end()) {
         continue;
       }
       const auto& sw = it->second;
 
-      // Update uniqueID (populated after extraList stabilization)
-      if (sw.uniqueID != 0) {
-        invWeapon.data.uniqueID = sw.uniqueID;
-      }
+      // No uniqueID write-back here: it is half the key, so changing it in
+      // place would leave m_weaponIndex pointing at the wrong record. A stack
+      // that gains a uniqueID is a new key, and the reconcile adds it.
 
       // Update charge for enchanted weapons
       if (invWeapon.data.hasEnchantment && sw.maxCharge > 0.0f) {
@@ -299,27 +328,10 @@ namespace Huginn::Weapon
       if (count <= 0) continue;
 
       if (auto* weapon = obj->As<RE::TESObjectWEAP>()) {
-        // Use entry data if available for metadata extraction
-        if (entry && safeToAccessExtraLists) {
-           ScannedWeapon sw = ExtractWeaponMetadata(weapon, entry.get(), true, equipped);
-           scannedWeapons.push_back(sw);
-        } else {
-           // No entry data or extraLists not stable - basic scan only
-           ScannedWeapon sw{};
-           sw.weapon = weapon;
-           sw.isFavorited = false;
-           sw.isEquipped = equipped.IsEquipped(weapon);
-           sw.currentCharge = 0.0f;
-           sw.maxCharge = 0.0f;
-           sw.uniqueID = 0;
-
-           auto* enchantable = weapon->As<RE::TESEnchantableForm>();
-           if (enchantable && enchantable->formEnchanting) {
-            sw.maxCharge = static_cast<float>(enchantable->amountofEnchantment);
-            sw.currentCharge = sw.maxCharge;
-           }
-           scannedWeapons.push_back(sw);
-        }
+        // One record per stack, not per base form. ScanWeaponEntry degrades to
+        // a single record itself when extraLists cannot be read.
+        ScanWeaponEntry(weapon, entry.get(), count, safeToAccessExtraLists,
+                        equipped, scannedWeapons);
       } else if (auto* ammo = obj->As<RE::TESAmmo>()) {
         ScannedAmmo sa{};
         sa.ammo = ammo;
@@ -330,11 +342,11 @@ namespace Huginn::Weapon
       }
       }  // end ReconcileWeapons::ExtractMetadata zone
 
-      // Build set of current inventory weapon FormIDs (outside critical section)
-      std::unordered_set<RE::FormID> currentWeaponIDs;
+      // Build set of current inventory stack keys (outside critical section)
+      std::unordered_set<uint64_t> currentWeaponKeys;
       for (const auto& sw : scannedWeapons) {
       if (sw.weapon) {
-        currentWeaponIDs.insert(sw.weapon->GetFormID());
+        currentWeaponKeys.insert(MakeWeaponKey(sw.weapon->GetFormID(), sw.uniqueID));
       }
       }
 
@@ -343,24 +355,41 @@ namespace Huginn::Weapon
       Huginn_ZONE_NAMED("ReconcileWeapons::Apply");
       std::unique_lock lock(m_mutex);
 
-      // Add new weapons or update existing (assumes lock is held)
+      // Add new weapons or update existing (assumes lock is held).
+      //
+      // Two stacks of one form with no ExtraUniqueID between them land on the
+      // same key, and there is nothing left to separate them with -- Wheeler
+      // needs the real uid, so a synthetic one is not an option. Keep the first
+      // and count the rest. Letting the second fall through to the update
+      // branch would overwrite the record's name, temper and charge from
+      // whichever stack the scan reached last, which is the thrash this whole
+      // change exists to remove.
+      std::unordered_set<uint64_t> seenKeys;
+      seenKeys.reserve(scannedWeapons.size());
+      size_t keyCollisions = 0;
+
       for (const auto& sw : scannedWeapons) {
       if (!sw.weapon) continue;
 
-      RE::FormID formID = sw.weapon->GetFormID();
-      if (!m_weaponIndex.contains(formID)) {
+      const uint64_t key = MakeWeaponKey(sw.weapon->GetFormID(), sw.uniqueID);
+      if (!seenKeys.insert(key).second) {
+        ++keyCollisions;
+        continue;
+      }
+
+      auto indexIt = m_weaponIndex.find(key);
+      if (indexIt == m_weaponIndex.end()) {
         if (m_weapons.size() < Config::MAX_TRACKED_WEAPONS) {
            // Only count actual insertions — AddWeapon no-ops on rejected weapons,
            // and counting those would report phantom changes every reconcile
-           if (AddWeapon(sw.weapon, sw.isFavorited, sw.isEquipped,
-                         sw.currentCharge, sw.maxCharge, sw.uniqueID)) {
+           if (AddWeapon(sw)) {
             weaponsAdded++;
             logger::trace("[WeaponRegistry] Added weapon: {}"sv, sw.weapon->GetName());
            }
         }
       } else {
         // Update favorited/equipped status for existing weapons
-        auto& invWeapon = m_weapons[m_weaponIndex[formID]];
+        auto& invWeapon = m_weapons[indexIt->second];
 
         // Only update favorites when extraLists are stable — reading them too early
         // yields false negatives. ReconcileWeapons is now the sole favorites detector
@@ -377,9 +406,21 @@ namespace Huginn::Weapon
 
         invWeapon.isEquipped = sw.isEquipped;
 
-        // Update uniqueID (populated after extraList stabilization)
-        if (safeToAccessExtraLists && sw.uniqueID != 0) {
-           invWeapon.data.uniqueID = sw.uniqueID;
+        // A re-temper changes the stack's damage and the name the player reads
+        // without changing its identity, so the record is never removed and
+        // re-added. Refresh both here or they stay at whatever they were when
+        // the weapon was first picked up.
+        if (safeToAccessExtraLists) {
+           if (sw.temperFactor != invWeapon.data.temperFactor) {
+            logger::debug("[WeaponRegistry] '{}' temper {:.2f} -> {:.2f}, dmg {:.1f} -> {:.1f}"sv,
+              invWeapon.data.name, invWeapon.data.temperFactor, sw.temperFactor,
+              invWeapon.data.damage, invWeapon.data.baseDamage * sw.temperFactor);
+            invWeapon.data.temperFactor = sw.temperFactor;
+            invWeapon.data.damage = invWeapon.data.baseDamage * sw.temperFactor;
+           }
+           if (!sw.displayName.empty() && sw.displayName != invWeapon.data.name) {
+            invWeapon.data.name = sw.displayName;
+           }
         }
 
         // Update charge for existing enchanted weapons (mirrors RefreshCharges).
@@ -406,16 +447,29 @@ namespace Huginn::Weapon
       }
       }
 
-      // Remove weapons no longer in inventory
-      std::vector<RE::FormID> toRemove;
+      if (keyCollisions > 0) {
+      logger::debug("[WeaponRegistry] {} scanned stacks shared a registry key "
+                     "(no ExtraUniqueID to separate them); kept the first of each"sv,
+        keyCollisions);
+      }
+
+      // Remove stacks no longer in inventory.
+      //
+      // Only when extraLists were readable. An unstable scan emits one uid-0
+      // record per base form, so every real per-instance record would look like
+      // it had left the inventory and the registry would churn itself empty
+      // once per load. The add pass above is safe either way: it only inserts.
+      if (safeToAccessExtraLists) {
+      std::vector<uint64_t> weaponsToRemove;
       for (const auto& invWeapon : m_weapons) {
-      if (!currentWeaponIDs.contains(invWeapon.data.formID)) {
-        toRemove.push_back(invWeapon.data.formID);
+        if (!currentWeaponKeys.contains(invWeapon.Key())) {
+           weaponsToRemove.push_back(invWeapon.Key());
+        }
       }
-      }
-      for (auto formID : toRemove) {
-      if (RemoveWeapon(formID)) {
-        weaponsRemoved++;
+      for (auto key : weaponsToRemove) {
+        if (RemoveWeapon(key)) {
+           weaponsRemoved++;
+        }
       }
       }
 
@@ -443,13 +497,13 @@ namespace Huginn::Weapon
       }
 
       // Remove depleted ammo
-      toRemove.clear();
+      std::vector<RE::FormID> ammoToRemove;
       for (const auto& invAmmo : m_ammo) {
       if (!currentAmmoIDs.contains(invAmmo.data.formID)) {
-        toRemove.push_back(invAmmo.data.formID);
+        ammoToRemove.push_back(invAmmo.data.formID);
       }
       }
-      for (auto formID : toRemove) {
+      for (auto formID : ammoToRemove) {
       if (RemoveAmmo(formID)) {
         ammoRemoved++;
       }
@@ -470,11 +524,11 @@ namespace Huginn::Weapon
    // WEAPON ACCESSORS
    // =============================================================================
 
-   const InventoryWeapon* WeaponRegistry::GetWeapon(RE::FormID formID) const
+   const InventoryWeapon* WeaponRegistry::GetWeapon(RE::FormID formID, uint16_t uniqueID) const
    {
       std::shared_lock lock(m_mutex);  // v0.7.12 - thread safety
-      auto it = m_weaponIndex.find(formID);
-      if (it == m_weaponIndex.end()) {
+      auto it = m_weaponIndex.find(MakeWeaponKey(formID, uniqueID));
+      if (it == m_weaponIndex.end() || it->second >= m_weapons.size()) {
       return nullptr;
       }
       return &m_weapons[it->second];
@@ -549,7 +603,7 @@ namespace Huginn::Weapon
       std::shared_lock lock(m_mutex);
       return Registry::FindBestLocked(m_weapons,
       [](const InventoryWeapon& w) { return HasTag(w.data.tags, WeaponTag::Melee); },
-      [](const InventoryWeapon& w) { return w.data.baseDamage; });
+      [](const InventoryWeapon& w) { return w.data.damage; });
    }
 
    const InventoryWeapon* WeaponRegistry::GetBestRangedWeapon() const noexcept
@@ -557,7 +611,7 @@ namespace Huginn::Weapon
       std::shared_lock lock(m_mutex);
       return Registry::FindBestLocked(m_weapons,
       [](const InventoryWeapon& w) { return HasTag(w.data.tags, WeaponTag::Ranged); },
-      [](const InventoryWeapon& w) { return w.data.baseDamage; });
+      [](const InventoryWeapon& w) { return w.data.damage; });
    }
 
    const InventoryWeapon* WeaponRegistry::GetBestSilveredWeapon() const noexcept
@@ -565,7 +619,7 @@ namespace Huginn::Weapon
       std::shared_lock lock(m_mutex);
       return Registry::FindBestLocked(m_weapons,
       [](const InventoryWeapon& w) { return HasTag(w.data.tags, WeaponTag::Silver); },
-      [](const InventoryWeapon& w) { return w.data.baseDamage; });
+      [](const InventoryWeapon& w) { return w.data.damage; });
    }
 
    // =============================================================================
@@ -651,9 +705,18 @@ namespace Huginn::Weapon
 
       logger::info("--- Weapons ---"sv);
       for (const auto& weapon : m_weapons) {
-      logger::debug("  {}: dmg={:.1f}, tags={:08X}, fav={}, eq={}, charge={:.0f}%"sv,
+      // uid and the temper pair are the whole point of this log now: two lines
+      // sharing a FormID with different uids is the registry tracking two
+      // instances, which is what could not happen before. And printing base
+      // beside effective damage is how the temper model gets checked against
+      // the number the game shows in the inventory.
+      logger::debug("  {} ({:08X}/uid{}): dmg={:.1f} (base {:.1f} x{:.2f}), tags={:08X}, fav={}, eq={}, charge={:.0f}%"sv,
         weapon.data.name,
+        weapon.data.formID,
+        weapon.data.uniqueID,
+        weapon.data.damage,
         weapon.data.baseDamage,
+        weapon.data.temperFactor,
         std::to_underlying(weapon.data.tags),
         weapon.isFavorited,
         weapon.isEquipped,
@@ -678,27 +741,23 @@ namespace Huginn::Weapon
 
    WeaponRegistry::ScannedWeapon WeaponRegistry::ExtractWeaponMetadata(
       RE::TESObjectWEAP* weapon,
-      RE::InventoryEntryData* entry,
-      bool includeExtraLists,
-      const EquippedWeapons& equipped) const
+      RE::ExtraDataList* extraList,
+      const EquippedWeapons& equipped,
+      bool resolveName) const
    {
       ScannedWeapon sw{};
       sw.weapon = weapon;
-      sw.isFavorited = false;
-      sw.isEquipped = equipped.IsEquipped(weapon);  // OPTIMIZATION (v0.7.19): Use struct helper
-      sw.currentCharge = 0.0f;
-      sw.maxCharge = 0.0f;
-      sw.uniqueID = 0;
+
+      // With an extraList, every per-instance question is asked of THAT stack.
+      // Without one there is no instance to speak of, so equipped falls back to
+      // the base form -- which is all the load-path scan can say anyway.
+      sw.isEquipped = extraList
+      ? (extraList->HasType<RE::ExtraWorn>() || extraList->HasType<RE::ExtraWornLeft>())
+      : equipped.IsEquipped(weapon);
 
       // OPTIMIZATION (S10 v0.7.19): Cache RTTI cast - was called twice before
       auto* enchantable = weapon->As<RE::TESEnchantableForm>();
       const bool hasEnchantment = enchantable && enchantable->formEnchanting;
-
-      // FIX (v0.12.x): Use IsFavorited() which catches both starred favorites AND hotkeyed items
-      // The old kHotkey check only detected hotkey-assigned items (1-8), missing starred favorites.
-      if (includeExtraLists && entry) {
-      sw.isFavorited = entry->IsFavorited();
-      }
 
       // Detect enchanted staves (no formEnchanting but still use charges)
       const bool isStaff = weapon->GetWeaponType() == RE::WEAPON_TYPE::kStaff;
@@ -709,23 +768,50 @@ namespace Huginn::Weapon
       sw.maxCharge = static_cast<float>(enchantable->amountofEnchantment);
       }
 
-      // Only access extraLists if safe to do so (500ms+ after load)
       bool foundExtraCharge = false;
-      if (includeExtraLists && entry && entry->extraLists) {
-      for (auto* extraList : *entry->extraLists) {
-        if (!extraList) continue;
+      if (extraList) {
+      // Favouriting is per STACK. ExtraHotkey lives on the extraList (with
+      // hotkey -1 for a plain star), and InventoryEntryData::IsFavorited()
+      // answers for the whole ENTRY -- so starring one dagger reported its
+      // untempered twin as favorited too.
+      sw.isFavorited = extraList->HasType<RE::ExtraHotkey>();
 
-        // Get enchantment charge (only created after weapon has been used)
-        auto* extraCharge = extraList->GetByType<RE::ExtraCharge>();
-        if (extraCharge) {
-           sw.currentCharge = extraCharge->charge;
-           foundExtraCharge = true;
-        }
+      // Enchantment charge (only created after the weapon has been used)
+      if (auto* extraCharge = extraList->GetByType<RE::ExtraCharge>(); extraCharge) {
+        sw.currentCharge = extraCharge->charge;
+        foundExtraCharge = true;
+      }
 
-        // Get unique ID for Wheeler (identifies specific inventory instance)
-        auto* extraUnique = extraList->GetByType<RE::ExtraUniqueID>();
-        if (extraUnique) {
-           sw.uniqueID = extraUnique->uniqueID;
+      // Unique ID for Wheeler, and half of this registry's key
+      if (auto* extraUnique = extraList->GetByType<RE::ExtraUniqueID>(); extraUnique) {
+        sw.uniqueID = extraUnique->uniqueID;
+      }
+
+      // Tempering. ExtraHealth is the game's own quality multiplier for this
+      // stack: 1.0 untempered, higher once it has been to a grindstone.
+      if (auto* extraHealth = extraList->GetByType<RE::ExtraHealth>(); extraHealth) {
+        sw.temperFactor = extraHealth->health;
+      }
+
+      // The name the PLAYER reads. ExtraDataList::GetDisplayName is the game's
+      // own accessor: it applies a player-set name and appends the temper
+      // quality suffix, so a tempered Iron Mace answers "Iron Mace - Okay"
+      // where the base form answers "Iron Mace" -- and the widget said the
+      // latter for an item the player owns exactly one of.
+      //
+      // Not purely a read: for a tempered stack that has no
+      // ExtraTextDisplayData yet, the engine creates one and attaches it. That
+      // is what the game itself does the first time the item is drawn in a
+      // menu, and there is no other way to reach the suffix. It is gated on the
+      // two extras that can make a name differ from the base form, so a plain
+      // stack is never touched.
+      const bool canDifferFromBase =
+        sw.temperFactor != 1.0f || extraList->HasType<RE::ExtraTextDisplayData>();
+      if (resolveName && canDifferFromBase) {
+        const char* shown = extraList->GetDisplayName(weapon);
+        const char* base = weapon->GetName();
+        if (shown && *shown && (!base || std::string_view{ shown } != base)) {
+           sw.displayName = shown;
         }
       }
       }
@@ -737,6 +823,49 @@ namespace Huginn::Weapon
       }
 
       return sw;
+   }
+
+   void WeaponRegistry::ScanWeaponEntry(
+      RE::TESObjectWEAP* weapon,
+      RE::InventoryEntryData* entry,
+      int32_t count,
+      bool includeExtraLists,
+      const EquippedWeapons& equipped,
+      std::vector<ScannedWeapon>& out) const
+   {
+      if (!weapon) {
+      return;
+      }
+
+      if (!includeExtraLists || !entry || !entry->extraLists) {
+      // Degraded: one record for the form, no instance detail at all. During
+      // the stabilization window after a load this is every weapon; the primed
+      // short-retry reconcile replaces these with real per-stack records a
+      // second later.
+      out.push_back(ExtractWeaponMetadata(weapon, nullptr, equipped));
+      return;
+      }
+
+      // Util::GetInventorySafe returns ONE entry per TESBoundObject, so this is
+      // where a base form fans back out into the instances the player owns.
+      int32_t plainCopies = count;
+      for (auto* extraList : *entry->extraLists) {
+      if (!extraList) continue;
+      plainCopies -= extraList->GetCount();
+      out.push_back(ExtractWeaponMetadata(weapon, extraList, equipped));
+      }
+
+      if (plainCopies > 0) {
+      // The copies carrying no extra data of their own: untempered,
+      // unenchanted, never equipped, never favorited. They share one record
+      // because nothing distinguishes them -- including, for Wheeler, a
+      // uniqueID, which is why the push filters them out (#118).
+      ScannedWeapon sw = ExtractWeaponMetadata(weapon, nullptr, equipped);
+      // ...and they cannot be the equipped one: ExtraWorn lives on an
+      // extraList, so an equipped copy always has one and was emitted above.
+      sw.isEquipped = false;
+      out.push_back(std::move(sw));
+      }
    }
 
    std::vector<WeaponRegistry::ScannedWeapon> WeaponRegistry::ScanPlayerWeapons() const
@@ -769,6 +898,20 @@ namespace Huginn::Weapon
 
       weapons.reserve(32);
 
+      // Ask, rather than assume no. On the load path extraLists are unreadable
+      // and this degrades to one record per base form -- no uniqueID, no
+      // temper, full charge assumed -- which the primed short-retry reconcile
+      // then replaces with per-stack records.
+      //
+      // But RebuildRegistry also runs from `hg rebuild` and from a later load,
+      // when the window has long passed. Hardcoding false there threw away
+      // instance data that was sitting right there and left the registry
+      // degraded until the next 30 s reconcile, which then had to remove every
+      // uid-0 record and re-add the real ones. Observed 2026-09-19: a rebuild
+      // at 19:46:12 produced 5 uid-0 entries, and the 19:46:31 reconcile
+      // reported +6/4 putting the same 7 stacks back.
+      const bool stable = Util::IsExtraListStable();
+
       for (auto& [obj, data] : inventory) {
       auto& [count, entry] = data;
       if (count <= 0) continue;
@@ -776,29 +919,7 @@ namespace Huginn::Weapon
       auto* weapon = obj->As<RE::TESObjectWEAP>();
       if (!weapon) continue;
 
-      ScannedWeapon sw{};
-      sw.weapon = weapon;
-      sw.isFavorited = false;
-      sw.isEquipped = equipped.IsEquipped(weapon);
-      sw.currentCharge = 0.0f;
-      sw.maxCharge = 0.0f;
-      sw.uniqueID = 0;
-
-      // Skip extraLists during initial scan (time-guarded access pattern).
-      // The primed short-retry reconcile populates favorites/charge/uniqueID
-      // after the stabilization window.
-
-      // If weapon is enchanted, assume full charge (no ExtraCharge during initial scan)
-      // Includes staves which don't use formEnchanting but still have charges
-      auto* enchantable = weapon->As<RE::TESEnchantableForm>();
-      const bool isStaff = weapon->GetWeaponType() == RE::WEAPON_TYPE::kStaff;
-      const bool isEnchanted = (enchantable && enchantable->formEnchanting) || isStaff;
-      if (isEnchanted && enchantable) {
-        sw.maxCharge = static_cast<float>(enchantable->amountofEnchantment);
-        sw.currentCharge = sw.maxCharge;  // Assume full charge until RefreshCharges
-      }
-
-      weapons.push_back(sw);
+      ScanWeaponEntry(weapon, entry.get(), count, stable, equipped, weapons);
       }
 
       return weapons;
@@ -886,31 +1007,34 @@ namespace Huginn::Weapon
       return favoritedWeapons;
    }
 
-   bool WeaponRegistry::AddWeapon(RE::TESObjectWEAP* weapon, bool isFavorited, bool isEquipped,
-                                  float currentCharge, float maxCharge, uint16_t uniqueID)
+   bool WeaponRegistry::AddWeapon(const ScannedWeapon& sw)
    {
       // NOTE: Assumes m_mutex is already held by caller (v0.7.12 - thread safety)
-      if (!weapon) return false;
+      if (!sw.weapon) return false;
 
-      RE::FormID formID = weapon->GetFormID();
+      const RE::FormID formID = sw.weapon->GetFormID();
+      const uint64_t key = MakeWeaponKey(formID, sw.uniqueID);
 
       // M2 (v0.7.21): Single lookup instead of contains() + subscript
-      auto it = m_weaponIndex.find(formID);
+      auto it = m_weaponIndex.find(key);
       if (it != m_weaponIndex.end()) {
-      logger::debug("[WeaponRegistry] Weapon {:08X} already registered, updating status"sv, formID);
-      m_weapons[it->second].isFavorited = isFavorited;
-      m_weapons[it->second].isEquipped = isEquipped;
+      logger::debug("[WeaponRegistry] Stack {:08X}/uid{} already registered, updating status"sv,
+        formID, sw.uniqueID);
+      m_weapons[it->second].isFavorited = sw.isFavorited;
+      m_weapons[it->second].isEquipped = sw.isEquipped;
       return true;
       }
 
-      // Known-rejected weapon — don't re-classify or re-log every scan cycle
+      // Known-rejected weapon — don't re-classify or re-log every scan cycle.
+      // Tombstoned by BASE form, because classification only ever sees the base
+      // form: if one instance is unnameable, so is every other.
       if (m_rejectedWeapons.contains(formID)) {
       return false;
       }
 
       // Classify weapon directly (no caching - classification is cheap ~0.01ms)
       // NOTE: Weapons not cached as of v0.7.11 - see CLAUDE.md design rationale
-      WeaponData data = m_classifier.ClassifyWeapon(weapon);
+      WeaponData data = m_classifier.ClassifyWeapon(sw.weapon);
 
       // Classification rejected (formID stays 0 — nameless modded weapons). Storing it
       // would desync data.formID from the m_weaponIndex key and corrupt RemoveWeapon's
@@ -921,12 +1045,21 @@ namespace Huginn::Weapon
       return false;
       }
 
-      data.uniqueID = uniqueID;
+      data.uniqueID = sw.uniqueID;
+
+      // Everything the classifier could not know, because it was handed a base
+      // form: what this particular stack was tempered to, and what the player
+      // sees it called.
+      data.temperFactor = sw.temperFactor;
+      data.damage = data.baseDamage * sw.temperFactor;
+      if (!sw.displayName.empty()) {
+      data.name = sw.displayName;
+      }
 
       // Update charge info
-      if (data.hasEnchantment && maxCharge > 0.0f) {
-      data.currentCharge = currentCharge / maxCharge;
-      data.maxCharge = maxCharge;
+      if (data.hasEnchantment && sw.maxCharge > 0.0f) {
+      data.currentCharge = sw.currentCharge / sw.maxCharge;
+      data.maxCharge = sw.maxCharge;
 
       if (data.currentCharge < Config::WEAPON_CHARGE_LOW_THRESHOLD) {
         data.tags |= WeaponTag::NeedsCharge;
@@ -936,18 +1069,18 @@ namespace Huginn::Weapon
       // Create inventory wrapper
       InventoryWeapon invWeapon{
       .data = std::move(data),
-      .isFavorited = isFavorited,
-      .isEquipped = isEquipped,
-      .previousCharge = (maxCharge > 0.0f) ? currentCharge / maxCharge : 1.0f
+      .isFavorited = sw.isFavorited,
+      .isEquipped = sw.isEquipped,
+      .previousCharge = (sw.maxCharge > 0.0f) ? sw.currentCharge / sw.maxCharge : 1.0f
       };
 
       // Add to dual-index storage
       size_t index = m_weapons.size();
       m_weapons.push_back(std::move(invWeapon));
-      m_weaponIndex[formID] = index;
+      m_weaponIndex[key] = index;
 
-      logger::trace("[WeaponRegistry] Added weapon: {} (fav={}, eq={})"sv,
-      weapon->GetName(), isFavorited, isEquipped);
+      logger::trace("[WeaponRegistry] Added weapon: {} (uid={}, temper={:.2f}, fav={}, eq={})"sv,
+      m_weapons[index].data.name, sw.uniqueID, sw.temperFactor, sw.isFavorited, sw.isEquipped);
       return true;
    }
 
@@ -986,16 +1119,18 @@ namespace Huginn::Weapon
       logger::trace("[WeaponRegistry] Added ammo: {} x{}"sv, ammo->GetName(), count);
    }
 
-   bool WeaponRegistry::RemoveWeapon(RE::FormID formID)
+   bool WeaponRegistry::RemoveWeapon(uint64_t key)
    {
       // NOTE: Assumes m_mutex is already held by caller (v0.7.12 - thread safety)
-      auto it = m_weaponIndex.find(formID);
+      auto it = m_weaponIndex.find(key);
       if (it == m_weaponIndex.end()) {
       return false;
       }
 
       const size_t indexToRemove = it->second;
       std::string weaponName = m_weapons[indexToRemove].data.name;
+      const RE::FormID formID = m_weapons[indexToRemove].data.formID;
+      const uint16_t uniqueID = m_weapons[indexToRemove].data.uniqueID;
 
       m_weaponIndex.erase(it);
 
@@ -1003,11 +1138,12 @@ namespace Huginn::Weapon
       const size_t lastIndex = m_weapons.size() - 1;
       if (indexToRemove != lastIndex) {
       m_weapons[indexToRemove] = std::move(m_weapons[lastIndex]);
-      m_weaponIndex[m_weapons[indexToRemove].data.formID] = indexToRemove;
+      m_weaponIndex[m_weapons[indexToRemove].Key()] = indexToRemove;
       }
       m_weapons.pop_back();
 
-      logger::info("[WeaponRegistry] Removed weapon: {} ({:08X})"sv, weaponName, formID);
+      logger::info("[WeaponRegistry] Removed weapon: {} ({:08X}/uid{})"sv,
+      weaponName, formID, uniqueID);
       return true;
    }
 

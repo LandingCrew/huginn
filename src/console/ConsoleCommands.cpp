@@ -229,6 +229,17 @@ namespace Huginn::Console
       g_apparelRegistry ? g_apparelRegistry->GetApparelCount() : 0);
       Print(regMsg.c_str());
 
+      // The weapon registry to the log, in full. The console cannot hold it,
+      // and the count above cannot answer the question this exists for: the
+      // registry tracks inventory STACKS, so two lines sharing a FormID with
+      // different uids is a tempered weapon and its plain twin being kept
+      // apart, and the `dmg=6.0 (base 4.0 x1.50)` pair is the temper model
+      // laid next to what the game shows in the inventory.
+      if (g_weaponRegistry) {
+      g_weaponRegistry->LogAllWeapons();
+      Print("Weapon registry dumped to the Huginn log");
+      }
+
       // Pages (query before slot locks so we know the actual count)
       auto& slotAllocator = Slot::SlotAllocator::GetSingleton();
 

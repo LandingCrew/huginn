@@ -37,11 +37,13 @@ namespace Huginn::UI
         RE::FormID formID = 0;    // FormID for direct spell lookup (avoids name collisions)
 
         // ExtraUniqueID of the specific inventory stack, when the recommendation
-        // is about an instance rather than a base form (#65: apparel). formID
-        // alone cannot name one of two player-enchanted Gold Rings, so an equip
-        // driven by formID would let the engine pick whichever stack it liked and
-        // the player would put on the plain ring the widget was not offering.
-        // 0 means "no instance in particular", which is right for every other type.
+        // is about an instance rather than a base form (#65: apparel; weapons
+        // since the registry started tracking instances). formID alone cannot
+        // name one of two player-enchanted Gold Rings, or the tempered one of
+        // two Iron Daggers, so an equip driven by formID would let the engine
+        // pick whichever stack it liked and the player would get the copy the
+        // widget was not offering.
+        // 0 means "no instance in particular", which is right for the rest.
         uint16_t uniqueID = 0;
 
         // Factory methods
@@ -67,11 +69,13 @@ namespace Huginn::UI
         static SlotContent StaminaPotion(const std::string& name = "Stamina Potion", RE::FormID formID = 0) {
             return { SlotContentType::StaminaPotion, name, 0.0f, formID };
         }
-        static SlotContent MeleeWeapon(const std::string& name = "Equip Melee", RE::FormID formID = 0) {
-            return { SlotContentType::MeleeWeapon, name, 0.0f, formID };
+        static SlotContent MeleeWeapon(const std::string& name = "Equip Melee", RE::FormID formID = 0,
+                                       uint16_t uniqueID = 0) {
+            return { SlotContentType::MeleeWeapon, name, 0.0f, formID, uniqueID };
         }
-        static SlotContent RangedWeapon(const std::string& name = "Equip Ranged", RE::FormID formID = 0) {
-            return { SlotContentType::RangedWeapon, name, 0.0f, formID };
+        static SlotContent RangedWeapon(const std::string& name = "Equip Ranged", RE::FormID formID = 0,
+                                        uint16_t uniqueID = 0) {
+            return { SlotContentType::RangedWeapon, name, 0.0f, formID, uniqueID };
         }
         static SlotContent Ammo(const std::string& name, RE::FormID formID = 0) {
             return { SlotContentType::Ammo, name, 0.0f, formID };

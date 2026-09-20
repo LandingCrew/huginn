@@ -22,6 +22,12 @@ namespace Huginn::Learning
 
    void FeatureBanditLearner::Update(RE::FormID formID, const StateFeatures& features, float reward)
    {
+      // Tell the pipeline it has something new to say. Set before the work
+      // rather than after: the flag only causes an extra pipeline run, so
+      // setting it early and having the run read slightly newer weights is
+      // harmless, while a late set could be missed by a run already in flight.
+      m_weightsChanged.store(true, std::memory_order_release);
+
       // Compute feature array outside lock (pure computation, no shared state)
       auto phi = features.ToArray();
 

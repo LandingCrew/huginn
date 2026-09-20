@@ -538,6 +538,11 @@ static void OnDataLoaded()
     CSimpleIniA earlyDMenuIni;
     if (LoadIniFile(earlyDMenuIni, GetDMenuIniPath(), "InitDMenuEarly"sv)) {
         UI::DebugSettings::GetSingleton().LoadFromIni(earlyDMenuIni);
+        // Apply here too, not only at step 11b. The widgets now default to
+        // hidden, so without this a player who ASKED for one in dMenu would
+        // not see it until kPostLoadGame. SetVisible only writes a bool on a
+        // singleton, so it is safe before the D3D hook exists.
+        UI::DebugSettings::GetSingleton().ApplyToWidgets();
         UI::IntuitionSettings::GetSingleton().LoadFromIni(earlyDMenuIni);
     }
 

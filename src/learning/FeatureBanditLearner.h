@@ -4,6 +4,7 @@
 #include <chrono>
 #include <unordered_map>
 #include <shared_mutex>
+#include <atomic>
 #include <array>
 #include <functional>
 #include <vector>
@@ -103,6 +104,32 @@ namespace Huginn::Learning
          const std::vector<SerializedEntry>& entries,
          uint32_t totalTrainCount);
 
+      // ── Pipeline wake-up latch ────────────────────────────────────────
+      //
+      // Set by Update(), read and cleared by PipelineCoordinator. A reward
+      // changes what the top-N ranking WOULD be, but changes no game state, so
+      // GameState::GetHash() cannot see it and CheckHashSkip skips the tick
+      // that would have published it. Observed 2026-09-19: a hotkey equip
+      // rewarded 00012EB7 at 20:24:25.459 and the new ranking did not reach the
+      // widget until 20:24:32.185 -- 6.7 s later, and only because an unrelated
+      // ally flap happened to move the hash. In a still scene nothing would
+      // have moved it at all.
+      //
+      // Update() ONLY. Not MaybeDecayBatch, which runs from inside the scoring
+      // loop: a decay that forced a run would be re-entered by the run it
+      // forced, every tick, forever. Not ImportData or Clear either -- the load
+      // and reset paths already force a pass through
+      // PipelineCoordinator::ResetCrossSaveState().
+      //
+      // Atomic because the equip event that calls Update() can arrive on the
+      // game thread while the update thread is reading this.
+      [[nodiscard]] bool WeightsChanged() const noexcept {
+         return m_weightsChanged.load(std::memory_order_acquire);
+      }
+      void ClearWeightsChanged() noexcept {
+         m_weightsChanged.store(false, std::memory_order_release);
+      }
+
       // Diagnostics
       [[nodiscard]] size_t GetItemCount() const;
       [[nodiscard]] uint32_t GetTotalTrainCount() const;
@@ -138,6 +165,11 @@ namespace Huginn::Learning
       static constexpr float UCB_NORMALIZATION_FACTOR = 0.2f;
 
       mutable std::shared_mutex m_mutex;
+
+      // See WeightsChanged() above. Not guarded by m_mutex on purpose: readers
+      // are on the update thread's skip check, which must not block behind a
+      // scoring pass holding the shared lock.
+      std::atomic<bool> m_weightsChanged{ false };
 
       [[nodiscard]] static float DotProduct(
          const std::array<float, StateFeatures::NUM_FEATURES>& a,

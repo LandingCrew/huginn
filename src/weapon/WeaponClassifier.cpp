@@ -37,7 +37,11 @@ namespace Huginn::Weapon
       data.tags = DetermineWeaponTags(weapon, data.type);
 
       // STEP 3: Get combat stats
+      // The classifier is handed a BASE FORM and nothing else, so damage starts
+      // as the untempered number and temperFactor stays 1.0. WeaponRegistry
+      // applies the per-stack ExtraHealth once it has scanned the instance.
       data.baseDamage = GetBaseDamage(weapon);
+      data.damage = data.baseDamage;
       data.speed = GetSpeed(weapon);
       data.reach = GetReach(weapon);
 

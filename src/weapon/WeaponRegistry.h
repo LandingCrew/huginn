@@ -91,11 +91,16 @@ namespace Huginn::Weapon
       // ForEachWeapon()/ForEachAmmo() (which hold the lock for the whole visit).
 
       /**
-       * @brief Get weapon by FormID
-       * @param formID The weapon's form ID
-       * @return Pointer to InventoryWeapon, or nullptr if not found
+       * @brief Get one tracked inventory stack by its composite key
+       * @param formID The weapon's BASE form ID
+       * @param uniqueID ExtraUniqueID of the stack wanted; 0 for the entry that
+       *        has no ExtraUniqueID of its own (plain stock of that form)
+       * @return Pointer to InventoryWeapon, or nullptr if not tracked
+       * @note The registry holds one entry PER STACK (see InventoryWeapon::Key),
+       *       so a bare FormID is not enough to name a tempered or enchanted
+       *       instance.
        */
-      [[nodiscard]] const InventoryWeapon* GetWeapon(RE::FormID formID) const;
+      [[nodiscard]] const InventoryWeapon* GetWeapon(RE::FormID formID, uint16_t uniqueID = 0) const;
 
       /**
        * @brief Get all melee weapons
@@ -311,17 +316,27 @@ namespace Huginn::Weapon
       // INTERNAL HELPERS
       // =============================================================================
 
-      /**
-       * @brief Scan player inventory for favorited weapons
-       * @return Vector of (weapon, isFavorited, isEquipped) tuples
-       */
+      /// One inventory STACK, resolved far enough to register.
+      ///
+      /// One per ExtraDataList, not one per base form. Util::GetInventorySafe
+      /// returns a map keyed by TESBoundObject*, so the inventory hands us one
+      /// entry per base form; folding that entry's extraLists into a single
+      /// record made every per-instance field last-wins, and a tempered weapon
+      /// and a plain one of the same form could not both be tracked.
+      ///
+      /// A record with uniqueID 0, temperFactor 1.0 and an empty displayName is
+      /// the plain remainder of the stack: the copies carrying no ExtraDataList
+      /// of their own. It is also what the load-path scan produces for
+      /// everything, because extraLists cannot be read that early.
       struct ScannedWeapon {
-      RE::TESObjectWEAP* weapon;
-      bool isFavorited;
-      bool isEquipped;
-      float currentCharge;
-      float maxCharge;
-      uint16_t uniqueID;
+      RE::TESObjectWEAP* weapon = nullptr;
+      bool isFavorited = false;
+      bool isEquipped = false;
+      float currentCharge = 0.0f;
+      float maxCharge = 0.0f;
+      uint16_t uniqueID = 0;
+      float temperFactor = 1.0f;   // ExtraHealth; 1.0 when untempered
+      std::string displayName;     // Empty unless this stack names itself
       };
       [[nodiscard]] std::vector<ScannedWeapon> ScanPlayerWeapons() const;
 
@@ -351,17 +366,14 @@ namespace Huginn::Weapon
       [[nodiscard]] std::vector<ScannedAmmo> ScanPlayerAmmo() const;
 
       /**
-       * @brief Add a weapon to the registry
-       * @param weapon The weapon to add
-       * @param isFavorited Is the weapon in favorites
-       * @param isEquipped Is the weapon currently equipped
-       * @param currentCharge Current enchantment charge (0-maxCharge)
-       * @param maxCharge Maximum enchantment charge
-       * @return true if the weapon is registered (inserted or updated),
+       * @brief Add one scanned stack to the registry
+       * @param sw The scanned stack (see ScannedWeapon)
+       * @return true if the stack is registered (inserted or updated),
        *         false if null or rejected by classification
+       * @note Takes the whole scan record rather than eight positional
+       *       arguments; the instance fields travel together or they drift.
        */
-      bool AddWeapon(RE::TESObjectWEAP* weapon, bool isFavorited, bool isEquipped,
-                     float currentCharge, float maxCharge, uint16_t uniqueID = 0);
+      bool AddWeapon(const ScannedWeapon& sw);
 
       /**
        * @brief Add ammo to the registry
@@ -372,10 +384,10 @@ namespace Huginn::Weapon
       void AddAmmo(RE::TESAmmo* ammo, int32_t count, bool isEquipped);
 
       /**
-       * @brief Remove a weapon from registry by FormID
+       * @brief Remove one tracked stack by its InventoryWeapon::Key()
        * @return true if removed, false if not found
        */
-      bool RemoveWeapon(RE::FormID formID);
+      bool RemoveWeapon(uint64_t key);
 
       /**
        * @brief Remove ammo from registry by FormID
@@ -384,28 +396,52 @@ namespace Huginn::Weapon
       bool RemoveAmmo(RE::FormID formID);
 
       /**
-       * @brief Extract weapon metadata from inventory entry (favorites, charge, equipped status)
-       * @param weapon The weapon to extract metadata for
-       * @param entry The inventory entry containing extraLists data
-       * @param includeExtraLists If true, access extraLists for favorites/charge (requires 500ms+ after load)
-       * @param equipped Currently equipped weapons (for isEquipped check)
-       * @return ScannedWeapon with all metadata filled
-       * @note Helper to eliminate code duplication between RefreshCharges() and ReconcileWeapons()
-       * @note UPDATED (v0.7.19): Now accepts EquippedWeapons struct instead of separate pointers
+       * @brief Build the scan record for ONE inventory stack
+       * @param weapon The base form
+       * @param extraList The stack's extra data, or nullptr for the plain
+       *        remainder (no per-instance data to read)
+       * @param equipped Currently equipped weapons - the fallback for isEquipped
+       *        when there is no extraList to ask
+       * @param resolveName False to skip the display-name lookup. RefreshCharges
+       *        runs at 2 Hz and never writes a name, and the lookup is a native
+       *        call that can attach an ExtraTextDisplayData the first time.
+       * @return ScannedWeapon for that single stack
+       * @note Per-stack, not per-entry: ScanWeaponEntry() calls this once for
+       *       each extraList. Reading the whole entry here is what collapsed
+       *       instances into one last-wins record.
        */
       [[nodiscard]] ScannedWeapon ExtractWeaponMetadata(
       RE::TESObjectWEAP* weapon,
+      RE::ExtraDataList* extraList,
+      const EquippedWeapons& equipped,
+      bool resolveName = true) const;
+
+      /**
+       * @brief Append one ScannedWeapon per stack of an inventory entry
+       * @param weapon The base form
+       * @param entry The inventory entry (may be null)
+       * @param count Total count of this form, used to size the plain remainder
+       * @param includeExtraLists False while extraLists are unsafe to read
+       *        (the 500ms window after a load) - emits a single degraded record
+       * @param equipped Currently equipped weapons
+       * @param out Destination, appended to
+       */
+      void ScanWeaponEntry(
+      RE::TESObjectWEAP* weapon,
       RE::InventoryEntryData* entry,
+      int32_t count,
       bool includeExtraLists,
-      const EquippedWeapons& equipped) const;
+      const EquippedWeapons& equipped,
+      std::vector<ScannedWeapon>& out) const;
 
       // =============================================================================
       // STORAGE
       // =============================================================================
 
-      // Dual-index storage for weapons (same pattern as SpellRegistry/ItemRegistry)
+      // Dual-index storage for weapons (same pattern as SpellRegistry/ItemRegistry).
+      // Keyed by InventoryWeapon::Key() - formID alone cannot name an instance.
       std::vector<InventoryWeapon> m_weapons;
-      std::unordered_map<RE::FormID, size_t> m_weaponIndex;
+      std::unordered_map<uint64_t, size_t> m_weaponIndex;
 
       // FormIDs whose classification was rejected (see AddWeapon guard). Without this,
       // the periodic scans re-classify and re-log the same unnameable weapon every
