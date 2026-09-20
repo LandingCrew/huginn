@@ -1,5 +1,9 @@
 #include "EquipManager.h"
+#include "Config.h"
+#include "Globals.h"
 #include "learning/EquipSourceTracker.h"
+#include "slot/SlotLocker.h"
+#include "util/InventoryUtil.h"
 
 // Windows GetObject macro interferes with RE::BGSDefaultObjectManager::GetObject
 #ifdef GetObject
@@ -139,6 +143,30 @@ namespace Huginn::Input
       return true;
    }
 
+   // Does the player still carry this object at all?
+   //
+   // Asked because a recommendation can outlive the thing it names: the weapon
+   // registry reconciles on a 30 s timer and the widget keeps showing whatever
+   // the last pipeline run published, so there is a window where a slot offers a
+   // weapon already dropped, sold or stashed. ActorEquipManager does not refuse
+   // one -- it takes the equipped weapon off, puts nothing in its place, and the
+   // player swings an empty hand while the log reports a successful equip and
+   // the learner books a reward for it. Seen 2026-09-19: a Blessed Iron Dagger
+   // (000896F3) dropped at 22:10:35 was still pressable at 22:10:50.
+   //
+   // One filtered inventory walk, and only on the paths that have reason to
+   // doubt the recommendation, so the cost lands on a keypress rather than a tick.
+   static bool PlayerStillHolds(RE::PlayerCharacter* player, RE::TESBoundObject* object)
+   {
+      if (!player || !object) {
+      return false;
+      }
+      const auto held = Util::GetInventorySafe(player,
+      [object](RE::TESBoundObject& obj) { return std::addressof(obj) == object; });
+      const auto it = held.find(object);
+      return it != held.end() && it->second.first > 0;
+   }
+
    bool EquipManager::EquipWeapon(RE::FormID formID, bool leftHand, uint16_t uniqueID)
    {
       if (formID == 0) {
@@ -256,6 +284,26 @@ namespace Huginn::Input
         logger::debug("[EquipManager] No stack with uniqueID {} for '{}' ({:08X}); "
           "falling back to the base form"sv, uniqueID, weapon->GetName(), formID);
       }
+      }
+
+      // A uniqueID miss is NOT evidence that the weapon is gone -- it fires for a
+      // stack still in the pack that was re-tempered, restacked or never had an
+      // ExtraUniqueID, and the base form is the right thing to equip there. Only
+      // "no stack of this form at all" is fatal, so the walk happens only on the
+      // path that already failed to resolve an instance.
+      if (!sourceInstance && !PlayerStillHolds(player, weapon)) {
+      logger::warn("[EquipManager] '{}' ({:08X}) is not in the player's inventory - "
+        "equip refused (stale recommendation)"sv, weapon->GetName(), formID);
+
+      // Let go of the slot and make the registry look, instead of leaving the
+      // ghost pressable for the rest of the reconcile interval. The primed pass
+      // removes the record; the update loop's departed-form hook then breaks any
+      // remaining lock and forces the recompute that drops it from the widget.
+      Slot::SlotLocker::GetSingleton().OnItemUsed(formID, /*respectActivationLock=*/false);
+      g_registryTimers.weaponReconcile.Reset(
+        std::chrono::steady_clock::now() - std::chrono::milliseconds(
+           static_cast<int64_t>(Config::WEAPON_RECONCILE_INTERVAL_MS)));
+      return false;
       }
 
       // Equip the weapon
@@ -396,6 +444,17 @@ namespace Huginn::Input
       auto* ammo = form->As<RE::TESAmmo>();
       if (!ammo) {
       logger::warn("[EquipManager] FormID {:08X} is not ammo"sv, formID);
+      return false;
+      }
+
+      // Same stale-recommendation guard as EquipWeapon, for the same reason: a
+      // quiver can empty between pipeline runs. Unconditional here because ammo
+      // is named by form alone -- there is no instance resolution to fall back
+      // from, so nothing else would have caught it.
+      if (!PlayerStillHolds(player, ammo)) {
+      logger::warn("[EquipManager] '{}' ({:08X}) is not in the player's inventory - "
+        "equip refused (stale recommendation)"sv, ammo->GetName(), formID);
+      Slot::SlotLocker::GetSingleton().OnItemUsed(formID, /*respectActivationLock=*/false);
       return false;
       }
 
