@@ -302,7 +302,9 @@ namespace Huginn::Input
       // without letting it DECAY through 0, so SlotLocker::Update reports no
       // lapse, and the skip gate reads the state hash, which inventory is not
       // part of. Nothing else in this scenario would run the pipeline again.
-      Slot::SlotLocker::GetSingleton().OnItemUsed(formID, /*respectActivationLock=*/false);
+      // Form-wide (uniqueID 0): nothing of this form is left, so no slot naming
+      // any stack of it can be honoured.
+      Slot::SlotLocker::GetSingleton().OnItemUsed(formID, 0, /*respectActivationLock=*/false);
       Slot::SlotAllocator::GetSingleton().MarkPageDirty();
 
       // The recompute only helps if the REGISTRY has also let go -- it is what
@@ -327,6 +329,32 @@ namespace Huginn::Input
            static_cast<int64_t>(Config::WEAPON_RECONCILE_INTERVAL_MS)));
       }
       return false;
+      }
+
+      // The form is still here but the named stack is not: the player asked for
+      // the tempered Iron Dagger and is about to get the plain one. Equipping it
+      // is still the better answer than a dead keypress -- they asked for a
+      // dagger and the learner is keyed on the form either way -- but the slot
+      // is now naming something that does not exist, so correct it in the same
+      // breath rather than leaving the widget to repeat the offer.
+      //
+      // Only this stack's lock goes: the copy in hand is a different stack of
+      // the same form and has every right to its own slot.
+      if (!sourceInstance && uniqueID != 0) {
+      logger::info("[EquipManager] Stack uid{} of '{}' ({:08X}) is gone; equipping another "
+        "copy and refreshing the slot"sv, uniqueID, weapon->GetName(), formID);
+
+      Slot::SlotLocker::GetSingleton().OnItemUsed(formID, uniqueID, /*respectActivationLock=*/false);
+      Slot::SlotAllocator::GetSingleton().MarkPageDirty();
+
+      // And let the registry drop the record, but only while it still has one:
+      // an unconditional prime buys a 20-40 ms inventory walk per update tick
+      // from a player pressing a slot whose stack the registry already forgot.
+      if (g_weaponRegistry && g_weaponRegistry->GetWeapon(formID, uniqueID)) {
+        g_registryTimers.weaponReconcile.Reset(
+           std::chrono::steady_clock::now() - std::chrono::milliseconds(
+            static_cast<int64_t>(Config::WEAPON_RECONCILE_INTERVAL_MS)));
+      }
       }
 
       // Equip the weapon
@@ -482,7 +510,7 @@ namespace Huginn::Input
       // every press refuses again. No reconcile prime: RefreshCharges zeroes the
       // count twice a second and the affordability filter drops it from
       // candidates, so one forced run is all this needs.
-      Slot::SlotLocker::GetSingleton().OnItemUsed(formID, /*respectActivationLock=*/false);
+      Slot::SlotLocker::GetSingleton().OnItemUsed(formID, 0, /*respectActivationLock=*/false);
       Slot::SlotAllocator::GetSingleton().MarkPageDirty();
       return false;
       }

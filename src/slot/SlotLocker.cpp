@@ -267,6 +267,11 @@ namespace Huginn::Slot
 
     void SlotLocker::OnItemUsed(RE::FormID formID, bool respectActivationLock)
     {
+        OnItemUsed(formID, 0, respectActivationLock);
+    }
+
+    void SlotLocker::OnItemUsed(RE::FormID formID, uint16_t uniqueID, bool respectActivationLock)
+    {
         if (formID == 0) {
             return;
         }
@@ -276,7 +281,14 @@ namespace Huginn::Slot
         // Find and unlock any slot containing this item
         for (size_t i = 0; i < MAX_SLOTS; ++i) {
             auto& slot = m_lockedSlots[i];
-            if (slot.isLocked && slot.assignment.formID == formID) {
+            // uniqueID 0 is "every stack of this form", which is both the old
+            // behaviour and the right one for anything the player cannot tell
+            // apart. A named stack matches only itself: evicting the tempered
+            // dagger's twin because THIS one was sold is the mistake this
+            // parameter exists to stop.
+            const bool sameItem = slot.assignment.formID == formID &&
+                (uniqueID == 0 || slot.assignment.uniqueID == uniqueID);
+            if (slot.isLocked && sameItem) {
                 // Preserve Sticky's deliberate 10s hold: the inventory delta-scan
                 // path (respectActivationLock) must not evict a just-activated item
                 // the instant it's consumed — that's exactly the case Sticky exists
@@ -284,8 +296,8 @@ namespace Huginn::Slot
                 if (respectActivationLock && slot.isActivationLock) {
                     continue;
                 }
-                spdlog::info("[SlotLocker] Slot {} unlocked - item {:08X} was used",
-                    i, formID);
+                spdlog::info("[SlotLocker] Slot {} unlocked - item {:08X}/uid{} was used",
+                    i, formID, slot.assignment.uniqueID);
                 slot.isLocked = false;
                 slot.remainingMs = 0.0f;
                 slot.isActivationLock = false;

@@ -42,6 +42,16 @@ namespace Huginn::Weapon
       // LIFECYCLE
       // =============================================================================
 
+      /// One inventory stack that left the player's possession, as the update
+      /// loop needs to hear about it: the form to look up, and the stack to
+      /// name. uniqueID is 0 for ammo and for weapons the game never gave an
+      /// ExtraUniqueID, which SlotLocker reads as "every stack of this form".
+      struct DepartedStack
+      {
+      RE::FormID formID = 0;
+      uint16_t uniqueID = 0;
+      };
+
       /**
        * @brief Full inventory scan on game load
        * @note Clears existing registry and rescans all favorited weapons
@@ -57,15 +67,16 @@ namespace Huginn::Weapon
       /**
        * @brief Refresh weapon charge levels and equipped status (with cached equipped weapons)
        * @param equipped Pre-queried equipped weapons (avoids redundant GetEquippedObject calls)
-       * @param depletedAmmo Optional out-param, appended to: ammo FormIDs whose
-       *        count went from positive to zero on THIS pass. The update loop
-       *        uses them the same way it uses ReconcileWeapons' departedForms -
-       *        break the slot lock, force one recompute - so an empty quiver
-       *        leaves the widget in 500 ms rather than at the 30 s reconcile.
+       * @param departed Optional out-param, appended to: ammo whose count went
+       *        from positive to zero on THIS pass (uniqueID 0 - ammo is named by
+       *        form). The update loop uses these exactly as it uses
+       *        ReconcileWeapons' departures - break the slot lock, force one
+       *        recompute - so an empty quiver leaves the widget in 500 ms rather
+       *        than at the 30 s reconcile.
        * @note OPTIMIZATION (v0.7.19): Use when caller already has equipped weapons cached
        */
       void RefreshCharges(const EquippedWeapons& equipped,
-                          std::vector<RE::FormID>* depletedAmmo = nullptr);
+                          std::vector<DepartedStack>* departed = nullptr);
 
       /**
        * @brief Full reconciliation - add new favorites, remove unfavorited
@@ -77,19 +88,19 @@ namespace Huginn::Weapon
       /**
        * @brief Full reconciliation with cached equipped weapons
        * @param equipped Pre-queried equipped weapons (avoids redundant GetEquippedObject calls)
-       * @param departedForms Optional out-param, appended to: base FormIDs that
-       *        left the inventory ENTIRELY this pass - every tracked stack of
-       *        that weapon gone, or the ammo type depleted. The update loop
-       *        hands these to SlotLocker::OnItemUsed so a lock stops pinning a
-       *        weapon the player no longer owns. A form whose other stacks are
-       *        still tracked is deliberately absent: a lock names a form, not a
-       *        stack, so reporting it would break the surviving instance's lock
-       *        as well.
+       * @param departed Optional out-param, appended to: every inventory STACK
+       *        removed this pass, plus the ammo forms removed. The update loop
+       *        hands these to SlotLocker::OnItemUsed so a lock stops pinning
+       *        something the player no longer owns.
+       *
+       *        Per stack, not per form, because the player can own two of one
+       *        form: dropping the tempered Iron Dagger must free the slot that
+       *        named THAT dagger while leaving the plain one's alone.
        * @return Number of weapons added or removed
        * @note OPTIMIZATION (v0.7.19): Use when caller already has equipped weapons cached
        */
       size_t ReconcileWeapons(const EquippedWeapons& equipped,
-                              std::vector<RE::FormID>* departedForms = nullptr);
+                              std::vector<DepartedStack>* departed = nullptr);
 
       // =============================================================================
       // WEAPON ACCESSORS

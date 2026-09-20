@@ -171,6 +171,20 @@ namespace Huginn::Slot
         ///   so a consumed sticky item still honors its 10s visibility window.
         void OnItemUsed(RE::FormID formID, bool respectActivationLock = false);
 
+        /// Same, for one inventory STACK rather than every stack of a form.
+        ///
+        /// A player carrying a tempered Iron Dagger and a plain one has two
+        /// registry entries and two candidates that share a FormID. When one of
+        /// them leaves, breaking both locks would evict the copy still in the
+        /// pack; breaking neither leaves the slot naming a stack that is gone,
+        /// which the equip path then cannot honour. So the departure names the
+        /// stack.
+        /// @param uniqueID The stack's ExtraUniqueID. 0 means "no instance to
+        ///   speak of" — plain stock, or a category like potions and ammo where
+        ///   the form IS the identity — and breaks every lock on the form, which
+        ///   is what the form-wide overload above does.
+        void OnItemUsed(RE::FormID formID, uint16_t uniqueID, bool respectActivationLock);
+
         /// Reset all locks (call on save load or game state reset)
         void Reset();
 

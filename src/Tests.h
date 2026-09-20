@@ -19,6 +19,7 @@ void RunOverrideNamespaceTests();      // Huginn_Overrides.ini section namespaci
 // THROWAWAY (0.19.21): backstops SlotLocker::Reset() clearing every LockedSlot
 // field. Delete with its Tests.cpp body and Main.cpp call site.
 void RunSlotLockerResetTest();
+void RunSlotLockerInstanceLockTest();
 
 // =============================================================================
 // CONSOLE COMMANDS - Manual testing via Skyrim console (debug mode only)
