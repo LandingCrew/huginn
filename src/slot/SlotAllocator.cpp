@@ -846,6 +846,37 @@ namespace Huginn::Slot
         // An item that left the screen entirely is in neither loop, so its seat
         // is simply not carried over -- which is how a seat is ever freed.
 
+#ifndef NDEBUG
+        // Log the map when it CHANGES, which is the only interesting moment: a
+        // steady map is the feature working and says nothing. Reading it next to
+        // the [VisualState] line for the same tick answers the one question this
+        // instrumentation exists for -- seats are recorded from the allocator's
+        // own output, while [VisualState] is what SlotLocker let through, so if
+        // the two disagree the memory is chasing an arrangement the player never
+        // saw. A '*' marks a seat whose owner is sitting somewhere else this
+        // tick (displaced by an override, or standing in for one).
+        if (seats != previous) {
+            std::string summary;
+            for (size_t i = 0; i < slotCount; ++i) {
+                if (seats[i] == 0) continue;
+
+                std::string_view who = "?";
+                bool elsewhere = true;
+                for (size_t j = 0; j < slotCount; ++j) {
+                    if (keyOf(assignments[j]) == seats[i]) {
+                        who = assignments[j].name;
+                        elsewhere = (j != i);
+                        break;
+                    }
+                }
+                if (!summary.empty()) summary += " ";
+                summary += std::format("{}={}{}", i, who, elsewhere ? "*" : "");
+            }
+            SKSE::log::debug("[Seating] page {} | {}", pageIndex,
+                summary.empty() ? "(no seats)" : summary);
+        }
+#endif
+
         m_seatingGeneration = generation;
         m_seating[pageIndex] = seats;
     }
