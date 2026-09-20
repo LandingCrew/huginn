@@ -5573,6 +5573,104 @@ void RunSlotLockerResetTest()
 #endif
 }
 
+// =============================================================================
+// THROWAWAY: SlotLocker per-stack lock breaking (0.20.28)
+// =============================================================================
+// Delete this block, its Tests.h declaration and its Main.cpp call site
+// together, as with the Reset backstop above.
+//
+// What it pins: OnItemUsed(formID, uniqueID, ...) must break the lock on the
+// stack it names and leave every other stack of the same form alone. The case
+// is a player carrying two Iron Daggers -- one tempered, one plain -- who drops
+// the tempered one. Two candidates share that FormID, so a form-wide break
+// evicts the copy still in the pack, and no break at all leaves a slot naming a
+// dagger that is gone. Neither is observable without two stacks in inventory,
+// which is why this asserts it directly instead of waiting for the in-game
+// repro. uniqueID 0 must still mean every stack, for potions, ammo and the
+// Wheeler call site that has no instance to name.
+//
+// Same limitation as the Reset test: it drives the LIVE singleton at
+// kPostLoadGame with the loading menu up, so the update loop is gated. An
+// intermittent failure under load means interleaving, not a regression.
+void RunSlotLockerInstanceLockTest()
+{
+#ifndef NDEBUG
+    using namespace Huginn::Slot;
+
+    logger::info("Running SlotLocker per-stack lock test..."sv);
+
+    auto& locker = SlotLocker::GetSingleton();
+    const auto savedConfig = locker.GetConfig();
+
+    SlotLockConfig testConfig{};
+    testConfig.lockDurationMs = 3000.0f;
+    testConfig.lockOnFill = true;
+    locker.SetConfig(testConfig);
+    locker.Reset();
+
+    // Two stacks of ONE form, as the two-dagger case produces them.
+    constexpr RE::FormID kSharedForm = 0x0BADDA61;
+    constexpr uint16_t kDroppedUid = 22;
+    constexpr uint16_t kKeptUid = 7;
+
+    SlotAssignments assignments;
+    for (size_t i = 0; i < MAX_SLOTS_PER_PAGE; ++i) {
+        SlotAssignment probe = SlotAssignment::Empty(i, SlotClassification::Regular);
+        if (i < 2) {
+            probe.type = AssignmentType::Normal;
+            probe.formID = kSharedForm;
+            probe.uniqueID = (i == 0) ? kDroppedUid : kKeptUid;
+            probe.name = (i == 0) ? "Tempered probe" : "Plain probe";
+        }
+        assignments.push_back(std::move(probe));
+    }
+    (void)locker.ApplyLocks(assignments, Override::OverrideCollection{});
+
+    {
+        const auto armed = locker.GetLockSnapshot();
+        if (!armed[0].isLocked || !armed[1].isLocked) {
+            logger::error("TEST FAIL: per-stack probe did not arm (slot0={}, slot1={}) — "
+                          "test proves nothing"sv, armed[0].isLocked, armed[1].isLocked);
+            locker.SetConfig(savedConfig);
+            locker.Reset();
+            return;
+        }
+    }
+
+    bool passed = true;
+
+    // The dropped stack leaves. Its slot must free; the kept stack must not.
+    locker.OnItemUsed(kSharedForm, kDroppedUid, /*respectActivationLock=*/false);
+    {
+        const auto after = locker.GetLockSnapshot();
+        if (after[0].isLocked) {
+            logger::error("TEST FAIL: uid{} departed but its slot is still locked"sv, kDroppedUid);
+            passed = false;
+        }
+        if (!after[1].isLocked) {
+            logger::error("TEST FAIL: uid{} lost its lock when uid{} departed — "
+                          "a named stack must not evict the player's other copy"sv,
+                kKeptUid, kDroppedUid);
+            passed = false;
+        }
+    }
+
+    // uniqueID 0 still means the whole form (potions, ammo, Wheeler).
+    locker.OnItemUsed(kSharedForm, 0, /*respectActivationLock=*/false);
+    if (locker.GetLockSnapshot()[1].isLocked) {
+        logger::error("TEST FAIL: uniqueID 0 left slot 1 locked — form-wide break regressed"sv);
+        passed = false;
+    }
+
+    locker.SetConfig(savedConfig);
+    locker.Reset();  // leave the live singleton as the load path expects
+
+    if (passed) {
+        logger::info("  SlotLocker per-stack lock test PASSED"sv);
+    }
+#endif
+}
+
 void RunCosaveTests()
 {
 #ifndef NDEBUG
@@ -5788,14 +5886,22 @@ void RunCosaveTests()
             }
         }
 
-        // Length mismatch: wrong byteLen must decode to nothing
+        // Length mismatch: wrong byteLen must decode to nothing.
+        //
+        // DecodeV2EntryBlob logs its refusal at [E], so this case prints an
+        // error line in a passing run. That has been read as a real cosave
+        // failure -- "this save's learned weights are being dropped on load" --
+        // so the log says outright that the next error belongs to the test.
         {
+            logger::info("  (negative case: the [Cosave] rejection error below is the "
+                         "assertion working, not a fault)"sv);
             auto blob = makeBlob(compiled, 1);
             auto entries = DecodeV2EntryBlob(blob.data(), blob.size() - 1, 1, compiled);
             if (!entries.empty()) {
                 logger::error("[Cosave Test] FAIL: byteLen mismatch should reject decode"sv);
                 return;
             }
+            logger::info("  PASS: short blob rejected (expected error above)"sv);
         }
 
         logger::info("  PASS: learner feature-count migration pads, truncates, round-trips"sv);

@@ -81,6 +81,13 @@ namespace Huginn::Slot
 
         // Quick-access fields (cached from candidate for efficiency)
         RE::FormID formID = 0;
+        // Which inventory STACK this assignment is about, when that is knowable
+        // (weapons and apparel; 0 everywhere else, and for plain stock that the
+        // game never gave an ExtraUniqueID). The registry tracks stacks, so a
+        // recommendation can be about the tempered Iron Dagger specifically --
+        // the widget already carries this through to EquipWeapon, and SlotLocker
+        // needs it to tell one instance's lock from the other's.
+        uint16_t uniqueID = 0;
         std::string name;
         float utility = 0.0f;
 
@@ -98,7 +105,7 @@ namespace Huginn::Slot
 
         static SlotAssignment Empty(size_t index, SlotClassification classification)
         {
-            return { index, AssignmentType::Empty, classification, std::nullopt, 0, "", 0.0f };
+            return { index, AssignmentType::Empty, classification, std::nullopt, 0, 0, "", 0.0f };
         }
 
         static SlotAssignment FromCandidate(
@@ -113,6 +120,7 @@ namespace Huginn::Slot
                 classification,
                 sc,
                 sc.GetFormID(),
+                sc.GetUniqueID(),
                 std::string(sc.GetName()),
                 sc.utility
             };

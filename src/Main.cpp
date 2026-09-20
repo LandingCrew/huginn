@@ -447,6 +447,7 @@ static void InitializeGameSystems(bool isNewGame)
         RunFeatureBanditLearnerTests();        // Phase 3.5b: Feature-based bandit learner tests
         RunOverrideNamespaceTests();      // Huginn_Overrides.ini section namespacing
         RunSlotLockerResetTest();         // THROWAWAY (0.19.21): Reset() field completeness
+        RunSlotLockerInstanceLockTest();  // THROWAWAY (0.20.28): per-stack lock breaking
         logger::info("Debug build ready. Console command functions available for hotkey integration"sv);
     }
 #endif

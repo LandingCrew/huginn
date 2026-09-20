@@ -102,7 +102,11 @@ namespace Huginn::Input
       /// @param uniqueID Which inventory stack to draw; 0 lets the engine choose.
       ///        The registry tracks stacks, not base forms, so a recommendation
       ///        can name the tempered copy of a weapon the player owns twice.
-      bool EquipWeapon(RE::FormID formID, bool leftHand = false, uint16_t uniqueID = 0);
+      /// @param afterHandSwap Internal: set only by the deferred retry this
+      ///   method schedules when it has to take the weapon off the other hand
+      ///   first. Bounds that retry to one attempt.
+      bool EquipWeapon(RE::FormID formID, bool leftHand = false, uint16_t uniqueID = 0,
+                       bool afterHandSwap = false);
 
       /// Equip ammo (arrow/bolt) by FormID
       bool EquipAmmo(RE::FormID formID);

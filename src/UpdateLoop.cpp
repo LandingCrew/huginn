@@ -348,8 +348,50 @@ static void MaintainRegistries(RE::PlayerCharacter* player,
                     Huginn_ZONE_NAMED("EquippedWeapons::Query");
                     return Huginn::Weapon::EquippedWeapons::Query(player);
                 }();
-                if (needsCharge) { g_weaponRegistry->RefreshCharges(equipped); g_registryTimers.weaponCharge.Reset(now); }
-                if (needsReconcile) { g_weaponRegistry->ReconcileWeapons(equipped); g_registryTimers.weaponReconcile.Reset(now); }
+                // Collected across both refreshes below, then acted on once:
+                // a stack that left inventory must stop holding its slot, and
+                // the pipeline has to be told to look, because nothing about
+                // inventory reaches the GameState hash the skip gate reads.
+                std::vector<Huginn::Weapon::WeaponRegistry::DepartedStack> departed;
+                bool weaponSetChanged = false;
+
+                if (needsCharge) {
+                    // 2 Hz: the only path that notices a quiver hitting zero
+                    // between reconciles.
+                    g_weaponRegistry->RefreshCharges(equipped, &departed);
+                    g_registryTimers.weaponCharge.Reset(now);
+                    weaponSetChanged |= !departed.empty();
+                }
+                if (needsReconcile) {
+                    // 30 s: the pass that actually removes a dropped, sold or
+                    // stashed weapon. Its return value counts adds, removes and
+                    // favorite changes — every one of which changes what belongs
+                    // on the widget, and was until now discarded.
+                    weaponSetChanged |=
+                        g_weaponRegistry->ReconcileWeapons(equipped, &departed) > 0;
+                    g_registryTimers.weaponReconcile.Reset(now);
+                }
+
+                // Break any lock still pinning a stack the player no longer owns,
+                // then force one recompute. Named per stack: a slot holding the
+                // player's other copy of the same form keeps its lock, which is
+                // the whole reason the registry reports stacks rather than forms.
+                //
+                // respectActivationLock=false, where the item/scroll scan above
+                // passes true, because the two are not the same event. There, an
+                // activation lock is exactly the case to protect: the player drank
+                // the potion they just activated, and the 10 s hold is deliberate.
+                // Here the form has LEFT the inventory — a weapon activated and
+                // then dropped, sold or stashed would otherwise hold its slot for
+                // the rest of the hold, refusing every press (EquipManager) and
+                // showing something the player cannot use. A departure is not a use.
+                for (const auto& stack : departed) {
+                    Slot::SlotLocker::GetSingleton().OnItemUsed(
+                        stack.formID, stack.uniqueID, /*respectActivationLock=*/false);
+                }
+                if (weaponSetChanged) {
+                    Slot::SlotAllocator::GetSingleton().MarkPageDirty();
+                }
             }
         }
     }

@@ -66,7 +66,9 @@ re-opening something that looks obviously undone.
       (1) correct as-is, the cost is cosmetic; (2) out of combat, a non-hostile
       should need dwell time before it becomes the primary target; (3) slot
       assignment should be sticky even when the ranking is not -- an item already
-      in a slot and still in the top N keeps its slot.
+      in a slot and still in the top N keeps its slot. Framing (3) now has its
+      own entry, "Anti-juggling", under Known Recommendation Issues: it turned
+      out to matter on its own, with no crosshair involved.
       Raised 2026-09-19.
 
 ## Known Mod Compatability Issues
@@ -110,6 +112,37 @@ re-opening something that looks obviously undone.
       alchemy lab (#65, PR #114); the forge may still have no live payload
 
 ## Known Recommendation Issues
+- [ ] Anti-juggling: an item that is still recommended should keep its slot.
+      Slot assignment is recomputed from the ranking every pass, so one item
+      entering or leaving the set shifts every item below it by one. The
+      recommendations are right; where they SIT is not stable, and the slot
+      number is what the player's hand has learned.
+      Straight from a log (2026-09-19, v0.20.29). Drop the Iron Mace and
+      everything under it moves up:
+        22:57:26  0:Iron Sword 1:Iron Dagger 3:Flames 4:Long Bow 5:Blessed Dagger
+      Pick the same mace back up thirty seconds later and all four move down
+      again, into the places they had before:
+        22:57:56  0:Iron Sword 1:Iron Mace 3:Iron Dagger 4:Flames 5:Long Bow 6:Blessed Dagger
+      Nothing about Flames changed, and Flames was on key 3, then 4. Every
+      re-rank of an unrelated item costs the player their muscle memory.
+      SlotLocker does not cover this and was never meant to: it stabilises a
+      SLOT'S CONTENT for a second at a time, against the content changing. This
+      is the other axis -- an item's IDENTITY to slot mapping across passes --
+      and it needs a pass in SlotAllocator that seats returning items first: an
+      item in the previous assignment that is still in the chosen set keeps its
+      index, and only genuinely new items take what is left. Same idea as
+      framing (3) under the crosshair-flap entry above, which is where this was
+      first written down; treat this as the canonical entry.
+      Details worth settling before coding: classification still constrains
+      which slots an item may occupy, so a returning item can only keep a slot
+      its category still accepts; overrides must keep the right to take their
+      slot outright; wildcards deliberately move, and should probably be exempt;
+      and pages multiply all of it. A weaker version -- only seat returners when
+      the set is otherwise unchanged -- covers the common case (one item leaving
+      or arriving) for much less machinery.
+      Raised 2026-09-19 by the user, after watching the widget reshuffle around
+      a dropped weapon during the #123 play-test.
+
 - [ ] Take craft gear back OFF when the crafting is done — the #65 follow-on.
       Apparel is the one source that CHANGES THE PLAYER and leaves it changed:
       every other recommendation is spent when used, but a fortify ring stays on

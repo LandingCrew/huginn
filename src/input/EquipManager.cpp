@@ -1,5 +1,10 @@
 #include "EquipManager.h"
+#include "Config.h"
+#include "Globals.h"
 #include "learning/EquipSourceTracker.h"
+#include "slot/SlotAllocator.h"
+#include "slot/SlotLocker.h"
+#include "util/InventoryUtil.h"
 
 // Windows GetObject macro interferes with RE::BGSDefaultObjectManager::GetObject
 #ifdef GetObject
@@ -139,7 +144,32 @@ namespace Huginn::Input
       return true;
    }
 
-   bool EquipManager::EquipWeapon(RE::FormID formID, bool leftHand, uint16_t uniqueID)
+   // Does the player still carry this object at all?
+   //
+   // Asked because a recommendation can outlive the thing it names: the weapon
+   // registry reconciles on a 30 s timer and the widget keeps showing whatever
+   // the last pipeline run published, so there is a window where a slot offers a
+   // weapon already dropped, sold or stashed. ActorEquipManager does not refuse
+   // one -- it takes the equipped weapon off, puts nothing in its place, and the
+   // player swings an empty hand while the log reports a successful equip and
+   // the learner books a reward for it. Seen 2026-09-19: a Blessed Iron Dagger
+   // (000896F3) dropped at 22:10:35 was still pressable at 22:10:50.
+   //
+   // One filtered inventory walk, and only on the paths that have reason to
+   // doubt the recommendation, so the cost lands on a keypress rather than a tick.
+   static bool PlayerStillHolds(RE::PlayerCharacter* player, RE::TESBoundObject* object)
+   {
+      if (!player || !object) {
+      return false;
+      }
+      const auto held = Util::GetInventorySafe(player,
+      [object](RE::TESBoundObject& obj) { return std::addressof(obj) == object; });
+      const auto it = held.find(object);
+      return it != held.end() && it->second.first > 0;
+   }
+
+   bool EquipManager::EquipWeapon(RE::FormID formID, bool leftHand, uint16_t uniqueID,
+                                  bool afterHandSwap)
    {
       if (formID == 0) {
       logger::warn("[EquipManager] Cannot equip weapon with FormID 0"sv);
@@ -218,6 +248,35 @@ namespace Huginn::Input
            weapon->GetName(), leftHand ? "right" : "left");
         equipManager->UnequipObject(player, weapon, nullptr, 1,
            GetEquipSlot(EquipHand::Right, !leftHand));
+
+        // The unequip is QUEUED, not applied. Equipping in the same call ran
+        // against a stack the engine still had marked worn, and the equip was
+        // simply lost: the player pressed once, both hands ended up empty, and
+        // an identical second press worked. Observed 2026-09-19 every time this
+        // branch ran -- 22:37:43.412 and 22:37:55.728 equipped with no readback
+        // at all, and 22:38:02.147 read the hand back as 'Flames', the spell the
+        // mace should have replaced, which then took a -3.0 misclick penalty for
+        // a choice the player never made.
+        //
+        // So let the frame end. Re-entering EquipWeapon next frame is the whole
+        // fix: by then the other hand is empty, this branch does not run, and
+        // the ordinary path equips the stack it was always going to.
+        if (!afterHandSwap) {
+           if (auto* task = SKSE::GetTaskInterface()) {
+              task->AddTask([formID, leftHand, uniqueID]() {
+                 EquipManager::GetSingleton().EquipWeapon(
+                    formID, leftHand, uniqueID, /*afterHandSwap=*/true);
+              });
+              return true;
+           }
+           logger::warn("[EquipManager] No task interface for the hand swap of '{}' — "
+             "equipping inline, which the engine may drop"sv, weapon->GetName());
+        } else {
+           // A frame was not enough. Equip inline anyway rather than bounce the
+           // retry forever; one dropped press beats a loop.
+           logger::warn("[EquipManager] '{}' is STILL in the {} hand a frame after the "
+             "unequip — equipping inline"sv, weapon->GetName(), leftHand ? "right" : "left");
+        }
       }
       }
 
@@ -255,6 +314,76 @@ namespace Huginn::Input
         // means the registry and the inventory have drifted.
         logger::debug("[EquipManager] No stack with uniqueID {} for '{}' ({:08X}); "
           "falling back to the base form"sv, uniqueID, weapon->GetName(), formID);
+      }
+      }
+
+      // A uniqueID miss is NOT evidence that the weapon is gone -- it fires for a
+      // stack still in the pack that was re-tempered, restacked or never had an
+      // ExtraUniqueID, and the base form is the right thing to equip there. Only
+      // "no stack of this form at all" is fatal, so the walk happens only on the
+      // path that already failed to resolve an instance.
+      if (!sourceInstance && !PlayerStillHolds(player, weapon)) {
+      logger::warn("[EquipManager] '{}' ({:08X}) is not in the player's inventory - "
+        "equip refused (stale recommendation)"sv, weapon->GetName(), formID);
+
+      // Clear the lock and force one recompute, so the ghost stops being
+      // displayed rather than merely refusing every press. MarkPageDirty is not
+      // optional here: clearing a lock through OnItemUsed sets remainingMs to 0
+      // without letting it DECAY through 0, so SlotLocker::Update reports no
+      // lapse, and the skip gate reads the state hash, which inventory is not
+      // part of. Nothing else in this scenario would run the pipeline again.
+      // Form-wide (uniqueID 0): nothing of this form is left, so no slot naming
+      // any stack of it can be honoured.
+      Slot::SlotLocker::GetSingleton().OnItemUsed(formID, 0, /*respectActivationLock=*/false);
+      Slot::SlotAllocator::GetSingleton().MarkPageDirty();
+
+      // The recompute only helps if the REGISTRY has also let go -- it is what
+      // candidates are generated from -- so ask for a reconcile when a record of
+      // this form is still there, and only then. Priming unconditionally would
+      // buy a 20-40 ms inventory walk per update tick from a player pressing a
+      // dead slot repeatedly, for a pass with nothing left to find. The visit is
+      // in-memory under the registry's own lock; it walks no inventory.
+      bool registryStillListsIt = false;
+      if (g_weaponRegistry) {
+      g_weaponRegistry->ForEachWeapon([&](const Weapon::InventoryWeapon& tracked) {
+        if (tracked.data.formID == formID) {
+           registryStillListsIt = true;
+           return false;  // found one; stop the visit
+        }
+        return true;
+      });
+      }
+      if (registryStillListsIt) {
+      g_registryTimers.weaponReconcile.Reset(
+        std::chrono::steady_clock::now() - std::chrono::milliseconds(
+           static_cast<int64_t>(Config::WEAPON_RECONCILE_INTERVAL_MS)));
+      }
+      return false;
+      }
+
+      // The form is still here but the named stack is not: the player asked for
+      // the tempered Iron Dagger and is about to get the plain one. Equipping it
+      // is still the better answer than a dead keypress -- they asked for a
+      // dagger and the learner is keyed on the form either way -- but the slot
+      // is now naming something that does not exist, so correct it in the same
+      // breath rather than leaving the widget to repeat the offer.
+      //
+      // Only this stack's lock goes: the copy in hand is a different stack of
+      // the same form and has every right to its own slot.
+      if (!sourceInstance && uniqueID != 0) {
+      logger::info("[EquipManager] Stack uid{} of '{}' ({:08X}) is gone; equipping another "
+        "copy and refreshing the slot"sv, uniqueID, weapon->GetName(), formID);
+
+      Slot::SlotLocker::GetSingleton().OnItemUsed(formID, uniqueID, /*respectActivationLock=*/false);
+      Slot::SlotAllocator::GetSingleton().MarkPageDirty();
+
+      // And let the registry drop the record, but only while it still has one:
+      // an unconditional prime buys a 20-40 ms inventory walk per update tick
+      // from a player pressing a slot whose stack the registry already forgot.
+      if (g_weaponRegistry && g_weaponRegistry->GetWeapon(formID, uniqueID)) {
+        g_registryTimers.weaponReconcile.Reset(
+           std::chrono::steady_clock::now() - std::chrono::milliseconds(
+            static_cast<int64_t>(Config::WEAPON_RECONCILE_INTERVAL_MS)));
       }
       }
 
@@ -396,6 +525,23 @@ namespace Huginn::Input
       auto* ammo = form->As<RE::TESAmmo>();
       if (!ammo) {
       logger::warn("[EquipManager] FormID {:08X} is not ammo"sv, formID);
+      return false;
+      }
+
+      // Same stale-recommendation guard as EquipWeapon, for the same reason: a
+      // quiver can empty between pipeline runs. Unconditional here because ammo
+      // is named by form alone -- there is no instance resolution to fall back
+      // from, so nothing else would have caught it.
+      if (!PlayerStillHolds(player, ammo)) {
+      logger::warn("[EquipManager] '{}' ({:08X}) is not in the player's inventory - "
+        "equip refused (stale recommendation)"sv, ammo->GetName(), formID);
+      // Same pairing as EquipWeapon, and needed for the same reason -- a cleared
+      // lock is not a lapse, so without this the empty quiver keeps its slot and
+      // every press refuses again. No reconcile prime: RefreshCharges zeroes the
+      // count twice a second and the affordability filter drops it from
+      // candidates, so one forced run is all this needs.
+      Slot::SlotLocker::GetSingleton().OnItemUsed(formID, 0, /*respectActivationLock=*/false);
+      Slot::SlotAllocator::GetSingleton().MarkPageDirty();
       return false;
       }
 
