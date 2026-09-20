@@ -168,7 +168,8 @@ namespace Huginn::Input
       return it != held.end() && it->second.first > 0;
    }
 
-   bool EquipManager::EquipWeapon(RE::FormID formID, bool leftHand, uint16_t uniqueID)
+   bool EquipManager::EquipWeapon(RE::FormID formID, bool leftHand, uint16_t uniqueID,
+                                  bool afterHandSwap)
    {
       if (formID == 0) {
       logger::warn("[EquipManager] Cannot equip weapon with FormID 0"sv);
@@ -247,6 +248,35 @@ namespace Huginn::Input
            weapon->GetName(), leftHand ? "right" : "left");
         equipManager->UnequipObject(player, weapon, nullptr, 1,
            GetEquipSlot(EquipHand::Right, !leftHand));
+
+        // The unequip is QUEUED, not applied. Equipping in the same call ran
+        // against a stack the engine still had marked worn, and the equip was
+        // simply lost: the player pressed once, both hands ended up empty, and
+        // an identical second press worked. Observed 2026-09-19 every time this
+        // branch ran -- 22:37:43.412 and 22:37:55.728 equipped with no readback
+        // at all, and 22:38:02.147 read the hand back as 'Flames', the spell the
+        // mace should have replaced, which then took a -3.0 misclick penalty for
+        // a choice the player never made.
+        //
+        // So let the frame end. Re-entering EquipWeapon next frame is the whole
+        // fix: by then the other hand is empty, this branch does not run, and
+        // the ordinary path equips the stack it was always going to.
+        if (!afterHandSwap) {
+           if (auto* task = SKSE::GetTaskInterface()) {
+              task->AddTask([formID, leftHand, uniqueID]() {
+                 EquipManager::GetSingleton().EquipWeapon(
+                    formID, leftHand, uniqueID, /*afterHandSwap=*/true);
+              });
+              return true;
+           }
+           logger::warn("[EquipManager] No task interface for the hand swap of '{}' — "
+             "equipping inline, which the engine may drop"sv, weapon->GetName());
+        } else {
+           // A frame was not enough. Equip inline anyway rather than bounce the
+           // retry forever; one dropped press beats a loop.
+           logger::warn("[EquipManager] '{}' is STILL in the {} hand a frame after the "
+             "unequip — equipping inline"sv, weapon->GetName(), leftHand ? "right" : "left");
+        }
       }
       }
 
