@@ -27,6 +27,7 @@
 #include "display/ExplanationLabel.h"
 #include "IniLoad.h"                   // MatchOverrideSection (override namespacing tests)
 #include "slot/SlotLocker.h"          // THROWAWAY: RunSlotLockerResetTest (0.19.21)
+#include "slot/SlotAllocator.h"       // THROWAWAY: RunSlotSeatingTest (0.20.30)
 #include "slot/SlotSettings.h"         // THROWAWAY: MAX_SLOTS_PER_PAGE for the same
 #include "override/OverrideConditions.h"  // THROWAWAY: OverrideCollection for the same
 
@@ -5667,6 +5668,123 @@ void RunSlotLockerInstanceLockTest()
 
     if (passed) {
         logger::info("  SlotLocker per-stack lock test PASSED"sv);
+    }
+#endif
+}
+
+// =============================================================================
+// THROWAWAY: slot seating keeps an item in its slot (0.20.30)
+// =============================================================================
+// Delete this block, its Tests.h declaration and its Main.cpp call site
+// together, as with the two SlotLocker backstops above.
+//
+// What it pins: allocation decides WHICH items are shown by rank, and then
+// leaves the ones that were already on screen where they were. Before seating,
+// one item leaving shifted every item below it up a slot -- the player watched
+// Flames move from key 3 to key 4 because a mace they dropped was no longer
+// being recommended (2026-09-19 log, 22:57:26).
+//
+// Drives the LIVE allocator against the LIVE page layout, so it asserts only
+// what holds for any layout: every item that survived the re-rank kept its slot
+// index. It cannot assert which indices those are -- the player's page decides
+// that -- and it skips itself if the layout is too small to show a shift.
+void RunSlotSeatingTest()
+{
+#ifndef NDEBUG
+    using namespace Huginn::Slot;
+
+    logger::info("Running slot seating (anti-juggling) test..."sv);
+
+    auto& allocator = SlotAllocator::GetSingleton();
+    allocator.Reset();  // clears seating memory; also selects page 0
+
+    // Damage spells, because DamageAny and Regular both accept them and one of
+    // those two is in every sane layout. Descending utility, as the scorer hands
+    // them over.
+    constexpr size_t kCount = 5;
+    constexpr RE::FormID kProbeBase = 0x0BADF00D;
+    auto makeList = [](size_t first) {
+        Scoring::ScoredCandidateList list;
+        for (size_t i = first; i < kCount; ++i) {
+            Candidate::SpellCandidate spell{};
+            spell.name = "SeatProbe";  // per-name dedup: must differ, set below
+            spell.formID = kProbeBase + static_cast<RE::FormID>(i);
+            spell.type = Spell::SpellType::Damage;
+            spell.tags = Spell::SpellTag::None;
+
+            Scoring::ScoredCandidate sc{};
+            sc.candidate = spell;
+            sc.utility = 10.0f - static_cast<float>(i);
+            list.push_back(sc);
+        }
+        return list;
+    };
+
+    // Names must be distinct or the allocator's name-dedup drops all but one.
+    static std::array<std::string, kCount> names;
+    for (size_t i = 0; i < kCount; ++i) {
+        names[i] = "SeatProbe" + std::to_string(i);
+    }
+    auto withNames = [&](Scoring::ScoredCandidateList list) {
+        for (auto& sc : list) {
+            const RE::FormID id = sc.GetFormID();
+            const size_t idx = static_cast<size_t>(id - kProbeBase);
+            if (idx < names.size()) {
+                std::get<Candidate::SpellCandidate>(sc.candidate).name = names[idx];
+            }
+        }
+        return list;
+    };
+
+    auto seatOf = [](const SlotAssignments& a, RE::FormID formID) -> size_t {
+        for (const auto& assignment : a) {
+            if (!assignment.IsEmpty() && assignment.formID == formID) {
+                return assignment.slotIndex;
+            }
+        }
+        return SIZE_MAX;
+    };
+
+    const auto before = allocator.AllocateSlots(withNames(makeList(0)));
+
+    // Arm check: at least two probes must actually be on screen, or a shift has
+    // nothing to shift and the test proves nothing.
+    size_t placed = 0;
+    for (size_t i = 1; i < kCount; ++i) {
+        if (seatOf(before, kProbeBase + static_cast<RE::FormID>(i)) != SIZE_MAX) {
+            ++placed;
+        }
+    }
+    if (placed < 2) {
+        logger::info("  seating test skipped: layout placed {} of {} probes "
+                     "(needs 2 survivors to show a shift)"sv, placed, kCount - 1);
+        allocator.Reset();
+        return;
+    }
+
+    // The top-ranked probe leaves -- the dropped-mace case. Everything below it
+    // moves up one place in the RANKING; none of it should move on screen.
+    const auto after = allocator.AllocateSlots(withNames(makeList(1)));
+
+    bool passed = true;
+    for (size_t i = 1; i < kCount; ++i) {
+        const RE::FormID id = kProbeBase + static_cast<RE::FormID>(i);
+        const size_t was = seatOf(before, id);
+        const size_t now = seatOf(after, id);
+        if (was == SIZE_MAX || now == SIZE_MAX) {
+            continue;  // never placed, or dropped by the re-rank: not this test's claim
+        }
+        if (was != now) {
+            logger::error("TEST FAIL: probe {} moved from slot {} to slot {} although it "
+                          "was still recommended"sv, i, was, now);
+            passed = false;
+        }
+    }
+
+    allocator.Reset();  // leave no probe seats behind for the first real tick
+
+    if (passed) {
+        logger::info("  slot seating test PASSED ({} survivors kept their slots)"sv, placed);
     }
 #endif
 }

@@ -104,6 +104,17 @@ namespace Huginn::Slot
             m_loggedMissingClassifications.clear();
             m_warnedUnplacedConditions.clear();
         }
+        {
+            // Seats are a memory of a layout that may not be the one coming
+            // back. Reset is also what a settings reload calls, and a page whose
+            // slots changed underneath would otherwise hand items back to seats
+            // that mean something else now.
+            std::lock_guard<std::mutex> seatLock(m_seatingMutex);
+            for (auto& page : m_seating) {
+                page.fill(0);
+            }
+            m_seatingGeneration = UINT32_MAX;
+        }
         SKSE::log::info("[SlotAllocator] Reset to page 0");
     }
 
@@ -557,7 +568,212 @@ namespace Huginn::Slot
             }
         }
 
+        // =======================================================================
+        // PASS 3: Seat returning items where they were (anti-juggling)
+        // =======================================================================
+        // Passes 1 and 2 decided WHICH items the player sees; this decides WHERE.
+        // Without it, one item arriving or leaving shifts every item below it by
+        // a slot -- the recommendations stay right and every key under the
+        // player's fingers changes meaning.
+        if (SlotSettings::GetSingleton().KeepSlotPositions()) {
+            const uint32_t generation = [this] {
+                std::lock_guard<std::mutex> lock(m_cacheMutex);
+                return m_cacheGeneration;
+            }();
+
+            ApplySeating(pageIndex, generation, slotConfigs, assignments, &player);
+
+            // PASS 4: refill whatever pass 3 vacated. An item moving back to its
+            // own seat can leave the slot it was sitting in empty, and a gap in
+            // the middle of the widget is a worse trade than the shuffle this
+            // whole thing exists to prevent. The dedup sets are still the ones
+            // pass 2 built, so this cannot re-place an item already on screen.
+            for (size_t k = 0; k < priorityCount; ++k) {
+                const size_t priorityIdx = priorityOrder[k];
+                auto& assignment = assignments[priorityIdx];
+                if (!assignment.IsEmpty()) continue;
+
+                const auto& config = slotConfigs[priorityIdx];
+                auto refill = FindBestCandidate(
+                    candidates, config.classification, assignedFormIDs, assignedNames,
+                    config.skipEquipped, &player, /*skipWildcards=*/!config.wildcardsEnabled);
+                if (!refill) continue;
+
+                assignment = SlotAssignment::FromCandidate(
+                    priorityIdx, config.classification, *refill,
+                    refill->isWildcard ? AssignmentType::Wildcard : AssignmentType::Normal);
+                assignedFormIDs.insert(refill->GetFormID());
+                assignedNames.insert(refill->GetName());
+            }
+
+            // PASS 5: remember the result for next time.
+            RecordSeating(pageIndex, generation, assignments);
+        }
+
         return assignments;
+    }
+
+    // =========================================================================
+    // SEATING (anti-juggling)
+    // =========================================================================
+
+    bool SlotAllocator::SlotAccepts(
+        const SlotConfig& config,
+        const SlotAssignment& assignment,
+        const State::PlayerActorState* player)
+    {
+        if (assignment.IsEmpty() || !assignment.candidate) {
+            return true;  // nothing to place; any slot will hold a gap
+        }
+        const auto& sc = *assignment.candidate;
+
+        if (!SlotClassifier::Matches(sc, config.classification)) {
+            return false;
+        }
+        if (sc.isWildcard && !config.wildcardsEnabled) {
+            return false;
+        }
+        if (config.skipEquipped) {
+            const auto& base = Candidate::GetBase(sc.candidate);
+            if (base.isEquipped) {
+                return false;
+            }
+            if (player && player->IsItemEquipped(base.formID)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    void SlotAllocator::ApplySeating(
+        size_t pageIndex,
+        uint32_t generation,
+        const std::vector<SlotConfig>& slotConfigs,
+        SlotAssignments& assignments,
+        const State::PlayerActorState* player) const
+    {
+        if (pageIndex >= MAX_PAGES) {
+            return;
+        }
+        const size_t slotCount = std::min(assignments.size(),
+            std::min(slotConfigs.size(), MAX_SLOTS_PER_PAGE));
+        if (slotCount == 0) {
+            return;
+        }
+
+        // Work on a copy: the pass reads one consistent snapshot of where things
+        // sat, and the lock is not held across the moves.
+        std::array<uint64_t, MAX_SLOTS_PER_PAGE> seats{};
+        {
+            std::lock_guard<std::mutex> lock(m_seatingMutex);
+            if (m_seatingGeneration != generation) {
+                // A layout reload happened; last pass's seats describe slots that
+                // may not mean the same thing now. Start over from this pass.
+                for (auto& page : m_seating) {
+                    page.fill(0);
+                }
+                m_seatingGeneration = generation;
+                return;
+            }
+            seats = m_seating[pageIndex];
+        }
+
+        auto keyOf = [](const SlotAssignment& a) -> uint64_t {
+            if (a.IsEmpty() || !a.candidate) return 0;
+            return Candidate::GetBase(a.candidate->candidate).GetDeduplicationKey();
+        };
+
+        // Which slot does this item want? At most one seat per key and one key
+        // per seat, so no two items can want the same slot -- the mapping is
+        // injective by construction, and nothing has to arbitrate.
+        auto seatWantedBy = [&](uint64_t key) -> size_t {
+            if (key == 0) return SIZE_MAX;
+            for (size_t j = 0; j < slotCount; ++j) {
+                if (seats[j] == key) return j;
+            }
+            return SIZE_MAX;
+        };
+
+        // An override sits where the override pass put it, which was a decision
+        // about that slot. Nothing moves it, and nothing moves into it.
+        auto movable = [&](size_t idx) {
+            return !assignments[idx].IsOverride();
+        };
+
+        auto moveTo = [&](size_t from, size_t to) {
+            assignments[to] = std::move(assignments[from]);
+            assignments[to].slotIndex = to;
+            assignments[to].classification = slotConfigs[to].classification;
+            assignments[from] = SlotAssignment::Empty(from, slotConfigs[from].classification);
+        };
+
+        // Phase 1: moves into empty seats, repeated.
+        //
+        // Repeated because the common case is a chain, not a swap: one item
+        // leaves, everything below it moves up a slot, and putting them back
+        // starts with the last one dropping into the hole at the bottom, which
+        // frees the seat the one above it wants, and so on up. One round per
+        // slot is enough for any chain, and the loop stops as soon as nothing
+        // moved.
+        for (size_t round = 0; round < slotCount; ++round) {
+            bool moved = false;
+            for (size_t i = 0; i < slotCount; ++i) {
+                if (assignments[i].IsEmpty() || !movable(i)) continue;
+
+                const size_t want = seatWantedBy(keyOf(assignments[i]));
+                if (want == SIZE_MAX || want == i || want >= slotCount) continue;
+                if (!assignments[want].IsEmpty() || !movable(want)) continue;
+                if (!SlotAccepts(slotConfigs[want], assignments[i], player)) continue;
+
+                moveTo(i, want);
+                moved = true;
+            }
+            if (!moved) break;
+        }
+
+        // Phase 2: two items holding each other's seats. A chain cannot resolve
+        // that -- neither seat is ever empty -- and it is what a pure reorder of
+        // an unchanged set looks like.
+        for (size_t i = 0; i < slotCount; ++i) {
+            if (assignments[i].IsEmpty() || !movable(i)) continue;
+
+            const size_t want = seatWantedBy(keyOf(assignments[i]));
+            if (want == SIZE_MAX || want == i || want >= slotCount) continue;
+            if (assignments[want].IsEmpty() || !movable(want)) continue;
+
+            // Only when BOTH are legal in the other's slot. Half a swap would
+            // put something in a slot its classification forbids.
+            if (!SlotAccepts(slotConfigs[want], assignments[i], player)) continue;
+            if (!SlotAccepts(slotConfigs[i], assignments[want], player)) continue;
+
+            std::swap(assignments[i], assignments[want]);
+            assignments[i].slotIndex = i;
+            assignments[i].classification = slotConfigs[i].classification;
+            assignments[want].slotIndex = want;
+            assignments[want].classification = slotConfigs[want].classification;
+        }
+    }
+
+    void SlotAllocator::RecordSeating(
+        size_t pageIndex,
+        uint32_t generation,
+        const SlotAssignments& assignments) const
+    {
+        if (pageIndex >= MAX_PAGES) {
+            return;
+        }
+        std::array<uint64_t, MAX_SLOTS_PER_PAGE> seats{};
+        const size_t slotCount = std::min(assignments.size(), MAX_SLOTS_PER_PAGE);
+        for (size_t i = 0; i < slotCount; ++i) {
+            const auto& a = assignments[i];
+            seats[i] = (a.IsEmpty() || !a.candidate)
+                ? 0
+                : Candidate::GetBase(a.candidate->candidate).GetDeduplicationKey();
+        }
+
+        std::lock_guard<std::mutex> lock(m_seatingMutex);
+        m_seatingGeneration = generation;
+        m_seating[pageIndex] = seats;
     }
 
     size_t SlotAllocator::ComputePriorityOrder(
