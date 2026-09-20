@@ -72,6 +72,31 @@ re-opening something that looks obviously undone.
       cosmetic cost that argued for (1) is now smaller than it was.
       Raised 2026-09-19.
 
+- [ ] Log noise: three sites break the rules CLAUDE.md sets for them.
+      Measured on a 13-minute LoreRim-5 session (2026-09-20, v0.20.35, 2556
+      lines, ~3.3 lines/sec overall — inside budget, but a third of it is these
+      three). Counts from
+      `grep -oE '\[[A-Za-z_]+\.(cpp|h)[ ]*:[0-9]+' log | sort | uniq -c | sort -rn`.
+      `ApparelRegistry.cpp:65` — 90 lines, and every one a repeat. The same 8
+      rejections ('Blue Mage Robes', 'Amulet of Zenithar', ...) re-print on each
+      30 s reconcile, which is "log ticks, not transitions" exactly. Wants a
+      last-value dedup so it fires when the REJECTED SET changes; a count at
+      info on change would be better than per-item at debug.
+      `ItemClassifier.cpp:488` and `:321` — 249 lines in one burst at registry
+      build, two per item ([PopulateItemTags] and [DetermineFortifySkillType]).
+      These are per-item registration lines and the rule for those is `trace`,
+      with a summary count at info.
+      `WeaponClassifier.cpp:121` — 'Unknown weapon type 0 for weapon: Unarmed'
+      three times. WeaponRegistry marks the form rejected and says "won't
+      retry", but the guard is in AddWeapon and the line is logged from the
+      classify path upstream of it, so the two disagree about whether a retry
+      happened. Small, and the 3-per-session rate makes it cosmetic, but it is
+      a guard that does not cover what it claims to.
+      None of this is new; it surfaced because a LoreRim inventory is big enough
+      for the per-item paths to show up in a log-source histogram, where a
+      simonrim-essentials save is not.
+      Raised 2026-09-20.
+
 ## Known Mod Compatability Issues
 - [ ] Vanilla-build integration pass — a set of contexts is only ever exercised
       on the Requiem-based list this is developed against, so anything vanilla
