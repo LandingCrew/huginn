@@ -68,14 +68,36 @@ namespace Huginn::Weapon
       m_ammo.reserve(std::min(scannedAmmo.size(), Config::MAX_TRACKED_AMMO));
       m_ammoIndex.reserve(m_ammo.capacity());
 
-      // Add all inventory weapons (AddWeapon assumes lock is held by caller)
+      // Add all inventory weapons (AddWeapon assumes lock is held by caller).
+      //
+      // Same key-collision guard as ReconcileWeapons: two stacks of one form
+      // with no ExtraUniqueID between them share a key, and without this the
+      // two paths disagreed about which one survives -- reconcile kept the
+      // first, rebuild kept whichever the scan reached last. Raised in review
+      // of #122.
+      std::unordered_set<uint64_t> seenKeys;
+      seenKeys.reserve(scannedWeapons.size());
+      size_t keyCollisions = 0;
+
       for (const auto& sw : scannedWeapons) {
       if (m_weapons.size() >= Config::MAX_TRACKED_WEAPONS) {
         logger::warn("Weapon registry at max capacity ({})"sv, Config::MAX_TRACKED_WEAPONS);
         break;
       }
 
+      if (sw.weapon &&
+          !seenKeys.insert(MakeWeaponKey(sw.weapon->GetFormID(), sw.uniqueID)).second) {
+        ++keyCollisions;
+        continue;
+      }
+
       AddWeapon(sw);
+      }
+
+      if (keyCollisions > 0) {
+      logger::debug("[WeaponRegistry] {} scanned stacks shared a registry key "
+                     "(no ExtraUniqueID to separate them); kept the first of each"sv,
+        keyCollisions);
       }
 
       // Add all ammo (AddAmmo assumes lock is held by caller)
@@ -703,6 +725,12 @@ namespace Huginn::Weapon
       logger::info("=== Weapon Registry ({} weapons, {} ammo) ==="sv,
       m_weapons.size(), m_ammo.size());
 
+      // Every line here is info, including the per-item rows, which used to be
+      // debug. Release pins the logger to info (Main.cpp), so `hg status` --
+      // whose whole purpose is reading uid and temper off a live session --
+      // printed a header, a footer and nothing between them on exactly the
+      // build where it is most wanted. Not a per-tick log: this only runs when
+      // someone types the command. Raised in review of #122.
       logger::info("--- Weapons ---"sv);
       for (const auto& weapon : m_weapons) {
       // uid and the temper pair are the whole point of this log now: two lines
@@ -710,7 +738,7 @@ namespace Huginn::Weapon
       // instances, which is what could not happen before. And printing base
       // beside effective damage is how the temper model gets checked against
       // the number the game shows in the inventory.
-      logger::debug("  {} ({:08X}/uid{}): dmg={:.1f} (base {:.1f} x{:.2f}), tags={:08X}, fav={}, eq={}, charge={:.0f}%"sv,
+      logger::info("  {} ({:08X}/uid{}): dmg={:.1f} (base {:.1f} x{:.2f}), tags={:08X}, fav={}, eq={}, charge={:.0f}%"sv,
         weapon.data.name,
         weapon.data.formID,
         weapon.data.uniqueID,
@@ -725,7 +753,7 @@ namespace Huginn::Weapon
 
       logger::info("--- Ammo ---"sv);
       for (const auto& ammo : m_ammo) {
-      logger::debug("  {}: x{}, dmg={:.1f}, ench={}"sv,
+      logger::info("  {}: x{}, dmg={:.1f}, ench={}"sv,
         ammo.data.name,
         ammo.count,
         ammo.data.baseDamage,
@@ -799,15 +827,22 @@ namespace Huginn::Weapon
       // where the base form answers "Iron Mace" -- and the widget said the
       // latter for an item the player owns exactly one of.
       //
-      // Not purely a read: for a tempered stack that has no
-      // ExtraTextDisplayData yet, the engine creates one and attaches it. That
-      // is what the game itself does the first time the item is drawn in a
-      // menu, and there is no other way to reach the suffix. It is gated on the
-      // two extras that can make a name differ from the base form, so a plain
-      // stack is never touched.
-      const bool canDifferFromBase =
-        sw.temperFactor != 1.0f || extraList->HasType<RE::ExtraTextDisplayData>();
-      if (resolveName && canDifferFromBase) {
+      // Gated on the stack ALREADY having ExtraTextDisplayData, which makes
+      // this a pure read. Without the gate, CommonLib's GetDisplayName does
+      //     if (!xText && !dfHealth) { xText = new ExtraTextDisplayData(); Add(xText); }
+      // -- a game-data write, into the player's save, from whichever thread the
+      // update loop is (an InputEvent sink; UpdateHandler::RunExclusive exists
+      // because the console is a DIFFERENT thread, so "it is the main thread"
+      // is not something this codebase can currently assert). Not worth the
+      // hazard for a string.
+      //
+      // The cost of the gate is close to zero in practice: the engine attaches
+      // that data the first time the item is drawn in any menu, and the
+      // grindstone that tempered it is such a menu. If it is ever genuinely
+      // absent we show the base-form name for that session, which is the old
+      // behaviour, rather than writing to a save from an unproven thread.
+      // Raised in review of #122.
+      if (resolveName && extraList->HasType<RE::ExtraTextDisplayData>()) {
         const char* shown = extraList->GetDisplayName(weapon);
         const char* base = weapon->GetName();
         if (shown && *shown && (!base || std::string_view{ shown } != base)) {
@@ -1020,8 +1055,16 @@ namespace Huginn::Weapon
       if (it != m_weaponIndex.end()) {
       logger::debug("[WeaponRegistry] Stack {:08X}/uid{} already registered, updating status"sv,
         formID, sw.uniqueID);
-      m_weapons[it->second].isFavorited = sw.isFavorited;
-      m_weapons[it->second].isEquipped = sw.isEquipped;
+      // OR, never assign. Reaching here means two scanned stacks collided on
+      // one key, which only happens when neither has an ExtraUniqueID to tell
+      // them apart -- and then a plain remainder arriving second would clear
+      // the favorited/equipped flags the starred stack set, dropping the
+      // weapon out of the favorites-gated candidate pool until the next
+      // reconcile. Merging upward keeps the truer answer: if EITHER stack of
+      // this form is starred or in hand, the record says so. Raised in review
+      // of #122.
+      m_weapons[it->second].isFavorited |= sw.isFavorited;
+      m_weapons[it->second].isEquipped |= sw.isEquipped;
       return true;
       }
 

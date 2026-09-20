@@ -22,12 +22,6 @@ namespace Huginn::Learning
 
    void FeatureBanditLearner::Update(RE::FormID formID, const StateFeatures& features, float reward)
    {
-      // Tell the pipeline it has something new to say. Set before the work
-      // rather than after: the flag only causes an extra pipeline run, so
-      // setting it early and having the run read slightly newer weights is
-      // harmless, while a late set could be missed by a run already in flight.
-      m_weightsChanged.store(true, std::memory_order_release);
-
       // Compute feature array outside lock (pure computation, no shared state)
       auto phi = features.ToArray();
 
@@ -55,6 +49,20 @@ namespace Huginn::Learning
 
       logger::trace("Learner update: item={:08X}, reward={:.2f}, error={:.3f}, est {:.3f}->{:.3f}"sv,
          formID, reward, error, prediction, DotProduct(w, phi));
+
+      // AFTER the weights are written, never before. The two orderings fail
+      // differently and only one of them fails safe:
+      //   late set  -> a run already in flight misses it, the flag stays set,
+      //                and the next 100 ms tick forces another run. Costs one
+      //                extra pass.
+      //   early set -> the pipeline can see the flag, CLEAR it, and then score
+      //                against the pre-update weights, because this function
+      //                has not applied them yet. The reward is then never
+      //                published until something unrelated moves the hash --
+      //                which is precisely the bug the latch exists to fix.
+      // The first version of this had it backwards, with a comment arguing the
+      // race away. Raised in review of #122.
+      m_weightsChanged.store(true, std::memory_order_release);
    }
 
    size_t FeatureBanditLearner::MaybeDecayBatch(
