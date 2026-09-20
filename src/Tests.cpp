@@ -5695,6 +5695,15 @@ void RunSlotSeatingTest()
 
     logger::info("Running slot seating (anti-juggling) test..."sv);
 
+    // The behaviour under test is a setting, and a player who turned it off is
+    // not running a broken build. Without this the test asserted seating against
+    // an allocator told not to seat, and failed four times in a row in a log
+    // that was otherwise clean (2026-09-19 23:11:59, bKeepSlotPositions = 0).
+    if (!SlotSettings::GetSingleton().KeepSlotPositions()) {
+        logger::info("  seating test skipped: bKeepSlotPositions is off in this INI"sv);
+        return;
+    }
+
     auto& allocator = SlotAllocator::GetSingleton();
     allocator.Reset();  // clears seating memory; also selects page 0
 
