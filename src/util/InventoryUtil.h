@@ -10,8 +10,22 @@ namespace Huginn::Util
     // produce duplicate TESBoundObject* entries, which causes an assertion failure
     // in CommonLibSSE-NG's GetInventory() (TESObjectREFR.cpp:339, `it.second`).
     //
-    // This reimplements the same logic but uses try_emplace + count accumulation
-    // instead of assert-guarded emplace.
+    // This reimplements the same logic with try_emplace instead of assert-guarded
+    // emplace.
+    //
+    // DUPLICATE SEMANTICS: the first entry wins and later entries for the same
+    // object are counted as nothing. That is what upstream does -- emplace keeps
+    // the first and drops the rest -- and, more importantly, it is what the GAME
+    // does, which is the number the player sees in their inventory menu.
+    //
+    // This helper used to SUM them, and that was a bug with a face on it. A
+    // LoreRim player's Iron Sword (00012EB7, 2026-09-20): base container 1 from
+    // starting gear, first changes entry -1 for having got rid of it, and a
+    // duplicate entry saying +1. The engine answers 1 + (-1) = 0, and
+    // `player.getitemcount 00012EB7` printed 0.00 while Huginn summed all three
+    // to 1 and kept recommending a sword that did not exist. Equipping it left
+    // an empty hand, and the "do you still hold this" guard in EquipWeapon could
+    // not help, because it asks this function.
     //
     // RETIRE WHEN: CommonLibSSE-NG's TESObjectREFR::GetInventory() no longer
     // asserts on duplicate TESBoundObject* entries (the upstream assert at
@@ -71,9 +85,10 @@ namespace Huginn::Util
                             entry->countDelta,
                             std::make_unique<RE::InventoryEntryData>(*entry)));
                     if (!inserted) {
-                        // Duplicate — accumulate count, keep first entry
+                        // Duplicate — keep the first entry AND its count. The
+                        // duplicate's delta is deliberately NOT added; see the
+                        // note on duplicate semantics above the function.
                         const int32_t before = it->second.first;
-                        it->second.first += entry->countDelta;
 
                         auto trail = std::find_if(duplicates.begin(), duplicates.end(),
                             [&](const DuplicateTrail& t) { return t.obj == entry->object; });
@@ -166,7 +181,7 @@ namespace Huginn::Util
                 }
 
                 logger::warn("[Inventory] {} ({:08X}) appears {}x in the changes list: "
-                    "first={} others={} extraLists={} base={}{} -> callers see {}",
+                    "first={} ignored={} extraLists={} base={}{} -> callers see {}",
                     t.obj->GetName(), formID, t.entries, t.firstDelta, t.extraDeltas,
                     t.extraLists, t.baseCount, t.leveledSkip ? " (leveled, base skipped)" : "",
                     total);
