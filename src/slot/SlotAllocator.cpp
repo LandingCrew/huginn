@@ -792,37 +792,59 @@ namespace Huginn::Slot
 
         std::array<uint64_t, MAX_SLOTS_PER_PAGE> seats{};
 
-        // An override is a guest. The slot still belongs to whatever was living
-        // there, so its claim carries over untouched and the override takes no
-        // seat of its own.
+        // The rule is one sentence: you keep your seat for as long as you are on
+        // screen, and you only get a new one if you do not have one.
+        //
+        // Stated the other way round -- "record where everything ended up" --
+        // every reason an item could not reach its seat this pass became a
+        // permanent move. An override pins a slot, the item that lives there is
+        // placed elsewhere, and recording that spot as its new home means the
+        // override clears and seating then holds it in the wrong place for good.
+        // The cascade is worse than the direct case and was visible in the same
+        // play-test: the mace an override displaced took the bow's slot, and the
+        // BOW -- which no override ever touched -- was the one that lost its
+        // seat (2026-09-19, 23:31:23 to 23:31:26).
+
+        // Anyone on screen but not in their own seat keeps the claim they had.
+        // Override guests included: the potion is still on screen, so the slot it
+        // normally lives in is still its slot, waiting for the override to end.
         for (size_t i = 0; i < slotCount; ++i) {
-            if (assignments[i].IsOverride()) {
-                seats[i] = previous[i];
+            const uint64_t key = keyOf(assignments[i]);
+            if (key == 0) {
+                continue;
+            }
+            const size_t home = previousSeatOf(key);
+            if (home != SIZE_MAX && home != i) {
+                seats[home] = key;
             }
         }
 
+        // Anyone sitting in their own seat keeps it, and an item with no seat at
+        // all takes the one it is sitting in -- unless someone displaced still
+        // owns it. An override guest claims nothing: it is passing through, and
+        // its own seat was preserved above.
+        //
+        // Both loops write at most one slot per key and one key per slot, so the
+        // map stays injective, which is what lets ApplySeating assume no two
+        // items can want the same slot.
         for (size_t i = 0; i < slotCount; ++i) {
             if (assignments[i].IsOverride()) {
-                continue;  // handled above
+                continue;
             }
             const uint64_t key = keyOf(assignments[i]);
             if (key == 0) {
-                continue;  // empty slot: no claim, and nothing to preserve
-            }
-
-            // Displaced, not rehomed: this item has a seat, ApplySeating could
-            // not give it back because an override is sitting in it, and where it
-            // is standing instead is not where it lives. Leaving this slot
-            // unclaimed also keeps the map injective -- the key is already
-            // recorded at its real seat by the override pass above.
-            const size_t home = previousSeatOf(key);
-            if (home != SIZE_MAX && home != i && home < slotCount &&
-                assignments[home].IsOverride()) {
                 continue;
             }
-
-            seats[i] = key;
+            const size_t home = previousSeatOf(key);
+            if (home == i) {
+                seats[i] = key;
+            } else if (home == SIZE_MAX && seats[i] == 0) {
+                seats[i] = key;
+            }
         }
+
+        // An item that left the screen entirely is in neither loop, so its seat
+        // is simply not carried over -- which is how a seat is ever freed.
 
         m_seatingGeneration = generation;
         m_seating[pageIndex] = seats;

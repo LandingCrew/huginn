@@ -283,13 +283,13 @@ namespace Huginn::Slot
         /// page. Called after the refill, so an item that has just arrived gets
         /// a seat of its own straight away.
         ///
-        /// An override slot keeps the seat of whatever normally lives there, and
-        /// the item the override displaced keeps its claim on it rather than
-        /// taking a new seat where it is standing. Otherwise one low-health
-        /// potion would permanently rehome the item it pushed aside -- the
-        /// override clears, the displaced item's seat now says "where I was
-        /// pushed to", and seating holds it there for good. Overrides fire
-        /// routinely, so that is the feature quietly undoing itself.
+        /// The rule is: you keep your seat for as long as you are on screen, and
+        /// you only get a new one if you do not have one. Recording where things
+        /// ENDED UP instead would turn every reason an item could not reach its
+        /// seat into a permanent move -- an override pins a slot for a second,
+        /// and the item that lives there is rehomed for the rest of the session.
+        /// That applies just as much to the item displaced by the displaced one,
+        /// which no override ever touched.
         void RecordSeating(
             size_t pageIndex,
             uint32_t generation,
