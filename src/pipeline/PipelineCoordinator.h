@@ -175,7 +175,7 @@ namespace Huginn::Pipeline
         [[nodiscard]] bool NeedsForcedRun() const noexcept
         {
             return m_wasElementalDamageActive || m_wasFalling || m_wasUnderwater ||
-                   m_reasonHold.IsHolding();
+                   m_reasonHold.IsHolding() || LearnerWeightsChanged();
         }
 
         /// Drop everything that describes the character being unloaded. The held
@@ -228,6 +228,13 @@ namespace Huginn::Pipeline
         /// (folds into the skip decision).
         bool ResolveDisplayPage(PipelineContext& ctx);
         bool CheckHashSkip(PipelineContext& ctx, bool pageChanged);
+
+        /// The fifth latch (see NeedsForcedRun): the learner was rewarded since
+        /// the last committed run, so the ranking has moved even though no
+        /// sensor did. Out of line so this header need not pull in Globals.h.
+        /// Non-consuming — BOTH skip gates ask, and only the run itself clears
+        /// it, in CheckHashSkip's commit path.
+        [[nodiscard]] static bool LearnerWeightsChanged() noexcept;
         void LogStateTransition(PipelineContext& ctx);
         void EnrichElementalDamage(PipelineContext& ctx);
         void ScoreCandidates(PipelineContext& ctx);

@@ -531,7 +531,7 @@ namespace Huginn::UI
             if (weapon->type == Weapon::WeaponType::Bow ||
                 weapon->type == Weapon::WeaponType::Crossbow) {
                 // Ranged: total damage (bow + arrow) + ammo count
-                int totalDmg = static_cast<int>(weapon->baseDamage + playerState.equippedAmmoDamage);
+                int totalDmg = static_cast<int>(weapon->damage + playerState.equippedAmmoDamage);
                 detail = std::format("{} dmg", totalDmg);
                 int32_t count = (weapon->type == Weapon::WeaponType::Bow)
                     ? playerState.arrowCount : playerState.boltCount;
@@ -560,7 +560,7 @@ namespace Huginn::UI
             }
             else {
                 // Melee: damage + optional charge
-                detail = std::format("{} dmg", static_cast<int>(weapon->baseDamage));
+                detail = std::format("{} dmg", static_cast<int>(weapon->damage));
                 if (weapon->hasEnchantment) {
                     detail += std::format(" \xC2\xB7 {}%",
                         static_cast<int>(weapon->GetChargePercent() * 100));

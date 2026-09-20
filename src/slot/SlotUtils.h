@@ -122,17 +122,21 @@ namespace Huginn::Slot
                 return UI::SlotContent::Potion(name, formID);
 
             case Candidate::SourceType::Weapon:
-                // Check if melee or ranged
+                // Check if melee or ranged. uniqueID travels with the weapon
+                // for the same reason it does with apparel below: the registry
+                // tracks inventory stacks, so a recommendation can be about the
+                // tempered Iron Dagger specifically, and EquipWeapon has to be
+                // told which one rather than left to the engine.
                 if (candidate.Is<Candidate::WeaponCandidate>()) {
                     const auto& weapon = candidate.As<Candidate::WeaponCandidate>();
                     if (Weapon::HasTag(weapon.tags, Weapon::WeaponTag::Ranged)) {
-                        return UI::SlotContent::RangedWeapon(name, formID);
+                        return UI::SlotContent::RangedWeapon(name, formID, candidate.GetUniqueID());
                     }
                 }
-                return UI::SlotContent::MeleeWeapon(name, formID);
+                return UI::SlotContent::MeleeWeapon(name, formID, candidate.GetUniqueID());
 
             case Candidate::SourceType::Staff:
-                return UI::SlotContent::RangedWeapon(name, formID);
+                return UI::SlotContent::RangedWeapon(name, formID, candidate.GetUniqueID());
 
             case Candidate::SourceType::Ammo:
                 return UI::SlotContent::Ammo(name, formID);

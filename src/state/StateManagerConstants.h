@@ -25,6 +25,30 @@ namespace Huginn::State
       inline constexpr float ALLY_DETECTION_RANGE = 512.0f;
       inline constexpr float ALLY_DETECTION_RANGE_SQ = ALLY_DETECTION_RANGE * ALLY_DETECTION_RANGE;
 
+      // Release margin — the gap that makes the range a BAND rather than an edge.
+      //
+      // Acquisition and the prune used the same 512 threshold, so a townsperson
+      // standing near it was added on one poll and pruned on the next, flipping
+      // AllyStatus None<->Present at the poll rate. Observed 2026-09-19: four
+      // transitions in 1.1 s (20:23:57.322 through 20:23:58.470), each one
+      // re-running the whole pipeline to produce an identical result and
+      // logging an info-level "State transition — scoring" line for it.
+      //
+      // Same shape as OverrideConditions' activationThreshold + hysteresisGap,
+      // which is the only other place in the codebase that had this right:
+      // engage at the threshold, disengage past it.
+      //
+      // Why 128 (a quarter of the ally range): wide enough that an NPC standing
+      // still cannot jitter across it, narrow enough that walking out of range
+      // still drops within a stride. It is applied to the hostile/follower 2048
+      // range too — the same zero-gap edge exists there and simply has not been
+      // caught flapping yet.
+      inline constexpr float RANGE_RELEASE_MARGIN = 128.0f;
+      inline constexpr float ALLY_RELEASE_RANGE_SQ =
+         (ALLY_DETECTION_RANGE + RANGE_RELEASE_MARGIN) * (ALLY_DETECTION_RANGE + RANGE_RELEASE_MARGIN);
+      inline constexpr float DETECTION_RELEASE_RANGE_SQ =
+         (DETECTION_RANGE + RANGE_RELEASE_MARGIN) * (DETECTION_RANGE + RANGE_RELEASE_MARGIN);
+
       // Last seen timeout (seconds)
       // Why 3.0f: Remove targets not seen for 3 seconds (likely out of range/dead)
       inline constexpr float LAST_SEEN_TIMEOUT = 3.0f;

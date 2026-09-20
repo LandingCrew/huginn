@@ -126,9 +126,45 @@ namespace Huginn::Scoring
         // Comparison operators (for sorting)
         // ---------------------------------------------------------------------
 
-        // Sort by utility descending (higher utility = better)
+        // DPS for the tie-break below: damage x attack speed, and 0 for
+        // anything that is not a weapon.
+        //
+        // Zero rather than "skip the comparison for non-weapons", which would
+        // break strict weak ordering: two tied weapons would order against each
+        // other while each compared equal to a tied spell, and std::sort on an
+        // intransitive comparator is undefined. Ordering on the pair
+        // (utility, dps) with dps 0 off-weapon is a proper lexicographic
+        // ordering. The cost is that a spell tying a weapon exactly loses the
+        // tie -- arbitrary, but it was arbitrary before too.
+        [[nodiscard]] float TieBreakDps() const noexcept {
+            const auto* weapon = TryAs<Candidate::WeaponCandidate>();
+            return weapon ? weapon->damage * weapon->speed : 0.0f;
+        }
+
+        // Sort by utility descending (higher utility = better), then by DPS.
+        //
+        // The tie-break exists because two instances of ONE base form score
+        // IDENTICALLY. The learner is keyed on FormID so they share a weight
+        // vector, the context weight is a property of the form, and
+        // CalculateWeaponPrior does not look at damage at all -- so a tempered
+        // Iron Dagger and a plain one come out equal to the last bit and the
+        // sort order alone decided which one the player was offered. Observed
+        // 2026-09-19: u=0.768 for both, with the plain one shown at 19:56 and
+        // the tempered one at 20:13.
+        //
+        // Exact float equality, deliberately, not an epsilon. An epsilon
+        // comparison is not transitive (a~b, b~c, a<c), which is undefined
+        // behaviour in std::sort. Exact is also all that is needed: the two
+        // instances reach this point through identical arithmetic on identical
+        // inputs, so they are bitwise equal.
+        //
+        // No durability in this game, so the better copy of a weapon is always
+        // the one to want; there is no reason to ration it.
         bool operator<(const ScoredCandidate& other) const noexcept {
-            return utility > other.utility;
+            if (utility != other.utility) {
+                return utility > other.utility;
+            }
+            return TieBreakDps() > other.TieBreakDps();
         }
 
         bool operator==(const ScoredCandidate& other) const noexcept {

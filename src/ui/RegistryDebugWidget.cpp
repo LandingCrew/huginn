@@ -578,10 +578,10 @@ namespace Huginn::UI
         ++fresh.favoritedCount;
       }
       auto consider = [&weapon](BestEntrySnap& slot) {
-        if (weapon.data.baseDamage > slot.value) {
+        if (weapon.data.damage > slot.value) {
            slot.valid = true;
            slot.name = weapon.data.name;
-           slot.value = weapon.data.baseDamage;
+           slot.value = weapon.data.damage;
            slot.hasEnchantment = weapon.data.hasEnchantment;
            slot.charge = weapon.data.currentCharge;
         }

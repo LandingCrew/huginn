@@ -737,7 +737,9 @@ void RunWeaponRegistryTests()
     if (weaponCount > 0) {
         const auto& allWeapons = g_weaponRegistry->GetAllWeapons();
         auto testFormID = allWeapons[0].data.formID;
-        auto* weaponData = g_weaponRegistry->GetWeapon(testFormID);
+        // FormID AND uniqueID: the registry keys on the stack, not the form,
+        // so a tempered weapon is not findable by its base form alone.
+        auto* weaponData = g_weaponRegistry->GetWeapon(testFormID, allWeapons[0].data.uniqueID);
 
         if (!weaponData) {
             logger::error("TEST FAIL: GetWeapon failed for valid FormID {:08X}"sv, testFormID);
@@ -778,7 +780,7 @@ void RunWeaponRegistryTests()
 
     for (const auto* weapon : silverWeapons) {
         logger::debug("  Silver weapon: {} (dmg={:.1f})"sv,
-            weapon->data.name, weapon->data.baseDamage);
+            weapon->data.name, weapon->data.damage);
     }
 
     // Test 7: Verify enchanted weapon detection
@@ -796,12 +798,12 @@ void RunWeaponRegistryTests()
     auto* bestMelee = g_weaponRegistry->GetBestMeleeWeapon();
     if (bestMelee) {
         logger::info("TEST INFO: Best melee weapon: {} (dmg={:.1f})"sv,
-            bestMelee->data.name, bestMelee->data.baseDamage);
+            bestMelee->data.name, bestMelee->data.damage);
 
         // Verify it's actually the highest
         bool isHighest = true;
         for (const auto* weapon : meleeWeapons) {
-            if (weapon->data.baseDamage > bestMelee->data.baseDamage) {
+            if (weapon->data.damage > bestMelee->data.damage) {
                 isHighest = false;
                 logger::error("TEST FAIL: Found melee weapon with higher damage than GetBestMeleeWeapon"sv);
                 break;
@@ -816,7 +818,7 @@ void RunWeaponRegistryTests()
     auto* bestRanged = g_weaponRegistry->GetBestRangedWeapon();
     if (bestRanged) {
         logger::info("TEST INFO: Best ranged weapon: {} (dmg={:.1f})"sv,
-            bestRanged->data.name, bestRanged->data.baseDamage);
+            bestRanged->data.name, bestRanged->data.damage);
     }
 
     // Test 10: Verify ammo accessors
@@ -856,11 +858,64 @@ void RunWeaponRegistryTests()
 
     // Test 13: Verify weapon type classification
     for (const auto& weapon : g_weaponRegistry->GetAllWeapons()) {
-        logger::debug("  Weapon: {} type={} tags={:08X} dmg={:.1f}"sv,
+        logger::debug("  Weapon: {} ({:08X}/uid{}) type={} tags={:08X} dmg={:.1f}"sv,
             weapon.data.name,
+            weapon.data.formID,
+            weapon.data.uniqueID,
             Weapon::WeaponTypeToString(weapon.data.type),
             std::to_underlying(weapon.data.tags),
-            weapon.data.baseDamage);
+            weapon.data.damage);
+    }
+
+    // Test 15: Instance identity - one entry per inventory STACK
+    //
+    // The registry used to hold one record per base form, so a tempered Iron
+    // Dagger and a plain one could not both exist and the survivor's uniqueID,
+    // name, damage and equipped flag came from whichever the scan reached last.
+    // Two things prove the fix from inside the game: no two entries may share a
+    // Key(), and a form the player carries two distinguishable copies of must
+    // appear twice.
+    {
+        std::unordered_set<uint64_t> keys;
+        std::unordered_map<RE::FormID, size_t> perForm;
+        bool duplicateKey = false;
+
+        for (const auto& weapon : g_weaponRegistry->GetAllWeapons()) {
+            if (!keys.insert(weapon.Key()).second) {
+                logger::error("TEST FAIL: two entries share key {:08X}/uid{}"sv,
+                    weapon.data.formID, weapon.data.uniqueID);
+                duplicateKey = true;
+            }
+            ++perForm[weapon.data.formID];
+        }
+
+        if (!duplicateKey) {
+            logger::info("TEST PASS: every registry entry has a distinct key"sv);
+        }
+
+        // Not a pass/fail — it depends on what the player happens to carry.
+        //
+        // And on the LOAD PATH it reads 0 whatever the player carries: this
+        // suite runs on kPostLoadGame, where extraLists are still unreadable
+        // and the registry holds one degraded uid-0 record per base form. The
+        // primed short-retry reconcile a second later is what fans them out.
+        // Observed 2026-09-19: this printed 0, and the reconcile at
+        // 19:46:01.906 then reported +6/4 for the same seven stacks.
+        //
+        // So a 0 here is not evidence of anything. `hg status` dumps the live
+        // registry mid-session, which is where instance tracking is actually
+        // read off.
+        size_t multiInstanceForms = 0;
+        for (const auto& [formID, count] : perForm) {
+            if (count > 1) {
+                ++multiInstanceForms;
+                logger::info("TEST INFO: form {:08X} tracked as {} separate instances"sv,
+                    formID, count);
+            }
+        }
+        logger::info("TEST INFO: {} base forms carry more than one tracked instance "
+                     "(0 is expected on the load path - use `hg status` mid-session)"sv,
+            multiInstanceForms);
     }
 
     // Test 14: Log all weapons for manual verification

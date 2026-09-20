@@ -98,8 +98,11 @@ namespace Huginn::Input
       /// Use a potion by FormID
       bool UsePotion(RE::FormID formID);
 
-      /// Equip a weapon by FormID
-      bool EquipWeapon(RE::FormID formID, bool leftHand = false);
+      /// Equip a weapon by FormID and ExtraUniqueID
+      /// @param uniqueID Which inventory stack to draw; 0 lets the engine choose.
+      ///        The registry tracks stacks, not base forms, so a recommendation
+      ///        can name the tempered copy of a weapon the player owns twice.
+      bool EquipWeapon(RE::FormID formID, bool leftHand = false, uint16_t uniqueID = 0);
 
       /// Equip ammo (arrow/bolt) by FormID
       bool EquipAmmo(RE::FormID formID);

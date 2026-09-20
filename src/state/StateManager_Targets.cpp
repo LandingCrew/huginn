@@ -69,11 +69,16 @@ namespace Huginn::State
       }
       // Remove if out of detection range - apply differentiated ranges (v0.6.12)
       // Followers/hostiles: 2048 range, Non-follower allies: 512 range
+      //
+      // RELEASE radius, not the acquisition radius. Pruning at the same 512 an
+      // ally is acquired at is what made the boundary flap: added on one poll,
+      // dropped on the next, for an NPC doing nothing but standing there. See
+      // TargetTracking::RANGE_RELEASE_MARGIN.
       else {
-        float maxRangeSq = (target.isHostile || target.isFollower)
-                               ? TargetTracking::DETECTION_RANGE_SQ
-                               : TargetTracking::ALLY_DETECTION_RANGE_SQ;
-        if (target.distanceToPlayerSq > maxRangeSq) {
+        float releaseRangeSq = (target.isHostile || target.isFollower)
+                               ? TargetTracking::DETECTION_RELEASE_RANGE_SQ
+                               : TargetTracking::ALLY_RELEASE_RANGE_SQ;
+        if (target.distanceToPlayerSq > releaseRangeSq) {
            toRemove.push_back(target.actorFormID);
         }
       }
@@ -281,9 +286,11 @@ namespace Huginn::State
             float dx = actorPos.x - playerPos.x;
             float dy = actorPos.y - playerPos.y;
 
-            // Quick 2D distance rejection
+            // Quick 2D distance rejection, at the RELEASE range so the
+            // hysteresis below is reachable at all (same correction as the
+            // ally loop; see RANGE_RELEASE_MARGIN).
             float distSq2D = dx * dx + dy * dy;
-            if (distSq2D > TargetTracking::DETECTION_RANGE_SQ) [[likely]] {
+            if (distSq2D > TargetTracking::DETECTION_RELEASE_RANGE_SQ) [[likely]] {
               continue;
             }
 
@@ -291,7 +298,7 @@ namespace Huginn::State
             float dz = actorPos.z - playerPos.z;
             float distSq = distSq2D + dz * dz;
 
-            if (distSq > TargetTracking::DETECTION_RANGE_SQ) {
+            if (distSq > TargetTracking::DETECTION_RELEASE_RANGE_SQ) {
               continue;
             }
 
@@ -301,6 +308,16 @@ namespace Huginn::State
             }
 
             RE::FormID formID = actor->GetFormID();
+
+            // Acquire at 2048, hold to 2176. PruneStaleTargets releases
+            // hostiles at the wider radius, so without the matching hold here
+            // an enemy at 2100 would stop refreshing lastSeenTime and die to
+            // LAST_SEEN_TIMEOUT 3 s later carrying a stale distance -- the
+            // acquire/prune disagreement this margin exists to remove.
+            if (distSq > TargetTracking::DETECTION_RANGE_SQ &&
+                m_targets.Find(formID) == nullptr) {
+              continue;
+            }
 
             // Track closest hostile for Priority 2 fallback
             if (distSq < closestHostileDistSq) {
@@ -529,21 +546,27 @@ namespace Huginn::State
             }
 
             // --- Opt 2: Coarse distance gate BEFORE IsHostileToActor ---
-            // Use DETECTION_RANGE_SQ as a cheap upper bound. Actors beyond max
-            // possible range fail here without the expensive faction check.
+            // Use the RELEASE range as the cheap upper bound, not the
+            // acquisition range. Gating at DETECTION_RANGE_SQ made the
+            // teammate hysteresis below unreachable -- nothing past 2048 ever
+            // got far enough to be offered the 2176 release radius, so a
+            // tracked follower drifting to 2100 stopped refreshing
+            // lastSeenTime and died to LAST_SEEN_TIMEOUT three seconds later,
+            // which is the exact failure the hysteresis was added to prevent.
+            // Raised in review of #122.
             RE::NiPoint3 allyPos = ally->GetPosition();
             float dx = allyPos.x - playerPos.x;
             float dy = allyPos.y - playerPos.y;
 
             float distSq2D = dx * dx + dy * dy;
-            if (distSq2D > TargetTracking::DETECTION_RANGE_SQ) [[likely]] {
+            if (distSq2D > TargetTracking::DETECTION_RELEASE_RANGE_SQ) [[likely]] {
               return false;
             }
 
             float dz = allyPos.z - playerPos.z;
             float distSq = distSq2D + dz * dz;
 
-            if (distSq > TargetTracking::DETECTION_RANGE_SQ) {
+            if (distSq > TargetTracking::DETECTION_RELEASE_RANGE_SQ) {
               return false;
             }
 
@@ -554,14 +577,26 @@ namespace Huginn::State
 
             // Apply tighter range for non-followers after hostility check
             bool isTeammate = ally->IsPlayerTeammate();
-            float maxRangeSq = isTeammate ? TargetTracking::DETECTION_RANGE_SQ
+            RE::FormID allyFormID = ally->GetFormID();
+
+            // Hysteresis: acquire at the detection range, hold to the release
+            // range. The prune below uses the same wider radius, so the two
+            // agree; relaxing only the prune would not help, because an ally
+            // that stops being re-acquired stops refreshing lastSeenTime and
+            // dies to LAST_SEEN_TIMEOUT three seconds later instead.
+            const bool alreadyTracked = m_targets.Find(allyFormID) != nullptr;
+            float maxRangeSq;
+            if (isTeammate) {
+              maxRangeSq = alreadyTracked ? TargetTracking::DETECTION_RELEASE_RANGE_SQ
+                                          : TargetTracking::DETECTION_RANGE_SQ;
+            } else {
+              maxRangeSq = alreadyTracked ? TargetTracking::ALLY_RELEASE_RANGE_SQ
                                           : TargetTracking::ALLY_DETECTION_RANGE_SQ;
+            }
 
             if (distSq > maxRangeSq) {
               return false;
             }
-
-            RE::FormID allyFormID = ally->GetFormID();
 
             if (m_processedAllies.contains(allyFormID)) {
               return false;

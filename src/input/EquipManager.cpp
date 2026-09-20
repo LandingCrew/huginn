@@ -139,7 +139,7 @@ namespace Huginn::Input
       return true;
    }
 
-   bool EquipManager::EquipWeapon(RE::FormID formID, bool leftHand)
+   bool EquipManager::EquipWeapon(RE::FormID formID, bool leftHand, uint16_t uniqueID)
    {
       if (formID == 0) {
       logger::warn("[EquipManager] Cannot equip weapon with FormID 0"sv);
@@ -221,11 +221,48 @@ namespace Huginn::Input
       }
       }
 
-      // Equip the weapon
-      equipManager->EquipObject(player, weapon, nullptr, 1, equipSlot);
+      // Resolve the SPECIFIC stack the widget offered, exactly as EquipApparel
+      // does. A player who carries a tempered Iron Dagger and a plain one has
+      // two registry entries and the recommendation is about one of them; with
+      // only the form to go on, EquipObject draws whichever it finds first and
+      // the widget's promise quietly does not hold.
+      //
+      // uniqueID == 0 means the recommendation was not about a particular
+      // instance (plain stock, or a stack the game never assigned one), and the
+      // engine's own choice is then the right one.
+      RE::ExtraDataList* sourceInstance = nullptr;
+      if (uniqueID != 0) {
+      auto* invChanges = player->GetInventoryChanges();
+      if (invChanges && invChanges->entryList) {
+        for (auto* entry : *invChanges->entryList) {
+           if (!entry || entry->object != weapon || !entry->extraLists) continue;
+           for (auto* extraList : *entry->extraLists) {
+              if (!extraList) continue;
+              auto* extraUnique = extraList->GetByType<RE::ExtraUniqueID>();
+              if (extraUnique && extraUnique->uniqueID == uniqueID) {
+                 sourceInstance = extraList;
+                 break;
+              }
+           }
+           if (sourceInstance) break;
+        }
+      }
 
-      logger::info("[EquipManager] Equipped weapon '{}' to {} hand (FormID: {:08X}, slot {:08X})"sv,
-      weapon->GetName(), leftHand ? "left" : "right", formID,
+      if (!sourceInstance) {
+        // Not fatal: the stack may have been dropped, sold or re-tempered since
+        // the pipeline last ran. Equipping the base form is closer to what the
+        // player asked for than doing nothing, but say so -- a run of these
+        // means the registry and the inventory have drifted.
+        logger::debug("[EquipManager] No stack with uniqueID {} for '{}' ({:08X}); "
+          "falling back to the base form"sv, uniqueID, weapon->GetName(), formID);
+      }
+      }
+
+      // Equip the weapon
+      equipManager->EquipObject(player, weapon, sourceInstance, 1, equipSlot);
+
+      logger::info("[EquipManager] Equipped weapon '{}' to {} hand (FormID: {:08X}/uid{}, slot {:08X})"sv,
+      weapon->GetName(), leftHand ? "left" : "right", formID, uniqueID,
       equipSlot ? equipSlot->GetFormID() : 0);
 
       // Debug: what the engine put in hand (may lag the async equip)
@@ -648,13 +685,19 @@ namespace Huginn::Input
       {
         switch (hand) {
         case EquipHand::Right:
-           success = EquipWeapon(content.formID, false);
+           success = EquipWeapon(content.formID, false, content.uniqueID);
            break;
         case EquipHand::Left:
-           success = EquipWeapon(content.formID, true);
+           success = EquipWeapon(content.formID, true, content.uniqueID);
            break;
         case EquipHand::Both:
-           success = EquipWeapon(content.formID, false) && EquipWeapon(content.formID, true);
+           // Both calls name the same stack. When the player owns only one
+           // copy that is the duplication case EquipWeapon already guards by
+           // taking it off the other hand first; naming the instance does not
+           // change that, it just stops the second call picking a different
+           // copy than the first.
+           success = EquipWeapon(content.formID, false, content.uniqueID) &&
+                     EquipWeapon(content.formID, true, content.uniqueID);
            break;
         }
       }

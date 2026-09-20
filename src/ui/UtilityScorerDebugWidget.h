@@ -131,7 +131,12 @@ namespace Huginn::UI
         std::vector<Learning::UsageEvent> m_cachedUsageSnapshot;   // GUARDED_BY(m_mutex)
         std::vector<std::string> m_cachedUsageNames;               // GUARDED_BY(m_mutex) owned, index-aligned with m_cachedUsageSnapshot
         uint32_t m_cachedContextHash = 0;                          // GUARDED_BY(m_mutex)
-        bool m_isVisible = true;  // Visible by default in Debug builds
+        bool m_isVisible = false;  // OFF until DebugSettings says otherwise.
+        // Must match DebugDefaults::UTILITY_SCORER_VISIBLE. It did not: the
+        // default here was true while the setting default was false, so the
+        // widget rendered over the main menu and the whole loading sequence
+        // and only went away at kPostLoadGame, when ApplyToWidgets() finally
+        // ran -- or never, for a player with no dMenu INI to load.
         size_t m_maxDisplay = 10; // Max total candidates to cache
         size_t m_candidatesPerSlot = 3;  // Runners-up shown per slot section
 

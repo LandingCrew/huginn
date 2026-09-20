@@ -103,7 +103,8 @@ namespace Huginn::Candidate
 
         candidate.type = data.type;
         candidate.tags = data.tags;
-        candidate.baseDamage = data.baseDamage;
+        candidate.damage = data.damage;
+        candidate.speed = data.speed;
         candidate.hasEnchantment = data.hasEnchantment;
         candidate.currentCharge = data.currentCharge;
         candidate.maxCharge = data.maxCharge;

@@ -166,14 +166,25 @@ namespace Huginn::Weapon
 
    struct WeaponData
    {
-      RE::FormID formID = 0;       // Unique weapon form ID
-      uint16_t uniqueID = 0;       // ExtraUniqueID for Wheeler (identifies specific inventory instance)
-      std::string name;            // Weapon name for display
+      RE::FormID formID = 0;       // Weapon BASE form ID - shared by every instance
+      uint16_t uniqueID = 0;       // ExtraUniqueID of THIS inventory stack (0 if it has none)
+      std::string name;            // Display name - the stack's own if it was tempered or renamed
       WeaponType type = WeaponType::Unknown;   // Primary type classification
       WeaponTag tags = WeaponTag::None;        // Contextual tags (bitflags)
 
       // Combat stats
-      float baseDamage = 0.0f;     // Base damage (unmodified by perks/skills)
+      //
+      // Three fields rather than one because tempering is per-INSTANCE while
+      // classification is per-base-form. The classifier only ever sees the base
+      // form, so it fills baseDamage; the registry multiplies in the temper
+      // factor it read off this stack's ExtraHealth.
+      //
+      // Rank and display on `damage`. baseDamage exists so a re-temper can
+      // recompute without a reclassify, and so the log can print both - which is
+      // how the temper model gets checked against what the game shows.
+      float baseDamage = 0.0f;     // Base form's damage, before tempering
+      float temperFactor = 1.0f;   // ExtraHealth on this stack; 1.0 = untempered
+      float damage = 0.0f;         // baseDamage x temperFactor - the effective number
       float speed = 1.0f;          // Attack speed multiplier
       float reach = 1.0f;          // Reach multiplier
 
@@ -186,12 +197,15 @@ namespace Huginn::Weapon
       [[nodiscard]] std::string ToString() const
       {
       return std::format(
-        "WeaponData[id={:08X}, name='{}', type={}, tags={:08X}, dmg={:.1f}, spd={:.2f}, ench={}, charge={:.0f}%]",
+        "WeaponData[id={:08X}/uid={}, name='{}', type={}, tags={:08X}, dmg={:.1f} (base {:.1f} x{:.2f}), spd={:.2f}, ench={}, charge={:.0f}%]",
         formID,
+        uniqueID,
         name,
         WeaponTypeToString(type),
         std::to_underlying(tags),
+        damage,
         baseDamage,
+        temperFactor,
         speed,
         hasEnchantment,
         currentCharge * 100.0f);
@@ -245,12 +259,43 @@ namespace Huginn::Weapon
    // Unlike items, weapons don't have "counts" but track enchantment charge.
    // =============================================================================
 
+   /// The registry key for one inventory stack, packed from the pair that
+   /// identifies it. InventoryWeapon::Key() is the same expression; this exists
+   /// for the callers that hold a formID and a uniqueID but no entry yet.
+   [[nodiscard]] inline constexpr uint64_t MakeWeaponKey(RE::FormID formID, uint16_t uniqueID) noexcept
+   {
+      return (static_cast<uint64_t>(uniqueID) << 32) | static_cast<uint64_t>(formID);
+   }
+
    struct InventoryWeapon
    {
       WeaponData data;             // Classification data
       bool isFavorited = false;    // Is in favorites menu
       bool isEquipped = false;     // Currently equipped
       float previousCharge = 0.0f; // Charge at last poll (for delta detection)
+
+      /// Registry key. ONE ENTRY PER INVENTORY STACK, not per base form.
+      ///
+      /// A tempered Iron Mace and a plain one are both formID 0x1399C, and
+      /// keying on the form alone collapsed them into a single record whose
+      /// instance fields - name, damage, charge, uniqueID, isEquipped - were
+      /// whichever instance the scan resolved last. The Wheeler push keys on
+      /// uniqueID, so that record could hand Wheeler the uid of the copy the
+      /// player did not want.
+      ///
+      /// Same layout as InventoryApparel::Key() and
+      /// CandidateBase::GetDeduplicationKey(), deliberately: the three have to
+      /// agree on what counts as one thing.
+      ///
+      /// The LEARNER does not, and that is a decision rather than an oversight.
+      /// FeatureBanditLearner is keyed on FormID alone, so both Iron Daggers
+      /// share one weight vector. Tempering does not change what a weapon is
+      /// FOR, and splitting the weights would halve the evidence behind each
+      /// one and reset a weapon's learned preference every time the player
+      /// visits a grindstone. Identity is per stack; preference is per form.
+      [[nodiscard]] uint64_t Key() const noexcept {
+      return MakeWeaponKey(data.formID, data.uniqueID);
+      }
 
       [[nodiscard]] std::string ToString() const
       {

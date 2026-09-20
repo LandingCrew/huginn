@@ -139,7 +139,14 @@ namespace Huginn::Candidate
     {
         Weapon::WeaponType type = Weapon::WeaponType::Unknown;
         Weapon::WeaponTag tags = Weapon::WeaponTag::None;
-        float baseDamage = 0.0f;
+        // Effective damage for THIS inventory stack: the base form's number
+        // with its tempering multiplied in. Not the base form's damage, which
+        // is the same for a pristine Iron Sword and a Legendary one.
+        float damage = 0.0f;
+        // Attack-speed multiplier off the base form. Carried only so the
+        // ranking tie-break can talk about DPS rather than raw damage; nothing
+        // else reads it. See ScoredCandidate::TieBreakDps().
+        float speed = 1.0f;
         float currentCharge = 0.0f;  // 0.0-1.0 for enchanted weapons (charge/maxCharge)
         float maxCharge = 0.0f;
         bool hasEnchantment = false;

@@ -233,7 +233,22 @@ bool PipelineCoordinator::CheckHashSkip(PipelineContext& ctx, bool pageChanged)
     m_wasElementalDamageActive = ctx.elementalDamageActive;
     m_wasFalling = ctx.fallingActive;
     m_wasUnderwater = ctx.underwaterActive;
+
+    // Commit point for the learner latch: everything below this line scores and
+    // publishes, so whatever reward set the flag is about to reach the widget.
+    // Cleared here rather than in NeedsForcedRun() because that one is asked by
+    // both gates and by neither exclusively — a consuming read there would let
+    // the outer gate eat the flag and the inner gate skip anyway.
+    if (g_featureBanditLearner) {
+        g_featureBanditLearner->ClearWeightsChanged();
+    }
+
     return false;  // Don't skip
+}
+
+bool PipelineCoordinator::LearnerWeightsChanged() noexcept
+{
+    return g_featureBanditLearner && g_featureBanditLearner->WeightsChanged();
 }
 
 // -----------------------------------------------------------------------------

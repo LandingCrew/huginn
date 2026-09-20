@@ -6,48 +6,69 @@ once its entry leaves this file. Git history is the only record; check it before
 re-opening something that looks obviously undone.
 
 ## Known Bugs
-- [ ] WeaponRegistry keeps one record per BASE FORM, so a tempered instance and
-      an untempered one cannot both exist and the record's instance fields
-      thrash between them.
-      The collapse is in the SCAN, not the index. `Util::GetInventorySafe`
-      returns `RE::TESObjectREFR::InventoryItemMap`, keyed by `TESBoundObject*`
-      -- one entry per base form (WeaponRegistry.cpp:283-308) -- and
-      `ExtractWeaponMetadata` (:713-731) then walks every extraList on that
-      entry keeping the LAST ExtraUniqueID and ExtraCharge it sees. So only one
-      ScannedWeapon per base form is ever produced, and re-keying
-      `m_weaponIndex` on `(uniqueID << 32) | formID` by itself would change
-      nothing. The scan has to emit one record per ExtraDataList first.
-      Observed 2026-09-19 on the simonrim profile, inventory vs registry:
-        Iron Dagger (dam 4) AND "Iron Dagger - Okay" (dam 6)  -> one entry, dmg=4.0
-        Iron Sword  (dam 8) AND "Iron Sword - Okay"  (dam 9)  -> one entry, dmg=7.0
-        "Iron Mace - Okay"  (dam 11), the ONLY mace owned     -> "Iron Mace", dmg=9.0
-      Seven weapons carried, five in the registry.
-      Four defects, and the Mace shows the first three are separable: with only
-      ONE instance there is nothing to collapse, yet name and damage are still
-      the base form's.
-      1. COLLAPSE. One record per base form; the other instance is unreachable.
-      2. NAME. `weapon->GetName()` answers the base form. The tempered name is
-         in ExtraTextDisplayData, which is what the player reads. The widget
-         says "Iron Mace" for an item the game calls "Iron Mace - Okay".
-      3. DAMAGE. The prior ranks base damage, so both instances score the same
-         and Huginn can recommend the WORSE one from the same pack.
-      4. THRASH -- the one with a gameplay-visible wrong ACTION rather than a
-         wrong label. ReconcileWeapons (:376-388) overwrites the single
-         record's isFavorited, isEquipped, uniqueID and charge from whichever
-         instance the scan resolved last, every reconcile. Since the Wheeler
-         push keys on uniqueID (the uid-less filter from #118), Huginn can hand
-         Wheeler a uid pointing at the instance the player did not want; a
-         wrong isEquipped can offer an equipped weapon or suppress an unequipped
-         one in the candidate filter.
-      Smaller than the apparel work it resembles: weapons ALREADY have the
-      ExtraUniqueID plumbing (WeaponData.h:170, populated at
-      WeaponRegistry.cpp:728 and threaded through AddWeapon/ReconcileWeapons for
-      the Wheeler push). Only the composite key and the per-ExtraDataList
-      records remain -- two of #65's three parts, not three.
-      The learner is FormID-keyed too, so both instances share one weight
-      vector. That half may be right -- tempering does not change what a weapon
-      is FOR -- and should be decided rather than inherited.
+- [ ] WeaponData::damage is not the number the game shows, and never was.
+      The TEMPER half is verified: `hg status` on 2026-09-19 read ExtraHealth
+      1.10 for all three "- Okay" weapons, giving 9.0->9.9, 7.0->7.7,
+      4.0->4.4, and the relative order within a base form is now right.
+      The ABSOLUTE number is not: the player's inventory showed 11, 9 and 6
+      for those same three. The gap is the skill/perk term -- the UNTEMPERED
+      Iron Sword already read 7.0 here against the game's 8 -- so it predates
+      instance tracking and is unchanged by it.
+      It matters in exactly one place: the widget's "N dmg" detail text,
+      which claims to be what the player would see. Ranking does not care,
+      since every comparison it makes is between two numbers with the same
+      term missing. Fixing it means asking the actor rather than the form.
       Raised 2026-09-19.
+
+- [ ] AllyStatus still flaps, 57% less than it did, and nothing reads it.
+      `RANGE_RELEASE_MARGIN` (acquire at 512, release at 640) killed the
+      pathological case -- four `Ally:None<->Present` transitions inside 1.1 s,
+      caused by acquisition and the prune testing the same threshold. Matched
+      quiet-town logs: 12 transitions in 266 s before, 11 in 565 s after, so
+      0.045/s -> 0.020/s.
+      What survives is two 0.31 s pairs (2026-09-19, 20:52:53.014->.324 and
+      20:55:09.174->.487). Distance cannot explain them: crossing the 128-unit
+      margin that fast needs ~413 units/s, about a sprint. So it is either a
+      running NPC or something that is not distance at all -- `Get3D()` going
+      null, the actor leaving `highActorHandles`, hostility flickering. A
+      distance band structurally cannot cover those.
+      Each one costs a full pipeline pass (~1.8 ms, 68% of it the Wheeler push)
+      to produce an identical result, for a field with NO CONSUMER: `allyStatus`
+      is written by `StateEvaluator.cpp:54` and read only by
+      `GameState::GetHash`, `ToString` and the diff. No ContextRuleEngine rule,
+      no learner feature, no candidate filter.
+      Two ways to finish it, if it is ever worth finishing. Drop `allyStatus`
+      from the hash until a rule needs it -- all 11 go, including the two the
+      band cannot catch. Or add a time-based hold like
+      `CrosshairHysteresis::PERSISTENCE_TIMEOUT_SEC`, which covers every cause
+      and keeps the signal honest for a future ally-aware rule, at the price of
+      more code for something nothing reads.
+      Deliberately left: 57% was judged enough, because the crosshair target now
+      dwarfs it (below).
+      Raised 2026-09-19.
+
+- [ ] The crosshair target is the dominant state flap, and it may not be a bug.
+      Same two logs: `Dist:Ranged<->Melee, Target:None<->Humanoid` went from 6 of
+      19 transitions (0.023/s) to 34 of 46 (0.060/s) -- 74% of all state
+      transitions, and the rise is camera movement, not a regression.
+      The primary target is whatever the crosshair is on
+      (`StateManager_Targets.cpp`, Priority 1, NO hostility filter; the
+      closest-hostile fallback is gated behind `if (inCombat)`). Sticky window is
+      `PERSISTENCE_TIMEOUT_SEC = 0.3f`, sized for raycast jitter rather than for
+      looking away. So standing in a town and sweeping the view across
+      townspeople re-scores the whole pipeline on every pass of the crosshair.
+      The visible effect is mild -- two adjacent widget rows trading places, same
+      six items, roughly 7 times in 4 minutes -- and the user reported not
+      noticing it in play. And it is arguably CORRECT: the crosshair is the
+      player pointing at something.
+      Recorded because it is where the remaining churn lives, and because the
+      three candidate framings should be decided rather than drifted into:
+      (1) correct as-is, the cost is cosmetic; (2) out of combat, a non-hostile
+      should need dwell time before it becomes the primary target; (3) slot
+      assignment should be sticky even when the ranking is not -- an item already
+      in a slot and still in the top N keeps its slot.
+      Raised 2026-09-19.
+
 ## Known Mod Compatability Issues
 - [ ] Vanilla-build integration pass — a set of contexts is only ever exercised
       on the Requiem-based list this is developed against, so anything vanilla
