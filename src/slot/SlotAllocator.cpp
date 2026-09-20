@@ -745,23 +745,43 @@ namespace Huginn::Slot
         // Phase 2: two items holding each other's seats. A chain cannot resolve
         // that -- neither seat is ever empty -- and it is what a pure reorder of
         // an unchanged set looks like.
-        for (size_t i = 0; i < slotCount; ++i) {
-            if (assignments[i].IsEmpty() || !movable(i)) continue;
+        //
+        // Repeated, for the same reason phase 1 is. The sweep runs top to bottom
+        // and a swap can throw an item BELOW the index it has already passed,
+        // where nothing comes back for it: seen 2026-09-19 23:53:38, where the
+        // potion swapping home to slot 7 put the Iron Sword in slot 4, the
+        // dagger swapping home to 4 then put the sword in 6, and the sword --
+        // whose seat was 5, free of anything but a newcomer -- sat in the wrong
+        // slot for 3.5 s until an unrelated pipeline run picked it up.
+        //
+        // It terminates: a swap only ever fires when the item at `i` can reach
+        // its OWN seat, and the seat map is injective, so the item it displaces
+        // was not in its own seat to begin with (that slot belongs to the mover)
+        // and is not put into one by being moved. Every swap therefore increases
+        // the number of items sitting in their own seat by at least one, and
+        // that number cannot exceed the slot count.
+        for (size_t round = 0; round < slotCount; ++round) {
+            bool swapped = false;
+            for (size_t i = 0; i < slotCount; ++i) {
+                if (assignments[i].IsEmpty() || !movable(i)) continue;
 
-            const size_t want = seatWantedBy(keyOf(assignments[i]));
-            if (want == SIZE_MAX || want == i || want >= slotCount) continue;
-            if (assignments[want].IsEmpty() || !movable(want)) continue;
+                const size_t want = seatWantedBy(keyOf(assignments[i]));
+                if (want == SIZE_MAX || want == i || want >= slotCount) continue;
+                if (assignments[want].IsEmpty() || !movable(want)) continue;
 
-            // Only when BOTH are legal in the other's slot. Half a swap would
-            // put something in a slot its classification forbids.
-            if (!SlotAccepts(slotConfigs[want], assignments[i], player)) continue;
-            if (!SlotAccepts(slotConfigs[i], assignments[want], player)) continue;
+                // Only when BOTH are legal in the other's slot. Half a swap would
+                // put something in a slot its classification forbids.
+                if (!SlotAccepts(slotConfigs[want], assignments[i], player)) continue;
+                if (!SlotAccepts(slotConfigs[i], assignments[want], player)) continue;
 
-            std::swap(assignments[i], assignments[want]);
-            assignments[i].slotIndex = i;
-            assignments[i].classification = slotConfigs[i].classification;
-            assignments[want].slotIndex = want;
-            assignments[want].classification = slotConfigs[want].classification;
+                std::swap(assignments[i], assignments[want]);
+                assignments[i].slotIndex = i;
+                assignments[i].classification = slotConfigs[i].classification;
+                assignments[want].slotIndex = want;
+                assignments[want].classification = slotConfigs[want].classification;
+                swapped = true;
+            }
+            if (!swapped) break;
         }
     }
 
