@@ -79,6 +79,20 @@ namespace Huginn::Slot
         /// Get all pages (returns copy for thread safety)
         [[nodiscard]] std::vector<PageConfig> GetAllPages() const;
 
+        /// Whether an item that is still recommended should keep the slot it
+        /// was in, instead of being re-seated by rank every pass.
+        ///
+        /// Read from `[SlotLocker] bKeepSlotPositions`, which is a section this
+        /// class otherwise has nothing to do with. It lives there because it is
+        /// the same concern the rest of that section configures -- stability of
+        /// what the player is looking at -- and because SlotSettings is the one
+        /// thing every allocation path already consults, so it hot-reloads with
+        /// the layout and needs no second wiring.
+        [[nodiscard]] bool KeepSlotPositions() const noexcept
+        {
+            return m_keepSlotPositions.load(std::memory_order_acquire);
+        }
+
         /// Monotonic generation counter — bumped on every config change
         /// (LoadFromFile / ResetToDefaults). Consumers can cache config copies
         /// and cheaply detect staleness without re-copying every access.
@@ -93,6 +107,7 @@ namespace Huginn::Slot
         mutable std::shared_mutex m_mutex;
         std::vector<PageConfig> m_pages;
         std::atomic<uint32_t> m_generation{0};
+        std::atomic<bool> m_keepSlotPositions{true};
 
         /// Parse classification string to enum (logs warning on error, returns Regular)
         [[nodiscard]] static SlotClassification ParseClassification(const std::string& str);

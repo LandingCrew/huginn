@@ -448,6 +448,7 @@ static void InitializeGameSystems(bool isNewGame)
         RunOverrideNamespaceTests();      // Huginn_Overrides.ini section namespacing
         RunSlotLockerResetTest();         // THROWAWAY (0.19.21): Reset() field completeness
         RunSlotLockerInstanceLockTest();  // THROWAWAY (0.20.28): per-stack lock breaking
+        RunSlotSeatingTest();             // THROWAWAY (0.20.30): anti-juggling seating
         logger::info("Debug build ready. Console command functions available for hotkey integration"sv);
     }
 #endif
