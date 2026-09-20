@@ -373,12 +373,19 @@ static void MaintainRegistries(RE::PlayerCharacter* player,
                 }
 
                 // Break any lock still pinning a form the player no longer owns,
-                // then force one recompute. Mirrors the item/scroll delta scan
-                // above; respectActivationLock for the same reason it does —
-                // a just-activated item keeps its deliberate 10 s hold.
+                // then force one recompute.
+                //
+                // respectActivationLock=false, where the item/scroll scan above
+                // passes true, because the two are not the same event. There, an
+                // activation lock is exactly the case to protect: the player drank
+                // the potion they just activated, and the 10 s hold is deliberate.
+                // Here the form has LEFT the inventory — a weapon activated and
+                // then dropped, sold or stashed would otherwise hold its slot for
+                // the rest of the hold, refusing every press (EquipManager) and
+                // showing something the player cannot use. A departure is not a use.
                 for (RE::FormID formID : departedForms) {
                     Slot::SlotLocker::GetSingleton().OnItemUsed(
-                        formID, /*respectActivationLock=*/true);
+                        formID, /*respectActivationLock=*/false);
                 }
                 if (weaponSetChanged) {
                     Slot::SlotAllocator::GetSingleton().MarkPageDirty();

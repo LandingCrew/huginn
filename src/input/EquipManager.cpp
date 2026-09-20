@@ -2,6 +2,7 @@
 #include "Config.h"
 #include "Globals.h"
 #include "learning/EquipSourceTracker.h"
+#include "slot/SlotAllocator.h"
 #include "slot/SlotLocker.h"
 #include "util/InventoryUtil.h"
 
@@ -295,14 +296,36 @@ namespace Huginn::Input
       logger::warn("[EquipManager] '{}' ({:08X}) is not in the player's inventory - "
         "equip refused (stale recommendation)"sv, weapon->GetName(), formID);
 
-      // Let go of the slot and make the registry look, instead of leaving the
-      // ghost pressable for the rest of the reconcile interval. The primed pass
-      // removes the record; the update loop's departed-form hook then breaks any
-      // remaining lock and forces the recompute that drops it from the widget.
+      // Clear the lock and force one recompute, so the ghost stops being
+      // displayed rather than merely refusing every press. MarkPageDirty is not
+      // optional here: clearing a lock through OnItemUsed sets remainingMs to 0
+      // without letting it DECAY through 0, so SlotLocker::Update reports no
+      // lapse, and the skip gate reads the state hash, which inventory is not
+      // part of. Nothing else in this scenario would run the pipeline again.
       Slot::SlotLocker::GetSingleton().OnItemUsed(formID, /*respectActivationLock=*/false);
+      Slot::SlotAllocator::GetSingleton().MarkPageDirty();
+
+      // The recompute only helps if the REGISTRY has also let go -- it is what
+      // candidates are generated from -- so ask for a reconcile when a record of
+      // this form is still there, and only then. Priming unconditionally would
+      // buy a 20-40 ms inventory walk per update tick from a player pressing a
+      // dead slot repeatedly, for a pass with nothing left to find. The visit is
+      // in-memory under the registry's own lock; it walks no inventory.
+      bool registryStillListsIt = false;
+      if (g_weaponRegistry) {
+      g_weaponRegistry->ForEachWeapon([&](const Weapon::InventoryWeapon& tracked) {
+        if (tracked.data.formID == formID) {
+           registryStillListsIt = true;
+           return false;  // found one; stop the visit
+        }
+        return true;
+      });
+      }
+      if (registryStillListsIt) {
       g_registryTimers.weaponReconcile.Reset(
         std::chrono::steady_clock::now() - std::chrono::milliseconds(
            static_cast<int64_t>(Config::WEAPON_RECONCILE_INTERVAL_MS)));
+      }
       return false;
       }
 
@@ -454,7 +477,13 @@ namespace Huginn::Input
       if (!PlayerStillHolds(player, ammo)) {
       logger::warn("[EquipManager] '{}' ({:08X}) is not in the player's inventory - "
         "equip refused (stale recommendation)"sv, ammo->GetName(), formID);
+      // Same pairing as EquipWeapon, and needed for the same reason -- a cleared
+      // lock is not a lapse, so without this the empty quiver keeps its slot and
+      // every press refuses again. No reconcile prime: RefreshCharges zeroes the
+      // count twice a second and the affordability filter drops it from
+      // candidates, so one forced run is all this needs.
       Slot::SlotLocker::GetSingleton().OnItemUsed(formID, /*respectActivationLock=*/false);
+      Slot::SlotAllocator::GetSingleton().MarkPageDirty();
       return false;
       }
 
