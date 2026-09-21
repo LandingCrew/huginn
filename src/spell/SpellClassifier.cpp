@@ -51,6 +51,22 @@ namespace Huginn::Spell
       data.type = *override->type;
       } else {
       data.type = DetermineSpellType(spell, primaryEffect);  // API-based
+
+      // A script effect is a closed door: no archetype, no actor value, nothing
+      // to read. When one is merely the COSTLIEST effect it hides the rest of
+      // the spell, so try again with the costliest effect that is not a script.
+      // 66 of the 157 script-primary spells in the 2026-09-21 dump have such an
+      // effect; the other 91 are script all the way down and stay Unknown, which
+      // is the honest answer for them.
+      if (data.type == SpellType::Unknown && primaryEffect &&
+          primaryEffect->GetArchetype() == RE::EffectSetting::Archetype::kScript) {
+        if (auto* readable = GetCostliestNonScriptEffect(spell)) {
+           if (auto* setting = readable->baseEffect) {
+            data.type = DetermineSpellType(spell, setting);
+           }
+        }
+      }
+
       if (data.type == SpellType::Unknown) {
         data.type = DeriveSpellTypeFromTags(data.tags, data.tagsExt);  // Tag-based fallback
       }
@@ -124,11 +140,11 @@ namespace Huginn::Spell
       return SpellType::Damage;
       }
 
-      // Defensive: Alteration armor spells (DamageResist)
-      if (school == MagicSchool::Alteration && !isHostile) {
-      if (primaryEffect->data.primaryAV == RE::ActorValue::kDamageResist) {
-        return SpellType::Defensive;
-      }
+      // Defensive: armor spells (DamageResist), whatever school casts them.
+      // Alteration is the vanilla home of Stoneflesh and friends; overhauls put
+      // wards and barriers in Restoration and Conjuration too.
+      if (!isHostile && primaryEffect->data.primaryAV == RE::ActorValue::kDamageResist) {
+      return SpellType::Defensive;
       }
 
       // Debuff: Hostile Illusion spells
@@ -136,17 +152,103 @@ namespace Huginn::Spell
       return SpellType::Debuff;
       }
 
-      // Buff: Non-hostile self-targeted spells with buff archetypes
-      if (!isHostile && spell->GetDelivery() == RE::MagicSystem::Delivery::kSelf) {
-      if (archetype == RE::EffectSetting::Archetype::kInvisibility ||
-          archetype == RE::EffectSetting::Archetype::kCloak) {
-        return SpellType::Buff;
+      // =====================================================================
+      // ARCHETYPE RULES
+      // =====================================================================
+      // Everything above keys on school or on one archetype at a time, which
+      // left 375 of the 1,106 spells a LoreRim player can LEARN with no type at
+      // all (2026-09-21, `hg dump spells`). Grouping those by archetype showed
+      // the gap is not subtle: the rules were written for vanilla Destruction
+      // and never extended to the archetypes an overhaul actually uses. Counts
+      // below are that measurement, and are what each rule is worth.
+      //
+      // An untyped spell is not dropped -- it is ranked without a type -- so the
+      // cost of all this was quietly bad ordering rather than anything visible.
+      switch (archetype) {
+      // --- what the value-modifier family means, once school is not the test ---
+      //
+      // A hostile spell that moves the target's HEALTH is a damage spell, and
+      // 70 of the 375 were exactly that: Restoration sun damage, Alteration
+      // rock spells, Conjuration life-drain. The old rule asked for
+      // school == Destruction, which is where vanilla happens to keep them.
+      case RE::EffectSetting::Archetype::kValueModifier:
+      case RE::EffectSetting::Archetype::kDualValueModifier:
+      case RE::EffectSetting::Archetype::kPeakValueModifier:
+      {
+      const auto av = primaryEffect->data.primaryAV;
+      if (isHostile) {
+        return (av == RE::ActorValue::kHealth) ? SpellType::Damage : SpellType::Debuff;
       }
+      if (av == RE::ActorValue::kHealth) {
+        return SpellType::Healing;  // also caught above; harmless and clearer here
+      }
+      // Fortify anything: magicka, stamina, carry weight, speed, a skill.
+      // ~40 spells, and the reason "Fortify Carry Weight" had no type.
+      return SpellType::Buff;
       }
 
-      // Utility: Light archetype
-      if (archetype == RE::EffectSetting::Archetype::kLight) {
-      return SpellType::Utility;
+      // Hazards are placed, then hurt whoever walks in -- runes, ash clouds,
+      // fire walls. All 15 in the dump read non-hostile, because the hazard does
+      // the harm and the spell that spawns it does not, so hostility is the
+      // wrong question to ask of them.
+      case RE::EffectSetting::Archetype::kSpawnHazard:
+        return SpellType::Damage;
+
+      // Absorb takes from the target and gives to the caster. It is damage with
+      // a rider, and ranking it as damage is what a player expects.
+      case RE::EffectSetting::Archetype::kAbsorb:
+        return SpellType::Damage;
+
+      // --- things done TO an enemy that are not damage ---
+      case RE::EffectSetting::Archetype::kParalysis:
+      case RE::EffectSetting::Archetype::kStagger:
+      case RE::EffectSetting::Archetype::kDisarm:
+      case RE::EffectSetting::Archetype::kBanish:
+      case RE::EffectSetting::Archetype::kTurnUndead:
+      case RE::EffectSetting::Archetype::kCalm:
+      case RE::EffectSetting::Archetype::kDemoralize:
+      case RE::EffectSetting::Archetype::kFrenzy:
+      case RE::EffectSetting::Archetype::kGrabActor:
+      case RE::EffectSetting::Archetype::kConcussion:
+        return SpellType::Debuff;
+
+      // --- things done FOR yourself or an ally ---
+      case RE::EffectSetting::Archetype::kRally:          // courage, call to arms
+      case RE::EffectSetting::Archetype::kEnhanceWeapon:  // elemental weapon coatings
+      case RE::EffectSetting::Archetype::kInvisibility:
+      case RE::EffectSetting::Archetype::kCloak:
+      case RE::EffectSetting::Archetype::kNightEye:
+      case RE::EffectSetting::Archetype::kEtherealize:
+      case RE::EffectSetting::Archetype::kSlowTime:
+      case RE::EffectSetting::Archetype::kDisguise:
+        return SpellType::Buff;
+
+      // --- things that put another body on the field ---
+      case RE::EffectSetting::Archetype::kReanimate:
+      case RE::EffectSetting::Archetype::kBoundWeapon:
+      case RE::EffectSetting::Archetype::kCommandSummoned:
+        return SpellType::Summon;
+
+      // --- things that act on the world rather than on a fight ---
+      case RE::EffectSetting::Archetype::kLight:
+      case RE::EffectSetting::Archetype::kDetectLife:
+      case RE::EffectSetting::Archetype::kTelekinesis:
+      case RE::EffectSetting::Archetype::kOpen:
+      case RE::EffectSetting::Archetype::kLock:
+      case RE::EffectSetting::Archetype::kSoulTrap:
+      case RE::EffectSetting::Archetype::kGuide:
+        return SpellType::Utility;
+
+      // --- undoing a condition ---
+      case RE::EffectSetting::Archetype::kCureDisease:
+      case RE::EffectSetting::Archetype::kCurePoison:
+      case RE::EffectSetting::Archetype::kCureParalysis:
+      case RE::EffectSetting::Archetype::kCureAddiction:
+      case RE::EffectSetting::Archetype::kDispel:
+        return SpellType::Healing;
+
+      default:
+        break;
       }
 
       return SpellType::Unknown;  // Will fall back to tag-based in ClassifySpell
@@ -575,6 +677,42 @@ namespace Huginn::Spell
 
       // Return costliest if found, otherwise first valid effect (safety fallback)
       return costliestEffect ? costliestEffect : firstValidEffect;
+   }
+
+   RE::Effect* SpellClassifier::GetCostliestNonScriptEffect(RE::SpellItem* spell) const
+   {
+      if (!spell || spell->effects.empty()) return nullptr;
+
+      RE::Effect* best = nullptr;
+      float highestCost = -1.0f;
+
+      for (auto* effect : spell->effects) {
+      if (!effect || !effect->baseEffect) continue;
+      if (effect->baseEffect->GetArchetype() == RE::EffectSetting::Archetype::kScript) {
+        continue;
+      }
+
+      // Same cost formula as GetCostliestEffect; kept here rather than shared
+      // because that one carries a first-valid-effect fallback this must NOT
+      // have -- "no readable effect" is a real answer and the caller depends on
+      // getting nullptr for it.
+      const float baseCost = effect->baseEffect->data.baseCost;
+      const float magnitude = effect->effectItem.magnitude;
+      const float duration = effect->effectItem.duration;
+      const float area = effect->effectItem.area;
+
+      const float durationFactor = (duration > 0) ? (duration / 10.0f) : 1.0f;
+      const float areaFactor = (area > 0) ? (0.15f * area) : 1.0f;
+      const float magnitudeFactor = std::pow(std::max(1.0f, magnitude), 1.1f);
+
+      const float cost = baseCost * magnitudeFactor * durationFactor * areaFactor;
+      if (cost > highestCost) {
+        highestCost = cost;
+        best = effect;
+      }
+      }
+
+      return best;
    }
 
    MagicSchool SpellClassifier::DetermineMagicSchool(RE::Effect* costliestEffect) const

@@ -27,6 +27,16 @@ namespace Huginn::Spell
       // Uses Skyrim's actual cost formula: baseCost × magnitude^1.1 × durationFactor × areaFactor
       [[nodiscard]] RE::Effect* GetCostliestEffect(RE::SpellItem* spell) const;
 
+      // Same, but skipping kScript effects.
+      //
+      // A script effect tells the API nothing -- no archetype, no actor value,
+      // no hostility worth reading -- so when it happens to be the costliest one
+      // it hides whatever else the spell does. Of the 157 script-primary spells
+      // a LoreRim player can learn, 66 carry another effect that IS readable
+      // (2026-09-21 dump). Returns nullptr when every effect is a script, which
+      // is the honest answer for the other 89.
+      [[nodiscard]] RE::Effect* GetCostliestNonScriptEffect(RE::SpellItem* spell) const;
+
    private:
       // OPTIMIZATION (v0.7.19): Methods now accept pre-computed effect to avoid
       // redundant GetCostliestEffect() calls (O(4n) → O(n) per spell at load time)
