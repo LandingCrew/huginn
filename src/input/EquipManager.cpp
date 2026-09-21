@@ -169,7 +169,7 @@ namespace Huginn::Input
    }
 
    bool EquipManager::EquipWeapon(RE::FormID formID, bool leftHand, uint16_t uniqueID,
-                                  bool afterHandSwap)
+                                  uint8_t handSwapAttempt)
    {
       if (formID == 0) {
       logger::warn("[EquipManager] Cannot equip weapon with FormID 0"sv);
@@ -261,21 +261,36 @@ namespace Huginn::Input
         // So let the frame end. Re-entering EquipWeapon next frame is the whole
         // fix: by then the other hand is empty, this branch does not run, and
         // the ordinary path equips the stack it was always going to.
-        if (!afterHandSwap) {
+        // One frame is usually enough, and once in a 48-minute soak it was not:
+        // an Orcish Dagger was still worn on the retry (2026-09-20 22:0x) and
+        // took the inline path, which is the path that loses the equip. So wait
+        // a second frame before falling back. Later frames are only ever reached
+        // when the weapon is still in the other hand, so this costs nothing in
+        // the normal case.
+        if (handSwapAttempt + 1 < kMaxHandSwapAttempts) {
            if (auto* task = SKSE::GetTaskInterface()) {
-              task->AddTask([formID, leftHand, uniqueID]() {
+              const uint8_t nextAttempt = static_cast<uint8_t>(handSwapAttempt + 1);
+              task->AddTask([formID, leftHand, uniqueID, nextAttempt]() {
                  EquipManager::GetSingleton().EquipWeapon(
-                    formID, leftHand, uniqueID, /*afterHandSwap=*/true);
+                    formID, leftHand, uniqueID, nextAttempt);
               });
+              if (handSwapAttempt > 0) {
+                 logger::debug("[EquipManager] '{}' still in the {} hand after {} frame(s) — "
+                   "waiting one more"sv, weapon->GetName(), leftHand ? "right" : "left",
+                   handSwapAttempt + 1);
+              }
               return true;
            }
            logger::warn("[EquipManager] No task interface for the hand swap of '{}' — "
              "equipping inline, which the engine may drop"sv, weapon->GetName());
         } else {
-           // A frame was not enough. Equip inline anyway rather than bounce the
-           // retry forever; one dropped press beats a loop.
-           logger::warn("[EquipManager] '{}' is STILL in the {} hand a frame after the "
-             "unequip — equipping inline"sv, weapon->GetName(), leftHand ? "right" : "left");
+           // Out of frames. Equip inline rather than bounce the retry forever;
+           // one dropped press beats a loop. If this line shows up more than
+           // rarely, the answer is not a third frame -- it is that something
+           // else is holding the stack worn, and this is the wrong fix.
+           logger::warn("[EquipManager] '{}' is STILL in the {} hand after {} frames — "
+             "equipping inline"sv, weapon->GetName(), leftHand ? "right" : "left",
+             kMaxHandSwapAttempts);
         }
       }
       }
