@@ -17,6 +17,7 @@
 #include "learning/ExternalEquipLearner.h"
 #include "spell/SpellRegistry.h"
 #include <fstream>
+#include <unordered_set>
 #include "context/ContextWeightSettings.h"
 #include "context/ContextWeightConfig.h"
 #include "ui/IntuitionMenu.h"
@@ -461,12 +462,29 @@ namespace Huginn::Console
       const auto& classifier = g_spellRegistry->GetClassifier();
       auto* player = RE::PlayerCharacter::GetSingleton();
 
+      // Which spells can a player actually LEARN? A spell tome teaching it is
+      // the only honest answer available here, and it is the column that makes
+      // this dump worth reading: a load order this size is mostly NPC and
+      // creature spells that happen to be kSpell, so an unclassified count over
+      // the whole array says nothing about what a player would ever be offered.
+      std::unordered_set<RE::FormID> taughtByTome;
+      for (auto* book : dataHandler->GetFormArray<RE::TESObjectBOOK>()) {
+         if (!book || !book->TeachesSpell()) {
+            continue;
+         }
+         if (auto* taught = book->GetSpell()) {
+            taughtByTome.insert(taught->GetFormID());
+         }
+      }
+
       out << "formID,name,castType,huginnType,school,element,tags,tagsExt,"
-             "cost,concentration,range,known\n";
+             "cost,concentration,range,known,tome\n";
 
       size_t written = 0;
       size_t skipped = 0;
       size_t unknownType = 0;
+      size_t unknownLearnable = 0;
+      size_t learnableCount = 0;
       for (auto* spell : dataHandler->GetFormArray<RE::SpellItem>()) {
          if (!spell) {
             continue;
@@ -485,11 +503,15 @@ namespace Huginn::Console
          }
 
          const auto data = classifier.ClassifySpell(spell);
+         const bool learnable = taughtByTome.contains(spell->GetFormID());
          if (data.type == Spell::SpellType::Unknown) {
             ++unknownType;
+            if (learnable) {
+               ++unknownLearnable;
+            }
          }
 
-         out << std::format("{:08X},{},{},{},{},{},{:08X},{:04X},{},{},{:.0f},{}\n",
+         out << std::format("{:08X},{},{},{},{},{},{:08X},{:04X},{},{},{:.0f},{},{}\n",
             spell->GetFormID(),
             csvQuote(rawName),
             castTypeName(castType),
@@ -501,13 +523,19 @@ namespace Huginn::Console
             data.baseCost,
             data.isConcentration ? 1 : 0,
             data.range,
-            (player && player->HasSpell(spell)) ? 1 : 0);
+            (player && player->HasSpell(spell)) ? 1 : 0,
+            learnable ? 1 : 0);
          ++written;
+         if (learnable) {
+            ++learnableCount;
+         }
       }
       out.close();
 
-      auto msg = std::format("Wrote {} spells to Huginn_Spells.csv ({} unclassified, {} non-spell forms skipped)",
-         written, unknownType, skipped);
+      auto msg = std::format(
+         "Wrote {} spells to Huginn_Spells.csv - {} learnable from tomes, {} of those unclassified "
+         "({} unclassified overall, {} non-spell forms skipped)",
+         written, learnableCount, unknownLearnable, unknownType, skipped);
       Print(msg.c_str());
       logger::info("[Console] {} -> {}"sv, msg, filePath.string());
    }
