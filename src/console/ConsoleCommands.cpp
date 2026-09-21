@@ -478,7 +478,7 @@ namespace Huginn::Console
       }
 
       out << "formID,name,castType,huginnType,school,element,tags,tagsExt,"
-             "cost,concentration,range,known,tome\n";
+             "cost,concentration,range,known,tome,hostile,archetype,primaryAV,secondaryAV,delivery,castingType,effects\n";
 
       size_t written = 0;
       size_t skipped = 0;
@@ -504,6 +504,24 @@ namespace Huginn::Console
 
          const auto data = classifier.ClassifySpell(spell);
          const bool learnable = taughtByTome.contains(spell->GetFormID());
+
+         // The inputs DetermineSpellType actually reads, dumped raw. Names would
+         // need a 50-case switch in a throwaway command; the numbers map back to
+         // the CommonLibSSE enums offline, and grouping by them is the point --
+         // "these 40 spells are archetype 27" is a rule, "Ash Rune, Bend Time,
+         // Burden" is a list.
+         int archetype = -1, primaryAV = -1, secondaryAV = -1, effectCount = 0;
+         bool hostile = false;
+         if (auto* costliest = classifier.GetCostliestEffect(spell)) {
+            if (auto* setting = costliest->baseEffect) {
+               archetype = static_cast<int>(setting->GetArchetype());
+               primaryAV = static_cast<int>(setting->data.primaryAV);
+               secondaryAV = static_cast<int>(setting->data.secondaryAV);
+               hostile = setting->data.flags.any(
+                  RE::EffectSetting::EffectSettingData::Flag::kHostile);
+            }
+         }
+         effectCount = static_cast<int>(spell->effects.size());
          if (data.type == Spell::SpellType::Unknown) {
             ++unknownType;
             if (learnable) {
@@ -511,7 +529,7 @@ namespace Huginn::Console
             }
          }
 
-         out << std::format("{:08X},{},{},{},{},{},{:08X},{:04X},{},{},{:.0f},{},{}\n",
+         out << std::format("{:08X},{},{},{},{},{},{:08X},{:04X},{},{},{:.0f},{},{},{},{},{},{},{},{},{}\n",
             spell->GetFormID(),
             csvQuote(rawName),
             castTypeName(castType),
@@ -524,7 +542,14 @@ namespace Huginn::Console
             data.isConcentration ? 1 : 0,
             data.range,
             (player && player->HasSpell(spell)) ? 1 : 0,
-            learnable ? 1 : 0);
+            learnable ? 1 : 0,
+            hostile ? 1 : 0,
+            archetype,
+            primaryAV,
+            secondaryAV,
+            static_cast<int>(spell->GetDelivery()),
+            static_cast<int>(spell->GetCastingType()),
+            effectCount);
          ++written;
          if (learnable) {
             ++learnableCount;
