@@ -146,6 +146,18 @@ namespace Huginn::Config
    // few seconds after a load is rare and low-value to learn.
    inline constexpr float CONSUMPTION_POST_LOAD_GRACE_MS = 5000.0f;
 
+   // How far back a consumption may look for a Huginn-mediated equip of the same
+   // form before deciding somebody else did it.
+   //
+   // Much wider than EquipSourceTracker's 400 ms default because the two events
+   // are detected differently: an equip is an event, a consumption is a COUNT
+   // CHANGE noticed by the 2 Hz delta scan. Measured gap between Huginn using a
+   // potion and the scan seeing it go: 1.33 s (2026-09-21 18:05:21.397 ->
+   // 18:05:22.730). Too short and Huginn's own drinks look external; too long
+   // and a genuine external drink inherits credit from an unrelated Huginn equip
+   // of the same form.
+   inline constexpr float CONSUMPTION_HUGINN_WINDOW_MS = 2500.0f;
+
    // Mirror of the grace window above, for the UNLOAD side. Quitting to the main
    // menu fires no SKSE message, so there is nothing to start a timer from: the
    // only evidence is the shape of the scan itself. When the player's container
