@@ -92,6 +92,16 @@ namespace Huginn::Input
       /// Get the equip slot for a hand
       RE::BGSEquipSlot* GetEquipSlot(EquipHand hand, bool isLeftHand);
 
+      /// How many frames a hand swap may wait for the engine to apply the
+      /// unequip before giving up and equipping inline.
+      ///
+      /// One frame was enough for every swap in a 2026-09-19 session and for all
+      /// but one in a 48-minute soak the next day, where an Orcish Dagger was
+      /// still worn on the retry and took the inline path -- which is the path
+      /// that drops the equip. Two costs nothing when one would have done: the
+      /// second frame is only reached when the weapon is still in the other hand.
+      static constexpr uint8_t kMaxHandSwapAttempts = 2;
+
       /// Equip a spell to the specified hand
       bool EquipSpellToHand(RE::SpellItem* spell, bool leftHand);
 
@@ -102,11 +112,12 @@ namespace Huginn::Input
       /// @param uniqueID Which inventory stack to draw; 0 lets the engine choose.
       ///        The registry tracks stacks, not base forms, so a recommendation
       ///        can name the tempered copy of a weapon the player owns twice.
-      /// @param afterHandSwap Internal: set only by the deferred retry this
-      ///   method schedules when it has to take the weapon off the other hand
-      ///   first. Bounds that retry to one attempt.
+      /// @param handSwapAttempt Internal: how many frames this equip has already
+      ///   waited for the engine to apply the unequip that must precede a swap
+      ///   to the other hand. Set only by the deferred retry this method
+      ///   schedules; bounds it to kMaxHandSwapAttempts.
       bool EquipWeapon(RE::FormID formID, bool leftHand = false, uint16_t uniqueID = 0,
-                       bool afterHandSwap = false);
+                       uint8_t handSwapAttempt = 0);
 
       /// Equip ammo (arrow/bolt) by FormID
       bool EquipAmmo(RE::FormID formID);
