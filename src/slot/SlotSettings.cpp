@@ -117,6 +117,13 @@ namespace Huginn::Slot
                 wildcardCapable, slotSummary);
         }
 
+        // Slot-position stickiness. Read here rather than in the SlotLocker
+        // loader (see KeepSlotPositions) so every allocation path picks it up
+        // from the config snapshot it already takes.
+        const bool keepPositions = ini.GetBoolValue("SlotLocker", "bKeepSlotPositions", true);
+        m_keepSlotPositions.store(keepPositions, std::memory_order_release);
+        SKSE::log::info("[SlotSettings] Keep slot positions: {}"sv, keepPositions ? "on" : "off");
+
         // Parsing succeeded - commit the new configuration under exclusive lock
         size_t committedCount;
         {
@@ -137,6 +144,7 @@ namespace Huginn::Slot
             m_pages.push_back(CreateDefaultPage(0));
             slotCount = m_pages[0].slots.size();
         }
+        m_keepSlotPositions.store(true, std::memory_order_release);
         m_generation.fetch_add(1, std::memory_order_release);
         SKSE::log::info("[SlotSettings] Reset to defaults (1 page, {} slots)"sv, slotCount);
     }

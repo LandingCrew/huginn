@@ -38,9 +38,18 @@ namespace Huginn::Slot
     //   3. Override injection: Force critical items (health potion, etc.)
     //   4. Priority ordering: Fill high-priority slots first
     //   5. Wildcard handling: Mark exploration picks appropriately
+    //   6. Seating: an item that is still recommended keeps the slot it was in
     //
     // Thread Safety:
-    //   AllocateSlots() is stateless and thread-safe.
+    //   AllocateSlots() is thread-safe.
+    //
+    //   It is no longer stateless, and the exception is (6). Seating remembers,
+    //   per page, which item sat in which slot last time that page was
+    //   allocated, because WHICH items to show is a ranking question the
+    //   candidate list answers, and WHERE to put them is a memory question
+    //   nothing else in the pipeline can answer: SlotLocker is per slot index
+    //   and single-page, and the Wheeler pages never reach it at all. The
+    //   memory is a small per-page array of dedup keys behind m_seatingMutex.
     // =============================================================================
 
     class SlotAllocator
@@ -206,7 +215,13 @@ namespace Huginn::Slot
 
         /// Get the current page-config snapshot, refreshing from SlotSettings
         /// only when the generation changed. Thread-safe; cheap on the hot path.
-        [[nodiscard]] std::shared_ptr<const std::vector<PageConfig>> GetConfigSnapshot() const;
+        /// @param outGeneration Receives the generation THIS snapshot belongs to.
+        ///   Callers that later compare a generation must use this rather than
+        ///   re-reading m_cacheGeneration: another thread refreshing the cache in
+        ///   between would hand them a number that describes a different layout
+        ///   than the configs they are holding.
+        [[nodiscard]] std::shared_ptr<const std::vector<PageConfig>> GetConfigSnapshot(
+            uint32_t* outGeneration = nullptr) const;
 
         // =========================================================================
         // INTERNAL HELPERS
@@ -217,6 +232,7 @@ namespace Huginn::Slot
         /// for per-page log dedup and the config-wide unplaced-override check.
         [[nodiscard]] SlotAssignments AllocateSlotsInternal(
             size_t pageIndex,
+            uint32_t configGeneration,
             const std::vector<SlotConfig>& slotConfigs,
             const Scoring::ScoredCandidateList& candidates,
             const Override::OverrideCollection& overrides,
@@ -236,6 +252,56 @@ namespace Huginn::Slot
         /// that can starve lower-priority overrides when several fire at once.
         /// Called from Initialize() (startup + every settings reload).
         void ValidateOverridePlaceability() const;
+
+        // =========================================================================
+        // SEATING MEMORY (anti-juggling)
+        // =========================================================================
+        // One dedup key per slot per page: what sat there when this page was last
+        // allocated. 0 means the slot was empty. Rebuilt on every allocation of
+        // that page, cleared when the layout generation changes or on Reset().
+        mutable std::mutex m_seatingMutex;
+        mutable std::array<std::array<uint64_t, MAX_SLOTS_PER_PAGE>, MAX_PAGES> m_seating{};
+        mutable uint32_t m_seatingGeneration = UINT32_MAX;
+
+        /// Put items back in the slots they were in last pass, where the layout
+        /// still allows it.
+        ///
+        /// Runs AFTER the rank-ordered fill, so it never changes WHICH items are
+        /// shown -- only where they sit. Overrides are pinned (they were placed
+        /// in a slot chosen for them, and their subtext says so). It can leave a
+        /// slot empty, by moving its occupant back to the seat it wants; the
+        /// caller refills those from the remaining candidates before recording,
+        /// so seating never opens a hole in the middle of the widget.
+        void ApplySeating(
+            size_t pageIndex,
+            uint32_t generation,
+            const std::vector<SlotConfig>& slotConfigs,
+            SlotAssignments& assignments,
+            const State::PlayerActorState* player) const;
+
+        /// Remember where everything ended up, for the next allocation of this
+        /// page. Called after the refill, so an item that has just arrived gets
+        /// a seat of its own straight away.
+        ///
+        /// The rule is: you keep your seat for as long as you are on screen, and
+        /// you only get a new one if you do not have one. Recording where things
+        /// ENDED UP instead would turn every reason an item could not reach its
+        /// seat into a permanent move -- an override pins a slot for a second,
+        /// and the item that lives there is rehomed for the rest of the session.
+        /// That applies just as much to the item displaced by the displaced one,
+        /// which no override ever touched.
+        void RecordSeating(
+            size_t pageIndex,
+            uint32_t generation,
+            const SlotAssignments& assignments) const;
+
+        /// Whether `assignment` may sit in slot `slotIndex` of this layout:
+        /// the same classification, wildcard and skip-equipped rules
+        /// FindBestCandidate applies when it picks one in the first place.
+        [[nodiscard]] static bool SlotAccepts(
+            const SlotConfig& config,
+            const SlotAssignment& assignment,
+            const State::PlayerActorState* player);
 
         /// Compute priority order from configs into a caller-provided buffer
         /// (no heap allocation). Returns the number of valid entries written.

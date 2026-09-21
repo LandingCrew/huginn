@@ -20,6 +20,7 @@ void RunOverrideNamespaceTests();      // Huginn_Overrides.ini section namespaci
 // field. Delete with its Tests.cpp body and Main.cpp call site.
 void RunSlotLockerResetTest();
 void RunSlotLockerInstanceLockTest();
+void RunSlotSeatingTest();
 
 // =============================================================================
 // CONSOLE COMMANDS - Manual testing via Skyrim console (debug mode only)
