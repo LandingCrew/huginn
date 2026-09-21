@@ -135,7 +135,14 @@ namespace Huginn::Learning
         /// record WHY nothing was attributed — see SoakMetrics::RecordEquipSkip.
         char ShouldSkip(RE::FormID formID) const;
 
-        // Determine reward multiplier and case label from pipeline state
+    public:
+        // Determine reward multiplier and case label from pipeline state.
+        //
+        // Public because the CONSUMPTION path needs the same answer. An item
+        // leaving the inventory and an equip event are two views of one act, and
+        // before this they disagreed: the equip path could decide an act taught
+        // it nothing while the consumption path rewarded it in full. See
+        // UpdateLoop's ApplyConsumptionReward.
         struct Attribution
         {
             float multiplier = 0.0f;

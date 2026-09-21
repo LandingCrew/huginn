@@ -12,6 +12,8 @@
 #include "learning/PipelineStateCache.h"
 #include "learning/EquipEventBus.h"
 #include "learning/InventoryExitTracker.h"
+#include "learning/EquipSourceTracker.h"
+#include "learning/ExternalEquipLearner.h"
 #include "util/ScopedTimer.h"
 #include "util/InventoryUtil.h"
 #include "weapon/WeaponRegistry.h"
@@ -67,16 +69,43 @@ static void ApplyConsumptionReward(RE::FormID formID, std::string_view name)
     }
 
     auto& cache = Learning::PipelineStateCache::GetSingleton();
-    if (!cache.IsStale(500.0f)) {
-        Learning::EquipEventBus::GetSingleton().Publish(
-            formID, Learning::EquipSource::Consumption, 1.0f, false);
-
-        logger::info("[Learning] Consumption event published: {} ({:08X})",
-            name, formID);
-    } else {
+    if (cache.IsStale(500.0f)) {
         logger::debug("[Learning] Skipped consumption reward (stale cache): {} ({:08X})",
             name, formID);
+        return;
     }
+
+    // WHO drank it decides what it teaches.
+    //
+    // A consumption Huginn itself triggered is the player acting on a
+    // recommendation, and worth full credit. Anything else is an outside equip
+    // wearing a different hat -- the player's own inventory menu, a favourites
+    // hotkey, or another mod acting on its own -- and it should be attributed
+    // exactly as ExternalEquipLearner attributes an outside equip, because it IS
+    // one. The two paths disagreed before this: for a LoreRim auto-quaff of a
+    // resist-shock potion (2026-09-21), the equip path decided the act taught it
+    // nothing and skipped, and then this path handed out the full +5.0 anyway.
+    // A mod drinking potions on a schedule was quietly teaching Huginn that the
+    // player loves those potions.
+    //
+    // A zero multiplier still PUBLISHES: the cooldown and usage-memory
+    // subscribers need to know the potion went, whoever drank it. Only the
+    // learner stays out (see BanditSubscriber).
+    float multiplier = 1.0f;
+    const char* attributionLabel = "huginn";
+    if (!Learning::EquipSourceTracker::GetSingleton().IsRecentHuginnEquip(
+            formID, Config::CONSUMPTION_HUGINN_WINDOW_MS)) {
+        const auto attribution =
+            Learning::ExternalEquipLearner::GetSingleton().ComputeAttribution(formID);
+        multiplier = attribution.multiplier;
+        attributionLabel = attribution.caseLabel;
+    }
+
+    Learning::EquipEventBus::GetSingleton().Publish(
+        formID, Learning::EquipSource::Consumption, multiplier, false);
+
+    logger::info("[Learning] Consumption event published: {} ({:08X}) [{} x{:.2f}]",
+        name, formID, attributionLabel, multiplier);
 }
 
 // =============================================================================
