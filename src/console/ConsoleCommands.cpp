@@ -386,8 +386,16 @@ namespace Huginn::Console
    }
 
    // =========================================================================
-   // SPELL CATALOGUE DUMP
+   // SPELL CATALOGUE DUMP — DEBUG BUILDS ONLY, AND TEMPORARY
    // =========================================================================
+   // THROWAWAY (0.20.40). Delete this function and its kCommands entry together
+   // once the curated test-spell lists exist and the classifier gaps it found
+   // are filed. It is a workbench tool, not a feature: it writes a 400 KB file
+   // from a console command and nothing in the plugin reads it back.
+   //
+   // Debug-gated rather than shipped-and-undocumented, so a release build has no
+   // command that writes half a megabyte to the player's SKSE folder.
+   //
    // Writes every castable spell in the LOAD ORDER to a CSV, with Huginn's own
    // classification beside each one.
    //
@@ -400,6 +408,7 @@ namespace Huginn::Console
    // Spells only -- abilities, diseases, enchantments and the rest of the SPEL
    // record's other uses are not things a player can be given. Powers and lesser
    // powers are kept, marked as such, since they ARE grantable.
+#ifndef NDEBUG
    static void Cmd_DumpSpells(std::string_view /*arg*/)
    {
       auto* dataHandler = RE::TESDataHandler::GetSingleton();
@@ -502,6 +511,7 @@ namespace Huginn::Console
       Print(msg.c_str());
       logger::info("[Console] {} -> {}"sv, msg, filePath.string());
    }
+#endif  // !NDEBUG
 
    // =========================================================================
    // COMMAND TABLE + HELP
@@ -516,7 +526,9 @@ namespace Huginn::Console
       { "rebuild",       "Force rebuild all registries",                false, Cmd_Rebuild },
       { "reload",        "Hot-reload all settings from INI",            false, Cmd_Reload },
       { "page",          "Switch to page N (or show current)",          true,  Cmd_Page },
-      { "dump spells",   "Write every castable spell to Huginn_Spells.csv", false, Cmd_DumpSpells },
+#ifndef NDEBUG
+      { "dump spells",   "Write every castable spell to Huginn_Spells.csv (debug builds)", false, Cmd_DumpSpells },
+#endif
       { "reset weights", "Clear learned item weights",                  false, Cmd_ResetWeights },
       { "reset w",       "Clear learned item weights",                  false, Cmd_ResetWeights },
       { "reset all",     "Full system reset",                          false, Cmd_ResetAll },
