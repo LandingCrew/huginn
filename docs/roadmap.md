@@ -112,7 +112,9 @@ re-opening something that looks obviously undone.
       and activated what was displayed. It is the DEFAULT that is wrong, because
       it silently doubles up on the busiest keys in the game.
       Options, roughly in order of how much they cost: ship a default that is
-      not the number row (F1-F8 or the numpad); require a modifier; or the
+      not the number row (F1-F8 or the numpad); require a modifier, which is
+      already its own entry under Architecture Critique ("Modifier-key bindings
+      (Ctrl+1, Alt+1, Shift+1)") and would fix this as a side effect; or the
       read-only widget mode that has been on the backlog for a while, where
       Huginn displays and something else activates. The last one also answers
       the Wheeler-driven player, so it may be the one worth building.
@@ -411,18 +413,13 @@ trigger to pick any of it up.
 - [ ] Unit tests for Context::WeightForCandidate (Tests.cpp:2656/3374 currently
       hand-reimplement the weight mapping — call the real one). DominantReason /
       ReasonLabel are covered by unit test 17.
-- [ ] Cosave decode negative test logs `[E] DecodeV2EntryBlob: byteLen 83 != stride
-      84` at every Debug startup. The test passes — the error is the assertion
-      firing. Silence it so a real rejection stays visible (the negative case is the
-      byteLen-mismatch block in RunCosaveTests, Tests.cpp:5159).
-      Still firing every session as of 0.20.3; it has now cost real time twice
-      while triaging unrelated logs (XS)
-- [ ] Delete the merged remote branches: `docs-pass`, `override-ini-namespacing`
-      and `rename-bandit-learner` — all zero commits ahead of `main`. Keep
+- [ ] Delete the merged remote branches: `docs-pass`, `override-ini-namespacing`,
+      `rename-bandit-learner`, and now `weapon-stale-recs`, `slot-stability`,
+      `slot-seating` and `inventory-count` — all merged or superseded. Keep
       `widget-hide-while-wheel-open`, which is 1 ahead and still holds work.
-      (The five branches this entry used to name are already gone.) Verified
-      against `git ls-remote` 2026-09-07. Nothing depends on this; it is
-      tidying (XS)
+      Re-verify with `git ls-remote` before deleting anything; the first three
+      were last checked 2026-09-07, the rest merged 2026-09-21. Nothing depends
+      on this; it is tidying (XS)
 - [ ] Soak protocol needs deliberate MANUAL equips — accept% is fed only by
       equips made outside Huginn, so a burst played through the wheel/hotkeys
       produces no recommendation-quality data at all. Confirmed 2026-08-26: a
