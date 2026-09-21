@@ -46,6 +46,16 @@ namespace Huginn::Learning
                 break;
             }
 
+            // A zero multiplier means "this act teaches nothing", not "this item
+            // is worthless". Updating with reward 0 is not the same as not
+            // updating: it is an observation, it moves the weights down and it
+            // counts as training. The publisher that zeroed the multiplier is
+            // asking the learner to stay out of it, so stay out of it -- the
+            // other subscribers (usage memory, cooldown) still want the event.
+            if (event.rewardMultiplier <= 0.0f) {
+                return;
+            }
+
             m_learner.Update(event.formID, event.features, reward);
 
             logger::info("[BanditSubscriber] Reward {:08X} +{:.1f} (src={}, mult={:.2f})"sv,
