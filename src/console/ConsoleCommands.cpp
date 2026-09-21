@@ -15,6 +15,8 @@
 #include "learning/ScorerSettings.h"
 #include "learning/LearningSettings.h"
 #include "learning/ExternalEquipLearner.h"
+#include "spell/SpellRegistry.h"
+#include <fstream>
 #include "context/ContextWeightSettings.h"
 #include "context/ContextWeightConfig.h"
 #include "ui/IntuitionMenu.h"
@@ -384,6 +386,124 @@ namespace Huginn::Console
    }
 
    // =========================================================================
+   // SPELL CATALOGUE DUMP
+   // =========================================================================
+   // Writes every castable spell in the LOAD ORDER to a CSV, with Huginn's own
+   // classification beside each one.
+   //
+   // Two uses. Building test characters: pick FormIDs out of the CSV and feed
+   // them to `player.addspell` in a console batch file, instead of guessing at
+   // IDs that may not exist in this load order. And checking the classifier
+   // against a big modlist: sort by huginnType and the Unknowns are the spells
+   // no rule caught, which is the list worth fixing.
+   //
+   // Spells only -- abilities, diseases, enchantments and the rest of the SPEL
+   // record's other uses are not things a player can be given. Powers and lesser
+   // powers are kept, marked as such, since they ARE grantable.
+   static void Cmd_DumpSpells(std::string_view /*arg*/)
+   {
+      auto* dataHandler = RE::TESDataHandler::GetSingleton();
+      if (!dataHandler) {
+         Print("Data handler unavailable");
+         return;
+      }
+      if (!g_spellRegistry) {
+         Print("Spell registry not initialized - load a game first");
+         return;
+      }
+
+      const auto logDir = SKSE::log::log_directory();
+      if (!logDir) {
+         Print("No SKSE log directory - cannot write the dump");
+         return;
+      }
+      const auto filePath = *logDir / "Huginn_Spells.csv";
+
+      std::ofstream out(filePath, std::ios::trunc);
+      if (!out) {
+         Print("Could not open Huginn_Spells.csv for writing");
+         logger::error("[Console] Failed to open {} for writing"sv, filePath.string());
+         return;
+      }
+
+      // Quote every name: spell names carry commas often enough, and a quote
+      // occasionally ("Conjure Dremora Lord \"Grand\"" exists in some mods).
+      auto csvQuote = [](std::string_view text) {
+         std::string quoted;
+         quoted.reserve(text.size() + 2);
+         quoted += '"';
+         for (const char c : text) {
+            if (c == '"') quoted += '"';  // doubled, per RFC 4180
+            quoted += c;
+         }
+         quoted += '"';
+         return quoted;
+      };
+
+      auto castTypeName = [](RE::MagicSystem::SpellType type) -> std::string_view {
+         switch (type) {
+         case RE::MagicSystem::SpellType::kSpell:        return "Spell"sv;
+         case RE::MagicSystem::SpellType::kPower:        return "Power"sv;
+         case RE::MagicSystem::SpellType::kLesserPower:  return "LesserPower"sv;
+         default:                                        return "Other"sv;
+         }
+      };
+
+      const auto& classifier = g_spellRegistry->GetClassifier();
+      auto* player = RE::PlayerCharacter::GetSingleton();
+
+      out << "formID,name,castType,huginnType,school,element,tags,tagsExt,"
+             "cost,concentration,range,known\n";
+
+      size_t written = 0;
+      size_t skipped = 0;
+      size_t unknownType = 0;
+      for (auto* spell : dataHandler->GetFormArray<RE::SpellItem>()) {
+         if (!spell) {
+            continue;
+         }
+         const auto castType = spell->GetSpellType();
+         if (castType != RE::MagicSystem::SpellType::kSpell &&
+             castType != RE::MagicSystem::SpellType::kPower &&
+             castType != RE::MagicSystem::SpellType::kLesserPower) {
+            ++skipped;
+            continue;
+         }
+         const char* rawName = spell->GetName();
+         if (!rawName || !*rawName) {
+            ++skipped;  // unnamed: a template or a scripted internal, not castable content
+            continue;
+         }
+
+         const auto data = classifier.ClassifySpell(spell);
+         if (data.type == Spell::SpellType::Unknown) {
+            ++unknownType;
+         }
+
+         out << std::format("{:08X},{},{},{},{},{},{:08X},{:04X},{},{},{:.0f},{}\n",
+            spell->GetFormID(),
+            csvQuote(rawName),
+            castTypeName(castType),
+            Spell::SpellTypeToString(data.type),
+            Spell::MagicSchoolToString(data.school),
+            Spell::ElementTypeToString(data.element),
+            static_cast<uint32_t>(data.tags),
+            static_cast<uint16_t>(data.tagsExt),
+            data.baseCost,
+            data.isConcentration ? 1 : 0,
+            data.range,
+            (player && player->HasSpell(spell)) ? 1 : 0);
+         ++written;
+      }
+      out.close();
+
+      auto msg = std::format("Wrote {} spells to Huginn_Spells.csv ({} unclassified, {} non-spell forms skipped)",
+         written, unknownType, skipped);
+      Print(msg.c_str());
+      logger::info("[Console] {} -> {}"sv, msg, filePath.string());
+   }
+
+   // =========================================================================
    // COMMAND TABLE + HELP
    // =========================================================================
 
@@ -396,6 +516,7 @@ namespace Huginn::Console
       { "rebuild",       "Force rebuild all registries",                false, Cmd_Rebuild },
       { "reload",        "Hot-reload all settings from INI",            false, Cmd_Reload },
       { "page",          "Switch to page N (or show current)",          true,  Cmd_Page },
+      { "dump spells",   "Write every castable spell to Huginn_Spells.csv", false, Cmd_DumpSpells },
       { "reset weights", "Clear learned item weights",                  false, Cmd_ResetWeights },
       { "reset w",       "Clear learned item weights",                  false, Cmd_ResetWeights },
       { "reset all",     "Full system reset",                          false, Cmd_ResetAll },
