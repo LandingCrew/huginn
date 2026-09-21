@@ -98,6 +98,26 @@ re-opening something that looks obviously undone.
       Raised 2026-09-20.
 
 ## Known Mod Compatability Issues
+- [ ] The default slot keys are the number row, which half of Skyrim also uses.
+      `iSlot1Key = 2` through `iSlot8Key = 9` are DirectInput codes for the
+      keyboard 1-8 — Skyrim's own favourites hotkeys, and whatever else a list
+      binds there. Huginn does not intercept the press, it acts on it IN
+      ADDITION, so one keystroke fires two systems.
+      Seen 2026-09-21 on LoreRim: three potions used in one fight, each one
+      millisecond after a press of 1 or 3, including a Potion of Fortify Carry
+      Weight mid-combat. The user's first reading was "Huginn is auto-consuming
+      potions", which is exactly what it looks like from the player's seat, and
+      the log needed careful reading to show the presses were theirs.
+      Nothing here is wrong in the code: the presses landed on the right slots
+      and activated what was displayed. It is the DEFAULT that is wrong, because
+      it silently doubles up on the busiest keys in the game.
+      Options, roughly in order of how much they cost: ship a default that is
+      not the number row (F1-F8 or the numpad); require a modifier; or the
+      read-only widget mode that has been on the backlog for a while, where
+      Huginn displays and something else activates. The last one also answers
+      the Wheeler-driven player, so it may be the one worth building.
+      Raised 2026-09-21.
+
 - [ ] Vanilla-build integration pass — a set of contexts is only ever exercised
       on the Requiem-based list this is developed against, so anything vanilla
       ships and Requiem strips is verified by unit test alone. Workstation is the
@@ -138,6 +158,33 @@ re-opening something that looks obviously undone.
       alchemy lab (#65, PR #114); the forge may still have no live payload
 
 ## Known Recommendation Issues
+- [ ] A third of the spells a LoreRim player can LEARN classify as Unknown.
+      Measured 2026-09-21 with `hg dump spells` (debug-only console command,
+      itself throwaway) on LoreRim v5: 5,025 castable spells in the load order,
+      1,106 of them taught by a tome — the honest test of "a player can have
+      this" — and 375 of those 1,106 come back `type=Unknown`. 34%.
+      The raw 45%-unclassified figure over all 5,025 is mostly noise: draugr,
+      dragon and quest spells are kSpell too and no widget will ever offer them.
+      The tome filter is what makes the number mean something, and it is the
+      column to sort on when re-measuring.
+      By school, and this is the actionable part:
+        Alteration 149 | Restoration 103 | Illusion 55 | Conjuration 37 |
+        Destruction 22
+      Destruction is nearly solved; the gap is everything that is not damage.
+      That is the shape of an API-first classifier whose rules were written
+      against damage archetypes — DetermineSpellType reads the costliest
+      effect's archetype, and utility-ish Alteration/Restoration effects fall
+      through to the tag fallback, which has nothing to say about them.
+      The names are ordinary player spells, not exotica: Ash Rune, Ash Shell,
+      Ash Storm, Bend Time, Burden, Boulder Strike, Control Weather,
+      Clairvoyance, Featherwalking, Equilibrium (Stamina). LoreRim is built on
+      Mysticism, so this is a third of a spellcaster's book invisible to the
+      ranking on the list Huginn is developed against.
+      Worth knowing before fixing: an Unknown spell is not dropped, it is ranked
+      without a type, so the cost is bad ordering rather than absence — which is
+      why this went unnoticed until something counted it.
+      Raised 2026-09-21.
+
 - [ ] Take craft gear back OFF when the crafting is done — the #65 follow-on.
       Apparel is the one source that CHANGES THE PLAYER and leaves it changed:
       every other recommendation is spent when used, but a fortify ring stays on
