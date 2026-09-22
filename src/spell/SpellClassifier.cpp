@@ -24,9 +24,11 @@ namespace Huginn::Spell
 
       if (m_overrides.HasOverride(data.formID)) {
       override = m_overrides.GetOverride(data.formID);
+      m_overrides.NoteMatched(data.formID);
       logger::debug("Using FormID override for: {} ({:08X})"sv, data.name, data.formID);
       } else if (m_overrides.HasOverride(data.name)) {
       override = m_overrides.GetOverride(data.name);
+      m_overrides.NoteMatched(data.name);
       logger::debug("Using name override for: {}"sv, data.name);
       }
 

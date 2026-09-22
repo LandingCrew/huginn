@@ -110,7 +110,17 @@ namespace Huginn::Spell
 
       logger::info("Spell registry built: {} spells registered ({} favorited)"sv,
       m_entries.size(), favoritedCount);
-   }
+
+      // Reconcile the override file against what was just classified. This is
+      // the only feedback an author gets: a misspelled name or a stale FormID
+      // loads fine and matches nothing, and the load line would still say the
+      // full count. Runs here rather than at load because "did it match" can
+      // only be answered after a classification pass.
+      //
+      // It sees the PLAYER'S spells, so an override on a spell they have not
+      // learned reads as unmatched. `hg dump spells` classifies the whole form
+      // array and is the complete check.
+      m_classifier.ReportOverrideUsage("after rebuild"sv);   }
 
    bool SpellRegistry::AddNewSpell(RE::SpellItem* spell)
    {

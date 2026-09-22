@@ -22,6 +22,13 @@ namespace Huginn::Spell
       // Will use override data if available, otherwise auto-classify
       [[nodiscard]] SpellData ClassifySpell(RE::SpellItem* spell) const;
 
+      // Reconcile the override file against reality: how many entries matched a
+      // spell, and which never did. Call after a pass that classifies every
+      // spell, which is what makes the answer meaningful.
+      void ReportOverrideUsage(std::string_view context) const {
+      m_overrides.ReportUsage(context);
+      }
+
       // OPTIMIZATION (v0.7.20 H1+H6): Made public for delegation from ScrollClassifier
       // Get the effect with the highest magicka cost (primary/defining effect)
       // Uses Skyrim's actual cost formula: baseCost × magnitude^1.1 × durationFactor × areaFactor
