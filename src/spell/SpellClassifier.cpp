@@ -88,6 +88,17 @@ namespace Huginn::Spell
       if (data.type == SpellType::Unknown) {
         data.type = DeriveSpellTypeFromName(spell->GetName());
       }
+
+      // A bound weapon is a summon, whichever archetype the author used to
+      // conjure it. Requiem builds Bound Arrows and Bound Bolts as peak value
+      // modifiers, so the API typed them Buff while the other 25 bound-anything
+      // spells were Summon -- one family, two buckets, for a reason no player
+      // can see. Applied here rather than in DetermineSpellType because that
+      // function never sees the tags, and this one is the only signal the two
+      // stragglers share with their family.
+      if (HasTag(data.tags, SpellTag::BoundWeapon) && data.type != SpellType::Summon) {
+        data.type = SpellType::Summon;
+      }
       }
 
       // STEP 3: School - API only (no name fallback needed)
@@ -243,24 +254,44 @@ namespace Huginn::Spell
       // One level deep, deliberately: the associated spell's own effects are
       // plain value modifiers in every case I have seen, and a cloak whose
       // associated spell is another cloak would otherwise recurse.
-      const auto typeOfAssociatedSpell = [this](RE::SpellItem* associated) {
+      const auto typeOfAssociatedSpell = [](RE::SpellItem* associated) {
       if (!associated) {
         return SpellType::Unknown;
       }
-      auto* effect = GetCostliestEffect(associated);
-      if (!effect || !effect->baseEffect) {
-        return SpellType::Unknown;
+
+      // EVERY effect, not just the costliest. Triumvirate's holy cloaks apply a
+      // spell with fifteen effects whose dearest one is a non-health debuff, so
+      // reading only the costliest called Holy Fire a Debuff while the spell it
+      // applies is itself typed Damage. What matters is whether ANY of them
+      // takes health away.
+      //
+      // And a hazard that RESTORES health is a heal, which the first cut could
+      // not say: it answered Unknown for anything non-harmful, so Guardian
+      // Circle -- rescued from Damage in the previous round -- stopped one
+      // bucket short of the heal slot it belongs in.
+      bool harmsHealth = false;
+      bool harmsOther = false;
+      bool restoresHealth = false;
+      for (const auto* effect : associated->effects) {
+        if (!effect || !effect->baseEffect) continue;
+        const auto& setting = *effect->baseEffect;
+        const bool harms =
+           setting.data.flags.any(RE::EffectSetting::EffectSettingData::Flag::kHostile) ||
+           setting.data.flags.any(RE::EffectSetting::EffectSettingData::Flag::kDetrimental);
+        const bool onHealth = setting.data.primaryAV == RE::ActorValue::kHealth;
+
+        if (harms && onHealth)  harmsHealth = true;
+        else if (harms)         harmsOther = true;
+        else if (onHealth &&
+                 setting.GetArchetype() == RE::EffectSetting::Archetype::kValueModifier) {
+           restoresHealth = true;
+        }
       }
-      const bool harms = effect->baseEffect->data.flags.any(
-        RE::EffectSetting::EffectSettingData::Flag::kHostile) ||
-        effect->baseEffect->data.flags.any(
-           RE::EffectSetting::EffectSettingData::Flag::kDetrimental);
-      if (!harms) {
-        return SpellType::Unknown;
-      }
-      return (effect->baseEffect->data.primaryAV == RE::ActorValue::kHealth)
-        ? SpellType::Damage
-        : SpellType::Debuff;
+
+      if (harmsHealth)     return SpellType::Damage;
+      if (harmsOther)      return SpellType::Debuff;
+      if (restoresHealth)  return SpellType::Healing;
+      return SpellType::Unknown;
       };
 
       // =====================================================================
@@ -384,7 +415,13 @@ namespace Huginn::Spell
         return SpellType::Debuff;
 
       // --- things done FOR yourself or an ally ---
-      case RE::EffectSetting::Archetype::kRally:          // courage, call to arms
+      // Rally raises morale, and mod authors use the same archetype to BREAK it:
+      // Deliver Unto Vaermina and Geas Rune are cast at an enemy and were typed
+      // Buff. Vanilla Courage, Rally and Call to Arms carry no harm flag, so
+      // gating on it costs them nothing.
+      case RE::EffectSetting::Archetype::kRally:
+        return harmful ? SpellType::Debuff : SpellType::Buff;
+
       case RE::EffectSetting::Archetype::kEnhanceWeapon:  // elemental weapon coatings
       case RE::EffectSetting::Archetype::kInvisibility:
       case RE::EffectSetting::Archetype::kNightEye:
