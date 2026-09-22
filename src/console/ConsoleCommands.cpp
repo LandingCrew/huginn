@@ -478,7 +478,7 @@ namespace Huginn::Console
       }
 
       out << "formID,name,castType,huginnType,school,element,tags,tagsExt,"
-             "cost,concentration,range,known,tome,hostile,detrimental,recover,archetype,primaryAV,secondaryAV,delivery,castingType,effects\n";
+             "cost,concentration,range,known,tome,hostile,detrimental,recover,archetype,primaryAV,secondaryAV,delivery,castingType,effects,retry\n";
 
       size_t written = 0;
       size_t skipped = 0;
