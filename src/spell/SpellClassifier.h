@@ -46,6 +46,17 @@ namespace Huginn::Spell
       // @param primaryEffect Pre-computed costliest effect's base setting (may be null)
       [[nodiscard]] SpellType DetermineSpellType(RE::SpellItem* spell, RE::EffectSetting* primaryEffect) const;
 
+      // Last-resort typing by NAME, for spells whose behaviour lives entirely in
+      // a Papyrus script.
+      //
+      // Only reached when the effect data has already said nothing: 121 of the
+      // 124 spells a LoreRim player can learn and Huginn cannot type are script
+      // effects (2026-09-21), and among them are Soul Trap and the whole "Open
+      // <rank> Lock" line. Names are a bad signal and this deliberately reads
+      // only the handful of words that name a spell's PURPOSE rather than its
+      // flavour, so a miss stays Unknown rather than becoming a wrong answer.
+      [[nodiscard]] static SpellType DeriveSpellTypeFromName(std::string_view name) noexcept;
+
       // Derive SpellType from computed tag bitflags (fallback when API fails).
       // Takes BOTH sets: an Open Lock or Waterbreathing spell carries no
       // primary tag at all now that the extended ones exist, so passing only

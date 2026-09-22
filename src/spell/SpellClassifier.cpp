@@ -70,6 +70,12 @@ namespace Huginn::Spell
       if (data.type == SpellType::Unknown) {
         data.type = DeriveSpellTypeFromTags(data.tags, data.tagsExt);  // Tag-based fallback
       }
+
+      // Everything the API can say has been said. What is left is script-driven
+      // and the name is the only evidence there is.
+      if (data.type == SpellType::Unknown) {
+        data.type = DeriveSpellTypeFromName(spell->GetName());
+      }
       }
 
       // STEP 3: School - API only (no name fallback needed)
@@ -109,6 +115,16 @@ namespace Huginn::Spell
       const auto archetype = primaryEffect->GetArchetype();
       const bool isHostile = primaryEffect->data.flags.any(
       RE::EffectSetting::EffectSettingData::Flag::kHostile);
+
+      // kHostile is the author's INTENT and mod authors set it carelessly; a
+      // 2026-09-21 audit found "Insomnia" -- an Illusion nightmare spell whose
+      // four identical siblings are all Debuff -- typed Healing purely because
+      // its author left the flag clear. kDetrimental is the mechanical fact:
+      // this effect moves the value DOWN. Where the two disagree, believe the
+      // mechanism.
+      const bool isDetrimental = primaryEffect->data.flags.any(
+      RE::EffectSetting::EffectSettingData::Flag::kDetrimental);
+      const bool harmful = isHostile || isDetrimental;
       // Derive school from primaryEffect directly to avoid redundant GetCostliestEffect call
       const auto school = [&]() -> MagicSchool {
       auto skillAV = primaryEffect->GetMagickSkill();
@@ -122,10 +138,17 @@ namespace Huginn::Spell
       }
       }();
 
-      // Healing: non-hostile health restoration
-      if (!isHostile && primaryEffect->data.primaryAV == RE::ActorValue::kHealth) {
-      if (archetype == RE::EffectSetting::Archetype::kValueModifier ||
-          archetype == RE::EffectSetting::Archetype::kPeakValueModifier) {
+      // Healing: health restoration that actually RESTORES.
+      //
+      // Two ways this used to lie. A detrimental health effect with the hostile
+      // flag clear was typed Healing and would have been offered to a dying
+      // player ("Insomnia", and any blood-magic spell that pays health as a
+      // cost). And kPeakValueModifier on health is a FORTIFY -- it raises the
+      // maximum and restores nothing -- so "Fortify Attributes" was a heal that
+      // heals nobody. Fortifies fall through to the switch below and land in
+      // Buff, where they belong.
+      if (!harmful && primaryEffect->data.primaryAV == RE::ActorValue::kHealth) {
+      if (archetype == RE::EffectSetting::Archetype::kValueModifier) {
         return SpellType::Healing;
       }
       }
@@ -135,21 +158,34 @@ namespace Huginn::Spell
       return SpellType::Summon;
       }
 
-      // Damage: Hostile Destruction spells
-      if (isHostile && school == MagicSchool::Destruction) {
-      return SpellType::Damage;
+      // Defensive: anything that MITIGATES incoming damage, whatever school
+      // casts it and whatever archetype carries it.
+      //
+      // DamageResist alone left the whole resist-element line as Buff, where
+      // Fire Shield competed with Fortify Speech instead of with Ebonyflesh
+      // (11 spells, 2026-09-21 audit). By the definition this classifier works
+      // to -- "mitigates incoming damage" -- they are the same kind of thing.
+      //
+      // Ward power is here rather than in the archetype switch because wards
+      // are kAccumulateMagnitude, which is also how some overhauls build
+      // charge-up damage: the ACTOR VALUE is what makes a ward a ward, and
+      // reading it here also rescues the two wards whose costliest effect is a
+      // script.
+      if (!harmful) {
+      switch (primaryEffect->data.primaryAV) {
+      case RE::ActorValue::kDamageResist:
+      case RE::ActorValue::kPoisonResist:
+      case RE::ActorValue::kResistFire:
+      case RE::ActorValue::kResistShock:
+      case RE::ActorValue::kResistFrost:
+      case RE::ActorValue::kResistMagic:
+      case RE::ActorValue::kResistDisease:
+      case RE::ActorValue::kWardPower:
+      case RE::ActorValue::kWardDeflection:
+        return SpellType::Defensive;
+      default:
+        break;
       }
-
-      // Defensive: armor spells (DamageResist), whatever school casts them.
-      // Alteration is the vanilla home of Stoneflesh and friends; overhauls put
-      // wards and barriers in Restoration and Conjuration too.
-      if (!isHostile && primaryEffect->data.primaryAV == RE::ActorValue::kDamageResist) {
-      return SpellType::Defensive;
-      }
-
-      // Debuff: Hostile Illusion spells
-      if (isHostile && school == MagicSchool::Illusion) {
-      return SpellType::Debuff;
       }
 
       // =====================================================================
@@ -176,11 +212,20 @@ namespace Huginn::Spell
       case RE::EffectSetting::Archetype::kPeakValueModifier:
       {
       const auto av = primaryEffect->data.primaryAV;
-      if (isHostile) {
-        return (av == RE::ActorValue::kHealth) ? SpellType::Damage : SpellType::Debuff;
+      const bool touchesHealth = av == RE::ActorValue::kHealth ||
+                                 primaryEffect->data.secondaryAV == RE::ActorValue::kHealth;
+      if (harmful) {
+        // secondaryAV too: a dual modifier that drains stamina AND health is a
+        // damage spell, whichever of the two the author put first.
+        return touchesHealth ? SpellType::Damage : SpellType::Debuff;
       }
       if (av == RE::ActorValue::kHealth) {
-        return SpellType::Healing;  // also caught above; harmless and clearer here
+        // Only kDualValueModifier reaches here -- the other two were answered by
+        // the healing check above. A peak modifier on health is a fortify and is
+        // deliberately NOT caught there, so it falls past this to Buff.
+        if (archetype == RE::EffectSetting::Archetype::kDualValueModifier) {
+           return SpellType::Healing;
+        }
       }
       // Fortify anything: magicka, stamina, carry weight, speed, a skill.
       // ~40 spells, and the reason "Fortify Carry Weight" had no type.
@@ -192,12 +237,39 @@ namespace Huginn::Spell
       // the harm and the spell that spawns it does not, so hostility is the
       // wrong question to ask of them.
       case RE::EffectSetting::Archetype::kSpawnHazard:
-        return SpellType::Damage;
+      {
+        // A hazard spell is non-hostile because the HAZARD does the harm, not
+        // the casting -- so hostility is the wrong question and the rule used to
+        // answer Damage regardless. That swallowed the protective circles:
+        // Guardian Circle, the "I am in trouble, drop a healing circle" button,
+        // was typed Damage (7 spells, 2026-09-21 audit).
+        //
+        // So ask the spell instead of the flag: if nothing it carries takes a
+        // value away, it is not an attack. Walk every effect, because the
+        // costliest one on a circle is often the aura rather than the bite.
+        for (const auto* effect : spell->effects) {
+           if (effect && effect->baseEffect &&
+              effect->baseEffect->data.flags.any(
+                 RE::EffectSetting::EffectSettingData::Flag::kDetrimental)) {
+            return SpellType::Damage;
+           }
+        }
+        return SpellType::Buff;
+      }
 
-      // Absorb takes from the target and gives to the caster. It is damage with
-      // a rider, and ranking it as damage is what a player expects.
+      // Absorb takes from the target and gives to the caster. Ranking it as
+      // damage is what a player expects -- offering Absorb Health as a HEAL at
+      // 10% against a lone archer would be a bad recommendation, and the audit
+      // agreed. But only health absorption is damage: draining magicka or
+      // stamina impairs without hurting, and two absorb spells with the hostile
+      // flag clear turn out to be weapon enchants rather than attacks.
       case RE::EffectSetting::Archetype::kAbsorb:
-        return SpellType::Damage;
+        if (!harmful) {
+           return SpellType::Buff;
+        }
+        return (primaryEffect->data.primaryAV == RE::ActorValue::kHealth)
+           ? SpellType::Damage
+           : SpellType::Debuff;
 
       // --- things done TO an enemy that are not damage ---
       case RE::EffectSetting::Archetype::kParalysis:
@@ -216,12 +288,26 @@ namespace Huginn::Spell
       case RE::EffectSetting::Archetype::kRally:          // courage, call to arms
       case RE::EffectSetting::Archetype::kEnhanceWeapon:  // elemental weapon coatings
       case RE::EffectSetting::Archetype::kInvisibility:
-      case RE::EffectSetting::Archetype::kCloak:
       case RE::EffectSetting::Archetype::kNightEye:
+      case RE::EffectSetting::Archetype::kWerewolf:       // Beast Form
+      case RE::EffectSetting::Archetype::kVampireLord:
       case RE::EffectSetting::Archetype::kEtherealize:
       case RE::EffectSetting::Archetype::kSlowTime:
       case RE::EffectSetting::Archetype::kDisguise:
         return SpellType::Buff;
+
+      // An elemental cloak is a Destruction damage aura wearing a self-cast
+      // effect, and typing it Buff did real harm: the element survives into
+      // ContextWeightForCandidate, where Buff + Fire reads as a FIRE RESISTANCE
+      // spell, so Flame Cloak was promoted when the player was burning. School
+      // is the honest test of what a cloak is for.
+      case RE::EffectSetting::Archetype::kCloak:
+        return (school == MagicSchool::Destruction) ? SpellType::Damage : SpellType::Buff;
+
+      // Dispel strips magic in whichever direction it is aimed: off yourself it
+      // is a cure, onto an enemy it is a debuff.
+      case RE::EffectSetting::Archetype::kDispel:
+        return harmful ? SpellType::Debuff : SpellType::Healing;
 
       // --- things that put another body on the field ---
       case RE::EffectSetting::Archetype::kReanimate:
@@ -244,14 +330,75 @@ namespace Huginn::Spell
       case RE::EffectSetting::Archetype::kCurePoison:
       case RE::EffectSetting::Archetype::kCureParalysis:
       case RE::EffectSetting::Archetype::kCureAddiction:
-      case RE::EffectSetting::Archetype::kDispel:
         return SpellType::Healing;
 
       default:
         break;
       }
 
+      // School as a LAST resort, not a first one.
+      //
+      // These two ran before the switch and stole from it: a hostile Destruction
+      // stagger or paralysis spell returned Damage without anyone looking at its
+      // archetype (42 such spells in the 2026-09-21 dump). Below the switch they
+      // cost nothing -- every case they were written for is now answered above --
+      // and they still catch a Destruction or Illusion spell whose archetype has
+      // no rule.
+      if (harmful && school == MagicSchool::Destruction) {
+      return SpellType::Damage;
+      }
+      if (harmful && school == MagicSchool::Illusion) {
+      return SpellType::Debuff;
+      }
+
       return SpellType::Unknown;  // Will fall back to tag-based in ClassifySpell
+   }
+
+   SpellType SpellClassifier::DeriveSpellTypeFromName(std::string_view name) noexcept
+   {
+      if (name.empty()) {
+      return SpellType::Unknown;
+      }
+
+      // Word-boundary matching throughout (Util::NameContainsWord), because a
+      // substring match on words this short is how "Lockpick" would make
+      // "Blocking" a utility spell.
+      //
+      // The list is short on purpose. These are words that name what a spell is
+      // FOR and that no combat spell uses for flavour; "fire", "storm", "blood"
+      // and their kind are deliberately absent, because a script spell called
+      // "Bloodstorm" could be anything and Unknown is the better answer.
+
+      // Acting on the world rather than on a fight.
+      if (Util::NameContainsWord(name, "unlock") || Util::NameContainsWord(name, "lockpick") ||
+          (Util::NameContainsWord(name, "open") && Util::NameContainsWord(name, "lock")) ||
+          Util::NameContainsWord(name, "transmute") || Util::NameContainsWord(name, "telekinesis") ||
+          Util::NameContainsWord(name, "clairvoyance") || Util::NameContainsWord(name, "detect") ||
+          Util::NameContainsWord(name, "teleport") || Util::NameContainsWord(name, "recall") ||
+          Util::NameContainsWord(name, "intervention") || Util::NameContainsWord(name, "soultrap") ||
+          (Util::NameContainsWord(name, "soul") && Util::NameContainsWord(name, "trap"))) {
+      return SpellType::Utility;
+      }
+
+      // Putting a body on the field. "Conjure" and "summon" are unambiguous;
+      // "raise" is not (Raise Wall, Raise Shield), so it is paired with what it
+      // raises.
+      if (Util::NameContainsWord(name, "conjure") || Util::NameContainsWord(name, "summon") ||
+          Util::NameContainsWord(name, "reanimate") ||
+          (Util::NameContainsWord(name, "raise") && (Util::NameContainsWord(name, "dead") ||
+                                                     Util::NameContainsWord(name, "zombie") ||
+                                                     Util::NameContainsWord(name, "thrall")))) {
+      return SpellType::Summon;
+      }
+
+      // Mitigation. "Shield" alone is risky -- Shield Charge is an attack -- so
+      // it is paired, while "ward" and "barrier" stand alone.
+      if (Util::NameContainsWord(name, "ward") || Util::NameContainsWord(name, "barrier") ||
+          (Util::NameContainsWord(name, "shield") && !Util::NameContainsWord(name, "charge"))) {
+      return SpellType::Defensive;
+      }
+
+      return SpellType::Unknown;
    }
 
    SpellType SpellClassifier::DeriveSpellTypeFromTags(SpellTag tags, SpellTagExt tagsExt) noexcept
