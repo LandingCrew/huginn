@@ -212,6 +212,35 @@ namespace Huginn::Spell
       }
       }
 
+      // What a cloak or a hazard DOES lives in another form: the effect's
+      // associatedForm is the spell applied to whoever walks into it. Reading it
+      // is the only way to tell Stendarr's Aura (Restoration, burns undead) from
+      // a Restoration protective aura, since nothing on the spell itself is
+      // flagged harmful -- the thing it spawns carries the harm.
+      //
+      // One level deep, deliberately: the associated spell's own effects are
+      // plain value modifiers in every case I have seen, and a cloak whose
+      // associated spell is another cloak would otherwise recurse.
+      const auto typeOfAssociatedSpell = [this](RE::SpellItem* associated) {
+      if (!associated) {
+        return SpellType::Unknown;
+      }
+      auto* effect = GetCostliestEffect(associated);
+      if (!effect || !effect->baseEffect) {
+        return SpellType::Unknown;
+      }
+      const bool harms = effect->baseEffect->data.flags.any(
+        RE::EffectSetting::EffectSettingData::Flag::kHostile) ||
+        effect->baseEffect->data.flags.any(
+           RE::EffectSetting::EffectSettingData::Flag::kDetrimental);
+      if (!harms) {
+        return SpellType::Unknown;
+      }
+      return (effect->baseEffect->data.primaryAV == RE::ActorValue::kHealth)
+        ? SpellType::Damage
+        : SpellType::Debuff;
+      };
+
       // =====================================================================
       // ARCHETYPE RULES
       // =====================================================================
@@ -278,7 +307,23 @@ namespace Huginn::Spell
             return SpellType::Damage;
            }
         }
-        return SpellType::Buff;
+
+        // Nothing on the spell is harmful, which is the normal case: the HAZARD
+        // holds the damage. Blizzard proved the point -- vanilla's master frost
+        // spell typed as a Buff, because every effect it carries is a marker and
+        // the killing is done by the blizzard it drops.
+        if (auto* hazard = primaryEffect->data.associatedForm
+              ? primaryEffect->data.associatedForm->As<RE::BGSHazard>()
+              : nullptr) {
+           if (const auto applied = typeOfAssociatedSpell(hazard->data.spell);
+              applied != SpellType::Unknown) {
+            return applied;
+           }
+        }
+
+        // No hazard to read: a Destruction ground effect is an attack, anything
+        // else is the protective circle this branch exists to protect.
+        return (school == MagicSchool::Destruction) ? SpellType::Damage : SpellType::Buff;
       }
 
       // Absorb takes from the target and gives to the caster. Ranking it as
@@ -326,7 +371,16 @@ namespace Huginn::Spell
       // spell, so Flame Cloak was promoted when the player was burning. School
       // is the honest test of what a cloak is for.
       case RE::EffectSetting::Archetype::kCloak:
+      {
+        if (const auto applied = typeOfAssociatedSpell(
+              primaryEffect->data.associatedForm
+                 ? primaryEffect->data.associatedForm->As<RE::SpellItem>()
+                 : nullptr);
+           applied != SpellType::Unknown) {
+           return applied;
+        }
         return (school == MagicSchool::Destruction) ? SpellType::Damage : SpellType::Buff;
+      }
 
       // Dispel strips magic in whichever direction it is aimed: off yourself it
       // is a cure, onto an enemy it is a debuff.
