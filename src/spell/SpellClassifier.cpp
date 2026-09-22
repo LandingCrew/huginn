@@ -106,6 +106,23 @@ namespace Huginn::Spell
       data.element = ElementType::None;
       }
 
+      // A weapon coating carries the element of the damage it adds to the
+      // WEAPON, and pairing that with type Buff is read downstream as a
+      // resistance spell: ContextWeightForCandidate promotes Buff+Fire when the
+      // player is burning, and the redundancy filter drops it once they have
+      // fire resistance. Flame Weapon would be offered as protection from fire
+      // and then suppressed for being redundant with it -- the same misread the
+      // cloak rule exists to stop, in a different archetype (12 spells carry an
+      // element here on LoreRim).
+      //
+      // Clearing the element rather than retyping the spell: it IS a buff, and
+      // the element is the part that lies.
+      if (data.type == SpellType::Buff && costliestEffect && costliestEffect->baseEffect &&
+      costliestEffect->baseEffect->GetArchetype() ==
+         RE::EffectSetting::Archetype::kEnhanceWeapon) {
+      data.element = ElementType::None;
+      }
+
       data.baseCost = GetBaseCost(spell);
       data.isConcentration = IsConcentration(spell);
       data.range = GetEffectiveRange(spell, primaryEffect);  // reuse pre-computed effect
@@ -203,7 +220,10 @@ namespace Huginn::Spell
       case RE::ActorValue::kResistShock:
       case RE::ActorValue::kResistFrost:
       case RE::ActorValue::kResistMagic:
-      case RE::ActorValue::kResistDisease:
+      // kResistDisease is deliberately absent: a disease is not incoming damage,
+      // and Defensive would put it in a ward slot and hand it the
+      // melee-without-shield bonus, competing with Ebonyflesh in a fight.
+      // Poison resistance stays, because poison does damage.
       case RE::ActorValue::kWardPower:
       case RE::ActorValue::kWardDeflection:
         return SpellType::Defensive;
@@ -265,8 +285,12 @@ namespace Huginn::Spell
       case RE::EffectSetting::Archetype::kPeakValueModifier:
       {
       const auto av = primaryEffect->data.primaryAV;
+      // secondaryAV only means anything for a DUAL modifier; on the other two
+      // it is whatever the record author left in the field, and reading it there
+      // turns a "Damage Stamina" spell into a damage spell.
       const bool touchesHealth = av == RE::ActorValue::kHealth ||
-                                 primaryEffect->data.secondaryAV == RE::ActorValue::kHealth;
+      (archetype == RE::EffectSetting::Archetype::kDualValueModifier &&
+       primaryEffect->data.secondaryAV == RE::ActorValue::kHealth);
       if (harmful) {
         // secondaryAV too: a dual modifier that drains stamina AND health is a
         // damage spell, whichever of the two the author put first.
@@ -300,10 +324,14 @@ namespace Huginn::Spell
         // So ask the spell instead of the flag: if nothing it carries takes a
         // value away, it is not an attack. Walk every effect, because the
         // costliest one on a circle is often the aura rather than the bite.
+        // Both flags, for the reason this whole function reads both: an author
+        // who sets one and not the other is the normal case, not the odd one.
         for (const auto* effect : spell->effects) {
            if (effect && effect->baseEffect &&
-              effect->baseEffect->data.flags.any(
-                 RE::EffectSetting::EffectSettingData::Flag::kDetrimental)) {
+              (effect->baseEffect->data.flags.any(
+                  RE::EffectSetting::EffectSettingData::Flag::kDetrimental) ||
+               effect->baseEffect->data.flags.any(
+                  RE::EffectSetting::EffectSettingData::Flag::kHostile))) {
             return SpellType::Damage;
            }
         }
@@ -382,10 +410,11 @@ namespace Huginn::Spell
         return (school == MagicSchool::Destruction) ? SpellType::Damage : SpellType::Buff;
       }
 
-      // Dispel strips magic in whichever direction it is aimed: off yourself it
-      // is a cure, onto an enemy it is a debuff.
+      // Dispel strips magic in whichever direction it is aimed: onto an enemy it
+      // is a debuff, off yourself it is housekeeping -- Utility, not Healing,
+      // because Healing is what fills the heal slot.
       case RE::EffectSetting::Archetype::kDispel:
-        return harmful ? SpellType::Debuff : SpellType::Healing;
+        return harmful ? SpellType::Debuff : SpellType::Utility;
 
       // --- things that put another body on the field ---
       case RE::EffectSetting::Archetype::kReanimate:
@@ -404,11 +433,16 @@ namespace Huginn::Spell
         return SpellType::Utility;
 
       // --- undoing a condition ---
+      //
+      // Utility rather than Healing, and the reason is the slot: SlotClassifier
+      // fills HealingAny on type == Healing alone, so a Cure Disease spell would
+      // sit in the slot a player mashes at low health while restoring nothing.
+      // Curing a condition is a thing you do afterwards.
       case RE::EffectSetting::Archetype::kCureDisease:
       case RE::EffectSetting::Archetype::kCurePoison:
       case RE::EffectSetting::Archetype::kCureParalysis:
       case RE::EffectSetting::Archetype::kCureAddiction:
-        return SpellType::Healing;
+        return SpellType::Utility;
 
       default:
         break;

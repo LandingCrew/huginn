@@ -512,8 +512,25 @@ namespace Huginn::Console
          // Burden" is a list.
          int archetype = -1, primaryAV = -1, secondaryAV = -1, effectCount = 0;
          bool hostile = false, detrimental = false, recover = false;
-         if (auto* costliest = classifier.GetCostliestEffect(spell)) {
-            if (auto* setting = costliest->baseEffect) {
+
+         // Report the effect the CLASSIFIER used, not merely the costliest one.
+         //
+         // ClassifySpell retries with the costliest non-script effect when the
+         // costliest is a script, so for those ~66 spells the dump used to print
+         // archetype=1 beside a type derived from a different effect entirely --
+         // and "group by archetype to find the rule" then mis-attributed that
+         // whole cohort. This command exists to drive exactly that analysis.
+         int usedRetry = 0;
+         auto* chosen = classifier.GetCostliestEffect(spell);
+         if (chosen && chosen->baseEffect &&
+             chosen->baseEffect->GetArchetype() == RE::EffectSetting::Archetype::kScript) {
+            if (auto* readable = classifier.GetCostliestNonScriptEffect(spell)) {
+               chosen = readable;
+               usedRetry = 1;
+            }
+         }
+         if (chosen) {
+            if (auto* setting = chosen->baseEffect) {
                archetype = static_cast<int>(setting->GetArchetype());
                primaryAV = static_cast<int>(setting->data.primaryAV);
                secondaryAV = static_cast<int>(setting->data.secondaryAV);
@@ -533,7 +550,7 @@ namespace Huginn::Console
             }
          }
 
-         out << std::format("{:08X},{},{},{},{},{},{:08X},{:04X},{},{},{:.0f},{},{},{},{},{},{},{},{},{},{},{}\n",
+         out << std::format("{:08X},{},{},{},{},{},{:08X},{:04X},{},{},{:.0f},{},{},{},{},{},{},{},{},{},{},{},{}\n",
             spell->GetFormID(),
             csvQuote(rawName),
             castTypeName(castType),
@@ -555,7 +572,8 @@ namespace Huginn::Console
             secondaryAV,
             static_cast<int>(spell->GetDelivery()),
             static_cast<int>(spell->GetCastingType()),
-            effectCount);
+            effectCount,
+            usedRetry);
          ++written;
          if (learnable) {
             ++learnableCount;
