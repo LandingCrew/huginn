@@ -65,6 +65,16 @@ namespace Huginn::Spell
             data.type = DetermineSpellType(spell, setting);
            }
         }
+
+        // Still nothing, and the spell is script-driven: ask the NAME before
+        // asking the tags. For these spells the tags are themselves guesses,
+        // and a guess about an element outranks a word that names the purpose
+        // -- which is how "Open Novice Lock" came out as Damage, off a Frost
+        // tag, and landed in a combat slot. A purpose word is the better
+        // evidence when there is no effect data at all.
+        if (data.type == SpellType::Unknown) {
+           data.type = DeriveSpellTypeFromName(spell->GetName());
+        }
       }
 
       if (data.type == SpellType::Unknown) {
