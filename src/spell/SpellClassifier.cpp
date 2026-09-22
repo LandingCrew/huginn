@@ -151,6 +151,20 @@ namespace Huginn::Spell
       if (archetype == RE::EffectSetting::Archetype::kValueModifier) {
         return SpellType::Healing;
       }
+      // A peak modifier on health is a FORTIFY or a heal-over-time, and the
+      // difference is kRecover: it means the value returns to what it was when
+      // the effect ends, which is what a temporary maximum does and what a heal
+      // never does.
+      //
+      // Excluding peak modifiers outright, as the first cut did, turned
+      // "Healing Aura" and "Greater Healing Aura" into Buffs along with the four
+      // genuine fortifies -- 8 real heals lost to catch 4 impostors (measured
+      // 2026-09-21, Healing fell 38 -> 24 and only 4 of that was intended).
+      if (archetype == RE::EffectSetting::Archetype::kPeakValueModifier &&
+          !primaryEffect->data.flags.any(
+             RE::EffectSetting::EffectSettingData::Flag::kRecover)) {
+        return SpellType::Healing;
+      }
       }
 
       // Summon: SummonCreature archetype

@@ -478,7 +478,7 @@ namespace Huginn::Console
       }
 
       out << "formID,name,castType,huginnType,school,element,tags,tagsExt,"
-             "cost,concentration,range,known,tome,hostile,archetype,primaryAV,secondaryAV,delivery,castingType,effects\n";
+             "cost,concentration,range,known,tome,hostile,detrimental,recover,archetype,primaryAV,secondaryAV,delivery,castingType,effects\n";
 
       size_t written = 0;
       size_t skipped = 0;
@@ -511,7 +511,7 @@ namespace Huginn::Console
          // "these 40 spells are archetype 27" is a rule, "Ash Rune, Bend Time,
          // Burden" is a list.
          int archetype = -1, primaryAV = -1, secondaryAV = -1, effectCount = 0;
-         bool hostile = false;
+         bool hostile = false, detrimental = false, recover = false;
          if (auto* costliest = classifier.GetCostliestEffect(spell)) {
             if (auto* setting = costliest->baseEffect) {
                archetype = static_cast<int>(setting->GetArchetype());
@@ -519,6 +519,10 @@ namespace Huginn::Console
                secondaryAV = static_cast<int>(setting->data.secondaryAV);
                hostile = setting->data.flags.any(
                   RE::EffectSetting::EffectSettingData::Flag::kHostile);
+               detrimental = setting->data.flags.any(
+                  RE::EffectSetting::EffectSettingData::Flag::kDetrimental);
+               recover = setting->data.flags.any(
+                  RE::EffectSetting::EffectSettingData::Flag::kRecover);
             }
          }
          effectCount = static_cast<int>(spell->effects.size());
@@ -529,7 +533,7 @@ namespace Huginn::Console
             }
          }
 
-         out << std::format("{:08X},{},{},{},{},{},{:08X},{:04X},{},{},{:.0f},{},{},{},{},{},{},{},{},{}\n",
+         out << std::format("{:08X},{},{},{},{},{},{:08X},{:04X},{},{},{:.0f},{},{},{},{},{},{},{},{},{},{},{}\n",
             spell->GetFormID(),
             csvQuote(rawName),
             castTypeName(castType),
@@ -544,6 +548,8 @@ namespace Huginn::Console
             (player && player->HasSpell(spell)) ? 1 : 0,
             learnable ? 1 : 0,
             hostile ? 1 : 0,
+            detrimental ? 1 : 0,
+            recover ? 1 : 0,
             archetype,
             primaryAV,
             secondaryAV,
