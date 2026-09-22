@@ -581,6 +581,10 @@ namespace Huginn::Console
       }
       out.close();
 
+      // This pass touched every spell in the load order, so it is the only
+      // reconciliation that can honestly say an override matched nothing.
+      classifier.ReportOverrideUsage("after dump (whole load order)"sv);
+
       auto msg = std::format(
          "Wrote {} spells to Huginn_Spells.csv - {} learnable from tomes, {} of those unclassified "
          "({} unclassified overall, {} non-spell forms skipped)",
