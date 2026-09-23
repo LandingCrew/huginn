@@ -254,16 +254,15 @@ namespace Huginn::Spell
       // One level deep, deliberately: the associated spell's own effects are
       // plain value modifiers in every case I have seen, and a cloak whose
       // associated spell is another cloak would otherwise recurse.
-      const auto typeOfAssociatedSpell = [](RE::SpellItem* associated) {
+      const auto typeOfAssociatedSpell = [school](RE::SpellItem* associated) {
       if (!associated) {
         return SpellType::Unknown;
       }
 
-      // EVERY effect, not just the costliest. Triumvirate's holy cloaks apply a
-      // spell with fifteen effects whose dearest one is a non-health debuff, so
-      // reading only the costliest called Holy Fire a Debuff while the spell it
-      // applies is itself typed Damage. What matters is whether ANY of them
-      // takes health away.
+      // EVERY effect, not just the costliest. The costliest effect on an applied
+      // spell is often an aura or a marker rather than the bite, so reading only
+      // that one answers a different question. What matters is whether ANY of
+      // them takes health away.
       //
       // And a hazard that RESTORES health is a heal, which the first cut could
       // not say: it answered Unknown for anything non-harmful, so Guardian
@@ -271,6 +270,7 @@ namespace Huginn::Spell
       // bucket short of the heal slot it belongs in.
       bool harmsHealth = false;
       bool harmsOther = false;
+      bool harmsUnreadably = false;
       bool restoresHealth = false;
       for (const auto* effect : associated->effects) {
         if (!effect || !effect->baseEffect) continue;
@@ -278,6 +278,18 @@ namespace Huginn::Spell
         const bool harms =
            setting.data.flags.any(RE::EffectSetting::EffectSettingData::Flag::kHostile) ||
            setting.data.flags.any(RE::EffectSetting::EffectSettingData::Flag::kDetrimental);
+
+        // A script effect has no actor value. primaryAV reads kNone, which is
+        // NOT the same as "harms something other than health" -- and reading it
+        // that way is exactly how Triumvirate's Holy Fire and Holy Shock came
+        // out as Debuff (2026-09-22 dump: each applies a one-effect script
+        // spell, detrimental, primaryAV -1, and both cloaks are Destruction).
+        // So record THAT it harms and leave the KIND to the school below.
+        if (setting.GetArchetype() == RE::EffectSetting::Archetype::kScript) {
+           if (harms) harmsUnreadably = true;
+           continue;
+        }
+
         const bool onHealth = setting.data.primaryAV == RE::ActorValue::kHealth;
 
         if (harms && onHealth)  harmsHealth = true;
@@ -290,6 +302,17 @@ namespace Huginn::Spell
 
       if (harmsHealth)     return SpellType::Damage;
       if (harmsOther)      return SpellType::Debuff;
+
+      // Harm we could not read, so fall back to what the CLOAK is: a Destruction
+      // cloak burns, anything else impairs. Measured across all 39 learnable
+      // cloak spells on LoreRim -- two corrected, none moved the wrong way.
+      // Skipping script effects outright instead would have cost five: Sotha's
+      // Maelstrom, both Staves, Valkyrie's Embrace and Worm Shroud all turn on a
+      // harmful script and would have fallen through to Buff.
+      if (harmsUnreadably) {
+        return (school == MagicSchool::Destruction) ? SpellType::Damage : SpellType::Debuff;
+      }
+
       if (restoresHealth)  return SpellType::Healing;
       return SpellType::Unknown;
       };

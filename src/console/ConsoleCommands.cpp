@@ -478,7 +478,7 @@ namespace Huginn::Console
       }
 
       out << "formID,name,castType,huginnType,school,element,tags,tagsExt,"
-             "cost,concentration,range,known,tome,hostile,detrimental,recover,archetype,primaryAV,secondaryAV,delivery,castingType,effects,retry,assocForm,assocKind\n";
+             "cost,concentration,range,known,tome,hostile,detrimental,recover,archetype,primaryAV,secondaryAV,delivery,castingType,effects,retry,assocForm,assocKind,assocSpell\n";
 
       size_t written = 0;
       size_t skipped = 0;
@@ -530,6 +530,7 @@ namespace Huginn::Console
          // the first question is whether the link points where the plugin
          // records say it does. Dump it rather than infer it.
          RE::FormID assocForm = 0;
+         RE::FormID assocSpell = 0;
          std::string_view assocKind = "-"sv;
 
          auto* chosen = classifier.GetCostliestEffect(spell);
@@ -553,9 +554,20 @@ namespace Huginn::Console
 
                if (auto* linked = setting->data.associatedForm) {
                   assocForm = linked->GetFormID();
-                  if (linked->As<RE::SpellItem>())        assocKind = "SPEL"sv;
-                  else if (linked->As<RE::BGSHazard>())   assocKind = "HAZD"sv;
-                  else                                    assocKind = "other"sv;
+                  if (linked->As<RE::SpellItem>()) {
+                     assocKind = "SPEL"sv;
+                  } else if (auto* hazard = linked->As<RE::BGSHazard>()) {
+                     // The chain is effect -> hazard -> spell, and the peek reads
+                     // the far end. Guardian Circle and Supernova both reach a
+                     // real hazard and still come back Unknown, so the open
+                     // question is whether that last link is set at all.
+                     assocKind = "HAZD"sv;
+                     if (hazard->data.spell) {
+                        assocSpell = hazard->data.spell->GetFormID();
+                     }
+                  } else {
+                     assocKind = "other"sv;
+                  }
                }
             }
          }
@@ -567,7 +579,7 @@ namespace Huginn::Console
             }
          }
 
-         out << std::format("{:08X},{},{},{},{},{},{:08X},{:04X},{},{},{:.0f},{},{},{},{},{},{},{},{},{},{},{},{},{:08X},{}\n",
+         out << std::format("{:08X},{},{},{},{},{},{:08X},{:04X},{},{},{:.0f},{},{},{},{},{},{},{},{},{},{},{},{},{:08X},{},{:08X}\n",
             spell->GetFormID(),
             csvQuote(rawName),
             castTypeName(castType),
@@ -592,7 +604,8 @@ namespace Huginn::Console
             effectCount,
             usedRetry,
             assocForm,
-            assocKind);
+            assocKind,
+            assocSpell);
          ++written;
          if (learnable) {
             ++learnableCount;
