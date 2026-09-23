@@ -185,6 +185,33 @@ namespace Huginn::Weapon
       float baseDamage = 0.0f;     // Base form's damage, before tempering
       float temperFactor = 1.0f;   // ExtraHealth on this stack; 1.0 = untempered
       float damage = 0.0f;         // baseDamage x temperFactor - the effective number
+
+      /// What the game's inventory shows for this weapon, or 0 when unknown.
+      ///
+      /// `damage` above is the FORM's number times this stack's temper, and it
+      /// is missing the player's skill and perks -- so it is not what the
+      /// player reads anywhere. Measured 2026-09-19: an untempered Iron Sword
+      /// read 7.0 here against the game's 8, and three tempered weapons read
+      /// 9.9 / 7.7 / 4.4 against 11 / 9 / 6.
+      ///
+      /// Ranking keeps using `damage`, and should: within one weapon skill the
+      /// missing term is identical for every candidate, so no comparison it
+      /// makes is affected. Display must not, which is the whole of this field.
+      ///
+      /// Supplied by PlayerCharacter::GetDamage, the game's own accessor -- the
+      /// one the inventory card calls. That takes an InventoryEntryData, which
+      /// is per BASE FORM and not per stack, so when one form is owned at two
+      /// different tempers both stacks get the same answer. Better than a
+      /// number that is wrong for all of them, and the limit is recorded here
+      /// rather than hidden: `hg status` prints both numbers so the gap can be
+      /// read off against the inventory.
+      float displayDamage = 0.0f;
+
+      /// The number to show a player: the game's if we have it, ours if not.
+      [[nodiscard]] float DamageForDisplay() const noexcept
+      {
+      return displayDamage > 0.0f ? displayDamage : damage;
+      }
       float speed = 1.0f;          // Attack speed multiplier
       float reach = 1.0f;          // Reach multiplier
 

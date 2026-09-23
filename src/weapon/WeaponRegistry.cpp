@@ -462,6 +462,9 @@ namespace Huginn::Weapon
             invWeapon.data.temperFactor = sw.temperFactor;
             invWeapon.data.damage = invWeapon.data.baseDamage * sw.temperFactor;
            }
+           if (sw.displayDamage > 0.0f) {
+            invWeapon.data.displayDamage = sw.displayDamage;
+           }
            if (!sw.displayName.empty() && sw.displayName != invWeapon.data.name) {
             invWeapon.data.name = sw.displayName;
            }
@@ -768,13 +771,19 @@ namespace Huginn::Weapon
       for (const auto& weapon : m_weapons) {
       // uid and the temper pair are the whole point of this log now: two lines
       // sharing a FormID with different uids is the registry tracking two
-      // instances, which is what could not happen before. And printing base
-      // beside effective damage is how the temper model gets checked against
-      // the number the game shows in the inventory.
-      logger::info("  {} ({:08X}/uid{}): dmg={:.1f} (base {:.1f} x{:.2f}), tags={:08X}, fav={}, eq={}, charge={:.0f}%"sv,
+      // instances, which is what could not happen before.
+      //
+      // `shown` is what the widget prints and should equal the number in the
+      // player's inventory: PlayerCharacter::GetDamage, skill and perks
+      // included. `rank` is what the scorer compares, which is the form's
+      // damage times temper and is missing those terms by design. Printing
+      // both beside base and temper is how either model gets checked against
+      // the game -- the gap between shown and rank IS the skill/perk term.
+      logger::info("  {} ({:08X}/uid{}): shown={:.1f} rank={:.1f} (base {:.1f} x{:.2f}), tags={:08X}, fav={}, eq={}, charge={:.0f}%"sv,
         weapon.data.name,
         weapon.data.formID,
         weapon.data.uniqueID,
+        weapon.data.DamageForDisplay(),
         weapon.data.damage,
         weapon.data.baseDamage,
         weapon.data.temperFactor,
@@ -914,13 +923,38 @@ namespace Huginn::Weapon
       return;
       }
 
+      // The number the player will actually read, asked of the ACTOR rather
+      // than the form, because the skill and perk terms live on the actor and
+      // no amount of reading the form will produce them.
+      //
+      // PlayerCharacter::GetDamage is the game's own accessor -- the inventory
+      // card calls it, and it sits beside GetArmorValue which does the same job
+      // for apparel. It is also a raw native in a codebase that has been bitten
+      // by one before (InventoryChanges::GetItemCount, PR #41, crashed on
+      // save-load), so it is called only here: inside the includeExtraLists
+      // gate, which already means Util::IsExtraListStable() said the inventory
+      // is safe to read, and never on the load path.
+      //
+      // Per ENTRY, so every stack of one base form gets the same answer; see
+      // WeaponData::displayDamage. A non-positive result means "no answer" and
+      // falls back to the computed number rather than showing a zero.
+      float displayDamage = 0.0f;
+      if (auto* player = RE::PlayerCharacter::GetSingleton()) {
+      const float asked = player->GetDamage(entry);
+      if (asked > 0.0f) {
+        displayDamage = asked;
+      }
+      }
+
       // Util::GetInventorySafe returns ONE entry per TESBoundObject, so this is
       // where a base form fans back out into the instances the player owns.
       int32_t plainCopies = count;
       for (auto* extraList : *entry->extraLists) {
       if (!extraList) continue;
       plainCopies -= extraList->GetCount();
-      out.push_back(ExtractWeaponMetadata(weapon, extraList, equipped));
+      auto sw = ExtractWeaponMetadata(weapon, extraList, equipped);
+      sw.displayDamage = displayDamage;
+      out.push_back(std::move(sw));
       }
 
       if (plainCopies > 0) {
@@ -929,6 +963,7 @@ namespace Huginn::Weapon
       // because nothing distinguishes them -- including, for Wheeler, a
       // uniqueID, which is why the push filters them out (#118).
       ScannedWeapon sw = ExtractWeaponMetadata(weapon, nullptr, equipped);
+      sw.displayDamage = displayDamage;
       // ...and they cannot be the equipped one: ExtraWorn lives on an
       // extraList, so an equipped copy always has one and was emitted above.
       sw.isEquipped = false;
@@ -1127,6 +1162,7 @@ namespace Huginn::Weapon
       // form: what this particular stack was tempered to, and what the player
       // sees it called.
       data.temperFactor = sw.temperFactor;
+      data.displayDamage = sw.displayDamage;
       data.damage = data.baseDamage * sw.temperFactor;
       if (!sw.displayName.empty()) {
       data.name = sw.displayName;

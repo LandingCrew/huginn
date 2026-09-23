@@ -362,6 +362,7 @@ namespace Huginn::Weapon
       float maxCharge = 0.0f;
       uint16_t uniqueID = 0;
       float temperFactor = 1.0f;   // ExtraHealth; 1.0 when untempered
+      float displayDamage = 0.0f;  // PlayerCharacter::GetDamage; 0 when unread
       std::string displayName;     // Empty unless this stack names itself
       };
       [[nodiscard]] std::vector<ScannedWeapon> ScanPlayerWeapons() const;
