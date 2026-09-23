@@ -85,8 +85,14 @@ namespace Huginn::Spell
       if (typeStr) {
         override.type = ParseSpellType(typeStr);
         if (!override.type) {
+           // "type ignored", not "section ignored". A section whose `type`
+           // fails to parse but whose `tags` succeed is still stored and its
+           // tags still beat auto-detection -- only a section with neither is
+           // dropped. Saying the section was ignored sends an author looking
+           // for a different cause while their tag override is live.
            logger::warn("[SpellOverrides] '{}': type '{}' is not a spell type — "
-                        "section ignored"sv, sectionName, typeStr);
+                        "type ignored (any tags in this section still apply)"sv,
+                        sectionName, typeStr);
         }
         // The tag guard cannot cover `type`: a token that parses is not evidence
         // it was meant for this domain. `buff` and `unknown` parse in BOTH

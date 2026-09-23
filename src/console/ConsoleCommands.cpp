@@ -531,7 +531,23 @@ namespace Huginn::Console
          // whole cohort. This command exists to drive exactly that analysis.
          // Ask the classifier rather than restating its condition; the two
          // disagreed, and the dump was the one that was wrong.
-         const int usedRetry = classifier.RetryDecidedType(spell) ? 1 : 0;
+         //
+         // And only when an EFFECT decided the type at all. RetryDecidedType
+         // and the chosen-effect block below both reproduce the
+         // DetermineSpellType path and neither knows about the layers above it,
+         // so a spell typed from the override file, from tags or from its name
+         // still printed a full archetype/AV/flag row describing an effect that
+         // decided nothing -- and "group by archetype to find the rule" then
+         // mis-attributes that cohort. Which is the exact failure this column
+         // was added to fix, one layer up.
+         const bool typedFromEffect =
+            data.typeEvidence == Spell::TypeEvidence::Archetype ||
+            data.typeEvidence == Spell::TypeEvidence::Applied ||
+            data.typeEvidence == Spell::TypeEvidence::SchoolOnly ||
+            data.typeEvidence == Spell::TypeEvidence::SchoolGuess;
+
+         const int usedRetry =
+            (typedFromEffect && classifier.RetryDecidedType(spell)) ? 1 : 0;
 
          // A cloak and a hazard both delegate their behaviour to another form,
          // and the classifier follows that link to type them. When its answer
@@ -542,7 +558,7 @@ namespace Huginn::Console
          RE::FormID assocSpell = 0;
          std::string_view assocKind = "-"sv;
 
-         auto* chosen = classifier.GetCostliestEffect(spell);
+         auto* chosen = typedFromEffect ? classifier.GetCostliestEffect(spell) : nullptr;
          if (chosen && chosen->baseEffect &&
              chosen->baseEffect->GetArchetype() == RE::EffectSetting::Archetype::kScript) {
             if (auto* readable = classifier.GetCostliestNonScriptEffect(spell)) {

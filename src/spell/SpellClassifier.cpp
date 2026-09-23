@@ -38,6 +38,7 @@ namespace Huginn::Spell
       RE::EffectSetting* primaryEffect = costliestEffect ? costliestEffect->baseEffect : nullptr;
 
       // STEP 1: Compute tags FIRST (single source of name-matching)
+      const bool tagsOverridden = override && override->tags.has_value();
       data.tags = override ? override->tags.value_or(DetermineSpellTags(spell))
                            : DetermineSpellTags(spell);
 
@@ -109,7 +110,12 @@ namespace Huginn::Spell
       // can see. Applied here rather than in DetermineSpellType because that
       // function never sees the tags, and this one is the only signal the two
       // stragglers share with their family.
-      if (HasTag(data.tags, SpellTag::BoundWeapon) && data.type != SpellType::Summon) {
+      // Not when the tag came from the override file. An author who writes
+      // `tags = BoundWeapon` and no `type` is describing the spell, not asking
+      // for it to be retyped, and forcing Summon over their own file is the one
+      // place Huginn should never be guessing.
+      if (!tagsOverridden && HasTag(data.tags, SpellTag::BoundWeapon) &&
+      data.type != SpellType::Summon) {
         data.type = SpellType::Summon;
         data.typeEvidence = TypeEvidence::Tags;
       }
@@ -144,10 +150,21 @@ namespace Huginn::Spell
       //
       // Clearing the element rather than retyping the spell: it IS a buff, and
       // the element is the part that lies.
-      if (data.type == SpellType::Buff && costliestEffect && costliestEffect->baseEffect &&
-      costliestEffect->baseEffect->GetArchetype() ==
-         RE::EffectSetting::Archetype::kEnhanceWeapon) {
-      data.element = ElementType::None;
+      //
+      // ANY effect, not just the costliest. The element being cleared usually
+      // arrives from the NAME via DeriveElementFromTags, and a coating whose
+      // costliest effect is something else -- a Fortify One-Handed modifier, or
+      // a script that sent the type through the retry -- kept it and walked
+      // straight back into the misread.
+      if (data.type == SpellType::Buff) {
+      for (const auto* effect : spell->effects) {
+        if (effect && effect->baseEffect &&
+           effect->baseEffect->GetArchetype() ==
+              RE::EffectSetting::Archetype::kEnhanceWeapon) {
+           data.element = ElementType::None;
+           break;
+        }
+      }
       }
 
       data.baseCost = GetBaseCost(spell);
@@ -285,27 +302,6 @@ namespace Huginn::Spell
         return SpellType::Unknown;
       }
 
-      // Ask the archetype rules about it first, rather than re-deriving an
-      // answer from raw flags that they already answer better.
-      //
-      // LoreRim points Guardian Circle's hazard at a kTurnUndead spell, and
-      // Circle of Protection's at the same kind of record. Turn Undead carries
-      // neither harm flag and sits on no interesting actor value, so the walk
-      // below finds nothing at all and both circles fell through to "not
-      // Destruction, therefore Buff". The switch types kTurnUndead as Debuff
-      // without being asked twice.
-      //
-      // Only at depth 0: this is the recursion the depth parameter exists for.
-      if (depth == 0) {
-        if (auto* costliest = GetCostliestEffect(associated);
-           costliest && costliest->baseEffect) {
-           if (const auto byRule = DetermineSpellType(associated, costliest->baseEffect,
-                                                      nullptr, depth + 1);
-              byRule != SpellType::Unknown) {
-            return byRule;
-           }
-        }
-      }
 
       // EVERY effect, not just the costliest. The costliest effect on an applied
       // spell is often an aura or a marker rather than the bite, so reading only
@@ -350,6 +346,33 @@ namespace Huginn::Spell
 
       if (harmsHealth)     return SpellType::Damage;
       if (harmsOther)      return SpellType::Debuff;
+
+      // Nothing above found harm, so now ask the archetype rules about the
+      // applied spell rather than guessing from the school.
+      //
+      // Deliberately BELOW the walk, not above it. This asks about the
+      // COSTLIEST effect only, and the walk exists precisely because the
+      // costliest effect on an applied spell is often a marker rather than the
+      // bite -- put it first and a harmless costly marker answers Buff while a
+      // cheap Damage Health effect goes unread. Below, it only ever speaks when
+      // the walk found nothing, which is the case it was added for: LoreRim
+      // points Guardian Circle's hazard at a kTurnUndead spell, and Circle of
+      // Protection's at the same kind of record. Turn Undead carries neither
+      // harm flag and sits on no interesting actor value, so the walk finds
+      // nothing and both circles used to fall through to "not Destruction,
+      // therefore Buff". The switch types kTurnUndead as Debuff.
+      //
+      // Only at depth 0: this is the recursion the depth parameter exists for.
+      if (depth == 0) {
+        if (auto* costliest = GetCostliestEffect(associated);
+           costliest && costliest->baseEffect) {
+           if (const auto byRule = DetermineSpellType(associated, costliest->baseEffect,
+                                                      nullptr, depth + 1);
+              byRule != SpellType::Unknown) {
+            return byRule;
+           }
+        }
+      }
 
       // Harm we could not read, so fall back to what the CLOAK is: a Destruction
       // cloak burns, anything else impairs. Measured across all 39 learnable
@@ -396,6 +419,20 @@ namespace Huginn::Spell
       (archetype == RE::EffectSetting::Archetype::kDualValueModifier &&
        primaryEffect->data.secondaryAV == RE::ActorValue::kHealth);
       if (harmful) {
+        // Unless it is aimed at YOU. Reading kDetrimental as harm was the fix
+        // that stopped "Insomnia" being a heal, but it also made every spell
+        // that spends your own health an attack: Equilibrium (Blood) converts
+        // health to magicka on self-delivery, and came out typed Damage, which
+        // fills a DamageAny slot and draws combat weight. A cost you pay to
+        // yourself is not a weapon.
+        //
+        // Delivery rather than the hostile flag, because the flag is exactly
+        // what could not be trusted here. One spell on LoreRim, and the shape
+        // -- self-cast, detrimental, on your own health -- is what blood magic
+        // always looks like.
+        if (spell->GetDelivery() == RE::MagicSystem::Delivery::kSelf) {
+           return SpellType::Utility;
+        }
         // secondaryAV too: a dual modifier that drains stamina AND health is a
         // damage spell, whichever of the two the author put first.
         return touchesHealth ? SpellType::Damage : SpellType::Debuff;
@@ -867,11 +904,18 @@ namespace Huginn::Spell
         tags |= SpellTag::SummonCreature;
       }
       }
-      // Whole-word, not a raw substring: "bound" appears inside "Unbound Fire"
+      // Word-START, not a raw substring: "bound" appears inside "Unbound Fire"
       // and "Unbounded Flames/Freezing/Storms", four LoreRim DESTRUCTION scrolls
       // that a find() tags BoundWeapon|Conjuration and so types Summon. Same
       // trap the Unlock arm below already avoids, and for the same reason bare
       // "open" was replaced there.
+      //
+      // NameContainsWord checks the LEADING boundary only, so this still
+      // matches a longer word beginning with it -- "Boundless", "Bounding". No
+      // such spell exists in the load orders measured, and tightening the
+      // helper would change every caller (it is what lets "detect" match
+      // "Detection"), so the exposure is recorded here rather than papered
+      // over. If one turns up, it wants its own whole-word helper.
       if (Util::NameContainsWord(name, "bound")) {
       tags |= SpellTag::BoundWeapon;
       tags |= SpellTag::Conjuration;
