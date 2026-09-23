@@ -197,6 +197,32 @@ re-opening something that looks obviously undone.
       ships, because it touches the vanilla set too.
       Raised 2026-09-23, out of the #128 review.
 
+- [ ] A Defensive spell's element may be a word in its name, not a resistance
+      it grants. Found by the #130 review, and the other half of the bug #130
+      fixed. `DetermineElementType` reads the effect's `resistVariable`; when
+      that is unset the element falls back to `DeriveElementFromTags`, which is
+      a NAME keyword -- "ice"/"freeze" -> Frost, "fire"/"flame" -> Fire,
+      "spark"/"thunder" -> Shock.
+      `ContextWeightForCandidate` and `CandidateFilters::IsResistSpellRedundant`
+      both take a Defensive spell's element to be what it protects against, so
+      a spell named after an element is promoted while the player takes that
+      damage and then suppressed once they resist it -- offered for the wrong
+      reason, then withheld for the wrong reason.
+      Measured on LoreRim (2026-09-23): ten Defensive spells carry an element.
+      NINE have a matching resist actor value and are genuine -- Fire Shell and
+      Shield (kResistFire), Frost Shell and Shield (kResistFrost), Shock Shell
+      and Shield (kResistShock), three Resist Poisons (kPoisonResist). The tenth
+      is **Ice Armor**: `kDamageResist`, a physical armour spell, Frost from the
+      word "Ice".
+      Blocked on an instrument, deliberately. All nine genuine ones ALSO have an
+      element word in their names, so `hg dump spells` cannot say which of the
+      two paths set each element -- and clearing name-derived elements on
+      Defensive blind could take all ten. Wants a dump column reporting the
+      API-derived element before the tag fallback, then the rule, then a count
+      on both load orders. The same "measure before shipping a rule that touches
+      many spells" that #128 settled on.
+      Raised 2026-09-23.
+
 - [ ] Arcane Mass Inhibition is typed Utility and should be Debuff.
       One spell, recorded so it is not rediscovered as a mystery. #128 types a
       self-delivered, non-hostile, detrimental spell as Utility — a cost you pay
