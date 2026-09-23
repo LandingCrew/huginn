@@ -71,10 +71,25 @@ namespace Huginn::Context
                     maxWeight = std::max(maxWeight, weights.stealthWeight);
                 }
 
-                // Resist spells: a Defensive spell's element is what it protects
-                // AGAINST, and maps to that element's resist weight. SpellTag is at
-                // 32/32 bits — no room for ResistFire/Frost/Shock tags — so the
-                // SpellType + ElementType combo set by SpellClassifier carries it.
+                // Resist spells: a Defensive spell's element is TAKEN to be what it
+                // protects against, and maps to that element's resist weight.
+                // SpellTag is at 32/32 bits — no room for ResistFire/Frost/Shock
+                // tags — so the SpellType + ElementType combo set by
+                // SpellClassifier carries it.
+                //
+                // "Taken to be", not "is". The element is read from the effect's
+                // resistVariable and falls back to a NAME keyword when that is
+                // unset, so a Defensive spell can carry an element it does not
+                // actually resist. Ice Armor is one: kDamageResist, a physical
+                // armour spell, Frost purely from the word "Ice" (LoreRim,
+                // 2026-09-23). It draws resistFrostWeight while the player freezes
+                // and is then suppressed as redundant once they have frost
+                // resistance — the same double misread this arm was narrowed to
+                // stop, surviving on the other side of the narrowing. Nine of the
+                // ten Defensive spells carrying an element on that load order have
+                // a matching resist actor value; this is the tenth. Fixing it means
+                // knowing which of the two paths set each element, which no dump
+                // column yet reports. See docs/roadmap.md.
                 //
                 // Defensive ONLY. This used to accept Buff as well, from when a
                 // resist spell WAS typed Buff; #128 widened Defensive to mean
@@ -87,7 +102,9 @@ namespace Huginn::Context
                 // donates health, Thundering Hooves a mount speed buff. Each was
                 // promoted as protection from an element it does not resist while
                 // the player took that damage -- and then dropped by the redundancy
-                // filter below for duplicating a resistance it never granted.
+                // filter (CandidateFilters::IsResistSpellRedundant, in
+                // src/candidate/CandidateFilters.cpp) for duplicating a resistance
+                // it never granted.
                 if (c.type == SpellType::Defensive) {
                     switch (c.element) {
                     case Spell::ElementType::Fire:

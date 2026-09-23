@@ -123,9 +123,15 @@ Gaps worth knowing, all present in v0.19.10:
 **Resist redundancy:** `IsResistPotionRedundant` (`CandidateFilters.cpp:370`) checks the
 ResistFire/Frost/Shock/Poison/Magic item tags against `player.resistances` and the
 `resistThresholdToFilter` percentage. `IsResistSpellRedundant`
-(`CandidateFilters.cpp:403`) has no tag to read — `SpellTag` is full at 32 bits — so it
-uses `SpellType::Defensive` or `SpellType::Buff` plus `ElementType` instead. Magic
-resistance has no spell arm as a result.
+has no tag to read — `SpellTag` is full at 32 bits — so it uses `SpellType::Defensive`
+plus `ElementType` instead. Magic resistance has no spell arm as a result.
+
+> **Changed in #130.** This accepted `SpellType::Buff` as well, from when an
+> elemental resist spell *was* typed `Buff`. #128 moved every spell that
+> mitigates an element into `Defensive`, and what was left matching on `Buff`
+> were spells whose element describes damage they **deal** — a poison melee
+> aura, a lightning bolt — which were suppressed for duplicating a resistance
+> they never granted. A `Buff` is no longer filterable as a redundant resist.
 
 ### 2.3 Deduplication
 

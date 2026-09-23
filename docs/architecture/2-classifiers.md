@@ -905,8 +905,8 @@ if (data.type == SpellType::Utility && data.element != ElementType::None) {
 }
 
 // Override 3 (#128): a weapon coating's element describes the WEAPON's damage,
-// not a resistance the spell grants. Buff + element is read as protection.
-if (data.type == SpellType::Buff && archetype == kEnhanceWeapon) {
+// not a resistance the spell grants. Tests EVERY effect, not just the costliest.
+if (data.type == SpellType::Buff && anyEffectIs(kEnhanceWeapon)) {
     data.element = ElementType::None;
 }
 ```
