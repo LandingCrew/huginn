@@ -443,6 +443,15 @@ namespace Huginn::Console
          quoted.reserve(text.size() + 2);
          quoted += '"';
          for (const char c : text) {
+            // A newline inside a quoted field is legal RFC 4180 and illegal to
+            // most of what actually reads these files -- awk, sort, Select-String
+            // all count lines, and one multi-line description would silently
+            // shift every count in an audit. Authored descriptions do contain
+            // them. Fold to a space.
+            if (c == '\r' || c == '\n') {
+               quoted += ' ';
+               continue;
+            }
             if (c == '"') quoted += '"';  // doubled, per RFC 4180
             quoted += c;
          }
@@ -478,7 +487,7 @@ namespace Huginn::Console
       }
 
       out << "formID,name,castType,huginnType,school,element,tags,tagsExt,"
-             "cost,concentration,range,known,tome,hostile,detrimental,recover,archetype,primaryAV,secondaryAV,delivery,castingType,effects,retry,assocForm,assocKind,assocSpell\n";
+             "cost,concentration,range,known,tome,hostile,detrimental,recover,archetype,primaryAV,secondaryAV,delivery,castingType,effects,retry,assocForm,assocKind,assocSpell,description\n";
 
       size_t written = 0;
       size_t skipped = 0;
@@ -572,6 +581,31 @@ namespace Huginn::Console
             }
          }
          effectCount = static_cast<int>(spell->effects.size());
+         // The authored text, from EVERY effect, joined in record order.
+         //
+         // This is the only place a spell says what it DOES in words a player
+         // reads, and on the evidence it outranks the effect data. Guardian
+         // Circle and Circle of Protection are identical in every field this
+         // classifier reads -- same archetype, same flags, same actor value,
+         // both reaching a kTurnUndead spell through a hazard -- and only the
+         // text says one of them also heals 20 health per second. Circle of
+         // Death reads as a non-hostile health value modifier, which is the
+         // single most reliable rule in the classifier, and its text says it
+         // instantly kills.
+         //
+         // Dumped as a CORPUS, not read by the classifier. A rule that can
+         // overturn effect data across 1,107 spells gets written from the
+         // strings that are actually there, and measured, before it is written
+         // from memory.
+         std::string description;
+         for (const auto* effect : spell->effects) {
+            if (!effect || !effect->baseEffect) continue;
+            const char* text = effect->baseEffect->magicItemDescription.c_str();
+            if (!text || !*text) continue;
+            if (!description.empty()) description += " | ";
+            description += text;
+         }
+
          if (data.type == Spell::SpellType::Unknown) {
             ++unknownType;
             if (learnable) {
@@ -579,7 +613,7 @@ namespace Huginn::Console
             }
          }
 
-         out << std::format("{:08X},{},{},{},{},{},{:08X},{:04X},{},{},{:.0f},{},{},{},{},{},{},{},{},{},{},{},{},{:08X},{},{:08X}\n",
+         out << std::format("{:08X},{},{},{},{},{},{:08X},{:04X},{},{},{:.0f},{},{},{},{},{},{},{},{},{},{},{},{},{:08X},{},{:08X},{}\n",
             spell->GetFormID(),
             csvQuote(rawName),
             castTypeName(castType),
@@ -605,7 +639,8 @@ namespace Huginn::Console
             usedRetry,
             assocForm,
             assocKind,
-            assocSpell);
+            assocSpell,
+            csvQuote(description));
          ++written;
          if (learnable) {
             ++learnableCount;
