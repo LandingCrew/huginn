@@ -51,8 +51,9 @@ namespace Huginn::Spell
       // STEP 2: Determine type - API first, then derive from tags
       if (override && override->type) {
       data.type = *override->type;
+      data.typeEvidence = TypeEvidence::Override;
       } else {
-      data.type = DetermineSpellType(spell, primaryEffect);  // API-based
+      data.type = DetermineSpellType(spell, primaryEffect, &data.typeEvidence);  // API-based
 
       // A script effect is a closed door: no archetype, no actor value, nothing
       // to read. When one is merely the COSTLIEST effect it hides the rest of
@@ -64,7 +65,10 @@ namespace Huginn::Spell
           primaryEffect->GetArchetype() == RE::EffectSetting::Archetype::kScript) {
         if (auto* readable = GetCostliestNonScriptEffect(spell)) {
            if (auto* setting = readable->baseEffect) {
-            data.type = DetermineSpellType(spell, setting);
+            // The retry reads effect data like any other pass, so whatever it
+            // decides carries that pass's own evidence -- not a weaker one for
+            // having taken a second look.
+            data.type = DetermineSpellType(spell, setting, &data.typeEvidence);
            }
         }
 
@@ -76,17 +80,26 @@ namespace Huginn::Spell
         // evidence when there is no effect data at all.
         if (data.type == SpellType::Unknown) {
            data.type = DeriveSpellTypeFromName(spell->GetName());
+           if (data.type != SpellType::Unknown) {
+            data.typeEvidence = TypeEvidence::Name;
+           }
         }
       }
 
       if (data.type == SpellType::Unknown) {
         data.type = DeriveSpellTypeFromTags(data.tags, data.tagsExt);  // Tag-based fallback
+        if (data.type != SpellType::Unknown) {
+           data.typeEvidence = TypeEvidence::Tags;
+        }
       }
 
       // Everything the API can say has been said. What is left is script-driven
       // and the name is the only evidence there is.
       if (data.type == SpellType::Unknown) {
         data.type = DeriveSpellTypeFromName(spell->GetName());
+        if (data.type != SpellType::Unknown) {
+           data.typeEvidence = TypeEvidence::Name;
+        }
       }
 
       // A bound weapon is a summon, whichever archetype the author used to
@@ -98,6 +111,7 @@ namespace Huginn::Spell
       // stragglers share with their family.
       if (HasTag(data.tags, SpellTag::BoundWeapon) && data.type != SpellType::Summon) {
         data.type = SpellType::Summon;
+        data.typeEvidence = TypeEvidence::Tags;
       }
       }
 
@@ -143,14 +157,25 @@ namespace Huginn::Spell
       return data;
    }
 
-   SpellType SpellClassifier::DetermineSpellType(RE::SpellItem* spell, RE::EffectSetting* primaryEffect) const
+   SpellType SpellClassifier::DetermineSpellType(RE::SpellItem* spell,
+      RE::EffectSetting* primaryEffect,
+      TypeEvidence* evidence) const
    {
+      // Every rule below this line reads the effect's archetype and actor
+      // value. The handful that read less say so at their own return.
+      const auto note = [evidence](TypeEvidence e) {
+      if (evidence) *evidence = e;
+      };
+      note(TypeEvidence::Archetype);
+
       // ONLY API-based checks here
       // Name-based fallback handled by DeriveSpellTypeFromTags() in ClassifySpell()
       // OPTIMIZATION (v0.7.19): primaryEffect is pre-computed by caller
 
-      if (!spell) return SpellType::Unknown;
-      if (!primaryEffect) return SpellType::Unknown;
+      if (!spell || !primaryEffect) {
+      note(TypeEvidence::None);
+      return SpellType::Unknown;
+      }
 
       const auto archetype = primaryEffect->GetArchetype();
       const bool isHostile = primaryEffect->data.flags.any(
@@ -401,12 +426,14 @@ namespace Huginn::Spell
               : nullptr) {
            if (const auto applied = typeOfAssociatedSpell(hazard->data.spell);
               applied != SpellType::Unknown) {
+            note(TypeEvidence::Applied);
             return applied;
            }
         }
 
         // No hazard to read: a Destruction ground effect is an attack, anything
         // else is the protective circle this branch exists to protect.
+        note(TypeEvidence::SchoolGuess);
         return (school == MagicSchool::Destruction) ? SpellType::Damage : SpellType::Buff;
       }
 
@@ -467,8 +494,10 @@ namespace Huginn::Spell
                  ? primaryEffect->data.associatedForm->As<RE::SpellItem>()
                  : nullptr);
            applied != SpellType::Unknown) {
+           note(TypeEvidence::Applied);
            return applied;
         }
+        note(TypeEvidence::SchoolGuess);
         return (school == MagicSchool::Destruction) ? SpellType::Damage : SpellType::Buff;
       }
 
@@ -519,12 +548,15 @@ namespace Huginn::Spell
       // and they still catch a Destruction or Illusion spell whose archetype has
       // no rule.
       if (harmful && school == MagicSchool::Destruction) {
+      note(TypeEvidence::SchoolOnly);
       return SpellType::Damage;
       }
       if (harmful && school == MagicSchool::Illusion) {
+      note(TypeEvidence::SchoolOnly);
       return SpellType::Debuff;
       }
 
+      note(TypeEvidence::None);
       return SpellType::Unknown;  // Will fall back to tag-based in ClassifySpell
    }
 

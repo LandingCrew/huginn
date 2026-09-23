@@ -63,7 +63,14 @@ namespace Huginn::Spell
       // Determine primary spell type using API-first approach (no name fallback)
       // @param spell The spell to classify
       // @param primaryEffect Pre-computed costliest effect's base setting (may be null)
-      [[nodiscard]] SpellType DetermineSpellType(RE::SpellItem* spell, RE::EffectSetting* primaryEffect) const;
+      // `evidence`, when given, is set to HOW the answer was reached, so the
+      // registry can report the guesses. Defaulted to Archetype on entry and
+      // overwritten only on the paths that read less than the effect data --
+      // there are four of those and forty that are not, so writing it at the
+      // exceptions keeps the forty honest by construction.
+      [[nodiscard]] SpellType DetermineSpellType(RE::SpellItem* spell,
+      RE::EffectSetting* primaryEffect,
+      TypeEvidence* evidence = nullptr) const;
 
       // Last-resort typing by NAME, for spells whose behaviour lives entirely in
       // a Papyrus script.

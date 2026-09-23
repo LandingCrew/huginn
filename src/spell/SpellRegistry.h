@@ -91,6 +91,10 @@ namespace Huginn::Spell
       void LogAllSpells() const;
 
    private:
+      /// Log the spells whose type is a guess, so an override can be written.
+      /// Caller holds m_mutex.
+      void ReportWeakClassificationsLocked() const;
+
       // Scan player's known spells from SKSE
       [[nodiscard]] std::vector<RE::SpellItem*> ScanPlayerSpells() const;
       [[nodiscard]] std::vector<RE::SpellItem*> ScanPlayerSpells(RE::PlayerCharacter* player) const;
