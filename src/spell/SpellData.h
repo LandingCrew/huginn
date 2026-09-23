@@ -214,9 +214,15 @@ namespace Huginn::Spell
    ///
    /// Recorded so Huginn can say which of its answers it is NOT sure of. The
    /// classifier is otherwise silent about its own confidence, and on a large
-   /// load order roughly one learnable spell in seven is a guess -- 149 of 1107
-   /// on LoreRim (2026-09-22 dump): 90 with no answer at all and 59 typed from
-   /// the spell's name or its tags, which are themselves name matches.
+   /// load order roughly one learnable spell in eight is a guess -- 140 of 1107
+   /// on LoreRim (2026-09-22 dump): 90 with no answer at all, 25 from the
+   /// spell's name, 17 from tags (which are themselves name matches) and 8 from
+   /// a cloak or hazard whose applied spell could not be read.
+   ///
+   /// That 140 is measured. The estimate before this enum existed was 149, from
+   /// counting script-primary spells that came out typed and assuming the name
+   /// or the tags had answered them; 27 of those were answered by the school
+   /// fallback instead, which reads two real fields and is not a guess.
    ///
    /// A guess is not a bug. Some spells cannot be classified from effect data
    /// at all, because their behaviour lives in a Papyrus script and there is
@@ -250,7 +256,10 @@ namespace Huginn::Spell
       case TypeEvidence::Archetype:    return "effect data";
       case TypeEvidence::Applied:      return "the spell it applies";
       case TypeEvidence::SchoolOnly:   return "school only";
-      case TypeEvidence::SchoolGuess:  return "school, guessed";
+      // No comma: this string is written as a field in `hg dump spells`,
+      // and the one that used to be here split 52 rows and shifted every
+      // column after it.
+      case TypeEvidence::SchoolGuess:  return "school guess";
       case TypeEvidence::Tags:         return "tags";
       case TypeEvidence::Name:         return "name only";
       default:                         return "nothing";

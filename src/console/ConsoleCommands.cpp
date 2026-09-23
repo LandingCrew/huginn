@@ -640,7 +640,7 @@ namespace Huginn::Console
             assocForm,
             assocKind,
             assocSpell,
-            Spell::TypeEvidenceToString(data.typeEvidence),
+            csvQuote(Spell::TypeEvidenceToString(data.typeEvidence)),
             csvQuote(description));
          ++written;
          if (learnable) {
