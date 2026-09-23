@@ -409,8 +409,16 @@ namespace Huginn::Candidate
     {
         const float threshold = m_config.resistThresholdToFilter;
 
-        // Check element type for resist spells (usually type == Defensive or Buff)
-        if (spell.type == Spell::SpellType::Defensive || spell.type == Spell::SpellType::Buff) {
+        // Defensive only. A Defensive spell's element is what it protects
+        // against, so already having that resistance makes it redundant.
+        //
+        // Buff was accepted here too, for the same stale reason as in
+        // ContextWeightForCandidate: before #128 an elemental resist spell was
+        // typed Buff. It is Defensive now, and the Buffs that carry an element
+        // carry it to describe damage they DEAL. Suppressing Strider's Shroud
+        // because the player already resists poison withheld a poison aura on
+        // the grounds that they did not need protection it was not offering.
+        if (spell.type == Spell::SpellType::Defensive) {
             // Use element to determine resist type
             switch (spell.element) {
                 case Spell::ElementType::Fire:
