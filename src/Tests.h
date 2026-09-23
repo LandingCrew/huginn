@@ -21,6 +21,7 @@ void RunOverrideNamespaceTests();      // Huginn_Overrides.ini section namespaci
 void RunSlotLockerResetTest();
 void RunSlotLockerInstanceLockTest();
 void RunSlotSeatingTest();
+void RunBuffElementResistTest();
 
 // =============================================================================
 // CONSOLE COMMANDS - Manual testing via Skyrim console (debug mode only)

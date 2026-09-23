@@ -5688,6 +5688,85 @@ void RunSlotLockerInstanceLockTest()
 // what holds for any layout: every item that survived the re-rank kept its slot
 // index. It cannot assert which indices those are -- the player's page decides
 // that -- and it skips itself if the layout is too small to show a shift.
+// =============================================================================
+// THROWAWAY: a Buff's element is not a resist claim (0.20.63)
+// =============================================================================
+// Delete this block, its Tests.h declaration and its Main.cpp call site
+// together, as with the throwaway tests above.
+//
+// What it pins: ContextWeightForCandidate and CandidateFilters both used to
+// read "Buff or Defensive, carrying an element" as a resist spell. That was
+// true when they were written; #128 moved every spell that actually mitigates
+// an element into Defensive, and what was left matching on Buff was three
+// LoreRim spells whose element describes damage they DEAL -- a poison melee
+// aura, a lightning bolt, a mount speed buff. Each was promoted as protection
+// from an element it does not resist, at the moment the player was taking that
+// damage.
+//
+// Asserted as a COMPARISON rather than against a number: the element must make
+// no difference to a Buff, and must make one to a Defensive. baseRelevanceWeight
+// and spellWeight are both INI-settable, so any fixed expectation here would be
+// a test of the player's INI rather than of the rule.
+//
+// This rule cannot be checked from a dump -- it changes ranking, not
+// classification -- and needs a player who knows one of three modded spells
+// while taking that element's damage. Hence a test.
+void RunBuffElementResistTest()
+{
+#ifndef NDEBUG
+   using namespace Huginn::Context;
+   using Huginn::Spell::ElementType;
+   using Huginn::Spell::SpellTag;
+   using Huginn::Spell::SpellType;
+
+   logger::info("Running buff-element resist claim test..."sv);
+
+   // One element weight raised far above the floor, so that if the element is
+   // read at all the difference cannot hide inside a baseline.
+   ContextWeightMap weights{};
+   weights.baseRelevanceWeight = 1.0f;
+   weights.spellWeight = 1.0f;
+   weights.resistFireWeight = 9.0f;
+
+   auto weightOf = [&weights](SpellType type, ElementType element) {
+      Candidate::SpellCandidate spell{};
+      spell.name = "ResistProbe";
+      spell.formID = 0x0BADE1E3;
+      spell.type = type;
+      spell.tags = SpellTag::None;
+      spell.element = element;
+      return WeightForCandidate(Candidate::CandidateVariant{spell}, weights);
+   };
+
+   const float buffNone = weightOf(SpellType::Buff, ElementType::None);
+   const float buffFire = weightOf(SpellType::Buff, ElementType::Fire);
+   const float defNone = weightOf(SpellType::Defensive, ElementType::None);
+   const float defFire = weightOf(SpellType::Defensive, ElementType::Fire);
+
+   bool passed = true;
+
+   if (buffFire != buffNone) {
+      logger::error("TEST FAIL: a Fire Buff drew {} against {} for the same buff with no "
+                    "element -- its element is being read as a resist claim"sv,
+      buffFire, buffNone);
+      passed = false;
+   }
+
+   // The other half: narrowing the check must not have disarmed it entirely.
+   if (defFire <= defNone) {
+      logger::error("TEST FAIL: a Fire Defensive drew {} against {} with no element -- "
+                    "resistFireWeight is no longer reaching the spells it is for"sv,
+      defFire, defNone);
+      passed = false;
+   }
+
+   if (passed) {
+      logger::info("  buff-element resist test PASSED (buff {} either way; "
+                   "defensive {} -> {})"sv, buffNone, defNone, defFire);
+   }
+#endif
+}
+
 void RunSlotSeatingTest()
 {
 #ifndef NDEBUG
