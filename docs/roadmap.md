@@ -178,7 +178,14 @@ re-opening something that looks obviously undone.
       would have retyped twenty-one weapon enchants. See the `TypeEvidence`
       comment in SpellData.h.
 
-- [ ] A Buff that carries an element is read as protection FROM that element.
+- [x] A Buff that carries an element is read as protection FROM that element.
+      SHIPPED in #130 (2026-09-23). Fixed at the two readers rather than by
+      clearing the element: the element is true — Strider's Shroud really is
+      poison — and it was the claim being made about it that was false. Both
+      now test `Defensive` alone, and a throwaway test in Tests.cpp pins it,
+      because this changes ranking rather than classification and no dump can
+      see it. Original entry below.
+
       `ContextWeightForCandidate` promotes Buff + Fire when the player is
       burning and `CandidateFilters` then drops it as redundant with fire
       resistance — so an elemental buff is offered as protection it does not
