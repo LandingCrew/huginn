@@ -210,6 +210,77 @@ namespace Huginn::Spell
       }
    }
 
+   /// How the classifier arrived at SpellData::type.
+   ///
+   /// Recorded so Huginn can say which of its answers it is NOT sure of. The
+   /// classifier is otherwise silent about its own confidence, and on a large
+   /// load order roughly one learnable spell in eight is a guess -- 140 of 1107
+   /// on LoreRim (2026-09-22 dump): 90 with no answer at all, 25 from the
+   /// spell's name, 17 from tags (which are themselves name matches) and 8 from
+   /// a cloak or hazard whose applied spell could not be read.
+   ///
+   /// That 140 is measured. The estimate before this enum existed was 149, from
+   /// counting script-primary spells that came out typed and assuming the name
+   /// or the tags had answered them; 27 of those were answered by the school
+   /// fallback instead, which reads two real fields and is not a guess.
+   ///
+   /// A guess is not a bug. Some spells cannot be classified from effect data
+   /// at all, because their behaviour lives in a Papyrus script and there is
+   /// nothing to read. `Huginn_Overrides.ini` is the fix, and this exists so
+   /// that a player is told an override is worth writing rather than left to
+   /// notice a spell ranking oddly and guess why.
+   ///
+   /// Deliberately NOT a general compatibility layer. The alternative -- reading
+   /// the authored description text and classifying from that -- was measured
+   /// against the whole LoreRim corpus and rejected: across 1,107 spells the
+   /// only phrase precise enough to overrule effect data was "instantly kills",
+   /// worth exactly one spell, while the obvious "deals N damage" rule would
+   /// have retyped twenty-one weapon enchants whose text describes the damage
+   /// the WEAPON does.
+   enum class TypeEvidence : uint8_t
+   {
+      None = 0,     // nothing answered; the type is Unknown
+      Override,     // Huginn_Overrides.ini said so
+      Archetype,    // read from the effect's archetype and actor value
+      Applied,      // read from the spell a cloak or hazard applies
+      SchoolOnly,   // harmful + Destruction/Illusion, no archetype rule matched
+      SchoolGuess,  // a cloak or hazard whose applied spell could not be read
+      Tags,         // derived from tags, which are themselves name matches
+      Name          // derived from the spell's name alone
+   };
+
+   inline std::string_view TypeEvidenceToString(TypeEvidence evidence)
+   {
+      switch (evidence) {
+      case TypeEvidence::Override:     return "override";
+      case TypeEvidence::Archetype:    return "effect data";
+      case TypeEvidence::Applied:      return "the spell it applies";
+      case TypeEvidence::SchoolOnly:   return "school only";
+      // No comma: this string is written as a field in `hg dump spells`,
+      // and the one that used to be here split 52 rows and shifted every
+      // column after it.
+      case TypeEvidence::SchoolGuess:  return "school guess";
+      case TypeEvidence::Tags:         return "tags";
+      case TypeEvidence::Name:         return "name only";
+      default:                         return "nothing";
+      }
+   }
+
+   /// Is this answer a guess the player should know about?
+   ///
+   /// SchoolOnly is deliberately NOT weak. "Harmful and Destruction, therefore
+   /// Damage" reads two real fields and is right nearly always; flagging it
+   /// would bury the answers that are actually guesses under ones that are not.
+   /// A warning nobody can act on is noise, and this one is meant to be acted
+   /// on.
+   inline constexpr bool IsWeakEvidence(TypeEvidence evidence)
+   {
+      return evidence == TypeEvidence::None ||
+      evidence == TypeEvidence::SchoolGuess ||
+      evidence == TypeEvidence::Tags ||
+      evidence == TypeEvidence::Name;
+   }
+
    // Spell metadata for contextual bandit and filtering
    struct SpellData
    {
@@ -224,12 +295,13 @@ namespace Huginn::Spell
       bool isConcentration;        // Continuous vs one-shot
       float range;                 // Max effective range (0 = self/touch)
       bool isFavorited = false;    // Is in favorites menu (v0.7.8)
+      TypeEvidence typeEvidence = TypeEvidence::None;  // how `type` was decided
 
       // String representation for logging
       [[nodiscard]] std::string ToString() const
       {
       return std::format(
-        "SpellData[id={:08X}, name='{}', type={}, school={}, element={}, tags={:08X}, tagsExt={:04X}, cost={}, concentration={}, range={}, fav={}]",
+        "SpellData[id={:08X}, name='{}', type={}, school={}, element={}, tags={:08X}, tagsExt={:04X}, cost={}, concentration={}, range={}, fav={}, from={}]",
         formID,
         name,
         SpellTypeToString(type),
@@ -240,7 +312,8 @@ namespace Huginn::Spell
         baseCost,
         isConcentration,
         range,
-        isFavorited);
+        isFavorited,
+        TypeEvidenceToString(typeEvidence));
       }
 
       // Equality operator

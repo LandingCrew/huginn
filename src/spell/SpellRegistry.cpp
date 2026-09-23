@@ -110,6 +110,61 @@ namespace Huginn::Spell
 
       logger::info("Spell registry built: {} spells registered ({} favorited)"sv,
       m_entries.size(), favoritedCount);
+
+      // Reconcile the override file against what was just classified. This is
+      // the only feedback an author gets: a misspelled name or a stale FormID
+      // loads fine and matches nothing, and the load line would still say the
+      // full count. Runs here rather than at load because "did it match" can
+      // only be answered after a classification pass.
+      //
+      // It sees the PLAYER'S spells, so an override on a spell they have not
+      // learned reads as unmatched. `hg dump spells` classifies the whole form
+      // array and is the complete check.
+      m_classifier.ReportOverrideUsage("after rebuild"sv);
+
+      ReportWeakClassificationsLocked();
+   }
+
+   void SpellRegistry::ReportWeakClassificationsLocked() const
+   {
+      // Say which answers are guesses.
+      //
+      // Some spells cannot be classified from effect data at all: their
+      // behaviour lives in a Papyrus script, so there is no archetype and no
+      // actor value to read, and Huginn falls back to the name or to tags that
+      // are themselves name matches. That is best effort, and it is fine -- but
+      // a wrong answer nobody is told about is one the player can only discover
+      // by noticing a spell rank oddly and never learning why.
+      //
+      // The pair to ReportUsage above: that one says which override entries
+      // matched nothing, this one says which spells could use an entry.
+      std::vector<const SpellData*> weak;
+      for (const auto& entry : m_entries) {
+      if (IsWeakEvidence(entry.typeEvidence)) {
+        weak.push_back(&entry);
+      }
+      }
+
+      if (weak.empty()) {
+      return;  // nothing to say, so say nothing
+      }
+
+      logger::info("[SpellRegistry] {} of {} spell(s) classified on weak evidence "
+                   "-- best effort. If one of them ranks oddly, an override in "
+                   "Huginn_Overrides.ini will fix it. Full list at debug level"sv,
+      weak.size(), m_entries.size());
+
+      // The list itself is per-spell and belongs at debug: it is a reference to
+      // work through once, not something to reprint every rebuild in a release
+      // log.
+      std::sort(weak.begin(), weak.end(), [](const SpellData* a, const SpellData* b) {
+      return a->name < b->name;
+      });
+      for (const auto* entry : weak) {
+      logger::debug("[SpellRegistry]   {:08X} {:<34} {:<9} (from {})"sv,
+        entry->formID, entry->name, SpellTypeToString(entry->type),
+        TypeEvidenceToString(entry->typeEvidence));
+      }
    }
 
    bool SpellRegistry::AddNewSpell(RE::SpellItem* spell)

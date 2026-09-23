@@ -1,4 +1,4 @@
-# Huginn Classification System (v0.19.x)
+# Huginn Classification System (v0.20.x)
 
 > See also:
 > - [0-pipeline.md](0-pipeline.md) - Overall pipeline flow
@@ -463,44 +463,151 @@ ElementType SpellClassifier::DetermineElementType(RE::Effect* costliestEffect) c
 }
 ```
 
-### SpellType Detection (School + Hostility Hybrid)
+### SpellType Detection (archetype-keyed)
 
-`DetermineSpellType` (`src/spell/SpellClassifier.cpp:84`) uses a school +
-hostility hybrid rather than pure archetype matching. Archetype alone decides
-only Summon, Buff and Utility. Tag-based fallback
-(`DeriveSpellTypeFromTags()`) handles everything it returns `Unknown` for.
+`DetermineSpellType` (`src/spell/SpellClassifier.cpp`) reads ONE effect — the
+costliest — and answers from its archetype. School is a last resort below the
+archetype switch, not the first question.
 
-```cpp
-// SpellClassifier private method — API-based only, no name fallback
-SpellType SpellClassifier::DetermineSpellType(RE::SpellItem* spell, RE::EffectSetting* primaryEffect) const {
-    // Pre-computed from primaryEffect: archetype, isHostile, school
+> **Changed in #128.** This used to be a school + hostility hybrid: hostile
+> Destruction meant Damage, hostile Illusion meant Debuff, and archetype
+> decided only Summon, Buff and Utility. That is where *vanilla* keeps its
+> spells, and on a large load order it left **375 of the 1,107 spells a LoreRim
+> player can learn with no type at all** (`hg dump spells`, 2026-09-21).
+> Worse, the two school tests ran *before* the archetype rules and stole from
+> them — a hostile Destruction paralysis spell returned Damage without anyone
+> looking at its archetype (42 spells). Moving them below the switch cost
+> nothing, because every case they were written for is now answered above.
 
-    // Healing: non-hostile health restoration via kValueModifier or kPeakValueModifier
-    if (!isHostile && primaryAV == kHealth && (arch == kValueModifier || arch == kPeakValueModifier))
-        return SpellType::Healing;
+**Harm is `kHostile || kDetrimental`, not `kHostile` alone.** `kHostile` is the
+author's *intent* and mod authors set it carelessly; `kDetrimental` is the
+mechanical fact that the effect moves a value down. Where they disagree,
+believe the mechanism. ("Insomnia", an Illusion nightmare spell whose four
+identical siblings are all Debuff, was typed **Healing** purely because its
+author left `kHostile` clear.)
 
-    // Summon: kSummonCreature archetype only
-    if (archetype == kSummonCreature) return SpellType::Summon;
+The order of tests:
 
-    // Damage: hostile Destruction school
-    if (isHostile && school == Destruction) return SpellType::Damage;
+| # | Test | Answers |
+|---|------|---------|
+| 1 | Not harmful, `primaryAV == kHealth`, and `kValueModifier` — or `kPeakValueModifier` without `kRecover` | `Healing` |
+| 2 | `kSummonCreature` | `Summon` |
+| 3 | Not harmful, `primaryAV` is any mitigation value | `Defensive` |
+| 4 | `kCloak` / `kSpawnHazard` — follow `associatedForm` (below) | varies |
+| 5 | Archetype switch, ~30 archetypes | varies |
+| 6 | Harmful + Destruction / harmful + Illusion | `Damage` / `Debuff` |
+| 7 | — | `Unknown`, for the fallback chain in `ClassifySpell` |
 
-    // Defensive: non-hostile Alteration on kDamageResist
-    if (school == Alteration && !isHostile && primaryAV == kDamageResist) return SpellType::Defensive;
+**(1) Healing requires actual restoration.** `kPeakValueModifier` on health is
+normally a *fortify* — it raises the maximum and restores nothing — so "Fortify
+Attributes" was a heal that healed nobody. But excluding peak modifiers
+outright turned "Healing Aura" and "Greater Healing Aura" into Buffs too:
+8 real heals lost to catch 4 impostors (Healing fell 38 → 24). `kRecover` is
+the discriminator — it means the value returns to what it was when the effect
+ends, which is what a temporary maximum does and what a heal never does.
 
-    // Debuff: hostile Illusion school
-    if (isHostile && school == Illusion) return SpellType::Debuff;
+**(3) Defensive is "mitigates incoming damage", whatever school or archetype.**
+`kDamageResist` alone left the whole resist-element line as `Buff`, where Fire
+Shield competed with Fortify Speech instead of with Ebonyflesh (11 spells).
+The set is `kDamageResist`, `kPoisonResist`, `kResistFire`, `kResistShock`,
+`kResistFrost`, `kResistMagic`, `kWardPower`, `kWardDeflection`.
+`kResistDisease` is deliberately **absent** — a disease is not incoming damage,
+and `Defensive` would put it in a ward slot with the melee-without-shield
+bonus. Ward power is tested here rather than in the switch because wards are
+`kAccumulateMagnitude`, which some overhauls also use for charge-up *damage*:
+the actor value is what makes a ward a ward.
 
-    // Buff: non-hostile self-targeted (Invisibility, Cloak archetypes)
-    if (!isHostile && spell->GetDelivery() == kSelf && (arch == kInvisibility || arch == kCloak))
-        return SpellType::Buff;
+### Following a cloak or a hazard
 
-    // Utility: Light archetype
-    if (archetype == kLight) return SpellType::Utility;
+What a cloak or a hazard *does* lives in another form. The effect's
+`associatedForm` is the spell applied to whoever walks into it, and reading it
+is the only way to tell Stendarr's Aura (Restoration, burns undead) from a
+Restoration protective aura — nothing on the spell itself is flagged harmful,
+because the thing it spawns carries the harm.
 
-    return SpellType::Unknown;  // Falls back to DeriveSpellTypeFromTags()
-}
 ```
+kCloak        →  associatedForm (SPEL)  →  its effects
+kSpawnHazard  →  associatedForm (HAZD)  →  BGSHazard::data.spell  →  its effects
+```
+
+One level deep, deliberately: a cloak whose associated spell is another cloak
+would otherwise recurse.
+
+The peek walks **every** effect of the applied spell, not just the costliest —
+the costliest is often an aura or a marker rather than the bite — and answers:
+
+| Finding on the applied spell | Answer |
+|---|---|
+| Any non-script effect harms `kHealth` | `Damage` |
+| Any non-script effect harms something else | `Debuff` |
+| Only a *script* effect harms | Destruction cloak → `Damage`, else `Debuff` |
+| Nothing harms; a `kValueModifier` restores health | `Healing` |
+| Nothing readable | `Unknown` → Destruction → `Damage`, else `Buff` |
+
+**A script effect has no actor value.** `primaryAV` reads `kNone`, which is
+*not* the same as "harms something other than health". Reading it that way is
+how Triumvirate's Holy Fire and Holy Shock came out as `Debuff`: each applies a
+one-effect script spell that is detrimental with `primaryAV = -1`, and both
+cloaks are Destruction (2026-09-22 dump). Recording *that* it harms and
+deferring the *kind* to the cloak's school corrects both. Skipping script
+effects outright instead would have cost five — Sotha's Maelstrom, both Staves,
+Valkyrie's Embrace and Worm Shroud all turn on a harmful script and would have
+fallen through to `Buff`.
+
+The hazard branch also checks the spell's own effects for harm *before*
+following the link, because a hazard spell is non-hostile by construction (the
+hazard does the harm, not the casting) and the old rule answered `Damage`
+regardless — which swallowed the protective circles. Guardian Circle, the "I am
+in trouble, drop a healing circle" button, was typed `Damage`.
+
+### The fallback chain
+
+`DetermineSpellType` is API-only. `ClassifySpell` wraps it in a chain, applied
+in this order and stopping at the first answer:
+
+1. **INI override** (`Huginn_Overrides.ini`) — short-circuits everything below.
+2. **`DetermineSpellType`** on the costliest effect.
+3. **Script retry.** A script effect is a closed door: no archetype, no actor
+   value, nothing to read. When one is merely the *costliest* effect it hides
+   the rest of the spell, so try again with `GetCostliestNonScriptEffect`.
+   66 of the 157 script-primary spells in the 2026-09-21 dump have such an
+   effect; the other 91 are script all the way down.
+4. **Name, for script-primary spells only.** For these the *tags* are
+   themselves guesses, and a guess about an element outranks a word that names
+   the purpose — which is how "Open Novice Lock" came out as `Damage` off a
+   Frost tag and landed in a combat slot.
+5. **`DeriveSpellTypeFromTags`.**
+6. **Name again**, for everything else that reached here.
+7. **BoundWeapon tag → `Summon`.** Requiem builds Bound Arrows and Bound Bolts
+   as peak value modifiers, so the API typed them `Buff` while the other 25
+   bound-anything spells were `Summon` — one family, two buckets, for a reason
+   no player can see. Applied at this level because `DetermineSpellType` never
+   sees the tags.
+
+`DeriveSpellTypeFromName` matches on **word boundaries** (`Util::NameContainsWord`),
+because a substring match on words this short is how "Lockpick" would make
+"Blocking" a utility spell. Its word list is short on purpose: only words that
+name what a spell is *for*. "fire", "storm", "blood" and their kind are
+deliberately absent — a script spell called "Bloodstorm" could be anything, and
+`Unknown` is the better answer.
+
+### Auditing it: `hg dump spells`
+
+Debug builds only. Writes every spell in the load order to `Huginn_Spells.csv`
+beside the log, one row per spell, with the classifier's answer next to the raw
+record fields it read — archetype, actor values, flags, effect count — plus:
+
+| Column | Meaning |
+|---|---|
+| `retry` | Did step 3 above decide the type? Answered by `SpellClassifier::RetryDecidedType`, which calls the same two functions in the same order rather than restating the condition |
+| `assocForm` / `assocKind` | The effect's `associatedForm` and whether it is a `SPEL`, a `HAZD` or something else |
+| `assocSpell` | For a `HAZD`, the `BGSHazard::data.spell` at the far end of the chain |
+
+This is the instrument every measurement quoted above came from. A rule change
+is expected to be justified by a before/after count from it, because the
+classifier's failures are invisible in play — an untyped spell is not dropped,
+it is ranked without a type, so the cost is quietly bad ordering rather than
+anything the player can see and report.
 
 ### ItemType Detection
 
@@ -764,13 +871,25 @@ API-based classification is reliable but not always semantically correct:
 | Spell | API Result | Semantic Truth | Root Cause |
 |-------|------------|----------------|------------|
 | Sunbeam | `element=Magic` | `element=Sun` | Dawnguard sun spells use `kResistMagic` internally |
-| Waterbreathing | `type=Unknown` | `type=Buff` | No archetype match (plain value modifier on `kWaterBreathing`) |
-| Open Lock / Knock | `type=Unknown` | `type=Utility` | `kOpen` archetype is not in `DetermineSpellType`'s table |
+| Flame Weapon | `type=Buff`, `element=Fire` | `type=Buff`, `element=None` | A weapon coating carries the element of the damage it adds to the *weapon* |
+
+> The `type` half of this table used to have two more rows — Waterbreathing
+> (`Unknown`) and Open Lock (`Unknown`). Both are answered by the API since
+> #128 widened the archetype switch: a non-harmful value modifier on any actor
+> value is a `Buff`, and `kOpen` is `Utility`.
+
+The element corrections are the interesting survivors, because an element is
+read downstream as a *claim about what the spell protects against*.
+`ContextWeightForCandidate` promotes `Buff` + `Fire` when the player is
+burning, and the redundancy filter then drops it once they have fire
+resistance — so Flame Weapon would be offered as protection from fire and then
+suppressed for being redundant with it. Clearing the element rather than
+retyping the spell: it *is* a buff, and the element is the part that lies
+(12 spells carry an element here on LoreRim).
 
 ### Solution: Post-API Semantic Overrides
 
-Two element corrections applied after element detection
-(`src/spell/SpellClassifier.cpp:67–75`):
+Element corrections applied after element detection, in `ClassifySpell`:
 
 ```cpp
 // Override 1: Sun damage overrides Magic
@@ -782,6 +901,12 @@ if (data.element == ElementType::Magic && HasTag(data.tags, SpellTag::Sun)) {
 // Override 2: Utility spells shouldn't have elemental damage
 // Some modded spells incorrectly use elemental resistVariable
 if (data.type == SpellType::Utility && data.element != ElementType::None) {
+    data.element = ElementType::None;
+}
+
+// Override 3 (#128): a weapon coating's element describes the WEAPON's damage,
+// not a resistance the spell grants. Buff + element is read as protection.
+if (data.type == SpellType::Buff && archetype == kEnhanceWeapon) {
     data.element = ElementType::None;
 }
 ```

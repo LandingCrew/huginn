@@ -34,6 +34,12 @@ namespace Huginn::Spell
       // Parsed cleanly: now replace wholesale.
       m_nameOverrides.clear();
       m_formIDOverrides.clear();
+      {
+      // A reload means the previous answers are no longer about this file.
+      std::lock_guard lock(m_matchMutex);
+      m_matchedNames.clear();
+      m_matchedFormIDs.clear();
+      }
 
       logger::info("Loading spell overrides from: {}"sv, iniPath.string());
 
@@ -78,6 +84,16 @@ namespace Huginn::Spell
       const char* typeStr = ini.GetValue(rawSection.c_str(), "type", nullptr);
       if (typeStr) {
         override.type = ParseSpellType(typeStr);
+        if (!override.type) {
+           // "type ignored", not "section ignored". A section whose `type`
+           // fails to parse but whose `tags` succeed is still stored and its
+           // tags still beat auto-detection -- only a section with neither is
+           // dropped. Saying the section was ignored sends an author looking
+           // for a different cause while their tag override is live.
+           logger::warn("[SpellOverrides] '{}': type '{}' is not a spell type — "
+                        "type ignored (any tags in this section still apply)"sv,
+                        sectionName, typeStr);
+        }
         // The tag guard cannot cover `type`: a token that parses is not evidence
         // it was meant for this domain. `buff` and `unknown` parse in BOTH
         // vocabularies, so an unprefixed section carrying one silently sets the
@@ -210,6 +226,71 @@ namespace Huginn::Spell
       return it->second;
       }
       return std::nullopt;
+   }
+
+   void SpellOverrides::NoteMatched(const std::string& spellName) const
+   {
+      std::lock_guard lock(m_matchMutex);
+      m_matchedNames.insert(spellName);
+   }
+
+   void SpellOverrides::NoteMatched(RE::FormID formID) const
+   {
+      std::lock_guard lock(m_matchMutex);
+      m_matchedFormIDs.insert(formID);
+   }
+
+   void SpellOverrides::ReportUsage(std::string_view context) const
+   {
+      if (m_nameOverrides.empty() && m_formIDOverrides.empty()) {
+      return;  // no file, or nothing in it: nothing to reconcile
+      }
+
+      std::vector<std::string> unmatched;
+      {
+      std::lock_guard lock(m_matchMutex);
+      for (const auto& [name, entry] : m_nameOverrides) {
+        if (!m_matchedNames.contains(name)) {
+           unmatched.push_back(name);
+        }
+      }
+      for (const auto& [formID, entry] : m_formIDOverrides) {
+        if (!m_matchedFormIDs.contains(formID)) {
+           unmatched.push_back(std::format("{:08X}", formID));
+        }
+      }
+      }
+
+      const size_t total = GetOverrideCount();
+      const size_t matched = total - unmatched.size();
+
+      if (unmatched.empty()) {
+      logger::info("[SpellOverrides] {}: all {} override(s) matched a spell"sv, context, total);
+      return;
+      }
+
+      // Sorted, because an unordered_map hands these back in a different order
+      // every run and a list you are working through should not reshuffle.
+      std::sort(unmatched.begin(), unmatched.end());
+
+      std::string list;
+      for (const auto& key : unmatched) {
+      if (!list.empty()) list += ", ";
+      list += key;
+      }
+
+      // Deliberately not an accusation. This same line fired "0 of 14 matched"
+      // for a file where all fourteen were working: a rebuild only classifies
+      // the spells the PLAYER knows, and that character knew none of them. The
+      // count is about the pass that just ran, and the message has to say so or
+      // it sends an author hunting a typo in a correct file.
+      logger::warn("[SpellOverrides] {}: {} of {} override(s) matched a spell in THIS pass. "
+                   "Not consulted: {}. A rebuild only sees the player's own spells, so an "
+                   "override for one they have not learned reads as unmatched here -- "
+                   "`hg dump spells` classifies the whole load order and is the real check. "
+                   "If it is missing there too: names must match the display name exactly "
+                   "(case included), and a FormID must be the runtime id the dump prints"sv,
+      context, matched, total, list);
    }
 
    std::optional<SpellType> SpellOverrides::ParseSpellType(const std::string& typeStr)

@@ -443,6 +443,15 @@ namespace Huginn::Console
          quoted.reserve(text.size() + 2);
          quoted += '"';
          for (const char c : text) {
+            // A newline inside a quoted field is legal RFC 4180 and illegal to
+            // most of what actually reads these files -- awk, sort, Select-String
+            // all count lines, and one multi-line description would silently
+            // shift every count in an audit. Authored descriptions do contain
+            // them. Fold to a space.
+            if (c == '\r' || c == '\n') {
+               quoted += ' ';
+               continue;
+            }
             if (c == '"') quoted += '"';  // doubled, per RFC 4180
             quoted += c;
          }
@@ -478,7 +487,7 @@ namespace Huginn::Console
       }
 
       out << "formID,name,castType,huginnType,school,element,tags,tagsExt,"
-             "cost,concentration,range,known,tome\n";
+             "cost,concentration,range,known,tome,hostile,detrimental,recover,archetype,primaryAV,secondaryAV,delivery,castingType,effects,retry,assocForm,assocKind,assocSpell,evidence,description\n";
 
       size_t written = 0;
       size_t skipped = 0;
@@ -504,6 +513,115 @@ namespace Huginn::Console
 
          const auto data = classifier.ClassifySpell(spell);
          const bool learnable = taughtByTome.contains(spell->GetFormID());
+
+         // The inputs DetermineSpellType actually reads, dumped raw. Names would
+         // need a 50-case switch in a throwaway command; the numbers map back to
+         // the CommonLibSSE enums offline, and grouping by them is the point --
+         // "these 40 spells are archetype 27" is a rule, "Ash Rune, Bend Time,
+         // Burden" is a list.
+         int archetype = -1, primaryAV = -1, secondaryAV = -1, effectCount = 0;
+         bool hostile = false, detrimental = false, recover = false;
+
+         // Report the effect the CLASSIFIER used, not merely the costliest one.
+         //
+         // ClassifySpell retries with the costliest non-script effect when the
+         // costliest is a script, so for those ~66 spells the dump used to print
+         // archetype=1 beside a type derived from a different effect entirely --
+         // and "group by archetype to find the rule" then mis-attributed that
+         // whole cohort. This command exists to drive exactly that analysis.
+         // Ask the classifier rather than restating its condition; the two
+         // disagreed, and the dump was the one that was wrong.
+         //
+         // And only when an EFFECT decided the type at all. RetryDecidedType
+         // and the chosen-effect block below both reproduce the
+         // DetermineSpellType path and neither knows about the layers above it,
+         // so a spell typed from the override file, from tags or from its name
+         // still printed a full archetype/AV/flag row describing an effect that
+         // decided nothing -- and "group by archetype to find the rule" then
+         // mis-attributes that cohort. Which is the exact failure this column
+         // was added to fix, one layer up.
+         const bool typedFromEffect =
+            data.typeEvidence == Spell::TypeEvidence::Archetype ||
+            data.typeEvidence == Spell::TypeEvidence::Applied ||
+            data.typeEvidence == Spell::TypeEvidence::SchoolOnly ||
+            data.typeEvidence == Spell::TypeEvidence::SchoolGuess;
+
+         const int usedRetry =
+            (typedFromEffect && classifier.RetryDecidedType(spell)) ? 1 : 0;
+
+         // A cloak and a hazard both delegate their behaviour to another form,
+         // and the classifier follows that link to type them. When its answer
+         // looks wrong -- Guardian Circle as a Buff, Holy Fire as a Debuff --
+         // the first question is whether the link points where the plugin
+         // records say it does. Dump it rather than infer it.
+         RE::FormID assocForm = 0;
+         RE::FormID assocSpell = 0;
+         std::string_view assocKind = "-"sv;
+
+         auto* chosen = typedFromEffect ? classifier.GetCostliestEffect(spell) : nullptr;
+         if (chosen && chosen->baseEffect &&
+             chosen->baseEffect->GetArchetype() == RE::EffectSetting::Archetype::kScript) {
+            if (auto* readable = classifier.GetCostliestNonScriptEffect(spell)) {
+               chosen = readable;
+            }
+         }
+         if (chosen) {
+            if (auto* setting = chosen->baseEffect) {
+               archetype = static_cast<int>(setting->GetArchetype());
+               primaryAV = static_cast<int>(setting->data.primaryAV);
+               secondaryAV = static_cast<int>(setting->data.secondaryAV);
+               hostile = setting->data.flags.any(
+                  RE::EffectSetting::EffectSettingData::Flag::kHostile);
+               detrimental = setting->data.flags.any(
+                  RE::EffectSetting::EffectSettingData::Flag::kDetrimental);
+               recover = setting->data.flags.any(
+                  RE::EffectSetting::EffectSettingData::Flag::kRecover);
+
+               if (auto* linked = setting->data.associatedForm) {
+                  assocForm = linked->GetFormID();
+                  if (linked->As<RE::SpellItem>()) {
+                     assocKind = "SPEL"sv;
+                  } else if (auto* hazard = linked->As<RE::BGSHazard>()) {
+                     // The chain is effect -> hazard -> spell, and the peek reads
+                     // the far end. Guardian Circle and Supernova both reach a
+                     // real hazard and still come back Unknown, so the open
+                     // question is whether that last link is set at all.
+                     assocKind = "HAZD"sv;
+                     if (hazard->data.spell) {
+                        assocSpell = hazard->data.spell->GetFormID();
+                     }
+                  } else {
+                     assocKind = "other"sv;
+                  }
+               }
+            }
+         }
+         effectCount = static_cast<int>(spell->effects.size());
+         // The authored text, from EVERY effect, joined in record order.
+         //
+         // This is the only place a spell says what it DOES in words a player
+         // reads, and on the evidence it outranks the effect data. Guardian
+         // Circle and Circle of Protection are identical in every field this
+         // classifier reads -- same archetype, same flags, same actor value,
+         // both reaching a kTurnUndead spell through a hazard -- and only the
+         // text says one of them also heals 20 health per second. Circle of
+         // Death reads as a non-hostile health value modifier, which is the
+         // single most reliable rule in the classifier, and its text says it
+         // instantly kills.
+         //
+         // Dumped as a CORPUS, not read by the classifier. A rule that can
+         // overturn effect data across 1,107 spells gets written from the
+         // strings that are actually there, and measured, before it is written
+         // from memory.
+         std::string description;
+         for (const auto* effect : spell->effects) {
+            if (!effect || !effect->baseEffect) continue;
+            const char* text = effect->baseEffect->magicItemDescription.c_str();
+            if (!text || !*text) continue;
+            if (!description.empty()) description += " | ";
+            description += text;
+         }
+
          if (data.type == Spell::SpellType::Unknown) {
             ++unknownType;
             if (learnable) {
@@ -511,7 +629,7 @@ namespace Huginn::Console
             }
          }
 
-         out << std::format("{:08X},{},{},{},{},{},{:08X},{:04X},{},{},{:.0f},{},{}\n",
+         out << std::format("{:08X},{},{},{},{},{},{:08X},{:04X},{},{},{:.0f},{},{},{},{},{},{},{},{},{},{},{},{},{:08X},{},{:08X},{},{}\n",
             spell->GetFormID(),
             csvQuote(rawName),
             castTypeName(castType),
@@ -524,13 +642,32 @@ namespace Huginn::Console
             data.isConcentration ? 1 : 0,
             data.range,
             (player && player->HasSpell(spell)) ? 1 : 0,
-            learnable ? 1 : 0);
+            learnable ? 1 : 0,
+            hostile ? 1 : 0,
+            detrimental ? 1 : 0,
+            recover ? 1 : 0,
+            archetype,
+            primaryAV,
+            secondaryAV,
+            static_cast<int>(spell->GetDelivery()),
+            static_cast<int>(spell->GetCastingType()),
+            effectCount,
+            usedRetry,
+            assocForm,
+            assocKind,
+            assocSpell,
+            csvQuote(Spell::TypeEvidenceToString(data.typeEvidence)),
+            csvQuote(description));
          ++written;
          if (learnable) {
             ++learnableCount;
          }
       }
       out.close();
+
+      // This pass touched every spell in the load order, so it is the only
+      // reconciliation that can honestly say an override matched nothing.
+      classifier.ReportOverrideUsage("after dump (whole load order)"sv);
 
       auto msg = std::format(
          "Wrote {} spells to Huginn_Spells.csv - {} learnable from tomes, {} of those unclassified "
