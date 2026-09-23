@@ -430,7 +430,15 @@ namespace Huginn::Spell
         // what could not be trusted here. One spell on LoreRim, and the shape
         // -- self-cast, detrimental, on your own health -- is what blood magic
         // always looks like.
-        if (spell->GetDelivery() == RE::MagicSystem::Delivery::kSelf) {
+        //
+        // And only when the author did NOT set kHostile. Fire Storm is
+        // self-delivered too -- "a fiery explosion centered on the caster" --
+        // and this rule sent vanilla's master Destruction spell to Utility,
+        // where it would never be offered in a fight. On a self-delivered
+        // spell the hostile flag is unambiguous in a way it is not elsewhere:
+        // there is no one else it could mean. Equilibrium leaves it clear,
+        // Fire Storm sets it.
+        if (!isHostile && spell->GetDelivery() == RE::MagicSystem::Delivery::kSelf) {
            return SpellType::Utility;
         }
         // secondaryAV too: a dual modifier that drains stamina AND health is a
