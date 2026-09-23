@@ -160,32 +160,55 @@ re-opening something that looks obviously undone.
       alchemy lab (#65, PR #114); the forge may still have no live payload
 
 ## Known Recommendation Issues
-- [ ] A third of the spells a LoreRim player can LEARN classify as Unknown.
-      Measured 2026-09-21 with `hg dump spells` (debug-only console command,
-      itself throwaway) on LoreRim v5: 5,025 castable spells in the load order,
-      1,106 of them taught by a tome — the honest test of "a player can have
-      this" — and 375 of those 1,106 come back `type=Unknown`. 34%.
-      The raw 45%-unclassified figure over all 5,025 is mostly noise: draugr,
-      dragon and quest spells are kSpell too and no widget will ever offer them.
-      The tome filter is what makes the number mean something, and it is the
-      column to sort on when re-measuring.
-      By school, and this is the actionable part:
-        Alteration 149 | Restoration 103 | Illusion 55 | Conjuration 37 |
-        Destruction 22
-      Destruction is nearly solved; the gap is everything that is not damage.
-      That is the shape of an API-first classifier whose rules were written
-      against damage archetypes — DetermineSpellType reads the costliest
-      effect's archetype, and utility-ish Alteration/Restoration effects fall
-      through to the tag fallback, which has nothing to say about them.
-      The names are ordinary player spells, not exotica: Ash Rune, Ash Shell,
-      Ash Storm, Bend Time, Burden, Boulder Strike, Control Weather,
-      Clairvoyance, Featherwalking, Equilibrium (Stamina). LoreRim is built on
-      Mysticism, so this is a third of a spellcaster's book invisible to the
-      ranking on the list Huginn is developed against.
-      Worth knowing before fixing: an Unknown spell is not dropped, it is ranked
-      without a type, so the cost is bad ordering rather than absence — which is
-      why this went unnoticed until something counted it.
-      Raised 2026-09-21.
+- [x] A third of the spells a LoreRim player can LEARN classify as Unknown.
+      SHIPPED in #128 (2026-09-23). 375 of 1,106 -> **90 of 1,107** on LoreRim
+      v5; vanilla went to **0 of 115**. `DetermineSpellType` now keys on the
+      effect's archetype rather than its school, and the two school tests that
+      used to run above the archetype rules — and steal from them — moved below.
+      What is left is the honest residue: 90 spells whose behaviour lives
+      entirely in a Papyrus script, where there is no archetype and no actor
+      value to read. Those are not a bug to fix, they are what
+      `Huginn_Overrides.ini` is for, and #128 also added the warning that tells
+      a player which spells are guesses so they know an override is worth
+      writing (137 of 1,107 weak on LoreRim, 4 of 115 on vanilla).
+      Do not reopen this as "read the spell description". That was built as a
+      corpus and measured against all 1,107 learnable spells before being
+      rejected: the only phrase precise enough to overrule effect data was
+      "instantly kills", worth one spell, and the obvious `deals N damage` rule
+      would have retyped twenty-one weapon enchants. See the `TypeEvidence`
+      comment in SpellData.h.
+
+- [ ] A Buff that carries an element is read as protection FROM that element.
+      `ContextWeightForCandidate` promotes Buff + Fire when the player is
+      burning and `CandidateFilters` then drops it as redundant with fire
+      resistance — so an elemental buff is offered as protection it does not
+      provide, then suppressed for duplicating it. #128 fixed the weapon-coating
+      case (any `kEnhanceWeapon` effect now clears the element) but three
+      LoreRim spells still carry one by another route, all via
+      `DeriveElementFromTags`, i.e. from the NAME:
+        Strider's Shroud (Poison, kPeakValueModifier) — a poison melee aura
+        Spark of Life (Shock, kAbsorb) — donates the caster's health to a target
+        Thundering Hooves (Shock, kCloak) — a mount speed buff
+      Vanilla has none, so this is a modded-content shape.
+      There is a clean rule available: after #128, a spell that genuinely
+      mitigates an element is typed `Defensive`, not `Buff` — so arguably NO
+      Buff should carry an element at all. Cheap to write, and it wants a
+      before/after count from `hg dump spells` on both load orders before it
+      ships, because it touches the vanilla set too.
+      Raised 2026-09-23, out of the #128 review.
+
+- [ ] Arcane Mass Inhibition is typed Utility and should be Debuff.
+      One spell, recorded so it is not rediscovered as a mystery. #128 types a
+      self-delivered, non-hostile, detrimental spell as Utility — a cost you pay
+      yourself rather than an attack, which is what rescued Equilibrium from
+      being called Damage. This spell is an offensive AoE whose author left
+      `kHostile` clear, so it is structurally identical to Equilibrium and lands
+      in the same bucket. Every narrower rule tried during the review traded it
+      for a spell that is correct today (health-only breaks Equilibrium
+      (Stamina); dropping the delivery test breaks Force of Nature).
+      An author flag error, one spell in 1,107, and the override file is the
+      fix. Only worth revisiting if the shape turns out to be common.
+      Raised 2026-09-23.
 
 - [ ] Take craft gear back OFF when the crafting is done — the #65 follow-on.
       Apparel is the one source that CHANGES THE PLAYER and leaves it changed:
