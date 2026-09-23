@@ -68,9 +68,15 @@ namespace Huginn::Spell
       // overwritten only on the paths that read less than the effect data --
       // there are four of those and forty that are not, so writing it at the
       // exceptions keeps the forty honest by construction.
+      //
+      // `depth` bounds the one recursion this function has: a cloak or a hazard
+      // asks it about the spell it applies. At depth 1 that link is not
+      // followed again, so a cloak whose applied spell is itself a cloak
+      // terminates.
       [[nodiscard]] SpellType DetermineSpellType(RE::SpellItem* spell,
       RE::EffectSetting* primaryEffect,
-      TypeEvidence* evidence = nullptr) const;
+      TypeEvidence* evidence = nullptr,
+      int depth = 0) const;
 
       // Last-resort typing by NAME, for spells whose behaviour lives entirely in
       // a Papyrus script.

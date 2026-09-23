@@ -159,7 +159,8 @@ namespace Huginn::Spell
 
    SpellType SpellClassifier::DetermineSpellType(RE::SpellItem* spell,
       RE::EffectSetting* primaryEffect,
-      TypeEvidence* evidence) const
+      TypeEvidence* evidence,
+      int depth) const
    {
       // Every rule below this line reads the effect's archetype and actor
       // value. The handful that read less say so at their own return.
@@ -279,9 +280,31 @@ namespace Huginn::Spell
       // One level deep, deliberately: the associated spell's own effects are
       // plain value modifiers in every case I have seen, and a cloak whose
       // associated spell is another cloak would otherwise recurse.
-      const auto typeOfAssociatedSpell = [school](RE::SpellItem* associated) {
+      const auto typeOfAssociatedSpell = [this, school, depth](RE::SpellItem* associated) {
       if (!associated) {
         return SpellType::Unknown;
+      }
+
+      // Ask the archetype rules about it first, rather than re-deriving an
+      // answer from raw flags that they already answer better.
+      //
+      // LoreRim points Guardian Circle's hazard at a kTurnUndead spell, and
+      // Circle of Protection's at the same kind of record. Turn Undead carries
+      // neither harm flag and sits on no interesting actor value, so the walk
+      // below finds nothing at all and both circles fell through to "not
+      // Destruction, therefore Buff". The switch types kTurnUndead as Debuff
+      // without being asked twice.
+      //
+      // Only at depth 0: this is the recursion the depth parameter exists for.
+      if (depth == 0) {
+        if (auto* costliest = GetCostliestEffect(associated);
+           costliest && costliest->baseEffect) {
+           if (const auto byRule = DetermineSpellType(associated, costliest->baseEffect,
+                                                      nullptr, depth + 1);
+              byRule != SpellType::Unknown) {
+            return byRule;
+           }
+        }
       }
 
       // EVERY effect, not just the costliest. The costliest effect on an applied
@@ -402,25 +425,16 @@ namespace Huginn::Spell
         // Guardian Circle, the "I am in trouble, drop a healing circle" button,
         // was typed Damage (7 spells, 2026-09-21 audit).
         //
-        // So ask the spell instead of the flag: if nothing it carries takes a
-        // value away, it is not an attack. Walk every effect, because the
-        // costliest one on a circle is often the aura rather than the bite.
-        // Both flags, for the reason this whole function reads both: an author
-        // who sets one and not the other is the normal case, not the odd one.
-        for (const auto* effect : spell->effects) {
-           if (effect && effect->baseEffect &&
-              (effect->baseEffect->data.flags.any(
-                  RE::EffectSetting::EffectSettingData::Flag::kDetrimental) ||
-               effect->baseEffect->data.flags.any(
-                  RE::EffectSetting::EffectSettingData::Flag::kHostile))) {
-            return SpellType::Damage;
-           }
-        }
-
-        // Nothing on the spell is harmful, which is the normal case: the HAZARD
-        // holds the damage. Blizzard proved the point -- vanilla's master frost
-        // spell typed as a Buff, because every effect it carries is a marker and
-        // the killing is done by the blizzard it drops.
+        // The link FIRST, because it is the better evidence whenever it can
+        // be read. The hazard holds the damage -- Blizzard proved the point,
+        // vanilla's master frost spell typing as a Buff because every effect it
+        // carries is a marker and the killing is done by the blizzard it drops.
+        //
+        // The harm scan below used to run first and pre-empted it. Aura of Dark
+        // Dreams carries two effects, the cheaper of which is harmful, so the
+        // scan answered Damage before anyone looked at the hazard -- which
+        // applies a kDemoralize spell. An Illusion aura that frightens people
+        // was competing with fireballs for a damage slot.
         if (auto* hazard = primaryEffect->data.associatedForm
               ? primaryEffect->data.associatedForm->As<RE::BGSHazard>()
               : nullptr) {
@@ -428,6 +442,20 @@ namespace Huginn::Spell
               applied != SpellType::Unknown) {
             note(TypeEvidence::Applied);
             return applied;
+           }
+        }
+
+        // No readable link. Fall back to the spell itself: if anything it
+        // carries takes a value away, it is an attack. Both flags, for the
+        // reason this whole function reads both -- an author who sets one and
+        // not the other is the normal case, not the odd one.
+        for (const auto* effect : spell->effects) {
+           if (effect && effect->baseEffect &&
+              (effect->baseEffect->data.flags.any(
+                  RE::EffectSetting::EffectSettingData::Flag::kDetrimental) ||
+               effect->baseEffect->data.flags.any(
+                  RE::EffectSetting::EffectSettingData::Flag::kHostile))) {
+            return SpellType::Damage;
            }
         }
 
