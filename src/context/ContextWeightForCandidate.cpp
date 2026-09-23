@@ -71,11 +71,24 @@ namespace Huginn::Context
                     maxWeight = std::max(maxWeight, weights.stealthWeight);
                 }
 
-                // Resist spells: Buff/Defensive spells with elemental element map to resist weights.
-                // SpellTag is at 32/32 bits — no room for ResistFire/Frost/Shock tags.
-                // Instead, use the existing SpellType + ElementType combo set by SpellClassifier.
-                // Damage spells have SpellType::Damage and won't match this check.
-                if (c.type == SpellType::Buff || c.type == SpellType::Defensive) {
+                // Resist spells: a Defensive spell's element is what it protects
+                // AGAINST, and maps to that element's resist weight. SpellTag is at
+                // 32/32 bits — no room for ResistFire/Frost/Shock tags — so the
+                // SpellType + ElementType combo set by SpellClassifier carries it.
+                //
+                // Defensive ONLY. This used to accept Buff as well, from when a
+                // resist spell WAS typed Buff; #128 widened Defensive to mean
+                // "mitigates incoming damage" whatever the school or archetype, and
+                // all ten elemental resist spells on LoreRim now land there (Fire
+                // and Frost Shell and Shield, Ice Armor, Shock Shell and Shield,
+                // three Resist Poisons). What was left matching on Buff was three
+                // spells whose element describes damage they DEAL: Strider's Shroud
+                // is a poison melee aura, Spark of Life a lightning bolt that
+                // donates health, Thundering Hooves a mount speed buff. Each was
+                // promoted as protection from an element it does not resist while
+                // the player took that damage -- and then dropped by the redundancy
+                // filter below for duplicating a resistance it never granted.
+                if (c.type == SpellType::Defensive) {
                     switch (c.element) {
                     case Spell::ElementType::Fire:
                         maxWeight = std::max(maxWeight, weights.resistFireWeight);

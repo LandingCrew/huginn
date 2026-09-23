@@ -151,6 +151,13 @@ namespace Huginn::Spell
       // Clearing the element rather than retyping the spell: it IS a buff, and
       // the element is the part that lies.
       //
+      // Both consumers named above now test Defensive alone, so this no longer
+      // stands between a coating and that misread -- it is belt to their
+      // braces. Kept because a coating's element genuinely says nothing about
+      // what it protects you from, and because the day someone adds a third
+      // reader of Buff + element this is what stops it. Safe to delete with the
+      // rest if that assumption is ever revisited.
+      //
       // ANY effect, not just the costliest. The element being cleared usually
       // arrives from the NAME via DeriveElementFromTags, and a coating whose
       // costliest effect is something else -- a Fortify One-Handed modifier, or
