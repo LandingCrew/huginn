@@ -478,7 +478,7 @@ namespace Huginn::Console
       }
 
       out << "formID,name,castType,huginnType,school,element,tags,tagsExt,"
-             "cost,concentration,range,known,tome,hostile,detrimental,recover,archetype,primaryAV,secondaryAV,delivery,castingType,effects,retry\n";
+             "cost,concentration,range,known,tome,hostile,detrimental,recover,archetype,primaryAV,secondaryAV,delivery,castingType,effects,retry,assocForm,assocKind\n";
 
       size_t written = 0;
       size_t skipped = 0;
@@ -520,13 +520,23 @@ namespace Huginn::Console
          // archetype=1 beside a type derived from a different effect entirely --
          // and "group by archetype to find the rule" then mis-attributed that
          // whole cohort. This command exists to drive exactly that analysis.
-         int usedRetry = 0;
+         // Ask the classifier rather than restating its condition; the two
+         // disagreed, and the dump was the one that was wrong.
+         const int usedRetry = classifier.RetryDecidedType(spell) ? 1 : 0;
+
+         // A cloak and a hazard both delegate their behaviour to another form,
+         // and the classifier follows that link to type them. When its answer
+         // looks wrong -- Guardian Circle as a Buff, Holy Fire as a Debuff --
+         // the first question is whether the link points where the plugin
+         // records say it does. Dump it rather than infer it.
+         RE::FormID assocForm = 0;
+         std::string_view assocKind = "-"sv;
+
          auto* chosen = classifier.GetCostliestEffect(spell);
          if (chosen && chosen->baseEffect &&
              chosen->baseEffect->GetArchetype() == RE::EffectSetting::Archetype::kScript) {
             if (auto* readable = classifier.GetCostliestNonScriptEffect(spell)) {
                chosen = readable;
-               usedRetry = 1;
             }
          }
          if (chosen) {
@@ -540,6 +550,13 @@ namespace Huginn::Console
                   RE::EffectSetting::EffectSettingData::Flag::kDetrimental);
                recover = setting->data.flags.any(
                   RE::EffectSetting::EffectSettingData::Flag::kRecover);
+
+               if (auto* linked = setting->data.associatedForm) {
+                  assocForm = linked->GetFormID();
+                  if (linked->As<RE::SpellItem>())        assocKind = "SPEL"sv;
+                  else if (linked->As<RE::BGSHazard>())   assocKind = "HAZD"sv;
+                  else                                    assocKind = "other"sv;
+               }
             }
          }
          effectCount = static_cast<int>(spell->effects.size());
@@ -550,7 +567,7 @@ namespace Huginn::Console
             }
          }
 
-         out << std::format("{:08X},{},{},{},{},{},{:08X},{:04X},{},{},{:.0f},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+         out << std::format("{:08X},{},{},{},{},{},{:08X},{:04X},{},{},{:.0f},{},{},{},{},{},{},{},{},{},{},{},{},{:08X},{}\n",
             spell->GetFormID(),
             csvQuote(rawName),
             castTypeName(castType),
@@ -573,7 +590,9 @@ namespace Huginn::Console
             static_cast<int>(spell->GetDelivery()),
             static_cast<int>(spell->GetCastingType()),
             effectCount,
-            usedRetry);
+            usedRetry,
+            assocForm,
+            assocKind);
          ++written;
          if (learnable) {
             ++learnableCount;

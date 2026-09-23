@@ -977,6 +977,23 @@ namespace Huginn::Spell
       return costliestEffect ? costliestEffect : firstValidEffect;
    }
 
+   bool SpellClassifier::RetryDecidedType(RE::SpellItem* spell) const
+   {
+      auto* costliest = GetCostliestEffect(spell);
+      if (!costliest || !costliest->baseEffect) {
+      return false;
+      }
+      if (costliest->baseEffect->GetArchetype() != RE::EffectSetting::Archetype::kScript) {
+      return false;
+      }
+      if (DetermineSpellType(spell, costliest->baseEffect) != SpellType::Unknown) {
+      return false;  // the school fallback answered it; no retry happened
+      }
+      auto* readable = GetCostliestNonScriptEffect(spell);
+      return readable && readable->baseEffect &&
+      DetermineSpellType(spell, readable->baseEffect) != SpellType::Unknown;
+   }
+
    RE::Effect* SpellClassifier::GetCostliestNonScriptEffect(RE::SpellItem* spell) const
    {
       if (!spell || spell->effects.empty()) return nullptr;

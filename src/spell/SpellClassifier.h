@@ -22,6 +22,18 @@ namespace Huginn::Spell
       // Will use override data if available, otherwise auto-classify
       [[nodiscard]] SpellData ClassifySpell(RE::SpellItem* spell) const;
 
+      /// Did the non-script retry decide this spell's type?
+      ///
+      /// For the dump, and exact by construction: it asks the same two functions
+      /// in the same order ClassifySpell does, rather than restating the
+      /// condition. The dump used to set its own flag on "the costliest effect
+      /// is a script and another exists", which is NOT the same thing -- a
+      /// harmful Destruction or Illusion script is answered by the school
+      /// fallback and never retries, and 22 of 52 flagged rows were that case.
+      /// An audit that groups by the archetype column believes those rows
+      /// describe an effect the classifier never looked at.
+      [[nodiscard]] bool RetryDecidedType(RE::SpellItem* spell) const;
+
       // Reconcile the override file against reality: how many entries matched a
       // spell, and which never did. Call after a pass that classifies every
       // spell, which is what makes the answer meaningful.
