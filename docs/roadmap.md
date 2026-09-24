@@ -49,23 +49,26 @@ re-opening something that looks obviously undone.
       term missing. Fixing it means asking the actor rather than the form.
       Raised 2026-09-19.
 
-- [ ] Route the temper suffix to the widget. LoreRim names a tempered weapon
+- [x] Route the temper suffix to the widget. LoreRim names a tempered weapon
       `Iron Sword (1.2)` where vanilla says `Iron Sword - Okay`, and either way
       the suffix is the game's own answer to "is this the good one". The
       registry already resolves the display name per stack
       (ExtraDataList::GetDisplayName, gated on the stack already having
       ExtraTextDisplayData so the read stays pure) and the widget DOES show it:
       the vanilla registry dump reads "Iron Mace - Okay". The plumbing works.
-      It produces nothing on LoreRim, and THAT is the real entry here. Every
-      LoreRim record comes back with the plain base name AND temperFactor 1.00,
-      while ExtraUniqueID from the same extra list reads fine -- so extra lists
-      are readable and these two types are simply absent. That points at
-      LoreRim not storing tempering in ExtraHealth at all, with the `(1.2)`
-      computed by the UI layer from wherever the smithing overhaul keeps it,
-      and would also explain why PlayerCharacter::GetDamage returns the
-      untempered number there: the game's own accessor reads ExtraHealth too,
-      and finds nothing.
-      Unconfirmed, and it needs looking at the plugin rather than at Huginn.
+      it works on LoreRim too. The registry there now reads "Long Bow (1.3)",
+      "Iron War Axe (1.2)", "Steel Dagger (1.1)" with temperFactor 1.30 / 1.20
+      / 1.10. There is nothing left to route.
+      CLOSED 2026-09-24, and the reasoning that opened it was wrong. It was
+      written from a session where every LoreRim record came back plain-named
+      at 1.00, and concluded that LoreRim must not keep tempering in
+      ExtraHealth at all. The same stack -- uid87, the Long Bow -- has since
+      read 0.00, then 1.00, then 1.30 across three sessions, so the data was
+      always in ExtraHealth and the earlier reads were empty for a reason not
+      yet identified: either the player tempered those weapons in between, or
+      an early read returned zero. Worth knowing which, because #131's
+      `ExtraHealth > 0` guard turns a zero into "untempered" and would hide the
+      second case.
       Raised 2026-09-24, from the #128-era weapon-damage pass.
 
 - [ ] LoreRim's throwing knives are SCROLLS, and the scroll arm carries them.
@@ -95,9 +98,10 @@ re-opening something that looks obviously undone.
       RebuildRegistry, so `hg rebuild` retries it -- if a rebuild registers what
       the initial scan rejected, the condition is transient and the scan is too
       early rather than the form being bad.
-      Suspected but NOT confirmed to be the Woodcutter's Axe, which is in the
-      player's inventory and absent from the registry dump. Confirm with
-      `help "Woodcutter" 0 WEAP` before believing it.
+      NOT the Woodcutter's Axe, which was the suspicion when this was raised.
+      The axe registers normally (2026-09-24: `Woodcutter's Axe
+      (0002F2F4/uid47): dmg=31.5`) and had simply not been in the player's
+      inventory. 870710C4 is still unidentified.
       Related: WeaponClassifier::DetermineWeaponType has no arm for
       kHandToHandMelee (type 0), so Unarmed warns once per scan and types as
       Unknown. It still registers, so this is log noise rather than a gap --
