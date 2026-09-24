@@ -134,6 +134,14 @@ namespace Huginn::Apparel
       /// Forms whose rejection reason has already been logged this session.
       /// The reason cannot change while the item does not, so reprinting it
       /// every 30 s reconcile is noise. Cleared with the registry.
+      ///
+      /// Its OWN mutex, not m_mutex. The insert happens in the classify loop,
+      /// which ReconcileApparel deliberately runs outside the write lock, while
+      /// RebuildRegistry clears the set holding it -- a lock only one side takes
+      /// protects nothing, and a concurrent unordered_set clear and insert is
+      /// heap corruption rather than the torn POD read the unsynchronised
+      /// startup path is documented to tolerate.
+      mutable std::mutex m_rejectionMutex;
       std::unordered_set<RE::FormID> m_reportedRejections;
 
       /// One inventory STACK, resolved far enough to classify.

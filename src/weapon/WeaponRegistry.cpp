@@ -226,10 +226,16 @@ namespace Huginn::Weapon
         if (!entry || !entry->object || !entry->object->Is(RE::FormType::Ammo)) {
         continue;
         }
-        // Accumulate (+=), not assign: one ammo object can appear as multiple
-        // entryList entries (distinct extra-data stacks). GetInventorySafe sums
-        // the same way; a bare assign would keep only the last stack's count.
-        ammoCounts[entry->object->GetFormID()] += static_cast<int32_t>(entry->countDelta);
+        // FIRST entry wins, which is what Util::GetInventorySafe does (see the
+        // duplicate-semantics note at the top of InventoryUtil.h). This used to
+        // accumulate, and the comment here claimed GetInventorySafe summed the
+        // same way -- true once, and false since that helper was changed to
+        // first-wins to stop a phantom Iron Sword. Summing here while baseCount
+        // is derived from a first-wins count double-counts every form with two
+        // changes entries, and the fast path and the reconcile then report
+        // different numbers for the same inventory.
+        ammoCounts.try_emplace(entry->object->GetFormID(),
+           static_cast<int32_t>(entry->countDelta));
       }
       }
 
@@ -307,7 +313,14 @@ namespace Huginn::Weapon
       const int32_t newCount =
       (it != ammoCounts.end())
          ? std::max(0, invAmmo.baseCount + it->second)
-         : 0;  // no entry at all: absent, and absent means gone (see above)
+         // No changes entry at all. That used to mean "gone", and it was right
+         // while every count came from the changes list -- but base-container
+         // ammo the player has not yet touched has no entry either, and
+         // answering 0 for it reported a full quiver as depleted. It does not
+         // recover: ReconcileWeapons only ADDS ammo it does not already know
+         // (m_ammoIndex.contains), so nothing rewrites the count for the rest
+         // of the session. What the base container holds is what they have.
+         : invAmmo.baseCount;
 
       // A type that just hit zero stops being a candidate on the next pipeline
       // run (the affordability filter drops count <= 0), but the slot lock
@@ -473,9 +486,15 @@ namespace Huginn::Weapon
         // the weapon was first picked up.
         if (safeToAccessExtraLists) {
            if (sw.temperFactor != invWeapon.data.temperFactor) {
-            logger::debug("[WeaponRegistry] '{}' temper {:.2f} -> {:.2f}, dmg {:.1f} -> {:.1f}"sv,
+            // The MODELLED number on both sides, and labelled as such: what
+            // actually gets stored below is BestDamage(), which prefers the
+            // game's. Printing the model as though it were the new value was
+            // misleading in exactly the diagnosis this line exists for -- on
+            // LoreRim it would claim 50.4 for a weapon stored at 46.
+            logger::debug("[WeaponRegistry] '{}' temper {:.2f} -> {:.2f}, model {:.1f} -> {:.1f}"sv,
               invWeapon.data.name, invWeapon.data.temperFactor, sw.temperFactor,
-              invWeapon.data.damage, invWeapon.data.baseDamage * sw.temperFactor);
+              invWeapon.data.baseDamage * invWeapon.data.temperFactor,
+              invWeapon.data.baseDamage * sw.temperFactor);
             invWeapon.data.temperFactor = sw.temperFactor;
            }
            if (sw.displayDamage > 0.0f) {
@@ -790,12 +809,13 @@ namespace Huginn::Weapon
       // sharing a FormID with different uids is the registry tracking two
       // instances, which is what could not happen before.
       //
-      // `shown` is what the widget prints and should equal the number in the
-      // player's inventory: PlayerCharacter::GetDamage, skill and perks
-      // included. `rank` is what the scorer compares, which is the form's
-      // damage times temper and is missing those terms by design. Printing
-      // both beside base and temper is how either model gets checked against
-      // the game -- the gap between shown and rank IS the skill/perk term.
+      // `dmg` is the one number, ranked and displayed, and should equal what
+      // the player's inventory shows: PlayerCharacter::GetDamage, skill and
+      // perks included. It is printed beside base and temper so the model can
+      // still be reconstructed -- their product is what `dmg` would have been
+      // before this became one number, and the gap between them is the
+      // skill/perk term. `[modelled]` means the game did not answer and that
+      // product is what is stored.
       logger::info("  {} ({:08X}/uid{}): dmg={:.1f}{} (base {:.1f} x{:.2f}), tags={:08X}, fav={}, eq={}, charge={:.0f}%"sv,
         weapon.data.name,
         weapon.data.formID,
@@ -940,15 +960,6 @@ namespace Huginn::Weapon
       return;
       }
 
-      if (!includeExtraLists || !entry || !entry->extraLists) {
-      // Degraded: one record for the form, no instance detail at all. During
-      // the stabilization window after a load this is every weapon; the primed
-      // short-retry reconcile replaces these with real per-stack records a
-      // second later.
-      out.push_back(ExtractWeaponMetadata(weapon, nullptr, equipped));
-      return;
-      }
-
       // The number the player will actually read, asked of the ACTOR rather
       // than the form, because the skill and perk terms live on the actor and
       // no amount of reading the form will produce them.
@@ -964,12 +975,32 @@ namespace Huginn::Weapon
       // Per ENTRY, so every stack of one base form gets the same answer; see
       // WeaponData::displayDamage. A non-positive result means "no answer" and
       // falls back to the computed number rather than showing a zero.
+      //
+      // Asked BEFORE the degraded early return below, because it needs only the
+      // entry and not its extra lists. A weapon present solely in the player's
+      // base container gets an InventoryEntryData with extraLists == nullptr,
+      // so it used to take that return and keep the modelled number forever --
+      // and base-container weapons are exactly the starting gear this change
+      // was verified against.
       float displayDamage = 0.0f;
+      if (includeExtraLists && entry) {
       if (auto* player = RE::PlayerCharacter::GetSingleton()) {
-      const float asked = player->GetDamage(entry);
-      if (asked > 0.0f) {
-        displayDamage = asked;
+        const float asked = player->GetDamage(entry);
+        if (asked > 0.0f) {
+           displayDamage = asked;
+        }
       }
+      }
+
+      if (!includeExtraLists || !entry || !entry->extraLists) {
+      // Degraded: one record for the form, no instance detail at all. During
+      // the stabilization window after a load this is every weapon; the primed
+      // short-retry reconcile replaces these with real per-stack records a
+      // second later.
+      auto sw = ExtractWeaponMetadata(weapon, nullptr, equipped);
+      sw.displayDamage = displayDamage;
+      out.push_back(std::move(sw));
+      return;
       }
 
       // Util::GetInventorySafe returns ONE entry per TESBoundObject, so this is
@@ -1191,8 +1222,13 @@ namespace Huginn::Weapon
       // sees it called.
       data.temperFactor = sw.temperFactor;
       data.displayDamage = sw.displayDamage;
+      // BestDamage, and nothing after it. The line that used to sit here set
+      // damage back to baseDamage * temperFactor, so every weapon entering
+      // through AddWeapon -- which is all of them after a rebuild -- was stored
+      // with the model this PR exists to replace, and only corrected up to 30 s
+      // later by the reconcile. `hg status` printed no [modelled] marker for
+      // them either, because displayDamage WAS set; only `damage` was wrong.
       data.damage = data.BestDamage();
-      data.damage = data.baseDamage * sw.temperFactor;
       if (!sw.displayName.empty()) {
       data.name = sw.displayName;
       }

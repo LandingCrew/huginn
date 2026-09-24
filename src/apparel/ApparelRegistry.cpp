@@ -20,7 +20,10 @@ namespace Huginn::Apparel
       // -- an override file edited, a mod updated -- so let each rejection
       // speak once more. NOT cleared in the 30 s reconcile below, which is the
       // repetition the dedup exists to stop.
+      {
+      std::lock_guard rejectionLock(m_rejectionMutex);
       m_reportedRejections.clear();
+      }
 
       // Deliberately no scan here. Player enchantments are only readable once
       // extraLists have stabilized, and this runs on the load path. The first
@@ -72,7 +75,12 @@ namespace Huginn::Apparel
                // transitions" exactly -- 124 lines apiece in a 2026-09-23
                // session. Why an item was rejected cannot change while the
                // item does not, so saying it again says nothing.
-               if (m_reportedRejections.insert(sa.armor->GetFormID()).second) {
+               bool firstReport = false;
+               {
+                  std::lock_guard lock(m_rejectionMutex);
+                  firstReport = m_reportedRejections.insert(sa.armor->GetFormID()).second;
+               }
+               if (firstReport) {
                   logger::debug("[ApparelRegistry] Rejected enchanted '{}': [{}]"sv,
                      sa.armor->GetName(), avs);
                }
