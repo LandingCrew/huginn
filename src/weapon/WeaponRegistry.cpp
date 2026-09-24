@@ -477,11 +477,11 @@ namespace Huginn::Weapon
               invWeapon.data.name, invWeapon.data.temperFactor, sw.temperFactor,
               invWeapon.data.damage, invWeapon.data.baseDamage * sw.temperFactor);
             invWeapon.data.temperFactor = sw.temperFactor;
-            invWeapon.data.damage = invWeapon.data.baseDamage * sw.temperFactor;
            }
            if (sw.displayDamage > 0.0f) {
             invWeapon.data.displayDamage = sw.displayDamage;
            }
+           invWeapon.data.damage = invWeapon.data.BestDamage();
            if (!sw.displayName.empty() && sw.displayName != invWeapon.data.name) {
             invWeapon.data.name = sw.displayName;
            }
@@ -796,12 +796,12 @@ namespace Huginn::Weapon
       // damage times temper and is missing those terms by design. Printing
       // both beside base and temper is how either model gets checked against
       // the game -- the gap between shown and rank IS the skill/perk term.
-      logger::info("  {} ({:08X}/uid{}): shown={:.1f} rank={:.1f} (base {:.1f} x{:.2f}), tags={:08X}, fav={}, eq={}, charge={:.0f}%"sv,
+      logger::info("  {} ({:08X}/uid{}): dmg={:.1f}{} (base {:.1f} x{:.2f}), tags={:08X}, fav={}, eq={}, charge={:.0f}%"sv,
         weapon.data.name,
         weapon.data.formID,
         weapon.data.uniqueID,
-        weapon.data.DamageForDisplay(),
         weapon.data.damage,
+        weapon.data.displayDamage > 0.0f ? ""sv : " [modelled]"sv,
         weapon.data.baseDamage,
         weapon.data.temperFactor,
         std::to_underlying(weapon.data.tags),
@@ -1191,6 +1191,7 @@ namespace Huginn::Weapon
       // sees it called.
       data.temperFactor = sw.temperFactor;
       data.displayDamage = sw.displayDamage;
+      data.damage = data.BestDamage();
       data.damage = data.baseDamage * sw.temperFactor;
       if (!sw.displayName.empty()) {
       data.name = sw.displayName;

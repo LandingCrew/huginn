@@ -537,7 +537,7 @@ namespace Huginn::UI
                 // player is looking at -- the whole complaint this display
                 // change exists to answer (vanilla, 2026-09-23).
                 int totalDmg = static_cast<int>(std::lround(
-                    weapon->DamageForDisplay() + playerState.equippedAmmoDamage));
+                    weapon->damage + playerState.equippedAmmoDamage));
                 detail = std::format("{} dmg", totalDmg);
                 int32_t count = (weapon->type == Weapon::WeaponType::Bow)
                     ? playerState.arrowCount : playerState.boltCount;
@@ -567,7 +567,7 @@ namespace Huginn::UI
             else {
                 // Melee: damage + optional charge
                 detail = std::format("{} dmg",
-                    static_cast<int>(std::lround(weapon->DamageForDisplay())));
+                    static_cast<int>(std::lround(weapon->damage)));
                 if (weapon->hasEnchantment) {
                     detail += std::format(" \xC2\xB7 {}%",
                         static_cast<int>(weapon->GetChargePercent() * 100));

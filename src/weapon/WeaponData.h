@@ -184,7 +184,21 @@ namespace Huginn::Weapon
       // how the temper model gets checked against what the game shows.
       float baseDamage = 0.0f;     // Base form's damage, before tempering
       float temperFactor = 1.0f;   // ExtraHealth on this stack; 1.0 = untempered
-      float damage = 0.0f;         // baseDamage x temperFactor - the effective number
+      /// The number to rank on AND to show: the game's own, when it answered.
+      ///
+      /// This used to be baseDamage x temperFactor, and that model is wrong
+      /// wherever a mod changes what tempering does. LoreRim's smithing adds
+      /// damage rather than multiplying it -- `(1.2)` is +2 points, measured
+      /// across five weapons on 2026-09-23 -- so the model overstated a
+      /// tempered Iron Sword at 50.4 against the game's 46 while understating
+      /// an untempered Orcish Dagger at 48 against its 50, and Huginn
+      /// recommended the sword where the game says the dagger is better.
+      ///
+      /// The game's number has no such problem: it already contains whatever
+      /// tempering, skill and perks come to on THIS load order, by definition,
+      /// because it is what the player is reading. Ranking the whole inventory
+      /// by it reproduces the game's own damage ordering exactly.
+      float damage = 0.0f;
 
       /// What the game's inventory shows for this weapon, or 0 when unknown.
       ///
@@ -207,10 +221,13 @@ namespace Huginn::Weapon
       /// read off against the inventory.
       float displayDamage = 0.0f;
 
-      /// The number to show a player: the game's if we have it, ours if not.
-      [[nodiscard]] float DamageForDisplay() const noexcept
+      /// The best damage figure available: the game's if it answered, the
+      /// base x temper model if it did not. The model survives as a fallback
+      /// only -- on the load path, before the inventory is safe to read, it is
+      /// all there is.
+      [[nodiscard]] float BestDamage() const noexcept
       {
-      return displayDamage > 0.0f ? displayDamage : damage;
+      return displayDamage > 0.0f ? displayDamage : baseDamage * temperFactor;
       }
       float speed = 1.0f;          // Attack speed multiplier
       float reach = 1.0f;          // Reach multiplier

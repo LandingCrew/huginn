@@ -144,20 +144,6 @@ namespace Huginn::Candidate
         // is the same for a pristine Iron Sword and a Legendary one.
         float damage = 0.0f;
 
-        // What to PRINT, which is not what to rank on. `damage` above is the
-        // form's number times this stack's temper and is missing the player's
-        // skill and perks, so it is not what the player reads in their
-        // inventory -- an untempered Iron Sword ranks at 7.0 and displays as 8.
-        // Ranking is unaffected, because within one weapon skill the missing
-        // term is identical for every candidate. See WeaponData::displayDamage.
-        float displayDamage = 0.0f;
-
-        /// The number to show: the game's if we have it, ours if not.
-        [[nodiscard]] float DamageForDisplay() const noexcept
-        {
-            return displayDamage > 0.0f ? displayDamage : damage;
-        }
-
         // Attack-speed multiplier off the base form. Carried only so the
         // ranking tie-break can talk about DPS rather than raw damage; nothing
         // else reads it. See ScoredCandidate::TieBreakDps().
