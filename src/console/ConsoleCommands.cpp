@@ -505,7 +505,20 @@ namespace Huginn::Console
       size_t unknownType = 0;
       size_t unknownLearnable = 0;
       size_t learnableCount = 0;
-      for (auto* spell : dataHandler->GetFormArray<RE::SpellItem>()) {
+      // Both form arrays. GetFormArray keys on T::FORMTYPE, and ScrollItem's is
+      // FormType::Scroll where SpellItem's is FormType::Spell -- so widening
+      // the cast-type filter above was necessary and not sufficient, and the
+      // first dump after it came back byte-identical. ScrollItem IS-A
+      // SpellItem, so the pointers go in the same list and the loop body does
+      // not care which array they came from.
+      std::vector<RE::SpellItem*> toDump;
+      const auto& spellForms = dataHandler->GetFormArray<RE::SpellItem>();
+      const auto& scrollForms = dataHandler->GetFormArray<RE::ScrollItem>();
+      toDump.reserve(spellForms.size() + scrollForms.size());
+      for (auto* form : spellForms) toDump.push_back(form);
+      for (auto* form : scrollForms) toDump.push_back(form);
+
+      for (auto* spell : toDump) {
          if (!spell) {
             continue;
          }
