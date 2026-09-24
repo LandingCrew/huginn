@@ -859,7 +859,16 @@ namespace Huginn::Weapon
 
       // Tempering. ExtraHealth is the game's own quality multiplier for this
       // stack: 1.0 untempered, higher once it has been to a grindstone.
-      if (auto* extraHealth = extraList->GetByType<RE::ExtraHealth>(); extraHealth) {
+      //
+      // A PRESENT ExtraHealth can still read 0, and four of thirteen stacks did
+      // on 2026-09-23 -- a Long Bow, an Orcish Dagger, an Iron Dagger and a
+      // Wooden Battlestaff, each beside an identical stack reading 1.0. Taken
+      // literally that is a weapon with no damage: rank went to 0.0 and the
+      // scorer will never offer it. The multiplier the game applies is never
+      // zero, so a zero here means the field was created and not filled, which
+      // is untempered.
+      if (auto* extraHealth = extraList->GetByType<RE::ExtraHealth>();
+      extraHealth && extraHealth->health > 0.0f) {
         sw.temperFactor = extraHealth->health;
       }
 
