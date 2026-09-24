@@ -215,6 +215,37 @@ re-opening something that looks obviously undone.
       alchemy lab (#65, PR #114); the forge may still have no live payload
 
 ## Known Recommendation Issues
+- [ ] #128 measured the spell classifier against 1,107 spells and silently
+      excluded 1,200 scrolls. `hg dump spells` walked
+      `GetFormArray<RE::SpellItem>()`, and GetFormArray keys on T::FORMTYPE --
+      ScrollItem's is FormType::Scroll, SpellItem's is FormType::Spell -- so no
+      scroll was ever in it. Fixed in v0.21.8, and the first dump that included
+      them came back 6,224 rows against 5,024.
+      Nothing in the #128 work saw a scroll: not the 375 -> 90 unclassified
+      count, not the description corpus that rejected a text classifier, not
+      the weak-evidence numbers. ScrollClassifier delegates straight to
+      SpellClassifier, so every rule written there applies to scrolls and none
+      of them was checked against one.
+      First measurement (LoreRim, 2026-09-24): 1,200 scrolls, of which 107 come
+      back Unknown. Worth re-running the #128 analyses over the wider set
+      before trusting their conclusions.
+      Raised 2026-09-24.
+
+- [ ] Potions, apparel and weapons have no dump at all, and the item
+      classifier has never had the measurement the spell one got.
+      `hg dump spells` covers spells and (since v0.21.8) scrolls. ItemClassifier
+      -- potions, poisons, food, soul gems -- ApparelClassifier and
+      WeaponClassifier have nothing equivalent, so their rules have only ever
+      been checked by eye against whatever the player happened to be carrying.
+      Every real classifier bug this month was found by dumping the whole load
+      order and grouping, not by looking at a registry: the 375 unclassified
+      spells, the twenty-one weapon enchants a text rule would have broken, the
+      kFame throwing knives. None of those was visible from a registry dump,
+      because a registry only holds what one character owns.
+      Wants one `hg dump forms` covering every classified form type, with the
+      inputs beside the verdict, in the same throwaway spirit as the spell one.
+      Raised 2026-09-24.
+
 - [x] A third of the spells a LoreRim player can LEARN classify as Unknown.
       SHIPPED in #128 (2026-09-23). 375 of 1,106 -> **90 of 1,107** on LoreRim
       v5; vanilla went to **0 of 115**. `DetermineSpellType` now keys on the
