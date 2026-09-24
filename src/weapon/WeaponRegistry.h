@@ -387,6 +387,7 @@ namespace Huginn::Weapon
       RE::TESAmmo* ammo;
       int32_t count;
       bool isEquipped;
+      int32_t baseCount = 0;  // count minus this entry's delta; see InventoryAmmo
       };
       /// Standalone ammo-only scan (used by RebuildRegistry). RefreshCharges and
       /// ReconcileWeapons instead fold ammo into their combined weapon+ammo scan.
@@ -408,7 +409,8 @@ namespace Huginn::Weapon
        * @param count Current inventory count
        * @param isEquipped Is the ammo currently equipped
        */
-      void AddAmmo(RE::TESAmmo* ammo, int32_t count, bool isEquipped);
+      void AddAmmo(RE::TESAmmo* ammo, int32_t count, bool isEquipped,
+         int32_t baseCount = 0);
 
       /**
        * @brief Remove one tracked stack by its InventoryWeapon::Key()

@@ -107,7 +107,7 @@ namespace Huginn::Weapon
         break;
       }
 
-      AddAmmo(sa.ammo, sa.count, sa.isEquipped);
+      AddAmmo(sa.ammo, sa.count, sa.isEquipped, sa.baseCount);
       }
 
       logger::info("Weapon registry built: {} weapons, {} ammo types"sv,
@@ -293,8 +293,21 @@ namespace Huginn::Weapon
       // GetBestArrow/GetBestBolt (count > 0), so FindBestAmmo can't surface ammo
       // the player no longer has.
       for (auto& invAmmo : m_ammo) {
+      // countDelta is a DELTA against the base container, not a count. Adding
+      // it to what the last full scan saw there is the whole difference between
+      // "you have 13 arrows" and "you have -5 arrows", which is what this
+      // reported for a vanilla character who had shot five of the arrows they
+      // started with -- and a count at or below zero trips the depletion branch
+      // below, so Huginn announced they were out of arrows while they held
+      // them.
+      //
+      // Ammo the player PICKED UP has no base-container copy, so baseCount is 0
+      // and this is the delta alone, exactly as before.
       auto it = ammoCounts.find(invAmmo.data.formID);
-      const int32_t newCount = (it != ammoCounts.end()) ? it->second : 0;
+      const int32_t newCount =
+      (it != ammoCounts.end())
+         ? std::max(0, invAmmo.baseCount + it->second)
+         : 0;  // no entry at all: absent, and absent means gone (see above)
 
       // A type that just hit zero stops being a candidate on the next pipeline
       // run (the affordability filter drops count <= 0), but the slot lock
@@ -381,6 +394,10 @@ namespace Huginn::Weapon
         sa.ammo = ammo;
         sa.count = count;
         sa.isEquipped = (ammo == equippedAmmo);
+        // What the base container holds, which this walk can see and the 2 Hz
+        // one cannot. See InventoryAmmo::baseCount.
+        sa.baseCount =
+           count - (entry ? static_cast<int32_t>(entry->countDelta) : 0);
         scannedAmmo.push_back(sa);
       }
       }
@@ -544,7 +561,7 @@ namespace Huginn::Weapon
       RE::FormID formID = sa.ammo->GetFormID();
       if (!m_ammoIndex.contains(formID)) {
         if (m_ammo.size() < Config::MAX_TRACKED_AMMO) {
-           AddAmmo(sa.ammo, sa.count, sa.isEquipped);
+           AddAmmo(sa.ammo, sa.count, sa.isEquipped, sa.baseCount);
            ammoAdded++;
            logger::trace("[WeaponRegistry] Added ammo: {}"sv, sa.ammo->GetName());
         }
@@ -1068,6 +1085,8 @@ namespace Huginn::Weapon
       sa.ammo = ammo;
       sa.count = count;
       sa.isEquipped = (ammo == equippedAmmo);
+      sa.baseCount =
+      count - (entry ? static_cast<int32_t>(entry->countDelta) : 0);
 
       ammoList.push_back(sa);
       }
@@ -1205,7 +1224,8 @@ namespace Huginn::Weapon
       return true;
    }
 
-   void WeaponRegistry::AddAmmo(RE::TESAmmo* ammo, int32_t count, bool isEquipped)
+   void WeaponRegistry::AddAmmo(RE::TESAmmo* ammo, int32_t count, bool isEquipped,
+      int32_t baseCount)
    {
       // NOTE: Assumes m_mutex is already held by caller (v0.7.12 - thread safety)
       if (!ammo) return;
@@ -1217,6 +1237,7 @@ namespace Huginn::Weapon
       if (it != m_ammoIndex.end()) {
       logger::debug("[WeaponRegistry] Ammo {:08X} already registered, updating count"sv, formID);
       m_ammo[it->second].count = count;
+      m_ammo[it->second].baseCount = baseCount;
       m_ammo[it->second].isEquipped = isEquipped;
       return;
       }
@@ -1229,7 +1250,8 @@ namespace Huginn::Weapon
       InventoryAmmo invAmmo{
       .data = std::move(data),
       .count = count,
-      .isEquipped = isEquipped
+      .isEquipped = isEquipped,
+      .baseCount = baseCount
       };
 
       // Add to dual-index storage

@@ -341,6 +341,22 @@ namespace Huginn::Weapon
       int32_t count = 0;           // Current inventory count
       bool isEquipped = false;     // Currently equipped
 
+      /// How many of these the player's BASE CONTAINER holds.
+      ///
+      /// The 2 Hz refresh reads `InventoryEntryData::countDelta`, which is a
+      /// delta against that container and not a count. For ammo the player
+      /// picked up, the two are the same and nothing was ever wrong. For ammo
+      /// they STARTED with, the delta is how many they have spent -- so a
+      /// vanilla character who had shot five of their starting arrows had the
+      /// count stored as -5 and was reported as out of arrows while holding
+      /// them (2026-09-23).
+      ///
+      /// Recorded by the full scans, which use Util::GetInventorySafe and so
+      /// see the base container; the fast path adds the live delta to it. The
+      /// base container does not change between reconciles -- that is what
+      /// makes it the base container -- so this stays true until the next one.
+      int32_t baseCount = 0;
+
       [[nodiscard]] std::string ToString() const
       {
       return std::format(
