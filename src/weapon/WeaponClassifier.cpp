@@ -117,6 +117,14 @@ namespace Huginn::Weapon
       // Special
       case RE::WEAPON_TYPE::kStaff:         return WeaponType::Staff;
 
+      // Hand to hand is a real weapon type with no Huginn equivalent, and
+      // "Unarmed" is a form the player always has. Answering Unknown is right;
+      // WARNING about it three times a session is not, because a warn says
+      // something unexpected happened and nothing did. Named here so the
+      // default arm keeps meaning "a type nobody has seen before".
+      case RE::WEAPON_TYPE::kHandToHandMelee:
+      return WeaponType::Unknown;
+
       default:
       logger::warn("Unknown weapon type {:d} for weapon: {}"sv,
         static_cast<int>(weaponType), weapon->GetName());

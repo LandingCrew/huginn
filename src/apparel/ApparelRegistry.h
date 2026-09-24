@@ -131,6 +131,11 @@ namespace Huginn::Apparel
       void LogAllApparel() const;
 
    private:
+      /// Forms whose rejection reason has already been logged this session.
+      /// The reason cannot change while the item does not, so reprinting it
+      /// every 30 s reconcile is noise. Cleared with the registry.
+      std::unordered_set<RE::FormID> m_reportedRejections;
+
       /// One inventory STACK, resolved far enough to classify.
       ///
       /// One per ExtraDataList, not one per base form. An earlier version emitted
