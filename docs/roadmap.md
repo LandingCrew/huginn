@@ -6,6 +6,35 @@ once its entry leaves this file. Git history is the only record; check it before
 re-opening something that looks obviously undone.
 
 ## Known Bugs
+- [ ] The widget's arrow count is a delta, not a count, and the LowAmmo
+      override reads it. `StateManager_Equipment.cpp:197` sets
+      `newArrowCount = entry->countDelta` (and `newBoltCount` on :199) straight
+      into `PlayerActorState`. countDelta is a delta against the player's BASE
+      CONTAINER, so for ammo they STARTED with it is how many they have spent.
+      A vanilla character who had fired 5 of 18 starting arrows reads -5 while
+      the quiver holds 13.
+      Two consumers, both player-facing. `IntuitionMenu.cpp:544` gates on
+      `count > 0`, so the widget silently drops the ammo count beside the bow --
+      the player just never sees it. `OverrideManager.cpp:266-282` clamps to 0,
+      trips the LowAmmo hysteresis and can fire an override announcing the
+      player is out of arrows while they are holding a full quiver.
+      Same bug as the registry one fixed in #131, on a different path. That fix
+      does NOT cover these: it added InventoryAmmo::baseCount, which
+      StateManager has no access to.
+      The fix is not obvious and that is why this is an entry rather than a
+      commit. StateManager has no registry dependency, holds no base-container
+      memory of its own, and polls at ~10 Hz, so Util::GetInventorySafe is too
+      expensive here. `RE::PlayerCharacter::GetItemCount(TESBoundObject*)` is
+      exactly the right shape -- the game's own absolute count for one form --
+      but it shares a name with `RE::InventoryChanges::GetItemCount`, which
+      crashed on save-load and was bisected out in PR #41 (sub-commit 23555b2
+      reproduced the access violation; 81eecc6 without it was stable). They are
+      different functions on different classes and the crash says nothing about
+      this one, but the resemblance is close enough that it wants its own
+      change with its own save-load soak rather than being folded into
+      something else.
+      Found by the #131 review, 2026-09-24.
+
 - [ ] WeaponData::damage is not the number the game shows, and never was.
       The TEMPER half is verified: `hg status` on 2026-09-19 read ExtraHealth
       1.10 for all three "- Okay" weapons, giving 9.0->9.9, 7.0->7.7,
