@@ -474,6 +474,7 @@ namespace Huginn::Console
          case RE::MagicSystem::SpellType::kSpell:        return "Spell"sv;
          case RE::MagicSystem::SpellType::kPower:        return "Power"sv;
          case RE::MagicSystem::SpellType::kLesserPower:  return "LesserPower"sv;
+         case RE::MagicSystem::SpellType::kScroll:       return "Scroll"sv;
          default:                                        return "Other"sv;
          }
       };
@@ -508,10 +509,18 @@ namespace Huginn::Console
          if (!spell) {
             continue;
          }
+         // Scrolls too, since v0.21.7. ScrollItem IS-A SpellItem and
+         // ScrollClassifier delegates straight to SpellClassifier, so a scroll
+         // is classified by exactly these rules -- and LoreRim ships throwing
+         // knives as scrolls, which come out Debuff while their own tooltip
+         // says "deals 24 physical damage". There was no way to ask which rule
+         // did that: this command filtered them out, and the scroll registry
+         // dump prints the answer without the inputs.
          const auto castType = spell->GetSpellType();
          if (castType != RE::MagicSystem::SpellType::kSpell &&
              castType != RE::MagicSystem::SpellType::kPower &&
-             castType != RE::MagicSystem::SpellType::kLesserPower) {
+             castType != RE::MagicSystem::SpellType::kLesserPower &&
+             castType != RE::MagicSystem::SpellType::kScroll) {
             ++skipped;
             continue;
          }
