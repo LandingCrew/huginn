@@ -25,20 +25,35 @@ re-opening something that looks obviously undone.
       the suffix is the game's own answer to "is this the good one". The
       registry already resolves the display name per stack
       (ExtraDataList::GetDisplayName, gated on the stack already having
-      ExtraTextDisplayData so the read stays pure) but the widget shows the base
-      form's name, so two stacks of one weapon are indistinguishable on screen
-      even when Huginn is ranking them apart.
-      Cheap, and it is the visible half of work already done.
+      ExtraTextDisplayData so the read stays pure) and the widget DOES show it:
+      the vanilla registry dump reads "Iron Mace - Okay". The plumbing works.
+      It produces nothing on LoreRim, and THAT is the real entry here. Every
+      LoreRim record comes back with the plain base name AND temperFactor 1.00,
+      while ExtraUniqueID from the same extra list reads fine -- so extra lists
+      are readable and these two types are simply absent. That points at
+      LoreRim not storing tempering in ExtraHealth at all, with the `(1.2)`
+      computed by the UI layer from wherever the smithing overhaul keeps it,
+      and would also explain why PlayerCharacter::GetDamage returns the
+      untempered number there: the game's own accessor reads ExtraHealth too,
+      and finds nothing.
+      Unconfirmed, and it needs looking at the plugin rather than at Huginn.
       Raised 2026-09-24, from the #128-era weapon-damage pass.
 
-- [ ] LoreRim's throwing knives are unexamined. They are a weapon class Huginn
-      has never been checked against, and the obvious questions have no answers
-      yet: do they register as WEAP or as AMMO, does a throw consume them the
-      way ammo is consumed, does the count deplete, and does any of the
-      equip/recommend path do the right thing when the "weapon" is spent by
-      using it? The ammo arm already has depletion handling and slot-lock
-      breaking that a consumable weapon would want; the weapon arm does not.
-      Investigate before assuming either arm covers them.
+- [ ] LoreRim's throwing knives are SCROLLS, and the scroll arm carries them.
+      Answered 2026-09-24: they are ScrollItem forms, not WEAP and not AMMO, so
+      both questions this entry originally asked were the wrong ones.
+      ScrollRegistry already tracks them with the right counts (Iron x45,
+      Steel x15, Silver x15) and they reach the widget -- a Silver Throwing
+      Knife was seated in slot 7 in the same session. ScrollClassifier
+      delegates to SpellClassifier, so a knife whose effect reads "deals 24
+      physical damage" should type Damage by the archetype rules from #128.
+      What is left is a RANKING question, not a plumbing one: the knife reached
+      the widget through WildcardManager at 50% probability, not on merit. A
+      stack of 45 is a real combat option and should be able to earn its slot.
+      That is the "Scroll cold-start" entry further down, now with a concrete
+      case attached to it.
+      Confirm the type with `hg status`, which dumps the scroll registry from
+      v0.21.6.
       Raised 2026-09-24.
 
 - [ ] One weapon in the LoreRim load order classifies as nameless and is
