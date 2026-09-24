@@ -243,6 +243,16 @@ namespace Huginn::Console
       Print("Weapon registry dumped to the Huginn log");
       }
 
+      // Scrolls too. LogAllScrolls has existed and gone uncalled, and the
+      // reason to want it is that a scroll is not always a scroll: LoreRim
+      // ships throwing knives as ScrollItem forms, so "is my 45-stack of Iron
+      // Throwing Knives typed Damage" is a question about this registry and
+      // there was no way to ask it.
+      if (g_scrollRegistry) {
+      g_scrollRegistry->LogAllScrolls();
+      Print("Scroll registry dumped to the Huginn log");
+      }
+
       // Pages (query before slot locks so we know the actual count)
       auto& slotAllocator = Slot::SlotAllocator::GetSingleton();
 
