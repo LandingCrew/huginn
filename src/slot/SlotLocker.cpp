@@ -208,8 +208,21 @@ namespace Huginn::Slot
             // A held lock means the next change is not "because the lock let
             // go" -- it has to let go again first. A page switch explains one
             // run only: everything on the new page arrives in that run.
+            //
+            // Used and Override are one-run causes too. A slot that stays
+            // unlocked showing the same item -- a potion with count left, an
+            // override that handed back the same form, or any slot with
+            // locking disabled -- never relocks, so without this the event
+            // would take the credit for whatever re-rank moves the slot
+            // minutes later, and keep that change out of the ratio. What is
+            // left afterwards is an unheld slot: Expired if locking is on
+            // (its lock is gone, however it went), Unheld if it is off.
             if (slot.isLocked || slot.releaseCause == Telemetry::SlotChange::Page) {
                 slot.releaseCause = Telemetry::SlotChange::Unheld;
+            } else if (slot.releaseCause == Telemetry::SlotChange::Used ||
+                       slot.releaseCause == Telemetry::SlotChange::Override) {
+                slot.releaseCause = m_config.lockDurationMs > 0.0f
+                    ? Telemetry::SlotChange::Expired : Telemetry::SlotChange::Unheld;
             }
         }
         m_churnBaseline = false;
