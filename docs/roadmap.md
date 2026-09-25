@@ -6,6 +6,32 @@ once its entry leaves this file. Git history is the only record; check it before
 re-opening something that looks obviously undone.
 
 ## Known Bugs
+- [ ] The CRITICAL health override offers Potion of Fortify Health.
+      `ItemRegistry::GetBestPotion` keeps the highest `magnitude` of the type,
+      and Fortify Health (Diluted) at mag=20 ("+20 max health for 300 s")
+      beats Restore Health (Fair) at mag=8 (8/s for 20 s, 160 total). Seen on
+      LoreRim 2026-09-25 at 08:59:11 and 12:01:05; in the second the player
+      appears to have drunk it, since the pick moved to Restore Health four
+      seconds later with the fortify's count at 1. Magicka and stamina use the
+      same comparison.
+      Fix: rank by health restored in the first few seconds -- magnitude for
+      an instant potion (vanilla, Apothecary: dur=0), magnitude x
+      min(duration, ~5 s) for a heal-over-time one (Requiem/LoreRim) -- so a
+      fortify, which restores nothing now, drops out without any
+      mod-specific check. The override ignores the tier preference: an
+      emergency always gets the potion that helps most.
+      Raised 2026-09-25.
+
+- [ ] The pipeline recomputed on EVERY tick for ten idle minutes.
+      simonrim-essentials 2026-09-25, 11:10-11:20: `recompute=2881/2881` in
+      two consecutive heartbeats, tick avg 0.46 -> 2.36 ms, and no state
+      transition logged. `CheckHashSkip` (`PipelineCoordinator.cpp:223`)
+      refuses to skip while any unhashed state is active -- elemental,
+      falling, underwater, workstation -- and its comment calls all of them
+      bounded, which underwater and workstation are not. Workstation read 0
+      throughout. What the player was doing is unknown; ask before guessing.
+      Raised 2026-09-25.
+
 - [ ] One weapon stack's ExtraHealth has read 0.00, then 1.00, then 1.30 across
       three sessions on the same character, and nothing explains the first two.
       uid87, the LoreRim Long Bow. Either the player tempered it between those
@@ -426,10 +452,16 @@ Raised 2026-09-24.
       - A Tracy plot of changes/s alongside the existing Huginn plots, so the
         burst can be lined up against state transitions in a capture.
       Only then decide the fix, against a baseline number.
-      **Step 1 SHIPPED in v0.21.17**, as specified above with these differences:
+      **Step 1 SHIPPED in v0.21.19**, as specified above with these differences:
       - The heartbeat field is `slotChurn=N peak5s=K@slotI (fill= clear=
-        dedup= override= expired= used= page= unheld=)`, or `slotChurn=0`.
+        dedup= override= wildcard= expired= used= page= unheld=)
+        ratio(gone= <1= <1.1= <1.25= <1.5= >=1.5=)`, or `slotChurn=0`.
         No remembrance bucket: add it with remembrance.
+      - `ratio` is challenger utility over the displaced item's utility in
+        the same run, for expired/unheld changes only -- the ones a margin
+        would govern. The debug line prints both numbers.
+      - Wildcards arriving and leaving are their own cause. They were landing
+        in `<1` on a 90 s cadence and in `>=1.5` 30 s later.
       - Reset (save load, cell transition, `hg reset`, `hg page`, INI reload)
         is NOT counted -- the next run re-baselines. Page switches through
         `SetCurrentPage` are counted as `page` but kept out of peak5s,
@@ -440,13 +472,47 @@ Raised 2026-09-24.
         `[SlotChurn]` lines, one per change.
       - Measures the widget's current page only. The Wheeler pages never
         reach `SlotLocker`.
-      Still to do: the baseline run itself, bow use included.
+      **Measured 2026-09-25** (LoreRim-5 and simonrim-essentials, ~5 min of
+      combat each). The premise below was wrong: the SHIPPED INI said
+      `fLockDurationMs = 1000`; 3000 was only the code fallback. Nothing
+      released locks early -- ~90% of changes were plain expiry, then a
+      re-rank against a moving state. Findings:
+      - 1000 -> 3000 ms halved the worst burst (peak5s 6 -> 3) for about the
+        same total (176 -> 154 per 5 min). Swap-backs (A->B->A in one slot)
+        stayed at ~1 change in 5. A longer lock rate-limits churn; it does
+        not remove it. 3000 now ships.
+      - Churn lives in the lower slots. Slots 0-1 barely move; 2-7 take
+        almost all of it. They are filled from a plateau of items on the
+        always-on baseline weights (0.15-0.20) with untrained learners, all
+        at u ~0.2-0.3, where the contextual learner's per-item response to
+        small state drift is enough to reorder them.
+      - Challenger ratios are bimodal on both load orders: a tie or clearly
+        better, little between. LoreRim: 22 within 0.9-1.1, 6 in 1.1-1.25,
+        64 at >= 1.25. Simonrim: 53 under 1.1, 7 in 1.1-1.25. A 25% margin
+        would stop the ties and hold back almost nothing real.
+      - Ratios well below 1 (x0.2-0.7) are NOT the ranking choosing worse:
+        the incumbent had become ineligible -- equipped (skip-equipped) or
+        taken by an override elsewhere. A margin must hold the incumbent only
+        while the slot would still accept it.
+      - Refill takes items seated ELSEWHERE: when a WeaponsAny slot loses its
+        item, it pulls the only other weapon out of its own seat, so the Long
+        Bow moved 5 -> 1 -> 5 -> 1 in ten seconds (2026-09-25 09:08). One
+        item leaving moved three keys.
+      - Dedup can empty a LOCKED slot: two slots locked on the same potion,
+        the later one shows nothing while still holding the lock (08:59:10).
+      Decided fix, one PR, each part behind its own INI key: a challenger
+      margin (default 25%, eligibility-checked); refill never pulls an item
+      from its own seat; `sPotionTierPreference = Higher | None | Lower`
+      (default Higher) replacing PotionDiscriminator's magnitude bonus AND its
+      "don't waste strong potions" penalty, which flip Fair/Faint order as
+      health crosses a bucket. Whether wildcards should live only in
+      dedicated slots is open: they are churn by design, ~4 changes/min.
       What the code already does, for context: `SlotLocker` keeps a per-slot
       timer (`m_lockedSlots[i].remainingMs`); only the DURATION is global —
-      `fLockDurationMs` = 3000, `fMinLockDurationMs` = 500 — and
+      `fLockDurationMs` (shipped 1000 until v0.21.18, now 3000),
+      `fMinLockDurationMs` = 500 — and
       `ShouldBreakLock` already refuses every non-override change until
-      expiry. So churn faster than every 3 s means something releases locks
-      early. Suspects from reading the code:
+      expiry. Suspects from reading the code, before measuring:
       - `OnItemUsed` unlocks the slot holding the used item (callers:
         `EquipManager` x3, `Main.cpp`, the inventory delta-scan in
         `UpdateLoop`). In combat: slot refills, that item is used, refills
