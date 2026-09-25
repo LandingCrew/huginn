@@ -10,6 +10,7 @@
 #include "StateManager.h"
 #include "StateConstants.h"
 #include "../Profiling.h"
+#include "../util/InventoryUtil.h"
 
 namespace Huginn::State
 {
@@ -185,30 +186,32 @@ namespace Huginn::State
       }
       }
 
-      // Inventory traversal for ammo count only
-      auto* invChanges = player->GetInventoryChanges();
-      if (invChanges && invChanges->entryList && needAmmoCount) {
-      for (auto* entry : *invChanges->entryList) {
-        if (!entry) continue;
-
-        // Check for ammo count (only if bow/crossbow equipped and ammo found)
-        if (needAmmoCount && entry->object == equippedAmmo) {
-           if (newHasBowEquipped) {
-            newArrowCount = entry->countDelta;
-           } else if (newHasCrossbowEquipped) {
-            newBoltCount = entry->countDelta;
-           }
-           needAmmoCount = false;
-        }
-
-        // Early exit when ammo found
-        if (!needAmmoCount) {
-           break;
-        }
+      // How many of the equipped ammo the player actually has. Base container
+      // plus changes delta, not the delta on its own -- the loop that used to sit
+      // here read `entry->countDelta` into these two fields directly, and for the
+      // arrows a character STARTS with that is how many they have spent. Three
+      // consumers read them and all three were wrong for starting ammo:
+      // IntuitionMenu gates on `count > 0` and so silently dropped the count
+      // beside the bow, OverrideManager clamped the negative to 0 and could
+      // announce an empty quiver to a player holding thirteen arrows, and
+      // PlayerActorState::IsOutOfArrows -- which is `== 0` -- made
+      // ContextRuleEngine weight ammo up for a full one that had no changes entry
+      // at all. Same bug the WeaponRegistry fast path had, fixed in #131; that
+      // fix could not cover these, because it lives on InventoryAmmo::baseCount
+      // and StateManager has no registry.
+      if (needAmmoCount) {
+      const std::int32_t count = Util::GetItemCountSafe(player, equippedAmmo);
+      if (newHasBowEquipped) {
+        newArrowCount = count;
+      } else if (newHasCrossbowEquipped) {
+        newBoltCount = count;
       }
       }
 
       // Update equipment state with change detection
+      bool ammoCountChanged = false;
+      std::int32_t prevAmmoCount = 0;
+      bool returnChanged = false;
       {
       std::unique_lock lock(m_playerMutex);
       bool changed = false;
@@ -283,10 +286,14 @@ namespace Huginn::State
         changed = true;
       }
       if (m_playerState.arrowCount != newArrowCount) {
+        prevAmmoCount = m_playerState.arrowCount;
+        ammoCountChanged = true;
         m_playerState.arrowCount = newArrowCount;
         changed = true;
       }
       if (m_playerState.boltCount != newBoltCount) {
+        prevAmmoCount = m_playerState.boltCount;
+        ammoCountChanged = true;
         m_playerState.boltCount = newBoltCount;
         changed = true;
       }
@@ -304,8 +311,23 @@ namespace Huginn::State
         logger::trace("[StateManager] PlayerEquipment changed"sv);
 #endif
       }
-      return changed;  // Stage 3b: Return change detection flag
+      returnChanged = changed;
       }
+
+      // Transition only, and outside the lock. This is the number the widget
+      // prints beside the bow and the one LowAmmo fires on, and until v0.21.11
+      // it was a delta -- there was no way to see that from the log, because the
+      // only line here said "PlayerEquipment changed". One line per shot while
+      // shooting, silent otherwise.
+      if (ammoCountChanged) {
+      const bool bow = newHasBowEquipped;
+      logger::debug("[StateManager] {} {} -> {}"sv,
+        bow ? "arrows"sv : "bolts"sv,
+        prevAmmoCount,
+        bow ? newArrowCount : newBoltCount);
+      }
+
+      return returnChanged;  // Stage 3b: Return change detection flag
    }
 
 } // namespace Huginn::State

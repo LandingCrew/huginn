@@ -1,4 +1,5 @@
 #include "Tests.h"
+#include "util/InventoryUtil.h"
 #include "Globals.h"
 
 #include "state/StateManager.h"
@@ -465,8 +466,13 @@ void RunItemClassifierTests()
         auto* alchemyItem = entry->object->As<RE::AlchemyItem>();
         if (!alchemyItem) continue;
 
-        // Get item count
-        int32_t count = entry->countDelta;
+        // Absolute count, not the delta. countDelta against a base container
+        // that holds the item is negative once any of it is consumed, so this
+        // test used to skip a half-drunk starting potion and print the wrong
+        // quantity for the rest. Items present ONLY in the base container are
+        // still missed, because this walks the changes list -- a test-harness
+        // limitation, not a classifier one.
+        int32_t count = Util::GetItemCountSafe(player, entry->object);
         if (count <= 0) continue;
 
         // Classify the item

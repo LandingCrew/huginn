@@ -36,6 +36,82 @@ namespace Huginn::Util
 
     using InventoryItemMap = RE::TESObjectREFR::InventoryItemMap;
 
+    // =============================================================================
+    // ONE OBJECT'S COUNT (v0.21.11)
+    // =============================================================================
+    // How many of a single object a reference holds, by the SAME arithmetic
+    // GetInventorySafe uses: the changes list is a set of deltas against the base
+    // container, so an absolute count is base + delta and never the delta alone.
+    //
+    // This exists because the cheap thing -- reading countDelta straight out of
+    // the entry -- is wrong in two directions and both of them reached the player
+    // (StateManager_Equipment.cpp, fixed alongside this):
+    //
+    //   * Ammo they STARTED with. The base container holds it, so countDelta is
+    //     how many they have SPENT. A vanilla character 5 arrows into a starting
+    //     18 reads -5 while the quiver holds 13.
+    //   * Ammo they have not touched at all has NO changes entry, and answering
+    //     "0" for it calls a full quiver empty.
+    //
+    // Deliberately NOT PlayerCharacter::GetItemCount, which is the game's own
+    // absolute count and would have been one call. Two reasons, in order: this
+    // way the widget's number and WeaponRegistry's number come out of one
+    // definition and cannot drift apart -- which is the bug shape #131 fixed
+    // when the fast path summed duplicates and the reconcile did not -- and
+    // GetItemCount's near-namesake RE::InventoryChanges::GetItemCount crashed on
+    // save-load and was bisected out in PR #41. They are different functions at
+    // different addresses (19275/19701 against 15868/16047) and the crash says
+    // nothing about the one on PlayerCharacter, but nothing here needs to find
+    // out on a 10 Hz path.
+    //
+    // Duplicate and leveled semantics match GetInventorySafe exactly: the first
+    // changes entry wins and the rest are ignored, and a leveled entry that came
+    // from the changes list suppresses the base-container contribution.
+    //
+    // O(entryList) with an early exit, plus the base container, which for the
+    // player is starting gear and small. Cheap enough for the equipment poll;
+    // use GetInventorySafe when you want more than one form.
+    inline std::int32_t GetItemCountSafe(RE::TESObjectREFR* ref,
+                                        const RE::TESBoundObject* obj)
+    {
+        if (!ref || !obj) return 0;
+
+        std::int32_t count = 0;
+        bool leveledInChanges = false;
+
+        // Phase 1: the delta, from the FIRST entry for this object.
+        if (auto* invChanges = ref->GetInventoryChanges();
+            invChanges && invChanges->entryList) {
+            for (auto* entry : *invChanges->entryList) {
+                if (!entry || entry->object != obj) continue;
+                count = entry->countDelta;
+                leveledInChanges = entry->IsLeveled();
+                break;
+            }
+        }
+
+        // Phase 2: what the base container contributes, unless Phase 1 found a
+        // leveled entry -- see the note above.
+        if (!leveledInChanges) {
+            if (auto* container = ref->GetContainer()) {
+                container->ForEachContainerObject(
+                    [&](RE::ContainerObject& a_entry) {
+                        if (a_entry.obj != obj) {
+                            return RE::BSContainer::ForEachResult::kContinue;
+                        }
+                        count += a_entry.count;
+                        return RE::BSContainer::ForEachResult::kStop;
+                    });
+            }
+        }
+
+        // Callers treat this as a count and compare it against 0 to mean "none
+        // left". A negative total means the deltas outran what we could see of
+        // the base container, which is the phantom-Iron-Sword shape; answering
+        // "none" for it is the safe reading.
+        return count > 0 ? count : 0;
+    }
+
     // One object's trail through a scan, kept only when it turned up in the
     // changes list more than once. See the summary log at the end of
     // GetInventorySafe for why these particular numbers.

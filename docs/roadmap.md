@@ -6,7 +6,7 @@ once its entry leaves this file. Git history is the only record; check it before
 re-opening something that looks obviously undone.
 
 ## Known Bugs
-- [ ] The widget's arrow count is a delta, not a count, and the LowAmmo
+- [x] The widget's arrow count is a delta, not a count, and the LowAmmo
       override reads it. `StateManager_Equipment.cpp:197` sets
       `newArrowCount = entry->countDelta` (and `newBoltCount` on :199) straight
       into `PlayerActorState`. countDelta is a delta against the player's BASE
@@ -34,6 +34,31 @@ re-opening something that looks obviously undone.
       change with its own save-load soak rather than being folded into
       something else.
       Found by the #131 review, 2026-09-24.
+      CLOSED 2026-09-24 in v0.21.11, and NOT with GetItemCount. The entry framed
+      the choice as "is that game function safe", and the better answer was that
+      we do not need to find out: Util::GetItemCountSafe is GetInventorySafe
+      restricted to one object -- first changes entry wins, leveled entries
+      suppress the base container, clamped at 0 -- so the widget's number and
+      WeaponRegistry's number now come from one definition and cannot drift
+      apart. That drift is the bug shape #131 fixed when the fast path summed
+      duplicates and the reconcile did not, and adding a second, independent way
+      to count the same inventory would have re-opened it. The two functions do
+      turn out to be unrelated (PlayerCharacter::GetItemCount at 19275/19701,
+      InventoryChanges::GetItemCount at 15868/16047), so the name resemblance
+      that made this cautious was only ever a resemblance -- worth knowing, but
+      it changed nothing here.
+      A THIRD consumer turned up while fixing it, and it was the worst of the
+      three. ContextRuleEngine:495 reads PlayerActorState::IsOutOfArrows, which
+      is `arrowCount == 0`, and ammo the player has never touched has NO changes
+      entry at all -- so a full quiver of starting arrows read 0 and the engine
+      applied weightNeedsAmmo to it for the whole session. The entry only
+      described the negative-delta case; the missing-entry case was quietly
+      worse, because nothing about it looked wrong.
+      Also cleaned up on the way past: OverrideManager's comment claimed a -1
+      sentinel that has never existed (NO_ARROWS is 0), the `>= 0` clamp it
+      justified was load-bearing for the wrong reason, and the ItemClassifier
+      test in Tests.cpp skipped `countDelta <= 0` and so dropped any starting
+      potion the player had begun drinking.
 
 - [x] WeaponData::damage is not the number the game shows, and never was.
       SHIPPED in #131 (2026-09-24). Asks the ACTOR rather than the form --

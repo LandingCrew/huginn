@@ -413,6 +413,8 @@ namespace Huginn::State
     // Equipment state (player-specific)
     float weaponChargePercent = DefaultState::FULL_CHARGE;  // 0.0-1.0
     bool hasEnchantedWeapon = false;
+    // Absolute count of the EQUIPPED ammo, base container plus changes delta
+    // (Util::GetItemCountSafe). 0 means empty quiver or no ammo equipped.
     std::int32_t arrowCount = DefaultState::NO_ARROWS;
     bool hasBowEquipped = false;
     RE::FormID rightHandWeapon = 0;
@@ -429,7 +431,7 @@ namespace Huginn::State
     bool hasCrossbowEquipped = false;
     bool hasTorchEquipped = false;
     float weaponChargeMax = 0.0f;
-    std::int32_t boltCount = DefaultState::NO_ARROWS;
+    std::int32_t boltCount = DefaultState::NO_ARROWS;  // see arrowCount
     RE::FormID equippedAmmoFormID = 0;  // FormID of equipped arrow/bolt (name looked up at display time)
     float equippedAmmoDamage = 0.0f;  // Base damage of equipped ammo (for bow total damage calc)
 
