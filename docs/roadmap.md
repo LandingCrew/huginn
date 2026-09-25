@@ -35,7 +35,21 @@ re-opening something that looks obviously undone.
       something else.
       Found by the #131 review, 2026-09-24.
 
-- [ ] WeaponData::damage is not the number the game shows, and never was.
+- [x] WeaponData::damage is not the number the game shows, and never was.
+      SHIPPED in #131 (2026-09-24). Asks the ACTOR rather than the form --
+      PlayerCharacter::GetDamage, the accessor the inventory card itself calls.
+      Verified exact against the inventory on both load orders.
+      The entry's own premise turned out to be half wrong, and that is the part
+      worth keeping: it said "Ranking does not care, since every comparison it
+      makes is between two numbers with the same term missing". True on vanilla.
+      False on LoreRim, whose smithing is ADDITIVE -- `(1.2)` is +2 points --
+      so base x temper overstated a tempered Iron Sword at 50.4 against the
+      game's 46 while understating an untempered Orcish Dagger at 48 against
+      its 50, and Huginn recommended the sword. There is one number now, ranked
+      and displayed, with the model only as a load-path fallback.
+      Four more bugs were found by the instrument built to verify it: a present
+      ExtraHealth reading 0, truncation where the game rounds, countDelta read
+      as a count, and the ranking inversion above.
       The TEMPER half is verified: `hg status` on 2026-09-19 read ExtraHealth
       1.10 for all three "- Okay" weapons, giving 9.0->9.9, 7.0->7.7,
       4.0->4.4, and the relative order within a base form is now right.
@@ -160,7 +174,16 @@ re-opening something that looks obviously undone.
       cosmetic cost that argued for (1) is now smaller than it was.
       Raised 2026-09-19.
 
-- [ ] Log noise: three sites break the rules CLAUDE.md sets for them.
+- [x] Log noise: three sites break the rules CLAUDE.md sets for them.
+      SHIPPED in #131 (2026-09-24), measured on a vanilla session afterwards:
+      `Unknown weapon type 0 for Unarmed` 3 -> 0 (named as a switch arm, since
+      a warn should mean something unexpected happened); `Rejected enchanted`
+      124 lines per item -> 2 (once per form, cleared only on RebuildRegistry
+      where a verdict could genuinely differ); `Magic state:` 78 identical
+      lines -> 1 (it was gated on more state than the line printed).
+      SlotLocker's 507 `Lock expired` lines and SlotAllocator's 381 candidate
+      counts were deliberately left: both already change-gated, every line a
+      real transition. Busy is not the same as wrong.
       Measured on a 13-minute LoreRim-5 session (2026-09-20, v0.20.35, 2556
       lines, ~3.3 lines/sec overall — inside budget, but a third of it is these
       three). Counts from
