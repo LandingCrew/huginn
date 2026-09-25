@@ -38,36 +38,47 @@ re-opening something that looks obviously undone.
       Raised 2026-09-24.
 
 - [x] AllyStatus still flaps, 57% less than it did, and nothing reads it.
-      CLOSED 2026-09-24 in v0.21.15, by the first of the two options this entry
-      offered: `allyStatus` is out of `GameState::GetHash`. Every flap it can
-      produce is now free, including the two 0.31 s pairs no distance
-      hysteresis could have caught, because the gate no longer asks.
-      The field, `ToString` and the `Diff` all stay. Stamina is the precedent
-      and the model: in the struct, out of the hash.
-      But NOT the measurement -- a correction to what the commit for this
-      first claimed. `LogStateTransition` is gated on the hash moving, so an
-      ally-only flap now produces no log line at all, and an ally change
-      reaches the log only bundled into a transition something else caused.
-      The v0.21.15 session shows exactly that: one `Ally:None->Present` in
-      199 s, riding along with `HP:Critical->VeryHigh, MP:Critical->VeryHigh,
-      Dist:Melee->Ranged` at startup, and no ally-only line anywhere. So the
-      flap rate that justified this change can no longer be measured from the
-      log. Re-measuring means a line at the StateEvaluator level, or putting
-      the field back in the hash temporarily.
-      `kTotalStates` 72,576 -> 24,192, and the un-reduced 870,912 is now a 36x
-      reduction rather than 12x.
-      Safe to do because the hash feeds nothing durable, which was checked
-      rather than assumed: `kTotalStates` sizes no array outside the test, and
-      the only other `GetHash()` consumer is `UsageMemory`, an in-memory ring
-      buffer that is never serialised. Nothing in the cosave is keyed by state
-      hash.
-      Test 3c pins it, mirroring the stamina test at 3b, and Test 2 now sets
-      `allyStatus` to its MAXIMUM rather than to None on purpose -- if the
-      field re-enters the hash without `kBases` being updated to match, that is
-      the assert that catches the overflow.
-      Put it back the day a ContextRuleEngine rule, learner feature or
-      candidate filter actually reads it. The field comment in GameState.h says
-      so.
+      CLOSED 2026-09-24 in v0.21.16, by narrowing the dimension rather than by
+      either option this entry offered. `GetHash` now asks one question of
+      `allyStatus` -- is it `InjuredPresent` -- so `None` and `Present` are the
+      same state to the gate and every flap between them is free. That pair is
+      all of the observed flapping, including the two 0.31 s pairs no distance
+      hysteresis could have caught.
+      `kTotalStates` 72,576 -> 48,384. The full 3-state value stays in the
+      struct, in `ToString` and in `Diff`.
+      **The first attempt (v0.21.15) removed it from the hash entirely and was
+      wrong**, caught by the #136 review. The premise -- "nothing reads it" --
+      came from grepping `allyStatus`, which finds every reader of the FIELD
+      and none of the readers of the FACT. `ScoreCandidates` builds
+      `ContextReasonSignals{.allyInjured = targets.HasInjuredFollower()}`,
+      `ContextRuleEngine_Reason` marks `R::AllyInjured` from it, and
+      `DominantReason` surfaces that as the "Ally Hurt" label -- all of it
+      below `CheckHashSkip`. With the dimension gone, a follower taking fall
+      damage beside an idle player at full vitals moves no hashed bucket, the
+      tick skips, and the label never appears; symmetrically a stale one
+      persists after the follower heals.
+      The review's suggested fix -- a `ctx.allyInjuredActive` bypass like the
+      ones falling, underwater and workstation use -- is the wrong shape here.
+      `unhashedStateActive` forces a run EVERY TICK while the flag is up, which
+      is fine for a one-second fall and ruinous for an injured follower that
+      can stay injured for minutes. A long-lived boolean belongs in the hash;
+      that is what a hash dimension is for.
+      Deliberately a superset of what is read: `EvaluateAllyStatus` returns
+      `InjuredPresent` for any injured non-hostile while `HasInjuredFollower`
+      requires `isFollower`, so the gate can wake for an injured non-follower
+      ally that produces no label. Over-triggering is the safe direction.
+      Safe on persistence, which was checked rather than assumed both times:
+      `kTotalStates` sizes no array outside the test, `UsageMemory` is an
+      in-memory ring buffer, and `BanditSerializer` keys on FormID plus
+      positional features. Nothing in the cosave is keyed by state hash.
+      Test 3c asserts both halves -- `None == Present` is the saving,
+      `Injured != None` is the correctness -- and Test 2 keeps `allyStatus` at
+      its maximum so a botched reinstatement overflows `kTotalStates` loudly.
+      One cost, recorded because it is easy to forget: `LogStateTransition` is
+      gated on the hash moving, so a `None<->Present` change now produces no
+      log line at all and reaches the log only bundled into a transition
+      something else caused. The flap rate that justified this change cannot be
+      re-measured from the log afterwards.
 
 - [ ] The crosshair target is the dominant state flap, and it may not be a bug.
       Same two logs: `Dist:Ranged<->Melee, Target:None<->Humanoid` went from 6 of
@@ -608,7 +619,7 @@ would notice.
       (skeleton): Returns all zeros — no rules implemented yet" above a fully
       implemented method. `StateManager.h` says "3 locks" and "7 float
       accumulators"; it is 4 and 11. `StateFeatures.h:17` cites the stale
-      36,288-state figure (it is 24,192 as of v0.21.15, and was 72,576 when
+      36,288-state figure (it is 48,384 as of v0.21.16, and was 72,576 when
       this was written — and the file is `src/learning/`, not `src/state/`). `SettingsReloader.cpp:94` says the dMenu INI holds "Widget,
       Keybindings, Debug" — keybindings moved to the main INI in the 0.19.0
       split. `FeatureBanditLearner.h` says "~90% confidence at 15 trains"; the

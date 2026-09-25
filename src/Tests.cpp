@@ -1572,10 +1572,9 @@ void RunUnitTests()
     }
 
     // Test 2: Maximum hash (all max values)
-    // Hash states: 6×6×3×7×4×2×2×2 = 24,192 (stamina and allyStatus excluded),
-    // so max hash = 24,191. allyStatus is deliberately set to its MAX below
-    // rather than to None: if it ever re-enters the hash without kBases being
-    // updated, this is the assert that catches the overflow.
+    // Hash states: 6×6×3×7×4×2×2×2×2 = 48,384, so max hash = 48,383.
+    // Stamina is excluded entirely; allyStatus contributes its INJURED BIT,
+    // so InjuredPresent below is the maximum that dimension can take.
     GameState state2{
         .health = HealthBucket::VeryHigh,
         .magicka = MagickaBucket::VeryHigh,
@@ -1594,18 +1593,19 @@ void RunUnitTests()
         return;
     }
 
-    // Test 3: Hash uniqueness for all 24,192 states (stamina and allyStatus excluded)
+    // Test 3: Hash uniqueness for all 48,384 states (stamina excluded;
+    // allyStatus enumerated as its two HASHED values, not its three)
     std::set<uint32_t> seenHashes;
     for (uint8_t h = 0; h < 6; ++h) {
         for (uint8_t m = 0; m < 6; ++m) {
             for (uint8_t d = 0; d < 3; ++d) {
                 for (uint8_t t = 0; t < 7; ++t) {
                     for (uint8_t ec = 0; ec < 4; ++ec) {
-                        // No allyStatus loop: it is excluded from the hash, so
-                        // varying it here would produce three identical hashes
-                        // for every other combination and trip the duplicate
-                        // check below. Test 3c pins the exclusion instead.
-                        {
+                        // Two values, not three: the hash reads only whether
+                        // allyStatus is InjuredPresent, so None and Present are
+                        // the same state to it and enumerating both would trip
+                        // the duplicate check below. Test 3c pins that.
+                        for (auto as : { AllyStatus::None, AllyStatus::InjuredPresent }) {
                           for (uint8_t ac = 0; ac < 2; ++ac) {
                             for (uint8_t c = 0; c < 2; ++c) {
                                 for (uint8_t s = 0; s < 2; ++s) {
@@ -1616,7 +1616,7 @@ void RunUnitTests()
                                         .distance = static_cast<DistanceBucket>(d),
                                         .targetType = static_cast<TargetType>(t),
                                         .enemyCount = static_cast<EnemyCountBucket>(ec),
-                                        .allyStatus = AllyStatus::None,  // excluded from hash
+                                        .allyStatus = as,
                                         .anyCasting = static_cast<CastingStatus>(ac),
                                         .inCombat = static_cast<CombatStatus>(c),
                                         .isSneaking = static_cast<SneakStatus>(s)
@@ -1670,31 +1670,34 @@ void RunUnitTests()
         return;
     }
 
-    // Test 3c: Verify allyStatus doesn't affect hash
-    // Mirrors 3b. allyStatus left the hash in v0.21.15 because nothing reads
-    // it; this is what catches it being silently reinstated, or reinstated
-    // without kBases being updated to match.
-    GameState allyNone{
-        .health = HealthBucket::Medium, .magicka = MagickaBucket::Medium,
-        .stamina = StaminaBucket::Medium, .distance = DistanceBucket::Melee,
-        .targetType = TargetType::None, .enemyCount = EnemyCountBucket::None,
-        .allyStatus = AllyStatus::None, .inCombat = CombatStatus::InCombat,
-        .isSneaking = SneakStatus::NotSneaking
+    // Test 3c: allyStatus reaches the hash as ONE BIT — its injured bit.
+    // Both halves matter and both are asserted. None == Present is the saving
+    // (v0.21.15): that pair is all of the observed ally flapping and nothing
+    // reads the distinction. Injured != None is the correctness half: the
+    // "Ally Hurt" label is computed below CheckHashSkip, so a gate that cannot
+    // see a follower becoming injured never produces it.
+    auto allyState = [](AllyStatus a) {
+        return GameState{
+            .health = HealthBucket::Medium, .magicka = MagickaBucket::Medium,
+            .stamina = StaminaBucket::Medium, .distance = DistanceBucket::Melee,
+            .targetType = TargetType::None, .enemyCount = EnemyCountBucket::None,
+            .allyStatus = a, .anyCasting = CastingStatus::NoneCasting,
+            .inCombat = CombatStatus::InCombat,
+            .isSneaking = SneakStatus::NotSneaking
+        };
     };
-    GameState allyInjured{
-        .health = HealthBucket::Medium, .magicka = MagickaBucket::Medium,
-        .stamina = StaminaBucket::Medium, .distance = DistanceBucket::Melee,
-        .targetType = TargetType::None, .enemyCount = EnemyCountBucket::None,
-        .allyStatus = AllyStatus::InjuredPresent, .inCombat = CombatStatus::InCombat,
-        .isSneaking = SneakStatus::NotSneaking
-    };
-    if (allyNone.GetHash() != allyInjured.GetHash()) {
-        logger::error("TEST FAIL: AllyStatus should not affect hash! None={}, Injured={}"sv,
-            allyNone.GetHash(), allyInjured.GetHash());
+    if (allyState(AllyStatus::None).GetHash() != allyState(AllyStatus::Present).GetHash()) {
+        logger::error("TEST FAIL: Ally None vs Present should hash the same! None={}, Present={}"sv,
+            allyState(AllyStatus::None).GetHash(), allyState(AllyStatus::Present).GetHash());
+        return;
+    }
+    if (allyState(AllyStatus::None).GetHash() == allyState(AllyStatus::InjuredPresent).GetHash()) {
+        logger::error("TEST FAIL: Ally InjuredPresent must hash differently from None (hash={})"sv,
+            allyState(AllyStatus::None).GetHash());
         return;
     }
 
-    logger::info("TEST PASS: All hash tests passed! {} unique states verified, stamina and allyStatus excluded."sv, GameState::kTotalStates);
+    logger::info("TEST PASS: All hash tests passed! {} unique states verified, stamina excluded, allyStatus hashed as its injured bit."sv, GameState::kTotalStates);
 
     // === SpellRegistry Unit Tests ===
     logger::info("Running SpellRegistry unit tests..."sv);

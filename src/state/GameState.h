@@ -128,8 +128,8 @@ namespace Huginn::State
    }
 
    // Complete game state representation
-   // Hash states: 6 × 6 × 3 × 7 × 4 × 2 × 2 × 2 = 24,192
-   // (stamina and allyStatus both excluded from the hash — see their fields)
+   // Hash states: 6 × 6 × 3 × 7 × 4 × 2 × 2 × 2 × 2 = 48,384
+   // (stamina excluded entirely; allyStatus hashed as 2 states, not 3)
    struct GameState
    {
       // Player vitals
@@ -143,26 +143,34 @@ namespace Huginn::State
 
       // Multi-target context
       EnemyCountBucket enemyCount; // 4 states
-      // 3 states (collapsed from AllyCount × HasInjuredAlly). KEPT in the
-      // struct and in ToString/Diff, EXCLUDED from the hash, for the same
-      // reason stamina is: nothing reads it to make a decision. It is written
-      // by StateEvaluator and consumed only by the logging above. While it was
-      // a hash dimension, every flap of it cost a full pipeline pass (~1.8 ms,
-      // 68% of that the Wheeler push) to recompute an identical answer —
-      // 11 of them in a 565 s quiet-town log, two of which no distance
-      // hysteresis could ever have caught, because crossing the release margin
-      // that fast needs about a sprint and the cause is something other than
-      // distance.
-      // One consequence to know before putting it back. Diff still PRINTS an
-      // ally change, but LogStateTransition is gated on the hash moving
-      // (PipelineCoordinator.cpp:260), so an ally-only flap now produces no
-      // line at all -- an ally change reaches the log only bundled into a
-      // transition something else caused. The flap rate that justified this
-      // change can therefore no longer be measured from the log; re-measuring
-      // it means a line at the StateEvaluator level, or putting the field back
-      // in the hash temporarily.
-      // Put it back in kBases and GetHash the day a ContextRuleEngine rule,
-      // learner feature or candidate filter actually reads it.
+      // 3 states in the struct, TWO in the hash: GetHash asks only whether the
+      // value is InjuredPresent. The full value stays here and in
+      // ToString/Diff, where it costs nothing.
+      //
+      // Only the injured bit is read. Nothing reads allyStatus ITSELF --
+      // StateEvaluator writes it and only the logging below consumes it -- but
+      // the FACT it encodes is read through a different accessor, which is why
+      // grepping the field name is not enough to retire it: ScoreCandidates
+      // builds ContextReasonSignals{.allyInjured = targets.HasInjuredFollower()},
+      // ContextRuleEngine_Reason marks R::AllyInjured from it, and
+      // DominantReason can surface that as the "Ally Hurt" label. All of it
+      // runs BELOW CheckHashSkip, so the gate has to be able to see an ally
+      // becoming injured or the label never appears -- a follower taking fall
+      // damage beside an idle player at full vitals moves no other bucket.
+      //
+      // The None/Present half is what nothing reads, and it is also all of the
+      // observed flapping: `Ally:None<->Present`, 11 times in a 565 s
+      // quiet-town log, each costing a full pipeline pass (~1.8 ms, 68% of it
+      // the Wheeler push) to recompute an identical answer. Two were 0.31 s
+      // pairs no distance hysteresis could catch, because crossing the release
+      // margin that fast needs about a sprint. Collapsing to the injured bit
+      // makes every one of them free without blinding the gate.
+      //
+      // Deliberately a SUPERSET of what is read: EvaluateAllyStatus returns
+      // InjuredPresent for any injured non-hostile, while HasInjuredFollower
+      // requires isFollower. The gate can therefore wake for an injured
+      // non-follower ally that produces no label. Over-triggering is the safe
+      // direction; the alternative is a second ally concept in GameState.
       AllyStatus allyStatus;
       CastingStatus anyCasting;   // 2 states (any living hostile casting)
 
@@ -173,11 +181,12 @@ namespace Huginn::State
       // Generate unique hash for weight table lookup
       // Returns value in range [0, kTotalStates - 1]
       // Stamina excluded: PotionDiscriminator reads it directly, ContextRuleEngine uses raw float
-      // AllyStatus excluded: nothing reads it at all (see the field)
-      // Multi-radix bases: [6, 6, 3, 7, 4, 2, 2, 2]
+      // AllyStatus narrowed to its injured bit: None and Present are the half
+      // nothing reads, and all of the observed flapping (see the field)
+      // Multi-radix bases: [6, 6, 3, 7, 4, 2, 2, 2, 2]
       // Multipliers computed at compile time from bases (right-to-left product)
    private:
-      static constexpr uint32_t kBases[] = { 6, 6, 3, 7, 4, 2, 2, 2 };
+      static constexpr uint32_t kBases[] = { 6, 6, 3, 7, 4, 2, 2, 2, 2 };
       static constexpr size_t kDims = std::size(kBases);
 
       // Compute multiplier for dimension i: product of bases[i+1..N-1]
@@ -192,7 +201,7 @@ namespace Huginn::State
       uint32_t t = 1;
       for (auto b : kBases) t *= b;
       return t;
-      }();  // 24,192
+      }();  // 48,384
 
       [[nodiscard]] uint32_t GetHash() const noexcept
       {
@@ -201,8 +210,11 @@ namespace Huginn::State
              static_cast<uint32_t>(distance)    * Multiplier(2) +
              static_cast<uint32_t>(targetType)  * Multiplier(3) +
              static_cast<uint32_t>(enemyCount)  * Multiplier(4) +
-             static_cast<uint32_t>(anyCasting)  * Multiplier(5) +
-             static_cast<uint32_t>(inCombat)    * Multiplier(6) +
+             // The injured BIT, not the 3-state value -- see the field comment.
+             static_cast<uint32_t>(allyStatus == AllyStatus::InjuredPresent)
+                                                * Multiplier(5) +
+             static_cast<uint32_t>(anyCasting)  * Multiplier(6) +
+             static_cast<uint32_t>(inCombat)    * Multiplier(7) +
              static_cast<uint32_t>(isSneaking);
       }
 
