@@ -6,126 +6,16 @@ once its entry leaves this file. Git history is the only record; check it before
 re-opening something that looks obviously undone.
 
 ## Known Bugs
-- [x] The widget's arrow count is a delta, not a count, and the LowAmmo
-      override reads it. `StateManager_Equipment.cpp:197` sets
-      `newArrowCount = entry->countDelta` (and `newBoltCount` on :199) straight
-      into `PlayerActorState`. countDelta is a delta against the player's BASE
-      CONTAINER, so for ammo they STARTED with it is how many they have spent.
-      A vanilla character who had fired 5 of 18 starting arrows reads -5 while
-      the quiver holds 13.
-      Two consumers, both player-facing. `IntuitionMenu.cpp:544` gates on
-      `count > 0`, so the widget silently drops the ammo count beside the bow --
-      the player just never sees it. `OverrideManager.cpp:266-282` clamps to 0,
-      trips the LowAmmo hysteresis and can fire an override announcing the
-      player is out of arrows while they are holding a full quiver.
-      Same bug as the registry one fixed in #131, on a different path. That fix
-      does NOT cover these: it added InventoryAmmo::baseCount, which
-      StateManager has no access to.
-      The fix is not obvious and that is why this is an entry rather than a
-      commit. StateManager has no registry dependency, holds no base-container
-      memory of its own, and polls at ~10 Hz, so Util::GetInventorySafe is too
-      expensive here. `RE::PlayerCharacter::GetItemCount(TESBoundObject*)` is
-      exactly the right shape -- the game's own absolute count for one form --
-      but it shares a name with `RE::InventoryChanges::GetItemCount`, which
-      crashed on save-load and was bisected out in PR #41 (sub-commit 23555b2
-      reproduced the access violation; 81eecc6 without it was stable). They are
-      different functions on different classes and the crash says nothing about
-      this one, but the resemblance is close enough that it wants its own
-      change with its own save-load soak rather than being folded into
-      something else.
-      Found by the #131 review, 2026-09-24.
-      CLOSED 2026-09-24 in v0.21.11, and NOT with GetItemCount. The entry framed
-      the choice as "is that game function safe", and the better answer was that
-      we do not need to find out: Util::GetItemCountSafe is GetInventorySafe
-      restricted to one object -- first changes entry wins, leveled entries
-      suppress the base container, clamped at 0 -- so the widget's number and
-      WeaponRegistry's number now come from one definition and cannot drift
-      apart. That drift is the bug shape #131 fixed when the fast path summed
-      duplicates and the reconcile did not, and adding a second, independent way
-      to count the same inventory would have re-opened it. The two functions do
-      turn out to be unrelated (PlayerCharacter::GetItemCount at 19275/19701,
-      InventoryChanges::GetItemCount at 15868/16047), so the name resemblance
-      that made this cautious was only ever a resemblance -- worth knowing, but
-      it changed nothing here.
-      A THIRD consumer turned up while fixing it, and it was the worst of the
-      three. ContextRuleEngine:495 reads PlayerActorState::IsOutOfArrows, which
-      is `arrowCount == 0`, and ammo the player has never touched has NO changes
-      entry at all -- so a full quiver of starting arrows read 0 and the engine
-      applied weightNeedsAmmo to it for the whole session. The entry only
-      described the negative-delta case; the missing-entry case was quietly
-      worse, because nothing about it looked wrong.
-      Also cleaned up on the way past: OverrideManager's comment claimed a -1
-      sentinel that has never existed (NO_ARROWS is 0), the `>= 0` clamp it
-      justified was load-bearing for the wrong reason, and the ItemClassifier
-      test in Tests.cpp skipped `countDelta <= 0` and so dropped any starting
-      potion the player had begun drinking.
-
-- [x] WeaponData::damage is not the number the game shows, and never was.
-      SHIPPED in #131 (2026-09-24). Asks the ACTOR rather than the form --
-      PlayerCharacter::GetDamage, the accessor the inventory card itself calls.
-      Verified exact against the inventory on both load orders.
-      The entry's own premise turned out to be half wrong, and that is the part
-      worth keeping: it said "Ranking does not care, since every comparison it
-      makes is between two numbers with the same term missing". True on vanilla.
-      False on LoreRim, whose smithing is ADDITIVE -- `(1.2)` is +2 points --
-      so base x temper overstated a tempered Iron Sword at 50.4 against the
-      game's 46 while understating an untempered Orcish Dagger at 48 against
-      its 50, and Huginn recommended the sword. There is one number now, ranked
-      and displayed, with the model only as a load-path fallback.
-      Four more bugs were found by the instrument built to verify it: a present
-      ExtraHealth reading 0, truncation where the game rounds, countDelta read
-      as a count, and the ranking inversion above.
-      The TEMPER half is verified: `hg status` on 2026-09-19 read ExtraHealth
-      1.10 for all three "- Okay" weapons, giving 9.0->9.9, 7.0->7.7,
-      4.0->4.4, and the relative order within a base form is now right.
-      The ABSOLUTE number is not: the player's inventory showed 11, 9 and 6
-      for those same three. The gap is the skill/perk term -- the UNTEMPERED
-      Iron Sword already read 7.0 here against the game's 8 -- so it predates
-      instance tracking and is unchanged by it.
-      It matters in exactly one place: the widget's "N dmg" detail text,
-      which claims to be what the player would see. Ranking does not care,
-      since every comparison it makes is between two numbers with the same
-      term missing. Fixing it means asking the actor rather than the form.
-      Raised 2026-09-19.
-
-- [x] Route the temper suffix to the widget. LoreRim names a tempered weapon
-      `Iron Sword (1.2)` where vanilla says `Iron Sword - Okay`, and either way
-      the suffix is the game's own answer to "is this the good one". The
-      registry already resolves the display name per stack
-      (ExtraDataList::GetDisplayName, gated on the stack already having
-      ExtraTextDisplayData so the read stays pure) and the widget DOES show it:
-      the vanilla registry dump reads "Iron Mace - Okay". The plumbing works.
-      it works on LoreRim too. The registry there now reads "Long Bow (1.3)",
-      "Iron War Axe (1.2)", "Steel Dagger (1.1)" with temperFactor 1.30 / 1.20
-      / 1.10. There is nothing left to route.
-      CLOSED 2026-09-24, and the reasoning that opened it was wrong. It was
-      written from a session where every LoreRim record came back plain-named
-      at 1.00, and concluded that LoreRim must not keep tempering in
-      ExtraHealth at all. The same stack -- uid87, the Long Bow -- has since
-      read 0.00, then 1.00, then 1.30 across three sessions, so the data was
-      always in ExtraHealth and the earlier reads were empty for a reason not
-      yet identified: either the player tempered those weapons in between, or
-      an early read returned zero. Worth knowing which, because #131's
-      `ExtraHealth > 0` guard turns a zero into "untempered" and would hide the
-      second case.
-      Raised 2026-09-24, from the #128-era weapon-damage pass.
-
-- [ ] LoreRim's throwing knives are SCROLLS, and the scroll arm carries them.
-      Answered 2026-09-24: they are ScrollItem forms, not WEAP and not AMMO, so
-      both questions this entry originally asked were the wrong ones.
-      ScrollRegistry already tracks them with the right counts (Iron x45,
-      Steel x15, Silver x15) and they reach the widget -- a Silver Throwing
-      Knife was seated in slot 7 in the same session. ScrollClassifier
-      delegates to SpellClassifier, so a knife whose effect reads "deals 24
-      physical damage" should type Damage by the archetype rules from #128.
-      What is left is a RANKING question, not a plumbing one: the knife reached
-      the widget through WildcardManager at 50% probability, not on merit. A
-      stack of 45 is a real combat option and should be able to earn its slot.
-      That is the "Scroll cold-start" entry further down, now with a concrete
-      case attached to it.
-      Confirm the type with `hg status`, which dumps the scroll registry from
-      v0.21.6.
-      Raised 2026-09-24.
+- [ ] One weapon stack's ExtraHealth has read 0.00, then 1.00, then 1.30 across
+      three sessions on the same character, and nothing explains the first two.
+      uid87, the LoreRim Long Bow. Either the player tempered it between those
+      sessions, or an early read returned zero for a reason of its own.
+      Worth settling because #131 added an `ExtraHealth > 0` guard before
+      trusting the temper factor, and that guard turns a zero into "untempered"
+      -- so if a read CAN spuriously return zero, the guard hides it rather
+      than reporting it, and the weapon silently ranks and displays at its
+      base damage.
+      Rescued 2026-09-24 from the temper-suffix entry, which closed around it.
 
 - [ ] One weapon in the LoreRim load order classifies as nameless and is
       skipped: `870710C4`, logged as "Failed to classify weapon ..., skipping
@@ -198,40 +88,6 @@ re-opening something that looks obviously undone.
       as a crosshair fix -- so what is left here is (1) against (2), and the
       cosmetic cost that argued for (1) is now smaller than it was.
       Raised 2026-09-19.
-
-- [x] Log noise: three sites break the rules CLAUDE.md sets for them.
-      SHIPPED in #131 (2026-09-24), measured on a vanilla session afterwards:
-      `Unknown weapon type 0 for Unarmed` 3 -> 0 (named as a switch arm, since
-      a warn should mean something unexpected happened); `Rejected enchanted`
-      124 lines per item -> 2 (once per form, cleared only on RebuildRegistry
-      where a verdict could genuinely differ); `Magic state:` 78 identical
-      lines -> 1 (it was gated on more state than the line printed).
-      SlotLocker's 507 `Lock expired` lines and SlotAllocator's 381 candidate
-      counts were deliberately left: both already change-gated, every line a
-      real transition. Busy is not the same as wrong.
-      Measured on a 13-minute LoreRim-5 session (2026-09-20, v0.20.35, 2556
-      lines, ~3.3 lines/sec overall — inside budget, but a third of it is these
-      three). Counts from
-      `grep -oE '\[[A-Za-z_]+\.(cpp|h)[ ]*:[0-9]+' log | sort | uniq -c | sort -rn`.
-      `ApparelRegistry.cpp:65` — 90 lines, and every one a repeat. The same 8
-      rejections ('Blue Mage Robes', 'Amulet of Zenithar', ...) re-print on each
-      30 s reconcile, which is "log ticks, not transitions" exactly. Wants a
-      last-value dedup so it fires when the REJECTED SET changes; a count at
-      info on change would be better than per-item at debug.
-      `ItemClassifier.cpp:488` and `:321` — 249 lines in one burst at registry
-      build, two per item ([PopulateItemTags] and [DetermineFortifySkillType]).
-      These are per-item registration lines and the rule for those is `trace`,
-      with a summary count at info.
-      `WeaponClassifier.cpp:121` — 'Unknown weapon type 0 for weapon: Unarmed'
-      three times. WeaponRegistry marks the form rejected and says "won't
-      retry", but the guard is in AddWeapon and the line is logged from the
-      classify path upstream of it, so the two disagree about whether a retry
-      happened. Small, and the 3-per-session rate makes it cosmetic, but it is
-      a guard that does not cover what it claims to.
-      None of this is new; it surfaced because a LoreRim inventory is big enough
-      for the per-item paths to show up in a log-source histogram, where a
-      simonrim-essentials save is not.
-      Raised 2026-09-20.
 
 ## Known Mod Compatability Issues
 - [ ] The default slot keys are the number row, which half of Skyrim also uses.
@@ -344,50 +200,6 @@ re-opening something that looks obviously undone.
       inputs beside the verdict, in the same throwaway spirit as the spell one.
       Raised 2026-09-24.
 
-- [x] A third of the spells a LoreRim player can LEARN classify as Unknown.
-      SHIPPED in #128 (2026-09-23). 375 of 1,106 -> **90 of 1,107** on LoreRim
-      v5; vanilla went to **0 of 115**. `DetermineSpellType` now keys on the
-      effect's archetype rather than its school, and the two school tests that
-      used to run above the archetype rules — and steal from them — moved below.
-      What is left is the honest residue: 90 spells whose behaviour lives
-      entirely in a Papyrus script, where there is no archetype and no actor
-      value to read. Those are not a bug to fix, they are what
-      `Huginn_Overrides.ini` is for, and #128 also added the warning that tells
-      a player which spells are guesses so they know an override is worth
-      writing (137 of 1,107 weak on LoreRim, 4 of 115 on vanilla).
-      Do not reopen this as "read the spell description". That was built as a
-      corpus and measured against all 1,107 learnable spells before being
-      rejected: the only phrase precise enough to overrule effect data was
-      "instantly kills", worth one spell, and the obvious `deals N damage` rule
-      would have retyped twenty-one weapon enchants. See the `TypeEvidence`
-      comment in SpellData.h.
-
-- [x] A Buff that carries an element is read as protection FROM that element.
-      SHIPPED in #130 (2026-09-23). Fixed at the two readers rather than by
-      clearing the element: the element is true — Strider's Shroud really is
-      poison — and it was the claim being made about it that was false. Both
-      now test `Defensive` alone, and a throwaway test in Tests.cpp pins it,
-      because this changes ranking rather than classification and no dump can
-      see it. Original entry below.
-
-      `ContextWeightForCandidate` promotes Buff + Fire when the player is
-      burning and `CandidateFilters` then drops it as redundant with fire
-      resistance — so an elemental buff is offered as protection it does not
-      provide, then suppressed for duplicating it. #128 fixed the weapon-coating
-      case (any `kEnhanceWeapon` effect now clears the element) but three
-      LoreRim spells still carry one by another route, all via
-      `DeriveElementFromTags`, i.e. from the NAME:
-        Strider's Shroud (Poison, kPeakValueModifier) — a poison melee aura
-        Spark of Life (Shock, kAbsorb) — donates the caster's health to a target
-        Thundering Hooves (Shock, kCloak) — a mount speed buff
-      Vanilla has none, so this is a modded-content shape.
-      There is a clean rule available: after #128, a spell that genuinely
-      mitigates an element is typed `Defensive`, not `Buff` — so arguably NO
-      Buff should carry an element at all. Cheap to write, and it wants a
-      before/after count from `hg dump spells` on both load orders before it
-      ships, because it touches the vanilla set too.
-      Raised 2026-09-23, out of the #128 review.
-
 - [ ] A Defensive spell's element may be a word in its name, not a resistance
       it grants. Found by the #130 review, and the other half of the bug #130
       fixed. `DetermineElementType` reads the effect's `resistVariable`; when
@@ -481,7 +293,13 @@ re-opening something that looks obviously undone.
       problem, and it bites every newly acquired item. Scrolls are just where it
       is most visible, because a player rarely uses one unprompted. The two
       candidate fixes are under Follow-ups, "Share learning across similar
-      items"; fixing either closes this
+      items"; fixing either closes this.
+      Concrete case (2026-09-24): LoreRim's throwing knives are ScrollItems --
+      not WEAP, not AMMO -- and ScrollRegistry already tracks them correctly
+      (Iron x45, Steel x15, Silver x15). A Silver Throwing Knife did reach the
+      widget, but through WildcardManager at 50% probability rather than on
+      merit. A stack of 45 is a real combat option and should be able to earn
+      its slot
 
 - [ ] Two duplication findings from the PR #114 review, neither blocking:
       `ItemClassifier::DetermineFortifySkillType` has no case for the
@@ -736,7 +554,6 @@ Raised 2026-09-24.
       configuration depends on the fallback pass for its primary case.
       (M-L)
 
-
 ## Doc-migration findings (2026-08-29)
 Surfaced by the one-agent-per-doc migration pass. Every one is a code or config
 defect the docs exposed, not a documentation problem. Ordered by what a player
@@ -812,17 +629,16 @@ would notice.
       `fMinimumUtility = 0` suppressed favorites would reappear at utility 0 (XS)
 
 ## Architecture Critique — Backlog
-See `reviews/architecture-critique.md` — **the file is missing from the repo**; it was never committed and is not in the recovered docs snapshot.
+The critique itself (`reviews/architecture-critique.md`) was never committed and
+does not exist in this repo or in the recovered docs snapshot. What survives is
+the ledger below plus git history; Tier 1 and all of Tier 2 have landed, so the
+only live work here is Tier 3.
 **Landed:** Tier 1 (all); Tier 2 #8 registry consolidation (PR #55), #9 display
 abstraction (PR #56), #10 safe pieces — GetContextWeight move + ComputeRelevanceTags
 dedup (PR #57), #10 leftover — relevance-tag encoding unified on ContextRuleEngine
 (PR #58, merged; verified in-game across 5 Debug sessions — all 26 reason labels
 observed, threshold parity exact on both smoothing exponents). Critique #10 is
 now closed; #59–#65 are follow-ups it surfaced, not remaining critique work.
-
-### Tier 2 — COMPLETE
-All Tier 2 critique items have landed (PRs #55–#58); the detail was in the deleted
-archive and is now only in git history.
 
 ### Tier 3 — hot-path perf (trace-prioritized; see docs/profiling/tracy-traces.md)
 **Nothing in this tier exceeds 0.10% of runtime** on the 44:40 capture of
@@ -892,13 +708,22 @@ trigger to pick any of it up.
 - [ ] Unit tests for Context::WeightForCandidate (Tests.cpp:2656/3374 currently
       hand-reimplement the weight mapping — call the real one). DominantReason /
       ReasonLabel are covered by unit test 17.
-- [ ] Delete the merged remote branches: `docs-pass`, `override-ini-namespacing`,
-      `rename-bandit-learner`, and now `weapon-stale-recs`, `slot-stability`,
-      `slot-seating` and `inventory-count` — all merged or superseded. Keep
-      `widget-hide-while-wheel-open`, which is 1 ahead and still holds work.
-      Re-verify with `git ls-remote` before deleting anything; the first three
-      were last checked 2026-09-07, the rest merged 2026-09-21. Nothing depends
-      on this; it is tidying (XS)
+- [ ] Three remote branches are left and none is a simple delete.
+      The eleven whose PRs merged were deleted 2026-09-24 (#107, #108, #109,
+      #115, #116, #118, #120, #123, #125, #126, #127). The entry this replaces
+      claimed four of those were "merged or superseded" on ancestry evidence,
+      which is the wrong test in a squash-merging repo -- a squash-merged branch
+      stays ahead of main forever. PR state is the test.
+      What is left, and why each one is a judgment call:
+      - `slot-stability` (PR #124 CLOSED, 16 commits) -- abandoned rather than
+        merged, and the live slot-stability entry above is about the same
+        problem. That work is the only copy. Read it before deleting it.
+      - `chore/tracy-0.14.1` (PR #117 CLOSED, 3 commits) -- a profiler version
+        bump that was not taken. Cheap to redo; probably safe to drop.
+      - `widget-hide-while-wheel-open` (no PR, 1 commit) -- never opened, still
+        holds work. Keep.
+      (XS, but not automatic)
+
 - [ ] Soak protocol needs deliberate MANUAL equips — accept% is fed only by
       equips made outside Huginn, so a burst played through the wheel/hotkeys
       produces no recommendation-quality data at all. Confirmed 2026-08-26: a
