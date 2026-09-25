@@ -31,38 +31,34 @@ re-opening something that looks obviously undone.
       The axe registers normally (2026-09-24: `Woodcutter's Axe
       (0002F2F4/uid47): dmg=31.5`) and had simply not been in the player's
       inventory. 870710C4 is still unidentified.
-      Related: WeaponClassifier::DetermineWeaponType has no arm for
-      kHandToHandMelee (type 0), so Unarmed warns once per scan and types as
-      Unknown. It still registers, so this is log noise rather than a gap --
-      but it is three warns a session for a thing that is not going to change.
+      The kHandToHandMelee note that used to sit here is done: #131's log-noise
+      pass gave DetermineWeaponType an explicit arm for it, so Unarmed types as
+      Unknown silently and the default arm keeps meaning "a type nobody has
+      seen before".
       Raised 2026-09-24.
 
-- [ ] AllyStatus still flaps, 57% less than it did, and nothing reads it.
-      `RANGE_RELEASE_MARGIN` (acquire at 512, release at 640) killed the
-      pathological case -- four `Ally:None<->Present` transitions inside 1.1 s,
-      caused by acquisition and the prune testing the same threshold. Matched
-      quiet-town logs: 12 transitions in 266 s before, 11 in 565 s after, so
-      0.045/s -> 0.020/s.
-      What survives is two 0.31 s pairs (2026-09-19, 20:52:53.014->.324 and
-      20:55:09.174->.487). Distance cannot explain them: crossing the 128-unit
-      margin that fast needs ~413 units/s, about a sprint. So it is either a
-      running NPC or something that is not distance at all -- `Get3D()` going
-      null, the actor leaving `highActorHandles`, hostility flickering. A
-      distance band structurally cannot cover those.
-      Each one costs a full pipeline pass (~1.8 ms, 68% of it the Wheeler push)
-      to produce an identical result, for a field with NO CONSUMER: `allyStatus`
-      is written by `StateEvaluator.cpp:54` and read only by
-      `GameState::GetHash`, `ToString` and the diff. No ContextRuleEngine rule,
-      no learner feature, no candidate filter.
-      Two ways to finish it, if it is ever worth finishing. Drop `allyStatus`
-      from the hash until a rule needs it -- all 11 go, including the two the
-      band cannot catch. Or add a time-based hold like
-      `CrosshairHysteresis::PERSISTENCE_TIMEOUT_SEC`, which covers every cause
-      and keeps the signal honest for a future ally-aware rule, at the price of
-      more code for something nothing reads.
-      Deliberately left: 57% was judged enough, because the crosshair target now
-      dwarfs it (below).
-      Raised 2026-09-19.
+- [x] AllyStatus still flaps, 57% less than it did, and nothing reads it.
+      CLOSED 2026-09-24 in v0.21.15, by the first of the two options this entry
+      offered: `allyStatus` is out of `GameState::GetHash`. Every flap it can
+      produce is now free, including the two 0.31 s pairs no distance
+      hysteresis could have caught, because the gate no longer asks.
+      The field, `ToString` and the `Diff` all stay, so the diagnostic that
+      measured this is still there to measure it again. Stamina is the
+      precedent and the model: in the struct, out of the hash.
+      `kTotalStates` 72,576 -> 24,192, and the un-reduced 870,912 is now a 36x
+      reduction rather than 12x.
+      Safe to do because the hash feeds nothing durable, which was checked
+      rather than assumed: `kTotalStates` sizes no array outside the test, and
+      the only other `GetHash()` consumer is `UsageMemory`, an in-memory ring
+      buffer that is never serialised. Nothing in the cosave is keyed by state
+      hash.
+      Test 3c pins it, mirroring the stamina test at 3b, and Test 2 now sets
+      `allyStatus` to its MAXIMUM rather than to None on purpose -- if the
+      field re-enters the hash without `kBases` being updated to match, that is
+      the assert that catches the overflow.
+      Put it back the day a ContextRuleEngine rule, learner feature or
+      candidate filter actually reads it. The field comment in GameState.h says
+      so.
 
 - [ ] The crosshair target is the dominant state flap, and it may not be a bug.
       Same two logs: `Dist:Ranged<->Melee, Target:None<->Humanoid` went from 6 of
@@ -603,8 +599,8 @@ would notice.
       (skeleton): Returns all zeros — no rules implemented yet" above a fully
       implemented method. `StateManager.h` says "3 locks" and "7 float
       accumulators"; it is 4 and 11. `StateFeatures.h:17` cites the stale
-      36,288-state figure (it is 72,576 — and the file is `src/learning/`, not
-      `src/state/`). `SettingsReloader.cpp:94` says the dMenu INI holds "Widget,
+      36,288-state figure (it is 24,192 as of v0.21.15, and was 72,576 when
+      this was written — and the file is `src/learning/`, not `src/state/`). `SettingsReloader.cpp:94` says the dMenu INI holds "Widget,
       Keybindings, Debug" — keybindings moved to the main INI in the 0.19.0
       split. `FeatureBanditLearner.h` says "~90% confidence at 15 trains"; the
       sigmoid gives 95.3%. Each verified still present 2026-09-07.

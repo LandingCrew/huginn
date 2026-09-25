@@ -825,7 +825,7 @@ graph TB
 | Consumer | Uses | Purpose |
 |----------|------|---------|
 | **PipelineCoordinator** | WorldState, PlayerActorState, TargetCollection, HealthTrackingState | Snapshots state once per tick into `PipelineContext`, passes it to each step |
-| **StateEvaluator** | PlayerActorState, TargetCollection | Discretize to `GameState` + hash (72,576 states) |
+| **StateEvaluator** | PlayerActorState, TargetCollection | Discretize to `GameState` + hash (24,192 states) |
 | **CandidateGenerator** | PlayerActorState | Gather available spells/potions/weapons/ammo/scrolls/soul gems |
 | **ContextRuleEngine** | PlayerActorState, TargetCollection, WorldState | Evaluate context rules → `ContextWeightMap`; also names the tick's `ContextReason` |
 | **StateFeatures** | PlayerActorState, TargetCollection | Build the 18-float feature vector for `FeatureBanditLearner` |
@@ -943,7 +943,7 @@ GameState gameState = evaluator.EvaluateCurrentState(world, player, targets);
 // gameState.anyCasting = CastingStatus::EnemyCasting
 // ... etc
 
-uint32_t stateHash = gameState.GetHash();  // 0-72,575
+uint32_t stateHash = gameState.GetHash();  // 0-24,191
 ```
 
 There is **no tabular Q-table**. The hash exists for two things only: the
@@ -984,7 +984,7 @@ graph TB
     Raw[Raw State Types<br/>Continuous floats, booleans] --> CW[Context Weights<br/>ContextRuleEngine]
     Raw --> Disc[Discretized State<br/>StateEvaluator]
 
-    Disc --> GS["GameState<br/>6×6×3×7×4×3×2×2×2<br/>= 72,576 states"]
+    Disc --> GS["GameState<br/>6×6×3×7×4×2×2×2<br/>= 24,192 states"]
     GS --> Skip[Pipeline hash-skip<br/>+ PotionDiscriminator]
 
     Raw --> FV[Feature Vector<br/>18 normalized floats]
@@ -1021,12 +1021,22 @@ graph TB
 | `inCombat` | `CombatStatus` | 2 | NotInCombat, InCombat |
 | `isSneaking` | `SneakStatus` | 2 | NotSneaking, Sneaking |
 
-`GetHash()` is a multi-radix encode over bases `{6, 6, 3, 7, 4, 3, 2, 2, 2}`, with
+`GetHash()` is a multi-radix encode over bases `{6, 6, 3, 7, 4, 2, 2, 2}`, with
 the multipliers computed at compile time, giving
-`kTotalStates = 72,576`. The un-reduced space — stamina hashed, and ally count
-kept separate from the injured flag — would be 870,912; excluding stamina removes
-a factor of 6 and collapsing the two ally dimensions into `AllyStatus` removes
-another factor of 2, for the 12× reduction.
+`kTotalStates = 24,192`. The un-reduced space — stamina hashed, ally count kept
+separate from the injured flag — would be 870,912, a 36× reduction. Three
+separate exclusions get there: collapsing the two ally dimensions into
+`AllyStatus` removed a factor of 2, excluding stamina removed a factor of 6, and
+dropping `allyStatus` from the hash entirely (v0.21.15) removed the last factor
+of 3.
+
+Stamina and `allyStatus` are excluded for different reasons, and the difference
+matters if either is ever reinstated. Stamina IS read — `PotionDiscriminator`
+reads it directly and `ContextRuleEngine` uses the raw float — so hashing it
+would only add states that change no decision. `allyStatus` is read by nothing
+at all: `StateEvaluator` writes it and only `ToString`/`Diff` consume it. It was
+a hash dimension until v0.21.15, and each of its flaps bought a full pipeline
+pass that recomputed an identical answer.
 
 `anyCasting` **must** stay a hash dimension: it drives ward and counter weights in
 `ContextRuleEngine`, so dropping it would make the skip gate blind to an enemy
@@ -1311,7 +1321,7 @@ source of TargetSource::Crosshair. -->
 | **Event Enrichment** | `DamageEventSink` (TESHitEvent) → HealthTrackingState → effect flags | Working well | ✅ Complete |
 | **Thread Safety** | Copy-out + compare-and-swap, 4 mutexes, atomics for cross-thread flags | Correct pattern | ✅ Complete |
 | **Pipeline Skip** | Two-tier: sensor dirty flag + hash comparison, with unhashed-state bypasses | Implemented | ✅ Complete |
-| **State Space** | 72,576 hashed states (12× reduction from the un-reduced 870,912) | Skip gate + potion discrimination only | ✅ Complete |
+| **State Space** | 24,192 hashed states (36× reduction from the un-reduced 870,912) | Skip gate + potion discrimination only | ✅ Complete |
 | **Memory Usage** | ~6 KB (hand-computed) | Within the 10 KB budget | ✅ Complete |
 | **Learning Persistence** | SKSE cosave, `BNDW` records, positional feature migration | Per-character persistence | ✅ Complete |
 | **Pipeline State Cache** | Caches scored candidates per cycle; timestamp refreshed even on a skip | External equip attribution | ✅ Complete |

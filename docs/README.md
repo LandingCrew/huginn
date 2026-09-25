@@ -100,7 +100,7 @@ It is a just-in-time affordance surface.
 │  StaminaTrackingState - Stamina usage events, rates, source classification  │
 │  MagickaTrackingState - Magicka usage events, rates, casting state          │
 │                                                                             │
-│  StateEvaluator converts raw state -> GameState (72,576 hash states)        │
+│  StateEvaluator converts raw state -> GameState (24,192 hash states)        │
 │    - health/magicka buckets (6 levels each), stamina (6, excluded from hash)│
 │    - distance bucket (3 levels), targetType (7 types)                       │
 │    - enemyCount (4 levels), allyStatus (3 levels: None/Present/Injured)     │

@@ -128,7 +128,8 @@ namespace Huginn::State
    }
 
    // Complete game state representation
-   // Hash states: 6 × 6 × 3 × 7 × 4 × 3 × 2 × 2 × 2 = 72,576 (stamina excluded from hash)
+   // Hash states: 6 × 6 × 3 × 7 × 4 × 2 × 2 × 2 = 24,192
+   // (stamina and allyStatus both excluded from the hash — see their fields)
    struct GameState
    {
       // Player vitals
@@ -142,7 +143,19 @@ namespace Huginn::State
 
       // Multi-target context
       EnemyCountBucket enemyCount; // 4 states
-      AllyStatus allyStatus;      // 3 states (collapsed from AllyCount × HasInjuredAlly)
+      // 3 states (collapsed from AllyCount × HasInjuredAlly). KEPT in the
+      // struct and in ToString/Diff, EXCLUDED from the hash, for the same
+      // reason stamina is: nothing reads it to make a decision. It is written
+      // by StateEvaluator and consumed only by the logging above. While it was
+      // a hash dimension, every flap of it cost a full pipeline pass (~1.8 ms,
+      // 68% of that the Wheeler push) to recompute an identical answer —
+      // 11 of them in a 565 s quiet-town log, two of which no distance
+      // hysteresis could ever have caught, because crossing the release margin
+      // that fast needs about a sprint and the cause is something other than
+      // distance.
+      // Put it back in kBases and GetHash the day a ContextRuleEngine rule,
+      // learner feature or candidate filter actually reads it.
+      AllyStatus allyStatus;
       CastingStatus anyCasting;   // 2 states (any living hostile casting)
 
       // Player state
@@ -152,10 +165,11 @@ namespace Huginn::State
       // Generate unique hash for weight table lookup
       // Returns value in range [0, kTotalStates - 1]
       // Stamina excluded: PotionDiscriminator reads it directly, ContextRuleEngine uses raw float
-      // Multi-radix bases: [6, 6, 3, 7, 4, 3, 2, 2, 2]
+      // AllyStatus excluded: nothing reads it at all (see the field)
+      // Multi-radix bases: [6, 6, 3, 7, 4, 2, 2, 2]
       // Multipliers computed at compile time from bases (right-to-left product)
    private:
-      static constexpr uint32_t kBases[] = { 6, 6, 3, 7, 4, 3, 2, 2, 2 };
+      static constexpr uint32_t kBases[] = { 6, 6, 3, 7, 4, 2, 2, 2 };
       static constexpr size_t kDims = std::size(kBases);
 
       // Compute multiplier for dimension i: product of bases[i+1..N-1]
@@ -170,7 +184,7 @@ namespace Huginn::State
       uint32_t t = 1;
       for (auto b : kBases) t *= b;
       return t;
-      }();  // 72,576
+      }();  // 24,192
 
       [[nodiscard]] uint32_t GetHash() const noexcept
       {
@@ -179,9 +193,8 @@ namespace Huginn::State
              static_cast<uint32_t>(distance)    * Multiplier(2) +
              static_cast<uint32_t>(targetType)  * Multiplier(3) +
              static_cast<uint32_t>(enemyCount)  * Multiplier(4) +
-             static_cast<uint32_t>(allyStatus)  * Multiplier(5) +
-             static_cast<uint32_t>(anyCasting)  * Multiplier(6) +
-             static_cast<uint32_t>(inCombat)    * Multiplier(7) +
+             static_cast<uint32_t>(anyCasting)  * Multiplier(5) +
+             static_cast<uint32_t>(inCombat)    * Multiplier(6) +
              static_cast<uint32_t>(isSneaking);
       }
 
