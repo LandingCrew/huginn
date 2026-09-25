@@ -42,9 +42,18 @@ re-opening something that looks obviously undone.
       offered: `allyStatus` is out of `GameState::GetHash`. Every flap it can
       produce is now free, including the two 0.31 s pairs no distance
       hysteresis could have caught, because the gate no longer asks.
-      The field, `ToString` and the `Diff` all stay, so the diagnostic that
-      measured this is still there to measure it again. Stamina is the
-      precedent and the model: in the struct, out of the hash.
+      The field, `ToString` and the `Diff` all stay. Stamina is the precedent
+      and the model: in the struct, out of the hash.
+      But NOT the measurement -- a correction to what the commit for this
+      first claimed. `LogStateTransition` is gated on the hash moving, so an
+      ally-only flap now produces no log line at all, and an ally change
+      reaches the log only bundled into a transition something else caused.
+      The v0.21.15 session shows exactly that: one `Ally:None->Present` in
+      199 s, riding along with `HP:Critical->VeryHigh, MP:Critical->VeryHigh,
+      Dist:Melee->Ranged` at startup, and no ally-only line anywhere. So the
+      flap rate that justified this change can no longer be measured from the
+      log. Re-measuring means a line at the StateEvaluator level, or putting
+      the field back in the hash temporarily.
       `kTotalStates` 72,576 -> 24,192, and the un-reduced 870,912 is now a 36x
       reduction rather than 12x.
       Safe to do because the hash feeds nothing durable, which was checked

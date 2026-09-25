@@ -153,6 +153,14 @@ namespace Huginn::State
       // hysteresis could ever have caught, because crossing the release margin
       // that fast needs about a sprint and the cause is something other than
       // distance.
+      // One consequence to know before putting it back. Diff still PRINTS an
+      // ally change, but LogStateTransition is gated on the hash moving
+      // (PipelineCoordinator.cpp:260), so an ally-only flap now produces no
+      // line at all -- an ally change reaches the log only bundled into a
+      // transition something else caused. The flap rate that justified this
+      // change can therefore no longer be measured from the log; re-measuring
+      // it means a line at the StateEvaluator level, or putting the field back
+      // in the hash temporarily.
       // Put it back in kBases and GetHash the day a ContextRuleEngine rule,
       // learner feature or candidate filter actually reads it.
       AllyStatus allyStatus;

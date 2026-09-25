@@ -1038,6 +1038,13 @@ at all: `StateEvaluator` writes it and only `ToString`/`Diff` consume it. It was
 a hash dimension until v0.21.15, and each of its flaps bought a full pipeline
 pass that recomputed an identical answer.
 
+Excluding a dimension also makes it invisible to `LogStateTransition`, which is
+gated on the hash moving: a change in `allyStatus` alone now produces no log
+line, and reaches the log only bundled into a transition something else caused.
+That is the intended saving, but it means the flap rate is no longer
+measurable from the log — worth knowing before excluding anything else on the
+strength of a measurement the exclusion then removes.
+
 `anyCasting` **must** stay a hash dimension: it drives ward and counter weights in
 `ContextRuleEngine`, so dropping it would make the skip gate blind to an enemy
 starting to cast.
