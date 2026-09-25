@@ -148,6 +148,18 @@
           }
         },
         {
+          "type": "checkbox",
+          "text": {
+            "name": "Show Counts in Minimal",
+            "desc": "In Minimal mode, show how many you have after the name -- Iron Arrow [12], a potion [3]. On by default: Minimal is also the default mode, and a count is the one detail that changes while you play. Off gives the older name-only widget. Ignored in Normal and Verbose, which show counts anyway."
+          },
+          "default": true,
+          "ini": {
+            "section": "Widget",
+            "id": "bMinimalCounts"
+          }
+        },
+        {
           "type": "dropdown",
           "text": {
             "name": "Slot Change Effect",

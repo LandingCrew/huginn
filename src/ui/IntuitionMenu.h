@@ -110,10 +110,13 @@ namespace Huginn::UI
         static IntuitionSlotType MapSlotContentType(SlotContentType type);
 
         // -- Detail string builder --
+        // minimalCounts applies only when mode == Minimal; the caller reads it
+        // from IntuitionSettings so this stays a pure function of its arguments.
         static std::string BuildSlotDetail(
             const Slot::SlotAssignment& assignment,
             DisplayMode mode,
-            const State::PlayerActorState& playerState);
+            const State::PlayerActorState& playerState,
+            bool minimalCounts);
 
     private:
         RE::GFxValue m_widget;  // Reference to _root.widget in SWF

@@ -326,9 +326,22 @@ so both the index and the name are accepted (`0`/`minimal`, `1`/`normal`,
 
 | Mode | Content |
 |---|---|
-| `minimal` (default) | Item name only — `BuildSlotDetail` returns `""` immediately |
+| `minimal` (default) | Item name, plus `[count]` when there is one — `Iron Arrow [12]` |
 | `normal` | Name + type-specific detail |
 | `verbose` | Normal detail + the scoring breakdown |
+
+`bMinimalCounts` (default `true`, 0.21.12) controls that bracketed count.
+Minimal returned `""` unconditionally until then, and because Minimal is also
+the DEFAULT mode, every count — arrows, potions, scrolls — was invisible to
+anyone who never opened the Display Mode dropdown. A count is the one part of
+the detail string that changes while you play, so Minimal keeps it and drops
+the rest; set `bMinimalCounts = false` for the older name-only widget. It is
+ignored in Normal and Verbose, which print counts as part of their own detail.
+
+A count is shown only where one exists and is `> 0`: the equipped ammo for a
+bow or crossbow (`arrowCount` / `boltCount`), and `count` on item, scroll and
+ammo candidates. A spell has no count and gets no brackets, and `[0]` is never
+printed — an empty quiver drops the suffix rather than showing zero.
 
 Type-specific detail (`IntuitionMenu::BuildSlotDetail`,
 `src/ui/IntuitionMenu.cpp:520`):
@@ -480,6 +493,7 @@ fAlphaChild = 70            ; Secondary element opacity (page pips/label)
 bReadOnly = false           ; Display-only: slot hotkeys ignored (0.19.11)
 bHideWhileWheelOpen = true  ; Hide while a Wheeler wheel is open (0.19.18)
 sDisplayMode = minimal      ; minimal | normal | verbose   (or 0 | 1 | 2)
+bMinimalCounts = true       ; Minimal shows "Iron Arrow [12]" (0.21.12)
 sSlotEffect = slide         ; slide | fade | instant       (or 0 | 1 | 2)
 ```
 

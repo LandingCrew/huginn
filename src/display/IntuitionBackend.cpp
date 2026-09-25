@@ -64,13 +64,15 @@ namespace Huginn::Display
         // SlotSettings. We just render the assignments we're given for that page.
         const auto& displayAssignments = ctx.assignments;
 
-        const auto displayMode = UI::IntuitionSettings::GetSingleton().GetDisplayMode();
+        const auto& widgetSettings = UI::IntuitionSettings::GetSingleton();
+        const auto displayMode = widgetSettings.GetDisplayMode();
+        const bool minimalCounts = widgetSettings.GetMinimalCounts();
 
         // #14: build what we WOULD send, and bail if it matches the last push.
         // Everything below this point allocates a UI task and copies strings into
         // it, so the comparison has to cover every field that reaches the widget —
-        // including detail, which folds in displayMode, so a settings change still
-        // repaints. Built into a reused member so the vector keeps its capacity.
+        // including detail, which folds in displayMode and bMinimalCounts, so a
+        // settings change still repaints. Built into a reused member so the vector keeps its capacity.
         m_scratch.valid = true;
         m_scratch.slotCount = ctx.slotCount;
         m_scratch.pageIndex = ctx.pageIndex;
@@ -83,7 +85,8 @@ namespace Huginn::Display
             m_scratch.slots.push_back(SlotView{
                 .name = content.name,
                 .type = static_cast<int>(UI::IntuitionMenu::MapSlotContentType(content.type)),
-                .detail = UI::IntuitionMenu::BuildSlotDetail(assignment, displayMode, ctx.playerState),
+                .detail = UI::IntuitionMenu::BuildSlotDetail(
+                    assignment, displayMode, ctx.playerState, minimalCounts),
                 .visualState = static_cast<int>(assignment.visualState),
                 .confidence = static_cast<double>(content.confidence),
             });

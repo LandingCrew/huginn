@@ -59,6 +59,9 @@ namespace Huginn::UI
             break;
         }
 
+        minimalCounts = ini.GetBoolValue(section, "bMinimalCounts",
+                                         IntuitionDefaults::MINIMAL_COUNTS);
+
         const char* slotStr = ini.GetValue(section, "sSlotEffect", IntuitionDefaults::SLOT_EFFECT);
         switch (dropdownIndex(slotStr)) {
         case 0:  slotEffect = SlotEffect::Slide;   break;
@@ -71,10 +74,14 @@ namespace Huginn::UI
             break;
         }
 
-        logger::info("[IntuitionSettings] Enabled: {}, Position: ({}%, {}%), Alpha: {}, Scale: {}%, ChildAlpha: {}, ReadOnly: {}, HideWhileWheelOpen: {}, DisplayMode: {}, SlotEffect: {}",
+        logger::info("[IntuitionSettings] Enabled: {}, Position: ({}%, {}%), Alpha: {}, Scale: {}%, ChildAlpha: {}, ReadOnly: {}, HideWhileWheelOpen: {}, DisplayMode: {}{}, SlotEffect: {}",
             enabled, positionX, positionY, alpha, scale, childAlpha, readOnly,
             HideWhileWheelOpen(),
             displayMode == DisplayMode::Verbose ? "verbose" : displayMode == DisplayMode::Normal ? "normal" : "minimal",
+            // Only meaningful in Minimal, and printed only there: reading
+            // "minimal (counts)" against a widget showing bare names is how a
+            // player tells a setting that did not take from one that did not apply.
+            displayMode == DisplayMode::Minimal ? (minimalCounts ? " (counts)" : " (names only)") : "",
             slotEffect == SlotEffect::Fade ? "fade" : slotEffect == SlotEffect::Instant ? "instant" : "slide");
     }
 
@@ -89,6 +96,7 @@ namespace Huginn::UI
         readOnly       = IntuitionDefaults::READ_ONLY;
         hideWhileWheelOpen = IntuitionDefaults::HIDE_WHILE_WHEEL_OPEN;
         displayMode    = DisplayMode::Minimal;
+        minimalCounts  = IntuitionDefaults::MINIMAL_COUNTS;
         slotEffect     = SlotEffect::Slide;
 
         logger::info("[IntuitionSettings] Reset to defaults"sv);
@@ -104,6 +112,7 @@ namespace Huginn::UI
         config.scale = scale;
         config.childAlpha = childAlpha;
         config.displayMode = displayMode;
+        config.minimalCounts = minimalCounts;
         config.slotEffect = slotEffect;
         return config;
     }
