@@ -60,6 +60,7 @@ namespace Huginn::Slot
         RE::FormID shownFormID = 0;
         uint16_t shownUniqueID = 0;
         bool shownEmpty = true;
+        bool shownWildcard = false;
         std::string shownName;
 
         // Why this slot's last lock let go (expiry, OnItemUsed, a page switch,

@@ -13,23 +13,26 @@
 namespace Huginn::Telemetry
 {
     // ClassifySlotChange's precedence, pinned at compile time.
-    // Args: wasEmpty, nowEmpty, dedupCleared, nowOverride, released.
+    // Args: wasEmpty, nowEmpty, dedupCleared, nowOverride, wildcardInvolved, released.
     namespace
     {
         using enum SlotChange;
         // A page switch explains everything on the page, even an override.
-        static_assert(ClassifySlotChange(false, false, false, true, Page) == Page);
-        static_assert(ClassifySlotChange(true, false, false, false, Page) == Page);
+        static_assert(ClassifySlotChange(false, false, false, true, false, Page) == Page);
+        static_assert(ClassifySlotChange(true, false, false, false, false, Page) == Page);
         // Through empty: what the player sees, whatever allowed it.
-        static_assert(ClassifySlotChange(false, true, true, false, Expired) == Dedup);
-        static_assert(ClassifySlotChange(false, true, false, false, Used) == Clear);
-        static_assert(ClassifySlotChange(true, false, false, true, Unheld) == Fill);
+        static_assert(ClassifySlotChange(false, true, true, false, false, Expired) == Dedup);
+        static_assert(ClassifySlotChange(false, true, false, false, true, Used) == Clear);
+        static_assert(ClassifySlotChange(true, false, false, true, false, Unheld) == Fill);
         // Item to item: an override names itself, over a lock that expired.
-        static_assert(ClassifySlotChange(false, false, false, true, Expired) == Override);
-        static_assert(ClassifySlotChange(false, false, false, false, Expired) == Expired);
-        static_assert(ClassifySlotChange(false, false, false, false, Used) == Used);
-        static_assert(ClassifySlotChange(false, false, false, false, Override) == Override);
-        static_assert(ClassifySlotChange(false, false, false, false, Unheld) == Unheld);
+        static_assert(ClassifySlotChange(false, false, false, true, false, Expired) == Override);
+        static_assert(ClassifySlotChange(false, false, false, true, true, Expired) == Override);
+        // A wildcard at either end outranks whatever released the lock.
+        static_assert(ClassifySlotChange(false, false, false, false, true, Expired) == Wildcard);
+        static_assert(ClassifySlotChange(false, false, false, false, false, Expired) == Expired);
+        static_assert(ClassifySlotChange(false, false, false, false, false, Used) == Used);
+        static_assert(ClassifySlotChange(false, false, false, false, false, Override) == Override);
+        static_assert(ClassifySlotChange(false, false, false, false, false, Unheld) == Unheld);
 
         // Bucket edges are half-open: exactly 10% better is NOT "<1.1".
         static_assert(BucketChallengerRatio(1.0f, -1.0f) == ChallengerRatio::Gone);

@@ -29,6 +29,8 @@ namespace Huginn::Telemetry
         Clear,     // item -> empty (the allocator had nothing for it)
         Dedup,     // item -> empty because DedupePreferLocked cleared it
         Override,  // replaced by an override assignment
+        Wildcard,  // a wildcard arriving or leaving -- scheduled exploration,
+                   // not the ranking, so it never feeds the challenger ratio
         Expired,   // replaced after the slot's lock ran out
         Used,      // replaced after OnItemUsed released the slot
         Page,      // page switch (UnlockAll) -- player-driven, kept out of peak
@@ -43,6 +45,7 @@ namespace Huginn::Telemetry
         case SlotChange::Clear:    return "clear";
         case SlotChange::Dedup:    return "dedup";
         case SlotChange::Override: return "override";
+        case SlotChange::Wildcard: return "wildcard";
         case SlotChange::Expired:  return "expired";
         case SlotChange::Used:     return "used";
         case SlotChange::Page:     return "page";
@@ -58,14 +61,19 @@ namespace Huginn::Telemetry
     //
     // Precedence: a page switch explains everything on the page; then the two
     // transitions through empty, which are what the player sees regardless of
-    // what allowed them; then an override; then whatever released the lock.
+    // what allowed them; then an override; then a wildcard at either end (its
+    // arrival scores below the item it evicts by design, and the item that
+    // returns when it leaves scores above it -- counting either as a ranking
+    // change would pollute both ends of the ratio); then whatever released
+    // the lock.
     [[nodiscard]] constexpr SlotChange ClassifySlotChange(bool wasEmpty, bool nowEmpty,
-        bool dedupCleared, bool nowOverride, SlotChange released) noexcept
+        bool dedupCleared, bool nowOverride, bool wildcardInvolved, SlotChange released) noexcept
     {
         if (released == SlotChange::Page) return SlotChange::Page;
         if (nowEmpty) return dedupCleared ? SlotChange::Dedup : SlotChange::Clear;
         if (wasEmpty) return SlotChange::Fill;
         if (nowOverride) return SlotChange::Override;
+        if (wildcardInvolved) return SlotChange::Wildcard;
         switch (released) {
         case SlotChange::Expired:
         case SlotChange::Used:

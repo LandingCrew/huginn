@@ -165,7 +165,8 @@ namespace Huginn::Slot
 
             if (changed && !m_churnBaseline) {
                 const auto cause = Telemetry::ClassifySlotChange(slot.shownEmpty, nowEmpty,
-                    filledBeforeDedup[i] && nowEmpty, shown.IsOverride(), slot.releaseCause);
+                    filledBeforeDedup[i] && nowEmpty, shown.IsOverride(),
+                    shown.IsWildcard() || slot.shownWildcard, slot.releaseCause);
 
                 // Challenger ratio, for the changes a margin would govern.
                 auto ratio = Telemetry::ChallengerRatio::NotApplicable;
@@ -198,6 +199,7 @@ namespace Huginn::Slot
             }
             if (changed) {
                 slot.shownEmpty = nowEmpty;
+                slot.shownWildcard = !nowEmpty && shown.IsWildcard();
                 slot.shownFormID = nowEmpty ? 0 : shown.formID;
                 slot.shownUniqueID = nowEmpty ? 0 : shown.uniqueID;
                 slot.shownName = nowEmpty ? std::string{} : shown.name;
