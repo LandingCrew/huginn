@@ -6,7 +6,7 @@ once its entry leaves this file. Git history is the only record; check it before
 re-opening something that looks obviously undone.
 
 ## Known Bugs
-- [ ] The widget's arrow count is a delta, not a count, and the LowAmmo
+- [x] The widget's arrow count is a delta, not a count, and the LowAmmo
       override reads it. `StateManager_Equipment.cpp:197` sets
       `newArrowCount = entry->countDelta` (and `newBoltCount` on :199) straight
       into `PlayerActorState`. countDelta is a delta against the player's BASE
@@ -34,6 +34,31 @@ re-opening something that looks obviously undone.
       change with its own save-load soak rather than being folded into
       something else.
       Found by the #131 review, 2026-09-24.
+      CLOSED 2026-09-24 in v0.21.11, and NOT with GetItemCount. The entry framed
+      the choice as "is that game function safe", and the better answer was that
+      we do not need to find out: Util::GetItemCountSafe is GetInventorySafe
+      restricted to one object -- first changes entry wins, leveled entries
+      suppress the base container, clamped at 0 -- so the widget's number and
+      WeaponRegistry's number now come from one definition and cannot drift
+      apart. That drift is the bug shape #131 fixed when the fast path summed
+      duplicates and the reconcile did not, and adding a second, independent way
+      to count the same inventory would have re-opened it. The two functions do
+      turn out to be unrelated (PlayerCharacter::GetItemCount at 19275/19701,
+      InventoryChanges::GetItemCount at 15868/16047), so the name resemblance
+      that made this cautious was only ever a resemblance -- worth knowing, but
+      it changed nothing here.
+      A THIRD consumer turned up while fixing it, and it was the worst of the
+      three. ContextRuleEngine:495 reads PlayerActorState::IsOutOfArrows, which
+      is `arrowCount == 0`, and ammo the player has never touched has NO changes
+      entry at all -- so a full quiver of starting arrows read 0 and the engine
+      applied weightNeedsAmmo to it for the whole session. The entry only
+      described the negative-delta case; the missing-entry case was quietly
+      worse, because nothing about it looked wrong.
+      Also cleaned up on the way past: OverrideManager's comment claimed a -1
+      sentinel that has never existed (NO_ARROWS is 0), the `>= 0` clamp it
+      justified was load-bearing for the wrong reason, and the ItemClassifier
+      test in Tests.cpp skipped `countDelta <= 0` and so dropped any starting
+      potion the player had begun drinking.
 
 - [x] WeaponData::damage is not the number the game shows, and never was.
       SHIPPED in #131 (2026-09-24). Asks the ACTOR rather than the form --
@@ -271,6 +296,23 @@ re-opening something that looks obviously undone.
       alchemy lab (#65, PR #114); the forge may still have no live payload
 
 ## Known Recommendation Issues
+- [ ] Two counts for the same quiver can be on screen at once and disagree by
+      one shot. A bow or crossbow slot prints `playerState.arrowCount` --
+      polled at 10 Hz and, since v0.21.13, forcing a recompute on every shot --
+      while an ammo slot prints the count on its AmmoCandidate, which comes
+      from WeaponRegistry's own 500 ms refresh. During archery a widget holding
+      both can read `Long Bow - [11]` beside `Iron Arrow - [12]` for up to half
+      a second per shot.
+      Pre-existing skew; only visible since v0.21.12 made Minimal -- the
+      default mode -- print counts at all.
+      NOT fixed by pointing both at PlayerActorState: an ammo candidate can be
+      ammo the player has NOT equipped, which PlayerActorState knows nothing
+      about, so the registry is the right source for that slot. The fix is
+      either to push the equipped ammo's count into the candidate at generation
+      time, or to let the equipment poll nudge the weapon registry's ammo index
+      the way it now nudges the pipeline.
+      Raised 2026-09-24, from the #133 review.
+
 - [ ] #128 measured the spell classifier against 1,107 spells and silently
       excluded 1,200 scrolls. `hg dump spells` walked
       `GetFormArray<RE::SpellItem>()`, and GetFormArray keys on T::FORMTYPE --
@@ -572,6 +614,128 @@ Raised 2026-09-24.
       after expiry; per-slot lock durations in `[PageN.SlotM]`. The last is
       the bigger ask and waits on the first two being measured
       (instrumentation S; fix S-M)
+
+      **A concrete case, caught in play 2026-09-24.** Worth keeping because the
+      entry above is otherwise built on an impression, and this one has
+      timestamps. Firing a bow on page 0:
+
+          21:01:53  6=Iron Sword - Okay   7=Steel Arrow
+          21:02:05  Override 'LOW AMMO: 9 arrows remaining' -> Page 0 Slot 6
+                    Slot 6 locked: Steel Arrow    (0001397F)
+                    Slot 7 locked: Iron Sword     (00012EB7)
+          21:03:08  6=Iron Sword - Okay*  7=Steel Arrow*
+
+      The two items swapped places and swapped back. On screen the player's
+      Steel Arrows moved from slot 8 to slot 7 and later returned, and nothing
+      about their inventory changed to justify it.
+
+      No lock was broken, which is what makes this a DIFFERENT failure from the
+      suspects listed above: the LowAmmo override's own content IS the best
+      ammo, so it seated a second copy of Steel Arrow at its override slot 6,
+      dedup dropped the copy legitimately sitting at 7, and Iron Sword --
+      evicted from 6 -- filled the hole at 7. Every step is working as designed
+      and the result is still two items trading places for no reason the player
+      can see. Seating keeping each item "in its own place" is not enough when
+      an override can claim a place that is already taken.
+      Cheapest thing to try: let an override that is about to seat an item
+      ALREADY on the page move to that item's existing slot instead of
+      displacing whatever sits at the configured one.
+
+      One honest note on this capture: it came from the session that fixed the
+      ammo count (#133), which now forces a pipeline recompute on every shot.
+      Seating is therefore recomputed far more often during archery than it was
+      -- nine override re-emissions in ten seconds here. That did not CREATE
+      this churn, the swap is a seating decision and would happen on any
+      recompute, but it does mean bow use is now a much better place to look
+      for it than it was, and any churn baseline measured before v0.21.13 is
+      not comparable to one measured after.
+      Raised 2026-09-24.
+
+- [ ] **Overrides should not take a slot, and override slots should prefer the
+      items overrides are about.** The structural answer to the slot-stability
+      entry above, raised out of the Steel Arrow case recorded there
+      (2026-09-24).
+
+      **The conflict.** Overrides and ranked items are allocated from the same
+      pool of slots, and overrides go first: Pass 1 runs before Pass 2 on an
+      entirely empty page, so an override does not evict anything -- it
+      PRE-EMPTS. Whatever would have filled that slot lands one slot down, and
+      so does everything below it. Seating then refuses to paper over it, on
+      purpose and correctly: "an override slot keeps the seat of whatever
+      normally lives there, and the item it displaced keeps its claim rather
+      than taking a seat where it was pushed" (5-slots.md), because the
+      alternative lets one low-health potion permanently move a key.
+      So seating exists to make keys stop changing, and an override's mechanism
+      IS changing what a key does. Neither is buggy. They cannot both win while
+      they share an index space, which makes every override a small guaranteed
+      dose of the exact churn the stability work is trying to remove.
+
+      The shipped layout makes it certain rather than occasional. There is no
+      reserved override slot on any default page: `Page0.Slot6` is a `Regular`
+      fill slot AND the `Other` landing pad, and it is `Regular` precisely
+      because WeaponCharge surfaces a soul gem, which no other classification
+      accepts. Being `Regular`, it also soaks up any ranked candidate.
+
+      **Design constraint, from the user 2026-09-24:** the UI has to be
+      readable at a glance and then get out of the way. That rules out a banner
+      or a second list. Whatever carries the override has to be one small
+      element, and the goal it serves is PREDICTABILITY -- the same key meaning
+      the same thing from one second to the next.
+
+      **Two changes, and they are complementary rather than alternatives.**
+
+      1. *Out of band.* An override stops occupying a slot index. It is a
+         message -- "LOW AMMO: 9 arrows remaining" -- not a ranking result, and
+         it gets its own small element with its own key, outside the numbered
+         list. This is the part that actually closes the hole: nothing can be
+         displaced by something that never takes a slot. It also deletes a
+         surprising amount of incidental machinery -- Pass 1b's
+         classification-dropping fallback, the `displaced` log, the
+         `ValidateOverridePlaceability` startup check with its unplaceable
+         warning and one-sided contention heuristic, and the separate
+         "Override placeability UX" entry, which is a symptom of the same cause
+         and should close with this.
+
+      2. *Override affinity in normal fill.* `bOverridesEnabled` stops meaning
+         "an override of this category may seize this slot" and starts meaning
+         "this slot PREFERS the items an override of this category would
+         surface". Same INI key, same existing configs, no longer a seizure.
+         The point is the observed case: `Page0.Slot6` and `Page0.Slot7` are
+         identical -- both `Regular`, both wildcards on -- and differ only in
+         `bOverridesEnabled`. Normal fill therefore treats them as
+         interchangeable and splits them on priority alone, so Iron Sword (the
+         better-ranked item) took slot 6 and the Steel Arrows took slot 7. With
+         affinity the arrows sit in slot 6 in the first place, the ammo
+         override is about the item already under that key, and the player's
+         hand does not move.
+         This is what buys predictability. (1) stops things moving; (2) makes
+         where they sit mean something.
+
+      **Two honest limits, to decide before building.**
+
+      * `Other` is a grab bag: Drowning, WeaponCharge and LowAmmo -- a
+        water-breathing potion, a soul gem and arrows. `bOverridesEnabled =
+        Other` as an AFFINITY therefore means "prefers any of those three",
+        which is far weaker than "prefers ammo" and would pull a soul gem into
+        the arrows' slot as readily as arrows. Affinity wants to key on the
+        CONDITION rather than the category, or `Other` needs splitting. The
+        category is the right granularity for permission and the wrong one for
+        preference, which is worth noticing before reusing the key for both.
+      * Affinity is a preference inside ranked fill, so it cannot promote an
+        item onto a page it did not earn. If the arrows rank twentieth they are
+        not on the page at all and there is nothing for the override to be a
+        no-op over. That is acceptable only BECAUSE (1) means there is nothing
+        to displace either -- which is the argument for doing them in that
+        order rather than treating (2) as a cheaper substitute.
+
+      Evidence the current model is already strained, not just inconvenient:
+      `Page0.Slot0` is `DamageAny` with `bOverridesEnabled = HP`, and a health
+      potion does not match `DamageAny` (items match that on `Poison`). Pass 1
+      cannot place the flagship override on the flagship slot; it lands there
+      only because Pass 1b drops the classification requirement. The default
+      configuration depends on the fallback pass for its primary case.
+      (M-L)
+
 
 ## Doc-migration findings (2026-08-29)
 Surfaced by the one-agent-per-doc migration pass. Every one is a code or config

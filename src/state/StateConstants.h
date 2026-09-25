@@ -529,8 +529,12 @@ namespace Huginn::State
 
       // Default arrow count (none)
       // Why 0: Assume no arrows if no bow equipped
-      // Units: count
-      // TYPE NOTE: int32_t matches RE::InventoryEntryData::countDelta to avoid narrowing conversion
+      // Units: count -- an ABSOLUTE count, and 0 is not a sentinel. It is both
+      // "no bow equipped" and "quiver empty", and every consumer wants the same
+      // answer for those two.
+      // TYPE NOTE: int32_t because RE::PlayerCharacter uses it for item counts.
+      // It used to be justified by matching InventoryEntryData::countDelta, back
+      // when these fields held a delta rather than a count (fixed v0.21.11).
       inline constexpr std::int32_t NO_ARROWS = 0;
 
       // Default survival level (neutral/none)

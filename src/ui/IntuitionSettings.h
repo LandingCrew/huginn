@@ -48,6 +48,16 @@ namespace Huginn::UI
         // Display mode: how much detail to show per slot
         inline constexpr const char* DISPLAY_MODE = "minimal";
 
+        // Show item counts in Minimal mode. ON by default, and the reason is
+        // that Minimal is also the default: with this off, the arrow count
+        // beside the bow, the potion count and the scroll count are invisible
+        // to anyone who never finds the Display Mode dropdown. A count is the
+        // one thing in the detail string that CHANGES while you play -- a
+        // spell's magicka cost and a weapon's damage are properties you can
+        // learn once -- so it is the part worth keeping when everything else
+        // goes. Off restores the older name-only widget exactly.
+        inline constexpr bool MINIMAL_COUNTS = true;
+
         // Slot effect: animation style when a slot's content changes
         inline constexpr const char* SLOT_EFFECT = "slide";
 
@@ -88,6 +98,7 @@ namespace Huginn::UI
         float scale = IntuitionDefaults::SCALE;
         float childAlpha = IntuitionDefaults::CHILD_ALPHA;
         DisplayMode displayMode = DisplayMode::Minimal;
+        bool minimalCounts = IntuitionDefaults::MINIMAL_COUNTS;
         SlotEffect slotEffect = SlotEffect::Slide;
     };
 
@@ -139,6 +150,7 @@ namespace Huginn::UI
             return hideWhileWheelOpen.load(std::memory_order_acquire);
         }
         [[nodiscard]] DisplayMode GetDisplayMode() const noexcept { return displayMode; }
+        [[nodiscard]] bool GetMinimalCounts() const noexcept { return minimalCounts; }
         [[nodiscard]] SlotEffect GetSlotEffect() const noexcept { return slotEffect; }
 
     private:
@@ -156,6 +168,7 @@ namespace Huginn::UI
         bool  readOnly     = IntuitionDefaults::READ_ONLY;
         std::atomic<bool> hideWhileWheelOpen{IntuitionDefaults::HIDE_WHILE_WHEEL_OPEN};
         DisplayMode displayMode = DisplayMode::Minimal;
+        bool minimalCounts = IntuitionDefaults::MINIMAL_COUNTS;
         SlotEffect slotEffect = SlotEffect::Slide;
     };
 

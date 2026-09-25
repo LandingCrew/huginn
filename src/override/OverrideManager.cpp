@@ -262,9 +262,18 @@ namespace Huginn::Override
             return std::nullopt;
         }
 
-        // Get current ammo count (arrowCount/boltCount are -1 when no ammo equipped)
+        // Current ammo count. 0 means either an empty quiver or no ammo equipped
+        // at all, and LowAmmo wants to fire on both -- there is no negative
+        // sentinel, whatever the comment that used to sit here said. It claimed
+        // -1, and the `>= 0` guard it justified was load-bearing for the wrong
+        // reason: until v0.21.11 these fields held InventoryEntryData::countDelta
+        // rather than a count, so a player five arrows into their starting
+        // eighteen arrived here at -5 and this line turned it into 0, which then
+        // tripped the hysteresis and announced "LOW AMMO: -5 arrows remaining"
+        // over a quiver holding thirteen. StateManager answers with a real count
+        // now, clamped at its source.
         int32_t rawCount = player.hasBowEquipped ? player.arrowCount : player.boltCount;
-        float currentAmmo = rawCount >= 0 ? static_cast<float>(rawCount) : 0.0f;
+        float currentAmmo = static_cast<float>(rawCount);
 
         // Check threshold with hysteresis
         if (!CheckThresholdHysteresis("LowAmmo", currentAmmo, config)) {

@@ -508,15 +508,51 @@ namespace Huginn::UI
 
     // ─── Detail String Builder ────────────────────────────────
 
+    // How many of this the player is carrying, for the candidate kinds that
+    // have a count at all. 0 means "no count to show", not "none left": a spell
+    // has no count, and the caller must not print [0] for one.
+    static std::int32_t SlotItemCount(
+        const Scoring::ScoredCandidate& scored,
+        const State::PlayerActorState& playerState)
+    {
+        if (auto* weapon = scored.TryAs<Candidate::WeaponCandidate>()) {
+            // The equipped AMMO's count, not the bow's -- the bow is one bow.
+            if (weapon->type == Weapon::WeaponType::Bow)       return playerState.arrowCount;
+            if (weapon->type == Weapon::WeaponType::Crossbow)  return playerState.boltCount;
+            return 0;
+        }
+        if (auto* item = scored.TryAs<Candidate::ItemCandidate>())     return item->count;
+        if (auto* scroll = scored.TryAs<Candidate::ScrollCandidate>()) return scroll->count;
+        if (auto* ammo = scored.TryAs<Candidate::AmmoCandidate>())     return ammo->count;
+        return 0;
+    }
+
     std::string IntuitionMenu::BuildSlotDetail(
         const Slot::SlotAssignment& assignment,
         DisplayMode mode,
-        const State::PlayerActorState& playerState)
+        const State::PlayerActorState& playerState,
+        bool minimalCounts)
     {
-        if (mode == DisplayMode::Minimal || !assignment.HasCandidate())
+        if (!assignment.HasCandidate())
             return "";
 
         const auto& scored = *assignment.candidate;
+
+        // === Minimal mode: the count, or nothing ===
+        // Minimal used to return "" unconditionally, and since Minimal is also
+        // the DEFAULT mode that hid every count from anyone who never found the
+        // Display Mode dropdown -- including the arrow count this was checked
+        // against, which was correct in the log and invisible on screen.
+        // A count is the one part of the detail string that changes while you
+        // play; a spell's magicka cost and a weapon's damage are properties you
+        // learn once. So Minimal keeps that and drops the rest, and bMinimalCounts
+        // turns it off for the older name-only widget.
+        if (mode == DisplayMode::Minimal) {
+            if (!minimalCounts) return "";
+            const std::int32_t count = SlotItemCount(scored, playerState);
+            return count > 0 ? std::format("[{}]", count) : "";
+        }
+
         std::string detail;
 
         // === Normal mode: type-specific details ===

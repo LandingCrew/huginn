@@ -1,4 +1,5 @@
 #include "Tests.h"
+#include "util/InventoryUtil.h"
 #include "Globals.h"
 
 #include "state/StateManager.h"
@@ -443,12 +444,15 @@ void RunItemClassifierTests()
     // Create a classifier instance
     Item::ItemClassifier classifier;
 
-    // Scan player inventory for alchemy items using SKSE inventory API
-    auto* invChanges = player->GetInventoryChanges();
-    if (!invChanges || !invChanges->entryList) {
-        logger::error("TEST SKIP: Cannot access player inventory"sv);
-        return;
-    }
+    // One pass over the whole inventory, base container included. This walked
+    // entryList directly until v0.21.14, which cost it two things: items the
+    // player holds ONLY from their base container never appeared at all, and
+    // asking GetItemCountSafe per entry re-walked the list once per alchemy
+    // item. GetInventorySafe answers both in a single scan with the same
+    // first-wins and leveled semantics.
+    auto inventory = Util::GetInventorySafe(player, [](RE::TESBoundObject& obj) {
+        return obj.Is(RE::FormType::AlchemyItem);
+    });
 
     size_t potionCount = 0;
     size_t poisonCount = 0;
@@ -458,15 +462,14 @@ void RunItemClassifierTests()
 
     logger::info("=== ItemClassifier Test Results ==="sv);
 
-    for (auto* entry : *invChanges->entryList) {
-        if (!entry || !entry->object) continue;
+    for (const auto& [object, entry] : inventory) {
+        if (!object) continue;
 
         // Only process AlchemyItems
-        auto* alchemyItem = entry->object->As<RE::AlchemyItem>();
+        auto* alchemyItem = object->As<RE::AlchemyItem>();
         if (!alchemyItem) continue;
 
-        // Get item count
-        int32_t count = entry->countDelta;
+        const int32_t count = entry.first;
         if (count <= 0) continue;
 
         // Classify the item

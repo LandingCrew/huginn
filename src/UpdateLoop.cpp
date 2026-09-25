@@ -464,6 +464,19 @@ static void RunPipelineIfNeeded(float deltaMs, RE::PlayerCharacter* player,
 
     auto& stateManager = State::StateManager::GetSingleton();
     bool stateChanged = stateManager.DidLastUpdateChangeState();
+
+    // The equipped ammo count is not a GameState hash dimension, so firing an
+    // arrow passes the outer gate on stateChanged and is then dropped by
+    // CheckHashSkip -- which is why a quiet scene could hold the widget at [9]
+    // while the game's own HUD read 6. Same treatment the inventory delta scan
+    // gets for the same reason: force one recompute.
+    //
+    // Before PeekPageChanged, so the flag this sets is seen on THIS tick rather
+    // than the next one.
+    if (stateManager.ConsumeAmmoCountChanged()) {
+        Slot::SlotAllocator::GetSingleton().MarkPageDirty();
+    }
+
     bool pageChanged = Slot::SlotAllocator::GetSingleton().PeekPageChanged();
 
     // Two ways the pipeline must run with no sensor delta at all:
