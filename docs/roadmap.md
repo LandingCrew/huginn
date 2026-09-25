@@ -31,38 +31,54 @@ re-opening something that looks obviously undone.
       The axe registers normally (2026-09-24: `Woodcutter's Axe
       (0002F2F4/uid47): dmg=31.5`) and had simply not been in the player's
       inventory. 870710C4 is still unidentified.
-      Related: WeaponClassifier::DetermineWeaponType has no arm for
-      kHandToHandMelee (type 0), so Unarmed warns once per scan and types as
-      Unknown. It still registers, so this is log noise rather than a gap --
-      but it is three warns a session for a thing that is not going to change.
+      The kHandToHandMelee note that used to sit here is done: #131's log-noise
+      pass gave DetermineWeaponType an explicit arm for it, so Unarmed types as
+      Unknown silently and the default arm keeps meaning "a type nobody has
+      seen before".
       Raised 2026-09-24.
 
-- [ ] AllyStatus still flaps, 57% less than it did, and nothing reads it.
-      `RANGE_RELEASE_MARGIN` (acquire at 512, release at 640) killed the
-      pathological case -- four `Ally:None<->Present` transitions inside 1.1 s,
-      caused by acquisition and the prune testing the same threshold. Matched
-      quiet-town logs: 12 transitions in 266 s before, 11 in 565 s after, so
-      0.045/s -> 0.020/s.
-      What survives is two 0.31 s pairs (2026-09-19, 20:52:53.014->.324 and
-      20:55:09.174->.487). Distance cannot explain them: crossing the 128-unit
-      margin that fast needs ~413 units/s, about a sprint. So it is either a
-      running NPC or something that is not distance at all -- `Get3D()` going
-      null, the actor leaving `highActorHandles`, hostility flickering. A
-      distance band structurally cannot cover those.
-      Each one costs a full pipeline pass (~1.8 ms, 68% of it the Wheeler push)
-      to produce an identical result, for a field with NO CONSUMER: `allyStatus`
-      is written by `StateEvaluator.cpp:54` and read only by
-      `GameState::GetHash`, `ToString` and the diff. No ContextRuleEngine rule,
-      no learner feature, no candidate filter.
-      Two ways to finish it, if it is ever worth finishing. Drop `allyStatus`
-      from the hash until a rule needs it -- all 11 go, including the two the
-      band cannot catch. Or add a time-based hold like
-      `CrosshairHysteresis::PERSISTENCE_TIMEOUT_SEC`, which covers every cause
-      and keeps the signal honest for a future ally-aware rule, at the price of
-      more code for something nothing reads.
-      Deliberately left: 57% was judged enough, because the crosshair target now
-      dwarfs it (below).
-      Raised 2026-09-19.
+- [x] AllyStatus still flaps, 57% less than it did, and nothing reads it.
+      CLOSED 2026-09-24 in v0.21.16, by narrowing the dimension rather than by
+      either option this entry offered. `GetHash` now asks one question of
+      `allyStatus` -- is it `InjuredPresent` -- so `None` and `Present` are the
+      same state to the gate and every flap between them is free. That pair is
+      all of the observed flapping, including the two 0.31 s pairs no distance
+      hysteresis could have caught.
+      `kTotalStates` 72,576 -> 48,384. The full 3-state value stays in the
+      struct, in `ToString` and in `Diff`.
+      **The first attempt (v0.21.15) removed it from the hash entirely and was
+      wrong**, caught by the #136 review. The premise -- "nothing reads it" --
+      came from grepping `allyStatus`, which finds every reader of the FIELD
+      and none of the readers of the FACT. `ScoreCandidates` builds
+      `ContextReasonSignals{.allyInjured = targets.HasInjuredFollower()}`,
+      `ContextRuleEngine_Reason` marks `R::AllyInjured` from it, and
+      `DominantReason` surfaces that as the "Ally Hurt" label -- all of it
+      below `CheckHashSkip`. With the dimension gone, a follower taking fall
+      damage beside an idle player at full vitals moves no hashed bucket, the
+      tick skips, and the label never appears; symmetrically a stale one
+      persists after the follower heals.
+      The review's suggested fix -- a `ctx.allyInjuredActive` bypass like the
+      ones falling, underwater and workstation use -- is the wrong shape here.
+      `unhashedStateActive` forces a run EVERY TICK while the flag is up, which
+      is fine for a one-second fall and ruinous for an injured follower that
+      can stay injured for minutes. A long-lived boolean belongs in the hash;
+      that is what a hash dimension is for.
+      Deliberately a superset of what is read: `EvaluateAllyStatus` returns
+      `InjuredPresent` for any injured non-hostile while `HasInjuredFollower`
+      requires `isFollower`, so the gate can wake for an injured non-follower
+      ally that produces no label. Over-triggering is the safe direction.
+      Safe on persistence, which was checked rather than assumed both times:
+      `kTotalStates` sizes no array outside the test, `UsageMemory` is an
+      in-memory ring buffer, and `BanditSerializer` keys on FormID plus
+      positional features. Nothing in the cosave is keyed by state hash.
+      Test 3c asserts both halves -- `None == Present` is the saving,
+      `Injured != None` is the correctness -- and Test 2 keeps `allyStatus` at
+      its maximum so a botched reinstatement overflows `kTotalStates` loudly.
+      One cost, recorded because it is easy to forget: `LogStateTransition` is
+      gated on the hash moving, so a `None<->Present` change now produces no
+      log line at all and reaches the log only bundled into a transition
+      something else caused. The flap rate that justified this change cannot be
+      re-measured from the log afterwards.
 
 - [ ] The crosshair target is the dominant state flap, and it may not be a bug.
       Same two logs: `Dist:Ranged<->Melee, Target:None<->Humanoid` went from 6 of
@@ -603,8 +619,8 @@ would notice.
       (skeleton): Returns all zeros — no rules implemented yet" above a fully
       implemented method. `StateManager.h` says "3 locks" and "7 float
       accumulators"; it is 4 and 11. `StateFeatures.h:17` cites the stale
-      36,288-state figure (it is 72,576 — and the file is `src/learning/`, not
-      `src/state/`). `SettingsReloader.cpp:94` says the dMenu INI holds "Widget,
+      36,288-state figure (it is 48,384 as of v0.21.16, and was 72,576 when
+      this was written — and the file is `src/learning/`, not `src/state/`). `SettingsReloader.cpp:94` says the dMenu INI holds "Widget,
       Keybindings, Debug" — keybindings moved to the main INI in the 0.19.0
       split. `FeatureBanditLearner.h` says "~90% confidence at 15 trains"; the
       sigmoid gives 95.3%. Each verified still present 2026-09-07.

@@ -41,7 +41,8 @@ Added since v0.18.x:
 - ✅ Page-race bail in `AllocateAndLock` — abandon rather than leak page-blind locks
 - ✅ `NeedsForcedRun()` — one list of unhashed latches, consulted by *both* skip gates
 - ✅ Unhashed-state bypasses for falling (#60) and underwater (#61)
-- ✅ `anyCasting` added to the `GameState` hash (72,576 states)
+- ✅ `anyCasting` added to the `GameState` hash (48,384 states since v0.21.15,
+  when `allyStatus` narrowed to its injured bit)
 - ✅ `ContextReason` derived from the same weight map the ranking used (#10), damped by `ReasonHold` (#62)
 - ✅ `DeriveDisplayLabels` — subtext stamped on the tick's own assignments
 - ✅ Page-keyed wildcard cache (`Scoring::WildcardPage`)
@@ -343,7 +344,7 @@ graph LR
 
 | Struct | Purpose | Details |
 |--------|---------|---------|
-| `GameState` | Discretized buckets for the pipeline skip-check — 72,576 states, bases `[6, 6, 3, 7, 4, 3, 2, 2, 2]` (health, magicka, distance, targetType, enemyCount, allyStatus, anyCasting, inCombat, isSneaking). Stamina is in the struct but excluded from the hash. | See [4-contextual-bandits.md](4-contextual-bandits.md) |
+| `GameState` | Discretized buckets for the pipeline skip-check — 48,384 states, bases `[6, 6, 3, 7, 4, 2, 2, 2, 2]` (health, magicka, distance, targetType, enemyCount, allyInjured, anyCasting, inCombat, isSneaking). Stamina is excluded from the hash; `allyStatus` enters it as one bit (is it `InjuredPresent`) rather than its three states. | See [4-contextual-bandits.md](4-contextual-bandits.md) |
 
 ### Stage 2: Candidate Generator
 

@@ -825,7 +825,7 @@ graph TB
 | Consumer | Uses | Purpose |
 |----------|------|---------|
 | **PipelineCoordinator** | WorldState, PlayerActorState, TargetCollection, HealthTrackingState | Snapshots state once per tick into `PipelineContext`, passes it to each step |
-| **StateEvaluator** | PlayerActorState, TargetCollection | Discretize to `GameState` + hash (72,576 states) |
+| **StateEvaluator** | PlayerActorState, TargetCollection | Discretize to `GameState` + hash (48,384 states) |
 | **CandidateGenerator** | PlayerActorState | Gather available spells/potions/weapons/ammo/scrolls/soul gems |
 | **ContextRuleEngine** | PlayerActorState, TargetCollection, WorldState | Evaluate context rules → `ContextWeightMap`; also names the tick's `ContextReason` |
 | **StateFeatures** | PlayerActorState, TargetCollection | Build the 18-float feature vector for `FeatureBanditLearner` |
@@ -943,7 +943,7 @@ GameState gameState = evaluator.EvaluateCurrentState(world, player, targets);
 // gameState.anyCasting = CastingStatus::EnemyCasting
 // ... etc
 
-uint32_t stateHash = gameState.GetHash();  // 0-72,575
+uint32_t stateHash = gameState.GetHash();  // 0-48,383
 ```
 
 There is **no tabular Q-table**. The hash exists for two things only: the
@@ -984,7 +984,7 @@ graph TB
     Raw[Raw State Types<br/>Continuous floats, booleans] --> CW[Context Weights<br/>ContextRuleEngine]
     Raw --> Disc[Discretized State<br/>StateEvaluator]
 
-    Disc --> GS["GameState<br/>6×6×3×7×4×3×2×2×2<br/>= 72,576 states"]
+    Disc --> GS["GameState<br/>6×6×3×7×4×2×2×2×2<br/>= 48,384 states"]
     GS --> Skip[Pipeline hash-skip<br/>+ PotionDiscriminator]
 
     Raw --> FV[Feature Vector<br/>18 normalized floats]
@@ -1003,7 +1003,7 @@ graph TB
 | Level | Purpose | Granularity | Consumer |
 |-------|---------|-------------|----------|
 | **Raw State** (6 state types) | Context weights, candidate gathering, slot allocation | Continuous floats, booleans | ContextRuleEngine, CandidateGenerator, OverrideManager |
-| **Discretized State** (`GameState`) | Pipeline skip gate + potion discrimination | Bucketed enums, 9 hashed dimensions (stamina excluded from the hash but kept in the struct) | `CheckHashSkip`, `PotionDiscriminator` |
+| **Discretized State** (`GameState`) | Pipeline skip gate + potion discrimination | Bucketed enums, 9 hashed dimensions (stamina excluded from the hash but kept in the struct; `allyStatus` hashed as one bit of its three states) | `CheckHashSkip`, `PotionDiscriminator` |
 | **Feature Vector** (`StateFeatures`) | Feature-based contextual bandit learning | 18 normalized floats | FeatureBanditLearner (linear function approximation) |
 
 **`GameState` dimensions** ([GameState.h](../../src/state/GameState.h)):
@@ -1016,17 +1016,45 @@ graph TB
 | `distance` | `DistanceBucket` | 3 | Melee ≤256, Mid ≤768, Ranged >768 units |
 | `targetType` | `TargetType` | 7 | None, Humanoid, Undead, Beast, Dragon, Construct, Daedra |
 | `enemyCount` | `EnemyCountBucket` | 4 | None(0), One(1-10), Few(11-30), Many(31+) — thresholds are 20%/60% of `MAX_TRACKED_TARGETS` |
-| `allyStatus` | `AllyStatus` | 3 | None, Present, InjuredPresent (any non-hostile living target below 30% HP) |
+| `allyStatus` | `AllyStatus` | 3 in the struct, **2 in the hash** | None, Present, InjuredPresent (any non-hostile living target below 30% HP). The hash asks only `== InjuredPresent`: None/Present is the distinction nothing reads, and all of the observed flapping. |
 | `anyCasting` | `CastingStatus` | 2 | NoneCasting, EnemyCasting — from `TargetCollection::cachedAnyCasting` |
 | `inCombat` | `CombatStatus` | 2 | NotInCombat, InCombat |
 | `isSneaking` | `SneakStatus` | 2 | NotSneaking, Sneaking |
 
-`GetHash()` is a multi-radix encode over bases `{6, 6, 3, 7, 4, 3, 2, 2, 2}`, with
-the multipliers computed at compile time, giving
-`kTotalStates = 72,576`. The un-reduced space — stamina hashed, and ally count
-kept separate from the injured flag — would be 870,912; excluding stamina removes
-a factor of 6 and collapsing the two ally dimensions into `AllyStatus` removes
-another factor of 2, for the 12× reduction.
+`GetHash()` is a multi-radix encode over bases `{6, 6, 3, 7, 4, 2, 2, 2, 2}`,
+with the multipliers computed at compile time, giving `kTotalStates = 48,384`.
+The un-reduced space — stamina hashed, ally count kept separate from the injured
+flag — would be 870,912, an 18× reduction. Three narrowings get there:
+collapsing the two ally dimensions into `AllyStatus` removed a factor of 2,
+excluding stamina removed a factor of 6, and narrowing `allyStatus` from three
+states to its injured bit (v0.21.15) removed a factor of 1.5.
+
+Stamina and `allyStatus` are narrowed for different reasons, and the difference
+decides how far either can go. Stamina IS read — `PotionDiscriminator` reads it
+directly and `ContextRuleEngine` uses the raw float — so hashing it would only
+add states that change no decision, and it can be excluded outright.
+
+`allyStatus` looks like the same case and is not, which is worth spelling out
+because the first attempt at this excluded it outright and was wrong. Nothing
+reads the FIELD: `StateEvaluator` writes it and only `ToString`/`Diff` consume
+it. But the fact it encodes is read through a different accessor —
+`ScoreCandidates` builds `ContextReasonSignals{.allyInjured =
+targets.HasInjuredFollower()}`, which becomes the "Ally Hurt" label — and all of
+that runs BELOW `CheckHashSkip`. A gate blind to an ally becoming injured never
+produces the label: a follower taking fall damage beside an idle player at full
+vitals moves no other bucket. So the injured bit has to stay hashed; only the
+None/Present half can go, which is all of the observed flapping anyway.
+
+The lesson generalises: grepping a field name tells you who reads that FIELD,
+not whether any decision depends on the state it describes. Ask the second
+question before removing a hash dimension.
+
+Narrowing also costs visibility. `LogStateTransition` is gated on the hash
+moving, so a `None`↔`Present` change now produces no log line, and reaches the
+log only bundled into a transition something else caused. That is the intended
+saving, but it means that flap rate is no longer measurable from the log —
+worth knowing before narrowing anything else on the strength of a measurement
+the narrowing then removes.
 
 `anyCasting` **must** stay a hash dimension: it drives ward and counter weights in
 `ContextRuleEngine`, so dropping it would make the skip gate blind to an enemy
@@ -1311,7 +1339,7 @@ source of TargetSource::Crosshair. -->
 | **Event Enrichment** | `DamageEventSink` (TESHitEvent) → HealthTrackingState → effect flags | Working well | ✅ Complete |
 | **Thread Safety** | Copy-out + compare-and-swap, 4 mutexes, atomics for cross-thread flags | Correct pattern | ✅ Complete |
 | **Pipeline Skip** | Two-tier: sensor dirty flag + hash comparison, with unhashed-state bypasses | Implemented | ✅ Complete |
-| **State Space** | 72,576 hashed states (12× reduction from the un-reduced 870,912) | Skip gate + potion discrimination only | ✅ Complete |
+| **State Space** | 48,384 hashed states (18× reduction from the un-reduced 870,912) | Skip gate + potion discrimination only | ✅ Complete |
 | **Memory Usage** | ~6 KB (hand-computed) | Within the 10 KB budget | ✅ Complete |
 | **Learning Persistence** | SKSE cosave, `BNDW` records, positional feature migration | Per-character persistence | ✅ Complete |
 | **Pipeline State Cache** | Caches scored candidates per cycle; timestamp refreshed even on a skip | External equip attribution | ✅ Complete |
