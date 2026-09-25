@@ -598,6 +598,42 @@ Raised 2026-09-24.
       the bigger ask and waits on the first two being measured
       (instrumentation S; fix S-M)
 
+      **A concrete case, caught in play 2026-09-24.** Worth keeping because the
+      entry above is otherwise built on an impression, and this one has
+      timestamps. Firing a bow on page 0:
+
+          21:01:53  6=Iron Sword - Okay   7=Steel Arrow
+          21:02:05  Override 'LOW AMMO: 9 arrows remaining' -> Page 0 Slot 6
+                    Slot 6 locked: Steel Arrow    (0001397F)
+                    Slot 7 locked: Iron Sword     (00012EB7)
+          21:03:08  6=Iron Sword - Okay*  7=Steel Arrow*
+
+      The two items swapped places and swapped back. On screen the player's
+      Steel Arrows moved from slot 8 to slot 7 and later returned, and nothing
+      about their inventory changed to justify it.
+
+      No lock was broken, which is what makes this a DIFFERENT failure from the
+      suspects listed above: the LowAmmo override's own content IS the best
+      ammo, so it seated a second copy of Steel Arrow at its override slot 6,
+      dedup dropped the copy legitimately sitting at 7, and Iron Sword --
+      evicted from 6 -- filled the hole at 7. Every step is working as designed
+      and the result is still two items trading places for no reason the player
+      can see. Seating keeping each item "in its own place" is not enough when
+      an override can claim a place that is already taken.
+      Cheapest thing to try: let an override that is about to seat an item
+      ALREADY on the page move to that item's existing slot instead of
+      displacing whatever sits at the configured one.
+
+      One honest note on this capture: it came from the session that fixed the
+      ammo count (#133), which now forces a pipeline recompute on every shot.
+      Seating is therefore recomputed far more often during archery than it was
+      -- nine override re-emissions in ten seconds here. That did not CREATE
+      this churn, the swap is a seating decision and would happen on any
+      recompute, but it does mean bow use is now a much better place to look
+      for it than it was, and any churn baseline measured before v0.21.13 is
+      not comparable to one measured after.
+      Raised 2026-09-24.
+
 ## Doc-migration findings (2026-08-29)
 Surfaced by the one-agent-per-doc migration pass. Every one is a code or config
 defect the docs exposed, not a documentation problem. Ordered by what a player
