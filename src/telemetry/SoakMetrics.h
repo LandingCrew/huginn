@@ -1,12 +1,91 @@
 #pragma once
 
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
+#include <deque>
+#include <mutex>
+#include <span>
+#include <string_view>
 
 namespace Huginn::Telemetry
 {
+    // =========================================================================
+    // SLOT CHURN
+    // =========================================================================
+    // Why the item SHOWN in a slot changed from one pipeline run to the next.
+    // Classified by SlotLocker::ApplyLocks, which is the one place that sees a
+    // slot's content before and after, locks and dedup included.
+    //
+    // The causes are "which gate was open", not a full causal chain: when an
+    // override claims slot 6 and the item it evicted lands in slot 7, slot 6
+    // reads Override and slot 7 reads whatever released slot 7's lock. Chains
+    // like that are read from the per-change debug lines, not from the counts.
+    enum class SlotChange : uint8_t
+    {
+        Fill,      // empty -> item
+        Clear,     // item -> empty (the allocator had nothing for it)
+        Dedup,     // item -> empty because DedupePreferLocked cleared it
+        Override,  // replaced by an override assignment
+        Expired,   // replaced after the slot's lock ran out
+        Used,      // replaced after OnItemUsed released the slot
+        Page,      // page switch (UnlockAll) -- player-driven, kept out of peak
+        Unheld,    // replaced with no lock ever in the way (locking disabled)
+        Count
+    };
+
+    [[nodiscard]] constexpr std::string_view SlotChangeName(SlotChange c) noexcept
+    {
+        switch (c) {
+        case SlotChange::Fill:     return "fill";
+        case SlotChange::Clear:    return "clear";
+        case SlotChange::Dedup:    return "dedup";
+        case SlotChange::Override: return "override";
+        case SlotChange::Expired:  return "expired";
+        case SlotChange::Used:     return "used";
+        case SlotChange::Page:     return "page";
+        case SlotChange::Unheld:   return "unheld";
+        default:                   return "?";
+        }
+    }
+
+    // Pure classification of one slot's content change, so the precedence can
+    // be tested without a live locker (static_asserts in SoakMetrics.cpp). `released` is the reason the slot's last
+    // lock let go (Page, Expired, Used, Override), or Unheld if none was
+    // recorded since the slot was last locked.
+    //
+    // Precedence: a page switch explains everything on the page; then the two
+    // transitions through empty, which are what the player sees regardless of
+    // what allowed them; then an override; then whatever released the lock.
+    [[nodiscard]] constexpr SlotChange ClassifySlotChange(bool wasEmpty, bool nowEmpty,
+        bool dedupCleared, bool nowOverride, SlotChange released) noexcept
+    {
+        if (released == SlotChange::Page) return SlotChange::Page;
+        if (nowEmpty) return dedupCleared ? SlotChange::Dedup : SlotChange::Clear;
+        if (wasEmpty) return SlotChange::Fill;
+        if (nowOverride) return SlotChange::Override;
+        switch (released) {
+        case SlotChange::Expired:
+        case SlotChange::Used:
+        case SlotChange::Override:
+            return released;
+        default:
+            return SlotChange::Unheld;
+        }
+    }
+
+    // Mirrors Slot::MAX_SLOTS_PER_PAGE without pulling SlotSettings.h into
+    // telemetry; SlotLocker.cpp static_asserts the two agree.
+    inline constexpr std::size_t SLOT_CHURN_SLOTS = 10;
+
+    struct SlotChangeEvent
+    {
+        std::size_t slotIndex = 0;
+        SlotChange cause = SlotChange::Unheld;
+    };
+
     // =========================================================================
     // SOAK METRICS
     // =========================================================================
@@ -65,6 +144,13 @@ namespace Huginn::Telemetry
         // value means the display-page race path actually executes on this build.
         void RecordPageRaceBail();
 
+        // One ApplyLocks run's slot content changes (possibly none). Feeds the
+        // heartbeat's churn field and, per run, the "Huginn/Slot Changes" plot.
+        // Called on the update thread; the burst tracking behind peak5s is
+        // guarded by its own mutex rather than relying on that.
+        void RecordSlotChanges(std::span<const SlotChangeEvent> changes,
+            std::chrono::steady_clock::time_point now);
+
         // Called every update tick with the measured whole-tick duration (ms).
         // Rolls the window and emits the heartbeat when the interval elapses.
         void RecordTick(float tickMs, std::chrono::steady_clock::time_point now);
@@ -102,5 +188,18 @@ namespace Huginn::Telemetry
         std::atomic<uint32_t> m_pageRaceBails{0};  // ticks abandoned to a mid-tick page switch
         std::atomic<uint64_t> m_tickSumMicros{0};
         std::atomic<uint32_t> m_tickPeakMicros{0};
+
+        // Slot churn (window). Per-cause totals, plus the worst burst: the most
+        // changes any one slot took inside SLOT_CHURN_BURST_MS. That burst is
+        // the number that matches what the player sees -- "slot 6 changed four
+        // times in a few seconds" -- which a window total averages away.
+        // Page switches are counted but kept out of the burst: the player
+        // asked for those.
+        static constexpr int64_t SLOT_CHURN_BURST_MS = 5000;
+        std::array<std::atomic<uint32_t>, static_cast<std::size_t>(SlotChange::Count)> m_slotChanges{};
+        std::mutex m_churnMutex;
+        std::array<std::deque<int64_t>, SLOT_CHURN_SLOTS> m_recentChanges;  // steady_clock ticks, per slot
+        uint32_t m_churnPeak = 0;       // guarded by m_churnMutex
+        std::size_t m_churnPeakSlot = 0;
     };
 }

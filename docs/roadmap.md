@@ -426,6 +426,21 @@ Raised 2026-09-24.
       - A Tracy plot of changes/s alongside the existing Huginn plots, so the
         burst can be lined up against state transitions in a capture.
       Only then decide the fix, against a baseline number.
+      **Step 1 SHIPPED in v0.21.17**, as specified above with these differences:
+      - The heartbeat field is `slotChurn=N peak5s=K@slotI (fill= clear=
+        dedup= override= expired= used= page= unheld=)`, or `slotChurn=0`.
+        No remembrance bucket: add it with remembrance.
+      - Reset (save load, cell transition, `hg reset`, `hg page`, INI reload)
+        is NOT counted -- the next run re-baselines. Page switches through
+        `SetCurrentPage` are counted as `page` but kept out of peak5s,
+        because the player asked for them.
+      - The causes say which gate was OPEN, not the causal chain. In the
+        Steel Arrow case below, slot 6 reads `override` and slot 7 reads
+        whatever released slot 7; the chain is in the debug-level
+        `[SlotChurn]` lines, one per change.
+      - Measures the widget's current page only. The Wheeler pages never
+        reach `SlotLocker`.
+      Still to do: the baseline run itself, bow use included.
       What the code already does, for context: `SlotLocker` keeps a per-slot
       timer (`m_lockedSlots[i].remainingMs`); only the DURATION is global —
       `fLockDurationMs` = 3000, `fMinLockDurationMs` = 500 — and
