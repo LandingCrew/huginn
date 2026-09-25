@@ -80,10 +80,58 @@ namespace Huginn::Telemetry
     // telemetry; SlotLocker.cpp static_asserts the two agree.
     inline constexpr std::size_t SLOT_CHURN_SLOTS = 10;
 
+    // How much better the challenger scored than the item it replaced, for the
+    // changes a challenger margin would govern (Expired, Unheld): the item
+    // that took the slot, over the displaced item's utility in the SAME run.
+    // The distribution is what sizes the margin -- a margin of m would have
+    // blocked every change below 1+m whose incumbent was still a candidate.
+    // Below 1.0 means the slot changed to something that scored WORSE: the
+    // allocator moving items for reasons of its own (seating, refill,
+    // classification), not the ranking.
+    enum class ChallengerRatio : uint8_t
+    {
+        Gone,       // incumbent no longer a candidate: nothing to hold on to
+        Below1,     // challenger scored lower than the incumbent
+        Below110,   // < 10% better
+        Below125,   // 10-25%
+        Below150,   // 25-50%
+        Above150,   // 50%+ (or incumbent scored <= 0)
+        NotApplicable,
+        Count = NotApplicable
+    };
+
+    [[nodiscard]] constexpr std::string_view ChallengerRatioName(ChallengerRatio r) noexcept
+    {
+        switch (r) {
+        case ChallengerRatio::Gone:     return "gone";
+        case ChallengerRatio::Below1:   return "<1";
+        case ChallengerRatio::Below110: return "<1.1";
+        case ChallengerRatio::Below125: return "<1.25";
+        case ChallengerRatio::Below150: return "<1.5";
+        case ChallengerRatio::Above150: return ">=1.5";
+        default:                        return "n/a";
+        }
+    }
+
+    // incumbentUtility < 0 means the incumbent is no longer a candidate.
+    [[nodiscard]] constexpr ChallengerRatio BucketChallengerRatio(
+        float challengerUtility, float incumbentUtility) noexcept
+    {
+        if (incumbentUtility < 0.0f) return ChallengerRatio::Gone;
+        if (incumbentUtility == 0.0f) return ChallengerRatio::Above150;
+        const float r = challengerUtility / incumbentUtility;
+        if (r < 1.0f) return ChallengerRatio::Below1;
+        if (r < 1.10f) return ChallengerRatio::Below110;
+        if (r < 1.25f) return ChallengerRatio::Below125;
+        if (r < 1.50f) return ChallengerRatio::Below150;
+        return ChallengerRatio::Above150;
+    }
+
     struct SlotChangeEvent
     {
         std::size_t slotIndex = 0;
         SlotChange cause = SlotChange::Unheld;
+        ChallengerRatio ratio = ChallengerRatio::NotApplicable;
     };
 
     // =========================================================================
@@ -197,6 +245,7 @@ namespace Huginn::Telemetry
         // asked for those.
         static constexpr int64_t SLOT_CHURN_BURST_MS = 5000;
         std::array<std::atomic<uint32_t>, static_cast<std::size_t>(SlotChange::Count)> m_slotChanges{};
+        std::array<std::atomic<uint32_t>, static_cast<std::size_t>(ChallengerRatio::Count)> m_challengerRatios{};
         std::mutex m_churnMutex;
         std::array<std::deque<int64_t>, SLOT_CHURN_SLOTS> m_recentChanges;  // steady_clock ticks, per slot
         uint32_t m_churnPeak = 0;       // guarded by m_churnMutex

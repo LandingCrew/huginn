@@ -81,7 +81,8 @@ namespace Huginn::Slot
 
     SlotAssignments SlotLocker::ApplyLocks(
         const SlotAssignments& newAssignments,
-        const Override::OverrideCollection& overrides)
+        const Override::OverrideCollection& overrides,
+        std::span<const Scoring::ScoredCandidate> scored)
     {
         std::lock_guard<std::mutex> lock(m_mutex);
 
@@ -165,11 +166,35 @@ namespace Huginn::Slot
             if (changed && !m_churnBaseline) {
                 const auto cause = Telemetry::ClassifySlotChange(slot.shownEmpty, nowEmpty,
                     filledBeforeDedup[i] && nowEmpty, shown.IsOverride(), slot.releaseCause);
-                changes[changeCount++] = { i, cause };
-                spdlog::debug("[SlotChurn] Slot {}: '{}' -> '{}' ({})", i,
-                    slot.shownEmpty ? std::string_view{} : std::string_view{ slot.shownName },
-                    nowEmpty ? std::string_view{} : std::string_view{ shown.name },
-                    Telemetry::SlotChangeName(cause));
+
+                // Challenger ratio, for the changes a margin would govern.
+                auto ratio = Telemetry::ChallengerRatio::NotApplicable;
+                float incumbentUtility = -1.0f;  // < 0 = no longer a candidate
+                if (!scored.empty() &&
+                    (cause == Telemetry::SlotChange::Expired || cause == Telemetry::SlotChange::Unheld)) {
+                    for (const auto& sc : scored) {
+                        if (sc.GetFormID() == slot.shownFormID && sc.GetUniqueID() == slot.shownUniqueID) {
+                            incumbentUtility = sc.utility;
+                            break;
+                        }
+                    }
+                    ratio = Telemetry::BucketChallengerRatio(shown.utility, incumbentUtility);
+                }
+                changes[changeCount++] = { i, cause, ratio };
+
+                const std::string_view from = slot.shownEmpty ? std::string_view{} : std::string_view{ slot.shownName };
+                const std::string_view to = nowEmpty ? std::string_view{} : std::string_view{ shown.name };
+                if (ratio == Telemetry::ChallengerRatio::NotApplicable) {
+                    spdlog::debug("[SlotChurn] Slot {}: '{}' -> '{}' ({})", i, from, to,
+                        Telemetry::SlotChangeName(cause));
+                } else if (incumbentUtility < 0.0f) {
+                    spdlog::debug("[SlotChurn] Slot {}: '{}' -> '{}' ({}, u={:.3f}, incumbent gone)",
+                        i, from, to, Telemetry::SlotChangeName(cause), shown.utility);
+                } else {
+                    spdlog::debug("[SlotChurn] Slot {}: '{}' -> '{}' ({}, u={:.3f} vs {:.3f}, x{:.2f})",
+                        i, from, to, Telemetry::SlotChangeName(cause), shown.utility, incumbentUtility,
+                        incumbentUtility > 0.0f ? shown.utility / incumbentUtility : 0.0f);
+                }
             }
             if (changed) {
                 slot.shownEmpty = nowEmpty;

@@ -465,7 +465,7 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
     // elsewhere), preferring to keep locked content. Lock-timer decay lives in
     // UpdateSubsystems (unconditional per tick), not here behind the skip gate.
     auto& slotLocker = Slot::SlotLocker::GetSingleton();
-    ctx.assignments = slotLocker.ApplyLocks(ctx.rawAssignments, ctx.overrides);
+    ctx.assignments = slotLocker.ApplyLocks(ctx.rawAssignments, ctx.overrides, ctx.scoredCandidates);
 
     // Compute visual state for each slot
     Slot::ComputeVisualStates(ctx.assignments, ctx.rawAssignments, slotLocker);

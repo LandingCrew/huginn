@@ -30,6 +30,15 @@ namespace Huginn::Telemetry
         static_assert(ClassifySlotChange(false, false, false, false, Used) == Used);
         static_assert(ClassifySlotChange(false, false, false, false, Override) == Override);
         static_assert(ClassifySlotChange(false, false, false, false, Unheld) == Unheld);
+
+        // Bucket edges are half-open: exactly 10% better is NOT "<1.1".
+        static_assert(BucketChallengerRatio(1.0f, -1.0f) == ChallengerRatio::Gone);
+        static_assert(BucketChallengerRatio(1.0f, 0.0f) == ChallengerRatio::Above150);
+        static_assert(BucketChallengerRatio(0.9f, 1.0f) == ChallengerRatio::Below1);
+        static_assert(BucketChallengerRatio(1.0f, 1.0f) == ChallengerRatio::Below110);
+        static_assert(BucketChallengerRatio(1.2f, 1.0f) == ChallengerRatio::Below125);
+        static_assert(BucketChallengerRatio(1.25f, 1.0f) == ChallengerRatio::Below150);
+        static_assert(BucketChallengerRatio(1.5f, 1.0f) == ChallengerRatio::Above150);
     }
 
     SoakMetrics& SoakMetrics::GetSingleton()
@@ -90,6 +99,9 @@ namespace Huginn::Telemetry
             std::lock_guard<std::mutex> lock(m_churnMutex);
             for (const auto& change : changes) {
                 m_slotChanges[static_cast<std::size_t>(change.cause)].fetch_add(1, std::memory_order_relaxed);
+                if (change.ratio != ChallengerRatio::NotApplicable) {
+                    m_challengerRatios[static_cast<std::size_t>(change.ratio)].fetch_add(1, std::memory_order_relaxed);
+                }
                 if (change.cause == SlotChange::Page || change.slotIndex >= SLOT_CHURN_SLOTS) {
                     continue;
                 }
@@ -167,6 +179,10 @@ namespace Huginn::Telemetry
             churn[c] = m_slotChanges[c].exchange(0, std::memory_order_relaxed);
             churnTotal += churn[c];
         }
+        std::array<uint32_t, static_cast<std::size_t>(ChallengerRatio::Count)> ratios{};
+        for (std::size_t r = 0; r < ratios.size(); ++r) {
+            ratios[r] = m_challengerRatios[r].exchange(0, std::memory_order_relaxed);
+        }
         uint32_t churnPeak = 0;
         std::size_t churnPeakSlot = 0;
         {
@@ -200,6 +216,11 @@ namespace Huginn::Telemetry
             for (std::size_t c = 0; c < churn.size(); ++c) {
                 churnStr += std::format("{}{}={}", c ? " " : "",
                     SlotChangeName(static_cast<SlotChange>(c)), churn[c]);
+            }
+            churnStr += ") ratio(";
+            for (std::size_t r = 0; r < ratios.size(); ++r) {
+                churnStr += std::format("{}{}={}", r ? " " : "",
+                    ChallengerRatioName(static_cast<ChallengerRatio>(r)), ratios[r]);
             }
             churnStr += ')';
         }

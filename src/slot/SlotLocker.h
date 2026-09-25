@@ -7,6 +7,7 @@
 #include <array>
 #include <cstdint>
 #include <mutex>
+#include <span>
 
 namespace Huginn::Slot
 {
@@ -124,10 +125,14 @@ namespace Huginn::Slot
         /// Apply locking logic to raw assignments from SlotAllocator
         /// @param newAssignments Fresh assignments from SlotAllocator
         /// @param overrides Active overrides (for priority-based lock breaking)
+        /// @param scored This run's full scored list, used only for churn
+        ///   telemetry: the utility of an item a slot just dropped, which the
+        ///   assignments no longer carry. Empty = no challenger ratios.
         /// @return Stable assignments with locks applied
         [[nodiscard]] SlotAssignments ApplyLocks(
             const SlotAssignments& newAssignments,
-            const Override::OverrideCollection& overrides);
+            const Override::OverrideCollection& overrides,
+            std::span<const Scoring::ScoredCandidate> scored = {});
 
         // =========================================================================
         // MANUAL LOCK CONTROL
