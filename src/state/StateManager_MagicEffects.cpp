@@ -543,12 +543,27 @@ namespace Huginn::State
 #endif
       }
 
-      // Log state changes at debug level (useful for troubleshooting)
+      // Log state changes at debug level (useful for troubleshooting).
+      //
+      // Gated on the SEVEN FLAGS THIS LINE PRINTS, not on effectsChanged, which
+      // covers more state than the line shows: 78 of these in a 2026-09-23
+      // session were byte-identical and all-false, because something outside
+      // the printed set had moved. A line that says the same thing twice says
+      // nothing, which is what CLAUDE.md's dedup rule is for.
       if (effectsChanged || buffsChanged) {
-        logger::debug("[StateManager] Magic state: armor={} cloak={} invis={} summon={} | fire={} poison={} frost={}",
+        const std::tuple<bool, bool, bool, bool, bool, bool, bool> printed{
           newBuffs.hasArmorBuff,
           newBuffs.hasCloakActive, newBuffs.isInvisible, newBuffs.hasActiveSummon,
-          newEffects.isOnFire, newEffects.isPoisoned, newEffects.isFrozen);
+          newEffects.isOnFire, newEffects.isPoisoned, newEffects.isFrozen };
+        using PrintedFlags = std::tuple<bool, bool, bool, bool, bool, bool, bool>;
+        static std::optional<PrintedFlags> lastPrinted;
+        if (!lastPrinted || *lastPrinted != printed) {
+        lastPrinted = printed;
+        logger::debug("[StateManager] Magic state: armor={} cloak={} invis={} summon={} | fire={} poison={} frost={}",
+           newBuffs.hasArmorBuff,
+           newBuffs.hasCloakActive, newBuffs.isInvisible, newBuffs.hasActiveSummon,
+           newEffects.isOnFire, newEffects.isPoisoned, newEffects.isFrozen);
+        }
       }
 
       // Stage 3b: Return true if any state changed

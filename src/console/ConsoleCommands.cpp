@@ -243,6 +243,16 @@ namespace Huginn::Console
       Print("Weapon registry dumped to the Huginn log");
       }
 
+      // Scrolls too. LogAllScrolls has existed and gone uncalled, and the
+      // reason to want it is that a scroll is not always a scroll: LoreRim
+      // ships throwing knives as ScrollItem forms, so "is my 45-stack of Iron
+      // Throwing Knives typed Damage" is a question about this registry and
+      // there was no way to ask it.
+      if (g_scrollRegistry) {
+      g_scrollRegistry->LogAllScrolls();
+      Print("Scroll registry dumped to the Huginn log");
+      }
+
       // Pages (query before slot locks so we know the actual count)
       auto& slotAllocator = Slot::SlotAllocator::GetSingleton();
 
@@ -464,6 +474,7 @@ namespace Huginn::Console
          case RE::MagicSystem::SpellType::kSpell:        return "Spell"sv;
          case RE::MagicSystem::SpellType::kPower:        return "Power"sv;
          case RE::MagicSystem::SpellType::kLesserPower:  return "LesserPower"sv;
+         case RE::MagicSystem::SpellType::kScroll:       return "Scroll"sv;
          default:                                        return "Other"sv;
          }
       };
@@ -494,14 +505,35 @@ namespace Huginn::Console
       size_t unknownType = 0;
       size_t unknownLearnable = 0;
       size_t learnableCount = 0;
-      for (auto* spell : dataHandler->GetFormArray<RE::SpellItem>()) {
+      // Both form arrays. GetFormArray keys on T::FORMTYPE, and ScrollItem's is
+      // FormType::Scroll where SpellItem's is FormType::Spell -- so widening
+      // the cast-type filter above was necessary and not sufficient, and the
+      // first dump after it came back byte-identical. ScrollItem IS-A
+      // SpellItem, so the pointers go in the same list and the loop body does
+      // not care which array they came from.
+      std::vector<RE::SpellItem*> toDump;
+      const auto& spellForms = dataHandler->GetFormArray<RE::SpellItem>();
+      const auto& scrollForms = dataHandler->GetFormArray<RE::ScrollItem>();
+      toDump.reserve(spellForms.size() + scrollForms.size());
+      for (auto* form : spellForms) toDump.push_back(form);
+      for (auto* form : scrollForms) toDump.push_back(form);
+
+      for (auto* spell : toDump) {
          if (!spell) {
             continue;
          }
+         // Scrolls too, since v0.21.7. ScrollItem IS-A SpellItem and
+         // ScrollClassifier delegates straight to SpellClassifier, so a scroll
+         // is classified by exactly these rules -- and LoreRim ships throwing
+         // knives as scrolls, which come out Debuff while their own tooltip
+         // says "deals 24 physical damage". There was no way to ask which rule
+         // did that: this command filtered them out, and the scroll registry
+         // dump prints the answer without the inputs.
          const auto castType = spell->GetSpellType();
          if (castType != RE::MagicSystem::SpellType::kSpell &&
              castType != RE::MagicSystem::SpellType::kPower &&
-             castType != RE::MagicSystem::SpellType::kLesserPower) {
+             castType != RE::MagicSystem::SpellType::kLesserPower &&
+             castType != RE::MagicSystem::SpellType::kScroll) {
             ++skipped;
             continue;
          }

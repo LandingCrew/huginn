@@ -6,6 +6,35 @@ once its entry leaves this file. Git history is the only record; check it before
 re-opening something that looks obviously undone.
 
 ## Known Bugs
+- [ ] The widget's arrow count is a delta, not a count, and the LowAmmo
+      override reads it. `StateManager_Equipment.cpp:197` sets
+      `newArrowCount = entry->countDelta` (and `newBoltCount` on :199) straight
+      into `PlayerActorState`. countDelta is a delta against the player's BASE
+      CONTAINER, so for ammo they STARTED with it is how many they have spent.
+      A vanilla character who had fired 5 of 18 starting arrows reads -5 while
+      the quiver holds 13.
+      Two consumers, both player-facing. `IntuitionMenu.cpp:544` gates on
+      `count > 0`, so the widget silently drops the ammo count beside the bow --
+      the player just never sees it. `OverrideManager.cpp:266-282` clamps to 0,
+      trips the LowAmmo hysteresis and can fire an override announcing the
+      player is out of arrows while they are holding a full quiver.
+      Same bug as the registry one fixed in #131, on a different path. That fix
+      does NOT cover these: it added InventoryAmmo::baseCount, which
+      StateManager has no access to.
+      The fix is not obvious and that is why this is an entry rather than a
+      commit. StateManager has no registry dependency, holds no base-container
+      memory of its own, and polls at ~10 Hz, so Util::GetInventorySafe is too
+      expensive here. `RE::PlayerCharacter::GetItemCount(TESBoundObject*)` is
+      exactly the right shape -- the game's own absolute count for one form --
+      but it shares a name with `RE::InventoryChanges::GetItemCount`, which
+      crashed on save-load and was bisected out in PR #41 (sub-commit 23555b2
+      reproduced the access violation; 81eecc6 without it was stable). They are
+      different functions on different classes and the crash says nothing about
+      this one, but the resemblance is close enough that it wants its own
+      change with its own save-load soak rather than being folded into
+      something else.
+      Found by the #131 review, 2026-09-24.
+
 - [ ] WeaponData::damage is not the number the game shows, and never was.
       The TEMPER half is verified: `hg status` on 2026-09-19 read ExtraHealth
       1.10 for all three "- Okay" weapons, giving 9.0->9.9, 7.0->7.7,
@@ -19,6 +48,65 @@ re-opening something that looks obviously undone.
       since every comparison it makes is between two numbers with the same
       term missing. Fixing it means asking the actor rather than the form.
       Raised 2026-09-19.
+
+- [x] Route the temper suffix to the widget. LoreRim names a tempered weapon
+      `Iron Sword (1.2)` where vanilla says `Iron Sword - Okay`, and either way
+      the suffix is the game's own answer to "is this the good one". The
+      registry already resolves the display name per stack
+      (ExtraDataList::GetDisplayName, gated on the stack already having
+      ExtraTextDisplayData so the read stays pure) and the widget DOES show it:
+      the vanilla registry dump reads "Iron Mace - Okay". The plumbing works.
+      it works on LoreRim too. The registry there now reads "Long Bow (1.3)",
+      "Iron War Axe (1.2)", "Steel Dagger (1.1)" with temperFactor 1.30 / 1.20
+      / 1.10. There is nothing left to route.
+      CLOSED 2026-09-24, and the reasoning that opened it was wrong. It was
+      written from a session where every LoreRim record came back plain-named
+      at 1.00, and concluded that LoreRim must not keep tempering in
+      ExtraHealth at all. The same stack -- uid87, the Long Bow -- has since
+      read 0.00, then 1.00, then 1.30 across three sessions, so the data was
+      always in ExtraHealth and the earlier reads were empty for a reason not
+      yet identified: either the player tempered those weapons in between, or
+      an early read returned zero. Worth knowing which, because #131's
+      `ExtraHealth > 0` guard turns a zero into "untempered" and would hide the
+      second case.
+      Raised 2026-09-24, from the #128-era weapon-damage pass.
+
+- [ ] LoreRim's throwing knives are SCROLLS, and the scroll arm carries them.
+      Answered 2026-09-24: they are ScrollItem forms, not WEAP and not AMMO, so
+      both questions this entry originally asked were the wrong ones.
+      ScrollRegistry already tracks them with the right counts (Iron x45,
+      Steel x15, Silver x15) and they reach the widget -- a Silver Throwing
+      Knife was seated in slot 7 in the same session. ScrollClassifier
+      delegates to SpellClassifier, so a knife whose effect reads "deals 24
+      physical damage" should type Damage by the archetype rules from #128.
+      What is left is a RANKING question, not a plumbing one: the knife reached
+      the widget through WildcardManager at 50% probability, not on merit. A
+      stack of 45 is a real combat option and should be able to earn its slot.
+      That is the "Scroll cold-start" entry further down, now with a concrete
+      case attached to it.
+      Confirm the type with `hg status`, which dumps the scroll registry from
+      v0.21.6.
+      Raised 2026-09-24.
+
+- [ ] One weapon in the LoreRim load order classifies as nameless and is
+      skipped: `870710C4`, logged as "Failed to classify weapon ..., skipping
+      (won't retry)" on every session. ClassifyWeapon rejects a form whose
+      GetName() AND GetFormEditorID() are both empty, because storing it would
+      leave data.formID at 0 and corrupt RemoveWeapon's swap-pop re-keying.
+      The rejection is sound; what is unknown is whether the form is genuinely
+      nameless or merely unnamed AT SCAN TIME. The tombstone is cleared by
+      RebuildRegistry, so `hg rebuild` retries it -- if a rebuild registers what
+      the initial scan rejected, the condition is transient and the scan is too
+      early rather than the form being bad.
+      NOT the Woodcutter's Axe, which was the suspicion when this was raised.
+      The axe registers normally (2026-09-24: `Woodcutter's Axe
+      (0002F2F4/uid47): dmg=31.5`) and had simply not been in the player's
+      inventory. 870710C4 is still unidentified.
+      Related: WeaponClassifier::DetermineWeaponType has no arm for
+      kHandToHandMelee (type 0), so Unarmed warns once per scan and types as
+      Unknown. It still registers, so this is log noise rather than a gap --
+      but it is three warns a session for a thing that is not going to change.
+      Raised 2026-09-24.
 
 - [ ] AllyStatus still flaps, 57% less than it did, and nothing reads it.
       `RANGE_RELEASE_MARGIN` (acquire at 512, release at 640) killed the
@@ -160,6 +248,37 @@ re-opening something that looks obviously undone.
       alchemy lab (#65, PR #114); the forge may still have no live payload
 
 ## Known Recommendation Issues
+- [ ] #128 measured the spell classifier against 1,107 spells and silently
+      excluded 1,200 scrolls. `hg dump spells` walked
+      `GetFormArray<RE::SpellItem>()`, and GetFormArray keys on T::FORMTYPE --
+      ScrollItem's is FormType::Scroll, SpellItem's is FormType::Spell -- so no
+      scroll was ever in it. Fixed in v0.21.8, and the first dump that included
+      them came back 6,224 rows against 5,024.
+      Nothing in the #128 work saw a scroll: not the 375 -> 90 unclassified
+      count, not the description corpus that rejected a text classifier, not
+      the weak-evidence numbers. ScrollClassifier delegates straight to
+      SpellClassifier, so every rule written there applies to scrolls and none
+      of them was checked against one.
+      First measurement (LoreRim, 2026-09-24): 1,200 scrolls, of which 107 come
+      back Unknown. Worth re-running the #128 analyses over the wider set
+      before trusting their conclusions.
+      Raised 2026-09-24.
+
+- [ ] Potions, apparel and weapons have no dump at all, and the item
+      classifier has never had the measurement the spell one got.
+      `hg dump spells` covers spells and (since v0.21.8) scrolls. ItemClassifier
+      -- potions, poisons, food, soul gems -- ApparelClassifier and
+      WeaponClassifier have nothing equivalent, so their rules have only ever
+      been checked by eye against whatever the player happened to be carrying.
+      Every real classifier bug this month was found by dumping the whole load
+      order and grouping, not by looking at a registry: the 375 unclassified
+      spells, the twenty-one weapon enchants a text rule would have broken, the
+      kFame throwing knives. None of those was visible from a registry dump,
+      because a registry only holds what one character owns.
+      Wants one `hg dump forms` covering every classified form type, with the
+      inputs beside the verdict, in the same throwaway spirit as the spell one.
+      Raised 2026-09-24.
+
 - [x] A third of the spells a LoreRim player can LEARN classify as Unknown.
       SHIPPED in #128 (2026-09-23). 375 of 1,106 -> **90 of 1,107** on LoreRim
       v5; vanilla went to **0 of 115**. `DetermineSpellType` now keys on the
@@ -313,6 +432,123 @@ re-opening something that looks obviously undone.
       index, which is why it was copied, but the visitor half could be adopted.
       Both grow in value if the apparel expansion above lands, since it
       multiplies the effect types being classified (S each)
+
+## Slot temporal memory
+Two slot-UX gaps left after seating (anti-juggling) shipped. Seating fixed
+WHERE an item sits; both of these are about WHEN a slot is allowed to change.
+Raised 2026-09-24.
+
+- [ ] **Remembrance — a slot holds what you just took off.** When the player
+      equips something from a slot, whatever that equip displaced (the sword
+      the bow replaced, the spell the new spell replaced, the helmet the new
+      helmet replaced) takes that slot for a while, then expires back to
+      normal recommendations the way a wildcard does. A one-deep undo: swap
+      and the old item is one key away.
+      NOT a new slot type. It is a per-slot flag on every existing
+      classification, on by default, so a player opts slots OUT:
+
+          [Page0.Slot0]
+          sClassification = DamageAny
+          bWildcardsEnabled = true
+          bOverridesEnabled = HP
+          iPriority = 6
+          bRemembrance = true      ; default true
+
+      (Hungarian `b` prefix to match `bWildcardsEnabled` / `bSkipEquipped`;
+      read in `SlotSettings.cpp` alongside them, and needs a dMenu toggle.)
+      Applies to anything equippable — spells per hand, weapons, shields,
+      armour, ammo. Consumables have nothing to displace, so it is a no-op
+      there.
+      Shape of it:
+      - Capture the displaced object at the equip transition, before the swap
+        lands. Equips through Huginn go through `EquipManager` and know their
+        slot, so "that slot" is well defined. Equips made OUTSIDE Huginn
+        (Wheeler, vanilla menu, favourites) arrive via the external-equip
+        detection in `UpdateLoop` and have no source slot — the remembered
+        item would need a home chosen by classification instead (first
+        `bRemembrance` slot on the page whose classification accepts it), or
+        external equips are simply out of scope for v1. Decide which.
+      - Hold it on a timer, not a score. It is not a recommendation: it should
+        bypass ranking and the learner entirely and never earn a reward.
+        `LockSlotForActivation` (the Sticky policy, `ACTIVATION_LOCK_MS`) is
+        the nearest existing mechanism. The duration wants to be an INI value
+        of its own, not `fLockDurationMs`.
+      - It must survive the seating pass and `DedupePreferLocked` — a locked
+        remembered item already wins dedup, which is the right answer.
+      Settled 2026-09-24:
+      - No looping. Equipping a remembered item does NOT remember what it
+        displaced: the slot releases to normal recommendations instead of
+        holding the other half of the pair, so two items cannot ping-pong in
+        one slot forever. Needs one check at capture time ("was this equip
+        sourced from a remembrance hold?"). A setting could allow the
+        toggle for players who want it, e.g.
+        `[SlotLocker] bRemembranceChain = false`; default off.
+      - Remembrance wins dedup. If the displaced item is already on screen in
+        another slot, the remembered copy stays and the recommended copy is
+        cleared, so the item the player just took off is where they expect it.
+        This is purely a display rule: it carries no reward or penalty and
+        must not touch the learner.
+      - `bSkipEquipped` does not conflict. The remembered item is by definition
+        unequipped at the moment it is placed, so the filter has nothing to
+        hide.
+      Open — one question, two directions: an equip that displaces TWO items.
+      A two-hander replacing a sword and a spell, or anything that swaps both
+      hands at once, leaves two things to remember in one slot. Two options:
+      (a) a pseudo-item for the pair, "re-equip both", one key press restoring
+      the whole previous loadout; or (b) remember one hand, the right, and drop
+      the other. (b) is the v1 answer; (a) is worth having if the pair case
+      turns out to be common in play.
+      Relates to the weapon stale-recommendation entry: the weapon registry
+      still lacks the OnItemUsed/MarkPageDirty hook items got in #43 (M)
+
+- [ ] **Slots change several times in a few seconds while state is moving.**
+      Seen in play: as combat state shifts quickly, one slot can take four or
+      five different items inside a handful of seconds. Seating keeps each item
+      in its own place, but it cannot stop the item SET turning over.
+      The desired rule: once a slot is filled it accepts nothing new for
+      3-5 s however much the state changes, with high-priority overrides
+      (urgent potions) as the only exception.
+      **Step 1 is instrumentation, not a fix.** There is currently no measure
+      of how often slots change, so "four or five times" is an impression and
+      any fix would be unverifiable. Wanted:
+      - A per-slot change counter in `SlotLocker::ApplyLocks` (content change =
+        the displayed FormID/uniqueID differs from last frame), bucketed by
+        CAUSE: lock expired, lock broken by override, unlocked by
+        `OnItemUsed`, `UnlockAll` (page switch/reset), dedup clear, fill from
+        empty, remembrance.
+      - Rate, not just totals: changes per slot per 10 s window, plus the
+        worst window seen (max changes in any single 5 s span, per slot).
+        That peak is the number that matches what the player sees.
+      - Report it in the `[Soak]` heartbeat (`SoakMetrics.cpp`) as one field,
+        e.g. `slotChurn total=N peak5s=K@slotI` — summary-level, per the
+        logging principles, not a line per change. Per-change detail stays at
+        debug, and the existing "lock broken" debug line gains the reason,
+        which it does not currently state.
+      - A Tracy plot of changes/s alongside the existing Huginn plots, so the
+        burst can be lined up against state transitions in a capture.
+      Only then decide the fix, against a baseline number.
+      What the code already does, for context: `SlotLocker` keeps a per-slot
+      timer (`m_lockedSlots[i].remainingMs`); only the DURATION is global —
+      `fLockDurationMs` = 3000, `fMinLockDurationMs` = 500 — and
+      `ShouldBreakLock` already refuses every non-override change until
+      expiry. So churn faster than every 3 s means something releases locks
+      early. Suspects from reading the code:
+      - `OnItemUsed` unlocks the slot holding the used item (callers:
+        `EquipManager` x3, `Main.cpp`, the inventory delta-scan in
+        `UpdateLoop`). In combat: slot refills, that item is used, refills
+        again.
+      - `SlotAllocator::SetCurrentPage` calls `UnlockAll` on every page switch.
+      - `ShouldLock` never locks an empty assignment, so a slot that expires to
+        empty is unheld and the next fill starts a fresh 3 s with no cooldown
+        carried over.
+      - `DedupePreferLocked` can empty an unlocked slot, feeding the case above.
+      - Overrides at `immediateBreakPriority` (50) break the matching slot's
+        lock — intended, but worth confirming it is not firing repeatedly.
+      Candidate fixes, cheapest first: a per-slot "last changed" cooldown that
+      survives unlock; a score margin a challenger must clear to take a slot
+      after expiry; per-slot lock durations in `[PageN.SlotM]`. The last is
+      the bigger ask and waits on the first two being measured
+      (instrumentation S; fix S-M)
 
 ## Doc-migration findings (2026-08-29)
 Surfaced by the one-agent-per-doc migration pass. Every one is a code or config

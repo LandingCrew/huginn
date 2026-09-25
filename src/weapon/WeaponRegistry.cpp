@@ -107,7 +107,7 @@ namespace Huginn::Weapon
         break;
       }
 
-      AddAmmo(sa.ammo, sa.count, sa.isEquipped);
+      AddAmmo(sa.ammo, sa.count, sa.isEquipped, sa.baseCount);
       }
 
       logger::info("Weapon registry built: {} weapons, {} ammo types"sv,
@@ -226,10 +226,16 @@ namespace Huginn::Weapon
         if (!entry || !entry->object || !entry->object->Is(RE::FormType::Ammo)) {
         continue;
         }
-        // Accumulate (+=), not assign: one ammo object can appear as multiple
-        // entryList entries (distinct extra-data stacks). GetInventorySafe sums
-        // the same way; a bare assign would keep only the last stack's count.
-        ammoCounts[entry->object->GetFormID()] += static_cast<int32_t>(entry->countDelta);
+        // FIRST entry wins, which is what Util::GetInventorySafe does (see the
+        // duplicate-semantics note at the top of InventoryUtil.h). This used to
+        // accumulate, and the comment here claimed GetInventorySafe summed the
+        // same way -- true once, and false since that helper was changed to
+        // first-wins to stop a phantom Iron Sword. Summing here while baseCount
+        // is derived from a first-wins count double-counts every form with two
+        // changes entries, and the fast path and the reconcile then report
+        // different numbers for the same inventory.
+        ammoCounts.try_emplace(entry->object->GetFormID(),
+           static_cast<int32_t>(entry->countDelta));
       }
       }
 
@@ -293,8 +299,28 @@ namespace Huginn::Weapon
       // GetBestArrow/GetBestBolt (count > 0), so FindBestAmmo can't surface ammo
       // the player no longer has.
       for (auto& invAmmo : m_ammo) {
+      // countDelta is a DELTA against the base container, not a count. Adding
+      // it to what the last full scan saw there is the whole difference between
+      // "you have 13 arrows" and "you have -5 arrows", which is what this
+      // reported for a vanilla character who had shot five of the arrows they
+      // started with -- and a count at or below zero trips the depletion branch
+      // below, so Huginn announced they were out of arrows while they held
+      // them.
+      //
+      // Ammo the player PICKED UP has no base-container copy, so baseCount is 0
+      // and this is the delta alone, exactly as before.
       auto it = ammoCounts.find(invAmmo.data.formID);
-      const int32_t newCount = (it != ammoCounts.end()) ? it->second : 0;
+      const int32_t newCount =
+      (it != ammoCounts.end())
+         ? std::max(0, invAmmo.baseCount + it->second)
+         // No changes entry at all. That used to mean "gone", and it was right
+         // while every count came from the changes list -- but base-container
+         // ammo the player has not yet touched has no entry either, and
+         // answering 0 for it reported a full quiver as depleted. It does not
+         // recover: ReconcileWeapons only ADDS ammo it does not already know
+         // (m_ammoIndex.contains), so nothing rewrites the count for the rest
+         // of the session. What the base container holds is what they have.
+         : invAmmo.baseCount;
 
       // A type that just hit zero stops being a candidate on the next pipeline
       // run (the affordability filter drops count <= 0), but the slot lock
@@ -381,6 +407,10 @@ namespace Huginn::Weapon
         sa.ammo = ammo;
         sa.count = count;
         sa.isEquipped = (ammo == equippedAmmo);
+        // What the base container holds, which this walk can see and the 2 Hz
+        // one cannot. See InventoryAmmo::baseCount.
+        sa.baseCount =
+           count - (entry ? static_cast<int32_t>(entry->countDelta) : 0);
         scannedAmmo.push_back(sa);
       }
       }
@@ -456,12 +486,21 @@ namespace Huginn::Weapon
         // the weapon was first picked up.
         if (safeToAccessExtraLists) {
            if (sw.temperFactor != invWeapon.data.temperFactor) {
-            logger::debug("[WeaponRegistry] '{}' temper {:.2f} -> {:.2f}, dmg {:.1f} -> {:.1f}"sv,
+            // The MODELLED number on both sides, and labelled as such: what
+            // actually gets stored below is BestDamage(), which prefers the
+            // game's. Printing the model as though it were the new value was
+            // misleading in exactly the diagnosis this line exists for -- on
+            // LoreRim it would claim 50.4 for a weapon stored at 46.
+            logger::debug("[WeaponRegistry] '{}' temper {:.2f} -> {:.2f}, model {:.1f} -> {:.1f}"sv,
               invWeapon.data.name, invWeapon.data.temperFactor, sw.temperFactor,
-              invWeapon.data.damage, invWeapon.data.baseDamage * sw.temperFactor);
+              invWeapon.data.baseDamage * invWeapon.data.temperFactor,
+              invWeapon.data.baseDamage * sw.temperFactor);
             invWeapon.data.temperFactor = sw.temperFactor;
-            invWeapon.data.damage = invWeapon.data.baseDamage * sw.temperFactor;
            }
+           if (sw.displayDamage > 0.0f) {
+            invWeapon.data.displayDamage = sw.displayDamage;
+           }
+           invWeapon.data.damage = invWeapon.data.BestDamage();
            if (!sw.displayName.empty() && sw.displayName != invWeapon.data.name) {
             invWeapon.data.name = sw.displayName;
            }
@@ -541,7 +580,7 @@ namespace Huginn::Weapon
       RE::FormID formID = sa.ammo->GetFormID();
       if (!m_ammoIndex.contains(formID)) {
         if (m_ammo.size() < Config::MAX_TRACKED_AMMO) {
-           AddAmmo(sa.ammo, sa.count, sa.isEquipped);
+           AddAmmo(sa.ammo, sa.count, sa.isEquipped, sa.baseCount);
            ammoAdded++;
            logger::trace("[WeaponRegistry] Added ammo: {}"sv, sa.ammo->GetName());
         }
@@ -768,14 +807,21 @@ namespace Huginn::Weapon
       for (const auto& weapon : m_weapons) {
       // uid and the temper pair are the whole point of this log now: two lines
       // sharing a FormID with different uids is the registry tracking two
-      // instances, which is what could not happen before. And printing base
-      // beside effective damage is how the temper model gets checked against
-      // the number the game shows in the inventory.
-      logger::info("  {} ({:08X}/uid{}): dmg={:.1f} (base {:.1f} x{:.2f}), tags={:08X}, fav={}, eq={}, charge={:.0f}%"sv,
+      // instances, which is what could not happen before.
+      //
+      // `dmg` is the one number, ranked and displayed, and should equal what
+      // the player's inventory shows: PlayerCharacter::GetDamage, skill and
+      // perks included. It is printed beside base and temper so the model can
+      // still be reconstructed -- their product is what `dmg` would have been
+      // before this became one number, and the gap between them is the
+      // skill/perk term. `[modelled]` means the game did not answer and that
+      // product is what is stored.
+      logger::info("  {} ({:08X}/uid{}): dmg={:.1f}{} (base {:.1f} x{:.2f}), tags={:08X}, fav={}, eq={}, charge={:.0f}%"sv,
         weapon.data.name,
         weapon.data.formID,
         weapon.data.uniqueID,
         weapon.data.damage,
+        weapon.data.displayDamage > 0.0f ? ""sv : " [modelled]"sv,
         weapon.data.baseDamage,
         weapon.data.temperFactor,
         std::to_underlying(weapon.data.tags),
@@ -850,7 +896,16 @@ namespace Huginn::Weapon
 
       // Tempering. ExtraHealth is the game's own quality multiplier for this
       // stack: 1.0 untempered, higher once it has been to a grindstone.
-      if (auto* extraHealth = extraList->GetByType<RE::ExtraHealth>(); extraHealth) {
+      //
+      // A PRESENT ExtraHealth can still read 0, and four of thirteen stacks did
+      // on 2026-09-23 -- a Long Bow, an Orcish Dagger, an Iron Dagger and a
+      // Wooden Battlestaff, each beside an identical stack reading 1.0. Taken
+      // literally that is a weapon with no damage: rank went to 0.0 and the
+      // scorer will never offer it. The multiplier the game applies is never
+      // zero, so a zero here means the field was created and not filled, which
+      // is untempered.
+      if (auto* extraHealth = extraList->GetByType<RE::ExtraHealth>();
+      extraHealth && extraHealth->health > 0.0f) {
         sw.temperFactor = extraHealth->health;
       }
 
@@ -905,12 +960,46 @@ namespace Huginn::Weapon
       return;
       }
 
+      // The number the player will actually read, asked of the ACTOR rather
+      // than the form, because the skill and perk terms live on the actor and
+      // no amount of reading the form will produce them.
+      //
+      // PlayerCharacter::GetDamage is the game's own accessor -- the inventory
+      // card calls it, and it sits beside GetArmorValue which does the same job
+      // for apparel. It is also a raw native in a codebase that has been bitten
+      // by one before (InventoryChanges::GetItemCount, PR #41, crashed on
+      // save-load), so it is called only here: inside the includeExtraLists
+      // gate, which already means Util::IsExtraListStable() said the inventory
+      // is safe to read, and never on the load path.
+      //
+      // Per ENTRY, so every stack of one base form gets the same answer; see
+      // WeaponData::displayDamage. A non-positive result means "no answer" and
+      // falls back to the computed number rather than showing a zero.
+      //
+      // Asked BEFORE the degraded early return below, because it needs only the
+      // entry and not its extra lists. A weapon present solely in the player's
+      // base container gets an InventoryEntryData with extraLists == nullptr,
+      // so it used to take that return and keep the modelled number forever --
+      // and base-container weapons are exactly the starting gear this change
+      // was verified against.
+      float displayDamage = 0.0f;
+      if (includeExtraLists && entry) {
+      if (auto* player = RE::PlayerCharacter::GetSingleton()) {
+        const float asked = player->GetDamage(entry);
+        if (asked > 0.0f) {
+           displayDamage = asked;
+        }
+      }
+      }
+
       if (!includeExtraLists || !entry || !entry->extraLists) {
       // Degraded: one record for the form, no instance detail at all. During
       // the stabilization window after a load this is every weapon; the primed
       // short-retry reconcile replaces these with real per-stack records a
       // second later.
-      out.push_back(ExtractWeaponMetadata(weapon, nullptr, equipped));
+      auto sw = ExtractWeaponMetadata(weapon, nullptr, equipped);
+      sw.displayDamage = displayDamage;
+      out.push_back(std::move(sw));
       return;
       }
 
@@ -920,7 +1009,9 @@ namespace Huginn::Weapon
       for (auto* extraList : *entry->extraLists) {
       if (!extraList) continue;
       plainCopies -= extraList->GetCount();
-      out.push_back(ExtractWeaponMetadata(weapon, extraList, equipped));
+      auto sw = ExtractWeaponMetadata(weapon, extraList, equipped);
+      sw.displayDamage = displayDamage;
+      out.push_back(std::move(sw));
       }
 
       if (plainCopies > 0) {
@@ -929,6 +1020,7 @@ namespace Huginn::Weapon
       // because nothing distinguishes them -- including, for Wheeler, a
       // uniqueID, which is why the push filters them out (#118).
       ScannedWeapon sw = ExtractWeaponMetadata(weapon, nullptr, equipped);
+      sw.displayDamage = displayDamage;
       // ...and they cannot be the equipped one: ExtraWorn lives on an
       // extraList, so an equipped copy always has one and was emitted above.
       sw.isEquipped = false;
@@ -1024,6 +1116,8 @@ namespace Huginn::Weapon
       sa.ammo = ammo;
       sa.count = count;
       sa.isEquipped = (ammo == equippedAmmo);
+      sa.baseCount =
+      count - (entry ? static_cast<int32_t>(entry->countDelta) : 0);
 
       ammoList.push_back(sa);
       }
@@ -1127,7 +1221,14 @@ namespace Huginn::Weapon
       // form: what this particular stack was tempered to, and what the player
       // sees it called.
       data.temperFactor = sw.temperFactor;
-      data.damage = data.baseDamage * sw.temperFactor;
+      data.displayDamage = sw.displayDamage;
+      // BestDamage, and nothing after it. The line that used to sit here set
+      // damage back to baseDamage * temperFactor, so every weapon entering
+      // through AddWeapon -- which is all of them after a rebuild -- was stored
+      // with the model this PR exists to replace, and only corrected up to 30 s
+      // later by the reconcile. `hg status` printed no [modelled] marker for
+      // them either, because displayDamage WAS set; only `damage` was wrong.
+      data.damage = data.BestDamage();
       if (!sw.displayName.empty()) {
       data.name = sw.displayName;
       }
@@ -1160,7 +1261,8 @@ namespace Huginn::Weapon
       return true;
    }
 
-   void WeaponRegistry::AddAmmo(RE::TESAmmo* ammo, int32_t count, bool isEquipped)
+   void WeaponRegistry::AddAmmo(RE::TESAmmo* ammo, int32_t count, bool isEquipped,
+      int32_t baseCount)
    {
       // NOTE: Assumes m_mutex is already held by caller (v0.7.12 - thread safety)
       if (!ammo) return;
@@ -1172,6 +1274,7 @@ namespace Huginn::Weapon
       if (it != m_ammoIndex.end()) {
       logger::debug("[WeaponRegistry] Ammo {:08X} already registered, updating count"sv, formID);
       m_ammo[it->second].count = count;
+      m_ammo[it->second].baseCount = baseCount;
       m_ammo[it->second].isEquipped = isEquipped;
       return;
       }
@@ -1184,7 +1287,8 @@ namespace Huginn::Weapon
       InventoryAmmo invAmmo{
       .data = std::move(data),
       .count = count,
-      .isEquipped = isEquipped
+      .isEquipped = isEquipped,
+      .baseCount = baseCount
       };
 
       // Add to dual-index storage

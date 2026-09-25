@@ -184,7 +184,51 @@ namespace Huginn::Weapon
       // how the temper model gets checked against what the game shows.
       float baseDamage = 0.0f;     // Base form's damage, before tempering
       float temperFactor = 1.0f;   // ExtraHealth on this stack; 1.0 = untempered
-      float damage = 0.0f;         // baseDamage x temperFactor - the effective number
+      /// The number to rank on AND to show: the game's own, when it answered.
+      ///
+      /// This used to be baseDamage x temperFactor, and that model is wrong
+      /// wherever a mod changes what tempering does. LoreRim's smithing adds
+      /// damage rather than multiplying it -- `(1.2)` is +2 points, measured
+      /// across five weapons on 2026-09-23 -- so the model overstated a
+      /// tempered Iron Sword at 50.4 against the game's 46 while understating
+      /// an untempered Orcish Dagger at 48 against its 50, and Huginn
+      /// recommended the sword where the game says the dagger is better.
+      ///
+      /// The game's number has no such problem: it already contains whatever
+      /// tempering, skill and perks come to on THIS load order, by definition,
+      /// because it is what the player is reading. Ranking the whole inventory
+      /// by it reproduces the game's own damage ordering exactly.
+      float damage = 0.0f;
+
+      /// What the game's inventory shows for this weapon, or 0 when unknown.
+      ///
+      /// `damage` above is the FORM's number times this stack's temper, and it
+      /// is missing the player's skill and perks -- so it is not what the
+      /// player reads anywhere. Measured 2026-09-19: an untempered Iron Sword
+      /// read 7.0 here against the game's 8, and three tempered weapons read
+      /// 9.9 / 7.7 / 4.4 against 11 / 9 / 6.
+      ///
+      /// Ranking keeps using `damage`, and should: within one weapon skill the
+      /// missing term is identical for every candidate, so no comparison it
+      /// makes is affected. Display must not, which is the whole of this field.
+      ///
+      /// Supplied by PlayerCharacter::GetDamage, the game's own accessor -- the
+      /// one the inventory card calls. That takes an InventoryEntryData, which
+      /// is per BASE FORM and not per stack, so when one form is owned at two
+      /// different tempers both stacks get the same answer. Better than a
+      /// number that is wrong for all of them, and the limit is recorded here
+      /// rather than hidden: `hg status` prints both numbers so the gap can be
+      /// read off against the inventory.
+      float displayDamage = 0.0f;
+
+      /// The best damage figure available: the game's if it answered, the
+      /// base x temper model if it did not. The model survives as a fallback
+      /// only -- on the load path, before the inventory is safe to read, it is
+      /// all there is.
+      [[nodiscard]] float BestDamage() const noexcept
+      {
+      return displayDamage > 0.0f ? displayDamage : baseDamage * temperFactor;
+      }
       float speed = 1.0f;          // Attack speed multiplier
       float reach = 1.0f;          // Reach multiplier
 
@@ -313,6 +357,22 @@ namespace Huginn::Weapon
       AmmoData data;               // Classification data
       int32_t count = 0;           // Current inventory count
       bool isEquipped = false;     // Currently equipped
+
+      /// How many of these the player's BASE CONTAINER holds.
+      ///
+      /// The 2 Hz refresh reads `InventoryEntryData::countDelta`, which is a
+      /// delta against that container and not a count. For ammo the player
+      /// picked up, the two are the same and nothing was ever wrong. For ammo
+      /// they STARTED with, the delta is how many they have spent -- so a
+      /// vanilla character who had shot five of their starting arrows had the
+      /// count stored as -5 and was reported as out of arrows while holding
+      /// them (2026-09-23).
+      ///
+      /// Recorded by the full scans, which use Util::GetInventorySafe and so
+      /// see the base container; the fast path adds the live delta to it. The
+      /// base container does not change between reconciles -- that is what
+      /// makes it the base container -- so this stays true until the next one.
+      int32_t baseCount = 0;
 
       [[nodiscard]] std::string ToString() const
       {

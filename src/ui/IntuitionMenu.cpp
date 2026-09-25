@@ -531,7 +531,13 @@ namespace Huginn::UI
             if (weapon->type == Weapon::WeaponType::Bow ||
                 weapon->type == Weapon::WeaponType::Crossbow) {
                 // Ranged: total damage (bow + arrow) + ammo count
-                int totalDmg = static_cast<int>(weapon->damage + playerState.equippedAmmoDamage);
+                // Rounded, not truncated. The game rounds, and a cast does not:
+                // an Iron Sword the inventory calls 9 computes to 8.8 and was
+                // printed as 8, which is a different number from the one the
+                // player is looking at -- the whole complaint this display
+                // change exists to answer (vanilla, 2026-09-23).
+                int totalDmg = static_cast<int>(std::lround(
+                    weapon->damage + playerState.equippedAmmoDamage));
                 detail = std::format("{} dmg", totalDmg);
                 int32_t count = (weapon->type == Weapon::WeaponType::Bow)
                     ? playerState.arrowCount : playerState.boltCount;
@@ -560,7 +566,8 @@ namespace Huginn::UI
             }
             else {
                 // Melee: damage + optional charge
-                detail = std::format("{} dmg", static_cast<int>(weapon->damage));
+                detail = std::format("{} dmg",
+                    static_cast<int>(std::lround(weapon->damage)));
                 if (weapon->hasEnchantment) {
                     detail += std::format(" \xC2\xB7 {}%",
                         static_cast<int>(weapon->GetChargePercent() * 100));

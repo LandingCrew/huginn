@@ -426,6 +426,38 @@ namespace Huginn::Spell
       (archetype == RE::EffectSetting::Archetype::kDualValueModifier &&
        primaryEffect->data.secondaryAV == RE::ActorValue::kHealth);
       if (harmful) {
+        // A harmful VALUE MODIFIER on an actor value nothing reads is not a
+        // debuff, because there is nothing there to debuff. It is a carrier:
+        // the magnitude is recorded on a dead stat and the harm is delivered
+        // by the projectile or explosion attached to the effect.
+        //
+        // kFame and kInfamy are the dead stats in question -- vestigial since
+        // Oblivion and read by nothing in Skyrim. LoreRim uses kFame for two
+        // unrelated conventions, and the ARCHETYPE separates them: a
+        // kPeakValueModifier on kFame is the Illusion "maximum level affected"
+        // number, which is 110 Fear/Calm/Frenzy/Sleep/Silence spells that are
+        // correctly Debuff and must not move. A kValueModifier on it, harmful,
+        // is this case: 57 forms on the 2026-09-24 dump -- 55 throwing knives,
+        // which LoreRim ships as scrolls, plus Celestial Rays and its scroll --
+        // and all 57 describe themselves as dealing damage. They were typed
+        // Debuff, so a stack of 45 throwing knives was ranked as crowd control
+        // and could never fill a damage slot.
+        //
+        // Keyed on the archetype and the actor value together for that reason.
+        // On the actor value alone it would have retyped the entire Illusion
+        // school, which is the same shape as the `deals N damage` text rule
+        // that would have retyped twenty-one weapon enchants.
+        // kValueModifier ONLY, not the whole arm. This block is shared with
+        // kDualValueModifier and kPeakValueModifier, and checking the actor
+        // value without the archetype retypes 168 forms rather than 57 --
+        // every Illusion spell in the list, because they are hostile with the
+        // detrimental flag clear and `harmful` is either one.
+        if (archetype == RE::EffectSetting::Archetype::kValueModifier &&
+           (primaryEffect->data.primaryAV == RE::ActorValue::kFame ||
+            primaryEffect->data.primaryAV == RE::ActorValue::kInfamy)) {
+           return SpellType::Damage;
+        }
+
         // Unless it is aimed at YOU. Reading kDetrimental as harm was the fix
         // that stopped "Insomnia" being a heal, but it also made every spell
         // that spends your own health an attack: Equilibrium (Blood) converts
