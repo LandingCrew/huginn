@@ -209,8 +209,14 @@ namespace Huginn::State
       }
 
       // Update equipment state with change detection
-      bool ammoCountChanged = false;
-      std::int32_t prevAmmoCount = 0;
+      // One pair per field, not one shared pair. Both CAN change on the same
+      // tick -- swapping a crossbow for a bow moves boltCount to 0 and
+      // arrowCount off it -- and a single `prev` let the second branch overwrite
+      // the first, printing one line with the other field's "from" value.
+      bool arrowCountChanged = false;
+      bool boltCountChanged = false;
+      std::int32_t prevArrowCount = 0;
+      std::int32_t prevBoltCount = 0;
       bool returnChanged = false;
       {
       std::unique_lock lock(m_playerMutex);
@@ -286,14 +292,14 @@ namespace Huginn::State
         changed = true;
       }
       if (m_playerState.arrowCount != newArrowCount) {
-        prevAmmoCount = m_playerState.arrowCount;
-        ammoCountChanged = true;
+        prevArrowCount = m_playerState.arrowCount;
+        arrowCountChanged = true;
         m_playerState.arrowCount = newArrowCount;
         changed = true;
       }
       if (m_playerState.boltCount != newBoltCount) {
-        prevAmmoCount = m_playerState.boltCount;
-        ammoCountChanged = true;
+        prevBoltCount = m_playerState.boltCount;
+        boltCountChanged = true;
         m_playerState.boltCount = newBoltCount;
         changed = true;
       }
@@ -319,16 +325,21 @@ namespace Huginn::State
       // it was a delta -- there was no way to see that from the log, because the
       // only line here said "PlayerEquipment changed". One line per shot while
       // shooting, silent otherwise.
-      if (ammoCountChanged) {
-      // The pipeline's hash gate cannot see this field, so say so explicitly or
-      // the widget keeps last run's number. See ConsumeAmmoCountChanged.
+      if (arrowCountChanged || boltCountChanged) {
+      // The pipeline's hash gate cannot see these fields, so say so explicitly
+      // or the widget keeps last run's number. See ConsumeAmmoCountChanged.
       m_ammoCountChanged.store(true, std::memory_order_release);
 
-      const bool bow = newHasBowEquipped;
-      logger::debug("[StateManager] {} {} -> {}"sv,
-        bow ? "arrows"sv : "bolts"sv,
-        prevAmmoCount,
-        bow ? newArrowCount : newBoltCount);
+      // The label follows the FIELD that changed, not the equipped weapon. It
+      // used to read `newHasBowEquipped`, which mislabels every line where the
+      // two disagree -- unequipping a bow holding 18 arrows drives arrowCount
+      // to 0 with no bow equipped, and printed "bolts 18 -> 0".
+      if (arrowCountChanged) {
+        logger::debug("[StateManager] arrows {} -> {}"sv, prevArrowCount, newArrowCount);
+      }
+      if (boltCountChanged) {
+        logger::debug("[StateManager] bolts {} -> {}"sv, prevBoltCount, newBoltCount);
+      }
       }
 
       return returnChanged;  // Stage 3b: Return change detection flag

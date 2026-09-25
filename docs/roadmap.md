@@ -296,6 +296,23 @@ re-opening something that looks obviously undone.
       alchemy lab (#65, PR #114); the forge may still have no live payload
 
 ## Known Recommendation Issues
+- [ ] Two counts for the same quiver can be on screen at once and disagree by
+      one shot. A bow or crossbow slot prints `playerState.arrowCount` --
+      polled at 10 Hz and, since v0.21.13, forcing a recompute on every shot --
+      while an ammo slot prints the count on its AmmoCandidate, which comes
+      from WeaponRegistry's own 500 ms refresh. During archery a widget holding
+      both can read `Long Bow - [11]` beside `Iron Arrow - [12]` for up to half
+      a second per shot.
+      Pre-existing skew; only visible since v0.21.12 made Minimal -- the
+      default mode -- print counts at all.
+      NOT fixed by pointing both at PlayerActorState: an ammo candidate can be
+      ammo the player has NOT equipped, which PlayerActorState knows nothing
+      about, so the registry is the right source for that slot. The fix is
+      either to push the equipped ammo's count into the candidate at generation
+      time, or to let the equipment poll nudge the weapon registry's ammo index
+      the way it now nudges the pipeline.
+      Raised 2026-09-24, from the #133 review.
+
 - [ ] #128 measured the spell classifier against 1,107 spells and silently
       excluded 1,200 scrolls. `hg dump spells` walked
       `GetFormArray<RE::SpellItem>()`, and GetFormArray keys on T::FORMTYPE --

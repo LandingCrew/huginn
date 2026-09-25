@@ -94,13 +94,19 @@ namespace Huginn::Util
         // leveled entry -- see the note above.
         if (!leveledInChanges) {
             if (auto* container = ref->GetContainer()) {
+                // kContinue, not kStop: a base container may list the same
+                // object more than once (an ESP or patch splitting starting
+                // gear), and GetInventorySafe's phase 2 sums every matching
+                // entry. Stopping at the first one answered low for exactly
+                // that case -- the two-definitions-drift-apart failure this
+                // helper exists to prevent. The walk is the player's base
+                // container, which is starting gear.
                 container->ForEachContainerObject(
                     [&](RE::ContainerObject& a_entry) {
-                        if (a_entry.obj != obj) {
-                            return RE::BSContainer::ForEachResult::kContinue;
+                        if (a_entry.obj == obj) {
+                            count += a_entry.count;
                         }
-                        count += a_entry.count;
-                        return RE::BSContainer::ForEachResult::kStop;
+                        return RE::BSContainer::ForEachResult::kContinue;
                     });
             }
         }
