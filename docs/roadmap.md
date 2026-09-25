@@ -634,6 +634,92 @@ Raised 2026-09-24.
       not comparable to one measured after.
       Raised 2026-09-24.
 
+- [ ] **Overrides should not take a slot, and override slots should prefer the
+      items overrides are about.** The structural answer to the slot-stability
+      entry above, raised out of the Steel Arrow case recorded there
+      (2026-09-24).
+
+      **The conflict.** Overrides and ranked items are allocated from the same
+      pool of slots, and overrides go first: Pass 1 runs before Pass 2 on an
+      entirely empty page, so an override does not evict anything -- it
+      PRE-EMPTS. Whatever would have filled that slot lands one slot down, and
+      so does everything below it. Seating then refuses to paper over it, on
+      purpose and correctly: "an override slot keeps the seat of whatever
+      normally lives there, and the item it displaced keeps its claim rather
+      than taking a seat where it was pushed" (5-slots.md), because the
+      alternative lets one low-health potion permanently move a key.
+      So seating exists to make keys stop changing, and an override's mechanism
+      IS changing what a key does. Neither is buggy. They cannot both win while
+      they share an index space, which makes every override a small guaranteed
+      dose of the exact churn the stability work is trying to remove.
+
+      The shipped layout makes it certain rather than occasional. There is no
+      reserved override slot on any default page: `Page0.Slot6` is a `Regular`
+      fill slot AND the `Other` landing pad, and it is `Regular` precisely
+      because WeaponCharge surfaces a soul gem, which no other classification
+      accepts. Being `Regular`, it also soaks up any ranked candidate.
+
+      **Design constraint, from the user 2026-09-24:** the UI has to be
+      readable at a glance and then get out of the way. That rules out a banner
+      or a second list. Whatever carries the override has to be one small
+      element, and the goal it serves is PREDICTABILITY -- the same key meaning
+      the same thing from one second to the next.
+
+      **Two changes, and they are complementary rather than alternatives.**
+
+      1. *Out of band.* An override stops occupying a slot index. It is a
+         message -- "LOW AMMO: 9 arrows remaining" -- not a ranking result, and
+         it gets its own small element with its own key, outside the numbered
+         list. This is the part that actually closes the hole: nothing can be
+         displaced by something that never takes a slot. It also deletes a
+         surprising amount of incidental machinery -- Pass 1b's
+         classification-dropping fallback, the `displaced` log, the
+         `ValidateOverridePlaceability` startup check with its unplaceable
+         warning and one-sided contention heuristic, and the separate
+         "Override placeability UX" entry, which is a symptom of the same cause
+         and should close with this.
+
+      2. *Override affinity in normal fill.* `bOverridesEnabled` stops meaning
+         "an override of this category may seize this slot" and starts meaning
+         "this slot PREFERS the items an override of this category would
+         surface". Same INI key, same existing configs, no longer a seizure.
+         The point is the observed case: `Page0.Slot6` and `Page0.Slot7` are
+         identical -- both `Regular`, both wildcards on -- and differ only in
+         `bOverridesEnabled`. Normal fill therefore treats them as
+         interchangeable and splits them on priority alone, so Iron Sword (the
+         better-ranked item) took slot 6 and the Steel Arrows took slot 7. With
+         affinity the arrows sit in slot 6 in the first place, the ammo
+         override is about the item already under that key, and the player's
+         hand does not move.
+         This is what buys predictability. (1) stops things moving; (2) makes
+         where they sit mean something.
+
+      **Two honest limits, to decide before building.**
+
+      * `Other` is a grab bag: Drowning, WeaponCharge and LowAmmo -- a
+        water-breathing potion, a soul gem and arrows. `bOverridesEnabled =
+        Other` as an AFFINITY therefore means "prefers any of those three",
+        which is far weaker than "prefers ammo" and would pull a soul gem into
+        the arrows' slot as readily as arrows. Affinity wants to key on the
+        CONDITION rather than the category, or `Other` needs splitting. The
+        category is the right granularity for permission and the wrong one for
+        preference, which is worth noticing before reusing the key for both.
+      * Affinity is a preference inside ranked fill, so it cannot promote an
+        item onto a page it did not earn. If the arrows rank twentieth they are
+        not on the page at all and there is nothing for the override to be a
+        no-op over. That is acceptable only BECAUSE (1) means there is nothing
+        to displace either -- which is the argument for doing them in that
+        order rather than treating (2) as a cheaper substitute.
+
+      Evidence the current model is already strained, not just inconvenient:
+      `Page0.Slot0` is `DamageAny` with `bOverridesEnabled = HP`, and a health
+      potion does not match `DamageAny` (items match that on `Poison`). Pass 1
+      cannot place the flagship override on the flagship slot; it lands there
+      only because Pass 1b drops the classification requirement. The default
+      configuration depends on the fallback pass for its primary case.
+      (M-L)
+
+
 ## Doc-migration findings (2026-08-29)
 Surfaced by the one-agent-per-doc migration pass. Every one is a code or config
 defect the docs exposed, not a documentation problem. Ordered by what a player
