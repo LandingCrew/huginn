@@ -320,6 +320,10 @@ namespace Huginn::State
       // only line here said "PlayerEquipment changed". One line per shot while
       // shooting, silent otherwise.
       if (ammoCountChanged) {
+      // The pipeline's hash gate cannot see this field, so say so explicitly or
+      // the widget keeps last run's number. See ConsumeAmmoCountChanged.
+      m_ammoCountChanged.store(true, std::memory_order_release);
+
       const bool bow = newHasBowEquipped;
       logger::debug("[StateManager] {} {} -> {}"sv,
         bow ? "arrows"sv : "bolts"sv,

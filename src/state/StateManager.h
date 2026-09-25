@@ -85,6 +85,25 @@ namespace Huginn::State
       // Used by UpdateLoop to skip expensive pipeline when state is stable
       [[nodiscard]] bool DidLastUpdateChangeState() const noexcept { return m_lastUpdateChanged; }
 
+      // Did the equipped ammo count change since this was last asked? Consuming
+      // read -- the caller gets it once and clears it.
+      //
+      // Exists because the ammo count is NOT a GameState hash dimension, so
+      // CheckHashSkip drops the very tick that changed it: state polls at 10 Hz
+      // and is correct, the pipeline never re-runs on a quiet scene, and the
+      // widget keeps printing the count from whenever it last ran for some other
+      // reason. Observed 2026-09-24 as [9] on the widget against 6 on the game's
+      // own HUD, 38 seconds apart.
+      //
+      // A bool rather than the count itself, and consuming rather than peeked,
+      // so UpdateLoop can turn it into MarkPageDirty() without copying
+      // PlayerActorState at 10 Hz and without StateManager learning what a
+      // SlotAllocator is -- the same shape the inventory delta scan already uses
+      // for the same reason.
+      [[nodiscard]] bool ConsumeAmmoCountChanged() noexcept {
+         return m_ammoCountChanged.exchange(false, std::memory_order_acq_rel);
+      }
+
       // True while instant-hit fire/frost/shock damage is inside the elemental
       // enrichment window. The outer pipeline-skip gate must consult this: the
       // enrichment flags (isOnFire/isFrozen/isShocked) decay with wall-clock time
@@ -364,6 +383,7 @@ namespace Huginn::State
       // Tracks whether last Update() detected any state changes
       // Used by UpdateLoop to skip expensive pipeline when state is stable
       std::atomic<bool> m_lastUpdateChanged{true};  // Default true to run pipeline on first update
+      std::atomic<bool> m_ammoCountChanged{false};  // See ConsumeAmmoCountChanged
 
       // Elemental enrichment window flag (set in PollHealthTracking, read by the
       // outer skip gate in UpdateLoop via IsElementalWindowActive)
