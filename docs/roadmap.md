@@ -708,21 +708,46 @@ trigger to pick any of it up.
 - [ ] Unit tests for Context::WeightForCandidate (Tests.cpp:2656/3374 currently
       hand-reimplement the weight mapping — call the real one). DominantReason /
       ReasonLabel are covered by unit test 17.
-- [ ] Three remote branches are left and none is a simple delete.
-      The eleven whose PRs merged were deleted 2026-09-24 (#107, #108, #109,
-      #115, #116, #118, #120, #123, #125, #126, #127). The entry this replaces
-      claimed four of those were "merged or superseded" on ancestry evidence,
-      which is the wrong test in a squash-merging repo -- a squash-merged branch
-      stays ahead of main forever. PR state is the test.
-      What is left, and why each one is a judgment call:
-      - `slot-stability` (PR #124 CLOSED, 16 commits) -- abandoned rather than
-        merged, and the live slot-stability entry above is about the same
-        problem. That work is the only copy. Read it before deleting it.
-      - `chore/tracy-0.14.1` (PR #117 CLOSED, 3 commits) -- a profiler version
-        bump that was not taken. Cheap to redo; probably safe to drop.
-      - `widget-hide-while-wheel-open` (no PR, 1 commit) -- never opened, still
-        holds work. Keep.
-      (XS, but not automatic)
+- [ ] The widget stays on screen through cut scenes, and the fix is written
+      but unmerged. `origin/widget-hide-while-wheel-open`, one commit
+      (`b752f38`, 2026-09-04), never opened as a PR.
+      The widget's only visibility gate is `GameIsPaused()`, and a cut scene
+      does not pause the game -- the camera is taken away and the controls go
+      quiet, but as far as that predicate is concerned nothing has happened.
+      The commit gates on two camera states instead, `kAnimated` (scripted
+      cut scenes and killmoves) and `kAutoVanity` (the idle orbit), and
+      deliberately excludes `kFurniture` -- which would hide the widget at an
+      alchemy table or forge, exactly where the workstation context has
+      something to recommend -- and `kBleedout`, as a separate question not
+      worth answering silently. It polls from the update loop rather than
+      using the event sink, because entering a cinematic camera raises no
+      `MenuOpenCloseEvent`.
+      Needs a rebase onto main (it is from before the display-backend split)
+      and in-game confirmation on a real cut scene. Neither `kAnimated` nor
+      `kAutoVanity` appears anywhere in `src/` today, so nothing about it has
+      landed by another route.
+      Raised 2026-09-24, out of the branch audit below (S)
+
+- [x] Branch tidying, and the lesson from getting it wrong twice.
+      All 13 stale remote branches are gone; only
+      `widget-hide-while-wheel-open` remains, and it is now the entry above
+      rather than a tidying line.
+      Worth recording because the entry this replaces was wrong twice, each
+      time from trusting a proxy instead of checking the thing:
+      - `git branch -r --merged` found 3. Wrong test: this repo squash-merges,
+        and a squash-merged branch never becomes an ancestor of main.
+      - PR state found 11. Also the wrong test, and it produced two false
+        negatives. `chore/tracy-0.14.1` (PR #117 CLOSED) was called "not
+        taken" -- the Tracy v0.14.1 bump actually landed inside PR #118, so
+        #117 was closed as redundant. `slot-stability` (PR #124 CLOSED, 16
+        commits) was called "abandoned work, the only copy" -- every one of
+        those commits is in main (`hg dump spells`, seating, the first-wins
+        inventory fix, the override-rehoming rule), landed under other PRs.
+      The only test that answers the question is whether main CONTAINS the
+      change, which means looking at the content: `git diff main..branch` and
+      probing for the identifiers the commits introduce. That is what found
+      the one branch that genuinely still holds work.
+      CLOSED 2026-09-24.
 
 - [ ] Soak protocol needs deliberate MANUAL equips — accept% is fed only by
       equips made outside Huginn, so a burst played through the wheel/hotkeys
