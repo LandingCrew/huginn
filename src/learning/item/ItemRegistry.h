@@ -406,16 +406,18 @@ namespace Huginn::Item
        */
       struct BestPotionPick
       {
-         const InventoryItem* pure = nullptr;  // Highest magnitude without harmful side effects
-         const InventoryItem* any = nullptr;   // Highest magnitude overall
+         const InventoryItem* pure = nullptr;  // Restores most without harmful side effects
+         const InventoryItem* any = nullptr;   // Restores most overall
       };
 
       /**
-       * @brief Get the best potion of the given type (highest magnitude, count > 0)
+       * @brief Get the potion of the given type that restores the most within
+       *        `windowSec` (count > 0) -- see ItemData::RestoredWithin
        * @param type Potion type to search (HealthPotion, MagickaPotion, StaminaPotion)
+       * @param windowSec How soon the restore has to land to count
        * @return Pure and overall best picks (nullptr fields when none available)
        */
-      [[nodiscard]] BestPotionPick GetBestPotion(ItemType type) const noexcept;
+      [[nodiscard]] BestPotionPick GetBestPotion(ItemType type, float windowSec) const noexcept;
 
       // Thin forwarders keeping the historical public names (zero call-site churn).
       // Count / copy-out / loading-flag / iteration all live in the shared core.

@@ -383,7 +383,7 @@ namespace Huginn::Override
             return std::nullopt;
         }
 
-        const auto pick = registry->GetBestPotion(type);
+        const auto pick = registry->GetBestPotion(type, Defaults::URGENT_RESTORE_WINDOW_SEC);
         const auto* bestPotion = SelectPotion(pick, Config::ALLOW_IMPURE_POTIONS());
         if (!bestPotion) {
             if (!logState.loggedNone) {

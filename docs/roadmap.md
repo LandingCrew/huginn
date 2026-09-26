@@ -6,22 +6,6 @@ once its entry leaves this file. Git history is the only record; check it before
 re-opening something that looks obviously undone.
 
 ## Known Bugs
-- [ ] The CRITICAL health override offers Potion of Fortify Health.
-      `ItemRegistry::GetBestPotion` keeps the highest `magnitude` of the type,
-      and Fortify Health (Diluted) at mag=20 ("+20 max health for 300 s")
-      beats Restore Health (Fair) at mag=8 (8/s for 20 s, 160 total). Seen on
-      LoreRim 2026-09-25 at 08:59:11 and 12:01:05; in the second the player
-      appears to have drunk it, since the pick moved to Restore Health four
-      seconds later with the fortify's count at 1. Magicka and stamina use the
-      same comparison.
-      Fix: rank by health restored in the first few seconds -- magnitude for
-      an instant potion (vanilla, Apothecary: dur=0), magnitude x
-      min(duration, ~5 s) for a heal-over-time one (Requiem/LoreRim) -- so a
-      fortify, which restores nothing now, drops out without any
-      mod-specific check. The override ignores the tier preference: an
-      emergency always gets the potion that helps most.
-      Raised 2026-09-25.
-
 - [ ] The pipeline recomputed on EVERY tick for ten idle minutes.
       simonrim-essentials 2026-09-25, 11:10-11:20: `recompute=2881/2881` in
       two consecutive heartbeats, tick avg 0.46 -> 2.36 ms, and no state
@@ -707,6 +691,13 @@ would notice.
       never sets them; `WeaponTag::EnchantSilence` has no writer anywhere in
       `src/`. Either wire them or delete them — as they stand,
       `HasHarmfulSideEffects()` cannot fire on those grounds (S)
+      A fourth, the other way round: `ItemTagExt::WeaknessElement` HAS a
+      writer but no reader (`IsWeaknessTo` has no caller), and the writer
+      misses most weakness poisons -- it reads `resistVariable` only, so
+      Apothecary's "Weak Aversion to Frost" (Peak, primaryAV = kResistFrost,
+      hostile) tags nothing. Resist POTIONS had the same gap and read
+      primaryAV since the override-potion PR; wire the weakness side the same
+      way if anything ever reads it, or delete it.
 - [ ] **Dead work in Release builds:** `damageRate`, `healingRate`,
       `damageIncreasing` and `damageDecreasing` are computed unconditionally
       every tick (`StateManager_HealthTracking.cpp:283-330`, no `_DEBUG` guard)

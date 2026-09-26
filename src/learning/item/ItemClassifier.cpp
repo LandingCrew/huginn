@@ -3,6 +3,39 @@
 
 namespace Huginn::Item
 {
+   namespace
+   {
+      bool IsResistAV(RE::ActorValue av) noexcept
+      {
+      switch (av) {
+      case RE::ActorValue::kResistFire:
+      case RE::ActorValue::kResistFrost:
+      case RE::ActorValue::kResistShock:
+      case RE::ActorValue::kPoisonResist:
+      case RE::ActorValue::kResistMagic:
+      case RE::ActorValue::kResistDisease:
+        return true;
+      default:
+        return false;
+      }
+      }
+
+      // Tag a beneficial resist effect by the actor value it concerns.
+      // Returns false when `av` is not a resistance.
+      bool TagResist(RE::ActorValue av, ItemData& data) noexcept
+      {
+      switch (av) {
+      case RE::ActorValue::kResistFire:    data.tags |= ItemTag::ResistFire;    data.element = ElementType::Fire;    return true;
+      case RE::ActorValue::kResistFrost:   data.tags |= ItemTag::ResistFrost;   data.element = ElementType::Frost;   return true;
+      case RE::ActorValue::kResistShock:   data.tags |= ItemTag::ResistShock;   data.element = ElementType::Shock;   return true;
+      case RE::ActorValue::kPoisonResist:  data.tags |= ItemTag::ResistPoison;  data.element = ElementType::Poison;  return true;
+      case RE::ActorValue::kResistMagic:   data.tags |= ItemTag::ResistMagic;   data.element = ElementType::Magic;   return true;
+      case RE::ActorValue::kResistDisease: data.tags |= ItemTag::ResistDisease; data.element = ElementType::Disease; return true;
+      default:                             return false;
+      }
+      }
+   }
+
    void ItemClassifier::LoadOverrides(const std::filesystem::path& iniPath)
    {
       m_overrides.LoadFromFile(iniPath);
@@ -48,6 +81,22 @@ namespace Huginn::Item
       data.type = DetermineItemType(item);  // API-based
       if (data.type == ItemType::Unknown) {
         data.type = DeriveItemTypeFromTags(data.tags);  // Tag-based fallback
+      }
+      // Last resort: a potion the game itself marks beneficial but whose
+      // effect no tag rule knows -- Apothecary's Potion of the Defender
+      // (armor rating, AV 39) and Potion of the Barbarian (power attacks,
+      // AV 114). Unknown gets no context weight and matches no potion slot,
+      // so these were invisible; as untagged buffs they take the buff
+      // baseline like Fortify Jump does (ContextWeightForCandidate).
+      if (data.type == ItemType::Unknown && !item->IsPoison()) {
+        const bool beneficial = std::any_of(item->effects.begin(), item->effects.end(),
+          [](const auto* effect) {
+             return effect && effect->baseEffect && !effect->baseEffect->IsHostile() &&
+                    HasKeyword(effect->baseEffect, "MagicAlchBeneficial");
+          });
+        if (beneficial) {
+          data.type = ItemType::BuffPotion;
+        }
       }
       // Sub-classify food items: check if actually alcohol
       if (data.type == ItemType::Food && IsAlcohol(item, data.name)) {
@@ -190,19 +239,28 @@ namespace Huginn::Item
       if (arch == RE::EffectSetting::Archetype::kValueModifier) {
       bool isHostile = effect->baseEffect->IsHostile();
 
+      // ...unless its keyword says it fortifies the vital instead.
+      const bool fortifies =
+        ClassifyVitalEffect(effect->baseEffect, primaryAV) == VitalEffect::Fortify;
       if (!isHostile) {
-        switch (primaryAV) {
-        case RE::ActorValue::kHealth:
-           return ItemType::HealthPotion;
-        case RE::ActorValue::kMagicka:
-           return ItemType::MagickaPotion;
-        case RE::ActorValue::kStamina:
-           return ItemType::StaminaPotion;
-        default:
-           break;
+        if (!fortifies) {
+           switch (primaryAV) {
+           case RE::ActorValue::kHealth:
+            return ItemType::HealthPotion;
+           case RE::ActorValue::kMagicka:
+            return ItemType::MagickaPotion;
+           case RE::ActorValue::kStamina:
+            return ItemType::StaminaPotion;
+           default:
+            break;
+           }
         }
 
-        // Check for resistance effects using resistVariable
+        // Resist potions: the resistance is either what the effect modifies
+        // (primaryAV) or what it is resisted by (resistVariable)
+        if (IsResistAV(primaryAV)) {
+           return ItemType::ResistPotion;
+        }
         auto resistAV = effect->baseEffect->data.resistVariable;
         if (resistAV != RE::ActorValue::kNone) {
            switch (resistAV) {
@@ -225,6 +283,20 @@ namespace Huginn::Item
       if (arch == RE::EffectSetting::Archetype::kPeakValueModifier) {
       bool isHostile = effect->baseEffect->IsHostile();
       if (!isHostile) {
+        // A Peak modifier on a resistance IS a resist potion (Apothecary)
+        if (IsResistAV(primaryAV)) {
+           return ItemType::ResistPotion;
+        }
+        // ...and one whose keyword says it restores a vital is a heal
+        // (LoreRim builds its restores as Peak modifiers)
+        if (ClassifyVitalEffect(effect->baseEffect, primaryAV) == VitalEffect::Restore) {
+           switch (primaryAV) {
+           case RE::ActorValue::kHealth:  return ItemType::HealthPotion;
+           case RE::ActorValue::kMagicka: return ItemType::MagickaPotion;
+           case RE::ActorValue::kStamina: return ItemType::StaminaPotion;
+           default: break;
+           }
+        }
         // Fortify vitals are buffs, not restore potions
         return ItemType::BuffPotion;
       }
@@ -268,10 +340,14 @@ namespace Huginn::Item
       return ItemType::CurePotion;
       }
 
-      // Restore vitals
-      if (HasTag(tags, ItemTag::RestoreHealth)) return ItemType::HealthPotion;
-      if (HasTag(tags, ItemTag::RestoreMagicka)) return ItemType::MagickaPotion;
-      if (HasTag(tags, ItemTag::RestoreStamina)) return ItemType::StaminaPotion;
+      // Restore vitals. A potion tagged BOTH restore and fortify for the same
+      // vital is a fortify that the effect scan could not tell apart -- the
+      // name fallback adds the Fortify tag. That was LoreRim's Fortify Health
+      // (0x201), typed a health potion and offered by the CRITICAL health
+      // override as a heal (2026-09-25). It falls through to the buff check.
+      if (HasTag(tags, ItemTag::RestoreHealth) && !HasTag(tags, ItemTag::FortifyHealth)) return ItemType::HealthPotion;
+      if (HasTag(tags, ItemTag::RestoreMagicka) && !HasTag(tags, ItemTag::FortifyMagicka)) return ItemType::MagickaPotion;
+      if (HasTag(tags, ItemTag::RestoreStamina) && !HasTag(tags, ItemTag::FortifyStamina)) return ItemType::StaminaPotion;
 
       // Resistances
       if (HasTag(tags, ItemTag::ResistFire) || HasTag(tags, ItemTag::ResistFrost) ||
@@ -485,12 +561,21 @@ namespace Huginn::Item
       bool isHostile = effect->baseEffect->IsHostile();
 
       // DEBUG v0.8: Log effect details to diagnose classification issues
-      logger::debug("[PopulateItemTags] {} - Effect: arch={}, primaryAV={}, secondaryAV={}, hostile={}"sv,
+      std::string keywords;
+      for (uint32_t k = 0; k < effect->baseEffect->GetNumKeywords(); ++k) {
+        if (auto kw = effect->baseEffect->GetKeywordAt(k); kw && *kw) {
+           if (!keywords.empty()) keywords += ',';
+           keywords += (*kw)->GetFormEditorID();
+        }
+      }
+      logger::debug("[PopulateItemTags] {} - Effect: arch={}, primaryAV={}, secondaryAV={}, hostile={}, recover={}, kw=[{}]"sv,
         name,
         static_cast<int>(arch),
         static_cast<int>(primaryAV),
         static_cast<int>(secondaryAV),
-        isHostile);
+        isHostile,
+        effect->baseEffect->data.flags.all(RE::EffectSetting::EffectSettingData::Flag::kRecover),
+        keywords);
 
       // Cure effects
       if (arch == RE::EffectSetting::Archetype::kCureDisease) {
@@ -530,16 +615,19 @@ namespace Huginn::Item
       if (arch == RE::EffectSetting::Archetype::kValueModifier ||
           arch == RE::EffectSetting::Archetype::kPeakValueModifier) {
         if (!isHostile) {
-           // Restore/Fortify effects
+           // Restore unless the effect's keyword says fortify -- see
+           // ClassifyVitalEffect for why the archetype cannot decide this.
+           const bool fortifies =
+               ClassifyVitalEffect(effect->baseEffect, primaryAV) == VitalEffect::Fortify;
            switch (primaryAV) {
            case RE::ActorValue::kHealth:
-            data.tags |= ItemTag::RestoreHealth;
+            data.tags |= fortifies ? ItemTag::FortifyHealth : ItemTag::RestoreHealth;
             break;
            case RE::ActorValue::kMagicka:
-            data.tags |= ItemTag::RestoreMagicka;
+            data.tags |= fortifies ? ItemTag::FortifyMagicka : ItemTag::RestoreMagicka;
             break;
            case RE::ActorValue::kStamina:
-            data.tags |= ItemTag::RestoreStamina;
+            data.tags |= fortifies ? ItemTag::FortifyStamina : ItemTag::RestoreStamina;
             break;
            case RE::ActorValue::kHealRate:
            case RE::ActorValue::kHealRateMult:
@@ -555,6 +643,14 @@ namespace Huginn::Item
             data.tags |= ItemTag::RegenStamina;
             break;
            default:
+            // A resist potion that modifies the resistance itself (Apothecary:
+            // Peak modifier, primaryAV = kResistFrost). The resistVariable
+            // check below never sees these, so they were classified by name
+            // alone -- and "Potion of Resist Cold" matched no name, so it
+            // came out Unknown.
+            if (TagResist(primaryAV, data)) {
+              break;
+            }
             // v0.8 FIX: Fortify skill potions use kValueModifier, not just kDualValueModifier
             // Call DetermineFortifySkillType to handle Fortify Alteration, Fortify Marksman, etc.
             DetermineFortifySkillType(primaryAV, data);
@@ -607,34 +703,7 @@ namespace Huginn::Item
 
         // Resistance effects (from resistVariable) - non-hostile only
         if (!isHostile) {
-           switch (resistAV) {
-           case RE::ActorValue::kResistFire:
-            data.tags |= ItemTag::ResistFire;
-            data.element = ElementType::Fire;
-            break;
-           case RE::ActorValue::kResistFrost:
-            data.tags |= ItemTag::ResistFrost;
-            data.element = ElementType::Frost;
-            break;
-           case RE::ActorValue::kResistShock:
-            data.tags |= ItemTag::ResistShock;
-            data.element = ElementType::Shock;
-            break;
-           case RE::ActorValue::kPoisonResist:
-            data.tags |= ItemTag::ResistPoison;
-            data.element = ElementType::Poison;
-            break;
-           case RE::ActorValue::kResistMagic:
-            data.tags |= ItemTag::ResistMagic;
-            data.element = ElementType::Magic;
-            break;
-           case RE::ActorValue::kResistDisease:
-            data.tags |= ItemTag::ResistDisease;
-            data.element = ElementType::Disease;
-            break;
-           default:
-            break;
-           }
+           TagResist(resistAV, data);
         }
       }
 
@@ -861,6 +930,34 @@ namespace Huginn::Item
    {
       if (!item) return false;
       return HasKeyword(item->As<RE::BGSKeywordForm>(), keywordEditorID);
+   }
+
+   // Restore or fortify? The archetype cannot say: vanilla fortifies with a
+   // Peak modifier, but LoreRim's Restore Health is a Peak modifier too --
+   // arch=34, primaryAV=24 for both it and Fortify Health (2026-09-25) -- so
+   // reading Peak as "fortify" turned every LoreRim heal into a buff and left
+   // the health override with nothing to offer. The vanilla alchemy keywords
+   // name the intent directly; when they are absent, say so and let the
+   // caller keep its old behaviour rather than guess.
+   ItemClassifier::VitalEffect ItemClassifier::ClassifyVitalEffect(
+      const RE::EffectSetting* mgef, RE::ActorValue av) noexcept
+   {
+      if (!mgef) return VitalEffect::Unknown;
+      std::string_view restoreKw;
+      std::string_view fortifyKw;
+      switch (av) {
+      case RE::ActorValue::kHealth:
+      restoreKw = "MagicAlchRestoreHealth"; fortifyKw = "MagicAlchFortifyHealth"; break;
+      case RE::ActorValue::kMagicka:
+      restoreKw = "MagicAlchRestoreMagicka"; fortifyKw = "MagicAlchFortifyMagicka"; break;
+      case RE::ActorValue::kStamina:
+      restoreKw = "MagicAlchRestoreStamina"; fortifyKw = "MagicAlchFortifyStamina"; break;
+      default:
+      return VitalEffect::Unknown;
+      }
+      if (HasKeyword(mgef, restoreKw)) return VitalEffect::Restore;
+      if (HasKeyword(mgef, fortifyKw)) return VitalEffect::Fortify;
+      return VitalEffect::Unknown;
    }
 
    bool ItemClassifier::HasKeyword(
