@@ -49,6 +49,11 @@ namespace Huginn::Override
 
         // Potion selection
         inline constexpr bool ALLOW_IMPURE_POTIONS = true;       // Fall back to potions with side effects (Skooma etc.)
+        // A critical-vitals override ranks potions by what they restore in
+        // this many seconds, so an instant heal and a heal-over-time compare
+        // fairly (ItemData::RestoredWithin). Short on purpose: the player is
+        // about to die, and 160 health over 20 s is worth less than 50 now.
+        inline constexpr float URGENT_RESTORE_WINDOW_SEC = 5.0f;
     }
 
     // =============================================================================

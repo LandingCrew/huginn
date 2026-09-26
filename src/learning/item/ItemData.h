@@ -1,5 +1,7 @@
 #pragma once
 
+#include <algorithm>
+
 namespace Huginn::Item
 {
    // =============================================================================
@@ -344,7 +346,7 @@ namespace Huginn::Item
       // SOUL_LEVEL currently held (0 = empty), not the gem's capacity — what
       // comes back as charge, not how big the gem is.
       float magnitude = 0.0f;
-      float duration = 0.0f;              // Effect duration
+      float duration = 0.0f;              // Effect duration (seconds; 0 = instant)
       uint32_t value = 0;                 // Gold value
       bool isHostile = false;             // Poison vs beneficial
 
@@ -395,6 +397,20 @@ namespace Huginn::Item
       [[nodiscard]] bool IsWeaknessTo(ElementType targetElement) const noexcept {
       return HasTagExt(tagsExt, ItemTagExt::WeaknessElement) &&
              element == targetElement;
+      }
+
+      // How much a restore potion gives back within the first `windowSec`
+      // seconds -- what matters when the player is about to die.
+      //
+      // Magnitude alone cannot compare potions across load orders: a vanilla
+      // or Apothecary restore is instant (dur 0, magnitude = the whole heal),
+      // a Requiem/LoreRim one heals over time (magnitude = per second). So an
+      // instant potion counts its magnitude once, and a heal-over-time one
+      // counts what it restores inside the window. LoreRim Restore Health
+      // (Fair), 8/s for 20 s, is 40 within 5 s; a vanilla 50-point instant
+      // potion is 50.
+      [[nodiscard]] float RestoredWithin(float windowSec) const noexcept {
+      return magnitude * std::clamp(duration, 1.0f, std::max(windowSec, 1.0f));
       }
 
       // Check for harmful side effects (Skooma, mixed-effect potions).

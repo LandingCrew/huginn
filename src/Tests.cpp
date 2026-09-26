@@ -682,6 +682,28 @@ void RunItemRegistryTests()
             bestSP->data.name, bestSP->data.magnitude);
     }
 
+    // Test 11b: RestoredWithin compares instant and heal-over-time potions.
+    // Numbers are the real ones from 2026-09-25: LoreRim Restore Health
+    // (Fair) is 8/s for 20 s, Apothecary Minor Healing is an instant 25.
+    {
+        const auto potion = [](float mag, float dur) {
+            Item::ItemData d;
+            d.magnitude = mag;
+            d.duration = dur;
+            return d;
+        };
+        const auto check = [](const char* what, float got, float want) {
+            if (std::abs(got - want) > 0.001f) {
+                logger::error("TEST FAIL: RestoredWithin {}: got {:.2f}, expected {:.2f}"sv, what, got, want);
+            }
+        };
+        check("instant 25", potion(25.0f, 0.0f).RestoredWithin(5.0f), 25.0f);
+        check("8/s for 20s", potion(8.0f, 20.0f).RestoredWithin(5.0f), 40.0f);
+        check("8/s for 3s", potion(8.0f, 3.0f).RestoredWithin(5.0f), 24.0f);
+        check("zero window", potion(8.0f, 20.0f).RestoredWithin(0.0f), 8.0f);
+        logger::info("TEST PASS: RestoredWithin (instant vs heal-over-time) ran"sv);
+    }
+
     // Test 12: Verify GetBest returns same as sorted[0]
     if (!sortedHealthPotions.empty() && bestHP) {
         if (sortedHealthPotions.front()->data.formID == bestHP->data.formID) {

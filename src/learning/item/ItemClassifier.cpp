@@ -190,16 +190,24 @@ namespace Huginn::Item
       if (arch == RE::EffectSetting::Archetype::kValueModifier) {
       bool isHostile = effect->baseEffect->IsHostile();
 
+      // ...unless flagged Recover on a vital, which hands the change back
+      // when the effect ends: a temporary fortify, not a heal. Only the
+      // vitals -- resist potions below are temporary too and must still
+      // reach the resist check.
+      const bool recovers =
+        effect->baseEffect->data.flags.all(RE::EffectSetting::EffectSettingData::Flag::kRecover);
       if (!isHostile) {
-        switch (primaryAV) {
-        case RE::ActorValue::kHealth:
-           return ItemType::HealthPotion;
-        case RE::ActorValue::kMagicka:
-           return ItemType::MagickaPotion;
-        case RE::ActorValue::kStamina:
-           return ItemType::StaminaPotion;
-        default:
-           break;
+        if (!recovers) {
+           switch (primaryAV) {
+           case RE::ActorValue::kHealth:
+            return ItemType::HealthPotion;
+           case RE::ActorValue::kMagicka:
+            return ItemType::MagickaPotion;
+           case RE::ActorValue::kStamina:
+            return ItemType::StaminaPotion;
+           default:
+            break;
+           }
         }
 
         // Check for resistance effects using resistVariable
@@ -530,16 +538,23 @@ namespace Huginn::Item
       if (arch == RE::EffectSetting::Archetype::kValueModifier ||
           arch == RE::EffectSetting::Archetype::kPeakValueModifier) {
         if (!isHostile) {
-           // Restore/Fortify effects
+           // A Peak modifier raises the MAXIMUM; a value modifier flagged
+           // Recover gives its change back when the effect ends. Either way
+           // it fortifies the vital rather than restoring it. Tagging those
+           // Restore made DeriveItemTypeFromTags call Fortify Health a health
+           // potion, and the CRITICAL health override offered it as a heal
+           // (LoreRim, 2026-09-25: arch=34 mag=20 beat Restore Health mag=8).
+           const bool fortifies = arch == RE::EffectSetting::Archetype::kPeakValueModifier ||
+               effect->baseEffect->data.flags.all(RE::EffectSetting::EffectSettingData::Flag::kRecover);
            switch (primaryAV) {
            case RE::ActorValue::kHealth:
-            data.tags |= ItemTag::RestoreHealth;
+            data.tags |= fortifies ? ItemTag::FortifyHealth : ItemTag::RestoreHealth;
             break;
            case RE::ActorValue::kMagicka:
-            data.tags |= ItemTag::RestoreMagicka;
+            data.tags |= fortifies ? ItemTag::FortifyMagicka : ItemTag::RestoreMagicka;
             break;
            case RE::ActorValue::kStamina:
-            data.tags |= ItemTag::RestoreStamina;
+            data.tags |= fortifies ? ItemTag::FortifyStamina : ItemTag::RestoreStamina;
             break;
            case RE::ActorValue::kHealRate:
            case RE::ActorValue::kHealRateMult:
