@@ -528,7 +528,8 @@ namespace Huginn::Slot
             const auto& settings = SlotSettings::GetSingleton();
             if (settings.KeepSlotPositions() && settings.HoldSeatedItems()) {
                 HoldIncumbents(pageIndex, configGeneration, slotConfigs, candidates, assignments,
-                    assignedFormIDs, assignedNames, &player, settings.ChallengerMargin());
+                    assignedFormIDs, assignedNames, &player, settings.ChallengerMargin(),
+                    priorityOrder, priorityCount);
             }
         }
 
@@ -676,7 +677,9 @@ namespace Huginn::Slot
         std::set<RE::FormID>& assignedFormIDs,
         std::set<std::string_view>& assignedNames,
         const State::PlayerActorState* player,
-        float margin) const
+        float margin,
+        const std::array<size_t, MAX_SLOTS_PER_PAGE>& priorityOrder,
+        size_t priorityCount) const
     {
         if (pageIndex >= MAX_PAGES) {
             return;
@@ -706,7 +709,11 @@ namespace Huginn::Slot
         std::set<RE::FormID> excludedIDs = assignedFormIDs;
         std::set<std::string_view> excludedNames = assignedNames;
 
-        for (size_t j = 0; j < slotCount; ++j) {
+        // Priority order, the order the fill uses: when two held slots want
+        // the same challenger, the one the fill would have served first gets it.
+        for (size_t k = 0; k < priorityCount; ++k) {
+            const size_t j = priorityOrder[k];
+            if (j >= slotCount) continue;
             if (!assignments[j].IsEmpty() || seats[j] == 0) {
                 continue;  // an override took the slot, or nobody owns it
             }
@@ -732,7 +739,17 @@ namespace Huginn::Slot
 
         // Phase B: each holder against the best challenger for its own slot.
         // Challengers exclude every other holder -- an item staying put in
-        // slot 3 is not about to move into slot 5.
+        // slot 3 is not about to move into slot 5 -- and every challenger
+        // already given a slot this pass.
+        //
+        // A winner is placed on the spot and reserved. Deciding the release
+        // and leaving the placement to the fill let two held slots lose to
+        // the SAME challenger: one got it, the other gave up its item for
+        // nothing (2026-09-26 14:04:35, slots 3 and 6 both yielding to one
+        // Resist Cold). And the loser gives up its seat, or the rule "you keep
+        // your seat while you are on screen" hands it straight back next pass
+        // and the same release repeats every run -- 939 [Hold] lines in ten
+        // minutes on the first build.
         const float factor = 1.0f + margin;
         for (size_t t = 0; t < tentativeCount; ++t) {
             const auto [j, item] = tentative[t];
@@ -742,9 +759,27 @@ namespace Huginn::Slot
                 /*skipWildcards=*/!config.wildcardsEnabled);
 
             if (challenger && challenger->utility > item->utility * factor) {
-                SKSE::log::debug("[Hold] Slot {}: '{}' gives way to '{}' (u={:.3f} vs {:.3f}, x{:.2f} > x{:.2f})",
-                    j, item->GetName(), challenger->GetName(), challenger->utility, item->utility,
+                SKSE::log::debug("[Hold] Page {} slot {}: '{}' gives way to '{}' (u={:.3f} vs {:.3f}, x{:.2f} > x{:.2f})",
+                    pageIndex, j, item->GetName(), challenger->GetName(), challenger->utility, item->utility,
                     item->utility > 0.0f ? challenger->utility / item->utility : 0.0f, factor);
+
+                assignments[j] = SlotAssignment::FromCandidate(j, config.classification, *challenger,
+                    challenger->isWildcard ? AssignmentType::Wildcard : AssignmentType::Normal);
+                assignedFormIDs.insert(challenger->GetFormID());
+                assignedNames.insert(challenger->GetName());
+                excludedIDs.insert(challenger->GetFormID());
+                excludedNames.insert(challenger->GetName());
+
+                // The loser is free again -- the fill may show it elsewhere --
+                // but not as this seat's owner.
+                excludedIDs.erase(item->GetFormID());
+                excludedNames.erase(item->GetName());
+                {
+                    std::lock_guard<std::mutex> lock(m_seatingMutex);
+                    if (m_seatingGeneration == generation && m_seating[pageIndex][j] == seats[j]) {
+                        m_seating[pageIndex][j] = 0;
+                    }
+                }
                 continue;
             }
 
