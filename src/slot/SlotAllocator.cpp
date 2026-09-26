@@ -116,6 +116,9 @@ namespace Huginn::Slot
             for (auto& page : m_seating) {
                 page.fill(0);
             }
+            for (auto& page : m_lastPlaced) {
+                page.fill(0);
+            }
             m_seatingGeneration = UINT32_MAX;
         }
         SKSE::log::info("[SlotAllocator] Reset to page 0");
@@ -688,6 +691,7 @@ namespace Huginn::Slot
             std::min(slotConfigs.size(), MAX_SLOTS_PER_PAGE));
 
         std::array<uint64_t, MAX_SLOTS_PER_PAGE> seats{};
+        std::array<uint64_t, MAX_SLOTS_PER_PAGE> placed{};
         {
             std::lock_guard<std::mutex> lock(m_seatingMutex);
             // A stale generation means a layout reload; ApplySeating clears
@@ -696,6 +700,7 @@ namespace Huginn::Slot
                 return;
             }
             seats = m_seating[pageIndex];
+            placed = m_lastPlaced[pageIndex];
         }
 
         // Phase A: which seat owners are still candidates, and still allowed
@@ -737,6 +742,51 @@ namespace Huginn::Slot
             excludedNames.insert(owner->GetName());
         }
 
+        // Guests: an item standing in a slot that is not its seat, because an
+        // override occupies the seat. Without this it was a free challenger
+        // every pass -- the mace whose seat the health potion held beat Wine
+        // in slot 5, then the sword in slot 1, then Wine again, on every run
+        // for half a minute (2026-09-26 14:28:49-14:29:20). Held where it
+        // stands, under the same test, until the override ends and seating
+        // takes it home.
+        for (size_t k = 0; k < priorityCount; ++k) {
+            const size_t j = priorityOrder[k];
+            if (j >= slotCount || !assignments[j].IsEmpty() || placed[j] == 0) continue;
+            bool taken = false;
+            for (size_t t = 0; t < tentativeCount; ++t) {
+                taken = taken || tentative[t].slot == j;
+            }
+            if (taken) continue;
+
+            const Scoring::ScoredCandidate* guest = nullptr;
+            for (const auto& c : candidates) {
+                if (Candidate::GetBase(c.candidate).GetDeduplicationKey() == placed[j]) {
+                    guest = &c;
+                    break;
+                }
+            }
+            if (!guest || excludedIDs.contains(guest->GetFormID()) ||
+                excludedNames.contains(guest->GetName())) {
+                continue;  // gone, shown by an override, or already held in its own seat
+            }
+            const auto probe = SlotAssignment::FromCandidate(j, slotConfigs[j].classification, *guest);
+            if (!SlotAccepts(slotConfigs[j], probe, player)) {
+                continue;
+            }
+            tentative[tentativeCount++] = { j, guest };
+            excludedIDs.insert(guest->GetFormID());
+            excludedNames.insert(guest->GetName());
+        }
+
+        // Owners and guests were gathered in two sweeps; judge them in one
+        // slot-priority order.
+        std::array<size_t, MAX_SLOTS_PER_PAGE> rank{};
+        for (size_t k = 0; k < priorityCount; ++k) {
+            if (priorityOrder[k] < MAX_SLOTS_PER_PAGE) rank[priorityOrder[k]] = k;
+        }
+        std::sort(tentative.begin(), tentative.begin() + tentativeCount,
+            [&rank](const Tentative& a, const Tentative& b) { return rank[a.slot] < rank[b.slot]; });
+
         // Phase B: each holder against the best challenger for its own slot.
         // Challengers exclude every other holder -- an item staying put in
         // slot 3 is not about to move into slot 5 -- and every challenger
@@ -771,12 +821,14 @@ namespace Huginn::Slot
                 excludedNames.insert(challenger->GetName());
 
                 // The loser is free again -- the fill may show it elsewhere --
-                // but not as this seat's owner.
+                // but not as this seat's owner. A guest owns a seat somewhere
+                // else, and the seat here is not its to give up.
                 excludedIDs.erase(item->GetFormID());
                 excludedNames.erase(item->GetName());
-                {
+                const uint64_t loserKey = Candidate::GetBase(item->candidate).GetDeduplicationKey();
+                if (seats[j] == loserKey) {
                     std::lock_guard<std::mutex> lock(m_seatingMutex);
-                    if (m_seatingGeneration == generation && m_seating[pageIndex][j] == seats[j]) {
+                    if (m_seatingGeneration == generation && m_seating[pageIndex][j] == loserKey) {
                         m_seating[pageIndex][j] = 0;
                     }
                 }
@@ -815,6 +867,9 @@ namespace Huginn::Slot
                 // A layout reload happened; last pass's seats describe slots that
                 // may not mean the same thing now. Start over from this pass.
                 for (auto& page : m_seating) {
+                    page.fill(0);
+                }
+                for (auto& page : m_lastPlaced) {
                     page.fill(0);
                 }
                 m_seatingGeneration = generation;
@@ -1031,8 +1086,16 @@ namespace Huginn::Slot
         }
 #endif
 
+        std::array<uint64_t, MAX_SLOTS_PER_PAGE> placedNow{};
+        for (size_t i = 0; i < slotCount; ++i) {
+            if (!assignments[i].IsOverride()) {
+                placedNow[i] = keyOf(assignments[i]);
+            }
+        }
+
         m_seatingGeneration = generation;
         m_seating[pageIndex] = seats;
+        m_lastPlaced[pageIndex] = placedNow;
     }
 
     size_t SlotAllocator::ComputePriorityOrder(
