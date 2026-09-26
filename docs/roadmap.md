@@ -6,6 +6,32 @@ once its entry leaves this file. Git history is the only record; check it before
 re-opening something that looks obviously undone.
 
 ## Known Bugs
+- [ ] The CRITICAL health override offers Potion of Fortify Health.
+      `ItemRegistry::GetBestPotion` keeps the highest `magnitude` of the type,
+      and Fortify Health (Diluted) at mag=20 ("+20 max health for 300 s")
+      beats Restore Health (Fair) at mag=8 (8/s for 20 s, 160 total). Seen on
+      LoreRim 2026-09-25 at 08:59:11 and 12:01:05; in the second the player
+      appears to have drunk it, since the pick moved to Restore Health four
+      seconds later with the fortify's count at 1. Magicka and stamina use the
+      same comparison.
+      Fix: rank by health restored in the first few seconds -- magnitude for
+      an instant potion (vanilla, Apothecary: dur=0), magnitude x
+      min(duration, ~5 s) for a heal-over-time one (Requiem/LoreRim) -- so a
+      fortify, which restores nothing now, drops out without any
+      mod-specific check. The override ignores the tier preference: an
+      emergency always gets the potion that helps most.
+      Raised 2026-09-25.
+
+- [ ] The pipeline recomputed on EVERY tick for ten idle minutes.
+      simonrim-essentials 2026-09-25, 11:10-11:20: `recompute=2881/2881` in
+      two consecutive heartbeats, tick avg 0.46 -> 2.36 ms, and no state
+      transition logged. `CheckHashSkip` (`PipelineCoordinator.cpp:223`)
+      refuses to skip while any unhashed state is active -- elemental,
+      falling, underwater, workstation -- and its comment calls all of them
+      bounded, which underwater and workstation are not. Workstation read 0
+      throughout. What the player was doing is unknown; ask before guessing.
+      Raised 2026-09-25.
+
 - [ ] One weapon stack's ExtraHealth has read 0.00, then 1.00, then 1.30 across
       three sessions on the same character, and nothing explains the first two.
       uid87, the LoreRim Long Bow. Either the player tempered it between those
@@ -103,6 +129,21 @@ re-opening something that looks obviously undone.
       #124 (bKeepSlotPositions, on by default), on its own account rather than
       as a crosshair fix -- so what is left here is (1) against (2), and the
       cosmetic cost that argued for (1) is now smaller than it was.
+      **Update 2026-09-25: it does cause slot churn, and it reaches combat
+      state.** LoreRim, 12:32-12:40: 9 of 103 state transitions were undone
+      within one second, every one of them target or distance. The worst:
+          12:37:55.565  Target:None->Humanoid, Enemies:None->One,
+                        Combat:OutOfCombat->InCombat
+          12:37:55.671  ...and back, 0.11 s later
+          12:37:55.567  slots 6,7: scrolls -> Resist Fire/Magic (x1.29, x1.24)
+          12:37:58.576  slots 6,7: back to the scrolls          (x1.86, x1.83)
+      A humanoid crossing the crosshair for a tenth of a second put the player
+      "in combat" and flipped two keys twice. The churn fix's challenger margin
+      cannot stop this: the context change is real while it lasts and the
+      challengers really are 24-29% better. So (1) is off the table -- the cost
+      is no longer only cosmetic recomputes -- and (2) wants widening: a dwell
+      before a transient target counts, which then gates the Enemies/Combat
+      state derived from it, not just the target bucket.
       Raised 2026-09-19.
 
 ## Known Mod Compatability Issues
@@ -397,6 +438,14 @@ Raised 2026-09-24.
       the whole previous loadout; or (b) remember one hand, the right, and drop
       the other. (b) is the v1 answer; (a) is worth having if the pair case
       turns out to be common in play.
+      Revisit `fWeightNoWeapon` with it. Today, putting a spell in the weapon
+      hand sets the no-weapon context (0.40), which lifts EVERY weapon at once:
+      seen twice on 2026-09-25 (12:34:20 via a Huginn key, 12:38:04 via an
+      external equip), each time six slots flipping to weapons. Remembrance
+      answers "you just took your weapon off" with the ONE weapon you took
+      off, under the key you pressed; once it exists, the no-weapon weight
+      should lift weapons much less, or not at all while a remembrance slot
+      holds one.
       Relates to the weapon stale-recommendation entry: the weapon registry
       still lacks the OnItemUsed/MarkPageDirty hook items got in #43 (M)
 
@@ -426,12 +475,78 @@ Raised 2026-09-24.
       - A Tracy plot of changes/s alongside the existing Huginn plots, so the
         burst can be lined up against state transitions in a capture.
       Only then decide the fix, against a baseline number.
+      **Step 1 SHIPPED in v0.21.19**, as specified above with these differences:
+      - The heartbeat field is `slotChurn=N peak5s=K@slotI (fill= clear=
+        dedup= override= wildcard= expired= used= page= unheld=)
+        ratio(gone= <1= <1.1= <1.25= <1.5= >=1.5=)`, or `slotChurn=0`.
+        No remembrance bucket: add it with remembrance.
+      - `ratio` is challenger utility over the displaced item's utility in
+        the same run, for expired/unheld changes only -- the ones a margin
+        would govern. The debug line prints both numbers.
+      - Wildcards arriving and leaving are their own cause. They were landing
+        in `<1` on a 90 s cadence and in `>=1.5` 30 s later.
+      - Reset (save load, cell transition, `hg reset`, `hg page`, INI reload)
+        is NOT counted -- the next run re-baselines. Page switches through
+        `SetCurrentPage` are counted as `page` but kept out of peak5s,
+        because the player asked for them.
+      - The causes say which gate was OPEN, not the causal chain. In the
+        Steel Arrow case below, slot 6 reads `override` and slot 7 reads
+        whatever released slot 7; the chain is in the debug-level
+        `[SlotChurn]` lines, one per change.
+      - Measures the widget's current page only. The Wheeler pages never
+        reach `SlotLocker`.
+      **Measured 2026-09-25** (LoreRim-5 and simonrim-essentials, ~5 min of
+      combat each). The premise below was wrong: the SHIPPED INI said
+      `fLockDurationMs = 1000`; 3000 was only the code fallback. Nothing
+      released locks early -- ~90% of changes were plain expiry, then a
+      re-rank against a moving state. Findings:
+      - 1000 -> 3000 ms halved the worst burst (peak5s 6 -> 3) for about the
+        same total (176 -> 154 per 5 min). Swap-backs (A->B->A in one slot)
+        stayed at ~1 change in 5. A longer lock rate-limits churn; it does
+        not remove it. 3000 now ships.
+      - Churn lives in the lower slots. Slots 0-1 barely move; 2-7 take
+        almost all of it. They are filled from a plateau of items on the
+        always-on baseline weights (0.15-0.20) with untrained learners, all
+        at u ~0.2-0.3, where the contextual learner's per-item response to
+        small state drift is enough to reorder them.
+      - Challenger ratios are bimodal on both load orders: a tie or clearly
+        better, little between. LoreRim: 22 within 0.9-1.1, 6 in 1.1-1.25,
+        64 at >= 1.25. Simonrim: 53 under 1.1, 7 in 1.1-1.25. A 25% margin
+        would stop the ties and hold back almost nothing real.
+      - Ratios well below 1 (x0.2-0.7) are NOT the ranking choosing worse:
+        the incumbent had become ineligible -- equipped (skip-equipped) or
+        taken by an override elsewhere. A margin must hold the incumbent only
+        while the slot would still accept it.
+      - Refill takes items seated ELSEWHERE: when a WeaponsAny slot loses its
+        item, it pulls the only other weapon out of its own seat, so the Long
+        Bow moved 5 -> 1 -> 5 -> 1 in ten seconds (2026-09-25 09:08). One
+        item leaving moved three keys.
+      - Dedup can empty a LOCKED slot: two slots locked on the same potion,
+        the later one shows nothing while still holding the lock (08:59:10).
+      Decided fix, one PR, each part behind its own INI key: a challenger
+      margin (default 25%, eligibility-checked); refill never pulls an item
+      from its own seat; `sPotionTierPreference = Higher | None | Lower`
+      (default Higher) replacing PotionDiscriminator's magnitude bonus AND its
+      "don't waste strong potions" penalty, which flip Fair/Faint order as
+      health crosses a bucket. Whether wildcards should live only in
+      dedicated slots is open: they are churn by design, ~4 changes/min.
+      Check the margin default against an equip, not only against ties:
+      putting a spell in the weapon hand flooded six slots with weapons at
+      x1.23-1.63 (see Remembrance). 25% lets most of that through; 30% stops
+      most of it. Which is right depends on whether that flood is ever wanted.
+      Two things the margin will NOT fix, tracked elsewhere: transient
+      target/combat state (the crosshair entry under Known Bugs) and
+      overrides taking slots (the override entry below).
+      Counter nit: `'Unarmed' -> 'Unarmed'` was counted as a change -- two
+      Unarmed pseudo-items (likely one per hand) with different FormIDs that
+      look identical on screen. Rare; the counter should compare what is
+      displayed, not only the form.
       What the code already does, for context: `SlotLocker` keeps a per-slot
       timer (`m_lockedSlots[i].remainingMs`); only the DURATION is global —
-      `fLockDurationMs` = 3000, `fMinLockDurationMs` = 500 — and
+      `fLockDurationMs` (shipped 1000 until v0.21.18, now 3000),
+      `fMinLockDurationMs` = 500 — and
       `ShouldBreakLock` already refuses every non-override change until
-      expiry. So churn faster than every 3 s means something releases locks
-      early. Suspects from reading the code:
+      expiry. Suspects from reading the code, before measuring:
       - `OnItemUsed` unlocks the slot holding the used item (callers:
         `EquipManager` x3, `Main.cpp`, the inventory delta-scan in
         `UpdateLoop`). In combat: slot refills, that item is used, refills

@@ -1,10 +1,15 @@
 #include "SlotLocker.h"
 #include "override/OverrideConditions.h"
+#include <chrono>
 #include <set>
+#include <span>
 #include <spdlog/spdlog.h>
 
 namespace Huginn::Slot
 {
+    static_assert(Telemetry::SLOT_CHURN_SLOTS == MAX_SLOTS_PER_PAGE,
+        "SoakMetrics' per-slot churn history must cover every slot on a page");
+
     namespace
     {
         // Truncate the registry-string borrow when an assignment enters
@@ -64,6 +69,7 @@ namespace Huginn::Slot
                 if (slot.remainingMs <= 0.0f) {
                     slot.isLocked = false;
                     slot.remainingMs = 0.0f;
+                    slot.releaseCause = Telemetry::SlotChange::Expired;
                     anyExpired = true;
                     spdlog::debug("[SlotLocker] Lock expired for slot with FormID {:08X}",
                         slot.assignment.formID);
@@ -75,11 +81,14 @@ namespace Huginn::Slot
 
     SlotAssignments SlotLocker::ApplyLocks(
         const SlotAssignments& newAssignments,
-        const Override::OverrideCollection& overrides)
+        const Override::OverrideCollection& overrides,
+        std::span<const Scoring::ScoredCandidate> scored)
     {
         std::lock_guard<std::mutex> lock(m_mutex);
 
         SlotAssignments result;
+        std::array<Telemetry::SlotChangeEvent, MAX_SLOTS> changes{};
+        size_t changeCount = 0;
         result.reserve(newAssignments.size());
 
         for (size_t i = 0; i < newAssignments.size() && i < MAX_SLOTS; ++i) {
@@ -89,9 +98,13 @@ namespace Huginn::Slot
             if (lockedSlot.isLocked) {
                 // Slot is currently locked - check if lock should break
                 if (ShouldBreakLock(lockedSlot, newAssign, overrides)) {
-                    // Break the lock
-                    spdlog::debug("[SlotLocker] Slot {} lock broken (was {:08X})",
-                        i, lockedSlot.assignment.formID);
+                    // ShouldBreakLock lets go for exactly two reasons: the timer
+                    // (normally already caught by Update) or an override.
+                    const bool expired = lockedSlot.remainingMs <= 0.0f;
+                    lockedSlot.releaseCause = expired
+                        ? Telemetry::SlotChange::Expired : Telemetry::SlotChange::Override;
+                    spdlog::debug("[SlotLocker] Slot {} lock broken (was {:08X}): {}",
+                        i, lockedSlot.assignment.formID, expired ? "expired" : "override");
                     lockedSlot.isLocked = false;
                     lockedSlot.remainingMs = 0.0f;
                     // Fall through to consider new assignment
@@ -131,9 +144,93 @@ namespace Huginn::Slot
             result.push_back(newAssign);
         }
 
+        // Which slots had content going into dedup, so a slot dedup empties
+        // can be told apart from one the allocator left empty.
+        std::array<bool, MAX_SLOTS> filledBeforeDedup{};
+        for (size_t i = 0; i < result.size() && i < MAX_SLOTS; ++i) {
+            filledBeforeDedup[i] = !result[i].IsEmpty();
+        }
+
         // Locks can reintroduce an item the allocator placed in another slot —
         // dedup here (where lock state is known) so locked content always wins.
         DedupePreferLocked(result);
+
+        // Churn: compare what is shown now against what was shown last run.
+        for (size_t i = 0; i < result.size() && i < MAX_SLOTS; ++i) {
+            const auto& shown = result[i];
+            auto& slot = m_lockedSlots[i];
+            const bool nowEmpty = shown.IsEmpty();
+            const bool changed = nowEmpty != slot.shownEmpty ||
+                (!nowEmpty && (shown.formID != slot.shownFormID || shown.uniqueID != slot.shownUniqueID));
+
+            if (changed && !m_churnBaseline) {
+                const auto cause = Telemetry::ClassifySlotChange(slot.shownEmpty, nowEmpty,
+                    filledBeforeDedup[i] && nowEmpty, shown.IsOverride(),
+                    shown.IsWildcard() || slot.shownWildcard, slot.releaseCause);
+
+                // Challenger ratio, for the changes a margin would govern.
+                auto ratio = Telemetry::ChallengerRatio::NotApplicable;
+                float incumbentUtility = -1.0f;  // < 0 = no longer a candidate
+                if (!scored.empty() &&
+                    (cause == Telemetry::SlotChange::Expired || cause == Telemetry::SlotChange::Unheld)) {
+                    for (const auto& sc : scored) {
+                        if (sc.GetFormID() == slot.shownFormID && sc.GetUniqueID() == slot.shownUniqueID) {
+                            incumbentUtility = sc.utility;
+                            break;
+                        }
+                    }
+                    ratio = Telemetry::BucketChallengerRatio(shown.utility, incumbentUtility);
+                }
+                changes[changeCount++] = { i, cause, ratio };
+
+                const std::string_view from = slot.shownEmpty ? std::string_view{} : std::string_view{ slot.shownName };
+                const std::string_view to = nowEmpty ? std::string_view{} : std::string_view{ shown.name };
+                if (ratio == Telemetry::ChallengerRatio::NotApplicable) {
+                    spdlog::debug("[SlotChurn] Slot {}: '{}' -> '{}' ({})", i, from, to,
+                        Telemetry::SlotChangeName(cause));
+                } else if (incumbentUtility < 0.0f) {
+                    spdlog::debug("[SlotChurn] Slot {}: '{}' -> '{}' ({}, u={:.3f}, incumbent gone)",
+                        i, from, to, Telemetry::SlotChangeName(cause), shown.utility);
+                } else {
+                    spdlog::debug("[SlotChurn] Slot {}: '{}' -> '{}' ({}, u={:.3f} vs {:.3f}, x{:.2f})",
+                        i, from, to, Telemetry::SlotChangeName(cause), shown.utility, incumbentUtility,
+                        incumbentUtility > 0.0f ? shown.utility / incumbentUtility : 0.0f);
+                }
+            }
+            if (changed) {
+                slot.shownEmpty = nowEmpty;
+                slot.shownWildcard = !nowEmpty && shown.IsWildcard();
+                slot.shownFormID = nowEmpty ? 0 : shown.formID;
+                slot.shownUniqueID = nowEmpty ? 0 : shown.uniqueID;
+                slot.shownName = nowEmpty ? std::string{} : shown.name;
+            }
+
+            // A held lock means the next change is not "because the lock let
+            // go" -- it has to let go again first. A page switch explains one
+            // run only: everything on the new page arrives in that run.
+            //
+            // Used and Override are one-run causes too. A slot that stays
+            // unlocked showing the same item -- a potion with count left, an
+            // override that handed back the same form, or any slot with
+            // locking disabled -- never relocks, so without this the event
+            // would take the credit for whatever re-rank moves the slot
+            // minutes later, and keep that change out of the ratio. What is
+            // left afterwards is an unheld slot: Expired if locking is on
+            // (its lock is gone, however it went), Unheld if it is off.
+            if (slot.isLocked || slot.releaseCause == Telemetry::SlotChange::Page) {
+                slot.releaseCause = Telemetry::SlotChange::Unheld;
+            } else if (slot.releaseCause == Telemetry::SlotChange::Used ||
+                       slot.releaseCause == Telemetry::SlotChange::Override) {
+                slot.releaseCause = m_config.lockDurationMs > 0.0f
+                    ? Telemetry::SlotChange::Expired : Telemetry::SlotChange::Unheld;
+            }
+        }
+        m_churnBaseline = false;
+
+        // Under m_mutex, which is safe: SoakMetrics takes only its own mutex
+        // and never calls back into the locker.
+        Telemetry::SoakMetrics::GetSingleton().RecordSlotChanges(
+            std::span{ changes.data(), changeCount }, std::chrono::steady_clock::now());
 
         return result;
     }
@@ -204,6 +301,10 @@ namespace Huginn::Slot
                 slot.isLocked = false;
                 slot.remainingMs = 0.0f;
             }
+            // Every slot, locked or not: the whole page's content is about to
+            // be replaced, and the player asked for that. Only caller is
+            // SlotAllocator::SetCurrentPage.
+            slot.releaseCause = Telemetry::SlotChange::Page;
         }
         spdlog::debug("[SlotLocker] All slots unlocked");
     }
@@ -288,21 +389,30 @@ namespace Huginn::Slot
             // parameter exists to stop.
             const bool sameItem = slot.assignment.formID == formID &&
                 (uniqueID == 0 || slot.assignment.uniqueID == uniqueID);
-            if (slot.isLocked && sameItem) {
-                // Preserve Sticky's deliberate 10s hold: the inventory delta-scan
-                // path (respectActivationLock) must not evict a just-activated item
-                // the instant it's consumed — that's exactly the case Sticky exists
-                // for. It still expires on its own timer.
-                if (respectActivationLock && slot.isActivationLock) {
-                    continue;
-                }
-                spdlog::info("[SlotLocker] Slot {} unlocked - item {:08X}/uid{} was used",
-                    i, formID, slot.assignment.uniqueID);
-                slot.isLocked = false;
-                slot.remainingMs = 0.0f;
-                slot.isActivationLock = false;
-                // Don't break - item might be in multiple slots (unlikely but safe)
+            if (!sameItem) {
+                continue;
             }
+            if (!slot.isLocked) {
+                // Nothing to break, but the item leaving is still why this
+                // slot is about to change -- a lock that had already expired
+                // would otherwise take the credit.
+                slot.releaseCause = Telemetry::SlotChange::Used;
+                continue;
+            }
+            // Preserve Sticky's deliberate 10s hold: the inventory delta-scan
+            // path (respectActivationLock) must not evict a just-activated item
+            // the instant it's consumed — that's exactly the case Sticky exists
+            // for. It still expires on its own timer.
+            if (respectActivationLock && slot.isActivationLock) {
+                continue;
+            }
+            spdlog::info("[SlotLocker] Slot {} unlocked - item {:08X}/uid{} was used",
+                i, formID, slot.assignment.uniqueID);
+            slot.isLocked = false;
+            slot.remainingMs = 0.0f;
+            slot.isActivationLock = false;
+            slot.releaseCause = Telemetry::SlotChange::Used;
+            // Don't break - item might be in multiple slots (unlikely but safe)
         }
     }
 
@@ -330,6 +440,7 @@ namespace Huginn::Slot
         for (auto& slot : m_lockedSlots) {
             slot = LockedSlot{};
         }
+        m_churnBaseline = true;
         spdlog::info("[SlotLocker] Reset complete");
     }
 

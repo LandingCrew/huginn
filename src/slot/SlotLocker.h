@@ -3,9 +3,11 @@
 #include "SlotAssignment.h"
 #include "SlotSettings.h"
 #include "override/OverrideConditions.h"
+#include "telemetry/SoakMetrics.h"
 #include <array>
 #include <cstdint>
 #include <mutex>
+#include <span>
 
 namespace Huginn::Slot
 {
@@ -51,6 +53,21 @@ namespace Huginn::Slot
         // hold that OnItemUsed must not break when asked to respect it, so a
         // just-activated item stays visible even after it's consumed.
         bool isActivationLock = false;
+
+        // Churn telemetry. What the player was SHOWN in this slot last run --
+        // post-dedup, which `assignment` above is not: an unlocked slot stores
+        // the allocator's pick even when dedup then cleared it.
+        RE::FormID shownFormID = 0;
+        uint16_t shownUniqueID = 0;
+        bool shownEmpty = true;
+        bool shownWildcard = false;
+        std::string shownName;
+
+        // Why this slot's last lock let go (expiry, OnItemUsed, a page switch,
+        // an override break), held until the slot next locks, so the change
+        // that lock release allowed can be attributed to it. Unheld = nothing
+        // recorded.
+        Telemetry::SlotChange releaseCause = Telemetry::SlotChange::Unheld;
     };
 
     // =============================================================================
@@ -109,10 +126,14 @@ namespace Huginn::Slot
         /// Apply locking logic to raw assignments from SlotAllocator
         /// @param newAssignments Fresh assignments from SlotAllocator
         /// @param overrides Active overrides (for priority-based lock breaking)
+        /// @param scored This run's full scored list, used only for churn
+        ///   telemetry: the utility of an item a slot just dropped, which the
+        ///   assignments no longer carry. Empty = no challenger ratios.
         /// @return Stable assignments with locks applied
         [[nodiscard]] SlotAssignments ApplyLocks(
             const SlotAssignments& newAssignments,
-            const Override::OverrideCollection& overrides);
+            const Override::OverrideCollection& overrides,
+            std::span<const Scoring::ScoredCandidate> scored = {});
 
         // =========================================================================
         // MANUAL LOCK CONTROL
@@ -208,6 +229,12 @@ namespace Huginn::Slot
         SlotLockConfig m_config;                            // Current configuration
         std::array<LockedSlot, MAX_SLOTS> m_lockedSlots;   // Lock state per slot
         mutable std::mutex m_mutex;                         // Thread safety for callback access
+
+        // True until the first ApplyLocks after construction or Reset(): that
+        // run records what is shown without counting it as churn. A save load
+        // or cell transition repopulating every slot is not the player
+        // watching keys change.
+        bool m_churnBaseline = true;
 
         // =========================================================================
         // INTERNAL HELPERS
