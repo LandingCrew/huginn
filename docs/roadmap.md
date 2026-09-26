@@ -6,7 +6,6 @@ once its entry leaves this file. Git history is the only record; check it before
 re-opening something that looks obviously undone.
 
 ## Known Bugs
-
 - [ ] The pipeline recomputed on EVERY tick for ten idle minutes.
       simonrim-essentials 2026-09-25, 11:10-11:20: `recompute=2881/2881` in
       two consecutive heartbeats, tick avg 0.46 -> 2.36 ms, and no state
