@@ -3,6 +3,39 @@
 
 namespace Huginn::Item
 {
+   namespace
+   {
+      bool IsResistAV(RE::ActorValue av) noexcept
+      {
+      switch (av) {
+      case RE::ActorValue::kResistFire:
+      case RE::ActorValue::kResistFrost:
+      case RE::ActorValue::kResistShock:
+      case RE::ActorValue::kPoisonResist:
+      case RE::ActorValue::kResistMagic:
+      case RE::ActorValue::kResistDisease:
+        return true;
+      default:
+        return false;
+      }
+      }
+
+      // Tag a beneficial resist effect by the actor value it concerns.
+      // Returns false when `av` is not a resistance.
+      bool TagResist(RE::ActorValue av, ItemData& data) noexcept
+      {
+      switch (av) {
+      case RE::ActorValue::kResistFire:    data.tags |= ItemTag::ResistFire;    data.element = ElementType::Fire;    return true;
+      case RE::ActorValue::kResistFrost:   data.tags |= ItemTag::ResistFrost;   data.element = ElementType::Frost;   return true;
+      case RE::ActorValue::kResistShock:   data.tags |= ItemTag::ResistShock;   data.element = ElementType::Shock;   return true;
+      case RE::ActorValue::kPoisonResist:  data.tags |= ItemTag::ResistPoison;  data.element = ElementType::Poison;  return true;
+      case RE::ActorValue::kResistMagic:   data.tags |= ItemTag::ResistMagic;   data.element = ElementType::Magic;   return true;
+      case RE::ActorValue::kResistDisease: data.tags |= ItemTag::ResistDisease; data.element = ElementType::Disease; return true;
+      default:                             return false;
+      }
+      }
+   }
+
    void ItemClassifier::LoadOverrides(const std::filesystem::path& iniPath)
    {
       m_overrides.LoadFromFile(iniPath);
@@ -210,7 +243,11 @@ namespace Huginn::Item
            }
         }
 
-        // Check for resistance effects using resistVariable
+        // Resist potions: the resistance is either what the effect modifies
+        // (primaryAV) or what it is resisted by (resistVariable)
+        if (IsResistAV(primaryAV)) {
+           return ItemType::ResistPotion;
+        }
         auto resistAV = effect->baseEffect->data.resistVariable;
         if (resistAV != RE::ActorValue::kNone) {
            switch (resistAV) {
@@ -233,6 +270,10 @@ namespace Huginn::Item
       if (arch == RE::EffectSetting::Archetype::kPeakValueModifier) {
       bool isHostile = effect->baseEffect->IsHostile();
       if (!isHostile) {
+        // A Peak modifier on a resistance IS a resist potion (Apothecary)
+        if (IsResistAV(primaryAV)) {
+           return ItemType::ResistPotion;
+        }
         // Fortify vitals are buffs, not restore potions
         return ItemType::BuffPotion;
       }
@@ -570,6 +611,14 @@ namespace Huginn::Item
             data.tags |= ItemTag::RegenStamina;
             break;
            default:
+            // A resist potion that modifies the resistance itself (Apothecary:
+            // Peak modifier, primaryAV = kResistFrost). The resistVariable
+            // check below never sees these, so they were classified by name
+            // alone -- and "Potion of Resist Cold" matched no name, so it
+            // came out Unknown.
+            if (TagResist(primaryAV, data)) {
+              break;
+            }
             // v0.8 FIX: Fortify skill potions use kValueModifier, not just kDualValueModifier
             // Call DetermineFortifySkillType to handle Fortify Alteration, Fortify Marksman, etc.
             DetermineFortifySkillType(primaryAV, data);
@@ -622,34 +671,7 @@ namespace Huginn::Item
 
         // Resistance effects (from resistVariable) - non-hostile only
         if (!isHostile) {
-           switch (resistAV) {
-           case RE::ActorValue::kResistFire:
-            data.tags |= ItemTag::ResistFire;
-            data.element = ElementType::Fire;
-            break;
-           case RE::ActorValue::kResistFrost:
-            data.tags |= ItemTag::ResistFrost;
-            data.element = ElementType::Frost;
-            break;
-           case RE::ActorValue::kResistShock:
-            data.tags |= ItemTag::ResistShock;
-            data.element = ElementType::Shock;
-            break;
-           case RE::ActorValue::kPoisonResist:
-            data.tags |= ItemTag::ResistPoison;
-            data.element = ElementType::Poison;
-            break;
-           case RE::ActorValue::kResistMagic:
-            data.tags |= ItemTag::ResistMagic;
-            data.element = ElementType::Magic;
-            break;
-           case RE::ActorValue::kResistDisease:
-            data.tags |= ItemTag::ResistDisease;
-            data.element = ElementType::Disease;
-            break;
-           default:
-            break;
-           }
+           TagResist(resistAV, data);
         }
       }
 
