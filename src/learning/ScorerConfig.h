@@ -13,6 +13,21 @@ namespace Huginn::Scoring
     };
 
     // =============================================================================
+    // POTION TIER PREFERENCE - which strength of the same potion ranks first
+    // =============================================================================
+    enum class PotionTierPreference : uint8_t
+    {
+        Higher,     // Use the best one now (greedy)
+        None,       // No ordering: natural scores stand, and the slot hold keeps near-ties still
+        Lower       // Save the good ones for later
+    };
+
+    // Utility ratio between adjacent strengths of one potion under Higher/Lower.
+    // Deliberately larger than the slot challenger margin (default 25%), so the
+    // tier rule decides which strength shows and a hold cannot keep the wrong one.
+    inline constexpr float POTION_TIER_STEP = 1.5f;
+
+    // =============================================================================
     // SCORER CONFIGURATION - Tunable parameters for the utility scoring system
     // =============================================================================
     // Future: Load from INI file or dMenu (v1.0)
@@ -90,10 +105,9 @@ namespace Huginn::Scoring
         // Flat restore bonus when resource < 30%
         float flatRestoreLowResourceMult = 1.5f;
 
-        // Magnitude value ranking: Higher magnitude → higher bonus
-        // Bonus = magnitudeValueScale * normalized_magnitude
-        // Range: 0.0 - 0.5
-        float magnitudeValueScale = 0.3f;
+        // Which strength of the same potion ranks first -- see
+        // UtilityScorer::ApplyPotionTierPreference
+        PotionTierPreference potionTierPreference = PotionTierPreference::Higher;
 
         // ---------------------------------------------------------------------
         // Scoring Thresholds

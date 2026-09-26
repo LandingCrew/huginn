@@ -32,7 +32,7 @@ namespace Huginn::Scoring
         inline constexpr float COMBAT_START_WINDOW = 10.0f;
         inline constexpr float REGEN_POTION_COMBAT_START_MULT = 1.5f;
         inline constexpr float FLAT_RESTORE_LOW_RESOURCE_MULT = 1.5f;
-        inline constexpr float MAGNITUDE_VALUE_SCALE = 0.3f;
+        inline constexpr const char* POTION_TIER_PREFERENCE = "Higher";
 
         // Thresholds
         inline constexpr float MINIMUM_UTILITY = 0.1f;
@@ -88,6 +88,7 @@ namespace Huginn::Scoring
 
         // Helper: parse string to FavoritesMode enum
         [[nodiscard]] static FavoritesMode ParseFavoritesMode(const char* str);
+        [[nodiscard]] static PotionTierPreference ParsePotionTierPreference(const char* str);
 
         // --- Core Scoring ---
         float lambdaMin = ScorerDefaults::LAMBDA_MIN;
@@ -107,7 +108,7 @@ namespace Huginn::Scoring
         float combatStartWindow = ScorerDefaults::COMBAT_START_WINDOW;
         float regenPotionCombatStartMult = ScorerDefaults::REGEN_POTION_COMBAT_START_MULT;
         float flatRestoreLowResourceMult = ScorerDefaults::FLAT_RESTORE_LOW_RESOURCE_MULT;
-        float magnitudeValueScale = ScorerDefaults::MAGNITUDE_VALUE_SCALE;
+        PotionTierPreference potionTierPreference = PotionTierPreference::Higher;
 
         // --- Thresholds ---
         float minimumUtility = ScorerDefaults::MINIMUM_UTILITY;

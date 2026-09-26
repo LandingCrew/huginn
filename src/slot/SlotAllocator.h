@@ -265,6 +265,28 @@ namespace Huginn::Slot
         mutable std::array<std::array<uint64_t, MAX_SLOTS_PER_PAGE>, MAX_PAGES> m_seating{};
         mutable uint32_t m_seatingGeneration = UINT32_MAX;
 
+        /// Before the rank-ordered fill: keep each seated item in its own seat,
+        /// unless the slot no longer accepts it or the best challenger FOR THAT
+        /// SLOT beats it by `margin` (0.25 = 25%).
+        ///
+        /// Two problems, one pass. Near-tied items were trading slots every
+        /// time a lock expired -- most slot changes in play were under 10%
+        /// better. And the fill runs in slot-priority order, so a
+        /// high-priority slot could take an item out of its seat further down
+        /// (a WeaponsAny slot pulling the bow out of slot 5 whenever the axe in
+        /// slot 1 left), which seating could not undo. Held items go into the
+        /// assigned sets, so the fill never sees them.
+        void HoldIncumbents(
+            size_t pageIndex,
+            uint32_t generation,
+            const std::vector<SlotConfig>& slotConfigs,
+            const Scoring::ScoredCandidateList& candidates,
+            SlotAssignments& assignments,
+            std::set<RE::FormID>& assignedFormIDs,
+            std::set<std::string_view>& assignedNames,
+            const State::PlayerActorState* player,
+            float margin) const;
+
         /// Put items back in the slots they were in last pass, where the layout
         /// still allows it.
         ///
