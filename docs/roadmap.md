@@ -128,6 +128,16 @@ re-opening something that looks obviously undone.
       is no longer only cosmetic recomputes -- and (2) wants widening: a dwell
       before a transient target counts, which then gates the Enemies/Combat
       state derived from it, not just the target bucket.
+      **Update 2026-09-26: not only the crosshair.** With the slot hold in
+      (near-tie churn gone), what swaps a slot back and forth now is state
+      that flips and flips back. `Casting:EnemyCasting <-> NoCasting` toggled
+      every ~1.2 s as one enemy cast and paused (14:34:37-14:34:42), swinging
+      Steadfast Ward 2.54 <-> 0.72 and trading it with Boiled Creme Treat in
+      slot 4 on every flip. Each release was correct for the score at that
+      moment; only the 3 s lock kept it to two visible changes out of six. So
+      the dwell wants to be a general debounce for short-lived STATE (target,
+      combat, enemy casting), not a crosshair special case -- the slot layer
+      cannot tell a real change from one that is about to undo itself.
       Raised 2026-09-19.
 
 ## Known Mod Compatability Issues
@@ -580,17 +590,24 @@ Raised 2026-09-24.
         item leaving moved three keys.
       - Dedup can empty a LOCKED slot: two slots locked on the same potion,
         the later one shows nothing while still holding the lock (08:59:10).
-      Decided fix, one PR, each part behind its own INI key: a challenger
-      margin (default 25%, eligibility-checked); refill never pulls an item
-      from its own seat; `sPotionTierPreference = Higher | None | Lower`
-      (default Higher) replacing PotionDiscriminator's magnitude bonus AND its
-      "don't waste strong potions" penalty, which flip Fair/Faint order as
-      health crosses a bucket. Whether wildcards should live only in
+      **Fix SHIPPED (v0.21.27)**: `bHoldSeatedItems` + `fChallengerMargin`
+      (25%) hold a seated item -- or one an override displaced, where it
+      stands -- until a challenger for THAT slot beats it by the margin; held
+      items leave the fill, so a higher-priority slot cannot pull one out of
+      its seat. `sPotionTierPreference = Higher | None | Lower` replaced the
+      magnitude bonus and overkill penalty. Measured on simonrim, same 3000 ms
+      lock: ~89 changes per 5 min (was 154), near-ties 1 of 37 (was 22 of
+      ~100), 10-25% band 0, swap-backs ~1 in 7 (was 1 in 5) -- and those are
+      now state flaps (see the crosshair entry). Two bugs on the way, both
+      the hold suppressing what it should let through: a release left to the
+      fill let two slots lose to one challenger and seating put the loser
+      back, keeping Resist Cold off screen for 18 s of frost damage; and an
+      item an override displaced was a free challenger every pass.
+      Still open: whether wildcards should live only in
       dedicated slots is open: they are churn by design, ~4 changes/min.
-      Check the margin default against an equip, not only against ties:
-      putting a spell in the weapon hand flooded six slots with weapons at
-      x1.23-1.63 (see Remembrance). 25% lets most of that through; 30% stops
-      most of it. Which is right depends on whether that flood is ever wanted.
+      And the equip flood: putting a spell in the weapon hand flooded six
+      slots with weapons at x1.23-1.63 (see Remembrance). 25% lets most of
+      that through; 30% stops most of it -- not yet re-measured with the hold.
       Two things the margin will NOT fix, tracked elsewhere: transient
       target/combat state (the crosshair entry under Known Bugs) and
       overrides taking slots (the override entry below).
