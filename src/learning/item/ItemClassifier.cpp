@@ -82,6 +82,22 @@ namespace Huginn::Item
       if (data.type == ItemType::Unknown) {
         data.type = DeriveItemTypeFromTags(data.tags);  // Tag-based fallback
       }
+      // Last resort: a potion the game itself marks beneficial but whose
+      // effect no tag rule knows -- Apothecary's Potion of the Defender
+      // (armor rating, AV 39) and Potion of the Barbarian (power attacks,
+      // AV 114). Unknown gets no context weight and matches no potion slot,
+      // so these were invisible; as untagged buffs they take the buff
+      // baseline like Fortify Jump does (ContextWeightForCandidate).
+      if (data.type == ItemType::Unknown && !item->IsPoison()) {
+        const bool beneficial = std::any_of(item->effects.begin(), item->effects.end(),
+          [](const auto* effect) {
+             return effect && effect->baseEffect && !effect->baseEffect->IsHostile() &&
+                    HasKeyword(effect->baseEffect, "MagicAlchBeneficial");
+          });
+        if (beneficial) {
+          data.type = ItemType::BuffPotion;
+        }
+      }
       // Sub-classify food items: check if actually alcohol
       if (data.type == ItemType::Food && IsAlcohol(item, data.name)) {
         data.type = ItemType::Alcohol;
