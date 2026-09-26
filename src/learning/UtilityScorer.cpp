@@ -2,8 +2,11 @@
 #include "context/ContextWeightSettings.h"       // For BuildConfig() in constructor
 #include "context/ContextWeightForCandidate.h"   // Context::WeightForCandidate (moved from here, #10)
 #include "util/ScopedTimer.h"
+#include "override/OverrideConfig.h"                // URGENT_RESTORE_WINDOW_SEC: one "strongest" for slots and override
 #include <algorithm>
 #include <chrono>
+#include <map>
+#include <tuple>
 
 namespace Huginn::Scoring
 {
@@ -189,6 +192,7 @@ namespace Huginn::Scoring
         // Rank-scaled favorites boost: replace Step 7's provisional uniform max
         // boost with the documented rank-scaled value (ScorerConfig.h).
         ApplyFavoritesRankScaling(scored);
+        ApplyPotionTierPreference(scored);
 
         // Partial sort for top N (much faster than full sort for large lists)
         size_t topN = std::min(m_config.topNCandidates, scored.size());
@@ -208,6 +212,76 @@ namespace Huginn::Scoring
         m_wildcardMgr.ApplyWildcards(scored, displayPage);
 
         return scored;
+    }
+
+    void UtilityScorer::ApplyPotionTierPreference(ScoredCandidateList& scored) const
+    {
+        // Family identity: everything that makes two potions "the same potion
+        // at a different strength". Different skills or schools are different
+        // potions even under one tag (FortifyCombatSkill: Block vs Archery).
+        using Key = std::tuple<Item::ItemType, Item::ItemTag, Item::ItemTagExt,
+            Item::MagicSchool, Item::CombatSkill, Item::UtilitySkill>;
+        struct Member { size_t index; float strength; };
+        std::map<Key, std::vector<Member>> families;
+
+        for (size_t i = 0; i < scored.size(); ++i) {
+            const auto* item = std::get_if<Candidate::ItemCandidate>(&scored[i].candidate);
+            if (!item) continue;
+            switch (item->type) {
+            case Item::ItemType::HealthPotion:
+            case Item::ItemType::MagickaPotion:
+            case Item::ItemType::StaminaPotion:
+                // The override's measure, so "Higher" means the same potion in
+                // a slot as the CRITICAL override would hand you
+                families[{ item->type, item->tags, item->tagsExt, item->school,
+                           item->combatSkill, item->utilitySkill }]
+                    .push_back({ i, Item::RestoredWithin(item->magnitude, item->duration,
+                                     Override::Defaults::URGENT_RESTORE_WINDOW_SEC) });
+                break;
+            case Item::ItemType::ResistPotion:
+            case Item::ItemType::BuffPotion:
+            case Item::ItemType::CurePotion:
+                families[{ item->type, item->tags, item->tagsExt, item->school,
+                           item->combatSkill, item->utilitySkill }]
+                    .push_back({ i, item->magnitude });
+                break;
+            default:
+                break;
+            }
+        }
+
+        const auto preference = m_config.potionTierPreference;
+        if (preference == PotionTierPreference::None) {
+            return;  // natural scores stand; the slot hold stops near-ties trading
+        }
+        for (auto& [key, members] : families) {
+            if (members.size() < 2) continue;
+
+            float familyTop = 0.0f;
+            for (const auto& m : members) {
+                familyTop = std::max(familyTop, scored[m.index].utility);
+            }
+
+            // Strongest first for Higher, weakest first for Lower. Equal
+            // strengths share a utility -- nothing to prefer between them.
+            std::sort(members.begin(), members.end(), [preference](const Member& a, const Member& b) {
+                return preference == PotionTierPreference::Lower ? a.strength < b.strength
+                                                                 : a.strength > b.strength;
+            });
+
+            float u = familyTop;
+            for (size_t k = 0; k < members.size(); ++k) {
+                if (k > 0 && members[k].strength != members[k - 1].strength) {
+                    u /= POTION_TIER_STEP;
+                }
+                auto& entry = scored[members[k].index];
+                if (entry.utility > 0.0f) {
+                    // Keep the [Recs] breakdown honest about why this moved
+                    entry.breakdown.potionMultiplier *= u / entry.utility;
+                }
+                entry.utility = u;
+            }
+        }
     }
 
     // =========================================================================

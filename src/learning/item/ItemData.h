@@ -4,6 +4,15 @@
 
 namespace Huginn::Item
 {
+   // What a restore effect gives back within `windowSec` seconds: the whole
+   // magnitude once for an instant potion (duration 0), magnitude-per-second
+   // times the time inside the window for a heal-over-time one. See
+   // ItemData::RestoredWithin for why magnitude alone cannot compare them.
+   [[nodiscard]] inline float RestoredWithin(float magnitude, float duration, float windowSec) noexcept
+   {
+      return magnitude * std::clamp(duration, 1.0f, std::max(windowSec, 1.0f));
+   }
+
    // =============================================================================
    // SKILL/SCHOOL ENUMS (for grouped fortification tracking)
    // =============================================================================
@@ -410,7 +419,7 @@ namespace Huginn::Item
       // (Fair), 8/s for 20 s, is 40 within 5 s; a vanilla 50-point instant
       // potion is 50.
       [[nodiscard]] float RestoredWithin(float windowSec) const noexcept {
-      return magnitude * std::clamp(duration, 1.0f, std::max(windowSec, 1.0f));
+      return Item::RestoredWithin(magnitude, duration, windowSec);
       }
 
       // Check for harmful side effects (Skooma, mixed-effect potions).
