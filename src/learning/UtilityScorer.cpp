@@ -243,7 +243,11 @@ namespace Huginn::Scoring
             case Item::ItemType::CurePotion:
                 families[{ item->type, item->tags, item->tagsExt, item->school,
                            item->combatSkill, item->utilitySkill }]
-                    .push_back({ i, item->magnitude });
+                    // Magnitude x duration: a buff's strength can live in
+                    // either. Waterbreathing is magnitude 0 at every strength
+                    // and differs only in duration (180/240/300 s on LoreRim),
+                    // so magnitude alone called Faint and Fair equal.
+                    .push_back({ i, std::max(item->magnitude, 1.0f) * std::max(item->duration, 1.0f) });
                 break;
             default:
                 break;
