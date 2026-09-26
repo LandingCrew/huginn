@@ -77,6 +77,13 @@ namespace Huginn::Item
       [[nodiscard]] static bool HasKeyword(
       const RE::BGSKeywordForm* keywordForm, std::string_view keywordEditorID) noexcept;
 
+      // What a beneficial effect on Health/Magicka/Stamina says it does, by
+      // its vanilla alchemy keyword. Unknown = no keyword either way (or not
+      // a vital), and every caller then keeps its behaviour from before.
+      enum class VitalEffect { Unknown, Restore, Fortify };
+      [[nodiscard]] static VitalEffect ClassifyVitalEffect(
+      const RE::EffectSetting* mgef, RE::ActorValue av) noexcept;
+
       // Helper: Check if item is a soul gem (v0.7.8)
       [[nodiscard]] static bool HasSoulGemKeyword(const RE::AlchemyItem* item) noexcept;
 
