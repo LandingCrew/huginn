@@ -192,6 +192,79 @@ re-opening something that looks obviously undone.
       of "inert" was ever about Requiem's content. Apparel now answers the
       alchemy lab (#65, PR #114); the forge may still have no live payload
 
+## Platform and dependencies
+- [ ] **Drop dMenu, move the settings UI to SKSE Menu Framework.** Raised
+      2026-09-26. Bigger than a settings-UI swap, because Huginn already owns
+      the stack the framework would host.
+
+      - Mod: https://www.nexusmods.com/skyrimspecialedition/mods/120352
+      - v2 usage: https://github.com/Thiago099/SKSE-Menu-Framework-2/blob/main/Usage.md
+      - v3 example: https://github.com/QTR-Modding/SKSE-Menu-Framework-3-Example
+      - v3 readme: https://github.com/QTR-Modding/SKSE-Menu-Framework-3
+
+      **The prize is not the settings panel, it is deleting our own hook.**
+      SKSE Menu Framework is ImGui-based: a plugin includes
+      `SKSEMenuFramework.h`, calls `SKSEMenuFramework::IsInstalled()`,
+      `SetSection("Huginn")` and `AddSectionItem("Name", &Render)`, and writes
+      ordinary ImGui inside the render callbacks. Huginn already does the hard
+      half of that for itself -- `src/ui/D3D11Hook.cpp` (65),
+      `ImGuiRenderer.cpp` (249) and `DebugInputHook.cpp` (290), 604 lines of
+      hooking and context bootstrap, plus `imgui` in vcpkg.json -- purely to
+      draw four debug widgets nobody but a developer sees. Those widgets
+      (`RegistryDebugWidget`, `StateManagerDebugWidget`,
+      `UtilityScorerDebugWidget`, `DebugSettings`) are already ImGui render
+      functions and would move across close to as-is.
+      The second deletion is the two-INI split. It exists only because dMenu's
+      `flush_ini()` writes a fresh file containing just the settings it tracks,
+      which would destroy every other section of `Huginn.ini` -- hence
+      `GetDMenuIniPath()`, its fallback, the `[Widget]`/`[Debug]` exclusive
+      ownership rule and the whole "Why two files at all?" section of
+      `docs/architecture/7-dmenu-integration.md`. A framework that does not own
+      an INI lets Huginn write its own settings and collapses all of it.
+
+      **The cost is the coupling, and it is a real trade.** The dMenu
+      integration is zero-coupling by design: no headers, no linking, no
+      compile-time dependency, communication entirely by JSON descriptor and
+      SKSE `ModCallbackEvent`, with a documented degradation table for
+      "dMenu absent", "dMenu present, no JSON" and "both present". SKSE Menu
+      Framework needs its header compiled in. That header is reported to be
+      permissively licensed and not to require dependants to be open source,
+      and `IsInstalled()` gives a runtime absence check -- so graceful
+      degradation is still reachable, but with one sharp edge: **if Huginn
+      deletes its own D3D hook and the framework is not installed, there is no
+      ImGui at all** and the debug widgets have nowhere to draw. Settings would
+      still load from INI, so players lose only the panel; developers lose the
+      widgets entirely. Decide whether that is acceptable or whether the hook
+      stays as a fallback -- and note that keeping both is the ONE thing that
+      must not happen casually, since two ImGui contexts in one process is a
+      classic crash.
+
+      **Declarative becomes procedural.** The descriptor is 3 groups and 19
+      controls of JSON today; it becomes C++ ImGui calls. Loss: settings stop
+      being data a player or packager can edit without a rebuild. Gain: adding
+      a setting stops being a three-place edit (JSON descriptor, INI, settings
+      class) with its own how-to section in the integration doc.
+
+      **Decide v2 or v3 first.** v3 claims non-pausing windows, an input event
+      system, foreground/HUD drawing, texture loading, translations, JSON
+      themes and an in-game config menu. Non-pausing matters here more than it
+      would for most mods: Huginn is a contextual tool and tuning weights while
+      the world is live is exactly how you would tune it. Against that, v3 is
+      newer and the example repo does not document the API inline.
+
+      Treat everything in the two paragraphs above that describes the framework
+      as vendor claims read off its docs on 2026-09-26, not as verified
+      behaviour; the line counts, the widget list and the two-INI rationale are
+      checked against this repo.
+
+      Scope: the settings panel alone is M. Panel plus retiring
+      D3D11Hook/ImGuiRenderer/DebugInputHook and the dMenu INI split is L, and
+      it touches `docs/architecture/7-dmenu-integration.md` (which would be
+      rewritten or deleted), `configs/Huginn.ini`,
+      `Data/SKSE/Plugins/dmenu/customSettings/Huginn.json` (deleted),
+      `SettingsReloader`, `Globals.cpp`'s two path helpers, and the 20 files
+      under `src/` that mention dMenu (132 references).
+
 ## Known Recommendation Issues
 - [ ] Two counts for the same quiver can be on screen at once and disagree by
       one shot. A bow or crossbow slot prints `playerState.arrowCount` --
