@@ -522,6 +522,17 @@ namespace Huginn::Slot
         }
 
         // =======================================================================
+        // PASS 1c: Hold seated items against near-tied challengers
+        // =======================================================================
+        {
+            const auto& settings = SlotSettings::GetSingleton();
+            if (settings.KeepSlotPositions() && settings.HoldSeatedItems()) {
+                HoldIncumbents(pageIndex, configGeneration, slotConfigs, candidates, assignments,
+                    assignedFormIDs, assignedNames, &player, settings.ChallengerMargin());
+            }
+        }
+
+        // =======================================================================
         // PASS 2: Fill remaining slots with candidates by classification
         // =======================================================================
         for (size_t k = 0; k < priorityCount; ++k) {
@@ -654,6 +665,94 @@ namespace Huginn::Slot
             }
         }
         return true;
+    }
+
+    void SlotAllocator::HoldIncumbents(
+        size_t pageIndex,
+        uint32_t generation,
+        const std::vector<SlotConfig>& slotConfigs,
+        const Scoring::ScoredCandidateList& candidates,
+        SlotAssignments& assignments,
+        std::set<RE::FormID>& assignedFormIDs,
+        std::set<std::string_view>& assignedNames,
+        const State::PlayerActorState* player,
+        float margin) const
+    {
+        if (pageIndex >= MAX_PAGES) {
+            return;
+        }
+        const size_t slotCount = std::min(assignments.size(),
+            std::min(slotConfigs.size(), MAX_SLOTS_PER_PAGE));
+
+        std::array<uint64_t, MAX_SLOTS_PER_PAGE> seats{};
+        {
+            std::lock_guard<std::mutex> lock(m_seatingMutex);
+            // A stale generation means a layout reload; ApplySeating clears
+            // the map for this pass, and there is nothing to hold.
+            if (m_seatingGeneration != generation) {
+                return;
+            }
+            seats = m_seating[pageIndex];
+        }
+
+        // Phase A: which seat owners are still candidates, and still allowed
+        // in their seat? An item the slot has given up -- now equipped under
+        // skip-equipped, a wildcard in a slot that refuses them -- is not held,
+        // however well it scores: holding it would keep something the slot
+        // itself just rejected.
+        struct Tentative { size_t slot; const Scoring::ScoredCandidate* item; };
+        std::array<Tentative, MAX_SLOTS_PER_PAGE> tentative{};
+        size_t tentativeCount = 0;
+        std::set<RE::FormID> excludedIDs = assignedFormIDs;
+        std::set<std::string_view> excludedNames = assignedNames;
+
+        for (size_t j = 0; j < slotCount; ++j) {
+            if (!assignments[j].IsEmpty() || seats[j] == 0) {
+                continue;  // an override took the slot, or nobody owns it
+            }
+            const Scoring::ScoredCandidate* owner = nullptr;
+            for (const auto& c : candidates) {
+                if (Candidate::GetBase(c.candidate).GetDeduplicationKey() == seats[j]) {
+                    owner = &c;
+                    break;
+                }
+            }
+            if (!owner || assignedFormIDs.contains(owner->GetFormID()) ||
+                assignedNames.contains(owner->GetName())) {
+                continue;  // left the candidates, or an override is showing it
+            }
+            const auto probe = SlotAssignment::FromCandidate(j, slotConfigs[j].classification, *owner);
+            if (!SlotAccepts(slotConfigs[j], probe, player)) {
+                continue;
+            }
+            tentative[tentativeCount++] = { j, owner };
+            excludedIDs.insert(owner->GetFormID());
+            excludedNames.insert(owner->GetName());
+        }
+
+        // Phase B: each holder against the best challenger for its own slot.
+        // Challengers exclude every other holder -- an item staying put in
+        // slot 3 is not about to move into slot 5.
+        const float factor = 1.0f + margin;
+        for (size_t t = 0; t < tentativeCount; ++t) {
+            const auto [j, item] = tentative[t];
+            const auto& config = slotConfigs[j];
+            const auto challenger = FindBestCandidate(candidates, config.classification,
+                excludedIDs, excludedNames, config.skipEquipped, player,
+                /*skipWildcards=*/!config.wildcardsEnabled);
+
+            if (challenger && challenger->utility > item->utility * factor) {
+                SKSE::log::debug("[Hold] Slot {}: '{}' gives way to '{}' (u={:.3f} vs {:.3f}, x{:.2f} > x{:.2f})",
+                    j, item->GetName(), challenger->GetName(), challenger->utility, item->utility,
+                    item->utility > 0.0f ? challenger->utility / item->utility : 0.0f, factor);
+                continue;
+            }
+
+            assignments[j] = SlotAssignment::FromCandidate(j, config.classification, *item,
+                item->isWildcard ? AssignmentType::Wildcard : AssignmentType::Normal);
+            assignedFormIDs.insert(item->GetFormID());
+            assignedNames.insert(item->GetName());
+        }
     }
 
     void SlotAllocator::ApplySeating(

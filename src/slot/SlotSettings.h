@@ -93,6 +93,22 @@ namespace Huginn::Slot
             return m_keepSlotPositions.load(std::memory_order_acquire);
         }
 
+        /// Whether an item still on screen holds its slot against newcomers
+        /// until one beats it by ChallengerMargin(). Needs KeepSlotPositions:
+        /// "its slot" is its seat. `[SlotLocker] bHoldSeatedItems`.
+        [[nodiscard]] bool HoldSeatedItems() const noexcept
+        {
+            return m_holdSeatedItems.load(std::memory_order_acquire);
+        }
+
+        /// How much better, as a fraction, a challenger must score than the
+        /// item holding a slot to take it: 0.25 = 25% better.
+        /// `[SlotLocker] fChallengerMargin`.
+        [[nodiscard]] float ChallengerMargin() const noexcept
+        {
+            return m_challengerMargin.load(std::memory_order_acquire);
+        }
+
         /// Monotonic generation counter — bumped on every config change
         /// (LoadFromFile / ResetToDefaults). Consumers can cache config copies
         /// and cheaply detect staleness without re-copying every access.
@@ -108,6 +124,8 @@ namespace Huginn::Slot
         std::vector<PageConfig> m_pages;
         std::atomic<uint32_t> m_generation{0};
         std::atomic<bool> m_keepSlotPositions{true};
+        std::atomic<bool> m_holdSeatedItems{true};
+        std::atomic<float> m_challengerMargin{0.25f};
 
         /// Parse classification string to enum (logs warning on error, returns Regular)
         [[nodiscard]] static SlotClassification ParseClassification(const std::string& str);
