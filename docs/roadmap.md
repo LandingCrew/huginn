@@ -603,6 +603,12 @@ Raised 2026-09-24.
       fill let two slots lose to one challenger and seating put the loser
       back, keeping Resist Cold off screen for 18 s of frost damage; and an
       item an override displaced was a free challenger every pass.
+      LoreRim, same build: ~62 per 5 min against its own 154 baseline, one
+      change in the 1.1-1.25 band, one tie.
+      Still open: one potion can fill several slots at once -- drowning put
+      Waterbreathing Good (override), Fair and Faint on screen together
+      (2026-09-26 14:56:43). The tier rule orders strengths; it does not say
+      only one strength should show. Whether it should is undecided.
       Still open: whether wildcards should live only in
       dedicated slots is open: they are churn by design, ~4 changes/min.
       And the equip flood: putting a spell in the weapon hand flooded six
