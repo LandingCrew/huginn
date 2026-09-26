@@ -129,6 +129,21 @@ re-opening something that looks obviously undone.
       #124 (bKeepSlotPositions, on by default), on its own account rather than
       as a crosshair fix -- so what is left here is (1) against (2), and the
       cosmetic cost that argued for (1) is now smaller than it was.
+      **Update 2026-09-25: it does cause slot churn, and it reaches combat
+      state.** LoreRim, 12:32-12:40: 9 of 103 state transitions were undone
+      within one second, every one of them target or distance. The worst:
+          12:37:55.565  Target:None->Humanoid, Enemies:None->One,
+                        Combat:OutOfCombat->InCombat
+          12:37:55.671  ...and back, 0.11 s later
+          12:37:55.567  slots 6,7: scrolls -> Resist Fire/Magic (x1.29, x1.24)
+          12:37:58.576  slots 6,7: back to the scrolls          (x1.86, x1.83)
+      A humanoid crossing the crosshair for a tenth of a second put the player
+      "in combat" and flipped two keys twice. The churn fix's challenger margin
+      cannot stop this: the context change is real while it lasts and the
+      challengers really are 24-29% better. So (1) is off the table -- the cost
+      is no longer only cosmetic recomputes -- and (2) wants widening: a dwell
+      before a transient target counts, which then gates the Enemies/Combat
+      state derived from it, not just the target bucket.
       Raised 2026-09-19.
 
 ## Known Mod Compatability Issues
@@ -423,6 +438,14 @@ Raised 2026-09-24.
       the whole previous loadout; or (b) remember one hand, the right, and drop
       the other. (b) is the v1 answer; (a) is worth having if the pair case
       turns out to be common in play.
+      Revisit `fWeightNoWeapon` with it. Today, putting a spell in the weapon
+      hand sets the no-weapon context (0.40), which lifts EVERY weapon at once:
+      seen twice on 2026-09-25 (12:34:20 via a Huginn key, 12:38:04 via an
+      external equip), each time six slots flipping to weapons. Remembrance
+      answers "you just took your weapon off" with the ONE weapon you took
+      off, under the key you pressed; once it exists, the no-weapon weight
+      should lift weapons much less, or not at all while a remembrance slot
+      holds one.
       Relates to the weapon stale-recommendation entry: the weapon registry
       still lacks the OnItemUsed/MarkPageDirty hook items got in #43 (M)
 
@@ -507,6 +530,17 @@ Raised 2026-09-24.
       "don't waste strong potions" penalty, which flip Fair/Faint order as
       health crosses a bucket. Whether wildcards should live only in
       dedicated slots is open: they are churn by design, ~4 changes/min.
+      Check the margin default against an equip, not only against ties:
+      putting a spell in the weapon hand flooded six slots with weapons at
+      x1.23-1.63 (see Remembrance). 25% lets most of that through; 30% stops
+      most of it. Which is right depends on whether that flood is ever wanted.
+      Two things the margin will NOT fix, tracked elsewhere: transient
+      target/combat state (the crosshair entry under Known Bugs) and
+      overrides taking slots (the override entry below).
+      Counter nit: `'Unarmed' -> 'Unarmed'` was counted as a change -- two
+      Unarmed pseudo-items (likely one per hand) with different FormIDs that
+      look identical on screen. Rare; the counter should compare what is
+      displayed, not only the form.
       What the code already does, for context: `SlotLocker` keeps a per-slot
       timer (`m_lockedSlots[i].remainingMs`); only the DURATION is global —
       `fLockDurationMs` (shipped 1000 until v0.21.18, now 3000),
