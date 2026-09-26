@@ -263,6 +263,11 @@ namespace Huginn::Slot
         // that page, cleared when the layout generation changes or on Reset().
         mutable std::mutex m_seatingMutex;
         mutable std::array<std::array<uint64_t, MAX_SLOTS_PER_PAGE>, MAX_PAGES> m_seating{};
+        /// Where each item was PLACED last pass, which differs from its seat
+        /// for a guest -- an item whose own seat an override is occupying.
+        /// HoldIncumbents holds guests where they stand; guarded by the same
+        /// mutex and generation as m_seating.
+        mutable std::array<std::array<uint64_t, MAX_SLOTS_PER_PAGE>, MAX_PAGES> m_lastPlaced{};
         mutable uint32_t m_seatingGeneration = UINT32_MAX;
 
         /// Before the rank-ordered fill: keep each seated item in its own seat,
