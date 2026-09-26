@@ -285,7 +285,9 @@ namespace Huginn::Slot
             std::set<RE::FormID>& assignedFormIDs,
             std::set<std::string_view>& assignedNames,
             const State::PlayerActorState* player,
-            float margin) const;
+            float margin,
+            const std::array<size_t, MAX_SLOTS_PER_PAGE>& priorityOrder,
+            size_t priorityCount) const;
 
         /// Put items back in the slots they were in last pass, where the layout
         /// still allows it.
