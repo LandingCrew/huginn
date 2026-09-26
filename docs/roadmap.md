@@ -6,13 +6,6 @@ once its entry leaves this file. Git history is the only record; check it before
 re-opening something that looks obviously undone.
 
 ## Known Bugs
-- [ ] `[Cosave] DecodeV2EntryBlob: byteLen 83 != stride 84 x numItems 1 —
-      rejecting` logs at [E] on every load, on both profiles and every build
-      of 2026-09-25/26. One saved learner entry is a byte short of the v2
-      stride and is dropped each time, so whatever it learned is lost on
-      every load, silently apart from this line. Not investigated: find which
-      writer produced 83 bytes before deciding whether to repair or discard.
-      Raised 2026-09-26.
 
 - [ ] The pipeline recomputed on EVERY tick for ten idle minutes.
       simonrim-essentials 2026-09-25, 11:10-11:20: `recompute=2881/2881` in
