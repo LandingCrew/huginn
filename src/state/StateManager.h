@@ -4,6 +4,7 @@
 #include "PlayerActorState.h"
 #include "TargetActorState.h"
 #include "FallTracker.h"
+#include "BoolDebouncer.h"
 #include "StateTypes.h"              // For HealthTrackingState
 #include "StateManagerConstants.h"
 #include "DamageEventSink.h"         // For instant damage classification (v0.6.8)
@@ -393,6 +394,12 @@ namespace Huginn::State
       std::atomic<CombatTransition> m_combatTransition{CombatTransition::None};
       std::atomic<bool> m_isInCombat{false};
       bool m_wasInCombat = false;  // Previous tick's combat state (single-writer in PollPlayerPosition)
+
+      // Published combat / enemy-casting flags, debounced (see BoolDebouncer).
+      // Combat: single writer in PollPlayerPosition. Casting: written in
+      // PollTargets under m_targetsMutex. Both reset in ResetTrackingState.
+      BoolDebouncer m_combatDebounce;
+      BoolDebouncer m_castingDebounce;
 
       // Take-off Z tracking for fall depth (#60). Single-writer in
       // PollPlayerPosition, same as m_wasInCombat. MUST be reset in

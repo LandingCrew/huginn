@@ -715,6 +715,19 @@ namespace Huginn::State
       // Recompute cached aggregates after all mutations
       m_targets.UpdateCachedCounts();
 
+      // Publish enemy casting debounced, before the digest reads it, so a
+      // caster pausing between spells neither re-scores nor flips the ward
+      // weights (see StateDebounce::CASTING_EXIT).
+      {
+        std::optional<BoolDebouncer::Suppressed> dropped;
+        m_targets.cachedAnyCasting = m_castingDebounce.Update(m_targets.cachedAnyCasting,
+            BoolDebouncer::Clock::now(), StateDebounce::CASTING_ENTER, StateDebounce::CASTING_EXIT, &dropped);
+        if (dropped) {
+           logger::debug("[Debounce] enemy casting {} for {} ms, not published"sv,
+             dropped->rawValue ? "on" : "off", dropped->lasted.count());
+        }
+      }
+
       // Change detection: compare lightweight digest against previous
       TargetDigest digest = ComputeTargetDigest();
       changed = !(digest == m_prevTargetDigest);

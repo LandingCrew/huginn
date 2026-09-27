@@ -133,8 +133,18 @@ namespace Huginn::State
       // Sneaking check
       newIsSneaking = player->IsSneaking();
 
-      // Combat check
-      newIsInCombat = player->IsInCombat();
+      // Combat check, debounced: everything downstream -- context rules,
+      // learner features, the pipeline hash, the combat timer -- reads this
+      // published value. Target tracking keeps reading the engine flag raw.
+      {
+      std::optional<BoolDebouncer::Suppressed> dropped;
+      newIsInCombat = m_combatDebounce.Update(player->IsInCombat(), BoolDebouncer::Clock::now(),
+          StateDebounce::COMBAT_ENTER, StateDebounce::COMBAT_EXIT, &dropped);
+      if (dropped) {
+        logger::debug("[Debounce] combat {} for {} ms, not published"sv,
+          dropped->rawValue ? "on" : "off", dropped->lasted.count());
+      }
+      }
 
       // Mounted check (pattern from EnvironmentSensor.cpp)
       newIsMounted = player->IsOnMount();

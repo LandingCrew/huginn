@@ -143,6 +143,8 @@ namespace Huginn::State
       m_combatTransition.store(CombatTransition::None, std::memory_order_relaxed);
       m_isInCombat.store(false, std::memory_order_relaxed);
       m_wasInCombat = false;
+      m_combatDebounce.Reset();
+      m_castingDebounce.Reset();
 
       // --- Fall tracking (#60) ---
       // The previous save's take-off Z describes a different world position.

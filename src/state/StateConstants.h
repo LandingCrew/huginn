@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 
 // =============================================================================
@@ -712,6 +713,29 @@ namespace Huginn::State
       // Epsilon for resistance comparison
       // Why 1.0f: 1% tolerance for change detection
       inline constexpr float EPSILON = 1.0f;
+   }
+
+   // =============================================================================
+   // STATE DEBOUNCE
+   // =============================================================================
+   // How long a flip of a flag the scorer reads must hold before it is
+   // published (BoolDebouncer). Enter = off -> on, exit = on -> off.
+   namespace StateDebounce
+   {
+      // Combat: the engine's IsInCombat went on for 0.11 s as a humanoid
+      // crossed the crosshair, and two slots flipped and flipped back
+      // (2026-09-25 12:37:55). Half a second rejects that and costs a real
+      // fight half a second of combat scoring.
+      inline constexpr std::chrono::milliseconds COMBAT_ENTER{ 500 };
+      // A lull is not the end of a fight: without a hold the "out of combat"
+      // ranking flashes up between blows.
+      inline constexpr std::chrono::milliseconds COMBAT_EXIT{ 2000 };
+
+      // Enemy casting: react to the first cast at once -- a ward is wanted
+      // NOW -- but hold through the gaps. One caster toggled it every ~1.2 s
+      // and swung Steadfast Ward 3.5x on every flip (2026-09-26 14:34:37).
+      inline constexpr std::chrono::milliseconds CASTING_ENTER{ 0 };
+      inline constexpr std::chrono::milliseconds CASTING_EXIT{ 2000 };
    }
 
    // =============================================================================
