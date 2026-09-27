@@ -551,17 +551,23 @@ namespace Huginn::State
       // the printed set had moved. A line that says the same thing twice says
       // nothing, which is what CLAUDE.md's dedup rule is for.
       if (effectsChanged || buffsChanged) {
-        const std::tuple<bool, bool, bool, bool, bool, bool, bool> printed{
+        // waterBreathing is printed because it silences BOTH the underwater
+        // context rule and the DROWNING override, and "never detected under
+        // water" and "thought you could already breathe" looked identical in a
+        // log without it (2026-09-27, fully submerged, nothing surfaced).
+        const std::tuple<bool, bool, bool, bool, bool, bool, bool, bool> printed{
           newBuffs.hasArmorBuff,
           newBuffs.hasCloakActive, newBuffs.isInvisible, newBuffs.hasActiveSummon,
+          newBuffs.hasWaterBreathing,
           newEffects.isOnFire, newEffects.isPoisoned, newEffects.isFrozen };
-        using PrintedFlags = std::tuple<bool, bool, bool, bool, bool, bool, bool>;
+        using PrintedFlags = std::tuple<bool, bool, bool, bool, bool, bool, bool, bool>;
         static std::optional<PrintedFlags> lastPrinted;
         if (!lastPrinted || *lastPrinted != printed) {
         lastPrinted = printed;
-        logger::debug("[StateManager] Magic state: armor={} cloak={} invis={} summon={} | fire={} poison={} frost={}",
+        logger::debug("[StateManager] Magic state: armor={} cloak={} invis={} summon={} waterBreathing={} | fire={} poison={} frost={}",
            newBuffs.hasArmorBuff,
            newBuffs.hasCloakActive, newBuffs.isInvisible, newBuffs.hasActiveSummon,
+           newBuffs.hasWaterBreathing,
            newEffects.isOnFire, newEffects.isPoisoned, newEffects.isFrozen);
         }
       }
