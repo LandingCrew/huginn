@@ -396,6 +396,50 @@ namespace Huginn::Slot
                 RE::FormID formID = Candidate::GetFormID(*override.candidate);
                 if (assignedFormIDs.contains(formID)) continue;
 
+                // If the item is ALREADY on this page, the override marks that
+                // slot -- label and pulse on the key the player already knows --
+                // instead of putting a second copy in its configured slot. The
+                // copy was the worst churn left: dedup bounced the potion
+                // between the two slots four times a second, and the item the
+                // configured slot held was pushed out and evicted another
+                // (2026-09-27 19:03:07, 19:08:56; Minor Healing in slot 7 moved
+                // to slot 0 at 19:14:16 when slot 7 could have just been marked).
+                //
+                // Except CRITICAL health, which keeps its configured slot: at 10%
+                // health the player should not have to find the potion -- the
+                // emergency key is muscle memory, and marking it where it stood
+                // put it on key 7 (2026-09-27 19:26, user's call). Everything
+                // else, where a still bar is worth more, marks in place.
+                const bool pinnedToSlot =
+                    override.condition == Override::OverrideCondition::CriticalHealth;
+                if (const size_t home = pinnedToSlot ? SIZE_MAX : FindItemSlot(pageIndex, configGeneration,
+                        Candidate::GetBase(*override.candidate).GetDeduplicationKey(),
+                        std::min(slotConfigs.size(), MAX_SLOTS_PER_PAGE));
+                    home != SIZE_MAX && assignments[home].IsEmpty()) {
+                    Scoring::ScoredCandidate sc;
+                    sc.candidate = *override.candidate;
+                    sc.utility = kOverrideUtility;
+                    sc.isWildcard = false;
+                    auto marked = SlotAssignment::FromCandidate(
+                        home, slotConfigs[home].classification, sc, AssignmentType::Override);
+                    if (SlotAccepts(slotConfigs[home], marked, &player)) {
+                        assignments[home] = std::move(marked);
+                        assignedFormIDs.insert(formID);
+                        assignedNames.insert(Candidate::GetName(*override.candidate));
+                        overrideAssignedThisFrame = true;
+
+                        auto& lastLog = pageLogs[static_cast<size_t>(override.condition)];
+                        const bool unstamped = BypassDedup(override.condition);
+                        if (unstamped || formID != lastLog.formID ||
+                            home != lastLog.slot || lastLog.displaced) {
+                            SKSE::log::info("[SlotAllocator] Override '{}' → Page {} Slot {} (marks the slot already showing it)",
+                                override.reason, pageIndex, home);
+                            lastLog = { formID, home, false };
+                        }
+                        continue;
+                    }
+                }
+
                 // Find first override-enabled slot that MATCHES this override's type
                 for (size_t k = 0; k < priorityCount; ++k) {
                     const size_t priorityIdx = priorityOrder[k];
@@ -671,6 +715,27 @@ namespace Huginn::Slot
         return true;
     }
 
+    size_t SlotAllocator::FindItemSlot(
+        size_t pageIndex, uint32_t generation, uint64_t key, size_t slotCount) const
+    {
+        if (key == 0 || pageIndex >= MAX_PAGES || !SlotSettings::GetSingleton().KeepSlotPositions()) {
+            return SIZE_MAX;
+        }
+        std::lock_guard<std::mutex> lock(m_seatingMutex);
+        if (m_seatingGeneration != generation) {
+            return SIZE_MAX;
+        }
+        const size_t n = std::min(slotCount, MAX_SLOTS_PER_PAGE);
+        // Its own seat first; failing that, where it stood last pass (a guest).
+        for (size_t j = 0; j < n; ++j) {
+            if (m_seating[pageIndex][j] == key) return j;
+        }
+        for (size_t j = 0; j < n; ++j) {
+            if (m_lastPlaced[pageIndex][j] == key) return j;
+        }
+        return SIZE_MAX;
+    }
+
     void SlotAllocator::HoldIncumbents(
         size_t pageIndex,
         uint32_t generation,
@@ -740,6 +805,27 @@ namespace Huginn::Slot
             tentative[tentativeCount++] = { j, owner };
             excludedIDs.insert(owner->GetFormID());
             excludedNames.insert(owner->GetName());
+        }
+
+        // Owners whose seat an override is sitting in stay out of the
+        // challengers. Free to challenge, the Iron Dagger an override pushed
+        // out of slot 1 beat Sparks in slot 4, Sparks landed in slot 3, and
+        // it all ran backwards when the override ended -- one override, six
+        // slot changes (2026-09-27 19:08:30-37). It may still fill a slot
+        // that is genuinely empty (the fill), and goes home when the override
+        // ends.
+        for (size_t j = 0; j < slotCount; ++j) {
+            if (!assignments[j].IsOverride() || seats[j] == 0 || !assignments[j].candidate) continue;
+            if (Candidate::GetBase(assignments[j].candidate->candidate).GetDeduplicationKey() == seats[j]) {
+                continue;  // the override IS the owner: it marked its own slot
+            }
+            for (const auto& c : candidates) {
+                if (Candidate::GetBase(c.candidate).GetDeduplicationKey() == seats[j]) {
+                    excludedIDs.insert(c.GetFormID());
+                    excludedNames.insert(c.GetName());
+                    break;
+                }
+            }
         }
 
         // Guests: an item standing in a slot that is not its seat, because an
@@ -1042,7 +1128,11 @@ namespace Huginn::Slot
                 continue;
             }
             const size_t home = previousSeatOf(key);
-            if (home != SIZE_MAX && home != i) {
+            // An override that marked its item's OWN seat keeps it: the second
+            // loop below skips overrides, and without this the seat would
+            // lapse, the next pass would find no slot showing the item, and
+            // the override would jump to its configured slot.
+            if (home != SIZE_MAX && (home != i || assignments[i].IsOverride())) {
                 seats[home] = key;
             }
         }
