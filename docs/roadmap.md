@@ -669,6 +669,12 @@ Raised 2026-09-24.
       only one strength should show. Whether it should is undecided.
       Still open: whether wildcards should live only in
       dedicated slots is open: they are churn by design, ~4 changes/min.
+      And whether they should roll DURING COMBAT (2026-09-27, user still
+      deciding). Leaning: an INI toggle, default ON -- exploration is how
+      the learner finds anything new -- possibly with a separate, shorter
+      combat expiry than the 30 s they persist for now. Since the hold fix
+      in v0.21.34 a wildcard keeps its slot for its whole term, so a
+      mid-fight wildcard now costs that slot for 30 s rather than hopping.
       And the equip flood: putting a spell in the weapon hand flooded six
       slots with weapons at x1.23-1.63 (see Remembrance). 25% lets most of
       that through; 30% stops most of it -- not yet re-measured with the hold.
