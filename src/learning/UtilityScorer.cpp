@@ -532,6 +532,7 @@ namespace Huginn::Scoring
     void UtilityScorer::Reset()
     {
         m_wildcardMgr.Reset();
+        m_contextEngine.ResetVitalEnvelopes();
     }
 
     void UtilityScorer::SetContextWeightConfig(const State::ContextWeightConfig& config)

@@ -147,9 +147,13 @@ re-opening something that looks obviously undone.
       **What swaps now is vitals.** Of 40 swap-backs in that soak, the state
       change just before was MP 15, HP 9, distance/target 12, combat 4,
       casting 3. Magicka crossing Medium<->Low as the player casts and
-      regenerates flips restore-magicka potions in and out. Next: hysteresis
-      on the vital buckets (cross a bucket edge by a few percent to move, not
-      by one point), same idea as the debounce but on a continuous value.
+      regenerates flips restore-magicka potions in and out. Bucket hysteresis
+      would not help: restore weights are continuous ((1-vital)^2), so the
+      buckets only decide WHEN the pipeline re-runs. Measured instead: MP
+      swap-backs a median 5.4 s apart (flap), HP 68 s (hurt, then healed --
+      correct). **Shipped v0.21.31:** VitalEnvelope holds the recent magicka
+      and stamina low for 8 s while regenerating, follows drops at once, and
+      resets on a >20% jump (a potion). Scoring input only; health untouched.
       Raised 2026-09-19.
 
 ## Known Mod Compatability Issues
