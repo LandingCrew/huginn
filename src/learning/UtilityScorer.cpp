@@ -2,6 +2,7 @@
 #include "context/ContextWeightSettings.h"       // For BuildConfig() in constructor
 #include "context/ContextWeightForCandidate.h"   // Context::WeightForCandidate (moved from here, #10)
 #include "util/ScopedTimer.h"
+#include "state/StateManager.h"                 // GetPlayerVitals: vital envelopes tick every frame
 #include "override/OverrideConfig.h"                // URGENT_RESTORE_WINDOW_SEC: one "strongest" for slots and override
 #include <algorithm>
 #include <chrono>
@@ -40,10 +41,20 @@ namespace Huginn::Scoring
         ScoredCandidateList scored;
         scored.reserve(candidates.size());
 
+        // Magicka and stamina are scored at their recent low while they
+        // regenerate (VitalEnvelope), on a COPY: the rule engine stays pure --
+        // a stateful engine let one evaluation's low leak into the next, which
+        // the threshold tests caught -- and nothing but the context weights
+        // sees the held value. Health is not held; see VitalEnvelope.
+        // The envelopes are ticked every frame in Update(); this only reads them.
+        State::PlayerActorState scoringPlayer = player;
+        scoringPlayer.vitals.magicka = m_magickaEnvelope.Value(player.vitals.magicka);
+        scoringPlayer.vitals.stamina = m_staminaEnvelope.Value(player.vitals.stamina);
+
         // Stage 1f: Evaluate context rules ONCE for all candidates
         // This replaces per-candidate relevance from CandidateGenerator
         Context::ContextWeightMap weights = m_contextEngine.EvaluateRules(
-            player, targets, world);
+            scoringPlayer, targets, world);
 
         // Hand the map back so the display explanation is read off the SAME
         // weights that ranked the list, not a second derivation (#10).
@@ -526,12 +537,23 @@ namespace Huginn::Scoring
     bool UtilityScorer::Update(float deltaSeconds)
     {
         m_potionDiscrim.Update(deltaSeconds);
-        return m_wildcardMgr.UpdateExpiry();
+        bool forceRun = m_wildcardMgr.UpdateExpiry();
+
+        // Vital envelopes tick every frame, not just when the pipeline runs: a
+        // hold ending, or a potion, changes the context weights without
+        // changing anything the skip gate hashes. Release -> one re-run.
+        const auto vitals = State::StateManager::GetSingleton().GetPlayerVitals();
+        const auto now = Context::VitalEnvelope::Clock::now();
+        forceRun |= m_magickaEnvelope.Tick(vitals.magicka, now);
+        forceRun |= m_staminaEnvelope.Tick(vitals.stamina, now);
+        return forceRun;
     }
 
     void UtilityScorer::Reset()
     {
         m_wildcardMgr.Reset();
+        m_magickaEnvelope.Reset();
+        m_staminaEnvelope.Reset();
     }
 
     void UtilityScorer::SetContextWeightConfig(const State::ContextWeightConfig& config)

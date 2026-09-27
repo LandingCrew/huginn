@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ScorerConfig.h"
+#include "context/VitalEnvelope.h"
 #include "ScoredCandidate.h"
 #include "PriorCalculator.h"
 #include "CorrelationBooster.h"
@@ -191,6 +192,11 @@ namespace Huginn::Scoring
         CorrelationBooster m_correlationBooster;
         PotionDiscriminator m_potionDiscrim;
         WildcardManager m_wildcardMgr;
+
+        // Live-path hold on magicka/stamina for context weights (ScoreCandidates
+        // only). Update thread, like the rest of scoring.
+        Context::VitalEnvelope m_magickaEnvelope;
+        Context::VitalEnvelope m_staminaEnvelope;
         Context::ContextRuleEngine m_contextEngine;  // Stage 1f: New component
 
         // Scratch buffer for batch decay (update thread only, reused per tick)

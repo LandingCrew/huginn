@@ -143,6 +143,8 @@ namespace Huginn::State
       m_combatTransition.store(CombatTransition::None, std::memory_order_relaxed);
       m_isInCombat.store(false, std::memory_order_relaxed);
       m_wasInCombat = false;
+      m_combatDebounce.Reset();
+      m_castingDebounce.Reset();
 
       // --- Fall tracking (#60) ---
       // The previous save's take-off Z describes a different world position.
@@ -184,6 +186,12 @@ namespace Huginn::State
    {
       std::shared_lock lock(m_playerMutex);
       return m_playerState;  // Copy-out pattern
+   }
+
+   ActorVitals StateManager::GetPlayerVitals() const noexcept
+   {
+      std::shared_lock lock(m_playerMutex);
+      return m_playerState.vitals;
    }
 
    TargetCollection StateManager::GetTargets() const noexcept
