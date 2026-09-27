@@ -174,6 +174,16 @@ namespace Huginn::State
       // crossing marks the state dirty.
       m_playerState.fallDepth = newFallDepth;
 
+      // Transition line for the water state, with the numbers that decide it.
+      // The underwater check had no log above trace, so a player fully
+      // submerged with nothing surfacing could not be told apart from one the
+      // check never saw (2026-09-27). Swimming is printed beside it: swimming
+      // while not "underwater" means the head-height comparison said no.
+      if (m_playerState.isUnderwater != newIsUnderwater || m_playerState.isSwimming != newIsSwimming) {
+        logger::debug("[StateManager] Water: underwater={} swimming={} | head z={:.0f} water={:.0f}",
+          newIsUnderwater, newIsSwimming, currentZ + PhysicsConstants::HEAD_HEIGHT, waterHeight);
+      }
+
       if (changed) {
         m_playerState.isUnderwater = newIsUnderwater;
         m_playerState.isSwimming = newIsSwimming;
