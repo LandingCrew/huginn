@@ -40,10 +40,22 @@ namespace Huginn::Scoring
         ScoredCandidateList scored;
         scored.reserve(candidates.size());
 
+        // Magicka and stamina are scored at their recent low while they
+        // regenerate (VitalEnvelope), on a COPY: the rule engine stays pure --
+        // a stateful engine let one evaluation's low leak into the next, which
+        // the threshold tests caught -- and nothing but the context weights
+        // sees the held value. Health is not held; see VitalEnvelope.
+        State::PlayerActorState scoringPlayer = player;
+        {
+            const auto now = Context::VitalEnvelope::Clock::now();
+            scoringPlayer.vitals.magicka = m_magickaEnvelope.Follow(player.vitals.magicka, now);
+            scoringPlayer.vitals.stamina = m_staminaEnvelope.Follow(player.vitals.stamina, now);
+        }
+
         // Stage 1f: Evaluate context rules ONCE for all candidates
         // This replaces per-candidate relevance from CandidateGenerator
         Context::ContextWeightMap weights = m_contextEngine.EvaluateRules(
-            player, targets, world);
+            scoringPlayer, targets, world);
 
         // Hand the map back so the display explanation is read off the SAME
         // weights that ranked the list, not a second derivation (#10).
@@ -532,7 +544,8 @@ namespace Huginn::Scoring
     void UtilityScorer::Reset()
     {
         m_wildcardMgr.Reset();
-        m_contextEngine.ResetVitalEnvelopes();
+        m_magickaEnvelope.Reset();
+        m_staminaEnvelope.Reset();
     }
 
     void UtilityScorer::SetContextWeightConfig(const State::ContextWeightConfig& config)

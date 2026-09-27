@@ -135,9 +135,7 @@ namespace Huginn::Context
         // MAGICKA RESTORATION (Pure continuous, no thresholds)
         // =====================================================================
 
-        // Held at its recent low while regenerating -- see VitalEnvelope.
-        const auto now = VitalEnvelope::Clock::now();
-        const float magickaPct = m_magickaEnvelope.Follow(player.vitals.magicka, now);
+        const float magickaPct = player.vitals.magicka;
 
         if (magickaPct < 1.0f) {
             const float deficit = 1.0f - magickaPct;
@@ -152,7 +150,7 @@ namespace Huginn::Context
         // Uses slightly gentler exponent (1.5 vs 2.0) since stamina is less
         // critical than health.
 
-        const float staminaPct = m_staminaEnvelope.Follow(player.vitals.stamina, now);
+        const float staminaPct = player.vitals.stamina;
 
         if (staminaPct < 1.0f) {
             const float deficit = 1.0f - staminaPct;

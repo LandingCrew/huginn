@@ -5,7 +5,6 @@
 #include "state/TargetActorState.h"
 #include "state/WorldState.h"
 #include "ContextWeightConfig.h"
-#include "VitalEnvelope.h"
 #include "ContextReason.h"
 
 #include <algorithm>  // std::max (GetMaxWeight)
@@ -269,13 +268,6 @@ namespace Huginn::Context
         /// Replace the stored config snapshot (e.g., after INI hot-reload).
         void SetConfig(const State::ContextWeightConfig& config) { m_config = config; }
 
-        /// Forget the magicka/stamina lows being held (save load).
-        void ResetVitalEnvelopes() noexcept
-        {
-            m_magickaEnvelope.Reset();
-            m_staminaEnvelope.Reset();
-        }
-
         /**
          * @brief Evaluate all context rules and produce normalized weights.
          *
@@ -317,12 +309,6 @@ namespace Huginn::Context
 
     private:
         State::ContextWeightConfig m_config;
-
-        // Scoring-side hold on magicka and stamina (see VitalEnvelope). Mutable:
-        // EvaluateRules stays const for its callers, and rule evaluation is
-        // update-thread only (THREAD SAFETY above).
-        mutable VitalEnvelope m_magickaEnvelope;
-        mutable VitalEnvelope m_staminaEnvelope;
 
         // =========================================================================
         // INTERNAL RULE EVALUATION HELPERS
