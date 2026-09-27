@@ -281,6 +281,12 @@ namespace Huginn::Slot
         /// (a WeaponsAny slot pulling the bow out of slot 5 whenever the axe in
         /// slot 1 left), which seating could not undo. Held items go into the
         /// assigned sets, so the fill never sees them.
+        /// The slot on this page that shows the item with `key`: its seat, or
+        /// failing that where it stood last pass. SIZE_MAX if none (or seating
+        /// is off, or the layout generation moved on).
+        [[nodiscard]] size_t FindItemSlot(
+            size_t pageIndex, uint32_t generation, uint64_t key, size_t slotCount) const;
+
         void HoldIncumbents(
             size_t pageIndex,
             uint32_t generation,
