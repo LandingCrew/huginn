@@ -804,6 +804,25 @@ namespace Huginn::Slot
         for (size_t t = 0; t < tentativeCount; ++t) {
             const auto [j, item] = tentative[t];
             const auto& config = slotConfigs[j];
+
+            // A wildcard is not challenged on score. WildcardManager swaps it
+            // into a rank POSITION and leaves its own low utility in place,
+            // so the fill (which walks the list in order) treats it as that
+            // rank while a utility comparison always finds it beaten. Held on
+            // score, it was released on every pass and re-placed by position
+            // somewhere else, evicting that slot's item -- the Woodcutter's
+            // Axe went slot 7 -> 3 and Flames lost its slot mid-fight, six
+            // wildcard moves in twelve seconds (2026-09-27 19:02:40-46). It
+            // stays until WildcardManager ends it (the flag clears) or the
+            // slot stops accepting it (Phase A).
+            if (item->isWildcard) {
+                assignments[j] = SlotAssignment::FromCandidate(j, config.classification, *item,
+                    AssignmentType::Wildcard);
+                assignedFormIDs.insert(item->GetFormID());
+                assignedNames.insert(item->GetName());
+                continue;
+            }
+
             const auto challenger = FindBestCandidate(candidates, config.classification,
                 excludedIDs, excludedNames, config.skipEquipped, player,
                 /*skipWildcards=*/!config.wildcardsEnabled);
