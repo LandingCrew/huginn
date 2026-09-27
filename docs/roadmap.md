@@ -138,6 +138,18 @@ re-opening something that looks obviously undone.
       the dwell wants to be a general debounce for short-lived STATE (target,
       combat, enemy casting), not a crosshair special case -- the slot layer
       cannot tell a real change from one that is about to undo itself.
+      **Combat and enemy casting debounced (v0.21.30):** combat 500 ms in /
+      2000 ms out, casting 0 in / 2000 out, published by BoolDebouncer where
+      the flags are set. 50-minute LoreRim soak, 2026-09-27: ~35 slot changes
+      per 5 min (was 154 before the hold, ~62 with it), worst burst 2 in most
+      windows; 8 flips filtered (7 casting gaps, 1 combat lull). Target type
+      and distance were NOT debounced -- Beast/Humanoid carry no weight.
+      **What swaps now is vitals.** Of 40 swap-backs in that soak, the state
+      change just before was MP 15, HP 9, distance/target 12, combat 4,
+      casting 3. Magicka crossing Medium<->Low as the player casts and
+      regenerates flips restore-magicka potions in and out. Next: hysteresis
+      on the vital buckets (cross a bucket edge by a few percent to move, not
+      by one point), same idea as the debounce but on a continuous value.
       Raised 2026-09-19.
 
 ## Known Mod Compatability Issues
@@ -276,6 +288,48 @@ re-opening something that looks obviously undone.
       under `src/` that mention dMenu (132 references).
 
 ## Known Recommendation Issues
+- [ ] **Darkness is detected but never scored, so Night Eye and light spells
+      never surface.** `InDarkness` is a display reason only
+      (`ContextRuleEngine.h:198`: "...InDarkness) that nothing scores on");
+      night and caves change nothing in the ranking. The player went looking
+      for Night Eye in both and it never appeared (2026-09-27). Wants a
+      darkness weight -- WorldState::lightLevel < 0.3 already reports it --
+      for Night Eye, Candlelight/Magelight and torches, suppressed while one
+      is active the way waterbreathing is.
+      Raised 2026-09-27.
+
+- [ ] **Survival cold is tracked but never scored.** `coldLevel`,
+      `warmthRating` and `IsFreezing()` exist in PlayerActorState and nothing
+      reads them; `PriorCalculator.cpp:96` names a `warmthWeight` that does
+      not exist. So warming spells (the player's "Warming Aura"), hot food
+      and warm gear never surface for cold, even at cold level 3. The
+      Warming Aura spell also did not appear in the spell registry dump --
+      get its exact name/FormID to check whether it is registered at all
+      before building the rule.
+      Raised 2026-09-27.
+
+- [ ] **Two weight sets: exploration and combat.** Idea from play
+      (2026-09-27), needs more thought before building. The context weights
+      are one table serving two very different situations; out of combat the
+      bar wants utility (light, warmth, waterbreathing, travel buffs), in
+      combat it wants damage, wards and restores. Splitting the table (or the
+      learner's context) by mode could make each sharper. Open questions:
+      what decides the mode (the debounced combat flag is the obvious gate),
+      whether the learner learns per mode, and how this interacts with page
+      layouts that already separate the two by hand.
+      Raised 2026-09-27.
+
+- [ ] **Estimated altitude.** Idea from play (2026-09-27): add a fixed
+      offset (e.g. +100000) to the player's world Z to get an estimated
+      global altitude. Exteriors only -- interiors have their own Z space and
+      do not need it. Featherfall already surfaces from FallTracker (descent
+      below the take-off point: it appeared 0.3 s into a fall at 16:41:38
+      with the "Falling" label), so altitude is not needed for that. Open
+      question before building: what should altitude DRIVE -- pre-emptive
+      slow-fall near high ground, cold at altitude in survival, something
+      else?
+      Raised 2026-09-27.
+
 - [ ] Two counts for the same quiver can be on screen at once and disagree by
       one shot. A bow or crossbow slot prints `playerState.arrowCount` --
       polled at 10 Hz and, since v0.21.13, forcing a recompute on every shot --
