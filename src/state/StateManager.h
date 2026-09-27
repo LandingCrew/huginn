@@ -147,6 +147,10 @@ namespace Huginn::State
       // Get player state (copy-out)
       [[nodiscard]] PlayerActorState GetPlayerState() const noexcept;
 
+      // Just the vitals, for per-tick readers that do not need the whole
+      // player state copied (UtilityScorer's vital envelopes).
+      [[nodiscard]] ActorVitals GetPlayerVitals() const noexcept;
+
       // Get all targets (copy-out)
       [[nodiscard]] TargetCollection GetTargets() const noexcept;
 

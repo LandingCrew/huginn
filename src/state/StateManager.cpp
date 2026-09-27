@@ -188,6 +188,12 @@ namespace Huginn::State
       return m_playerState;  // Copy-out pattern
    }
 
+   ActorVitals StateManager::GetPlayerVitals() const noexcept
+   {
+      std::shared_lock lock(m_playerMutex);
+      return m_playerState.vitals;
+   }
+
    TargetCollection StateManager::GetTargets() const noexcept
    {
       std::shared_lock lock(m_targetsMutex);
