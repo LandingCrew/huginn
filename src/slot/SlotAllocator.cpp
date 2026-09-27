@@ -404,7 +404,15 @@ namespace Huginn::Slot
                 // configured slot held was pushed out and evicted another
                 // (2026-09-27 19:03:07, 19:08:56; Minor Healing in slot 7 moved
                 // to slot 0 at 19:14:16 when slot 7 could have just been marked).
-                if (const size_t home = FindItemSlot(pageIndex, configGeneration,
+                //
+                // Except CRITICAL health, which keeps its configured slot: at 10%
+                // health the player should not have to find the potion -- the
+                // emergency key is muscle memory, and marking it where it stood
+                // put it on key 7 (2026-09-27 19:26, user's call). Everything
+                // else, where a still bar is worth more, marks in place.
+                const bool pinnedToSlot =
+                    override.condition == Override::OverrideCondition::CriticalHealth;
+                if (const size_t home = pinnedToSlot ? SIZE_MAX : FindItemSlot(pageIndex, configGeneration,
                         Candidate::GetBase(*override.candidate).GetDeduplicationKey(),
                         std::min(slotConfigs.size(), MAX_SLOTS_PER_PAGE));
                     home != SIZE_MAX && assignments[home].IsEmpty()) {

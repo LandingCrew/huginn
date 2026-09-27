@@ -91,6 +91,27 @@ namespace Huginn::Slot
         size_t changeCount = 0;
         result.reserve(newAssignments.size());
 
+        // An override showing an item in one slot releases any OTHER slot
+        // still locked on that item, in the same pass. Otherwise the lock
+        // keeps the old copy up, dedup clears one of the two, and the potion
+        // bounced between them four times a second (2026-09-27 19:03:07). The
+        // allocator never places an override's item twice; only a lock can.
+        for (size_t j = 0; j < newAssignments.size() && j < MAX_SLOTS; ++j) {
+            auto& held = m_lockedSlots[j];
+            if (!held.isLocked || held.assignment.IsEmpty()) continue;
+            for (size_t i = 0; i < newAssignments.size() && i < MAX_SLOTS; ++i) {
+                const auto& ovr = newAssignments[i];
+                if (i != j && ovr.IsOverride() && ovr.formID == held.assignment.formID &&
+                    ovr.uniqueID == held.assignment.uniqueID) {
+                    spdlog::debug("[SlotLocker] Slot {} lock released: its item moved to override slot {}", j, i);
+                    held.isLocked = false;
+                    held.remainingMs = 0.0f;
+                    held.releaseCause = Telemetry::SlotChange::Override;
+                    break;
+                }
+            }
+        }
+
         for (size_t i = 0; i < newAssignments.size() && i < MAX_SLOTS; ++i) {
             const auto& newAssign = newAssignments[i];
             auto& lockedSlot = m_lockedSlots[i];
