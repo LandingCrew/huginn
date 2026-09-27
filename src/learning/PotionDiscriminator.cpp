@@ -63,14 +63,12 @@ namespace Huginn::Scoring
             }
         }
 
-        // =====================================================================
-        // Value Ranking: Higher Magnitude = Slight Bonus
-        // =====================================================================
-
-        // Apply magnitude bonus for potions with significant magnitude
-        if (item.magnitude > 0.0f) {
-            multiplier += GetMagnitudeBonus(item.magnitude);
-        }
+        // Strength ordering WITHIN one potion (Fair vs Faint) is not decided
+        // here: a potion scored on its own cannot see its siblings. See
+        // UtilityScorer::ApplyPotionTierPreference, which replaced a magnitude
+        // bonus here and an "overkill" penalty below. Together they flipped
+        // Fair and Faint as health crossed the Medium bucket, and in play the
+        // three strengths of Restore Health traded slots every few seconds.
 
         // =====================================================================
         // Situation-Specific Adjustments
@@ -93,26 +91,6 @@ namespace Huginn::Scoring
         float combatDuration = m_combatDuration.load(std::memory_order_relaxed);
         if (inCombat && combatDuration > PotionConstants::SUSTAINED_COMBAT_THRESHOLD && isRegenPotion) {
             multiplier *= PotionConstants::SUSTAINED_COMBAT_REGEN_MULT;
-        }
-
-        // Low resource + high magnitude → Slight penalty
-        // (Don't waste strong potions when weak ones would suffice)
-        if (item.magnitude > PotionConstants::STRONG_POTION_MAGNITUDE) {
-            bool needsLess = false;
-
-            // Check if player only needs a small amount
-            if (HasTag(item.tags, ItemTag::RestoreHealth)) {
-                // If health is only at Medium (41-60%), a strong potion is overkill
-                needsLess = (state.health == State::HealthBucket::Medium);
-            } else if (HasTag(item.tags, ItemTag::RestoreMagicka)) {
-                needsLess = (state.magicka == State::MagickaBucket::Medium);
-            } else if (HasTag(item.tags, ItemTag::RestoreStamina)) {
-                needsLess = (state.stamina == State::StaminaBucket::Medium);
-            }
-
-            if (needsLess) {
-                multiplier *= PotionConstants::OVERKILL_PENALTY_MULT;
-            }
         }
 
         // =====================================================================
@@ -192,18 +170,5 @@ namespace Huginn::Scoring
         return inCombat && duration < m_config.combatStartWindow;
     }
 
-    float PotionDiscriminator::GetMagnitudeBonus(float magnitude) const
-    {
-        // Normalize magnitude to [0, 1] range
-        // Typical potion magnitudes:
-        //   - Weak: 25-50
-        //   - Standard: 50-100
-        //   - Strong: 100-200
-        //   - Ultimate: 200+
-        float normalized = std::clamp(magnitude / PotionConstants::MAGNITUDE_NORMALIZATION, 0.0f, 1.0f);
-
-        // Scale by config value
-        return normalized * m_config.magnitudeValueScale;
-    }
 
 }  // namespace Huginn::Scoring

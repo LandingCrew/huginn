@@ -818,10 +818,11 @@ encodes equipment/target synergies whose values live in `[Scoring]`:
 `fBowArrowBonus` and `fCrossbowBoltBonus` (2.0), `fMeleeDefensiveBonus` (1.5),
 `fSilverUndeadBonus` (2.0), `fFortifySchoolBonus` (2.0),
 `fStaffLowMagickaBonus` (1.5), `fTwoHandedDefensiveBonus` (1.2).
-`PotionDiscriminator` handles combat-timing and magnitude discrimination
+`PotionDiscriminator` handles combat-timing discrimination
 (`fCombatStartWindow` 10s, `fRegenPotionCombatStartMult` 1.5,
-`fFlatRestoreLowResourceMult` 1.5, `fMagnitudeValueScale` 0.3) and returns 1.0
-for non-potions. Neither feeds back into the learner.
+`fFlatRestoreLowResourceMult` 1.5) and returns 1.0 for non-potions. Ordering
+the strengths of one potion is `UtilityScorer::ApplyPotionTierPreference`
+(`sPotionTierPreference`, default Higher), which needs the whole list. Neither feeds back into the learner.
 
 ---
 

@@ -17,14 +17,9 @@ namespace Huginn::Scoring
         constexpr float SUSTAINED_COMBAT_THRESHOLD = 30.0f;   // Seconds for "sustained" combat
         constexpr float LINGERING_POISON_THRESHOLD = 10.0f;   // Seconds before lingering bonus
 
-        // Potion magnitude thresholds
-        constexpr float STRONG_POTION_MAGNITUDE = 100.0f;     // Above this = "strong" potion
-        constexpr float MAGNITUDE_NORMALIZATION = 200.0f;     // Max magnitude for normalization
-
         // Multipliers - situational bonuses
         constexpr float RESIST_MULTIPLE_ENEMIES_MULT = 1.2f;  // Resist potions vs many enemies
         constexpr float SUSTAINED_COMBAT_REGEN_MULT = 1.3f;   // Regen in long fights
-        constexpr float OVERKILL_PENALTY_MULT = 0.8f;         // Strong potion when not needed
         constexpr float POISON_COMBAT_START_MULT = 1.3f;      // Poison at combat start
         constexpr float PARALYZE_SINGLE_TARGET_MULT = 1.5f;   // Paralyze vs single enemy
         constexpr float LINGERING_POISON_MULT = 1.2f;         // Lingering poison in combat
@@ -83,7 +78,6 @@ namespace Huginn::Scoring
         [[nodiscard]] bool IsInCombatStartWindow() const;
 
         // Calculate magnitude bonus (higher magnitude = slight bonus)
-        [[nodiscard]] float GetMagnitudeBonus(float magnitude) const;
 
         const ScorerConfig& m_config;
 

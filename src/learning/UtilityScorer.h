@@ -160,6 +160,16 @@ namespace Huginn::Scoring
         // contract — rank scaling corrects order, not membership).
         void ApplyFavoritesRankScaling(ScoredCandidateList& scored);
 
+        // Order the strengths of ONE potion (Restore Health Fair / Faint /
+        // Depleted: same type, same tags) by the configured preference. The
+        // family keeps its best utility; under Higher the strongest takes it and
+        // each weaker strength gets the one above divided by POTION_TIER_STEP
+        // (Lower reverses; None leaves the scores alone). A per-potion
+        // multiplier cannot do this -- it cannot see the siblings -- and the
+        // two it replaced flipped their order as health crossed a bucket.
+        // Runs with ApplyFavoritesRankScaling, before the top-N sort.
+        void ApplyPotionTierPreference(ScoredCandidateList& scored) const;
+
         // Stage 1f: context→candidate weight mapping moved to
         // Context::WeightForCandidate (context/ContextWeightForCandidate.h) — see
         // architecture-critique #10. UtilityScorer just calls it.
