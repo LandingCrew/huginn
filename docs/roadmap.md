@@ -759,14 +759,14 @@ Raised 2026-09-24.
          below its threshold, releases above threshold + hysteresis. Already
          INI per vital (`fCritical{Health,Magicka,Stamina}Threshold` /
          `...Hysteresis`, shipped 0.35 / 0.15); defaults unchanged.
-         OPEN: any time, or in combat only?
+         Any time, in or out of combat (decided 2026-09-27).
       2. *Content.* A fixed pick order per vital, no scoring:
          potion (most restored in 5 s, pure before impure -- already so) ->
          spell (best restore affordable RIGHT NOW; the key equips it) ->
          nothing. The spell step is optional per vital. When nothing is
          available, the behaviour is optional too: show a "none" marker in
          the slot, OR release the slot back to a normal recommendation.
-         OPEN: spell fallback default on or off.
+         Spell fallback ON by default (decided 2026-09-27).
       3. *Placement: in the numbered slots (option B).* No separate widget
          element and no dedicated potion buttons. Default: ONE KEY PER
          VITAL -- each vital's override pinned to its configured slot
