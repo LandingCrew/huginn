@@ -744,10 +744,50 @@ Raised 2026-09-24.
       not comparable to one measured after.
       Raised 2026-09-24.
 
-- [ ] **Overrides should not take a slot, and override slots should prefer the
-      items overrides are about.** The structural answer to the slot-stability
-      entry above, raised out of the Steel Arrow case recorded there
-      (2026-09-24).
+- [ ] **Override rethink: deterministic emergencies, predictable keys.**
+      Originally "overrides should not take a slot" (2026-09-24); the
+      out-of-band element that title argued for was REJECTED in the design
+      below. The analysis further down is kept as history.
+
+      **Agreed design (2026-09-27, with the user).** The goal is to stop the
+      "dumb smart" problem: sometimes you just need a health potion, and the
+      recommendation engine must not stand between you and it. An override is
+      a RULE, not a recommendation -- it bypasses ranking, the learner,
+      context weights, the slot hold, seating and wildcards entirely.
+
+      1. *Trigger.* Deterministic, per vital: fires as the resource drops
+         below its threshold, releases above threshold + hysteresis. Already
+         INI per vital (`fCritical{Health,Magicka,Stamina}Threshold` /
+         `...Hysteresis`, shipped 0.35 / 0.15); defaults unchanged.
+         Any time, in or out of combat (decided 2026-09-27).
+      2. *Content.* A fixed pick order per vital, no scoring:
+         potion (most restored in 5 s, pure before impure -- already so) ->
+         spell (best restore affordable RIGHT NOW; the key equips it) ->
+         nothing. The spell step is optional per vital. When nothing is
+         available, the behaviour is optional too: show a "none" marker in
+         the slot, OR release the slot back to a normal recommendation.
+         Spell fallback ON by default (decided 2026-09-27).
+      3. *Placement: in the numbered slots (option B).* No separate widget
+         element and no dedicated potion buttons. Default: ONE KEY PER
+         VITAL -- each vital's override pinned to its configured slot
+         (`bOverridesEnabled = HP` etc.), so the key for "heal me" never
+         moves. This REVERSES #143's mark-in-place for magicka and stamina
+         (it put the magicka potion on key 8 at 25% magicka, 2026-09-27
+         19:42:19); mark-in-place survives only as an INI option. #143's
+         other two parts stay: the displaced item does not cascade, and a
+         stale lock on the override's item is released in the same pass.
+      4. *One emergency key (nice to have).* Not a new element: a slot flag
+         `bOverridesOnly` -- the slot is empty unless an override is active,
+         accepts every override category, and shows the highest priority
+         (Drowning > Health > Magicka > Stamina > Ammo > Charge). Shipped as
+         a commented example config binding it to a free key such as G.
+      5. *Presentation.* No change. The pulse stays; the only presentation
+         problem was ever slot juggling, which 3 and #143 address.
+
+      Build order: (a) pick order + spell fallback + "none" behaviour;
+      (b) pin all vitals, mark-in-place behind an INI flag; (c)
+      `bOverridesOnly` + the example config. Each played and measured like
+      #140-#143.
 
       **The conflict.** Overrides and ranked items are allocated from the same
       pool of slots, and overrides go first: Pass 1 runs before Pass 2 on an
