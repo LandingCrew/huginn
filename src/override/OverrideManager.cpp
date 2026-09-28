@@ -401,6 +401,17 @@ namespace Huginn::Override
         std::optional<Spell::SpellData> best;
         float bestRestored = 0.0f;
         float bestCost = 0.0f;
+
+        // The spell already on the key keeps it while it is still castable.
+        // Re-picking the best every pass swapped the emergency key between
+        // Healing and Fast Healing every couple of seconds as magicka rose and
+        // fell (2026-09-27 20:41:04-12) -- each pick right, the key never
+        // still. It changes only when the incumbent becomes unaffordable, or a
+        // potion comes back (the finder never gets here then).
+        const RE::FormID incumbentID = logState.lastLogged;
+        std::optional<Spell::SpellData> incumbent;
+        float incumbentRestored = 0.0f;
+        float incumbentCost = 0.0f;
         g_spellRegistry->ForEachSpell([&](const Spell::SpellData& sd) {
             if (!Spell::HasTag(sd.tags, tag)) return;
             auto* spell = RE::TESForm::LookupByID<RE::SpellItem>(sd.formID);
@@ -427,12 +438,22 @@ namespace Huginn::Override
                 restored = std::max(restored,
                     sd.isConcentration ? mag * castSeconds : Item::RestoredWithin(mag, dur, window));
             }
+            if (restored > 0.0f && sd.formID == incumbentID) {
+                incumbent = sd;
+                incumbentRestored = restored;
+                incumbentCost = cost;
+            }
             if (restored > bestRestored) {
                 bestRestored = restored;
                 bestCost = cost;
                 best = sd;   // a copy: registry entries must not outlive the visit
             }
         });
+        if (incumbent) {
+            best = incumbent;
+            bestRestored = incumbentRestored;
+            bestCost = incumbentCost;
+        }
 
         if (!best) {
             return std::nullopt;

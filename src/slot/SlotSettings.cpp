@@ -86,6 +86,19 @@ namespace Huginn::Slot
                 slot.skipEquipped = ini.GetBoolValue(slotSection.c_str(), "bSkipEquipped",
                     slot.skipEquipped);
 
+                // A slot that can host the critical-health override (HP, or Any)
+                // is an emergency key: it takes no wildcards, whatever the INI
+                // says. Between emergencies the shipped key 1 was handed an Axe,
+                // a Dagger and a Sword as exploration picks (2026-09-27
+                // 20:40:48, 20:41:13, 20:43:51) -- the last place a random
+                // item should be. Decided here so every reader (fill, refill,
+                // hold, the wildcard-capable count) agrees.
+                if (slot.wildcardsEnabled &&
+                    (slot.overrideFilter == OverrideFilter::HP || slot.overrideFilter == OverrideFilter::Any)) {
+                    slot.wildcardsEnabled = false;
+                    SKSE::log::info("[SlotSettings] {} hosts health overrides: wildcards off"sv, slotSection);
+                }
+
                 page.slots.push_back(slot);
             }
 
