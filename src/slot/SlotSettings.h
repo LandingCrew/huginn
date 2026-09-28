@@ -159,7 +159,7 @@ namespace Huginn::Slot
     namespace Defaults
     {
         inline constexpr size_t PAGE_COUNT = 1;
-        inline constexpr size_t SLOTS_PER_PAGE = 7;
+        inline constexpr size_t SLOTS_PER_PAGE = 8;
 
         // Default slot configurations for Page 0
         struct SlotDefault
@@ -171,15 +171,20 @@ namespace Huginn::Slot
             bool skipEquipped;
         };
 
+        // One job per key, the same layout the shipped INI's page 0 uses. With
+        // skip-equipped on, key 1 is "the other weapon", and Remembrance makes
+        // it a toggle between the two.
         inline constexpr SlotDefault PAGE0_SLOTS[] = {
-            { SlotClassification::DamageAny,  true, OverrideFilter::Any,  6, true },  // Slot 0
-            { SlotClassification::WeaponsAny, true, OverrideFilter::Any,  5, true },  // Slot 1
-            { SlotClassification::BuffsAny,   true, OverrideFilter::Any,  4, true },  // Slot 2
-            { SlotClassification::Regular,    true, OverrideFilter::None, 3, true },  // Slot 3
-            { SlotClassification::Regular,    true, OverrideFilter::None, 2, true },  // Slot 4
-            { SlotClassification::Regular,    true, OverrideFilter::None, 1, true },  // Slot 5
-            { SlotClassification::Regular,    true, OverrideFilter::Other, 0, true }, // Slot 6 (reserves an Other-only home for soul-gem/ammo/drowning overrides)
+            { SlotClassification::WeaponsAny,   true, OverrideFilter::HP,    7, true },  // 1 Weapon
+            { SlotClassification::DamageMagic,  true, OverrideFilter::MP,    6, true },  // 2 Attack magic
+            { SlotClassification::HealingAny,   true, OverrideFilter::SP,    5, true },  // 3 Heal
+            { SlotClassification::DefensiveAny, true, OverrideFilter::None,  4, true },  // 4 Defend
+            { SlotClassification::BuffsAny,     true, OverrideFilter::None,  3, true },  // 5 Buff
+            { SlotClassification::PotionsAny,   true, OverrideFilter::None,  2, true },  // 6 Potion
+            { SlotClassification::Regular,      true, OverrideFilter::Other, 1, true },  // 7 Situational (Other-only home for soul-gem/ammo/drowning)
+            { SlotClassification::Regular,      true, OverrideFilter::None,  0, true },  // 8 Wildcard
         };
+        static_assert(std::size(PAGE0_SLOTS) == SLOTS_PER_PAGE);
     }
 
 }  // namespace Huginn::Slot

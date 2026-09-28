@@ -23,10 +23,11 @@ namespace Huginn::Slot
         // Tripwire: adding a SlotClassification means this switch (and the other
         // classification switches in SlotConfig.h/SlotClassifier.cpp/SlotSettings.cpp)
         // may need a new case — they default to a generic fallback otherwise.
-        static_assert(SLOT_CLASSIFICATION_COUNT == 22,
+        static_assert(SLOT_CLASSIFICATION_COUNT == 23,
             "SlotClassification changed — review GetClassificationDisplayName and sibling switches");
         switch (c) {
             case SlotClassification::DamageAny:   return "damage";
+            case SlotClassification::DamageMagic: return "attack magic";
             case SlotClassification::HealingAny:  return "healing";
             case SlotClassification::BuffsAny:    return "buffs";
             case SlotClassification::DefensiveAny: return "defensive";

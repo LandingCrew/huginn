@@ -13,7 +13,7 @@ namespace Huginn::Slot
     // Tripwire: a new SlotClassification needs a parse alias + ToIniString case
     // below (ParseClassification / ClassificationToIniString), else it can't be
     // configured from INI and round-trips to Regular.
-    static_assert(SLOT_CLASSIFICATION_COUNT == 22,
+    static_assert(SLOT_CLASSIFICATION_COUNT == 23,
         "SlotClassification changed — update ParseClassification and ClassificationToIniString");
 
     void SlotSettings::LoadFromFile(const std::filesystem::path& iniPath)
@@ -313,6 +313,7 @@ namespace Huginn::Slot
         std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
 
         if (lower == "damageany" || lower == "damage") return SlotClassification::DamageAny;
+        if (lower == "damagemagic" || lower == "magicdamage" || lower == "attackmagic") return SlotClassification::DamageMagic;
         if (lower == "healingany" || lower == "healing") return SlotClassification::HealingAny;
         if (lower == "buffsany" || lower == "buffs" || lower == "buff") return SlotClassification::BuffsAny;
         if (lower == "defensiveany" || lower == "defensive") return SlotClassification::DefensiveAny;
@@ -344,6 +345,7 @@ namespace Huginn::Slot
     {
         switch (c) {
             case SlotClassification::DamageAny:   return "DamageAny";
+            case SlotClassification::DamageMagic: return "DamageMagic";
             case SlotClassification::HealingAny:  return "HealingAny";
             case SlotClassification::BuffsAny:    return "BuffsAny";
             case SlotClassification::DefensiveAny: return "DefensiveAny";

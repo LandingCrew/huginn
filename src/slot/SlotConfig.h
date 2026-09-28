@@ -44,6 +44,8 @@ namespace Huginn::Slot
         AlcoholAny,     // Alcoholic beverages (ale, mead, wine, skooma)
         AmmoAny,        // Ammunition (arrows, bolts)
         ApparelAny,     // #65: fortify-crafting gear (only scores at a workstation)
+        DamageMagic,    // Damage spells and damage scrolls: DamageAny minus
+                        // weapons and poisons, for an "attack magic" key
 
         // Unrestricted
         Regular,        // No restriction - accepts any candidate (legacy behavior)
@@ -127,7 +129,7 @@ namespace Huginn::Slot
 
     [[nodiscard]] inline constexpr std::string_view SlotClassificationToString(SlotClassification c) noexcept
     {
-        static_assert(SLOT_CLASSIFICATION_COUNT == 22,
+        static_assert(SLOT_CLASSIFICATION_COUNT == 23,
             "SlotClassification changed — add the new case to this switch and its siblings");
         switch (c) {
             case SlotClassification::DamageAny:   return "DamageAny";
@@ -144,6 +146,7 @@ namespace Huginn::Slot
             case SlotClassification::SpellsConjuration: return "SpellsConjuration";
             case SlotClassification::SpellsIllusion:    return "SpellsIllusion";
             case SlotClassification::SpellsAlteration:  return "SpellsAlteration";
+            case SlotClassification::DamageMagic:       return "DamageMagic";
             case SlotClassification::WeaponsAny:   return "WeaponsAny";
             case SlotClassification::WeaponsMelee: return "WeaponsMelee";
             case SlotClassification::WeaponsRanged: return "WeaponsRanged";

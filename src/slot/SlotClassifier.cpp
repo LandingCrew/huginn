@@ -8,7 +8,7 @@ namespace Huginn::Slot
     // Tripwire: a new SlotClassification means each Matches*/Classify switch
     // below may need a case — they default to `return false`, so a forgotten
     // case silently never matches. Bump the count here after auditing them all.
-    static_assert(SLOT_CLASSIFICATION_COUNT == 22,
+    static_assert(SLOT_CLASSIFICATION_COUNT == 23,
         "SlotClassification changed — audit MatchesSpell/Item/Scroll/Weapon and Classify()");
 
     bool SlotClassifier::Matches(
@@ -66,6 +66,7 @@ namespace Huginn::Slot
         // Priority order: most specific classification first
         static constexpr SlotClassification priorities[] = {
             SlotClassification::HealingAny,
+            SlotClassification::DamageMagic,    // Before DamageAny: the narrower of the two
             SlotClassification::DamageAny,
             SlotClassification::DefensiveAny,
             SlotClassification::BuffsAny,
@@ -110,6 +111,7 @@ namespace Huginn::Slot
 
         switch (classification) {
             case SlotClassification::DamageAny:
+            case SlotClassification::DamageMagic:
                 return spell.type == SpellType::Damage;
 
             case SlotClassification::HealingAny:
@@ -284,6 +286,7 @@ namespace Huginn::Slot
 
         switch (classification) {
             case SlotClassification::DamageAny:
+            case SlotClassification::DamageMagic:
                 return scroll.type == ScrollType::Damage;
 
             case SlotClassification::HealingAny:

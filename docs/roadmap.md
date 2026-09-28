@@ -423,6 +423,16 @@ entries named.
       Both grow in value if the apparel expansion above lands, since it
       multiplies the effect types being classified (S each)
 
+- [ ] **Review the slot classes as a whole.** They grew one at a time and
+      overlap in ways a player cannot guess: DamageAny takes weapons and
+      poisons as well as spells; BuffsAny and DefensiveAny both take armour
+      spells; HealingAny and PotionsAny both take health potions; and
+      nothing meant "attack magic" until DamageMagic was added for the
+      flagship page (2026-09-28). Worth one pass that decides what each
+      class is FOR (a job on a key) rather than what it happens to match,
+      then trims or renames to fit.
+      Raised 2026-09-28.
+
 ## Slot temporal memory
 Seating fixed WHERE an item sits; these entries are about WHEN a slot may
 change. The churn and override work (#140-#148) closed most of it: what is
