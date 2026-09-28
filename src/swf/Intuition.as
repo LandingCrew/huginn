@@ -44,7 +44,11 @@ class Intuition extends MovieClip
 
     // ── Confirm flash timing ──
     private static var CONFIRM_FLASH_SEC:Number = 0.5;   // Single dip duration
-    private static var EXPIRING_CYCLE_SEC:Number = 2.5;  // Slow pulse period
+    // Expiring pulse: 1 s period, 50-100% alpha, starting at the dip the
+    // moment a slot begins expiring. It was 2.5 s at 70-100% on the global
+    // clock, so a 2 s window (a lock's last 40%, or a short Remembrance hold)
+    // showed at most one faint pulse, wherever the clock happened to be.
+    private static var EXPIRING_CYCLE_SEC:Number = 1.0;
 
     // ── Colors ────────────────────────────────────────────────
     private static var COLOR_SPELL_TOP:Number   = 0xFFD4A0;  // Warm white (slot 0)
@@ -84,6 +88,7 @@ class Intuition extends MovieClip
     // ── Visual state tracking ────────────────────────────────
     private var _visualState:Array;     // SlotVisualState per slot
     private var _confirmTimer:Array;    // Confirm flash countdown per slot
+    private var _expiringTime:Array;    // Seconds since this slot started expiring
 
     // ── Animation state ──────────────────────────────────────
     private var _animPhase:Array;       // 0=idle, 1=slideOut, 2=slideIn
@@ -146,6 +151,7 @@ class Intuition extends MovieClip
         // Visual state tracking
         _visualState = [];       // Visual state per slot
         _confirmTimer = [];      // Confirm flash countdown per slot
+        _expiringTime = [];      // Expiring pulse phase per slot
 
         _childAlpha = 70;        // Default; C++ can override via setChildAlpha()
 
@@ -220,6 +226,10 @@ class Intuition extends MovieClip
         // CONFIRMED: Trigger single flash on state entry
         if (visualState == STATE_CONFIRMED && prevState != STATE_CONFIRMED) {
             _confirmTimer[index] = CONFIRM_FLASH_SEC;
+        }
+        // EXPIRING: start the pulse at its dip on state entry
+        if (visualState == STATE_EXPIRING && prevState != STATE_EXPIRING) {
+            _expiringTime[index] = 0;
         }
 
         // Same name: update detail only
@@ -568,7 +578,10 @@ class Intuition extends MovieClip
                 }
                 // Priority 2: Expiring slow pulse (2.5s cycle, 70-100% alpha)
                 else if (_visualState[i] == STATE_EXPIRING) {
-                    var expiringPulse:Number = 0.7 + 0.3 * Math.sin(_pulseTime * Math.PI * 2 / EXPIRING_CYCLE_SEC);
+                    if (_expiringTime[i] == undefined) _expiringTime[i] = 0;
+                    _expiringTime[i] += dt;
+                    // Starts at 50% and is back to full by mid-cycle: the first beat is a dip
+                    var expiringPulse:Number = 0.75 + 0.25 * Math.cos(_expiringTime[i] * Math.PI * 2 / EXPIRING_CYCLE_SEC + Math.PI);
                     _slotClips[i].itemName._alpha = _baseAlpha[i] * expiringPulse;
                 }
                 // Priority 3: Confirmed single flash (decay from 100% to 50% over 0.5s)
