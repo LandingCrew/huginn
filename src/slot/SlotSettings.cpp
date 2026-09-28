@@ -86,20 +86,37 @@ namespace Huginn::Slot
                 slot.skipEquipped = ini.GetBoolValue(slotSection.c_str(), "bSkipEquipped",
                     slot.skipEquipped);
 
-                // A slot that can host the critical-health override (HP, or Any)
-                // is an emergency key: it takes no wildcards, whatever the INI
-                // says. Between emergencies the shipped key 1 was handed an Axe,
-                // a Dagger and a Sword as exploration picks (2026-09-27
-                // 20:40:48, 20:41:13, 20:43:51) -- the last place a random
-                // item should be. Decided here so every reader (fill, refill,
-                // hold, the wildcard-capable count) agrees.
-                if (slot.wildcardsEnabled &&
-                    (slot.overrideFilter == OverrideFilter::HP || slot.overrideFilter == OverrideFilter::Any)) {
-                    slot.wildcardsEnabled = false;
-                    SKSE::log::info("[SlotSettings] {} hosts health overrides: wildcards off"sv, slotSection);
-                }
-
                 page.slots.push_back(slot);
+            }
+
+            // The slot the critical-health override lands in is an emergency
+            // key: it takes no wildcards, whatever the INI says. Between
+            // emergencies the shipped key 1 was handed an Axe, a Dagger and a
+            // Sword as exploration picks (2026-09-27 20:40:48, 20:41:13,
+            // 20:43:51). That is every slot set to HP -- a deliberate health
+            // key -- plus the highest-priority Any slot, where the override
+            // lands on a page with no HP slot. Not every Any slot: on a page
+            // that enables Any throughout ("Regulars"), that took wildcards
+            // off six of eight slots (v0.21.41). Decided here so every reader
+            // (fill, refill, hold, the wildcard-capable count) agrees.
+            {
+                auto& slots = page.slots;
+                const bool hasHpSlot = std::any_of(slots.begin(), slots.end(),
+                    [](const SlotConfig& c) { return c.overrideFilter == OverrideFilter::HP; });
+                size_t firstAny = SIZE_MAX;
+                for (size_t s = 0; s < slots.size() && !hasHpSlot; ++s) {
+                    if (slots[s].overrideFilter != OverrideFilter::Any) continue;
+                    if (firstAny == SIZE_MAX || slots[s].priority > slots[firstAny].priority) {
+                        firstAny = s;
+                    }
+                }
+                for (size_t s = 0; s < slots.size(); ++s) {
+                    const bool healthKey = slots[s].overrideFilter == OverrideFilter::HP || s == firstAny;
+                    if (healthKey && slots[s].wildcardsEnabled) {
+                        slots[s].wildcardsEnabled = false;
+                        SKSE::log::info("[SlotSettings] Page{}.Slot{} hosts health overrides: wildcards off"sv, p, s);
+                    }
+                }
             }
 
             newPages.push_back(std::move(page));
