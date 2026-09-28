@@ -66,6 +66,8 @@ namespace Huginn::Slot
             // both hands, replacing one leaves the other still holding it.
             int64_t startedAtMs = 0;
             bool capped = false;       // CapHold already applied
+            float totalMs = 0.0f;      // the hold's full length, for the expiry pulse
+            bool expiring = false;     // crossed into its last kExpiringFraction
             // Where the allocator actually shows it: the pressed key, or with
             // sRemembranceTarget = Job the key whose class fits. SIZE_MAX until
             // first shown. Undo and release follow it there.
@@ -133,6 +135,14 @@ namespace Huginn::Slot
         static constexpr int64_t kMatchWindowMs = 1500;
         static constexpr size_t kMaxPending = 4;
         static constexpr float kSettleMs = 1000.0f;
+
+    public:
+        // A hold pulses (SlotVisualState::Expiring) for the last 40% of its
+        // time -- the same share a slot lock uses -- so the player sees the
+        // swap-back is about to go.
+        static constexpr float kExpiringFraction = 0.4f;
+
+    private:
 
         static void Observe(Track& track, RE::FormID now, int64_t nowMs);
         [[nodiscard]] static bool ChangedTo(const Track& track, RE::FormID formID, int64_t sinceMs);

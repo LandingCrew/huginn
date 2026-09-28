@@ -160,6 +160,7 @@ namespace Huginn::Slot
             if (displaced != 0) {
                 if (durationMs > 0.0f) {
                     m_pages[p.page][p.slot] = { displaced, durationMs, kSettleMs, nowMs };
+                    m_pages[p.page][p.slot].totalMs = durationMs;
                     m_endedInHand[p.page][p.slot] = {};
                     spdlog::info("[Remembrance] Page {} Slot {}: holding '{}' ({:08X}) for {:.0f}s, taken off by '{}'",
                         p.page, p.slot, NameOf(displaced), displaced, durationMs / 1000.0f, NameOf(p.formID));
@@ -204,6 +205,11 @@ namespace Huginn::Slot
                 }
                 if (entry.settleMs > 0.0f) {
                     entry.settleMs -= deltaMs;
+                    changed = true;
+                }
+                // Start pulsing: one pipeline run to repaint the slot.
+                if (!entry.expiring && entry.remainingMs <= entry.totalMs * kExpiringFraction) {
+                    entry.expiring = true;
                     changed = true;
                 }
             }
@@ -251,6 +257,7 @@ namespace Huginn::Slot
         entry.capped = true;
         if (entry.remainingMs > maxRemainingMs) {
             entry.remainingMs = maxRemainingMs;
+            entry.totalMs = maxRemainingMs;
             spdlog::info("[Remembrance] Page {} Slot {}: '{}' does not fit this key's class; holding {:.0f}s",
                 page, slot, NameOf(formID), maxRemainingMs / 1000.0f);
         }
