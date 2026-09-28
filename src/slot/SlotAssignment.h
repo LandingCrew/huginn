@@ -22,6 +22,7 @@ namespace Huginn::Slot
         Normal,     // Standard utility-based assignment
         Override,   // Forced by override condition (critical health, etc.)
         Wildcard,   // Exploration pick (blue styling in widget)
+        Remembered, // What pressing this slot took off (Remembrance.h): not ranked
     };
 
     [[nodiscard]] inline constexpr std::string_view AssignmentTypeToString(AssignmentType t) noexcept
@@ -31,6 +32,7 @@ namespace Huginn::Slot
             case AssignmentType::Normal:   return "Normal";
             case AssignmentType::Override: return "Override";
             case AssignmentType::Wildcard: return "Wildcard";
+            case AssignmentType::Remembered: return "Remembered";
             default:                       return "Unknown";
         }
     }
@@ -133,6 +135,10 @@ namespace Huginn::Slot
         [[nodiscard]] bool IsEmpty() const noexcept { return type == AssignmentType::Empty; }
         [[nodiscard]] bool IsOverride() const noexcept { return type == AssignmentType::Override; }
         [[nodiscard]] bool IsWildcard() const noexcept { return type == AssignmentType::Wildcard; }
+        [[nodiscard]] bool IsRemembered() const noexcept { return type == AssignmentType::Remembered; }
+        // Placed by a rule for THIS slot rather than by the ranking: seating
+        // neither moves it nor gives it a seat, and dedup keeps it.
+        [[nodiscard]] bool IsPinned() const noexcept { return IsOverride() || IsRemembered(); }
         [[nodiscard]] bool HasCandidate() const noexcept { return candidate.has_value(); }
         [[nodiscard]] bool IsConfirmed() const noexcept { return visualState == SlotVisualState::Confirmed; }
         [[nodiscard]] bool IsExpiring() const noexcept { return visualState == SlotVisualState::Expiring; }

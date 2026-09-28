@@ -109,6 +109,10 @@ namespace Huginn::Slot
         // If true, skip candidates that are already equipped (show alternatives only)
         bool skipEquipped = false;
 
+        // If true, pressing this slot to equip something holds what the equip
+        // took off here for [SlotLocker] fRemembranceDurationMs (Remembrance.h)
+        bool remembrance = true;
+
         // Priority for allocation order (higher = filled first)
         // When multiple slots could accept a candidate, higher priority slots get it
         int8_t priority = 0;

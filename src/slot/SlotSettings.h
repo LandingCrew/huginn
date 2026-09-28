@@ -109,6 +109,14 @@ namespace Huginn::Slot
             return m_challengerMargin.load(std::memory_order_acquire);
         }
 
+        /// How long a slot holds what pressing it took off (Remembrance.h), in
+        /// ms; 0 = off everywhere. `[SlotLocker] fRemembranceDurationMs`. The
+        /// per-slot switch is SlotConfig::remembrance (`bRemembrance`).
+        [[nodiscard]] float RemembranceDurationMs() const noexcept
+        {
+            return m_remembranceDurationMs.load(std::memory_order_acquire);
+        }
+
         /// Monotonic generation counter — bumped on every config change
         /// (LoadFromFile / ResetToDefaults). Consumers can cache config copies
         /// and cheaply detect staleness without re-copying every access.
@@ -126,6 +134,7 @@ namespace Huginn::Slot
         std::atomic<bool> m_keepSlotPositions{true};
         std::atomic<bool> m_holdSeatedItems{true};
         std::atomic<float> m_challengerMargin{0.25f};
+        std::atomic<float> m_remembranceDurationMs{15000.0f};
 
         /// Parse classification string to enum (logs warning on error, returns Regular)
         [[nodiscard]] static SlotClassification ParseClassification(const std::string& str);

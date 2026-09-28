@@ -3,6 +3,7 @@
 #include "Globals.h"
 #include "learning/EquipSourceTracker.h"
 #include "slot/SlotAllocator.h"
+#include "slot/Remembrance.h"
 #include "slot/SlotLocker.h"
 #include "util/InventoryUtil.h"
 
@@ -779,6 +780,32 @@ namespace Huginn::Input
       // must be set first. If the equip fails, the window expires harmlessly.
       Learning::EquipSourceTracker::GetSingleton().MarkHuginnEquip(content.formID);
 
+      // Remembrance: note the press, so what the equip takes off can be held
+      // in this slot. Pressing the remembered item itself is the undo -- it
+      // ends the hold, and it earns the learner nothing: Huginn did not
+      // recommend it, the player put it back.
+      bool pressedRemembered = false;
+      {
+         std::optional<Slot::Remembrance::Kind> kind;
+         switch (content.type) {
+         case UI::SlotContentType::Spell:
+         case UI::SlotContentType::Wildcard:
+         case UI::SlotContentType::MeleeWeapon:
+         case UI::SlotContentType::RangedWeapon:
+            kind = Slot::Remembrance::Kind::Hand;
+            break;
+         case UI::SlotContentType::Ammo:
+            kind = Slot::Remembrance::Kind::Ammo;
+            break;
+         default:
+            break;  // used up, not worn: nothing is displaced
+         }
+         if (kind) {
+            pressedRemembered = Slot::Remembrance::GetSingleton().OnSlotActivated(
+               Slot::SlotAllocator::GetSingleton().GetCurrentPage(), slotIndex, content.formID, *kind);
+         }
+      }
+
       bool success = false;
 
       switch (content.type) {
@@ -881,7 +908,7 @@ namespace Huginn::Input
       break;
       }
 
-      if (success && m_equipCallback) {
+      if (success && m_equipCallback && !pressedRemembered) {
          m_equipCallback(content.formID, true);
       }
 

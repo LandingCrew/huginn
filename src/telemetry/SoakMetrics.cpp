@@ -33,6 +33,11 @@ namespace Huginn::Telemetry
         static_assert(ClassifySlotChange(false, false, false, false, false, Used) == Used);
         static_assert(ClassifySlotChange(false, false, false, false, false, Override) == Override);
         static_assert(ClassifySlotChange(false, false, false, false, false, Unheld) == Unheld);
+        // A remembrance hold names itself over a wildcard and a lock, not over
+        // an override or a trip through empty.
+        static_assert(ClassifySlotChange(false, false, false, false, true, Expired, true) == Remembrance);
+        static_assert(ClassifySlotChange(false, false, false, true, false, Expired, true) == Override);
+        static_assert(ClassifySlotChange(true, false, false, false, false, Unheld, true) == Fill);
 
         // Bucket edges are half-open: exactly 10% better is NOT "<1.1".
         static_assert(BucketChallengerRatio(1.0f, -1.0f) == ChallengerRatio::Gone);

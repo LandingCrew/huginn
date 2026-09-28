@@ -4,6 +4,7 @@
 #include "update/UpdateHandler.h"
 #include "slot/SlotAllocator.h"
 #include "slot/SlotLocker.h"
+#include "slot/Remembrance.h"
 #include "slot/SlotSettings.h"
 #include "learning/ScorerSettings.h"
 #include "learning/LearningSettings.h"
@@ -375,6 +376,8 @@ namespace Huginn::Settings
         slotLocker.Reset();
         slotLocker.SetConfig(mainIni ? LoadSlotLockerConfigFromINI(*mainIni)
                                      : LoadSlotLockerConfigFromINI());
+        // Holds name page/slot indices of the layout that just went away.
+        Slot::Remembrance::GetSingleton().Reset();
 
         // 4. Wheeler wheels — rebuild ONLY if the wheel structure actually changed.
         // Wheel creation depends solely on the page layout (count/name/slot count)
