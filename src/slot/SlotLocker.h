@@ -255,7 +255,10 @@ namespace Huginn::Slot
         /// placed in another (unlocked) slot this frame. Clears duplicate names,
         /// PREFERRING to keep the locked occurrence so a lower-index unlocked
         /// duplicate can't evict locked content. Caller must hold m_mutex.
-        void DedupePreferLocked(SlotAssignments& result) const;
+        /// Also refills a slot it empties with the item the allocator wanted
+        /// in a locked slot (shown nowhere else), and releases the emptied
+        /// slot's lock. Not const: it may unlock.
+        void DedupePreferLocked(SlotAssignments& result, const SlotAssignments& wanted);
     };
 
 }  // namespace Huginn::Slot
