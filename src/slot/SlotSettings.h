@@ -109,6 +109,14 @@ namespace Huginn::Slot
             return m_challengerMargin.load(std::memory_order_acquire);
         }
 
+        /// How long a slot holds what pressing it took off (Remembrance.h), in
+        /// ms; 0 = off everywhere. `[SlotLocker] fRemembranceDurationMs`. The
+        /// per-slot switch is SlotConfig::remembrance (`bRemembrance`).
+        [[nodiscard]] float RemembranceDurationMs() const noexcept
+        {
+            return m_remembranceDurationMs.load(std::memory_order_acquire);
+        }
+
         /// Monotonic generation counter — bumped on every config change
         /// (LoadFromFile / ResetToDefaults). Consumers can cache config copies
         /// and cheaply detect staleness without re-copying every access.
@@ -126,6 +134,7 @@ namespace Huginn::Slot
         std::atomic<bool> m_keepSlotPositions{true};
         std::atomic<bool> m_holdSeatedItems{true};
         std::atomic<float> m_challengerMargin{0.25f};
+        std::atomic<float> m_remembranceDurationMs{15000.0f};
 
         /// Parse classification string to enum (logs warning on error, returns Regular)
         [[nodiscard]] static SlotClassification ParseClassification(const std::string& str);
@@ -163,13 +172,13 @@ namespace Huginn::Slot
         };
 
         inline constexpr SlotDefault PAGE0_SLOTS[] = {
-            { SlotClassification::DamageAny,  true, OverrideFilter::Any,  6, false },  // Slot 0
-            { SlotClassification::WeaponsAny, true, OverrideFilter::Any,  5, false },  // Slot 1
-            { SlotClassification::BuffsAny,   true, OverrideFilter::Any,  4, false },  // Slot 2
-            { SlotClassification::Regular,    true, OverrideFilter::None, 3, false },  // Slot 3
-            { SlotClassification::Regular,    true, OverrideFilter::None, 2, false },  // Slot 4
-            { SlotClassification::Regular,    true, OverrideFilter::None, 1, false },  // Slot 5
-            { SlotClassification::Regular,    true, OverrideFilter::Other, 0, false }, // Slot 6 (reserves an Other-only home for soul-gem/ammo/drowning overrides)
+            { SlotClassification::DamageAny,  true, OverrideFilter::Any,  6, true },  // Slot 0
+            { SlotClassification::WeaponsAny, true, OverrideFilter::Any,  5, true },  // Slot 1
+            { SlotClassification::BuffsAny,   true, OverrideFilter::Any,  4, true },  // Slot 2
+            { SlotClassification::Regular,    true, OverrideFilter::None, 3, true },  // Slot 3
+            { SlotClassification::Regular,    true, OverrideFilter::None, 2, true },  // Slot 4
+            { SlotClassification::Regular,    true, OverrideFilter::None, 1, true },  // Slot 5
+            { SlotClassification::Regular,    true, OverrideFilter::Other, 0, true }, // Slot 6 (reserves an Other-only home for soul-gem/ammo/drowning overrides)
         };
     }
 

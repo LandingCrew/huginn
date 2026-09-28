@@ -3,6 +3,7 @@
 #include "Globals.h"
 #include "learning/EquipSourceTracker.h"
 #include "slot/SlotAllocator.h"
+#include "slot/Remembrance.h"
 #include "slot/SlotLocker.h"
 #include "util/InventoryUtil.h"
 
@@ -101,6 +102,30 @@ namespace Huginn::Input
       }
 
       return true;  // Trust the EquipSpell call succeeded
+   }
+
+   bool EquipManager::EquipScrollToHand(RE::ScrollItem* scroll, bool leftHand)
+   {
+      auto* player = RE::PlayerCharacter::GetSingleton();
+      auto* equipManager = RE::ActorEquipManager::GetSingleton();
+      auto* equipSlot = GetEquipSlot(EquipHand::Right, leftHand);
+      if (!scroll || !player || !equipManager || !equipSlot) {
+      logger::warn("[EquipManager] Cannot equip scroll (scroll/player/equip manager/slot missing)"sv);
+      return false;
+      }
+
+      // A scroll is an inventory item, and it has to be equipped as one.
+      // EquipSpell put it in the hand as if it were a SPELL: the first cast
+      // used up that copy and the hand came up empty, so a stack of 45
+      // throwing knives (LoreRim makes them scrolls) threw once per key
+      // press, as did Powder of Burning (2026-09-27 22:24-22:28). Equipped
+      // from the inventory the game re-arms the hand from the stack after
+      // every cast, exactly as the inventory menu does.
+      equipManager->EquipObject(player, scroll, nullptr, 1, equipSlot);
+
+      logger::info("[EquipManager] Equipped scroll '{}' to {} hand (FormID: {:08X})"sv,
+      scroll->GetName(), leftHand ? "left" : "right", scroll->GetFormID());
+      return true;
    }
 
    bool EquipManager::UsePotion(RE::FormID formID)
@@ -779,6 +804,32 @@ namespace Huginn::Input
       // must be set first. If the equip fails, the window expires harmlessly.
       Learning::EquipSourceTracker::GetSingleton().MarkHuginnEquip(content.formID);
 
+      // Remembrance: note the press, so what the equip takes off can be held
+      // in this slot. Pressing the remembered item itself is the undo -- it
+      // ends the hold, and it earns the learner nothing: Huginn did not
+      // recommend it, the player put it back.
+      bool pressedRemembered = false;
+      {
+         std::optional<Slot::Remembrance::Kind> kind;
+         switch (content.type) {
+         case UI::SlotContentType::Spell:
+         case UI::SlotContentType::Wildcard:
+         case UI::SlotContentType::MeleeWeapon:
+         case UI::SlotContentType::RangedWeapon:
+            kind = Slot::Remembrance::Kind::Hand;
+            break;
+         case UI::SlotContentType::Ammo:
+            kind = Slot::Remembrance::Kind::Ammo;
+            break;
+         default:
+            break;  // used up, not worn: nothing is displaced
+         }
+         if (kind) {
+            pressedRemembered = Slot::Remembrance::GetSingleton().OnSlotActivated(
+               Slot::SlotAllocator::GetSingleton().GetCurrentPage(), slotIndex, content.formID, *kind);
+         }
+      }
+
       bool success = false;
 
       switch (content.type) {
@@ -819,16 +870,29 @@ namespace Huginn::Input
            }
         }
 
-        // Equip based on hand preference
+        // Equip based on hand preference. Scrolls are items, not spells
+        // (see EquipScrollToHand); ScrollItem derives from SpellItem, which
+        // is how they reached EquipSpell in the first place.
+        auto* scroll = spell->Is(RE::FormType::Scroll) ? static_cast<RE::ScrollItem*>(spell) : nullptr;
+        auto equipTo = [&](bool leftHand) {
+           return scroll ? EquipScrollToHand(scroll, leftHand) : EquipSpellToHand(spell, leftHand);
+        };
         switch (hand) {
         case EquipHand::Right:
-           success = EquipSpellToHand(spell, false);
+           success = equipTo(false);
            break;
         case EquipHand::Left:
-           success = EquipSpellToHand(spell, true);
+           success = equipTo(true);
            break;
         case EquipHand::Both:
-           success = EquipSpellToHand(spell, false) && EquipSpellToHand(spell, true);
+           // One scroll cannot be in two hands: equipping it as an item moves
+           // the single copy to the left and empties the right. Both hands
+           // only with two to spare; otherwise the right, as a tap would.
+           if (scroll && Util::GetItemCountSafe(RE::PlayerCharacter::GetSingleton(), scroll) < 2) {
+              success = equipTo(false);
+           } else {
+              success = equipTo(false) && equipTo(true);
+           }
            break;
         }
       }
@@ -881,7 +945,7 @@ namespace Huginn::Input
       break;
       }
 
-      if (success && m_equipCallback) {
+      if (success && m_equipCallback && !pressedRemembered) {
          m_equipCallback(content.formID, true);
       }
 

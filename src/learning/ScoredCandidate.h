@@ -72,6 +72,10 @@ namespace Huginn::Scoring
         ScoreBreakdown breakdown;               // Score component breakdown
         bool isWildcard = false;                // True if this is a wildcard exploration pick
         bool isColdStartBoosted = false;        // True if scored via cold-start UCB boost
+        // Not ranked: added to the list only so a Remembrance hold can show it
+        // (PipelineCoordinator::ScoreCandidates). Nothing but that hold may
+        // place it -- the fill and the slot hold skip it.
+        bool isRememberedOnly = false;
 
         // ---------------------------------------------------------------------
         // Accessors for common candidate properties

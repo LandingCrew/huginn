@@ -69,8 +69,8 @@ namespace Huginn::Display
     }
 
     /// Derive the subtext explanation for one slot assignment.
-    /// Priority: the override's own reason > this tick's context reason, IF it
-    /// ranked this item > "Favorite" > no label.
+    /// Priority: a Remembrance hold ("Swap Back") > the override's own reason >
+    /// this tick's context reason, IF it ranked this item > "Favorite" > no label.
     /// @param contextReason Reason for THIS tick (DisplayContext::contextReason),
     ///        derived once by the pipeline from the tick's context weights.
     [[nodiscard]] inline std::string DeriveExplanationLabel(
@@ -79,6 +79,10 @@ namespace Huginn::Display
     {
         if (!assignment.HasCandidate()) {
             return {};
+        }
+        // Not a recommendation at all: what pressing this key just took off.
+        if (assignment.IsRemembered()) {
+            return "Swap Back";
         }
 
         const auto& candidate = assignment.candidate->candidate;

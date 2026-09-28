@@ -106,8 +106,15 @@ namespace Huginn::Slot
         // Which override categories this slot accepts (None, Any, HP, MP, SP)
         OverrideFilter overrideFilter = OverrideFilter::Any;
 
-        // If true, skip candidates that are already equipped (show alternatives only)
-        bool skipEquipped = false;
+        // If true, skip candidates that are already equipped (show alternatives
+        // only). On by default since v0.21.51: an equipped SPELL never reaches
+        // a slot (CandidateFilters), and a held weapon taking a key is the
+        // same waste (the Hunting Bow in hand on key 7, 2026-09-28).
+        bool skipEquipped = true;
+
+        // If true, pressing this slot to equip something holds what the equip
+        // took off here for [SlotLocker] fRemembranceDurationMs (Remembrance.h)
+        bool remembrance = true;
 
         // Priority for allocation order (higher = filled first)
         // When multiple slots could accept a candidate, higher priority slots get it

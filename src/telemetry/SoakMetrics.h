@@ -35,6 +35,9 @@ namespace Huginn::Telemetry
         Used,      // replaced after OnItemUsed released the slot
         Page,      // page switch (UnlockAll) -- player-driven, kept out of peak
         Unheld,    // replaced with no lock ever in the way (locking disabled)
+        Remembrance,  // a Remembrance hold arriving or leaving -- the player's
+                      // own press, not the ranking. Last, so the heartbeat's
+                      // existing columns keep their order.
         Count
     };
 
@@ -50,6 +53,7 @@ namespace Huginn::Telemetry
         case SlotChange::Used:     return "used";
         case SlotChange::Page:     return "page";
         case SlotChange::Unheld:   return "unheld";
+        case SlotChange::Remembrance: return "remembrance";
         default:                   return "?";
         }
     }
@@ -65,19 +69,23 @@ namespace Huginn::Telemetry
     // arrival scores below the item it evicts by design, and the item that
     // returns when it leaves scores above it -- counting either as a ranking
     // change would pollute both ends of the ratio); then whatever released
-    // the lock.
+    // the lock. A Remembrance hold at either end ranks with the wildcard, and
+    // ahead of it: the player pressed that key.
     [[nodiscard]] constexpr SlotChange ClassifySlotChange(bool wasEmpty, bool nowEmpty,
-        bool dedupCleared, bool nowOverride, bool wildcardInvolved, SlotChange released) noexcept
+        bool dedupCleared, bool nowOverride, bool wildcardInvolved, SlotChange released,
+        bool remembranceInvolved = false) noexcept
     {
         if (released == SlotChange::Page) return SlotChange::Page;
         if (nowEmpty) return dedupCleared ? SlotChange::Dedup : SlotChange::Clear;
         if (wasEmpty) return SlotChange::Fill;
         if (nowOverride) return SlotChange::Override;
+        if (remembranceInvolved) return SlotChange::Remembrance;
         if (wildcardInvolved) return SlotChange::Wildcard;
         switch (released) {
         case SlotChange::Expired:
         case SlotChange::Used:
         case SlotChange::Override:
+        case SlotChange::Remembrance:
             return released;
         default:
             return SlotChange::Unheld;

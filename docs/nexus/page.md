@@ -13,6 +13,7 @@ Huginn also provides a HUD widget showing the rolling state of each hotkey.
 * **On-screen widget** — a small overlay showing what is on each key; hides itself outside combat
 * **Wheeler integration** — optional [Wheeler](https://www.nexusmods.com/skyrimspecialedition/mods/97345) radial menu support
 * **Multi-page slots** — organize recommendations by role (up to 10 pages, 10 slots each)
+* **Swap back** — press a key that swaps what is in your hand (or your arrows), and what it replaced waits under that same key for 15 seconds; press again to swap back
 * **Workstation awareness** — Fortify Smithing at forges, Fortify Enchanting at enchanters
 * **INI-configurable** — context weights, scoring, slot layout, keybindings, display mode
 
@@ -71,14 +72,15 @@ You can create up to 10 pages containing up to 10 slots per page. `[Pages]` sets
 
 #### Slot configuration
 
-Every slot takes the same five settings:
+Every slot takes the same six settings:
 
 | Setting | What it does |
 |---|---|
 | `sClassification` | What is allowed in this slot — see the list below |
 | `bWildcardsEnabled` | Let Huginn occasionally offer something outside its usual pick, so it can find out what else you like |
 | `bOverridesEnabled` | Whether an emergency can take this slot over. `HP`, `MP` or `SP` for a health, magicka or stamina emergency; `Other` for the soul gem, low ammo and drowning prompts; `Any` for all of them; `None` to leave the slot alone |
-| `bSkipEquipped` | Skip anything already in your hands, so the slot shows you an alternative instead |
+| `bSkipEquipped` | Skip anything already in your hands, so the slot shows you an alternative instead. On by default; `bSkipEquipped = 0` lets a slot show a weapon you are holding (to double-tap it into the other hand, say) |
+| `bRemembrance` | Swap back: when you press this slot to equip something, what it took off waits under the same key for a while (see Steadiness below). On by default; `bRemembrance = 0` turns it off for this slot |
 | `iPriority` | Which slots get first pick of the good options. Higher fills first |
 
 Here is the first slot of the first page in the default setup. It takes anything that deals damage, is allowed to try something new now and then, gets an early pick, and hands itself over to a healing potion when your health drops dangerously low:
@@ -231,7 +233,18 @@ Wildcards never touch your top slot — that always holds the genuine best pick 
 
 A recommendation that changes the instant before you press the key is worse than a merely decent one that stays put. When a slot fills, Huginn briefly locks it so it cannot be swapped out from under your thumb.
 
-`fLockDurationMs = 1000` is that hold. Raise it for a calmer, slower display; lower it for one that reacts faster. `0` disables locking entirely. Emergencies are allowed to break a lock, which is what `bOverridesBreakLock` and `iImmediateBreakPriority` govern. `hg unlock` clears every lock immediately.
+`fLockDurationMs = 3000` is that hold. Raise it for a calmer, slower display; lower it for one that reacts faster. `0` disables locking entirely. Emergencies are allowed to break a lock, which is what `bOverridesBreakLock` and `iImmediateBreakPriority` govern. `hg unlock` clears every lock immediately.
+
+**Swap back.** Press a key that puts a weapon, spell or scroll in your hand, and whatever was in that hand appears under the *same* key, labelled "Swap Back", for `fRemembranceDurationMs` (15000 = 15 seconds). Press it to put the old item back; the key then returns to normal. Arrows work the same way, arrows for arrows: switch from Iron to Steel Arrows with a key and the Iron Arrows wait on it. Only a swap counts; equipping into an empty hand or quiver leaves nothing to swap back to. It works from Huginn's hotkeys and Huginn's own Wheeler wheels, not from the inventory menu or favourites. It is not a recommendation, so swapping back teaches Huginn nothing.
+
+To turn it off for one slot, add `bRemembrance = 0` to that slot's section:
+
+```
+[Page0.Slot3]
+bRemembrance = 0
+```
+
+To turn it off everywhere, set `fRemembranceDurationMs = 0` under `[SlotLocker]`. Either way, `hg reload` applies it without restarting.
 
 ##### Spells you can't currently cast — `[Candidates]`
 

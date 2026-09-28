@@ -1,4 +1,5 @@
 #include "SlotAllocator.h"
+#include "Remembrance.h"
 #include "SlotLocker.h"
 #include "override/OverrideConditions.h"
 #include "override/OverrideConfig.h"
@@ -569,6 +570,50 @@ namespace Huginn::Slot
         }
 
         // =======================================================================
+        // PASS 1a: Remembrance -- what pressing a slot took off, held there
+        // =======================================================================
+        // A rule, not a ranking: it takes the slot the player pressed whatever
+        // that slot's classification or bSkipEquipped says, and only an
+        // override (placed above) outranks it. A hold whose item goes back in
+        // a hand some other way is ended by Remembrance itself.
+        {
+            const auto held = Remembrance::GetSingleton().GetPage(pageIndex);
+            const size_t n = std::min(slotConfigs.size(), MAX_SLOTS_PER_PAGE);
+            for (size_t j = 0; j < n; ++j) {
+                const auto& entry = held[j];
+                if (!entry.Active() || !slotConfigs[j].remembrance) continue;
+                if (!assignments[j].IsEmpty()) continue;  // an override has the slot
+                if (assignedFormIDs.contains(entry.formID)) continue;  // an override shows it
+
+                // The best-scoring stack of a weapon owned twice. Only a prefix
+                // of the list is sorted, so compare rather than take the first.
+                const Scoring::ScoredCandidate* found = nullptr;
+                for (const auto& c : candidates) {
+                    if (c.GetFormID() == entry.formID && (!found || c.utility > found->utility)) {
+                        found = &c;
+                    }
+                }
+                if (!found) {
+                    // Not a candidate at all -- a shield, a torch, an
+                    // unaffordable spell. Logged once per item.
+                    thread_local RE::FormID s_lastMissing = 0;
+                    if (s_lastMissing != entry.formID) {
+                        SKSE::log::debug("[Remembrance] Page {} Slot {}: {:08X} is not a candidate; slot fills normally",
+                            pageIndex, j, entry.formID);
+                        s_lastMissing = entry.formID;
+                    }
+                    continue;
+                }
+                Scoring::ScoredCandidate sc = *found;
+                sc.isWildcard = false;
+                assignments[j] = SlotAssignment::FromCandidate(
+                    j, slotConfigs[j].classification, sc, AssignmentType::Remembered);
+                assignedFormIDs.insert(entry.formID);
+                assignedNames.insert(found->GetName());
+            }
+        }
+
+        // =======================================================================
         // PASS 1c: Hold seated items against near-tied challengers
         // =======================================================================
         {
@@ -789,7 +834,8 @@ namespace Huginn::Slot
             }
             const Scoring::ScoredCandidate* owner = nullptr;
             for (const auto& c : candidates) {
-                if (Candidate::GetBase(c.candidate).GetDeduplicationKey() == seats[j]) {
+                if (!c.isRememberedOnly &&
+                    Candidate::GetBase(c.candidate).GetDeduplicationKey() == seats[j]) {
                     owner = &c;
                     break;
                 }
@@ -815,9 +861,11 @@ namespace Huginn::Slot
         // that is genuinely empty (the fill), and goes home when the override
         // ends.
         for (size_t j = 0; j < slotCount; ++j) {
-            if (!assignments[j].IsOverride() || seats[j] == 0 || !assignments[j].candidate) continue;
+            // A remembered item sitting in someone's seat displaces its owner
+            // the same way an override does.
+            if (!assignments[j].IsPinned() || seats[j] == 0 || !assignments[j].candidate) continue;
             if (Candidate::GetBase(assignments[j].candidate->candidate).GetDeduplicationKey() == seats[j]) {
-                continue;  // the override IS the owner: it marked its own slot
+                continue;  // the pinned item IS the owner: it is in its own slot
             }
             for (const auto& c : candidates) {
                 if (Candidate::GetBase(c.candidate).GetDeduplicationKey() == seats[j]) {
@@ -846,7 +894,8 @@ namespace Huginn::Slot
 
             const Scoring::ScoredCandidate* guest = nullptr;
             for (const auto& c : candidates) {
-                if (Candidate::GetBase(c.candidate).GetDeduplicationKey() == placed[j]) {
+                if (!c.isRememberedOnly &&
+                    Candidate::GetBase(c.candidate).GetDeduplicationKey() == placed[j]) {
                     guest = &c;
                     break;
                 }
@@ -1001,8 +1050,9 @@ namespace Huginn::Slot
 
         // An override sits where the override pass put it, which was a decision
         // about that slot. Nothing moves it, and nothing moves into it.
+        // A remembered item likewise: it is under the key the player pressed.
         auto movable = [&](size_t idx) {
-            return !assignments[idx].IsOverride();
+            return !assignments[idx].IsPinned();
         };
 
         auto moveTo = [&](size_t from, size_t to) {
@@ -1132,7 +1182,7 @@ namespace Huginn::Slot
             // loop below skips overrides, and without this the seat would
             // lapse, the next pass would find no slot showing the item, and
             // the override would jump to its configured slot.
-            if (home != SIZE_MAX && (home != i || assignments[i].IsOverride())) {
+            if (home != SIZE_MAX && (home != i || assignments[i].IsPinned())) {
                 seats[home] = key;
             }
         }
@@ -1146,7 +1196,7 @@ namespace Huginn::Slot
         // map stays injective, which is what lets ApplySeating assume no two
         // items can want the same slot.
         for (size_t i = 0; i < slotCount; ++i) {
-            if (assignments[i].IsOverride()) {
+            if (assignments[i].IsPinned()) {  // a remembered item is passing through too
                 continue;
             }
             const uint64_t key = keyOf(assignments[i]);
@@ -1197,7 +1247,7 @@ namespace Huginn::Slot
 
         std::array<uint64_t, MAX_SLOTS_PER_PAGE> placedNow{};
         for (size_t i = 0; i < slotCount; ++i) {
-            if (!assignments[i].IsOverride()) {
+            if (!assignments[i].IsPinned()) {
                 placedNow[i] = keyOf(assignments[i]);
             }
         }
@@ -1253,6 +1303,11 @@ namespace Huginn::Slot
         for (const auto& candidate : candidates) {
             // Skip wildcards when the target slot forbids them
             if (skipWildcards && candidate.isWildcard) {
+                continue;
+            }
+
+            // Only a Remembrance hold may place these; they were never ranked.
+            if (candidate.isRememberedOnly) {
                 continue;
             }
 

@@ -43,6 +43,7 @@
 #include "override/OverrideManager.h"
 #include "slot/SlotAllocator.h"
 #include "slot/SlotLocker.h"
+#include "slot/Remembrance.h"
 #include "slot/SlotSettings.h"
 #include "learning/ScorerSettings.h"
 #include "learning/LearningSettings.h"
@@ -617,6 +618,23 @@ static void OnDataLoaded()
         },
         .markPageDirty = [] {
             Slot::SlotAllocator::GetSingleton().MarkPageDirty();
+        },
+        .noteSlotActivated = [](size_t pageIndex, size_t slotIndex, RE::FormID formID) {
+            // Worn things only; a potion or soul gem displaces nothing.
+            auto* form = RE::TESForm::LookupByID(formID);
+            if (!form) {
+                return false;
+            }
+            Slot::Remembrance::Kind kind;
+            if (form->Is(RE::FormType::Weapon) || form->Is(RE::FormType::Spell) ||
+                form->Is(RE::FormType::Scroll)) {
+                kind = Slot::Remembrance::Kind::Hand;
+            } else if (form->Is(RE::FormType::Ammo)) {
+                kind = Slot::Remembrance::Kind::Ammo;
+            } else {
+                return false;
+            }
+            return Slot::Remembrance::GetSingleton().OnSlotActivated(pageIndex, slotIndex, formID, kind);
         },
     });
 

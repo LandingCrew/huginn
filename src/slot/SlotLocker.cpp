@@ -97,17 +97,21 @@ namespace Huginn::Slot
         // keeps the old copy up, dedup clears one of the two, and the potion
         // bounced between them four times a second (2026-09-27 19:03:07). The
         // allocator never places an override's item twice; only a lock can.
+        // A remembered item likewise: the thing you just took off belongs
+        // under the key you pressed, not under a lock somewhere else.
         for (size_t j = 0; j < newAssignments.size() && j < MAX_SLOTS; ++j) {
             auto& held = m_lockedSlots[j];
             if (!held.isLocked || held.assignment.IsEmpty()) continue;
             for (size_t i = 0; i < newAssignments.size() && i < MAX_SLOTS; ++i) {
                 const auto& ovr = newAssignments[i];
-                if (i != j && ovr.IsOverride() && ovr.formID == held.assignment.formID &&
+                if (i != j && ovr.IsPinned() && ovr.formID == held.assignment.formID &&
                     ovr.uniqueID == held.assignment.uniqueID) {
-                    spdlog::debug("[SlotLocker] Slot {} lock released: its item moved to override slot {}", j, i);
+                    spdlog::debug("[SlotLocker] Slot {} lock released: its item moved to {} slot {}",
+                        j, ovr.IsOverride() ? "override" : "remembrance", i);
                     held.isLocked = false;
                     held.remainingMs = 0.0f;
-                    held.releaseCause = Telemetry::SlotChange::Override;
+                    held.releaseCause = ovr.IsOverride()
+                        ? Telemetry::SlotChange::Override : Telemetry::SlotChange::Remembrance;
                     break;
                 }
             }
@@ -188,7 +192,8 @@ namespace Huginn::Slot
             if (changed && !m_churnBaseline) {
                 const auto cause = Telemetry::ClassifySlotChange(slot.shownEmpty, nowEmpty,
                     filledBeforeDedup[i] && nowEmpty, shown.IsOverride(),
-                    shown.IsWildcard() || slot.shownWildcard, slot.releaseCause);
+                    shown.IsWildcard() || slot.shownWildcard, slot.releaseCause,
+                    shown.IsRemembered() || slot.shownRemembered);
 
                 // Challenger ratio, for the changes a margin would govern.
                 auto ratio = Telemetry::ChallengerRatio::NotApplicable;
@@ -222,6 +227,7 @@ namespace Huginn::Slot
             if (changed) {
                 slot.shownEmpty = nowEmpty;
                 slot.shownWildcard = !nowEmpty && shown.IsWildcard();
+                slot.shownRemembered = !nowEmpty && shown.IsRemembered();
                 slot.shownFormID = nowEmpty ? 0 : shown.formID;
                 slot.shownUniqueID = nowEmpty ? 0 : shown.uniqueID;
                 slot.shownName = nowEmpty ? std::string{} : shown.name;
@@ -231,7 +237,7 @@ namespace Huginn::Slot
             // go" -- it has to let go again first. A page switch explains one
             // run only: everything on the new page arrives in that run.
             //
-            // Used and Override are one-run causes too. A slot that stays
+            // Used, Override and Remembrance are one-run causes too. A slot that stays
             // unlocked showing the same item -- a potion with count left, an
             // override that handed back the same form, or any slot with
             // locking disabled -- never relocks, so without this the event
@@ -242,7 +248,8 @@ namespace Huginn::Slot
             if (slot.isLocked || slot.releaseCause == Telemetry::SlotChange::Page) {
                 slot.releaseCause = Telemetry::SlotChange::Unheld;
             } else if (slot.releaseCause == Telemetry::SlotChange::Used ||
-                       slot.releaseCause == Telemetry::SlotChange::Override) {
+                       slot.releaseCause == Telemetry::SlotChange::Override ||
+                       slot.releaseCause == Telemetry::SlotChange::Remembrance) {
                 slot.releaseCause = m_config.lockDurationMs > 0.0f
                     ? Telemetry::SlotChange::Expired : Telemetry::SlotChange::Unheld;
             }
@@ -621,8 +628,9 @@ namespace Huginn::Slot
                 if (i >= wanted.size() || i >= MAX_SLOTS) continue;
                 if (n > 0 && (i == j || !m_lockedSlots[i].isLocked || cleared[i])) continue;
                 const auto& homeless = wanted[i];
-                // Overrides and wildcards were placed deliberately; never moved.
-                if (homeless.IsEmpty() || homeless.IsOverride() || homeless.IsWildcard() ||
+                // Overrides, wildcards and remembered items were placed
+                // deliberately; never moved.
+                if (homeless.IsEmpty() || homeless.IsPinned() || homeless.IsWildcard() ||
                     !homeless.candidate || shown.contains(homeless.name)) {
                     continue;
                 }

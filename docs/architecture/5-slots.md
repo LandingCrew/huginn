@@ -151,7 +151,8 @@ classifications, then `FoodAny` before `AlcoholAny` before `PotionsAny`, then
 | `classification` | `SlotClassification` | `Regular` | What type of candidate can appear |
 | `wildcardsEnabled` | `bool` | `true` | Allow wildcard exploration picks |
 | `overrideFilter` | `OverrideFilter` | `Any` | Which override categories accepted (`None`, `Any`, `HP`, `MP`, `SP`, `Other`) |
-| `skipEquipped` | `bool` | `false` | Skip candidates already equipped (show alternatives only) |
+| `skipEquipped` | `bool` | `true` | Skip candidates already equipped (show alternatives only). Default on since v0.21.51 |
+| `remembrance` | `bool` | `true` | Pressing this slot holds what the equip took off here (see [Remembrance](#remembrance)) |
 | `priority` | `int8_t` | `0` | Allocation order (higher = filled first) |
 
 ---
@@ -171,6 +172,7 @@ are three distinct type systems.
 | **Normal** | Standard utility-based assignment | Most common |
 | **Override** | Forced by an override condition | Stamped with `kOverrideUtility = 1000.0f`, a cosmetic marker — consumers test `AssignmentType::Override`, never the utility value |
 | **Wildcard** | Exploration pick | Distinct styling in the widget |
+| **Remembered** | What pressing this slot took off ([Remembrance](#remembrance)) | Not ranked; labelled "Swap Back". Seating and dedup treat it like an override (`IsPinned()`) |
 
 ### SlotVisualState (animation hints)
 
@@ -334,6 +336,8 @@ five-pass fill over a priority-ordered slot list. Passes 1-2 decide WHICH items
 are shown, by rank; passes 3-5 decide WHERE they sit.
 
 1. **Overrides** take a slot whose filter and classification accept them.
+   Then **Remembrance** holds (Pass 1a) take the slot the player pressed, and
+   the slot hold (Pass 1c) keeps seated items against near-tied challengers.
 2. **Rank fill** gives every remaining slot the best candidate it accepts.
 3. **Seating** puts items that were already on screen back in the slots they
    held (see [Seating](#seating-anti-juggling) below).
@@ -361,6 +365,13 @@ else about a call is still a pure function of its inputs.
            v
   PASS 1b  leftover override -> highest-priority empty slot that
            accepts its category (classification ignored)
+           |
+           v
+  PASS 1a  remembered item -> the slot the player pressed
+           (classification ignored; skipped if an override has it)
+           |
+           v
+  PASS 1c  hold seated items unless a challenger wins by the margin
            |
            v
   PASS 2   remaining slots <- best matching candidate, deduped
@@ -443,18 +454,18 @@ priority governs fill order only. Neither reads the other.
 
 | Slot | Classification | Priority | Override filter | Wildcards | SkipEquipped |
 |------|----------------|----------|-----------------|-----------|--------------|
-| 0 | DamageAny | 6 | Any | Yes | No |
-| 1 | WeaponsAny | 5 | Any | Yes | No |
-| 2 | BuffsAny | 4 | Any | Yes | No |
-| 3 | Regular | 3 | None | Yes | No |
-| 4 | Regular | 2 | None | Yes | No |
-| 5 | Regular | 1 | None | Yes | No |
-| 6 | Regular | 0 | **Other** | Yes | No |
+| 0 | DamageAny | 6 | Any | Yes | Yes |
+| 1 | WeaponsAny | 5 | Any | Yes | Yes |
+| 2 | BuffsAny | 4 | Any | Yes | Yes |
+| 3 | Regular | 3 | None | Yes | Yes |
+| 4 | Regular | 2 | None | Yes | Yes |
+| 5 | Regular | 1 | None | Yes | Yes |
+| 6 | Regular | 0 | **Other** | Yes | Yes |
 
 Slot 6's `Other` filter reserves a home for the soul-gem / low-ammo / drowning
 prompts. Slots past index 6 (only reachable when the INI asks for more) and all
 slots on pages 1+ default to `Regular`, wildcards on, override filter `None`,
-priority `slotCount - index - 1`.
+skip-equipped on, priority `slotCount - index - 1`.
 
 ### Shipped INI layout (3 pages, 8 slots each)
 
@@ -515,6 +526,39 @@ everything sliding up. `bKeepSlotPositions = 0` in `[SlotLocker]` turns seating
 off for a player who prefers the shuffle.
 
 ---
+
+## Remembrance
+
+`src/slot/Remembrance.{h,cpp}`. Press a Huginn key, or pick an entry on one of
+Huginn's own Wheeler wheels, that puts a weapon, spell or scroll in a hand
+(or swaps one ammo for another), and whatever that equip took off appears
+under the SAME key for `fRemembranceDurationMs` (15 s): a one-deep undo. An
+equip into an empty hand or quiver displaces nothing and starts no hold.
+
+- **Not a recommendation.** Pass 1a places it after overrides and before
+  everything else, whatever the slot's classification or `skipEquipped`.
+  Pressing it ends the hold and publishes no learner reward (EquipManager and
+  the Wheeler `noteSlotActivated` wiring skip the equip callback).
+- **No chaining.** Equipping the remembered item does not remember what it
+  took off, so two items cannot ping-pong in one slot.
+- **Captured by observation.** The press registers a pending capture;
+  `Remembrance::Update` (every tick, from `UpdateSubsystems`) reads both hands
+  and the quiver directly, and when the pressed item arrives, what that hand
+  held before is remembered. This works the same for hotkeys and for Wheeler,
+  which equips before it calls back.
+- **One hand.** A two-item displacement remembers the right hand, else the
+  left. Instances are not tracked: a weapon owned twice shows its
+  best-scoring stack.
+- **Ends early** when the item goes back in a hand some other way.
+- **Always a candidate.** If the ranking dropped the item, `ScoreCandidates`
+  appends it unranked with `isRememberedOnly`, which only Pass 1a may place.
+- **Wins dedup.** A lock elsewhere on the same item is released in
+  `ApplyLocks`, as for an override.
+- For one second after a hold starts, `Update` forces a pipeline run every
+  tick. The player state and the ammo registry lag the direct read, and a
+  spell-for-spell swap may move no hashed state.
+
+Churn telemetry counts a hold arriving or leaving as `remembrance`.
 
 ## SlotLocker: Temporal Stability
 
@@ -696,7 +740,8 @@ sClassification = DamageAny   ; SlotClassification enum name (unknown -> Regular
 bWildcardsEnabled = true      ; Allow wildcard exploration picks in this slot
 bOverridesEnabled = HP        ; OverrideFilter: None/Any/HP/MP/SP/Other (true/false also accepted)
 iPriority = 6                 ; Allocation order (higher = filled first)
-bSkipEquipped = false         ; Skip already-equipped candidates
+bSkipEquipped = true          ; Skip already-equipped candidates (default on)
+bRemembrance = true           ; Hold what pressing this slot took off (Remembrance)
 ```
 
 Every key is optional; a missing `[PageN.SlotM]` section falls back to the
@@ -708,7 +753,10 @@ per-slot defaults described under
 ```ini
 [SlotLocker]
 bKeepSlotPositions = true       ; Keep an item in the slot it was already in (seating)
-fLockDurationMs = 1000          ; Shipped value; code default 3000. 0 = disable locking
+bHoldSeatedItems = true         ; Hold a seated item until a challenger beats it by the margin
+fChallengerMargin = 0.25        ; How much better a challenger must score (0.25 = 25%)
+fRemembranceDurationMs = 15000  ; Remembrance hold length; 0 = off everywhere
+fLockDurationMs = 3000          ; 0 = disable locking
 fMinLockDurationMs = 500        ; Minimum time before a lock can break
 bLockOnFill = true              ; Lock when a slot fills from empty
 bOverridesBreakLock = true      ; Allow high-priority overrides to break locks

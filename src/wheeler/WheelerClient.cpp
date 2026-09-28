@@ -131,6 +131,7 @@ namespace Huginn::Wheeler
 
         int pageIndex = -1;
         auto policy = PostActivationPolicy::Backfill;
+        bool pressedRemembered = false;
 
         {
             std::lock_guard<std::mutex> lock(client.m_callbackMutex);
@@ -174,6 +175,10 @@ namespace Huginn::Wheeler
             // Mark as Huginn-mediated equip (for external equip detection)
             client.m_env.markHuginnEquip(static_cast<RE::FormID>(formID));
 
+            pressedRemembered = client.m_env.noteSlotActivated(
+                static_cast<size_t>(pageIndex), static_cast<size_t>(entryIndex),
+                static_cast<RE::FormID>(formID));
+
             // Start cooldown so the consumed item is filtered out on the next update cycle (~100ms)
             // Without this, the item stays recommended until RefreshCounts detects count=0 (up to 500ms)
             // Skip cooldown for Sticky policy — the item should remain visible.
@@ -207,7 +212,10 @@ namespace Huginn::Wheeler
         // then subscriber internal locks — all outside m_callbackMutex.
         // No pageIndex guard: the locked block above returns early when the
         // wheel isn't ours, so reaching here means pageIndex >= 0.
-        client.m_env.publishWheelerEquip(static_cast<RE::FormID>(formID));
+        // A remembered item put back is the player's undo, not a Huginn pick.
+        if (!pressedRemembered) {
+            client.m_env.publishWheelerEquip(static_cast<RE::FormID>(formID));
+        }
     }
 
     void WheelerClient::OnWheelStateChanged(int32_t wheelIndex, bool isOpen)

@@ -8,6 +8,7 @@
 #include "override/OverrideManager.h"
 #include "slot/SlotAllocator.h"
 #include "slot/SlotLocker.h"
+#include "slot/Remembrance.h"
 #include "wheeler/WheelerClient.h"
 #include "learning/PipelineStateCache.h"
 #include "learning/EquipEventBus.h"
@@ -259,6 +260,13 @@ static void UpdateSubsystems(float deltaSeconds, float deltaMs)
         // Lock expiry: decay wall-clock (not just on pipeline-active ticks) and
         // let the freed slot's content swap immediately
         forcePipelineRun |= Slot::SlotLocker::GetSingleton().Update(deltaMs);
+    }
+
+    {
+        Huginn_ZONE_NAMED("Remembrance::Update");
+        // A hold starting (the press's equip landed) or running out
+        forcePipelineRun |= Slot::Remembrance::GetSingleton().Update(
+            deltaMs, RE::PlayerCharacter::GetSingleton());
     }
 
     if (forcePipelineRun) {
@@ -589,6 +597,7 @@ void OnUpdate(float deltaSeconds)
                 // else runs. Reset() is idempotent, so the overlap costs one
                 // log line per load.
                 Slot::SlotLocker::GetSingleton().Reset();
+                Slot::Remembrance::GetSingleton().Reset();
             }
         }
         if (!loaded) return;

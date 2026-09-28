@@ -70,7 +70,7 @@ namespace Huginn::Slot
                     slot.wildcardsEnabled = true;
                     slot.overrideFilter = OverrideFilter::None;
                     slot.priority = static_cast<int8_t>(slotCount - s - 1);
-                    slot.skipEquipped = false;
+                    slot.skipEquipped = true;
                 }
 
                 // Read from INI (section may not exist - uses defaults)
@@ -90,6 +90,9 @@ namespace Huginn::Slot
 
                 slot.skipEquipped = ini.GetBoolValue(slotSection.c_str(), "bSkipEquipped",
                     slot.skipEquipped);
+
+                slot.remembrance = ini.GetBoolValue(slotSection.c_str(), "bRemembrance",
+                    slot.remembrance);
 
                 page.slots.push_back(slot);
             }
@@ -165,11 +168,14 @@ namespace Huginn::Slot
                     ++wildcardCapable;
                 }
                 if (s > 0) slotSummary += "|";
-                slotSummary += std::format("{}:p{}:o{}:w{}",
+                // `:r0` only when remembrance is off: it is on by default,
+                // and the common line stays as it was.
+                slotSummary += std::format("{}:p{}:o{}:w{}{}",
                     SlotClassificationToString(slot.classification),
                     slot.priority,
                     OverrideFilterToString(slot.overrideFilter),
-                    slot.wildcardsEnabled ? 1 : 0);
+                    slot.wildcardsEnabled ? 1 : 0,
+                    slot.remembrance ? "" : ":r0");
             }
             SKSE::log::info("[SlotSettings] Page {} '{}': {} slots, {} wildcard-capable [{}]"sv,
                 p, newPages.back().name, newPages.back().slots.size(),
@@ -190,6 +196,12 @@ namespace Huginn::Slot
         m_challengerMargin.store(margin, std::memory_order_release);
         SKSE::log::info("[SlotSettings] Hold seated items: {} (challenger margin {:.0f}%)"sv,
             hold ? "on" : "off", margin * 100.0f);
+
+        const float remembranceMs = std::max(0.0f,
+            static_cast<float>(ini.GetDoubleValue("SlotLocker", "fRemembranceDurationMs", 15000.0)));
+        m_remembranceDurationMs.store(remembranceMs, std::memory_order_release);
+        SKSE::log::info("[SlotSettings] Remembrance: {}"sv,
+            remembranceMs > 0.0f ? std::format("{:.0f}s", remembranceMs / 1000.0f) : std::string("off"));
 
         // Parsing succeeded - commit the new configuration under exclusive lock
         size_t committedCount;
@@ -285,7 +297,7 @@ namespace Huginn::Slot
                     .classification = SlotClassification::Regular,
                     .wildcardsEnabled = true,
                     .overrideFilter = OverrideFilter::None,
-                    .skipEquipped = false,
+                    .skipEquipped = true,
                     .priority = static_cast<int8_t>(2 - s)
                 });
             }

@@ -9,20 +9,17 @@ re-opening something that looks obviously undone.
 Suggested order, each played and measured like #140-#148. Details are in the
 entries named.
 
-1. **Remembrance** (Slot temporal memory). The last big slot-UX item. It also
-   answers the equip flood, where putting a spell in the weapon hand lifted six
-   weapons at once.
-2. **Darkness scoring** (Known Recommendation Issues). Small and concrete:
+1. **Darkness scoring** (Known Recommendation Issues). Small and concrete:
    Night Eye, light spells and torches when `lightLevel < 0.3`.
-3. **Survival cold scoring** (Known Recommendation Issues). Blocked on the
+2. **Survival cold scoring** (Known Recommendation Issues). Blocked on the
    Warming Aura spell's name or FormID, to check whether it is registered at
    all.
-4. **Wildcards in combat** (Slot temporal memory, remaining churn). Decision
+3. **Wildcards in combat** (Slot temporal memory, remaining churn). Decision
    pending from the user; the lean is an INI toggle, default on, possibly with
    a shorter combat expiry.
-5. **Widget hidden in cut scenes** (Follow-ups). Written on
+4. **Widget hidden in cut scenes** (Follow-ups). Written on
    `widget-hide-while-wheel-open`; needs a rebase and one real cut scene (S).
-6. **Every-tick recompute** (Known Bugs). Needs what the player was doing at
+5. **Every-tick recompute** (Known Bugs). Needs what the player was doing at
    11:10-11:20 on 2026-09-25 before anything can be guessed.
 
 ## Known Bugs
@@ -429,79 +426,38 @@ entries named.
 ## Slot temporal memory
 Seating fixed WHERE an item sits; these entries are about WHEN a slot may
 change. The churn and override work (#140-#148) closed most of it: what is
-left is Remembrance, the churn tail and the two deferred override steps.
+left is the churn tail and the two deferred override steps; Remembrance
+shipped (v0.21.47).
 Raised 2026-09-24.
 
-- [ ] **Remembrance — a slot holds what you just took off.** When the player
-      equips something from a slot, whatever that equip displaced (the sword
-      the bow replaced, the spell the new spell replaced, the helmet the new
-      helmet replaced) takes that slot for a while, then expires back to
-      normal recommendations the way a wildcard does. A one-deep undo: swap
-      and the old item is one key away.
-      NOT a new slot type. It is a per-slot flag on every existing
-      classification, on by default, so a player opts slots OUT:
-
-          [Page0.Slot0]
-          sClassification = DamageAny
-          bWildcardsEnabled = true
-          bOverridesEnabled = HP
-          iPriority = 6
-          bRemembrance = true      ; default true
-
-      (Hungarian `b` prefix to match `bWildcardsEnabled` / `bSkipEquipped`;
-      read in `SlotSettings.cpp` alongside them, and needs a dMenu toggle.)
-      Applies to anything equippable — spells per hand, weapons, shields,
-      armour, ammo. Consumables have nothing to displace, so it is a no-op
-      there.
-      Shape of it:
-      - Capture the displaced object at the equip transition, before the swap
-        lands. Equips through Huginn go through `EquipManager` and know their
-        slot, so "that slot" is well defined. Equips made OUTSIDE Huginn
-        (Wheeler, vanilla menu, favourites) arrive via the external-equip
-        detection in `UpdateLoop` and have no source slot — the remembered
-        item would need a home chosen by classification instead (first
-        `bRemembrance` slot on the page whose classification accepts it), or
-        external equips are simply out of scope for v1. Decide which.
-      - Hold it on a timer, not a score. It is not a recommendation: it should
-        bypass ranking and the learner entirely and never earn a reward.
-        `LockSlotForActivation` (the Sticky policy, `ACTIVATION_LOCK_MS`) is
-        the nearest existing mechanism. The duration wants to be an INI value
-        of its own, not `fLockDurationMs`.
-      - It must survive the seating pass and `DedupePreferLocked` — a locked
-        remembered item already wins dedup, which is the right answer.
-      Settled 2026-09-24:
-      - No looping. Equipping a remembered item does NOT remember what it
-        displaced: the slot releases to normal recommendations instead of
-        holding the other half of the pair, so two items cannot ping-pong in
-        one slot forever. Needs one check at capture time ("was this equip
-        sourced from a remembrance hold?"). A setting could allow the
-        toggle for players who want it, e.g.
-        `[SlotLocker] bRemembranceChain = false`; default off.
-      - Remembrance wins dedup. If the displaced item is already on screen in
-        another slot, the remembered copy stays and the recommended copy is
-        cleared, so the item the player just took off is where they expect it.
-        This is purely a display rule: it carries no reward or penalty and
-        must not touch the learner.
-      - `bSkipEquipped` does not conflict. The remembered item is by definition
-        unequipped at the moment it is placed, so the filter has nothing to
-        hide.
-      Open — one question, two directions: an equip that displaces TWO items.
-      A two-hander replacing a sword and a spell, or anything that swaps both
-      hands at once, leaves two things to remember in one slot. Two options:
-      (a) a pseudo-item for the pair, "re-equip both", one key press restoring
-      the whole previous loadout; or (b) remember one hand, the right, and drop
-      the other. (b) is the v1 answer; (a) is worth having if the pair case
-      turns out to be common in play.
-      Revisit `fWeightNoWeapon` with it. Today, putting a spell in the weapon
-      hand sets the no-weapon context (0.40), which lifts EVERY weapon at once:
-      seen twice on 2026-09-25 (12:34:20 via a Huginn key, 12:38:04 via an
-      external equip), each time six slots flipping to weapons. Remembrance
-      answers "you just took your weapon off" with the ONE weapon you took
-      off, under the key you pressed; once it exists, the no-weapon weight
-      should lift weapons much less, or not at all while a remembrance slot
-      holds one.
-      Relates to the weapon stale-recommendation entry: the weapon registry
-      still lacks the OnItemUsed/MarkPageDirty hook items got in #43 (M)
+- [ ] **Remembrance follow-ups.** Remembrance itself -- a slot holds what
+      you just took off -- SHIPPED in v0.21.47; design and mechanics are in
+      `docs/architecture/5-slots.md` (Remembrance). Press a Huginn key or a
+      Huginn wheel entry that puts a weapon, spell or scroll in a hand (or
+      swaps one ammo for another), and what it replaced shows under the same key for `fRemembranceDurationMs` (15 s),
+      labelled "Swap Back". Per-slot `bRemembrance`, on by default.
+      Decided 2026-09-27 (with the user): Huginn keys and Huginn wheels only;
+      external equips (menu, favourites, the player's own wheels) are out of
+      scope; the item takes the pressed slot whatever its classification;
+      one hand (right, else left); no chaining; no learner reward.
+      Decided 2026-09-28: a plain UNEQUIP (hand or quiver left empty) is not
+      remembered -- only a swap made through Huginn is.
+      Played on LoreRim 2026-09-27 22:16-22:39: 18 holds, each the item the
+      press took off (Battlestaff back under the knife's key, Long Bow back
+      when the Battlestaff replaced it); swap-backs ended them, the rest
+      expired at 15 s.
+      Follow-ups, none started:
+      - `fWeightNoWeapon` (0.40) still lifts every weapon when a spell goes in
+        the weapon hand. With the one weapon you took off now on your key,
+        that weight can probably drop a lot; measure the equip flood first.
+      - A pair pseudo-item ("re-equip both") if two-item displacement turns
+        out to be common in play.
+      - External equips, if wanted: they have no source slot, so the item
+        would need a home chosen by classification.
+      - Instance tracking: a weapon owned twice shows its best-scoring stack,
+        not necessarily the one you took off.
+      - Untested with Wheeler's `Empty` post-activation policy.
+      - No dMenu toggle, like the rest of `[SlotLocker]`.
 
 - [ ] **Remaining slot churn.** Instrumentation shipped in v0.21.19: the
       `slotChurn=` heartbeat field with causes and challenger ratios, plus a
@@ -527,7 +483,8 @@ Raised 2026-09-24.
       - **The equip flood.** Putting a spell in the weapon hand lifts every
         weapon (`fWeightNoWeapon` 0.40) and flooded six slots at x1.23-1.63.
         A 30% margin would stop most of it, but it has not been re-measured
-        with the hold. Remembrance is the better answer (see above).
+        with the hold. Remembrance now puts the weapon you took off under your
+        key; next is lowering the weight (see Remembrance's follow-ups).
       - **Blank slot at load.** LoreRim 2026-09-27 21:38:13: two duplicates
         cleared in the first frame while two used items moved. Slot 6 had
         nothing that was not already on another key and stayed empty for

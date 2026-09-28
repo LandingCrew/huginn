@@ -10,6 +10,7 @@
 #include "override/OverrideManager.h"
 #include "slot/SlotAllocator.h"
 #include "slot/SlotLocker.h"
+#include "slot/Remembrance.h"
 #include "slot/SlotUtils.h"
 #include "input/EquipManager.h"
 #include "wheeler/WheelerClient.h"  // debug-only: ValidateWheelState in UpdateDebugWidgets
@@ -330,6 +331,27 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
             .wildcardSlots = ctx.displayWildcardSlots,
         },
         &contextWeights);
+
+    // A Remembrance hold shows what the player took off whether or not the
+    // ranking kept it: context weight or minimum utility can drop a sword the
+    // moment a spell goes in its hand, which is exactly when the hold wants
+    // it. Added unranked, at the end, flagged so only the hold may place it.
+    for (const RE::FormID id : Slot::Remembrance::GetSingleton().ActiveFormIDs()) {
+        const bool ranked = std::ranges::any_of(ctx.scoredCandidates,
+            [id](const Scoring::ScoredCandidate& sc) { return sc.GetFormID() == id; });
+        if (ranked) {
+            continue;
+        }
+        for (const auto& c : candidates) {
+            if (Candidate::GetFormID(c) == id) {
+                Scoring::ScoredCandidate sc;
+                sc.candidate = c;
+                sc.isRememberedOnly = true;
+                ctx.scoredCandidates.push_back(std::move(sc));
+                break;
+            }
+        }
+    }
 
     // Name the dominant reason once per tick, off the weights the ranking just
     // used — the display explanation can't disagree with the scoring (#10).

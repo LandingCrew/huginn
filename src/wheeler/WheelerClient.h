@@ -256,6 +256,11 @@ namespace Huginn::Wheeler
             /// Force the pipeline to run so the widget repaints on wheel close.
             std::function<void()> markPageDirty;
 
+            /// Remembrance: a Huginn wheel entry was activated. Returns true
+            /// when the item was that slot's remembered item -- the hold ends,
+            /// and the activation must not be published as a Huginn equip.
+            std::function<bool(size_t pageIndex, size_t slotIndex, RE::FormID)> noteSlotActivated;
+
             /// Every effect wired. Lives on the struct, immediately below the
             /// fields, so the list cannot drift: SetEnvironment validates with
             /// it and EnvironmentReady() gates with it, and adding a ninth
@@ -268,6 +273,7 @@ namespace Huginn::Wheeler
             {
                 return lockSlotForActivation && onItemUsed && markHuginnEquip &&
                        startCooldown && publishWheelerEquip && setWidgetVisible &&
+                       noteSlotActivated &&
                        setCurrentPage && markPageDirty;
             }
         };
