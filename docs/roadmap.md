@@ -427,8 +427,9 @@ entries named.
       overlap in ways a player cannot guess: DamageAny takes weapons and
       poisons as well as spells; BuffsAny and DefensiveAny both take armour
       spells; HealingAny and PotionsAny both take health potions; and
-      nothing meant "attack magic" until DamageMagic was added for the
-      flagship page (2026-09-28). Worth one pass that decides what each
+      nothing meant "attack magic" or "poisons" until DamageMagic and
+      PoisonsAny were added for the flagship page and the templates
+      (2026-09-28). Worth one pass that decides what each
       class is FOR (a job on a key) rather than what it happens to match,
       then trims or renames to fit.
       Raised 2026-09-28.
@@ -505,7 +506,7 @@ Raised 2026-09-24.
         The counter should compare what is displayed, not only the form.
       Raised 2026-09-24.
 
-- [ ] **Override rethink, steps (b) and (c): deferred until needed.** The
+- [ ] **Override rethink, step (c) deferred; (b) shipped.** The
       goal is to fix the "dumb smart" problem: an override is a RULE, not a
       recommendation, so sometimes you just get a health potion. Agreed with
       the user 2026-09-27:
@@ -521,10 +522,12 @@ Raised 2026-09-24.
       recommendation. Verified on simonrim (Potion of Healing, then Fast
       Healing, then Healing as magicka fell) and on LoreRim (Requiem's
       Healing, cost 53 of 146 magicka, placed on key 1).
+      **(b) SHIPPED 2026-09-28** (branch `flagship-page`): magicka and
+      stamina are pinned like health, and each vital is an INI switch
+      (`[Overrides] bPin{Health,Magicka,Stamina}ToSlot`, all on; off = mark
+      in place). Needed once the flagship page gave every key a job: the
+      magicka emergency pulsed the Potion key, not key 2.
       Deferred:
-      - **(b)** Pin magicka and stamina the way health is, with mark-in-place
-        as an INI option. The key-8 screenshot that motivated it was really a
-        dedup blank, fixed in #146.
       - **(c)** A `bOverridesOnly` emergency-key slot. This is already
         reachable by configuration: a PotionsAny slot with overrides enabled,
         bound to any key.

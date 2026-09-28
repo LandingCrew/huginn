@@ -14,7 +14,7 @@ locking, overrides and wildcards — as implemented in **v0.19.x**.
 ## Overview
 
 - Multi-page slot system (up to 10 pages, up to 10 slots per page)
-- 21 slot classifications: effect-based (`DamageAny`, `HealingAny`, …),
+- 24 slot classifications: effect-based (`DamageAny`, `DamageMagic`, `HealingAny`, …),
   item-type-based (`PotionsAny`, `WeaponsMelee`, per-school spells, …) and
   unrestricted (`Regular`)
 - Override system with priority-ordered urgent replacements, routed to slots by
@@ -71,12 +71,12 @@ inline constexpr size_t MAX_PAGES = 10;
 inline constexpr size_t MAX_SLOTS_PER_PAGE = 10;
 ```
 
-**Code default vs shipped INI.** The compiled-in fallback is **1 page with 7
+**Code default vs shipped INI.** The compiled-in fallback is **1 page with 8
 slots** (`Defaults::PAGE_COUNT`, `Defaults::SLOTS_PER_PAGE`,
-`src/slot/SlotSettings.h:119`). The shipped `configs/Huginn.ini` overrides that
-with **3 pages of 8 slots** (`Smart`, `Inventory`, `Regulars`), and ships three
-further page templates commented out (`Fighter`, `Mage`, `Rogue`) for the player
-to uncomment after raising `iPageCount`.
+`src/slot/SlotSettings.h`), the same layout as the shipped page 1 "Smart". The
+shipped `configs/Huginn.ini` has **7 pages**: two for play (`Smart`, `Kit`) and
+five test pages. Six archetype layouts live in `configs/templates/` (see
+[Shipped INI layout](#shipped-ini-layout-7-pages)).
 
 **Page state and dirty flags** (`src/slot/SlotAllocator.h`):
 
@@ -92,7 +92,7 @@ to uncomment after raising `iPageCount`.
 
 ## Slot Classification System
 
-`SlotClassification` (`src/slot/SlotConfig.h`) has 21 values. `SlotClassifier`
+`SlotClassification` (`src/slot/SlotConfig.h`) has 24 values. `SlotClassifier`
 (`src/slot/SlotClassifier.cpp`) dispatches on the candidate variant — spell,
 item, scroll, weapon or ammo — so the same classification means different things
 per source type.
@@ -102,6 +102,7 @@ per source type.
 | Classification | Spells / scrolls match on | Items match on |
 |---|---|---|
 | **DamageAny** | `SpellType::Damage` | `ItemType::Poison` (weapon candidates also match) |
+| **DamageMagic** | `SpellType::Damage` | — (no items, no weapons): the "attack magic" key |
 | **HealingAny** | `SpellType::Healing`, or the `RestoreHealth` tag | `HealthPotion`, or the `RestoreHealth` tag |
 | **BuffsAny** | `SpellType::Buff`, or `Armor` / `Invisibility` / `Muffle` tags | `BuffPotion`, or any `Fortify*` / `Invisibility` tag |
 | **DefensiveAny** | `SpellType::Defensive`, or `Ward` / `Armor` tags | `ResistPotion`, or any `Resist*` tag |
@@ -113,6 +114,7 @@ per source type.
 | Classification | Matches |
 |---|---|
 | **PotionsAny** | Health, magicka, stamina, resist, buff and cure potions plus poisons — **not** food, alcohol or soul gems |
+| **PoisonsAny** | `ItemType::Poison` only |
 | **ScrollsAny** | Any scroll |
 | **SpellsAny** | Any spell (scrolls do **not** match) |
 | **SpellsDestruction / SpellsRestoration / SpellsConjuration / SpellsIllusion / SpellsAlteration** | Spells whose `MagicSchool` is that school |
@@ -122,6 +124,11 @@ per source type.
 | **FoodAny** | `ItemType::Food` |
 | **AlcoholAny** | `ItemType::Alcohol` (ale, mead, wine, skooma) |
 | **AmmoAny** | Ammo candidates (arrows, bolts) |
+| **ApparelAny** | Fortify-crafting gear (scores only at a workstation) |
+
+The classes overlap in ways a player cannot guess (DamageAny takes weapons,
+HealingAny and PotionsAny both take health potions, …). A review of them as a
+whole is on the roadmap.
 
 ### Regular (Unrestricted)
 
@@ -395,6 +402,16 @@ and take the first that (a) accepts the override's category, (b) is still empty,
 and (c) whose classification the override's candidate actually matches. Both the
 FormID and the name are recorded as assigned.
 
+**Pinned or marked in place.** Before that walk, an override whose item is
+already on the page may simply *mark* the slot showing it (label and pulse, no
+second copy), so nothing moves. The quieter prompts -- low ammo, soul gem,
+drowning -- always do. The three vitals do not by default: health, magicka and
+stamina are **pinned** to their configured slot, so the emergency key is muscle
+memory (`[Overrides] bPin{Health,Magicka,Stamina}ToSlot`, all on). Set one to
+0 and that vital marks in place too. Either way, a stale lock on the override's
+item in another slot is released in the same pass (`SlotLocker::ApplyLocks`), so
+the item never bounces between two slots.
+
 ### Pass 1b — override fallback
 
 Any override not placed in Pass 1 gets a second walk that drops the
@@ -438,45 +455,58 @@ duplicate.
 ## Slot Priority System
 
 Slot priority is a **user-defined `int8_t`** (range -128..127; the shipped pages
-use 0..6). Higher-priority slots are filled first and therefore get first pick
-of the candidate pool. Ties are resolved by `std::sort`, which is not stable, so
-two slots sharing a priority (the shipped pages do this at priority 1) have no
-guaranteed relative order — give slots distinct priorities if the order matters.
+use 0..9). Higher-priority slots are filled first and therefore get first pick
+of the candidate pool. Ties keep slot-index order (`ComputePriorityOrder` uses
+`std::stable_sort`, #147); the shipped pages use distinct priorities anyway.
 
 **Slot priority is a different system from override priority.** Override
 priority is a fixed constant per condition (`CRITICAL_HEALTH = 100`, …) and
 governs collection ordering, lock breaking and Wheeler auto-focus gating. Slot
 priority governs fill order only. Neither reads the other.
 
-### Code default layout (1 page, 7 slots)
+### Code default layout (1 page, 8 slots)
 
-`Defaults::PAGE0_SLOTS`, `src/slot/SlotSettings.h:132`:
+`Defaults::PAGE0_SLOTS`, `src/slot/SlotSettings.h` -- one job per key, the same
+as the shipped page 1:
 
-| Slot | Classification | Priority | Override filter | Wildcards | SkipEquipped |
-|------|----------------|----------|-----------------|-----------|--------------|
-| 0 | DamageAny | 6 | Any | Yes | Yes |
-| 1 | WeaponsAny | 5 | Any | Yes | Yes |
-| 2 | BuffsAny | 4 | Any | Yes | Yes |
-| 3 | Regular | 3 | None | Yes | Yes |
-| 4 | Regular | 2 | None | Yes | Yes |
-| 5 | Regular | 1 | None | Yes | Yes |
-| 6 | Regular | 0 | **Other** | Yes | Yes |
+| Key | Job | Classification | Priority | Overrides |
+|-----|-----|----------------|----------|-----------|
+| 1 | Weapon | WeaponsAny | 7 | HP |
+| 2 | Attack magic | DamageMagic | 6 | MP |
+| 3 | Heal | HealingAny | 5 | SP |
+| 4 | Defend | DefensiveAny | 4 | None |
+| 5 | Buff | BuffsAny | 3 | None |
+| 6 | Potion | PotionsAny | 2 | None |
+| 7 | Situational | Regular | 1 | **Other** |
+| 8 | Wildcard | Regular | 0 | None |
 
-Slot 6's `Other` filter reserves a home for the soul-gem / low-ammo / drowning
-prompts. Slots past index 6 (only reachable when the INI asks for more) and all
-slots on pages 1+ default to `Regular`, wildcards on, override filter `None`,
-skip-equipped on, priority `slotCount - index - 1`.
+Every slot has wildcards on (the health key turns them off itself),
+skip-equipped on and swap back on. With skip-equipped, key 1 is "the weapon you
+are not holding"; with swap back, pressing it toggles between two weapons. Key
+7's `Other` filter reserves a home for the soul-gem / low-ammo / drowning
+prompts. Slots on pages 1+ default to `Regular`, wildcards on, override filter
+`None`, skip-equipped on, priority `slotCount - index - 1`.
 
-### Shipped INI layout (3 pages, 8 slots each)
+### Shipped INI layout (7 pages)
 
-| Page | Name | Layout |
-|------|------|--------|
-| 0 | Smart | DamageAny(HP), WeaponsAny(MP), BuffsAny(SP), four `Regular`, one `Regular` pinned to `Other`; wildcards on throughout |
-| 1 | Inventory | One category per slot — DamageAny, WeaponsMelee, WeaponsRanged, HealingAny, PotionsAny, FoodAny, BuffsAny, Utility; wildcards **off**, no overrides |
-| 2 | Regulars | All `Regular`; HP / MP / SP pinned to slots 0/1/2, `Any` on the rest; wildcards on |
+| In game | Name | Layout |
+|---------|------|--------|
+| 1 | Smart | The code default above |
+| 2 | Kit | Potions, Food, Scrolls, Utility, Summons, Ammo, craft gear, Regular; no overrides |
+| 3 | T: Emergencies | Regular keys with HP / MP / SP / Other on 1-4; key 5 PotionsAny with no overrides as a control |
+| 4 | T: Classes A | Ten keys, one class each: WeaponsMelee, WeaponsRanged, AmmoAny, DamageMagic, HealingAny, DefensiveAny, SummonsAny, BuffsAny, Utility, ScrollsAny |
+| 5 | T: Classes B | PotionsAny, FoodAny, AlcoholAny, ApparelAny, DamageAny and the five spell schools |
+| 6 | T: Ranking | Eight Regular keys with no overrides, wildcards or swap back: churn from ranking and the hold alone |
+| 7 | T: Swap | Swap back and equip: one key with `bSkipEquipped = 0`, one with `bRemembrance = 0` |
 
-Commented-out `Fighter`, `Mage` and `Rogue` templates follow in the same file;
-uncomment one and raise `iPageCount` to enable it.
+The test pages run with wildcards and swap back off unless that is what they
+test. Delete them, or set `iPageCount = 2`, for a player setup.
+
+**Templates** (`configs/templates/`): battlemage, paladin, pure-mage,
+stealth-archer, summoner, survivalist. Each is a page layout to paste over
+`[Pages]` and the page sections. All keep the flagship's emergency keys (health
+1, magicka 2, stamina 3) and a key-7 home for the `Other` prompts, so switching
+template never moves "heal me".
 
 ---
 
@@ -539,6 +569,15 @@ equip into an empty hand or quiver displaces nothing and starts no hold.
   everything else, whatever the slot's classification or `skipEquipped`.
   Pressing it ends the hold and publishes no learner reward (EquipManager and
   the Wheeler `noteSlotActivated` wiring skip the equip callback).
+- **When it does not fit the key.** `sRemembranceTarget = Pressed` (default)
+  shows it on the pressed key anyway, but only for
+  `fRemembranceMismatchDurationMs` (5 s): a dagger a spell took off shows
+  briefly on the attack-magic key. `Job` sends it to the first swap-back key
+  whose class fits (the dagger to the Weapon key), falling back to the pressed
+  key. Undo and release follow the hold to wherever it is shown, and a hold
+  breaks that key's lock like an override.
+- **Pulses before it ends**, for the last 40% of its time -- the same
+  `Expiring` pulse a slot lock uses (1 s cycle, 50-100%).
 - **No chaining.** Equipping the remembered item does not remember what it
   took off, so two items cannot ping-pong in one slot.
 - **Captured by observation.** The press registers a pending capture;
@@ -756,6 +795,9 @@ bKeepSlotPositions = true       ; Keep an item in the slot it was already in (se
 bHoldSeatedItems = true         ; Hold a seated item until a challenger beats it by the margin
 fChallengerMargin = 0.25        ; How much better a challenger must score (0.25 = 25%)
 fRemembranceDurationMs = 15000  ; Remembrance hold length; 0 = off everywhere
+fRemembranceMismatchDurationMs = 5000  ; ...on a key whose class it does not fit
+sRemembranceTarget = Pressed    ; Pressed | Job (the key whose class fits)
+bFillJobKeysFromRegular = false ; A blank job key takes a match off a Regular key
 fLockDurationMs = 3000          ; 0 = disable locking
 fMinLockDurationMs = 500        ; Minimum time before a lock can break
 bLockOnFill = true              ; Lock when a slot fills from empty
@@ -780,6 +822,14 @@ fCriticalStaminaThreshold = 0.35  ; Code default 0.10
 fCriticalStaminaHysteresis = 0.15
 
 bAllowImpurePotions = true        ; Allow potions with side effects (skooma, etc.)
+
+bHealthSpellFallback = true       ; No potion: offer a self-cast restore spell
+bMagickaSpellFallback = true
+bStaminaSpellFallback = true
+
+bPinHealthToSlot = true           ; Emergency on its own key (false: mark in place)
+bPinMagickaToSlot = true
+bPinStaminaToSlot = true
 
 bEnableWeaponCharge = true
 fWeaponChargeThreshold = 0.25     ; Must be > 0 (see Override Rules)

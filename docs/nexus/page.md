@@ -12,6 +12,7 @@ Huginn also provides a HUD widget showing the rolling state of each hotkey.
 * **Learns as you play** — observes what you equip in each situation, bootstrapped with sensible defaults
 * **On-screen widget** — a small overlay showing what is on each key; hides itself outside combat
 * **Wheeler integration** — optional [Wheeler](https://www.nexusmods.com/skyrimspecialedition/mods/97345) radial menu support
+* **A job for every key** — the default page gives each key a role (weapon, attack magic, heal, defend…) with emergencies on fixed keys; six ready-made templates for other builds
 * **Multi-page slots** — organize recommendations by role (up to 10 pages, 10 slots each)
 * **Swap back** — press a key that swaps what is in your hand (or your arrows), and what it replaced waits under that same key for 15 seconds; press again to swap back
 * **Workstation awareness** — Fortify Smithing at forges, Fortify Enchanting at enchanters
@@ -83,15 +84,36 @@ Every slot takes the same six settings:
 | `bRemembrance` | Swap back: when you press this slot to equip something, what it took off waits under the same key for a while (see Steadiness below). On by default; `bRemembrance = 0` turns it off for this slot |
 | `iPriority` | Which slots get first pick of the good options. Higher fills first |
 
-Here is the first slot of the first page in the default setup. It takes anything that deals damage, is allowed to try something new now and then, gets an early pick, and hands itself over to a healing potion when your health drops dangerously low:
+Here is the first slot of the first page in the default setup. It holds the weapon you are *not* holding, gets first pick, and hands itself over to a healing potion when your health drops dangerously low:
 
 ```
 [Page0.Slot0]
-sClassification = DamageAny
+sClassification = WeaponsAny
 bWildcardsEnabled = true
 bOverridesEnabled = HP
-iPriority = 6
+iPriority = 7
 ```
+
+#### The default pages
+
+The first page, **Smart**, gives every key a job. Each key shows the best thing for that job that is not already in your hands:
+
+| Key | Job | What you'll see |
+|---|---|---|
+| 1 | Weapon | The weapon you're not holding — the bow while the sword is out. Swap, and the sword waits on this key, so one key toggles between two weapons |
+| 2 | Attack magic | Damage spells and damage scrolls for the target |
+| 3 | Heal | Healing spells and health potions |
+| 4 | Defend | Wards, armour spells, resist potions |
+| 5 | Buff | Fortify, invisibility, muffle |
+| 6 | Potion | Whatever potion suits the moment |
+| 7 | Situational | Anything, plus the quieter prompts: arrows running low, a soul gem, waterbreathing |
+| 8 | Wildcard | The best of everything else, and now and then something new |
+
+Emergencies always land on the same keys: health on 1, magicka on 2, stamina on 3.
+
+The second page, **Kit**, is for between fights: potions, food, scrolls, utility spells, summons, arrows and crafting gear, one kind per key. The shipped file also has five pages whose names start with `T:` — test layouts that each isolate one feature. Delete them, or set `iPageCount = 2` under `[Pages]`, if you only want the two play pages.
+
+**Templates.** `configs/templates/` has six ready-made layouts: battlemage, paladin, pure mage, stealth archer, summoner and survivalist. Each keeps the same emergency keys, so switching never moves "heal me". To use one, delete `[Pages]` and every `[PageN]` / `[PageN.SlotM]` section in `Huginn.ini`, paste the template in their place, and type `hg reload`.
 
 One thing worth knowing about emergencies: a slot set to `Other` will *not* take health, magicka or stamina emergencies. That is deliberate — it keeps one slot free for the quieter prompts, so a soul gem or low-ammo warning still gets through when your health is also dropping.
 
@@ -104,6 +126,7 @@ One thing worth knowing about emergencies: a slot set to `Other` will *not* take
 | Set this | And the slot holds |
 |---|---|
 | `DamageAny` | Anything that hurts something: attack spells, damage scrolls, poisons, and your weapons |
+| `DamageMagic` | Attack magic only: damage spells and damage scrolls — no weapons, no poisons |
 | `HealingAny` | Healing spells, healing scrolls, and health potions |
 | `BuffsAny` | Things you use *before* the fight: armor and cloak spells, invisibility, muffle, and fortify potions |
 | `DefensiveAny` | Wards, armor spells, and resist fire/frost/shock/magic/poison potions |
@@ -122,18 +145,21 @@ One thing worth knowing about emergencies: a slot set to `Other` will *not* take
 | `SpellsAlteration` | Alteration spells only |
 | `ScrollsAny` | Any scroll |
 | `PotionsAny` | Any potion — restore, resist, fortify, cure, and poisons. Not food or drink |
+| `PoisonsAny` | Poisons only |
 | `FoodAny` | Food |
 | `AlcoholAny` | Ale, mead, wine, skooma |
 | `WeaponsAny` | Any weapon, including staves |
 | `WeaponsMelee` | Swords, axes, maces, daggers |
 | `WeaponsRanged` | Bows, crossbows, staves |
 | `AmmoAny` | Arrows and bolts |
+| `ApparelAny` | Gear that fortifies smithing, enchanting or alchemy — it only comes up at a workstation |
 | `Regular` | No restriction — anything at all can land here |
 
 A few things to note:
 
 * **`Regular` is the catch-all.** Use it for slots you want Huginn to fill freely, and as overflow after your specific slots. If you typo a classification, Huginn falls back to `Regular` and notes it in the log.
-* **Weapons count as damage.** A `DamageAny` slot can serve you a sword. If you want spells only there, use `SpellsDestruction`.
+* **Weapons count as damage.** A `DamageAny` slot can serve you a sword. If you want attack magic only there, use `DamageMagic`.
+* **Held items are skipped.** Every slot leaves out what you are already holding (`bSkipEquipped`, on by default), which is what makes a weapon key show your *other* weapon.
 * **Staves are ranged.** They match `WeaponsRanged`, not the spell classifications.
 * **The names have short forms.** `damage`, `healing`, `buffs`, `melee`, `destruction`, `drinks`, `any` and so on all work, and case doesn't matter.
 
@@ -154,18 +180,20 @@ Tap equips to the right hand, double-tap to the left hand, hold to both hands.
 
 Most of the time Huginn quietly ranks your options. Sometimes something is urgent enough that it should stop suggesting and just put the answer on your key. That is an override: it seizes a slot, ignoring the normal ranking, until the emergency passes.
 
-A slot only accepts an override if you let it. That is the `bOverridesEnabled` setting on the slot — `HP`, `MP`, `SP`, `Other`, `Any`, or `None`. In the shipped layout, health takes `Page0.Slot0`, magicka takes `Slot1`, stamina takes `Slot2`, and everything else takes `Slot6`.
+A slot only accepts an override if you let it. That is the `bOverridesEnabled` setting on the slot — `HP`, `MP`, `SP`, `Other`, `Any`, or `None`. In the shipped layout, health takes `Page0.Slot0` (key 1), magicka takes `Slot1` (key 2), stamina takes `Slot2` (key 3), and everything else takes `Slot6` (key 7).
 
 | Emergency | Fires when | What lands on the key |
 |---|---|---|
-| Health | Health drops below 35% | Best health potion |
-| Magicka | Magicka drops below 35% | Best magicka potion |
-| Stamina | Stamina drops below 35% | Best stamina potion |
+| Health | Health drops below 35% | Best health potion; failing that, a healing spell you can cast right now |
+| Magicka | Magicka drops below 35% | Best magicka potion; failing that, a restore spell you can afford |
+| Stamina | Stamina drops below 35% | Best stamina potion; failing that, a restore spell you can afford |
 | Weapon charge | An enchanted weapon or staff falls below 25% charge | A filled soul gem |
 | Low ammo | You are down to 10 arrows or bolts | The best ammo you are carrying |
 | Drowning | You are underwater with no waterbreathing | Waterbreathing potion |
 
-Each one has its own on/off switch — `bEnableCriticalHealth`, `bEnableWeaponCharge`, `bEnableDrowning` and so on. Turn off what you don't want.
+Each one has its own on/off switch — `bEnableCriticalHealth`, `bEnableWeaponCharge`, `bEnableDrowning` and so on. Turn off what you don't want. `bHealthSpellFallback` and its magicka and stamina twins turn off the spell fallback.
+
+**Same key, or where it already is.** By default health, magicka and stamina emergencies always use their own key, so "heal me" is muscle memory. If you'd rather nothing moved, set `bPinHealthToSlot`, `bPinMagickaToSlot` or `bPinStaminaToSlot` to `false`: then, when the potion is already on another key, that key pulses instead. Arrows, soul gems and waterbreathing always work that second way.
 
 **Thresholds and the release gap.** Every emergency has a threshold and a hysteresis. The threshold is where it starts; the hysteresis is how far back you have to climb before it lets go. Health is `0.35` and `0.15`, so it fires below 35% and releases above 50%. That gap is deliberate — without it a potion would flash on and off your key every time your health wobbled around a single number. Widen the gap if it lets go too eagerly; narrow it if it lingers.
 
@@ -245,6 +273,10 @@ bRemembrance = 0
 ```
 
 To turn it off everywhere, set `fRemembranceDurationMs = 0` under `[SlotLocker]`. Either way, `hg reload` applies it without restarting.
+
+A remembered item pulses for the last few seconds before it goes. When it doesn't fit the key you pressed — a spell took your dagger off, and the dagger now sits on the attack-magic key — it only stays for `fRemembranceMismatchDurationMs` (5 seconds). Set `sRemembranceTarget = Job` to send it to a key where it does fit instead (the dagger goes to your weapon key).
+
+`bFillJobKeysFromRegular` covers the odd moment a job key would be empty while an "anything" key holds something that fits it: turn it on and the item moves to the job key. It is off by default, because it moves things between keys.
 
 ##### Spells you can't currently cast — `[Candidates]`
 
