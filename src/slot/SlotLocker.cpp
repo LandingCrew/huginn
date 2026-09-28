@@ -537,6 +537,13 @@ namespace Huginn::Slot
             }
         }
 
+        // A Remembrance hold is the player's own undo and may land on a key
+        // other than the one pressed (sRemembranceTarget = Job): it takes the
+        // key now, like an override, rather than after its lock runs out.
+        if (newAssign.IsRemembered() && newAssign.formID != lock.assignment.formID) {
+            return true;
+        }
+
         // Calculate elapsed time since lock was created
         float elapsedMs = lock.totalDurationMs - lock.remainingMs;
 

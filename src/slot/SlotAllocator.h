@@ -335,6 +335,15 @@ namespace Huginn::Slot
         /// Whether `assignment` may sit in slot `slotIndex` of this layout:
         /// the same classification, wildcard and skip-equipped rules
         /// FindBestCandidate applies when it picks one in the first place.
+        /// `[SlotLocker] bFillJobKeysFromRegular`: an empty key with a class
+        /// takes a matching item standing on a Regular key.
+        void PullIntoEmptyJobKeys(
+            const std::vector<SlotConfig>& slotConfigs,
+            SlotAssignments& assignments,
+            const State::PlayerActorState* player,
+            const std::array<size_t, MAX_SLOTS_PER_PAGE>& priorityOrder,
+            size_t priorityCount) const;
+
         [[nodiscard]] static bool SlotAccepts(
             const SlotConfig& config,
             const SlotAssignment& assignment,

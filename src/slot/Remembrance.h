@@ -65,6 +65,11 @@ namespace Huginn::Slot
             // a hand after this, not that it is in one: with the same spell in
             // both hands, replacing one leaves the other still holding it.
             int64_t startedAtMs = 0;
+            bool capped = false;       // CapHold already applied
+            // Where the allocator actually shows it: the pressed key, or with
+            // sRemembranceTarget = Job the key whose class fits. SIZE_MAX until
+            // first shown. Undo and release follow it there.
+            size_t shownSlot = SIZE_MAX;
             [[nodiscard]] bool Active() const noexcept { return formID != 0 && remainingMs > 0.0f; }
         };
         using PageEntries = std::array<Entry, MAX_SLOTS_PER_PAGE>;
@@ -85,6 +90,13 @@ namespace Huginn::Slot
         /// @return true when a hold started or ended -- the caller forces a
         ///   pipeline run so the slot changes now, not at the next state change.
         [[nodiscard]] bool Update(float deltaMs, RE::PlayerCharacter* player);
+
+        /// Shorten a hold whose item does not fit the key's class, once. The
+        /// allocator knows the class and the candidate; this does not.
+        void CapHold(size_t page, size_t slot, RE::FormID formID, float maxRemainingMs);
+
+        /// The allocator placed the hold held at `slot` on `shownSlot`.
+        void NoteShownSlot(size_t page, size_t slot, size_t shownSlot);
 
         /// This page's holds, copied out.
         [[nodiscard]] PageEntries GetPage(size_t page) const;

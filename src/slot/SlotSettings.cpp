@@ -200,8 +200,29 @@ namespace Huginn::Slot
         const float remembranceMs = std::max(0.0f,
             static_cast<float>(ini.GetDoubleValue("SlotLocker", "fRemembranceDurationMs", 15000.0)));
         m_remembranceDurationMs.store(remembranceMs, std::memory_order_release);
-        SKSE::log::info("[SlotSettings] Remembrance: {}"sv,
-            remembranceMs > 0.0f ? std::format("{:.0f}s", remembranceMs / 1000.0f) : std::string("off"));
+        const float mismatchMs = std::max(0.0f,
+            static_cast<float>(ini.GetDoubleValue("SlotLocker", "fRemembranceMismatchDurationMs", 5000.0)));
+        m_remembranceMismatchMs.store(mismatchMs, std::memory_order_release);
+        SKSE::log::info("[SlotSettings] Remembrance: {} ({:.0f}s when it does not fit the key's class)"sv,
+            remembranceMs > 0.0f ? std::format("{:.0f}s", remembranceMs / 1000.0f) : std::string("off"),
+            mismatchMs / 1000.0f);
+
+        {
+            std::string target = ini.GetValue("SlotLocker", "sRemembranceTarget", "Pressed");
+            std::transform(target.begin(), target.end(), target.begin(), ::tolower);
+            const bool toJob = target == "job";
+            if (!toJob && target != "pressed") {
+                SKSE::log::warn("[SlotSettings] Unknown sRemembranceTarget '{}', using Pressed"sv, target);
+            }
+            m_remembranceToJobKey.store(toJob, std::memory_order_release);
+            SKSE::log::info("[SlotSettings] Remembrance target: {}"sv,
+                toJob ? "the key whose class fits (Job)" : "the key you pressed (Pressed)");
+        }
+
+        const bool pullFromRegular = ini.GetBoolValue("SlotLocker", "bFillJobKeysFromRegular", false);
+        m_fillJobKeysFromRegular.store(pullFromRegular, std::memory_order_release);
+        SKSE::log::info("[SlotSettings] Fill empty job keys from Regular keys: {}"sv,
+            pullFromRegular ? "on" : "off");
 
         // Parsing succeeded - commit the new configuration under exclusive lock
         size_t committedCount;

@@ -117,6 +117,32 @@ namespace Huginn::Slot
             return m_remembranceDurationMs.load(std::memory_order_acquire);
         }
 
+        /// Cap on a Remembrance hold whose item does not fit the pressed key's
+        /// class (a dagger on an attack-magic key): it still shows there, but
+        /// briefly. `[SlotLocker] fRemembranceMismatchDurationMs`.
+        [[nodiscard]] float RemembranceMismatchDurationMs() const noexcept
+        {
+            return m_remembranceMismatchMs.load(std::memory_order_acquire);
+        }
+
+        /// Where a remembered item that does not fit the pressed key goes.
+        /// false (`sRemembranceTarget = Pressed`, default): the pressed key,
+        /// capped at RemembranceMismatchDurationMs. true (`Job`): the first
+        /// empty swap-back key whose class accepts it, else the pressed key.
+        [[nodiscard]] bool RemembranceToJobKey() const noexcept
+        {
+            return m_remembranceToJobKey.load(std::memory_order_acquire);
+        }
+
+        /// Whether a key with a class that would otherwise be BLANK takes a
+        /// matching item from a Regular key (the bow moves from an "anything"
+        /// key to the empty Weapon key). Off by default: the slot hold wins,
+        /// and the item stays put. `[SlotLocker] bFillJobKeysFromRegular`.
+        [[nodiscard]] bool FillJobKeysFromRegular() const noexcept
+        {
+            return m_fillJobKeysFromRegular.load(std::memory_order_acquire);
+        }
+
         /// Monotonic generation counter — bumped on every config change
         /// (LoadFromFile / ResetToDefaults). Consumers can cache config copies
         /// and cheaply detect staleness without re-copying every access.
@@ -135,6 +161,9 @@ namespace Huginn::Slot
         std::atomic<bool> m_holdSeatedItems{true};
         std::atomic<float> m_challengerMargin{0.25f};
         std::atomic<float> m_remembranceDurationMs{15000.0f};
+        std::atomic<float> m_remembranceMismatchMs{5000.0f};
+        std::atomic<bool> m_fillJobKeysFromRegular{false};
+        std::atomic<bool> m_remembranceToJobKey{false};
 
         /// Parse classification string to enum (logs warning on error, returns Regular)
         [[nodiscard]] static SlotClassification ParseClassification(const std::string& str);
