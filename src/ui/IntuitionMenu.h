@@ -93,6 +93,12 @@ namespace Huginn::UI
         /// Flip the widget between shown and hidden. @return true if now hidden.
         static bool ToggleUserHidden();
         [[nodiscard]] static bool IsUserHidden() noexcept;
+
+        /// Ask the next push to re-send every slot, bypassing the backend's
+        /// identical-frame cache. Set whenever the widget is (re)shown.
+        static void RequestResync() noexcept;
+        /// True once per request; IntuitionBackend::Push consumes it.
+        [[nodiscard]] static bool ConsumeResync() noexcept;
         static void ResetUserHidden() noexcept;
 
         /// Re-read IntuitionSettings from INI and push all values to the live widget.

@@ -7,6 +7,7 @@
 #include "candidate/CandidateTypes.h"
 #include "state/PlayerActorState.h"
 #include "weapon/WeaponData.h"
+#include "slot/SlotAllocator.h"
 
 #include <algorithm>
 #include <atomic>
@@ -66,6 +67,9 @@ namespace Huginn::UI
             if (msgQueue) {
                 msgQueue->AddMessage(MENU_NAME, RE::UI_MESSAGE_TYPE::kShow, nullptr);
                 logger::info("IntuitionMenu::Show() - kShow message queued"sv);
+                // Reopened (load, cell change): full re-push on the next run.
+                RequestResync();
+                Slot::SlotAllocator::GetSingleton().MarkPageDirty();
             } else {
                 logger::warn("IntuitionMenu::Show() - UIMessageQueue is null"sv);
             }
@@ -376,6 +380,22 @@ namespace Huginn::UI
     }
 
 
+    namespace
+    {
+        // Starts true: the first push after startup is always a full one.
+        std::atomic<bool> g_resyncRequested{ true };
+    }
+
+    void IntuitionMenu::RequestResync() noexcept
+    {
+        g_resyncRequested.store(true, std::memory_order_release);
+    }
+
+    bool IntuitionMenu::ConsumeResync() noexcept
+    {
+        return g_resyncRequested.exchange(false, std::memory_order_acq_rel);
+    }
+
     void IntuitionMenu::SetVisible(bool a_visible)
     {
         auto* tasks = SKSE::GetTaskInterface();
@@ -388,6 +408,18 @@ namespace Huginn::UI
         // player's hide. A hide is always allowed through.
         if (a_visible && IsUserHidden()) {
             return;
+        }
+
+        // Every re-show re-sends the whole bar and forces one pipeline run.
+        // After a death-reload the key and the widget disagreed: key 1 equipped
+        // the Iron Mace the pipeline had put there, while the widget still read
+        // "Healing" from before the death, for 35 s and two presses
+        // (2026-09-27 21:02:21-56). The backend skips identical frames, so a
+        // push lost while the widget was hidden was never retried. What the
+        // widget shows must never depend on it having received every push.
+        if (a_visible) {
+            RequestResync();
+            Slot::SlotAllocator::GetSingleton().MarkPageDirty();
         }
 
         // Only log when visibility actually changes
