@@ -788,6 +788,18 @@ Raised 2026-09-24.
       (b) pin all vitals, mark-in-place behind an INI flag; (c)
       `bOverridesOnly` + the example config. Each played and measured like
       #140-#143.
+      **(a) SHIPPED in #144** (v0.21.39): potion -> self-cast spell affordable
+      now -> the slot's normal recommendation. Played on simonrim: Potion of
+      Healing, then Fast Healing once it was drunk, then Healing once
+      magicka fell below Fast Healing's cost.
+      **(b) and (c) DEFERRED until needed** (user, 2026-09-27). Health is
+      pinned (#143); magicka/stamina marking in place was not the problem it
+      looked like -- the key-8 screenshot's real fault was an EMPTY slot, a
+      dedup clear (19:42:21 slot 6 -> '' for a second), which is the "dedup
+      can empty a locked slot" case under the churn entry. And (c) is
+      already reachable by configuration: a PotionsAny slot with overrides
+      enabled, bound to any key, shows potions normally and the emergency
+      when one fires.
 
       **The conflict.** Overrides and ranked items are allocated from the same
       pool of slots, and overrides go first: Pass 1 runs before Pass 2 on an
