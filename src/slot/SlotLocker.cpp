@@ -1,5 +1,6 @@
 #include "SlotLocker.h"
 #include "override/OverrideConditions.h"
+#include "SlotClassifier.h"
 #include <chrono>
 #include <set>
 #include <span>
@@ -174,7 +175,7 @@ namespace Huginn::Slot
 
         // Locks can reintroduce an item the allocator placed in another slot —
         // dedup here (where lock state is known) so locked content always wins.
-        DedupePreferLocked(result);
+        DedupePreferLocked(result, newAssignments);
 
         // Churn: compare what is shown now against what was shown last run.
         for (size_t i = 0; i < result.size() && i < MAX_SLOTS; ++i) {
@@ -546,7 +547,7 @@ namespace Huginn::Slot
         return false;
     }
 
-    void SlotLocker::DedupePreferLocked(SlotAssignments& result) const
+    void SlotLocker::DedupePreferLocked(SlotAssignments& result, const SlotAssignments& wanted)
     {
         // `result` is built 1:1 per slot by ApplyLocks, so result[i] corresponds
         // to m_lockedSlots[i] (i == slotIndex). The index-parallel access below
@@ -563,6 +564,7 @@ namespace Huginn::Slot
         // Second pass: clear duplicates. An unlocked slot whose name is held by a
         // locked slot is cleared outright; otherwise keep first occurrence.
         std::set<std::string_view> seen;
+        std::array<bool, MAX_SLOTS> cleared{};
         for (size_t i = 0; i < result.size() && i < MAX_SLOTS; ++i) {
             auto& assignment = result[i];
             if (assignment.IsEmpty()) continue;
@@ -572,6 +574,7 @@ namespace Huginn::Slot
                 spdlog::debug("[SlotLocker] Post-lock dedup: clearing unlocked '{}' from slot {} (locked elsewhere)",
                     assignment.name, assignment.slotIndex);
                 assignment = SlotAssignment::Empty(assignment.slotIndex, assignment.classification);
+                cleared[i] = true;
                 continue;
             }
 
@@ -580,6 +583,68 @@ namespace Huginn::Slot
                 spdlog::debug("[SlotLocker] Post-lock dedup: clearing duplicate '{}' from slot {}",
                     assignment.name, assignment.slotIndex);
                 assignment = SlotAssignment::Empty(assignment.slotIndex, assignment.classification);
+                cleared[i] = true;
+            }
+        }
+
+        // Third pass: don't leave a hole. A duplicate exists because a lock
+        // kept an item in one slot while the allocator moved it to another --
+        // so the item the allocator WANTED in that locked slot is on screen
+        // nowhere. Put it in the slot dedup just emptied. Before this the slot
+        // stayed blank, and stayed LOCKED on an item it could not show, until
+        // the other lock expired: slot 6 blank for 0.9 s at 2026-09-27
+        // 19:42:21 while Minor Magicka, wanted in locked slot 3, was shown
+        // nowhere (up to fLockDurationMs in general).
+        std::set<std::string_view> shown;
+        for (size_t i = 0; i < result.size() && i < MAX_SLOTS; ++i) {
+            if (!result[i].IsEmpty()) shown.insert(result[i].name);
+        }
+        for (size_t j = 0; j < result.size() && j < MAX_SLOTS; ++j) {
+            if (!cleared[j]) continue;
+
+            // The cleared slot holds nothing: whatever its lock was holding,
+            // it can no longer show it.
+            auto& slotJ = m_lockedSlots[j];
+            slotJ.isLocked = false;
+            slotJ.remainingMs = 0.0f;
+            slotJ.isActivationLock = false;
+
+            for (size_t i = 0; i < wanted.size() && i < MAX_SLOTS; ++i) {
+                // A slot cleared in this same pass holds nothing any more;
+                // taking its pick would only move the hole there.
+                if (i == j || !m_lockedSlots[i].isLocked || cleared[i]) continue;
+                const auto& homeless = wanted[i];
+                // Overrides and wildcards were placed deliberately; never moved.
+                if (homeless.IsEmpty() || homeless.IsOverride() || homeless.IsWildcard() ||
+                    !homeless.candidate || shown.contains(homeless.name)) {
+                    continue;
+                }
+                // The locker cannot see bSkipEquipped, so never fill with an
+                // equipped item: a slot configured to exclude it would show it.
+                if (Candidate::GetBase(homeless.candidate->candidate).isEquipped) {
+                    continue;
+                }
+                if (!SlotClassifier::Matches(*homeless.candidate, result[j].classification)) {
+                    continue;
+                }
+                const auto classification = result[j].classification;
+                result[j] = homeless;
+                result[j].slotIndex = j;
+                result[j].classification = classification;
+                shown.insert(homeless.name);
+                // slotJ.assignment deliberately still records what the ALLOCATOR
+                // gave slot j (the duplicate), not the fill. Recording the fill
+                // made the next run see the allocator's unchanged pick as new
+                // content, lock it again, and -- with j below i -- let it win
+                // dedup and evict the ORIGINAL lock, leaving that slot blank
+                // (/code-review on #146). Unlocked and unchanged, slot j is
+                // simply cleared and refilled the same way each run until the
+                // other lock ends.
+                if (slotJ.shownName != homeless.name) {
+                    spdlog::debug("[SlotLocker] Post-lock dedup: slot {} filled with '{}', which locked slot {} kept off screen",
+                        j, homeless.name, i);
+                }
+                break;
             }
         }
     }
