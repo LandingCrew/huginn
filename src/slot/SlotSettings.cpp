@@ -2,6 +2,11 @@
 #include "IniLoad.h"
 #include <SimpleIni.h>
 #include <algorithm>
+#include <array>
+#include <numeric>
+#include <set>
+#include "SlotClassifier.h"
+#include "candidate/CandidateTypes.h"
 
 namespace Huginn::Slot
 {
@@ -87,6 +92,60 @@ namespace Huginn::Slot
                     slot.skipEquipped);
 
                 page.slots.push_back(slot);
+            }
+
+            // The slot the critical-health override lands in is an emergency
+            // key: it takes no wildcards, whatever the INI says. Between
+            // emergencies the shipped key 1 was handed an Axe, a Dagger and a
+            // Sword as exploration picks (2026-09-27 20:40:48, 20:41:13,
+            // 20:43:51). Found the way SlotAllocator places the override, so
+            // the protected slot is the one it actually lands in
+            // (/code-review #147): priority order, first slot that accepts a
+            // health override AND whose classification takes the item (a
+            // potion, or -- the spell fallback -- a restore spell), else the
+            // first that accepts it at all. Both items are probed. Decided
+            // here so every reader (fill, refill, hold, the wildcard-capable
+            // count) agrees.
+            {
+                auto& slots = page.slots;
+                std::vector<size_t> order(slots.size());
+                std::iota(order.begin(), order.end(), size_t{ 0 });
+                std::stable_sort(order.begin(), order.end(), [&slots](size_t a, size_t b) {
+                    return slots[a].priority > slots[b].priority;
+                });
+                const auto acceptsHealth = [](OverrideFilter f) {
+                    return f == OverrideFilter::HP || f == OverrideFilter::Any;
+                };
+
+                Candidate::ItemCandidate potion{};
+                potion.type = Item::ItemType::HealthPotion;
+                potion.tags = Item::ItemTag::RestoreHealth;
+                Candidate::SpellCandidate spell{};
+                spell.type = Spell::SpellType::Healing;
+                spell.tags = Spell::SpellTag::RestoreHealth;
+                const std::array<Candidate::CandidateVariant, 2> probes{ potion, spell };
+
+                std::set<size_t> landing;
+                for (const auto& probe : probes) {
+                    size_t firstAccepting = SIZE_MAX;
+                    size_t firstMatching = SIZE_MAX;
+                    for (const size_t s : order) {
+                        if (!acceptsHealth(slots[s].overrideFilter)) continue;
+                        if (firstAccepting == SIZE_MAX) firstAccepting = s;
+                        if (SlotClassifier::Matches(probe, slots[s].classification)) {
+                            firstMatching = s;
+                            break;
+                        }
+                    }
+                    const size_t lands = firstMatching != SIZE_MAX ? firstMatching : firstAccepting;
+                    if (lands != SIZE_MAX) landing.insert(lands);
+                }
+                for (const size_t s : landing) {
+                    if (slots[s].wildcardsEnabled) {
+                        slots[s].wildcardsEnabled = false;
+                        SKSE::log::info("[SlotSettings] Page{}.Slot{} hosts health overrides: wildcards off"sv, p, s);
+                    }
+                }
             }
 
             newPages.push_back(std::move(page));

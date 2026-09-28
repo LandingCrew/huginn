@@ -1228,8 +1228,10 @@ namespace Huginn::Slot
             outOrder[i] = i;
         }
 
-        // Sort by priority (highest first)
-        std::sort(outOrder.begin(), outOrder.begin() + n,
+        // Sort by priority (highest first). Stable, so tied priorities keep
+        // slot-index order -- the same order SlotSettings assumes when it
+        // finds the slot a health override lands in (/code-review #147).
+        std::stable_sort(outOrder.begin(), outOrder.begin() + n,
             [&configs](size_t a, size_t b) {
                 return configs[a].priority > configs[b].priority;
             });
