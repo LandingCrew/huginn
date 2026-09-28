@@ -284,6 +284,12 @@ namespace Huginn::Candidate
         m_weaponRegistry->ForEachAmmo([&](const Weapon::InventoryAmmo& invAmmo) {
             ++count;
             AmmoCandidate candidate = AmmoCandidate::FromInventoryAmmo(invAmmo);
+            // Equipped-ness from the equipment poll, not the registry's
+            // 500 ms refresh -- the same source spells use. Right after a swap
+            // the registry still named the OLD arrows equipped: the new ones
+            // showed on a key and the old ones could not return to theirs
+            // (2026-09-28 16:23:41).
+            candidate.isEquipped = candidate.formID == player.equippedAmmoFormID;
 
             // Stage 1g: baseRelevance removed - now computed by ContextRuleEngine
 

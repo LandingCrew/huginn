@@ -489,7 +489,8 @@ namespace Huginn::State
     }
 
     [[nodiscard]] bool IsItemEquipped(RE::FormID formID) const noexcept {
-      return IsSpellEquipped(formID) || IsWeaponEquipped(formID) || equippedShield == formID;
+      return IsSpellEquipped(formID) || IsWeaponEquipped(formID) || equippedShield == formID ||
+             (formID != 0 && equippedAmmoFormID == formID);
     }
 
     // Survival helpers

@@ -60,6 +60,7 @@ namespace Huginn::Slot
             // now, or it shows the equipped item as "Swap Back" until the
             // lock runs out.
             ReleaseIfOnScreen(page, slot);
+            m_undoSettleMs[page][slot] = kSettleMs;
             m_dirty = true;
             return true;
         }
@@ -68,6 +69,8 @@ namespace Huginn::Slot
         auto& ended = m_endedInHand[page][slot];
         if (ended.formID == formID && NowMs() - ended.endedAtMs <= kMatchWindowMs) {
             ended = {};
+            m_undoSettleMs[page][slot] = kSettleMs;
+            m_dirty = true;
             return true;
         }
 
@@ -190,6 +193,17 @@ namespace Huginn::Slot
                 }
             }
         }
+
+        // Slots settling after an undo: keep them unlocked and re-run.
+        for (size_t page = 0; page < MAX_PAGES; ++page) {
+            for (size_t slot = 0; slot < MAX_SLOTS_PER_PAGE; ++slot) {
+                float& settle = m_undoSettleMs[page][slot];
+                if (settle <= 0.0f) continue;
+                settle -= deltaMs;
+                ReleaseIfOnScreen(page, slot);
+                changed = true;
+            }
+        }
         return changed || std::exchange(m_dirty, false);
     }
 
@@ -216,6 +230,7 @@ namespace Huginn::Slot
         std::lock_guard<std::mutex> lock(m_mutex);
         m_pages = {};
         m_endedInHand = {};
+        m_undoSettleMs = {};
         m_dirty = false;
         m_pendingCount = 0;
         m_sampled = false;

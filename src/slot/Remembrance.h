@@ -141,6 +141,12 @@ namespace Huginn::Slot
         std::array<std::array<Ended, MAX_SLOTS_PER_PAGE>, MAX_PAGES> m_endedInHand{};
         // A hold ended outside Update (the undo): force the next pipeline run.
         bool m_dirty = false;
+        // After an undo the slot follows the allocator unlocked for
+        // kSettleMs. The first fill after it is made against state that has
+        // not caught up with the swap yet, and locking that pick kept Skooma
+        // on the key for 3 s while the arrows it should have shown were still
+        // flagged equipped (2026-09-28 16:23:41-44).
+        std::array<std::array<float, MAX_SLOTS_PER_PAGE>, MAX_PAGES> m_undoSettleMs{};
         std::array<Pending, kMaxPending> m_pending{};
         size_t m_pendingCount = 0;
         Track m_right, m_left, m_ammo;
