@@ -433,10 +433,21 @@ namespace Huginn::Override
             logState.lastLogged = best->formID;
         }
 
-        auto candidate = Candidate::SpellCandidate::FromSpellData(*best);
-        candidate.effectiveCost = bestCost;
-        candidate.overrideReason = reason;
-        return candidate;
+        // Build the candidate from the REGISTRY's entry, not from `best`: a
+        // candidate's name is a view into the registry's string, like every
+        // other candidate's. Built from the local copy, the view dangled the
+        // moment this returned and the health key showed a row of garbage
+        // glyphs (2026-09-27 20:04:55, v0.21.37).
+        std::optional<Candidate::CandidateVariant> result;
+        const RE::FormID bestID = best->formID;
+        g_spellRegistry->ForEachSpell([&](const Spell::SpellData& sd) {
+            if (result || sd.formID != bestID) return;
+            auto candidate = Candidate::SpellCandidate::FromSpellData(sd);
+            candidate.effectiveCost = bestCost;
+            candidate.overrideReason = reason;
+            result = std::move(candidate);
+        });
+        return result;
     }
 
     static std::optional<Candidate::CandidateVariant> FindVitalsPotion(
