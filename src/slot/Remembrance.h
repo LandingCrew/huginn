@@ -65,9 +65,15 @@ namespace Huginn::Slot
             // a hand after this, not that it is in one: with the same spell in
             // both hands, replacing one leaves the other still holding it.
             int64_t startedAtMs = 0;
-            bool capped = false;       // CapHold already applied
-            float totalMs = 0.0f;      // the hold's full length, for the expiry pulse
-            bool expiring = false;     // crossed into its last kExpiringFraction
+            float fullMs = 0.0f;       // the hold's length on a key it fits
+            float heldMs = 0.0f;       // how long it has been held
+            // Shown on a key whose class it does not fit, this pass. Decided
+            // afresh each allocation (NoteShownSlot), so a hold that only
+            // briefly fell back to such a key -- its job key busy with an
+            // emergency -- gets its full time back once it returns (/code-review
+            // #151: a one-time cap made the 5 s limit permanent).
+            bool mismatch = false;
+            bool expiring = false;     // in its last kExpiringFraction
             // Where the allocator actually shows it: the pressed key, or with
             // sRemembranceTarget = Job the key whose class fits. SIZE_MAX until
             // first shown. Undo and release follow it there.
@@ -93,12 +99,10 @@ namespace Huginn::Slot
         ///   pipeline run so the slot changes now, not at the next state change.
         [[nodiscard]] bool Update(float deltaMs, RE::PlayerCharacter* player);
 
-        /// Shorten a hold whose item does not fit the key's class, once. The
-        /// allocator knows the class and the candidate; this does not.
-        void CapHold(size_t page, size_t slot, RE::FormID formID, float maxRemainingMs);
-
-        /// The allocator placed the hold held at `slot` on `shownSlot`.
-        void NoteShownSlot(size_t page, size_t slot, size_t shownSlot);
+        /// The allocator placed the hold held at `slot` on `shownSlot`, which
+        /// `mismatch` says does not fit its class. While it does not, the hold
+        /// lasts at most fRemembranceMismatchDurationMs in all.
+        void NoteShownSlot(size_t page, size_t slot, size_t shownSlot, bool mismatch);
 
         /// This page's holds, copied out.
         [[nodiscard]] PageEntries GetPage(size_t page) const;
@@ -145,6 +149,8 @@ namespace Huginn::Slot
     private:
 
         static void Observe(Track& track, RE::FormID now, int64_t nowMs);
+        /// The hold's length as it stands: full, or capped while mismatched.
+        [[nodiscard]] static float EffectiveTotal(const Entry& entry);
         [[nodiscard]] static bool ChangedTo(const Track& track, RE::FormID formID, int64_t sinceMs);
 
         // A hold that ended because its item went back in hand, kept briefly

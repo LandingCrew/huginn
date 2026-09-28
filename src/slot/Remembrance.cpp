@@ -160,7 +160,7 @@ namespace Huginn::Slot
             if (displaced != 0) {
                 if (durationMs > 0.0f) {
                     m_pages[p.page][p.slot] = { displaced, durationMs, kSettleMs, nowMs };
-                    m_pages[p.page][p.slot].totalMs = durationMs;
+                    m_pages[p.page][p.slot].fullMs = durationMs;
                     m_endedInHand[p.page][p.slot] = {};
                     spdlog::info("[Remembrance] Page {} Slot {}: holding '{}' ({:08X}) for {:.0f}s, taken off by '{}'",
                         p.page, p.slot, NameOf(displaced), displaced, durationMs / 1000.0f, NameOf(p.formID));
@@ -182,7 +182,9 @@ namespace Huginn::Slot
             for (size_t slot = 0; slot < MAX_SLOTS_PER_PAGE; ++slot) {
                 auto& entry = m_pages[page][slot];
                 if (entry.formID == 0) continue;
-                entry.remainingMs -= deltaMs;
+                entry.heldMs += deltaMs;
+                const float total = EffectiveTotal(entry);
+                entry.remainingMs = total - entry.heldMs;
                 auto arrived = [&](const Track& t) {
                     return t.current == entry.formID && t.changedAtMs > entry.startedAtMs;
                 };
@@ -207,9 +209,12 @@ namespace Huginn::Slot
                     entry.settleMs -= deltaMs;
                     changed = true;
                 }
-                // Start pulsing: one pipeline run to repaint the slot.
-                if (!entry.expiring && entry.remainingMs <= entry.totalMs * kExpiringFraction) {
-                    entry.expiring = true;
+                // Pulse in the last stretch: one pipeline run to repaint the
+                // slot each time that flips (it can flip back, when a hold
+                // leaves a key it did not fit and gets its full time back).
+                const bool expiring = entry.remainingMs <= total * kExpiringFraction;
+                if (expiring != entry.expiring) {
+                    entry.expiring = expiring;
                     changed = true;
                 }
             }
@@ -228,38 +233,41 @@ namespace Huginn::Slot
         return changed || std::exchange(m_dirty, false);
     }
 
-    void Remembrance::NoteShownSlot(size_t page, size_t slot, size_t shownSlot)
+    float Remembrance::EffectiveTotal(const Entry& entry)
+    {
+        return entry.mismatch
+            ? std::min(entry.fullMs, SlotSettings::GetSingleton().RemembranceMismatchDurationMs())
+            : entry.fullMs;
+    }
+
+    void Remembrance::NoteShownSlot(size_t page, size_t slot, size_t shownSlot, bool mismatch)
     {
         if (page >= MAX_PAGES || slot >= MAX_SLOTS_PER_PAGE) {
             return;
         }
         std::lock_guard<std::mutex> lock(m_mutex);
         auto& entry = m_pages[page][slot];
-        if (entry.Active() && entry.shownSlot != shownSlot) {
+        if (!entry.Active()) {
+            return;
+        }
+        if (entry.shownSlot != shownSlot) {
             if (shownSlot != slot) {
-                spdlog::info("[Remembrance] Page {} Slot {}: '{}' shown on slot {}, the key whose class fits",
-                    page, slot, NameOf(entry.formID), shownSlot);
+                spdlog::info("[Remembrance] Page {} Slot {}: '{}' shown on slot {}{}",
+                    page, slot, NameOf(entry.formID), shownSlot,
+                    mismatch ? "" : ", the key whose class fits");
             }
             entry.shownSlot = shownSlot;
         }
-    }
-
-    void Remembrance::CapHold(size_t page, size_t slot, RE::FormID formID, float maxRemainingMs)
-    {
-        if (page >= MAX_PAGES || slot >= MAX_SLOTS_PER_PAGE) {
-            return;
-        }
-        std::lock_guard<std::mutex> lock(m_mutex);
-        auto& entry = m_pages[page][slot];
-        if (!entry.Active() || entry.formID != formID || entry.capped) {
-            return;
-        }
-        entry.capped = true;
-        if (entry.remainingMs > maxRemainingMs) {
-            entry.remainingMs = maxRemainingMs;
-            entry.totalMs = maxRemainingMs;
-            spdlog::info("[Remembrance] Page {} Slot {}: '{}' does not fit this key's class; holding {:.0f}s",
-                page, slot, NameOf(formID), maxRemainingMs / 1000.0f);
+        if (entry.mismatch != mismatch) {
+            entry.mismatch = mismatch;
+            entry.remainingMs = EffectiveTotal(entry) - entry.heldMs;
+            if (mismatch) {
+                spdlog::info("[Remembrance] Page {} Slot {}: '{}' does not fit this key's class; holding {:.0f}s in all",
+                    page, slot, NameOf(entry.formID), EffectiveTotal(entry) / 1000.0f);
+            } else {
+                spdlog::info("[Remembrance] Page {} Slot {}: '{}' on a key that fits; full {:.0f}s",
+                    page, slot, NameOf(entry.formID), entry.fullMs / 1000.0f);
+            }
         }
     }
 

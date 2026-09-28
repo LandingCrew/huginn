@@ -632,6 +632,10 @@ namespace Huginn::Slot
                         const size_t t = priorityOrder[k];
                         if (t >= n || t == j || !slotConfigs[t].remembrance) continue;
                         if (slotConfigs[t].classification == SlotClassification::Regular) continue;
+                        // Another hold was pressed there, and that key is its
+                        // fallback: taking it could leave that item nowhere
+                        // (/code-review #151).
+                        if (held[t].Active()) continue;
                         if (!assignments[t].IsEmpty() || !fits(t)) continue;
                         target = t;
                         break;
@@ -643,11 +647,7 @@ namespace Huginn::Slot
 
                 // On a key whose class it does not fit -- the pressed key under
                 // Pressed, or Job with no key that fits -- it shows briefly.
-                if (!fits(target)) {
-                    remembrance.CapHold(pageIndex, j, entry.formID,
-                        slotSettings.RemembranceMismatchDurationMs());
-                }
-                remembrance.NoteShownSlot(pageIndex, j, target);
+                remembrance.NoteShownSlot(pageIndex, j, target, !fits(target));
                 Scoring::ScoredCandidate sc = *found;
                 sc.isWildcard = false;
                 assignments[target] = SlotAssignment::FromCandidate(
@@ -729,6 +729,23 @@ namespace Huginn::Slot
         if (!SlotSettings::GetSingleton().KeepSlotPositions() &&
             SlotSettings::GetSingleton().FillJobKeysFromRegular()) {
             PullIntoEmptyJobKeys(slotConfigs, assignments, &player, priorityOrder, priorityCount);
+
+            // Without seating there is no pass 4, so refill the Regular key the
+            // pull just emptied here, or it stays blank (/code-review #151).
+            for (size_t k = 0; k < priorityCount; ++k) {
+                const size_t idx = priorityOrder[k];
+                if (!assignments[idx].IsEmpty()) continue;
+                const auto& config = slotConfigs[idx];
+                auto refill = FindBestCandidate(
+                    candidates, config.classification, assignedFormIDs, assignedNames,
+                    config.skipEquipped, &player, /*skipWildcards=*/!config.wildcardsEnabled);
+                if (!refill) continue;
+                assignments[idx] = SlotAssignment::FromCandidate(
+                    idx, config.classification, *refill,
+                    refill->isWildcard ? AssignmentType::Wildcard : AssignmentType::Normal);
+                assignedFormIDs.insert(refill->GetFormID());
+                assignedNames.insert(refill->GetName());
+            }
         }
 
         // =======================================================================
