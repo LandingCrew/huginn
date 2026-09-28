@@ -5,6 +5,26 @@ was deleted on 2026-09-07 — so a rejected approach is no longer recorded anywh
 once its entry leaves this file. Git history is the only record; check it before
 re-opening something that looks obviously undone.
 
+## Next up
+Suggested order, each played and measured like #140-#148. Details are in the
+entries named.
+
+1. **Remembrance** (Slot temporal memory). The last big slot-UX item. It also
+   answers the equip flood, where putting a spell in the weapon hand lifted six
+   weapons at once.
+2. **Darkness scoring** (Known Recommendation Issues). Small and concrete:
+   Night Eye, light spells and torches when `lightLevel < 0.3`.
+3. **Survival cold scoring** (Known Recommendation Issues). Blocked on the
+   Warming Aura spell's name or FormID, to check whether it is registered at
+   all.
+4. **Wildcards in combat** (Slot temporal memory, remaining churn). Decision
+   pending from the user; the lean is an INI toggle, default on, possibly with
+   a shorter combat expiry.
+5. **Widget hidden in cut scenes** (Follow-ups). Written on
+   `widget-hide-while-wheel-open`; needs a rebase and one real cut scene (S).
+6. **Every-tick recompute** (Known Bugs). Needs what the player was doing at
+   11:10-11:20 on 2026-09-25 before anything can be guessed.
+
 ## Known Bugs
 - [ ] The pipeline recomputed on EVERY tick for ten idle minutes.
       simonrim-essentials 2026-09-25, 11:10-11:20: `recompute=2881/2881` in
@@ -47,113 +67,21 @@ re-opening something that looks obviously undone.
       seen before".
       Raised 2026-09-24.
 
-- [x] AllyStatus still flaps, 57% less than it did, and nothing reads it.
-      CLOSED 2026-09-24 in v0.21.16, by narrowing the dimension rather than by
-      either option this entry offered. `GetHash` now asks one question of
-      `allyStatus` -- is it `InjuredPresent` -- so `None` and `Present` are the
-      same state to the gate and every flap between them is free. That pair is
-      all of the observed flapping, including the two 0.31 s pairs no distance
-      hysteresis could have caught.
-      `kTotalStates` 72,576 -> 48,384. The full 3-state value stays in the
-      struct, in `ToString` and in `Diff`.
-      **The first attempt (v0.21.15) removed it from the hash entirely and was
-      wrong**, caught by the #136 review. The premise -- "nothing reads it" --
-      came from grepping `allyStatus`, which finds every reader of the FIELD
-      and none of the readers of the FACT. `ScoreCandidates` builds
-      `ContextReasonSignals{.allyInjured = targets.HasInjuredFollower()}`,
-      `ContextRuleEngine_Reason` marks `R::AllyInjured` from it, and
-      `DominantReason` surfaces that as the "Ally Hurt" label -- all of it
-      below `CheckHashSkip`. With the dimension gone, a follower taking fall
-      damage beside an idle player at full vitals moves no hashed bucket, the
-      tick skips, and the label never appears; symmetrically a stale one
-      persists after the follower heals.
-      The review's suggested fix -- a `ctx.allyInjuredActive` bypass like the
-      ones falling, underwater and workstation use -- is the wrong shape here.
-      `unhashedStateActive` forces a run EVERY TICK while the flag is up, which
-      is fine for a one-second fall and ruinous for an injured follower that
-      can stay injured for minutes. A long-lived boolean belongs in the hash;
-      that is what a hash dimension is for.
-      Deliberately a superset of what is read: `EvaluateAllyStatus` returns
-      `InjuredPresent` for any injured non-hostile while `HasInjuredFollower`
-      requires `isFollower`, so the gate can wake for an injured non-follower
-      ally that produces no label. Over-triggering is the safe direction.
-      Safe on persistence, which was checked rather than assumed both times:
-      `kTotalStates` sizes no array outside the test, `UsageMemory` is an
-      in-memory ring buffer, and `BanditSerializer` keys on FormID plus
-      positional features. Nothing in the cosave is keyed by state hash.
-      Test 3c asserts both halves -- `None == Present` is the saving,
-      `Injured != None` is the correctness -- and Test 2 keeps `allyStatus` at
-      its maximum so a botched reinstatement overflows `kTotalStates` loudly.
-      One cost, recorded because it is easy to forget: `LogStateTransition` is
-      gated on the hash moving, so a `None<->Present` change now produces no
-      log line at all and reaches the log only bundled into a transition
-      something else caused. The flap rate that justified this change cannot be
-      re-measured from the log afterwards.
-
-- [ ] The crosshair target is the dominant state flap, and it may not be a bug.
-      Same two logs: `Dist:Ranged<->Melee, Target:None<->Humanoid` went from 6 of
-      19 transitions (0.023/s) to 34 of 46 (0.060/s) -- 74% of all state
-      transitions, and the rise is camera movement, not a regression.
-      The primary target is whatever the crosshair is on
-      (`StateManager_Targets.cpp`, Priority 1, NO hostility filter; the
-      closest-hostile fallback is gated behind `if (inCombat)`). Sticky window is
-      `PERSISTENCE_TIMEOUT_SEC = 0.3f`, sized for raycast jitter rather than for
-      looking away. So standing in a town and sweeping the view across
-      townspeople re-scores the whole pipeline on every pass of the crosshair.
-      The visible effect is mild -- two adjacent widget rows trading places, same
-      six items, roughly 7 times in 4 minutes -- and the user reported not
-      noticing it in play. And it is arguably CORRECT: the crosshair is the
-      player pointing at something.
-      Recorded because it is where the remaining churn lives, and because the
-      three candidate framings should be decided rather than drifted into:
-      (1) correct as-is, the cost is cosmetic; (2) out of combat, a non-hostile
-      should need dwell time before it becomes the primary target; (3) slot
-      assignment should be sticky even when the ranking is not -- an item already
-      in a slot and still in the top N keeps its slot. Framing (3) SHIPPED in
-      #124 (bKeepSlotPositions, on by default), on its own account rather than
-      as a crosshair fix -- so what is left here is (1) against (2), and the
-      cosmetic cost that argued for (1) is now smaller than it was.
-      **Update 2026-09-25: it does cause slot churn, and it reaches combat
-      state.** LoreRim, 12:32-12:40: 9 of 103 state transitions were undone
-      within one second, every one of them target or distance. The worst:
-          12:37:55.565  Target:None->Humanoid, Enemies:None->One,
-                        Combat:OutOfCombat->InCombat
-          12:37:55.671  ...and back, 0.11 s later
-          12:37:55.567  slots 6,7: scrolls -> Resist Fire/Magic (x1.29, x1.24)
-          12:37:58.576  slots 6,7: back to the scrolls          (x1.86, x1.83)
-      A humanoid crossing the crosshair for a tenth of a second put the player
-      "in combat" and flipped two keys twice. The churn fix's challenger margin
-      cannot stop this: the context change is real while it lasts and the
-      challengers really are 24-29% better. So (1) is off the table -- the cost
-      is no longer only cosmetic recomputes -- and (2) wants widening: a dwell
-      before a transient target counts, which then gates the Enemies/Combat
-      state derived from it, not just the target bucket.
-      **Update 2026-09-26: not only the crosshair.** With the slot hold in
-      (near-tie churn gone), what swaps a slot back and forth now is state
-      that flips and flips back. `Casting:EnemyCasting <-> NoCasting` toggled
-      every ~1.2 s as one enemy cast and paused (14:34:37-14:34:42), swinging
-      Steadfast Ward 2.54 <-> 0.72 and trading it with Boiled Creme Treat in
-      slot 4 on every flip. Each release was correct for the score at that
-      moment; only the 3 s lock kept it to two visible changes out of six. So
-      the dwell wants to be a general debounce for short-lived STATE (target,
-      combat, enemy casting), not a crosshair special case -- the slot layer
-      cannot tell a real change from one that is about to undo itself.
-      **Combat and enemy casting debounced (v0.21.30):** combat 500 ms in /
-      2000 ms out, casting 0 in / 2000 out, published by BoolDebouncer where
-      the flags are set. 50-minute LoreRim soak, 2026-09-27: ~35 slot changes
-      per 5 min (was 154 before the hold, ~62 with it), worst burst 2 in most
-      windows; 8 flips filtered (7 casting gaps, 1 combat lull). Target type
-      and distance were NOT debounced -- Beast/Humanoid carry no weight.
-      **What swaps now is vitals.** Of 40 swap-backs in that soak, the state
-      change just before was MP 15, HP 9, distance/target 12, combat 4,
-      casting 3. Magicka crossing Medium<->Low as the player casts and
-      regenerates flips restore-magicka potions in and out. Bucket hysteresis
-      would not help: restore weights are continuous ((1-vital)^2), so the
-      buckets only decide WHEN the pipeline re-runs. Measured instead: MP
-      swap-backs a median 5.4 s apart (flap), HP 68 s (hurt, then healed --
-      correct). **Shipped v0.21.31:** VitalEnvelope holds the recent magicka
-      and stamina low for 8 s while regenerating, follows drops at once, and
-      resets on a >20% jump (a potion). Scoring input only; health untouched.
+- [ ] Short-lived TARGET and DISTANCE state still flaps; decide whether to
+      debounce them too. The crosshair picks the primary target with no
+      hostility filter (`StateManager_Targets.cpp`) and a 0.3 s sticky window
+      sized for raycast jitter, so sweeping the view across townspeople moves
+      `Target`/`Dist` on every pass. LoreRim 2026-09-25: a humanoid crossing
+      the crosshair for 0.11 s put the player "in combat" and flipped two keys
+      twice.
+      Done so far: combat (500 ms in / 2000 ms out) and enemy casting (0 in /
+      2000 out) are debounced by BoolDebouncer (v0.21.30), and VitalEnvelope
+      holds the recent magicka/stamina low for 8 s while regenerating
+      (v0.21.31). The 50-minute LoreRim soak after both: ~35 slot changes per
+      5 min (154 before the hold), with target/distance behind 12 of 40
+      swap-backs. Target type and distance were left alone because
+      Beast/Humanoid carry no weight. Re-measure before adding a dwell; the
+      remaining swaps may be cheap enough to leave.
       Raised 2026-09-19.
 
 ## Known Mod Compatability Issues
@@ -499,8 +427,9 @@ re-opening something that looks obviously undone.
       multiplies the effect types being classified (S each)
 
 ## Slot temporal memory
-Two slot-UX gaps left after seating (anti-juggling) shipped. Seating fixed
-WHERE an item sits; both of these are about WHEN a slot is allowed to change.
+Seating fixed WHERE an item sits; these entries are about WHEN a slot may
+change. The churn and override work (#140-#148) closed most of it: what is
+left is Remembrance, the churn tail and the two deferred override steps.
 Raised 2026-09-24.
 
 - [ ] **Remembrance — a slot holds what you just took off.** When the player
@@ -574,312 +503,66 @@ Raised 2026-09-24.
       Relates to the weapon stale-recommendation entry: the weapon registry
       still lacks the OnItemUsed/MarkPageDirty hook items got in #43 (M)
 
-- [ ] **Slots change several times in a few seconds while state is moving.**
-      Seen in play: as combat state shifts quickly, one slot can take four or
-      five different items inside a handful of seconds. Seating keeps each item
-      in its own place, but it cannot stop the item SET turning over.
-      The desired rule: once a slot is filled it accepts nothing new for
-      3-5 s however much the state changes, with high-priority overrides
-      (urgent potions) as the only exception.
-      **Step 1 is instrumentation, not a fix.** There is currently no measure
-      of how often slots change, so "four or five times" is an impression and
-      any fix would be unverifiable. Wanted:
-      - A per-slot change counter in `SlotLocker::ApplyLocks` (content change =
-        the displayed FormID/uniqueID differs from last frame), bucketed by
-        CAUSE: lock expired, lock broken by override, unlocked by
-        `OnItemUsed`, `UnlockAll` (page switch/reset), dedup clear, fill from
-        empty, remembrance.
-      - Rate, not just totals: changes per slot per 10 s window, plus the
-        worst window seen (max changes in any single 5 s span, per slot).
-        That peak is the number that matches what the player sees.
-      - Report it in the `[Soak]` heartbeat (`SoakMetrics.cpp`) as one field,
-        e.g. `slotChurn total=N peak5s=K@slotI` — summary-level, per the
-        logging principles, not a line per change. Per-change detail stays at
-        debug, and the existing "lock broken" debug line gains the reason,
-        which it does not currently state.
-      - A Tracy plot of changes/s alongside the existing Huginn plots, so the
-        burst can be lined up against state transitions in a capture.
-      Only then decide the fix, against a baseline number.
-      **Step 1 SHIPPED in v0.21.19**, as specified above with these differences:
-      - The heartbeat field is `slotChurn=N peak5s=K@slotI (fill= clear=
-        dedup= override= wildcard= expired= used= page= unheld=)
-        ratio(gone= <1= <1.1= <1.25= <1.5= >=1.5=)`, or `slotChurn=0`.
-        No remembrance bucket: add it with remembrance.
-      - `ratio` is challenger utility over the displaced item's utility in
-        the same run, for expired/unheld changes only -- the ones a margin
-        would govern. The debug line prints both numbers.
-      - Wildcards arriving and leaving are their own cause. They were landing
-        in `<1` on a 90 s cadence and in `>=1.5` 30 s later.
-      - Reset (save load, cell transition, `hg reset`, `hg page`, INI reload)
-        is NOT counted -- the next run re-baselines. Page switches through
-        `SetCurrentPage` are counted as `page` but kept out of peak5s,
-        because the player asked for them.
-      - The causes say which gate was OPEN, not the causal chain. In the
-        Steel Arrow case below, slot 6 reads `override` and slot 7 reads
-        whatever released slot 7; the chain is in the debug-level
-        `[SlotChurn]` lines, one per change.
-      - Measures the widget's current page only. The Wheeler pages never
-        reach `SlotLocker`.
-      **Measured 2026-09-25** (LoreRim-5 and simonrim-essentials, ~5 min of
-      combat each). The premise below was wrong: the SHIPPED INI said
-      `fLockDurationMs = 1000`; 3000 was only the code fallback. Nothing
-      released locks early -- ~90% of changes were plain expiry, then a
-      re-rank against a moving state. Findings:
-      - 1000 -> 3000 ms halved the worst burst (peak5s 6 -> 3) for about the
-        same total (176 -> 154 per 5 min). Swap-backs (A->B->A in one slot)
-        stayed at ~1 change in 5. A longer lock rate-limits churn; it does
-        not remove it. 3000 now ships.
-      - Churn lives in the lower slots. Slots 0-1 barely move; 2-7 take
-        almost all of it. They are filled from a plateau of items on the
-        always-on baseline weights (0.15-0.20) with untrained learners, all
-        at u ~0.2-0.3, where the contextual learner's per-item response to
-        small state drift is enough to reorder them.
-      - Challenger ratios are bimodal on both load orders: a tie or clearly
-        better, little between. LoreRim: 22 within 0.9-1.1, 6 in 1.1-1.25,
-        64 at >= 1.25. Simonrim: 53 under 1.1, 7 in 1.1-1.25. A 25% margin
-        would stop the ties and hold back almost nothing real.
-      - Ratios well below 1 (x0.2-0.7) are NOT the ranking choosing worse:
-        the incumbent had become ineligible -- equipped (skip-equipped) or
-        taken by an override elsewhere. A margin must hold the incumbent only
-        while the slot would still accept it.
-      - Refill takes items seated ELSEWHERE: when a WeaponsAny slot loses its
-        item, it pulls the only other weapon out of its own seat, so the Long
-        Bow moved 5 -> 1 -> 5 -> 1 in ten seconds (2026-09-25 09:08). One
-        item leaving moved three keys.
-      - Dedup can empty a LOCKED slot: two slots locked on the same potion,
-        the later one shows nothing while still holding the lock (08:59:10).
-      **Fix SHIPPED (v0.21.27)**: `bHoldSeatedItems` + `fChallengerMargin`
-      (25%) hold a seated item -- or one an override displaced, where it
-      stands -- until a challenger for THAT slot beats it by the margin; held
-      items leave the fill, so a higher-priority slot cannot pull one out of
-      its seat. `sPotionTierPreference = Higher | None | Lower` replaced the
-      magnitude bonus and overkill penalty. Measured on simonrim, same 3000 ms
-      lock: ~89 changes per 5 min (was 154), near-ties 1 of 37 (was 22 of
-      ~100), 10-25% band 0, swap-backs ~1 in 7 (was 1 in 5) -- and those are
-      now state flaps (see the crosshair entry). Two bugs on the way, both
-      the hold suppressing what it should let through: a release left to the
-      fill let two slots lose to one challenger and seating put the loser
-      back, keeping Resist Cold off screen for 18 s of frost damage; and an
-      item an override displaced was a free challenger every pass.
-      LoreRim, same build: ~62 per 5 min against its own 154 baseline, one
-      change in the 1.1-1.25 band, one tie.
-      Still open: one potion can fill several slots at once -- drowning put
-      Waterbreathing Good (override), Fair and Faint on screen together
-      (2026-09-26 14:56:43). The tier rule orders strengths; it does not say
-      only one strength should show. Whether it should is undecided.
-      Still open: whether wildcards should live only in
-      dedicated slots is open: they are churn by design, ~4 changes/min.
-      And whether they should roll DURING COMBAT (2026-09-27, user still
-      deciding). Leaning: an INI toggle, default ON -- exploration is how
-      the learner finds anything new -- possibly with a separate, shorter
-      combat expiry than the 30 s they persist for now. Since the hold fix
-      in v0.21.34 a wildcard keeps its slot for its whole term, so a
-      mid-fight wildcard now costs that slot for 30 s rather than hopping.
-      And the equip flood: putting a spell in the weapon hand flooded six
-      slots with weapons at x1.23-1.63 (see Remembrance). 25% lets most of
-      that through; 30% stops most of it -- not yet re-measured with the hold.
-      Two things the margin will NOT fix, tracked elsewhere: transient
-      target/combat state (the crosshair entry under Known Bugs) and
-      overrides taking slots (the override entry below).
-      Counter nit: `'Unarmed' -> 'Unarmed'` was counted as a change -- two
-      Unarmed pseudo-items (likely one per hand) with different FormIDs that
-      look identical on screen. Rare; the counter should compare what is
-      displayed, not only the form.
-      What the code already does, for context: `SlotLocker` keeps a per-slot
-      timer (`m_lockedSlots[i].remainingMs`); only the DURATION is global —
-      `fLockDurationMs` (shipped 1000 until v0.21.18, now 3000),
-      `fMinLockDurationMs` = 500 — and
-      `ShouldBreakLock` already refuses every non-override change until
-      expiry. Suspects from reading the code, before measuring:
-      - `OnItemUsed` unlocks the slot holding the used item (callers:
-        `EquipManager` x3, `Main.cpp`, the inventory delta-scan in
-        `UpdateLoop`). In combat: slot refills, that item is used, refills
-        again.
-      - `SlotAllocator::SetCurrentPage` calls `UnlockAll` on every page switch.
-      - `ShouldLock` never locks an empty assignment, so a slot that expires to
-        empty is unheld and the next fill starts a fresh 3 s with no cooldown
-        carried over.
-      - `DedupePreferLocked` can empty an unlocked slot, feeding the case above.
-      - Overrides at `immediateBreakPriority` (50) break the matching slot's
-        lock — intended, but worth confirming it is not firing repeatedly.
-      Candidate fixes, cheapest first: a per-slot "last changed" cooldown that
-      survives unlock; a score margin a challenger must clear to take a slot
-      after expiry; per-slot lock durations in `[PageN.SlotM]`. The last is
-      the bigger ask and waits on the first two being measured
-      (instrumentation S; fix S-M)
-
-      **A concrete case, caught in play 2026-09-24.** Worth keeping because the
-      entry above is otherwise built on an impression, and this one has
-      timestamps. Firing a bow on page 0:
-
-          21:01:53  6=Iron Sword - Okay   7=Steel Arrow
-          21:02:05  Override 'LOW AMMO: 9 arrows remaining' -> Page 0 Slot 6
-                    Slot 6 locked: Steel Arrow    (0001397F)
-                    Slot 7 locked: Iron Sword     (00012EB7)
-          21:03:08  6=Iron Sword - Okay*  7=Steel Arrow*
-
-      The two items swapped places and swapped back. On screen the player's
-      Steel Arrows moved from slot 8 to slot 7 and later returned, and nothing
-      about their inventory changed to justify it.
-
-      No lock was broken, which is what makes this a DIFFERENT failure from the
-      suspects listed above: the LowAmmo override's own content IS the best
-      ammo, so it seated a second copy of Steel Arrow at its override slot 6,
-      dedup dropped the copy legitimately sitting at 7, and Iron Sword --
-      evicted from 6 -- filled the hole at 7. Every step is working as designed
-      and the result is still two items trading places for no reason the player
-      can see. Seating keeping each item "in its own place" is not enough when
-      an override can claim a place that is already taken.
-      Cheapest thing to try: let an override that is about to seat an item
-      ALREADY on the page move to that item's existing slot instead of
-      displacing whatever sits at the configured one.
-
-      One honest note on this capture: it came from the session that fixed the
-      ammo count (#133), which now forces a pipeline recompute on every shot.
-      Seating is therefore recomputed far more often during archery than it was
-      -- nine override re-emissions in ten seconds here. That did not CREATE
-      this churn, the swap is a seating decision and would happen on any
-      recompute, but it does mean bow use is now a much better place to look
-      for it than it was, and any churn baseline measured before v0.21.13 is
-      not comparable to one measured after.
+- [ ] **Remaining slot churn.** Instrumentation shipped in v0.21.19: the
+      `slotChurn=` heartbeat field with causes and challenger ratios, plus a
+      debug `[SlotChurn]` line per change. The fixes that followed:
+      - the slot hold (`bHoldSeatedItems`, `fChallengerMargin` = 25%, v0.21.27);
+      - `sPotionTierPreference`;
+      - the combat/casting debounce and VitalEnvelope (see Known Bugs);
+      - a dedup-emptied slot refilled in the same pass (#146).
+      Result: 154 changes per 5 min went to ~35, near-ties to ~0, and
+      swap-backs from 1 in 5 to ~1 in 8-11. The last simonrim run had 12/12
+      key presses matching the widget and no dedup blanks. What is left, none
+      of it urgent:
+      - **Wildcards.** They are churn by design, ~4 changes/min, and hold
+        their slot for the whole 30 s term. Two questions: should they live
+        only in dedicated slots, and should they roll DURING COMBAT? For
+        combat the user is still deciding; the lean is an INI toggle,
+        default ON (exploration is how the learner finds anything new),
+        possibly with a shorter combat expiry.
+      - **One potion in several slots.** Drowning put Waterbreathing Good
+        (the override), Fair and Faint on screen together (2026-09-26
+        14:56:43). The tier rule orders strengths; it does not say only one
+        should show. Undecided whether it should.
+      - **The equip flood.** Putting a spell in the weapon hand lifts every
+        weapon (`fWeightNoWeapon` 0.40) and flooded six slots at x1.23-1.63.
+        A 30% margin would stop most of it, but it has not been re-measured
+        with the hold. Remembrance is the better answer (see above).
+      - **Blank slot at load.** LoreRim 2026-09-27 21:38:13: two duplicates
+        cleared in the first frame while two used items moved. Slot 6 had
+        nothing that was not already on another key and stayed empty for
+        2.3 s. That is the designed behaviour; revisit only if it shows up
+        mid-play.
+      - **Counter nit.** `'Unarmed' -> 'Unarmed'` counts as a change: two
+        Unarmed pseudo-items (likely one per hand) with different FormIDs.
+        The counter should compare what is displayed, not only the form.
       Raised 2026-09-24.
 
-- [ ] **Override rethink: deterministic emergencies, predictable keys.**
-      Originally "overrides should not take a slot" (2026-09-24); the
-      out-of-band element that title argued for was REJECTED in the design
-      below. The analysis further down is kept as history.
-
-      **Agreed design (2026-09-27, with the user).** The goal is to stop the
-      "dumb smart" problem: sometimes you just need a health potion, and the
-      recommendation engine must not stand between you and it. An override is
-      a RULE, not a recommendation -- it bypasses ranking, the learner,
-      context weights, the slot hold, seating and wildcards entirely.
-
-      1. *Trigger.* Deterministic, per vital: fires as the resource drops
-         below its threshold, releases above threshold + hysteresis. Already
-         INI per vital (`fCritical{Health,Magicka,Stamina}Threshold` /
-         `...Hysteresis`, shipped 0.35 / 0.15); defaults unchanged.
-         Any time, in or out of combat (decided 2026-09-27).
-      2. *Content.* A fixed pick order per vital, no scoring:
-         potion (most restored in 5 s, pure before impure -- already so) ->
-         spell (best restore affordable RIGHT NOW; the key equips it) ->
-         nothing. The spell step is optional per vital. When nothing is
-         available, the behaviour is optional too: show a "none" marker in
-         the slot, OR release the slot back to a normal recommendation.
-         Spell fallback ON by default (decided 2026-09-27).
-      3. *Placement: in the numbered slots (option B).* No separate widget
-         element and no dedicated potion buttons. Default: ONE KEY PER
-         VITAL -- each vital's override pinned to its configured slot
-         (`bOverridesEnabled = HP` etc.), so the key for "heal me" never
-         moves. This REVERSES #143's mark-in-place for magicka and stamina
-         (it put the magicka potion on key 8 at 25% magicka, 2026-09-27
-         19:42:19); mark-in-place survives only as an INI option. #143's
-         other two parts stay: the displaced item does not cascade, and a
-         stale lock on the override's item is released in the same pass.
-      4. *One emergency key (nice to have).* Not a new element: a slot flag
-         `bOverridesOnly` -- the slot is empty unless an override is active,
-         accepts every override category, and shows the highest priority
-         (Drowning > Health > Magicka > Stamina > Ammo > Charge). Shipped as
-         a commented example config binding it to a free key such as G.
-      5. *Presentation.* No change. The pulse stays; the only presentation
-         problem was ever slot juggling, which 3 and #143 address.
-
-      Build order: (a) pick order + spell fallback + "none" behaviour;
-      (b) pin all vitals, mark-in-place behind an INI flag; (c)
-      `bOverridesOnly` + the example config. Each played and measured like
-      #140-#143.
-      **(a) SHIPPED in #144** (v0.21.39): potion -> self-cast spell affordable
-      now -> the slot's normal recommendation. Played on simonrim: Potion of
-      Healing, then Fast Healing once it was drunk, then Healing once
-      magicka fell below Fast Healing's cost.
-      **(b) and (c) DEFERRED until needed** (user, 2026-09-27). Health is
-      pinned (#143); magicka/stamina marking in place was not the problem it
-      looked like -- the key-8 screenshot's real fault was an EMPTY slot, a
-      dedup clear (19:42:21 slot 6 -> '' for a second), which is the "dedup
-      can empty a locked slot" case under the churn entry. And (c) is
-      already reachable by configuration: a PotionsAny slot with overrides
-      enabled, bound to any key, shows potions normally and the emergency
-      when one fires.
-
-      **The conflict.** Overrides and ranked items are allocated from the same
-      pool of slots, and overrides go first: Pass 1 runs before Pass 2 on an
-      entirely empty page, so an override does not evict anything -- it
-      PRE-EMPTS. Whatever would have filled that slot lands one slot down, and
-      so does everything below it. Seating then refuses to paper over it, on
-      purpose and correctly: "an override slot keeps the seat of whatever
-      normally lives there, and the item it displaced keeps its claim rather
-      than taking a seat where it was pushed" (5-slots.md), because the
-      alternative lets one low-health potion permanently move a key.
-      So seating exists to make keys stop changing, and an override's mechanism
-      IS changing what a key does. Neither is buggy. They cannot both win while
-      they share an index space, which makes every override a small guaranteed
-      dose of the exact churn the stability work is trying to remove.
-
-      The shipped layout makes it certain rather than occasional. There is no
-      reserved override slot on any default page: `Page0.Slot6` is a `Regular`
-      fill slot AND the `Other` landing pad, and it is `Regular` precisely
-      because WeaponCharge surfaces a soul gem, which no other classification
-      accepts. Being `Regular`, it also soaks up any ranked candidate.
-
-      **Design constraint, from the user 2026-09-24:** the UI has to be
-      readable at a glance and then get out of the way. That rules out a banner
-      or a second list. Whatever carries the override has to be one small
-      element, and the goal it serves is PREDICTABILITY -- the same key meaning
-      the same thing from one second to the next.
-
-      **Two changes, and they are complementary rather than alternatives.**
-
-      1. *Out of band.* An override stops occupying a slot index. It is a
-         message -- "LOW AMMO: 9 arrows remaining" -- not a ranking result, and
-         it gets its own small element with its own key, outside the numbered
-         list. This is the part that actually closes the hole: nothing can be
-         displaced by something that never takes a slot. It also deletes a
-         surprising amount of incidental machinery -- Pass 1b's
-         classification-dropping fallback, the `displaced` log, the
-         `ValidateOverridePlaceability` startup check with its unplaceable
-         warning and one-sided contention heuristic, and the separate
-         "Override placeability UX" entry, which is a symptom of the same cause
-         and should close with this.
-
-      2. *Override affinity in normal fill.* `bOverridesEnabled` stops meaning
-         "an override of this category may seize this slot" and starts meaning
-         "this slot PREFERS the items an override of this category would
-         surface". Same INI key, same existing configs, no longer a seizure.
-         The point is the observed case: `Page0.Slot6` and `Page0.Slot7` are
-         identical -- both `Regular`, both wildcards on -- and differ only in
-         `bOverridesEnabled`. Normal fill therefore treats them as
-         interchangeable and splits them on priority alone, so Iron Sword (the
-         better-ranked item) took slot 6 and the Steel Arrows took slot 7. With
-         affinity the arrows sit in slot 6 in the first place, the ammo
-         override is about the item already under that key, and the player's
-         hand does not move.
-         This is what buys predictability. (1) stops things moving; (2) makes
-         where they sit mean something.
-
-      **Two honest limits, to decide before building.**
-
-      * `Other` is a grab bag: Drowning, WeaponCharge and LowAmmo -- a
-        water-breathing potion, a soul gem and arrows. `bOverridesEnabled =
-        Other` as an AFFINITY therefore means "prefers any of those three",
-        which is far weaker than "prefers ammo" and would pull a soul gem into
-        the arrows' slot as readily as arrows. Affinity wants to key on the
-        CONDITION rather than the category, or `Other` needs splitting. The
-        category is the right granularity for permission and the wrong one for
-        preference, which is worth noticing before reusing the key for both.
-      * Affinity is a preference inside ranked fill, so it cannot promote an
-        item onto a page it did not earn. If the arrows rank twentieth they are
-        not on the page at all and there is nothing for the override to be a
-        no-op over. That is acceptable only BECAUSE (1) means there is nothing
-        to displace either -- which is the argument for doing them in that
-        order rather than treating (2) as a cheaper substitute.
-
-      Evidence the current model is already strained, not just inconvenient:
-      `Page0.Slot0` is `DamageAny` with `bOverridesEnabled = HP`, and a health
-      potion does not match `DamageAny` (items match that on `Poison`). Pass 1
-      cannot place the flagship override on the flagship slot; it lands there
-      only because Pass 1b drops the classification requirement. The default
-      configuration depends on the fallback pass for its primary case.
-      (M-L)
+- [ ] **Override rethink, steps (b) and (c): deferred until needed.** The
+      goal is to fix the "dumb smart" problem: an override is a RULE, not a
+      recommendation, so sometimes you just get a health potion. Agreed with
+      the user 2026-09-27:
+      - it triggers per vital at the INI thresholds, any time;
+      - it shows a fixed pick order, with no scoring;
+      - it lives in the numbered slots, with one key per vital;
+      - the pulse stays as the only presentation.
+      An out-of-band override element was REJECTED; the reasoning is in git
+      history (this entry before 2026-09-27).
+      Shipped: health pinned to its slot, with no cascade and a stale lock
+      released (#143). Then (a) in #144, v0.21.39: the pick order is potion,
+      then a self-cast spell affordable now, then the slot's normal
+      recommendation. Verified on simonrim (Potion of Healing, then Fast
+      Healing, then Healing as magicka fell) and on LoreRim (Requiem's
+      Healing, cost 53 of 146 magicka, placed on key 1).
+      Deferred:
+      - **(b)** Pin magicka and stamina the way health is, with mark-in-place
+        as an INI option. The key-8 screenshot that motivated it was really a
+        dedup blank, fixed in #146.
+      - **(c)** A `bOverridesOnly` emergency-key slot. This is already
+        reachable by configuration: a PotionsAny slot with overrides enabled,
+        bound to any key.
+      Pick it up again if play shows a vital's emergency landing somewhere
+      unexpected.
 
 ## Doc-migration findings (2026-08-29)
 Surfaced by the one-agent-per-doc migration pass. Every one is a code or config
@@ -1061,27 +744,6 @@ trigger to pick any of it up.
       `kAutoVanity` appears anywhere in `src/` today, so nothing about it has
       landed by another route.
       Raised 2026-09-24, out of the branch audit below (S)
-
-- [x] Branch tidying, and the lesson from getting it wrong twice.
-      All 13 stale remote branches are gone; only
-      `widget-hide-while-wheel-open` remains, and it is now the entry above
-      rather than a tidying line.
-      Worth recording because the entry this replaces was wrong twice, each
-      time from trusting a proxy instead of checking the thing:
-      - `git branch -r --merged` found 3. Wrong test: this repo squash-merges,
-        and a squash-merged branch never becomes an ancestor of main.
-      - PR state found 11. Also the wrong test, and it produced two false
-        negatives. `chore/tracy-0.14.1` (PR #117 CLOSED) was called "not
-        taken" -- the Tracy v0.14.1 bump actually landed inside PR #118, so
-        #117 was closed as redundant. `slot-stability` (PR #124 CLOSED, 16
-        commits) was called "abandoned work, the only copy" -- every one of
-        those commits is in main (`hg dump spells`, seating, the first-wins
-        inventory fix, the override-rehoming rule), landed under other PRs.
-      The only test that answers the question is whether main CONTAINS the
-      change, which means looking at the content: `git diff main..branch` and
-      probing for the identifiers the commits introduce. That is what found
-      the one branch that genuinely still holds work.
-      CLOSED 2026-09-24.
 
 - [ ] Soak protocol needs deliberate MANUAL equips — accept% is fed only by
       equips made outside Huginn, so a burst played through the wheel/hotkeys
