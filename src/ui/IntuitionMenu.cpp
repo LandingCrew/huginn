@@ -130,6 +130,13 @@ namespace Huginn::UI
             if (m_widget.IsObject()) {
                 logger::info("IntuitionMenu: _root.widget found (type={})"sv,
                     static_cast<int>(m_widget.GetType()));
+                // A fresh SWF starts with empty slots, and the backend's
+                // identical-frame cache still holds the previous instance's
+                // bar. Request the resync HERE: requested only in Show(), it
+                // could be consumed by a push to the old, closing instance
+                // before this one existed (/code-review #148).
+                RequestResync();
+                Slot::SlotAllocator::GetSingleton().MarkPageDirty();
             } else {
                 logger::error("IntuitionMenu: _root.widget not found (type={})"sv,
                     static_cast<int>(m_widget.GetType()));
@@ -417,16 +424,21 @@ namespace Huginn::UI
         // (2026-09-27 21:02:21-56). The backend skips identical frames, so a
         // push lost while the widget was hidden was never retried. What the
         // widget shows must never depend on it having received every push.
-        if (a_visible) {
+        //
+        // On a hidden -> shown TRANSITION only: SetVisible(true) also runs on
+        // every menu open/close while the widget is already up, and forcing a
+        // pipeline run for each would re-roll wildcards and re-send the bar in
+        // a quiet scene for nothing (/code-review #148).
+        static std::atomic<bool> s_lastVisible{ false };
+        const bool wasVisible = s_lastVisible.exchange(a_visible, std::memory_order_acq_rel);
+        if (a_visible && !wasVisible) {
             RequestResync();
             Slot::SlotAllocator::GetSingleton().MarkPageDirty();
         }
 
         // Only log when visibility actually changes
-        static bool s_lastVisible = false;
-        if (a_visible != s_lastVisible) {
+        if (a_visible != wasVisible) {
             logger::debug("IntuitionMenu::SetVisible({}) queued"sv, a_visible);
-            s_lastVisible = a_visible;
         }
 
         tasks->AddUITask([a_visible]() {
