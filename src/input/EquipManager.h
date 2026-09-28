@@ -105,6 +105,10 @@ namespace Huginn::Input
       /// Equip a spell to the specified hand
       bool EquipSpellToHand(RE::SpellItem* spell, bool leftHand);
 
+      /// Equip a scroll (an inventory item) to the specified hand, so the
+      /// game re-arms it from the stack after each cast
+      bool EquipScrollToHand(RE::ScrollItem* scroll, bool leftHand);
+
       /// Use a potion by FormID
       bool UsePotion(RE::FormID formID);
 
