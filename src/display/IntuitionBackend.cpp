@@ -111,7 +111,12 @@ namespace Huginn::Display
         {
             std::string summary;
             for (size_t i = 0; i < m_lastPush.slots.size(); ++i) {
-                summary += std::format("{}{}={}", i ? " " : "", i, m_lastPush.slots[i].name);
+                // "~" marks a pulsing (expiring) slot: a push with the same
+                // names as the last one is otherwise unreadable from the log.
+                const bool pulsing = m_lastPush.slots[i].visualState ==
+                    static_cast<int>(Slot::SlotVisualState::Expiring);
+                summary += std::format("{}{}={}{}", i ? " " : "", i, m_lastPush.slots[i].name,
+                    pulsing ? "~" : "");
             }
             logger::debug("[Intuition] push page {}: {}"sv, ctx.pageIndex, summary);
         }

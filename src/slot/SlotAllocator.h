@@ -183,6 +183,17 @@ namespace Huginn::Slot
         /// page cycling does, so it bypasses the pipeline's hash-skip.
         void MarkPageDirty() noexcept { m_pageChanged = true; }
 
+        /// `[SlotLocker] bFillJobKeysFromRegular`: an empty key with a class
+        /// takes a matching item standing on a Regular key. The caller checks
+        /// the setting; public so the unit test can drive it with a made-up
+        /// page, which live play rarely produces on demand.
+        void PullIntoEmptyJobKeys(
+            const std::vector<SlotConfig>& slotConfigs,
+            SlotAssignments& assignments,
+            const State::PlayerActorState* player,
+            const std::array<size_t, MAX_SLOTS_PER_PAGE>& priorityOrder,
+            size_t priorityCount) const;
+
     private:
         SlotAllocator() = default;
         ~SlotAllocator() = default;

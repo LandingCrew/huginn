@@ -491,6 +491,20 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
 
     // Compute visual state for each slot
     Slot::ComputeVisualStates(ctx.assignments, ctx.rawAssignments, slotLocker);
+
+    // A Remembrance hold near its end pulses like an expiring lock, so the
+    // player sees the swap-back is about to go. Found by where it is shown.
+    const auto holds = Slot::Remembrance::GetSingleton().GetPage(ctx.displayPageIndex);
+    for (auto& assignment : ctx.assignments) {
+        if (!assignment.IsRemembered()) continue;
+        for (size_t s = 0; s < holds.size(); ++s) {
+            const auto& hold = holds[s];
+            const size_t shown = hold.shownSlot != SIZE_MAX ? hold.shownSlot : s;
+            if (hold.Active() && shown == assignment.slotIndex && hold.expiring) {
+                assignment.visualState = Slot::SlotVisualState::Expiring;
+            }
+        }
+    }
     return true;
 }
 

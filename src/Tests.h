@@ -21,6 +21,7 @@ void RunOverrideNamespaceTests();      // Huginn_Overrides.ini section namespaci
 void RunSlotLockerResetTest();
 void RunSlotLockerInstanceLockTest();
 void RunSlotSeatingTest();
+void RunFillJobKeysTest();
 void RunBuffElementResistTest();
 
 // =============================================================================

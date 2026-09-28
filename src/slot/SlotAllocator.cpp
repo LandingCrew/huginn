@@ -406,13 +406,21 @@ namespace Huginn::Slot
                 // (2026-09-27 19:03:07, 19:08:56; Minor Healing in slot 7 moved
                 // to slot 0 at 19:14:16 when slot 7 could have just been marked).
                 //
-                // Except CRITICAL health, which keeps its configured slot: at 10%
-                // health the player should not have to find the potion -- the
-                // emergency key is muscle memory, and marking it where it stood
-                // put it on key 7 (2026-09-27 19:26, user's call). Everything
-                // else, where a still bar is worth more, marks in place.
+                // Except the VITALS, which by default keep their configured
+                // slots: in an emergency the player should not have to find the
+                // potion -- the key is muscle memory. Health first (2026-09-27
+                // 19:26, user's call: marking it where it stood put it on key 7);
+                // magicka and stamina joined when the flagship page gave every
+                // key a job and the magicka emergency pulsed the Potion key, not
+                // key 2 (2026-09-28 18:00:27). Each is an INI switch
+                // ([Overrides] bPin{Health,Magicka,Stamina}ToSlot). The quieter
+                // prompts -- ammo, soul gem, drowning -- always mark in place,
+                // where a still bar is worth more.
+                using OC = Override::OverrideCondition;
                 const bool pinnedToSlot =
-                    override.condition == Override::OverrideCondition::CriticalHealth;
+                    (override.condition == OC::CriticalHealth && Override::Config::PIN_HEALTH_TO_SLOT()) ||
+                    (override.condition == OC::CriticalMagicka && Override::Config::PIN_MAGICKA_TO_SLOT()) ||
+                    (override.condition == OC::CriticalStamina && Override::Config::PIN_STAMINA_TO_SLOT());
                 if (const size_t home = pinnedToSlot ? SIZE_MAX : FindItemSlot(pageIndex, configGeneration,
                         Candidate::GetBase(*override.candidate).GetDeduplicationKey(),
                         std::min(slotConfigs.size(), MAX_SLOTS_PER_PAGE));
@@ -576,14 +584,23 @@ namespace Huginn::Slot
         // that slot's classification or bSkipEquipped says, and only an
         // override (placed above) outranks it. A hold whose item goes back in
         // a hand some other way is ended by Remembrance itself.
+        //
+        // sRemembranceTarget = Job sends an item that does not fit the
+        // pressed key to the first empty swap-back key whose class fits it
+        // (a dagger taken off by the attack-magic key goes to the Weapon key).
+        // Two sweeps so a routed item cannot take a key another hold was
+        // pressed on: the ones staying put are placed first.
         {
-            const auto held = Remembrance::GetSingleton().GetPage(pageIndex);
+            auto& remembrance = Remembrance::GetSingleton();
+            const auto& slotSettings = SlotSettings::GetSingleton();
+            const bool toJob = slotSettings.RemembranceToJobKey();
+            const auto held = remembrance.GetPage(pageIndex);
             const size_t n = std::min(slotConfigs.size(), MAX_SLOTS_PER_PAGE);
+            for (int sweep = 0; sweep < 2; ++sweep)
             for (size_t j = 0; j < n; ++j) {
                 const auto& entry = held[j];
                 if (!entry.Active() || !slotConfigs[j].remembrance) continue;
-                if (!assignments[j].IsEmpty()) continue;  // an override has the slot
-                if (assignedFormIDs.contains(entry.formID)) continue;  // an override shows it
+                if (assignedFormIDs.contains(entry.formID)) continue;  // shown already (an override, or sweep 0)
 
                 // The best-scoring stack of a weapon owned twice. Only a prefix
                 // of the list is sorted, so compare rather than take the first.
@@ -604,10 +621,37 @@ namespace Huginn::Slot
                     }
                     continue;
                 }
+                auto fits = [&](size_t k) {
+                    return slotConfigs[k].classification == SlotClassification::Regular ||
+                           SlotClassifier::Matches(*found, slotConfigs[k].classification);
+                };
+                size_t target = j;
+                if (toJob && !fits(j)) {
+                    if (sweep == 0) continue;
+                    for (size_t k = 0; k < priorityCount; ++k) {
+                        const size_t t = priorityOrder[k];
+                        if (t >= n || t == j || !slotConfigs[t].remembrance) continue;
+                        if (slotConfigs[t].classification == SlotClassification::Regular) continue;
+                        // Another hold was pressed there, and that key is its
+                        // fallback: taking it could leave that item nowhere
+                        // (/code-review #151).
+                        if (held[t].Active()) continue;
+                        if (!assignments[t].IsEmpty() || !fits(t)) continue;
+                        target = t;
+                        break;
+                    }
+                } else if (sweep == 1) {
+                    continue;
+                }
+                if (!assignments[target].IsEmpty()) continue;  // an override has the slot
+
+                // On a key whose class it does not fit -- the pressed key under
+                // Pressed, or Job with no key that fits -- it shows briefly.
+                remembrance.NoteShownSlot(pageIndex, j, target, !fits(target));
                 Scoring::ScoredCandidate sc = *found;
                 sc.isWildcard = false;
-                assignments[j] = SlotAssignment::FromCandidate(
-                    j, slotConfigs[j].classification, sc, AssignmentType::Remembered);
+                assignments[target] = SlotAssignment::FromCandidate(
+                    target, slotConfigs[target].classification, sc, AssignmentType::Remembered);
                 assignedFormIDs.insert(entry.formID);
                 assignedNames.insert(found->GetName());
             }
@@ -682,6 +726,28 @@ namespace Huginn::Slot
             }
         }
 
+        if (!SlotSettings::GetSingleton().KeepSlotPositions() &&
+            SlotSettings::GetSingleton().FillJobKeysFromRegular()) {
+            PullIntoEmptyJobKeys(slotConfigs, assignments, &player, priorityOrder, priorityCount);
+
+            // Without seating there is no pass 4, so refill the Regular key the
+            // pull just emptied here, or it stays blank (/code-review #151).
+            for (size_t k = 0; k < priorityCount; ++k) {
+                const size_t idx = priorityOrder[k];
+                if (!assignments[idx].IsEmpty()) continue;
+                const auto& config = slotConfigs[idx];
+                auto refill = FindBestCandidate(
+                    candidates, config.classification, assignedFormIDs, assignedNames,
+                    config.skipEquipped, &player, /*skipWildcards=*/!config.wildcardsEnabled);
+                if (!refill) continue;
+                assignments[idx] = SlotAssignment::FromCandidate(
+                    idx, config.classification, *refill,
+                    refill->isWildcard ? AssignmentType::Wildcard : AssignmentType::Normal);
+                assignedFormIDs.insert(refill->GetFormID());
+                assignedNames.insert(refill->GetName());
+            }
+        }
+
         // =======================================================================
         // PASS 3: Seat returning items where they were (anti-juggling)
         // =======================================================================
@@ -697,6 +763,13 @@ namespace Huginn::Slot
             const uint32_t generation = configGeneration;
 
             ApplySeating(pageIndex, generation, slotConfigs, assignments, &player);
+
+            // Optional: a key with a job that would be blank takes a matching
+            // item off a Regular key. After seating, so seating does not undo
+            // it; before the refill, which then fills the Regular key.
+            if (SlotSettings::GetSingleton().FillJobKeysFromRegular()) {
+                PullIntoEmptyJobKeys(slotConfigs, assignments, &player, priorityOrder, priorityCount);
+            }
 
             // PASS 4: refill whatever pass 3 vacated. An item moving back to its
             // own seat can leave the slot it was sitting in empty, and a gap in
@@ -1255,6 +1328,39 @@ namespace Huginn::Slot
         m_seatingGeneration = generation;
         m_seating[pageIndex] = seats;
         m_lastPlaced[pageIndex] = placedNow;
+    }
+
+    void SlotAllocator::PullIntoEmptyJobKeys(
+        const std::vector<SlotConfig>& slotConfigs,
+        SlotAssignments& assignments,
+        const State::PlayerActorState* player,
+        const std::array<size_t, MAX_SLOTS_PER_PAGE>& priorityOrder,
+        size_t priorityCount) const
+    {
+        const size_t slotCount = std::min(assignments.size(), std::min(slotConfigs.size(), MAX_SLOTS_PER_PAGE));
+        for (size_t k = 0; k < priorityCount; ++k) {
+            const size_t i = priorityOrder[k];
+            if (i >= slotCount || !assignments[i].IsEmpty()) continue;
+            if (slotConfigs[i].classification == SlotClassification::Regular) continue;
+
+            // Best-scoring movable match standing on a Regular key.
+            size_t from = SIZE_MAX;
+            for (size_t j = 0; j < slotCount; ++j) {
+                const auto& a = assignments[j];
+                if (j == i || a.IsEmpty() || a.IsPinned() || a.IsWildcard() || !a.candidate) continue;
+                if (slotConfigs[j].classification != SlotClassification::Regular) continue;
+                if (!SlotAccepts(slotConfigs[i], a, player)) continue;
+                if (from == SIZE_MAX || a.utility > assignments[from].utility) from = j;
+            }
+            if (from == SIZE_MAX) continue;
+
+            SKSE::log::debug("[SlotAllocator] Slot {} ({}) was empty: took '{}' from Regular slot {}",
+                i, SlotClassificationToString(slotConfigs[i].classification), assignments[from].name, from);
+            assignments[i] = std::move(assignments[from]);
+            assignments[i].slotIndex = i;
+            assignments[i].classification = slotConfigs[i].classification;
+            assignments[from] = SlotAssignment::Empty(from, slotConfigs[from].classification);
+        }
     }
 
     size_t SlotAllocator::ComputePriorityOrder(

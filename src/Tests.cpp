@@ -5858,6 +5858,74 @@ void RunSlotSeatingTest()
 }
 
 // =============================================================================
+// bFillJobKeysFromRegular: an empty job key takes a match off a Regular key
+// =============================================================================
+// The situation is hard to produce in play on demand -- a job key has to go
+// blank at the moment a matching item stands on an "anything" key as an
+// ordinary pick -- so this drives PullIntoEmptyJobKeys with a made-up page:
+//   key 0 WeaponsAny (empty)   key 1 Regular (a weapon)   key 2 Regular (a spell)
+//   key 3 HealingAny (empty)   key 4 Regular (a remembered healing spell)
+// Expected: the weapon moves to key 0 and key 1 empties; the spell stays (it
+// does not fit WeaponsAny); key 3 stays empty, because a Remembrance hold is
+// never moved.
+void RunFillJobKeysTest()
+{
+#ifndef NDEBUG
+    using namespace Huginn::Slot;
+    logger::info("Running fill-job-keys test..."sv);
+
+    std::vector<SlotConfig> configs(5);
+    configs[0].classification = SlotClassification::WeaponsAny;   configs[0].priority = 4;
+    configs[1].classification = SlotClassification::Regular;      configs[1].priority = 3;
+    configs[2].classification = SlotClassification::Regular;      configs[2].priority = 2;
+    configs[3].classification = SlotClassification::HealingAny;   configs[3].priority = 1;
+    configs[4].classification = SlotClassification::Regular;      configs[4].priority = 0;
+    for (auto& c : configs) c.skipEquipped = false;  // no player: nothing is equipped
+
+    auto weapon = [] {
+        Candidate::WeaponCandidate w{};
+        w.formID = 0x0BADF100; w.name = "FillProbeSword";
+        w.tags = Weapon::WeaponTag::Melee;
+        Scoring::ScoredCandidate sc{}; sc.candidate = w; sc.utility = 3.0f;
+        return sc;
+    }();
+    auto spell = [](RE::FormID id, std::string_view name, Spell::SpellType type) {
+        Candidate::SpellCandidate s{};
+        s.formID = id; s.name = name; s.type = type;
+        Scoring::ScoredCandidate sc{}; sc.candidate = s; sc.utility = 2.0f;
+        return sc;
+    };
+
+    SlotAssignments a;
+    for (size_t i = 0; i < configs.size(); ++i) a.push_back(SlotAssignment::Empty(i, configs[i].classification));
+    a[1] = SlotAssignment::FromCandidate(1, configs[1].classification, weapon);
+    a[2] = SlotAssignment::FromCandidate(2, configs[2].classification,
+        spell(0x0BADF101, "FillProbeFlames", Spell::SpellType::Damage));
+    a[4] = SlotAssignment::FromCandidate(4, configs[4].classification,
+        spell(0x0BADF102, "FillProbeHeal", Spell::SpellType::Healing), AssignmentType::Remembered);
+
+    std::array<size_t, MAX_SLOTS_PER_PAGE> order{ 0, 1, 2, 3, 4 };
+    SlotAllocator::GetSingleton().PullIntoEmptyJobKeys(configs, a, nullptr, order, configs.size());
+
+    bool passed = true;
+    auto expect = [&](bool ok, std::string_view what) {
+        if (!ok) { logger::error("TEST FAIL: fill-job-keys: {}"sv, what); passed = false; }
+    };
+    expect(a[0].formID == 0x0BADF100, "the weapon did not move to the empty Weapon key");
+    expect(a[1].IsEmpty(), "the Regular key the weapon left is not empty");
+    expect(a[2].formID == 0x0BADF101, "the spell moved, but it does not fit WeaponsAny");
+    expect(a[3].IsEmpty(), "the Healing key took a Remembrance hold, which must never move");
+    expect(a[4].IsRemembered(), "the Remembrance hold left its key");
+    expect(a[0].slotIndex == 0 && a[0].classification == SlotClassification::WeaponsAny,
+        "the moved assignment kept its old slot index or class");
+
+    if (passed) {
+        logger::info("  fill-job-keys test PASSED"sv);
+    }
+#endif
+}
+
+// =============================================================================
 // THROWAWAY: a Buff's element is not a resist claim (0.20.63)
 // =============================================================================
 // Delete this block, its Tests.h declaration and its Main.cpp call site

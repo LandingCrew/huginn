@@ -51,15 +51,23 @@ namespace Huginn::Slot
         // Pressing the remembered item is the undo. It ends the hold and
         // remembers nothing: the item it takes off already had its turn in
         // this slot, and holding it would ping-pong the two forever.
-        auto& entry = m_pages[page][slot];
-        if (entry.Active() && entry.formID == formID) {
+        // The hold may be shown on another key than the one pressed to make
+        // it (sRemembranceTarget = Job), so look it up by where it is shown.
+        for (size_t s = 0; s < MAX_SLOTS_PER_PAGE; ++s) {
+            auto& entry = m_pages[page][s];
+            if (!entry.Active() || entry.formID != formID) continue;
+            if (s != slot && entry.shownSlot != slot) continue;
             spdlog::info("[Remembrance] Page {} Slot {}: '{}' re-equipped, hold ended",
                 page, slot, NameOf(formID));
+            const size_t shown = entry.shownSlot;
             entry = {};
             // The slot is still locked on the remembered assignment; let go
             // now, or it shows the equipped item as "Swap Back" until the
             // lock runs out.
-            ReleaseIfOnScreen(page, slot);
+            ReleaseIfOnScreen(page, s);
+            if (shown != SIZE_MAX && shown != s) {
+                ReleaseIfOnScreen(page, shown);
+            }
             m_undoSettleMs[page][slot] = kSettleMs;
             m_dirty = true;
             return true;
@@ -152,6 +160,7 @@ namespace Huginn::Slot
             if (displaced != 0) {
                 if (durationMs > 0.0f) {
                     m_pages[p.page][p.slot] = { displaced, durationMs, kSettleMs, nowMs };
+                    m_pages[p.page][p.slot].fullMs = durationMs;
                     m_endedInHand[p.page][p.slot] = {};
                     spdlog::info("[Remembrance] Page {} Slot {}: holding '{}' ({:08X}) for {:.0f}s, taken off by '{}'",
                         p.page, p.slot, NameOf(displaced), displaced, durationMs / 1000.0f, NameOf(p.formID));
@@ -173,7 +182,9 @@ namespace Huginn::Slot
             for (size_t slot = 0; slot < MAX_SLOTS_PER_PAGE; ++slot) {
                 auto& entry = m_pages[page][slot];
                 if (entry.formID == 0) continue;
-                entry.remainingMs -= deltaMs;
+                entry.heldMs += deltaMs;
+                const float total = EffectiveTotal(entry);
+                entry.remainingMs = total - entry.heldMs;
                 auto arrived = [&](const Track& t) {
                     return t.current == entry.formID && t.changedAtMs > entry.startedAtMs;
                 };
@@ -181,14 +192,29 @@ namespace Huginn::Slot
                 if (entry.remainingMs <= 0.0f || backInHand) {
                     spdlog::info("[Remembrance] Page {} Slot {}: hold on '{}' {}",
                         page, slot, NameOf(entry.formID), backInHand ? "ended, back in hand" : "expired");
+                    const size_t shown = entry.shownSlot != SIZE_MAX ? entry.shownSlot : slot;
                     m_endedInHand[page][slot] = backInHand ? Ended{ entry.formID, nowMs } : Ended{};
+                    if (shown != slot) {
+                        m_endedInHand[page][shown] = m_endedInHand[page][slot];
+                    }
                     entry = {};
                     ReleaseIfOnScreen(page, slot);
+                    if (shown != slot) {
+                        ReleaseIfOnScreen(page, shown);
+                    }
                     changed = true;
                     continue;
                 }
                 if (entry.settleMs > 0.0f) {
                     entry.settleMs -= deltaMs;
+                    changed = true;
+                }
+                // Pulse in the last stretch: one pipeline run to repaint the
+                // slot each time that flips (it can flip back, when a hold
+                // leaves a key it did not fit and gets its full time back).
+                const bool expiring = entry.remainingMs <= total * kExpiringFraction;
+                if (expiring != entry.expiring) {
+                    entry.expiring = expiring;
                     changed = true;
                 }
             }
@@ -205,6 +231,44 @@ namespace Huginn::Slot
             }
         }
         return changed || std::exchange(m_dirty, false);
+    }
+
+    float Remembrance::EffectiveTotal(const Entry& entry)
+    {
+        return entry.mismatch
+            ? std::min(entry.fullMs, SlotSettings::GetSingleton().RemembranceMismatchDurationMs())
+            : entry.fullMs;
+    }
+
+    void Remembrance::NoteShownSlot(size_t page, size_t slot, size_t shownSlot, bool mismatch)
+    {
+        if (page >= MAX_PAGES || slot >= MAX_SLOTS_PER_PAGE) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(m_mutex);
+        auto& entry = m_pages[page][slot];
+        if (!entry.Active()) {
+            return;
+        }
+        if (entry.shownSlot != shownSlot) {
+            if (shownSlot != slot) {
+                spdlog::info("[Remembrance] Page {} Slot {}: '{}' shown on slot {}{}",
+                    page, slot, NameOf(entry.formID), shownSlot,
+                    mismatch ? "" : ", the key whose class fits");
+            }
+            entry.shownSlot = shownSlot;
+        }
+        if (entry.mismatch != mismatch) {
+            entry.mismatch = mismatch;
+            entry.remainingMs = EffectiveTotal(entry) - entry.heldMs;
+            if (mismatch) {
+                spdlog::info("[Remembrance] Page {} Slot {}: '{}' does not fit this key's class; holding {:.0f}s in all",
+                    page, slot, NameOf(entry.formID), EffectiveTotal(entry) / 1000.0f);
+            } else {
+                spdlog::info("[Remembrance] Page {} Slot {}: '{}' on a key that fits; full {:.0f}s",
+                    page, slot, NameOf(entry.formID), entry.fullMs / 1000.0f);
+            }
+        }
     }
 
     Remembrance::PageEntries Remembrance::GetPage(size_t page) const

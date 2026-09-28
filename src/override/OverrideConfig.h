@@ -61,6 +61,13 @@ namespace Huginn::Override
         inline constexpr bool HEALTH_SPELL_FALLBACK = true;
         inline constexpr bool MAGICKA_SPELL_FALLBACK = true;
         inline constexpr bool STAMINA_SPELL_FALLBACK = true;
+
+        // Pin a vital's emergency to its configured slot (true), or let it
+        // mark the slot already showing its potion (false, #143's rule). Pinned
+        // keeps "heal me" on one key; marking keeps the bar still.
+        inline constexpr bool PIN_HEALTH_TO_SLOT = true;
+        inline constexpr bool PIN_MAGICKA_TO_SLOT = true;
+        inline constexpr bool PIN_STAMINA_TO_SLOT = true;
     }
 
     // =============================================================================
@@ -141,6 +148,11 @@ namespace Huginn::Override
         bool magickaSpellFallback = Defaults::MAGICKA_SPELL_FALLBACK;
         bool staminaSpellFallback = Defaults::STAMINA_SPELL_FALLBACK;
 
+        // Emergency placement per vital (pinned to its slot vs marked in place)
+        bool pinHealthToSlot = Defaults::PIN_HEALTH_TO_SLOT;
+        bool pinMagickaToSlot = Defaults::PIN_MAGICKA_TO_SLOT;
+        bool pinStaminaToSlot = Defaults::PIN_STAMINA_TO_SLOT;
+
     private:
         Settings() = default;
         ~Settings() = default;
@@ -179,6 +191,9 @@ namespace Huginn::Override
         inline bool HEALTH_SPELL_FALLBACK() { return Settings::GetSingleton().healthSpellFallback; }
         inline bool MAGICKA_SPELL_FALLBACK() { return Settings::GetSingleton().magickaSpellFallback; }
         inline bool STAMINA_SPELL_FALLBACK() { return Settings::GetSingleton().staminaSpellFallback; }
+        inline bool PIN_HEALTH_TO_SLOT() { return Settings::GetSingleton().pinHealthToSlot; }
+        inline bool PIN_MAGICKA_TO_SLOT() { return Settings::GetSingleton().pinMagickaToSlot; }
+        inline bool PIN_STAMINA_TO_SLOT() { return Settings::GetSingleton().pinStaminaToSlot; }
     }
 
 }  // namespace Huginn::Override

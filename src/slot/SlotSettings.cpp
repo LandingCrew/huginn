@@ -13,7 +13,7 @@ namespace Huginn::Slot
     // Tripwire: a new SlotClassification needs a parse alias + ToIniString case
     // below (ParseClassification / ClassificationToIniString), else it can't be
     // configured from INI and round-trips to Regular.
-    static_assert(SLOT_CLASSIFICATION_COUNT == 22,
+    static_assert(SLOT_CLASSIFICATION_COUNT == 24,
         "SlotClassification changed — update ParseClassification and ClassificationToIniString");
 
     void SlotSettings::LoadFromFile(const std::filesystem::path& iniPath)
@@ -42,7 +42,9 @@ namespace Huginn::Slot
             PageConfig page;
 
             // Page name
-            page.name = ini.GetValue(pageSection.c_str(), "sName", std::format("Page {}", p + 1).c_str());
+            // Page 0 is the flagship "Huginn" page (Defaults::PAGE0_SLOTS).
+            page.name = ini.GetValue(pageSection.c_str(), "sName",
+                p == 0 ? "Huginn" : std::format("Page {}", p + 1).c_str());
 
             // Slot count for this page
             size_t slotCount = static_cast<size_t>(ini.GetLongValue(pageSection.c_str(), "iSlotCount",
@@ -200,8 +202,29 @@ namespace Huginn::Slot
         const float remembranceMs = std::max(0.0f,
             static_cast<float>(ini.GetDoubleValue("SlotLocker", "fRemembranceDurationMs", 15000.0)));
         m_remembranceDurationMs.store(remembranceMs, std::memory_order_release);
-        SKSE::log::info("[SlotSettings] Remembrance: {}"sv,
-            remembranceMs > 0.0f ? std::format("{:.0f}s", remembranceMs / 1000.0f) : std::string("off"));
+        const float mismatchMs = std::max(0.0f,
+            static_cast<float>(ini.GetDoubleValue("SlotLocker", "fRemembranceMismatchDurationMs", 5000.0)));
+        m_remembranceMismatchMs.store(mismatchMs, std::memory_order_release);
+        SKSE::log::info("[SlotSettings] Remembrance: {} ({:.0f}s when it does not fit the key's class)"sv,
+            remembranceMs > 0.0f ? std::format("{:.0f}s", remembranceMs / 1000.0f) : std::string("off"),
+            mismatchMs / 1000.0f);
+
+        {
+            std::string target = ini.GetValue("SlotLocker", "sRemembranceTarget", "Pressed");
+            std::transform(target.begin(), target.end(), target.begin(), ::tolower);
+            const bool toJob = target == "job";
+            if (!toJob && target != "pressed") {
+                SKSE::log::warn("[SlotSettings] Unknown sRemembranceTarget '{}', using Pressed"sv, target);
+            }
+            m_remembranceToJobKey.store(toJob, std::memory_order_release);
+            SKSE::log::info("[SlotSettings] Remembrance target: {}"sv,
+                toJob ? "the key whose class fits (Job)" : "the key you pressed (Pressed)");
+        }
+
+        const bool pullFromRegular = ini.GetBoolValue("SlotLocker", "bFillJobKeysFromRegular", false);
+        m_fillJobKeysFromRegular.store(pullFromRegular, std::memory_order_release);
+        SKSE::log::info("[SlotSettings] Fill empty job keys from Regular keys: {}"sv,
+            pullFromRegular ? "on" : "off");
 
         // Parsing succeeded - commit the new configuration under exclusive lock
         size_t committedCount;
@@ -274,7 +297,7 @@ namespace Huginn::Slot
     PageConfig SlotSettings::CreateDefaultPage(size_t pageIndex)
     {
         PageConfig page;
-        page.name = std::format("Page {}", pageIndex + 1);
+        page.name = pageIndex == 0 ? std::string("Huginn") : std::format("Page {}", pageIndex + 1);
 
         if (pageIndex == 0) {
             // First page uses full defaults
@@ -313,6 +336,8 @@ namespace Huginn::Slot
         std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
 
         if (lower == "damageany" || lower == "damage") return SlotClassification::DamageAny;
+        if (lower == "damagemagic" || lower == "magicdamage" || lower == "attackmagic") return SlotClassification::DamageMagic;
+        if (lower == "poisonsany" || lower == "poisons" || lower == "poison") return SlotClassification::PoisonsAny;
         if (lower == "healingany" || lower == "healing") return SlotClassification::HealingAny;
         if (lower == "buffsany" || lower == "buffs" || lower == "buff") return SlotClassification::BuffsAny;
         if (lower == "defensiveany" || lower == "defensive") return SlotClassification::DefensiveAny;
@@ -344,6 +369,8 @@ namespace Huginn::Slot
     {
         switch (c) {
             case SlotClassification::DamageAny:   return "DamageAny";
+            case SlotClassification::DamageMagic: return "DamageMagic";
+            case SlotClassification::PoisonsAny:  return "PoisonsAny";
             case SlotClassification::HealingAny:  return "HealingAny";
             case SlotClassification::BuffsAny:    return "BuffsAny";
             case SlotClassification::DefensiveAny: return "DefensiveAny";

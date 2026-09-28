@@ -117,6 +117,32 @@ namespace Huginn::Slot
             return m_remembranceDurationMs.load(std::memory_order_acquire);
         }
 
+        /// Cap on a Remembrance hold whose item does not fit the pressed key's
+        /// class (a dagger on an attack-magic key): it still shows there, but
+        /// briefly. `[SlotLocker] fRemembranceMismatchDurationMs`.
+        [[nodiscard]] float RemembranceMismatchDurationMs() const noexcept
+        {
+            return m_remembranceMismatchMs.load(std::memory_order_acquire);
+        }
+
+        /// Where a remembered item that does not fit the pressed key goes.
+        /// false (`sRemembranceTarget = Pressed`, default): the pressed key,
+        /// capped at RemembranceMismatchDurationMs. true (`Job`): the first
+        /// empty swap-back key whose class accepts it, else the pressed key.
+        [[nodiscard]] bool RemembranceToJobKey() const noexcept
+        {
+            return m_remembranceToJobKey.load(std::memory_order_acquire);
+        }
+
+        /// Whether a key with a class that would otherwise be BLANK takes a
+        /// matching item from a Regular key (the bow moves from an "anything"
+        /// key to the empty Weapon key). Off by default: the slot hold wins,
+        /// and the item stays put. `[SlotLocker] bFillJobKeysFromRegular`.
+        [[nodiscard]] bool FillJobKeysFromRegular() const noexcept
+        {
+            return m_fillJobKeysFromRegular.load(std::memory_order_acquire);
+        }
+
         /// Monotonic generation counter — bumped on every config change
         /// (LoadFromFile / ResetToDefaults). Consumers can cache config copies
         /// and cheaply detect staleness without re-copying every access.
@@ -135,6 +161,9 @@ namespace Huginn::Slot
         std::atomic<bool> m_holdSeatedItems{true};
         std::atomic<float> m_challengerMargin{0.25f};
         std::atomic<float> m_remembranceDurationMs{15000.0f};
+        std::atomic<float> m_remembranceMismatchMs{5000.0f};
+        std::atomic<bool> m_fillJobKeysFromRegular{false};
+        std::atomic<bool> m_remembranceToJobKey{false};
 
         /// Parse classification string to enum (logs warning on error, returns Regular)
         [[nodiscard]] static SlotClassification ParseClassification(const std::string& str);
@@ -159,7 +188,7 @@ namespace Huginn::Slot
     namespace Defaults
     {
         inline constexpr size_t PAGE_COUNT = 1;
-        inline constexpr size_t SLOTS_PER_PAGE = 7;
+        inline constexpr size_t SLOTS_PER_PAGE = 8;
 
         // Default slot configurations for Page 0
         struct SlotDefault
@@ -171,15 +200,20 @@ namespace Huginn::Slot
             bool skipEquipped;
         };
 
+        // One job per key, the same layout the shipped INI's page 0 uses. With
+        // skip-equipped on, key 1 is "the other weapon", and Remembrance makes
+        // it a toggle between the two.
         inline constexpr SlotDefault PAGE0_SLOTS[] = {
-            { SlotClassification::DamageAny,  true, OverrideFilter::Any,  6, true },  // Slot 0
-            { SlotClassification::WeaponsAny, true, OverrideFilter::Any,  5, true },  // Slot 1
-            { SlotClassification::BuffsAny,   true, OverrideFilter::Any,  4, true },  // Slot 2
-            { SlotClassification::Regular,    true, OverrideFilter::None, 3, true },  // Slot 3
-            { SlotClassification::Regular,    true, OverrideFilter::None, 2, true },  // Slot 4
-            { SlotClassification::Regular,    true, OverrideFilter::None, 1, true },  // Slot 5
-            { SlotClassification::Regular,    true, OverrideFilter::Other, 0, true }, // Slot 6 (reserves an Other-only home for soul-gem/ammo/drowning overrides)
+            { SlotClassification::WeaponsAny,   true, OverrideFilter::HP,    7, true },  // 1 Weapon
+            { SlotClassification::DamageMagic,  true, OverrideFilter::MP,    6, true },  // 2 Attack magic
+            { SlotClassification::HealingAny,   true, OverrideFilter::SP,    5, true },  // 3 Heal
+            { SlotClassification::DefensiveAny, true, OverrideFilter::None,  4, true },  // 4 Defend
+            { SlotClassification::BuffsAny,     true, OverrideFilter::None,  3, true },  // 5 Buff
+            { SlotClassification::PotionsAny,   true, OverrideFilter::None,  2, true },  // 6 Potion
+            { SlotClassification::Regular,      true, OverrideFilter::Other, 1, true },  // 7 Situational (Other-only home for soul-gem/ammo/drowning)
+            { SlotClassification::Regular,      true, OverrideFilter::None,  0, true },  // 8 Wildcard
         };
+        static_assert(std::size(PAGE0_SLOTS) == SLOTS_PER_PAGE);
     }
 
 }  // namespace Huginn::Slot
