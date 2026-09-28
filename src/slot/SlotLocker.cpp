@@ -610,11 +610,18 @@ namespace Huginn::Slot
             slotJ.isActivationLock = false;
 
             for (size_t i = 0; i < wanted.size() && i < MAX_SLOTS; ++i) {
-                if (i == j || !m_lockedSlots[i].isLocked) continue;
+                // A slot cleared in this same pass holds nothing any more;
+                // taking its pick would only move the hole there.
+                if (i == j || !m_lockedSlots[i].isLocked || cleared[i]) continue;
                 const auto& homeless = wanted[i];
                 // Overrides and wildcards were placed deliberately; never moved.
                 if (homeless.IsEmpty() || homeless.IsOverride() || homeless.IsWildcard() ||
                     !homeless.candidate || shown.contains(homeless.name)) {
+                    continue;
+                }
+                // The locker cannot see bSkipEquipped, so never fill with an
+                // equipped item: a slot configured to exclude it would show it.
+                if (Candidate::GetBase(homeless.candidate->candidate).isEquipped) {
                     continue;
                 }
                 if (!SlotClassifier::Matches(*homeless.candidate, result[j].classification)) {
@@ -625,10 +632,18 @@ namespace Huginn::Slot
                 result[j].slotIndex = j;
                 result[j].classification = classification;
                 shown.insert(homeless.name);
-                slotJ.assignment = result[j];
-                TruncateCandidateViews(slotJ.assignment);
-                spdlog::debug("[SlotLocker] Post-lock dedup: slot {} filled with '{}', which locked slot {} kept off screen",
-                    j, homeless.name, i);
+                // slotJ.assignment deliberately still records what the ALLOCATOR
+                // gave slot j (the duplicate), not the fill. Recording the fill
+                // made the next run see the allocator's unchanged pick as new
+                // content, lock it again, and -- with j below i -- let it win
+                // dedup and evict the ORIGINAL lock, leaving that slot blank
+                // (/code-review on #146). Unlocked and unchanged, slot j is
+                // simply cleared and refilled the same way each run until the
+                // other lock ends.
+                if (slotJ.shownName != homeless.name) {
+                    spdlog::debug("[SlotLocker] Post-lock dedup: slot {} filled with '{}', which locked slot {} kept off screen",
+                        j, homeless.name, i);
+                }
                 break;
             }
         }
