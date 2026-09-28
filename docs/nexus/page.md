@@ -65,6 +65,8 @@ Huginn reads three files, each with a distinct job:
 
 The majority of the recommendation algorithm is configured from this file. It is re-read every time you load a save, and can be hot-reloaded in game with `hg reload`.
 
+> A note before you tune. The defaults below are chosen for steady keys: once something lands on a key, Huginn prefers to leave it there rather than chase the newest best pick. You can retune Huginn to react faster, but the keys will then change more often with newer recommendation; tune it the other way and it gets calmer but slower to catch up with lagging recommendations. The settings that decide this are under Steadiness — [SlotLocker] below. This is mostly user preference. 
+
 #### Basics
 
 Huginn is configured as **slots**, grouped into **pages**, with `[Keybindings]` tying a slot to a key. `[Page0.Slot0]` is driven by `iSlot1Key` — slots are numbered from 0, keys from 1 — meaning Huginn keeps that hotkey stocked with its current best pick, swapping it out as the situation changes. Alternatively, WheelerAPI can be used to surface each page as a Wheeler wheel and each slot as a wheel entry.
@@ -96,7 +98,7 @@ iPriority = 7
 
 #### The default pages
 
-The first page, **Smart**, gives every key a job. Each key shows the best thing for that job that is not already in your hands:
+The first page, **Huginn**, gives every key a job. Each key shows the best thing for that job that is not already in your hands:
 
 | Key | Job | What you'll see |
 |---|---|---|
@@ -111,7 +113,7 @@ The first page, **Smart**, gives every key a job. Each key shows the best thing 
 
 Emergencies always land on the same keys: health on 1, magicka on 2, stamina on 3.
 
-The second page, **Kit**, is for between fights: potions, food, scrolls, utility spells, summons, arrows and crafting gear, one kind per key. The shipped file also has five pages whose names start with `T:` — test layouts that each isolate one feature. Delete them, or set `iPageCount = 2` under `[Pages]`, if you only want the two play pages.
+The second page, **Kit**, is for between fights: potions, food, scrolls, utility spells, summons, arrows and crafting gear, one kind per key.
 
 **Templates.** `configs/templates/` has six ready-made layouts: battlemage, paladin, pure mage, stealth archer, summoner and survivalist. Each keeps the same emergency keys, so switching never moves "heal me". To use one, delete `[Pages]` and every `[PageN]` / `[PageN.SlotM]` section in `Huginn.ini`, paste the template in their place, and type `hg reload`.
 

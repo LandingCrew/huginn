@@ -42,7 +42,9 @@ namespace Huginn::Slot
             PageConfig page;
 
             // Page name
-            page.name = ini.GetValue(pageSection.c_str(), "sName", std::format("Page {}", p + 1).c_str());
+            // Page 0 is the flagship "Huginn" page (Defaults::PAGE0_SLOTS).
+            page.name = ini.GetValue(pageSection.c_str(), "sName",
+                p == 0 ? "Huginn" : std::format("Page {}", p + 1).c_str());
 
             // Slot count for this page
             size_t slotCount = static_cast<size_t>(ini.GetLongValue(pageSection.c_str(), "iSlotCount",
@@ -295,7 +297,7 @@ namespace Huginn::Slot
     PageConfig SlotSettings::CreateDefaultPage(size_t pageIndex)
     {
         PageConfig page;
-        page.name = std::format("Page {}", pageIndex + 1);
+        page.name = pageIndex == 0 ? std::string("Huginn") : std::format("Page {}", pageIndex + 1);
 
         if (pageIndex == 0) {
             // First page uses full defaults

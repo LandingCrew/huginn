@@ -73,10 +73,10 @@ inline constexpr size_t MAX_SLOTS_PER_PAGE = 10;
 
 **Code default vs shipped INI.** The compiled-in fallback is **1 page with 8
 slots** (`Defaults::PAGE_COUNT`, `Defaults::SLOTS_PER_PAGE`,
-`src/slot/SlotSettings.h`), the same layout as the shipped page 1 "Smart". The
-shipped `configs/Huginn.ini` has **7 pages**: two for play (`Smart`, `Kit`) and
-five test pages. Six archetype layouts live in `configs/templates/` (see
-[Shipped INI layout](#shipped-ini-layout-7-pages)).
+`src/slot/SlotSettings.h`), the same layout as the shipped page 1 "Huginn". The
+shipped `configs/Huginn.ini` has **2 pages** (`Huginn`, `Kit`). Six archetype
+layouts and a set of five test pages live in `configs/templates/` (see
+[Shipped INI layout](#shipped-ini-layout-2-pages)).
 
 **Page state and dirty flags** (`src/slot/SlotAllocator.h`):
 
@@ -487,12 +487,20 @@ are not holding"; with swap back, pressing it toggles between two weapons. Key
 prompts. Slots on pages 1+ default to `Regular`, wildcards on, override filter
 `None`, skip-equipped on, priority `slotCount - index - 1`.
 
-### Shipped INI layout (7 pages)
+### Shipped INI layout (2 pages)
+
+Most players never edit the INI, so these two pages are the product.
 
 | In game | Name | Layout |
 |---------|------|--------|
-| 1 | Smart | The code default above |
+| 1 | Huginn | The code default above |
 | 2 | Kit | Potions, Food, Scrolls, Utility, Summons, Ammo, craft gear, Regular; no overrides |
+
+**Test pages** (`configs/templates/test-pages.ini`), added after the two above
+for testing and log reading:
+
+| In game | Name | Layout |
+|---------|------|--------|
 | 3 | T: Emergencies | Regular keys with HP / MP / SP / Other on 1-4; key 5 PotionsAny with no overrides as a control |
 | 4 | T: Classes A | Ten keys, one class each: WeaponsMelee, WeaponsRanged, AmmoAny, DamageMagic, HealingAny, DefensiveAny, SummonsAny, BuffsAny, Utility, ScrollsAny |
 | 5 | T: Classes B | PotionsAny, FoodAny, AlcoholAny, ApparelAny, DamageAny and the five spell schools |
@@ -500,7 +508,7 @@ prompts. Slots on pages 1+ default to `Regular`, wildcards on, override filter
 | 7 | T: Swap | Swap back and equip: one key with `bSkipEquipped = 0`, one with `bRemembrance = 0` |
 
 The test pages run with wildcards and swap back off unless that is what they
-test. Delete them, or set `iPageCount = 2`, for a player setup.
+test.
 
 **Templates** (`configs/templates/`): battlemage, paladin, pure-mage,
 stealth-archer, summoner, survivalist. Each is a page layout to paste over
@@ -771,7 +779,7 @@ Shipped template: `configs/Huginn.ini`, copied to
 iPageCount = 3            ; 1-10 (clamped). Code default 1, shipped INI 3.
 
 [Page0]
-sName = Smart             ; Page display name
+sName = Huginn            ; Page display name
 iSlotCount = 8            ; 1-10 (clamped). Code default 7 on page 0, 3 elsewhere.
 
 [Page0.Slot0]
