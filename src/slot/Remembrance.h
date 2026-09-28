@@ -60,6 +60,10 @@ namespace Huginn::Slot
             // filtered out. A spell-for-spell swap may move no state bucket,
             // so nothing else would ever re-run it.
             float settleMs = 0.0f;
+            // When the hold started. "Back in hand" means the item ARRIVED in
+            // a hand after this, not that it is in one: with the same spell in
+            // both hands, replacing one leaves the other still holding it.
+            int64_t startedAtMs = 0;
             [[nodiscard]] bool Active() const noexcept { return formID != 0 && remainingMs > 0.0f; }
         };
         using PageEntries = std::array<Entry, MAX_SLOTS_PER_PAGE>;
@@ -120,8 +124,22 @@ namespace Huginn::Slot
         static void Observe(Track& track, RE::FormID now, int64_t nowMs);
         [[nodiscard]] static bool ChangedTo(const Track& track, RE::FormID formID, int64_t sinceMs);
 
+        // A hold that ended because its item went back in hand, kept briefly
+        // per slot. Wheeler equips before it calls back, so an update tick can
+        // see the undo land and end the hold before OnSlotActivated hears of
+        // it; this lets the late call still recognise the press as the undo
+        // rather than capture the other item as a new hold.
+        struct Ended
+        {
+            RE::FormID formID = 0;
+            int64_t endedAtMs = 0;
+        };
+
         mutable std::mutex m_mutex;
         std::array<PageEntries, MAX_PAGES> m_pages{};
+        std::array<std::array<Ended, MAX_SLOTS_PER_PAGE>, MAX_PAGES> m_endedInHand{};
+        // A hold ended outside Update (the undo): force the next pipeline run.
+        bool m_dirty = false;
         std::array<Pending, kMaxPending> m_pending{};
         size_t m_pendingCount = 0;
         Track m_right, m_left, m_ammo;

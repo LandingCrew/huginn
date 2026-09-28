@@ -56,6 +56,18 @@ namespace Huginn::Slot
             spdlog::info("[Remembrance] Page {} Slot {}: '{}' re-equipped, hold ended",
                 page, slot, NameOf(formID));
             entry = {};
+            // The slot is still locked on the remembered assignment; let go
+            // now, or it shows the equipped item as "Swap Back" until the
+            // lock runs out.
+            ReleaseIfOnScreen(page, slot);
+            m_dirty = true;
+            return true;
+        }
+        // The same undo, reported after an update tick already saw the item
+        // back in hand and ended the hold (Wheeler).
+        auto& ended = m_endedInHand[page][slot];
+        if (ended.formID == formID && NowMs() - ended.endedAtMs <= kMatchWindowMs) {
+            ended = {};
             return true;
         }
 
@@ -136,7 +148,8 @@ namespace Huginn::Slot
 
             if (displaced != 0) {
                 if (durationMs > 0.0f) {
-                    m_pages[p.page][p.slot] = { displaced, durationMs, kSettleMs };
+                    m_pages[p.page][p.slot] = { displaced, durationMs, kSettleMs, nowMs };
+                    m_endedInHand[p.page][p.slot] = {};
                     spdlog::info("[Remembrance] Page {} Slot {}: holding '{}' ({:08X}) for {:.0f}s, taken off by '{}'",
                         p.page, p.slot, NameOf(displaced), displaced, durationMs / 1000.0f, NameOf(p.formID));
                     ReleaseIfOnScreen(p.page, p.slot);
@@ -158,11 +171,14 @@ namespace Huginn::Slot
                 auto& entry = m_pages[page][slot];
                 if (entry.formID == 0) continue;
                 entry.remainingMs -= deltaMs;
-                const bool backInHand = player && (entry.formID == m_right.current ||
-                    entry.formID == m_left.current || entry.formID == m_ammo.current);
+                auto arrived = [&](const Track& t) {
+                    return t.current == entry.formID && t.changedAtMs > entry.startedAtMs;
+                };
+                const bool backInHand = player && (arrived(m_right) || arrived(m_left) || arrived(m_ammo));
                 if (entry.remainingMs <= 0.0f || backInHand) {
                     spdlog::info("[Remembrance] Page {} Slot {}: hold on '{}' {}",
                         page, slot, NameOf(entry.formID), backInHand ? "ended, back in hand" : "expired");
+                    m_endedInHand[page][slot] = backInHand ? Ended{ entry.formID, nowMs } : Ended{};
                     entry = {};
                     ReleaseIfOnScreen(page, slot);
                     changed = true;
@@ -174,7 +190,7 @@ namespace Huginn::Slot
                 }
             }
         }
-        return changed;
+        return changed || std::exchange(m_dirty, false);
     }
 
     Remembrance::PageEntries Remembrance::GetPage(size_t page) const
@@ -199,6 +215,8 @@ namespace Huginn::Slot
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         m_pages = {};
+        m_endedInHand = {};
+        m_dirty = false;
         m_pendingCount = 0;
         m_sampled = false;
     }

@@ -885,7 +885,14 @@ namespace Huginn::Input
            success = equipTo(true);
            break;
         case EquipHand::Both:
-           success = equipTo(false) && equipTo(true);
+           // One scroll cannot be in two hands: equipping it as an item moves
+           // the single copy to the left and empties the right. Both hands
+           // only with two to spare; otherwise the right, as a tap would.
+           if (scroll && Util::GetItemCountSafe(RE::PlayerCharacter::GetSingleton(), scroll) < 2) {
+              success = equipTo(false);
+           } else {
+              success = equipTo(false) && equipTo(true);
+           }
            break;
         }
       }
