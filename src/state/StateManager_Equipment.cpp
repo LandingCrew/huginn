@@ -175,7 +175,12 @@ namespace Huginn::State
       // Get equipped ammo for bows/crossbows
       RE::FormID newAmmoFormID = 0;
       float newAmmoDamage = 0.0f;
-      if (newHasBowEquipped || newHasCrossbowEquipped) {
+      // Read whether or not a bow is in hand: ammo stays equipped when the bow
+      // goes away, and a bow on a key -- recommended, or held by Remembrance
+      // -- has no other way to show how many arrows it would fire. Nothing
+      // gates on the count without also checking the bow (IsOutOfArrows,
+      // LowAmmo), so a count beside no bow changes no rule.
+      {
       equippedAmmo = player->GetCurrentAmmo();
       needAmmoCount = (equippedAmmo != nullptr);
       if (equippedAmmo) {
@@ -201,10 +206,13 @@ namespace Huginn::State
       // and StateManager has no registry.
       if (needAmmoCount) {
       const std::int32_t count = Util::GetItemCountSafe(player, equippedAmmo);
-      if (newHasBowEquipped) {
-        newArrowCount = count;
-      } else if (newHasCrossbowEquipped) {
+      // The ammo decides which count it is, not the weapon in hand.
+      const auto* ammo = equippedAmmo->As<RE::TESAmmo>();
+      // (TESAmmo::IsBolt is non-const; it reads this flag.)
+      if (ammo && ammo->GetRuntimeData().data.flags.none(RE::AMMO_DATA::Flag::kNonBolt)) {
         newBoltCount = count;
+      } else {
+        newArrowCount = count;
       }
       }
 

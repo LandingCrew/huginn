@@ -291,9 +291,12 @@ namespace Huginn::Override
         result.priority = Priority::LOW_AMMO;
         result.category = OverrideCategory::Other;
         result.condition = OverrideCondition::LowAmmo;
-        result.reason = player.hasBowEquipped
-            ? std::format("LOW AMMO: {} arrows remaining", rawCount)
-            : std::format("LOW AMMO: {} bolts remaining", rawCount);
+        // 0 with nothing in the quiver is not "0 remaining": the player may be
+        // carrying a hundred, just none equipped (2026-09-28 16:02:59).
+        const char* ammoWord = player.hasBowEquipped ? "arrows" : "bolts";
+        result.reason = player.equippedAmmoFormID == 0
+            ? std::format("NO {} EQUIPPED", player.hasBowEquipped ? "ARROWS" : "BOLTS")
+            : std::format("LOW AMMO: {} {} remaining", rawCount, ammoWord);
         result.candidate = std::move(candidate);
 
         return result;

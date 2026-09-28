@@ -11,8 +11,9 @@ namespace Huginn::Slot
     // =============================================================================
     // REMEMBRANCE — a slot holds what you just took off
     // =============================================================================
-    // Press a Huginn key (or pick an entry on a Huginn wheel) that equips a
-    // weapon, spell or ammo, and whatever that equip displaced takes the slot
+    // Press a Huginn key (or pick an entry on a Huginn wheel) that puts a
+    // weapon, spell or scroll in a hand, or swaps one ammo for another, and
+    // whatever that equip displaced takes the slot
     // you pressed for fRemembranceDurationMs: a one-deep undo under the same
     // finger. Then the slot goes back to normal recommendations.
     //

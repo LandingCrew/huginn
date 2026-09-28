@@ -433,8 +433,8 @@ Raised 2026-09-24.
 - [ ] **Remembrance follow-ups.** Remembrance itself -- a slot holds what
       you just took off -- SHIPPED in v0.21.47; design and mechanics are in
       `docs/architecture/5-slots.md` (Remembrance). Press a Huginn key or a
-      Huginn wheel entry that equips a weapon, spell, scroll or ammo, and what
-      it took off shows under the same key for `fRemembranceDurationMs` (15 s),
+      Huginn wheel entry that puts a weapon, spell or scroll in a hand (or
+      swaps one ammo for another), and what it replaced shows under the same key for `fRemembranceDurationMs` (15 s),
       labelled "Swap Back". Per-slot `bRemembrance`, on by default.
       Decided 2026-09-27 (with the user): Huginn keys and Huginn wheels only;
       external equips (menu, favourites, the player's own wheels) are out of

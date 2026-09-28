@@ -13,7 +13,7 @@ Huginn also provides a HUD widget showing the rolling state of each hotkey.
 * **On-screen widget** — a small overlay showing what is on each key; hides itself outside combat
 * **Wheeler integration** — optional [Wheeler](https://www.nexusmods.com/skyrimspecialedition/mods/97345) radial menu support
 * **Multi-page slots** — organize recommendations by role (up to 10 pages, 10 slots each)
-* **Swap back** — press a key that equips a weapon, spell or ammo, and what it took off waits under that same key for 15 seconds; press again to swap back
+* **Swap back** — press a key that swaps what is in your hand (or your arrows), and what it replaced waits under that same key for 15 seconds; press again to swap back
 * **Workstation awareness** — Fortify Smithing at forges, Fortify Enchanting at enchanters
 * **INI-configurable** — context weights, scoring, slot layout, keybindings, display mode
 
@@ -235,7 +235,7 @@ A recommendation that changes the instant before you press the key is worse than
 
 `fLockDurationMs = 3000` is that hold. Raise it for a calmer, slower display; lower it for one that reacts faster. `0` disables locking entirely. Emergencies are allowed to break a lock, which is what `bOverridesBreakLock` and `iImmediateBreakPriority` govern. `hg unlock` clears every lock immediately.
 
-**Swap back.** Press a key that equips a weapon, spell, scroll or ammo, and whatever that took off appears under the *same* key, labelled "Swap Back", for `fRemembranceDurationMs` (15000 = 15 seconds). Press it to put the old item back; the key then returns to normal. It works from Huginn's hotkeys and Huginn's own Wheeler wheels, not from the inventory menu or favourites. It is not a recommendation, so swapping back teaches Huginn nothing.
+**Swap back.** Press a key that puts a weapon, spell or scroll in your hand, and whatever was in that hand appears under the *same* key, labelled "Swap Back", for `fRemembranceDurationMs` (15000 = 15 seconds). Press it to put the old item back; the key then returns to normal. Arrows work the same way, arrows for arrows: switch from Iron to Steel Arrows with a key and the Iron Arrows wait on it. Only a swap counts; equipping into an empty hand or quiver leaves nothing to swap back to. It works from Huginn's hotkeys and Huginn's own Wheeler wheels, not from the inventory menu or favourites. It is not a recommendation, so swapping back teaches Huginn nothing.
 
 To turn it off for one slot, add `bRemembrance = 0` to that slot's section:
 

@@ -530,9 +530,10 @@ off for a player who prefers the shuffle.
 ## Remembrance
 
 `src/slot/Remembrance.{h,cpp}`. Press a Huginn key, or pick an entry on one of
-Huginn's own Wheeler wheels, that equips a weapon, spell, scroll or ammo, and
-whatever that equip took off appears under the SAME key for
-`fRemembranceDurationMs` (15 s): a one-deep undo.
+Huginn's own Wheeler wheels, that puts a weapon, spell or scroll in a hand
+(or swaps one ammo for another), and whatever that equip took off appears
+under the SAME key for `fRemembranceDurationMs` (15 s): a one-deep undo. An
+equip into an empty hand or quiver displaces nothing and starts no hold.
 
 - **Not a recommendation.** Pass 1a places it after overrides and before
   everything else, whatever the slot's classification or `skipEquipped`.
