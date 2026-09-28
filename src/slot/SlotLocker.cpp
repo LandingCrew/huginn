@@ -609,10 +609,17 @@ namespace Huginn::Slot
             slotJ.remainingMs = 0.0f;
             slotJ.isActivationLock = false;
 
-            for (size_t i = 0; i < wanted.size() && i < MAX_SLOTS; ++i) {
-                // A slot cleared in this same pass holds nothing any more;
-                // taking its pick would only move the hole there.
-                if (i == j || !m_lockedSlots[i].isLocked || cleared[i]) continue;
+            // The slot's OWN pick first: when the emptied slot is itself the
+            // one whose lock kept the old copy, what the allocator wanted
+            // there is the natural fill (slot 4 locked on a dagger the
+            // allocator had moved to slot 0 -- it wanted Ale in 4, and 4
+            // sat blank for half a second, 2026-09-27 20:55:36). Then items
+            // other locks kept off screen -- never from a slot cleared in
+            // this same pass, which holds nothing any more.
+            for (size_t n = 0; n <= wanted.size() && n <= MAX_SLOTS; ++n) {
+                const size_t i = (n == 0) ? j : n - 1;
+                if (i >= wanted.size() || i >= MAX_SLOTS) continue;
+                if (n > 0 && (i == j || !m_lockedSlots[i].isLocked || cleared[i])) continue;
                 const auto& homeless = wanted[i];
                 // Overrides and wildcards were placed deliberately; never moved.
                 if (homeless.IsEmpty() || homeless.IsOverride() || homeless.IsWildcard() ||
@@ -632,17 +639,19 @@ namespace Huginn::Slot
                 result[j].slotIndex = j;
                 result[j].classification = classification;
                 shown.insert(homeless.name);
-                // slotJ.assignment deliberately still records what the ALLOCATOR
-                // gave slot j (the duplicate), not the fill. Recording the fill
-                // made the next run see the allocator's unchanged pick as new
+                // slotJ.assignment deliberately still records what the lock /
+                // allocator gave slot j, not the fill. Recording the fill made
+                // the next run see the allocator's unchanged pick as new
                 // content, lock it again, and -- with j below i -- let it win
                 // dedup and evict the ORIGINAL lock, leaving that slot blank
-                // (/code-review on #146). Unlocked and unchanged, slot j is
-                // simply cleared and refilled the same way each run until the
-                // other lock ends.
+                // (/code-review on #146). Unlocked, slot j settles on its own.
                 if (slotJ.shownName != homeless.name) {
-                    spdlog::debug("[SlotLocker] Post-lock dedup: slot {} filled with '{}', which locked slot {} kept off screen",
-                        j, homeless.name, i);
+                    if (i == j) {
+                        spdlog::debug("[SlotLocker] Post-lock dedup: slot {} filled with its own pick '{}'", j, homeless.name);
+                    } else {
+                        spdlog::debug("[SlotLocker] Post-lock dedup: slot {} filled with '{}', which locked slot {} kept off screen",
+                            j, homeless.name, i);
+                    }
                 }
                 break;
             }
