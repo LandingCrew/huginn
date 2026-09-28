@@ -726,7 +726,8 @@ namespace Huginn::Slot
             }
         }
 
-        if (!SlotSettings::GetSingleton().KeepSlotPositions()) {
+        if (!SlotSettings::GetSingleton().KeepSlotPositions() &&
+            SlotSettings::GetSingleton().FillJobKeysFromRegular()) {
             PullIntoEmptyJobKeys(slotConfigs, assignments, &player, priorityOrder, priorityCount);
         }
 
@@ -749,7 +750,9 @@ namespace Huginn::Slot
             // Optional: a key with a job that would be blank takes a matching
             // item off a Regular key. After seating, so seating does not undo
             // it; before the refill, which then fills the Regular key.
-            PullIntoEmptyJobKeys(slotConfigs, assignments, &player, priorityOrder, priorityCount);
+            if (SlotSettings::GetSingleton().FillJobKeysFromRegular()) {
+                PullIntoEmptyJobKeys(slotConfigs, assignments, &player, priorityOrder, priorityCount);
+            }
 
             // PASS 4: refill whatever pass 3 vacated. An item moving back to its
             // own seat can leave the slot it was sitting in empty, and a gap in
@@ -1317,9 +1320,6 @@ namespace Huginn::Slot
         const std::array<size_t, MAX_SLOTS_PER_PAGE>& priorityOrder,
         size_t priorityCount) const
     {
-        if (!SlotSettings::GetSingleton().FillJobKeysFromRegular()) {
-            return;
-        }
         const size_t slotCount = std::min(assignments.size(), std::min(slotConfigs.size(), MAX_SLOTS_PER_PAGE));
         for (size_t k = 0; k < priorityCount; ++k) {
             const size_t i = priorityOrder[k];
