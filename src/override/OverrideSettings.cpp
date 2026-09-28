@@ -59,6 +59,13 @@ namespace Huginn::Override
         // Potion selection
         allowImpurePotions = readBool(section, "bAllowImpurePotions", Defaults::ALLOW_IMPURE_POTIONS);
 
+        // Spell fallback (no potion -> best self-cast restore spell affordable now)
+        healthSpellFallback = readBool(section, "bHealthSpellFallback", Defaults::HEALTH_SPELL_FALLBACK);
+        magickaSpellFallback = readBool(section, "bMagickaSpellFallback", Defaults::MAGICKA_SPELL_FALLBACK);
+        staminaSpellFallback = readBool(section, "bStaminaSpellFallback", Defaults::STAMINA_SPELL_FALLBACK);
+        logger::info("[OverrideSettings] Spell fallback: health={} magicka={} stamina={}"sv,
+            healthSpellFallback, magickaSpellFallback, staminaSpellFallback);
+
         // Enable flags
         enableCriticalHealth = readBool(section, "bEnableCriticalHealth", Defaults::ENABLE_CRITICAL_HEALTH);
         enableDrowning = readBool(section, "bEnableDrowning", Defaults::ENABLE_DROWNING);

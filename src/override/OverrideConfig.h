@@ -54,6 +54,13 @@ namespace Huginn::Override
         // fairly (ItemData::RestoredWithin). Short on purpose: the player is
         // about to die, and 160 health over 20 s is worth less than 50 now.
         inline constexpr float URGENT_RESTORE_WINDOW_SEC = 5.0f;
+
+        // No potion for a critical vital -> offer the best restore SPELL the
+        // player can cast on themselves and afford right now (the key equips
+        // it). On by default, per vital.
+        inline constexpr bool HEALTH_SPELL_FALLBACK = true;
+        inline constexpr bool MAGICKA_SPELL_FALLBACK = true;
+        inline constexpr bool STAMINA_SPELL_FALLBACK = true;
     }
 
     // =============================================================================
@@ -129,6 +136,11 @@ namespace Huginn::Override
         // =========================================================================
         bool allowImpurePotions = Defaults::ALLOW_IMPURE_POTIONS;
 
+        // Spell fallback when no potion is available (per vital)
+        bool healthSpellFallback = Defaults::HEALTH_SPELL_FALLBACK;
+        bool magickaSpellFallback = Defaults::MAGICKA_SPELL_FALLBACK;
+        bool staminaSpellFallback = Defaults::STAMINA_SPELL_FALLBACK;
+
     private:
         Settings() = default;
         ~Settings() = default;
@@ -164,6 +176,9 @@ namespace Huginn::Override
         inline float CRITICAL_STAMINA_HYSTERESIS() { return Settings::GetSingleton().criticalStaminaHysteresis; }
         inline bool ENABLE_CRITICAL_STAMINA() { return Settings::GetSingleton().enableCriticalStamina; }
         inline bool ALLOW_IMPURE_POTIONS() { return Settings::GetSingleton().allowImpurePotions; }
+        inline bool HEALTH_SPELL_FALLBACK() { return Settings::GetSingleton().healthSpellFallback; }
+        inline bool MAGICKA_SPELL_FALLBACK() { return Settings::GetSingleton().magickaSpellFallback; }
+        inline bool STAMINA_SPELL_FALLBACK() { return Settings::GetSingleton().staminaSpellFallback; }
     }
 
 }  // namespace Huginn::Override

@@ -2,6 +2,8 @@
 #include "learning/item/ItemRegistry.h"
 #include "learning/item/ItemData.h"
 #include "weapon/WeaponRegistry.h"
+#include "spell/SpellRegistry.h"
+#include "Globals.h"                   // g_spellRegistry: spell fallback
 
 namespace Huginn::Override
 {
@@ -371,6 +373,72 @@ namespace Huginn::Override
 
     // Shared body for the three vitals potion finders (health/magicka/stamina):
     // single-pass registry pick, pure-preferred selection, deduped logging
+    // No potion for a critical vital: the best restore SPELL the player can
+    // cast on THEMSELVES and afford right now. Deterministic like the potion
+    // pick -- no scoring, no learner: the one that restores most within the
+    // same urgent window (a concentration spell counts its magnitude per
+    // second over the window). Self-delivery only: Heal Other and Healing
+    // Hands restore someone else. SpellData carries neither delivery nor
+    // magnitude, so the form is looked up here -- only while an override is
+    // active with no potion, which is rare.
+    static std::optional<Candidate::CandidateVariant> FindRestoreSpell(
+        Spell::SpellTag tag,
+        RE::ActorValue av,
+        std::string_view label,
+        Context::ContextReason reason,
+        PotionLogState& logState)
+    {
+        if (!g_spellRegistry || g_spellRegistry->IsLoading()) {
+            return std::nullopt;
+        }
+        auto* player = RE::PlayerCharacter::GetSingleton();
+        if (!player) {
+            return std::nullopt;
+        }
+        const float magicka = player->AsActorValueOwner()->GetActorValue(RE::ActorValue::kMagicka);
+        const float window = Defaults::URGENT_RESTORE_WINDOW_SEC;
+
+        std::optional<Spell::SpellData> best;
+        float bestRestored = 0.0f;
+        float bestCost = 0.0f;
+        g_spellRegistry->ForEachSpell([&](const Spell::SpellData& sd) {
+            if (!Spell::HasTag(sd.tags, tag)) return;
+            auto* spell = RE::TESForm::LookupByID<RE::SpellItem>(sd.formID);
+            if (!spell || spell->GetDelivery() != RE::MagicSystem::Delivery::kSelf) return;
+            const float cost = spell->CalculateMagickaCost(player);
+            if (cost > magicka) return;
+
+            float restored = 0.0f;
+            for (const auto* effect : spell->effects) {
+                if (!effect || !effect->baseEffect || effect->baseEffect->IsHostile()) continue;
+                if (effect->baseEffect->data.primaryAV != av) continue;
+                const float mag = effect->effectItem.magnitude;
+                const float dur = static_cast<float>(effect->effectItem.duration);
+                restored = std::max(restored,
+                    sd.isConcentration ? mag * window : Item::RestoredWithin(mag, dur, window));
+            }
+            if (restored > bestRestored) {
+                bestRestored = restored;
+                bestCost = cost;
+                best = sd;   // a copy: registry entries must not outlive the visit
+            }
+        });
+
+        if (!best) {
+            return std::nullopt;
+        }
+        if (best->formID != logState.lastLogged) {
+            logger::info("[OverrideManager] {}: no potion, spell '{}' FormID={:08X} (restores {:.0f} in {:.0f}s, cost {:.0f} of {:.0f} magicka)"sv,
+                label, best->name, best->formID, bestRestored, window, bestCost, magicka);
+            logState.lastLogged = best->formID;
+        }
+
+        auto candidate = Candidate::SpellCandidate::FromSpellData(*best);
+        candidate.effectiveCost = bestCost;
+        candidate.overrideReason = reason;
+        return candidate;
+    }
+
     static std::optional<Candidate::CandidateVariant> FindVitalsPotion(
         const Item::ItemRegistry* registry,
         Item::ItemType type,
@@ -411,9 +479,16 @@ namespace Huginn::Override
 
     std::optional<Candidate::CandidateVariant> OverrideManager::FindStaminaPotion() const
     {
+        // Pick order: potion, then (optionally) a self-cast restore spell.
         static PotionLogState s_logState;
-        return FindVitalsPotion(m_itemRegistry, Item::ItemType::StaminaPotion,
+        auto potion = FindVitalsPotion(m_itemRegistry, Item::ItemType::StaminaPotion,
             "FindStaminaPotion"sv, Context::ContextReason::LowStamina, s_logState);
+        if (potion || !Config::STAMINA_SPELL_FALLBACK()) {
+            return potion;
+        }
+        static PotionLogState s_spellLog;
+        return FindRestoreSpell(Spell::SpellTag::RestoreStamina, RE::ActorValue::kStamina,
+            "FindStaminaPotion"sv, Context::ContextReason::LowStamina, s_spellLog);
     }
 
     std::optional<Candidate::CandidateVariant> OverrideManager::FindBestAmmo(bool isBow) const
@@ -454,16 +529,30 @@ namespace Huginn::Override
 
     std::optional<Candidate::CandidateVariant> OverrideManager::FindHealthPotion() const
     {
+        // Pick order: potion, then (optionally) a self-cast restore spell.
         static PotionLogState s_logState;
-        return FindVitalsPotion(m_itemRegistry, Item::ItemType::HealthPotion,
+        auto potion = FindVitalsPotion(m_itemRegistry, Item::ItemType::HealthPotion,
             "FindHealthPotion"sv, Context::ContextReason::CriticalHealth, s_logState);
+        if (potion || !Config::HEALTH_SPELL_FALLBACK()) {
+            return potion;
+        }
+        static PotionLogState s_spellLog;
+        return FindRestoreSpell(Spell::SpellTag::RestoreHealth, RE::ActorValue::kHealth,
+            "FindHealthPotion"sv, Context::ContextReason::CriticalHealth, s_spellLog);
     }
 
     std::optional<Candidate::CandidateVariant> OverrideManager::FindMagickaPotion() const
     {
+        // Pick order: potion, then (optionally) a self-cast restore spell.
         static PotionLogState s_logState;
-        return FindVitalsPotion(m_itemRegistry, Item::ItemType::MagickaPotion,
+        auto potion = FindVitalsPotion(m_itemRegistry, Item::ItemType::MagickaPotion,
             "FindMagickaPotion"sv, Context::ContextReason::LowMagicka, s_logState);
+        if (potion || !Config::MAGICKA_SPELL_FALLBACK()) {
+            return potion;
+        }
+        static PotionLogState s_spellLog;
+        return FindRestoreSpell(Spell::SpellTag::RestoreMagicka, RE::ActorValue::kMagicka,
+            "FindMagickaPotion"sv, Context::ContextReason::LowMagicka, s_spellLog);
     }
 
     std::optional<Candidate::CandidateVariant> OverrideManager::FindWaterbreathingItem() const
