@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include "OverrideConditions.h"
 #include "OverrideConfig.h"
 #include "state/PlayerActorState.h"
@@ -222,6 +223,12 @@ namespace Huginn::Override
 
         // Registry references (set during Initialize)
         Item::ItemRegistry* m_itemRegistry = nullptr;
+
+        // The fallback spell on each vital's key (health, magicka, stamina),
+        // kept while castable so the key does not swap between spells. Cleared
+        // when that emergency ends, when a potion takes over, and on Reset --
+        // without that it carried across fights and loads (/code-review #147).
+        mutable std::array<RE::FormID, 3> m_spellIncumbent{};
         Weapon::WeaponRegistry* m_weaponRegistry = nullptr;
 
         // Hysteresis tracking for each condition

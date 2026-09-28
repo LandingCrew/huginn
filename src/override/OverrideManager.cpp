@@ -34,6 +34,7 @@ namespace Huginn::Override
     {
         m_hysteresisStates.clear();
         m_lastActiveCount = 0;
+        m_spellIncumbent.fill(0);
 
         logger::debug("[OverrideManager] Reset hysteresis states"sv);
     }
@@ -147,6 +148,7 @@ namespace Huginn::Override
 
         // Check if health is below critical threshold (with hysteresis)
         if (!CheckThresholdHysteresis("CriticalHealth", player.vitals.health, config)) {
+            m_spellIncumbent[0] = 0;  // emergency over: the next one picks afresh
             return std::nullopt;
         }
 
@@ -308,6 +310,7 @@ namespace Huginn::Override
 
         // Check if magicka is below critical threshold (with hysteresis)
         if (!CheckThresholdHysteresis("CriticalMagicka", player.vitals.magicka, config)) {
+            m_spellIncumbent[1] = 0;  // emergency over: the next one picks afresh
             return std::nullopt;
         }
 
@@ -335,6 +338,7 @@ namespace Huginn::Override
 
         // Check if stamina is below critical threshold (with hysteresis)
         if (!CheckThresholdHysteresis("CriticalStamina", player.vitals.stamina, config)) {
+            m_spellIncumbent[2] = 0;  // emergency over: the next one picks afresh
             return std::nullopt;
         }
 
@@ -386,7 +390,8 @@ namespace Huginn::Override
         RE::ActorValue av,
         std::string_view label,
         Context::ContextReason reason,
-        PotionLogState& logState)
+        PotionLogState& logState,
+        RE::FormID& incumbentSlot)
     {
         if (!g_spellRegistry || g_spellRegistry->IsLoading()) {
             return std::nullopt;
@@ -408,7 +413,7 @@ namespace Huginn::Override
         // fell (2026-09-27 20:41:04-12) -- each pick right, the key never
         // still. It changes only when the incumbent becomes unaffordable, or a
         // potion comes back (the finder never gets here then).
-        const RE::FormID incumbentID = logState.lastLogged;
+        const RE::FormID incumbentID = incumbentSlot;
         std::optional<Spell::SpellData> incumbent;
         float incumbentRestored = 0.0f;
         float incumbentCost = 0.0f;
@@ -458,6 +463,7 @@ namespace Huginn::Override
         if (!best) {
             return std::nullopt;
         }
+        incumbentSlot = best->formID;
         if (best->formID != logState.lastLogged) {
             logger::info("[OverrideManager] {}: no potion, spell '{}' FormID={:08X} (restores {:.0f} in {:.0f}s, cost {:.0f} of {:.0f} magicka)"sv,
                 label, best->name, best->formID, bestRestored, window, bestCost, magicka);
@@ -526,11 +532,12 @@ namespace Huginn::Override
         auto potion = FindVitalsPotion(m_itemRegistry, Item::ItemType::StaminaPotion,
             "FindStaminaPotion"sv, Context::ContextReason::LowStamina, s_logState);
         if (potion || !Config::STAMINA_SPELL_FALLBACK()) {
+            m_spellIncumbent[2] = 0;  // a potion (or no fallback) resets the spell
             return potion;
         }
         static PotionLogState s_spellLog;
         return FindRestoreSpell(Spell::SpellTag::RestoreStamina, RE::ActorValue::kStamina,
-            "FindStaminaPotion"sv, Context::ContextReason::LowStamina, s_spellLog);
+            "FindStaminaPotion"sv, Context::ContextReason::LowStamina, s_spellLog, m_spellIncumbent[2]);
     }
 
     std::optional<Candidate::CandidateVariant> OverrideManager::FindBestAmmo(bool isBow) const
@@ -576,11 +583,12 @@ namespace Huginn::Override
         auto potion = FindVitalsPotion(m_itemRegistry, Item::ItemType::HealthPotion,
             "FindHealthPotion"sv, Context::ContextReason::CriticalHealth, s_logState);
         if (potion || !Config::HEALTH_SPELL_FALLBACK()) {
+            m_spellIncumbent[0] = 0;  // a potion (or no fallback) resets the spell
             return potion;
         }
         static PotionLogState s_spellLog;
         return FindRestoreSpell(Spell::SpellTag::RestoreHealth, RE::ActorValue::kHealth,
-            "FindHealthPotion"sv, Context::ContextReason::CriticalHealth, s_spellLog);
+            "FindHealthPotion"sv, Context::ContextReason::CriticalHealth, s_spellLog, m_spellIncumbent[0]);
     }
 
     std::optional<Candidate::CandidateVariant> OverrideManager::FindMagickaPotion() const
@@ -590,11 +598,12 @@ namespace Huginn::Override
         auto potion = FindVitalsPotion(m_itemRegistry, Item::ItemType::MagickaPotion,
             "FindMagickaPotion"sv, Context::ContextReason::LowMagicka, s_logState);
         if (potion || !Config::MAGICKA_SPELL_FALLBACK()) {
+            m_spellIncumbent[1] = 0;  // a potion (or no fallback) resets the spell
             return potion;
         }
         static PotionLogState s_spellLog;
         return FindRestoreSpell(Spell::SpellTag::RestoreMagicka, RE::ActorValue::kMagicka,
-            "FindMagickaPotion"sv, Context::ContextReason::LowMagicka, s_spellLog);
+            "FindMagickaPotion"sv, Context::ContextReason::LowMagicka, s_spellLog, m_spellIncumbent[1]);
     }
 
     std::optional<Candidate::CandidateVariant> OverrideManager::FindWaterbreathingItem() const
