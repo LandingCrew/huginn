@@ -59,6 +59,12 @@ namespace Huginn::Display
             m_widgetHiddenForWheel = false;
         }
 
+        // A re-show (or startup) invalidates the identical-frame cache: the
+        // widget may have missed pushes while hidden -- see RequestResync.
+        if (UI::IntuitionMenu::ConsumeResync()) {
+            m_lastPush.valid = false;
+        }
+
         // Page state was resolved once by the coordinator (ResolveDisplayPage) and
         // handed to us on the context — no need to re-fetch from the allocator or
         // SlotSettings. We just render the assignments we're given for that page.
@@ -98,6 +104,17 @@ namespace Huginn::Display
         // Swap rather than assign: m_scratch inherits the old buffers, so neither
         // side reallocates on the next push.
         std::swap(m_lastPush, m_scratch);
+
+        // What the widget was told, on change only. Without this a widget/key
+        // desync could not be read from a log at all: the per-slot line below
+        // is trace. Names only -- short enough for one line.
+        {
+            std::string summary;
+            for (size_t i = 0; i < m_lastPush.slots.size(); ++i) {
+                summary += std::format("{}{}={}", i ? " " : "", i, m_lastPush.slots[i].name);
+            }
+            logger::debug("[Intuition] push page {}: {}"sv, ctx.pageIndex, summary);
+        }
 
         intuition->SetSlotCount(static_cast<int>(ctx.slotCount));
         intuition->SetPage(
