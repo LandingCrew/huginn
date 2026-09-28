@@ -405,8 +405,18 @@ namespace Huginn::Override
             if (!Spell::HasTag(sd.tags, tag)) return;
             auto* spell = RE::TESForm::LookupByID<RE::SpellItem>(sd.formID);
             if (!spell || spell->GetDelivery() != RE::MagicSystem::Delivery::kSelf) return;
-            const float cost = spell->CalculateMagickaCost(player);
+            float cost = spell->CalculateMagickaCost(player);
+            // The engine can report <= 0 for concentration spells; use the
+            // base cost then, as CandidateGenerator does -- otherwise a heal
+            // the player cannot cast passes as "cost 0" (/code-review, #144).
+            if (sd.isConcentration && cost <= 0.0f) {
+                cost = static_cast<float>(sd.baseCost);
+            }
             if (cost > magicka) return;
+            // A concentration spell's cost is per second: credit only the
+            // seconds the player can pay for, not the whole window.
+            const float castSeconds = (sd.isConcentration && cost > 0.0f)
+                ? std::min(window, magicka / cost) : window;
 
             float restored = 0.0f;
             for (const auto* effect : spell->effects) {
@@ -415,7 +425,7 @@ namespace Huginn::Override
                 const float mag = effect->effectItem.magnitude;
                 const float dur = static_cast<float>(effect->effectItem.duration);
                 restored = std::max(restored,
-                    sd.isConcentration ? mag * window : Item::RestoredWithin(mag, dur, window));
+                    sd.isConcentration ? mag * castSeconds : Item::RestoredWithin(mag, dur, window));
             }
             if (restored > bestRestored) {
                 bestRestored = restored;
