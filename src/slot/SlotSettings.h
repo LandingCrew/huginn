@@ -172,13 +172,13 @@ namespace Huginn::Slot
         };
 
         inline constexpr SlotDefault PAGE0_SLOTS[] = {
-            { SlotClassification::DamageAny,  true, OverrideFilter::Any,  6, false },  // Slot 0
-            { SlotClassification::WeaponsAny, true, OverrideFilter::Any,  5, false },  // Slot 1
-            { SlotClassification::BuffsAny,   true, OverrideFilter::Any,  4, false },  // Slot 2
-            { SlotClassification::Regular,    true, OverrideFilter::None, 3, false },  // Slot 3
-            { SlotClassification::Regular,    true, OverrideFilter::None, 2, false },  // Slot 4
-            { SlotClassification::Regular,    true, OverrideFilter::None, 1, false },  // Slot 5
-            { SlotClassification::Regular,    true, OverrideFilter::Other, 0, false }, // Slot 6 (reserves an Other-only home for soul-gem/ammo/drowning overrides)
+            { SlotClassification::DamageAny,  true, OverrideFilter::Any,  6, true },  // Slot 0
+            { SlotClassification::WeaponsAny, true, OverrideFilter::Any,  5, true },  // Slot 1
+            { SlotClassification::BuffsAny,   true, OverrideFilter::Any,  4, true },  // Slot 2
+            { SlotClassification::Regular,    true, OverrideFilter::None, 3, true },  // Slot 3
+            { SlotClassification::Regular,    true, OverrideFilter::None, 2, true },  // Slot 4
+            { SlotClassification::Regular,    true, OverrideFilter::None, 1, true },  // Slot 5
+            { SlotClassification::Regular,    true, OverrideFilter::Other, 0, true }, // Slot 6 (reserves an Other-only home for soul-gem/ammo/drowning overrides)
         };
     }
 

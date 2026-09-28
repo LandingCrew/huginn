@@ -440,6 +440,8 @@ Raised 2026-09-24.
       external equips (menu, favourites, the player's own wheels) are out of
       scope; the item takes the pressed slot whatever its classification;
       one hand (right, else left); no chaining; no learner reward.
+      Decided 2026-09-28: a plain UNEQUIP (hand or quiver left empty) is not
+      remembered -- only a swap made through Huginn is.
       Played on LoreRim 2026-09-27 22:16-22:39: 18 holds, each the item the
       press took off (Battlestaff back under the knife's key, Long Bow back
       when the Battlestaff replaced it); swap-backs ended them, the rest

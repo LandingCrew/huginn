@@ -79,7 +79,7 @@ Every slot takes the same six settings:
 | `sClassification` | What is allowed in this slot — see the list below |
 | `bWildcardsEnabled` | Let Huginn occasionally offer something outside its usual pick, so it can find out what else you like |
 | `bOverridesEnabled` | Whether an emergency can take this slot over. `HP`, `MP` or `SP` for a health, magicka or stamina emergency; `Other` for the soul gem, low ammo and drowning prompts; `Any` for all of them; `None` to leave the slot alone |
-| `bSkipEquipped` | Skip anything already in your hands, so the slot shows you an alternative instead |
+| `bSkipEquipped` | Skip anything already in your hands, so the slot shows you an alternative instead. On by default; `bSkipEquipped = 0` lets a slot show a weapon you are holding (to double-tap it into the other hand, say) |
 | `bRemembrance` | Swap back: when you press this slot to equip something, what it took off waits under the same key for a while (see Steadiness below). On by default; `bRemembrance = 0` turns it off for this slot |
 | `iPriority` | Which slots get first pick of the good options. Higher fills first |
 

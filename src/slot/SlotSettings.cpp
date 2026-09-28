@@ -70,7 +70,7 @@ namespace Huginn::Slot
                     slot.wildcardsEnabled = true;
                     slot.overrideFilter = OverrideFilter::None;
                     slot.priority = static_cast<int8_t>(slotCount - s - 1);
-                    slot.skipEquipped = false;
+                    slot.skipEquipped = true;
                 }
 
                 // Read from INI (section may not exist - uses defaults)
@@ -297,7 +297,7 @@ namespace Huginn::Slot
                     .classification = SlotClassification::Regular,
                     .wildcardsEnabled = true,
                     .overrideFilter = OverrideFilter::None,
-                    .skipEquipped = false,
+                    .skipEquipped = true,
                     .priority = static_cast<int8_t>(2 - s)
                 });
             }

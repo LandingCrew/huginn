@@ -151,7 +151,7 @@ classifications, then `FoodAny` before `AlcoholAny` before `PotionsAny`, then
 | `classification` | `SlotClassification` | `Regular` | What type of candidate can appear |
 | `wildcardsEnabled` | `bool` | `true` | Allow wildcard exploration picks |
 | `overrideFilter` | `OverrideFilter` | `Any` | Which override categories accepted (`None`, `Any`, `HP`, `MP`, `SP`, `Other`) |
-| `skipEquipped` | `bool` | `false` | Skip candidates already equipped (show alternatives only) |
+| `skipEquipped` | `bool` | `true` | Skip candidates already equipped (show alternatives only). Default on since v0.21.51 |
 | `remembrance` | `bool` | `true` | Pressing this slot holds what the equip took off here (see [Remembrance](#remembrance)) |
 | `priority` | `int8_t` | `0` | Allocation order (higher = filled first) |
 
@@ -454,18 +454,18 @@ priority governs fill order only. Neither reads the other.
 
 | Slot | Classification | Priority | Override filter | Wildcards | SkipEquipped |
 |------|----------------|----------|-----------------|-----------|--------------|
-| 0 | DamageAny | 6 | Any | Yes | No |
-| 1 | WeaponsAny | 5 | Any | Yes | No |
-| 2 | BuffsAny | 4 | Any | Yes | No |
-| 3 | Regular | 3 | None | Yes | No |
-| 4 | Regular | 2 | None | Yes | No |
-| 5 | Regular | 1 | None | Yes | No |
-| 6 | Regular | 0 | **Other** | Yes | No |
+| 0 | DamageAny | 6 | Any | Yes | Yes |
+| 1 | WeaponsAny | 5 | Any | Yes | Yes |
+| 2 | BuffsAny | 4 | Any | Yes | Yes |
+| 3 | Regular | 3 | None | Yes | Yes |
+| 4 | Regular | 2 | None | Yes | Yes |
+| 5 | Regular | 1 | None | Yes | Yes |
+| 6 | Regular | 0 | **Other** | Yes | Yes |
 
 Slot 6's `Other` filter reserves a home for the soul-gem / low-ammo / drowning
 prompts. Slots past index 6 (only reachable when the INI asks for more) and all
 slots on pages 1+ default to `Regular`, wildcards on, override filter `None`,
-priority `slotCount - index - 1`.
+skip-equipped on, priority `slotCount - index - 1`.
 
 ### Shipped INI layout (3 pages, 8 slots each)
 
@@ -740,7 +740,7 @@ sClassification = DamageAny   ; SlotClassification enum name (unknown -> Regular
 bWildcardsEnabled = true      ; Allow wildcard exploration picks in this slot
 bOverridesEnabled = HP        ; OverrideFilter: None/Any/HP/MP/SP/Other (true/false also accepted)
 iPriority = 6                 ; Allocation order (higher = filled first)
-bSkipEquipped = false         ; Skip already-equipped candidates
+bSkipEquipped = true          ; Skip already-equipped candidates (default on)
 bRemembrance = true           ; Hold what pressing this slot took off (Remembrance)
 ```
 
