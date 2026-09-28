@@ -66,6 +66,13 @@ namespace Huginn::Override
         logger::info("[OverrideSettings] Spell fallback: health={} magicka={} stamina={}"sv,
             healthSpellFallback, magickaSpellFallback, staminaSpellFallback);
 
+        // Emergency placement (pinned to the configured slot vs marked in place)
+        pinHealthToSlot = readBool(section, "bPinHealthToSlot", Defaults::PIN_HEALTH_TO_SLOT);
+        pinMagickaToSlot = readBool(section, "bPinMagickaToSlot", Defaults::PIN_MAGICKA_TO_SLOT);
+        pinStaminaToSlot = readBool(section, "bPinStaminaToSlot", Defaults::PIN_STAMINA_TO_SLOT);
+        logger::info("[OverrideSettings] Pinned to slot: health={} magicka={} stamina={}"sv,
+            pinHealthToSlot, pinMagickaToSlot, pinStaminaToSlot);
+
         // Enable flags
         enableCriticalHealth = readBool(section, "bEnableCriticalHealth", Defaults::ENABLE_CRITICAL_HEALTH);
         enableDrowning = readBool(section, "bEnableDrowning", Defaults::ENABLE_DROWNING);

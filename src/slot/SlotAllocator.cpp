@@ -406,18 +406,21 @@ namespace Huginn::Slot
                 // (2026-09-27 19:03:07, 19:08:56; Minor Healing in slot 7 moved
                 // to slot 0 at 19:14:16 when slot 7 could have just been marked).
                 //
-                // Except the three VITALS, which keep their configured slots: in
-                // an emergency the player should not have to find the potion --
-                // the key is muscle memory. Health first (2026-09-27 19:26, user's
-                // call: marking it where it stood put it on key 7); magicka and
-                // stamina joined when the flagship page gave every key a job and
-                // the magicka emergency pulsed the Potion key, not key 2
-                // (2026-09-28 18:00:27). The quieter prompts -- ammo, soul gem,
-                // drowning -- still mark in place, where a still bar is worth more.
+                // Except the VITALS, which by default keep their configured
+                // slots: in an emergency the player should not have to find the
+                // potion -- the key is muscle memory. Health first (2026-09-27
+                // 19:26, user's call: marking it where it stood put it on key 7);
+                // magicka and stamina joined when the flagship page gave every
+                // key a job and the magicka emergency pulsed the Potion key, not
+                // key 2 (2026-09-28 18:00:27). Each is an INI switch
+                // ([Overrides] bPin{Health,Magicka,Stamina}ToSlot). The quieter
+                // prompts -- ammo, soul gem, drowning -- always mark in place,
+                // where a still bar is worth more.
+                using OC = Override::OverrideCondition;
                 const bool pinnedToSlot =
-                    override.condition == Override::OverrideCondition::CriticalHealth ||
-                    override.condition == Override::OverrideCondition::CriticalMagicka ||
-                    override.condition == Override::OverrideCondition::CriticalStamina;
+                    (override.condition == OC::CriticalHealth && Override::Config::PIN_HEALTH_TO_SLOT()) ||
+                    (override.condition == OC::CriticalMagicka && Override::Config::PIN_MAGICKA_TO_SLOT()) ||
+                    (override.condition == OC::CriticalStamina && Override::Config::PIN_STAMINA_TO_SLOT());
                 if (const size_t home = pinnedToSlot ? SIZE_MAX : FindItemSlot(pageIndex, configGeneration,
                         Candidate::GetBase(*override.candidate).GetDeduplicationKey(),
                         std::min(slotConfigs.size(), MAX_SLOTS_PER_PAGE));
