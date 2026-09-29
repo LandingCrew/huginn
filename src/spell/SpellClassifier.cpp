@@ -178,6 +178,23 @@ namespace Huginn::Spell
       data.isConcentration = IsConcentration(spell);
       data.range = GetEffectiveRange(spell, primaryEffect);  // reuse pre-computed effect
 
+      // Equivalence-cap inputs (slot/EquivalenceKey.h). Both are things the
+      // player can see: how the spell is cast, and the skill level printed in
+      // the magic menu and on the tome.
+      switch (spell->GetDelivery()) {
+      case RE::MagicSystem::Delivery::kSelf:           data.delivery = SpellDelivery::Self; break;
+      case RE::MagicSystem::Delivery::kTouch:          data.delivery = SpellDelivery::Touch; break;
+      case RE::MagicSystem::Delivery::kAimed:          data.delivery = SpellDelivery::Aimed; break;
+      case RE::MagicSystem::Delivery::kTargetActor:    data.delivery = SpellDelivery::TargetActor; break;
+      case RE::MagicSystem::Delivery::kTargetLocation: data.delivery = SpellDelivery::TargetLocation; break;
+      default:                                         data.delivery = SpellDelivery::Unknown; break;
+      }
+      // static_cast<int> first: compiles whether CommonLib types the field as
+      // an integer or a float.
+      data.skillLevel = primaryEffect
+         ? static_cast<uint8_t>(std::clamp(static_cast<int>(primaryEffect->data.minimumSkill), 0, 100))
+         : 0;
+
       return data;
    }
 

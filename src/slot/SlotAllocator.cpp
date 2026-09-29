@@ -104,6 +104,9 @@ namespace Huginn::Slot
             std::lock_guard<std::mutex> logLock(m_logMutex);
             m_loggedMissingClassifications.clear();
             m_warnedUnplacedConditions.clear();
+            for (auto& page : m_lastCapSkipped) {
+                page.clear();
+            }
         }
         {
             // Seats are a memory of a layout that may not be the one coming
@@ -331,6 +334,25 @@ namespace Huginn::Slot
         // Compute priority order for this config (fixed-size, no heap allocation)
         std::array<size_t, MAX_SLOTS_PER_PAGE> priorityOrder;
         const size_t priorityCount = ComputePriorityOrder(slotConfigs, priorityOrder);
+
+        // Equivalence cap (`[SlotLocker] bCapEquivalents`): keys are computed
+        // once per allocation, index-aligned with `candidates`. Magicka is the
+        // RAW player value -- the spell-vs-scroll choice is about what can be
+        // cast right now.
+        EquivCapContext capCtx;
+        {
+            const auto& slotSettings = SlotSettings::GetSingleton();
+            capCtx.enabled = slotSettings.CapEquivalents();
+            if (capCtx.enabled) {
+                capCtx.maxPerKey = slotSettings.MaxPerEquivalenceKey();
+                capCtx.edges = slotSettings.EquivalenceCostBands();
+                capCtx.currentMagicka = player.vitals.magicka * player.vitals.maxMagicka;
+                capCtx.keys.reserve(candidates.size());
+                for (const auto& c : candidates) {
+                    capCtx.keys.push_back(MakeEquivalenceKey(c, capCtx.edges));
+                }
+            }
+        }
 
         // Diagnostic: Count candidates by classification (logs only on change, debug level)
         // Use thread_local for thread safety in case of multi-threaded access
@@ -665,7 +687,7 @@ namespace Huginn::Slot
             if (settings.KeepSlotPositions() && settings.HoldSeatedItems()) {
                 HoldIncumbents(pageIndex, configGeneration, slotConfigs, candidates, assignments,
                     assignedFormIDs, assignedNames, &player, settings.ChallengerMargin(),
-                    priorityOrder, priorityCount);
+                    priorityOrder, priorityCount, &capCtx);
             }
         }
 
@@ -682,7 +704,8 @@ namespace Huginn::Slot
 
             // Find best matching candidate
             auto bestCandidate = FindBestCandidate(
-                candidates, config.classification, assignedFormIDs, assignedNames, config.skipEquipped, &player);
+                candidates, config.classification, assignedFormIDs, assignedNames, config.skipEquipped, &player,
+                /*skipWildcards=*/false, &assignments, &capCtx);
 
             if (!bestCandidate) {
                 // Rate-limit "no candidate found" logs per classification type
@@ -710,7 +733,7 @@ namespace Huginn::Slot
                     bestCandidate = FindBestCandidate(
                         candidates, config.classification, assignedFormIDs,
                         assignedNames, config.skipEquipped, &player,
-                        /*skipWildcards=*/true);
+                        /*skipWildcards=*/true, &assignments, &capCtx);
                     assignType = AssignmentType::Normal;
                 }
 
@@ -738,7 +761,8 @@ namespace Huginn::Slot
                 const auto& config = slotConfigs[idx];
                 auto refill = FindBestCandidate(
                     candidates, config.classification, assignedFormIDs, assignedNames,
-                    config.skipEquipped, &player, /*skipWildcards=*/!config.wildcardsEnabled);
+                    config.skipEquipped, &player, /*skipWildcards=*/!config.wildcardsEnabled,
+                    &assignments, &capCtx);
                 if (!refill) continue;
                 assignments[idx] = SlotAssignment::FromCandidate(
                     idx, config.classification, *refill,
@@ -746,6 +770,14 @@ namespace Huginn::Slot
                 assignedFormIDs.insert(refill->GetFormID());
                 assignedNames.insert(refill->GetName());
             }
+        }
+
+        // PASS 4b (cap fallback), no-seating path: the cap held back an item
+        // and nothing else could take its slot -- show the held-back item
+        // rather than a blank key. The seating path runs this after pass 4.
+        if (capCtx.enabled && !SlotSettings::GetSingleton().KeepSlotPositions()) {
+            FillEmptyIgnoringCap(slotConfigs, assignments, candidates, assignedFormIDs, assignedNames,
+                player, priorityOrder, priorityCount);
         }
 
         // =======================================================================
@@ -784,7 +816,8 @@ namespace Huginn::Slot
                 const auto& config = slotConfigs[priorityIdx];
                 auto refill = FindBestCandidate(
                     candidates, config.classification, assignedFormIDs, assignedNames,
-                    config.skipEquipped, &player, /*skipWildcards=*/!config.wildcardsEnabled);
+                    config.skipEquipped, &player, /*skipWildcards=*/!config.wildcardsEnabled,
+                    &assignments, &capCtx);
                 if (!refill) continue;
 
                 assignment = SlotAssignment::FromCandidate(
@@ -794,9 +827,18 @@ namespace Huginn::Slot
                 assignedNames.insert(refill->GetName());
             }
 
+            // PASS 4b (cap fallback): a slot the cap left blank takes the best
+            // held-back item after all. Before RecordSeating, so it gets a seat.
+            if (capCtx.enabled) {
+                FillEmptyIgnoringCap(slotConfigs, assignments, candidates, assignedFormIDs, assignedNames,
+                    player, priorityOrder, priorityCount);
+            }
+
             // PASS 5: remember the result for next time.
             RecordSeating(pageIndex, generation, assignments);
         }
+
+        LogCapSkips(pageIndex, capCtx, assignments);
 
         return assignments;
     }
@@ -865,7 +907,8 @@ namespace Huginn::Slot
         const State::PlayerActorState* player,
         float margin,
         const std::array<size_t, MAX_SLOTS_PER_PAGE>& priorityOrder,
-        size_t priorityCount) const
+        size_t priorityCount,
+        const EquivCapContext* cap) const
     {
         if (pageIndex >= MAX_PAGES) {
             return;
@@ -1013,6 +1056,25 @@ namespace Huginn::Slot
             const auto [j, item] = tentative[t];
             const auto& config = slotConfigs[j];
 
+            // Equivalence cap: a seat is not exempt. Its key already shown the
+            // maximum number of times on this page (by an override, a
+            // Remembrance hold, or a holder served earlier in this loop) means
+            // it is not held; it competes in pass 2 like anything else, where
+            // the cap applies to it again. Exempting seats would keep an old
+            // duplicate on screen for as long as it stayed recommended.
+            if (cap && cap->enabled) {
+                if (const auto key = MakeEquivalenceKey(*item, cap->edges)) {
+                    const uint32_t shown = CountWithEquivalenceKey(assignments, *key, cap->edges);
+                    if (shown >= cap->maxPerKey) {
+                        cap->skipped.try_emplace(item->GetFormID(),
+                            CapSkip{ item->GetName(), CapSkipReason::KeyFull, shown });
+                        excludedIDs.erase(item->GetFormID());
+                        excludedNames.erase(item->GetName());
+                        continue;
+                    }
+                }
+            }
+
             // A wildcard is not challenged on score. WildcardManager swaps it
             // into a rank POSITION and leaves its own low utility in place,
             // so the fill (which walks the list in order) treats it as that
@@ -1033,7 +1095,7 @@ namespace Huginn::Slot
 
             const auto challenger = FindBestCandidate(candidates, config.classification,
                 excludedIDs, excludedNames, config.skipEquipped, player,
-                /*skipWildcards=*/!config.wildcardsEnabled);
+                /*skipWildcards=*/!config.wildcardsEnabled, &assignments, cap);
 
             if (challenger && challenger->utility > item->utility * factor) {
                 SKSE::log::debug("[Hold] Page {} slot {}: '{}' gives way to '{}' (u={:.3f} vs {:.3f}, x{:.2f} > x{:.2f})",
@@ -1402,33 +1464,36 @@ namespace Huginn::Slot
         const std::set<std::string_view>& assignedNames,
         bool skipEquipped,
         const State::PlayerActorState* player,
-        bool skipWildcards) const
+        bool skipWildcards,
+        const SlotAssignments* placed,
+        const EquivCapContext* cap) const
     {
-        // Candidates are already sorted by utility (highest first)
-        // Find the first candidate that matches and isn't already assigned
-        for (const auto& candidate : candidates) {
+        // Could this candidate take the slot at all? Shared by the main walk
+        // and by the spell-vs-scroll check, which must only defer to an
+        // alternative that could actually be placed here.
+        auto eligible = [&](const Scoring::ScoredCandidate& candidate) -> bool {
             // Skip wildcards when the target slot forbids them
             if (skipWildcards && candidate.isWildcard) {
-                continue;
+                return false;
             }
 
             // Only a Remembrance hold may place these; they were never ranked.
             if (candidate.isRememberedOnly) {
-                continue;
+                return false;
             }
 
             // Skip already assigned candidates (by FormID or name)
             // Name check catches duplicate enchanted items with different FormIDs
             if (assignedFormIDs.contains(candidate.GetFormID())) {
-                continue;
+                return false;
             }
             if (assignedNames.contains(candidate.GetName())) {
-                continue;
+                return false;
             }
 
             // Check classification match
             if (!SlotClassifier::Matches(candidate, classification)) {
-                continue;
+                return false;
             }
 
             // Skip equipped items if this slot wants alternatives only.
@@ -1438,10 +1503,72 @@ namespace Huginn::Slot
             if (skipEquipped) {
                 const auto& base = Candidate::GetBase(candidate.candidate);
                 if (base.isEquipped) {
-                    continue;
+                    return false;
                 }
                 if (player && player->IsItemEquipped(base.formID)) {
+                    return false;
+                }
+            }
+            return true;
+        };
+
+        // The keys are index-aligned with the list they were built from; a
+        // caller passing a different list gets no cap rather than wrong keys.
+        const bool capOn = cap && cap->enabled && placed && cap->keys.size() == candidates.size();
+
+        // Candidates are already sorted by utility (highest first)
+        // Find the first candidate that matches and isn't already assigned
+        for (size_t i = 0; i < candidates.size(); ++i) {
+            const auto& candidate = candidates[i];
+            if (!eligible(candidate)) {
+                continue;
+            }
+
+            if (capOn && cap->keys[i]) {
+                const EquivalenceKey& key = *cap->keys[i];
+                auto holdBack = [&](CapSkipReason reason, uint32_t shown) {
+                    cap->skipped.try_emplace(candidate.GetFormID(),
+                        CapSkip{ candidate.GetName(), reason, shown });
+                };
+
+                // (a) The page already shows this key the maximum number of times.
+                const uint32_t shown = CountWithEquivalenceKey(*placed, key, cap->edges);
+                if (shown >= cap->maxPerKey) {
+                    holdBack(CapSkipReason::KeyFull, shown);
                     continue;
+                }
+
+                // (b) Spell vs scroll of the same key: the spell while it can
+                // be cast now, else the scroll. Only defers to an alternative
+                // that is eligible for THIS slot, so it never empties one. The
+                // two rules cannot both fire for one pair: a scroll defers
+                // only to a castable spell, a spell only when it is not.
+                auto sameKeyEligible = [&](auto&& accepts) -> bool {
+                    for (size_t j = 0; j < candidates.size(); ++j) {
+                        if (j == i || !cap->keys[j] || !(*cap->keys[j] == key)) continue;
+                        if (!accepts(candidates[j])) continue;
+                        if (eligible(candidates[j])) return true;
+                    }
+                    return false;
+                };
+                if (Candidate::IsType<Candidate::ScrollCandidate>(candidate.candidate)) {
+                    const bool castableSpell = sameKeyEligible([&](const Scoring::ScoredCandidate& other) {
+                        const auto* spell = Candidate::TryGetAs<Candidate::SpellCandidate>(other.candidate);
+                        return spell && PreferSpellOverScroll(cap->currentMagicka, spell->effectiveCost);
+                    });
+                    if (castableSpell) {
+                        holdBack(CapSkipReason::PreferSpell, 0);
+                        continue;
+                    }
+                } else if (const auto* spell = Candidate::TryGetAs<Candidate::SpellCandidate>(candidate.candidate);
+                           spell && !PreferSpellOverScroll(cap->currentMagicka, spell->effectiveCost)) {
+                    const bool scrollAvailable = sameKeyEligible([](const Scoring::ScoredCandidate& other) {
+                        return Candidate::IsType<Candidate::ScrollCandidate>(other.candidate);
+                    });
+                    if (scrollAvailable) {
+                        holdBack(CapSkipReason::PreferScroll, 0);
+                        continue;
+                    }
                 }
             }
 
@@ -1449,6 +1576,91 @@ namespace Huginn::Slot
         }
 
         return std::nullopt;
+    }
+
+    // =========================================================================
+    // EQUIVALENCE CAP
+    // =========================================================================
+
+    void SlotAllocator::FillEmptyIgnoringCap(
+        const std::vector<SlotConfig>& slotConfigs,
+        SlotAssignments& assignments,
+        const Scoring::ScoredCandidateList& candidates,
+        std::set<RE::FormID>& assignedFormIDs,
+        std::set<std::string_view>& assignedNames,
+        const State::PlayerActorState& player,
+        const std::array<size_t, MAX_SLOTS_PER_PAGE>& priorityOrder,
+        size_t priorityCount) const
+    {
+        // The cap decides which items to prefer, never whether a key is
+        // blank: whatever is still empty here takes the best remaining
+        // candidate with the cap off. Same rules as pass 4 otherwise.
+        for (size_t k = 0; k < priorityCount; ++k) {
+            const size_t idx = priorityOrder[k];
+            if (idx >= assignments.size() || idx >= slotConfigs.size() || !assignments[idx].IsEmpty()) continue;
+
+            const auto& config = slotConfigs[idx];
+            auto refill = FindBestCandidate(
+                candidates, config.classification, assignedFormIDs, assignedNames,
+                config.skipEquipped, &player, /*skipWildcards=*/!config.wildcardsEnabled);
+            if (!refill) continue;
+
+            assignments[idx] = SlotAssignment::FromCandidate(
+                idx, config.classification, *refill,
+                refill->isWildcard ? AssignmentType::Wildcard : AssignmentType::Normal);
+            assignedFormIDs.insert(refill->GetFormID());
+            assignedNames.insert(refill->GetName());
+        }
+    }
+
+    void SlotAllocator::LogCapSkips(
+        size_t pageIndex, const EquivCapContext& cap, const SlotAssignments& assignments) const
+    {
+        if (pageIndex >= MAX_PAGES) {
+            return;
+        }
+
+        // Held back = skipped somewhere this pass AND not on screen in the
+        // end (a later slot, or the fallback fill, may have placed it).
+        std::set<RE::FormID> now;
+        if (cap.enabled) {
+            for (const auto& entry : cap.skipped) {
+                now.insert(entry.first);
+            }
+            for (const auto& a : assignments) {
+                if (!a.IsEmpty()) {
+                    now.erase(a.formID);
+                }
+            }
+        }
+
+        std::lock_guard<std::mutex> logLock(m_logMutex);
+        auto& last = m_lastCapSkipped[pageIndex];
+        if (now == last) {
+            return;
+        }
+        // Transitions only: an item held back tick after tick logs once.
+        for (const RE::FormID formID : now) {
+            if (last.contains(formID)) continue;
+            const auto it = cap.skipped.find(formID);
+            if (it == cap.skipped.end()) continue;
+            const auto& skip = it->second;
+            switch (skip.reason) {
+                case CapSkipReason::KeyFull:
+                    SKSE::log::debug("[EquivCap] Page {}: '{}' held back (key already shown {}x)",
+                        pageIndex, skip.name, skip.shown);
+                    break;
+                case CapSkipReason::PreferSpell:
+                    SKSE::log::debug("[EquivCap] Page {}: '{}' held back (the same-effect spell is castable)",
+                        pageIndex, skip.name);
+                    break;
+                case CapSkipReason::PreferScroll:
+                    SKSE::log::debug("[EquivCap] Page {}: '{}' held back (not enough magicka; a same-effect scroll is shown instead)",
+                        pageIndex, skip.name);
+                    break;
+            }
+        }
+        last = std::move(now);
     }
 
     // =========================================================================

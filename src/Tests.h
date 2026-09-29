@@ -24,6 +24,7 @@ void RunSlotLockerResetTest();
 void RunSlotLockerInstanceLockTest();
 void RunSlotSeatingTest();
 void RunFillJobKeysTest();
+void RunEquivalenceKeyTests();
 void RunBuffElementResistTest();
 
 // =============================================================================

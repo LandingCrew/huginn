@@ -3,7 +3,9 @@
 #include <SimpleIni.h>
 #include <algorithm>
 #include <array>
+#include <charconv>
 #include <numeric>
+#include <string_view>
 #include <set>
 #include "SlotClassifier.h"
 #include "candidate/CandidateTypes.h"
@@ -226,6 +228,23 @@ namespace Huginn::Slot
         SKSE::log::info("[SlotSettings] Fill empty job keys from Regular keys: {}"sv,
             pullFromRegular ? "on" : "off");
 
+        // Per-page equivalence cap (slot/EquivalenceKey.h). In [SlotLocker]
+        // for the same reason as the switches above: the allocator already
+        // takes its policies from here, so it hot-reloads with the layout.
+        {
+            const bool cap = ini.GetBoolValue("SlotLocker", "bCapEquivalents", false);
+            const auto maxPerKey = static_cast<uint32_t>(std::clamp(
+                ini.GetLongValue("SlotLocker", "iMaxPerEquivalenceKey", 1), 1L, 10L));
+            const auto bands = ParseCostBands(ini.GetValue("SlotLocker", "sEquivalenceCostBands", "40,100,250,600"));
+            m_capEquivalents.store(cap, std::memory_order_release);
+            m_maxPerEquivalenceKey.store(maxPerKey, std::memory_order_release);
+            for (size_t i = 0; i < bands.size(); ++i) {
+                m_costBands[i].store(bands[i], std::memory_order_release);
+            }
+            SKSE::log::info("[SlotSettings] Equivalence cap: {} (max {} per key per page, cost bands {}/{}/{}/{})"sv,
+                cap ? "on" : "off", maxPerKey, bands[0], bands[1], bands[2], bands[3]);
+        }
+
         // Parsing succeeded - commit the new configuration under exclusive lock
         size_t committedCount;
         {
@@ -249,6 +268,14 @@ namespace Huginn::Slot
         m_keepSlotPositions.store(true, std::memory_order_release);
         m_holdSeatedItems.store(true, std::memory_order_release);
         m_challengerMargin.store(0.25f, std::memory_order_release);
+        m_capEquivalents.store(false, std::memory_order_release);
+        m_maxPerEquivalenceKey.store(1, std::memory_order_release);
+        {
+            constexpr std::array<uint32_t, 4> kDefaultBands{ 40, 100, 250, 600 };
+            for (size_t i = 0; i < kDefaultBands.size(); ++i) {
+                m_costBands[i].store(kDefaultBands[i], std::memory_order_release);
+            }
+        }
         m_generation.fetch_add(1, std::memory_order_release);
         SKSE::log::info("[SlotSettings] Reset to defaults (1 page, {} slots)"sv, slotCount);
     }
@@ -327,6 +354,46 @@ namespace Huginn::Slot
         }
 
         return page;
+    }
+
+    std::array<uint32_t, 4> SlotSettings::ParseCostBands(const char* str)
+    {
+        constexpr std::array<uint32_t, 4> kDefault{ 40, 100, 250, 600 };
+        if (!str) {
+            return kDefault;
+        }
+        std::array<uint32_t, 4> out{};
+        size_t count = 0;
+        std::string_view rest(str);
+        bool ok = true;
+        while (ok && !rest.empty()) {
+            const size_t comma = rest.find(',');
+            std::string_view token = rest.substr(0, comma);
+            rest = comma == std::string_view::npos ? std::string_view{} : rest.substr(comma + 1);
+
+            while (!token.empty() && (token.front() == ' ' || token.front() == '\t')) token.remove_prefix(1);
+            while (!token.empty() && (token.back() == ' ' || token.back() == '\t')) token.remove_suffix(1);
+            if (token.empty() || count >= out.size()) {
+                ok = false;
+                break;
+            }
+            uint32_t value = 0;
+            const auto [ptr, ec] = std::from_chars(token.data(), token.data() + token.size(), value);
+            if (ec != std::errc{} || ptr != token.data() + token.size()) {
+                ok = false;
+                break;
+            }
+            if (count > 0 && value <= out[count - 1]) {
+                ok = false;  // must be strictly ascending
+                break;
+            }
+            out[count++] = value;
+        }
+        if (!ok || count != out.size()) {
+            SKSE::log::warn("[SlotSettings] sEquivalenceCostBands '{}' is not four ascending numbers; using 40,100,250,600"sv, str);
+            return kDefault;
+        }
+        return out;
     }
 
     SlotClassification SlotSettings::ParseClassification(const std::string& str)

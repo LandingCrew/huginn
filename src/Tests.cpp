@@ -34,6 +34,7 @@
 #include "IniLoad.h"                   // MatchOverrideSection (override namespacing tests)
 #include "slot/SlotLocker.h"          // THROWAWAY: RunSlotLockerResetTest (0.19.21)
 #include "slot/SlotAllocator.h"       // THROWAWAY: RunSlotSeatingTest (0.20.30)
+#include "slot/EquivalenceKey.h"      // RunEquivalenceKeyTests
 #include "slot/SlotSettings.h"         // THROWAWAY: MAX_SLOTS_PER_PAGE for the same
 #include "override/OverrideConditions.h"  // THROWAWAY: OverrideCollection for the same
 
@@ -6160,6 +6161,145 @@ void RunFillJobKeysTest()
 
     if (passed) {
         logger::info("  fill-job-keys test PASSED"sv);
+    }
+#endif
+}
+
+// =============================================================================
+// Per-page equivalence cap: key construction (slot/EquivalenceKey.h)
+// =============================================================================
+// Pure: builds candidates by hand, never touches a registry or the allocator's
+// state. Pins what counts as "the same thing" for bCapEquivalents -- a spell
+// and its scroll share a key, delivery-ish tag bits do not split them, and a
+// different element, delivery, tier or effect tag does.
+void RunEquivalenceKeyTests()
+{
+#ifndef NDEBUG
+    using namespace Huginn::Slot;
+    logger::info("Running equivalence-key tests..."sv);
+
+    bool passed = true;
+    auto expect = [&](bool ok, std::string_view what) {
+        if (!ok) { logger::error("TEST FAIL: equivalence key: {}"sv, what); passed = false; }
+    };
+    const CostBandEdges edges = DEFAULT_COST_BAND_EDGES;
+
+    auto spell = [](RE::FormID id, std::string_view name, Spell::SpellType type, Spell::SpellTag tags,
+                     Spell::ElementType element, Spell::SpellDelivery delivery, uint8_t skill, uint32_t cost) {
+        Candidate::SpellCandidate s{};
+        s.formID = id; s.name = name; s.type = type; s.tags = tags; s.element = element;
+        s.delivery = delivery; s.skillLevel = skill; s.baseCost = cost;
+        s.effectiveCost = static_cast<float>(cost);
+        return s;
+    };
+    auto scroll = [](RE::FormID id, std::string_view name, Spell::SpellType type, Spell::SpellTag tags,
+                      Spell::ElementType element, Spell::SpellDelivery delivery, uint8_t skill, uint32_t cost) {
+        Candidate::ScrollCandidate s{};
+        s.formID = id; s.name = name; s.type = type; s.tags = tags; s.element = element;
+        s.delivery = delivery; s.skillLevel = skill; s.baseCost = cost; s.count = 1;
+        return s;
+    };
+    auto key = [&](const Candidate::CandidateVariant& v) { return MakeEquivalenceKey(v, edges); };
+
+    using ST = Spell::SpellTag;
+    using SD = Spell::SpellDelivery;
+    using EL = Spell::ElementType;
+
+    // A concentration spell and a fire-and-forget scroll of the same effect:
+    // Concentration/Ranged differ, everything else matches.
+    const auto flames = spell(0x0BADE001, "EqProbeFlames", Spell::SpellType::Damage,
+        ST::Fire | ST::Ranged | ST::Concentration, EL::Fire, SD::Aimed, 25, 14);
+    const auto flamesScroll = scroll(0x0BADE002, "EqProbeScrollOfFlames", Spell::SpellType::Damage,
+        ST::Fire, EL::Fire, SD::Aimed, 25, 14);
+    {
+        const auto a = key(flames);
+        const auto b = key(flamesScroll);
+        expect(a.has_value() && b.has_value(), "a typed spell or scroll got no key");
+        expect(a && b && *a == *b, "a spell and its scroll (differing only in Ranged/Concentration) have different keys");
+    }
+
+    // TargetActor and Aimed both bucket to Ranged.
+    {
+        auto aimedAtActor = flames;
+        aimedAtActor.delivery = SD::TargetActor;
+        expect(key(flames) == key(aimedAtActor), "Aimed and TargetActor fall in different delivery buckets");
+    }
+
+    // Any one real difference splits the key.
+    {
+        auto frost = flames; frost.element = EL::Frost;
+        expect(key(flames) != key(frost), "a different element gave the same key");
+
+        auto touch = flames; touch.delivery = SD::Touch;
+        expect(key(flames) != key(touch), "a different delivery gave the same key");
+
+        auto adept = flames; adept.skillLevel = 50;
+        expect(key(flames) != key(adept), "a different tier gave the same key");
+    }
+
+    // Same type/element/delivery/tier, different effect tags: Oakflesh-like
+    // (Armor) and Muffle-like (Muffle|Stealth) must not merge.
+    {
+        const auto oak = spell(0x0BADE003, "EqProbeOakflesh", Spell::SpellType::Buff, ST::Armor,
+            EL::None, SD::Self, 0, 50);
+        const auto muffle = spell(0x0BADE004, "EqProbeMuffle", Spell::SpellType::Buff, ST::Muffle | ST::Stealth,
+            EL::None, SD::Self, 0, 50);
+        expect(key(oak) != key(muffle), "two Buffs with different effect tags share a key");
+    }
+
+    // No key: potion, weapon, Unknown spell type.
+    {
+        Candidate::ItemCandidate potion{};
+        potion.formID = 0x0BADE005; potion.name = "EqProbePotion";
+        potion.type = Item::ItemType::HealthPotion; potion.tags = Item::ItemTag::RestoreHealth;
+        expect(!key(potion).has_value(), "a potion got a key (tier preference owns potions)");
+
+        Candidate::WeaponCandidate weapon{};
+        weapon.formID = 0x0BADE006; weapon.name = "EqProbeSword";
+        expect(!key(weapon).has_value(), "a weapon got a key");
+
+        auto unknown = flames; unknown.type = Spell::SpellType::Unknown;
+        expect(!key(unknown).has_value(), "an Unknown-type spell got a key (must fail safe)");
+    }
+
+    // TierBand: skill first, else cost band.
+    expect(TierBand(50, 0, edges) == 2, "TierBand(skill 50) != 2");
+    expect(TierBand(100, 0, edges) == 4, "TierBand(skill 100) != 4");
+    expect(TierBand(0, 14, edges) == 0, "TierBand(skill 0, cost 14) != 0");
+    expect(TierBand(0, 700, edges) == 4, "TierBand(skill 0, cost 700) != 4");
+    expect(TierBand(0, 100, edges) == 2, "TierBand(skill 0, cost 100) != 2 (edges are inclusive)");
+
+    // ExceedsEquivalenceCap against a hand-built page.
+    {
+        auto scored = [](const Candidate::CandidateVariant& v) {
+            Scoring::ScoredCandidate sc{}; sc.candidate = v; sc.utility = 1.0f;
+            return sc;
+        };
+        SlotAssignments page;
+        for (size_t i = 0; i < 3; ++i) page.push_back(SlotAssignment::Empty(i, SlotClassification::Regular));
+        page[0] = SlotAssignment::FromCandidate(0, SlotClassification::Regular, scored(flames));
+
+        const auto scrollSc = scored(flamesScroll);
+        expect(ExceedsEquivalenceCap(page, scrollSc, 1, edges), "max 1: a second same-key item was not capped");
+        expect(!ExceedsEquivalenceCap(page, scrollSc, 2, edges), "max 2: the second same-key item was capped");
+
+        page[1] = SlotAssignment::FromCandidate(1, SlotClassification::Regular, scrollSc, AssignmentType::Override);
+        auto third = flames; third.formID = 0x0BADE007; third.name = "EqProbeFlames2";
+        expect(ExceedsEquivalenceCap(page, scored(third), 2, edges),
+            "max 2: a third same-key item was not capped (overrides must count)");
+
+        Candidate::WeaponCandidate weapon{};
+        weapon.formID = 0x0BADE008; weapon.name = "EqProbeAxe";
+        expect(!ExceedsEquivalenceCap(page, scored(weapon), 1, edges), "an item with no key was capped");
+    }
+
+    // Spell vs scroll: the spell exactly at its cost, the scroll one short.
+    expect(PreferSpellOverScroll(14.0f, 14.0f), "PreferSpellOverScroll false at magicka == cost");
+    expect(!PreferSpellOverScroll(13.9f, 14.0f), "PreferSpellOverScroll true below cost");
+    expect(PreferSpellOverScroll(0.0f, 0.0f), "PreferSpellOverScroll false for a free spell");
+
+    if (passed) {
+        logger::info("  equivalence-key tests PASSED"sv);
     }
 #endif
 }
