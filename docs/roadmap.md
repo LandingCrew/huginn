@@ -704,5 +704,45 @@ trigger to pick any of it up.
       Neither is measured. (A) is cheap enough to try and discard; (B) should
       not be started until (A) has shown that pooling helps at all on real play
       data.
+      Second source, same shape (2026-09-29): Amazon's "Contextual deep RL with
+      adaptive value-based clustering"
+      (https://www.amazon.science/publications/contextual-deep-reinforcement-learning-with-adaptive-value-based-clustering)
+      reaches the same pooling asymmetry from the opposite direction — it
+      clusters CONTEXTS and fits a policy per cluster, where (A)/(B) cluster
+      ITEMS and fit a weight vector per class. Two unrelated papers converging
+      on "fit the shared part from everything, leave a small residual to the
+      scarce per-arm data" is weak evidence the shape is right; it says nothing
+      about which axis pays here. Its own mechanism does NOT port — it embeds
+      contexts from the hidden layers of a pretrained deep value function, and
+      Huginn has neither a net to read activations off nor the trajectories to
+      fit one. The context axis it suggests is filed as its own entry below.
+- [ ] **Per-context-regime weights** — the other pooling axis, and the dual of
+      the entry above: that one pools over items and leaves context continuous,
+      this one pools over contexts and leaves items separate. Motive is
+      different too. `w_item · phi` is LINEAR in the 18 features, so it can add
+      `inCombat` and `healthPct` but cannot represent "low HP AND in combat AND
+      undead target"; a weight vector per context regime is piecewise-linear,
+      which buys those interactions without a network.
+      The partition already exists and is already computed every tick:
+      `ContextRuleEngine::DominantReason()` collapses the ContextWeightMap into
+      one of 26 `ContextReason` values, and that label currently reaches ONLY
+      the widget explanation (`PipelineCoordinator.cpp:296` → `ReasonHold` →
+      `ExplanationLabel`). Nothing in scoring reads it. So there is no
+      clustering algorithm to write — the clusters are hand-authored and
+      already load-bearing elsewhere.
+      Why this is filed and not planned: it splits an already-starved reward
+      stream K ways. Rewards fire only on equip/consume and confidence is 50%
+      at 5 trains, so K≈26 regimes multiplies every cold start by K against the
+      same per-playthrough event budget — on top of `K × 18` floats per item
+      and a cosave bump. The budget-respecting form is shrinkage, reusing the
+      shape the scorer already has one level down:
+      `w_global · phi + λ(regime_confidence) × (w_regime · phi)`, so a cold
+      regime contributes nothing and falls back to global, and specialisation
+      appears only where the player actually generated data.
+      Blocked on two things, in order: (A) above showing that pooling helps at
+      all, and a way to MEASURE a learning change offline. Neither this nor
+      (A)/(B) is falsifiable on accept% alone — see the soak-protocol entry —
+      and a replay harness over logged `(features, item, reward)` tuples would
+      unblock all three at once (L)
 - [ ] Addendum #15/#16 (Kalman learner / learnable context weights) — **parked**: needs a v3
       cosave bump, NOT landable during an active soak run
