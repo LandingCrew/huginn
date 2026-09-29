@@ -539,18 +539,22 @@ Surfaced by the one-agent-per-doc migration pass. Every one is a code or config
 defect the docs exposed, not a documentation problem. Ordered by what a player
 would notice.
 
-- [ ] **`sUncastableSpellPolicy = Penalize` behaves identically to `Allow`.**
+- [ ] **`sUncastableSpellPolicy = Penalize` behaves identically to `Allow`
+      (by default).**
       Split out of the `[Candidates]` wiring fix (0.19.13), which got the setting
       to `CandidateGenerator` but could not make `Penalize` mean anything: both
       `RunVisitorFilters` and `PassesAffordabilityFilter` branch only on
-      `Disallow`, and there is no penalty mechanism to reconnect. The docs
-      described one — a shortfall ratio and a `penaltyFloor` — but it was never
-      built, and `fUncastablePenaltyFloor` has now been removed from the shipped
-      INI rather than left implying it works.
-      So this is a scoring FEATURE, not a settings bug: decide whether a partial
-      relevance penalty for an unaffordable spell is wanted at all, and if so
-      what the curve is. Until then the option is honest but has only two
-      distinct behaviours (M)
+      `Disallow`. The old docs described a shortfall ratio and a `penaltyFloor`;
+      neither was built, and `fUncastablePenaltyFloor` is gone from the INI.
+      **The mechanism now exists** in `Scoring::FitScorer`
+      (`src/learning/FitScorer.h`): below one cast of magicka, `Penalize` gets
+      the flat `[Scoring] fFitUnaffordableMult` (0.3) while `Allow`/`Disallow`
+      hold at `fFitAffordMin` (0.7, the one-cast value). It is not a shortfall
+      ratio. But fit enters the utility only under `iFitMode = 2`, and the
+      shipped default is `1` (shadow: computed and shown in `hg recs` as
+      `fit~`, not applied), so with default settings `Penalize` still ranks
+      exactly like `Allow`. Close this once soak data from shadow mode
+      justifies making apply mode the default (M)
 - [ ] **Three tag values have no writer.** `ItemTagExt::Ravage*` and
       `Damage*Regen` are read by `HasHarmfulSideEffects()` but `PopulateItemTags`
       never sets them; `WeaponTag::EnchantSilence` has no writer anywhere in

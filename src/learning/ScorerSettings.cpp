@@ -1,5 +1,7 @@
 #include "ScorerSettings.h"
 #include "IniLoad.h"
+#include <algorithm>
+#include <utility>
 
 namespace Huginn::Scoring
 {
@@ -39,6 +41,28 @@ namespace Huginn::Scoring
         potionTierPreference = ParsePotionTierPreference(
             ini.GetValue(section, "sPotionTierPreference", ScorerDefaults::POTION_TIER_PREFERENCE));
 
+        // Item-context fit (FitScorer)
+        {
+            const long rawMode = ini.GetLongValue(section, "iFitMode", ScorerDefaults::FIT_MODE);
+            const long mode = std::clamp(rawMode, 0L, 2L);
+            if (mode != rawMode) {
+                logger::warn("[ScorerSettings] iFitMode = {} out of range [0, 2], clamped to {}"sv, rawMode, mode);
+            }
+            fitMode = static_cast<FitMode>(mode);
+        }
+        fitAffordMin = ReadClampedFloat(ini, section, "fFitAffordMin", ScorerDefaults::FIT_AFFORD_MIN, 0.0f, 1.0f, "ScorerSettings"sv);
+        fitAffordFullCasts = ReadClampedFloat(ini, section, "fFitAffordFullCasts", ScorerDefaults::FIT_AFFORD_FULL_CASTS, 1.0f, 100.0f, "ScorerSettings"sv);
+        fitUnaffordableMult = ReadClampedFloat(ini, section, "fFitUnaffordableMult", ScorerDefaults::FIT_UNAFFORDABLE_MULT, 0.0f, 1.0f, "ScorerSettings"sv);
+        fitConcentrationSecondsPerCast = ReadClampedFloat(ini, section, "fFitConcentrationSecondsPerCast", ScorerDefaults::FIT_CONCENTRATION_SECONDS_PER_CAST, 0.1f, 60.0f, "ScorerSettings"sv);
+        fitOutOfRangeMult = ReadClampedFloat(ini, section, "fFitOutOfRangeMult", ScorerDefaults::FIT_OUT_OF_RANGE_MULT, 0.0f, 1.0f, "ScorerSettings"sv);
+        fitClampMin = ReadClampedFloat(ini, section, "fFitClampMin", ScorerDefaults::FIT_CLAMP_MIN, 0.0f, 1.0f, "ScorerSettings"sv);
+        fitClampMax = ReadClampedFloat(ini, section, "fFitClampMax", ScorerDefaults::FIT_CLAMP_MAX, 0.0f, 10.0f, "ScorerSettings"sv);
+        if (fitClampMin > fitClampMax) {
+            logger::warn("[ScorerSettings] fFitClampMin ({:.2f}) > fFitClampMax ({:.2f}), swapping"sv,
+                fitClampMin, fitClampMax);
+            std::swap(fitClampMin, fitClampMax);
+        }
+
         // Thresholds
         minimumUtility = ReadClampedFloat(ini, section, "fMinimumUtility", ScorerDefaults::MINIMUM_UTILITY, 0.0f, 1000.0f, "ScorerSettings"sv);
         minimumContextWeight = ReadClampedFloat(ini, section, "fMinimumContextWeight", ScorerDefaults::MINIMUM_CONTEXT_WEIGHT, 0.0f, 1000.0f, "ScorerSettings"sv);
@@ -71,6 +95,11 @@ namespace Huginn::Scoring
             minimumUtility, minimumContextWeight, coldStartUCBBoost, topNCandidates,
             potionTierPreference == PotionTierPreference::Higher ? "Higher" :
                 potionTierPreference == PotionTierPreference::Lower ? "Lower" : "None");
+        logger::info("[ScorerSettings] Fit: mode={}, affordMin={:.2f}, affordFullCasts={:.1f}, "
+            "unaffordable={:.2f}, concSecPerCast={:.1f}, outOfRange={:.2f}, clamp=[{:.2f}, {:.2f}]",
+            FitModeToString(fitMode), fitAffordMin, fitAffordFullCasts,
+            fitUnaffordableMult, fitConcentrationSecondsPerCast, fitOutOfRangeMult,
+            fitClampMin, fitClampMax);
     }
 
     void ScorerSettings::ResetToDefaults()
@@ -91,6 +120,15 @@ namespace Huginn::Scoring
         regenPotionCombatStartMult = ScorerDefaults::REGEN_POTION_COMBAT_START_MULT;
         flatRestoreLowResourceMult = ScorerDefaults::FLAT_RESTORE_LOW_RESOURCE_MULT;
         potionTierPreference = PotionTierPreference::Higher;
+
+        fitMode = static_cast<FitMode>(ScorerDefaults::FIT_MODE);
+        fitAffordMin = ScorerDefaults::FIT_AFFORD_MIN;
+        fitAffordFullCasts = ScorerDefaults::FIT_AFFORD_FULL_CASTS;
+        fitUnaffordableMult = ScorerDefaults::FIT_UNAFFORDABLE_MULT;
+        fitConcentrationSecondsPerCast = ScorerDefaults::FIT_CONCENTRATION_SECONDS_PER_CAST;
+        fitOutOfRangeMult = ScorerDefaults::FIT_OUT_OF_RANGE_MULT;
+        fitClampMin = ScorerDefaults::FIT_CLAMP_MIN;
+        fitClampMax = ScorerDefaults::FIT_CLAMP_MAX;
 
         minimumUtility = ScorerDefaults::MINIMUM_UTILITY;
         minimumContextWeight = ScorerDefaults::MINIMUM_CONTEXT_WEIGHT;
@@ -126,6 +164,15 @@ namespace Huginn::Scoring
         cfg.regenPotionCombatStartMult = regenPotionCombatStartMult;
         cfg.flatRestoreLowResourceMult = flatRestoreLowResourceMult;
         cfg.potionTierPreference = potionTierPreference;
+
+        cfg.fitMode = fitMode;
+        cfg.fitAffordMin = fitAffordMin;
+        cfg.fitAffordFullCasts = fitAffordFullCasts;
+        cfg.fitUnaffordableMult = fitUnaffordableMult;
+        cfg.fitConcentrationSecondsPerCast = fitConcentrationSecondsPerCast;
+        cfg.fitOutOfRangeMult = fitOutOfRangeMult;
+        cfg.fitClampMin = fitClampMin;
+        cfg.fitClampMax = fitClampMax;
 
         cfg.minimumUtility = minimumUtility;
         cfg.minimumContextWeight = minimumContextWeight;

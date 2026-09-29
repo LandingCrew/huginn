@@ -13,6 +13,7 @@
 #include "learning/UtilityScorer.h"
 #include "learning/ScoredCandidate.h"
 #include "learning/ScorerSettings.h"   // MINIMUM_UTILITY — the floor test 6i is about
+#include "learning/FitScorer.h"        // RunFitScorerTests: pure fit math
 #include "candidate/CandidateGenerator.h"
 #include "persist/BanditSerializer.h"
 #include "learning/StateFeatures.h"
@@ -5371,6 +5372,119 @@ void RunRegressionTests()
 // Tests FeatureBanditLearner ExportData/ImportData round-trip without requiring
 // actual SKSE cosave infrastructure. FormID resolution is verified via manual testing.
 // =============================================================================
+
+// =============================================================================
+// FIT SCORER (item-context fit multiplier)
+// =============================================================================
+// Pins the pure math behind Scoring::FitScorer: casts left, the affordability
+// ramp under each UncastableSpellPolicy, the range judgement and the clamp.
+// The per-frame wrapper only feeds these from PlayerActorState/TargetCollection.
+void RunFitScorerTests()
+{
+#ifndef NDEBUG
+    using namespace Huginn::Scoring;
+    using Candidate::UncastableSpellPolicy;
+    logger::info("Running fit-scorer tests..."sv);
+
+    bool passed = true;
+    auto expect = [&](bool ok, std::string_view what) {
+        if (!ok) { logger::error("TEST FAIL: fit-scorer: {}"sv, what); passed = false; }
+    };
+    auto approx = [](float a, float b) { return std::abs(a - b) < 1e-4f; };
+
+    FitParams p;  // defaults: affordMin 0.7, full 3, unaffordable 0.3, conc 2 s,
+                  // outOfRange 0.6, clamp [0.2, 1.0]
+
+    // --- CastsLeft ---
+    expect(CastsLeft(100.0f, 0.0f, false, 2.0f) == std::numeric_limits<float>::infinity(),
+        "a free spell (cost 0) is not infinitely affordable");
+    expect(CastsLeft(100.0f, -5.0f, false, 2.0f) == std::numeric_limits<float>::infinity(),
+        "a negative cost is not treated as free");
+    expect(approx(CastsLeft(100.0f, 25.0f, false, 2.0f), 4.0f), "100 magicka / 25 cost != 4 casts");
+    expect(approx(CastsLeft(100.0f, 25.0f, true, 2.0f), 2.0f),
+        "concentration: 100 / (25/s x 2 s) != 2 casts");
+    expect(approx(CastsLeft(100.0f, 25.0f, true, 0.0f), 4.0f),
+        "concentration with seconds <= 0 did not fall back to 1 s");
+    expect(approx(CastsLeft(-10.0f, 25.0f, false, 2.0f), 0.0f), "negative magicka is not 0 casts");
+
+    // --- AffordFit ---
+    expect(approx(AffordFit(1.0f, UncastableSpellPolicy::Allow, p), 0.7f), "1 cast != affordMin");
+    expect(approx(AffordFit(3.0f, UncastableSpellPolicy::Allow, p), 1.0f), "full casts != 1.0");
+    expect(approx(AffordFit(10.0f, UncastableSpellPolicy::Allow, p), 1.0f), "beyond full casts != 1.0");
+    expect(approx(AffordFit(2.0f, UncastableSpellPolicy::Allow, p), 0.85f), "midpoint (2 casts) != 0.85");
+    expect(approx(AffordFit(std::numeric_limits<float>::infinity(), UncastableSpellPolicy::Penalize, p), 1.0f),
+        "a free spell is not fully affordable");
+    expect(approx(AffordFit(0.5f, UncastableSpellPolicy::Penalize, p), 0.3f),
+        "<1 cast under Penalize != unaffordableMult");
+    expect(approx(AffordFit(0.5f, UncastableSpellPolicy::Allow, p), 0.7f),
+        "<1 cast under Allow is not held at affordMin");
+    expect(approx(AffordFit(0.5f, UncastableSpellPolicy::Disallow, p), 0.7f),
+        "<1 cast under Disallow is not held at affordMin");
+    {
+        // Monotonic in castsLeft under Allow (the reason <1 holds at affordMin
+        // instead of jumping back to 1.0)
+        bool monotonic = true;
+        float prev = AffordFit(0.0f, UncastableSpellPolicy::Allow, p);
+        for (float c = 0.1f; c <= 5.0f; c += 0.1f) {
+            const float v = AffordFit(c, UncastableSpellPolicy::Allow, p);
+            if (v + 1e-6f < prev) monotonic = false;
+            prev = v;
+        }
+        expect(monotonic, "AffordFit is not monotonic in castsLeft under Allow");
+    }
+    {
+        FitParams one = p;
+        one.affordFullCasts = 1.0f;
+        expect(approx(AffordFit(1.0f, UncastableSpellPolicy::Allow, one), 1.0f),
+            "affordFullCasts <= 1 does not mean 'one cast is enough'");
+    }
+
+    // --- RangeFit ---
+    expect(approx(RangeFit(0.0f, 5000.0f, p), 1.0f), "self/touch (range 0) was judged on range");
+    expect(approx(RangeFit(RANGE_FALLBACK_SENTINEL, 9000.0f, p), 1.0f), "the 4096 fallback was judged on range");
+    expect(approx(RangeFit(1500.0f, -1.0f, p), 1.0f), "no enemy was judged out of range");
+    expect(approx(RangeFit(1500.0f, 1000.0f, p), 1.0f), "an enemy within range was demoted");
+    expect(approx(RangeFit(1500.0f, 1500.0f, p), 1.0f), "an enemy exactly at range was demoted");
+    expect(approx(RangeFit(1500.0f, 2000.0f, p), 0.6f), "an enemy out of range != outOfRangeMult");
+
+    // --- ComputeSpellFit: combined + clamp ---
+    {
+        SpellFitInputs in;
+        in.currentMagicka = 10.0f;
+        in.effectiveCost = 50.0f;       // 0.2 casts
+        in.range = 1500.0f;
+        in.enemyDistance = 2000.0f;     // out of range
+        in.policy = UncastableSpellPolicy::Penalize;
+        const auto r = ComputeSpellFit(in, p);
+        expect(approx(r.affordFit, 0.3f) && approx(r.rangeFit, 0.6f), "components not 0.3 / 0.6");
+        expect(approx(r.multiplier, 0.2f), "0.3 x 0.6 = 0.18 was not clamped up to 0.2");
+        expect(approx(r.castsLeft, 0.2f), "castsLeft not recorded");
+    }
+    {
+        SpellFitInputs in;
+        in.currentMagicka = 300.0f;
+        in.effectiveCost = 30.0f;       // 10 casts
+        in.range = 0.0f;
+        in.enemyDistance = 100.0f;
+        const auto r = ComputeSpellFit(in, p);
+        expect(approx(r.multiplier, 1.0f), "an affordable self spell is not neutral");
+    }
+    {
+        FitParams swapped = p;
+        swapped.clampMin = 1.0f;
+        swapped.clampMax = 0.2f;        // hand-built inverted clamp must not trip std::clamp
+        SpellFitInputs in;
+        in.currentMagicka = 300.0f;
+        in.effectiveCost = 30.0f;
+        const auto r = ComputeSpellFit(in, swapped);
+        expect(approx(r.multiplier, 1.0f), "an inverted clamp was not normalised");
+    }
+
+    if (passed) {
+        logger::info("  fit-scorer tests PASSED"sv);
+    }
+#endif
+}
 
 // =============================================================================
 // OVERRIDE SECTION NAMESPACING (0.19.22)

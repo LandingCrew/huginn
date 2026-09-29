@@ -13,6 +13,7 @@ void RunWeaponRegistryTests();
 void RunCosaveTests();
 void RunStateFeaturesTests();
 void RunFeatureBanditLearnerTests();
+void RunFitScorerTests();              // Scoring::FitScorer pure math
 void RunUnitTests();
 void RunOverrideNamespaceTests();      // Huginn_Overrides.ini section namespacing
 

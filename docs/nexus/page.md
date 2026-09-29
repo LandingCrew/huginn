@@ -285,7 +285,7 @@ A remembered item pulses for the last few seconds before it goes. When it doesn'
 `sUncastableSpellPolicy` decides what happens to spells you cannot afford right now:
 
 * `Disallow` (the default) — hide them; a key you cannot use is wasted space
-* `Penalize` — keep them, ranked lower the further out of reach they are
+* `Penalize` — keep them, but rank them lower. This only works with `iFitMode = 2` in `[Scoring]`; at the default setting it behaves like `Allow`
 * `Allow` — rank them normally, magicka be damned
 
 `bEnableSoulGemRecharge` belongs to this section too — see the soul gem note under Emergencies above.

@@ -27,6 +27,13 @@ namespace Huginn::Scoring
         float potionMultiplier = 1.0f;  // From PotionDiscriminator
         float favoritesMultiplier = 1.0f; // From favorites system
 
+        // Item-context fit (FitScorer). Filled when iFitMode != Off.
+        float fitMultiplier = 1.0f;  // FitScorer, clamped; 1.0 = neutral / not a spell
+        float fitCastsLeft = -1.0f;  // -1 = n/a
+        float fitAfford = 1.0f;
+        float fitRange = 1.0f;
+        bool  fitApplied = false;    // true iff iFitMode=Apply, i.e. it entered the utility
+
         // Log string, compact: only the factors that enter the utility formula
         // (u = ctx*(1+λ*learn)*mults), with neutral 1.00x multipliers omitted.
         [[nodiscard]] std::string ToCompactString() const
