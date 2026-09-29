@@ -11,6 +11,7 @@ void RunItemClassifierTests();
 void RunItemRegistryTests();
 void RunWeaponRegistryTests();
 void RunCosaveTests();
+void RunTelemetryFormatTests();        // Decision log: item keys, JSON escaping, file-name sanitising
 void RunStateFeaturesTests();
 void RunFeatureBanditLearnerTests();
 void RunFitScorerTests();              // Scoring::FitScorer pure math

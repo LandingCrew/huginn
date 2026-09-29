@@ -20,6 +20,8 @@
 #include "input/KeybindingSettings.h"
 #include "input/InputHandler.h"
 #include "candidate/CandidateGenerator.h"
+#include "telemetry/TelemetrySettings.h"
+#include "telemetry/DecisionLog.h"
 
 #include <filesystem>
 
@@ -166,6 +168,10 @@ namespace Huginn::Settings
             // the "update loop is paused" precondition this method documents.
             Candidate::CandidateGenerator::GetSingleton().RefreshConfigFromGlobal();
             logger::debug("[SettingsReloader]   [Candidates] reloaded"sv);
+
+            // 6b. Telemetry (opt-in decision log; writer applied in ApplySideEffects)
+            Telemetry::TelemetrySettings::GetSingleton().LoadFromIni(mainIni);
+            logger::debug("[SettingsReloader]   [Telemetry] reloaded"sv);
         }
 
         // 7-9. Widget / Debug (dMenu's) and Keybindings (ours).
@@ -305,6 +311,9 @@ namespace Huginn::Settings
         Candidate::g_candidateConfig.ResetToDefaults();
         Candidate::CandidateGenerator::GetSingleton().RefreshConfigFromGlobal();
         logger::debug("[SettingsReloader]   [Candidates] reset to defaults"sv);
+
+        // Default is OFF: "reset to defaults" stops the decision log.
+        Telemetry::TelemetrySettings::GetSingleton().ResetToDefaults();
 
         // Reset keybindings to defaults
         Input::KeybindingSettings keybindings;
@@ -455,6 +464,12 @@ namespace Huginn::Settings
         // 6. Apply debug widget visibility (Phase 2 — DebugSettings::LoadFromIni is a
         //    pure loader now; this is the side-effect step for both reload and reset).
         UI::DebugSettings::GetSingleton().ApplyToWidgets();
+
+        // 7. Telemetry writer (open/close/reopen). Joins the writer thread when
+        //    turning the log off; the writer never takes the update mutex, so
+        //    joining under RunExclusive cannot deadlock.
+        Telemetry::DecisionLog::GetSingleton().ApplyConfig(
+            Telemetry::TelemetrySettings::GetSingleton().BuildConfig());
 
         // The next update tick (~100ms) will pick up all new settings.
         // SlotLocker::Reset() ensures the first tick after reload can freely

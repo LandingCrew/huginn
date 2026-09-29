@@ -16,6 +16,8 @@
 #include "wheeler/WheelerClient.h"  // debug-only: ValidateWheelState in UpdateDebugWidgets
 #include "learning/PipelineStateCache.h"
 #include "telemetry/SoakMetrics.h"
+#include "telemetry/DecisionLog.h"
+#include "learning/StateFeatures.h"
 #include "ui/DebugSettings.h"
 #include "display/IDisplayBackend.h"
 #include "display/ExplanationLabel.h"  // ReasonLabel for the [Context] transition log
@@ -126,6 +128,8 @@ bool PipelineCoordinator::RunPipeline(
     Telemetry::SoakMetrics::GetSingleton().RecordPipelineRun(
         m_ctx.scoredCandidates.size(), displayedCount,
         topOverride != nullptr && topOverride->candidate.has_value());
+
+    RecordDecisionTelemetry(m_ctx);
 
     return true;
 }
@@ -767,5 +771,35 @@ void PipelineCoordinator::UpdateDebugWidgets(PipelineContext& ctx)
 #endif
 }
 #endif
+
+// -----------------------------------------------------------------------------
+// RecordDecisionTelemetry — opt-in offline decision log ([Telemetry])
+// -----------------------------------------------------------------------------
+// Runs on the pipeline thread after the display was pushed, so `assignments`
+// is exactly what the player is shown. DecisionLog only builds a string and
+// queues it (and only when the display changed); the file IO happens on its
+// own writer thread.
+
+void PipelineCoordinator::RecordDecisionTelemetry(PipelineContext& ctx)
+{
+    auto& decisionLog = Telemetry::DecisionLog::GetSingleton();
+    if (!decisionLog.IsEnabled()) {
+        return;
+    }
+
+    // Same call the scorer makes: raw player (not the VitalEnvelope copy).
+    const auto phi = Learning::StateFeatures::FromState(ctx.playerState, ctx.targets).ToArray();
+    const auto* topOverride = ctx.overrides.GetTopOverride();
+
+    decisionLog.RecordImpression(Telemetry::ImpressionInput{
+        .phi = phi,
+        .scored = ctx.scoredCandidates,
+        .assignments = ctx.assignments,
+        .pageIndex = ctx.displayPageIndex,
+        .pageCount = ctx.displayPageCount,
+        .reason = ctx.contextReason,
+        .overrideTookSlot = topOverride != nullptr && topOverride->candidate.has_value(),
+    });
+}
 
 }  // namespace Huginn::Pipeline

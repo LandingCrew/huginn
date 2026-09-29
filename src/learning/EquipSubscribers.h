@@ -7,18 +7,60 @@
 #include "candidate/CandidateGenerator.h"
 #include "candidate/CandidateTypes.h"
 #include "util/InventoryUtil.h"
+#include "telemetry/DecisionLog.h"   // RecordMisclick (opt-in decision log)
 
 #include <spdlog/spdlog.h>
+#include <utility>
 
 namespace Huginn::Learning
 {
     // =========================================================================
+    // BANDIT REWARD RULE - shared by BanditSubscriber and the decision log
+    // =========================================================================
+    // Returns {reward, trains}. `trains` false means the learner must NOT be
+    // updated for this event (the reward is then informational only).
+    //   Hotkey/Wheeler: trains only if wasRecommended (player chose our suggestion)
+    //   External: always (attribution scaling via rewardMultiplier)
+    //   Consumption: uses CONSUME_REWARD constant
+    //
+    // A zero multiplier means "this act teaches nothing", not "this item is
+    // worthless". Updating with reward 0 is not the same as not updating: it is
+    // an observation, it moves the weights down and it counts as training. The
+    // publisher that zeroed the multiplier is asking the learner to stay out of
+    // it, so stay out of it -- the other subscribers (usage memory, cooldown)
+    // still want the event.
+    // =========================================================================
+    [[nodiscard]] inline std::pair<float, bool> ComputeBanditReward(const EquipEvent& event)
+    {
+        float reward = 0.0f;
+
+        switch (event.source) {
+        case EquipSource::Hotkey:
+        case EquipSource::Wheeler:
+            if (!event.wasRecommended) return { 0.0f, false };  // No reward for non-recommended items
+            reward = Config::EQUIP_REWARD * event.rewardMultiplier;
+            break;
+
+        case EquipSource::External:
+            // External always applies (attribution scaling already in rewardMultiplier)
+            reward = Config::EQUIP_REWARD * event.rewardMultiplier;
+            break;
+
+        case EquipSource::Consumption:
+            reward = Config::CONSUME_REWARD * event.rewardMultiplier;
+            break;
+        }
+
+        if (event.rewardMultiplier <= 0.0f) {
+            return { reward, false };
+        }
+        return { reward, true };
+    }
+
+    // =========================================================================
     // BANDIT SUBSCRIBER - Applies FeatureBanditLearner rewards
     // =========================================================================
-    // Source filtering:
-    //   Hotkey/Wheeler: reward only if wasRecommended (player chose our suggestion)
-    //   External: always reward (attribution scaling via rewardMultiplier)
-    //   Consumption: uses CONSUME_REWARD constant
+    // Source filtering and reward values: see ComputeBanditReward above.
     // =========================================================================
     class BanditSubscriber final : public IEquipSubscriber
     {
@@ -27,32 +69,8 @@ namespace Huginn::Learning
 
         void OnEquipEvent(const EquipEvent& event) override
         {
-            float reward = 0.0f;
-
-            switch (event.source) {
-            case EquipSource::Hotkey:
-            case EquipSource::Wheeler:
-                if (!event.wasRecommended) return;  // No reward for non-recommended items
-                reward = Config::EQUIP_REWARD * event.rewardMultiplier;
-                break;
-
-            case EquipSource::External:
-                // External always applies (attribution scaling already in rewardMultiplier)
-                reward = Config::EQUIP_REWARD * event.rewardMultiplier;
-                break;
-
-            case EquipSource::Consumption:
-                reward = Config::CONSUME_REWARD * event.rewardMultiplier;
-                break;
-            }
-
-            // A zero multiplier means "this act teaches nothing", not "this item
-            // is worthless". Updating with reward 0 is not the same as not
-            // updating: it is an observation, it moves the weights down and it
-            // counts as training. The publisher that zeroed the multiplier is
-            // asking the learner to stay out of it, so stay out of it -- the
-            // other subscribers (usage memory, cooldown) still want the event.
-            if (event.rewardMultiplier <= 0.0f) {
+            const auto [reward, trains] = ComputeBanditReward(event);
+            if (!trains) {
                 return;
             }
 
@@ -116,6 +134,8 @@ namespace Huginn::Learning
 
             if (misclick.detected) {
                 m_learner.Update(misclick.previousFormID, event.features, Config::MISCLICK_PENALTY);
+                Telemetry::DecisionLog::GetSingleton().RecordMisclick(
+                    misclick.previousFormID, event.features, Config::MISCLICK_PENALTY);
                 logger::debug("[Misclick] Penalized {:08X} ({:.1f})"sv,
                     misclick.previousFormID, Config::MISCLICK_PENALTY);
             }
