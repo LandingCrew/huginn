@@ -434,6 +434,20 @@ entries named.
       then trims or renames to fit.
       Raised 2026-09-28.
 
+- [ ] **Equivalence cap: decide the default after play.** `[SlotLocker]
+      bCapEquivalents` (one spell/scroll of each kind per page, spell over
+      scroll while castable; `docs/architecture/5-slots.md`, Equivalence cap)
+      shipped opt-in and has not been play-tested. Open: (a) turn it on by
+      default if `[EquivCap]` debug lines show it removing real duplicates and
+      nothing a player misses; (b) the key may be too fine (a cost-band edge
+      splits two otherwise equal mod spells) or too coarse (different
+      magnitudes merge) -- adjust from what the log shows; (c) a slot lock
+      can keep a duplicate for up to `fLockDurationMs`, because SlotLocker
+      runs after allocation and cannot refill -- accept or teach the locker;
+      (d) optionally reuse FitScorer's CastsLeft for the spell-vs-scroll
+      test once both are merged (S)
+      Raised 2026-09-29.
+
 ## Slot temporal memory
 Seating fixed WHERE an item sits; these entries are about WHEN a slot may
 change. The churn and override work (#140-#148) closed most of it: what is

@@ -2,6 +2,7 @@
 
 #include "SlotConfig.h"
 #include "SlotAssignment.h"
+#include "EquivalenceKey.h"
 #include "SlotClassifier.h"
 #include "SlotSettings.h"
 #include "learning/ScoredCandidate.h"
@@ -10,9 +11,12 @@
 #include "state/WorldState.h"
 #include <array>
 #include <atomic>
+#include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
+#include <string_view>
 #include <vector>
 
 namespace Huginn::Slot
@@ -34,7 +38,13 @@ namespace Huginn::Slot
     //
     // Responsibilities:
     //   1. Classification filtering: Match candidates to slot types
-    //   2. Deduplication: Each candidate appears in at most one slot
+    //   2. Deduplication: Each candidate appears in at most one slot, and --
+    //      with `[SlotLocker] bCapEquivalents` -- at most
+    //      iMaxPerEquivalenceKey near-interchangeable spells/scrolls per page
+    //      (EquivalenceKey.h). Capped items stay available as a fallback for a
+    //      slot that would otherwise be blank (PASS 4b). SlotLocker runs after
+    //      this and may briefly put a locked duplicate back; the lock expiring
+    //      resolves it.
     //   3. Override injection: Force critical items (health potion, etc.)
     //   4. Priority ordering: Fill high-priority slots first
     //   5. Wildcard handling: Mark exploration picks appropriately
@@ -200,6 +210,39 @@ namespace Huginn::Slot
         SlotAllocator(const SlotAllocator&) = delete;
         SlotAllocator& operator=(const SlotAllocator&) = delete;
 
+        // =========================================================================
+        // EQUIVALENCE CAP
+        // =========================================================================
+
+        /// Why the cap held a candidate back (for the transition log only).
+        enum class CapSkipReason : uint8_t
+        {
+            KeyFull,       // its key is already shown maxPerKey times on this page
+            PreferSpell,   // a scroll, while the same-key spell is castable
+            PreferScroll,  // a spell the player cannot cast now, while a same-key scroll is available
+        };
+
+        struct CapSkip
+        {
+            std::string_view name;
+            CapSkipReason reason = CapSkipReason::KeyFull;
+            uint32_t shown = 0;  // KeyFull: how many with the key were already placed
+        };
+
+        /// Per-allocation cap state, built once at the top of
+        /// AllocateSlotsInternal. `keys` is index-aligned with the candidate
+        /// list. `skipped` is written through a const pointer (it only feeds
+        /// the transition log), hence mutable.
+        struct EquivCapContext
+        {
+            bool enabled = false;
+            uint32_t maxPerKey = 1;
+            CostBandEdges edges = DEFAULT_COST_BAND_EDGES;
+            float currentMagicka = 0.0f;
+            std::vector<std::optional<EquivalenceKey>> keys;
+            mutable std::map<RE::FormID, CapSkip> skipped;
+        };
+
         // Current active page index (atomic: read from update thread, written from input thread)
         std::atomic<size_t> m_currentPage{0};
 
@@ -217,6 +260,9 @@ namespace Huginn::Slot
         mutable std::mutex m_logMutex;
         mutable std::set<SlotClassification> m_loggedMissingClassifications;
         mutable std::set<Override::OverrideCondition> m_warnedUnplacedConditions;
+        /// Per page: the candidates the equivalence cap held back last time
+        /// that page was allocated. Only NEWLY held-back items are logged.
+        mutable std::array<std::set<RE::FormID>, MAX_PAGES> m_lastCapSkipped{};
 
         // Config snapshot cache — avoids a SlotSettings shared_lock + vector copy
         // on every allocation tick. Refreshed only when SlotSettings bumps its
@@ -309,7 +355,8 @@ namespace Huginn::Slot
             const State::PlayerActorState* player,
             float margin,
             const std::array<size_t, MAX_SLOTS_PER_PAGE>& priorityOrder,
-            size_t priorityCount) const;
+            size_t priorityCount,
+            const EquivCapContext* cap = nullptr) const;
 
         /// Put items back in the slots they were in last pass, where the layout
         /// still allows it.
@@ -357,7 +404,25 @@ namespace Huginn::Slot
             const std::vector<SlotConfig>& configs,
             std::array<size_t, MAX_SLOTS_PER_PAGE>& outOrder) const;
 
-        /// Helper: Try to find the best candidate for a slot
+        /// PASS 4b (cap fallback): fill any slot still empty, ignoring the
+        /// equivalence cap, so the cap never leaves a blank key.
+        void FillEmptyIgnoringCap(
+            const std::vector<SlotConfig>& slotConfigs,
+            SlotAssignments& assignments,
+            const Scoring::ScoredCandidateList& candidates,
+            std::set<RE::FormID>& assignedFormIDs,
+            std::set<std::string_view>& assignedNames,
+            const State::PlayerActorState& player,
+            const std::array<size_t, MAX_SLOTS_PER_PAGE>& priorityOrder,
+            size_t priorityCount) const;
+
+        /// Log (debug) the candidates the cap newly held back on this page.
+        void LogCapSkips(size_t pageIndex, const EquivCapContext& cap,
+            const SlotAssignments& assignments) const;
+
+        /// Helper: Try to find the best candidate for a slot.
+        /// With `placed` and an enabled `cap`, also applies the equivalence
+        /// cap and the spell-vs-scroll preference (EquivalenceKey.h).
         [[nodiscard]] std::optional<Scoring::ScoredCandidate> FindBestCandidate(
             const Scoring::ScoredCandidateList& candidates,
             SlotClassification classification,
@@ -365,7 +430,9 @@ namespace Huginn::Slot
             const std::set<std::string_view>& assignedNames,
             bool skipEquipped = false,
             const State::PlayerActorState* player = nullptr,
-            bool skipWildcards = false) const;
+            bool skipWildcards = false,
+            const SlotAssignments* placed = nullptr,
+            const EquivCapContext* cap = nullptr) const;
     };
 
 }  // namespace Huginn::Slot

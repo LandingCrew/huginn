@@ -22,6 +22,8 @@ namespace Huginn::Candidate
         candidate.baseCost = data.baseCost;
         candidate.isConcentration = data.isConcentration;
         candidate.range = data.range;
+        candidate.delivery = data.delivery;
+        candidate.skillLevel = data.skillLevel;
         candidate.isFavorited = data.isFavorited;
 
         // canAfford will be set by filters based on current magicka
@@ -169,6 +171,9 @@ namespace Huginn::Candidate
         candidate.element = data.element;
         candidate.magnitude = data.magnitude;
         candidate.duration = data.duration;
+        candidate.baseCost = data.baseCost;
+        candidate.delivery = data.delivery;
+        candidate.skillLevel = data.skillLevel;
         candidate.count = inventoryCount;
 
         // Can afford if we have at least one

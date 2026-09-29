@@ -382,7 +382,8 @@ else about a call is still a pure function of its inputs.
            |
            v
   PASS 2   remaining slots <- best matching candidate, deduped
-           by FormID and by name
+           by FormID and by name (and, with bCapEquivalents, by
+           equivalence key -- see Equivalence cap)
            |
            v
      SlotLocker::ApplyLocks -> ComputeVisualStates -> widget / Wheeler
@@ -449,6 +450,79 @@ wildcards.
 
 Duplicates are simply filtered out. There is no learner penalty for being a
 duplicate.
+
+### Equivalence cap (opt-in)
+
+Deduplication by FormID and name stops the *same* item filling two slots. It
+does not stop *interchangeable* ones: within one category the context weight is
+identical and the prior differs by at most ~0.1, so untrained near-duplicates
+(Flames and a Scroll of Flames, or three Novice frost cloaks from different
+mods) tie and can take several keys of one page between them.
+`[SlotLocker] bCapEquivalents = 1` caps that at `iMaxPerEquivalenceKey`
+(default 1) per page.
+
+**The key** (`src/slot/EquivalenceKey.h`, `MakeEquivalenceKey`) is built from
+the candidate alone, and only for spells and scrolls:
+
+| Field | Source | Notes |
+|---|---|---|
+| type | `SpellType` | `Unknown` ⇒ no key (never capped: fails safe) |
+| tags | `SpellTag` minus `Ranged`, `Melee`, `Concentration` | Without tags, Oakflesh, Muffle and Courage would all be `Buff/None/Self`. The cleared bits describe delivery, which has its own field, and would split a spell from its own scroll |
+| tagsExt | `SpellTagExt` | whole |
+| element | `ElementType` | |
+| delivery | `SpellDelivery` → Self / Touch / Ranged | Aimed, TargetActor and TargetLocation are all Ranged |
+| tier | 0 Novice .. 4 Master | see below |
+
+The **tier** is `skillLevel / 25` when the costliest effect has a
+`minimumSkill` above 0 — the Novice..Master level the magic menu and the tome
+show. Vanilla Novice is 0 and many mods leave the field at 0, so 0 cannot tell
+Novice from "not set"; for those the base cost decides: the band is the number
+of `sEquivalenceCostBands` edges (default `40,100,250,600`) at or below
+`baseCost`. A scroll carries its spell's delivery, skill level and base cost,
+so a spell and the scroll that casts it share a key.
+
+Potions, food, soul gems, weapons, staves, ammo and apparel get no key.
+Potions are already reduced to one per family by
+`UtilityScorer::ApplyPotionTierPreference`; the cap is the same idea applied to
+spells and scrolls, and does not touch that function.
+
+**Where it applies.** `FindBestCandidate` takes the page's assignments so far
+and a per-allocation `EquivCapContext` (keys precomputed, index-aligned with
+the candidate list). After the usual checks it skips a candidate when:
+
+1. the page already shows `iMaxPerEquivalenceKey` items with its key
+   (overrides, Remembrance holds and held seats all count), or
+2. it is a scroll and a same-key spell that the player can cast now
+   (`currentMagicka >= effectiveCost`, raw magicka) is also eligible for
+   this slot, or
+3. it is a spell the player cannot cast now and a same-key scroll is eligible
+   for this slot.
+
+Every fill that goes through `FindBestCandidate` applies it: pass 2 and its
+wildcard retry, the no-seating refill, pass 4, and the challenger search in the
+slot hold. The **slot hold** does not exempt a seat: a seated item whose key is
+already full on the page is not held and competes in pass 2 like anything
+else. Otherwise an old duplicate would stay for as long as it stayed
+recommended.
+
+**Fallback (pass 4b).** The cap chooses what to prefer, never whether a key is
+blank. After pass 4 (seating on) or pass 2 and the no-seating refill (seating
+off), any slot still empty is filled with the cap off, so a held-back item is
+used when nothing else fits.
+
+**Locks.** `SlotLocker::ApplyLocks` runs after allocation and is not touched.
+It can put a locked item back beside a same-key item the allocator chose; the
+locker has no candidate list to refill from, so clearing that slot would leave
+a gap. The duplicate lasts until the lock expires (`fLockDurationMs`, 3 s by
+default) and the next allocation resolves it.
+
+**Logging.** Items held back are logged at `debug`, once when they become held
+back on a page (`[EquivCap] Page N: 'X' held back (key already shown 1x)`),
+not every tick. An item that ended up placed after all (a later slot, or the
+fallback) is not logged.
+
+Off by default, like `bFillJobKeysFromRegular`: it changes what is visible, and
+the flagship layout already gives each key one job.
 
 ---
 
@@ -806,6 +880,9 @@ fRemembranceDurationMs = 15000  ; Remembrance hold length; 0 = off everywhere
 fRemembranceMismatchDurationMs = 5000  ; ...on a key whose class it does not fit
 sRemembranceTarget = Pressed    ; Pressed | Job (the key whose class fits)
 bFillJobKeysFromRegular = false ; A blank job key takes a match off a Regular key
+bCapEquivalents = 0             ; At most iMaxPerEquivalenceKey interchangeable spells/scrolls per page
+iMaxPerEquivalenceKey = 1       ; 1-10
+sEquivalenceCostBands = 40,100,250,600  ; Tier bands by base cost when a spell has no skill level
 fLockDurationMs = 3000          ; 0 = disable locking
 fMinLockDurationMs = 500        ; Minimum time before a lock can break
 bLockOnFill = true              ; Lock when a slot fills from empty

@@ -2,6 +2,7 @@
 
 #include "SlotConfig.h"
 #include <SimpleIni.h>
+#include <array>
 #include <atomic>
 #include <filesystem>
 #include <shared_mutex>
@@ -143,6 +144,34 @@ namespace Huginn::Slot
             return m_fillJobKeysFromRegular.load(std::memory_order_acquire);
         }
 
+        /// Per-page equivalence cap: at most MaxPerEquivalenceKey() spells or
+        /// scrolls with the same EquivalenceKey (slot/EquivalenceKey.h) on one
+        /// page; the rest are held back unless a slot would otherwise be
+        /// blank. Off by default. `[SlotLocker] bCapEquivalents`.
+        [[nodiscard]] bool CapEquivalents() const noexcept
+        {
+            return m_capEquivalents.load(std::memory_order_acquire);
+        }
+
+        /// `[SlotLocker] iMaxPerEquivalenceKey`, 1..10.
+        [[nodiscard]] uint32_t MaxPerEquivalenceKey() const noexcept
+        {
+            return m_maxPerEquivalenceKey.load(std::memory_order_acquire);
+        }
+
+        /// Base-cost band edges for the tier of a spell with no skill level.
+        /// `[SlotLocker] sEquivalenceCostBands`, four ascending numbers.
+        /// Each edge is its own atomic, so a reader racing a reload can see a
+        /// mix of old and new edges for one tick -- harmless for a band.
+        [[nodiscard]] std::array<uint32_t, 4> EquivalenceCostBands() const noexcept
+        {
+            std::array<uint32_t, 4> edges{};
+            for (size_t i = 0; i < edges.size(); ++i) {
+                edges[i] = m_costBands[i].load(std::memory_order_acquire);
+            }
+            return edges;
+        }
+
         /// Monotonic generation counter — bumped on every config change
         /// (LoadFromFile / ResetToDefaults). Consumers can cache config copies
         /// and cheaply detect staleness without re-copying every access.
@@ -164,6 +193,9 @@ namespace Huginn::Slot
         std::atomic<float> m_remembranceMismatchMs{5000.0f};
         std::atomic<bool> m_fillJobKeysFromRegular{false};
         std::atomic<bool> m_remembranceToJobKey{false};
+        std::atomic<bool> m_capEquivalents{false};
+        std::atomic<uint32_t> m_maxPerEquivalenceKey{1};
+        std::array<std::atomic<uint32_t>, 4> m_costBands{ 40u, 100u, 250u, 600u };
 
         /// Parse classification string to enum (logs warning on error, returns Regular)
         [[nodiscard]] static SlotClassification ParseClassification(const std::string& str);
@@ -176,6 +208,10 @@ namespace Huginn::Slot
 
         /// Override filter to INI string (true/false for backward compat)
         [[nodiscard]] static const char* OverrideFilterToIniString(OverrideFilter f);
+
+        /// Parse `sEquivalenceCostBands`: four strictly ascending unsigned
+        /// numbers, comma-separated. Warns and returns the default on error.
+        [[nodiscard]] static std::array<uint32_t, 4> ParseCostBands(const char* str);
 
         /// Create default page configuration
         [[nodiscard]] static PageConfig CreateDefaultPage(size_t pageIndex);
