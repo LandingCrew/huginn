@@ -4,11 +4,14 @@
 
 #include "Config.h"
 #include "Globals.h"                    // g_utilityScorer (cfg record)
+#include "candidate/CandidateConfig.h"  // g_candidateConfig (cfg record)
 #include "learning/ScorerSettings.h"
 #include "learning/UtilityScorer.h"
 #include "learning/WildcardManager.h"
+#include "slot/EquivalenceKey.h"        // eqk (AppendCapFields)
 #include "slot/SlotConfig.h"            // SlotClassificationToString
 #include "slot/SlotLocker.h"
+#include "slot/SlotSettings.h"          // equivalence-cap settings (cfg, eqk)
 
 #include <algorithm>
 #include <fstream>
@@ -514,7 +517,31 @@ namespace Huginn::Telemetry
             o.Bool("wcFirstExcluded", wc.IsFirstSlotExcluded());
         }
         o.UInt("topCands", m_topCandidates.load(std::memory_order_relaxed));
-        // TODO(integration: B-fit): o.Str("fitMode", ...)
+        // Item-context fit (FitScorer). fitMode tells a reader whether "fit" in
+        // the candidates entered "u" (Apply) or was only recorded (Shadow).
+        o.Str("fitMode", Scoring::FitModeToString(cfg.fitMode));
+        o.Num("fitAffordMin", cfg.fitAffordMin);
+        o.Num("fitAffordFull", cfg.fitAffordFullCasts);
+        o.Num("fitUnaffordable", cfg.fitUnaffordableMult);
+        o.Num("fitConcSecs", cfg.fitConcentrationSecondsPerCast);
+        o.Num("fitOutOfRange", cfg.fitOutOfRangeMult);
+        o.Num("fitClampMin", cfg.fitClampMin);
+        o.Num("fitClampMax", cfg.fitClampMax);
+        o.Str("uncastable", Candidate::ToString(Candidate::g_candidateConfig.uncastableSpellPolicy));
+        // Equivalence cap ([SlotLocker]).
+        {
+            const auto& slotSettings = Slot::SlotSettings::GetSingleton();
+            o.Bool("capOn", slotSettings.CapEquivalents());
+            o.UInt("capMax", slotSettings.MaxPerEquivalenceKey());
+            o.Key("capBands");
+            out += '[';
+            const auto bands = slotSettings.EquivalenceCostBands();
+            for (size_t i = 0; i < bands.size(); ++i) {
+                if (i) out += ',';
+                std::format_to(std::back_inserter(out), "{}", bands[i]);
+            }
+            out += ']';
+        }
         o.Close();
         return out;
     }
@@ -533,13 +560,17 @@ namespace Huginn::Telemetry
                 p.Num("range", c.range);
                 p.Bool("conc", c.isConcentration);
                 p.Bool("afford", c.canAfford);
+                p.Str("dlv", Spell::SpellDeliveryToString(c.delivery));
+                p.UInt("skill", c.skillLevel);
                 p.Hex("tags", static_cast<std::uint64_t>(c.tags));
                 p.Hex("tagsExt", static_cast<std::uint64_t>(c.tagsExt));
             } else if constexpr (std::is_same_v<T, Candidate::ScrollCandidate>) {
-                // No baseCost: ScrollCandidate does not carry it on this schema.
                 p.Str("type", Spell::SpellTypeToString(c.type));
                 p.Str("school", Spell::MagicSchoolToString(c.school));
                 p.Str("element", Spell::ElementTypeToString(c.element));
+                p.UInt("baseCost", c.baseCost);
+                p.Str("dlv", Spell::SpellDeliveryToString(c.delivery));
+                p.UInt("skill", c.skillLevel);
                 p.Num("mag", c.magnitude);
                 p.Num("dur", c.duration);
                 p.Int("count", c.count);
@@ -574,6 +605,27 @@ namespace Huginn::Telemetry
             }
         }, variant);
         p.Close();
+    }
+
+    void DecisionLog::AppendFitFields(Json::Object& c, const Scoring::ScoreBreakdown& bd)
+    {
+        c.Num("fit", bd.fitMultiplier);
+        c.Bool("fitOn", bd.fitApplied);
+        if (bd.fitCastsLeft != -1.0f) {           // -1 = n/a (not a spell, or iFitMode = 0)
+            c.Num("fitCasts", bd.fitCastsLeft);   // +inf (free spell) is written as null
+            c.Num("fitAfford", bd.fitAfford);
+            c.Num("fitRange", bd.fitRange);
+        }
+    }
+
+    void DecisionLog::AppendCapFields(Json::Object& c, const Candidate::CandidateVariant& candidate)
+    {
+        const auto edges = Slot::SlotSettings::GetSingleton().EquivalenceCostBands();
+        if (const auto key = Slot::MakeEquivalenceKey(candidate, edges)) {
+            c.Str("eqk", Slot::EquivalenceKeyToString(*key));
+        } else {
+            c.Null("eqk");
+        }
     }
 
     // =========================================================================
@@ -719,8 +771,8 @@ namespace Huginn::Telemetry
             c.Bool("cold", sc.isColdStartBoosted);
             c.Key("p");
             AppendCandidateProps(out, sc.candidate);
-            AppendFitFields(out, bd);            // TODO(integration: B-fit)
-            AppendCapFields(out, sc.candidate);  // TODO(integration: C-cap)
+            AppendFitFields(c, bd);
+            AppendCapFields(c, sc.candidate);
             c.Close();
         }
         out += ']';

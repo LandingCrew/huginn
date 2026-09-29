@@ -2,11 +2,14 @@
 
 #include "SlotAssignment.h"
 #include "candidate/CandidateTypes.h"
+#include "learning/FitScorer.h"        // Scoring::CastsLeft
 #include "learning/ScoredCandidate.h"
 #include "spell/SpellData.h"
 #include <array>
 #include <cstdint>
+#include <format>
 #include <optional>
+#include <string>
 #include <string_view>
 #include <type_traits>
 #include <utility>
@@ -77,6 +80,17 @@ namespace Huginn::Slot
 
         bool operator==(const EquivalenceKey&) const = default;
     };
+
+    /// Stable text form of a key: "type|tagsHex|tagsExtHex|element|delivery|tier",
+    /// e.g. "Damage|0x12|0x0|Fire|Ranged|0". Used by the decision log ("eqk");
+    /// changing the format is a telemetry schema change.
+    [[nodiscard]] inline std::string EquivalenceKeyToString(const EquivalenceKey& key)
+    {
+        return std::format("{}|0x{:X}|0x{:X}|{}|{}|{}",
+            Spell::SpellTypeToString(key.type), key.tags, key.tagsExt,
+            Spell::ElementTypeToString(key.element), DeliveryBucketToString(key.delivery),
+            static_cast<unsigned>(key.tier));
+    }
 
     /// Tag bits that describe HOW a spell is delivered, not WHAT it does.
     /// Cleared before comparing, so a concentration spell and a
@@ -191,13 +205,17 @@ namespace Huginn::Slot
     }
 
     /// Spell vs scroll of the same key: the spell while the player can cast
-    /// it now, else the scroll. For a concentration spell effectiveCost is
-    /// per second, so this reads "can sustain it for a second". A spell with
-    /// no cost (0) is always preferred.
+    /// it now (at least one cast left), else the scroll. Shares FitScorer's
+    /// casts-left helper so both read affordability the same way. For a
+    /// concentration spell effectiveCost is per second and this reads "can
+    /// sustain it for a second" (one-second cast, independent of
+    /// [Scoring] fFitConcentrationSecondsPerCast, so the cap does not change
+    /// with a scoring knob). A spell with no cost (<= 0) is always preferred.
     [[nodiscard]] inline constexpr bool PreferSpellOverScroll(
         float currentMagicka, float spellEffectiveCost) noexcept
     {
-        return currentMagicka >= spellEffectiveCost;
+        return Scoring::CastsLeft(currentMagicka, spellEffectiveCost,
+                                  /*isConcentration=*/false, /*secondsPerCast=*/1.0f) >= 1.0f;
     }
 
 }  // namespace Huginn::Slot

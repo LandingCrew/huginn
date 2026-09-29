@@ -65,12 +65,13 @@ See [docs/README.md](docs/README.md) for full system design.
 **Compile-time constants** — `src/Config.h` (learning rate, rewards, intervals, target limits)
 
 **INI settings** — `Data/SKSE/Plugins/Huginn.ini`:
-- `[Scoring]` — Utility scoring params (loaded by `ScorerSettings`)
+- `[Scoring]` — Utility scoring params (loaded by `ScorerSettings`), incl. item fit: `iFitMode` (0 Off, 1 Shadow default, 2 Apply) and `fFit*` for `FitScorer`
 - `[ContextWeights]` — context weight multipliers (loaded by `ContextWeightSettings`)
 - `[Widget]` — Scaleform HUD position, alpha, scale, display mode
 - `[Wheeler]` — Wheeler integration settings
 - `[Candidates]` — Uncastable spell policy
 - `[Pages]`, `[PageN]`, `[PageN.SlotM]` — Multi-page slot layout
+- `[SlotLocker]` — Slot locking, seating, and the opt-in per-page equivalence cap (`bCapEquivalents`, `iMaxPerEquivalenceKey`, `sEquivalenceCostBands`; loaded by `SlotSettings`)
 - `[Telemetry]` — opt-in decision log, default off (loaded by `TelemetrySettings`, see [docs/architecture/9-telemetry.md](docs/architecture/9-telemetry.md))
 
 ## Console Commands
@@ -80,7 +81,7 @@ Registered as `Huginn` with short alias `hg` (in-game `~` console):
 | Command | Description |
 |---------|-------------|
 | `hg refresh` | Force immediate recommendation update |
-| `hg recs [N]` | Dump top-N recommendation breakdown to log (default 10) |
+| `hg recs [N]` | Dump top-N recommendation breakdown to log (default 10); includes the fit column (`fit~` shadow / `fit=` applied) and, with the equivalence cap on, each slot's `eq=` key |
 | `hg reload` | Hot-reload all settings from INI |
 | `hg status` | Show system status |
 | `hg unlock` | Clear all slot locks |

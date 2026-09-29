@@ -24,6 +24,8 @@
 
 namespace Huginn::Telemetry
 {
+    namespace Json { class Object; }
+
     // =========================================================================
     // DECISION LOG (opt-in offline telemetry)
     // =========================================================================
@@ -32,10 +34,10 @@ namespace Huginn::Telemetry
     // for aggregation, offline training and replay evaluation. Default OFF
     // ([Telemetry] bEnabled = 0). Nothing is ever uploaded.
     //
-    // Record types (schema v1; full field list in docs/architecture/9-telemetry.md):
+    // Record types (schema v2; full field list in docs/architecture/9-telemetry.md):
     //   session  file header: schema, plugin version, random session id,
     //            feature names, reward constants. Written on every file open.
-    //   cfg      scorer / wildcard parameters that shape the policy.
+    //   cfg      scorer / fit / wildcard / equivalence-cap parameters that shape the policy.
     //   load     a save was loaded or a new game started (no names).
     //   imp      an impression: phi, the top-N scored candidates with full
     //            breakdowns and fit-relevant properties, and what each slot of
@@ -63,7 +65,7 @@ namespace Huginn::Telemetry
     // wall-clock time. Only the inputs the scorer already uses (Core Principle).
     // =========================================================================
 
-    inline constexpr int SCHEMA_VERSION = 1;
+    inline constexpr int SCHEMA_VERSION = 2;   // v2: fit fields, eqk, delivery/skill props, fit+cap cfg
     inline constexpr size_t QUEUE_CAPACITY = 4096;
 
     /// One pipeline tick's decision, as the pipeline hands it over. All
@@ -144,14 +146,14 @@ namespace Huginn::Telemetry
                            const Learning::StateFeatures& features);
         static void AppendCandidateProps(std::string& out, const Candidate::CandidateVariant& c);
 
-        // TODO(integration: B-fit): fill in after merge -- append
-        // ,"fit":bd.fitMultiplier,"fitCasts":bd.fitCastsLeft,"fitAfford":bd.fitAfford,
-        // ,"fitRange":bd.fitRange,"fitOn":bd.fitApplied (leading comma), add fitMode
-        // to the cfg record, and bump SCHEMA_VERSION.
-        static void AppendFitFields(std::string& /*out*/, const Scoring::ScoreBreakdown& /*bd*/) {}
-        // TODO(integration: C-cap): spell/scroll delivery, skillLevel and the
-        // serialised equivalence key ("eqk", or null); bump SCHEMA_VERSION.
-        static void AppendCapFields(std::string& /*out*/, const Candidate::CandidateVariant& /*c*/) {}
+        /// Item-context fit (Scoring::FitScorer) from the breakdown: "fit" and
+        /// "fitOn" always; "fitCasts", "fitAfford", "fitRange" only when fit
+        /// was computed for a spell (fitCastsLeft != -1).
+        static void AppendFitFields(Json::Object& c, const Scoring::ScoreBreakdown& bd);
+        /// Equivalence key (slot/EquivalenceKey.h) as "eqk": its string form for
+        /// spells and scrolls, null otherwise. Written whether or not
+        /// [SlotLocker] bCapEquivalents is on, using the current cost bands.
+        static void AppendCapFields(Json::Object& c, const Candidate::CandidateVariant& candidate);
 
         // ---- lifecycle (m_lifecycleMutex) ------------------------------------
         mutable std::mutex m_lifecycleMutex;

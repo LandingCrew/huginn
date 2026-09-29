@@ -18,7 +18,7 @@ import json
 import sys
 from collections import Counter, defaultdict
 
-SUPPORTED_SCHEMAS = {1}
+SUPPORTED_SCHEMAS = {1, 2}  # v2 only adds fields (fit, eqk, dlv/skill, fit+cap cfg)
 
 
 def read_records(path):

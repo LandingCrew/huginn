@@ -493,7 +493,8 @@ the candidate list). After the usual checks it skips a candidate when:
 1. the page already shows `iMaxPerEquivalenceKey` items with its key
    (overrides, Remembrance holds and held seats all count), or
 2. it is a scroll and a same-key spell that the player can cast now
-   (`currentMagicka >= effectiveCost`, raw magicka) is also eligible for
+   (at least one cast left by `Scoring::CastsLeft`, the helper FitScorer uses;
+   raw magicka, one second of sustain for a concentration spell) is also eligible for
    this slot, or
 3. it is a spell the player cannot cast now and a same-key scroll is eligible
    for this slot.
@@ -519,7 +520,9 @@ default) and the next allocation resolves it.
 **Logging.** Items held back are logged at `debug`, once when they become held
 back on a page (`[EquivCap] Page N: 'X' held back (key already shown 1x)`),
 not every tick. An item that ended up placed after all (a later slot, or the
-fallback) is not logged.
+fallback) is not logged. While the cap is on, `hg recs` prints each slot's key
+(`eq=Damage|0x12|0x0|Fire|Ranged|0`), and the opt-in decision log records it
+for every spell and scroll candidate as `eqk` ([9-telemetry.md](9-telemetry.md)).
 
 Off by default, like `bFillJobKeysFromRegular`: it changes what is visible, and
 the flagship layout already gives each key one job.

@@ -6297,6 +6297,20 @@ void RunEquivalenceKeyTests()
     expect(PreferSpellOverScroll(14.0f, 14.0f), "PreferSpellOverScroll false at magicka == cost");
     expect(!PreferSpellOverScroll(13.9f, 14.0f), "PreferSpellOverScroll true below cost");
     expect(PreferSpellOverScroll(0.0f, 0.0f), "PreferSpellOverScroll false for a free spell");
+    expect(PreferSpellOverScroll(-1.0f, 0.0f), "PreferSpellOverScroll false for a free spell at negative magicka");
+
+    // Telemetry "eqk" text form (a schema field: format changes bump SCHEMA_VERSION).
+    {
+        EquivalenceKey key;
+        key.type = Spell::SpellType::Damage;
+        key.tags = 0x12;
+        key.tagsExt = 0;
+        key.element = Spell::ElementType::Fire;
+        key.delivery = DeliveryBucket::Ranged;
+        key.tier = 3;
+        expect(EquivalenceKeyToString(key) == "Damage|0x12|0x0|Fire|Ranged|3",
+            "EquivalenceKeyToString format changed");
+    }
 
     if (passed) {
         logger::info("  equivalence-key tests PASSED"sv);

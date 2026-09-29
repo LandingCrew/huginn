@@ -68,12 +68,14 @@ the log off.
   equipped-hand flags, bias).
 - For each **impression**: the top `iTopCandidates` scored candidates, plus any
   displayed item outside that prefix. Each carries its utility, every
-  `ScoreBreakdown` term, and its fit-relevant properties (type, school, element,
-  base and effective cost, range, concentration, magnitude, duration, count,
+  `ScoreBreakdown` term (including the `FitScorer` fit multiplier, whether or
+  not it was applied), its equivalence key (spells and scrolls), and its
+  fit-relevant properties (type, school, element, base and effective cost,
+  range, delivery, skill level, concentration, magnitude, duration, count,
   weapon damage, speed, charge). Also recorded: which candidate each slot of
   the displayed page held, how it got there (`Normal` merit / `Wildcard` /
   `Override` / `Remembered`), and whether the slot was locked.
-- The scorer and wildcard parameters that shape the policy (`cfg` record).
+- The scorer, fit, wildcard and equivalence-cap parameters that shape the policy (`cfg` record).
 - **Reward events**: equip via hotkey / Wheeler / external (vanilla menu,
   favourites), consumption, and misclick penalties, each with its reward value.
 - A **stable item key** (below). The plugin **file name** is part of it.
@@ -132,10 +134,10 @@ starts with a `session` record, and every record belongs to the most recent
 `session` line above it. Rotation also writes a fresh `session` header at the top
 of the new file, with the same `sid`.
 
-### `session`: file / session header (schema v1)
+### `session`: file / session header (schema v2)
 
 ```json
-{"n":0,"t":"session","schema":1,"plugin":"0.20.63","sid":"3f9c…(32 hex)","rt":0,
+{"n":0,"t":"session","schema":2,"plugin":"0.20.63","sid":"3f9c…(32 hex)","rt":0,
  "features":["healthPct","magickaPct","staminaPct","inCombat","isSneaking","distanceNorm",
              "targetNone","targetHumanoid","targetUndead","targetBeast","targetConstruct",
              "targetDragon","targetDaedra","hasMeleeEquipped","hasBowEquipped",
@@ -166,6 +168,10 @@ save load.
 | `potionTier` (`Higher`/`None`/`Lower`) | potion tier preference |
 | `wcOn`, `wcBase`, `wcMax`, `wcCooldown`, `wcRefractory`, `wcFirstExcluded` | `WildcardManager` settings. P(slot i) = `wcBase × i`, capped at `wcMax`. |
 | `topCands` | `iTopCandidates` |
+| `fitMode` (`Off`/`Shadow`/`Apply`) | `[Scoring] iFitMode`. Only under `Apply` did the candidates' `fit` enter `u`. |
+| `fitAffordMin`, `fitAffordFull`, `fitUnaffordable`, `fitConcSecs`, `fitOutOfRange`, `fitClampMin`, `fitClampMax` | The remaining `[Scoring] fFit*` parameters |
+| `uncastable` (`Disallow`/`Penalize`/`Allow`) | `[Candidates] sUncastableSpellPolicy` (selects the below-one-cast fit value) |
+| `capOn`, `capMax`, `capBands` | `[SlotLocker] bCapEquivalents`, `iMaxPerEquivalenceKey`, `sEquivalenceCostBands` (array of 4) |
 
 ### `load`: a save was loaded or a new game started
 
@@ -214,14 +220,18 @@ after it. Identical ticks write nothing (CLAUDE.md "log transitions, not ticks")
 | `wc` | Candidate was injected as a wildcard |
 | `cold` | Scored with the cold-start UCB boost |
 | `p` | Properties by kind (below) |
+| `fit` | `FitScorer` multiplier (1 = neutral / not a spell / `iFitMode = 0`) |
+| `fitOn` | `fit` was multiplied into `u` (`iFitMode = 2`) |
+| `fitCasts`, `fitAfford`, `fitRange` | Casts left at current magicka (`null` = free spell), affordability and range factors. Spells only, and only when fit was computed; omitted otherwise. |
+| `eqk` | Equivalence key (`type\|tagsHex\|tagsExtHex\|element\|delivery\|tier`, e.g. `"Damage\|0x12\|0x0\|Fire\|Ranged\|0"`) for spells and scrolls, `null` for everything else. Written whether or not `bCapEquivalents` is on. |
 
 `p` by kind (tag bitfields are hex strings such as `"0x1A"`, taken from the
 `SpellTag`/`ItemTag`/`WeaponTag` enums of the logged plugin version):
 
 | Kind | Fields |
 |---|---|
-| Spell | `type`, `school`, `element`, `baseCost`, `effCost` (perk-adjusted; per second for concentration), `range` (0 self/touch, projectile range, 4096 fallback), `conc`, `afford`, `tags`, `tagsExt` |
-| Scroll | `type`, `school`, `element`, `mag`, `dur`, `count`, `tags`, `tagsExt` |
+| Spell | `type`, `school`, `element`, `baseCost`, `effCost` (perk-adjusted; per second for concentration), `range` (0 self/touch, projectile range, 4096 fallback), `conc`, `afford`, `dlv` (`Self`/`Touch`/`Aimed`/`TargetActor`/`TargetLocation`/`Unknown`), `skill` (minimum skill level, 0 = Novice/unset), `tags`, `tagsExt` |
+| Scroll | `type`, `school`, `element`, `baseCost`, `dlv`, `skill`, `mag`, `dur`, `count`, `tags`, `tagsExt` |
 | Item (`src` Potion, Food, SoulGem) | `type`, `school`, `mag`, `dur`, `count`, `tags`, `tagsExt` |
 | Weapon (`src` Weapon, Staff) | `type`, `dmg`, `speed`, `charge` (0–1), `ench`, `tags` |
 | Ammo | `type`, `dmg`, `ench`, `count`, `tags` |
@@ -318,13 +328,14 @@ locks give the same display for the same inputs. So:
 ## Schema changes
 
 Any change to a record's fields, an enum spelling, the feature order or the key
-format bumps `SCHEMA_VERSION` in `src/telemetry/DecisionLog.h`. Two changes are
-already expected:
-- The item-fit multiplier fields (`fit`, `fitCasts`, `fitAfford`, `fitRange`,
-  `fitOn`, and `fitMode` in `cfg`).
-- The equivalence-cap fields (`delivery`, `skill`, `eqk`).
+format bumps `SCHEMA_VERSION` in `src/telemetry/DecisionLog.h`.
 
-Their hooks are `DecisionLog::AppendFitFields` / `AppendCapFields`.
+- **v1**: initial format.
+- **v2** (additive): per-candidate `fit`, `fitOn`, `fitCasts`, `fitAfford`,
+  `fitRange` (`DecisionLog::AppendFitFields`) and `eqk`
+  (`DecisionLog::AppendCapFields`); `dlv` and `skill` in spell/scroll `p`, and
+  `baseCost` for scrolls; the fit, `uncastable` and cap parameters in `cfg`.
+  A v1 reader that ignores unknown fields reads v2 unchanged.
 
 ## Reading the files
 

@@ -443,9 +443,8 @@ entries named.
       splits two otherwise equal mod spells) or too coarse (different
       magnitudes merge) -- adjust from what the log shows; (c) a slot lock
       can keep a duplicate for up to `fLockDurationMs`, because SlotLocker
-      runs after allocation and cannot refill -- accept or teach the locker;
-      (d) optionally reuse FitScorer's CastsLeft for the spell-vs-scroll
-      test once both are merged (S)
+      runs after allocation and cannot refill -- accept or teach the locker
+      (S)
       Raised 2026-09-29.
 
 ## Slot temporal memory
