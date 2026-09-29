@@ -26,6 +26,7 @@
 #include "wheeler/WheelerClient.h"
 #include "settings/SettingsReloader.h"
 #include "pipeline/PipelineCoordinator.h"
+#include "telemetry/DecisionLog.h"
 
 #include <algorithm>
 #include <cctype>
@@ -711,6 +712,24 @@ namespace Huginn::Console
 #endif  // !NDEBUG
 
    // =========================================================================
+   // TELEMETRY STATUS (opt-in decision log, [Telemetry] in Huginn.ini)
+   // =========================================================================
+   // File NAME only, never the full path: the path contains the Windows user
+   // folder, and players paste console output into bug reports.
+   static void Cmd_Telemetry(std::string_view /*arg*/)
+   {
+      const auto s = Telemetry::DecisionLog::GetSingleton().GetStatus();
+      auto msg = std::format("Decision log: {} | file: {} (in the SKSE log folder)",
+         s.enabled ? "ENABLED" : "disabled (set bEnabled = 1 under [Telemetry], then hg reload)",
+         s.fileName);
+      Print(msg.c_str());
+      auto counts = std::format("  records written: {} | dropped: {} | queued: {} | file size: {} KiB",
+         s.written, s.dropped, s.queued, s.fileBytes / 1024);
+      Print(counts.c_str());
+      logger::info("[Console] {} / {}"sv, msg, counts);
+   }
+
+   // =========================================================================
    // COMMAND TABLE + HELP
    // =========================================================================
 
@@ -723,6 +742,7 @@ namespace Huginn::Console
       { "rebuild",       "Force rebuild all registries",                false, Cmd_Rebuild },
       { "reload",        "Hot-reload all settings from INI",            false, Cmd_Reload },
       { "page",          "Switch to page N (or show current)",          true,  Cmd_Page },
+      { "telemetry",     "Show decision-log (telemetry) status",        false, Cmd_Telemetry },
 #ifndef NDEBUG
       { "dump spells",   "Write every castable spell to Huginn_Spells.csv (debug builds)", false, Cmd_DumpSpells },
 #endif
