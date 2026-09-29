@@ -270,6 +270,13 @@ namespace Huginn::State
       // Units: percentage (0.0 = pitch black, 1.0 = full daylight)
       inline constexpr float DARK_THRESHOLD = 0.35f;
 
+      // Leaving the dark takes more light than entering it (/code-review
+      // #152): the game value moves every frame with the player and nearby
+      // lights, and a reading hovering near raw 35 alternated 0.3 / 0.4 and
+      // switched darkness on and off. Once dark, it stays dark until 0.45 --
+      // the 0.5 step, which LoreRim reached only in lit rooms.
+      inline constexpr float DARK_EXIT_THRESHOLD = 0.45f;
+
       // Well-lit threshold
       // Why 0.7f: Above 70% light level is considered "well lit" (bright)
       // Used by EnvironmentState::IsWellLit()

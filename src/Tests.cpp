@@ -4285,6 +4285,7 @@ void RunUnitTests()
             State::TargetCollection targets{};
             State::WorldState dark{};
             dark.lightLevel = 0.1f;
+            dark.isDark = true;
             State::PlayerActorState player{};
 
             if (reasonFor(player, targets, dark, kNoSignals) != Context::ContextReason::InDarkness) {

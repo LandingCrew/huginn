@@ -192,6 +192,16 @@ namespace Huginn::Context
     // which is precisely the failure #64 is about.
     // =============================================================================
 
+    /// True when darknessWeight fires: dark, and the player has no way to see
+    /// yet -- no Night Eye, no light spell, no torch out. EvaluateRules and the
+    /// pipeline's skip gate both read this, so they cannot disagree.
+    [[nodiscard]] inline bool DarknessApplies(
+        const State::PlayerActorState& player, const State::WorldState& world) noexcept
+    {
+        return world.isDark && !player.buffs.hasNightEye &&
+               !player.buffs.hasLightSpell && !player.hasTorchEquipped;
+    }
+
     /// Pointer-to-member for the weight a reason is read off.
     using ReasonWeightField = float ContextWeightMap::*;
 

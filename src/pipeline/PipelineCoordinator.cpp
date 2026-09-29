@@ -201,6 +201,10 @@ void PipelineCoordinator::GatherState(PipelineContext& ctx)
     // because ReasonHold only advances in ScoreCandidates, below the skip check.
     // Both gates read the latch straight off the member via NeedsForcedRun().
 
+    // Darkness: whether its weight fires this tick, compared with the last run
+    // in CheckHashSkip. See PipelineContext::darknessActive.
+    ctx.darknessActive = Context::DarknessApplies(ctx.playerState, ctx.worldState);
+
     ctx.currentMagicka = ctx.actorValue->GetActorValue(RE::ActorValue::kMagicka);
 }
 
@@ -224,8 +228,12 @@ bool PipelineCoordinator::CheckHashSkip(PipelineContext& ctx, bool pageChanged)
     const bool unhashedStateActive = ctx.elementalDamageActive || ctx.fallingActive ||
                                      ctx.underwaterActive || ctx.workstationActive;
 
+    // Darkness runs once on each flip, either way: into the dark, and out of it
+    // when Night Eye, a light or a torch comes up.
+    const bool darknessFlipped = ctx.darknessActive != m_wasDark;
+
     if (ctx.stateHash == m_lastPipelineHash && !pageChanged &&
-        !unhashedStateActive && !NeedsForcedRun()) {
+        !unhashedStateActive && !darknessFlipped && !NeedsForcedRun()) {
         // Keep cache timestamp fresh so external equip events aren't rejected as stale
         Learning::PipelineStateCache::GetSingleton().RefreshTimestamp();
         return true;  // Skip
@@ -234,6 +242,7 @@ bool PipelineCoordinator::CheckHashSkip(PipelineContext& ctx, bool pageChanged)
     m_wasElementalDamageActive = ctx.elementalDamageActive;
     m_wasFalling = ctx.fallingActive;
     m_wasUnderwater = ctx.underwaterActive;
+    m_wasDark = ctx.darknessActive;
 
     // Commit point for the learner latch: everything below this line scores and
     // publishes, so whatever reward set the flag is about to reach the widget.

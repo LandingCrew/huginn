@@ -178,6 +178,17 @@ namespace Huginn::State
       // Quantize to 10% increments
       newState.lightLevel = std::round(newState.lightLevel * LightLevel::QUANTIZATION_MULTIPLIER) / LightLevel::QUANTIZATION_MULTIPLIER;
 
+      // Dark with hysteresis: enter below DARK_THRESHOLD, leave at
+      // DARK_EXIT_THRESHOLD, so a reading on the edge does not flip it.
+      bool wasDark = false;
+      {
+      std::shared_lock lock(m_worldMutex);
+      wasDark = m_worldState.isDark;
+      }
+      newState.isDark = wasDark
+        ? newState.lightLevel < LightLevel::DARK_EXIT_THRESHOLD
+        : newState.lightLevel < LightLevel::DARK_THRESHOLD;
+
       // Crosshair detection for world objects (locks, ore veins, workstations)
       auto* crosshairRef = GetCrosshairReference();
       if (crosshairRef) {
@@ -198,8 +209,8 @@ namespace Huginn::State
       // comes from, so the apparel/potion gate can be read straight off this.
       // rawLight is the game's value before scaling (-1 = unavailable, clock
       // estimate used): read it here to calibrate GAME_LIGHT_SCALE.
-      logger::info("[StateManager] WorldState changed - time:{:.1f} interior:{} light:{:.2f} (raw {:.1f}) workstation:{}"sv,
-        newState.timeOfDay, newState.isInterior, newState.lightLevel, rawLight, newState.workstationType);
+      logger::info("[StateManager] WorldState changed - time:{:.1f} interior:{} light:{:.2f} (raw {:.1f}) dark:{} workstation:{}"sv,
+        newState.timeOfDay, newState.isInterior, newState.lightLevel, rawLight, newState.isDark, newState.workstationType);
       }
 #endif
       return changed;

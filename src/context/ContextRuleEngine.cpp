@@ -250,9 +250,7 @@ namespace Huginn::Context
         // lightLevel is the game's light on the player, so a light spell or a
         // torch already lifts it out of the dark; the three checks catch the
         // gap before the next poll, and Night Eye, which changes no light.
-        if (world.lightLevel < State::LightLevel::DARK_THRESHOLD &&
-            !player.buffs.hasNightEye && !player.buffs.hasLightSpell &&
-            !player.hasTorchEquipped) {
+        if (DarknessApplies(player, world)) {
             result.darknessWeight = m_config.weightDarkness;
         }
 
