@@ -263,10 +263,26 @@ namespace Huginn::State
    namespace LightLevel
    {
       // Dark threshold (for stealth/dark vision)
-      // Why 0.3f: Below 30% light level is considered "dark" for stealth purposes
+      // Why 0.35f: lightLevel is quantized to 0.1, and a moonlit road reads
+      // raw 27-33 (the 0.3 step) while a cave floors at raw 12.5. At 0.3 the
+      // road never counted as dark; 0.35 takes the 0.3 step in (2026-09-28).
       // Used by EnvironmentState::IsDark()
       // Units: percentage (0.0 = pitch black, 1.0 = full daylight)
-      inline constexpr float DARK_THRESHOLD = 0.3f;
+      inline constexpr float DARK_THRESHOLD = 0.35f;
+
+      // Leaving the dark takes more light than entering it (/code-review
+      // #152): the game value moves every frame with the player and nearby
+      // lights, and a reading hovering near raw 35 alternated 0.3 / 0.4 and
+      // switched darkness on and off. Once dark, it stays dark until 0.45 --
+      // the 0.5 step, which LoreRim reached only in lit rooms.
+      inline constexpr float DARK_EXIT_THRESHOLD = 0.45f;
+
+      // ...and has to STAY there this long. In a cave the reading swung
+      // 8.9 -> 45.8 -> 7.5 -> 59 -> 94 -> 25 in twelve seconds as the player
+      // walked past braziers, far wider than the band above, and the
+      // Darkness label blinked four times (2026-09-29). Passing a light does
+      // not end the dark; stepping into a lit room does, after a beat.
+      inline constexpr int64_t DARK_EXIT_HOLD_MS = 3000;
 
       // Well-lit threshold
       // Why 0.7f: Above 70% light level is considered "well lit" (bright)
@@ -281,7 +297,14 @@ namespace Huginn::State
       // Units: multiplier for rounding
       inline constexpr float QUANTIZATION_MULTIPLIER = 10.0f;
 
-      // Base light level for interiors
+      // The game's own light level on the player (HighProcessData::lightLevel,
+      // what NPC detection reads) divided by this gives [0,1]. It is the light
+      // the player actually stands in: a cave, a lit inn, their own torch.
+      // Why 100.0f: first guess at the scale -- PollWorldObjects logs the raw
+      // value so it can be calibrated against play.
+      inline constexpr float GAME_LIGHT_SCALE = 100.0f;
+
+      // Base light level for interiors (fallback when the game value is unavailable)
       // Why 0.5f: Default moderate light level for interior cells
       // Without cell-specific data, we assume interiors are moderately lit
       // Units: percentage (0.0 = pitch black, 1.0 = full daylight)

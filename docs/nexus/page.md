@@ -1,10 +1,16 @@
 # Huginn
 
-Huginn is an SKSE plugin that watches how your fight is going and keeps your hotkeys stocked with whatever suits the moment — the right spell, potion, weapon, or item, already on the key, before you have to go digging for it. It only reads what you can already see for yourself — your health, magicka and stamina, the enemies in front of you, where you are. No enemy spell lists, no hidden traps, no peeking in locked chests. It is a convenience, not a cheat.
+Huginn is an SKSE plugin that watches how your fight is going and keeps your hotkeys stocked with whatever suits the moment — the right spell, potion, weapon, or item, already on the key, before you have to go digging for it in the menus.
 
 It also learns as you play. Huginn notices what you actually reach for in each kind of situation and starts offering that sooner. And it never acts on its own: it puts the item on the key, you decide whether to press it.
 
-Huginn also provides a HUD widget showing the rolling state of each hotkey.
+Huginn provides a HUD widget showing the rolling state of each hotkey.
+
+## Why 
+
+Huggin is an attempt to solve the issue of inventory and spell selection without having the player to remember if they have a potion, spell, or item for the job. Ideally Huggin abstracts away the inventory and ... 
+
+No... Why Huggin? oh thats becuase [Huggin is the raven that sits on Odins shoulder bringing knowledge and gossip.](https://en.wikipedia.org/wiki/Huginn_and_Muninn) That and there are already one to many Mimirs named mods.
 
 ## Features
 
@@ -32,22 +38,13 @@ Huginn uses dMenu as its settings GUI
 
 Huginn is entirely self contained with its own rendering pipeline. Install the dependencies then install Huginn using your favorite mod manager.
 
-### Upgrading to 0.20.0
+### Upgrading
 
-**0.20.0 resets what Huginn has learned about you.** It stores its learned
-preferences in the co-save under a record name, and that name changed — so on an
-existing character it starts from scratch and learns you again from your next few
-equips. Everything else in your save is untouched, and nothing needs
-reinstalling. A fresh character is unaffected.
-
-Also in 0.20.0: the console command `hg reset qvalues` is now `hg reset weights`,
-and the dMenu button "Reset Q-Table" is now "Reset Learned Weights". If you use
-dMenu, let the new `Huginn.json` overwrite the old one — the button stops working
-if the file and the plugin are from different versions.
+[PLACEHOLDER] If you are uninstalling or upgradeing you might want to `hg reset weights` or press the dMenu button "Reset Q-Table" "Reset Learned Weights".  Huginn stores its learned preferences in an SKSE co-save under a record name.
 
 ### Uninstall
 
-Huginn can be installed and uninstalled at anytime. Just delete or disable the mod from your mod manager
+Huginn can be installed and uninstalled at anytime. Just delete or disable the mod from your mod manager. 
 
 ## Configuration and Usage
 
@@ -98,6 +95,10 @@ iPriority = 7
 
 #### The default pages
 
+By default Huggin comes with 2 default pages: Huggin and Kit
+
+##### Huggins Page
+
 The first page, **Huginn**, gives every key a job. Each key shows the best thing for that job that is not already in your hands:
 
 | Key | Job | What you'll see |
@@ -111,11 +112,24 @@ The first page, **Huginn**, gives every key a job. Each key shows the best thing
 | 7 | Situational | Anything, plus the quieter prompts: arrows running low, a soul gem, waterbreathing |
 | 8 | Wildcard | The best of everything else, and now and then something new |
 
-Emergencies always land on the same keys: health on 1, magicka on 2, stamina on 3.
+Emergencies always land on the same keys: health on 1, magicka on 2, stamina on 3 (See Emergencies — [Overrides] below to change this).
+
+##### Kit Page
 
 The second page, **Kit**, is for between fights: potions, food, scrolls, utility spells, summons, arrows and crafting gear, one kind per key.
 
-**Templates.** `configs/templates/` has six ready-made layouts: battlemage, paladin, pure mage, stealth archer, summoner and survivalist. Each keeps the same emergency keys, so switching never moves "heal me". To use one, delete `[Pages]` and every `[PageN]` / `[PageN.SlotM]` section in `Huginn.ini`, paste the template in their place, and type `hg reload`.
+#### Template Pages
+
+**Templates.** `configs/templates/` has six ready-made layouts: 
+
+* battlemage  
+* paladin
+* pure mage
+* stealth archer
+* summoner
+* survivalist
+
+Each keeps the same emergency keys, so switching never moves "heal me". To use one, delete `[Pages]` and every `[PageN]` / `[PageN.SlotM]` section in `Huginn.ini`, paste the template in their place, and type `hg reload`.
 
 One thing worth knowing about emergencies: a slot set to `Other` will *not* take health, magicka or stamina emergencies. That is deliberate — it keeps one slot free for the quieter prompts, so a soul gem or low-ammo warning still gets through when your health is also dropping.
 
@@ -162,7 +176,7 @@ A few things to note:
 * **`Regular` is the catch-all.** Use it for slots you want Huginn to fill freely, and as overflow after your specific slots. If you typo a classification, Huginn falls back to `Regular` and notes it in the log.
 * **Weapons count as damage.** A `DamageAny` slot can serve you a sword. If you want attack magic only there, use `DamageMagic`.
 * **Held items are skipped.** Every slot leaves out what you are already holding (`bSkipEquipped`, on by default), which is what makes a weapon key show your *other* weapon.
-* **Staves are ranged.** They match `WeaponsRanged`, not the spell classifications.
+* **Magic Wands and Staves are ranged.** They match `WeaponsRanged`, not the spell classifications.
 * **The names have short forms.** `damage`, `healing`, `buffs`, `melee`, `destruction`, `drinks`, `any` and so on all work, and case doesn't matter.
 
 #### Keybindings
@@ -400,8 +414,17 @@ Both wheelerAPI and WHEELER - Refined support these labels. If they never appear
 
 ## Mod Compability
 
+### Spells Packs
+
+### Lighting Mods
+
+Huginn estiamtes how  dark it is from the light reported by game itself (measures on your character, the same value guards use to spot you sneaking). When it is dark, Night Eye and light spells such as Candlelight and Magelight come forward, and they drop back once one is active or a torch is out.
+
+Lighting mods change that value, so how often this happens depends on your load order. With a dark lighting setup, caves and moonless nights count as dark. With a bright one, or the vanilla game, the light may never fall low enough and Night Eye will not be suggested for darkness.
+
+To turn or disable the darkness suggestions off entirely, set `fWeightDarkness = 0` under `[ContextWeights]`.
 
 ## Source Code
 
-[huginn](https://github.com/LandingCrew/huginn)
-[WheelerAPI](https://github.com/LandingCrew/wheelerAPI)
+* [Huginn](https://github.com/LandingCrew/huginn)
+* [WheelerAPI](https://github.com/LandingCrew/wheelerAPI)

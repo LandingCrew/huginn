@@ -999,6 +999,13 @@ namespace Huginn::Spell
         // never reaches the spell registry, but mods rebind it as a spell.
         tags |= SpellTagExt::SlowFall;
         break;
+      case RE::EffectSetting::Archetype::kNightEye:
+      case RE::EffectSetting::Archetype::kLight:
+        // Two answers to the same problem, so one tag: see in the dark, or
+        // light it. By archetype, not the name -- SpellTag::Light is a name
+        // match, and "light" is a substring of too much.
+        tags |= SpellTagExt::DarkVision;
+        break;
       default:
         break;
       }
@@ -1043,6 +1050,15 @@ namespace Huginn::Spell
           Util::NameContainsWord(name, "featherfall") ||
           Util::NameContainsWord(name, "feather fall")) {
       tags |= SpellTagExt::SlowFall;
+      }
+
+      // Night Eye built through kScript describes nothing either: LoreRim's
+      // "Transmute Night Eye" classifies from its name alone and drew no
+      // darkness weight while the player cast it in a cave (2026-09-28). A
+      // Dispel is the opposite of what darknessWeight wants to offer.
+      if (Util::NameContainsWord(name, "night eye") &&
+          !Util::NameContainsWord(name, "dispel")) {
+      tags |= SpellTagExt::DarkVision;
       }
 
       // Unlock keeps a name fallback where the others do not, because the

@@ -427,6 +427,10 @@ namespace Huginn::UI
       DrawIndicatorPair("Muffle", buffs.hasMuffle, Colors::BUFF_COLOR,
                         "Waterbreath", buffs.hasWaterBreathing, Colors::BUFF_COLOR, Layout::COLUMN_WIDTH);
 
+      // Row 4: Night Eye | Light (both silence the darkness weight)
+      DrawIndicatorPair("Night Eye", buffs.hasNightEye, Colors::BUFF_COLOR,
+                        "Light", buffs.hasLightSpell, Colors::BUFF_COLOR, Layout::COLUMN_WIDTH);
+
       ImGui::Separator();
 
       // Regen buffs/debuffs - compact 2-row layout (v0.6.7)

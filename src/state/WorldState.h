@@ -34,6 +34,9 @@ namespace Huginn::State
       float timeOfDay = DefaultState::NOON_TIME;  // 0-24 hour format
       float lightLevel = DefaultState::DEFAULT_LIGHT;  // 0.0 = dark, 1.0 = bright
       bool isInterior = false;  // True if in interior cell
+      // Dark, with hysteresis: set below DARK_THRESHOLD, cleared only at
+      // DARK_EXIT_THRESHOLD (PollWorldObjects). What darknessWeight reads.
+      bool isDark = false;
 
       // =============================================================================
       // INTERACTABLE OBJECTS (from crosshair detection)
@@ -66,7 +69,7 @@ namespace Huginn::State
 
       // Light helpers
       [[nodiscard]] bool IsDark() const noexcept {
-      return lightLevel < LightLevel::DARK_THRESHOLD;
+      return isDark;
       }
 
       [[nodiscard]] bool IsWellLit() const noexcept {
@@ -139,6 +142,7 @@ namespace Huginn::State
       bool equal = std::abs(timeOfDay - other.timeOfDay) < Epsilon::TIME_OF_DAY &&
                    std::abs(lightLevel - other.lightLevel) < Epsilon::LIGHT_LEVEL &&
                    isInterior == other.isInterior &&
+                   isDark == other.isDark &&
                    isLookingAtLock == other.isLookingAtLock &&
                    lockLevel == other.lockLevel &&
                    isLookingAtOreVein == other.isLookingAtOreVein &&

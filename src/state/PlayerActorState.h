@@ -200,6 +200,8 @@ namespace Huginn::State
     bool hasWaterBreathing = false;
     bool isInvisible = false;
     bool hasMuffle = false;
+    bool hasNightEye = false;           // Night Eye / Vampire's Sight (archetype kNightEye)
+    bool hasLightSpell = false;         // Candlelight / Magelight (archetype kLight)
     bool hasArmorBuff = false;          // Any armor spell active (Oakflesh, Stoneflesh, etc.)
     bool hasCloakActive = false;        // Flame Cloak, Frost Cloak, Lightning Cloak
     bool hasActiveSummon = false;       // Any conjured creature
@@ -224,7 +226,7 @@ namespace Huginn::State
     bool hasFortifyEnchanting = false;   // Not a school, but same pattern
 
     [[nodiscard]] bool HasAnyBuff() const noexcept {
-      return hasWaterBreathing || isInvisible || hasMuffle ||
+      return hasWaterBreathing || isInvisible || hasMuffle || hasNightEye || hasLightSpell ||
              hasArmorBuff || hasCloakActive || hasActiveSummon ||
              hasHealthRegenBuff || hasMagickaRegenBuff || hasStaminaRegenBuff ||
              hasFortifyDestruction || hasFortifyConjuration || hasFortifyRestoration ||
@@ -250,6 +252,12 @@ namespace Huginn::State
       }
       if (hasMuffle != other.hasMuffle) {
         logger::trace("  {}.hasMuffle changed: {} -> {}", prefix, other.hasMuffle, hasMuffle);
+      }
+      if (hasNightEye != other.hasNightEye) {
+        logger::trace("  {}.hasNightEye changed: {} -> {}", prefix, other.hasNightEye, hasNightEye);
+      }
+      if (hasLightSpell != other.hasLightSpell) {
+        logger::trace("  {}.hasLightSpell changed: {} -> {}", prefix, other.hasLightSpell, hasLightSpell);
       }
       if (hasArmorBuff != other.hasArmorBuff) {
         logger::trace("  {}.hasArmorBuff changed: {} -> {}", prefix, other.hasArmorBuff, hasArmorBuff);
@@ -309,6 +317,8 @@ namespace Huginn::State
       bool equal = hasWaterBreathing == other.hasWaterBreathing &&
                    isInvisible == other.isInvisible &&
                    hasMuffle == other.hasMuffle &&
+                   hasNightEye == other.hasNightEye &&
+                   hasLightSpell == other.hasLightSpell &&
                    hasArmorBuff == other.hasArmorBuff &&
                    hasCloakActive == other.hasCloakActive &&
                    activeCloakType == other.activeCloakType &&

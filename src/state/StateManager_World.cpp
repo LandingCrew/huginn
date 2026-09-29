@@ -156,10 +156,19 @@ namespace Huginn::State
       newState.isInterior = cell->IsInteriorCell();
       }
 
-      // Light level calculation (from EnvironmentSensor)
+      // Light level. The game's own value comes first: it is the light on the
+      // player, so a dark cave reads dark and a torch or Candlelight reads lit.
+      // The clock estimate below it only ever knew the time of day, and called
+      // every interior 0.5 -- a cave was never dark.
       // Quantized to 10% increments to reduce jitter
-      // Note: Uses hoursSinceNoon directly; hoursSinceSunrise was unused
-      if (newState.isInterior) {
+      float rawLight = -1.0f;
+      if (auto* process = player->GetActorRuntimeData().currentProcess;
+          process && process->high) {
+      rawLight = process->high->lightLevel;
+      }
+      if (rawLight >= 0.0f) {
+      newState.lightLevel = std::clamp(rawLight / LightLevel::GAME_LIGHT_SCALE, 0.0f, 1.0f);
+      } else if (newState.isInterior) {
       newState.lightLevel = LightLevel::INTERIOR_DEFAULT;
       } else {
       float hoursSinceNoon = std::abs(newState.timeOfDay - LightLevel::NOON);
@@ -168,6 +177,32 @@ namespace Huginn::State
       }
       // Quantize to 10% increments
       newState.lightLevel = std::round(newState.lightLevel * LightLevel::QUANTIZATION_MULTIPLIER) / LightLevel::QUANTIZATION_MULTIPLIER;
+
+      // Dark with hysteresis: enter below DARK_THRESHOLD, leave at
+      // DARK_EXIT_THRESHOLD, so a reading on the edge does not flip it.
+      bool wasDark = false;
+      {
+      std::shared_lock lock(m_worldMutex);
+      wasDark = m_worldState.isDark;
+      }
+      if (!wasDark) {
+      newState.isDark = newState.lightLevel < LightLevel::DARK_THRESHOLD;
+      m_brightSinceMs = 0;
+      } else if (newState.lightLevel < LightLevel::DARK_EXIT_THRESHOLD) {
+      newState.isDark = true;
+      m_brightSinceMs = 0;
+      } else {
+      // Bright while dark: leave only once it has lasted DARK_EXIT_HOLD_MS.
+      const int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+      if (m_brightSinceMs == 0) {
+        m_brightSinceMs = nowMs;
+      }
+      newState.isDark = nowMs - m_brightSinceMs < LightLevel::DARK_EXIT_HOLD_MS;
+      if (!newState.isDark) {
+        m_brightSinceMs = 0;
+      }
+      }
 
       // Crosshair detection for world objects (locks, ore veins, workstations)
       auto* crosshairRef = GetCrosshairReference();
@@ -187,8 +222,10 @@ namespace Huginn::State
       // was invisible (it logs at trace, which is effectively off). 0 = not
       // looking at a bench; otherwise it is the BenchType the craft weight
       // comes from, so the apparel/potion gate can be read straight off this.
-      logger::info("[StateManager] WorldState changed - time:{:.1f} interior:{} light:{:.2f} workstation:{}"sv,
-        newState.timeOfDay, newState.isInterior, newState.lightLevel, newState.workstationType);
+      // rawLight is the game's value before scaling (-1 = unavailable, clock
+      // estimate used): read it here to calibrate GAME_LIGHT_SCALE.
+      logger::info("[StateManager] WorldState changed - time:{:.1f} interior:{} light:{:.2f} (raw {:.1f}) dark:{} workstation:{}"sv,
+        newState.timeOfDay, newState.isInterior, newState.lightLevel, rawLight, newState.isDark, newState.workstationType);
       }
 #endif
       return changed;

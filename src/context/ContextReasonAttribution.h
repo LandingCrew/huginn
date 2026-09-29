@@ -22,8 +22,8 @@ namespace Huginn::Context
     // showed was the right shape.
     //
     // Deliberate consequence: a reason nothing can draw from labels NOTHING,
-    // ever. That covers the three signal-only reasons with no weight at all
-    // (AllyInjured, LookingAtOre, InDarkness). It USED to cover unlock,
+    // ever. That covers the two signal-only reasons with no weight at all
+    // (AllyInjured, LookingAtOre). It USED to cover darkness, unlock,
     // slow-fall and anti-dragon as well, because SpellTag had no bit left for a
     // candidate to match them on — those reasons were never ranking anything,
     // so the label was never true, and silence made the gap visible as absence

@@ -61,6 +61,11 @@ namespace Huginn::Pipeline
         // surface when some unrelated dimension happened to move at the same
         // moment.
         bool workstationActive = false;
+        // Nor is darkness (/code-review #152): walking into a quiet cave, or
+        // lighting a torch there, moves no hashed bucket. Edge-triggered, not
+        // held like the three above -- a cave lasts minutes, and one run on
+        // each flip is all the weight needs (Context::DarknessApplies).
+        bool darknessActive = false;
 
         // Pipeline outputs (built by successive steps)
         std::vector<Scoring::ScoredCandidate> scoredCandidates;
@@ -203,6 +208,7 @@ namespace Huginn::Pipeline
             m_wasElementalDamageActive = false;
             m_wasFalling = false;
             m_wasUnderwater = false;
+            m_wasDark = false;
         }
 
         /// Queue a one-shot full-detail recommendation dump (console `hg recs`).
@@ -276,6 +282,11 @@ namespace Huginn::Pipeline
         // to clear the water-breathing weight and stand the drowning override
         // down, and neither edge moves a hashed bucket.
         bool m_wasUnderwater = false;
+
+        // Darkness at the last run (/code-review #152). Unlike the latches
+        // above this is compared, not OR-ed in: CheckHashSkip runs once when
+        // darknessActive differs from it, in either direction.
+        bool m_wasDark = false;
 
         // Holds the displayed reason so a momentary one stays readable.
         // Label-only: ScoreCandidates above it always sees the raw weights.

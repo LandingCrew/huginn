@@ -48,6 +48,7 @@ namespace Huginn::State
         weightMultipleEnemies = ReadClampedFloat(ini, section, "fWeightMultipleEnemies", ContextWeightDefaults::MULTIPLE_ENEMIES, 0.0f, 100.0f, "ContextWeightSettings"sv);
         weightEnemyCasting = ReadClampedFloat(ini, section, "fWeightEnemyCasting", ContextWeightDefaults::ENEMY_CASTING, 0.0f, 100.0f, "ContextWeightSettings"sv);
         weightSneaking = ReadClampedFloat(ini, section, "fWeightSneaking", ContextWeightDefaults::SNEAKING, 0.0f, 100.0f, "ContextWeightSettings"sv);
+        weightDarkness = ReadClampedFloat(ini, section, "fWeightDarkness", ContextWeightDefaults::DARKNESS, 0.0f, 100.0f, "ContextWeightSettings"sv);
 
         // Workstations
         weightAtForge = ReadClampedFloat(ini, section, "fWeightAtForge", ContextWeightDefaults::AT_FORGE, 0.0f, 100.0f, "ContextWeightSettings"sv);
@@ -135,6 +136,7 @@ namespace Huginn::State
         weightMultipleEnemies = ContextWeightDefaults::MULTIPLE_ENEMIES;
         weightEnemyCasting = ContextWeightDefaults::ENEMY_CASTING;
         weightSneaking = ContextWeightDefaults::SNEAKING;
+        weightDarkness = ContextWeightDefaults::DARKNESS;
 
         weightAtForge = ContextWeightDefaults::AT_FORGE;
         weightAtEnchanter = ContextWeightDefaults::AT_ENCHANTER;
@@ -191,6 +193,7 @@ namespace Huginn::State
         config.weightMultipleEnemies = weightMultipleEnemies;
         config.weightEnemyCasting = weightEnemyCasting;
         config.weightSneaking = weightSneaking;
+        config.weightDarkness = weightDarkness;
 
         config.weightAtForge = weightAtForge;
         config.weightAtEnchanter = weightAtEnchanter;

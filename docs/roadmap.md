@@ -9,17 +9,15 @@ re-opening something that looks obviously undone.
 Suggested order, each played and measured like #140-#148. Details are in the
 entries named.
 
-1. **Darkness scoring** (Known Recommendation Issues). Small and concrete:
-   Night Eye, light spells and torches when `lightLevel < 0.3`.
-2. **Survival cold scoring** (Known Recommendation Issues). Blocked on the
+1. **Survival cold scoring** (Known Recommendation Issues). Blocked on the
    Warming Aura spell's name or FormID, to check whether it is registered at
    all.
-3. **Wildcards in combat** (Slot temporal memory, remaining churn). Decision
+2. **Wildcards in combat** (Slot temporal memory, remaining churn). Decision
    pending from the user; the lean is an INI toggle, default on, possibly with
    a shorter combat expiry.
-4. **Widget hidden in cut scenes** (Follow-ups). Written on
+3. **Widget hidden in cut scenes** (Follow-ups). Written on
    `widget-hide-while-wheel-open`; needs a rebase and one real cut scene (S).
-5. **Every-tick recompute** (Known Bugs). Needs what the player was doing at
+4. **Every-tick recompute** (Known Bugs). Needs what the player was doing at
    11:10-11:20 on 2026-09-25 before anything can be guessed.
 
 ## Known Bugs
@@ -217,15 +215,14 @@ entries named.
       under `src/` that mention dMenu (132 references).
 
 ## Known Recommendation Issues
-- [ ] **Darkness is detected but never scored, so Night Eye and light spells
-      never surface.** `InDarkness` is a display reason only
-      (`ContextRuleEngine.h:198`: "...InDarkness) that nothing scores on");
-      night and caves change nothing in the ranking. The player went looking
-      for Night Eye in both and it never appeared (2026-09-27). Wants a
-      darkness weight -- WorldState::lightLevel < 0.3 already reports it --
-      for Night Eye, Candlelight/Magelight and torches, suppressed while one
-      is active the way waterbreathing is.
-      Raised 2026-09-27.
+- [ ] **Torches are not candidates**, so darkness can offer Night Eye and
+      light spells but never a torch -- the one answer a non-caster has.
+      Needs a light-source candidate type (TESObjectLIGH, equipped to the
+      left hand). Left out of the darkness PR (2026-09-28).
+- [ ] **The dark cut-off is a constant** (`LightLevel::DARK_THRESHOLD`,
+      0.35 of the game's light / 100). LoreRim caves floor at raw 7-12 and
+      lit areas start near 37; simonrim's darkest was 37.4, so it never
+      reads dark there. An INI threshold would let bright load orders opt in.
 
 - [ ] **Survival cold is tracked but never scored.** `coldLevel`,
       `warmthRating` and `IsFreezing()` exist in PlayerActorState and nothing

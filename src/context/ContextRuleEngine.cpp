@@ -245,6 +245,16 @@ namespace Huginn::Context
         }
 
         // =====================================================================
+        // DARK → Night Eye / light spells (suppressed once the player can see)
+        // =====================================================================
+        // lightLevel is the game's light on the player, so a light spell or a
+        // torch already lifts it out of the dark; the three checks catch the
+        // gap before the next poll, and Night Eye, which changes no light.
+        if (DarknessApplies(player, world)) {
+            result.darknessWeight = m_config.weightDarkness;
+        }
+
+        // =====================================================================
         // LOOKING AT LOCK → Unlock spells
         // =====================================================================
         if (world.isLookingAtLock) {
