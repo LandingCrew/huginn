@@ -54,6 +54,9 @@ namespace Huginn::Telemetry
     //   game forms -- and push it onto a bounded queue. One background writer
     //   thread does ALL file IO and makes NO RE:: calls. A full queue drops the
     //   new record and counts it; the writer reports the count as a drop record.
+    //   Stopping never joins on the caller's thread: it closes the queue (late
+    //   records are dropped), and the writer abandons its batch after the
+    //   current line; the next start joins it.
     //
     // LIFETIME
     //   Heap-allocated and intentionally never destroyed: joining a thread from
@@ -132,7 +135,8 @@ namespace Huginn::Telemetry
         /// File IO ONLY here. No RE:: calls.
         void WriterLoop(std::stop_token stop);
         void StartWriterLocked();   // m_lifecycleMutex held
-        void StopWriterLocked();    // m_lifecycleMutex held
+        void StopWriterLocked();    // m_lifecycleMutex held; closes the queue, does not join
+        void ReapRetiredWriterLocked();  // m_lifecycleMutex held; joins a writer StopWriterLocked retired
         [[nodiscard]] std::string BuildSessionHeader();
 
         // ---- producer helpers (may touch forms) ------------------------------
@@ -159,6 +163,9 @@ namespace Huginn::Telemetry
         mutable std::mutex m_lifecycleMutex;
         TelemetryConfig m_config{};
         std::jthread m_writer;
+        /// A writer StopWriterLocked stopped but did not join (it may still be
+        /// finishing its current line). Joined before the next start.
+        std::jthread m_retiredWriter;
         std::atomic<bool> m_enabled{ false };
 
         // Read by the writer; written under m_lifecycleMutex while it is stopped
@@ -173,6 +180,9 @@ namespace Huginn::Telemetry
         std::condition_variable_any m_queueCv;
         std::deque<std::string> m_queue;
         std::uint64_t m_seq = 0;                        // next "n"
+        /// True only while a writer is live. Enqueue rejects (and counts as
+        /// dropped) every record while false, so none outlives its session.
+        bool m_queueOpen = false;
 
         // ---- counters (status) -----------------------------------------------
         std::atomic<std::uint64_t> m_written{ 0 };

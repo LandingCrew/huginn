@@ -82,8 +82,14 @@ namespace Huginn::Telemetry
         }
 
         if (name.empty() || name == "." || name == "..") {
-            logger::warn("[TelemetrySettings] sFileName '{}' is not a usable file name, using {}"sv,
-                raw, TelemetryDefaults::FILE_NAME);
+            // Never echo `raw`: with no file-name component (a value ending in
+            // a separator, e.g. C:\Users\<name>\Documents\) it is a full
+            // path, Windows user folder included, and players paste this log
+            // into bug reports. Only the (empty, "." or "..") component and the
+            // raw length go out.
+            logger::warn("[TelemetrySettings] sFileName has no usable file-name component "
+                "('{}', {} chars), using {}"sv,
+                name, raw.size(), TelemetryDefaults::FILE_NAME);
             return TelemetryDefaults::FILE_NAME;
         }
 

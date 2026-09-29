@@ -1677,6 +1677,9 @@ void RunTelemetryFormatTests()
             "forward-slash directory or case-insensitive extension not handled");
         expect(TelemetrySettings::SanitizeFileName("") == def, "empty name not defaulted");
         expect(TelemetrySettings::SanitizeFileName("..") == def, "'..' not defaulted");
+        // No file-name component: defaulted (and the warning must not echo the path).
+        expect(TelemetrySettings::SanitizeFileName("C:\\Users\\me\\Documents\\") == def,
+            "directory-only name not defaulted");
         expect(TelemetrySettings::SanitizeFileName("log%s.jsonl") == "log_s.jsonl",
             "'%' not replaced (console Print is printf-style)");
         expect(TelemetrySettings::SanitizeFileName("notes.txt") == "notes.txt.jsonl",

@@ -167,6 +167,9 @@ namespace Huginn::Telemetry
         }
 
         if (!m_writer.joinable()) {
+            // A writer stopped earlier may still be finishing its line; it
+            // reads m_filePath, so it must be gone before that changes.
+            ReapRetiredWriterLocked();
             const auto logDir = SKSE::log::log_directory();
             if (!logDir) {
                 logger::error("[Telemetry] No SKSE log directory - decision log stays off"sv);
@@ -196,6 +199,10 @@ namespace Huginn::Telemetry
             m_sessionStart = std::chrono::steady_clock::now();
             m_sessionStarted.store(true, std::memory_order_release);
         }
+        {
+            std::scoped_lock qlk(m_queueMutex);
+            m_queueOpen = true;
+        }
         m_writer = std::jthread([this](std::stop_token st) { WriterLoop(st); });
     }
 
@@ -204,19 +211,44 @@ namespace Huginn::Telemetry
         if (!m_writer.joinable()) {
             return;
         }
+
+        {
+            // Close the queue first, under the queue mutex, so no record can
+            // land in it from here on. A producer that passed IsEnabled()
+            // before m_enabled went false and is still building its line is
+            // turned away by Enqueue (and counted as dropped) instead of
+            // sitting in the queue until the next writer writes it into the
+            // next session, after that session's header.
+            std::scoped_lock qlk(m_queueMutex);
+            m_queueOpen = false;
+            // Whatever is still queued belongs to the session that is ending;
+            // it holds sequence numbers, so it counts as dropped.
+            if (!m_queue.empty()) {
+                m_dropped.fetch_add(m_queue.size(), std::memory_order_relaxed);
+                m_queue.clear();
+            }
+        }
+
+        // No join here. The caller is the game main thread under the update
+        // mutex (SettingsReloader::ApplySideEffects), and joining waited for
+        // the writer to finish its whole batch -- up to QUEUE_CAPACITY lines
+        // plus a flush and possibly a rotate. The writer abandons its batch
+        // after the current line once stop is requested, and the thread is
+        // parked here until the next start reaps it.
+        ReapRetiredWriterLocked();  // defensive: a start always reaps first
         m_writer.request_stop();
         m_queueCv.notify_all();
-        m_writer.join();
+        m_retiredWriter = std::move(m_writer);
         m_writer = std::jthread{};
+    }
 
-        // Anything a producer slipped in after the writer's final drain belongs
-        // to the session that just ended; do not replay it into the next file.
-        // They already hold sequence numbers, so they count as dropped.
-        std::scoped_lock qlk(m_queueMutex);
-        if (!m_queue.empty()) {
-            m_dropped.fetch_add(m_queue.size(), std::memory_order_relaxed);
-            m_queue.clear();
+    void DecisionLog::ReapRetiredWriterLocked()
+    {
+        // Stopped already: at most one line, a flush and a close away.
+        if (m_retiredWriter.joinable()) {
+            m_retiredWriter.join();
         }
+        m_retiredWriter = std::jthread{};
     }
 
     DecisionLog::Status DecisionLog::GetStatus() const
@@ -245,6 +277,13 @@ namespace Huginn::Telemetry
     {
         {
             std::scoped_lock lk(m_queueMutex);
+            // Not live (stopping, stopped, or not started yet): the record
+            // belongs to no session a writer will write. No sequence number --
+            // there is no file for the gap to show up in.
+            if (!m_queueOpen) {
+                m_dropped.fetch_add(1, std::memory_order_relaxed);
+                return;
+            }
             // Every record takes a sequence number, INCLUDING the ones dropped
             // below, so a reader sees the gap as well as the drop record.
             const std::uint64_t n = m_seq++;
@@ -374,10 +413,14 @@ namespace Huginn::Telemetry
                 std::unique_lock lk(m_queueMutex);
                 m_queueCv.wait(lk, stop, [this] { return !m_queue.empty(); });
                 batch.swap(m_queue);
-                // Stop requested: write what was drained, then exit.
+                // Stop requested: StopWriterLocked already emptied and closed
+                // the queue, so there is nothing more to write; exit.
                 if (stop.stop_requested()) {
                     running = false;
                 }
+            }
+            if (batch.empty()) {
+                continue;  // woken by a stop, or spuriously
             }
 
             if (!out.is_open()) {
@@ -403,7 +446,18 @@ namespace Huginn::Telemetry
             }
 
             const std::uint64_t cap = m_maxBytes.load(std::memory_order_relaxed);
-            for (const auto& line : batch) {
+            size_t done = 0;
+            bool stopped = false;
+            for (; done < batch.size(); ++done) {
+                // Stop requested: abandon the rest of the batch after the
+                // current line, so a stop never waits on a large batch (or a
+                // rotate) -- StopWriterLocked does not join, but the next
+                // start does.
+                if (stop.stop_requested()) {
+                    stopped = true;
+                    break;
+                }
+                const auto& line = batch[done];
                 if (bytes > 0 && bytes + line.size() > cap) {
                     rotate();
                     if (!out.is_open()) {
@@ -412,6 +466,17 @@ namespace Huginn::Telemetry
                 }
                 writeRaw(line);
                 m_written.fetch_add(1, std::memory_order_relaxed);
+            }
+            if (const size_t lost = batch.size() - done; lost > 0) {
+                m_dropped.fetch_add(lost, std::memory_order_relaxed);
+                if (!stopped) {
+                    // A failed reopen after rotating: report it in this file
+                    // once a later batch opens it. A stopped session is over.
+                    m_droppedUnreported.fetch_add(lost, std::memory_order_relaxed);
+                }
+            }
+            if (stopped) {
+                running = false;
             }
             out.flush();
             batch.clear();

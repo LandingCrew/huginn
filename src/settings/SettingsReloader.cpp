@@ -465,9 +465,11 @@ namespace Huginn::Settings
         //    pure loader now; this is the side-effect step for both reload and reset).
         UI::DebugSettings::GetSingleton().ApplyToWidgets();
 
-        // 7. Telemetry writer (open/close/reopen). Joins the writer thread when
-        //    turning the log off; the writer never takes the update mutex, so
-        //    joining under RunExclusive cannot deadlock.
+        // 7. Telemetry writer (open/close/reopen). Turning the log off does not
+        //    join the writer: it is stopped and joined on the next start, and a
+        //    stopped writer abandons its batch after the current line, so a
+        //    file-name change (stop + start) waits for one line at most. The
+        //    writer never takes the update mutex, so this cannot deadlock.
         Telemetry::DecisionLog::GetSingleton().ApplyConfig(
             Telemetry::TelemetrySettings::GetSingleton().BuildConfig());
 

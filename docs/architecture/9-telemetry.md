@@ -309,7 +309,15 @@ locks give the same display for the same inputs. So:
   flush once per drained batch, and rotate. It makes **no `RE::` calls**.
 - When the queue is full, the new record is dropped and counted, and a `drop`
   record reports it later.
-- When the log is off, every producer returns after one atomic load.
+- When the log is off, every producer returns after one atomic load. A producer
+  that passed that check just before the log was turned off is turned away when
+  it enqueues, and its record counts as dropped. So a record never lands in the
+  next session's file after that session's header.
+- Turning the log off (`hg reload`, dMenu, `reset all`) never joins the writer
+  on the calling thread, which is the game main thread under the update mutex.
+  The queue is closed and emptied, and the writer abandons its batch after the
+  line it is writing. The stopped thread is joined when the writer next starts,
+  so a file-name change waits for one line at most.
 - `DecisionLog` is heap-allocated and never destroyed, because joining a thread
   from a static destructor would run under the loader lock. At process exit, at
   most the batch being written is lost.

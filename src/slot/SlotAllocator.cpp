@@ -896,6 +896,53 @@ namespace Huginn::Slot
         return SIZE_MAX;
     }
 
+    template <class Eligible>
+    size_t SlotAllocator::PreferredSameKeyAlternative(
+        const Scoring::ScoredCandidateList& candidates,
+        size_t i,
+        const EquivCapContext& cap,
+        Eligible&& eligible,
+        CapSkipReason& outReason)
+    {
+        if (i >= candidates.size() || cap.keys.size() != candidates.size() || !cap.keys[i]) {
+            return SIZE_MAX;
+        }
+        const EquivalenceKey& key = *cap.keys[i];
+
+        // First same-key candidate (by utility) of the wanted kind that could
+        // take the slot.
+        auto findSameKey = [&](auto&& accepts) -> size_t {
+            for (size_t j = 0; j < candidates.size(); ++j) {
+                if (j == i || !cap.keys[j] || !(*cap.keys[j] == key)) continue;
+                if (!accepts(candidates[j])) continue;
+                if (eligible(candidates[j])) return j;
+            }
+            return SIZE_MAX;
+        };
+        auto isCastableSpell = [&cap](const Scoring::ScoredCandidate& other) {
+            const auto* spell = Candidate::TryGetAs<Candidate::SpellCandidate>(other.candidate);
+            return spell && PreferSpellOverScroll(cap.currentMagicka, spell->effectiveCost);
+        };
+
+        // The two rules cannot both fire for one pair: a scroll defers only
+        // to a castable spell, a spell only when it is not castable.
+        const auto& c = candidates[i];
+        if (Candidate::IsType<Candidate::ScrollCandidate>(c.candidate)) {
+            const size_t j = findSameKey(isCastableSpell);
+            if (j != SIZE_MAX) outReason = CapSkipReason::PreferSpell;
+            return j;
+        }
+        if (const auto* spell = Candidate::TryGetAs<Candidate::SpellCandidate>(c.candidate);
+            spell && !PreferSpellOverScroll(cap.currentMagicka, spell->effectiveCost)) {
+            const size_t j = findSameKey([](const Scoring::ScoredCandidate& other) {
+                return Candidate::IsType<Candidate::ScrollCandidate>(other.candidate);
+            });
+            if (j != SIZE_MAX) outReason = CapSkipReason::PreferScroll;
+            return j;
+        }
+        return SIZE_MAX;
+    }
+
     void SlotAllocator::HoldIncumbents(
         size_t pageIndex,
         uint32_t generation,
@@ -1052,6 +1099,22 @@ namespace Huginn::Slot
         // and the same release repeats every run -- 939 [Hold] lines in ten
         // minutes on the first build.
         const float factor = 1.0f + margin;
+
+        // A holder that loses its slot is free again -- the fill may show it
+        // elsewhere -- but not as this seat's owner. A guest owns a seat
+        // somewhere else, and the seat here is not its to give up.
+        auto releaseHolder = [&](size_t j, const Scoring::ScoredCandidate* item) {
+            excludedIDs.erase(item->GetFormID());
+            excludedNames.erase(item->GetName());
+            const uint64_t loserKey = Candidate::GetBase(item->candidate).GetDeduplicationKey();
+            if (seats[j] == loserKey) {
+                std::lock_guard<std::mutex> lock(m_seatingMutex);
+                if (m_seatingGeneration == generation && m_seating[pageIndex][j] == loserKey) {
+                    m_seating[pageIndex][j] = 0;
+                }
+            }
+        };
+
         for (size_t t = 0; t < tentativeCount; ++t) {
             const auto [j, item] = tentative[t];
             const auto& config = slotConfigs[j];
@@ -1070,6 +1133,44 @@ namespace Huginn::Slot
                             CapSkip{ item->GetName(), CapSkipReason::KeyFull, shown });
                         excludedIDs.erase(item->GetFormID());
                         excludedNames.erase(item->GetName());
+                        continue;
+                    }
+                }
+
+                // Spell vs scroll of the same key applies to a seat too:
+                // otherwise a seated Scroll of X is re-held every pass, fills
+                // X's key, and the castable spell X only gets in by beating
+                // it by the challenger margin (and an uncastable seated spell
+                // keeps out its scroll the same way). The preferred
+                // alternative takes the slot directly, and the holder gives up
+                // its seat, as if it had lost to a challenger.
+                if (cap->keys.size() == candidates.size() && !candidates.empty()) {
+                    const size_t idx = static_cast<size_t>(item - candidates.data());
+                    const size_t slot = j;  // named copy for the lambda (a structured binding)
+                    auto fitsHere = [&](const Scoring::ScoredCandidate& other) -> bool {
+                        if (other.isRememberedOnly) return false;
+                        if (excludedIDs.contains(other.GetFormID()) || excludedNames.contains(other.GetName())) {
+                            return false;  // held elsewhere, placed, or shown by an override
+                        }
+                        const auto probe = SlotAssignment::FromCandidate(slot, config.classification, other);
+                        return SlotAccepts(config, probe, player);
+                    };
+                    CapSkipReason reason = CapSkipReason::PreferSpell;
+                    const size_t alt = PreferredSameKeyAlternative(candidates, idx, *cap, fitsHere, reason);
+                    if (alt != SIZE_MAX) {
+                        const auto& preferred = candidates[alt];
+                        SKSE::log::debug("[Hold] Page {} slot {}: '{}' gives way to same-effect '{}' ({})",
+                            pageIndex, j, item->GetName(), preferred.GetName(),
+                            reason == CapSkipReason::PreferSpell ? "spell is castable" : "not enough magicka");
+                        cap->skipped.try_emplace(item->GetFormID(), CapSkip{ item->GetName(), reason, 0 });
+
+                        assignments[j] = SlotAssignment::FromCandidate(j, config.classification, preferred,
+                            preferred.isWildcard ? AssignmentType::Wildcard : AssignmentType::Normal);
+                        assignedFormIDs.insert(preferred.GetFormID());
+                        assignedNames.insert(preferred.GetName());
+                        excludedIDs.insert(preferred.GetFormID());
+                        excludedNames.insert(preferred.GetName());
+                        releaseHolder(j, item);
                         continue;
                     }
                 }
@@ -1109,18 +1210,7 @@ namespace Huginn::Slot
                 excludedIDs.insert(challenger->GetFormID());
                 excludedNames.insert(challenger->GetName());
 
-                // The loser is free again -- the fill may show it elsewhere --
-                // but not as this seat's owner. A guest owns a seat somewhere
-                // else, and the seat here is not its to give up.
-                excludedIDs.erase(item->GetFormID());
-                excludedNames.erase(item->GetName());
-                const uint64_t loserKey = Candidate::GetBase(item->candidate).GetDeduplicationKey();
-                if (seats[j] == loserKey) {
-                    std::lock_guard<std::mutex> lock(m_seatingMutex);
-                    if (m_seatingGeneration == generation && m_seating[pageIndex][j] == loserKey) {
-                        m_seating[pageIndex][j] = 0;
-                    }
-                }
+                releaseHolder(j, item);
                 continue;
             }
 
@@ -1539,36 +1629,19 @@ namespace Huginn::Slot
                 }
 
                 // (b) Spell vs scroll of the same key: the spell while it can
-                // be cast now, else the scroll. Only defers to an alternative
-                // that is eligible for THIS slot, so it never empties one. The
-                // two rules cannot both fire for one pair: a scroll defers
-                // only to a castable spell, a spell only when it is not.
-                auto sameKeyEligible = [&](auto&& accepts) -> bool {
-                    for (size_t j = 0; j < candidates.size(); ++j) {
-                        if (j == i || !cap->keys[j] || !(*cap->keys[j] == key)) continue;
-                        if (!accepts(candidates[j])) continue;
-                        if (eligible(candidates[j])) return true;
-                    }
-                    return false;
-                };
-                if (Candidate::IsType<Candidate::ScrollCandidate>(candidate.candidate)) {
-                    const bool castableSpell = sameKeyEligible([&](const Scoring::ScoredCandidate& other) {
-                        const auto* spell = Candidate::TryGetAs<Candidate::SpellCandidate>(other.candidate);
-                        return spell && PreferSpellOverScroll(cap->currentMagicka, spell->effectiveCost);
-                    });
-                    if (castableSpell) {
-                        holdBack(CapSkipReason::PreferSpell, 0);
-                        continue;
-                    }
-                } else if (const auto* spell = Candidate::TryGetAs<Candidate::SpellCandidate>(candidate.candidate);
-                           spell && !PreferSpellOverScroll(cap->currentMagicka, spell->effectiveCost)) {
-                    const bool scrollAvailable = sameKeyEligible([](const Scoring::ScoredCandidate& other) {
-                        return Candidate::IsType<Candidate::ScrollCandidate>(other.candidate);
-                    });
-                    if (scrollAvailable) {
-                        holdBack(CapSkipReason::PreferScroll, 0);
-                        continue;
-                    }
+                // be cast now, else the scroll. The preferred alternative
+                // takes THIS slot -- the deferring item's rank position --
+                // rather than the walk moving on: moving on handed the slot
+                // to the next item by utility (usually another key), and a
+                // low-ranked alternative often never got a slot at all, so
+                // the effect vanished from the page. Only an alternative
+                // eligible for this slot counts, so the rule never empties
+                // one. Same key, so rule (a) holds for it too.
+                CapSkipReason reason = CapSkipReason::PreferSpell;
+                const size_t alt = PreferredSameKeyAlternative(candidates, i, *cap, eligible, reason);
+                if (alt != SIZE_MAX) {
+                    holdBack(reason, 0);
+                    return candidates[alt];
                 }
             }
 

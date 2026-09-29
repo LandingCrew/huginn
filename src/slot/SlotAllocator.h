@@ -416,6 +416,21 @@ namespace Huginn::Slot
             const std::array<size_t, MAX_SLOTS_PER_PAGE>& priorityOrder,
             size_t priorityCount) const;
 
+        /// Spell vs scroll of one equivalence key (EquivalenceKey.h): the
+        /// index of the same-key candidate the rule prefers over
+        /// candidates[i] -- a castable spell over a scroll, a scroll over a
+        /// spell the player cannot cast now -- that `eligible` accepts, or
+        /// SIZE_MAX when the rule keeps candidates[i]. On a hit `outReason`
+        /// says why candidates[i] deferred. `cap.keys` must be index-aligned
+        /// with `candidates`. Defined in SlotAllocator.cpp (only used there).
+        template <class Eligible>
+        [[nodiscard]] static size_t PreferredSameKeyAlternative(
+            const Scoring::ScoredCandidateList& candidates,
+            size_t i,
+            const EquivCapContext& cap,
+            Eligible&& eligible,
+            CapSkipReason& outReason);
+
         /// Log (debug) the candidates the cap newly held back on this page.
         void LogCapSkips(size_t pageIndex, const EquivCapContext& cap,
             const SlotAssignments& assignments) const;

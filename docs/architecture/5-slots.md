@@ -499,12 +499,23 @@ the candidate list). After the usual checks it skips a candidate when:
 3. it is a spell the player cannot cast now and a same-key scroll is eligible
    for this slot.
 
+In cases 2 and 3 the preferred same-key item takes the slot at the skipped
+candidate's rank position; the walk does not move on. Moving on gave the slot
+to the next item by utility, usually one with a different key. A low-ranked
+alternative, such as an untrained spell behind its trained scroll, then often
+got no slot at all, and the effect disappeared from the page.
+
 Every fill that goes through `FindBestCandidate` applies it: pass 2 and its
 wildcard retry, the no-seating refill, pass 4, and the challenger search in the
 slot hold. The **slot hold** does not exempt a seat: a seated item whose key is
 already full on the page is not held and competes in pass 2 like anything
 else. Otherwise an old duplicate would stay for as long as it stayed
-recommended.
+recommended. The spell-vs-scroll preference applies to a seat as well. A seated
+scroll whose castable same-key spell is eligible for that slot hands the slot
+to the spell, and a seated uncastable spell hands it to the scroll. The holder
+gives up its seat as if it had lost to a challenger. Without this, a seated
+scroll would fill its key every pass, and the spell would get in only by
+beating it by the challenger margin.
 
 **Fallback (pass 4b).** The cap chooses what to prefer, never whether a key is
 blank. After pass 4 (seating on) or pass 2 and the no-seating refill (seating
