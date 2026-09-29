@@ -71,6 +71,7 @@ namespace Huginn::Context
         float waterbreathingWeight = 0.0f;  // Waterbreathing (when underwater)
         float unlockWeight = 0.0f;          // Unlock spells (when looking at lock)
         float slowFallWeight = 0.0f;        // Slow fall / become ethereal (when falling)
+        float darknessWeight = 0.0f;        // Night Eye / light spells (when it is dark)
 
         // =========================================================================
         // WORKSTATION FORTIFY EFFECTS
@@ -142,6 +143,7 @@ namespace Huginn::Context
             maxWeight = std::max(maxWeight, waterbreathingWeight);
             maxWeight = std::max(maxWeight, unlockWeight);
             maxWeight = std::max(maxWeight, slowFallWeight);
+            maxWeight = std::max(maxWeight, darknessWeight);
             maxWeight = std::max(maxWeight, fortifySmithingWeight);
             maxWeight = std::max(maxWeight, fortifyEnchantingWeight);
             maxWeight = std::max(maxWeight, fortifyAlchemyWeight);
@@ -194,8 +196,8 @@ namespace Huginn::Context
     using ReasonWeightField = float ContextWeightMap::*;
 
     /// The field behind `reason`, or nullptr for reasons no weight backs:
-    /// None, and the three ContextReasonSignals facts (AllyInjured,
-    /// LookingAtOre, InDarkness) that nothing scores on.
+    /// None, and the two ContextReasonSignals facts (AllyInjured,
+    /// LookingAtOre) that nothing scores on.
     [[nodiscard]] ReasonWeightField WeightFieldFor(ContextReason reason) noexcept;
 
     // =============================================================================
@@ -205,7 +207,8 @@ namespace Huginn::Context
     // on, so they have no ContextWeightMap entry to read them off:
     //   - injured follower: no heal-other weight exists (healingWeight is the
     //     player's own deficit)
-    //   - ore vein / ambient light: no mining or light weight exists
+    //   - ore vein: no mining weight exists
+    // Darkness used to be the third; it grew darknessWeight and left.
     //
     // They are passed in raw (not pre-thresholded) so every threshold in the
     // reason vocabulary stays in one place — this file's implementation.
@@ -214,7 +217,7 @@ namespace Huginn::Context
     //
     // CAVEAT: having no weight also means having no INI knob. Every other reason
     // can be tuned or silenced from [ContextWeights] (a rule at 0 never reports);
-    // these three always report at their hardcoded thresholds. That is the price
+    // these two always report at their hardcoded thresholds. That is the price
     // of labelling a fact nothing scores on — and the reason to prefer adding a
     // weight over adding a field here.
     // =============================================================================
@@ -223,7 +226,6 @@ namespace Huginn::Context
     {
         bool allyInjured = false;    // A follower is below the low-health threshold
         bool lookingAtOre = false;   // Crosshair on an ore vein
-        float lightLevel = 1.0f;     // Ambient light [0,1] (WorldState::lightLevel)
     };
 
     // =============================================================================

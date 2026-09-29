@@ -156,10 +156,19 @@ namespace Huginn::State
       newState.isInterior = cell->IsInteriorCell();
       }
 
-      // Light level calculation (from EnvironmentSensor)
+      // Light level. The game's own value comes first: it is the light on the
+      // player, so a dark cave reads dark and a torch or Candlelight reads lit.
+      // The clock estimate below it only ever knew the time of day, and called
+      // every interior 0.5 -- a cave was never dark.
       // Quantized to 10% increments to reduce jitter
-      // Note: Uses hoursSinceNoon directly; hoursSinceSunrise was unused
-      if (newState.isInterior) {
+      float rawLight = -1.0f;
+      if (auto* process = player->GetActorRuntimeData().currentProcess;
+          process && process->high) {
+      rawLight = process->high->lightLevel;
+      }
+      if (rawLight >= 0.0f) {
+      newState.lightLevel = std::clamp(rawLight / LightLevel::GAME_LIGHT_SCALE, 0.0f, 1.0f);
+      } else if (newState.isInterior) {
       newState.lightLevel = LightLevel::INTERIOR_DEFAULT;
       } else {
       float hoursSinceNoon = std::abs(newState.timeOfDay - LightLevel::NOON);
@@ -187,8 +196,10 @@ namespace Huginn::State
       // was invisible (it logs at trace, which is effectively off). 0 = not
       // looking at a bench; otherwise it is the BenchType the craft weight
       // comes from, so the apparel/potion gate can be read straight off this.
-      logger::info("[StateManager] WorldState changed - time:{:.1f} interior:{} light:{:.2f} workstation:{}"sv,
-        newState.timeOfDay, newState.isInterior, newState.lightLevel, newState.workstationType);
+      // rawLight is the game's value before scaling (-1 = unavailable, clock
+      // estimate used): read it here to calibrate GAME_LIGHT_SCALE.
+      logger::info("[StateManager] WorldState changed - time:{:.1f} interior:{} light:{:.2f} (raw {:.1f}) workstation:{}"sv,
+        newState.timeOfDay, newState.isInterior, newState.lightLevel, rawLight, newState.workstationType);
       }
 #endif
       return changed;

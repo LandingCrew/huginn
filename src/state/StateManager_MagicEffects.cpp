@@ -11,6 +11,7 @@
 #include "StateManager.h"
 #include "StateConstants.h"
 #include "../Profiling.h"
+#include "../util/NameMatch.h"
 
 namespace Huginn::State
 {
@@ -124,6 +125,23 @@ namespace Huginn::State
         }
 
         auto archetype = baseEffect->GetArchetype();
+
+        // Night Eye built through kScript has no kNightEye archetype to find
+        // below, so match the name the way SpellClassifier tags the spell:
+        // LoreRim's Transmute Night Eye kept the darkness weight up after it
+        // was cast (2026-09-28).
+        {
+          const auto isNightEye = [](std::string_view name) {
+            return Util::NameContainsWord(name, "night eye") &&
+                   !Util::NameContainsWord(name, "dispel");
+          };
+          const char* effectName = baseEffect->GetFullName();
+          if ((spell && isNightEye(spell->GetName())) ||
+              (effectName && isNightEye(effectName))) {
+            newBuffs.hasNightEye = true;
+          }
+        }
+
         auto primaryAV = baseEffect->data.primaryAV;
         auto resistAV = baseEffect->data.resistVariable;
         float magnitude = effect->magnitude;
@@ -285,6 +303,14 @@ namespace Huginn::State
         // Process effects by archetype (match ActiveBuffsSensor approach - don't rely on IsDetrimental flag)
         switch (archetype) {
           // BUFFS
+          case RE::EffectSetting::Archetype::kNightEye:
+            newBuffs.hasNightEye = true;
+            break;
+
+          case RE::EffectSetting::Archetype::kLight:
+            newBuffs.hasLightSpell = true;
+            break;
+
           case RE::EffectSetting::Archetype::kInvisibility:
             newBuffs.isInvisible = true;
 #ifdef _DEBUG

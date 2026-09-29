@@ -58,6 +58,7 @@ namespace Huginn::State
         float weightMultipleEnemies = ContextWeightDefaults::MULTIPLE_ENEMIES;
         float weightEnemyCasting = ContextWeightDefaults::ENEMY_CASTING;
         float weightSneaking = ContextWeightDefaults::SNEAKING;
+        float weightDarkness = ContextWeightDefaults::DARKNESS;
 
         // Workstations
         float weightAtForge = ContextWeightDefaults::AT_FORGE;

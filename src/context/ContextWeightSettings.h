@@ -50,6 +50,7 @@ namespace Huginn::State
         inline constexpr float MULTIPLE_ENEMIES = 0.5f;     // 3+ enemies (AOE viable)
         inline constexpr float ENEMY_CASTING = 0.7f;        // Enemy casting (ward)
         inline constexpr float SNEAKING = 0.4f;             // Sneaking (invisibility/muffle)
+        inline constexpr float DARKNESS = 0.5f;             // Dark (Night Eye, light spells)
 
         // Workstations (normalized from 8.0 → 0.8)
         inline constexpr float AT_FORGE = 0.8f;
@@ -167,6 +168,7 @@ namespace Huginn::State
         float weightMultipleEnemies = ContextWeightDefaults::MULTIPLE_ENEMIES;
         float weightEnemyCasting = ContextWeightDefaults::ENEMY_CASTING;
         float weightSneaking = ContextWeightDefaults::SNEAKING;
+        float weightDarkness = ContextWeightDefaults::DARKNESS;
 
         // --- Workstations ---
         float weightAtForge = ContextWeightDefaults::AT_FORGE;

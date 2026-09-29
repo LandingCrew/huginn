@@ -37,12 +37,6 @@ namespace Huginn::Context
         // configured value.
         constexpr float kBinaryReasonFraction = 0.5f;
 
-        // Ambient light below which "Darkness" reports (WorldState::lightLevel).
-        // Signal-only reason, so unlike every weight-backed reason below it has
-        // no INI weight to disable or tune it — see the note on
-        // ContextReasonSignals. Matches the old tag threshold.
-        constexpr float kDarknessLightLevel = 0.3f;
-
         /// Weight a continuous rule reaches exactly at `pct` of the vital.
         /// Curve is (1 - pct)^exponent, so comparing weights compares deficits.
         [[nodiscard]] float CurveThreshold(float pct, float exponent) noexcept
@@ -76,6 +70,7 @@ namespace Huginn::Context
             case R::TakingFrost:     return &W::resistFrostWeight;
             case R::TakingShock:     return &W::resistShockWeight;
             case R::Falling:         return &W::slowFallWeight;
+            case R::InDarkness:      return &W::darknessWeight;
             case R::LowHealth:       return &W::healingWeight;
             case R::LowMagicka:      return &W::magickaRestoreWeight;
             case R::LowStamina:      return &W::staminaRestoreWeight;
@@ -91,12 +86,11 @@ namespace Huginn::Context
             case R::MultipleEnemies: return &W::aoeWeight;
             case R::EnemyCasting:    return &W::wardWeight;
 
-            // Fieldless by definition — the three ContextReasonSignals facts
+            // Fieldless by definition — the two ContextReasonSignals facts
             // nothing scores on, plus the two non-reasons. Listed rather than
             // defaulted so a new enumerator is a compiler diagnostic here too.
             case R::AllyInjured:
             case R::LookingAtOre:
-            case R::InDarkness:
             case R::None:
             case R::_Count:
                 break;
@@ -171,7 +165,7 @@ namespace Huginn::Context
         // --- Surroundings -----------------------------------------------------
         Mark(R::AllyInjured,  signals.allyInjured);
         Mark(R::LookingAtOre, signals.lookingAtOre);
-        Mark(R::InDarkness,   signals.lightLevel < kDarknessLightLevel);
+        MarkBinary(R::InDarkness, m_config.weightDarkness);
         MarkBinary(R::Sneaking, m_config.weightSneaking);
 
         // --- Target / combat ---------------------------------------------------

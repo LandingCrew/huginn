@@ -510,6 +510,7 @@ graph TB
 | underwater, no waterbreathing | `waterbreathingWeight` | `fWeightUnderwater`, ramped by depth | Will drown |
 | at forge workstation | `fortifySmithingWeight` | `fWeightAtForge` | Obvious context |
 | sneaking | `stealthWeight` | `fWeightSneaking` | Stealth utility |
+| dark (game light on the player < 0.35), no Night Eye / light / torch | `darknessWeight` | `fWeightDarkness` | Night Eye and light spells |
 | enchanted weapon draining | `weaponChargeWeight` | ramped, clamped to [0,1] | Charge urgency |
 
 > **The weight map is not uniformly [0,1].** The three vital-restoration curves and

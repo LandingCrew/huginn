@@ -361,7 +361,6 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
         Context::ContextReasonSignals{
             .allyInjured = ctx.targets.HasInjuredFollower(),
             .lookingAtOre = ctx.worldState.isLookingAtOreVein,
-            .lightLevel = ctx.worldState.lightLevel,
         });
 
     // Damp the LABEL only (#62). Scoring above already used the instantaneous

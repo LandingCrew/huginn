@@ -263,10 +263,12 @@ namespace Huginn::State
    namespace LightLevel
    {
       // Dark threshold (for stealth/dark vision)
-      // Why 0.3f: Below 30% light level is considered "dark" for stealth purposes
+      // Why 0.35f: lightLevel is quantized to 0.1, and a moonlit road reads
+      // raw 27-33 (the 0.3 step) while a cave floors at raw 12.5. At 0.3 the
+      // road never counted as dark; 0.35 takes the 0.3 step in (2026-09-28).
       // Used by EnvironmentState::IsDark()
       // Units: percentage (0.0 = pitch black, 1.0 = full daylight)
-      inline constexpr float DARK_THRESHOLD = 0.3f;
+      inline constexpr float DARK_THRESHOLD = 0.35f;
 
       // Well-lit threshold
       // Why 0.7f: Above 70% light level is considered "well lit" (bright)
@@ -281,7 +283,14 @@ namespace Huginn::State
       // Units: multiplier for rounding
       inline constexpr float QUANTIZATION_MULTIPLIER = 10.0f;
 
-      // Base light level for interiors
+      // The game's own light level on the player (HighProcessData::lightLevel,
+      // what NPC detection reads) divided by this gives [0,1]. It is the light
+      // the player actually stands in: a cave, a lit inn, their own torch.
+      // Why 100.0f: first guess at the scale -- PollWorldObjects logs the raw
+      // value so it can be calibrated against play.
+      inline constexpr float GAME_LIGHT_SCALE = 100.0f;
+
+      // Base light level for interiors (fallback when the game value is unavailable)
       // Why 0.5f: Default moderate light level for interior cells
       // Without cell-specific data, we assume interiors are moderately lit
       // Units: percentage (0.0 = pitch black, 1.0 = full daylight)

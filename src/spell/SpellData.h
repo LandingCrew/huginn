@@ -93,7 +93,8 @@ namespace Huginn::Spell
       Unlock         = 1 << 0,  // Open Lock / Knock          → unlockWeight
       SlowFall       = 1 << 1,  // Slow Fall / Become Ethereal → slowFallWeight
       AntiDragon     = 1 << 2,  // Dragonrend and friends      → antiDragonWeight
-      Waterbreathing = 1 << 3   // → waterbreathingWeight (the potion half already worked)
+      Waterbreathing = 1 << 3,  // → waterbreathingWeight (the potion half already worked)
+      DarkVision     = 1 << 4   // Night Eye or a light (Candlelight) → darknessWeight
    };
 
    // Enable bitwise operations on SpellTag

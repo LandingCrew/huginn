@@ -142,6 +142,9 @@ namespace Huginn::Context
                 if (HasTagExt(c.tagsExt, SpellTagExt::Waterbreathing)) {
                     maxWeight = std::max(maxWeight, weights.waterbreathingWeight);
                 }
+                if (HasTagExt(c.tagsExt, SpellTagExt::DarkVision)) {
+                    maxWeight = std::max(maxWeight, weights.darknessWeight);
+                }
 
                 return maxWeight;
             }
@@ -328,6 +331,9 @@ namespace Huginn::Context
                 }
                 if (HasTagExt(c.tagsExt, Scroll::ScrollTagExt::Waterbreathing)) {
                     maxWeight = std::max(maxWeight, weights.waterbreathingWeight);
+                }
+                if (HasTagExt(c.tagsExt, Scroll::ScrollTagExt::DarkVision)) {
+                    maxWeight = std::max(maxWeight, weights.darknessWeight);
                 }
 
                 return maxWeight;

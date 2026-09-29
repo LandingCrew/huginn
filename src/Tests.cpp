@@ -4279,23 +4279,35 @@ void RunUnitTests()
             }
         }
 
-        // 17e: Label-only signals (no scoring weight to read them off)
+        // 17e: Darkness is weight-backed now (darknessWeight), and goes quiet
+        // once the player can see; AllyInjured is still a label-only signal.
         {
             State::TargetCollection targets{};
-            State::WorldState world{};
+            State::WorldState dark{};
+            dark.lightLevel = 0.1f;
             State::PlayerActorState player{};
 
-            Context::ContextReasonSignals dark{};
-            dark.lightLevel = 0.1f;
-            if (reasonFor(player, targets, world, dark) != Context::ContextReason::InDarkness) {
+            if (reasonFor(player, targets, dark, kNoSignals) != Context::ContextReason::InDarkness) {
                 logger::error("TEST FAIL: low light should report InDarkness");
                 return;
             }
 
+            State::PlayerActorState seeing = player;
+            seeing.buffs.hasNightEye = true;
+            if (reasonFor(seeing, targets, dark, kNoSignals) == Context::ContextReason::InDarkness) {
+                logger::error("TEST FAIL: Night Eye up must silence InDarkness");
+                return;
+            }
+            State::PlayerActorState torch = player;
+            torch.hasTorchEquipped = true;
+            if (reasonFor(torch, targets, dark, kNoSignals) == Context::ContextReason::InDarkness) {
+                logger::error("TEST FAIL: a torch out must silence InDarkness");
+                return;
+            }
+
             Context::ContextReasonSignals ally{};
-            ally.allyInjured = true;
-            ally.lightLevel = 0.1f;  // InDarkness is lower priority
-            if (reasonFor(player, targets, world, ally) != Context::ContextReason::AllyInjured) {
+            ally.allyInjured = true;  // InDarkness is lower priority
+            if (reasonFor(player, targets, dark, ally) != Context::ContextReason::AllyInjured) {
                 logger::error("TEST FAIL: AllyInjured must outrank InDarkness");
                 return;
             }
@@ -4550,8 +4562,7 @@ void RunUnitTests()
             Candidate::ItemCandidate apple{};
             apple.name = "Green Apple";
             for (const auto reason : {Context::ContextReason::LookingAtOre,
-                                      Context::ContextReason::AllyInjured,
-                                      Context::ContextReason::InDarkness}) {
+                                      Context::ContextReason::AllyInjured}) {
                 if (Context::WeightFieldFor(reason) != nullptr) {
                     logger::error("TEST FAIL: signal-only reason {} gained a weight field",
                         static_cast<int>(reason));
@@ -5215,6 +5226,7 @@ void RunRegressionTests()
         w.slowFallWeight = 0.80f;
         w.antiDragonWeight = 0.70f;
         w.waterbreathingWeight = 0.60f;
+        w.darknessWeight = 0.50f;
         // Deliberately the HIGHEST weight in the map, and deliberately not one
         // any of these spells should draw — see the waterbreathing case below.
         w.stealthWeight = 0.90f;
@@ -5229,6 +5241,7 @@ void RunRegressionTests()
             {"Slow Fall",      Spell::SpellTagExt::SlowFall,       0.80f},
             {"Dragonrend",     Spell::SpellTagExt::AntiDragon,     0.70f},
             {"Waterbreathing", Spell::SpellTagExt::Waterbreathing, 0.60f},
+            {"Night Eye",      Spell::SpellTagExt::DarkVision,     0.50f},
         };
         for (const auto& tc : kCases) {
             Candidate::SpellCandidate spell{};
