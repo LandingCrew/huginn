@@ -262,6 +262,7 @@ For detailed documentation on specific subsystems, see [docs/architecture/](arch
 | [6-ui-ux.md](architecture/6-ui-ux.md) | Intuition widget and Wheeler integration |
 | [7-dmenu-integration.md](architecture/7-dmenu-integration.md) | dMenu integration and two-INI architecture |
 | [8-future-work.md](architecture/8-future-work.md) | Deferred ideas: temporal prediction, urgency multipliers, HMM combat states |
+| [9-telemetry.md](architecture/9-telemetry.md) | Opt-in decision log (telemetry): record format, privacy, how to send us your file |
 
 And the reference material in [docs/reference/](reference/), plus the console
 command reference now on the wiki:

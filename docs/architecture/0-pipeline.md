@@ -141,6 +141,7 @@ graph TB
 | **DeriveExplanationLabel** | Pure subtext derivation, shared by the coordinator and Wheeler | `src/display/ExplanationLabel.h` |
 | **IDisplayBackend** | Interface for display targets (Intuition, Wheeler) | `src/display/IDisplayBackend.h` |
 | **SoakMetrics** | Long-play telemetry: tick cost, candidate/display counts, page-race bails | `src/telemetry/SoakMetrics.h` |
+| **DecisionLog** | Opt-in (`[Telemetry] bEnabled`) JSON Lines decision log: impressions on display change + reward events, written by a background thread ([9-telemetry.md](9-telemetry.md)) | `src/telemetry/DecisionLog.h` |
 
 ---
 

@@ -208,8 +208,12 @@ namespace Huginn::Telemetry
 
         // Anything a producer slipped in after the writer's final drain belongs
         // to the session that just ended; do not replay it into the next file.
+        // They already hold sequence numbers, so they count as dropped.
         std::scoped_lock qlk(m_queueMutex);
-        m_queue.clear();
+        if (!m_queue.empty()) {
+            m_dropped.fetch_add(m_queue.size(), std::memory_order_relaxed);
+            m_queue.clear();
+        }
     }
 
     DecisionLog::Status DecisionLog::GetStatus() const
@@ -377,7 +381,10 @@ namespace Huginn::Telemetry
                 openFile();  // retry after an earlier failure
             }
             if (!out.is_open()) {
+                // Also unreported: the drop record goes out as soon as a later
+                // batch manages to open the file.
                 m_dropped.fetch_add(batch.size(), std::memory_order_relaxed);
+                m_droppedUnreported.fetch_add(batch.size(), std::memory_order_relaxed);
                 batch.clear();
                 continue;
             }

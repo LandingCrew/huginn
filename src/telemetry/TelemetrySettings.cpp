@@ -2,6 +2,7 @@
 #include "IniLoad.h"
 
 #include <algorithm>
+#include <cctype>
 
 namespace Huginn::Telemetry
 {
@@ -68,6 +69,16 @@ namespace Huginn::Telemetry
             name = std::filesystem::path(raw).filename().string();
         } catch (const std::exception&) {
             name.clear();  // non-representable characters: fall back below
+        }
+
+        // '%' would be read as a format directive by the game console's printf-
+        // style Print (hg telemetry echoes the name), and control characters
+        // have no place in a file name. Replace both rather than reject.
+        for (char& ch : name) {
+            const auto u = static_cast<unsigned char>(ch);
+            if (ch == '%' || u < 0x20) {
+                ch = '_';
+            }
         }
 
         if (name.empty() || name == "." || name == "..") {

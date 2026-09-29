@@ -20,6 +20,10 @@
 #include "learning/PipelineStateCache.h"
 #include "learning/EquipSourceTracker.h"
 #include "learning/UsageMemory.h"
+#include "telemetry/ItemKey.h"            // RunTelemetryFormatTests
+#include "telemetry/JsonLine.h"           // RunTelemetryFormatTests
+#include "telemetry/TelemetrySettings.h"  // RunTelemetryFormatTests (SanitizeFileName)
+#include <limits>                         // RunTelemetryFormatTests (NaN / inf)
 #include "util/ScopedTimer.h"
 #include "util/NameMatch.h"
 #include "context/ContextRuleEngine.h"
@@ -1559,6 +1563,127 @@ void RunFeatureBanditLearnerTests()
     }
 
     logger::info("TEST PASS: All FeatureBanditLearner tests passed! (8 tests)"sv);
+#endif
+}
+
+// =============================================================================
+// DECISION LOG FORMAT (telemetry): item keys, JSON escaping, file names
+// =============================================================================
+// Pure helpers only -- no file, no writer thread, no forms. What it pins:
+//   - SplitFormID strips the load-order byte (regular), the ESL slot (0xFE)
+//     and marks runtime-created forms (0xFF) as having no stable key;
+//   - FormatItemKey spells the key the aggregation side joins on;
+//   - AppendEscaped produces valid JSON for quote, backslash and control bytes;
+//   - AppendFloat never writes NaN/inf (not JSON) and the Object builder
+//     places its commas;
+//   - SanitizeFileName cannot be talked into writing outside the log folder.
+void RunTelemetryFormatTests()
+{
+#ifndef NDEBUG
+    using namespace Huginn::Telemetry;
+    logger::info("Running telemetry format tests..."sv);
+
+    bool passed = true;
+    auto expect = [&](bool ok, std::string_view what) {
+        if (!ok) { logger::error("TEST FAIL: telemetry format: {}"sv, what); passed = false; }
+    };
+
+    // ---- SplitFormID ----------------------------------------------------------
+    {
+        const auto regular = SplitFormID(0x2A000D62u);   // mod at load index 0x2A
+        expect(!regular.dynamic && !regular.light && regular.local == 0x000D62u,
+            "regular id: load-order byte not stripped");
+        const auto base = SplitFormID(0x00012FCDu);      // Skyrim.esm
+        expect(!base.dynamic && !base.light && base.local == 0x012FCDu,
+            "Skyrim.esm id changed");
+        const auto light = SplitFormID(0xFE03A801u);     // ESL slot 0x03A, local 0x801
+        expect(light.light && !light.dynamic && light.local == 0x801u,
+            "light id: ESL slot index not stripped");
+        const auto dyn = SplitFormID(0xFF000ABCu);
+        expect(dyn.dynamic, "0xFF id not marked dynamic");
+    }
+
+    // ---- FormatItemKey --------------------------------------------------------
+    expect(FormatItemKey("Skyrim.esm", SplitFormID(0x00012FCDu)) == "Skyrim.esm|012FCD",
+        "regular key spelling");
+    expect(FormatItemKey("Foo.esp", SplitFormID(0xFE001ABCu)) == "Foo.esp|ABC",
+        "light key spelling (3 hex digits)");
+    expect(FormatItemKey("Foo.esp", SplitFormID(0xFF000ABCu)) == "~dyn",
+        "dynamic key is not ~dyn");
+    expect(FormatItemKey("", SplitFormID(0x01000800u)) == "?|000800",
+        "missing plugin name is not '?'");
+    // The same local id under two load orders must give the same key.
+    expect(FormatItemKey("Mod.esp", SplitFormID(0x2A000D62u)) ==
+           FormatItemKey("Mod.esp", SplitFormID(0x31000D62u)),
+        "key depends on load order");
+
+    // ---- AppendEscaped --------------------------------------------------------
+    {
+        std::string s;
+        Json::AppendEscaped(s, "a\"b\\c");
+        expect(s == R"("a\"b\\c")", "quote/backslash escaping: got " + s);
+
+        s.clear();
+        Json::AppendEscaped(s, std::string_view("x\n\t\x01y", 5));
+        expect(s == R"("x\n\t\u0001y")", "control-char escaping: got " + s);
+
+        s.clear();
+        Json::AppendEscaped(s, "Dawnguard.esm");
+        expect(s == "\"Dawnguard.esm\"", "plain string altered: got " + s);
+    }
+
+    // ---- AppendFloat ----------------------------------------------------------
+    {
+        std::string s;
+        Json::AppendFloat(s, std::numeric_limits<float>::quiet_NaN());
+        expect(s == "null", "NaN is not null: got " + s);
+        s.clear();
+        Json::AppendFloat(s, std::numeric_limits<float>::infinity());
+        expect(s == "null", "inf is not null: got " + s);
+        s.clear();
+        Json::AppendFloat(s, 1.5f);
+        expect(s == "1.5", "1.5 formatted as " + s);
+        s.clear();
+        Json::AppendFloat(s, 0.0f);
+        expect(s == "0", "0 formatted as " + s);
+    }
+
+    // ---- Object builder -------------------------------------------------------
+    {
+        std::string s;
+        Json::Object o(s);
+        o.Str("t", "rew");
+        o.UInt("imp", 7);
+        o.Bool("trained", true);
+        o.Null("shown");
+        o.Hex("tags", 0x1Au);
+        o.Close();
+        expect(s == R"({"t":"rew","imp":7,"trained":true,"shown":null,"tags":"0x1A"})",
+            "object builder output: got " + s);
+    }
+
+    // ---- SanitizeFileName -----------------------------------------------------
+    {
+        const std::string def = TelemetryDefaults::FILE_NAME;
+        expect(TelemetrySettings::SanitizeFileName("Huginn_Telemetry.jsonl") == def,
+            "default name altered");
+        expect(TelemetrySettings::SanitizeFileName("..\\..\\evil.jsonl") == "evil.jsonl",
+            "directory traversal not stripped");
+        expect(TelemetrySettings::SanitizeFileName("C:\\Users\\me\\x") == "x.jsonl",
+            "absolute path / missing extension not handled");
+        expect(TelemetrySettings::SanitizeFileName("sub/dir/log.JSONL") == "log.JSONL",
+            "forward-slash directory or case-insensitive extension not handled");
+        expect(TelemetrySettings::SanitizeFileName("") == def, "empty name not defaulted");
+        expect(TelemetrySettings::SanitizeFileName("..") == def, "'..' not defaulted");
+        expect(TelemetrySettings::SanitizeFileName("log%s.jsonl") == "log_s.jsonl",
+            "'%' not replaced (console Print is printf-style)");
+        expect(TelemetrySettings::SanitizeFileName("notes.txt") == "notes.txt.jsonl",
+            ".jsonl not appended to a foreign extension");
+    }
+
+    if (passed) {
+        logger::info("  telemetry format tests PASSED"sv);
+    }
 #endif
 }
 

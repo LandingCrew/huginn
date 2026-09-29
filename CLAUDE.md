@@ -58,6 +58,7 @@ See [docs/README.md](docs/README.md) for full system design.
 | `src/override/` | Override system (urgent potion surfacing) |
 | `src/persist/` | Learner weight serialization (cosave) |
 | `src/settings/` | SettingsReloader (dMenu hot-reload) |
+| `src/telemetry/` | SoakMetrics, opt-in DecisionLog (JSON Lines decision log, `[Telemetry]`) |
 
 ## Configuration
 
@@ -70,6 +71,7 @@ See [docs/README.md](docs/README.md) for full system design.
 - `[Wheeler]` — Wheeler integration settings
 - `[Candidates]` — Uncastable spell policy
 - `[Pages]`, `[PageN]`, `[PageN.SlotM]` — Multi-page slot layout
+- `[Telemetry]` — opt-in decision log, default off (loaded by `TelemetrySettings`, see [docs/architecture/9-telemetry.md](docs/architecture/9-telemetry.md))
 
 ## Console Commands
 
@@ -85,6 +87,7 @@ Registered as `Huginn` with short alias `hg` (in-game `~` console):
 | `hg rebuild` | Force rebuild all registries |
 | `hg weights <FormID>` | Show learner weight vector (hex FormID) |
 | `hg page <N>` | Switch to page N |
+| `hg telemetry` | Show decision-log status (enabled, records written/dropped, file size) |
 | `hg reset weights` | Clear learned item weights |
 | `hg reset all` | Full system reset |
 
@@ -167,5 +170,6 @@ All `IntuitionMenu` public API methods defer GFx work via `SKSE::GetTaskInterfac
 - Console commands — the table under [Console Commands](#console-commands)
   above is the reference. There is no wiki page; the earlier link here pointed
   at one that was never created, for content already in this file.
+- [docs/architecture/9-telemetry.md](docs/architecture/9-telemetry.md) — Opt-in decision log: record format, privacy, how players send the file
 - [docs/testing/TESTING-INDEX.md](docs/testing/TESTING-INDEX.md) — Test suite index and profiling guide
 - [docs/roadmap.md](docs/roadmap.md) — Development roadmap and backlog
