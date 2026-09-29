@@ -277,6 +277,13 @@ namespace Huginn::State
       // the 0.5 step, which LoreRim reached only in lit rooms.
       inline constexpr float DARK_EXIT_THRESHOLD = 0.45f;
 
+      // ...and has to STAY there this long. In a cave the reading swung
+      // 8.9 -> 45.8 -> 7.5 -> 59 -> 94 -> 25 in twelve seconds as the player
+      // walked past braziers, far wider than the band above, and the
+      // Darkness label blinked four times (2026-09-29). Passing a light does
+      // not end the dark; stepping into a lit room does, after a beat.
+      inline constexpr int64_t DARK_EXIT_HOLD_MS = 3000;
+
       // Well-lit threshold
       // Why 0.7f: Above 70% light level is considered "well lit" (bright)
       // Used by EnvironmentState::IsWellLit()

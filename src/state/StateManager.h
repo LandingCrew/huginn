@@ -334,6 +334,9 @@ namespace Huginn::State
       // =============================================================================
 
       WorldState m_worldState;
+      // When the light last rose to DARK_EXIT_THRESHOLD while dark; 0 = not
+      // bright. Poll thread only (PollWorldObjects), so no lock.
+      int64_t m_brightSinceMs = 0;
       PlayerActorState m_playerState;
       TargetCollection m_targets;
       HealthTrackingState m_healthTracking;

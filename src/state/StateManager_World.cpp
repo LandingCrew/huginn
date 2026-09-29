@@ -185,9 +185,24 @@ namespace Huginn::State
       std::shared_lock lock(m_worldMutex);
       wasDark = m_worldState.isDark;
       }
-      newState.isDark = wasDark
-        ? newState.lightLevel < LightLevel::DARK_EXIT_THRESHOLD
-        : newState.lightLevel < LightLevel::DARK_THRESHOLD;
+      if (!wasDark) {
+      newState.isDark = newState.lightLevel < LightLevel::DARK_THRESHOLD;
+      m_brightSinceMs = 0;
+      } else if (newState.lightLevel < LightLevel::DARK_EXIT_THRESHOLD) {
+      newState.isDark = true;
+      m_brightSinceMs = 0;
+      } else {
+      // Bright while dark: leave only once it has lasted DARK_EXIT_HOLD_MS.
+      const int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count();
+      if (m_brightSinceMs == 0) {
+        m_brightSinceMs = nowMs;
+      }
+      newState.isDark = nowMs - m_brightSinceMs < LightLevel::DARK_EXIT_HOLD_MS;
+      if (!newState.isDark) {
+        m_brightSinceMs = 0;
+      }
+      }
 
       // Crosshair detection for world objects (locks, ore veins, workstations)
       auto* crosshairRef = GetCrosshairReference();
