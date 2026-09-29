@@ -34,6 +34,16 @@ namespace Huginn::Scoring
         inline constexpr float FLAT_RESTORE_LOW_RESOURCE_MULT = 1.5f;
         inline constexpr const char* POTION_TIER_PREFERENCE = "Higher";
 
+        // Item-context fit (FitScorer). FIT_MODE: 0 Off, 1 Shadow, 2 Apply.
+        inline constexpr long FIT_MODE = 1;
+        inline constexpr float FIT_AFFORD_MIN = 0.7f;
+        inline constexpr float FIT_AFFORD_FULL_CASTS = 3.0f;
+        inline constexpr float FIT_UNAFFORDABLE_MULT = 0.3f;
+        inline constexpr float FIT_CONCENTRATION_SECONDS_PER_CAST = 2.0f;
+        inline constexpr float FIT_OUT_OF_RANGE_MULT = 0.6f;
+        inline constexpr float FIT_CLAMP_MIN = 0.2f;
+        inline constexpr float FIT_CLAMP_MAX = 1.0f;
+
         // Thresholds
         inline constexpr float MINIMUM_UTILITY = 0.1f;
         inline constexpr float MINIMUM_CONTEXT_WEIGHT = 0.05f;
@@ -55,7 +65,7 @@ namespace Huginn::Scoring
     // =========================================================================
     // Singleton that loads scoring parameters from Data/SKSE/Plugins/Huginn.ini.
     // Reads [Scoring] section (core, correlations, potion discrimination,
-    // thresholds, performance) and [Favorites] section (mode, boost range).
+    // item fit, thresholds, performance) and [Favorites] section (mode, boost range).
     //
     // Call BuildConfig() to produce a ScorerConfig struct suitable for
     // UtilityScorer::SetConfig().
@@ -109,6 +119,16 @@ namespace Huginn::Scoring
         float regenPotionCombatStartMult = ScorerDefaults::REGEN_POTION_COMBAT_START_MULT;
         float flatRestoreLowResourceMult = ScorerDefaults::FLAT_RESTORE_LOW_RESOURCE_MULT;
         PotionTierPreference potionTierPreference = PotionTierPreference::Higher;
+
+        // --- Item-context fit (FitScorer) ---
+        FitMode fitMode = static_cast<FitMode>(ScorerDefaults::FIT_MODE);
+        float fitAffordMin = ScorerDefaults::FIT_AFFORD_MIN;
+        float fitAffordFullCasts = ScorerDefaults::FIT_AFFORD_FULL_CASTS;
+        float fitUnaffordableMult = ScorerDefaults::FIT_UNAFFORDABLE_MULT;
+        float fitConcentrationSecondsPerCast = ScorerDefaults::FIT_CONCENTRATION_SECONDS_PER_CAST;
+        float fitOutOfRangeMult = ScorerDefaults::FIT_OUT_OF_RANGE_MULT;
+        float fitClampMin = ScorerDefaults::FIT_CLAMP_MIN;
+        float fitClampMax = ScorerDefaults::FIT_CLAMP_MAX;
 
         // --- Thresholds ---
         float minimumUtility = ScorerDefaults::MINIMUM_UTILITY;

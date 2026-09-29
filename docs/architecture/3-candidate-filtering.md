@@ -184,7 +184,7 @@ Controls what happens to spells the player cannot currently afford. Declared as
 | Mode | INI value | Actual behavior in v0.19.10 |
 |---|---|---|
 | **Disallow** | `Disallow` | `FilterResult::Affordability` — the spell is removed (default) |
-| **Penalize** | `Penalize` | The spell is **kept, unmodified** |
+| **Penalize** | `Penalize` | The spell is kept; `FitScorer` demotes it by `fFitUnaffordableMult` **only when `iFitMode = 2`** |
 | **Allow** | `Allow` | The spell is kept, unmodified |
 
 `effectiveCost` is `spell->CalculateMagickaCost(player)`, cached during gathering
@@ -192,14 +192,16 @@ Controls what happens to spells the player cannot currently afford. Declared as
 concentration spells `CalculateMagickaCost` returns a per-second cost; if it comes back
 ≤ 0 the base cost is substituted.
 
-> **Penalize is not implemented.** There is no shortfall ratio, no penalty floor, and no
-> multiplier anywhere in `src/`. `PassesAffordabilityFilter` and `RunVisitorFilters` both
-> branch only on `policy == Disallow`, so `Penalize` and `Allow` are behaviorally
-> identical. The `penaltyFloor` field that used to hold this has been removed from
-> `CandidateConfig`, and `fUncastablePenaltyFloor` was removed from
-> `configs/Huginn.ini` in 0.19.13 rather than left implying it works. `Penalize`
-> remains behaviourally identical to `Allow`; that is tracked on the roadmap as a
-> scoring feature to design, not a settings bug.
+> **Penalize lives in scoring, not in the filter.** `PassesAffordabilityFilter` and
+> `RunVisitorFilters` branch only on `policy == Disallow`. The difference between
+> `Penalize` and `Allow` is in `Scoring::FitScorer` (see "FitScorer (item-context fit)"
+> in [4-contextual-bandits.md](4-contextual-bandits.md)): with less than one cast of
+> magicka left, `Penalize` gets the flat multiplier `[Scoring] fFitUnaffordableMult`
+> (0.3) and `Allow` holds at `fFitAffordMin` (0.7). There is no shortfall ratio and no
+> penalty floor. Fit reaches the utility only when `[Scoring] iFitMode = 2`; the
+> shipped default `1` (shadow) records it without applying it, so **by default
+> `Penalize` still ranks exactly like `Allow`**. Tracked on the roadmap until apply
+> mode becomes the default.
 
 ---
 
@@ -571,7 +573,7 @@ There is no automated test suite in the repository; these are in-game checks
 ### 11.1 Filters
 
 - [ ] Spell costing more than current magicka is excluded (Disallow)
-- [ ] Spell costing more than current magicka is kept (Penalize / Allow — identical today)
+- [ ] Spell costing more than current magicka is kept (Penalize / Allow — identical unless `iFitMode = 2`)
 - [ ] Equipped spell is excluded
 - [ ] Equipped weapon passes the global filters; per-slot `bSkipEquipped` still hides it
 - [ ] Equipped ammo is excluded

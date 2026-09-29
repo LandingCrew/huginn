@@ -61,7 +61,7 @@ two fields are read from INI, from the `[Candidates]` section:
 
 | INI key | Field | Default |
 |---------|-------|---------|
-| `sUncastableSpellPolicy` | `uncastableSpellPolicy` (`Disallow` / `Penalize` / `Allow`) | `Disallow` |
+| `sUncastableSpellPolicy` | `uncastableSpellPolicy` (`Disallow` / `Penalize` / `Allow`; `Penalize` differs from `Allow` only through `FitScorer`, and only under `[Scoring] iFitMode = 2`) | `Disallow` |
 | `bEnableSoulGemRecharge` | `enableSoulGemRecharge` | `true` |
 
 The remaining fields are code-level tunables:

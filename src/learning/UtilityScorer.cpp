@@ -17,6 +17,7 @@ namespace Huginn::Scoring
         , m_config(config)
         , m_correlationBooster(m_config)
         , m_potionDiscrim(m_config)
+        , m_fitScorer(m_config)
         , m_contextEngine(State::ContextWeightSettings::GetSingleton().BuildConfig())  // BuildConfig pattern
     {
         // Configure wildcard manager from scorer config
@@ -65,6 +66,10 @@ namespace Huginn::Scoring
         // Phase 3.5c: Pre-compute StateFeatures for FeatureBanditLearner (once per scoring pass)
         auto stateFeatures = Learning::StateFeatures::FromState(player, targets);
         auto phi = stateFeatures.ToArray();  // Pre-compute once for locked reader
+
+        // Fit inputs (magicka, nearest-enemy distance) once per pass, from the
+        // RAW player -- fit is about what can be cast now, not the envelope.
+        m_fitScorer.BeginFrame(player, targets);
 
         // Lazy decay: apply time-based weight decay to candidates about to be scored.
         // Only decays items idle > DECAY_THRESHOLD_MINUTES. Batched: one shared-lock
@@ -321,6 +326,8 @@ namespace Huginn::Scoring
         auto metrics = m_featureLearner.GetMetrics(formID, stateFeatures);
         float recencyBoost = m_usageMemory.GetRecencyBoost(formID, state);
 
+        m_fitScorer.BeginFrame(player, targets);
+
         return ScoreCandidateInternal(candidate, state, player, targets, world, weights,
             contextWeight, metrics, recencyBoost);
     }
@@ -395,6 +402,20 @@ namespace Huginn::Scoring
             m_potionDiscrim.GetMultiplier(state, player, candidate);
 
         // =====================================================================
+        // Step 6b: Item-context fit (FitScorer; neutral for non-spells)
+        // =====================================================================
+        // Off: not computed, breakdown stays neutral. Shadow: recorded for
+        // [Recs] / analysis but ComputeUtility ignores it. Apply: multiplied in.
+        if (m_config.fitMode != FitMode::Off) {
+            const FitResult fit = m_fitScorer.Compute(candidate);
+            result.breakdown.fitMultiplier = fit.multiplier;
+            result.breakdown.fitCastsLeft = fit.castsLeft;
+            result.breakdown.fitAfford = fit.affordFit;
+            result.breakdown.fitRange = fit.rangeFit;
+            result.breakdown.fitApplied = (m_config.fitMode == FitMode::Apply);
+        }
+
+        // =====================================================================
         // Step 7: Get favorites multiplier
         // =====================================================================
         // Boost mode: provisional uniform boost (rank 0 of 1 = favoritesBoostMax).
@@ -420,12 +441,21 @@ namespace Huginn::Scoring
     {
         const float lambda = ComputeAdaptiveLambda(breakdown.confidence);
 
-        // Formula: utility = ctx × (1 + λ×learn) × corr × potion × fav
+        // Fit is MULTIPLIED, not added, deliberately: it breaks ties among
+        // near-equal items and scales with them; it must not override a
+        // learned habit. Trained items outscore untrained ones ~10x, and a 0.6
+        // demotion cannot flip that. Shadow mode records it without applying.
+        // Cold start and favorites rescaling call this helper, so they pick
+        // fit up automatically.
+        const float fit = (m_config.fitMode == FitMode::Apply) ? breakdown.fitMultiplier : 1.0f;
+
+        // Formula: utility = ctx × (1 + λ×learn) × corr × potion × fav [× fit]
         return breakdown.contextWeight *                    // [0,1] gate
                (1.0f + lambda * breakdown.learningScore) *  // Learning boost
                breakdown.correlationBonus *                 // Multiplicative
                breakdown.potionMultiplier *
-               breakdown.favoritesMultiplier;
+               breakdown.favoritesMultiplier *
+               fit;
     }
 
     // =========================================================================
@@ -592,19 +622,31 @@ namespace Huginn::Scoring
             return;
         }
 
-        logger::info("[Recs] === Top {}/{} candidates | u = ctx*(1+λ*learn)*mults ==="sv,
-            numToLog, ranked.size());
+        const FitMode fitMode = m_config.fitMode;
+        logger::info("[Recs] === Top {}/{} candidates | u = ctx*(1+λ*learn)*mults{} ==="sv,
+            numToLog, ranked.size(), fitMode == FitMode::Apply ? "*fit" : "");
 
         for (size_t i = 0; i < numToLog; ++i) {
             const auto& scored = ranked[i];
             const auto& bd = scored.breakdown;
 
-            logger::info("[Recs] {}. {} ({}) u={:.3f} | {}{}{}"sv,
+            // Fit column: printed on every line (1.00 included) so it reads as
+            // a column. "fit=" = applied, "fit~" = shadow (recorded, not applied).
+            std::string fitCol;
+            if (fitMode != FitMode::Off) {
+                fitCol = fmt::format(" fit{}{:.2f}", fitMode == FitMode::Apply ? "=" : "~", bd.fitMultiplier);
+                if (detail && bd.fitCastsLeft >= 0.0f) {
+                    fitCol += fmt::format(" (casts={:.1f} rng={:.2f})", bd.fitCastsLeft, bd.fitRange);
+                }
+            }
+
+            logger::info("[Recs] {}. {} ({}) u={:.3f} | {}{}{}{}"sv,
                 i + 1,
                 scored.GetName(),
                 Candidate::SourceTypeToString(scored.GetSourceType()),
                 scored.utility,
                 detail ? bd.ToDetailString() : bd.ToCompactString(),
+                fitCol,
                 scored.isWildcard ? " [WC]" : "",
                 scored.isColdStartBoosted ? " [COLD]" : "");
         }

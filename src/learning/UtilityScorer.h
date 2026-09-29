@@ -6,6 +6,7 @@
 #include "PriorCalculator.h"
 #include "CorrelationBooster.h"
 #include "PotionDiscriminator.h"
+#include "FitScorer.h"
 #include "WildcardManager.h"
 #include "state/GameState.h"
 #include "state/PlayerActorState.h"
@@ -36,6 +37,7 @@ namespace Huginn::Scoring
     // MULTIPLICATIVE (v1.0):
     //   utility = contextWeight × (1 + λ(confidence) × learningScore)
     //             × correlationBonus × potionMultiplier × favoritesMultiplier
+    //             [× fitMultiplier, only when iFitMode = 2 (Apply)]
     //
     // Where λ(confidence) = lambdaMin + confidence × (lambdaMax - lambdaMin)
     //
@@ -45,6 +47,9 @@ namespace Huginn::Scoring
     //   - correlationBonus: Equipment synergy bonuses (multiplicative in v1.0)
     //   - potionMultiplier: Combat timing and value discrimination
     //   - favoritesMultiplier: Boost/suppress favorited items
+    //   - fitMultiplier: FitScorer item-vs-situation fit (affordability, range);
+    //     always recorded in the breakdown unless iFitMode = 0, applied only
+    //     when iFitMode = 2
     //
     // The scorer:
     //   1. Takes raw candidates from CandidateGenerator
@@ -182,6 +187,7 @@ namespace Huginn::Scoring
         // normal scoring path (ScoreCandidateInternal Step 8) and the cold-start
         // fallback in ScoreCandidates. Reads all factors from the breakdown:
         //   utility = ctx × (1 + λ(confidence)×learn) × corr × potion × fav
+        //             [× fit when fitMode == Apply]
         [[nodiscard]] float ComputeUtility(const ScoreBreakdown& breakdown) const;
 
         // Components
@@ -191,6 +197,7 @@ namespace Huginn::Scoring
         PriorCalculator m_priorCalc;
         CorrelationBooster m_correlationBooster;
         PotionDiscriminator m_potionDiscrim;
+        FitScorer m_fitScorer;  // Holds a reference to m_config; declared after it
         WildcardManager m_wildcardMgr;
 
         // Live-path hold on magicka/stamina for context weights (ScoreCandidates

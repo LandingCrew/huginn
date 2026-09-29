@@ -9,10 +9,12 @@ namespace Huginn::Candidate
 
     /// Policy for handling spells the player can't currently afford (insufficient magicka).
     /// Disallow removes them in PassesAffordabilityFilter(); Penalize/Allow both keep them.
+    /// The only difference between Penalize and Allow is in Scoring::FitScorer, and it
+    /// reaches the utility only when [Scoring] iFitMode = 2 (Apply).
     enum class UncastableSpellPolicy : uint8_t {
         Disallow,   // Filter out uncastable spells (current behavior)
-        Penalize,   // Keep but reduce relevance by magicka shortfall ratio
-        Allow       // Keep at full relevance (no penalty)
+        Penalize,   // Kept; FitScorer applies fFitUnaffordableMult when iFitMode=2, otherwise ranks like Allow
+        Allow       // Kept; no extra penalty (FitScorer holds it at fFitAffordMin, the 1-cast value)
     };
 
     /// Canonical string representation for logging.

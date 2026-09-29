@@ -446,6 +446,7 @@ static void InitializeGameSystems(bool isNewGame)
         RunCosaveTests();                 // FeatureBanditLearner serialization round-trip
         RunStateFeaturesTests();          // Phase 3.5a: StateFeatures extraction tests
         RunFeatureBanditLearnerTests();        // Phase 3.5b: Feature-based bandit learner tests
+        RunFitScorerTests();              // Item-context fit multiplier (FitScorer)
         RunOverrideNamespaceTests();      // Huginn_Overrides.ini section namespacing
         RunSlotLockerResetTest();         // THROWAWAY (0.19.21): Reset() field completeness
         RunSlotLockerInstanceLockTest();  // THROWAWAY (0.20.28): per-stack lock breaking

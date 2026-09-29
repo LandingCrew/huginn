@@ -28,6 +28,26 @@ namespace Huginn::Scoring
     inline constexpr float POTION_TIER_STEP = 1.5f;
 
     // =============================================================================
+    // FIT MODE - whether the item-context fit multiplier (FitScorer) is used
+    // =============================================================================
+    enum class FitMode : uint8_t
+    {
+        Off = 0,     // Not computed; breakdown fields stay neutral
+        Shadow = 1,  // Computed and recorded in the breakdown / [Recs], NOT applied
+        Apply = 2    // Multiplied into the utility (ComputeUtility)
+    };
+
+    [[nodiscard]] constexpr const char* FitModeToString(FitMode mode) noexcept
+    {
+        switch (mode) {
+            case FitMode::Off:    return "Off";
+            case FitMode::Shadow: return "Shadow";
+            case FitMode::Apply:  return "Apply";
+            default:              return "Unknown";
+        }
+    }
+
+    // =============================================================================
     // SCORER CONFIGURATION - Tunable parameters for the utility scoring system
     // =============================================================================
     // Future: Load from INI file or dMenu (v1.0)
@@ -108,6 +128,33 @@ namespace Huginn::Scoring
         // Which strength of the same potion ranks first -- see
         // UtilityScorer::ApplyPotionTierPreference
         PotionTierPreference potionTierPreference = PotionTierPreference::Higher;
+
+        // ---------------------------------------------------------------------
+        // Item-context fit (FitScorer)
+        // ---------------------------------------------------------------------
+
+        // Off / Shadow (compute + record, don't apply) / Apply. Shadow by
+        // default so shipping it changes no ranking and soak runs stay valid.
+        FitMode fitMode = FitMode::Shadow;
+
+        // Affordability ramp: fitAffordMin at exactly one cast left, 1.0 at
+        // fitAffordFullCasts or more. Below one cast: Penalize policy =>
+        // fitUnaffordableMult; Allow/Disallow => hold at fitAffordMin.
+        float fitAffordMin = 0.7f;
+        float fitAffordFullCasts = 3.0f;
+        float fitUnaffordableMult = 0.3f;
+
+        // Concentration spells cost magicka per second; one "cast" is taken
+        // to be this many seconds of sustain.
+        float fitConcentrationSecondsPerCast = 2.0f;
+
+        // Aimed spell whose projectile range is shorter than the nearest enemy.
+        float fitOutOfRangeMult = 0.6f;
+
+        // Output clamp. Max 1.0 means fit only ever demotes -- deliberate: it
+        // breaks ties among near-equal items and cannot promote one.
+        float fitClampMin = 0.2f;
+        float fitClampMax = 1.0f;
 
         // ---------------------------------------------------------------------
         // Scoring Thresholds

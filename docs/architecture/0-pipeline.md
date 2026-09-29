@@ -15,6 +15,7 @@ This document describes the data flow from game state to slot recommendations as
 ```
 utility = contextWeight × (1 + λ(confidence) × learningScore)
           × correlationBonus × potionMultiplier × favoritesMultiplier
+          [× fitMultiplier — only when [Scoring] iFitMode = 2; default 1 records it without applying]
 ```
 
 Where `λ(confidence) = lambdaMin + confidence × (lambdaMax − lambdaMin)`. Context acts as a gate: zero context = zero utility regardless of learning.
