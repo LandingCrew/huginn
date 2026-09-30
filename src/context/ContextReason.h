@@ -48,6 +48,8 @@ namespace Huginn::Context
         LowStamina,
         WeaponLowCharge,
         NeedsAmmo,
+        Cold,       // Survival: Very Cold or worse
+        Hungry,     // Survival: Hungry or worse
 
         // Ambient surroundings — true for as long as you stand there, so they
         // rank below anything actively hurting or depleting you. The crafting

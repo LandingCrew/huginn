@@ -145,6 +145,9 @@ namespace Huginn::Context
                 if (HasTagExt(c.tagsExt, SpellTagExt::DarkVision)) {
                     maxWeight = std::max(maxWeight, weights.darknessWeight);
                 }
+                if (HasTagExt(c.tagsExt, SpellTagExt::Warming)) {
+                    maxWeight = std::max(maxWeight, weights.coldWeight);
+                }
 
                 return maxWeight;
             }
@@ -219,6 +222,16 @@ namespace Huginn::Context
                 // Environmental (Waterbreathing potions)
                 if (HasTag(c.tags, ItemTag::Waterbreathing)) {
                     maxWeight = std::max(maxWeight, weights.waterbreathingWeight);
+                }
+
+                // Survival food. By tag, not ItemType::Food: a stew that also
+                // restores health types as a health potion and must still
+                // answer hunger.
+                if (HasTag(c.tags, ItemTag::SatisfiesHunger)) {
+                    maxWeight = std::max(maxWeight, weights.hungerWeight);
+                }
+                if (HasTag(c.tags, ItemTag::SatisfiesCold)) {
+                    maxWeight = std::max(maxWeight, weights.coldWeight);
                 }
 
                 // Stealth (Invisibility potions - Muffle doesn't exist as a potion)
@@ -334,6 +347,9 @@ namespace Huginn::Context
                 }
                 if (HasTagExt(c.tagsExt, Scroll::ScrollTagExt::DarkVision)) {
                     maxWeight = std::max(maxWeight, weights.darknessWeight);
+                }
+                if (HasTagExt(c.tagsExt, Scroll::ScrollTagExt::Warming)) {
+                    maxWeight = std::max(maxWeight, weights.coldWeight);
                 }
 
                 return maxWeight;

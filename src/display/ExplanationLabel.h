@@ -27,7 +27,7 @@ namespace Huginn::Display
     {
         // Tripwire: a new ContextReason needs wording here and a threshold in
         // ContextRuleEngine::DominantReason.
-        static_assert(Context::CONTEXT_REASON_COUNT == 27,
+        static_assert(Context::CONTEXT_REASON_COUNT == 29,
             "ContextReason changed — review ReasonLabel and DominantReason");
 
         using R = Context::ContextReason;
@@ -49,6 +49,8 @@ namespace Huginn::Display
             case R::LowStamina:      return "Low SP";
             case R::WeaponLowCharge: return "Low Charge";
             case R::NeedsAmmo:       return "Low Ammo";
+            case R::Cold:            return "Cold";
+            case R::Hungry:          return "Hungry";
             case R::AllyInjured:     return "Ally Hurt";
             case R::LookingAtOre:    return "Ore Vein";
             case R::InDarkness:      return "Darkness";

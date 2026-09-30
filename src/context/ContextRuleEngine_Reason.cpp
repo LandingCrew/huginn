@@ -55,7 +55,7 @@ namespace Huginn::Context
     {
         // Tripwire: a new ContextReason belongs in this table (or is explicitly
         // fieldless below). Missing it makes the reason silently un-markable.
-        static_assert(CONTEXT_REASON_COUNT == 27,
+        static_assert(CONTEXT_REASON_COUNT == 29,
             "ContextReason changed — review WeightFieldFor");
 
         using R = ContextReason;
@@ -71,6 +71,8 @@ namespace Huginn::Context
             case R::TakingShock:     return &W::resistShockWeight;
             case R::Falling:         return &W::slowFallWeight;
             case R::InDarkness:      return &W::darknessWeight;
+            case R::Cold:            return &W::coldWeight;
+            case R::Hungry:          return &W::hungerWeight;
             case R::LowHealth:       return &W::healingWeight;
             case R::LowMagicka:      return &W::magickaRestoreWeight;
             case R::LowStamina:      return &W::staminaRestoreWeight;
@@ -104,7 +106,7 @@ namespace Huginn::Context
     {
         // Tripwire: a new ContextReason needs a Mark() below (and a label in
         // display/ExplanationLabel.h) or it can never report.
-        static_assert(CONTEXT_REASON_COUNT == 27,
+        static_assert(CONTEXT_REASON_COUNT == 29,
             "ContextReason changed — review DominantReason and Display::ReasonLabel");
         static_assert(CONTEXT_REASON_COUNT <= 32,
             "ContextReason outgrew the uint32_t mark set — widen `marked`");
@@ -161,6 +163,10 @@ namespace Huginn::Context
 
         // --- Equipment --------------------------------------------------------
         MarkBinary(R::NeedsAmmo, m_config.weightNeedsAmmo);
+
+        // --- Survival: from the half-weight tier (Hungry, Very Cold) up ------
+        MarkBinary(R::Cold,   m_config.weightCold);
+        MarkBinary(R::Hungry, m_config.weightHungry);
 
         // --- Surroundings -----------------------------------------------------
         Mark(R::AllyInjured,  signals.allyInjured);

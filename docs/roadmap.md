@@ -9,15 +9,12 @@ re-opening something that looks obviously undone.
 Suggested order, each played and measured like #140-#148. Details are in the
 entries named.
 
-1. **Survival cold scoring** (Known Recommendation Issues). Blocked on the
-   Warming Aura spell's name or FormID, to check whether it is registered at
-   all.
-2. **Wildcards in combat** (Slot temporal memory, remaining churn). Decision
+1. **Wildcards in combat** (Slot temporal memory, remaining churn). Decision
    pending from the user; the lean is an INI toggle, default on, possibly with
    a shorter combat expiry.
-3. **Widget hidden in cut scenes** (Follow-ups). Written on
+2. **Widget hidden in cut scenes** (Follow-ups). Written on
    `widget-hide-while-wheel-open`; needs a rebase and one real cut scene (S).
-4. **Every-tick recompute** (Known Bugs). Needs what the player was doing at
+3. **Every-tick recompute** (Known Bugs). Needs what the player was doing at
    11:10-11:20 on 2026-09-25 before anything can be guessed.
 
 ## Known Bugs
@@ -224,15 +221,14 @@ entries named.
       lit areas start near 37; simonrim's darkest was 37.4, so it never
       reads dark there. An INI threshold would let bright load orders opt in.
 
-- [ ] **Survival cold is tracked but never scored.** `coldLevel`,
-      `warmthRating` and `IsFreezing()` exist in PlayerActorState and nothing
-      reads them; `PriorCalculator.cpp:96` names a `warmthWeight` that does
-      not exist. So warming spells (the player's "Warming Aura"), hot food
-      and warm gear never surface for cold, even at cold level 3. The
-      Warming Aura spell also did not appear in the spell registry dump --
-      get its exact name/FormID to check whether it is registered at all
-      before building the rule.
-      Raised 2026-09-27.
+- [ ] **Warming Aura cannot be seen running.** Casting it adds nothing to
+      Active Effects that Huginn can tell apart ("Fortify Warmth" there is
+      the Nord racial passive), so the rule that stops a running warming
+      spell being re-offered never fires for it; it stays on the cold key
+      while the player is Very Cold or worse. Fine for a spell worth
+      recasting; revisit if it reads as nagging. Warm FOOD is detected
+      (about 3 minutes of `warming=true` per soup on LoreRim).
+      Raised 2026-09-29.
 
 - [ ] **Two weight sets: exploration and combat.** Idea from play
       (2026-09-27), needs more thought before building. The context weights

@@ -1025,6 +1025,15 @@ namespace Huginn::Spell
       if (!isHostile && base->data.primaryAV == RE::ActorValue::kWaterBreathing) {
         tags |= SpellTagExt::Waterbreathing;
       }
+
+      // Survival warmth lives on kVariable09 -- the actor value the warm
+      // foods' Fortify Warmth effect raises -- and mods tag the effect
+      // CCSM_FortifyWarmth / Survival_MagicAlchFortifyWarmth.
+      if (!isHostile && (base->data.primaryAV == RE::ActorValue::kVariable09 ||
+                         base->HasKeywordString("CCSM_FortifyWarmth") ||
+                         base->HasKeywordString("Survival_MagicAlchFortifyWarmth"))) {
+        tags |= SpellTagExt::Warming;
+      }
       }
 
       // Name fallback, for the parts no API describes.
@@ -1050,6 +1059,12 @@ namespace Huginn::Spell
           Util::NameContainsWord(name, "featherfall") ||
           Util::NameContainsWord(name, "feather fall")) {
       tags |= SpellTagExt::SlowFall;
+      }
+
+      // Warming spells are often scripted too (Warming Aura, 2026-09-29).
+      if (Util::NameContainsWord(name, "warming") ||
+          Util::NameContainsWord(name, "warmth")) {
+      tags |= SpellTagExt::Warming;
       }
 
       // Night Eye built through kScript describes nothing either: LoreRim's

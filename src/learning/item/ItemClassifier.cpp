@@ -577,6 +577,28 @@ namespace Huginn::Item
         effect->baseEffect->data.flags.all(RE::EffectSetting::EffectSettingData::Flag::kRecover),
         keywords);
 
+      // Survival food, by EFFECT keyword. The item-keyword scan further down
+      // matched nothing on LoreRim, whose foods carry the survival meaning on
+      // their effects instead: CCSM_RestoreHunger{Tiny,Small,Medium,...},
+      // CCSM_RestoreCold and CCSM_FortifyWarmth /
+      // Survival_MagicAlchFortifyWarmth (2026-09-29). Prefixes, because the
+      // size suffix varies by author.
+      for (uint32_t k = 0; k < effect->baseEffect->GetNumKeywords(); ++k) {
+        auto kw = effect->baseEffect->GetKeywordAt(k);
+        if (!kw || !*kw) continue;
+        const std::string_view edid = (*kw)->GetFormEditorID();
+        if (edid.starts_with("CCSM_RestoreHunger") ||
+            edid.starts_with("Survival_FoodRestoreHunger")) {
+          data.tags |= ItemTag::SatisfiesHunger;
+        }
+        if (edid.starts_with("CCSM_RestoreCold") ||
+            edid.starts_with("CCSM_FortifyWarmth") ||
+            edid.starts_with("Survival_MagicAlchFortifyWarmth") ||
+            edid.starts_with("Survival_FoodWarm")) {
+          data.tags |= ItemTag::SatisfiesCold;
+        }
+      }
+
       // Cure effects
       if (arch == RE::EffectSetting::Archetype::kCureDisease) {
         data.tags |= ItemTag::CureDisease;

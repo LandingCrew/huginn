@@ -120,6 +120,10 @@ namespace Huginn::State
           auto spellType = spell->GetSpellType();
           if (spellType == RE::MagicSystem::SpellType::kAbility ||
               spellType == RE::MagicSystem::SpellType::kAddiction) {
+            // Warming stays out too, by name as well as by value: LoreRim's
+            // "Fortify Warmth" is the NORD RACIAL passive, not Warming Aura's
+            // effect, and matching it pinned hasWarmingEffect on for every
+            // Nord (2026-09-29).
             continue;
           }
         }
@@ -140,6 +144,17 @@ namespace Huginn::State
               (effectName && isNightEye(effectName))) {
             newBuffs.hasNightEye = true;
           }
+        }
+
+        // Warming: the same test SpellClassifier tags warming spells by, so a
+        // cast or a warm meal silences the cold weight it was offered for.
+        if (!baseEffect->IsDetrimental() &&
+            (baseEffect->data.primaryAV == RE::ActorValue::kVariable09 ||
+             baseEffect->HasKeywordString("CCSM_FortifyWarmth") ||
+             baseEffect->HasKeywordString("Survival_MagicAlchFortifyWarmth") ||
+             (spell && (Util::NameContainsWord(spell->GetName(), "warming") ||
+                        Util::NameContainsWord(spell->GetName(), "warmth"))))) {
+          newBuffs.hasWarmingEffect = true;
         }
 
         auto primaryAV = baseEffect->data.primaryAV;
@@ -552,6 +567,15 @@ namespace Huginn::State
 #endif
       }
       if (buffsChanged) {
+        // The three buffs that silence an ambient weight, at info: a warm
+        // meal whose cold prompt came back 20 s later had nothing in the log
+        // to say whether the warming effect had ended (2026-09-29).
+        if (m_playerState.buffs.hasWarmingEffect != newBuffs.hasWarmingEffect ||
+            m_playerState.buffs.hasNightEye != newBuffs.hasNightEye ||
+            m_playerState.buffs.hasLightSpell != newBuffs.hasLightSpell) {
+          logger::info("[StateManager] Ambient buffs: warming={} nightEye={} light={}"sv,
+            newBuffs.hasWarmingEffect, newBuffs.hasNightEye, newBuffs.hasLightSpell);
+        }
         m_playerState.buffs = newBuffs;
 #ifdef _DEBUG
         logger::trace("[StateManager] PlayerBuffs changed"sv);

@@ -66,6 +66,11 @@ namespace Huginn::Candidate
                         return FilterResult::ActiveBuff;
                     if (c.type == Spell::SpellType::Summon && player.buffs.hasActiveSummon)
                         return FilterResult::ActiveBuff;
+                    // Warming aura already running: do not offer it again.
+                    // Warm FOOD stays: it restores cold outright.
+                    if (Spell::HasTagExt(c.tagsExt, Spell::SpellTagExt::Warming) &&
+                        player.buffs.hasWarmingEffect)
+                        return FilterResult::ActiveBuff;
                 }
                 if (checkResists && IsResistSpellRedundant(c, player.resistances))
                     return FilterResult::ActiveBuff;

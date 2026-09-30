@@ -94,7 +94,8 @@ namespace Huginn::Spell
       SlowFall       = 1 << 1,  // Slow Fall / Become Ethereal → slowFallWeight
       AntiDragon     = 1 << 2,  // Dragonrend and friends      → antiDragonWeight
       Waterbreathing = 1 << 3,  // → waterbreathingWeight (the potion half already worked)
-      DarkVision     = 1 << 4   // Night Eye or a light (Candlelight) → darknessWeight
+      DarkVision     = 1 << 4,  // Night Eye or a light (Candlelight) → darknessWeight
+      Warming        = 1 << 5   // Raises survival warmth (Warming Aura) → coldWeight
    };
 
    // Enable bitwise operations on SpellTag

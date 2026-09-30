@@ -72,6 +72,8 @@ namespace Huginn::Context
         float unlockWeight = 0.0f;          // Unlock spells (when looking at lock)
         float slowFallWeight = 0.0f;        // Slow fall / become ethereal (when falling)
         float darknessWeight = 0.0f;        // Night Eye / light spells (when it is dark)
+        float hungerWeight = 0.0f;          // Food (survival: hungry)
+        float coldWeight = 0.0f;            // Warm food / warming spells (survival: cold)
 
         // =========================================================================
         // WORKSTATION FORTIFY EFFECTS
@@ -144,6 +146,8 @@ namespace Huginn::Context
             maxWeight = std::max(maxWeight, unlockWeight);
             maxWeight = std::max(maxWeight, slowFallWeight);
             maxWeight = std::max(maxWeight, darknessWeight);
+            maxWeight = std::max(maxWeight, hungerWeight);
+            maxWeight = std::max(maxWeight, coldWeight);
             maxWeight = std::max(maxWeight, fortifySmithingWeight);
             maxWeight = std::max(maxWeight, fortifyEnchantingWeight);
             maxWeight = std::max(maxWeight, fortifyAlchemyWeight);
@@ -200,6 +204,33 @@ namespace Huginn::Context
     {
         return world.isDark && !player.buffs.hasNightEye &&
                !player.buffs.hasLightSpell && !player.hasTorchEquipped;
+    }
+
+    /// Survival need as a tier: 0 none, 1 half weight, 2 full weight.
+    /// Hunger: Hungry (3) is half, Famished (4) and worse full. Cold: Very Cold
+    /// (3) half, Freezing (4) and worse full. Shared by EvaluateRules and the
+    /// pipeline's skip gate, as DarknessApplies is.
+    ///
+    /// NOT silenced by a warming effect, though it was at first: a warm meal
+    /// drops the cold level itself within half a second, and LoreRim's
+    /// Warming Aura leaves a "Fortify Warmth" ability up for as long as it
+    /// runs -- the player froze from level 3 to 4 with it on and no prompt
+    /// (2026-09-29). The cold level is the signal. A running warming effect
+    /// only stops the warming SPELL being offered again (CandidateFilters).
+    [[nodiscard]] inline int HungerTier(const State::PlayerActorState& player) noexcept
+    {
+        if (!player.survivalModeActive) return 0;
+        if (player.hungerLevel >= State::SurvivalThreshold::HUNGER_FAMISHED) return 2;
+        if (player.hungerLevel >= State::SurvivalThreshold::HUNGER_HUNGRY) return 1;
+        return 0;
+    }
+
+    [[nodiscard]] inline int ColdTier(const State::PlayerActorState& player) noexcept
+    {
+        if (!player.survivalModeActive) return 0;
+        if (player.coldLevel >= State::SurvivalThreshold::COLD_FREEZING) return 2;
+        if (player.coldLevel >= State::SurvivalThreshold::COLD_VERY_COLD) return 1;
+        return 0;
     }
 
     /// Pointer-to-member for the weight a reason is read off.
