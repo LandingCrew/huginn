@@ -9,20 +9,9 @@ re-opening something that looks obviously undone.
 Suggested order, each played and measured like #140-#148. Details are in the
 entries named.
 
-1. **Every-tick recompute** (Known Bugs). Needs what the player was doing at
-   11:10-11:20 on 2026-09-25 before anything can be guessed.
+Nothing queued: pick from the entries below.
 
 ## Known Bugs
-- [ ] The pipeline recomputed on EVERY tick for ten idle minutes.
-      simonrim-essentials 2026-09-25, 11:10-11:20: `recompute=2881/2881` in
-      two consecutive heartbeats, tick avg 0.46 -> 2.36 ms, and no state
-      transition logged. `CheckHashSkip` (`PipelineCoordinator.cpp:223`)
-      refuses to skip while any unhashed state is active -- elemental,
-      falling, underwater, workstation -- and its comment calls all of them
-      bounded, which underwater and workstation are not. Workstation read 0
-      throughout. What the player was doing is unknown; ask before guessing.
-      Raised 2026-09-25.
-
 - [ ] One weapon stack's ExtraHealth has read 0.00, then 1.00, then 1.30 across
       three sessions on the same character, and nothing explains the first two.
       uid87, the LoreRim Long Bow. Either the player tempered it between those
