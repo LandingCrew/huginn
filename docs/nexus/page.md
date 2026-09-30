@@ -422,7 +422,7 @@ Huginn estiamtes how  dark it is from the light reported by game itself (measure
 
 Lighting mods change that value, so how often this happens depends on your load order. With a dark lighting setup, caves and moonless nights count as dark. With a bright one, or the vanilla game, the light may never fall low enough and Night Eye will not be suggested for darkness.
 
-To turn or disable the darkness suggestions off entirely, set `fWeightDarkness = 0` under `[ContextWeights]`.
+If your setup is bright and Night Eye never comes up, raise `fDarkLightLevel` under `[ContextWeights]` (default `0.35`; the debug panel shows the light level where you stand). To turn or disable the darkness suggestions off entirely, set `fWeightDarkness = 0` under `[ContextWeights]`.
 
 ### Survival Mode
 

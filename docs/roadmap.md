@@ -209,11 +209,6 @@ entries named.
       under `src/` that mention dMenu (132 references).
 
 ## Known Recommendation Issues
-- [ ] **The dark cut-off is a constant** (`LightLevel::DARK_THRESHOLD`,
-      0.35 of the game's light / 100). LoreRim caves floor at raw 7-12 and
-      lit areas start near 37; simonrim's darkest was 37.4, so it never
-      reads dark there. An INI threshold would let bright load orders opt in.
-
 - [ ] **Thirst is not tracked.** LoreRim runs a thirst need ("Thirst -
       Parched" in Active Effects, from DVSMP Survival Tweaks per research,
       unverified), and waters, teas and waterskins carry `Hydrated` /
