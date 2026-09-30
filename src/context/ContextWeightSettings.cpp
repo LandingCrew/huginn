@@ -1,6 +1,7 @@
 #include "ContextWeightSettings.h"
 #include "IniLoad.h"
 #include "ContextWeightConfig.h"
+#include "state/StateManager.h"
 
 namespace Huginn::State
 {
@@ -49,6 +50,8 @@ namespace Huginn::State
         weightEnemyCasting = ReadClampedFloat(ini, section, "fWeightEnemyCasting", ContextWeightDefaults::ENEMY_CASTING, 0.0f, 100.0f, "ContextWeightSettings"sv);
         weightSneaking = ReadClampedFloat(ini, section, "fWeightSneaking", ContextWeightDefaults::SNEAKING, 0.0f, 100.0f, "ContextWeightSettings"sv);
         weightDarkness = ReadClampedFloat(ini, section, "fWeightDarkness", ContextWeightDefaults::DARKNESS, 0.0f, 100.0f, "ContextWeightSettings"sv);
+        darkLightLevel = ReadClampedFloat(ini, section, "fDarkLightLevel", State::LightLevel::DARK_THRESHOLD, 0.05f, 0.95f, "ContextWeightSettings"sv);
+        State::StateManager::GetSingleton().SetDarkLightLevel(darkLightLevel);
         weightHungry = ReadClampedFloat(ini, section, "fWeightHungry", ContextWeightDefaults::HUNGRY, 0.0f, 100.0f, "ContextWeightSettings"sv);
         alcoholSatisfiesHunger = ini.GetBoolValue(section, "bAlcoholSatisfiesHunger", false);
         weightCold = ReadClampedFloat(ini, section, "fWeightCold", ContextWeightDefaults::COLD, 0.0f, 100.0f, "ContextWeightSettings"sv);
@@ -140,6 +143,8 @@ namespace Huginn::State
         weightEnemyCasting = ContextWeightDefaults::ENEMY_CASTING;
         weightSneaking = ContextWeightDefaults::SNEAKING;
         weightDarkness = ContextWeightDefaults::DARKNESS;
+        darkLightLevel = State::LightLevel::DARK_THRESHOLD;
+        State::StateManager::GetSingleton().SetDarkLightLevel(darkLightLevel);
         weightHungry = ContextWeightDefaults::HUNGRY;
         alcoholSatisfiesHunger = false;
         weightCold = ContextWeightDefaults::COLD;

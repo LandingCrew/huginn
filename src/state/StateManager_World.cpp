@@ -185,10 +185,12 @@ namespace Huginn::State
       std::shared_lock lock(m_worldMutex);
       wasDark = m_worldState.isDark;
       }
+      const float darkEnter = m_darkLightLevel.load();
+      const float darkExit = darkEnter + LightLevel::DARK_EXIT_GAP;
       if (!wasDark) {
-      newState.isDark = newState.lightLevel < LightLevel::DARK_THRESHOLD;
+      newState.isDark = newState.lightLevel < darkEnter;
       m_brightSinceMs = 0;
-      } else if (newState.lightLevel < LightLevel::DARK_EXIT_THRESHOLD) {
+      } else if (newState.lightLevel < darkExit) {
       newState.isDark = true;
       m_brightSinceMs = 0;
       } else {
