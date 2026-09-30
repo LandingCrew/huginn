@@ -546,6 +546,13 @@ namespace Huginn::Input
       logger::warn("[EquipManager] Cannot equip torch {:08X}"sv, formID);
       return false;
       }
+      // The last scan's count, not InventoryChanges::GetItemCount (which can
+      // crash around a load). A torch that has since left the pack must not be
+      // "equipped" into an empty hand.
+      if (!g_itemRegistry || g_itemRegistry->GetTorchCount(formID) <= 0) {
+      logger::debug("[EquipManager] Torch {:08X} is no longer carried"sv, formID);
+      return false;
+      }
 
       // Left hand, always: a torch has no right-hand use. Whatever was there --
       // a shield, a spell, an off-hand weapon -- is unequipped by the game, as

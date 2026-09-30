@@ -358,6 +358,11 @@ static void MaintainRegistries(RE::PlayerCharacter* player,
             // not a consumption (a torch burns out; equipping does not use one).
             if (itemDeltaDue && g_itemRegistry->ConsumeTorchesChanged()) {
                 inventoryChanged = true;
+                // A torch dropped or burned out: break its lock, as
+                // ProcessInventoryChanges does for an item that leaves.
+                for (const auto formID : g_itemRegistry->ConsumeTorchDecreases()) {
+                    Slot::SlotLocker::GetSingleton().OnItemUsed(formID, /*respectActivationLock=*/true);
+                }
             }
             if (inventoryChanged) {
                 Slot::SlotAllocator::GetSingleton().MarkPageDirty();

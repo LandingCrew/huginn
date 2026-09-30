@@ -730,9 +730,34 @@ namespace Huginn::Item
    void ItemRegistry::SetTorchesLocked(const std::vector<TrackedTorch>& torches)
    {
       if (torches != m_torches) {
+      // Any torch that lost count or left: its slot lock must break, or the
+      // widget keeps offering a torch the player no longer carries
+      // (/code-review #157).
+      for (const auto& old : m_torches) {
+        const auto it = std::find_if(torches.begin(), torches.end(),
+           [&](const TrackedTorch& t) { return t.formID == old.formID; });
+        if (it == torches.end() || it->count < old.count) {
+           m_torchDecreases.push_back(old.formID);
+        }
+      }
       m_torches = torches;
       m_torchesChanged.store(true);
       }
+   }
+
+   std::vector<RE::FormID> ItemRegistry::ConsumeTorchDecreases()
+   {
+      std::unique_lock lock(m_mutex);
+      return std::exchange(m_torchDecreases, {});
+   }
+
+   int32_t ItemRegistry::GetTorchCount(RE::FormID formID) const
+   {
+      std::shared_lock lock(m_mutex);
+      for (const auto& torch : m_torches) {
+      if (torch.formID == formID) return torch.count;
+      }
+      return 0;
    }
 
    std::vector<TrackedTorch> ItemRegistry::GetTorches() const

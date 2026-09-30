@@ -530,6 +530,9 @@ namespace Huginn::Item
       // dark cave reaches the bar without waiting for a state change).
       std::vector<TrackedTorch> m_torches;
       std::atomic<bool> m_torchesChanged{ false };
+      // Torches whose count fell since the update loop last asked (dropped,
+      // burned out). Under m_mutex.
+      std::vector<RE::FormID> m_torchDecreases;
       void SetTorchesLocked(const std::vector<TrackedTorch>& torches);
 
    public:
@@ -537,6 +540,11 @@ namespace Huginn::Item
       [[nodiscard]] std::vector<TrackedTorch> GetTorches() const;
       /// True once after the torch list changes (count or kind).
       [[nodiscard]] bool ConsumeTorchesChanged() noexcept { return m_torchesChanged.exchange(false); }
+      /// Torches whose count fell since the last call, so their slot locks can
+      /// be broken the way ProcessInventoryChanges breaks an item's.
+      [[nodiscard]] std::vector<RE::FormID> ConsumeTorchDecreases();
+      /// How many of this torch the last scan found (0 if none).
+      [[nodiscard]] int32_t GetTorchCount(RE::FormID formID) const;
    private:
 
       // Item classifier instance
