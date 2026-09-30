@@ -658,6 +658,11 @@ trigger to pick any of it up.
       1.4 s later. Observed 2026-08-29 13:03:18 against a 13:03:20 re-resolve.
       Skip the check while `IsInEditMode()` — the diagnostic cannot say anything
       true there (XS)
+- [ ] A torch on a Huginn Wheeler wheel is unverified. Torches (#157) reach
+      Wheeler through `AddItemByFormID`, and whether Wheeler accepts a LIGH
+      form was never seen in play; a refusal is retried and then suppressed
+      by WheelSync, so the worst case is a blank wheel entry. Check once
+      with a torch on the Kit page's Utility key (XS)
 - [ ] Soak protocol needs deliberate MANUAL equips — accept% is fed only by
       equips made outside Huginn, so a burst played through the wheel/hotkeys
       produces no recommendation-quality data at all. Confirmed 2026-08-26: a
