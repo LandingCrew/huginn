@@ -283,12 +283,16 @@ class Intuition extends MovieClip
             _pendingConf[index] = confidence;
             _pendingDetail[index] = detail;
 
-            if (_animPhase[index] == 0) {
+            // Idle, or mid slide-IN: start a fresh slide-out. Phase 2 has no
+            // swap point -- the swap already happened -- so content queued
+            // during it was dropped when the rise finished, and a quick page
+            // flip back left the other page's slots under this page's header
+            // (2026-09-30). Mid slide-OUT (phase 1) the returns above already
+            // replaced the queue, and its swap will pick it up.
+            if (_animPhase[index] != 1) {
                 _animPhase[index] = 1;
                 _animTimer[index] = 0;
             }
-            // If already animating, pending data is updated and will be
-            // applied when current animation reaches the swap point.
         }
 
         _background._visible = true;
