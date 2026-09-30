@@ -299,6 +299,15 @@ namespace Huginn::State
                       std::abs(m_playerState.warmthRating - newWarmthRating) >= 1.0f);
 
       if (changed) {
+        // Stage transitions at info (warmth rating alone moves too often):
+        // HungerTier/ColdTier score off these, so the log has to show them.
+        if (m_playerState.hungerLevel != newHungerLevel ||
+            m_playerState.coldLevel != newColdLevel ||
+            m_playerState.fatigueLevel != newFatigueLevel ||
+            m_playerState.survivalModeActive != newSurvivalModeActive) {
+          logger::info("[StateManager] Survival: hunger={} cold={} fatigue={} warmth={:.0f} active={}"sv,
+            newHungerLevel, newColdLevel, newFatigueLevel, newWarmthRating, newSurvivalModeActive);
+        }
         m_playerState.hungerLevel = newHungerLevel;
         m_playerState.coldLevel = newColdLevel;
         m_playerState.fatigueLevel = newFatigueLevel;

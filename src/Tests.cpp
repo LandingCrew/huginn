@@ -4314,6 +4314,49 @@ void RunUnitTests()
             }
         }
 
+        // 17e2: Survival. Hunger and cold report from their first costly stage;
+        // a warming effect silences cold; survival off silences both.
+        {
+            State::TargetCollection targets{};
+            State::WorldState world{};
+            State::PlayerActorState player{};
+            player.survivalModeActive = true;
+            player.hungerLevel = State::SurvivalThreshold::HUNGER_HUNGRY;
+            if (reasonFor(player, targets, world, kNoSignals) != Context::ContextReason::Hungry) {
+                logger::error("TEST FAIL: Hungry should report Hungry");
+                return;
+            }
+            player.hungerLevel = State::SurvivalThreshold::HUNGER_PECKISH;
+            player.coldLevel = State::SurvivalThreshold::COLD_FREEZING;
+            if (reasonFor(player, targets, world, kNoSignals) != Context::ContextReason::Cold) {
+                logger::error("TEST FAIL: Freezing should report Cold");
+                return;
+            }
+            // A warming effect does NOT silence Cold: the cold level is the
+            // signal (LoreRim's aura is a long-lived ability).
+            State::PlayerActorState warmed = player;
+            warmed.buffs.hasWarmingEffect = true;
+            if (reasonFor(warmed, targets, world, kNoSignals) != Context::ContextReason::Cold) {
+                logger::error("TEST FAIL: Freezing with a warming effect should still report Cold");
+                return;
+            }
+            State::PlayerActorState off = player;
+            off.survivalModeActive = false;
+            if (reasonFor(off, targets, world, kNoSignals) == Context::ContextReason::Cold) {
+                logger::error("TEST FAIL: survival off must silence Cold");
+                return;
+            }
+            const auto weights = engine.EvaluateRules(player, targets, world);
+            Candidate::ItemCandidate stew{};
+            stew.name = "Vegetable Soup";
+            stew.tags = Item::ItemTag::SatisfiesHunger | Item::ItemTag::SatisfiesCold;
+            if (Context::WeightForCandidate(stew, weights) < weights.coldWeight - 0.001f ||
+                weights.coldWeight <= 0.0f) {
+                logger::error("TEST FAIL: a warm stew should draw coldWeight when freezing");
+                return;
+            }
+        }
+
         // 17f: Ambient combat weights are deliberately NOT reasons — otherwise
         // every fight would relabel every slot "In Combat"
         {
@@ -5228,6 +5271,7 @@ void RunRegressionTests()
         w.antiDragonWeight = 0.70f;
         w.waterbreathingWeight = 0.60f;
         w.darknessWeight = 0.50f;
+        w.coldWeight = 0.45f;
         // Deliberately the HIGHEST weight in the map, and deliberately not one
         // any of these spells should draw — see the waterbreathing case below.
         w.stealthWeight = 0.90f;
@@ -5243,6 +5287,7 @@ void RunRegressionTests()
             {"Dragonrend",     Spell::SpellTagExt::AntiDragon,     0.70f},
             {"Waterbreathing", Spell::SpellTagExt::Waterbreathing, 0.60f},
             {"Night Eye",      Spell::SpellTagExt::DarkVision,     0.50f},
+            {"Warming Aura",   Spell::SpellTagExt::Warming,        0.45f},
         };
         for (const auto& tc : kCases) {
             Candidate::SpellCandidate spell{};

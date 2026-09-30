@@ -61,11 +61,14 @@ namespace Huginn::Pipeline
         // surface when some unrelated dimension happened to move at the same
         // moment.
         bool workstationActive = false;
-        // Nor is darkness (/code-review #152): walking into a quiet cave, or
-        // lighting a torch there, moves no hashed bucket. Edge-triggered, not
-        // held like the three above -- a cave lasts minutes, and one run on
-        // each flip is all the weight needs (Context::DarknessApplies).
-        bool darknessActive = false;
+        // Nor are darkness (/code-review #152) or the survival needs: walking
+        // into a quiet cave, or getting hungrier, moves no hashed bucket.
+        // Packed into one signature and edge-triggered, not held like the three
+        // above -- a cave or a cold spell lasts minutes, and one run on each
+        // change is all the weights need. Bit 0 darkness, bits 1-2 the hunger
+        // tier, bits 3-4 the cold tier (Context::DarknessApplies, HungerTier,
+        // ColdTier).
+        uint8_t ambientSignature = 0;
 
         // Pipeline outputs (built by successive steps)
         std::vector<Scoring::ScoredCandidate> scoredCandidates;
@@ -208,7 +211,7 @@ namespace Huginn::Pipeline
             m_wasElementalDamageActive = false;
             m_wasFalling = false;
             m_wasUnderwater = false;
-            m_wasDark = false;
+            m_lastAmbientSignature = 0;
         }
 
         /// Queue a one-shot full-detail recommendation dump (console `hg recs`).
@@ -283,10 +286,10 @@ namespace Huginn::Pipeline
         // down, and neither edge moves a hashed bucket.
         bool m_wasUnderwater = false;
 
-        // Darkness at the last run (/code-review #152). Unlike the latches
-        // above this is compared, not OR-ed in: CheckHashSkip runs once when
-        // darknessActive differs from it, in either direction.
-        bool m_wasDark = false;
+        // ambientSignature at the last run (/code-review #152). Unlike the
+        // latches above this is compared, not OR-ed in: CheckHashSkip runs
+        // once whenever it changes, in either direction.
+        uint8_t m_lastAmbientSignature = 0;
 
         // Holds the displayed reason so a momentary one stays readable.
         // Label-only: ScoreCandidates above it always sees the raw weights.

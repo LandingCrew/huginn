@@ -424,6 +424,12 @@ Lighting mods change that value, so how often this happens depends on your load 
 
 To turn or disable the darkness suggestions off entirely, set `fWeightDarkness = 0` under `[ContextWeights]`.
 
+### Survival Mode
+
+With Survival Mode on (the Creation Club version, with or without Survival Mode Improved), Huginn reads your hunger and cold stages. From Hungry, food comes forward; from Very Cold, warm food and warming spells do, labelled "Hungry" or "Cold". Both get stronger a stage later (Famished, Freezing). Food is recognised by the survival keywords on its effects, which covers vanilla and mod-added dishes alike.
+
+To turn either off, set `fWeightHungry = 0` or `fWeightCold = 0` under `[ContextWeights]`.
+
 ## Source Code
 
 * [Huginn](https://github.com/LandingCrew/huginn)

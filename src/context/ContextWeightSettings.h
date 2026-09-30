@@ -51,6 +51,8 @@ namespace Huginn::State
         inline constexpr float ENEMY_CASTING = 0.7f;        // Enemy casting (ward)
         inline constexpr float SNEAKING = 0.4f;             // Sneaking (invisibility/muffle)
         inline constexpr float DARKNESS = 0.5f;             // Dark (Night Eye, light spells)
+        inline constexpr float HUNGRY = 0.5f;               // Survival hunger at Famished (half at Hungry)
+        inline constexpr float COLD = 0.6f;                 // Survival cold at Freezing (half at Very Cold)
 
         // Workstations (normalized from 8.0 → 0.8)
         inline constexpr float AT_FORGE = 0.8f;
@@ -169,6 +171,8 @@ namespace Huginn::State
         float weightEnemyCasting = ContextWeightDefaults::ENEMY_CASTING;
         float weightSneaking = ContextWeightDefaults::SNEAKING;
         float weightDarkness = ContextWeightDefaults::DARKNESS;
+        float weightHungry = ContextWeightDefaults::HUNGRY;
+        float weightCold = ContextWeightDefaults::COLD;
 
         // --- Workstations ---
         float weightAtForge = ContextWeightDefaults::AT_FORGE;

@@ -202,6 +202,7 @@ namespace Huginn::State
     bool hasMuffle = false;
     bool hasNightEye = false;           // Night Eye / Vampire's Sight (archetype kNightEye)
     bool hasLightSpell = false;         // Candlelight / Magelight (archetype kLight)
+    bool hasWarmingEffect = false;      // Survival warmth effect (warm food, Warming Aura)
     bool hasArmorBuff = false;          // Any armor spell active (Oakflesh, Stoneflesh, etc.)
     bool hasCloakActive = false;        // Flame Cloak, Frost Cloak, Lightning Cloak
     bool hasActiveSummon = false;       // Any conjured creature
@@ -255,6 +256,9 @@ namespace Huginn::State
       }
       if (hasNightEye != other.hasNightEye) {
         logger::trace("  {}.hasNightEye changed: {} -> {}", prefix, other.hasNightEye, hasNightEye);
+      }
+      if (hasWarmingEffect != other.hasWarmingEffect) {
+        logger::trace("  {}.hasWarmingEffect changed: {} -> {}", prefix, other.hasWarmingEffect, hasWarmingEffect);
       }
       if (hasLightSpell != other.hasLightSpell) {
         logger::trace("  {}.hasLightSpell changed: {} -> {}", prefix, other.hasLightSpell, hasLightSpell);
@@ -319,6 +323,7 @@ namespace Huginn::State
                    hasMuffle == other.hasMuffle &&
                    hasNightEye == other.hasNightEye &&
                    hasLightSpell == other.hasLightSpell &&
+                   hasWarmingEffect == other.hasWarmingEffect &&
                    hasArmorBuff == other.hasArmorBuff &&
                    hasCloakActive == other.hasCloakActive &&
                    activeCloakType == other.activeCloakType &&

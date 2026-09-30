@@ -431,6 +431,10 @@ namespace Huginn::UI
       DrawIndicatorPair("Night Eye", buffs.hasNightEye, Colors::BUFF_COLOR,
                         "Light", buffs.hasLightSpell, Colors::BUFF_COLOR, Layout::COLUMN_WIDTH);
 
+      // Row 5: Warming (silences the cold weight)
+      DrawIndicatorPair("Warming", buffs.hasWarmingEffect, Colors::BUFF_COLOR,
+                        "", false, Colors::BUFF_COLOR, Layout::COLUMN_WIDTH);
+
       ImGui::Separator();
 
       // Regen buffs/debuffs - compact 2-row layout (v0.6.7)

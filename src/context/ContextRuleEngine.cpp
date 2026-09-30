@@ -255,6 +255,15 @@ namespace Huginn::Context
         }
 
         // =====================================================================
+        // SURVIVAL → food when hungry; warm food and warming spells when cold
+        // =====================================================================
+        // Half weight at the first stage that costs the player something
+        // (Hungry, Very Cold), full from the next. Below that nothing: Peckish
+        // and Chilly are the normal state of a survival game, not a prompt.
+        result.hungerWeight = m_config.weightHungry * 0.5f * static_cast<float>(HungerTier(player));
+        result.coldWeight = m_config.weightCold * 0.5f * static_cast<float>(ColdTier(player));
+
+        // =====================================================================
         // LOOKING AT LOCK → Unlock spells
         // =====================================================================
         if (world.isLookingAtLock) {
