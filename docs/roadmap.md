@@ -433,27 +433,16 @@ entries named.
 
 ## Slot temporal memory
 Seating fixed WHERE an item sits; these entries are about WHEN a slot may
-change. The churn and override work (#140-#148) closed most of it: what is
-left is the churn tail and the two deferred override steps; Remembrance
-shipped (v0.21.47).
-Raised 2026-09-24.
+change. The churn and override work (#140-#148, #151) closed most of it, and
+Remembrance shipped (#150); what is left is the churn tail and Remembrance's
+follow-ups. The override rethink is done: its last step, an overrides-only
+key, is already a PotionsAny slot with overrides on.
 
-- [ ] **Remembrance follow-ups.** Remembrance itself -- a slot holds what
-      you just took off -- SHIPPED in v0.21.47; design and mechanics are in
-      `docs/architecture/5-slots.md` (Remembrance). Press a Huginn key or a
-      Huginn wheel entry that puts a weapon, spell or scroll in a hand (or
-      swaps one ammo for another), and what it replaced shows under the same key for `fRemembranceDurationMs` (15 s),
-      labelled "Swap Back". Per-slot `bRemembrance`, on by default.
-      Decided 2026-09-27 (with the user): Huginn keys and Huginn wheels only;
-      external equips (menu, favourites, the player's own wheels) are out of
-      scope; the item takes the pressed slot whatever its classification;
-      one hand (right, else left); no chaining; no learner reward.
-      Decided 2026-09-28: a plain UNEQUIP (hand or quiver left empty) is not
-      remembered -- only a swap made through Huginn is.
-      Played on LoreRim 2026-09-27 22:16-22:39: 18 holds, each the item the
-      press took off (Battlestaff back under the knife's key, Long Bow back
-      when the Battlestaff replaced it); swap-backs ended them, the rest
-      expired at 15 s.
+- [ ] **Remembrance follow-ups.** Design and mechanics are in
+      `docs/architecture/5-slots.md` (Remembrance). Decided with the user and
+      not to be reopened casually: Huginn keys and Huginn wheels only (menu,
+      favourites and the player's own wheels are out of scope); no chaining;
+      no learner reward; a plain UNEQUIP is not remembered, only a swap.
       Follow-ups, none started:
       - `fWeightNoWeapon` (0.40) still lifts every weapon when a spell goes in
         the weapon hand. With the one weapon you took off now on your key,
@@ -502,34 +491,6 @@ Raised 2026-09-24.
         Unarmed pseudo-items (likely one per hand) with different FormIDs.
         The counter should compare what is displayed, not only the form.
       Raised 2026-09-24.
-
-- [ ] **Override rethink, step (c) deferred; (b) shipped.** The
-      goal is to fix the "dumb smart" problem: an override is a RULE, not a
-      recommendation, so sometimes you just get a health potion. Agreed with
-      the user 2026-09-27:
-      - it triggers per vital at the INI thresholds, any time;
-      - it shows a fixed pick order, with no scoring;
-      - it lives in the numbered slots, with one key per vital;
-      - the pulse stays as the only presentation.
-      An out-of-band override element was REJECTED; the reasoning is in git
-      history (this entry before 2026-09-27).
-      Shipped: health pinned to its slot, with no cascade and a stale lock
-      released (#143). Then (a) in #144, v0.21.39: the pick order is potion,
-      then a self-cast spell affordable now, then the slot's normal
-      recommendation. Verified on simonrim (Potion of Healing, then Fast
-      Healing, then Healing as magicka fell) and on LoreRim (Requiem's
-      Healing, cost 53 of 146 magicka, placed on key 1).
-      **(b) SHIPPED 2026-09-28** (branch `flagship-page`): magicka and
-      stamina are pinned like health, and each vital is an INI switch
-      (`[Overrides] bPin{Health,Magicka,Stamina}ToSlot`, all on; off = mark
-      in place). Needed once the flagship page gave every key a job: the
-      magicka emergency pulsed the Potion key, not key 2.
-      Deferred:
-      - **(c)** A `bOverridesOnly` emergency-key slot. This is already
-        reachable by configuration: a PotionsAny slot with overrides enabled,
-        bound to any key.
-      Pick it up again if play shows a vital's emergency landing somewhere
-      unexpected.
 
 ## Doc-migration findings (2026-08-29)
 Surfaced by the one-agent-per-doc migration pass. Every one is a code or config
@@ -613,16 +574,8 @@ would notice.
       `fMinimumUtility = 0` suppressed favorites would reappear at utility 0 (XS)
 
 ## Architecture Critique — Backlog
-The critique itself (`reviews/architecture-critique.md`) was never committed and
-does not exist in this repo or in the recovered docs snapshot. What survives is
-the ledger below plus git history; Tier 1 and all of Tier 2 have landed, so the
-only live work here is Tier 3.
-**Landed:** Tier 1 (all); Tier 2 #8 registry consolidation (PR #55), #9 display
-abstraction (PR #56), #10 safe pieces — GetContextWeight move + ComputeRelevanceTags
-dedup (PR #57), #10 leftover — relevance-tag encoding unified on ContextRuleEngine
-(PR #58, merged; verified in-game across 5 Debug sessions — all 26 reason labels
-observed, threshold parity exact on both smoothing exponents). Critique #10 is
-now closed; #59–#65 are follow-ups it surfaced, not remaining critique work.
+Tiers 1 and 2 landed (PRs #55-#58); the critique document itself was never
+committed. The only live work here is Tier 3.
 
 ### Tier 3 — hot-path perf (trace-prioritized; see docs/profiling/tracy-traces.md)
 **Nothing in this tier exceeds 0.10% of runtime** on the 44:40 capture of
@@ -689,9 +642,6 @@ trigger to pick any of it up.
       1.4 s later. Observed 2026-08-29 13:03:18 against a 13:03:20 re-resolve.
       Skip the check while `IsInEditMode()` — the diagnostic cannot say anything
       true there (XS)
-- [ ] Unit tests for Context::WeightForCandidate (Tests.cpp:2656/3374 currently
-      hand-reimplement the weight mapping — call the real one). DominantReason /
-      ReasonLabel are covered by unit test 17.
 - [ ] The widget stays on screen through cut scenes, and the fix is written
       but unmerged. `origin/widget-hide-while-wheel-open`, one commit
       (`b752f38`, 2026-09-04), never opened as a PR.
@@ -710,7 +660,7 @@ trigger to pick any of it up.
       and in-game confirmation on a real cut scene. Neither `kAnimated` nor
       `kAutoVanity` appears anywhere in `src/` today, so nothing about it has
       landed by another route.
-      Raised 2026-09-24, out of the branch audit below (S)
+      Raised 2026-09-24 (S)
 
 - [ ] Soak protocol needs deliberate MANUAL equips — accept% is fed only by
       equips made outside Huginn, so a burst played through the wheel/hotkeys
