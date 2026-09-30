@@ -4347,6 +4347,18 @@ void RunUnitTests()
                 return;
             }
             const auto weights = engine.EvaluateRules(player, targets, world);
+            Candidate::ItemCandidate wine{};
+            wine.name = "Wine";
+            wine.type = Item::ItemType::Alcohol;
+            wine.tags = Item::ItemTag::SatisfiesHunger;
+            State::PlayerActorState hungry = player;
+            hungry.hungerLevel = State::SurvivalThreshold::HUNGER_FAMISHED;
+            const auto hungryWeights = engine.EvaluateRules(hungry, targets, world);
+            if (hungryWeights.hungerWeight <= 0.0f ||
+                Context::WeightForCandidate(wine, hungryWeights) >= hungryWeights.hungerWeight) {
+                logger::error("TEST FAIL: alcohol must not draw hungerWeight by default");
+                return;
+            }
             Candidate::ItemCandidate stew{};
             stew.name = "Vegetable Soup";
             stew.tags = Item::ItemTag::SatisfiesHunger | Item::ItemTag::SatisfiesCold;

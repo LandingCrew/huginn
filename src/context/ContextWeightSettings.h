@@ -172,6 +172,7 @@ namespace Huginn::State
         float weightSneaking = ContextWeightDefaults::SNEAKING;
         float weightDarkness = ContextWeightDefaults::DARKNESS;
         float weightHungry = ContextWeightDefaults::HUNGRY;
+        bool alcoholSatisfiesHunger = false;
         float weightCold = ContextWeightDefaults::COLD;
 
         // --- Workstations ---

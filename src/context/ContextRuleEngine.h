@@ -73,6 +73,7 @@ namespace Huginn::Context
         float slowFallWeight = 0.0f;        // Slow fall / become ethereal (when falling)
         float darknessWeight = 0.0f;        // Night Eye / light spells (when it is dark)
         float hungerWeight = 0.0f;          // Food (survival: hungry)
+        float alcoholHungerWeight = 0.0f;   // hungerWeight for alcohol, 0 unless opted in
         float coldWeight = 0.0f;            // Warm food / warming spells (survival: cold)
 
         // =========================================================================

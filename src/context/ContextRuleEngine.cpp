@@ -261,6 +261,10 @@ namespace Huginn::Context
         // (Hungry, Very Cold), full from the next. Below that nothing: Peckish
         // and Chilly are the normal state of a survival game, not a prompt.
         result.hungerWeight = m_config.weightHungry * 0.5f * static_cast<float>(HungerTier(player));
+        // Vanilla survival gives wine and ale a "Restore Hunger Very Small"
+        // rider, and they topped the Hungry key over real food on simonrim
+        // (2026-09-29). Alcohol is its own category; opt in to count it.
+        result.alcoholHungerWeight = m_config.alcoholSatisfiesHunger ? result.hungerWeight : 0.0f;
         result.coldWeight = m_config.weightCold * 0.5f * static_cast<float>(ColdTier(player));
 
         // =====================================================================

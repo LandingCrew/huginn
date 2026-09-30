@@ -50,6 +50,7 @@ namespace Huginn::State
         weightSneaking = ReadClampedFloat(ini, section, "fWeightSneaking", ContextWeightDefaults::SNEAKING, 0.0f, 100.0f, "ContextWeightSettings"sv);
         weightDarkness = ReadClampedFloat(ini, section, "fWeightDarkness", ContextWeightDefaults::DARKNESS, 0.0f, 100.0f, "ContextWeightSettings"sv);
         weightHungry = ReadClampedFloat(ini, section, "fWeightHungry", ContextWeightDefaults::HUNGRY, 0.0f, 100.0f, "ContextWeightSettings"sv);
+        alcoholSatisfiesHunger = ini.GetBoolValue(section, "bAlcoholSatisfiesHunger", false);
         weightCold = ReadClampedFloat(ini, section, "fWeightCold", ContextWeightDefaults::COLD, 0.0f, 100.0f, "ContextWeightSettings"sv);
 
         // Workstations
@@ -140,6 +141,7 @@ namespace Huginn::State
         weightSneaking = ContextWeightDefaults::SNEAKING;
         weightDarkness = ContextWeightDefaults::DARKNESS;
         weightHungry = ContextWeightDefaults::HUNGRY;
+        alcoholSatisfiesHunger = false;
         weightCold = ContextWeightDefaults::COLD;
 
         weightAtForge = ContextWeightDefaults::AT_FORGE;
@@ -199,6 +201,7 @@ namespace Huginn::State
         config.weightSneaking = weightSneaking;
         config.weightDarkness = weightDarkness;
         config.weightHungry = weightHungry;
+        config.alcoholSatisfiesHunger = alcoholSatisfiesHunger;
         config.weightCold = weightCold;
 
         config.weightAtForge = weightAtForge;
