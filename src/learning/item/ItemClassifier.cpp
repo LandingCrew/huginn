@@ -1109,6 +1109,29 @@ namespace Huginn::Item
          return true;
       }
 
+      // TIER 1b: the drawback EFFECT every drink carries. The names below
+      // missed Sujamma, Velvet LeChance, Stros M'Kai Rum, Cliff Racer and
+      // White-Gold Tower (/code-review #155), and under vanilla survival each
+      // of those also restores a little hunger, so they reached the Hungry
+      // key as food. Vanilla marks the drawback MagicAlchHarmful (Damage
+      // Stamina Regeneration); Apothecary MAG_DrinkAlcohol* / MAG_FoodItemDrugs;
+      // LoreRim BOOB_AlcoholBadEffect / Feat_KW_Alcohol. Real food carries
+      // none of them -- spoiled food's "Weak Stomach" has no keyword -- and a
+      // poisoned cheese landing here keeps it off the Hungry key, which is
+      // right anyway.
+      for (const auto* effect : item->effects) {
+         if (!effect || !effect->baseEffect) continue;
+         const auto* base = effect->baseEffect;
+         if (base->HasKeywordString("MagicAlchHarmful") ||
+             base->HasKeywordString("MAG_DrinkAlcoholFortify") ||
+             base->HasKeywordString("MAG_DrinkAlcoholDamage") ||
+             base->HasKeywordString("MAG_FoodItemDrugs") ||
+             base->HasKeywordString("BOOB_AlcoholBadEffect") ||
+             base->HasKeywordString("Feat_KW_Alcohol")) {
+            return true;
+         }
+      }
+
       // TIER 2: Name-based fallback for vanilla and untagged items
       // Full drink names (match anywhere in name, case-insensitive)
       if (NameContains(name, "alto wine") ||
