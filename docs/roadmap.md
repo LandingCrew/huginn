@@ -288,7 +288,9 @@ entries named.
       Raised 2026-09-24.
 
 - [ ] Potions, apparel and weapons have no dump at all, and the item
-      classifier has never had the measurement the spell one got.
+      classifier has never had the measurement the spell one got. Food
+      has one now: `hg dump food` (#155) found the untagged vanilla survival
+      food and five drinks typed as food -- the pattern this entry predicts.
       `hg dump spells` covers spells and (since v0.21.8) scrolls. ItemClassifier
       -- potions, poisons, food, soul gems -- ApparelClassifier and
       WeaponClassifier have nothing equivalent, so their rules have only ever
