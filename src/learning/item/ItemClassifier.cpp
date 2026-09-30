@@ -1148,7 +1148,13 @@ namespace Huginn::Item
           NameContains(name, "flin") ||
           NameContains(name, "shein") ||
           NameContains(name, "jagga") ||
-          NameContains(name, "rotmeth")) {
+          NameContains(name, "rotmeth") ||
+          // Vanilla cocktails with no drawback effect for TIER 1b to see:
+          // Restore Stamina plus survival's hunger rider, nothing else.
+          NameContains(name, "cliff racer") ||
+          NameContains(name, "white-gold tower") ||
+          NameContains(name, "velvet lechance") ||
+          NameContains(name, "sujamma")) {
          return true;
       }
 
@@ -1179,7 +1185,7 @@ namespace Huginn::Item
          return true;
       };
 
-      constexpr std::string_view genericTerms[] = { "ale", "mead", "wine", "beer", "brandy" };
+      constexpr std::string_view genericTerms[] = { "ale", "mead", "wine", "beer", "brandy", "rum" };
       for (auto term : genericTerms) {
          if (endsWithWordCI(name, term) || startsWithWordCI(name, term)) {
             return true;
