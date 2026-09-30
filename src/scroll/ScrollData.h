@@ -36,12 +36,17 @@ namespace Huginn::Scroll
       float magnitude = 0.0f;                    // Effect magnitude (for potency comparison)
       float duration = 0.0f;                     // Effect duration in seconds
       uint32_t baseCost = 0;                     // Base magicka cost of the scroll's spell effects (for comparison)
+      // Copied from the spell classification, as tagsExt is: the equivalence
+      // cap (slot/EquivalenceKey.h) gives a scroll the same key as the spell
+      // it casts, and that needs both.
+      Spell::SpellDelivery delivery = Spell::SpellDelivery::Unknown;
+      uint8_t skillLevel = 0;                    // costliest effect's minimumSkill (0 = unknown/Novice)
 
       // String representation for logging
       [[nodiscard]] std::string ToString() const
       {
       return std::format(
-        "ScrollData[id={:08X}, name='{}', type={}, school={}, element={}, tags={:08X}, tagsExt={:04X}, magnitude={:.1f}, duration={:.1f}, cost={}]",
+        "ScrollData[id={:08X}, name='{}', type={}, school={}, element={}, tags={:08X}, tagsExt={:04X}, magnitude={:.1f}, duration={:.1f}, cost={}, delivery={}, skill={}]",
         formID,
         name,
         Spell::SpellTypeToString(type),
@@ -51,7 +56,9 @@ namespace Huginn::Scroll
         std::to_underlying(tagsExt),
         magnitude,
         duration,
-        baseCost);
+        baseCost,
+        Spell::SpellDeliveryToString(delivery),
+        skillLevel);
       }
 
       // Equality operator

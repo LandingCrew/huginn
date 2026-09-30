@@ -263,6 +263,10 @@ namespace Huginn::Pipeline
 #ifndef NDEBUG
         void UpdateDebugWidgets(PipelineContext& ctx);
 #endif
+        /// Opt-in decision log ([Telemetry] bEnabled): hands this tick's phi,
+        /// scored list and displayed page to Telemetry::DecisionLog, which
+        /// writes only when the display changed. Returns at once when off.
+        void RecordDecisionTelemetry(PipelineContext& ctx);
 
         // Reusable pipeline context — cleared each frame, preserves container capacity
         PipelineContext m_ctx;

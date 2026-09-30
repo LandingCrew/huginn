@@ -768,6 +768,10 @@ learningScore += recencyBoost;
 float correlationBonus = m_correlationBooster.CalculateBonus(player, targets, candidate);
 float potionMultiplier = m_potionDiscrim.GetMultiplier(state, player, candidate);
 
+// Step 6b: item-context fit (FitScorer). Recorded unless iFitMode = 0,
+//          multiplied in only when iFitMode = 2 (Apply).
+float fit = (fitMode == FitMode::Apply) ? m_fitScorer.Compute(candidate).multiplier : 1.0f;
+
 // Step 7: Provisional favorites multiplier (rank 0 of 1 = favoritesBoostMax).
 //         ScoreCandidates later replaces it with the rank-scaled value —
 //         see ApplyFavoritesRankScaling.
@@ -779,7 +783,7 @@ float lambda = ComputeAdaptiveLambda(metrics.confidence);
 // confidence=0 → λ = 0.5 (context dominates); confidence=1 → λ = 3.0 (6x amplification)
 
 return contextWeight * (1.0f + lambda * learningScore)
-       * correlationBonus * potionMultiplier * favoritesMultiplier;
+       * correlationBonus * potionMultiplier * favoritesMultiplier * fit;
 ```
 
 `recencyBoost` is `UsageMemory::RECENCY_BOOST` (1.5), granted when at least
@@ -823,6 +827,57 @@ encodes equipment/target synergies whose values live in `[Scoring]`:
 `fFlatRestoreLowResourceMult` 1.5) and returns 1.0 for non-potions. Ordering
 the strengths of one potion is `UtilityScorer::ApplyPotionTierPreference`
 (`sPotionTierPreference`, default Higher), which needs the whole list. Neither feeds back into the learner.
+
+### FitScorer (item-context fit)
+
+`FitScorer` (`src/learning/FitScorer.h/.cpp`) generalises the
+`PotionDiscriminator` idea: a multiplier from the item's own properties against
+state the player can already see. It exists because within one category the
+context weight is identical and the prior differs by at most ~0.1, so untrained
+items tie and the order among them is arbitrary. The first cut covers spells
+only:
+
+- **Affordability.** `castsLeft = currentMagicka / effectiveCost`, with
+  `currentMagicka = vitals.magicka × maxMagicka` from the raw player (not the
+  `VitalEnvelope` copy the context weights see). The multiplier ramps linearly
+  from `fFitAffordMin` (0.7) at exactly one cast to 1.0 at
+  `fFitAffordFullCasts` (3). A free spell (`effectiveCost <= 0`) counts as
+  fully affordable. Below one cast, `Penalize` gets `fFitUnaffordableMult`
+  (0.3); `Allow` and `Disallow` hold at `fFitAffordMin`. Holding keeps the
+  curve continuous and monotonic: `Allow` means "no extra punishment for being
+  unaffordable", not "an unaffordable spell beats a 1.5-cast one". `Disallow`
+  can still land there, because the filter reads `GetActorValue(kMagicka)` and
+  fit reads the polled vitals, and the two can disagree by a hair.
+- **Concentration spells.** `CalculateMagickaCost` returns a per-second cost
+  for them, so one "cast" is `fFitConcentrationSecondsPerCast` (2) seconds of
+  sustain: `castsLeft = magicka / (costPerSecond × seconds)`.
+- **Range.** For aimed spells only. `range == 0` (self/touch) is skipped, and
+  so is the 4096 fallback that `SpellClassifier::GetEffectiveRange` returns
+  when a spell has no projectile data. If the nearest hostile Huginn tracks is
+  farther away than the spell's projectile range, the spell gets
+  `fFitOutOfRangeMult` (0.6). The distance comes from
+  `TargetCollection::GetClosestEnemy()`, the same source as
+  `StateFeatures::distanceNorm`, and is used only in combat. There is no
+  line-of-sight test, because that would be a new sensor.
+- **Clamp.** The product is clamped to `[fFitClampMin, fFitClampMax]` =
+  `[0.2, 1.0]`. With a max of 1.0, fit only ever demotes.
+
+It **multiplies** rather than adds, and that is deliberate. Fit is a
+tie-breaker that scales with the item's own utility. It must not override a
+learned habit: trained items outscore untrained ones about 10x, and a 0.6
+demotion cannot flip that.
+
+`[Scoring] iFitMode` selects the mode:
+
+- `0` (Off): not computed.
+- `1` (Shadow, the default): computed and recorded in the `ScoreBreakdown`
+  (`fitMultiplier`, `fitCastsLeft`, `fitAfford`, `fitRange`, `fitApplied`).
+  `hg recs` shows it as `fit~0.85`, but it does not enter the utility.
+- `2` (Apply): multiplied into the utility, shown as `fit=0.85`.
+
+Shadow is the default so that shipping the feature changes no ranking and does
+not invalidate soak runs. Every constant is INI-tunable and hot-reloads through
+`ScorerSettings`.
 
 ---
 

@@ -13,6 +13,7 @@
 #include "learning/UtilityScorer.h"
 #include "learning/ScoredCandidate.h"
 #include "learning/ScorerSettings.h"   // MINIMUM_UTILITY — the floor test 6i is about
+#include "learning/FitScorer.h"        // RunFitScorerTests: pure fit math
 #include "candidate/CandidateGenerator.h"
 #include "persist/BanditSerializer.h"
 #include "learning/StateFeatures.h"
@@ -20,6 +21,10 @@
 #include "learning/PipelineStateCache.h"
 #include "learning/EquipSourceTracker.h"
 #include "learning/UsageMemory.h"
+#include "telemetry/ItemKey.h"            // RunTelemetryFormatTests
+#include "telemetry/JsonLine.h"           // RunTelemetryFormatTests
+#include "telemetry/TelemetrySettings.h"  // RunTelemetryFormatTests (SanitizeFileName)
+#include <limits>                         // RunTelemetryFormatTests (NaN / inf)
 #include "util/ScopedTimer.h"
 #include "util/NameMatch.h"
 #include "context/ContextRuleEngine.h"
@@ -29,6 +34,7 @@
 #include "IniLoad.h"                   // MatchOverrideSection (override namespacing tests)
 #include "slot/SlotLocker.h"          // THROWAWAY: RunSlotLockerResetTest (0.19.21)
 #include "slot/SlotAllocator.h"       // THROWAWAY: RunSlotSeatingTest (0.20.30)
+#include "slot/EquivalenceKey.h"      // RunEquivalenceKeyTests
 #include "slot/SlotSettings.h"         // THROWAWAY: MAX_SLOTS_PER_PAGE for the same
 #include "override/OverrideConditions.h"  // THROWAWAY: OverrideCollection for the same
 
@@ -1559,6 +1565,130 @@ void RunFeatureBanditLearnerTests()
     }
 
     logger::info("TEST PASS: All FeatureBanditLearner tests passed! (8 tests)"sv);
+#endif
+}
+
+// =============================================================================
+// DECISION LOG FORMAT (telemetry): item keys, JSON escaping, file names
+// =============================================================================
+// Pure helpers only -- no file, no writer thread, no forms. What it pins:
+//   - SplitFormID strips the load-order byte (regular), the ESL slot (0xFE)
+//     and marks runtime-created forms (0xFF) as having no stable key;
+//   - FormatItemKey spells the key the aggregation side joins on;
+//   - AppendEscaped produces valid JSON for quote, backslash and control bytes;
+//   - AppendFloat never writes NaN/inf (not JSON) and the Object builder
+//     places its commas;
+//   - SanitizeFileName cannot be talked into writing outside the log folder.
+void RunTelemetryFormatTests()
+{
+#ifndef NDEBUG
+    using namespace Huginn::Telemetry;
+    logger::info("Running telemetry format tests..."sv);
+
+    bool passed = true;
+    auto expect = [&](bool ok, std::string_view what) {
+        if (!ok) { logger::error("TEST FAIL: telemetry format: {}"sv, what); passed = false; }
+    };
+
+    // ---- SplitFormID ----------------------------------------------------------
+    {
+        const auto regular = SplitFormID(0x2A000D62u);   // mod at load index 0x2A
+        expect(!regular.dynamic && !regular.light && regular.local == 0x000D62u,
+            "regular id: load-order byte not stripped");
+        const auto base = SplitFormID(0x00012FCDu);      // Skyrim.esm
+        expect(!base.dynamic && !base.light && base.local == 0x012FCDu,
+            "Skyrim.esm id changed");
+        const auto light = SplitFormID(0xFE03A801u);     // ESL slot 0x03A, local 0x801
+        expect(light.light && !light.dynamic && light.local == 0x801u,
+            "light id: ESL slot index not stripped");
+        const auto dyn = SplitFormID(0xFF000ABCu);
+        expect(dyn.dynamic, "0xFF id not marked dynamic");
+    }
+
+    // ---- FormatItemKey --------------------------------------------------------
+    expect(FormatItemKey("Skyrim.esm", SplitFormID(0x00012FCDu)) == "Skyrim.esm|012FCD",
+        "regular key spelling");
+    expect(FormatItemKey("Foo.esp", SplitFormID(0xFE001ABCu)) == "Foo.esp|ABC",
+        "light key spelling (3 hex digits)");
+    expect(FormatItemKey("Foo.esp", SplitFormID(0xFF000ABCu)) == "~dyn",
+        "dynamic key is not ~dyn");
+    expect(FormatItemKey("", SplitFormID(0x01000800u)) == "?|000800",
+        "missing plugin name is not '?'");
+    // The same local id under two load orders must give the same key.
+    expect(FormatItemKey("Mod.esp", SplitFormID(0x2A000D62u)) ==
+           FormatItemKey("Mod.esp", SplitFormID(0x31000D62u)),
+        "key depends on load order");
+
+    // ---- AppendEscaped --------------------------------------------------------
+    {
+        std::string s;
+        Json::AppendEscaped(s, "a\"b\\c");
+        expect(s == R"("a\"b\\c")", "quote/backslash escaping: got " + s);
+
+        s.clear();
+        Json::AppendEscaped(s, std::string_view("x\n\t\x01y", 5));
+        expect(s == R"("x\n\t\u0001y")", "control-char escaping: got " + s);
+
+        s.clear();
+        Json::AppendEscaped(s, "Dawnguard.esm");
+        expect(s == "\"Dawnguard.esm\"", "plain string altered: got " + s);
+    }
+
+    // ---- AppendFloat ----------------------------------------------------------
+    {
+        std::string s;
+        Json::AppendFloat(s, std::numeric_limits<float>::quiet_NaN());
+        expect(s == "null", "NaN is not null: got " + s);
+        s.clear();
+        Json::AppendFloat(s, std::numeric_limits<float>::infinity());
+        expect(s == "null", "inf is not null: got " + s);
+        s.clear();
+        Json::AppendFloat(s, 1.5f);
+        expect(s == "1.5", "1.5 formatted as " + s);
+        s.clear();
+        Json::AppendFloat(s, 0.0f);
+        expect(s == "0", "0 formatted as " + s);
+    }
+
+    // ---- Object builder -------------------------------------------------------
+    {
+        std::string s;
+        Json::Object o(s);
+        o.Str("t", "rew");
+        o.UInt("imp", 7);
+        o.Bool("trained", true);
+        o.Null("shown");
+        o.Hex("tags", 0x1Au);
+        o.Close();
+        expect(s == R"({"t":"rew","imp":7,"trained":true,"shown":null,"tags":"0x1A"})",
+            "object builder output: got " + s);
+    }
+
+    // ---- SanitizeFileName -----------------------------------------------------
+    {
+        const std::string def = TelemetryDefaults::FILE_NAME;
+        expect(TelemetrySettings::SanitizeFileName("Huginn_Telemetry.jsonl") == def,
+            "default name altered");
+        expect(TelemetrySettings::SanitizeFileName("..\\..\\evil.jsonl") == "evil.jsonl",
+            "directory traversal not stripped");
+        expect(TelemetrySettings::SanitizeFileName("C:\\Users\\me\\x") == "x.jsonl",
+            "absolute path / missing extension not handled");
+        expect(TelemetrySettings::SanitizeFileName("sub/dir/log.JSONL") == "log.JSONL",
+            "forward-slash directory or case-insensitive extension not handled");
+        expect(TelemetrySettings::SanitizeFileName("") == def, "empty name not defaulted");
+        expect(TelemetrySettings::SanitizeFileName("..") == def, "'..' not defaulted");
+        // No file-name component: defaulted (and the warning must not echo the path).
+        expect(TelemetrySettings::SanitizeFileName("C:\\Users\\me\\Documents\\") == def,
+            "directory-only name not defaulted");
+        expect(TelemetrySettings::SanitizeFileName("log%s.jsonl") == "log_s.jsonl",
+            "'%' not replaced (console Print is printf-style)");
+        expect(TelemetrySettings::SanitizeFileName("notes.txt") == "notes.txt.jsonl",
+            ".jsonl not appended to a foreign extension");
+    }
+
+    if (passed) {
+        logger::info("  telemetry format tests PASSED"sv);
+    }
 #endif
 }
 
@@ -5444,6 +5574,119 @@ void RunRegressionTests()
 // =============================================================================
 
 // =============================================================================
+// FIT SCORER (item-context fit multiplier)
+// =============================================================================
+// Pins the pure math behind Scoring::FitScorer: casts left, the affordability
+// ramp under each UncastableSpellPolicy, the range judgement and the clamp.
+// The per-frame wrapper only feeds these from PlayerActorState/TargetCollection.
+void RunFitScorerTests()
+{
+#ifndef NDEBUG
+    using namespace Huginn::Scoring;
+    using Candidate::UncastableSpellPolicy;
+    logger::info("Running fit-scorer tests..."sv);
+
+    bool passed = true;
+    auto expect = [&](bool ok, std::string_view what) {
+        if (!ok) { logger::error("TEST FAIL: fit-scorer: {}"sv, what); passed = false; }
+    };
+    auto approx = [](float a, float b) { return std::abs(a - b) < 1e-4f; };
+
+    FitParams p;  // defaults: affordMin 0.7, full 3, unaffordable 0.3, conc 2 s,
+                  // outOfRange 0.6, clamp [0.2, 1.0]
+
+    // --- CastsLeft ---
+    expect(CastsLeft(100.0f, 0.0f, false, 2.0f) == std::numeric_limits<float>::infinity(),
+        "a free spell (cost 0) is not infinitely affordable");
+    expect(CastsLeft(100.0f, -5.0f, false, 2.0f) == std::numeric_limits<float>::infinity(),
+        "a negative cost is not treated as free");
+    expect(approx(CastsLeft(100.0f, 25.0f, false, 2.0f), 4.0f), "100 magicka / 25 cost != 4 casts");
+    expect(approx(CastsLeft(100.0f, 25.0f, true, 2.0f), 2.0f),
+        "concentration: 100 / (25/s x 2 s) != 2 casts");
+    expect(approx(CastsLeft(100.0f, 25.0f, true, 0.0f), 4.0f),
+        "concentration with seconds <= 0 did not fall back to 1 s");
+    expect(approx(CastsLeft(-10.0f, 25.0f, false, 2.0f), 0.0f), "negative magicka is not 0 casts");
+
+    // --- AffordFit ---
+    expect(approx(AffordFit(1.0f, UncastableSpellPolicy::Allow, p), 0.7f), "1 cast != affordMin");
+    expect(approx(AffordFit(3.0f, UncastableSpellPolicy::Allow, p), 1.0f), "full casts != 1.0");
+    expect(approx(AffordFit(10.0f, UncastableSpellPolicy::Allow, p), 1.0f), "beyond full casts != 1.0");
+    expect(approx(AffordFit(2.0f, UncastableSpellPolicy::Allow, p), 0.85f), "midpoint (2 casts) != 0.85");
+    expect(approx(AffordFit(std::numeric_limits<float>::infinity(), UncastableSpellPolicy::Penalize, p), 1.0f),
+        "a free spell is not fully affordable");
+    expect(approx(AffordFit(0.5f, UncastableSpellPolicy::Penalize, p), 0.3f),
+        "<1 cast under Penalize != unaffordableMult");
+    expect(approx(AffordFit(0.5f, UncastableSpellPolicy::Allow, p), 0.7f),
+        "<1 cast under Allow is not held at affordMin");
+    expect(approx(AffordFit(0.5f, UncastableSpellPolicy::Disallow, p), 0.7f),
+        "<1 cast under Disallow is not held at affordMin");
+    {
+        // Monotonic in castsLeft under Allow (the reason <1 holds at affordMin
+        // instead of jumping back to 1.0)
+        bool monotonic = true;
+        float prev = AffordFit(0.0f, UncastableSpellPolicy::Allow, p);
+        for (float c = 0.1f; c <= 5.0f; c += 0.1f) {
+            const float v = AffordFit(c, UncastableSpellPolicy::Allow, p);
+            if (v + 1e-6f < prev) monotonic = false;
+            prev = v;
+        }
+        expect(monotonic, "AffordFit is not monotonic in castsLeft under Allow");
+    }
+    {
+        FitParams one = p;
+        one.affordFullCasts = 1.0f;
+        expect(approx(AffordFit(1.0f, UncastableSpellPolicy::Allow, one), 1.0f),
+            "affordFullCasts <= 1 does not mean 'one cast is enough'");
+    }
+
+    // --- RangeFit ---
+    expect(approx(RangeFit(0.0f, 5000.0f, p), 1.0f), "self/touch (range 0) was judged on range");
+    expect(approx(RangeFit(RANGE_FALLBACK_SENTINEL, 9000.0f, p), 1.0f), "the 4096 fallback was judged on range");
+    expect(approx(RangeFit(1500.0f, -1.0f, p), 1.0f), "no enemy was judged out of range");
+    expect(approx(RangeFit(1500.0f, 1000.0f, p), 1.0f), "an enemy within range was demoted");
+    expect(approx(RangeFit(1500.0f, 1500.0f, p), 1.0f), "an enemy exactly at range was demoted");
+    expect(approx(RangeFit(1500.0f, 2000.0f, p), 0.6f), "an enemy out of range != outOfRangeMult");
+
+    // --- ComputeSpellFit: combined + clamp ---
+    {
+        SpellFitInputs in;
+        in.currentMagicka = 10.0f;
+        in.effectiveCost = 50.0f;       // 0.2 casts
+        in.range = 1500.0f;
+        in.enemyDistance = 2000.0f;     // out of range
+        in.policy = UncastableSpellPolicy::Penalize;
+        const auto r = ComputeSpellFit(in, p);
+        expect(approx(r.affordFit, 0.3f) && approx(r.rangeFit, 0.6f), "components not 0.3 / 0.6");
+        expect(approx(r.multiplier, 0.2f), "0.3 x 0.6 = 0.18 was not clamped up to 0.2");
+        expect(approx(r.castsLeft, 0.2f), "castsLeft not recorded");
+    }
+    {
+        SpellFitInputs in;
+        in.currentMagicka = 300.0f;
+        in.effectiveCost = 30.0f;       // 10 casts
+        in.range = 0.0f;
+        in.enemyDistance = 100.0f;
+        const auto r = ComputeSpellFit(in, p);
+        expect(approx(r.multiplier, 1.0f), "an affordable self spell is not neutral");
+    }
+    {
+        FitParams swapped = p;
+        swapped.clampMin = 1.0f;
+        swapped.clampMax = 0.2f;        // hand-built inverted clamp must not trip std::clamp
+        SpellFitInputs in;
+        in.currentMagicka = 300.0f;
+        in.effectiveCost = 30.0f;
+        const auto r = ComputeSpellFit(in, swapped);
+        expect(approx(r.multiplier, 1.0f), "an inverted clamp was not normalised");
+    }
+
+    if (passed) {
+        logger::info("  fit-scorer tests PASSED"sv);
+    }
+#endif
+}
+
+// =============================================================================
 // OVERRIDE SECTION NAMESPACING (0.19.22)
 // =============================================================================
 // Huginn_Overrides.ini is shared by SpellOverrides and ItemOverrides. Sections
@@ -5992,6 +6235,159 @@ void RunFillJobKeysTest()
 
     if (passed) {
         logger::info("  fill-job-keys test PASSED"sv);
+    }
+#endif
+}
+
+// =============================================================================
+// Per-page equivalence cap: key construction (slot/EquivalenceKey.h)
+// =============================================================================
+// Pure: builds candidates by hand, never touches a registry or the allocator's
+// state. Pins what counts as "the same thing" for bCapEquivalents -- a spell
+// and its scroll share a key, delivery-ish tag bits do not split them, and a
+// different element, delivery, tier or effect tag does.
+void RunEquivalenceKeyTests()
+{
+#ifndef NDEBUG
+    using namespace Huginn::Slot;
+    logger::info("Running equivalence-key tests..."sv);
+
+    bool passed = true;
+    auto expect = [&](bool ok, std::string_view what) {
+        if (!ok) { logger::error("TEST FAIL: equivalence key: {}"sv, what); passed = false; }
+    };
+    const CostBandEdges edges = DEFAULT_COST_BAND_EDGES;
+
+    auto spell = [](RE::FormID id, std::string_view name, Spell::SpellType type, Spell::SpellTag tags,
+                     Spell::ElementType element, Spell::SpellDelivery delivery, uint8_t skill, uint32_t cost) {
+        Candidate::SpellCandidate s{};
+        s.formID = id; s.name = name; s.type = type; s.tags = tags; s.element = element;
+        s.delivery = delivery; s.skillLevel = skill; s.baseCost = cost;
+        s.effectiveCost = static_cast<float>(cost);
+        return s;
+    };
+    auto scroll = [](RE::FormID id, std::string_view name, Spell::SpellType type, Spell::SpellTag tags,
+                      Spell::ElementType element, Spell::SpellDelivery delivery, uint8_t skill, uint32_t cost) {
+        Candidate::ScrollCandidate s{};
+        s.formID = id; s.name = name; s.type = type; s.tags = tags; s.element = element;
+        s.delivery = delivery; s.skillLevel = skill; s.baseCost = cost; s.count = 1;
+        return s;
+    };
+    auto key = [&](const Candidate::CandidateVariant& v) { return MakeEquivalenceKey(v, edges); };
+
+    using ST = Spell::SpellTag;
+    using SD = Spell::SpellDelivery;
+    using EL = Spell::ElementType;
+
+    // A concentration spell and a fire-and-forget scroll of the same effect:
+    // Concentration/Ranged differ, everything else matches.
+    const auto flames = spell(0x0BADE001, "EqProbeFlames", Spell::SpellType::Damage,
+        ST::Fire | ST::Ranged | ST::Concentration, EL::Fire, SD::Aimed, 25, 14);
+    const auto flamesScroll = scroll(0x0BADE002, "EqProbeScrollOfFlames", Spell::SpellType::Damage,
+        ST::Fire, EL::Fire, SD::Aimed, 25, 14);
+    {
+        const auto a = key(flames);
+        const auto b = key(flamesScroll);
+        expect(a.has_value() && b.has_value(), "a typed spell or scroll got no key");
+        expect(a && b && *a == *b, "a spell and its scroll (differing only in Ranged/Concentration) have different keys");
+    }
+
+    // TargetActor and Aimed both bucket to Ranged.
+    {
+        auto aimedAtActor = flames;
+        aimedAtActor.delivery = SD::TargetActor;
+        expect(key(flames) == key(aimedAtActor), "Aimed and TargetActor fall in different delivery buckets");
+    }
+
+    // Any one real difference splits the key.
+    {
+        auto frost = flames; frost.element = EL::Frost;
+        expect(key(flames) != key(frost), "a different element gave the same key");
+
+        auto touch = flames; touch.delivery = SD::Touch;
+        expect(key(flames) != key(touch), "a different delivery gave the same key");
+
+        auto adept = flames; adept.skillLevel = 50;
+        expect(key(flames) != key(adept), "a different tier gave the same key");
+    }
+
+    // Same type/element/delivery/tier, different effect tags: Oakflesh-like
+    // (Armor) and Muffle-like (Muffle|Stealth) must not merge.
+    {
+        const auto oak = spell(0x0BADE003, "EqProbeOakflesh", Spell::SpellType::Buff, ST::Armor,
+            EL::None, SD::Self, 0, 50);
+        const auto muffle = spell(0x0BADE004, "EqProbeMuffle", Spell::SpellType::Buff, ST::Muffle | ST::Stealth,
+            EL::None, SD::Self, 0, 50);
+        expect(key(oak) != key(muffle), "two Buffs with different effect tags share a key");
+    }
+
+    // No key: potion, weapon, Unknown spell type.
+    {
+        Candidate::ItemCandidate potion{};
+        potion.formID = 0x0BADE005; potion.name = "EqProbePotion";
+        potion.type = Item::ItemType::HealthPotion; potion.tags = Item::ItemTag::RestoreHealth;
+        expect(!key(potion).has_value(), "a potion got a key (tier preference owns potions)");
+
+        Candidate::WeaponCandidate weapon{};
+        weapon.formID = 0x0BADE006; weapon.name = "EqProbeSword";
+        expect(!key(weapon).has_value(), "a weapon got a key");
+
+        auto unknown = flames; unknown.type = Spell::SpellType::Unknown;
+        expect(!key(unknown).has_value(), "an Unknown-type spell got a key (must fail safe)");
+    }
+
+    // TierBand: skill first, else cost band.
+    expect(TierBand(50, 0, edges) == 2, "TierBand(skill 50) != 2");
+    expect(TierBand(100, 0, edges) == 4, "TierBand(skill 100) != 4");
+    expect(TierBand(0, 14, edges) == 0, "TierBand(skill 0, cost 14) != 0");
+    expect(TierBand(0, 700, edges) == 4, "TierBand(skill 0, cost 700) != 4");
+    expect(TierBand(0, 100, edges) == 2, "TierBand(skill 0, cost 100) != 2 (edges are inclusive)");
+
+    // ExceedsEquivalenceCap against a hand-built page.
+    {
+        auto scored = [](const Candidate::CandidateVariant& v) {
+            Scoring::ScoredCandidate sc{}; sc.candidate = v; sc.utility = 1.0f;
+            return sc;
+        };
+        SlotAssignments page;
+        for (size_t i = 0; i < 3; ++i) page.push_back(SlotAssignment::Empty(i, SlotClassification::Regular));
+        page[0] = SlotAssignment::FromCandidate(0, SlotClassification::Regular, scored(flames));
+
+        const auto scrollSc = scored(flamesScroll);
+        expect(ExceedsEquivalenceCap(page, scrollSc, 1, edges), "max 1: a second same-key item was not capped");
+        expect(!ExceedsEquivalenceCap(page, scrollSc, 2, edges), "max 2: the second same-key item was capped");
+
+        page[1] = SlotAssignment::FromCandidate(1, SlotClassification::Regular, scrollSc, AssignmentType::Override);
+        auto third = flames; third.formID = 0x0BADE007; third.name = "EqProbeFlames2";
+        expect(ExceedsEquivalenceCap(page, scored(third), 2, edges),
+            "max 2: a third same-key item was not capped (overrides must count)");
+
+        Candidate::WeaponCandidate weapon{};
+        weapon.formID = 0x0BADE008; weapon.name = "EqProbeAxe";
+        expect(!ExceedsEquivalenceCap(page, scored(weapon), 1, edges), "an item with no key was capped");
+    }
+
+    // Spell vs scroll: the spell exactly at its cost, the scroll one short.
+    expect(PreferSpellOverScroll(14.0f, 14.0f), "PreferSpellOverScroll false at magicka == cost");
+    expect(!PreferSpellOverScroll(13.9f, 14.0f), "PreferSpellOverScroll true below cost");
+    expect(PreferSpellOverScroll(0.0f, 0.0f), "PreferSpellOverScroll false for a free spell");
+    expect(PreferSpellOverScroll(-1.0f, 0.0f), "PreferSpellOverScroll false for a free spell at negative magicka");
+
+    // Telemetry "eqk" text form (a schema field: format changes bump SCHEMA_VERSION).
+    {
+        EquivalenceKey key;
+        key.type = Spell::SpellType::Damage;
+        key.tags = 0x12;
+        key.tagsExt = 0;
+        key.element = Spell::ElementType::Fire;
+        key.delivery = DeliveryBucket::Ranged;
+        key.tier = 3;
+        expect(EquivalenceKeyToString(key) == "Damage|0x12|0x0|Fire|Ranged|3",
+            "EquivalenceKeyToString format changed");
+    }
+
+    if (passed) {
+        logger::info("  equivalence-key tests PASSED"sv);
     }
 #endif
 }

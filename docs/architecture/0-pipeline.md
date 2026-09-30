@@ -15,6 +15,7 @@ This document describes the data flow from game state to slot recommendations as
 ```
 utility = contextWeight × (1 + λ(confidence) × learningScore)
           × correlationBonus × potionMultiplier × favoritesMultiplier
+          [× fitMultiplier — only when [Scoring] iFitMode = 2; default 1 records it without applying]
 ```
 
 Where `λ(confidence) = lambdaMin + confidence × (lambdaMax − lambdaMin)`. Context acts as a gate: zero context = zero utility regardless of learning.
@@ -141,6 +142,7 @@ graph TB
 | **DeriveExplanationLabel** | Pure subtext derivation, shared by the coordinator and Wheeler | `src/display/ExplanationLabel.h` |
 | **IDisplayBackend** | Interface for display targets (Intuition, Wheeler) | `src/display/IDisplayBackend.h` |
 | **SoakMetrics** | Long-play telemetry: tick cost, candidate/display counts, page-race bails | `src/telemetry/SoakMetrics.h` |
+| **DecisionLog** | Opt-in (`[Telemetry] bEnabled`) JSON Lines decision log: impressions on display change + reward events, written by a background thread ([9-telemetry.md](9-telemetry.md)) | `src/telemetry/DecisionLog.h` |
 
 ---
 

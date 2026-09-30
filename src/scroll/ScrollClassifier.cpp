@@ -51,6 +51,10 @@ namespace Huginn::Scroll
       data.school = spellData.school;
       data.element = spellData.element;
       data.baseCost = spellData.baseCost;
+      // Equivalence-cap inputs: a Scroll of Firebolt shares its key with
+      // Firebolt only if these travel with it.
+      data.delivery = spellData.delivery;
+      data.skillLevel = spellData.skillLevel;
 
       // magnitude and duration keep their zero defaults; ClassifyScroll overrides
       // them with scroll-specific values

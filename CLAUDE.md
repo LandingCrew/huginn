@@ -58,18 +58,21 @@ See [docs/README.md](docs/README.md) for full system design.
 | `src/override/` | Override system (urgent potion surfacing) |
 | `src/persist/` | Learner weight serialization (cosave) |
 | `src/settings/` | SettingsReloader (dMenu hot-reload) |
+| `src/telemetry/` | SoakMetrics, opt-in DecisionLog (JSON Lines decision log, `[Telemetry]`) |
 
 ## Configuration
 
 **Compile-time constants** — `src/Config.h` (learning rate, rewards, intervals, target limits)
 
 **INI settings** — `Data/SKSE/Plugins/Huginn.ini`:
-- `[Scoring]` — Utility scoring params (loaded by `ScorerSettings`)
+- `[Scoring]` — Utility scoring params (loaded by `ScorerSettings`), incl. item fit: `iFitMode` (0 Off, 1 Shadow default, 2 Apply) and `fFit*` for `FitScorer`
 - `[ContextWeights]` — context weight multipliers (loaded by `ContextWeightSettings`)
 - `[Widget]` — Scaleform HUD position, alpha, scale, display mode
 - `[Wheeler]` — Wheeler integration settings
 - `[Candidates]` — Uncastable spell policy
 - `[Pages]`, `[PageN]`, `[PageN.SlotM]` — Multi-page slot layout
+- `[SlotLocker]` — Slot locking, seating, and the opt-in per-page equivalence cap (`bCapEquivalents`, `iMaxPerEquivalenceKey`, `sEquivalenceCostBands`; loaded by `SlotSettings`)
+- `[Telemetry]` — opt-in decision log, default off (loaded by `TelemetrySettings`, see [docs/architecture/9-telemetry.md](docs/architecture/9-telemetry.md))
 
 ## Console Commands
 
@@ -78,13 +81,14 @@ Registered as `Huginn` with short alias `hg` (in-game `~` console):
 | Command | Description |
 |---------|-------------|
 | `hg refresh` | Force immediate recommendation update |
-| `hg recs [N]` | Dump top-N recommendation breakdown to log (default 10) |
+| `hg recs [N]` | Dump top-N recommendation breakdown to log (default 10); includes the fit column (`fit~` shadow / `fit=` applied) and, with the equivalence cap on, each slot's `eq=` key |
 | `hg reload` | Hot-reload all settings from INI |
 | `hg status` | Show system status |
 | `hg unlock` | Clear all slot locks |
 | `hg rebuild` | Force rebuild all registries |
 | `hg weights <FormID>` | Show learner weight vector (hex FormID) |
 | `hg page <N>` | Switch to page N |
+| `hg telemetry` | Show decision-log status (enabled, records written/dropped, file size) |
 | `hg reset weights` | Clear learned item weights |
 | `hg reset all` | Full system reset |
 
@@ -167,5 +171,6 @@ All `IntuitionMenu` public API methods defer GFx work via `SKSE::GetTaskInterfac
 - Console commands — the table under [Console Commands](#console-commands)
   above is the reference. There is no wiki page; the earlier link here pointed
   at one that was never created, for content already in this file.
+- [docs/architecture/9-telemetry.md](docs/architecture/9-telemetry.md) — Opt-in decision log: record format, privacy, how players send the file
 - [docs/testing/TESTING-INDEX.md](docs/testing/TESTING-INDEX.md) — Test suite index and profiling guide
 - [docs/roadmap.md](docs/roadmap.md) — Development roadmap and backlog

@@ -52,6 +52,9 @@
 #include "context/ContextWeightSettings.h"
 #include "context/ContextWeightConfig.h"
 #include "settings/SettingsReloader.h"
+#include "telemetry/TelemetrySettings.h"
+#include "telemetry/DecisionLog.h"
+#include "telemetry/TelemetrySubscriber.h"
 #include "console/ConsoleCommands.h"
 #include "persist/BanditSerializer.h"
 #include "learning/EquipEventBus.h"
@@ -129,6 +132,16 @@ static void InitializeGameSystems(bool isNewGame)
     {
         auto& slotSettings = Slot::SlotSettings::GetSingleton();
         if (haveMainIni) slotSettings.LoadFromIni(mainIni);
+    }
+    {
+        // Opt-in decision log ([Telemetry], default off). ApplyConfig starts or
+        // stops the writer thread; OnGameLoaded comes AFTER it so the very first
+        // load of the process gets its "load" record when the log is enabled.
+        auto& telemetrySettings = Telemetry::TelemetrySettings::GetSingleton();
+        if (haveMainIni) telemetrySettings.LoadFromIni(mainIni);
+        auto& decisionLog = Telemetry::DecisionLog::GetSingleton();
+        decisionLog.ApplyConfig(telemetrySettings.BuildConfig());
+        decisionLog.OnGameLoaded(isNewGame);
     }
 
     // ── 2. Wheeler setup ────────────────────────────────────────────────
@@ -282,15 +295,18 @@ static void InitializeGameSystems(bool isNewGame)
         static std::optional<Learning::BanditSubscriber> s_banditSub;
         static std::optional<Learning::UsageMemorySubscriber> s_usageMemSub;
         static std::optional<Learning::CooldownSubscriber> s_cooldownSub;
+        static std::optional<Telemetry::TelemetrySubscriber> s_telemetrySub;
 
         if (!s_banditSub.has_value()) {
             s_banditSub.emplace(*g_featureBanditLearner);
             s_usageMemSub.emplace(*g_usageMemory, *g_featureBanditLearner);
             s_cooldownSub.emplace();
+            s_telemetrySub.emplace();
             auto& bus = Learning::EquipEventBus::GetSingleton();
             bus.Subscribe(&*s_banditSub);
             bus.Subscribe(&*s_usageMemSub);
             bus.Subscribe(&*s_cooldownSub);
+            bus.Subscribe(&*s_telemetrySub);
             logger::info("EquipEventBus subscribers registered"sv);
         }
     }
@@ -444,13 +460,16 @@ static void InitializeGameSystems(bool isNewGame)
         RunMultiplicativeScoringTests();  // Stage 2d: Test multiplicative scoring formula
         RunRegressionTests();             // Regression suite for v1.0 refactor validation
         RunCosaveTests();                 // FeatureBanditLearner serialization round-trip
+        RunTelemetryFormatTests();        // Decision-log item keys + JSON formatting
         RunStateFeaturesTests();          // Phase 3.5a: StateFeatures extraction tests
         RunFeatureBanditLearnerTests();        // Phase 3.5b: Feature-based bandit learner tests
+        RunFitScorerTests();              // Item-context fit multiplier (FitScorer)
         RunOverrideNamespaceTests();      // Huginn_Overrides.ini section namespacing
         RunSlotLockerResetTest();         // THROWAWAY (0.19.21): Reset() field completeness
         RunSlotLockerInstanceLockTest();  // THROWAWAY (0.20.28): per-stack lock breaking
         RunSlotSeatingTest();             // THROWAWAY (0.20.30): anti-juggling seating
         RunFillJobKeysTest();             // bFillJobKeysFromRegular
+        RunEquivalenceKeyTests();         // bCapEquivalents: key construction
         RunBuffElementResistTest();       // THROWAWAY (0.20.63): buff element != resist
         logger::info("Debug build ready. Console command functions available for hotkey integration"sv);
     }

@@ -100,6 +100,9 @@ namespace Huginn::Candidate
         float effectiveCost = 0.0f;  // Perk/enchant-adjusted cost, cached during gathering
         bool isConcentration = false;
         float range = 0.0f;
+        // Equivalence-cap inputs (slot/EquivalenceKey.h); nothing in scoring reads them.
+        Spell::SpellDelivery delivery = Spell::SpellDelivery::Unknown;
+        uint8_t skillLevel = 0;      // costliest effect's minimumSkill, 0 = unknown/Novice
         bool isFavorited = false;
 
         SpellCandidate() { sourceType = SourceType::Spell; }
@@ -199,6 +202,12 @@ namespace Huginn::Candidate
         Scroll::ElementType element = Scroll::ElementType::None;
         float magnitude = 0.0f;
         float duration = 0.0f;
+        // Equivalence-cap inputs (slot/EquivalenceKey.h): the tier band falls
+        // back to base cost when skillLevel is 0, and a scroll shares its key
+        // with the spell it casts.
+        uint32_t baseCost = 0;
+        Spell::SpellDelivery delivery = Spell::SpellDelivery::Unknown;
+        uint8_t skillLevel = 0;
         int32_t count = 0;
 
         ScrollCandidate() { sourceType = SourceType::Scroll; }

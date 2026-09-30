@@ -170,6 +170,34 @@ namespace Huginn::Spell
       Magic   // Generic magic damage (no resist)
    };
 
+   // How the spell reaches its target, straight from SpellItem::GetDelivery()
+   // (RE::MagicSystem::Delivery). SpellData::range already merges Self and
+   // Touch (both 0), which is enough for "how far does it reach" but not for
+   // "is this the same kind of spell": a self-cast Oakflesh and a touch ward
+   // are not interchangeable. Read by the per-page equivalence cap
+   // (slot/EquivalenceKey.h); nothing in scoring reads it.
+   enum class SpellDelivery : uint8_t
+   {
+      Unknown = 0,
+      Self,
+      Touch,
+      Aimed,
+      TargetActor,
+      TargetLocation
+   };
+
+   inline std::string_view SpellDeliveryToString(SpellDelivery delivery)
+   {
+      switch (delivery) {
+      case SpellDelivery::Self:           return "Self";
+      case SpellDelivery::Touch:          return "Touch";
+      case SpellDelivery::Aimed:          return "Aimed";
+      case SpellDelivery::TargetActor:    return "TargetActor";
+      case SpellDelivery::TargetLocation: return "TargetLocation";
+      default:                            return "Unknown";
+      }
+   }
+
    // MagicSchool to string (for logging)
    inline std::string_view MagicSchoolToString(MagicSchool school)
    {
@@ -296,6 +324,13 @@ namespace Huginn::Spell
       uint32_t baseCost;           // Magicka cost (unmodified by perks)
       bool isConcentration;        // Continuous vs one-shot
       float range;                 // Max effective range (0 = self/touch)
+      SpellDelivery delivery = SpellDelivery::Unknown;  // Self / Touch / Aimed / ... (equivalence cap)
+      // Minimum skill of the costliest effect (EffectSetting::data.minimumSkill):
+      // the Novice/Apprentice/Adept/Expert/Master level the magic menu and the
+      // spell tome show, 0..100. Vanilla Novice is 0 and mods often leave it at
+      // 0, so 0 means "unknown or Novice" -- EquivalenceKey falls back to a
+      // base-cost band for it.
+      uint8_t skillLevel = 0;
       bool isFavorited = false;    // Is in favorites menu (v0.7.8)
       TypeEvidence typeEvidence = TypeEvidence::None;  // how `type` was decided
 
@@ -303,7 +338,7 @@ namespace Huginn::Spell
       [[nodiscard]] std::string ToString() const
       {
       return std::format(
-        "SpellData[id={:08X}, name='{}', type={}, school={}, element={}, tags={:08X}, tagsExt={:04X}, cost={}, concentration={}, range={}, fav={}, from={}]",
+        "SpellData[id={:08X}, name='{}', type={}, school={}, element={}, tags={:08X}, tagsExt={:04X}, cost={}, concentration={}, range={}, delivery={}, skill={}, fav={}, from={}]",
         formID,
         name,
         SpellTypeToString(type),
@@ -314,6 +349,8 @@ namespace Huginn::Spell
         baseCost,
         isConcentration,
         range,
+        SpellDeliveryToString(delivery),
+        skillLevel,
         isFavorited,
         TypeEvidenceToString(typeEvidence));
       }

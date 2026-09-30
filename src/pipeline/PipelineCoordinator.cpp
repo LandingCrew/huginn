@@ -12,10 +12,14 @@
 #include "slot/SlotLocker.h"
 #include "slot/Remembrance.h"
 #include "slot/SlotUtils.h"
+#include "slot/SlotSettings.h"       // hg recs: equivalence-cap column
+#include "slot/EquivalenceKey.h"     // hg recs: equivalence-cap column
 #include "input/EquipManager.h"
 #include "wheeler/WheelerClient.h"  // debug-only: ValidateWheelState in UpdateDebugWidgets
 #include "learning/PipelineStateCache.h"
 #include "telemetry/SoakMetrics.h"
+#include "telemetry/DecisionLog.h"
+#include "learning/StateFeatures.h"
 #include "ui/DebugSettings.h"
 #include "display/IDisplayBackend.h"
 #include "display/ExplanationLabel.h"  // ReasonLabel for the [Context] transition log
@@ -126,6 +130,8 @@ bool PipelineCoordinator::RunPipeline(
     Telemetry::SoakMetrics::GetSingleton().RecordPipelineRun(
         m_ctx.scoredCandidates.size(), displayedCount,
         topOverride != nullptr && topOverride->candidate.has_value());
+
+    RecordDecisionTelemetry(m_ctx);
 
     return true;
 }
@@ -663,13 +669,27 @@ void PipelineCoordinator::LogRecommendations(PipelineContext& ctx)
 
         // Label with the tick's snapshot page, not a live re-read, so the dump
         // matches the assignments it prints.
-        logger::info("[Recs] Slots (page {} '{}'):"sv,
-            ctx.displayPageIndex, ctx.displayPageName);
+        // With [SlotLocker] bCapEquivalents on, each slot also shows its
+        // equivalence key, so a duplicate the cap let through (lock-held or
+        // pass-4b fill) is visible next to the one it duplicates.
+        const auto& slotSettings = Slot::SlotSettings::GetSingleton();
+        const bool capOn = slotSettings.CapEquivalents();
+        const auto capEdges = slotSettings.EquivalenceCostBands();
+        logger::info("[Recs] Slots (page {} '{}'){}:"sv,
+            ctx.displayPageIndex, ctx.displayPageName,
+            capOn ? fmt::format(" | equivalence cap {}/key", slotSettings.MaxPerEquivalenceKey()) : std::string{});
         for (const auto& a : ctx.assignments) {
             if (a.IsEmpty() || a.formID == 0) continue;
-            logger::info("[Recs]   slot {}: {} ({:08X}) u={:.3f}{}"sv,
+            std::string eqCol;
+            if (capOn && a.candidate) {
+                if (const auto key = Slot::MakeEquivalenceKey(*a.candidate, capEdges)) {
+                    eqCol = fmt::format(" eq={}", Slot::EquivalenceKeyToString(*key));
+                }
+            }
+            logger::info("[Recs]   slot {}: {} ({:08X}) u={:.3f}{}{}"sv,
                 a.slotIndex, a.name, a.formID, a.utility,
-                a.subtextLabel.empty() ? "" : fmt::format(" [{}]", a.subtextLabel));
+                a.subtextLabel.empty() ? "" : fmt::format(" [{}]", a.subtextLabel),
+                eqCol);
         }
         return;  // The dump covers this tick; skip the periodic log
     }
@@ -778,5 +798,35 @@ void PipelineCoordinator::UpdateDebugWidgets(PipelineContext& ctx)
 #endif
 }
 #endif
+
+// -----------------------------------------------------------------------------
+// RecordDecisionTelemetry — opt-in offline decision log ([Telemetry])
+// -----------------------------------------------------------------------------
+// Runs on the pipeline thread after the display was pushed, so `assignments`
+// is exactly what the player is shown. DecisionLog only builds a string and
+// queues it (and only when the display changed); the file IO happens on its
+// own writer thread.
+
+void PipelineCoordinator::RecordDecisionTelemetry(PipelineContext& ctx)
+{
+    auto& decisionLog = Telemetry::DecisionLog::GetSingleton();
+    if (!decisionLog.IsEnabled()) {
+        return;
+    }
+
+    // Same call the scorer makes: raw player (not the VitalEnvelope copy).
+    const auto phi = Learning::StateFeatures::FromState(ctx.playerState, ctx.targets).ToArray();
+    const auto* topOverride = ctx.overrides.GetTopOverride();
+
+    decisionLog.RecordImpression(Telemetry::ImpressionInput{
+        .phi = phi,
+        .scored = ctx.scoredCandidates,
+        .assignments = ctx.assignments,
+        .pageIndex = ctx.displayPageIndex,
+        .pageCount = ctx.displayPageCount,
+        .reason = ctx.contextReason,
+        .overrideTookSlot = topOverride != nullptr && topOverride->candidate.has_value(),
+    });
+}
 
 }  // namespace Huginn::Pipeline

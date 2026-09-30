@@ -810,6 +810,13 @@ match "silver".
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
+`ClassifySpell` also records `delivery` (`SpellDelivery`, from
+`SpellItem::GetDelivery()`: Self / Touch / Aimed / TargetActor / TargetLocation)
+and `skillLevel` (the costliest effect's `minimumSkill`, 0-100, the level the
+magic menu shows). Scrolls copy both from their spell classification. Nothing in
+scoring reads them; they feed the per-page equivalence cap
+([5-slots.md](5-slots.md#equivalence-cap-opt-in)).
+
 The costliest effect is computed **once** per spell and threaded through every
 helper (v0.7.19: O(4n) → O(n) effect iterations per spell at load time).
 
