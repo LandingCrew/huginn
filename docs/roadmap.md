@@ -9,9 +9,7 @@ re-opening something that looks obviously undone.
 Suggested order, each played and measured like #140-#148. Details are in the
 entries named.
 
-1. **Thirst** (Known Recommendation Issues). A new need, shaped like
-   hunger: find the thirst stage, tag drinks, add a weight.
-2. **Every-tick recompute** (Known Bugs). Needs what the player was doing at
+1. **Every-tick recompute** (Known Bugs). Needs what the player was doing at
    11:10-11:20 on 2026-09-25 before anything can be guessed.
 
 ## Known Bugs
@@ -209,7 +207,11 @@ entries named.
       under `src/` that mention dMenu (132 references).
 
 ## Known Recommendation Issues
-- [ ] **Thirst is not tracked.** LoreRim runs a thirst need ("Thirst -
+- [ ] **Thirst is not tracked -- PARKED 2026-09-30.** Skipped with the user:
+      there is no reliable way to buy water from innkeepers on LoreRim, so a
+      thirst prompt would point at drinks the player often cannot get. Pick
+      it up if a load order makes water easy to come by.
+      Original entry: **Thirst is not tracked.** LoreRim runs a thirst need ("Thirst -
       Parched" in Active Effects, from DVSMP Survival Tweaks per research,
       unverified), and waters, teas and waterskins carry `Hydrated` /
       `Restore Thirst` effects (`hg dump food`: Cup of Water, Waterskin,
