@@ -35,6 +35,7 @@ namespace Huginn::State
       m_playerState.hasTwoHandedEquipped = false;
       m_playerState.hasSpellEquipped = false;
       m_playerState.hasTorchEquipped = false;
+      m_playerState.equippedTorchFormID = 0;
       return false;
       }
 
@@ -53,6 +54,7 @@ namespace Huginn::State
       bool newHasTwoHandedEquipped = false;
       bool newHasSpellEquipped = false;
       bool newHasTorchEquipped = false;
+      RE::FormID newEquippedTorch = 0;
       RE::FormID newRightHandWeapon = 0;
       RE::FormID newLeftHandWeapon = 0;
       RE::FormID newRightHandSpell = 0;
@@ -140,6 +142,7 @@ namespace Huginn::State
         }
       } else if (leftHand->As<RE::TESObjectLIGH>()) {
         newHasTorchEquipped = true;
+        newEquippedTorch = leftHand->GetFormID();
       } else if (leftHand->As<RE::SpellItem>()) {  // Type check only, spell details not needed
         newLeftHandSpell = leftHand->GetFormID();
         newHasSpellEquipped = true;
@@ -268,6 +271,10 @@ namespace Huginn::State
       }
       if (m_playerState.hasTorchEquipped != newHasTorchEquipped) {
         m_playerState.hasTorchEquipped = newHasTorchEquipped;
+        changed = true;
+      }
+      if (m_playerState.equippedTorchFormID != newEquippedTorch) {
+        m_playerState.equippedTorchFormID = newEquippedTorch;
         changed = true;
       }
       if (m_playerState.rightHandWeapon != newRightHandWeapon) {

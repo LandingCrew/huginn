@@ -54,6 +54,12 @@ namespace Huginn::Slot
                 return classification == SlotClassification::ApparelAny ||
                        classification == SlotClassification::Regular;
             }
+            else if constexpr (std::is_same_v<T, Candidate::TorchCandidate>) {
+                // Utility's own comment lists "Light"; a torch is that job
+                // done with an item. No class of its own.
+                return classification == SlotClassification::Utility ||
+                       classification == SlotClassification::Regular;
+            }
             else {
                 return false;
             }

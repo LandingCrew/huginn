@@ -152,6 +152,9 @@ namespace Huginn::Slot
                 // stack the widget is actually offering.
                 return UI::SlotContent::Apparel(name, formID, candidate.GetUniqueID());
 
+            case Candidate::SourceType::Torch:
+                return UI::SlotContent::Torch(name, formID);
+
             default:
                 return UI::SlotContent::Spell(name, confidence, formID);
         }

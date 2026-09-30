@@ -70,6 +70,11 @@ namespace Huginn::Scoring
                 return 1.0f;
             } else if constexpr (std::is_same_v<T, Candidate::ScrollCandidate>) {
                 return CalculateScrollCorrelation(player, targets, c);
+            } else if constexpr (std::is_same_v<T, Candidate::TorchCandidate>) {
+                // Darkness is the whole of a torch's context, and that is the
+                // context weight's job, not a correlation's. Neutral.
+                (void)c;
+                return 1.0f;
             } else {
                 // Compile-time exhaustiveness: adding a new CandidateVariant
                 // alternative must force a correlation decision here.

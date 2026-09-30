@@ -411,6 +411,7 @@ namespace Huginn::UI
             case Candidate::SourceType::Food:    return "Food";
             case Candidate::SourceType::Staff:   return "Staff";
             case Candidate::SourceType::Apparel: return "Apparel";
+            case Candidate::SourceType::Torch:   return "Torch";
             default:                             return "???";
         }
     }

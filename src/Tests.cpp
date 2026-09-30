@@ -4293,6 +4293,27 @@ void RunUnitTests()
                 return;
             }
 
+            // A torch draws darkness and nothing else: the dark weight in a
+            // cave, exactly 0 in daylight (no baseline), and it is hard-gated
+            // so the cold-start floor cannot lift it into a sunny bar.
+            {
+                Candidate::TorchCandidate torch{};
+                torch.name = "Torch";
+                torch.count = 3;
+                const auto darkWeights = engine.EvaluateRules(player, targets, dark);
+                const auto dayWeights = engine.EvaluateRules(player, targets, State::WorldState{});
+                if (darkWeights.darknessWeight <= 0.0f ||
+                    std::abs(Context::WeightForCandidate(torch, darkWeights) - darkWeights.darknessWeight) > 0.001f) {
+                    logger::error("TEST FAIL: a torch should draw darknessWeight in the dark");
+                    return;
+                }
+                if (Context::WeightForCandidate(torch, dayWeights) != 0.0f ||
+                    !Context::IsHardContextGated(torch)) {
+                    logger::error("TEST FAIL: a torch must score 0 in daylight and be hard-gated");
+                    return;
+                }
+            }
+
             State::PlayerActorState seeing = player;
             seeing.buffs.hasNightEye = true;
             if (reasonFor(seeing, targets, dark, kNoSignals) == Context::ContextReason::InDarkness) {

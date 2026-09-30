@@ -152,6 +152,14 @@ namespace Huginn::Candidate
                 // Weapons pass all visitor filters (equipped-skip is per-slot in SlotAllocator)
                 return FilterResult::Passed;
             }
+            // =================================================================
+            // TORCH
+            // =================================================================
+            else if constexpr (std::is_same_v<T, TorchCandidate>) {
+                if (c.count <= 0) return FilterResult::Affordability;
+                if (c.isEquipped) return FilterResult::Equipped;
+                return FilterResult::Passed;
+            }
             else {
                 return FilterResult::Passed;
             }
@@ -173,6 +181,7 @@ namespace Huginn::Candidate
             else if constexpr (std::is_same_v<T, ItemCandidate>) { return c.count > 0; }
             else if constexpr (std::is_same_v<T, ScrollCandidate>) { return c.count > 0; }
             else if constexpr (std::is_same_v<T, AmmoCandidate>) { return c.count > 0; }
+            else if constexpr (std::is_same_v<T, TorchCandidate>) { return c.count > 0; }
             else { return true; }
         }, candidate);
     }
@@ -184,6 +193,7 @@ namespace Huginn::Candidate
             using T = std::decay_t<decltype(c)>;
             if constexpr (std::is_same_v<T, SpellCandidate>) { return !player.IsSpellEquipped(c.formID); }
             else if constexpr (std::is_same_v<T, AmmoCandidate>) { return !c.isEquipped; }
+            else if constexpr (std::is_same_v<T, TorchCandidate>) { return !c.isEquipped; }
             else { return true; }
         }, candidate);
     }

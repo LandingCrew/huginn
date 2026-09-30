@@ -27,6 +27,7 @@ namespace Huginn::Candidate
         size_t ammoScanned = 0;
         size_t soulGemsScanned = 0;
         size_t apparelScanned = 0;
+        size_t torchesScanned = 0;
         FilterStats filterStats;
         float generationTimeMs = 0.0f;
 
@@ -38,6 +39,7 @@ namespace Huginn::Candidate
             ammoScanned = 0;
             soulGemsScanned = 0;
             apparelScanned = 0;
+            torchesScanned = 0;
             filterStats.Reset();
             generationTimeMs = 0.0f;
         }
@@ -241,6 +243,10 @@ namespace Huginn::Candidate
         /// #65: craft-relevant apparel. Only fires at a workstation — see
         /// WeightForCandidate, which gives apparel no baseline weight.
         void GatherApparelCandidates(
+            std::vector<CandidateVariant>& out,
+            const State::PlayerActorState& player);
+
+        void GatherTorchCandidates(
             std::vector<CandidateVariant>& out,
             const State::PlayerActorState& player);
 

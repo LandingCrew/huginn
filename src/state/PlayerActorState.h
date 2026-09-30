@@ -445,6 +445,7 @@ namespace Huginn::State
     bool hasSpellEquipped = false;
     bool hasCrossbowEquipped = false;
     bool hasTorchEquipped = false;
+    RE::FormID equippedTorchFormID = 0;  // the torch in the left hand, 0 if none
     float weaponChargeMax = 0.0f;
     std::int32_t boltCount = DefaultState::NO_ARROWS;  // see arrowCount
     RE::FormID equippedAmmoFormID = 0;  // FormID of equipped arrow/bolt (name looked up at display time)
@@ -505,7 +506,8 @@ namespace Huginn::State
 
     [[nodiscard]] bool IsItemEquipped(RE::FormID formID) const noexcept {
       return IsSpellEquipped(formID) || IsWeaponEquipped(formID) || equippedShield == formID ||
-             (formID != 0 && equippedAmmoFormID == formID);
+             (formID != 0 && equippedAmmoFormID == formID) ||
+             (formID != 0 && equippedTorchFormID == formID);
     }
 
     // Survival helpers
@@ -600,6 +602,7 @@ namespace Huginn::State
              hasSpellEquipped == other.hasSpellEquipped &&
              hasCrossbowEquipped == other.hasCrossbowEquipped &&
              hasTorchEquipped == other.hasTorchEquipped &&
+             equippedTorchFormID == other.equippedTorchFormID &&
              std::abs(weaponChargeMax - other.weaponChargeMax) < Epsilon::WEAPON_CHARGE &&
              boltCount == other.boltCount &&
              equippedAmmoFormID == other.equippedAmmoFormID &&

@@ -136,6 +136,8 @@ namespace Huginn::Input
       /// ApparelCandidate.
       /// @param uniqueID Which inventory stack to wear; 0 lets the engine choose.
       bool EquipApparel(RE::FormID formID, uint16_t uniqueID = 0);
+      /// A carried light, always to the left hand whatever hand was pressed.
+      bool EquipTorch(RE::FormID formID);
 
       /// Callback for learning system
       EquipCallback m_equipCallback;

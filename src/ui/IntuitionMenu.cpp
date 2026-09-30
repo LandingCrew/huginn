@@ -546,6 +546,10 @@ namespace Huginn::UI
             // renders as kEmpty — #808080 at 50% ALPHA, the styling for a slot
             // holding nothing, which reads to a player as "no recommendation".
             case SlotContentType::Apparel:       return IntuitionSlotType::kApparel;
+            // Torch borrows the weapon gold: it goes in a hand, like a weapon.
+            // A colour of its own would need a new TYPE_* in Intuition.as and a
+            // rebuilt SWF, which a first cut does not need.
+            case SlotContentType::Torch:         return IntuitionSlotType::kMeleeWeapon;
             default:                             return IntuitionSlotType::kEmpty;
         }
     }
@@ -568,6 +572,7 @@ namespace Huginn::UI
         if (auto* item = scored.TryAs<Candidate::ItemCandidate>())     return item->count;
         if (auto* scroll = scored.TryAs<Candidate::ScrollCandidate>()) return scroll->count;
         if (auto* ammo = scored.TryAs<Candidate::AmmoCandidate>())     return ammo->count;
+        if (auto* torch = scored.TryAs<Candidate::TorchCandidate>())   return torch->count;
         return 0;
     }
 

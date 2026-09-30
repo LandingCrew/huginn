@@ -318,7 +318,7 @@ static void MaintainRegistries(RE::PlayerCharacter* player,
             Huginn_ZONE_NAMED("Inventory::DeltaScan");
             auto inventory = Util::GetInventorySafe(player, [](RE::TESBoundObject& obj) {
                 return obj.Is(RE::FormType::AlchemyItem) || obj.Is(RE::FormType::SoulGem) ||
-                       obj.Is(RE::FormType::Scroll);
+                       obj.Is(RE::FormType::Scroll) || obj.Is(RE::FormType::Light);
             });
 
             // Any inventory count change can invalidate the current widget — a
@@ -354,6 +354,11 @@ static void MaintainRegistries(RE::PlayerCharacter* player,
             // Force one recompute so count==0 items drop from candidates and the
             // widget refreshes even when no GameState field changed. Reuses the
             // existing "page dirty" force-recompute path (as Wheeler-close does).
+            // Torches ride the item scan but are not items: a count change is
+            // not a consumption (a torch burns out; equipping does not use one).
+            if (itemDeltaDue && g_itemRegistry->ConsumeTorchesChanged()) {
+                inventoryChanged = true;
+            }
             if (inventoryChanged) {
                 Slot::SlotAllocator::GetSingleton().MarkPageDirty();
             }
