@@ -6,6 +6,9 @@ It also learns as you play. Huginn notices what you actually reach for in each k
 
 Huginn provides a HUD widget showing the rolling state of each hotkey.
 
+
+Huginn was primaliy tested on LORERIM and Vanlla AE. Minor testing was preformed on Apostay and Simonrim
+
 ## Why 
 
 Huggin is an attempt to solve the issue of inventory and spell selection without having the player to remember if they have a potion, spell, or item for the job. Ideally Huggin abstracts away the inventory and ... 
@@ -422,15 +425,23 @@ Huginn estiamtes how  dark it is from the light reported by game itself (measure
 
 Lighting mods change that value, so how often this happens depends on your load order. With a dark lighting setup, caves and moonless nights count as dark. With a bright one, or the vanilla game, the light may never fall low enough and Night Eye will not be suggested for darkness.
 
-To turn or disable the darkness suggestions off entirely, set `fWeightDarkness = 0` under `[ContextWeights]`.
-
-### Survival Mode
-
-With Survival Mode on (the Creation Club version, with or without Survival Mode Improved), Huginn reads your hunger and cold stages. From Hungry, food comes forward; from Very Cold, warm food and warming spells do, labelled "Hungry" or "Cold". Both get stronger a stage later (Famished, Freezing). Food is recognised by the survival keywords on its effects, which covers vanilla and mod-added dishes alike.
-
-To turn either off, set `fWeightHungry = 0` or `fWeightCold = 0` under `[ContextWeights]`.
-
+To turn or disable the darkness suggestions off entirely, set `fWeightDarkness = 0` under `[ContextWeights]
 ## Source Code
 
 * [Huginn](https://github.com/LandingCrew/huginn)
 * [WheelerAPI](https://github.com/LandingCrew/wheelerAPI)
+
+## Contributing
+
+As a recommendation algorithm, Huginng's accurary and precison are largely limited by the handtuned priors of its matrixes. If you want to improve Huginn, it needs to be refined with data that is difficult to obtain at scale. 
+
+Huginn is provided in two builds with and without this capability. The telemetry collected If you use the telemetry build please send me the file that can be used to tune this algorithm. This functionality is disabled by default. You can enable this by setting `` to true in the INI. The file is printed to `` and is anonomized to only recommedations and picks. Please send t
+
+Telemetry file ([Telemetry] bEnabled=0, writes Huginn_Telemetry.jsonl to the SKSE log folder):
+
+* What's in a record: it's written when recommendations change or a reward happens. Each record has the 18 game-state features, the top-N candidates with their full score breakdown (wildcard vs merit, locked, fit, equivalence key), item properties, and reward events tagged by source (widget, Wheeler, hotkey, external, consume, misclick).
+* Pooling across players: items are identified by plugin filename plus local FormID, which is safe for ESL plugins, so files from different load orders can be combined.
+* Privacy: there are no names, save names, file paths or wall-clock dates, and the session id is random.
+* Writing: a bounded queue feeds a background writer. Records that don't fit are dropped and counted. Files rotate by size.
+* Tooling and docs: hg telemetry shows status, tools/telemetry_aggregate.py reads the files, and docs/architecture/9-telemetry.md documents the exact format and how players send their file.
+ 
