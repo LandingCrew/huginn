@@ -68,7 +68,8 @@ namespace Huginn::Telemetry
     // wall-clock time. Only the inputs the scorer already uses (Core Principle).
     // =========================================================================
 
-    inline constexpr int SCHEMA_VERSION = 2;   // v2: fit fields, eqk, delivery/skill props, fit+cap cfg
+    inline constexpr int SCHEMA_VERSION = 3;   // v2: fit fields, eqk, delivery/skill props, fit+cap cfg
+                                               // v3: ContextReason gains Cold, Hungry (#154)
     inline constexpr size_t QUEUE_CAPACITY = 4096;
 
     /// One pipeline tick's decision, as the pipeline hands it over. All

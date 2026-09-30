@@ -40,7 +40,7 @@ namespace Huginn::Telemetry
         // keeps its own identifiers. Changing one is a schema change.
         [[nodiscard]] constexpr std::string_view ContextReasonName(Context::ContextReason r) noexcept
         {
-            static_assert(Context::CONTEXT_REASON_COUNT == 27,
+            static_assert(Context::CONTEXT_REASON_COUNT == 29,
                 "ContextReason changed: add the new case here and bump SCHEMA_VERSION");
             using R = Context::ContextReason;
             switch (r) {
@@ -59,6 +59,8 @@ namespace Huginn::Telemetry
             case R::LowStamina:      return "LowStamina";
             case R::WeaponLowCharge: return "WeaponLowCharge";
             case R::NeedsAmmo:       return "NeedsAmmo";
+            case R::Cold:            return "Cold";
+            case R::Hungry:          return "Hungry";
             case R::AllyInjured:     return "AllyInjured";
             case R::AtForge:         return "AtForge";
             case R::AtEnchanter:     return "AtEnchanter";

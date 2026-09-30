@@ -1,8 +1,10 @@
 #pragma once
 
 #include "ScorerConfig.h"
-#include "candidate/CandidateConfig.h"
+// CandidateTypes first: CandidateConfig.h only forward-declares SourceType
+// but uses its enumerators inline.
 #include "candidate/CandidateTypes.h"
+#include "candidate/CandidateConfig.h"
 #include "state/PlayerActorState.h"
 #include "state/TargetActorState.h"  // TargetCollection
 #include <limits>

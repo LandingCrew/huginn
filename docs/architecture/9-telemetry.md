@@ -134,10 +134,10 @@ starts with a `session` record, and every record belongs to the most recent
 `session` line above it. Rotation also writes a fresh `session` header at the top
 of the new file, with the same `sid`.
 
-### `session`: file / session header (schema v2)
+### `session`: file / session header (schema v3)
 
 ```json
-{"n":0,"t":"session","schema":2,"plugin":"0.20.63","sid":"3f9c…(32 hex)","rt":0,
+{"n":0,"t":"session","schema":3,"plugin":"0.20.63","sid":"3f9c…(32 hex)","rt":0,
  "features":["healthPct","magickaPct","staminaPct","inCombat","isSneaking","distanceNorm",
              "targetNone","targetHumanoid","targetUndead","targetBeast","targetConstruct",
              "targetDragon","targetDaedra","hasMeleeEquipped","hasBowEquipped",
@@ -344,6 +344,9 @@ format bumps `SCHEMA_VERSION` in `src/telemetry/DecisionLog.h`.
   (`DecisionLog::AppendCapFields`); `dlv` and `skill` in spell/scroll `p`, and
   `baseCost` for scrolls; the fit, `uncastable` and cap parameters in `cfg`.
   A v1 reader that ignores unknown fields reads v2 unchanged.
+- **v3**: two new `ContextReason` spellings, `Cold` and `Hungry` (survival
+  scoring, #154). No field changes; a reader that tolerates unknown reason
+  names reads v3 unchanged.
 
 ## Reading the files
 

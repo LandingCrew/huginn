@@ -18,7 +18,7 @@ import json
 import sys
 from collections import Counter, defaultdict
 
-SUPPORTED_SCHEMAS = {1, 2}  # v2 only adds fields (fit, eqk, dlv/skill, fit+cap cfg)
+SUPPORTED_SCHEMAS = {1, 2, 3}  # v2 only adds fields (fit, eqk, dlv/skill, fit+cap cfg); v3 adds the Cold/Hungry reasons
 
 
 def read_records(path):
