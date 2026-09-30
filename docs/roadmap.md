@@ -221,15 +221,6 @@ entries named.
       lit areas start near 37; simonrim's darkest was 37.4, so it never
       reads dark there. An INI threshold would let bright load orders opt in.
 
-- [ ] **Warming Aura cannot be seen running.** Casting it adds nothing to
-      Active Effects that Huginn can tell apart ("Fortify Warmth" there is
-      the Nord racial passive), so the rule that stops a running warming
-      spell being re-offered never fires for it; it stays on the cold key
-      while the player is Very Cold or worse. Fine for a spell worth
-      recasting; revisit if it reads as nagging. Warm FOOD is detected
-      (about 3 minutes of `warming=true` per soup on LoreRim).
-      Raised 2026-09-29.
-
 - [ ] **Two weight sets: exploration and combat.** Idea from play
       (2026-09-27), needs more thought before building. The context weights
       are one table serving two very different situations; out of combat the
