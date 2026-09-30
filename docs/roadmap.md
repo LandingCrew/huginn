@@ -9,12 +9,9 @@ re-opening something that looks obviously undone.
 Suggested order, each played and measured like #140-#148. Details are in the
 entries named.
 
-1. **Wildcards in combat** (Slot temporal memory, remaining churn). Decision
-   pending from the user; the lean is an INI toggle, default on, possibly with
-   a shorter combat expiry.
-2. **Widget hidden in cut scenes** (Follow-ups). Written on
-   `widget-hide-while-wheel-open`; needs a rebase and one real cut scene (S).
-3. **Every-tick recompute** (Known Bugs). Needs what the player was doing at
+1. **Thirst** (Known Recommendation Issues). A new need, shaped like
+   hunger: find the thirst stage, tag drinks, add a weight.
+2. **Every-tick recompute** (Known Bugs). Needs what the player was doing at
    11:10-11:20 on 2026-09-25 before anything can be guessed.
 
 ## Known Bugs
@@ -467,12 +464,10 @@ key, is already a PotionsAny slot with overrides on.
       swap-backs from 1 in 5 to ~1 in 8-11. The last simonrim run had 12/12
       key presses matching the widget and no dedup blanks. What is left, none
       of it urgent:
-      - **Wildcards.** They are churn by design, ~4 changes/min, and hold
-        their slot for the whole 30 s term. Two questions: should they live
-        only in dedicated slots, and should they roll DURING COMBAT? For
-        combat the user is still deciding; the lean is an INI toggle,
-        default ON (exploration is how the learner finds anything new),
-        possibly with a shorter combat expiry.
+      - **Wildcards.** Churn by design, ~4 changes/min. No combat toggle
+        (decided 2026-09-29): per-slot `bWildcardsEnabled` already keeps
+        the keys that matter steady, and no play session showed a wildcard
+        in the way mid-fight. Revisit only if one does.
       - **One potion in several slots.** Drowning put Waterbreathing Good
         (the override), Fair and Faint on screen together (2026-09-26
         14:56:43). The tier rule orders strengths; it does not say only one
@@ -642,26 +637,6 @@ trigger to pick any of it up.
       1.4 s later. Observed 2026-08-29 13:03:18 against a 13:03:20 re-resolve.
       Skip the check while `IsInEditMode()` — the diagnostic cannot say anything
       true there (XS)
-- [ ] The widget stays on screen through cut scenes, and the fix is written
-      but unmerged. `origin/widget-hide-while-wheel-open`, one commit
-      (`b752f38`, 2026-09-04), never opened as a PR.
-      The widget's only visibility gate is `GameIsPaused()`, and a cut scene
-      does not pause the game -- the camera is taken away and the controls go
-      quiet, but as far as that predicate is concerned nothing has happened.
-      The commit gates on two camera states instead, `kAnimated` (scripted
-      cut scenes and killmoves) and `kAutoVanity` (the idle orbit), and
-      deliberately excludes `kFurniture` -- which would hide the widget at an
-      alchemy table or forge, exactly where the workstation context has
-      something to recommend -- and `kBleedout`, as a separate question not
-      worth answering silently. It polls from the update loop rather than
-      using the event sink, because entering a cinematic camera raises no
-      `MenuOpenCloseEvent`.
-      Needs a rebase onto main (it is from before the display-backend split)
-      and in-game confirmation on a real cut scene. Neither `kAnimated` nor
-      `kAutoVanity` appears anywhere in `src/` today, so nothing about it has
-      landed by another route.
-      Raised 2026-09-24 (S)
-
 - [ ] Soak protocol needs deliberate MANUAL equips — accept% is fed only by
       equips made outside Huginn, so a burst played through the wheel/hotkeys
       produces no recommendation-quality data at all. Confirmed 2026-08-26: a
