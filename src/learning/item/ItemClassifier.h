@@ -27,6 +27,11 @@ namespace Huginn::Item
       // Note: Soul gems are NOT cached (classification is trivial, cache overhead not worth it)
       [[nodiscard]] static ItemData ClassifySoulGem(RE::TESSoulGem* soulGem) noexcept;
 
+      // CC Survival's Update.esm food effects (hunger 0x2EE1-0x2EE4; Restore
+      // Cold 0x2EE5, Fortify Warmth 0x2EE6), matched by FormID.
+      [[nodiscard]] static bool IsSurvivalHungerEffect(const RE::EffectSetting* effect) noexcept;
+      [[nodiscard]] static bool IsSurvivalColdEffect(const RE::EffectSetting* effect) noexcept;
+
    private:
       // Determine primary item type using API-first approach
       [[nodiscard]] static ItemType DetermineItemType(RE::AlchemyItem* item) noexcept;

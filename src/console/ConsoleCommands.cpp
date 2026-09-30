@@ -16,6 +16,7 @@
 #include "learning/LearningSettings.h"
 #include "learning/ExternalEquipLearner.h"
 #include "spell/SpellRegistry.h"
+#include "learning/item/ItemClassifier.h"
 #include <fstream>
 #include <unordered_set>
 #include "context/ContextWeightSettings.h"
@@ -708,6 +709,110 @@ namespace Huginn::Console
       Print(msg.c_str());
       logger::info("[Console] {} -> {}"sv, msg, filePath.string());
    }
+
+   // `hg dump food` -- every food and drink in the LOAD ORDER to a CSV, with
+   // the survival tags Huginn gives it and every effect's raw inputs beside
+   // them: display name, editor ID (empty without po3 Tweaks), archetype,
+   // actor values and keywords.
+   //
+   // Survival tagging has to work across load orders that mark hunger and
+   // warmth three different ways -- LoreRim on effect keywords, vanilla CC by
+   // an unkeyworded effect, mods by their own conventions -- and a registry
+   // dump only shows what one character carries (2026-09-29).
+   //
+   // A fresh classifier, not the registry's: the dump must not touch the
+   // registry's cache, and overrides are beside the point here. Classifying
+   // logs a debug line per effect, so expect the log to grow by a few
+   // thousand lines.
+   static void Cmd_DumpFood(std::string_view /*arg*/)
+   {
+      auto* dataHandler = RE::TESDataHandler::GetSingleton();
+      if (!dataHandler) {
+         Print("Data handler unavailable");
+         return;
+      }
+      const auto logDir = SKSE::log::log_directory();
+      if (!logDir) {
+         Print("No SKSE log directory - cannot write the dump");
+         return;
+      }
+      const auto filePath = *logDir / "Huginn_Food.csv";
+      std::ofstream out(filePath, std::ios::trunc);
+      if (!out) {
+         Print("Could not open Huginn_Food.csv for writing");
+         logger::error("[Console] Failed to open {} for writing"sv, filePath.string());
+         return;
+      }
+
+      // Same quoting rules as the spell dump.
+      auto csvQuote = [](std::string_view text) {
+         std::string quoted;
+         quoted.reserve(text.size() + 2);
+         quoted += '"';
+         for (const char c : text) {
+            if (c == '\r' || c == '\n') { quoted += ' '; continue; }
+            if (c == '"') quoted += '"';
+            quoted += c;
+         }
+         quoted += '"';
+         return quoted;
+      };
+
+      Item::ItemClassifier classifier;
+      out << "formID,plugin,name,huginnType,hunger,cold,tags,effects\n";
+
+      size_t written = 0, hunger = 0, cold = 0;
+      for (auto* item : dataHandler->GetFormArray<RE::AlchemyItem>()) {
+         if (!item || !item->IsFood()) continue;
+         const char* rawName = item->GetName();
+         if (!rawName || !*rawName) continue;
+
+         const auto data = classifier.ClassifyItem(item);
+         const bool isHunger = Item::HasTag(data.tags, Item::ItemTag::SatisfiesHunger);
+         const bool isCold = Item::HasTag(data.tags, Item::ItemTag::SatisfiesCold);
+
+         // One field per item: effects joined by " / ", each as
+         // 'name'{edid} arch/pAV [kw;kw].
+         std::string effects;
+         for (const auto* effect : item->effects) {
+            if (!effect || !effect->baseEffect) continue;
+            const auto* base = effect->baseEffect;
+            std::string keywords;
+            for (uint32_t k = 0; k < base->GetNumKeywords(); ++k) {
+               if (auto kw = base->GetKeywordAt(k); kw && *kw) {
+                  if (!keywords.empty()) keywords += ';';
+                  keywords += (*kw)->GetFormEditorID();
+               }
+            }
+            if (!effects.empty()) effects += " / ";
+            const char* full = base->GetFullName();
+            effects += std::format("'{}'{{{}}} {}/{} [{}]",
+               full ? full : "", base->GetFormEditorID(),
+               static_cast<int>(base->GetArchetype()),
+               static_cast<int>(base->data.primaryAV), keywords);
+         }
+
+         const auto* file = item->GetFile(0);
+         out << std::format("{:08X},{},{},{},{},{},{:08X},{}\n",
+            item->GetFormID(),
+            csvQuote(file ? file->GetFilename() : ""sv),
+            csvQuote(rawName),
+            Item::ItemTypeToString(data.type),
+            isHunger ? 1 : 0,
+            isCold ? 1 : 0,
+            static_cast<uint32_t>(data.tags),
+            csvQuote(effects));
+         ++written;
+         if (isHunger) ++hunger;
+         if (isCold) ++cold;
+      }
+      out.close();
+
+      auto msg = std::format("Wrote {} foods/drinks to Huginn_Food.csv - {} satisfy hunger, {} satisfy cold",
+         written, hunger, cold);
+      Print(msg.c_str());
+      logger::info("[Console] {} -> {}"sv, msg, filePath.string());
+   }
 #endif  // !NDEBUG
 
    // =========================================================================
@@ -725,6 +830,7 @@ namespace Huginn::Console
       { "page",          "Switch to page N (or show current)",          true,  Cmd_Page },
 #ifndef NDEBUG
       { "dump spells",   "Write every castable spell to Huginn_Spells.csv (debug builds)", false, Cmd_DumpSpells },
+      { "dump food",     "Write every food and drink to Huginn_Food.csv (debug builds)", false, Cmd_DumpFood },
 #endif
       { "reset weights", "Clear learned item weights",                  false, Cmd_ResetWeights },
       { "reset w",       "Clear learned item weights",                  false, Cmd_ResetWeights },

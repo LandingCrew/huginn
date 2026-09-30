@@ -1,5 +1,6 @@
 #include "ItemClassifier.h"
 #include "apparel/ApparelData.h"   // CraftSkillForActorValue - one AV vocabulary, two callers
+#include "util/NameMatch.h"
 
 namespace Huginn::Item
 {
@@ -539,6 +540,55 @@ namespace Huginn::Item
       }
    }
 
+   namespace
+   {
+      // Update.esm survival food effects, resolved once. Zero when Update.esm
+      // lacks them (pre-AE-content runtimes), which simply matches nothing.
+      struct SurvivalFoodEffects
+      {
+         RE::FormID hunger[4]{};
+         RE::FormID restoreCold = 0;
+         RE::FormID fortifyWarmth = 0;
+      };
+
+      const SurvivalFoodEffects& GetSurvivalFoodEffects()
+      {
+         static const SurvivalFoodEffects effects = [] {
+            SurvivalFoodEffects e;
+            auto* dh = RE::TESDataHandler::GetSingleton();
+            if (!dh) return e;
+            for (int i = 0; i < 4; ++i) {
+               e.hunger[i] = dh->LookupFormID(0x2EE1 + i, "Update.esm"sv);
+            }
+            e.restoreCold = dh->LookupFormID(0x2EE5, "Update.esm"sv);
+            e.fortifyWarmth = dh->LookupFormID(0x2EE6, "Update.esm"sv);
+            logger::info("[ItemClassifier] Survival food effects: hunger {:08X}-{:08X}, cold {:08X}, warmth {:08X}"sv,
+               e.hunger[0], e.hunger[3], e.restoreCold, e.fortifyWarmth);
+            return e;
+         }();
+         return effects;
+      }
+   }
+
+   bool ItemClassifier::IsSurvivalHungerEffect(const RE::EffectSetting* effect) noexcept
+   {
+      if (!effect) return false;
+      const auto id = effect->GetFormID();
+      for (const auto h : GetSurvivalFoodEffects().hunger) {
+         if (h != 0 && id == h) return true;
+      }
+      return false;
+   }
+
+   bool ItemClassifier::IsSurvivalColdEffect(const RE::EffectSetting* effect) noexcept
+   {
+      if (!effect) return false;
+      const auto id = effect->GetFormID();
+      const auto& e = GetSurvivalFoodEffects();
+      return (e.restoreCold != 0 && id == e.restoreCold) ||
+             (e.fortifyWarmth != 0 && id == e.fortifyWarmth);
+   }
+
    void ItemClassifier::PopulateItemTags(RE::AlchemyItem* item, ItemData& data) const
    {
       if (!item) return;
@@ -568,14 +618,55 @@ namespace Huginn::Item
            keywords += (*kw)->GetFormEditorID();
         }
       }
-      logger::debug("[PopulateItemTags] {} - Effect: arch={}, primaryAV={}, secondaryAV={}, hostile={}, recover={}, kw=[{}]"sv,
+      const std::string_view effectEdid = effect->baseEffect->GetFormEditorID();
+      const char* effectFull = effect->baseEffect->GetFullName();
+      const std::string_view effectName = effectFull ? effectFull : "";
+      logger::debug("[PopulateItemTags] {} - Effect: {} '{}' arch={}, primaryAV={}, secondaryAV={}, hostile={}, recover={}, kw=[{}]"sv,
         name,
+        effectEdid,
+        effectName,
         static_cast<int>(arch),
         static_cast<int>(primaryAV),
         static_cast<int>(secondaryAV),
         isHostile,
         effect->baseEffect->data.flags.all(RE::EffectSetting::EffectSettingData::Flag::kRecover),
         keywords);
+
+      // Vanilla CC Survival's food effects are fixed forms in Update.esm, and
+      // the only reliable handle on them: no keyword, and no editor ID
+      // without po3 Tweaks. Hunger 0x2EE1-0x2EE4 (VerySmall..Large), Restore
+      // Cold 0x2EE5, Fortify Warmth 0x2EE6 -- the same lookups Survival Mode
+      // Improved makes. Only the twelve "Hot ..." soups carry the last two;
+      // a plain Vegetable Soup does not warm (UESP, Survival Mode Items).
+      if (IsSurvivalHungerEffect(effect->baseEffect)) {
+        data.tags |= ItemTag::SatisfiesHunger;
+      }
+      if (IsSurvivalColdEffect(effect->baseEffect)) {
+        data.tags |= ItemTag::SatisfiesCold;
+      }
+
+      // Vanilla CC Survival names the effect itself and gives it no keyword:
+      // Cabbage's hunger effect is primaryAV 4 with kw=[] on simonrim
+      // (2026-09-29). Match the effect's editor ID the way the keywords are
+      // matched below.
+      if (effectEdid.find("RestoreHunger") != std::string_view::npos) {
+        data.tags |= ItemTag::SatisfiesHunger;
+      }
+      // ...and without po3 Tweaks the editor ID is EMPTY (simonrim, every
+      // food). The effect's display name survives: "Restore Hunger".
+      if (Util::NameContainsWord(effectName, "hunger") && !effect->baseEffect->IsHostile()) {
+        data.tags |= ItemTag::SatisfiesHunger;
+      }
+      if (!effect->baseEffect->IsHostile() &&
+          (Util::NameContainsWord(effectName, "warmth") ||
+           (Util::NameContainsWord(effectName, "restore") && Util::NameContainsWord(effectName, "cold")))) {
+        data.tags |= ItemTag::SatisfiesCold;
+      }
+      if (effectEdid.find("RestoreCold") != std::string_view::npos ||
+          effectEdid.find("FoodWarm") != std::string_view::npos ||
+          effectEdid.find("FortifyWarmth") != std::string_view::npos) {
+        data.tags |= ItemTag::SatisfiesCold;
+      }
 
       // Survival food, by EFFECT keyword. The item-keyword scan further down
       // matched nothing on LoreRim, whose foods carry the survival meaning on
@@ -787,14 +878,22 @@ namespace Huginn::Item
       if (HasKeyword(keywordForm, "Survival_FoodRestoreHunger") ||
           HasKeyword(keywordForm, "Survival_FoodRestoreHungerSmall") ||
           HasKeyword(keywordForm, "Survival_FoodRestoreHungerMedium") ||
-          HasKeyword(keywordForm, "Survival_FoodRestoreHungerLarge")) {
+          HasKeyword(keywordForm, "Survival_FoodRestoreHungerLarge") ||
+          // SunHelm's food tiers
+          HasKeyword(keywordForm, "_SH_LightFoodKeyword") ||
+          HasKeyword(keywordForm, "_SH_MediumFoodKeyword") ||
+          HasKeyword(keywordForm, "_SH_HeavyFoodKeyword")) {
       data.tags |= ItemTag::SatisfiesHunger;
       }
 
       if (HasKeyword(keywordForm, "Survival_FoodWarm") ||
           HasKeyword(keywordForm, "Survival_FoodWarmSmall") ||
           HasKeyword(keywordForm, "Survival_FoodWarmMedium") ||
-          HasKeyword(keywordForm, "Survival_FoodWarmLarge")) {
+          HasKeyword(keywordForm, "Survival_FoodWarmLarge") ||
+          // The cross-mod "warm food" convention (Frostfall, CACO, OCF) and
+          // SunHelm's soups
+          HasKeyword(keywordForm, "FrostfallWarmFoodDrinkKeyword") ||
+          HasKeyword(keywordForm, "_SH_SoupKeyword")) {
       data.tags |= ItemTag::SatisfiesCold;
       }
 
@@ -1010,6 +1109,29 @@ namespace Huginn::Item
          return true;
       }
 
+      // TIER 1b: the drawback EFFECT every drink carries. The names below
+      // missed Sujamma, Velvet LeChance, Stros M'Kai Rum, Cliff Racer and
+      // White-Gold Tower (/code-review #155), and under vanilla survival each
+      // of those also restores a little hunger, so they reached the Hungry
+      // key as food. Vanilla marks the drawback MagicAlchHarmful (Damage
+      // Stamina Regeneration); Apothecary MAG_DrinkAlcohol* / MAG_FoodItemDrugs;
+      // LoreRim BOOB_AlcoholBadEffect / Feat_KW_Alcohol. Real food carries
+      // none of them -- spoiled food's "Weak Stomach" has no keyword -- and a
+      // poisoned cheese landing here keeps it off the Hungry key, which is
+      // right anyway.
+      for (const auto* effect : item->effects) {
+         if (!effect || !effect->baseEffect) continue;
+         const auto* base = effect->baseEffect;
+         if (base->HasKeywordString("MagicAlchHarmful") ||
+             base->HasKeywordString("MAG_DrinkAlcoholFortify") ||
+             base->HasKeywordString("MAG_DrinkAlcoholDamage") ||
+             base->HasKeywordString("MAG_FoodItemDrugs") ||
+             base->HasKeywordString("BOOB_AlcoholBadEffect") ||
+             base->HasKeywordString("Feat_KW_Alcohol")) {
+            return true;
+         }
+      }
+
       // TIER 2: Name-based fallback for vanilla and untagged items
       // Full drink names (match anywhere in name, case-insensitive)
       if (NameContains(name, "alto wine") ||
@@ -1026,8 +1148,19 @@ namespace Huginn::Item
           NameContains(name, "flin") ||
           NameContains(name, "shein") ||
           NameContains(name, "jagga") ||
-          NameContains(name, "rotmeth")) {
+          NameContains(name, "rotmeth") ||
+          NameContains(name, "sujamma")) {
          return true;
+      }
+
+      // Vanilla cocktails with no drawback effect for TIER 1b to see:
+      // Restore Stamina plus survival's hunger rider, nothing else. The WHOLE
+      // name, because "Cliff Racer" is also a creature, and LoreRim's "Raw
+      // Cliff Racer Tail" is meat (2026-09-29).
+      for (const std::string_view cocktail : { "cliff racer"sv, "white-gold tower"sv, "velvet lechance"sv }) {
+         if (name.size() == cocktail.size() && NameContains(name, cocktail)) {
+            return true;
+         }
       }
 
       // Generic terms — word-boundary check to avoid false positives
@@ -1057,7 +1190,7 @@ namespace Huginn::Item
          return true;
       };
 
-      constexpr std::string_view genericTerms[] = { "ale", "mead", "wine", "beer", "brandy" };
+      constexpr std::string_view genericTerms[] = { "ale", "mead", "wine", "beer", "brandy", "rum" };
       for (auto term : genericTerms) {
          if (endsWithWordCI(name, term) || startsWithWordCI(name, term)) {
             return true;

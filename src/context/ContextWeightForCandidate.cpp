@@ -228,7 +228,9 @@ namespace Huginn::Context
                 // restores health types as a health potion and must still
                 // answer hunger.
                 if (HasTag(c.tags, ItemTag::SatisfiesHunger)) {
-                    maxWeight = std::max(maxWeight, weights.hungerWeight);
+                    maxWeight = std::max(maxWeight, c.type == Item::ItemType::Alcohol
+                        ? weights.alcoholHungerWeight
+                        : weights.hungerWeight);
                 }
                 if (HasTag(c.tags, ItemTag::SatisfiesCold)) {
                     maxWeight = std::max(maxWeight, weights.coldWeight);
