@@ -1149,13 +1149,18 @@ namespace Huginn::Item
           NameContains(name, "shein") ||
           NameContains(name, "jagga") ||
           NameContains(name, "rotmeth") ||
-          // Vanilla cocktails with no drawback effect for TIER 1b to see:
-          // Restore Stamina plus survival's hunger rider, nothing else.
-          NameContains(name, "cliff racer") ||
-          NameContains(name, "white-gold tower") ||
-          NameContains(name, "velvet lechance") ||
           NameContains(name, "sujamma")) {
          return true;
+      }
+
+      // Vanilla cocktails with no drawback effect for TIER 1b to see:
+      // Restore Stamina plus survival's hunger rider, nothing else. The WHOLE
+      // name, because "Cliff Racer" is also a creature, and LoreRim's "Raw
+      // Cliff Racer Tail" is meat (2026-09-29).
+      for (const std::string_view cocktail : { "cliff racer"sv, "white-gold tower"sv, "velvet lechance"sv }) {
+         if (name.size() == cocktail.size() && NameContains(name, cocktail)) {
+            return true;
+         }
       }
 
       // Generic terms — word-boundary check to avoid false positives
