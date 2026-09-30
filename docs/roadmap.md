@@ -387,6 +387,28 @@ entries named.
       consumer and comes back here; (b) a worn-vs-candidate comparison, is the
       enchantment worth the armor lost, which is scoring not filtering; and
       (c) a restore story, or an explicit decision not to have one (M/L)
+- [ ] **Gear and poisons, decided direction (with the user, 2026-09-30).**
+      For the two apparel entries above:
+      - Enchanted gear is recommended OUT OF COMBAT only. Mid-fight swaps
+        strip armour, and choosing the right piece in combat needs context
+        Huginn does not have yet (see poisons below).
+      - Taking gear back off rides on Remembrance: an apparel swap made
+        through Huginn remembers the displaced piece, on its OWN, longer
+        expiry than the 15 s weapon hold -- a crafting session or a walk
+        through a dungeon, not a weapon toggle. Needs the instance
+        (ExtraUniqueID) the #65 plumbing already has.
+      - In-combat gear, if ever: keyword lookups and a dump first, the same
+        way `hg dump food` settled survival -- measure what the load order
+        marks before writing a rule.
+      Poisons are the same problem: the right poison depends on what is
+      being fought (a paralysis poison on a dragon, frost on a fire atronach,
+      damage-magicka on a mage). Only perceivable target facts may drive it
+      -- race/type (undead, daedra, dragon, humanoid), what the target is
+      visibly casting or wielding -- never a stat sheet (CLAUDE.md,
+      Forbidden Information). Wants a poison dump (effects, keywords) and a
+      target-keyword survey before a rule.
+      Raised 2026-09-30.
+
 - [ ] Scroll cold-start: all scrolls sit in the pool every tick but score
       `learn≈0` against trained items at `learn=7–8`, so one can never surface
       until used and can't be used until surfaced.
