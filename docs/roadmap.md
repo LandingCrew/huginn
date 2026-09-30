@@ -209,10 +209,6 @@ entries named.
       under `src/` that mention dMenu (132 references).
 
 ## Known Recommendation Issues
-- [ ] **Torches are not candidates**, so darkness can offer Night Eye and
-      light spells but never a torch -- the one answer a non-caster has.
-      Needs a light-source candidate type (TESObjectLIGH, equipped to the
-      left hand). Left out of the darkness PR (2026-09-28).
 - [ ] **The dark cut-off is a constant** (`LightLevel::DARK_THRESHOLD`,
       0.35 of the game's light / 100). LoreRim caves floor at raw 7-12 and
       lit areas start near 37; simonrim's darkest was 37.4, so it never
@@ -456,6 +452,14 @@ change. The churn and override work (#140-#148, #151) closed most of it, and
 Remembrance shipped (#150); what is left is the churn tail and Remembrance's
 follow-ups. The override rethink is done: its last step, an overrides-only
 key, is already a PotionsAny slot with overrides on.
+
+- [ ] **A held spell you cannot afford blinks out.** Swap Back holds what
+      a press took off, but a held spell still goes through the
+      affordability filter: at 13 magicka the Frostbite a torch displaced
+      was "not a candidate", and the key showed a potion for ~0.3 s until
+      magicka ticked back (2026-09-30). Cosmetic; a hold could bypass the
+      filter for its own item.
+      Raised 2026-09-30.
 
 - [ ] **Remembrance follow-ups.** Design and mechanics are in
       `docs/architecture/5-slots.md` (Remembrance). Decided with the user and

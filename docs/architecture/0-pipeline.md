@@ -510,7 +510,7 @@ graph TB
 | underwater, no waterbreathing | `waterbreathingWeight` | `fWeightUnderwater`, ramped by depth | Will drown |
 | at forge workstation | `fortifySmithingWeight` | `fWeightAtForge` | Obvious context |
 | sneaking | `stealthWeight` | `fWeightSneaking` | Stealth utility |
-| dark (game light on the player < 0.35), no Night Eye / light / torch | `darknessWeight` | `fWeightDarkness` | Night Eye and light spells |
+| dark (game light on the player < 0.35), no Night Eye / light / torch | `darknessWeight` | `fWeightDarkness` | Night Eye, light spells, torches (`TorchCandidate`, no baseline) |
 | survival hunger: Hungry (half), Famished+ (full) | `hungerWeight` | `fWeightHungry` | Food (`ItemTag::SatisfiesHunger`) |
 | survival cold: Very Cold (half), Freezing+ (full) | `coldWeight` | `fWeightCold` | Warm food, warming spells (`SpellTagExt::Warming`) |
 | enchanted weapon draining | `weaponChargeWeight` | ramped, clamped to [0,1] | Charge urgency |
