@@ -209,15 +209,6 @@ entries named.
       under `src/` that mention dMenu (132 references).
 
 ## Known Recommendation Issues
-- [ ] **Torches are not candidates**, so darkness can offer Night Eye and
-      light spells but never a torch -- the one answer a non-caster has.
-      Needs a light-source candidate type (TESObjectLIGH, equipped to the
-      left hand). Left out of the darkness PR (2026-09-28).
-- [ ] **The dark cut-off is a constant** (`LightLevel::DARK_THRESHOLD`,
-      0.35 of the game's light / 100). LoreRim caves floor at raw 7-12 and
-      lit areas start near 37; simonrim's darkest was 37.4, so it never
-      reads dark there. An INI threshold would let bright load orders opt in.
-
 - [ ] **Thirst is not tracked.** LoreRim runs a thirst need ("Thirst -
       Parched" in Active Effects, from DVSMP Survival Tweaks per research,
       unverified), and waters, teas and waterskins carry `Hydrated` /
@@ -387,6 +378,28 @@ entries named.
       consumer and comes back here; (b) a worn-vs-candidate comparison, is the
       enchantment worth the armor lost, which is scoring not filtering; and
       (c) a restore story, or an explicit decision not to have one (M/L)
+- [ ] **Gear and poisons, decided direction (with the user, 2026-09-30).**
+      For the two apparel entries above:
+      - Enchanted gear is recommended OUT OF COMBAT only. Mid-fight swaps
+        strip armour, and choosing the right piece in combat needs context
+        Huginn does not have yet (see poisons below).
+      - Taking gear back off rides on Remembrance: an apparel swap made
+        through Huginn remembers the displaced piece, on its OWN, longer
+        expiry than the 15 s weapon hold -- a crafting session or a walk
+        through a dungeon, not a weapon toggle. Needs the instance
+        (ExtraUniqueID) the #65 plumbing already has.
+      - In-combat gear, if ever: keyword lookups and a dump first, the same
+        way `hg dump food` settled survival -- measure what the load order
+        marks before writing a rule.
+      Poisons are the same problem: the right poison depends on what is
+      being fought (a paralysis poison on a dragon, frost on a fire atronach,
+      damage-magicka on a mage). Only perceivable target facts may drive it
+      -- race/type (undead, daedra, dragon, humanoid), what the target is
+      visibly casting or wielding -- never a stat sheet (CLAUDE.md,
+      Forbidden Information). Wants a poison dump (effects, keywords) and a
+      target-keyword survey before a rule.
+      Raised 2026-09-30.
+
 - [ ] Scroll cold-start: all scrolls sit in the pool every tick but score
       `learn≈0` against trained items at `learn=7–8`, so one can never surface
       until used and can't be used until surfaced.
@@ -434,6 +447,14 @@ change. The churn and override work (#140-#148, #151) closed most of it, and
 Remembrance shipped (#150); what is left is the churn tail and Remembrance's
 follow-ups. The override rethink is done: its last step, an overrides-only
 key, is already a PotionsAny slot with overrides on.
+
+- [ ] **A held spell you cannot afford blinks out.** Swap Back holds what
+      a press took off, but a held spell still goes through the
+      affordability filter: at 13 magicka the Frostbite a torch displaced
+      was "not a candidate", and the key showed a potion for ~0.3 s until
+      magicka ticked back (2026-09-30). Cosmetic; a hold could bypass the
+      filter for its own item.
+      Raised 2026-09-30.
 
 - [ ] **Remembrance follow-ups.** Design and mechanics are in
       `docs/architecture/5-slots.md` (Remembrance). Decided with the user and
@@ -637,6 +658,11 @@ trigger to pick any of it up.
       1.4 s later. Observed 2026-08-29 13:03:18 against a 13:03:20 re-resolve.
       Skip the check while `IsInEditMode()` — the diagnostic cannot say anything
       true there (XS)
+- [ ] A torch on a Huginn Wheeler wheel is unverified. Torches (#157) reach
+      Wheeler through `AddItemByFormID`, and whether Wheeler accepts a LIGH
+      form was never seen in play; a refusal is retried and then suppressed
+      by WheelSync, so the worst case is a blank wheel entry. Check once
+      with a torch on the Kit page's Utility key (XS)
 - [ ] Soak protocol needs deliberate MANUAL equips — accept% is fed only by
       equips made outside Huginn, so a burst played through the wheel/hotkeys
       produces no recommendation-quality data at all. Confirmed 2026-08-26: a

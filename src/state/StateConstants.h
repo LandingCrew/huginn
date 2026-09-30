@@ -276,6 +276,8 @@ namespace Huginn::State
       // switched darkness on and off. Once dark, it stays dark until 0.45 --
       // the 0.5 step, which LoreRim reached only in lit rooms.
       inline constexpr float DARK_EXIT_THRESHOLD = 0.45f;
+      // The same band when fDarkLightLevel moves the entry point.
+      inline constexpr float DARK_EXIT_GAP = DARK_EXIT_THRESHOLD - DARK_THRESHOLD;
 
       // ...and has to STAY there this long. In a cave the reading swung
       // 8.9 -> 45.8 -> 7.5 -> 59 -> 94 -> 25 in twelve seconds as the player

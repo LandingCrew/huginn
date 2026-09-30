@@ -132,6 +132,7 @@ namespace Huginn::Candidate
         GatherAmmoCandidates(m_gatherBuffer, player);
         GatherSoulGemCandidates(m_gatherBuffer, player);
         GatherApparelCandidates(m_gatherBuffer, player);
+        GatherTorchCandidates(m_gatherBuffer, player);
 
         // Step 3: Filter gathered candidates into a local output vector.
         // Survivors are moved from m_gatherBuffer into output (one move per
@@ -470,6 +471,40 @@ namespace Huginn::Candidate
             ++gathered;
         });
         m_stats.apparelScanned = gathered;
+    }
+
+    void CandidateGenerator::GatherTorchCandidates(
+        std::vector<CandidateVariant>& out,
+        const State::PlayerActorState& player)
+    {
+        if (!m_itemRegistry || m_itemRegistry->IsLoading()) {
+            return;
+        }
+
+        // A torch goes in the left hand, which a two-handed weapon, a bow or a
+        // crossbow also occupies: equipping one there unequips the weapon the
+        // player is fighting with. Not offered then. A shield or a left-hand
+        // spell is fair game -- trading one for a torch is ordinary Skyrim.
+        if (player.hasTwoHandedEquipped || player.hasBowEquipped || player.hasCrossbowEquipped) {
+            return;
+        }
+
+        // No context gate, as with apparel: WeightForCandidate returns 0 unless
+        // it is dark, so minimumContextWeight drops torches before scoring.
+        size_t gathered = 0;
+        for (const auto& torch : m_itemRegistry->GetTorches()) {
+            if (torch.count <= 0 || torch.name.empty()) continue;
+            TorchCandidate candidate;
+            candidate.formID = torch.formID;
+            candidate.name = torch.name;
+            candidate.count = torch.count;
+            // A torch already in hand: nothing to recommend (PassesBasicFilters).
+            candidate.isEquipped = player.hasTorchEquipped &&
+                                   player.equippedTorchFormID == torch.formID;
+            out.push_back(candidate);
+            ++gathered;
+        }
+        m_stats.torchesScanned = gathered;
     }
 
     // =========================================================================

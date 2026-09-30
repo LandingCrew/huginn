@@ -42,6 +42,7 @@ namespace Huginn::Candidate
         Food = 6,
         Staff = 7,
         Apparel = 8,   // #65: fortify-crafting gear (workstation contexts only)
+        Torch = 9,     // Carried light sources (darkness context only)
         _Count       // Sentinel for array sizing - must be last
     };
 
@@ -242,6 +243,22 @@ namespace Huginn::Candidate
     };
 
     // =============================================================================
+    // TORCH CANDIDATE - a carried light source (TESObjectLIGH with kCanCarry)
+    // =============================================================================
+    // The non-caster's answer to darkness. Like apparel it has NO baseline
+    // context weight -- it draws darknessWeight and nothing else, so it never
+    // reaches the bar in daylight -- and it is equipped and left on rather than
+    // used up, so `isEquipped` (a torch already in hand) keeps it out of the
+    // pool. Always goes to the LEFT hand (EquipManager::EquipTorch).
+    // =============================================================================
+    struct TorchCandidate : CandidateBase
+    {
+        int32_t count = 0;
+
+        TorchCandidate() { sourceType = SourceType::Torch; }
+    };
+
+    // =============================================================================
     // CANDIDATE VARIANT - Unified type for polymorphic candidate handling
     // Using std::variant avoids virtual dispatch overhead
     // =============================================================================
@@ -251,7 +268,8 @@ namespace Huginn::Candidate
         WeaponCandidate,
         AmmoCandidate,
         ScrollCandidate,
-        ApparelCandidate
+        ApparelCandidate,
+        TorchCandidate
     >;
 
     // Helper for compile-time exhaustiveness checks in CandidateVariant visitors:
@@ -350,6 +368,7 @@ namespace Huginn::Candidate
             case SourceType::Food:    return "Food";
             case SourceType::Staff:   return "Staff";
             case SourceType::Apparel: return "Apparel";
+            case SourceType::Torch:   return "Torch";
             default:                  return "Unknown";
         }
     }
@@ -357,7 +376,7 @@ namespace Huginn::Candidate
     // =============================================================================
     // STATIC ASSERTIONS - Compile-time verification
     // =============================================================================
-    static_assert(SOURCE_TYPE_COUNT == 9, "SOURCE_TYPE_COUNT must match number of SourceType values");
+    static_assert(SOURCE_TYPE_COUNT == 10, "SOURCE_TYPE_COUNT must match number of SourceType values");
     // CandidateBase::name is a string_view borrowing from persistent registry data.
     static_assert(sizeof(CandidateBase) <= 56, "CandidateBase struct size check");
 

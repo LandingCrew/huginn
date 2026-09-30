@@ -232,6 +232,21 @@ class Intuition extends MovieClip
             _expiringTime[index] = 0;
         }
 
+        // Mid slide-out, the swap has not happened yet: whatever arrives now
+        // replaces what is queued, even when it matches what is still shown.
+        // Rapid page flips (Kit -> Huginn -> Kit inside ANIM_OUT_SEC) sent the
+        // Kit names back while the Huginn names sat queued; the same-name
+        // branch below returned early, and the swap then painted Huginn's
+        // slots under the Kit header (2026-09-30).
+        if (_animPhase[index] == 1) {
+            _pendingName[index] = name;
+            _pendingType[index] = type;
+            _pendingConf[index] = confidence;
+            _pendingDetail[index] = detail;
+            _background._visible = true;
+            return;
+        }
+
         // Same name: update detail only
         if (name == _currentName[index]) {
             if (detail != _currentDetail[index]) {
@@ -268,12 +283,16 @@ class Intuition extends MovieClip
             _pendingConf[index] = confidence;
             _pendingDetail[index] = detail;
 
-            if (_animPhase[index] == 0) {
+            // Idle, or mid slide-IN: start a fresh slide-out. Phase 2 has no
+            // swap point -- the swap already happened -- so content queued
+            // during it was dropped when the rise finished, and a quick page
+            // flip back left the other page's slots under this page's header
+            // (2026-09-30). Mid slide-OUT (phase 1) the returns above already
+            // replaced the queue, and its swap will pick it up.
+            if (_animPhase[index] != 1) {
                 _animPhase[index] = 1;
                 _animTimer[index] = 0;
             }
-            // If already animating, pending data is updated and will be
-            // applied when current animation reaches the swap point.
         }
 
         _background._visible = true;

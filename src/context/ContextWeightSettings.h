@@ -171,6 +171,7 @@ namespace Huginn::State
         float weightEnemyCasting = ContextWeightDefaults::ENEMY_CASTING;
         float weightSneaking = ContextWeightDefaults::SNEAKING;
         float weightDarkness = ContextWeightDefaults::DARKNESS;
+        float darkLightLevel = 0.35f;   // fDarkLightLevel: light (0-1) below which it is dark
         float weightHungry = ContextWeightDefaults::HUNGRY;
         bool alcoholSatisfiesHunger = false;
         float weightCold = ContextWeightDefaults::COLD;

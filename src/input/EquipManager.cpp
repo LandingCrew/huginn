@@ -537,6 +537,32 @@ namespace Huginn::Input
       return true;
    }
 
+   bool EquipManager::EquipTorch(RE::FormID formID)
+   {
+      auto* player = RE::PlayerCharacter::GetSingleton();
+      auto* equipManager = RE::ActorEquipManager::GetSingleton();
+      auto* light = formID ? RE::TESForm::LookupByID<RE::TESObjectLIGH>(formID) : nullptr;
+      if (!player || !equipManager || !light) {
+      logger::warn("[EquipManager] Cannot equip torch {:08X}"sv, formID);
+      return false;
+      }
+      // The last scan's count, not InventoryChanges::GetItemCount (which can
+      // crash around a load). A torch that has since left the pack must not be
+      // "equipped" into an empty hand.
+      if (!g_itemRegistry || g_itemRegistry->GetTorchCount(formID) <= 0) {
+      logger::debug("[EquipManager] Torch {:08X} is no longer carried"sv, formID);
+      return false;
+      }
+
+      // Left hand, always: a torch has no right-hand use. Whatever was there --
+      // a shield, a spell, an off-hand weapon -- is unequipped by the game, as
+      // when the player does it from the menu. Remembrance holds a displaced
+      // spell or weapon; a shield is not a candidate and is not held.
+      equipManager->EquipObject(player, light, nullptr, 1, GetEquipSlot(EquipHand::Left, true));
+      logger::info("[EquipManager] Equipped torch '{}' (FormID: {:08X})"sv, light->GetName(), formID);
+      return true;
+   }
+
    bool EquipManager::EquipAmmo(RE::FormID formID)
    {
       if (formID == 0) {
@@ -816,6 +842,7 @@ namespace Huginn::Input
          case UI::SlotContentType::Wildcard:
          case UI::SlotContentType::MeleeWeapon:
          case UI::SlotContentType::RangedWeapon:
+         case UI::SlotContentType::Torch:
             kind = Slot::Remembrance::Kind::Hand;
             break;
          case UI::SlotContentType::Ammo:
@@ -938,6 +965,10 @@ namespace Huginn::Input
 
       case UI::SlotContentType::Apparel:
       success = EquipApparel(content.formID, content.uniqueID);
+      break;
+
+      case UI::SlotContentType::Torch:
+      success = EquipTorch(content.formID);
       break;
 
       default:

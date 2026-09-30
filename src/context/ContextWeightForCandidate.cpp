@@ -393,6 +393,17 @@ namespace Huginn::Context
                 }
                 return maxWeight;
             }
+            // =====================================================================
+            // TORCH CANDIDATES
+            // =====================================================================
+            // Darkness and nothing else, with no baseline -- the apparel trick:
+            // 0 in daylight drops a torch below minimumContextWeight before
+            // scoring, so the bar is never cluttered with one. darknessWeight is
+            // itself 0 while a torch is already out (DarknessApplies).
+            else if constexpr (std::is_same_v<T, Candidate::TorchCandidate>) {
+                (void)c;
+                return weights.darknessWeight;
+            }
             else {
                 // Compile-time exhaustiveness: adding a new CandidateVariant
                 // alternative must force a context-weight mapping here.
@@ -409,6 +420,7 @@ namespace Huginn::Context
         // be 0, which would make every source look hard-gated and disable the
         // cold-start pass wholesale. Keep this in step with the arms above: a new
         // source that skips the baseRelevanceWeight floor belongs here too.
-        return std::holds_alternative<Candidate::ApparelCandidate>(candidate);
+        return std::holds_alternative<Candidate::ApparelCandidate>(candidate) ||
+               std::holds_alternative<Candidate::TorchCandidate>(candidate);
     }
 }

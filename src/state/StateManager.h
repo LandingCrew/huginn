@@ -337,6 +337,13 @@ namespace Huginn::State
       // When the light last rose to DARK_EXIT_THRESHOLD while dark; 0 = not
       // bright. Poll thread only (PollWorldObjects), so no lock.
       int64_t m_brightSinceMs = 0;
+      // Light below which it counts as dark ([ContextWeights] fDarkLightLevel,
+      // pushed in by ContextWeightSettings). Leaving takes this + DARK_EXIT_GAP.
+      std::atomic<float> m_darkLightLevel{ LightLevel::DARK_THRESHOLD };
+
+   public:
+      void SetDarkLightLevel(float level) noexcept { m_darkLightLevel.store(level); }
+   private:
       PlayerActorState m_playerState;
       TargetCollection m_targets;
       HealthTrackingState m_healthTracking;

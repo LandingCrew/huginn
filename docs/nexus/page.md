@@ -418,11 +418,11 @@ Both wheelerAPI and WHEELER - Refined support these labels. If they never appear
 
 ### Lighting Mods
 
-Huginn estiamtes how  dark it is from the light reported by game itself (measures on your character, the same value guards use to spot you sneaking). When it is dark, Night Eye and light spells such as Candlelight and Magelight come forward, and they drop back once one is active or a torch is out.
+Huginn estiamtes how  dark it is from the light reported by game itself (measures on your character, the same value guards use to spot you sneaking). When it is dark, Night Eye, light spells such as Candlelight and Magelight, and torches come forward, and they drop back once one is active or a torch is out.
 
 Lighting mods change that value, so how often this happens depends on your load order. With a dark lighting setup, caves and moonless nights count as dark. With a bright one, or the vanilla game, the light may never fall low enough and Night Eye will not be suggested for darkness.
 
-To turn or disable the darkness suggestions off entirely, set `fWeightDarkness = 0` under `[ContextWeights]`.
+If your setup is bright and Night Eye never comes up, raise `fDarkLightLevel` under `[ContextWeights]` (default `0.35`; the debug panel shows the light level where you stand). To turn or disable the darkness suggestions off entirely, set `fWeightDarkness = 0` under `[ContextWeights]`.
 
 ### Survival Mode
 

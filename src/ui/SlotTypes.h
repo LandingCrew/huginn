@@ -22,7 +22,8 @@ namespace Huginn::UI
         RangedWeapon,   // Favorited ranged weapon
         Ammo,           // Arrow or bolt (equip as ammo, not weapon)
         SoulGem,        // Soul gem (informational - weapon needs charging)
-        Apparel         // #65: fortify-crafting gear (equip, don't consume)
+        Apparel,        // #65: fortify-crafting gear (equip, don't consume)
+        Torch           // carried light, always to the left hand
     };
 
     /**
@@ -87,6 +88,10 @@ namespace Huginn::UI
         static SlotContent Apparel(const std::string& name, RE::FormID formID = 0,
                                    uint16_t uniqueID = 0) {
             return { SlotContentType::Apparel, name, 0.0f, formID, uniqueID };
+        }
+
+        static SlotContent Torch(const std::string& name, RE::FormID formID = 0) {
+            return { SlotContentType::Torch, name, 0.0f, formID, 0 };
         }
 
         bool IsEmpty() const { return type == SlotContentType::Empty; }

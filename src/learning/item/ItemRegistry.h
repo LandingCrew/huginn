@@ -42,10 +42,23 @@ namespace Huginn::Item
    // RebuildRegistry to halve SKSE API calls on hot paths.
    // =============================================================================
 
+   // A carried light source in the player's inventory. Torches ride the
+   // item scan rather than a registry of their own: there is no
+   // classification to cache, only a form, a name and a count.
+   struct TrackedTorch
+   {
+      RE::FormID formID = 0;
+      std::string_view name;  // the form's own FULL name: persistent
+      int32_t count = 0;
+
+      bool operator==(const TrackedTorch&) const = default;
+   };
+
    struct InventoryScanResult
    {
       std::vector<ScannedAlchemyItem> alchemyItems;
       std::vector<ScannedSoulGem> soulGems;
+      std::vector<TrackedTorch> torches;
    };
 
    // =============================================================================
@@ -511,6 +524,28 @@ namespace Huginn::Item
       // 500ms, so the soul level behind it has to travel the same path or a gem
       // filled by Soul Trap would rank on a stale value until the 30s reconcile.
       std::unordered_map<RE::FormID, int32_t> m_scanSoulLevels;
+
+      // Torches from the last scan (under m_mutex), and whether that list
+      // changed since the update loop last asked (so a torch picked up in a
+      // dark cave reaches the bar without waiting for a state change).
+      std::vector<TrackedTorch> m_torches;
+      std::atomic<bool> m_torchesChanged{ false };
+      // Torches whose count fell since the update loop last asked (dropped,
+      // burned out). Under m_mutex.
+      std::vector<RE::FormID> m_torchDecreases;
+      void SetTorchesLocked(const std::vector<TrackedTorch>& torches);
+
+   public:
+      /// Copy of the carried torches from the last inventory scan.
+      [[nodiscard]] std::vector<TrackedTorch> GetTorches() const;
+      /// True once after the torch list changes (count or kind).
+      [[nodiscard]] bool ConsumeTorchesChanged() noexcept { return m_torchesChanged.exchange(false); }
+      /// Torches whose count fell since the last call, so their slot locks can
+      /// be broken the way ProcessInventoryChanges breaks an item's.
+      [[nodiscard]] std::vector<RE::FormID> ConsumeTorchDecreases();
+      /// How many of this torch the last scan found (0 if none).
+      [[nodiscard]] int32_t GetTorchCount(RE::FormID formID) const;
+   private:
 
       // Item classifier instance
       ItemClassifier m_classifier;

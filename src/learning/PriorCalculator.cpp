@@ -22,6 +22,10 @@ namespace Huginn::Scoring
                 return CalculateScrollPrior(c);
             } else if constexpr (std::is_same_v<T, Candidate::ApparelCandidate>) {
                 return CalculateApparelPrior(c);
+            } else if constexpr (std::is_same_v<T, Candidate::TorchCandidate>) {
+                // One torch is as good as another; nothing intrinsic to rank.
+                (void)c;
+                return 0.5f;
             } else {
                 // Compile-time exhaustiveness: adding a new CandidateVariant
                 // alternative must force a prior decision here.

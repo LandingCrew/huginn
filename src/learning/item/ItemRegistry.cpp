@@ -54,6 +54,7 @@ namespace Huginn::Item
 
       // Clear existing data
       ClearStoreLocked();
+      SetTorchesLocked(scanResult.torches);
 
       // Reserve space for both containers to avoid reallocation/rehashing
       const size_t capacity = std::min(inventoryItems.size() + soulGems.size(), Config::MAX_TRACKED_ITEMS);
@@ -142,6 +143,7 @@ namespace Huginn::Item
 
       // Acquire unique lock for write access (v0.7.12 - thread safety)
       std::unique_lock lock(m_mutex);
+      SetTorchesLocked(scanResult.torches);
 
       // Compare tracked items with current counts
       for (auto& invItem : m_entries) {
@@ -725,6 +727,45 @@ namespace Huginn::Item
    // calls by 50% on the 500ms hot path. Replaces separate scan methods.
    // =============================================================================
 
+   void ItemRegistry::SetTorchesLocked(const std::vector<TrackedTorch>& torches)
+   {
+      if (torches != m_torches) {
+      // Any torch that lost count or left: its slot lock must break, or the
+      // widget keeps offering a torch the player no longer carries
+      // (/code-review #157).
+      for (const auto& old : m_torches) {
+        const auto it = std::find_if(torches.begin(), torches.end(),
+           [&](const TrackedTorch& t) { return t.formID == old.formID; });
+        if (it == torches.end() || it->count < old.count) {
+           m_torchDecreases.push_back(old.formID);
+        }
+      }
+      m_torches = torches;
+      m_torchesChanged.store(true);
+      }
+   }
+
+   std::vector<RE::FormID> ItemRegistry::ConsumeTorchDecreases()
+   {
+      std::unique_lock lock(m_mutex);
+      return std::exchange(m_torchDecreases, {});
+   }
+
+   int32_t ItemRegistry::GetTorchCount(RE::FormID formID) const
+   {
+      std::shared_lock lock(m_mutex);
+      for (const auto& torch : m_torches) {
+      if (torch.formID == formID) return torch.count;
+      }
+      return 0;
+   }
+
+   std::vector<TrackedTorch> ItemRegistry::GetTorches() const
+   {
+      std::shared_lock lock(m_mutex);
+      return m_torches;
+   }
+
    InventoryScanResult ItemRegistry::ScanPlayerInventoryAll() const
    {
       auto* player = RE::PlayerCharacter::GetSingleton();
@@ -747,7 +788,8 @@ namespace Huginn::Item
       // The old entryList + countDelta approach missed items from the player's base container
       // because countDelta only tracks changes, not the total count.
       return ScanPlayerInventoryAll(Util::GetInventorySafe(player, [](RE::TESBoundObject& obj) {
-      return obj.Is(RE::FormType::AlchemyItem) || obj.Is(RE::FormType::SoulGem);
+      return obj.Is(RE::FormType::AlchemyItem) || obj.Is(RE::FormType::SoulGem) ||
+             obj.Is(RE::FormType::Light);
       }));
    }
 
@@ -769,6 +811,20 @@ namespace Huginn::Item
       for (auto& [obj, data] : inventory) {
       auto& [count, entry] = data;
       if (count <= 0) continue;
+
+      // Carried lights (torches). A LIGH that cannot be carried is scenery and
+      // never reaches an inventory, but check anyway: the flag is the definition.
+      if (auto* light = obj->As<RE::TESObjectLIGH>()) {
+        if (light->CanBeCarried()) {
+           const char* lightName = light->GetName();
+           result.torches.push_back({
+              .formID = light->GetFormID(),
+              .name = lightName ? std::string_view(lightName) : std::string_view{},
+              .count = count
+           });
+        }
+        continue;
+      }
 
       // Try alchemy item first (more common)
       if (auto* alchemyItem = obj->As<RE::AlchemyItem>()) {
