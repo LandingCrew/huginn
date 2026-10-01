@@ -9,7 +9,22 @@ re-opening something that looks obviously undone.
 Suggested order, each played and measured like #140-#148. Details are in the
 entries named.
 
-Nothing queued: pick from the entries below.
+1. **Share learning across similar items** (pooling) -- under Follow-ups.
+   Decided with the user 2026-10-01 as the next real piece of work: it is
+   the one entry that addresses the decay criticism, the cold start and
+   (later) item differentiation together.
+
+**What Huginn is measured by** (the user, 2026-10-01). Two objective
+metrics; everything else is a proxy:
+- **Did the player reach into the inventory** (or favourites menu) to use
+  something Huginn could have offered?
+- **Did the player need a slot-manager label or a custom slot** to get what
+  they wanted?
+The end state is one page of plain, regular slots, with Huginn good enough
+that nothing else is needed. Page layouts, slot classes and custom slots
+exist because the recommender is not there yet. Neither metric is counted
+today -- see the instrumentation note under "Behavioural modes as a recall
+stage".
 
 ## Known Bugs
 - [ ] One weapon stack's ExtraHealth has read 0.00, then 1.00, then 1.30 across
@@ -107,6 +122,10 @@ Nothing queued: pick from the entries below.
 
 ## Platform and dependencies
 - [ ] **Move off CharmedBaryon CommonLibSSE-NG; support Skyrim 1.7.104.**
+      **PAUSED -- waiting on LoreRim 5.1** (the test install is still on 1.6).
+      Work so far is on local branch `commonlib-ng-alandtse` (b348a9f): it
+      builds against the fork, but does not load yet -- fix the trampoline
+      allocation first (see that branch's copy of this entry).
       Raised 2026-10-01. Bethesda patched Skyrim after two and a half years:
       SKSE 2.3.1 targets game 1.7.104 (skse.silverlock.org; the
       `ianpatt/skse64` GitHub releases still stop at 2.2.6 and do not show
@@ -264,7 +283,44 @@ Nothing queued: pick from the entries below.
       what decides the mode (the debounced combat flag is the obvious gate),
       whether the learner learns per mode, and how this interacts with page
       layouts that already separate the two by hand.
-      Raised 2026-09-27.
+      Raised 2026-09-27. Developed in the next entry.
+
+- [ ] **Behavioural modes as a recall stage -- for later.** Design doc
+      "Huginn: Behavioural Modes as a Recall Stage" (2026-10-01). Parked
+      behind shared learning; filed so it can be picked at later.
+      Idea, after YouTube's two-stage recommender: a handful of hand-written
+      modes (combat, stealth, crafting/town, exploring; emergency probably
+      an overlay on combat, which overrides already cover) decide which
+      items are in play, then the existing scorer ranks a short list of ~15
+      instead of all ~100. Each mode keeps per-item USE COUNTS (every equip
+      counts as one, unlike rewards) plus a co-use graph of items used in the
+      same fight. Counts suit the data budget where per-mode weight vectors
+      do not. Extensions: richer count-only sensors (enemy race, visible
+      enemy weapon, location keywords) and tier selection (spell rank by
+      magicka, specialist vs generalist weapon).
+      Review notes (2026-10-01):
+      - Recall from usage alone hides never-used items -- the scroll cold
+        start made worse -- and Huginn's best moments are context-driven
+        (Waterbreathing when drowning). The short list must be "used in this
+        mode OR strongly relevant now"; recall then only trims the low-context
+        tail. It must also be slot-aware, so a slot never comes back empty.
+      - Step 3 (recall live) needs step 4 (counts in the cosave), or every
+        load starts recall cold.
+      - The co-use graph will be sparse for a long time (2-5 items a fight).
+        Record it early if cheap; do not read it until logs show structure.
+      - Location counts learned from the player's own play are memory and are
+        inside the Core Principle; a hand-written "crypt, so anti-undead" rule
+        is prediction and is out.
+      - Count decay wants a half-life of a few hours of PLAY time, not the
+        learner's 2%/hour.
+      Staging: (0) instrument the two metrics in Next up -- inventory or
+      favourites equips of an item Huginn had as a candidate, and slot-manager
+      label / custom-slot / Kit-page use per hour -- into `[Soak]`; (1) log the
+      mode on transitions, change nothing; (2) record per-mode counts, show
+      them in `hg recs`; (3) recall live; (4) persist counts (cosave bump);
+      (5) learned clusters only if hand-written modes visibly misfit.
+      Tiers are a separate track; their first step, recording spell magnitude
+      and minimum skill level in the spell classifier, can start any time.
 
 - [ ] **Estimated altitude.** Idea from play (2026-09-27): add a fixed
       offset (e.g. +100000) to the player's world Z to get an estimated
@@ -767,5 +823,23 @@ trigger to pick any of it up.
       Neither is measured. (A) is cheap enough to try and discard; (B) should
       not be started until (A) has shown that pooling helps at all on real play
       data.
+      **Picked as next up (with the user, 2026-10-01).** Three criticisms it
+      has to answer, in order:
+      - **Decay.** Lazy decay is 2%/hour once an item is idle for 5 minutes
+        (`Config.h` `DECAY_RATE_PER_HOUR`, `MaybeDecayBatch`): after 20 idle
+        hours an item keeps ~2/3 of its weight. Only the weights decay --
+        `trainCount` does not, so a long-unused item keeps full confidence.
+        With pooling, a decayed item should fall back TOWARDS its class
+        rather than towards zero, which is a better answer than a faster rate.
+      - **Cold start.** The (A)/(B) split above.
+      - **Item differentiation** -- later; it is closer to optimisation than
+        to learning. The worry for pooling: potions are not told apart much
+        today, so a class mean may be the same number for every potion in
+        it and pooling would have no visible effect. Check first: dump the
+        trained weight vectors grouped by classification and see whether
+        the classes actually differ from each other, and whether items
+        within a class differ. If not, pooling needs finer classes, or the
+        differentiation work first.
+      Memory is not a constraint: the learner is under 300 KB.
 - [ ] Addendum #15/#16 (Kalman learner / learnable context weights) — **parked**: needs a v3
       cosave bump, NOT landable during an active soak run
