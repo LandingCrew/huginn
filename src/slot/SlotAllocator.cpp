@@ -3,6 +3,7 @@
 #include "SlotLocker.h"
 #include "override/OverrideConditions.h"
 #include "override/OverrideConfig.h"
+#include "telemetry/SoakMetrics.h"
 #include <algorithm>
 #include <format>
 #include <set>
@@ -145,6 +146,7 @@ namespace Huginn::Slot
             // Clear all slot locks — stale locks from the previous page's context
             // would prevent the new page's allocations from appearing.
             SlotLocker::GetSingleton().UnlockAll();
+            Telemetry::SoakMetrics::GetSingleton().RecordPageFlip();
 
             SKSE::log::info("[SlotAllocator] Switched to page {} '{}'",
                 pageIndex, GetCurrentPageName());
@@ -224,6 +226,15 @@ namespace Huginn::Slot
         const auto& slots = (*snap)[pageIndex].slots;
         return static_cast<size_t>(std::count_if(slots.begin(), slots.end(),
             [](const SlotConfig& c) { return c.wildcardsEnabled; }));
+    }
+
+    bool SlotAllocator::IsRegularSlot(size_t pageIndex, size_t slotIndex) const
+    {
+        auto snap = GetConfigSnapshot();
+        if (pageIndex >= snap->size()) return true;
+        const auto& slots = (*snap)[pageIndex].slots;
+        return slotIndex >= slots.size() ||
+               slots[slotIndex].classification == SlotClassification::Regular;
     }
 
     SlotConfig SlotAllocator::GetSlotConfig(size_t slotIndex) const

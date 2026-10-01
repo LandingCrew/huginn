@@ -156,6 +156,10 @@ namespace Huginn::Slot
         /// Get configuration for a specific slot in current page (returns copy)
         [[nodiscard]] SlotConfig GetSlotConfig(size_t slotIndex) const;
 
+        /// True when the slot is unrestricted (SlotClassification::Regular).
+        /// Any page, not only the current one; out of range reads as regular.
+        [[nodiscard]] bool IsRegularSlot(size_t pageIndex, size_t slotIndex) const;
+
         /// Get all slot configurations for current page (returns copy)
         [[nodiscard]] std::vector<SlotConfig> GetSlotConfigs() const;
 

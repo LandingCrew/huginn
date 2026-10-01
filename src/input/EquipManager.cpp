@@ -6,6 +6,7 @@
 #include "slot/Remembrance.h"
 #include "slot/SlotLocker.h"
 #include "util/InventoryUtil.h"
+#include "telemetry/SoakMetrics.h"
 
 // Windows GetObject macro interferes with RE::BGSDefaultObjectManager::GetObject
 #ifdef GetObject
@@ -829,6 +830,13 @@ namespace Huginn::Input
       // checks IsRecentHuginnEquip(formID) within the suppression window, so the mark
       // must be set first. If the equip fails, the window expires harmlessly.
       Learning::EquipSourceTracker::GetSingleton().MarkHuginnEquip(content.formID);
+
+      {
+         auto& allocator = Slot::SlotAllocator::GetSingleton();
+         const size_t page = allocator.GetCurrentPage();
+         Telemetry::SoakMetrics::GetSingleton().RecordSlotPress(
+            page, allocator.IsRegularSlot(page, slotIndex));
+      }
 
       // Remembrance: note the press, so what the equip takes off can be held
       // in this slot. Pressing the remembered item itself is the undo -- it
