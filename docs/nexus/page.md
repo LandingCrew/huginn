@@ -418,7 +418,7 @@ Both wheelerAPI and WHEELER - Refined support these labels. If they never appear
 
 ### Lighting Mods
 
-Huginn estiamtes how  dark it is from the light reported by game itself (measures on your character, the same value guards use to spot you sneaking). When it is dark, Night Eye, light spells such as Candlelight and Magelight, and torches come forward, and they drop back once one is active or a torch is out.
+Huginn estiamtes how  dark it is from the light reported by game itself (measures on your character, the same value guards use to spot you sneaking). When it is dark, Night Eye, light spells such as Candlelight and Magelight, and torches come forward, and they drop back once one is active or a torch is out. A passing shadow does not count: it has to stay dark for about five seconds, and light for about three before the suggestions go away. Going through a door is the exception, so a dark cave counts the moment it loads.
 
 Lighting mods change that value, so how often this happens depends on your load order. With a dark lighting setup, caves and moonless nights count as dark. With a bright one, or the vanilla game, the light may never fall low enough and Night Eye will not be suggested for darkness.
 

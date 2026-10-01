@@ -79,8 +79,7 @@ namespace Huginn::State
       return DistanceBucket::Ranged;  // No target
       }
 
-      // Shared constants: ComputeTargetDigest must bucket identically or the
-      // pipeline-skip digest misses distance transitions (critique finding 1).
+      // Logged, not hashed -- see GameState::distance.
       const float distanceSq = targets.primary->distanceToPlayerSq;
 
       if (distanceSq <= DistanceThresholds::EVAL_MELEE_MAX_SQ) {
@@ -94,11 +93,7 @@ namespace Huginn::State
 
    TargetType StateEvaluator::EvaluateTargetType(const TargetCollection& targets) const
    {
-      if (!targets.primary.has_value()) {
-      return TargetType::None;
-      }
-
-      return targets.primary->targetType;
+      return targets.ScoringTargetType();
    }
 
    EnemyCountBucket StateEvaluator::EvaluateEnemyCount(const TargetCollection& targets) const

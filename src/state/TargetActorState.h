@@ -290,6 +290,20 @@ namespace Huginn::State
       cachedAnyCasting = false;
       }
 
+      // The primary target's type as SCORING sees it: None unless the target
+      // is a living hostile. The crosshair picks the primary with no hostility
+      // filter, so sweeping the view across a town made every passer-by a
+      // Humanoid target -- a learner feature, and a pipeline wake each time
+      // (LoreRim 2026-09-25). A follower's atronach is not a reason for
+      // anti-daedra either. A dormant draugr is still hostile, so looking at
+      // one keeps working. `primary` itself is untouched: ally logic needs it.
+      [[nodiscard]] TargetType ScoringTargetType() const noexcept {
+      if (!primary.has_value() || !primary->isHostile || primary->isDead) {
+        return TargetType::None;
+      }
+      return primary->targetType;
+      }
+
       // Check if target exists
       [[nodiscard]] bool Contains(RE::FormID formID) const noexcept {
       return Find(formID) != nullptr;

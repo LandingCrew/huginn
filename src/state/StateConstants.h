@@ -190,10 +190,8 @@ namespace Huginn::State
       // === 3-bucket evaluator scheme (GameState DistanceBucket) ===
       // Melee ≤ 256 < Mid ≤ 768 < Ranged. Distinct from the 4-bucket
       // target-tracking scheme above — the two schemes coexist; do not conflate.
-      // Both StateEvaluator::EvaluateDistance and StateManager::ComputeTargetDigest
-      // MUST bucket with these constants: if they diverge, the pipeline-skip digest
-      // misses distance-bucket transitions (e.g. Mid→Ranged) and recommendations
-      // are scored against a stale bucket.
+      // StateEvaluator::EvaluateDistance buckets with these. The bucket is
+      // logged but not hashed: nothing that scores reads it (GameState::distance).
       // Units: Skyrim distance units (squared variants for sqrt-free comparison)
       inline constexpr float EVAL_MELEE_MAX = 256.0f;
       inline constexpr float EVAL_MID_MAX = 768.0f;
@@ -284,7 +282,14 @@ namespace Huginn::State
       // walked past braziers, far wider than the band above, and the
       // Darkness label blinked four times (2026-09-29). Passing a light does
       // not end the dark; stepping into a lit room does, after a beat.
-      inline constexpr int64_t DARK_EXIT_HOLD_MS = 3000;
+      inline constexpr std::chrono::milliseconds DARK_EXIT_HOLD{ 3000 };
+
+      // Entering the dark has to hold too. At noon in a LoreRim town the
+      // reading dropped to 27 under overhangs and gates for 0.6 to 4 s at a
+      // time, and darkness went on five times in 90 s (2026-09-30). Five
+      // seconds clears all of those. A new place skips it (DarknessGate), so a
+      // cave is dark the moment it loads.
+      inline constexpr std::chrono::milliseconds DARK_ENTER_DELAY{ 5000 };
 
       // Well-lit threshold
       // Why 0.7f: Above 70% light level is considered "well lit" (bright)

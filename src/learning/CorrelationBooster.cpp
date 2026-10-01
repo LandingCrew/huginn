@@ -309,16 +309,16 @@ namespace Huginn::Scoring
 
     bool CorrelationBooster::HasUndeadTarget(const State::TargetCollection& targets) const
     {
-        // Check primary target
-        if (targets.primary.has_value()) {
-            if (targets.primary->targetType == State::TargetType::Undead) {
-                return true;
-            }
+        // Check primary target (living hostiles only, like the rest of scoring)
+        if (targets.ScoringTargetType() == State::TargetType::Undead) {
+            return true;
         }
 
-        // Check any tracked target
+        // Check any tracked target -- same filter: a vampire follower is not
+        // a reason for anti-undead
         for (const auto& target : targets.targets) {
-            if (target.targetType == State::TargetType::Undead) {
+            if (target.isHostile && !target.isDead &&
+                target.targetType == State::TargetType::Undead) {
                 return true;
             }
         }

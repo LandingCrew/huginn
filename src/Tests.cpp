@@ -1594,8 +1594,8 @@ void RunUnitTests()
     }
 
     // Test 2: Maximum hash (all max values)
-    // Hash states: 6×6×3×7×4×2×2×2×2 = 48,384, so max hash = 48,383.
-    // Stamina is excluded entirely; allyStatus contributes its INJURED BIT,
+    // Hash states: 6×6×7×4×2×2×2×2 = 16,128, so max hash = 16,127.
+    // Stamina and distance are excluded entirely; allyStatus contributes its INJURED BIT,
     // so InjuredPresent below is the maximum that dimension can take.
     GameState state2{
         .health = HealthBucket::VeryHigh,
@@ -1615,12 +1615,12 @@ void RunUnitTests()
         return;
     }
 
-    // Test 3: Hash uniqueness for all 48,384 states (stamina excluded;
-    // allyStatus enumerated as its two HASHED values, not its three)
+    // Test 3: Hash uniqueness for all 16,128 states (stamina and distance
+    // excluded; allyStatus enumerated as its two HASHED values, not its three)
     std::set<uint32_t> seenHashes;
     for (uint8_t h = 0; h < 6; ++h) {
         for (uint8_t m = 0; m < 6; ++m) {
-            for (uint8_t d = 0; d < 3; ++d) {
+            {
                 for (uint8_t t = 0; t < 7; ++t) {
                     for (uint8_t ec = 0; ec < 4; ++ec) {
                         // Two values, not three: the hash reads only whether
@@ -1635,7 +1635,7 @@ void RunUnitTests()
                                         .health = static_cast<HealthBucket>(h),
                                         .magicka = static_cast<MagickaBucket>(m),
                                         .stamina = StaminaBucket::Medium,  // Arbitrary — excluded from hash
-                                        .distance = static_cast<DistanceBucket>(d),
+                                        .distance = DistanceBucket::Mid,  // Arbitrary — excluded from hash
                                         .targetType = static_cast<TargetType>(t),
                                         .enemyCount = static_cast<EnemyCountBucket>(ec),
                                         .allyStatus = as,
@@ -1719,7 +1719,129 @@ void RunUnitTests()
         return;
     }
 
-    logger::info("TEST PASS: All hash tests passed! {} unique states verified, stamina excluded, allyStatus hashed as its injured bit."sv, GameState::kTotalStates);
+    // Test 3d: distance doesn't affect the hash. Nothing that scores reads
+    // the bucket (GameState::distance), so a sweep past townspeople at
+    // different ranges must not wake the pipeline.
+    {
+        auto distState = [](DistanceBucket d) {
+            return GameState{
+                .health = HealthBucket::Medium, .magicka = MagickaBucket::Medium,
+                .stamina = StaminaBucket::Medium, .distance = d,
+                .targetType = TargetType::None, .enemyCount = EnemyCountBucket::None,
+                .allyStatus = AllyStatus::None, .anyCasting = CastingStatus::NoneCasting,
+                .inCombat = CombatStatus::NotInCombat,
+                .isSneaking = SneakStatus::NotSneaking
+            };
+        };
+        if (distState(DistanceBucket::Melee).GetHash() != distState(DistanceBucket::Ranged).GetHash() ||
+            distState(DistanceBucket::Mid).GetHash() != distState(DistanceBucket::Ranged).GetHash()) {
+            logger::error("TEST FAIL: Distance should not affect hash! Melee={}, Mid={}, Ranged={}"sv,
+                distState(DistanceBucket::Melee).GetHash(), distState(DistanceBucket::Mid).GetHash(),
+                distState(DistanceBucket::Ranged).GetHash());
+            return;
+        }
+    }
+
+    // Test 3e: scoring sees the primary target's type only for a LIVING
+    // HOSTILE. A townsperson under the crosshair, a follower's atronach and a
+    // corpse are all None; the primary itself is kept for ally logic.
+    {
+        auto withPrimary = [](TargetType type, bool hostile, bool dead) {
+            TargetCollection targets;
+            TargetActorState p;
+            p.actorFormID = 0x30000;
+            p.targetType = type;
+            p.isHostile = hostile;
+            p.isDead = dead;
+            targets.primary = p;
+            return targets;
+        };
+        struct Case { TargetType type; bool hostile; bool dead; TargetType expected; const char* name; };
+        constexpr std::array<Case, 5> cases = {{
+            {TargetType::Humanoid, false, false, TargetType::None,     "townsperson"},
+            {TargetType::Daedra,   false, false, TargetType::None,     "follower's atronach"},
+            {TargetType::Undead,   true,  true,  TargetType::None,     "dead draugr"},
+            {TargetType::Undead,   true,  false, TargetType::Undead,   "living draugr"},
+            {TargetType::Humanoid, true,  false, TargetType::Humanoid, "bandit"},
+        }};
+        for (const auto& c : cases) {
+            const auto targets = withPrimary(c.type, c.hostile, c.dead);
+            if (targets.ScoringTargetType() != c.expected) {
+                logger::error("TEST FAIL: ScoringTargetType for {} should be {}, got {}"sv, c.name,
+                    BucketNames::kTarget[std::to_underlying(c.expected)],
+                    BucketNames::kTarget[std::to_underlying(targets.ScoringTargetType())]);
+                return;
+            }
+            if (!targets.primary.has_value()) {
+                logger::error("TEST FAIL: ScoringTargetType must not clear the primary ({})"sv, c.name);
+                return;
+            }
+        }
+        if (TargetCollection{}.ScoringTargetType() != TargetType::None) {
+            logger::error("TEST FAIL: ScoringTargetType with no primary should be None"sv);
+            return;
+        }
+    }
+
+    logger::info("TEST PASS: All hash tests passed! {} unique states verified, stamina and distance excluded, allyStatus hashed as its injured bit, target type hostile-only."sv, GameState::kTotalStates);
+
+    // === DarknessGate: band + dwell both ways, a new place taken at once ===
+    {
+        using namespace std::chrono_literals;
+        using Clock = BoolDebouncer::Clock;
+        constexpr float kEnter = LightLevel::DARK_THRESHOLD;  // 0.35
+        constexpr std::uint32_t kTown = 0x1000, kCave = 0x2000;
+        const auto t0 = Clock::now();
+        auto fail = [](const char* what) {
+            logger::error("TEST FAIL: DarknessGate — {}"sv, what);
+        };
+
+        DarknessGate gate;
+        // First reading after a reset is a new cell: taken at once.
+        if (gate.Update(1.0f, kEnter, kTown, t0)) { fail("bright town start should be lit"); return; }
+
+        // A 4 s shadow at noon (the longest dip seen 2026-09-30) never publishes.
+        std::optional<BoolDebouncer::Suppressed> dropped;
+        for (auto t = 0ms; t <= 4000ms; t += 100ms) {
+            if (gate.Update(0.3f, kEnter, kTown, t0 + 1s + t)) { fail("a 4 s shadow must not publish dark"); return; }
+        }
+        gate.Update(1.0f, kEnter, kTown, t0 + 5100ms, &dropped);
+        if (!dropped || !dropped->rawValue) { fail("the shadow should be reported as suppressed"); return; }
+
+        // Dark that lasts past DARK_ENTER_DELAY publishes.
+        const auto night = t0 + 10s;
+        gate.Update(0.2f, kEnter, kTown, night);
+        if (gate.Update(0.2f, kEnter, kTown, night + LightLevel::DARK_ENTER_DELAY - 100ms)) {
+            fail("dark published before the enter delay"); return;
+        }
+        if (!gate.Update(0.2f, kEnter, kTown, night + LightLevel::DARK_ENTER_DELAY)) {
+            fail("dark not published after the enter delay"); return;
+        }
+
+        // Once dark, 0.4 is inside the band: stays dark however long it lasts.
+        if (!gate.Update(0.4f, kEnter, kTown, night + 20s) || !gate.Update(0.4f, kEnter, kTown, night + 40s)) {
+            fail("a reading inside the band must not end the dark"); return;
+        }
+        // Passing a brazier (bright < DARK_EXIT_HOLD) does not end it either.
+        gate.Update(0.9f, kEnter, kTown, night + 41s);
+        if (!gate.Update(0.9f, kEnter, kTown, night + 41s + LightLevel::DARK_EXIT_HOLD - 100ms)) {
+            fail("dark ended before the exit hold"); return;
+        }
+        if (gate.Update(0.9f, kEnter, kTown, night + 41s + LightLevel::DARK_EXIT_HOLD)) {
+            fail("dark held past the exit hold"); return;
+        }
+
+        // Through a door into a cave: dark at once, no enter delay.
+        if (!gate.Update(0.1f, kEnter, kCave, night + 60s)) { fail("a dark new place must publish at once"); return; }
+        // And back out into daylight: lit at once.
+        if (gate.Update(1.0f, kEnter, kTown, night + 60s + 100ms)) { fail("a lit new place must publish at once"); return; }
+
+        // A save load (Reset) also takes the next reading at once.
+        gate.Reset();
+        if (!gate.Update(0.1f, kEnter, kCave, night + 70s)) { fail("first reading after Reset must publish at once"); return; }
+
+        logger::info("TEST PASS: DarknessGate — shadows suppressed, enter/exit dwell, band, new place and reset taken at once"sv);
+    }
 
     // === SpellRegistry Unit Tests ===
     logger::info("Running SpellRegistry unit tests..."sv);

@@ -24,6 +24,12 @@ namespace Huginn::UI
     {
         if (!a_event) return RE::BSEventNotifyControl::kContinue;
 
+        // Our own menu: logged (rare, and the only record of whether RE::UI
+        // actually acted on a kShow) and clears Show()'s pending flag.
+        if (a_event->menuName == IntuitionMenu::MENU_NAME) {
+            IntuitionMenu::OnMenuOpenClose(a_event->opening);
+        }
+
         // Re-show IntuitionMenu after loading screen closes.
         // Skyrim closes (but doesn't destroy) custom IMenu instances during cell
         // transitions.  The C++ singleton survives, but the menu is no longer "open"

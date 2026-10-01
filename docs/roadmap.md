@@ -43,23 +43,6 @@ Nothing queued: pick from the entries below.
       seen before".
       Raised 2026-09-24.
 
-- [ ] Short-lived TARGET and DISTANCE state still flaps; decide whether to
-      debounce them too. The crosshair picks the primary target with no
-      hostility filter (`StateManager_Targets.cpp`) and a 0.3 s sticky window
-      sized for raycast jitter, so sweeping the view across townspeople moves
-      `Target`/`Dist` on every pass. LoreRim 2026-09-25: a humanoid crossing
-      the crosshair for 0.11 s put the player "in combat" and flipped two keys
-      twice.
-      Done so far: combat (500 ms in / 2000 ms out) and enemy casting (0 in /
-      2000 out) are debounced by BoolDebouncer (v0.21.30), and VitalEnvelope
-      holds the recent magicka/stamina low for 8 s while regenerating
-      (v0.21.31). The 50-minute LoreRim soak after both: ~35 slot changes per
-      5 min (154 before the hold), with target/distance behind 12 of 40
-      swap-backs. Target type and distance were left alone because
-      Beast/Humanoid carry no weight. Re-measure before adding a dwell; the
-      remaining swaps may be cheap enough to leave.
-      Raised 2026-09-19.
-
 ## Known Mod Compatability Issues
 - [ ] The default slot keys are the number row, which half of Skyrim also uses.
       `iSlot1Key = 2` through `iSlot8Key = 9` are DirectInput codes for the
@@ -196,6 +179,19 @@ Nothing queued: pick from the entries below.
       under `src/` that mention dMenu (132 references).
 
 ## Known Recommendation Issues
+- [ ] **Restore Health and Restore Stamina trade one slot in a fight, below
+      the hold margin.** LoreRim 2026-09-30 21:35:20-35, one beast: health
+      crossed the Critical/VeryLow line every ~3 s and slot 5 went Health ->
+      Stamina -> Health -> Stamina -> Health -> Stamina in 13 s, every change
+      logged `expired`. Two of the wins were x1.12 and x1.08, under
+      `fChallengerMargin` (x1.25), so the slot hold did not hold them. Open
+      questions: why the hold let a x1.08 challenger in (is an expired lock
+      outside its reach for potions, or was the incumbent not a candidate for
+      that slot at that moment?), and whether the HP bucket itself wants the
+      same dwell as combat and darkness. Re-measure first: the stamina side
+      may have been a real need (sp 22% at 21:36:18).
+      Raised 2026-09-30.
+
 - [ ] **Thirst is not tracked -- PARKED 2026-09-30.** Skipped with the user:
       there is no reliable way to buy water from innkeepers on LoreRim, so a
       thirst prompt would point at drinks the player often cannot get. Pick
@@ -470,7 +466,9 @@ key, is already a PotionsAny slot with overrides on.
       debug `[SlotChurn]` line per change. The fixes that followed:
       - the slot hold (`bHoldSeatedItems`, `fChallengerMargin` = 25%, v0.21.27);
       - `sPotionTierPreference`;
-      - the combat/casting debounce and VitalEnvelope (see Known Bugs);
+      - the combat/casting debounce and VitalEnvelope (v0.21.30-31), then
+        target type for hostiles only, distance out of the hash and the
+        darkness enter delay (v0.22.5);
       - a dedup-emptied slot refilled in the same pass (#146).
       Result: 154 changes per 5 min went to ~35, near-ties to ~0, and
       swap-backs from 1 in 5 to ~1 in 8-11. The last simonrim run had 12/12

@@ -145,6 +145,7 @@ namespace Huginn::State
       m_wasInCombat = false;
       m_combatDebounce.Reset();
       m_castingDebounce.Reset();
+      m_darkGate.Reset();
 
       // --- Fall tracking (#60) ---
       // The previous save's take-off Z describes a different world position.
