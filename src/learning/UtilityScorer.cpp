@@ -88,8 +88,16 @@ namespace Huginn::Scoring
             // Stage 1f: Use GetContextWeight instead of Candidate::GetRelevance
             // Favorites always pass — they represent explicit player intent and must
             // remain observable by the learner even when context weight is low.
+            //
+            // Suppress mode is the exception: its multiplier is 0, so scoring a
+            // favorite only to drop it at minimumUtility was wasted work -- and
+            // with fMinimumUtility = 0 it was not dropped at all.
+            const bool favorited = IsCandidateFavorited(candidate);
+            if (favorited && m_config.favoritesMode == FavoritesMode::Suppress) {
+                continue;
+            }
             float contextWeight = Context::WeightForCandidate(candidate, weights);
-            if (contextWeight < m_config.minimumContextWeight && !IsCandidateFavorited(candidate)) {
+            if (contextWeight < m_config.minimumContextWeight && !favorited) {
                 continue;
             }
 
