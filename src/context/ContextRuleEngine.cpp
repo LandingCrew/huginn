@@ -37,11 +37,8 @@ namespace Huginn::Context
     // =============================================================================
     // MAIN EVALUATION METHOD
     // =============================================================================
-    // Stage 1a (skeleton): Returns all zeros — no rules implemented yet.
-    // Rules will be migrated in stages:
-    // - Stage 1c: EvaluateVitalRules() (health, magicka, stamina)
-    // - Stage 1d: EvaluateElementalRules(), EvaluateEnvironmentalRules()
-    // - Stage 1e: EvaluateCombatRules(), EvaluateTargetRules(), EvaluateEquipmentRules()
+    // Runs every rule group -- vital, elemental, environmental, combat, target,
+    // equipment -- and combines their weights for the current state.
     // =============================================================================
 
     ContextWeightMap ContextRuleEngine::EvaluateRules(
@@ -50,9 +47,6 @@ namespace Huginn::Context
         const State::WorldState& world) const
     {
         ContextWeightMap result;
-
-        // Stage 1a: All methods are stubs that do nothing.
-        // They will be implemented in subsequent stages.
 
         // Vital-based rules (Stage 1c)
         EvaluateVitalRules(result, player);

@@ -22,7 +22,6 @@ namespace Huginn::Candidate
         size_t filteredByEquipped = 0;       // Already equipped
         size_t filteredByCooldown = 0;       // Recently used
         size_t filteredByActiveBuff = 0;     // Buff already active
-        size_t filteredByRelevance = 0;      // Below minimum relevance threshold
         size_t filteredByDuplication = 0;    // Duplicate items removed
         size_t filteredByFullVitals = 0;     // Healing when health is full, etc.
         size_t outputCount = 0;              // Candidates after all filtering
@@ -34,7 +33,6 @@ namespace Huginn::Candidate
             filteredByEquipped = 0;
             filteredByCooldown = 0;
             filteredByActiveBuff = 0;
-            filteredByRelevance = 0;
             filteredByDuplication = 0;
             filteredByFullVitals = 0;
             outputCount = 0;
@@ -43,7 +41,7 @@ namespace Huginn::Candidate
         /// Total filtered out
         [[nodiscard]] size_t TotalFiltered() const noexcept {
             return filteredByAffordability + filteredByEquipped + filteredByCooldown +
-                   filteredByActiveBuff + filteredByRelevance + filteredByDuplication +
+                   filteredByActiveBuff + filteredByDuplication +
                    filteredByFullVitals;
         }
     };

@@ -16,7 +16,6 @@ namespace Huginn::State
 
       // Evaluate current state from state models
       [[nodiscard]] GameState EvaluateCurrentState(
-      const WorldState& world,
       const PlayerActorState& player,
       const TargetCollection& targets) const;
 

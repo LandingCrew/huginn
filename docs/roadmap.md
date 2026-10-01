@@ -404,6 +404,11 @@ stage".
       magnitude/duration, carried count, train count). `hg dump scrolls` and
       `hg dump weights` landed with it, for the pooling pre-check. Apparel
       and weapons still have none.
+      First LoreRim run: 34 of 439 potions Unknown, and on inspection all of
+      them correctly so -- quest potions on scripted effects (Dragon Infusion,
+      Potion of the Phantom), camping kits, Vigilant's stat items, trait
+      elixirs, and Wintersun's Potion of Immolation, whose one effect is a
+      hostile Damage Magicka: a cost to drink, never something to offer.
 
 - [ ] A Defensive spell's element may be a word in its name, not a resistance
       it grants. Found by the #130 review, and the other half of the bug #130
@@ -640,54 +645,16 @@ would notice.
       relevance penalty for an unaffordable spell is wanted at all, and if so
       what the curve is. Until then the option is honest but has only two
       distinct behaviours (M)
-- [ ] **Three tag values have no writer.** `ItemTagExt::Ravage*` and
-      `Damage*Regen` are read by `HasHarmfulSideEffects()` but `PopulateItemTags`
-      never sets them; `WeaponTag::EnchantSilence` has no writer anywhere in
-      `src/`. Either wire them or delete them — as they stand,
-      `HasHarmfulSideEffects()` cannot fire on those grounds (S)
-      A fourth, the other way round: `ItemTagExt::WeaknessElement` HAS a
-      writer but no reader (`IsWeaknessTo` has no caller), and the writer
-      misses most weakness poisons -- it reads `resistVariable` only, so
-      Apothecary's "Weak Aversion to Frost" (Peak, primaryAV = kResistFrost,
-      hostile) tags nothing. Resist POTIONS had the same gap and read
-      primaryAV since the override-potion PR; wire the weakness side the same
-      way if anything ever reads it, or delete it.
-- [ ] **Dead work in Release builds:** `damageRate`, `healingRate`,
-      `damageIncreasing` and `damageDecreasing` are computed unconditionally
-      every tick (`StateManager_HealthTracking.cpp:283-330`, no `_DEBUG` guard)
-      and their only consumer is an ImGui debug widget. Either guard it or wire
-      it — it is also exactly the substrate a future trend feature would need.
-      Adjacent dead code: `SlotAllocator::AllocateSlots` (both overloads), kept
-      as a legacy/test entry point; `IntuitionMenu::SetUrgent` / `setUrgent` /
-      `_urgentSlots`, vestigial with no caller;
-      `maxCandidatesPerCycle` on `ScorerConfig`, still parsed by
-      `ScorerSettings.cpp:47` and read by nothing (0.19.13 removed the INI key
-      only, not the code); `weightWeaponChargeModerate/Low/Critical` on
-      `ContextWeightSettings`, loaded but absent from `ContextWeightConfig` so
-      they reach no consumer — the weapon-charge weight became a continuous
-      `pow()` curve and these three tiers stayed behind (their INI keys were
-      removed in 0.19.13); `FilterStats::filteredByRelevance`, never incremented
-      but still summed;
-      `StateEvaluator::EvaluateCurrentState()`, which takes a
-      `const WorldState&` it never reads (S)
-- [ ] **Code comments that actively mislead**, all found because a doc repeated
-      them. Fixing these is what stops the docs rotting again.
-      `StateManager_Targets.cpp:498` says "Scan ALL process levels (high,
-      middleHigh, middleLow)" above a loop reading `highActorHandles` only — the
-      middle lists were removed for cost, and the doc's headline ally-scanning
-      claim came straight from this line. `ContextRuleEngine.cpp` says "Stage 1a
-      (skeleton): Returns all zeros — no rules implemented yet" above a fully
-      implemented method. `StateManager.h` says "3 locks" and "7 float
-      accumulators"; it is 4 and 11. `StateFeatures.h:17` cites the stale
-      36,288-state figure (it is 48,384 as of v0.21.16, and was 72,576 when
-      this was written — and the file is `src/learning/`, not `src/state/`). `SettingsReloader.cpp:94` says the dMenu INI holds "Widget,
-      Keybindings, Debug" — keybindings moved to the main INI in the 0.19.0
-      split. `FeatureBanditLearner.h` says "~90% confidence at 15 trains"; the
-      sigmoid gives 95.3%. Each verified still present 2026-09-07.
-      Two are already fixed and dropped from this list: the "Semi-gradient
-      TD(0)" claim (0.20.0, with the identifier rename) and
-      `ContextWeightConfig.h`, whose field breakdown now correctly reads 35
-      against 38 (XS each)
+- [ ] **AS2 `setUrgent` / `_urgentSlots` in `Intuition.as`** -- inert, no
+      caller since urgency moved to `SlotVisualState`. The C++ side went in
+      0.22.8 with the rest of this entry's dead code; the AS2 side waits for
+      the next SWF rebuild (XS).
+      Kept on purpose, not dead: `SlotAllocator::AllocateSlots` (Tests.cpp
+      uses it), and the health tracker's damage/healing rates and trends.
+      Those still run every poll with only a debug widget reading them, but
+      the cost is arithmetic over a 10-event ring plus, when a trend flips, one
+      pipeline hash compare -- the hash gate still skips the run -- and they
+      are what a future trend feature would read.
 - [ ] Spell-pattern override file was proposed and never implemented — no
       `m_patterns`, no `pattern=true` parsing, no `Huginn_SpellPatterns.ini`.
       The proposal lived in `reviews/magic-classification.md`, deleted
@@ -698,11 +665,6 @@ would notice.
       scheduling. Related: `Huginn_Overrides.ini` is shared by `SpellRegistry`
       and `ItemRegistry` but the shipped template documents only item types, so
       the spell-type vocabulary `SpellOverrides` parses is undocumented (M)
-- [ ] **Suppress-mode favorites are fully scored every tick to be discarded.**
-      Favorites bypass the `minimumContextWeight` early filter
-      (`UtilityScorer.cpp:77`), then `GetFavoritesMultiplier` returns 0.0, then
-      `minimumUtility` drops them. Low severity, but note that with
-      `fMinimumUtility = 0` suppressed favorites would reappear at utility 0 (XS)
 
 ## Architecture Critique — Backlog
 Tiers 1 and 2 landed (PRs #55-#58); the critique document itself was never

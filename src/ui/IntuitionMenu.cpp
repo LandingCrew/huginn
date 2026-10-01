@@ -309,23 +309,6 @@ namespace Huginn::UI
         });
     }
 
-    void IntuitionMenu::SetUrgent(int index, bool active)
-    {
-        auto* tasks = SKSE::GetTaskInterface();
-        if (!tasks) return;
-
-        tasks->AddUITask([index, active]() {
-            auto* self = GetSingleton();
-            if (!self || !self->m_widget.IsObject()) return;
-
-            std::array<RE::GFxValue, 2> args;
-            args[0] = static_cast<double>(index);
-            args[1] = active;
-
-            self->m_widget.Invoke("setUrgent", nullptr, args.data(), args.size());
-        });
-    }
-
     void IntuitionMenu::SetWidgetAlpha(double alpha)
     {
         auto* tasks = SKSE::GetTaskInterface();

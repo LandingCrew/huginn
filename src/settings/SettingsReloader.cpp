@@ -93,7 +93,7 @@ namespace Huginn::Settings
     {
         logger::info("[SettingsReloader] Reloading (dMenu INI: {})"sv, dMenuIniPath.string());
 
-        // dMenu INI only contains dMenu-managed sections (Widget, Keybindings, Debug).
+        // dMenu INI only contains dMenu-managed sections (Widget, Debug; keybindings moved to the main INI in 0.19.0).
         // Non-dMenu settings always load from the main INI to avoid reading defaults
         // from an incomplete file (dMenu's flush_ini creates a fresh CSimpleIniA).
         const auto mainIniPath = GetMainIniPath();
@@ -124,7 +124,7 @@ namespace Huginn::Settings
         // Phase 1: Reload all settings from INI
         // =====================================================================
         // Non-dMenu settings load from main INI (Scoring, ContextWeights, etc.)
-        // dMenu-managed settings load from dMenu INI (Widget, Keybindings, Debug).
+        // dMenu-managed settings load from dMenu INI (Widget, Debug; keybindings moved to the main INI in 0.19.0).
         // Each INI is parsed ONCE here and handed to every loader via LoadFromIni,
         // instead of each loader re-opening and re-parsing the file itself.
         CSimpleIniA mainIni;

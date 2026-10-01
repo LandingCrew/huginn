@@ -29,11 +29,6 @@ namespace Huginn::State
         weightFallingHigh = ReadClampedFloat(ini, section, "fWeightFallingHigh", ContextWeightDefaults::FALLING_HIGH, 0.0f, 100.0f, "ContextWeightSettings"sv);
         weightLookingAtLock = ReadClampedFloat(ini, section, "fWeightLookingAtLock", ContextWeightDefaults::LOOKING_AT_LOCK, 0.0f, 100.0f, "ContextWeightSettings"sv);
 
-        // Weapon charge
-        weightWeaponChargeModerate = ReadClampedFloat(ini, section, "fWeightWeaponChargeModerate", ContextWeightDefaults::WEAPON_CHARGE_MODERATE, 0.0f, 100.0f, "ContextWeightSettings"sv);
-        weightWeaponChargeLow = ReadClampedFloat(ini, section, "fWeightWeaponChargeLow", ContextWeightDefaults::WEAPON_CHARGE_LOW, 0.0f, 100.0f, "ContextWeightSettings"sv);
-        weightWeaponChargeCritical = ReadClampedFloat(ini, section, "fWeightWeaponChargeCritical", ContextWeightDefaults::WEAPON_CHARGE_CRITICAL, 0.0f, 100.0f, "ContextWeightSettings"sv);
-
         // =====================================================================
         // NEW: NORMALIZED WEIGHTS [0,1] for ContextRuleEngine
         // =====================================================================
@@ -127,10 +122,6 @@ namespace Huginn::State
         weightUnderwater = ContextWeightDefaults::UNDERWATER;
         weightFallingHigh = ContextWeightDefaults::FALLING_HIGH;
         weightLookingAtLock = ContextWeightDefaults::LOOKING_AT_LOCK;
-
-        weightWeaponChargeModerate = ContextWeightDefaults::WEAPON_CHARGE_MODERATE;
-        weightWeaponChargeLow = ContextWeightDefaults::WEAPON_CHARGE_LOW;
-        weightWeaponChargeCritical = ContextWeightDefaults::WEAPON_CHARGE_CRITICAL;
 
         // Normalized weights [0,1]
         weightCriticalHealth = ContextWeightDefaults::CRITICAL_HEALTH;

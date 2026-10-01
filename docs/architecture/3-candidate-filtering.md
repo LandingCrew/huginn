@@ -166,9 +166,8 @@ drift (`CooldownManager.cpp:14`).
 
 ### 2.6 FilterStats
 
-`FilterStats` (`CandidateFilters.h:18`) counts what each stage removed. Note that
-`filteredByRelevance` is **dead** — nothing increments it since the relevance filter was
-removed. It is still summed into `TotalFiltered()`, harmlessly.
+`FilterStats` (`CandidateFilters.h:18`) counts what each stage removed. (Its
+`filteredByRelevance` counter, dead since the relevance filter went, was removed in 0.22.8.)
 
 > **The relevance filter is gone.** `baseRelevance` no longer exists on `CandidateBase`, and
 > neither does the `GetRelevance()` helper. Context-based exclusion now happens in
@@ -368,11 +367,9 @@ These two thresholds are what replaced the removed `baseRelevance` filter:
 | `coldStartUCBBoost` | `fColdStartUCBBoost` | `0.2` |
 | `topNCandidates` | `iTopNCandidates` | `10` |
 
-> `maxCandidatesPerCycle` is parsed by `ScorerSettings` and
-> stored on `ScorerConfig`, but nothing reads it — the scoring loop is bounded only by
-> `maxCandidatesAfterFilter` upstream. Dead setting — the `iMaxCandidatesPerCycle`
-> KEY was removed from the shipped INI in 0.19.13; the parsing code and the
-> `ScorerConfig` field are still there and still dead, tracked on the roadmap.
+> The scoring loop is bounded only by `maxCandidatesAfterFilter` upstream.
+> `maxCandidatesPerCycle` used to be parsed and stored here but was never read;
+> its INI key went in 0.19.13 and the code in 0.22.8.
 
 ---
 

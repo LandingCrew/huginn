@@ -521,8 +521,9 @@ namespace Huginn::State
       // FOLLOWER SCANNING (v0.6.10 bugfix: moved outside combat)
       // =========================================================================
       // Scan for nearby allies (player teammates) ALWAYS (not just in combat).
-      // v0.6.12: Scan ALL process levels (high, middleHigh, middleLow)
-      // Distant allies may be in lower process levels when not in combat.
+      // Scans highActorHandles only: the middle-high and middle-low lists
+      // were dropped for cost, so a distant ally in a lower process level is
+      // not found (v0.6.12 scanned all three).
       // =========================================================================
       {
         auto* processLists = RE::ProcessLists::GetSingleton();

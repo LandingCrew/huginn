@@ -147,7 +147,7 @@ void PipelineCoordinator::GatherState(PipelineContext& ctx)
 
     // Evaluate GameState from the already-fetched snapshots (no extra copies)
     ctx.currentState = g_stateEvaluator->EvaluateCurrentState(
-        ctx.worldState, ctx.playerState, ctx.targets);
+        ctx.playerState, ctx.targets);
     ctx.stateHash = ctx.currentState.GetHash();
 
     // Check if elemental damage requires pipeline run despite unchanged hash

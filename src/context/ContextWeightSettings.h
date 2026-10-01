@@ -27,11 +27,6 @@ namespace Huginn::State
         inline constexpr float FALLING_HIGH = 8.0f;
         inline constexpr float LOOKING_AT_LOCK = 10.0f;
 
-        // Weapon charge (OLD SCALE: 0-10)
-        inline constexpr float WEAPON_CHARGE_MODERATE = 5.0f;   // 25% threshold
-        inline constexpr float WEAPON_CHARGE_LOW = 6.0f;        // 20% threshold
-        inline constexpr float WEAPON_CHARGE_CRITICAL = 9.0f;   // 5% threshold
-
         // =====================================================================
         // NEW: NORMALIZED WEIGHTS [0,1] for ContextRuleEngine
         // =====================================================================
@@ -146,11 +141,6 @@ namespace Huginn::State
         float weightUnderwater = ContextWeightDefaults::UNDERWATER;
         float weightFallingHigh = ContextWeightDefaults::FALLING_HIGH;
         float weightLookingAtLock = ContextWeightDefaults::LOOKING_AT_LOCK;
-
-        // --- Weapon charge ---
-        float weightWeaponChargeModerate = ContextWeightDefaults::WEAPON_CHARGE_MODERATE;
-        float weightWeaponChargeLow = ContextWeightDefaults::WEAPON_CHARGE_LOW;
-        float weightWeaponChargeCritical = ContextWeightDefaults::WEAPON_CHARGE_CRITICAL;
 
         // =====================================================================
         // NEW: NORMALIZED WEIGHTS [0,1] for ContextRuleEngine
