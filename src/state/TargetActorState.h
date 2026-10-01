@@ -304,6 +304,23 @@ namespace Huginn::State
       return primary->targetType;
       }
 
+      // Distance band of the closest living hostile (GameState::distance and
+      // the target digest both use this, so they cannot disagree). No hostile
+      // = Ranged, matching the learner's distanceNorm = 1.
+      [[nodiscard]] DistanceBucket ClosestEnemyDistanceBucket() const noexcept {
+      const auto enemy = GetClosestEnemy();
+      if (!enemy.has_value()) {
+        return DistanceBucket::Ranged;
+      }
+      if (enemy->distanceToPlayerSq <= DistanceThresholds::EVAL_MELEE_MAX_SQ) {
+        return DistanceBucket::Melee;
+      }
+      if (enemy->distanceToPlayerSq <= DistanceThresholds::EVAL_MID_MAX_SQ) {
+        return DistanceBucket::Mid;
+      }
+      return DistanceBucket::Ranged;
+      }
+
       // Check if target exists
       [[nodiscard]] bool Contains(RE::FormID formID) const noexcept {
       return Find(formID) != nullptr;

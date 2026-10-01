@@ -344,7 +344,7 @@ graph LR
 
 | Struct | Purpose | Details |
 |--------|---------|---------|
-| `GameState` | Discretized buckets for the pipeline skip-check — 16,128 states, bases `[6, 6, 7, 4, 2, 2, 2, 2]` (health, magicka, targetType, enemyCount, allyInjured, anyCasting, inCombat, isSneaking). Stamina and distance are excluded from the hash (nothing that scores reads the distance bucket); `allyStatus` enters it as one bit (is it `InjuredPresent`) rather than its three states; `targetType` is the primary's type only when it is a living hostile (`TargetCollection::ScoringTargetType`), so townspeople under the crosshair read as None. | See [4-contextual-bandits.md](4-contextual-bandits.md) |
+| `GameState` | Discretized buckets for the pipeline skip-check — 48,384 states, bases `[6, 6, 3, 7, 4, 2, 2, 2, 2]` (health, magicka, distance, targetType, enemyCount, allyInjured, anyCasting, inCombat, isSneaking). Stamina is excluded from the hash; `distance` is the closest living hostile's band (`ClosestEnemyDistanceBucket`, the actor the learner's `distanceNorm` measures), not the crosshair primary's; `allyStatus` enters it as one bit (is it `InjuredPresent`) rather than its three states; `targetType` is the primary's type only when it is a living hostile (`TargetCollection::ScoringTargetType`), so townspeople under the crosshair read as None. | See [4-contextual-bandits.md](4-contextual-bandits.md) |
 
 ### Stage 2: Candidate Generator
 

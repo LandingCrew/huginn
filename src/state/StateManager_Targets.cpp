@@ -753,8 +753,10 @@ namespace Huginn::State
       // The type scoring sees, not the raw one: a townsperson under the
       // crosshair is None to GameState, so it must be None here too.
       digest.primaryTargetType = m_targets.ScoringTargetType();
-      // No distance: the bucket is not hashed (see GameState::distance).
       }
+
+      // Outside the primary block: it is the closest hostile, not the primary.
+      digest.closestEnemyDistance = m_targets.ClosestEnemyDistanceBucket();
 
       // Scoring consumes the ANY-hostile-casting aggregate (ContextRuleEngine
       // ward weights, GameState::anyCasting) — a background caster must produce

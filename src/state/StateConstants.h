@@ -190,8 +190,8 @@ namespace Huginn::State
       // === 3-bucket evaluator scheme (GameState DistanceBucket) ===
       // Melee ≤ 256 < Mid ≤ 768 < Ranged. Distinct from the 4-bucket
       // target-tracking scheme above — the two schemes coexist; do not conflate.
-      // StateEvaluator::EvaluateDistance buckets with these. The bucket is
-      // logged but not hashed: nothing that scores reads it (GameState::distance).
+      // TargetCollection::ClosestEnemyDistanceBucket buckets with these, for
+      // GameState::distance and the pipeline-skip digest alike.
       // Units: Skyrim distance units (squared variants for sqrt-free comparison)
       inline constexpr float EVAL_MELEE_MAX = 256.0f;
       inline constexpr float EVAL_MID_MAX = 768.0f;

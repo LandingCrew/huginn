@@ -825,7 +825,7 @@ graph TB
 | Consumer | Uses | Purpose |
 |----------|------|---------|
 | **PipelineCoordinator** | WorldState, PlayerActorState, TargetCollection, HealthTrackingState | Snapshots state once per tick into `PipelineContext`, passes it to each step |
-| **StateEvaluator** | PlayerActorState, TargetCollection | Discretize to `GameState` + hash (16,128 states) |
+| **StateEvaluator** | PlayerActorState, TargetCollection | Discretize to `GameState` + hash (48,384 states) |
 | **CandidateGenerator** | PlayerActorState | Gather available spells/potions/weapons/ammo/scrolls/soul gems |
 | **ContextRuleEngine** | PlayerActorState, TargetCollection, WorldState | Evaluate context rules → `ContextWeightMap`; also names the tick's `ContextReason` |
 | **StateFeatures** | PlayerActorState, TargetCollection | Build the 18-float feature vector for `FeatureBanditLearner` |
@@ -984,7 +984,7 @@ graph TB
     Raw[Raw State Types<br/>Continuous floats, booleans] --> CW[Context Weights<br/>ContextRuleEngine]
     Raw --> Disc[Discretized State<br/>StateEvaluator]
 
-    Disc --> GS["GameState<br/>6×6×7×4×2×2×2×2<br/>= 16,128 states"]
+    Disc --> GS["GameState<br/>6×6×3×7×4×2×2×2×2<br/>= 48,384 states"]
     GS --> Skip[Pipeline hash-skip<br/>+ PotionDiscriminator]
 
     Raw --> FV[Feature Vector<br/>18 normalized floats]
@@ -1003,7 +1003,7 @@ graph TB
 | Level | Purpose | Granularity | Consumer |
 |-------|---------|-------------|----------|
 | **Raw State** (6 state types) | Context weights, candidate gathering, slot allocation | Continuous floats, booleans | ContextRuleEngine, CandidateGenerator, OverrideManager |
-| **Discretized State** (`GameState`) | Pipeline skip gate + potion discrimination | Bucketed enums, 8 hashed dimensions (stamina and distance excluded from the hash but kept in the struct; `allyStatus` hashed as one bit of its three states) | `CheckHashSkip`, `PotionDiscriminator` |
+| **Discretized State** (`GameState`) | Pipeline skip gate + potion discrimination | Bucketed enums, 9 hashed dimensions (stamina excluded from the hash but kept in the struct; `allyStatus` hashed as one bit of its three states) | `CheckHashSkip`, `PotionDiscriminator` |
 | **Feature Vector** (`StateFeatures`) | Feature-based contextual bandit learning | 18 normalized floats | FeatureBanditLearner (linear function approximation) |
 
 **`GameState` dimensions** ([GameState.h](../../src/state/GameState.h)):
@@ -1013,7 +1013,7 @@ graph TB
 | `health` | `HealthBucket` | 6 | Critical ≤10%, VeryLow ≤25%, Low ≤40%, Medium ≤60%, High ≤80%, VeryHigh >80% |
 | `magicka` | `MagickaBucket` | 6 | Same edges |
 | `stamina` | `StaminaBucket` | 6 | Same edges — **in the struct, excluded from the hash** |
-| `distance` | `DistanceBucket` | 3 | Melee ≤256, Mid ≤768, Ranged >768 units — **in the struct, excluded from the hash** (nothing that scores reads it; the learner's distance feature is to the closest enemy) |
+| `distance` | `DistanceBucket` | 3 | Melee ≤256, Mid ≤768, Ranged >768 units — to the **closest living hostile** (the actor the learner's `distanceNorm` measures), not the crosshair primary; no hostile = Ranged |
 | `targetType` | `TargetType` | 7 | None, Humanoid, Undead, Beast, Dragon, Construct, Daedra — the primary's type only when it is a living hostile (`ScoringTargetType`); otherwise None |
 | `enemyCount` | `EnemyCountBucket` | 4 | None(0), One(1-10), Few(11-30), Many(31+) — thresholds are 20%/60% of `MAX_TRACKED_TARGETS` |
 | `allyStatus` | `AllyStatus` | 3 in the struct, **2 in the hash** | None, Present, InjuredPresent (any non-hostile living target below 30% HP). The hash asks only `== InjuredPresent`: None/Present is the distinction nothing reads, and all of the observed flapping. |
@@ -1021,14 +1021,13 @@ graph TB
 | `inCombat` | `CombatStatus` | 2 | NotInCombat, InCombat |
 | `isSneaking` | `SneakStatus` | 2 | NotSneaking, Sneaking |
 
-`GetHash()` is a multi-radix encode over bases `{6, 6, 7, 4, 2, 2, 2, 2}`,
-with the multipliers computed at compile time, giving `kTotalStates = 16,128`.
-The un-reduced space — stamina and distance hashed, ally count kept separate
-from the injured flag — would be 870,912, a 54× reduction. Four narrowings get
-there: collapsing the two ally dimensions into `AllyStatus` removed a factor of
-2, excluding stamina removed a factor of 6, narrowing `allyStatus` from three
-states to its injured bit (v0.21.15) removed a factor of 1.5, and excluding
-distance (v0.22.5) removed a factor of 3.
+`GetHash()` is a multi-radix encode over bases `{6, 6, 3, 7, 4, 2, 2, 2, 2}`,
+with the multipliers computed at compile time, giving `kTotalStates = 48,384`.
+The un-reduced space — stamina hashed, ally count kept separate from the injured
+flag — would be 870,912, an 18× reduction. Three narrowings get there:
+collapsing the two ally dimensions into `AllyStatus` removed a factor of 2,
+excluding stamina removed a factor of 6, and narrowing `allyStatus` from three
+states to its injured bit (v0.21.15) removed a factor of 1.5.
 
 Stamina and `allyStatus` are narrowed for different reasons, and the difference
 decides how far either can go. Stamina IS read — `PotionDiscriminator` reads it
@@ -1340,7 +1339,7 @@ source of TargetSource::Crosshair. -->
 | **Event Enrichment** | `DamageEventSink` (TESHitEvent) → HealthTrackingState → effect flags | Working well | ✅ Complete |
 | **Thread Safety** | Copy-out + compare-and-swap, 4 mutexes, atomics for cross-thread flags | Correct pattern | ✅ Complete |
 | **Pipeline Skip** | Two-tier: sensor dirty flag + hash comparison, with unhashed-state bypasses | Implemented | ✅ Complete |
-| **State Space** | 16,128 hashed states (54× reduction from the un-reduced 870,912) | Skip gate + potion discrimination only | ✅ Complete |
+| **State Space** | 48,384 hashed states (18× reduction from the un-reduced 870,912) | Skip gate + potion discrimination only | ✅ Complete |
 | **Memory Usage** | ~6 KB (hand-computed) | Within the 10 KB budget | ✅ Complete |
 | **Learning Persistence** | SKSE cosave, `BNDW` records, positional feature migration | Per-character persistence | ✅ Complete |
 | **Pipeline State Cache** | Caches scored candidates per cycle; timestamp refreshed even on a skip | External equip attribution | ✅ Complete |

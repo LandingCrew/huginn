@@ -467,8 +467,8 @@ key, is already a PotionsAny slot with overrides on.
       - the slot hold (`bHoldSeatedItems`, `fChallengerMargin` = 25%, v0.21.27);
       - `sPotionTierPreference`;
       - the combat/casting debounce and VitalEnvelope (v0.21.30-31), then
-        target type for hostiles only, distance out of the hash and the
-        darkness enter delay (v0.22.5);
+        target type for hostiles only, distance from the closest hostile
+        rather than the crosshair, and the darkness enter delay (v0.22.5);
       - a dedup-emptied slot refilled in the same pass (#146).
       Result: 154 changes per 5 min went to ~35, near-ties to ~0, and
       swap-backs from 1 in 5 to ~1 in 8-11. The last simonrim run had 12/12

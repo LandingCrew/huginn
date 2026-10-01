@@ -1594,8 +1594,8 @@ void RunUnitTests()
     }
 
     // Test 2: Maximum hash (all max values)
-    // Hash states: 6×6×7×4×2×2×2×2 = 16,128, so max hash = 16,127.
-    // Stamina and distance are excluded entirely; allyStatus contributes its INJURED BIT,
+    // Hash states: 6×6×3×7×4×2×2×2×2 = 48,384, so max hash = 48,383.
+    // Stamina is excluded entirely; allyStatus contributes its INJURED BIT,
     // so InjuredPresent below is the maximum that dimension can take.
     GameState state2{
         .health = HealthBucket::VeryHigh,
@@ -1615,12 +1615,12 @@ void RunUnitTests()
         return;
     }
 
-    // Test 3: Hash uniqueness for all 16,128 states (stamina and distance
-    // excluded; allyStatus enumerated as its two HASHED values, not its three)
+    // Test 3: Hash uniqueness for all 48,384 states (stamina excluded;
+    // allyStatus enumerated as its two HASHED values, not its three)
     std::set<uint32_t> seenHashes;
     for (uint8_t h = 0; h < 6; ++h) {
         for (uint8_t m = 0; m < 6; ++m) {
-            {
+            for (uint8_t d = 0; d < 3; ++d) {
                 for (uint8_t t = 0; t < 7; ++t) {
                     for (uint8_t ec = 0; ec < 4; ++ec) {
                         // Two values, not three: the hash reads only whether
@@ -1635,7 +1635,7 @@ void RunUnitTests()
                                         .health = static_cast<HealthBucket>(h),
                                         .magicka = static_cast<MagickaBucket>(m),
                                         .stamina = StaminaBucket::Medium,  // Arbitrary — excluded from hash
-                                        .distance = DistanceBucket::Mid,  // Arbitrary — excluded from hash
+                                        .distance = static_cast<DistanceBucket>(d),
                                         .targetType = static_cast<TargetType>(t),
                                         .enemyCount = static_cast<EnemyCountBucket>(ec),
                                         .allyStatus = as,
@@ -1719,25 +1719,49 @@ void RunUnitTests()
         return;
     }
 
-    // Test 3d: distance doesn't affect the hash. Nothing that scores reads
-    // the bucket (GameState::distance), so a sweep past townspeople at
-    // different ranges must not wake the pipeline.
+    // Test 3d: the distance bucket is the CLOSEST LIVING HOSTILE's, not the
+    // crosshair primary's. A townsperson at arm's length leaves it Ranged (no
+    // wake on a sweep); a hostile closing in moves it (the learner scores on
+    // that distance -- /code-review #160).
     {
-        auto distState = [](DistanceBucket d) {
-            return GameState{
-                .health = HealthBucket::Medium, .magicka = MagickaBucket::Medium,
-                .stamina = StaminaBucket::Medium, .distance = d,
-                .targetType = TargetType::None, .enemyCount = EnemyCountBucket::None,
-                .allyStatus = AllyStatus::None, .anyCasting = CastingStatus::NoneCasting,
-                .inCombat = CombatStatus::NotInCombat,
-                .isSneaking = SneakStatus::NotSneaking
-            };
+        auto actor = [](RE::FormID id, float dist, bool hostile, bool dead) {
+            TargetActorState a;
+            a.actorFormID = id;
+            a.distanceToPlayerSq = dist * dist;
+            a.isHostile = hostile;
+            a.isDead = dead;
+            return a;
         };
-        if (distState(DistanceBucket::Melee).GetHash() != distState(DistanceBucket::Ranged).GetHash() ||
-            distState(DistanceBucket::Mid).GetHash() != distState(DistanceBucket::Ranged).GetHash()) {
-            logger::error("TEST FAIL: Distance should not affect hash! Melee={}, Mid={}, Ranged={}"sv,
-                distState(DistanceBucket::Melee).GetHash(), distState(DistanceBucket::Mid).GetHash(),
-                distState(DistanceBucket::Ranged).GetHash());
+        TargetCollection targets;
+        const auto townsperson = actor(0x40001, 100.0f, false, false);
+        targets.InsertOrUpdate(townsperson.actorFormID, townsperson);
+        targets.primary = townsperson;
+        if (targets.ClosestEnemyDistanceBucket() != DistanceBucket::Ranged) {
+            logger::error("TEST FAIL: a townsperson in melee range must leave distance Ranged"sv);
+            return;
+        }
+        const auto bandit = actor(0x40002, 2000.0f, true, false);
+        targets.InsertOrUpdate(bandit.actorFormID, bandit);
+        if (targets.ClosestEnemyDistanceBucket() != DistanceBucket::Ranged) {
+            logger::error("TEST FAIL: a hostile at 2000 should be Ranged"sv);
+            return;
+        }
+        targets.InsertOrUpdate(bandit.actorFormID, actor(0x40002, 500.0f, true, false));
+        if (targets.ClosestEnemyDistanceBucket() != DistanceBucket::Mid) {
+            logger::error("TEST FAIL: a hostile at 500 should be Mid"sv);
+            return;
+        }
+        targets.InsertOrUpdate(bandit.actorFormID, actor(0x40002, 200.0f, true, false));
+        if (targets.ClosestEnemyDistanceBucket() != DistanceBucket::Melee) {
+            logger::error("TEST FAIL: a hostile at 200 should be Melee"sv);
+            return;
+        }
+        // A corpse at the player's feet does not count; the living bandit does.
+        targets.InsertOrUpdate(bandit.actorFormID, actor(0x40002, 600.0f, true, false));
+        const auto corpse = actor(0x40003, 50.0f, true, true);
+        targets.InsertOrUpdate(corpse.actorFormID, corpse);
+        if (targets.ClosestEnemyDistanceBucket() != DistanceBucket::Mid) {
+            logger::error("TEST FAIL: a dead hostile must not set the distance bucket"sv);
             return;
         }
     }
@@ -1783,7 +1807,7 @@ void RunUnitTests()
         }
     }
 
-    logger::info("TEST PASS: All hash tests passed! {} unique states verified, stamina and distance excluded, allyStatus hashed as its injured bit, target type hostile-only."sv, GameState::kTotalStates);
+    logger::info("TEST PASS: All hash tests passed! {} unique states verified, stamina excluded, distance from the closest hostile, allyStatus hashed as its injured bit, target type hostile-only."sv, GameState::kTotalStates);
 
     // === DarknessGate: band + dwell both ways, a new place taken at once ===
     {

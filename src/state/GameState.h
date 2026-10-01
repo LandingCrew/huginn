@@ -128,8 +128,8 @@ namespace Huginn::State
    }
 
    // Complete game state representation
-   // Hash states: 6 × 6 × 7 × 4 × 2 × 2 × 2 × 2 = 16,128
-   // (stamina and distance excluded entirely; allyStatus hashed as 2 states, not 3)
+   // Hash states: 6 × 6 × 3 × 7 × 4 × 2 × 2 × 2 × 2 = 48,384
+   // (stamina excluded entirely; allyStatus hashed as 2 states, not 3)
    struct GameState
    {
       // Player vitals
@@ -138,13 +138,14 @@ namespace Huginn::State
       StaminaBucket stamina;      // 6 states (KEPT in struct for PotionDiscriminator, excluded from hash)
 
       // Target context
-      // 3 states in the struct, NONE in the hash. Nothing that scores reads
-      // the bucket: no context rule keys on it, and the learner's distance
-      // feature is the continuous distance to the CLOSEST ENEMY, not to the
-      // crosshair target this buckets. Hashing it only woke the pipeline as
-      // the view swept past townspeople at different ranges, to recompute an
-      // answer none of whose inputs depended on it (LoreRim 2026-09-25:
-      // target/distance behind 12 of 40 swap-backs). Kept for ToString/Diff.
+      // 3 states. Distance to the CLOSEST LIVING HOSTILE, the actor the
+      // learner's distanceNorm measures -- not to the crosshair primary.
+      // Bucketing the primary woke the pipeline as the view swept past
+      // townspeople at different ranges (LoreRim 2026-09-25: target/distance
+      // behind 12 of 40 swap-backs), yet the bucket has to stay in the hash:
+      // the learner scores on distance, so an enemy charging from range into
+      // melee must re-score even when nothing else moves (/code-review #160).
+      // No hostile = Ranged, matching distanceNorm = 1.
       DistanceBucket distance;
       TargetType targetType;      // 7 states (None, Humanoid, Undead, Beast, Dragon, Construct, Daedra)
 
@@ -190,11 +191,10 @@ namespace Huginn::State
       // Stamina excluded: PotionDiscriminator reads it directly, ContextRuleEngine uses raw float
       // AllyStatus narrowed to its injured bit: None and Present are the half
       // nothing reads, and all of the observed flapping (see the field)
-      // Distance excluded: nothing that scores reads it (see the field)
-      // Multi-radix bases: [6, 6, 7, 4, 2, 2, 2, 2]
+      // Multi-radix bases: [6, 6, 3, 7, 4, 2, 2, 2, 2]
       // Multipliers computed at compile time from bases (right-to-left product)
    private:
-      static constexpr uint32_t kBases[] = { 6, 6, 7, 4, 2, 2, 2, 2 };
+      static constexpr uint32_t kBases[] = { 6, 6, 3, 7, 4, 2, 2, 2, 2 };
       static constexpr size_t kDims = std::size(kBases);
 
       // Compute multiplier for dimension i: product of bases[i+1..N-1]
@@ -209,19 +209,20 @@ namespace Huginn::State
       uint32_t t = 1;
       for (auto b : kBases) t *= b;
       return t;
-      }();  // 16,128
+      }();  // 48,384
 
       [[nodiscard]] uint32_t GetHash() const noexcept
       {
       return static_cast<uint32_t>(health)      * Multiplier(0) +
              static_cast<uint32_t>(magicka)     * Multiplier(1) +
-             static_cast<uint32_t>(targetType)  * Multiplier(2) +
-             static_cast<uint32_t>(enemyCount)  * Multiplier(3) +
+             static_cast<uint32_t>(distance)    * Multiplier(2) +
+             static_cast<uint32_t>(targetType)  * Multiplier(3) +
+             static_cast<uint32_t>(enemyCount)  * Multiplier(4) +
              // The injured BIT, not the 3-state value -- see the field comment.
              static_cast<uint32_t>(allyStatus == AllyStatus::InjuredPresent)
-                                                * Multiplier(4) +
-             static_cast<uint32_t>(anyCasting)  * Multiplier(5) +
-             static_cast<uint32_t>(inCombat)    * Multiplier(6) +
+                                                * Multiplier(5) +
+             static_cast<uint32_t>(anyCasting)  * Multiplier(6) +
+             static_cast<uint32_t>(inCombat)    * Multiplier(7) +
              static_cast<uint32_t>(isSneaking);
       }
 

@@ -435,6 +435,7 @@ namespace Huginn::State
       {
          RE::FormID primaryFormID = 0;
          TargetType primaryTargetType = TargetType::None;
+         DistanceBucket closestEnemyDistance = DistanceBucket::Ranged;
          int enemyCount = 0;
          int allyCount = 0;
          bool hasInjuredAlly = false;
