@@ -13,6 +13,9 @@ entries named.
    Decided with the user 2026-10-01 as the next real piece of work: it is
    the one entry that addresses the decay criticism, the cold start and
    (later) item differentiation together.
+   First step is the pre-check: run `hg dump weights` and `hg dump potions`
+   (v0.22.7, debug builds) on the LoreRim save, group by class/subclass,
+   and see whether the classes differ.
 
 **What Huginn is measured by** (the user, 2026-10-01). Two objective
 metrics; everything else is a proxy:
@@ -244,6 +247,13 @@ stage".
       same dwell as combat and darkness. Re-measure first: the stamina side
       may have been a real need (sp 22% at 21:36:18).
       Raised 2026-09-30.
+      **Root cause (the user, 2026-10-01): the play, not the sensor.** They
+      were kiting at low health while trying to heal -- heal, get hit, drop,
+      run (stamina spent), heal again -- so health and stamina really were
+      trading places as the most urgent need every few seconds. The open
+      question still stands: is it right for one slot to follow a need that
+      flips that fast, or should a slot hold through a kite cycle? Re-measure
+      in a fight that is not a kite before tuning the margin.
 
 - [ ] **The enemy count drops to None and back mid-fight.** LoreRim
       2026-10-01 18:17:47-18:01, one humanoid: `Enemies:One->None` and back
@@ -382,6 +392,11 @@ stage".
       Wants one `hg dump forms` covering every classified form type, with the
       inputs beside the verdict, in the same throwaway spirit as the spell one.
       Raised 2026-09-24.
+      **Potions done (v0.22.7):** `hg dump potions` covers potions and
+      poisons (type, subclass, magnitude, duration, value, tags, per-effect
+      magnitude/duration, carried count, train count). `hg dump scrolls` and
+      `hg dump weights` landed with it, for the pooling pre-check. Apparel
+      and weapons still have none.
 
 - [ ] A Defensive spell's element may be a word in its name, not a resistance
       it grants. Found by the #130 review, and the other half of the bug #130
@@ -841,5 +856,37 @@ trigger to pick any of it up.
         within a class differ. If not, pooling needs finer classes, or the
         differentiation work first.
       Memory is not a constraint: the learner is under 300 KB.
+      **Pre-check result (LoreRim, 2026-10-01, `hg dump weights`, v0.22.7):
+      classes do NOT differ, so pooling as written would do little.**
+      - Thin data: 66 items, 298 trains. 34 items have 2 trains or fewer and
+        9 have 10 or more, so mean confidence is low and the learned term is
+        mostly gated off anyway.
+      - Class does not predict weight shape. Mean cosine similarity between
+        weight vectors, excluding food: 0.54 within a class, 0.63 BETWEEN
+        classes. Food within its class: ~0.
+      - The vectors record the STATE an item was used in, not the item. The
+        always-on features (bias, healthPct, magickaPct, staminaPct, all ~1
+        outside a fight) move together, and 29 of 66 vectors are a scaled
+        copy of one or two feature vectors. Tier siblings (Restore Magicka
+        Diluted / Faint / Fair) differ only in train count.
+      - So a class-mean warm start (A) would seed nearly the same "used out of
+        combat at full resources" vector into every class: a popularity prior,
+        not item knowledge. Situational relevance lives in ContextRuleEngine,
+        not in the learner.
+      Implication: the bottleneck is what the features can say, not the lack
+      of pooling. Before (A), decide what the learner should learn that the
+      rules do not -- and note that a per-class or per-mode USE COUNT
+      ("Behavioural modes as a recall stage") may capture everything the
+      learner currently does. One save, small sample: re-run after a longer
+      session before treating this as settled.
+      **The sample is not representative (the user):** weights were reset
+      often during recent patch testing, to simulate a new character, and
+      test sessions poison them with false activations. The thin-data and
+      cold-start numbers are still what a NEW character sees; the "classes
+      do not differ" finding needs a clean save played normally to confirm.
+      The cold start, measured the same day (`hg dump potions` / `scrolls`):
+      63 of 69 carried potions and 46 of 52 carried scrolls have NEVER been
+      trained. Most of the inventory is invisible to the learner, so it is
+      the cold start, not the weights, that matters most.
 - [ ] Addendum #15/#16 (Kalman learner / learnable context weights) — **parked**: needs a v3
       cosave bump, NOT landable during an active soak run

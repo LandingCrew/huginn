@@ -17,6 +17,11 @@
 #include "learning/ExternalEquipLearner.h"
 #include "spell/SpellRegistry.h"
 #include "learning/item/ItemClassifier.h"
+#include "scroll/ScrollClassifier.h"
+#include "weapon/WeaponClassifier.h"
+#include "util/InventoryUtil.h"
+#include <cmath>
+#include <filesystem>
 #include <fstream>
 #include <unordered_set>
 #include "context/ContextWeightSettings.h"
@@ -813,6 +818,297 @@ namespace Huginn::Console
       Print(msg.c_str());
       logger::info("[Console] {} -> {}"sv, msg, filePath.string());
    }
+
+   // Shared by the three dumps below: open <SKSE log dir>/<fileName>, or say
+   // why not on the console and return false.
+   static bool OpenDumpFile(std::string_view fileName, std::ofstream& out,
+                            std::filesystem::path& filePath)
+   {
+      const auto logDir = SKSE::log::log_directory();
+      if (!logDir) {
+         Print("No SKSE log directory - cannot write the dump");
+         return false;
+      }
+      filePath = *logDir / fileName;
+      out.open(filePath, std::ios::trunc);
+      if (!out) {
+         const auto msg = std::format("Could not open {} for writing", fileName);
+         Print(msg.c_str());
+         logger::error("[Console] Failed to open {} for writing"sv, filePath.string());
+         return false;
+      }
+      return true;
+   }
+
+   // Same quoting rules as the spell dump: always quoted, quotes doubled,
+   // newlines folded to a space so line-counting tools stay honest.
+   static std::string CsvQuote(std::string_view text)
+   {
+      std::string quoted;
+      quoted.reserve(text.size() + 2);
+      quoted += '"';
+      for (const char c : text) {
+         if (c == '\r' || c == '\n') { quoted += ' '; continue; }
+         if (c == '"') quoted += '"';
+         quoted += c;
+      }
+      quoted += '"';
+      return quoted;
+   }
+
+   static std::string_view PluginOf(const RE::TESForm* form)
+   {
+      const auto* file = form ? form->GetFile(0) : nullptr;
+      return file ? file->GetFilename() : ""sv;
+   }
+
+   // The one sub-classification an item carries, whichever field its type
+   // fills: element for resists, school/skill for fortifies. "-" if none.
+   static std::string_view ItemSubclass(const Item::ItemData& data)
+   {
+      if (data.element != Item::ElementType::None)      return Item::ElementTypeToString(data.element);
+      if (data.school != Item::MagicSchool::None)       return Item::MagicSchoolToString(data.school);
+      if (data.combatSkill != Item::CombatSkill::None)  return Item::CombatSkillToString(data.combatSkill);
+      if (data.utilitySkill != Item::UtilitySkill::None) return Item::UtilitySkillToString(data.utilitySkill);
+      return "-"sv;
+   }
+
+   // `hg dump weights` -- every item the learner holds, one row each: what
+   // it is (kind / class / subclass), how much it has been trained, how
+   // stale it is, and its full weight vector.
+   //
+   // The pre-check for pooling (roadmap, "Share learning across similar
+   // items"): pooling seeds an item from its class, which only helps if the
+   // classes actually differ from each other. Group this file by class and
+   // subclass and compare -- the potion classes are the doubtful ones.
+   //
+   // Classified with fresh classifiers (the spell registry's when loaded, for
+   // its overrides), so the registries' caches are untouched.
+   static void Cmd_DumpWeights(std::string_view /*arg*/)
+   {
+      if (!g_featureBanditLearner) {
+         Print("FeatureBanditLearner not initialized (load a game first)");
+         return;
+      }
+      std::ofstream out;
+      std::filesystem::path filePath;
+      if (!OpenDumpFile("Huginn_Weights.csv"sv, out, filePath)) return;
+
+      // Copy out under the learner's lock, classify outside it.
+      std::vector<Learning::FeatureBanditLearner::SerializedEntry> entries;
+      uint32_t totalTrains = 0;
+      g_featureBanditLearner->ExportData(
+         [&entries](Learning::FeatureBanditLearner::SerializedEntry entry) {
+            entries.push_back(entry);
+         },
+         totalTrains);
+
+      Spell::SpellClassifier fallbackSpells;
+      const auto& spellClassifier = g_spellRegistry ? g_spellRegistry->GetClassifier() : fallbackSpells;
+      const Scroll::ScrollClassifier scrollClassifier(spellClassifier);
+      Item::ItemClassifier itemClassifier;
+      Weapon::WeaponClassifier weaponClassifier;
+
+      out << "formID,plugin,name,kind,class,subclass,trainCount,confidence,minutesSinceUpdate,weightNorm";
+      for (const char* feature : kFeatureNames) out << ',' << feature;
+      out << '\n';
+
+      size_t unresolved = 0;
+      for (const auto& entry : entries) {
+         std::string_view kind = "unresolved"sv, cls = "-"sv, sub = "-"sv;
+         std::string clsOwned, subOwned;  // for classifier strings built at runtime
+         auto* form = RE::TESForm::LookupByID(entry.formID);
+         const char* name = form ? form->GetName() : nullptr;
+
+         if (!form) {
+            // Pseudo-items (Unarmed and the like) and forms from a plugin
+            // that is no longer loaded.
+            ++unresolved;
+         } else if (auto* scroll = form->As<RE::ScrollItem>()) {
+            const auto data = scrollClassifier.ClassifyScroll(scroll);
+            kind = "Scroll"sv;
+            cls = Spell::SpellTypeToString(data.type);
+            sub = Spell::ElementTypeToString(data.element);
+         } else if (auto* spell = form->As<RE::SpellItem>()) {
+            const auto data = spellClassifier.ClassifySpell(spell);
+            kind = "Spell"sv;
+            cls = Spell::SpellTypeToString(data.type);
+            sub = data.element != Spell::ElementType::None
+               ? Spell::ElementTypeToString(data.element)
+               : Spell::MagicSchoolToString(data.school);
+         } else if (auto* alchemy = form->As<RE::AlchemyItem>()) {
+            const auto data = itemClassifier.ClassifyItem(alchemy);
+            kind = alchemy->IsFood() ? "Food"sv : (data.isHostile ? "Poison"sv : "Potion"sv);
+            cls = Item::ItemTypeToString(data.type);
+            sub = ItemSubclass(data);
+         } else if (auto* weapon = form->As<RE::TESObjectWEAP>()) {
+            kind = "Weapon"sv;
+            cls = Weapon::WeaponTypeToString(weaponClassifier.ClassifyWeapon(weapon).type);
+         } else if (auto* ammo = form->As<RE::TESAmmo>()) {
+            kind = "Ammo"sv;
+            cls = Weapon::AmmoTypeToString(weaponClassifier.ClassifyAmmo(ammo).type);
+         } else if (form->As<RE::TESSoulGem>()) {
+            kind = "SoulGem"sv;
+         } else if (form->As<RE::TESObjectARMO>()) {
+            kind = "Apparel"sv;
+         } else if (form->As<RE::TESObjectLIGH>()) {
+            kind = "Light"sv;
+         } else {
+            clsOwned = std::format("formType {}", static_cast<int>(form->GetFormType()));
+            kind = "Other"sv;
+            cls = clsOwned;
+         }
+
+         float norm = 0.0f;
+         for (const float w : entry.weights) norm += w * w;
+
+         out << std::format("{:08X},{},{},{},{},{},{},{:.3f},{},{:.4f}",
+            entry.formID,
+            CsvQuote(PluginOf(form)),
+            CsvQuote(name ? name : ""),
+            kind, cls, sub,
+            entry.trainCount,
+            g_featureBanditLearner->GetConfidence(entry.formID),
+            entry.minutesSinceLastUpdate,
+            std::sqrt(norm));
+         for (const float w : entry.weights) out << std::format(",{:.4f}", w);
+         out << '\n';
+      }
+      out.close();
+
+      auto msg = std::format("Wrote {} learner entries to Huginn_Weights.csv ({} total trains, {} unresolved)",
+         entries.size(), totalTrains, unresolved);
+      Print(msg.c_str());
+      logger::info("[Console] {} -> {}"sv, msg, filePath.string());
+   }
+
+   // `hg dump potions` -- every potion and poison in the LOAD ORDER (food has
+   // its own dump), with the classification Huginn gives it, the numbers that
+   // tell two potions of one class apart (magnitude, duration, value), how
+   // many the player carries and how often the learner has trained on it.
+   // The question it answers: how differentiated are potions, really?
+   static void Cmd_DumpPotions(std::string_view /*arg*/)
+   {
+      auto* dataHandler = RE::TESDataHandler::GetSingleton();
+      if (!dataHandler) {
+         Print("Data handler unavailable");
+         return;
+      }
+      std::ofstream out;
+      std::filesystem::path filePath;
+      if (!OpenDumpFile("Huginn_Potions.csv"sv, out, filePath)) return;
+
+      auto* player = RE::PlayerCharacter::GetSingleton();
+      Item::ItemClassifier classifier;
+      out << "formID,plugin,name,type,subclass,hostile,magnitude,duration,value,tags,tagsExt,"
+             "playerCount,trainCount,effects\n";
+
+      size_t written = 0, unknown = 0, carried = 0;
+      for (auto* item : dataHandler->GetFormArray<RE::AlchemyItem>()) {
+         if (!item || item->IsFood()) continue;
+         const char* rawName = item->GetName();
+         if (!rawName || !*rawName) continue;
+
+         const auto data = classifier.ClassifyItem(item);
+         const auto count = player ? Util::GetItemCountSafe(player, item) : 0;
+
+         // 'name' magnitude/duration per effect, joined by " / ".
+         std::string effects;
+         for (const auto* effect : item->effects) {
+            if (!effect || !effect->baseEffect) continue;
+            const char* full = effect->baseEffect->GetFullName();
+            if (!effects.empty()) effects += " / ";
+            effects += std::format("'{}' {:g}/{}s", full ? full : "",
+               effect->effectItem.magnitude, effect->effectItem.duration);
+         }
+
+         out << std::format("{:08X},{},{},{},{},{},{:g},{:g},{},{:08X},{:04X},{},{},{}\n",
+            item->GetFormID(),
+            CsvQuote(PluginOf(item)),
+            CsvQuote(rawName),
+            Item::ItemTypeToString(data.type),
+            ItemSubclass(data),
+            data.isHostile ? 1 : 0,
+            data.magnitude,
+            data.duration,
+            data.value,
+            static_cast<uint32_t>(data.tags),
+            static_cast<uint32_t>(data.tagsExt),
+            count,
+            g_featureBanditLearner ? g_featureBanditLearner->GetTrainCount(item->GetFormID()) : 0,
+            CsvQuote(effects));
+         ++written;
+         if (data.type == Item::ItemType::Unknown) ++unknown;
+         if (count > 0) ++carried;
+      }
+      out.close();
+
+      auto msg = std::format("Wrote {} potions/poisons to Huginn_Potions.csv - {} unclassified, {} carried",
+         written, unknown, carried);
+      Print(msg.c_str());
+      logger::info("[Console] {} -> {}"sv, msg, filePath.string());
+   }
+
+   // `hg dump scrolls` -- every scroll in the LOAD ORDER, as the scroll
+   // registry sees it. `hg dump spells` already lists scrolls (since v0.21.8)
+   // with the classifier's INPUTS; this one is the scroll side of the
+   // cold-start question instead: what ScrollData keeps (magnitude, duration,
+   // cost), how many the player carries, and whether the learner has ever
+   // trained on one.
+   static void Cmd_DumpScrolls(std::string_view /*arg*/)
+   {
+      auto* dataHandler = RE::TESDataHandler::GetSingleton();
+      if (!dataHandler) {
+         Print("Data handler unavailable");
+         return;
+      }
+      if (!g_spellRegistry) {
+         Print("Spell registry not initialized - load a game first");
+         return;
+      }
+      std::ofstream out;
+      std::filesystem::path filePath;
+      if (!OpenDumpFile("Huginn_Scrolls.csv"sv, out, filePath)) return;
+
+      auto* player = RE::PlayerCharacter::GetSingleton();
+      const Scroll::ScrollClassifier classifier(g_spellRegistry->GetClassifier());
+      out << "formID,plugin,name,type,school,element,tags,tagsExt,magnitude,duration,baseCost,"
+             "playerCount,trainCount\n";
+
+      size_t written = 0, unknown = 0, carried = 0;
+      for (auto* scroll : dataHandler->GetFormArray<RE::ScrollItem>()) {
+         if (!scroll) continue;
+         const char* rawName = scroll->GetName();
+         if (!rawName || !*rawName) continue;
+
+         const auto data = classifier.ClassifyScroll(scroll);
+         const auto count = player ? Util::GetItemCountSafe(player, scroll) : 0;
+
+         out << std::format("{:08X},{},{},{},{},{},{:08X},{:04X},{:g},{:g},{},{},{}\n",
+            scroll->GetFormID(),
+            CsvQuote(PluginOf(scroll)),
+            CsvQuote(rawName),
+            Spell::SpellTypeToString(data.type),
+            Spell::MagicSchoolToString(data.school),
+            Spell::ElementTypeToString(data.element),
+            static_cast<uint32_t>(data.tags),
+            static_cast<uint16_t>(data.tagsExt),
+            data.magnitude,
+            data.duration,
+            data.baseCost,
+            count,
+            g_featureBanditLearner ? g_featureBanditLearner->GetTrainCount(scroll->GetFormID()) : 0);
+         ++written;
+         if (data.type == Spell::SpellType::Unknown) ++unknown;
+         if (count > 0) ++carried;
+      }
+      out.close();
+
+      auto msg = std::format("Wrote {} scrolls to Huginn_Scrolls.csv - {} unclassified, {} carried",
+         written, unknown, carried);
+      Print(msg.c_str());
+      logger::info("[Console] {} -> {}"sv, msg, filePath.string());
+   }
 #endif  // !NDEBUG
 
    // =========================================================================
@@ -831,6 +1127,9 @@ namespace Huginn::Console
 #ifndef NDEBUG
       { "dump spells",   "Write every castable spell to Huginn_Spells.csv (debug builds)", false, Cmd_DumpSpells },
       { "dump food",     "Write every food and drink to Huginn_Food.csv (debug builds)", false, Cmd_DumpFood },
+      { "dump potions",  "Write every potion and poison to Huginn_Potions.csv (debug builds)", false, Cmd_DumpPotions },
+      { "dump scrolls",  "Write every scroll to Huginn_Scrolls.csv (debug builds)", false, Cmd_DumpScrolls },
+      { "dump weights",  "Write every learner entry to Huginn_Weights.csv (debug builds)", false, Cmd_DumpWeights },
 #endif
       { "reset weights", "Clear learned item weights",                  false, Cmd_ResetWeights },
       { "reset w",       "Clear learned item weights",                  false, Cmd_ResetWeights },
