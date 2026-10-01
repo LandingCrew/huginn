@@ -106,6 +106,40 @@ Nothing queued: pick from the entries below.
       alchemy lab (#65, PR #114); the forge may still have no live payload
 
 ## Platform and dependencies
+- [ ] **Move off CharmedBaryon CommonLibSSE-NG; support Skyrim 1.7.104.**
+      Raised 2026-10-01. Bethesda patched Skyrim after two and a half years:
+      SKSE 2.3.1 targets game 1.7.104 (skse.silverlock.org; the
+      `ianpatt/skse64` GitHub releases still stop at 2.2.6 and do not show
+      it). GOG AE stays on 2.2.6/1.6.1179, SE on 2.0.20/1.5.97.
+
+      **We build against a dead fork.** `CommonLibSSEPath_NG` points at
+      CharmedBaryon/CommonLibSSE-NG v3.7.0 (2023-05-13), which is still that
+      repo's latest release and knows nothing of runtime 1.7. Any address that
+      moved in 1.7 is wrong in a plugin built on it. The maintained line is
+      alandtse/CommonLibSSE-NG (GitHub API name `alandtse/CommonLibVR`),
+      v10.1.0 on 2026-09-30, which adds 1.7 IDs and the extra arguments 1.7
+      reads.
+
+      **It may also explain #41.** v10.1.0 ships `inventorychanges: correct
+      GetItemCount AE ID (#387)` -- the function that crashed on save-load in
+      PR #41 and is quarantined behind `Util::GetItemCountSafe`
+      (`src/util/InventoryUtil.h`). A wrong address fits "crashes on call"
+      better than anything the bisect found. Keep the safe walker regardless;
+      just stop describing the raw function as inherently unsafe once it is
+      verified on the new library.
+      Other v10.x fixes (SetWorn, ForEachActiveEffect, GetTargetActor,
+      PlayReleaseSound) touch nothing Huginn calls directly, per a grep of
+      `src/` on 2026-10-01. The one v10.0.0 break -- `CreatePackage`/
+      `SetPackType` take `PACKAGE_TYPE` -- is likewise unused.
+
+      Scope: unknown until a build is tried -- the jump is 3.7 to 10.1, so
+      expect header and API churn beyond the release notes. First step is
+      clone the fork, repoint `CommonLibSSEPath_NG`, build, and list what
+      breaks. Then: in-game test on 1.7.104 and on a 1.6 install, check
+      whether the fork's packaging (vcpkg/xmake) is better than a path
+      variable, and update `CLAUDE.md` and `README.md`, which both pin
+      v3.7.0.
+
 - [ ] **Drop dMenu, move the settings UI to SKSE Menu Framework.** Raised
       2026-09-26. Bigger than a settings-UI swap, because Huginn already owns
       the stack the framework would host.
@@ -204,14 +238,6 @@ Nothing queued: pick from the entries below.
       count that flips and flips back. Options: hold the last enemy through a
       short gap while combat is on, or debounce `cachedEnemyCount == 0` like
       CASTING_EXIT. Measure how often it moves a slot before building.
-      Raised 2026-10-01.
-
-- [ ] **One cosave item rejected on load.** LoreRim 2026-10-01 17:39:49:
-      `[Cosave] DecodeV2EntryBlob: byteLen 83 != stride 84 x numItems 1 --
-      rejecting`. One item's learned weights were dropped, one byte short of
-      the stride; nothing else failed and no learner code changed in that
-      build. Seen once, and no older log to say whether it is new. If it
-      repeats, find which writer produces 83 bytes for a 1-item block.
       Raised 2026-10-01.
 
 - [ ] **Thirst is not tracked -- PARKED 2026-09-30.** Skipped with the user:
