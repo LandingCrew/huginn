@@ -43,9 +43,11 @@ namespace Huginn::Persist
    // data/byteLen must hold exactly numItems entries of on-disk stride
    //   sizeof(RE::FormID) + sizeof(float) * diskFeatureCount + 2 * sizeof(uint32_t);
    // returns empty if byteLen does not match. Exposed for tests.
+   // `unitTest` marks a call from the unit tests' negative case: the rejection
+   // is then logged at info as a test, not at error as a save fault.
    [[nodiscard]] std::vector<Learning::FeatureBanditLearner::SerializedEntry>
    DecodeV2EntryBlob(const std::byte* data, size_t byteLen,
-      uint32_t numItems, uint32_t diskFeatureCount);
+      uint32_t numItems, uint32_t diskFeatureCount, bool unitTest = false);
 
    // Buffered learner data from cosave Load callback
    struct LoadedBanditData {

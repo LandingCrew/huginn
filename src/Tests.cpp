@@ -6461,20 +6461,20 @@ void RunCosaveTests()
 
         // Length mismatch: wrong byteLen must decode to nothing.
         //
-        // DecodeV2EntryBlob logs its refusal at [E], so this case prints an
-        // error line in a passing run. That has been read as a real cosave
-        // failure -- "this save's learned weights are being dropped on load" --
-        // so the log says outright that the next error belongs to the test.
+        // Passed as a unit-test call, so the rejection logs at info and names
+        // itself a test. At [E] it was read twice as a real cosave failure --
+        // "this save's learned weights are being dropped on load" -- the
+        // second time after a note above it, which did not survive grepping
+        // for errors (2026-10-01).
         {
-            logger::info("  (negative case: the [Cosave] rejection error below is the "
-                         "assertion working, not a fault)"sv);
             auto blob = makeBlob(compiled, 1);
-            auto entries = DecodeV2EntryBlob(blob.data(), blob.size() - 1, 1, compiled);
+            auto entries = DecodeV2EntryBlob(blob.data(), blob.size() - 1, 1, compiled,
+                /*unitTest=*/true);
             if (!entries.empty()) {
                 logger::error("[Cosave Test] FAIL: byteLen mismatch should reject decode"sv);
                 return;
             }
-            logger::info("  PASS: short blob rejected (expected error above)"sv);
+            logger::info("  PASS: short blob rejected"sv);
         }
 
         logger::info("  PASS: learner feature-count migration pads, truncates, round-trips"sv);

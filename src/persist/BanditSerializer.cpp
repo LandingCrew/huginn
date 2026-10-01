@@ -32,15 +32,25 @@ namespace Huginn::Persist
    static std::optional<LoadedBanditData> s_pendingBanditData;
 
    std::vector<BanditEntry> DecodeV2EntryBlob(
-      const std::byte* data, size_t byteLen, uint32_t numItems, uint32_t diskFeatureCount)
+      const std::byte* data, size_t byteLen, uint32_t numItems, uint32_t diskFeatureCount,
+      bool unitTest)
    {
       constexpr auto compiled = static_cast<uint32_t>(Learning::StateFeatures::NUM_FEATURES);
       const size_t stride = sizeof(RE::FormID)
                           + sizeof(float) * diskFeatureCount
                           + sizeof(uint32_t) * 2;
       if (byteLen != stride * numItems) {
-         logger::error("[Cosave] DecodeV2EntryBlob: byteLen {} != stride {} x numItems {} — rejecting"sv,
-            byteLen, stride, numItems);
+         // The unit tests feed a short blob on purpose. Logged at [E] like a
+         // real one, it was read as a save dropping learned weights on load
+         // (2026-10-01), so a test call says so on the line itself.
+         if (unitTest) {
+            logger::info("[Cosave Test] DecodeV2EntryBlob: byteLen {} != stride {} x numItems {} — "
+               "rejecting (UNIT TEST: deliberate short blob, not a save fault)"sv,
+               byteLen, stride, numItems);
+         } else {
+            logger::error("[Cosave] DecodeV2EntryBlob: byteLen {} != stride {} x numItems {} — rejecting"sv,
+               byteLen, stride, numItems);
+         }
          return {};
       }
       const uint32_t copyCount = std::min(diskFeatureCount, compiled);
