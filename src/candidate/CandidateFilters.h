@@ -4,6 +4,7 @@
 #include "CandidateConfig.h"
 #include "CooldownManager.h"
 #include "state/PlayerActorState.h"
+#include <span>
 #include <vector>
 #include <unordered_set>
 
@@ -165,7 +166,9 @@ namespace Huginn::Candidate
             std::vector<CandidateVariant>& output,
             const State::PlayerActorState& player,
             float currentMagicka,
-            FilterStats& stats
+            FilterStats& stats,
+            std::span<const RE::FormID> heldIDs = {},
+            std::vector<CandidateVariant>* heldUnaffordable = nullptr
         );
 
         // =========================================================================

@@ -113,7 +113,9 @@ namespace Huginn::Candidate
          */
         [[nodiscard]] std::vector<CandidateVariant> GenerateCandidates(
             const State::PlayerActorState& player,
-            float currentMagicka
+            float currentMagicka,
+            std::span<const RE::FormID> heldIDs = {},
+            std::vector<CandidateVariant>* heldUnaffordable = nullptr
         );
 
         /**

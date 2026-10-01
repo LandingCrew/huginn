@@ -329,7 +329,12 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
     Huginn_ZONE_NAMED("Pipeline::ScoreCandidates");
     auto& candidateGen = Candidate::CandidateGenerator::GetSingleton();
 
-    auto candidates = candidateGen.GenerateCandidates(ctx.playerState, ctx.currentMagicka);
+    // Held items the affordability filter would drop come back separately,
+    // for the hold alone (see the Remembrance loop below).
+    const auto heldIDs = Slot::Remembrance::GetSingleton().ActiveFormIDs();
+    std::vector<Candidate::CandidateVariant> heldUnaffordable;
+    auto candidates = candidateGen.GenerateCandidates(ctx.playerState, ctx.currentMagicka,
+        heldIDs, &heldUnaffordable);
 
     Context::ContextWeightMap contextWeights{};
     // The display page comes from ResolveDisplayPage, which ran earlier this
@@ -348,20 +353,27 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
     // ranking kept it: context weight or minimum utility can drop a sword the
     // moment a spell goes in its hand, which is exactly when the hold wants
     // it. Added unranked, at the end, flagged so only the hold may place it.
-    for (const RE::FormID id : Slot::Remembrance::GetSingleton().ActiveFormIDs()) {
+    // An unaffordable held spell is added the same way, from the aside list.
+    for (const RE::FormID id : heldIDs) {
         const bool ranked = std::ranges::any_of(ctx.scoredCandidates,
             [id](const Scoring::ScoredCandidate& sc) { return sc.GetFormID() == id; });
         if (ranked) {
             continue;
         }
-        for (const auto& c : candidates) {
-            if (Candidate::GetFormID(c) == id) {
-                Scoring::ScoredCandidate sc;
-                sc.candidate = c;
-                sc.isRememberedOnly = true;
-                ctx.scoredCandidates.push_back(std::move(sc));
-                break;
+        auto addHeld = [&](const std::vector<Candidate::CandidateVariant>& pool) {
+            for (const auto& c : pool) {
+                if (Candidate::GetFormID(c) == id) {
+                    Scoring::ScoredCandidate sc;
+                    sc.candidate = c;
+                    sc.isRememberedOnly = true;
+                    ctx.scoredCandidates.push_back(std::move(sc));
+                    return true;
+                }
             }
+            return false;
+        };
+        if (!addHeld(candidates)) {
+            addHeld(heldUnaffordable);
         }
     }
 
@@ -752,7 +764,13 @@ void PipelineCoordinator::UpdateDebugWidgets(PipelineContext& ctx)
     auto& wheelerClient = Wheeler::WheelerClient::GetSingleton();
     auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(ctx.now - m_lastDebugLog);
     if (elapsed.count() >= 5000) {
-        wheelerClient.ValidateWheelState();
+        // Not during Wheeler edit mode: the player is moving entries and
+        // Huginn has no signal that indices moved until it exits, so every
+        // desync reported there is stale by construction (~11 warns in one
+        // session, 2026-08-29) and the exit re-resolve fixes them anyway.
+        if (!wheelerClient.IsInEditMode()) {
+            wheelerClient.ValidateWheelState();
+        }
         m_lastDebugLog = ctx.now;
     }
 

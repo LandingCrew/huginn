@@ -207,5 +207,9 @@ namespace Huginn::Input
 
       /// Read-only mode. See SetReadOnly.
       std::atomic<bool> m_readOnly = false;
+
+      // Last text-entry gate state seen by ProcessButton, for its transition
+      // log. Input thread only.
+      bool m_textEntryGated = false;
    };
 }

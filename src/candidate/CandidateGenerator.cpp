@@ -110,7 +110,9 @@ namespace Huginn::Candidate
 
     std::vector<CandidateVariant> CandidateGenerator::GenerateCandidates(
         const State::PlayerActorState& player,
-        float currentMagicka)
+        float currentMagicka,
+        std::span<const RE::FormID> heldIDs,
+        std::vector<CandidateVariant>* heldUnaffordable)
     {
         if (!m_initialized) {
             logger::warn("CandidateGenerator::GenerateCandidates called before Initialize()");
@@ -139,7 +141,8 @@ namespace Huginn::Candidate
         // candidate, no in-place erase_if chains).  m_gatherBuffer retains
         // its allocated capacity for the next call.
         std::vector<CandidateVariant> output;
-        m_filters->ApplyAllFilters(m_gatherBuffer, output, player, currentMagicka, m_stats.filterStats);
+        m_filters->ApplyAllFilters(m_gatherBuffer, output, player, currentMagicka, m_stats.filterStats,
+            heldIDs, heldUnaffordable);
 
         // Calculate generation time
         const auto endTime = std::chrono::high_resolution_clock::now();

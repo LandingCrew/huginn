@@ -112,8 +112,18 @@ namespace Huginn::Input
       // binding was a digit or punctuation; the default toggle is now a letter,
       // so typing "player.additem" would flicker the widget on every 'x'. The
       // digits have the same problem: typing a FormID would equip slots.
+      //
+      // Logged on the transition only, both ways: otherwise the gate is
+      // verifiable only by the ABSENCE of KEY PRESS lines, which looks the same
+      // as any other reason input stopped.
       if (auto* controlMap = RE::ControlMap::GetSingleton()) {
-      if (controlMap->textEntryCount > 0) {
+      const bool typing = controlMap->textEntryCount > 0;
+      if (typing != m_textEntryGated) {
+         m_textEntryGated = typing;
+         logger::info("[InputHandler] Input {} -- text entry {}"sv,
+           typing ? "suppressed" : "resumed", typing ? "active" : "ended");
+      }
+      if (typing) {
          return false;
       }
       }
