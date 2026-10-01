@@ -268,6 +268,13 @@ stage".
       short gap while combat is on, or debounce `cachedEnemyCount == 0` like
       CASTING_EXIT. Measure how often it moves a slot before building.
       Raised 2026-10-01.
+      **Likely cause found, fix in v0.22.8 -- confirm in play.** Not the
+      prune: PollTargets read the RAW `player->IsInCombat()`, and on a poll
+      where the engine dropped it for a moment it erased every hostile and
+      skipped the closest-hostile scan. The published combat flag held through
+      COMBAT_EXIT, hence no `Combat:` flip. Now raw to enter, published to
+      leave. If `Enemies:` still flaps with combat steady, the remaining cause
+      is the hostile falling out of `highActorHandles` for a poll.
 
 - [ ] **Thirst is not tracked -- PARKED 2026-09-30.** Skipped with the user:
       there is no reliable way to buy water from innkeepers on LoreRim, so a

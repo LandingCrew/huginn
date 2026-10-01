@@ -135,7 +135,8 @@ namespace Huginn::State
 
       // Combat check, debounced: everything downstream -- context rules,
       // learner features, the pipeline hash, the combat timer -- reads this
-      // published value. Target tracking keeps reading the engine flag raw.
+      // published value. Target tracking reads the engine flag raw to ENTER
+      // combat and this published value to leave it (PollTargets).
       {
       std::optional<BoolDebouncer::Suppressed> dropped;
       newIsInCombat = m_combatDebounce.Update(player->IsInCombat(), BoolDebouncer::Clock::now(),
