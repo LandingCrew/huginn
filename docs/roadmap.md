@@ -192,6 +192,28 @@ Nothing queued: pick from the entries below.
       may have been a real need (sp 22% at 21:36:18).
       Raised 2026-09-30.
 
+- [ ] **The enemy count drops to None and back mid-fight.** LoreRim
+      2026-10-01 18:17:47-18:01, one humanoid: `Enemies:One->None` and back
+      four times in 14 s, `Target` going None with it each time, while combat
+      stayed on throughout (no `Combat:` flip until 18:18:03). One slot change
+      rode on it (slot 6 Roasted Goat Leg -> Iron Throwing Knife at 18:17:47).
+      Likely the hostile dropping out of the scan for a moment -- out of
+      sight, or not in `highActorHandles` -- and being pruned or re-found;
+      `LAST_SEEN_TIMEOUT` is 3 s, and the gaps were 0.2-2.9 s, so check which
+      path removes it first. Same family as combat, casting and darkness: a
+      count that flips and flips back. Options: hold the last enemy through a
+      short gap while combat is on, or debounce `cachedEnemyCount == 0` like
+      CASTING_EXIT. Measure how often it moves a slot before building.
+      Raised 2026-10-01.
+
+- [ ] **One cosave item rejected on load.** LoreRim 2026-10-01 17:39:49:
+      `[Cosave] DecodeV2EntryBlob: byteLen 83 != stride 84 x numItems 1 --
+      rejecting`. One item's learned weights were dropped, one byte short of
+      the stride; nothing else failed and no learner code changed in that
+      build. Seen once, and no older log to say whether it is new. If it
+      repeats, find which writer produces 83 bytes for a 1-item block.
+      Raised 2026-10-01.
+
 - [ ] **Thirst is not tracked -- PARKED 2026-09-30.** Skipped with the user:
       there is no reliable way to buy water from innkeepers on LoreRim, so a
       thirst prompt would point at drinks the player often cannot get. Pick
