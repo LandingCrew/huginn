@@ -344,7 +344,7 @@ graph LR
 
 | Struct | Purpose | Details |
 |--------|---------|---------|
-| `GameState` | Discretized buckets for the pipeline skip-check — 48,384 states, bases `[6, 6, 3, 7, 4, 2, 2, 2, 2]` (health, magicka, distance, targetType, enemyCount, allyInjured, anyCasting, inCombat, isSneaking). Stamina is excluded from the hash; `allyStatus` enters it as one bit (is it `InjuredPresent`) rather than its three states. | See [4-contextual-bandits.md](4-contextual-bandits.md) |
+| `GameState` | Discretized buckets for the pipeline skip-check — 48,384 states, bases `[6, 6, 3, 7, 4, 2, 2, 2, 2]` (health, magicka, distance, targetType, enemyCount, allyInjured, anyCasting, inCombat, isSneaking). Stamina is excluded from the hash; `distance` is the closest living hostile's band (`ClosestEnemyDistanceBucket`, the actor the learner's `distanceNorm` measures), not the crosshair primary's; `allyStatus` enters it as one bit (is it `InjuredPresent`) rather than its three states; `targetType` is the primary's type only when it is a living hostile (`TargetCollection::ScoringTargetType`), so townspeople under the crosshair read as None. | See [4-contextual-bandits.md](4-contextual-bandits.md) |
 
 ### Stage 2: Candidate Generator
 
@@ -510,7 +510,7 @@ graph TB
 | underwater, no waterbreathing | `waterbreathingWeight` | `fWeightUnderwater`, ramped by depth | Will drown |
 | at forge workstation | `fortifySmithingWeight` | `fWeightAtForge` | Obvious context |
 | sneaking | `stealthWeight` | `fWeightSneaking` | Stealth utility |
-| dark (game light on the player < 0.35), no Night Eye / light / torch | `darknessWeight` | `fWeightDarkness` | Night Eye, light spells, torches (`TorchCandidate`, no baseline) |
+| dark (game light on the player < 0.35 for 5 s, or at once in a new interior cell or worldspace; leaves at 0.45 held 3 s — `DarknessGate`), no Night Eye / light / torch | `darknessWeight` | `fWeightDarkness` | Night Eye, light spells, torches (`TorchCandidate`, no baseline) |
 | survival hunger: Hungry (half), Famished+ (full) | `hungerWeight` | `fWeightHungry` | Food (`ItemTag::SatisfiesHunger`) |
 | survival cold: Very Cold (half), Freezing+ (full) | `coldWeight` | `fWeightCold` | Warm food, warming spells (`SpellTagExt::Warming`) |
 | enchanted weapon draining | `weaponChargeWeight` | ramped, clamped to [0,1] | Charge urgency |

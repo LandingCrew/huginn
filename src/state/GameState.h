@@ -138,7 +138,15 @@ namespace Huginn::State
       StaminaBucket stamina;      // 6 states (KEPT in struct for PotionDiscriminator, excluded from hash)
 
       // Target context
-      DistanceBucket distance;    // 3 states
+      // 3 states. Distance to the CLOSEST LIVING HOSTILE, the actor the
+      // learner's distanceNorm measures -- not to the crosshair primary.
+      // Bucketing the primary woke the pipeline as the view swept past
+      // townspeople at different ranges (LoreRim 2026-09-25: target/distance
+      // behind 12 of 40 swap-backs), yet the bucket has to stay in the hash:
+      // the learner scores on distance, so an enemy charging from range into
+      // melee must re-score even when nothing else moves (/code-review #160).
+      // No hostile = Ranged, matching distanceNorm = 1.
+      DistanceBucket distance;
       TargetType targetType;      // 7 states (None, Humanoid, Undead, Beast, Dragon, Construct, Daedra)
 
       // Multi-target context

@@ -35,7 +35,7 @@ namespace Huginn::State
       float lightLevel = DefaultState::DEFAULT_LIGHT;  // 0.0 = dark, 1.0 = bright
       bool isInterior = false;  // True if in interior cell
       // Dark, with hysteresis: set below DARK_THRESHOLD, cleared only at
-      // DARK_EXIT_THRESHOLD (PollWorldObjects). What darknessWeight reads.
+      // DARK_EXIT_THRESHOLD, each held a while (DarknessGate). What darknessWeight reads.
       bool isDark = false;
 
       // =============================================================================

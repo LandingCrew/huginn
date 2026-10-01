@@ -178,31 +178,22 @@ namespace Huginn::State
       // Quantize to 10% increments
       newState.lightLevel = std::round(newState.lightLevel * LightLevel::QUANTIZATION_MULTIPLIER) / LightLevel::QUANTIZATION_MULTIPLIER;
 
-      // Dark with hysteresis: enter below DARK_THRESHOLD, leave at
-      // DARK_EXIT_THRESHOLD, so a reading on the edge does not flip it.
-      bool wasDark = false;
+      // Dark with a hysteresis band and a dwell both ways; a new place (an
+      // interior cell, or an exterior worldspace -- not the exterior grid
+      // cell) is taken at once (DarknessGate).
       {
-      std::shared_lock lock(m_worldMutex);
-      wasDark = m_worldState.isDark;
+      RE::FormID placeID = 0;
+      if (cell && cell->IsInteriorCell()) {
+        placeID = cell->GetFormID();
+      } else if (auto* worldspace = player->GetWorldspace()) {
+        placeID = worldspace->GetFormID();
       }
-      const float darkEnter = m_darkLightLevel.load();
-      const float darkExit = darkEnter + LightLevel::DARK_EXIT_GAP;
-      if (!wasDark) {
-      newState.isDark = newState.lightLevel < darkEnter;
-      m_brightSinceMs = 0;
-      } else if (newState.lightLevel < darkExit) {
-      newState.isDark = true;
-      m_brightSinceMs = 0;
-      } else {
-      // Bright while dark: leave only once it has lasted DARK_EXIT_HOLD_MS.
-      const int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
-        std::chrono::steady_clock::now().time_since_epoch()).count();
-      if (m_brightSinceMs == 0) {
-        m_brightSinceMs = nowMs;
-      }
-      newState.isDark = nowMs - m_brightSinceMs < LightLevel::DARK_EXIT_HOLD_MS;
-      if (!newState.isDark) {
-        m_brightSinceMs = 0;
+      std::optional<BoolDebouncer::Suppressed> dropped;
+      newState.isDark = m_darkGate.Update(newState.lightLevel, m_darkLightLevel.load(),
+          placeID, BoolDebouncer::Clock::now(), &dropped);
+      if (dropped) {
+        logger::debug("[Debounce] dark {} for {} ms, not published"sv,
+          dropped->rawValue ? "on" : "off", dropped->lasted.count());
       }
       }
 

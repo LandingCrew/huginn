@@ -1013,8 +1013,8 @@ graph TB
 | `health` | `HealthBucket` | 6 | Critical ≤10%, VeryLow ≤25%, Low ≤40%, Medium ≤60%, High ≤80%, VeryHigh >80% |
 | `magicka` | `MagickaBucket` | 6 | Same edges |
 | `stamina` | `StaminaBucket` | 6 | Same edges — **in the struct, excluded from the hash** |
-| `distance` | `DistanceBucket` | 3 | Melee ≤256, Mid ≤768, Ranged >768 units |
-| `targetType` | `TargetType` | 7 | None, Humanoid, Undead, Beast, Dragon, Construct, Daedra |
+| `distance` | `DistanceBucket` | 3 | Melee ≤256, Mid ≤768, Ranged >768 units — to the **closest living hostile** (the actor the learner's `distanceNorm` measures), not the crosshair primary; no hostile = Ranged |
+| `targetType` | `TargetType` | 7 | None, Humanoid, Undead, Beast, Dragon, Construct, Daedra — the primary's type only when it is a living hostile (`ScoringTargetType`); otherwise None |
 | `enemyCount` | `EnemyCountBucket` | 4 | None(0), One(1-10), Few(11-30), Many(31+) — thresholds are 20%/60% of `MAX_TRACKED_TARGETS` |
 | `allyStatus` | `AllyStatus` | 3 in the struct, **2 in the hash** | None, Present, InjuredPresent (any non-hostile living target below 30% HP). The hash asks only `== InjuredPresent`: None/Present is the distinction nothing reads, and all of the observed flapping. |
 | `anyCasting` | `CastingStatus` | 2 | NoneCasting, EnemyCasting — from `TargetCollection::cachedAnyCasting` |

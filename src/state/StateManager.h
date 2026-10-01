@@ -5,6 +5,7 @@
 #include "TargetActorState.h"
 #include "FallTracker.h"
 #include "BoolDebouncer.h"
+#include "DarknessGate.h"
 #include "StateTypes.h"              // For HealthTrackingState
 #include "StateManagerConstants.h"
 #include "DamageEventSink.h"         // For instant damage classification (v0.6.8)
@@ -334,9 +335,9 @@ namespace Huginn::State
       // =============================================================================
 
       WorldState m_worldState;
-      // When the light last rose to DARK_EXIT_THRESHOLD while dark; 0 = not
-      // bright. Poll thread only (PollWorldObjects), so no lock.
-      int64_t m_brightSinceMs = 0;
+      // Light reading -> isDark, with the band and a dwell both ways.
+      // Poll thread only (PollWorldObjects), so no lock. Reset on save load.
+      DarknessGate m_darkGate;
       // Light below which it counts as dark ([ContextWeights] fDarkLightLevel,
       // pushed in by ContextWeightSettings). Leaving takes this + DARK_EXIT_GAP.
       std::atomic<float> m_darkLightLevel{ LightLevel::DARK_THRESHOLD };
@@ -434,7 +435,7 @@ namespace Huginn::State
       {
          RE::FormID primaryFormID = 0;
          TargetType primaryTargetType = TargetType::None;
-         DistanceBucket primaryDistance = DistanceBucket::Ranged;
+         DistanceBucket closestEnemyDistance = DistanceBucket::Ranged;
          int enemyCount = 0;
          int allyCount = 0;
          bool hasInjuredAlly = false;

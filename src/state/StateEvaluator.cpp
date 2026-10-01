@@ -75,30 +75,13 @@ namespace Huginn::State
 
    DistanceBucket StateEvaluator::EvaluateDistance(const TargetCollection& targets) const
    {
-      if (!targets.primary.has_value()) {
-      return DistanceBucket::Ranged;  // No target
-      }
-
-      // Shared constants: ComputeTargetDigest must bucket identically or the
-      // pipeline-skip digest misses distance transitions (critique finding 1).
-      const float distanceSq = targets.primary->distanceToPlayerSq;
-
-      if (distanceSq <= DistanceThresholds::EVAL_MELEE_MAX_SQ) {
-      return DistanceBucket::Melee;
-      } else if (distanceSq <= DistanceThresholds::EVAL_MID_MAX_SQ) {
-      return DistanceBucket::Mid;
-      } else {
-      return DistanceBucket::Ranged;
-      }
+      // Closest living hostile, not the crosshair primary -- see GameState::distance.
+      return targets.ClosestEnemyDistanceBucket();
    }
 
    TargetType StateEvaluator::EvaluateTargetType(const TargetCollection& targets) const
    {
-      if (!targets.primary.has_value()) {
-      return TargetType::None;
-      }
-
-      return targets.primary->targetType;
+      return targets.ScoringTargetType();
    }
 
    EnemyCountBucket StateEvaluator::EvaluateEnemyCount(const TargetCollection& targets) const

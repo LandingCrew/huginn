@@ -61,7 +61,7 @@ namespace Huginn::Scoring
         // - NO state.targetType checks (ContextRuleEngine handles antiUndeadWeight)
         // - NO player.effects checks (ContextRuleEngine handles resistFireWeight)
         // - NO state.isSneaking checks (ContextRuleEngine handles stealthWeight)
-        // - NO state.distance checks (ContextRuleEngine handles rangedWeight)
+        // - NO state.distance checks (distance is context, not intrinsic)
 
         return std::clamp(prior, 0.0f, 1.0f);
     }

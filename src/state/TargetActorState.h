@@ -290,6 +290,37 @@ namespace Huginn::State
       cachedAnyCasting = false;
       }
 
+      // The primary target's type as SCORING sees it: None unless the target
+      // is a living hostile. The crosshair picks the primary with no hostility
+      // filter, so sweeping the view across a town made every passer-by a
+      // Humanoid target -- a learner feature, and a pipeline wake each time
+      // (LoreRim 2026-09-25). A follower's atronach is not a reason for
+      // anti-daedra either. A dormant draugr is still hostile, so looking at
+      // one keeps working. `primary` itself is untouched: ally logic needs it.
+      [[nodiscard]] TargetType ScoringTargetType() const noexcept {
+      if (!primary.has_value() || !primary->isHostile || primary->isDead) {
+        return TargetType::None;
+      }
+      return primary->targetType;
+      }
+
+      // Distance band of the closest living hostile (GameState::distance and
+      // the target digest both use this, so they cannot disagree). No hostile
+      // = Ranged, matching the learner's distanceNorm = 1.
+      [[nodiscard]] DistanceBucket ClosestEnemyDistanceBucket() const noexcept {
+      const auto enemy = GetClosestEnemy();
+      if (!enemy.has_value()) {
+        return DistanceBucket::Ranged;
+      }
+      if (enemy->distanceToPlayerSq <= DistanceThresholds::EVAL_MELEE_MAX_SQ) {
+        return DistanceBucket::Melee;
+      }
+      if (enemy->distanceToPlayerSq <= DistanceThresholds::EVAL_MID_MAX_SQ) {
+        return DistanceBucket::Mid;
+      }
+      return DistanceBucket::Ranged;
+      }
+
       // Check if target exists
       [[nodiscard]] bool Contains(RE::FormID formID) const noexcept {
       return Find(formID) != nullptr;

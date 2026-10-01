@@ -53,6 +53,9 @@ namespace Huginn::UI
         static RE::IMenu* CreateInstance();
         static void Show();
         static void Hide();
+        /// RE::UI opened or closed this menu: any kShow Show() queued has
+        /// been consumed (HudVisibilityManager calls this).
+        static void OnMenuOpenClose(bool a_opening) noexcept;
 
         // -- Singleton access (valid after Show() creates the instance) --
         static IntuitionMenu* GetSingleton();

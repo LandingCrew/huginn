@@ -404,31 +404,27 @@ namespace Huginn::Context
         ContextWeightMap& result,
         const State::TargetCollection& targets) const
     {
-        // Check if we have a primary target
-        if (!targets.primary.has_value()) {
-            return;  // No target → all weights remain 0
-        }
-
-        const auto& primary = targets.primary.value();
+        // Living hostile primary only (see TargetCollection::ScoringTargetType)
+        const State::TargetType type = targets.ScoringTargetType();
 
         // =====================================================================
         // ANTI-UNDEAD (Turn Undead, Sun Damage, etc.)
         // =====================================================================
-        if (primary.targetType == State::TargetType::Undead) {
+        if (type == State::TargetType::Undead) {
             result.antiUndeadWeight = m_config.weightTargetUndead;  // Already [0,1]
         }
 
         // =====================================================================
         // ANTI-DAEDRA (vs Atronachs, Dremora, etc.)
         // =====================================================================
-        if (primary.targetType == State::TargetType::Daedra) {
+        if (type == State::TargetType::Daedra) {
             result.antiDaedraWeight = m_config.weightTargetDaedra;  // Already [0,1]
         }
 
         // =====================================================================
         // ANTI-DRAGON (Dragonrend, dragon-specific)
         // =====================================================================
-        if (primary.targetType == State::TargetType::Dragon) {
+        if (type == State::TargetType::Dragon) {
             result.antiDragonWeight = m_config.weightTargetDragon;  // Already [0,1]
         }
     }

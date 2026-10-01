@@ -31,6 +31,27 @@ namespace Huginn::UI
         return new IntuitionMenu();
     }
 
+    namespace
+    {
+        // When Show() last queued a kShow that RE::UI has not acted on yet;
+        // 0 = none pending. See Show().
+        std::atomic<std::int64_t> g_showQueuedMs{ 0 };
+        // A kShow the UI never answers must not block re-showing for good.
+        constexpr std::int64_t SHOW_PENDING_MAX_MS = 2000;
+
+        std::int64_t NowMs() noexcept
+        {
+            return std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now().time_since_epoch()).count();
+        }
+    }
+
+    void IntuitionMenu::OnMenuOpenClose(bool a_opening) noexcept
+    {
+        logger::info("IntuitionMenu {} by RE::UI"sv, a_opening ? "opened" : "closed");
+        g_showQueuedMs.store(0, std::memory_order_release);
+    }
+
     void IntuitionMenu::Show()
     {
         if (!IntuitionSettings::GetSingleton().IsEnabled()) {
@@ -63,8 +84,19 @@ namespace Huginn::UI
             alreadyOpen, singleton != nullptr);
 
         if (!alreadyOpen) {
+            // One kShow at a time. IsMenuOpen stays false until the UI thread
+            // processes the queued message, so two LoadingMenu closes 124 ms
+            // apart queued two (2026-09-30 21:36:23, entering a cave), and
+            // the widget never drew again -- not even through the hotkey.
+            const std::int64_t queuedAt = g_showQueuedMs.load(std::memory_order_acquire);
+            if (queuedAt != 0 && NowMs() - queuedAt < SHOW_PENDING_MAX_MS) {
+                logger::info("IntuitionMenu::Show() - kShow already queued {} ms ago, skipping"sv,
+                    NowMs() - queuedAt);
+                return;
+            }
             auto* msgQueue = RE::UIMessageQueue::GetSingleton();
             if (msgQueue) {
+                g_showQueuedMs.store(NowMs(), std::memory_order_release);
                 msgQueue->AddMessage(MENU_NAME, RE::UI_MESSAGE_TYPE::kShow, nullptr);
                 logger::info("IntuitionMenu::Show() - kShow message queued"sv);
                 // Reopened (load, cell change): full re-push on the next run.
@@ -369,7 +401,17 @@ namespace Huginn::UI
     {
         const bool nowHidden = !g_userHidden.load(std::memory_order_acquire);
         g_userHidden.store(nowHidden, std::memory_order_release);
-        logger::info("[Intuition] Widget {}"sv, nowHidden ? "hidden" : "shown");
+        auto* ui = RE::UI::GetSingleton();
+        const bool menuOpen = ui && ui->IsMenuOpen(MENU_NAME);
+        logger::info("[Intuition] Widget {} (menu open={})"sv, nowHidden ? "hidden" : "shown", menuOpen);
+
+        // Un-hiding a menu RE::UI has closed would only flip _root on a movie
+        // nobody draws. Reopen it: the hotkey is the player's way back from
+        // a widget that went missing, so it has to work from any state.
+        if (!nowHidden && !menuOpen) {
+            logger::warn("[Intuition] Widget un-hidden while the menu is closed -- reopening"sv);
+            Show();
+        }
 
         // Apply immediately rather than waiting for the next menu event or
         // pipeline push — the player pressed a key and expects a response now.

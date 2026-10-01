@@ -97,11 +97,9 @@ namespace Huginn::Learning
             f.distanceNorm = 1.0f;  // No enemy → max range
          }
 
-         // Target type one-hot encoding (from primary target — crosshair/combat focus)
-         State::TargetType type = State::TargetType::None;
-         if (targets.primary.has_value()) {
-            type = targets.primary->targetType;
-         }
+         // Target type one-hot encoding (primary target, living hostiles only --
+         // see TargetCollection::ScoringTargetType)
+         const State::TargetType type = targets.ScoringTargetType();
 
          // Reset all target fields (fresh struct has targetNone=1.0, must clear before switch)
          f.targetNone      = 0.0f;

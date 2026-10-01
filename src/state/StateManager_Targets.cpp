@@ -750,19 +750,13 @@ namespace Huginn::State
       if (m_targets.primary.has_value()) {
       const auto& p = *m_targets.primary;
       digest.primaryFormID = p.actorFormID;
-      digest.primaryTargetType = p.targetType;
+      // The type scoring sees, not the raw one: a townsperson under the
+      // crosshair is None to GameState, so it must be None here too.
+      digest.primaryTargetType = m_targets.ScoringTargetType();
+      }
 
-      // Shared 3-bucket constants: must match StateEvaluator::EvaluateDistance
-      // exactly, or distance-bucket transitions produce no dirty signal.
-      const float distSq = p.distanceToPlayerSq;
-      if (distSq <= DistanceThresholds::EVAL_MELEE_MAX_SQ) {
-        digest.primaryDistance = DistanceBucket::Melee;
-      } else if (distSq <= DistanceThresholds::EVAL_MID_MAX_SQ) {
-        digest.primaryDistance = DistanceBucket::Mid;
-      } else {
-        digest.primaryDistance = DistanceBucket::Ranged;
-      }
-      }
+      // Outside the primary block: it is the closest hostile, not the primary.
+      digest.closestEnemyDistance = m_targets.ClosestEnemyDistanceBucket();
 
       // Scoring consumes the ANY-hostile-casting aggregate (ContextRuleEngine
       // ward weights, GameState::anyCasting) — a background caster must produce
