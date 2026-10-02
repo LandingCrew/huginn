@@ -151,6 +151,14 @@ namespace Huginn::Scoring
                 RE::FormID formID = Candidate::GetFormID(candidate);
                 if (alreadyScored(formID)) continue;
 
+                // The same Suppress skip as the main loop. A suppressed favorite
+                // was never scored there, so alreadyScored() lets it through, and
+                // with fMinimumUtility = 0 its zero utility passed the check below
+                // and it came back as a cold-start pick.
+                if (m_config.favoritesMode == FavoritesMode::Suppress && IsCandidateFavorited(candidate)) {
+                    continue;
+                }
+
                 float contextWeight = Context::WeightForCandidate(candidate, weights);
 
                 // A closed hard gate is not a cold start. For a source with no
