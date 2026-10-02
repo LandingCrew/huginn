@@ -139,7 +139,12 @@ namespace Huginn::Wheeler
             // Check if this is one of our managed wheels
             pageIndex = wheels.FindPageForWheel(wheelIndex);
             if (pageIndex < 0) {
-                spdlog::debug("[WheelerClient] ItemActivated on non-Huginn wheel {}, ignoring", wheelIndex);
+                // Not ours -- but it IS the player picking, so the equip that
+                // follows counts as theirs (PlayerInputGate). Before the one
+                // selection path these picks taught nothing: the external
+                // learner skipped every equip while any wheel was open.
+                spdlog::debug("[WheelerClient] ItemActivated on non-Huginn wheel {}, noted as player input", wheelIndex);
+                client.m_env.noteOwnWheelPick(static_cast<RE::FormID>(formID));
                 return;
             }
 
@@ -207,13 +212,19 @@ namespace Huginn::Wheeler
             }
         }
 
-        // Publish to EquipEventBus OUTSIDE the mutex (subscribers handle learner + UsageMemory).
-        // Lock ordering: bus acquires StateManager shared locks in BuildEvent, then bus m_mutex,
-        // then subscriber internal locks — all outside m_callbackMutex.
+        // Record the selection OUTSIDE the mutex: SelectionTracker captures state
+        // (StateManager shared locks) and is rewarded later, once it confirms.
         // No pageIndex guard: the locked block above returns early when the
         // wheel isn't ours, so reaching here means pageIndex >= 0.
         // A remembered item put back is the player's undo, not a Huginn pick.
-        if (!pressedRemembered) {
+        //
+        // Wheeler equips BEFORE it calls back (LoreRim 2026-10-02: the equip
+        // event at .096, this callback at .102), so the item is usually already
+        // pending as an outside selection. A Huginn pick relabels it; an undo
+        // must withdraw it, or a swap-back is rewarded as the player's choice.
+        if (pressedRemembered) {
+            client.m_env.withdrawSelection(static_cast<RE::FormID>(formID));
+        } else {
             client.m_env.publishWheelerEquip(static_cast<RE::FormID>(formID));
         }
     }

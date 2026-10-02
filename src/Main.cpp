@@ -56,6 +56,8 @@
 #include "persist/BanditSerializer.h"
 #include "learning/EquipEventBus.h"
 #include "learning/EquipSourceTracker.h"  // MarkHuginnEquip (Wheeler environment)
+#include "learning/SelectionTracker.h"
+#include "learning/PlayerInputGate.h"
 #include "learning/EquipSubscribers.h"
 
 using namespace Huginn;
@@ -98,8 +100,9 @@ static void InitializeGameSystems(bool isNewGame)
     // default epoch on the first load — and the gate could never report
     // "unstable" on the exact path it exists to protect.
     g_lastGameLoad = std::chrono::steady_clock::now();
-    logger::info("Game load timestamp recorded ({})"sv,
-        isNewGame ? "kNewGame" : "kPostLoadGame");
+    const uint32_t loadGeneration = g_loadGeneration.fetch_add(1, std::memory_order_relaxed) + 1;
+    logger::info("Game load timestamp recorded ({}, load generation {})"sv,
+        isNewGame ? "kNewGame" : "kPostLoadGame", loadGeneration);
 
     // ── Clear the hotkey hide latch ─────────────────────────────────────
     // A hotkey hide belongs to the session that set it. Carrying it into a
@@ -279,18 +282,17 @@ static void InitializeGameSystems(bool isNewGame)
 
     // ── 5b. EquipEventBus subscribers (once-only registration) ────────
     {
+        // Cooldown is not a subscriber any more: it follows the count drop,
+        // selection or not (UpdateLoop's ProcessInventoryChanges).
         static std::optional<Learning::BanditSubscriber> s_banditSub;
         static std::optional<Learning::UsageMemorySubscriber> s_usageMemSub;
-        static std::optional<Learning::CooldownSubscriber> s_cooldownSub;
 
         if (!s_banditSub.has_value()) {
             s_banditSub.emplace(*g_featureBanditLearner);
-            s_usageMemSub.emplace(*g_usageMemory, *g_featureBanditLearner);
-            s_cooldownSub.emplace();
+            s_usageMemSub.emplace(*g_usageMemory);
             auto& bus = Learning::EquipEventBus::GetSingleton();
             bus.Subscribe(&*s_banditSub);
             bus.Subscribe(&*s_usageMemSub);
-            bus.Subscribe(&*s_cooldownSub);
             logger::info("EquipEventBus subscribers registered"sv);
         }
     }
@@ -327,9 +329,10 @@ static void InitializeGameSystems(bool isNewGame)
     // here beside SetConfig rather than hoisted, so learner setup stays in one
     // place; SetEnvironment logs if it is ever left incomplete.
     Learning::ExternalEquipLearner::GetSingleton().SetEnvironment({
-        .isWheelOpen = [] { return Wheeler::WheelerClient::GetSingleton().IsWheelOpen(); },
         .currentDisplayPage = [] { return Slot::SlotAllocator::GetSingleton().GetCurrentPage(); },
     });
+    Learning::PlayerInputGate::GetSingleton().SetWheelOpenQuery(
+        [] { return Wheeler::WheelerClient::GetSingleton().IsWheelOpen(); });
     if (haveMainIni) LoadWildcardConfigFromINI(g_utilityScorer->GetWildcardManager(), mainIni);
 
     // ── 7. OverrideManager ─────────────────────────────────────────────
@@ -590,8 +593,14 @@ static void OnDataLoaded()
                 formID, static_cast<int>(sourceType));
         },
         .publishWheelerEquip = [](RE::FormID formID) {
-            Learning::EquipEventBus::GetSingleton().Publish(
-                formID, Learning::EquipSource::Wheeler, 1.0f, /*wasRecommended=*/true);
+            Learning::SelectionTracker::GetSingleton().Select(
+                formID, Learning::EquipSource::Wheeler, "Huginn wheel");
+        },
+        .withdrawSelection = [](RE::FormID formID) {
+            Learning::SelectionTracker::GetSingleton().Withdraw(formID, "Remembrance swap-back");
+        },
+        .noteOwnWheelPick = [](RE::FormID formID) {
+            Learning::PlayerInputGate::GetSingleton().NoteOwnWheelPick(formID);
         },
         .setWidgetVisible = [](bool visible) {
             // Gated here rather than in WheelerClient so that class keeps no UI
@@ -731,11 +740,14 @@ static void OnDataLoaded()
                 slotAllocator.GetCurrentPageName());
         });
 
-        // Equip callback: publish to EquipEventBus (subscribers handle learner + UsageMemory)
-        // MarkHuginnEquip is already called in EquipManager.cpp before this callback
-        equipManager.SetEquipCallback([](RE::FormID formID, bool wasRecommended) {
-            Learning::EquipEventBus::GetSingleton().Publish(
-                formID, Learning::EquipSource::Hotkey, 1.0f, wasRecommended);
+        // Equip callback: a Huginn key press is a selection; it is rewarded
+        // once it confirms (SelectionTracker). MarkHuginnEquip is already
+        // called in EquipManager.cpp before this callback, so the
+        // TESEquipEvent the press causes is not counted a second time.
+        equipManager.SetEquipCallback([](RE::FormID formID, size_t slotIndex) {
+            Learning::SelectionTracker::GetSingleton().Select(
+                formID, Learning::EquipSource::Hotkey,
+                std::format("key {} (s{})", slotIndex + 1, slotIndex));
         });
 
         // Apparel is worn, not used, so it has no cooldown to stop it being

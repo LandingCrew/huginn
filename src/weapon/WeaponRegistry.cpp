@@ -485,13 +485,22 @@ namespace Huginn::Weapon
         // re-added. Refresh both here or they stay at whatever they were when
         // the weapon was first picked up.
         if (safeToAccessExtraLists) {
+           if (sw.temperReadZero != invWeapon.temperReadZero) {
+            logger::info("[WeaponRegistry] '{}' ({:08X}/uid{}): ExtraHealth {}"sv,
+              invWeapon.data.name, invWeapon.data.formID, invWeapon.data.uniqueID,
+              sw.temperReadZero ? "reads 0 -- treated as untempered"sv
+                                : "no longer reads 0"sv);
+            invWeapon.temperReadZero = sw.temperReadZero;
+           }
            if (sw.temperFactor != invWeapon.data.temperFactor) {
             // The MODELLED number on both sides, and labelled as such: what
             // actually gets stored below is BestDamage(), which prefers the
             // game's. Printing the model as though it were the new value was
             // misleading in exactly the diagnosis this line exists for -- on
             // LoreRim it would claim 50.4 for a weapon stored at 46.
-            logger::debug("[WeaponRegistry] '{}' temper {:.2f} -> {:.2f}, model {:.1f} -> {:.1f}"sv,
+            // info: a transition, and the other half of the uid87 question --
+            // a stack whose temper moves with no grindstone visit between.
+            logger::info("[WeaponRegistry] '{}' temper {:.2f} -> {:.2f}, model {:.1f} -> {:.1f}"sv,
               invWeapon.data.name, invWeapon.data.temperFactor, sw.temperFactor,
               invWeapon.data.baseDamage * invWeapon.data.temperFactor,
               invWeapon.data.baseDamage * sw.temperFactor);
@@ -904,9 +913,17 @@ namespace Huginn::Weapon
       // scorer will never offer it. The multiplier the game applies is never
       // zero, so a zero here means the field was created and not filled, which
       // is untempered.
-      if (auto* extraHealth = extraList->GetByType<RE::ExtraHealth>();
-      extraHealth && extraHealth->health > 0.0f) {
-        sw.temperFactor = extraHealth->health;
+      //
+      // Zero is reported rather than only absorbed (temperReadZero): uid87,
+      // the LoreRim Long Bow, read 0.00, 1.00 and 1.30 across three sessions,
+      // and with the guard alone a spurious zero would look exactly like an
+      // untempered bow. The registry logs the flag when it changes.
+      if (auto* extraHealth = extraList->GetByType<RE::ExtraHealth>(); extraHealth) {
+        if (extraHealth->health > 0.0f) {
+           sw.temperFactor = extraHealth->health;
+        } else {
+           sw.temperReadZero = true;
+        }
       }
 
       // The name the PLAYER reads. ExtraDataList::GetDisplayName is the game's
@@ -1211,8 +1228,23 @@ namespace Huginn::Weapon
       // swap-pop re-keying. Tombstone it so this logs once, not every scan cycle.
       if (data.formID == 0) {
       m_rejectedWeapons.insert(formID);
-      logger::warn("[WeaponRegistry] Failed to classify weapon {:08X}, skipping (won't retry)"sv, formID);
+      // Say what the form IS, so an unidentified id can be looked up: the
+      // plugin that defines it and whether it is a playable, templated record.
+      // A second rejection after `hg rebuild` settles that it is genuinely
+      // nameless, not merely unnamed when the first scan reached it.
+      const auto* file = sw.weapon->GetFile(0);
+      const bool again = !m_everRejectedWeapons.insert(formID).second;
+      logger::warn("[WeaponRegistry] Failed to classify weapon {:08X} ({}, playable={}, template={:08X}), "
+                   "skipping{}"sv,
+        formID, file ? file->GetFilename() : "no file"sv, sw.weapon->GetPlayable(),
+        sw.weapon->templateWeapon ? sw.weapon->templateWeapon->GetFormID() : 0,
+        again ? " -- rejected again on retry, so genuinely nameless"sv
+              : " (won't retry until hg rebuild)"sv);
       return false;
+      }
+      if (m_everRejectedWeapons.erase(formID)) {
+      logger::info("[WeaponRegistry] {:08X} ('{}') registered on retry after an earlier rejection -- "
+                   "it was unnamed at scan time, not nameless"sv, formID, data.name);
       }
 
       data.uniqueID = sw.uniqueID;
@@ -1248,8 +1280,13 @@ namespace Huginn::Weapon
       .data = std::move(data),
       .isFavorited = sw.isFavorited,
       .isEquipped = sw.isEquipped,
-      .previousCharge = (sw.maxCharge > 0.0f) ? sw.currentCharge / sw.maxCharge : 1.0f
+      .previousCharge = (sw.maxCharge > 0.0f) ? sw.currentCharge / sw.maxCharge : 1.0f,
+      .temperReadZero = sw.temperReadZero
       };
+      if (sw.temperReadZero) {
+      logger::info("[WeaponRegistry] '{}' ({:08X}/uid{}): ExtraHealth reads 0 -- treated as untempered"sv,
+        invWeapon.data.name, formID, sw.uniqueID);
+      }
 
       // Add to dual-index storage
       size_t index = m_weapons.size();

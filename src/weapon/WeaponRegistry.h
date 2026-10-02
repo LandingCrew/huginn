@@ -362,6 +362,7 @@ namespace Huginn::Weapon
       float maxCharge = 0.0f;
       uint16_t uniqueID = 0;
       float temperFactor = 1.0f;   // ExtraHealth; 1.0 when untempered
+      bool temperReadZero = false; // ExtraHealth present but read <= 0 (treated as 1.0)
       float displayDamage = 0.0f;  // PlayerCharacter::GetDamage; 0 when unread
       std::string displayName;     // Empty unless this stack names itself
       };
@@ -476,6 +477,10 @@ namespace Huginn::Weapon
       // the periodic scans re-classify and re-log the same unnameable weapon every
       // cycle, since it never enters m_weaponIndex. Cleared on RebuildRegistry.
       std::unordered_set<RE::FormID> m_rejectedWeapons;
+      // Every FormID ever rejected this session, NOT cleared on rebuild. Lets the
+      // retry a rebuild grants say whether the rejection was transient (the form
+      // registers now) or real (rejected again) -- the open question on 870710C4.
+      std::unordered_set<RE::FormID> m_everRejectedWeapons;
 
       // Dual-index storage for ammo
       std::vector<InventoryAmmo> m_ammo;

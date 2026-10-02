@@ -4082,8 +4082,8 @@ void RunUnitTests()
         logger::info("TEST PASS: EquipSourceTracker is FormID-keyed, non-consuming, with window expiry"sv);
     }
 
-    // Test 14: UsageMemory snapshot reader — misclick detection semantics, recency
-    // boost, and (critically) RecordUsage while a reader is alive. Under the old
+    // Test 14: UsageMemory snapshot reader — context-keyed recency boost, and
+    // (critically) RecordUsage while a reader is alive. Under the old
     // lock-holding reader, same-thread RecordUsage during a scoring pass would
     // deadlock (shared_lock held + unique_lock requested on one thread).
     {
@@ -4096,18 +4096,12 @@ void RunUnitTests()
         // different-context state must use a nonzero bucket value.
         ctxB.health = State::HealthBucket::VeryHigh;  // different hash from ctxA
 
-        // Misclick: different item, same context, fast switch
-        memory.RecordUsage(0x1111, ctxA);
-        auto misclick = memory.RecordUsage(0x2222, ctxA);
-        if (!misclick.detected || misclick.previousFormID != 0x1111) {
-            logger::error("TEST FAIL: fast same-context switch should flag misclick of previous item");
-            return;
+        // Uses in another context do not count towards this one's boost
+        for (size_t i = 0; i < Learning::UsageMemory::MATCH_THRESHOLD; ++i) {
+            memory.RecordUsage(0x4444, ctxB);
         }
-
-        // No misclick across different contexts
-        auto noMisclick = memory.RecordUsage(0x3333, ctxB);
-        if (noMisclick.detected) {
-            logger::error("TEST FAIL: different-context switch should not flag misclick");
+        if (memory.AcquireReader(ctxA).GetRecencyBoost(0x4444) != 0.0f) {
+            logger::error("TEST FAIL: uses in a different context should not boost this one");
             return;
         }
 
@@ -4142,7 +4136,7 @@ void RunUnitTests()
             return;
         }
 
-        logger::info("TEST PASS: UsageMemory snapshot reader (misclick, boost, non-blocking writes)"sv);
+        logger::info("TEST PASS: UsageMemory snapshot reader (context, boost, non-blocking writes)"sv);
     }
 
     // Test 15: Deduplicated logic stays in sync — IsFavorited single source of

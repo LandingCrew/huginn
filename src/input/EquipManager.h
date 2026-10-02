@@ -10,11 +10,12 @@
 namespace Huginn::Input
 {
    /**
-    * @brief Callback when a spell is equipped
-    * @param formID The FormID of the equipped spell
-    * @param wasRecommended true if the spell was in the widget slots
+    * @brief Callback when a slot press used or equipped its item -- a player
+    *        selection (SelectionTracker)
+    * @param formID The item the slot held
+    * @param slotIndex The slot pressed (0-based)
     */
-   using EquipCallback = std::function<void(RE::FormID formID, bool wasRecommended)>;
+   using EquipCallback = std::function<void(RE::FormID formID, size_t slotIndex)>;
 
    /**
     * @brief Callback when fortify-crafting apparel is equipped (#65)

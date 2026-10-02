@@ -63,7 +63,7 @@ Release:
 |-------|---------|---------------|
 | `accept=%` | of external equips Huginn attributed, how many it had **displayed** (`hit`) | **the recommendation-quality number.** Should trend up as learning warms; a flat-low accept% is the signal to investigate |
 | `hit/near/miss/novel` | equip attribution buckets (E / C+D / B / A) | rising `novel` = player keeps reaching for things Huginn never scores as a candidate |
-| `skipped=N (wheel/stale/spam/off)` | equips that a filter caught BEFORE attribution, so they never entered the buckets | **read this whenever `accept=n/a`.** `skipped=0` = nothing was equipped. A large `wheel=` = you played through the wheel and produced no acceptance data at all (v0.19.1+) |
+| `skipped=N (input/stale/off)` | outside equips that a filter caught BEFORE attribution, so they never entered the buckets | **read this whenever `accept=n/a`.** `skipped=0` = nothing was equipped outside Huginn. `input=` counts consumables used with no player input behind them -- a script or another mod drinking for the player (engine equips such as the quiver refilling are not counted) (v0.22.9; before that the fields were `wheel/stale/spam/off`) |
 | `recompute/ticks` | pipeline recomputes vs total ticks | very high ratio = state hashing thrashing (churn); near-zero = pipeline may be stuck skipping |
 | `override` | recomputes where a safety override took top slot | sanity-check against how often you actually hit low-health/charge/drowning |
 | `learn items/trains` | learned-item count + total train count | **items must plateau, not climb linearly** across 50 hr — linear climb = unbounded weight table |
@@ -75,20 +75,17 @@ Release:
 Attribution buckets come from `ExternalEquipLearner` cases: **E** displayed
 current page (hit), **D** displayed other page + **C** near-miss (near), **B**
 low-ranked candidate (miss), **A** not a candidate (novel). Equips made through
-Huginn's own wheel, or while the cache is stale, are excluded from the
-denominator by design.
+Huginn's own keys or wheel, or while the cache is stale, are excluded from the
+denominator by design. Since v0.22.9, picks off the player's OWN Wheeler wheels
+are outside selections and DO count (they were filtered as "wheel open" before).
 
-> **accept% ONLY counts equips made outside Huginn — so manual equips are a
-> test requirement, not a preference.** Grading a wheel pick would ask whether
-> Huginn predicted the item the player chose from Huginn's own recommendation
-> list; the wheel-open filter exists to keep that circularity out. The
-> consequence is that a burst played entirely through the wheel and hotkeys
-> yields **no recommendation-quality signal whatsoever**, however long it runs.
-> Observed 2026-08-26: a 44-minute session reported `accept=n/a` in every
-> window while 21 external-equip events fired and were all filtered as
-> wheel-open. Before v0.19.1 that was indistinguishable from an idle session;
-> `skipped=` now makes it visible, but visibility is not data — the equips
-> still have to happen.
+> **accept% ONLY counts equips made outside Huginn.** Grading a Huginn key or
+> Huginn-wheel pick would ask whether Huginn predicted the item the player chose
+> from Huginn's own recommendation list, so those never enter it. A burst played
+> entirely through Huginn's keys and wheel yields **no accept% signal**, however
+> long it runs. (Before v0.22.9 the player's own wheels were filtered too: a
+> 44-minute session on 2026-08-26 reported `accept=n/a` throughout while 21
+> external-equip events were all skipped as wheel-open.)
 
 ### Tracy plots (Release+Tracy runs)
 
@@ -163,7 +160,7 @@ carry the rest.
 | `tick avg` | < 0.1 ms | sustained rise across bursts |
 | `tick peak` | stable across bursts | grows hour-over-hour |
 | `accept %` | trends up, stabilizes | flat-low, or falling as learning accrues |
-| `accept %` reported at all | populated in most windows | `n/a` with a large `skipped=(wheel=…)` means the burst produced no signal — not a pass, a **void run** for this metric |
+| `accept %` reported at all | populated in most windows | `n/a` with nothing skipped means the burst made no outside selections — not a pass, a **void run** for this metric |
 | Log warn/error rate | → ~0 / hr | repeated same-site errors |
 
 ---

@@ -6,17 +6,132 @@ once its entry leaves this file. Git history is the only record; check it before
 re-opening something that looks obviously undone.
 
 ## Next up
-Suggested order, each played and measured like #140-#148. Details are in the
-entries named.
+Priority order, set with the user 2026-10-02. Details are in the entries
+named. The rule that orders it: anything that changes learning or scoring
+lands AFTER the soak run, so the run measures one frozen build; anything
+that only logs or fixes config lands BEFORE it. One exception, decided the
+same day: the reward-path fix (Phase 1 #2) changes learning but lands
+BEFORE the soak -- it is a set of bugs, and a soak on the broken path would
+mostly measure them.
 
-1. **Share learning across similar items** (pooling) -- under Follow-ups.
-   Decided with the user 2026-10-01 as the next real piece of work: it is
-   the one entry that addresses the decay criticism, the cold start and
-   (later) item differentiation together.
-   Pre-check done 2026-10-01 (results on the entry): on the current save
-   the classes do NOT differ, but that save's weights are reset-heavy and
-   test-polluted. Next: a clean save played normally, then `hg dump weights`
-   again before building anything.
+**Phase 1 -- pre-soak cleanup (only #2 touches learning; see above):**
+Landed on branch `pre-soak-cleanup` (0.22.9): #2 through #6 (details on
+each), plus the AS2 `setUrgent` removal with a SWF rebuild and logging for
+both Known Bugs so the soak run can settle them. Only #1 is left, deferred.
+1. **Default slot keys off the number row** -- Known Mod Compatability
+   Issues. XS, config only (`configs/Huginn.ini` `iSlot1Key`-`iSlot10Key`).
+   First because the double-fire is what polluted the last save's weights.
+   Not F1-F8: F5 is Skyrim's quicksave (see the entry).
+   Pushed back 2026-10-02: the user does not use Skyrim's hotkeys.
+2. ~~**One selection path: hold, then confirm**~~ -- done in 0.22.9
+   (`src/learning/SelectionTracker`, `PlayerInputGate`; design in
+   docs/architecture/4-contextual-bandits.md). One confirmed selection, one
+   reward, on the press-time state, whatever the device; a script's equip
+   or a count drop with no selection behind it teaches nothing. Misclick
+   penalties, the attribution multipliers, the separate consumption reward,
+   the wheel-open and anti-spam filters are gone. Heartbeat `skipped=` is
+   now `(input/stale/off)`.
+3. ~~**Reward-time logging**~~ -- done in 0.22.9, hung off the confirm
+   point (`src/learning/SelectionLog`): a `[Selection] Confirmed` header
+   and one line per item on the page in the debug log, and one JSON record
+   per selection in `Huginn_Selections.jsonl` -- press-time phi, wildcard
+   odds, the page with slot index and assignment type (override / wildcard
+   / Remembrance), and the WHOLE scored list with every breakdown term and
+   the learner's press-time prediction, tagged with the load generation.
+4. ~~**`sUncastableSpellPolicy = Penalize`**~~ -- done in 0.22.9: removed,
+   a legacy INI value loads as Allow.
+5. ~~**Arcane Mass Inhibition override + spell-type vocabulary**~~ -- done
+   in 0.22.9: shipped active in `Huginn_Overrides.ini`, which the build now
+   deploys.
+6. ~~**Thaumaturgy Fortify Poison Use** misread~~ -- done in 0.22.9:
+   excluded by its effect keyword, `MAG_MagicEnchFortifyPoisonUse`.
+
+**Phase 2 -- the soak run.** Clean save, `hg reset weights`, no test
+sessions on it, played normally. `hg dump weights` / `potions` / `scrolls`
+at both ends (and add a carried-and-trained section to
+docs/reference/classifier-coverage.md from them). Checklist to ride along:
+- torch on a Huginn Wheeler wheel (Kit page, Utility key);
+- arrest, yield, re-engage -- watch `Enemies:` against `Combat:`;
+- Restore Health/Stamina in a fight that is not a kite;
+- `hg rebuild` once -- does `870710C4` register? (the rejection line now names
+  its plugin; a retry logs "registered on retry" or "rejected again");
+- uid87 Long Bow ExtraHealth at each session start (a zero read now logs
+  "ExtraHealth reads 0", and a temper change logs at info);
+- the equip flood with the slot hold in.
+
+LoreRim's auto-quaff mod is meant to be off for the run (the user,
+2026-10-02) -- but a LoreRim minor update re-enabled it the same day, so
+check it after every list update. With the player-input gate (0.22.9) it no
+longer trains the learner either way: its drinks log as `Skipped (no player
+input -- a script?)` and count in the heartbeat's `skipped=input`, which is
+the place to spot it. Seen in the first 0.22.9 test (08:57:34, a Fortify
+Carry Weight with no key, menu or wheel behind it).
+Raised in review 2026-10-02, to settle before the run starts:
+- **The soak doc contradicts "played normally".**
+  `docs/playtest/LongPlaySoak.md` (the context-coverage checklist and the
+  per-burst protocol) tells the tester to equip from menus on purpose,
+  including items Huginn is not showing. That inflates goal 1 directly and
+  feeds the learner staged choices. Rewrite those parts for this run.
+- **The layout sets goal 2.** The shipped page is six labeled slots and two
+  Regular, so labeled presses are high whatever the recommender does. Pick
+  the run's layout on purpose.
+- **A learning-off arm.** Nothing has measured context-only Huginn, and the
+  pooling pre-check hints the learner adds little. `fLambdaMin =
+  fLambdaMax = 0` (`[Scoring]`) turns it off by config. Alternating
+  sessions gives a same-save comparison on both goals, and those sessions
+  log selections the learner did not shape -- cleaner data for fitting the
+  choice target.
+- **Death and reload roll the learner back** to the last save, but the log
+  keeps the abandoned rewards, so log counts will not match `hg dump
+  weights`. Tag log lines with a load generation (done in 0.22.9: `gen=`
+  on every selection record, bumped per load). Separately: should
+  learning survive a reload? Today the fight that killed you is forgotten.
+- **Comparing Phase 3 against this run.** The character progresses, so a
+  before/after is confounded. Keep the run's starting save as a benchmark
+  and compare per-hour rates.
+- **Selection-log cost** (code review of #163, deferred): each confirmed
+  selection opens and appends ~13 KB to `Huginn_Selections.jsonl` and runs one
+  learner prediction per candidate, on the game thread. Rare enough for
+  testing; move it to a background writer with a persistent stream before a
+  50-hour run. Smaller: `PipelineStateCache::Update` classifies every
+  candidate on every pipeline run, though the class is read only at selection
+  time.
+- **Two quick drinks of one potion count once** (#163 review). One pending
+  record per item merges them, by design -- but a deliberate double-drink
+  inside 2.5 s is two choices. Decide before the choice target (Phase 3 #1)
+  whether a second count drop opens a second selection.
+- One tester, who knows the internals. LoreRim 5.1 could land mid-run:
+  decide now whether the run finishes on 1.6.
+
+**Phase 3 -- learning rework, in this order** (all on "Learning swamps
+context" unless named):
+1. **Choice target** -- learn "was this chosen" (1) against "shown for
+   that need and passed over" (0, weighted ~0.25x), one target for equips
+   and consumption alike, one reward per decision. Puts the learned term
+   on 0-1: the prior's scale mismatch disappears and the learned boost
+   tops out at ~4x instead of ~20x (~8x while the recency boost stays at
+   1.5 -- see the review notes). Replaces three earlier items (fixed
+   8/5 target, prior on the reward scale, most of the balance cap).
+   Cosave bump. Soak logs set the negative weight.
+2. **Fine-tune the balance** -- per-candidate-type lambdaMax (weapons high;
+   potions, spells, food low) or rank within context bands, only if ~4x is
+   still too much in play.
+3. **Prior as pseudo-observations** -- n/(n+n0) instead of the sigmoid,
+   decay n with the weights. Review note (2026-10-02): may need to ship
+   WITH #1 -- see "zero now means rejected" on the entry.
+4. **Surprise-weighted updates** -- capped inverse-propensity step size;
+   an item Huginn was not showing ~2x, whichever device picked it (one
+   selection path, decided 2026-10-02 -- source is never a weight).
+5. **Share learning across similar items** (pooling) -- under Follow-ups.
+   Was #1 here until 2026-10-02: pooling only raises the floor for untrained
+   items and leaves the 12x multiplier on top, so the balance goes first.
+   Class level for potions, spells and scrolls, per item for weapons; class
+   = the context-weight tag. Only if the soak dump shows classes differ.
+6. Later: **Behavioural modes as a recall stage**, then **#15/#16
+   learnable context weights**.
+
+**Parked tracks** (not in the order): CommonLib migration (waiting on
+LoreRim 5.1), dMenu -> SKSE Menu Framework, apparel expansion, Tier 3 perf.
 
 **What Huginn is measured by** (the user, 2026-10-01). Two objective
 metrics; everything else is a proxy:
@@ -28,7 +143,10 @@ The end state is one page of plain, regular slots, with Huginn good enough
 that nothing else is needed. Page layouts, slot classes and custom slots
 exist because the recommender is not there yet. Both are counted since
 v0.22.8, in the `goals` field of the `[Soak]` heartbeat
-(docs/playtest/LongPlaySoak.md).
+(docs/playtest/LongPlaySoak.md). Where a selection came from never weights
+learning (one selection path, 0.22.9), but it stays on the event as a
+label, because these two goals are defined by it. Both counts also move
+with how the run is played and laid out -- see the Phase 2 review notes.
 
 ## Known Bugs
 - [ ] One weapon stack's ExtraHealth has read 0.00, then 1.00, then 1.30 across
@@ -40,6 +158,11 @@ v0.22.8, in the `goals` field of the `[Soak]` heartbeat
       -- so if a read CAN spuriously return zero, the guard hides it rather
       than reporting it, and the weapon silently ranks and displays at its
       base damage.
+      0.22.9 stops hiding it: a present ExtraHealth that reads 0 still counts
+      as untempered, but the registry logs "ExtraHealth reads 0" for the stack
+      (and "no longer reads 0" when it clears), and temper changes log at info.
+      A session that shows 0 then 1.30 with no grindstone between is the
+      spurious-read answer.
       Rescued 2026-09-24 from the temper-suffix entry, which closed around it.
 
 - [ ] One weapon in the LoreRim load order classifies as nameless and is
@@ -56,6 +179,10 @@ v0.22.8, in the `goals` field of the `[Soak]` heartbeat
       The axe registers normally (2026-09-24: `Woodcutter's Axe
       (0002F2F4/uid47): dmg=31.5`) and had simply not been in the player's
       inventory. 870710C4 is still unidentified.
+      0.22.9: the rejection warn now names the defining plugin, the playable
+      flag and any template (CNAM), and a rebuild's retry says which way it
+      went -- "registered on retry ... unnamed at scan time" or "rejected
+      again on retry, so genuinely nameless".
       The kHandToHandMelee note that used to sit here is done: #131's log-noise
       pass gave DetermineWeaponType an explicit arm for it, so Unarmed types as
       Unknown silently and the default arm keeps meaning "a type nobody has
@@ -84,6 +211,15 @@ v0.22.8, in the `goals` field of the `[Soak]` heartbeat
       Huginn displays and something else activates. The last one also answers
       the Wheeler-driven player, so it may be the one worth building.
       Raised 2026-09-21.
+      Review notes (2026-10-02): not F1-F8 -- F5 is Skyrim's quicksave and
+      F9 quickload. There are ten slot keys (`iSlot10Key`), not eight. Many
+      keyboards (TKL, laptops) have no numpad. A new shipped default does
+      not change an INI a player already has -- check the soak install's own
+      `Huginn.ini`. The double-fire has also inflated goal 1 since v0.22.8: a
+      vanilla favourites-hotkey equip counts as an external equip, so as a
+      reach-in. The read-only mode is no longer a learning dead end: under
+      the one selection path a vanilla-hotkey pick of a displayed item is a
+      full selection (it used to be attribution case E, worth 0).
 
 - [ ] Vanilla-build integration pass — a set of contexts is only ever exercised
       on the Requiem-based list this is developed against, so anything vanilla
@@ -236,6 +372,206 @@ v0.22.8, in the `goals` field of the `[Soak]` heartbeat
       under `src/` that mention dMenu (132 references).
 
 ## Known Recommendation Issues
+- [ ] **Learning swamps context ~12x, so the bar converges on a few trained
+      items.** Seen in testing (the user, 2026-10-02): a handful of trained
+      items win almost every key. Fine for weapons, wrong for potions and
+      spells, which are numerous and situational.
+      The arithmetic, with the shipped constants (sigmoid midpoint 5,
+      steepness 0.3; lambda 0.5-3.0; beta 0.2; prior ~0.5):
+      `utility = ctx x (1 + lambda*learn) x ...`
+      | item | alpha | learn | lambda | 1+lambda*learn |
+      |---|---|---|---|---|
+      | never trained | 0.18 | ~0.6 | 0.95 | ~1.6 |
+      | 15 trains, R~7 | 0.95 | ~6.7 | 2.9 | ~20 |
+      Break-even context is ~1.6/20 = 0.08. A trained weapon at its 0.2
+      baseline (~4.0) beats an untrained Waterbreathing potion while drowning
+      at ctx 1.0 (~1.6) -- overrides catch that one case, nothing catches the
+      pattern -- and a trained item at the 0.05 noise floor (~1.0) matches an
+      untrained one at ctx 0.65. The header calls context a gate; in practice
+      it is a 1/12 tiebreaker once anything is trained. R is state-dependent
+      (w.phi), but the pooling pre-check found the vectors dominated by
+      always-on features, so it likely stays high everywhere.
+      Why it converges fast: every used item regresses to the same fixed target
+      (8 equip / 5 consume), only recommended items are rewarded on keys
+      (`wasRecommended`), confidence hits 95% at 15 trains, and consumables
+      rack up trains quickly -- partly because each drink is rewarded twice
+      (fixed in 0.22.9 by the one selection path). Rich get richer.
+      **Why weapons and consumables differ.** For a weapon the preference IS
+      the item ("I use this sword"). For a potion or spell the preference is
+      mostly the situation, and which of twenty healing potions is a
+      detail. So per-item learning suits the few, and class-level learning
+      plus context suits the many -- the same split pooling (Follow-ups) is
+      reaching for from the other side.
+      Per category (carried counts, not the load-order totals in
+      docs/reference/classifier-coverage.md):
+      - Weapons: a handful, each used constantly -- per item, high or no cap.
+      - Apparel: craft gear only, out of combat -- small pool, per item.
+      - Spells: dozens, situational -- class level, low cap.
+      - Potions: ~69 carried, 63 untrained -- class level;
+        `sPotionTierPreference` already orders tier siblings.
+      - Scrolls: ~52 carried, 46 untrained, rarely used -- per-item learning
+        never converges at that rate; class level is the only way in.
+      - Food: already context-driven, vectors uncorrelated even within the
+        class -- lowest cap, let hunger/cold decide.
+      Three consequences:
+      - **Unclassified items keep per-item learning at full strength.**
+        Script-only spells, LoreRim's 34 untyped potions and simonrim's 13
+        learnable script-only spells have no class to pool and draw only the
+        0.05 baseline; under a cap a heavily used one could never climb. Never
+        pool them into one Unknown bucket.
+      - **Class grain is the real decision.** Probably the tag that maps to a
+        context-weight field (what `WeightForCandidate` matches on), so
+        learning and context share one grouping. Re-run the pooling pre-check
+        grouped that way -- "classes do not differ" may have been the wrong
+        grain.
+      - **Classifier errors start to train the wrong class.** With less
+        learning, context ranks more, and with pooling a misread (Ice Armor's
+        name-derived Frost, the Thaumaturgy ring before 0.22.9) also trains the wrong
+        class. The coverage checks become guarantees the learner relies on.
+      **Decided direction (with the user, 2026-10-02): a choice target.**
+      The root of the convergence is that the learner only ever sees
+      positives. A used item gets an update, a shown-and-ignored item gets
+      nothing, so a regression whose target is always 8 (or 5) learns
+      "predict 8" from whatever features are present -- the pooling
+      pre-check's scaled-copy vectors and tier siblings differing only in
+      train count. Nothing item-specific can be learned without contrast.
+      - **Target 1 = chosen, 0 = shown for that need and passed over.** The
+        existing update `w += alpha*(target - w.phi)*phi` then sizes every
+        move by surprise with nothing new to tune: a strong item passed over
+        (predicted 0.9) drops a lot, a weak one (0.1) barely; a low-ranked
+        item chosen over a strong one rises a lot, the incumbent chosen
+        again barely moves. That is "reward proportional to what it beat",
+        and the target itself stays fixed -- only the error varies, as it
+        already does today.
+      - **Negatives only at a real choice moment**: the player chose A and
+        B was on the bar for the same need (same context-weight field or
+        slot class). Never because B sat on screen while nothing was
+        needed. A passed-over counts ~0.25x a chosen (weaker evidence: the
+        player may not have looked); size it from the logging.
+      - **No equip/consume split.** 8 vs 5 mixed preference with evidence
+        strength. A choice is 1 either way. The real evidence problem is
+        that one decision can fire several events (a weapon toggled back and
+        forth), so: one reward per decision -- no reward for re-equipping the
+        same item within a few seconds, Remembrance swap-backs do not count.
+        Hold-then-confirm (SelectionTracker, 0.22.9) is what implements this.
+        Base rates (weapons equipped often, potions rarely) are absorbed by
+        each item's bias weight. The one weighting kept is surprise: an
+        item Huginn was not showing ~2x (surprise weighting below). Source
+        is not a weight -- one selection path, decided 2026-10-02.
+      - **Scale falls out.** Predictions live on 0-1, the same scale as the
+        PriorCalculator prior, so the prior-scale fix is not needed; and the
+        learned boost tops out at 1 + lambda*1 = 4x (lambda 3) instead of
+        ~20x (~8x while the recency boost stays at 1.5 -- review notes
+        below), so most of the balance problem goes with it.
+      - **Cost:** a cosave bump. Weights trained towards 8 are divided by 8
+        on load, or reset.
+      - **Not needed:** moving the vitals off the six buckets. The buckets
+        (`GameState.h` HealthBucket etc.) feed only the pipeline skip gate;
+        the learner reads continuous `healthPct` / `magickaPct` /
+        `staminaPct` (`StateFeatures.h`) and the context curves are
+        continuous too. Buckets decide WHEN the bar re-ranks, not what is
+        learned. (Not quite, today: misclick detection and the recency
+        boost both key on `GameState::GetHash()`. Misclick goes with
+        hold-then-confirm; the recency boost needs rescaling anyway --
+        review notes below.)
+      - Rejected: grading the target by outcome (a potion drunk at 15% HP
+        scores higher than at 90%). It duplicates what context already
+        knows.
+      - Later: a logistic link (true probabilities) instead of least squares
+        on a 0/1 target -- same idea, better calibrated, a bigger change.
+      Options still open on top of it:
+      - Cap the learned boost (`lambda*learn` <= ~2-3x) so context stays a
+        real gate; or a per-candidate-type lambdaMax (high for weapons, low
+        for potions/spells).
+      - Rank within a context band: learning orders items of similar ctx and
+        cannot lift a baseline item over a triggered one.
+      - Learn consumables and spells at class level (pooling B) and weapons
+        per item.
+      - Surprise-weighted updates (`w += alpha*k*(r - w.phi)*phi`, k larger
+        when the chosen item ranked low or was not on the bar, clamped ~1-3x)
+        -- inverse-propensity weighting, after Joachims et al. WSDM 2017 and
+        Chen et al. WSDM 2019 (capped weights). Fights the feedback loop
+        rather than the balance.
+      - Prior as pseudo-observations: replace the sigmoid with n/(n+n0),
+        decay n alongside the weights so idle items fall back towards the
+        prior. (Putting the prior on the reward scale was part of this until
+        the choice target made both 0-1.)
+      Probably BEFORE pooling: pooling only makes untrained items look more
+      trained, which raises the floor but leaves a 12x multiplier on top.
+      All of this changes learning behaviour -- not landable during the soak
+      run. What IS landable before it: log, at each reward, the chosen item's
+      utility, rank and ctx, what it displaced, its source (key / wheel /
+      menu), and what else was showing for the same need with its
+      prediction. That changes nothing and lets the soak data size the
+      negative weight, the cap and k (and supports offline evaluation --
+      see the review note on replay below).
+      Landed in 0.22.9 as the selection log (`src/learning/SelectionLog`,
+      Phase 1 #3): at each CONFIRMED selection, the whole scored list from
+      the press-time pipeline run, so a new formula can re-rank logged
+      selections offline. Still current page only for the readable lines --
+      the JSONL has every candidate, but "shown" means the current page, so
+      a Wheeler pick from another page shows as not displayed.
+      **Raised in review (2026-10-02), not decided:**
+      - **Rescale what was sized for 0-8.** The recency boost adds 1.5
+        inside lambda (`UtilityScorer.cpp`, Step 4b); on a 0-1 target that
+        is bigger than the whole learned term, so the boost tops out near
+        8x, not 4x. UCB's beta 0.2 becomes 20% of the learned range. (The
+        -3 misclick penalty and the attribution multipliers leave learning
+        with the one selection path.)
+      - **Zero now means "rejected".** L2 and the 2%/hour decay both pull
+        towards 0, so an idle item drifts towards "never chosen" instead of
+        back to its prior. If a 0.25x negative counts as a whole train,
+        confidence climbs four times faster than the evidence. Pseudo-
+        observations (Phase 3 #3) fix both -- an argument for shipping them
+        with #1.
+      - **Substitutes, not complements.** Negatives fit items competing for
+        one hand, body slot or need -- not circlet + ring, sword + ward or
+        dual-wield. Delay negatives and cancel any whose item is chosen
+        next; the confirm window is the natural place.
+      - **The shipped layout rarely shows two items for one need.** One job
+        per key; same-need items share the screen only through class
+        overlaps (HealingAny / PotionsAny) and the two Regular slots --
+        what "Review the slot classes" wants to trim. On that page the
+        target falls back to positives only. The strong negative there is
+        a menu bypass: the key's item loses to what the player fetched.
+      - **Key position and overrides.** "Health on key 1" means the press
+        picks the key, not the item; rewarding override-placed picks teaches
+        the learner the override rule. Log slot index and override flag.
+        (Logged since 0.22.9: every shown slot carries its index and
+        assignment type in the selection log.)
+      - **Migration.** Dividing by 8 keeps every trained item near 1 with
+        its full train count (doubled for consumables) -- the convergence,
+        imported. Reset, or divide and cap trainCount at 2-3.
+      - **Step size.** `LEARNING_RATE` 0.1 times ||phi||^2 (about 7 out of
+        combat) moves the prediction 45-70% of the way per update, so the
+        estimate reflects the last two or three selections while
+        confidence claims 95% at 15. Normalised or 1/n steps
+        (pseudo-counts again).
+      - **Balance is the whole product.** Favourites (up to 2.5x, on by
+        default), correlation (up to 2x) and the potion multiplier (1.5x)
+        still multiply in: a favourited, fully trained weapon at its 0.2
+        baseline beats an untrained item at full context, ~1.9 vs ~1.5.
+        Favourites are also a hand-set preference, through the menu goal 1
+        counts.
+      - **Context rules become load-bearing** once learning is capped.
+        Grade them from the selection logs: did the player pick an item
+        with lower ctx than a same-need item they passed over?
+      - **Replay needs randomness Huginn lacks.** Li et al. WSDM 2011
+        assumes randomised logging with known propensities; Huginn is
+        deterministic apart from wildcards. The workable offline test is
+        re-ranking the logged candidates under a new formula, which needs
+        the WHOLE scored list at each selection (every breakdown term,
+        phi, slot index, override / wildcard flags, the wildcard roll
+        probability), one structured line each -- the input for an offline
+        harness, so a Phase 3 change costs minutes rather than play-hours.
+        (Logged since 0.22.9: `Huginn_Selections.jsonl`. The harness itself
+        is not written yet.)
+      - **"Soak logs set the negative weight" needs a procedure.** The logs
+        cannot show whether the player looked. Fit on the first half of
+        the run; keep the weight that best ranks the second half's
+        selections.
+      Raised 2026-10-02.
+
 - [ ] **Restore Health and Restore Stamina trade one slot in a fight, below
       the hold margin.** LoreRim 2026-09-30 21:35:20-35, one beast: health
       crossed the Critical/VeryLow line every ~3 s and slot 5 went Health ->
@@ -400,33 +736,6 @@ v0.22.8, in the `goals` field of the `[Soak]` heartbeat
       tome-learnable spells. Across all three load orders EVERY unclassified
       spell and scroll is script-only: the classifier covers every effect it
       can read, so this entry is the whole remaining classification gap.
-
-- [ ] **Thaumaturgy reuses `kAlchemyModifier` for Fortify Poison Use.**
-      Simonrim, `hg dump apparel` 2026-10-01: 5,609 enchanted pieces, only 6
-      read as craft gear, and those 6 are wrong -- Muiri's Band, the four
-      Thaumaturgy Poisoner rings and Rahgot carry 'Fortify Poison Use' on AV
-      106, the value vanilla uses for Fortify Alchemy, so `CraftSkillForActorValue`
-      files them as Alchemy and Huginn would offer a poisoner's ring at the
-      alchemy table. The rest is correct: Thaumaturgy turns "of the
-      Alchemist" gear into Fortify Potion Duration (AV 124), which is not a
-      crafting buff, and has no Fortify Smithing gear at all -- so on
-      simonrim the #65 craft-gear feature is effectively inert. The AV
-      cannot tell the two apart; the effect can (its name, or a keyword if
-      Thaumaturgy sets one). Vanilla: 147 Alchemy, 81 Smithing, 0 Enchanting
-      -- correct, vanilla has no Fortify Enchanting apparel (S).
-
-- [ ] Arcane Mass Inhibition is typed Utility and should be Debuff.
-      One spell, recorded so it is not rediscovered as a mystery. #128 types a
-      self-delivered, non-hostile, detrimental spell as Utility — a cost you pay
-      yourself rather than an attack, which is what rescued Equilibrium from
-      being called Damage. This spell is an offensive AoE whose author left
-      `kHostile` clear, so it is structurally identical to Equilibrium and lands
-      in the same bucket. Every narrower rule tried during the review traded it
-      for a spell that is correct today (health-only breaks Equilibrium
-      (Stamina); dropping the delivery test breaks Force of Nature).
-      An author flag error, one spell in 1,107, and the override file is the
-      fix. Only worth revisiting if the shape turns out to be common.
-      Raised 2026-09-23.
 
 - [ ] Take craft gear back OFF when the crafting is done — the #65 follow-on.
       Apparel is the one source that CHANGES THE PLAYER and leaves it changed:
@@ -597,28 +906,6 @@ Surfaced by the one-agent-per-doc migration pass. Every one is a code or config
 defect the docs exposed, not a documentation problem. Ordered by what a player
 would notice.
 
-- [ ] **`sUncastableSpellPolicy = Penalize` behaves identically to `Allow`.**
-      Split out of the `[Candidates]` wiring fix (0.19.13), which got the setting
-      to `CandidateGenerator` but could not make `Penalize` mean anything: both
-      `RunVisitorFilters` and `PassesAffordabilityFilter` branch only on
-      `Disallow`, and there is no penalty mechanism to reconnect. The docs
-      described one — a shortfall ratio and a `penaltyFloor` — but it was never
-      built, and `fUncastablePenaltyFloor` has now been removed from the shipped
-      INI rather than left implying it works.
-      So this is a scoring FEATURE, not a settings bug: decide whether a partial
-      relevance penalty for an unaffordable spell is wanted at all, and if so
-      what the curve is. Until then the option is honest but has only two
-      distinct behaviours (M)
-- [ ] **AS2 `setUrgent` / `_urgentSlots` in `Intuition.as`** -- inert, no
-      caller since urgency moved to `SlotVisualState`. The C++ side went in
-      0.22.8 with the rest of this entry's dead code; the AS2 side waits for
-      the next SWF rebuild (XS).
-      Kept on purpose, not dead: `SlotAllocator::AllocateSlots` (Tests.cpp
-      uses it), and the health tracker's damage/healing rates and trends.
-      Those still run every poll with only a debug widget reading them, but
-      the cost is arithmetic over a 10-event ring plus, when a trend flips, one
-      pipeline hash compare -- the hash gate still skips the run -- and they
-      are what a future trend feature would read.
 - [ ] Spell-pattern override file was proposed and never implemented — no
       `m_patterns`, no `pattern=true` parsing, no `Huginn_SpellPatterns.ini`.
       The proposal lived in `reviews/magic-classification.md`, deleted
@@ -745,6 +1032,8 @@ trigger to pick any of it up.
       Neither is measured. (A) is cheap enough to try and discard; (B) should
       not be started until (A) has shown that pooling helps at all on real play
       data.
+      **2026-10-02: moved behind "Learning swamps context"** (Known
+      Recommendation Issues) -- fix the 12x balance first; see Next up.
       **Picked as next up (with the user, 2026-10-01).** Three criticisms it
       has to answer, in order:
       - **Decay.** Lazy decay is 2%/hour once an item is idle for 5 minutes

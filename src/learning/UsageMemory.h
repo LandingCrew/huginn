@@ -21,24 +21,15 @@ namespace Huginn::Learning
     };
 
     // =========================================================================
-    // MISCLICK RESULT - Returned by RecordUsage for rapid equip-then-switch
-    // =========================================================================
-    struct MisclickResult
-    {
-        bool detected = false;
-        RE::FormID previousFormID = 0;
-    };
-
-    // =========================================================================
     // USAGE MEMORY - Short-term situational recall (Event-Driven Memory)
     // =========================================================================
     // Tracks recent item usage in a ring buffer. When the same item is used
     // multiple times in the same discretized game context, it receives an
     // additive recency boost to its learning score.
     //
-    // Also detects misclicks: if the player switches to a different item
-    // within MISCLICK_WINDOW_SECONDS in the same context, the previous item
-    // likely wasn't intentional.
+    // Fed only CONFIRMED selections (UsageMemorySubscriber), so one decision
+    // is one event. It used to detect misclicks too; the selection confirm
+    // window replaced that (SelectionTracker).
     //
     // Design:
     // - Ring buffer of last 20 usage events (self-pruning, no timestamps needed)
@@ -48,7 +39,7 @@ namespace Huginn::Learning
     //
     // Thread safety:
     // - Internal mutex guards all access to the ring buffer
-    // - Multiple writers (Wheeler callback, equip callback, ExternalEquipLearner)
+    // - One writer in practice (confirmed selections, update thread)
     // - One reader (update thread via UtilityScorer)
     // - Lock is lightweight: 20-element scan under lock is sub-microsecond
     // =========================================================================
@@ -62,31 +53,10 @@ namespace Huginn::Learning
         UsageMemory() = default;
 
         // Record that the player used an item in the given game state.
-        // Returns misclick detection result: if the previous event was a
-        // different item in the same context within MISCLICK_WINDOW_SECONDS,
-        // the previous item is flagged as a likely misclick.
-        MisclickResult RecordUsage(RE::FormID formID, const State::GameState& state)
+        void RecordUsage(RE::FormID formID, const State::GameState& state)
         {
             std::unique_lock lock(m_mutex);
-
-            MisclickResult result;
-            auto now = std::chrono::steady_clock::now();
-            uint32_t hash = state.GetHash();
-
-            // Check for misclick: different item, same context, within time window
-            if (!m_buffer.empty()) {
-                const auto& last = m_buffer.back();
-                if (last.formID != formID && last.contextHash == hash) {
-                    float elapsed = std::chrono::duration<float>(now - last.timestamp).count();
-                    if (elapsed < Config::MISCLICK_WINDOW_SECONDS) {
-                        result.detected = true;
-                        result.previousFormID = last.formID;
-                    }
-                }
-            }
-
-            m_buffer.push_back(UsageEvent{formID, hash, now});
-            return result;
+            m_buffer.push_back(UsageEvent{formID, state.GetHash(), std::chrono::steady_clock::now()});
         }
 
         // Get recency boost for an item in the current context.

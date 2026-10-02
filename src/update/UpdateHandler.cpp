@@ -2,9 +2,23 @@
 #include "../util/ScopedTimer.h"
 #include "../input/InputHandler.h"
 #include "../Profiling.h"
+#include "../learning/PlayerInputGate.h"
 
 namespace Huginn::Update
 {
+   namespace
+   {
+      bool IsVanillaHotkey(const RE::BSFixedString& userEvent)
+      {
+         const auto* names = RE::UserEvents::GetSingleton();
+         if (!names || userEvent.empty()) return false;
+         return userEvent == names->hotkey1 || userEvent == names->hotkey2 ||
+                userEvent == names->hotkey3 || userEvent == names->hotkey4 ||
+                userEvent == names->hotkey5 || userEvent == names->hotkey6 ||
+                userEvent == names->hotkey7 || userEvent == names->hotkey8;
+      }
+   }
+
    UpdateHandler* UpdateHandler::GetSingleton()
    {
       static UpdateHandler singleton;
@@ -62,6 +76,12 @@ namespace Huginn::Update
            loggedFirstEvent = true;
         }
 #endif
+        // A vanilla favourites hotkey the player pressed: the equip that
+        // follows is theirs (PlayerInputGate). Read BEFORE ProcessButton,
+        // which clears userEvent on a key Huginn swallows -- and a swallowed
+        // key never reaches the game, so it is skipped below.
+        const bool vanillaHotkey = button->IsDown() && IsVanillaHotkey(button->QUserEvent());
+
         // Process button and consume event if handled
         if (inputHandler.ProcessButton(button)) {
            // Clear userEvent to mark as consumed - prevents game from processing
@@ -71,6 +91,8 @@ namespace Huginn::Update
             logger::trace("[UpdateHandler] Consumed input event (code=0x{:02X})"sv,
               button->GetIDCode());
            }
+        } else if (vanillaHotkey) {
+           Learning::PlayerInputGate::GetSingleton().NoteVanillaHotkey();
         }
       }
       }

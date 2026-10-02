@@ -19,16 +19,17 @@ namespace Huginn::Learning
     // =========================================================================
     // EQUIP EVENT BUS - Observer pattern singleton
     // =========================================================================
-    // Publishers call Publish() with raw parameters. The bus evaluates state
-    // ONCE (BuildEvent), then dispatches to all registered subscribers.
+    // One event per CONFIRMED player selection. SelectionTracker captures the
+    // state when the player chooses (Capture) and dispatches the event when
+    // the choice confirms (Dispatch) -- so subscribers train on press-time
+    // state, and a selection that never confirms never reaches them.
     //
     // Lock ordering (must be respected to avoid deadlocks):
-    //   StateManager shared locks (acquired in BuildEvent)
-    //   → m_mutex (acquired for subscriber dispatch)
+    //   StateManager shared locks (acquired in Capture)
+    //   → m_mutex (acquired to snapshot the subscriber list)
     //   → subscriber internal locks (learner m_mutex, UsageMemory m_mutex, etc.)
     //
-    // BuildEvent runs OUTSIDE m_mutex to avoid holding the bus lock while
-    // acquiring StateManager locks.
+    // Capture takes no bus lock; Dispatch calls subscribers outside m_mutex.
     // =========================================================================
     class EquipEventBus
     {
@@ -42,18 +43,17 @@ namespace Huginn::Learning
         void Subscribe(IEquipSubscriber* subscriber);
         void Unsubscribe(IEquipSubscriber* subscriber);
 
-        // Publish an equip event. Evaluates state once, then dispatches to all subscribers.
-        void Publish(RE::FormID formID, EquipSource source, float rewardMultiplier, bool wasRecommended);
+        /// Evaluate the game state NOW into an event (no dispatch).
+        [[nodiscard]] static EquipEvent Capture(RE::FormID formID, EquipSource source);
+
+        /// Hand a confirmed selection to every subscriber.
+        void Dispatch(const EquipEvent& event);
 
     private:
         EquipEventBus() = default;
         ~EquipEventBus() = default;
         EquipEventBus(const EquipEventBus&) = delete;
         EquipEventBus& operator=(const EquipEventBus&) = delete;
-
-        // Build event with pre-computed state (called OUTSIDE m_mutex)
-        [[nodiscard]] EquipEvent BuildEvent(RE::FormID formID, EquipSource source,
-                                             float rewardMultiplier, bool wasRecommended) const;
 
         std::mutex m_mutex;
         std::vector<IEquipSubscriber*> m_subscribers;

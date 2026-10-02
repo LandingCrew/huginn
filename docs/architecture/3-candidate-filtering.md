@@ -178,12 +178,11 @@ drift (`CooldownManager.cpp:14`).
 ## 3. Uncastable Spell Policy
 
 Controls what happens to spells the player cannot currently afford. Declared as
-`UncastableSpellPolicy` in `CandidateConfig.h:12`.
+`UncastableSpellPolicy` in `CandidateConfig.h:13`.
 
-| Mode | INI value | Actual behavior in v0.19.10 |
+| Mode | INI value | Behavior |
 |---|---|---|
 | **Disallow** | `Disallow` | `FilterResult::Affordability` — the spell is removed (default) |
-| **Penalize** | `Penalize` | The spell is **kept, unmodified** |
 | **Allow** | `Allow` | The spell is kept, unmodified |
 
 `effectiveCost` is `spell->CalculateMagickaCost(player)`, cached during gathering
@@ -191,14 +190,10 @@ Controls what happens to spells the player cannot currently afford. Declared as
 concentration spells `CalculateMagickaCost` returns a per-second cost; if it comes back
 ≤ 0 the base cost is substituted.
 
-> **Penalize is not implemented.** There is no shortfall ratio, no penalty floor, and no
-> multiplier anywhere in `src/`. `PassesAffordabilityFilter` and `RunVisitorFilters` both
-> branch only on `policy == Disallow`, so `Penalize` and `Allow` are behaviorally
-> identical. The `penaltyFloor` field that used to hold this has been removed from
-> `CandidateConfig`, and `fUncastablePenaltyFloor` was removed from
-> `configs/Huginn.ini` in 0.19.13 rather than left implying it works. `Penalize`
-> remains behaviourally identical to `Allow`; that is tracked on the roadmap as a
-> scoring feature to design, not a settings bug.
+> **There is no `Penalize` mode.** It existed until 0.22.9 but was never built — no
+> shortfall ratio, no penalty floor — and behaved exactly like `Allow`. It was removed
+> rather than designed; an INI that still says `Penalize` loads as `Allow` and logs
+> that it did so.
 
 ---
 
@@ -434,7 +429,7 @@ The only field candidates carry for this is `CandidateBase::overrideReason`
 
 ```ini
 [Candidates]
-sUncastableSpellPolicy = Disallow    ; Disallow / Penalize / Allow (case-insensitive)
+sUncastableSpellPolicy = Disallow    ; Disallow / Allow (case-insensitive)
 bEnableSoulGemRecharge = true
 ```
 
@@ -568,7 +563,7 @@ There is no automated test suite in the repository; these are in-game checks
 ### 11.1 Filters
 
 - [ ] Spell costing more than current magicka is excluded (Disallow)
-- [ ] Spell costing more than current magicka is kept (Penalize / Allow — identical today)
+- [ ] Spell costing more than current magicka is kept (Allow)
 - [ ] Equipped spell is excluded
 - [ ] Equipped weapon passes the global filters; per-slot `bSkipEquipped` still hides it
 - [ ] Equipped ammo is excluded
