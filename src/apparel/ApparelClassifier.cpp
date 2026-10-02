@@ -63,6 +63,12 @@ namespace Huginn::Apparel
          // fortify — ranking it as craft gear would recommend sabotage.
          if (effect->baseEffect->IsHostile()) continue;
 
+         // Thaumaturgy (simonrim) puts 'Fortify Poison Use' on AV 106, the value
+         // vanilla uses for Fortify Alchemy, so the AV alone filed a poisoner's
+         // ring as alchemy gear and offered it at the lab. The actor value
+         // cannot tell the two apart; the effect's own keyword can.
+         if (effect->baseEffect->HasKeywordString("MAG_MagicEnchFortifyPoisonUse")) continue;
+
          const CraftSkill skill = CraftSkillForActorValue(effect->baseEffect->data.primaryAV);
          if (skill == CraftSkill::None) continue;
 

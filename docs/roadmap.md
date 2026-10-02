@@ -15,7 +15,7 @@ BEFORE the soak -- it is a set of bugs, and a soak on the broken path would
 mostly measure them.
 
 **Phase 1 -- pre-soak cleanup (only #2 touches learning; see above):**
-Landed on branch `pre-soak-cleanup` (0.22.9): #4, #5 and a first cut of
+Landed on branch `pre-soak-cleanup` (0.22.9): #4, #5, #6 and a first cut of
 #3 (details on each), plus the AS2 `setUrgent` removal with a SWF rebuild and
 logging for both Known Bugs so the soak run can settle them.
 1. **Default slot keys off the number row** -- Known Mod Compatability
@@ -45,7 +45,8 @@ logging for both Known Bugs so the soak run can settle them.
 5. ~~**Arcane Mass Inhibition override + spell-type vocabulary**~~ -- done
    in 0.22.9: shipped active in `Huginn_Overrides.ini`, which the build now
    deploys.
-6. Optional: **Thaumaturgy Fortify Poison Use** misread -- simonrim only. S.
+6. ~~**Thaumaturgy Fortify Poison Use** misread~~ -- done in 0.22.9:
+   excluded by its effect keyword, `MAG_MagicEnchFortifyPoisonUse`.
 
 **Phase 2 -- the soak run.** Clean save, `hg reset weights`, no test
 sessions on it, played normally. `hg dump weights` / `potions` / `scrolls`
@@ -486,7 +487,7 @@ with how the run is played and laid out -- see the Phase 2 review notes.
         grain.
       - **Classifier errors start to train the wrong class.** With less
         learning, context ranks more, and with pooling a misread (Ice Armor's
-        name-derived Frost, the Thaumaturgy ring) also trains the wrong
+        name-derived Frost, the Thaumaturgy ring before 0.22.9) also trains the wrong
         class. The coverage checks become guarantees the learner relies on.
       **Decided direction (with the user, 2026-10-02): a choice target.**
       The root of the convergence is that the learner only ever sees
@@ -795,20 +796,6 @@ with how the run is played and laid out -- see the Phase 2 review notes.
       tome-learnable spells. Across all three load orders EVERY unclassified
       spell and scroll is script-only: the classifier covers every effect it
       can read, so this entry is the whole remaining classification gap.
-
-- [ ] **Thaumaturgy reuses `kAlchemyModifier` for Fortify Poison Use.**
-      Simonrim, `hg dump apparel` 2026-10-01: 5,609 enchanted pieces, only 6
-      read as craft gear, and those 6 are wrong -- Muiri's Band, the four
-      Thaumaturgy Poisoner rings and Rahgot carry 'Fortify Poison Use' on AV
-      106, the value vanilla uses for Fortify Alchemy, so `CraftSkillForActorValue`
-      files them as Alchemy and Huginn would offer a poisoner's ring at the
-      alchemy table. The rest is correct: Thaumaturgy turns "of the
-      Alchemist" gear into Fortify Potion Duration (AV 124), which is not a
-      crafting buff, and has no Fortify Smithing gear at all -- so on
-      simonrim the #65 craft-gear feature is effectively inert. The AV
-      cannot tell the two apart; the effect can (its name, or a keyword if
-      Thaumaturgy sets one). Vanilla: 147 Alchemy, 81 Smithing, 0 Enchanting
-      -- correct, vanilla has no Fortify Enchanting apparel (S).
 
 - [ ] Take craft gear back OFF when the crafting is done — the #65 follow-on.
       Apparel is the one source that CHANGES THE PLAYER and leaves it changed:

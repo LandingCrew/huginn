@@ -54,9 +54,11 @@ What the numbers mean:
 - **Craft gear** differs by load order, not by bug: vanilla has no Fortify
   Enchanting apparel at all, and LoreRim has only two Fortify Smithing
   pieces. On simonrim, Thaumaturgy turns "of the Alchemist" gear into Fortify
-  Potion Duration (not a crafting buff) and removes Fortify Smithing; the 6
-  it reads as Alchemy are its Fortify Poison Use rings, which reuse the
-  vanilla Fortify Alchemy actor value -- a misread, on the roadmap.
+  Potion Duration (not a crafting buff) and removes Fortify Smithing. Its 6
+  Fortify Poison Use pieces reuse the vanilla Fortify Alchemy actor value and
+  used to read as Alchemy; since 0.22.9 the effect's keyword
+  (`MAG_MagicEnchFortifyPoisonUse`) excludes them, so simonrim should show 0
+  craft gear.
 - **Defensive spell elements**: every Defensive spell's element matches its
   resist actor value on all three (LoreRim 80, simonrim 27, vanilla 2).
 - **Food on simonrim** is clean: all 29 warming items are the "Hot ..."
