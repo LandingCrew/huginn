@@ -2,6 +2,20 @@
 
 namespace Huginn::Apparel
 {
+   namespace
+   {
+      /// Is Thaumaturgy.esp in the load order? Asked once, on first use --
+      /// classification only runs after data load, when the answer is final.
+      bool ThaumaturgyLoaded()
+      {
+         static const bool loaded = [] {
+            auto* dh = RE::TESDataHandler::GetSingleton();  // LookupModByName is non-const
+            return dh && dh->LookupModByName("Thaumaturgy.esp") != nullptr;
+         }();
+         return loaded;
+      }
+   }
+
    // The mapping now lives in ApparelData.h so ItemClassifier can share it —
    // the two copies had already drifted, and it was this one being wrong that
    // made #65 inert on its first play-test. Kept as a forwarder rather than
@@ -66,10 +80,20 @@ namespace Huginn::Apparel
          // Thaumaturgy (simonrim) puts 'Fortify Poison Use' on AV 106, the value
          // vanilla uses for Fortify Alchemy, so the AV alone filed a poisoner's
          // ring as alchemy gear and offered it at the lab. The actor value
-         // cannot tell the two apart; the effect's own keyword can.
+         // cannot tell the two apart; the effect's own keyword usually can.
          if (effect->baseEffect->HasKeywordString("MAG_MagicEnchFortifyPoisonUse")) continue;
 
          const CraftSkill skill = CraftSkillForActorValue(effect->baseEffect->data.primaryAV);
+
+         // "Usually": the keyword is not always there at runtime. Artificer.esp
+         // gives Rahgot its own AV 106 effect carrying Thaumaturgy's keyword,
+         // but on simonrim Artificer loads BEFORE its master Thaumaturgy, so the
+         // keyword reference resolves to nothing and Rahgot read as Alchemy 50
+         // (hg dump apparel, 2026-10-02). With Thaumaturgy loaded, AV 106 on
+         // apparel is never Fortify Alchemy at all -- it rewrites the vanilla
+         // Fortify Alchemy effect (Skyrim.esm 0008B65C) into Potion Duration,
+         // AV 124 -- so the plugin's presence settles it without the keyword.
+         if (skill == CraftSkill::Alchemy && ThaumaturgyLoaded()) continue;
          if (skill == CraftSkill::None) continue;
 
          data.magnitudes.Set(skill, effect->effectItem.magnitude);
