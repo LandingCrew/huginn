@@ -50,7 +50,7 @@ soak run can settle them. Only #1 is left, deferred.
 sessions on it, played normally. `hg dump weights` / `potions` / `scrolls`
 at both ends (and add a carried-and-trained section to
 docs/reference/classifier-coverage.md from them). Checklist to ride along:
-- torch on a Huginn Wheeler wheel (any key: the run's page is all Regular);
+- torch on a Huginn Wheeler wheel (any key on page 1, which is all Regular);
 - arrest, yield, re-engage -- watch `Enemies:` against `Combat:`;
 - Restore Health/Stamina in a fight that is not a kite;
 - `hg rebuild` once -- does `870710C4` register? (the rejection line now names
@@ -72,10 +72,12 @@ Raised in review 2026-10-02, to settle before the run starts:
   why (they inflate goal 1 and train the learner on staged picks), keeps the
   layout fixed for the run, and adds the selections file and the start/end
   dumps to the capture list.
-- ~~**The layout sets goal 2.**~~ Decided (the user, 2026-10-02): one page of
-  eight Regular keys, which is also the shipped default from 0.22.10 -- the
-  end state Huginn is measured against. The old one-job-per-key layout is
-  `configs/templates/job-per-key.ini`.
+- ~~**The layout sets goal 2.**~~ Decided (the user, 2026-10-02): page 1 is
+  eight Regular keys -- the end state Huginn is measured against -- and
+  page 2, "Jobs", is the old one-job-per-key page, kept as a MEASURED
+  fallback: its presses (`labeled=`, `offPage=`) and the flips to reach it
+  (`pageFlips=`) say whether the slot filters are still needed. Shipped as
+  the default from 0.22.10; Kit is page 3, off.
 - **A learning-off arm** -- decided (the user, 2026-10-02): not alternating
   sessions but a shadow arm on the SAME playthrough, as throwaway debug code
   with its own log. At each confirmed selection, rank the logged candidates

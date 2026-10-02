@@ -73,11 +73,12 @@ inline constexpr size_t MAX_SLOTS_PER_PAGE = 10;
 
 **Code default vs shipped INI.** The compiled-in fallback is **1 page with 8
 slots** (`Defaults::PAGE_COUNT`, `Defaults::SLOTS_PER_PAGE`,
-`src/slot/SlotSettings.h`), the same layout as the shipped `configs/Huginn.ini`:
-**1 page of 8 Regular keys** since 0.22.10 (the `Kit` page is still in the file,
-off unless `iPageCount = 2`). Seven layouts -- the old one-job-per-key default
-and six archetypes -- and a set of five test pages live in `configs/templates/`
-(see [Shipped INI layout](#shipped-ini-layout-1-page)).
+`src/slot/SlotSettings.h`), the same layout as page 1 of the shipped
+`configs/Huginn.ini`: **8 Regular keys** since 0.22.10. The shipped INI adds a
+second page, `Jobs` (the old one-job-per-key default), as a measured fallback,
+and keeps `Kit` as a third page, off unless `iPageCount = 3`. Seven layouts --
+the old default and six archetypes -- and a set of five test pages live in
+`configs/templates/` (see [Shipped INI layout](#shipped-ini-layout-2-pages)).
 
 **Page state and dirty flags** (`src/slot/SlotAllocator.h`):
 
@@ -494,14 +495,20 @@ The previous default gave every key a job (1 weapon, 2 attack magic, 3 heal,
 `configs/templates/job-per-key.ini`. Slots on pages 1+ default to `Regular`, wildcards on, override filter
 `None`, skip-equipped on, priority `slotCount - index - 1`.
 
-### Shipped INI layout (1 page)
+### Shipped INI layout (2 pages)
 
-Most players never edit the INI, so this page is the product.
+Most players never edit the INI, so these pages are the product.
 
 | In game | Name | Layout |
 |---------|------|--------|
 | 1 | Huginn | The code default above: eight Regular keys |
-| (2) | Kit | Off by default (`iPageCount = 2` turns it on): Potions, Food, Scrolls, Utility, Summons, Ammo, craft gear, Regular; no overrides |
+| 2 | Jobs | The previous default: Weapon, Attack magic, Heal, Defend, Buff, Potion, Regular, Regular; emergencies on the same keys as page 1 |
+| (3) | Kit | Off by default (`iPageCount = 3` turns it on): Potions, Food, Scrolls, Utility, Summons, Ammo, craft gear, Regular; no overrides |
+
+**Why Jobs is shipped.** It is the fallback, and it is measured. Every press on
+it counts as `labeled=` (keys 1-6) and `offPage=`, and every trip to it as
+`pageFlips=`, in the `[Soak]` heartbeat's goal-2 fields. If those stay rare the
+slot filters can go; if not, they show where the plain page falls short.
 
 **Test pages** (`configs/templates/test-pages.ini`), added after the pages above
 for testing and log reading:

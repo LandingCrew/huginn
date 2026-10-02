@@ -95,11 +95,11 @@ iPriority = 7
 
 #### The default page
 
-By default Huginn comes with one page of eight plain keys. No key has a job: each shows one of the eight best things for the moment, whatever they are, and Huginn decides which key gets what. That is what Huginn is built to get right -- labels are for when it doesn't yet.
+By default Huginn comes with two pages. The first, **Huginn**, is eight plain keys. No key has a job: each shows one of the eight best things for the moment, whatever they are, and Huginn decides which key gets what. That is what Huginn is built to get right -- labels are for when it doesn't yet.
 
 Emergencies always land on the same keys: health on 1, magicka on 2, stamina on 3, and key 7 takes the quieter prompts: arrows running low, a soul gem, waterbreathing (See Emergencies — [Overrides] below to change this).
 
-Prefer a job per key? The **job-per-key** template is the old default: 1 weapon, 2 attack magic, 3 heal, 4 defend, 5 buff, 6 potion, 7 situational, 8 wildcard -- plus a second **Kit** page for between fights (potions, food, scrolls, utility spells, summons, arrows and crafting gear, one kind per key). The Kit page is also still in Huginn.ini: set `iPageCount = 2` to turn it on.
+The second page, **Jobs**, is the old default with a job per key: 1 weapon, 2 attack magic, 3 heal, 4 defend, 5 buff, 6 potion, 7 situational, 8 wildcard. Flip to it when the plain page doesn't have what you want -- Huginn counts those flips, and they tell us where it falls short. A third page, **Kit**, for between fights (potions, food, scrolls, utility spells, summons, arrows and crafting gear, one kind per key), is in Huginn.ini too: set `iPageCount = 3` to turn it on.
 
 #### Template Pages
 
