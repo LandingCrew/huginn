@@ -116,12 +116,24 @@ namespace Huginn::Input
       // Logged on the transition only, both ways: otherwise the gate is
       // verifiable only by the ABSENCE of KEY PRESS lines, which looks the same
       // as any other reason input stopped.
-      if (auto* controlMap = RE::ControlMap::GetSingleton()) {
-      const bool typing = controlMap->textEntryCount > 0;
+      //
+      // The console needs its own check. textEntryCount never went above zero
+      // for it: typing a command containing "1000" reached Huginn as slot
+      // presses, equipped Unarmed off slot 1 and paid the learner +8 for it
+      // (LoreRim 2026-10-01 21:11:19), with no gate line all session.
+      {
+      const auto* controlMap = RE::ControlMap::GetSingleton();
+      auto* ui = RE::UI::GetSingleton();  // IsMenuOpen is non-const
+      const bool consoleOpen = ui && ui->IsMenuOpen(RE::Console::MENU_NAME);
+      const bool typing = consoleOpen || (controlMap && controlMap->textEntryCount > 0);
       if (typing != m_textEntryGated) {
          m_textEntryGated = typing;
-         logger::info("[InputHandler] Input {} -- text entry {}"sv,
-           typing ? "suppressed" : "resumed", typing ? "active" : "ended");
+         if (typing) {
+           logger::info("[InputHandler] Input suppressed -- {}"sv,
+             consoleOpen ? "console open" : "text entry active");
+         } else {
+           logger::info("[InputHandler] Input resumed"sv);
+         }
       }
       if (typing) {
          return false;
