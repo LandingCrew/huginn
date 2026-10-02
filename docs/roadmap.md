@@ -380,6 +380,26 @@ stage".
       powers should be candidates at all; if not, only the Shalidor scrolls
       matter, and an override entry or the unbuilt spell-pattern file covers
       them.
+      Simonrim (same day): all 148 Unknowns are script-only too, and 13 are
+      learnable SPELLS, not powers -- Night Eye, Chameleon, Mark, Shalidor's
+      and Valerica's Beacon, Planar Anchor, Translimination, Silence and
+      Burden Rune, Ash Form, Ash Cloud, The Unwelcome Guest, Daedric
+      Invocation -- plus their 13 scrolls. Those are in scope even if powers
+      stay out.
+
+- [ ] **Thaumaturgy reuses `kAlchemyModifier` for Fortify Poison Use.**
+      Simonrim, `hg dump apparel` 2026-10-01: 5,609 enchanted pieces, only 6
+      read as craft gear, and those 6 are wrong -- Muiri's Band, the four
+      Thaumaturgy Poisoner rings and Rahgot carry 'Fortify Poison Use' on AV
+      106, the value vanilla uses for Fortify Alchemy, so `CraftSkillForActorValue`
+      files them as Alchemy and Huginn would offer a poisoner's ring at the
+      alchemy table. The rest is correct: Thaumaturgy turns "of the
+      Alchemist" gear into Fortify Potion Duration (AV 124), which is not a
+      crafting buff, and has no Fortify Smithing gear at all -- so on
+      simonrim the #65 craft-gear feature is effectively inert. The AV
+      cannot tell the two apart; the effect can (its name, or a keyword if
+      Thaumaturgy sets one). Vanilla: 147 Alchemy, 81 Smithing, 0 Enchanting
+      -- correct, vanilla has no Fortify Enchanting apparel (S).
 
 - [ ] Arcane Mass Inhibition is typed Utility and should be Debuff.
       One spell, recorded so it is not rediscovered as a mystery. #128 types a
