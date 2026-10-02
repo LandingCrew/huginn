@@ -34,7 +34,7 @@ switching load orders.
 | Enchanted apparel | 4,588 | 5,609 | 2,843 |
 | Craft gear: Alchemy / Smithing | 191 / 2 | 6 (wrong) / 0 | 147 / 81 |
 | Potions + poisons (unclassified) | 439 (34) | 335 (2) | 293 (2) |
-| Food + drink (satisfy hunger / warm) | 177, 2026-09-29 | 235: 192 food, 43 alcohol (199 / 29) | not measured |
+| Food + drink (satisfy hunger / warm) | not measured | 235: 192 food, 43 alcohol (199 / 29) | 177: 145 food, 32 alcohol (174 / 16) |
 
 What the numbers mean:
 
@@ -62,5 +62,8 @@ What the numbers mean:
 - **Food on simonrim** is clean: all 29 warming items are the "Hot ..."
   survival soups, stews and pies, and the only food that does not satisfy
   hunger is Soul Husk (a Dawnguard soul-protection item) and Gourmet's two
-  quest "Special" drinks. Not measured: food on vanilla; LoreRim's 177 is
-  from 2026-09-29, before the survival tagging fixes.
+  quest "Special" drinks. **Vanilla** likewise: all 16 warming items are
+  "Hot ..." dishes, 30 of 32 drinks restore a little hunger (Survival Mode),
+  and only Soul Husk satisfies none. **LoreRim food has not been measured**:
+  the 177-row dump of 2026-09-29, once taken for LoreRim, matches vanilla
+  exactly (same count, vanilla effects), so it was most likely a vanilla run.
