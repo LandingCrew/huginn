@@ -188,12 +188,13 @@ void LoadCandidateConfigFromINI(const CSimpleIniA& ini) {
   const char* policyStr = ini.GetValue(section, "sUncastableSpellPolicy", "Disallow");
   std::string lower(policyStr);
   std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-  if (lower == "allow") {
+  // "Penalize" was removed: it never had a penalty behind it and behaved as
+  // Allow, so an INI that still says it keeps the behaviour it always had.
+  if (lower == "allow" || lower == "penalize") {
+    if (lower == "penalize")
+      logger::info("[Candidates] sUncastableSpellPolicy = Penalize is no longer supported; using Allow"sv);
     Candidate::g_candidateConfig.uncastableSpellPolicy =
       Candidate::UncastableSpellPolicy::Allow;
-  } else if (lower == "penalize") {
-    Candidate::g_candidateConfig.uncastableSpellPolicy =
-      Candidate::UncastableSpellPolicy::Penalize;
   } else {
     Candidate::g_candidateConfig.uncastableSpellPolicy =
       Candidate::UncastableSpellPolicy::Disallow;

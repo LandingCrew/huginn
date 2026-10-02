@@ -190,7 +190,6 @@ widget.Invoke("setSlot", nullptr, args.data(), args.size());
 | `clearSlot(index)` | int | Hide a slot, reset its animation state |
 | `setSlotCount(count)` | int | Set visible count, resize background |
 | `setPage(current, total, name)` | int, int, string | Update page indicator dots + inline label |
-| `setUrgent(index, active)` | int, bool | Legacy pulse flag (superseded by `visualState`) |
 | `setWidgetAlpha(alpha)` | float | Overall opacity (0-100) |
 | `setChildAlpha(alpha)` | float | Secondary-element opacity (0-100), e.g. page label |
 | `setSlotEffect(mode)` | int | 0 = slide, 1 = fade, 2 = instant |

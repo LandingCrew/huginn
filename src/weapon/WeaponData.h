@@ -317,6 +317,7 @@ namespace Huginn::Weapon
       bool isFavorited = false;    // Is in favorites menu
       bool isEquipped = false;     // Currently equipped
       float previousCharge = 0.0f; // Charge at last poll (for delta detection)
+      bool temperReadZero = false; // Last extraList read saw ExtraHealth == 0 (see WeaponRegistry)
 
       /// Registry key. ONE ENTRY PER INVENTORY STACK, not per base form.
       ///

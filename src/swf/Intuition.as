@@ -7,7 +7,6 @@
  *   clearSlot(index)                        - Hide a slot
  *   setSlotCount(count)                     - Set visible slot count + resize
  *   setPage(current, total, name)           - Update page indicator
- *   setUrgent(index, active)                - Enable/disable pulse on slot
  *   setWidgetAlpha(alpha)                   - Overall widget opacity (0-100)
  *   setChildAlpha(alpha)                    - Set secondary element opacity (0-100)
  *   setSlotEffect(mode)                     - Slot change anim: 0=slide, 1=fade, 2=instant
@@ -15,7 +14,7 @@
  * Animations:
  *   - Slide reveal: when slot content changes, old text slides up + fades out,
  *     new text rises in from below with ease-out deceleration.
- *   - Urgent pulse: override slots do a slow sine pulse.
+ *   - Urgent pulse: override/wildcard slots (visual state) do a slow sine pulse.
  */
 class Intuition extends MovieClip
 {
@@ -82,7 +81,6 @@ class Intuition extends MovieClip
     private var _activeSlotCount:Number;
 
     // ── Pulse state ───────────────────────────────────────────
-    private var _urgentSlots:Array;     // Boolean per slot (deprecated - replaced by visual states)
     private var _pulseTime:Number;
 
     // ── Visual state tracking ────────────────────────────────
@@ -132,7 +130,6 @@ class Intuition extends MovieClip
     function Intuition()
     {
         _slotClips = [];
-        _urgentSlots = [];
         _activeSlotCount = 0;
         _pulseTime = 0;
 
@@ -377,13 +374,6 @@ class Intuition extends MovieClip
         _pageContainer._visible = (total > 1);
     }
 
-    /** Enable/disable urgent pulse on a slot. */
-    public function setUrgent(index:Number, active:Boolean):Void
-    {
-        if (index < 0 || index >= MAX_SLOTS) return;
-        _urgentSlots[index] = active;
-    }
-
     /** Set overall widget opacity (0-100). */
     public function setWidgetAlpha(alpha:Number):Void
     {
@@ -465,7 +455,6 @@ class Intuition extends MovieClip
             nf.setNewTextFormat(_nameFormat);
 
             _slotClips.push(slot);
-            _urgentSlots.push(false);
 
             // Animation state
             _animPhase.push(0);

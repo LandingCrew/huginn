@@ -15,10 +15,14 @@ BEFORE the soak -- it is a set of bugs, and a soak on the broken path would
 mostly measure them.
 
 **Phase 1 -- pre-soak cleanup (only #2 touches learning; see above):**
+Landed on branch `pre-soak-cleanup` (0.22.9): #4, #5 and a first cut of
+#3 (details on each), plus the AS2 `setUrgent` removal with a SWF rebuild and
+logging for both Known Bugs so the soak run can settle them.
 1. **Default slot keys off the number row** -- Known Mod Compatability
    Issues. XS, config only (`configs/Huginn.ini` `iSlot1Key`-`iSlot10Key`).
    First because the double-fire is what polluted the last save's weights.
    Not F1-F8: F5 is Skyrim's quicksave (see the entry).
+   Pushed back 2026-10-02: the user does not use Skyrim's hotkeys.
 2. **One selection path: hold, then confirm** -- Known Bugs. Fixes potions
    trained twice, the false misclick penalties and the late game-state
    read; one API for every device, gated on player input. M.
@@ -30,11 +34,17 @@ mostly measure them.
    lets a new formula re-rank the logged candidates offline. S.
    Raised in review 2026-10-02: log the WHOLE scored list per selection,
    not just the same-need items -- see that entry's review notes.
-4. **`sUncastableSpellPolicy = Penalize`** -- Doc-migration findings. Remove
-   it (treat as Allow). The learner-reward ideas it prompted live on
-   "Learning swamps context", not here. XS.
-5. **Arcane Mass Inhibition override + document the spell-type vocabulary
-   in `Huginn_Overrides.ini`** -- one pass over one file. S.
+   **First cut in 0.22.9** (`src/learning/RewardLog`, `[Reward]` lines):
+   fires at each APPLIED reward, not yet a confirmed selection (that waits
+   on #2), and logs the current page only, with rank/util/ctx/pred/need per
+   shown item. Still to add for the review note: the whole scored list,
+   every breakdown term and phi, override / wildcard flags, a load
+   generation tag.
+4. ~~**`sUncastableSpellPolicy = Penalize`**~~ -- done in 0.22.9: removed,
+   a legacy INI value loads as Allow.
+5. ~~**Arcane Mass Inhibition override + spell-type vocabulary**~~ -- done
+   in 0.22.9: shipped active in `Huginn_Overrides.ini`, which the build now
+   deploys.
 6. Optional: **Thaumaturgy Fortify Poison Use** misread -- simonrim only. S.
 
 **Phase 2 -- the soak run.** Clean save, `hg reset weights`, no test
@@ -44,8 +54,10 @@ docs/reference/classifier-coverage.md from them). Checklist to ride along:
 - torch on a Huginn Wheeler wheel (Kit page, Utility key);
 - arrest, yield, re-engage -- watch `Enemies:` against `Combat:`;
 - Restore Health/Stamina in a fight that is not a kite;
-- `hg rebuild` once -- does `870710C4` register?
-- uid87 Long Bow ExtraHealth at each session start;
+- `hg rebuild` once -- does `870710C4` register? (the rejection line now names
+  its plugin; a retry logs "registered on retry" or "rejected again");
+- uid87 Long Bow ExtraHealth at each session start (a zero read now logs
+  "ExtraHealth reads 0", and a temper change logs at info);
 - the equip flood with the slot hold in.
 
 LoreRim's auto-quaff mod is off for the run (the user, 2026-10-02); the
@@ -206,6 +218,11 @@ with how the run is played and laid out -- see the Phase 2 review notes.
       -- so if a read CAN spuriously return zero, the guard hides it rather
       than reporting it, and the weapon silently ranks and displays at its
       base damage.
+      0.22.9 stops hiding it: a present ExtraHealth that reads 0 still counts
+      as untempered, but the registry logs "ExtraHealth reads 0" for the stack
+      (and "no longer reads 0" when it clears), and temper changes log at info.
+      A session that shows 0 then 1.30 with no grindstone between is the
+      spurious-read answer.
       Rescued 2026-09-24 from the temper-suffix entry, which closed around it.
 
 - [ ] One weapon in the LoreRim load order classifies as nameless and is
@@ -222,6 +239,10 @@ with how the run is played and laid out -- see the Phase 2 review notes.
       The axe registers normally (2026-09-24: `Woodcutter's Axe
       (0002F2F4/uid47): dmg=31.5`) and had simply not been in the player's
       inventory. 870710C4 is still unidentified.
+      0.22.9: the rejection warn now names the defining plugin, the playable
+      flag and any template (CNAM), and a rebuild's retry says which way it
+      went -- "registered on retry ... unnamed at scan time" or "rejected
+      again on retry, so genuinely nameless".
       The kHandToHandMelee note that used to sit here is done: #131's log-noise
       pass gave DetermineWeaponType an explicit arm for it, so Unarmed types as
       Unknown silently and the default arm keeps meaning "a type nobody has
@@ -544,6 +565,15 @@ with how the run is played and laid out -- see the Phase 2 review notes.
       prediction. That changes nothing and lets the soak data size the
       negative weight, the cap and k (and supports offline evaluation --
       see the review note on replay below).
+      First cut landed in 0.22.9 (`src/learning/RewardLog`): at each applied
+      reward, a `[Reward]` line with the chosen item's source, reward, rank,
+      utility, ctx, prediction before the update and need (primary slot
+      class), the best-ranked same-need item it passed over (`over=`), then
+      one line per item on the current page with slot index, same-need peers
+      marked `=`. Short of the replay note below: current page only (a
+      Wheeler pick from another page logs as not shown), no breakdown terms
+      or phi, no override / wildcard flags, and it fires on applied rewards
+      -- so a potion trained twice logs twice until the one selection path.
       **Raised in review (2026-10-02), not decided:**
       - **Rescale what was sized for 0-8.** The recency boost adds 1.5
         inside lambda (`UtilityScorer.cpp`, Step 4b); on a 0-1 target that
@@ -780,19 +810,6 @@ with how the run is played and laid out -- see the Phase 2 review notes.
       Thaumaturgy sets one). Vanilla: 147 Alchemy, 81 Smithing, 0 Enchanting
       -- correct, vanilla has no Fortify Enchanting apparel (S).
 
-- [ ] Arcane Mass Inhibition is typed Utility and should be Debuff.
-      One spell, recorded so it is not rediscovered as a mystery. #128 types a
-      self-delivered, non-hostile, detrimental spell as Utility — a cost you pay
-      yourself rather than an attack, which is what rescued Equilibrium from
-      being called Damage. This spell is an offensive AoE whose author left
-      `kHostile` clear, so it is structurally identical to Equilibrium and lands
-      in the same bucket. Every narrower rule tried during the review traded it
-      for a spell that is correct today (health-only breaks Equilibrium
-      (Stamina); dropping the delivery test breaks Force of Nature).
-      An author flag error, one spell in 1,107, and the override file is the
-      fix. Only worth revisiting if the shape turns out to be common.
-      Raised 2026-09-23.
-
 - [ ] Take craft gear back OFF when the crafting is done — the #65 follow-on.
       Apparel is the one source that CHANGES THE PLAYER and leaves it changed:
       every other recommendation is spent when used, but a fortify ring stays on
@@ -962,28 +979,6 @@ Surfaced by the one-agent-per-doc migration pass. Every one is a code or config
 defect the docs exposed, not a documentation problem. Ordered by what a player
 would notice.
 
-- [ ] **`sUncastableSpellPolicy = Penalize` behaves identically to `Allow`.**
-      Split out of the `[Candidates]` wiring fix (0.19.13), which got the setting
-      to `CandidateGenerator` but could not make `Penalize` mean anything: both
-      `RunVisitorFilters` and `PassesAffordabilityFilter` branch only on
-      `Disallow`, and there is no penalty mechanism to reconnect. The docs
-      described one — a shortfall ratio and a `penaltyFloor` — but it was never
-      built, and `fUncastablePenaltyFloor` has now been removed from the shipped
-      INI rather than left implying it works.
-      So this is a scoring FEATURE, not a settings bug: decide whether a partial
-      relevance penalty for an unaffordable spell is wanted at all, and if so
-      what the curve is. Until then the option is honest but has only two
-      distinct behaviours (M)
-- [ ] **AS2 `setUrgent` / `_urgentSlots` in `Intuition.as`** -- inert, no
-      caller since urgency moved to `SlotVisualState`. The C++ side went in
-      0.22.8 with the rest of this entry's dead code; the AS2 side waits for
-      the next SWF rebuild (XS).
-      Kept on purpose, not dead: `SlotAllocator::AllocateSlots` (Tests.cpp
-      uses it), and the health tracker's damage/healing rates and trends.
-      Those still run every poll with only a debug widget reading them, but
-      the cost is arithmetic over a 10-event ring plus, when a trend flips, one
-      pipeline hash compare -- the hash gate still skips the run -- and they
-      are what a future trend feature would read.
 - [ ] Spell-pattern override file was proposed and never implemented — no
       `m_patterns`, no `pattern=true` parsing, no `Huginn_SpellPatterns.ini`.
       The proposal lived in `reviews/magic-classification.md`, deleted

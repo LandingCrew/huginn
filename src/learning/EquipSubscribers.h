@@ -2,6 +2,7 @@
 
 #include "EquipEventBus.h"
 #include "FeatureBanditLearner.h"
+#include "RewardLog.h"
 #include "UsageMemory.h"
 #include "Config.h"
 #include "candidate/CandidateGenerator.h"
@@ -56,6 +57,7 @@ namespace Huginn::Learning
                 return;
             }
 
+            LogRewardContext(event, reward, m_learner);  // before the update: logs its prediction
             m_learner.Update(event.formID, event.features, reward);
 
             logger::info("[BanditSubscriber] Reward {:08X} +{:.1f} (src={}, mult={:.2f})"sv,

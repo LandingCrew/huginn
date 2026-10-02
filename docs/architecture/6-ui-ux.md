@@ -218,7 +218,6 @@ to the UI thread.
 | `ClearSlot` | `clearSlot` | index | Hide a slot and reset its animation state |
 | `SetSlotCount` | `setSlotCount` | count | Set visible slot count, resize background |
 | `SetPage` | `setPage` | current, total, name | Page pips + inline page-name label (hidden when `total <= 1`) |
-| — | `setUrgent` | index, active | **Inert**, AS2 only — see below |
 | `SetWidgetAlpha` | `setWidgetAlpha` | alpha (0–100) | Overall widget opacity |
 | — | `setChildAlpha` | alpha (0–100) | Secondary element opacity (page pips/label). Invoked directly from the constructor and `ReapplySettings`; no dedicated C++ method |
 | — | `setSlotEffect` | 0=slide, 1=fade, 2=instant | Slot change animation |
@@ -240,12 +239,9 @@ to the UI thread.
 Widget **scale** is not an AS2 call: it is applied by setting `_xscale` and
 `_yscale` on `_root` directly.
 
-**`setUrgent` is inert.** The C++ `IntuitionMenu::SetUrgent` had no caller and
-was removed in 0.22.8. The AS2 `setUrgent` still exists and stores the flag in
-`_urgentSlots`, but nothing reads that array — urgency is carried by
-`SlotVisualState` on each `setSlot` instead. Removing the AS2 side needs a SWF
-rebuild, so it waits for the next one. The AS2 field is commented
-`deprecated - replaced by visual states`.
+There is no `setUrgent`. Urgency is carried by `SlotVisualState` on each
+`setSlot`; the old per-slot pulse flag lost its C++ side in 0.22.8 and its AS2
+side in 0.22.9.
 
 ### Thread safety
 
@@ -1134,7 +1130,6 @@ graph TB
 | Hot reload | Implemented | `hg reload` and the dMenu Reload INI button |
 | Player hide latch | Implemented | `iToggleWidgetKey` (default `x`), session-scoped |
 | Auto-hide behind Wheeler | Implemented | Re-asserted per tick while a wheel is open |
-| `setUrgent` | **Inert** | Superseded by `SlotVisualState`; no C++ caller |
 
 ### Wheeler integration
 
@@ -1159,36 +1154,34 @@ graph TB
 
 ## Known Limitations
 
-1. **`setUrgent` is vestigial.** `_urgentSlots` is written and never read.
-
-2. **EditModeCallback carries no payload.** Wheeler always passes
+1. **EditModeCallback carries no payload.** Wheeler always passes
    `(nullptr, 0)`; Huginn re-resolves indices unconditionally instead.
 
-3. **Single subtext per entry** — a Wheeler API limit. When several labels apply,
+2. **Single subtext per entry** — a Wheeler API limit. When several labels apply,
    only the highest-priority one shows.
 
-4. **Lock-timer noise** — `bShowLockTimerLabel` is off by default. Even quantized
+3. **Lock-timer noise** — `bShowLockTimerLabel` is off by default. Even quantized
    to whole seconds it changes once a second while a slot is locked, and each
    change costs a page diff plus a cross-DLL write.
 
-5. **`IsManagedWheel` cannot answer "is it mine".** It reports only that a wheel
+4. **`IsManagedWheel` cannot answer "is it mine".** It reports only that a wheel
    is managed by *someone*, so a stale index can be written to another client's
    wheel. Index re-resolution (v4) is the mitigation; on v3 and below there is no
    lookup that distinguishes them.
 
-6. **Another mod inserting a wheel ahead of ours** shifts our indices with the
+5. **Another mod inserting a wheel ahead of ours** shifts our indices with the
    player having touched nothing, and the position-memory heuristic reads that as
    a deliberate move. Telling the two apart needs a signal Wheeler does not
    expose.
 
-7. **Scaleform string passing** — always `CreateString()` to copy into the
+6. **Scaleform string passing** — always `CreateString()` to copy into the
    movie's managed heap. A raw `const char*` causes silent text disappearance if
    the backing string dies before render.
 
-8. **`onEnterFrame` is unreliable** in Skyrim's Scaleform GFx, so all animation
+7. **`onEnterFrame` is unreliable** in Skyrim's Scaleform GFx, so all animation
    is driven by C++ calling `tick(dt)` from `AdvanceMovie()`.
 
-9. **A missing dMenu INI silently defaults the widget.** `[Widget]` and
+8. **A missing dMenu INI silently defaults the widget.** `[Widget]` and
    `[Debug]` live only in dMenu's file; if it is absent, `GetDMenuIniPath()`
    falls back to the main INI, which does not define those keys, and every value
    lands on its compile-time default.
