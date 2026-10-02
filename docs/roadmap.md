@@ -236,6 +236,60 @@ v0.22.8, in the `goals` field of the `[Soak]` heartbeat
       under `src/` that mention dMenu (132 references).
 
 ## Known Recommendation Issues
+- [ ] **Learning swamps context ~12x, so the bar converges on a few trained
+      items.** Seen in testing (the user, 2026-10-02): a handful of trained
+      items win almost every key. Fine for weapons, wrong for potions and
+      spells, which are numerous and situational.
+      The arithmetic, with the shipped constants (sigmoid midpoint 5,
+      steepness 0.3; lambda 0.5-3.0; beta 0.2; prior ~0.5):
+      `utility = ctx x (1 + lambda*learn) x ...`
+      | item | alpha | learn | lambda | 1+lambda*learn |
+      |---|---|---|---|---|
+      | never trained | 0.18 | ~0.6 | 0.95 | ~1.6 |
+      | 15 trains, R~7 | 0.95 | ~6.7 | 2.9 | ~20 |
+      Break-even context is ~1.6/20 = 0.08. A trained weapon at its 0.2
+      baseline (~4.0) beats an untrained Waterbreathing potion while drowning
+      at ctx 1.0 (~1.6) -- overrides catch that one case, nothing catches the
+      pattern -- and a trained item at the 0.05 noise floor (~1.0) matches an
+      untrained one at ctx 0.65. The header calls context a gate; in practice
+      it is a 1/12 tiebreaker once anything is trained. R is state-dependent
+      (w.phi), but the pooling pre-check found the vectors dominated by
+      always-on features, so it likely stays high everywhere.
+      Why it converges fast: every used item regresses to the same fixed target
+      (8 equip / 5 consume), only recommended items are rewarded on keys
+      (`wasRecommended`), confidence hits 95% at 15 trains, and consumables
+      rack up trains quickly. Rich get richer.
+      **Why weapons and consumables differ.** For a weapon the preference IS
+      the item ("I use this sword"). For a potion or spell the preference is
+      mostly the situation, and which of twenty healing potions is a
+      detail. So per-item learning suits the few, and class-level learning
+      plus context suits the many -- the same split pooling (Follow-ups) is
+      reaching for from the other side.
+      Options, not decided:
+      - Cap the learned boost (`lambda*learn` <= ~2-3x) so context stays a
+        real gate; or a per-candidate-type lambdaMax (high for weapons, low
+        for potions/spells).
+      - Rank within a context band: learning orders items of similar ctx and
+        cannot lift a baseline item over a triggered one.
+      - Learn consumables and spells at class level (pooling B) and weapons
+        per item.
+      - Surprise-weighted updates (`w += alpha*k*(r - w.phi)*phi`, k larger
+        when the chosen item ranked low or came from the menu, clamped ~1-3x)
+        -- inverse-propensity weighting, after Joachims et al. WSDM 2017 and
+        Chen et al. WSDM 2019 (capped weights). Fights the feedback loop
+        rather than the balance.
+      - Prior as pseudo-observations: put the PriorCalculator prior on the
+        reward scale (0-8, not 0-1), replace the sigmoid with n/(n+n0), decay
+        n alongside the weights so idle items fall back towards the prior.
+      Probably BEFORE pooling: pooling only makes untrained items look more
+      trained, which raises the floor but leaves a 12x multiplier on top.
+      All of this changes learning behaviour -- not landable during the soak
+      run. What IS landable before it: log, at each reward, the chosen item's
+      utility, rank and ctx, what it displaced, and its source (key / wheel /
+      menu). That changes nothing and lets the soak data size the cap and k
+      (and supports offline replay evaluation, Li et al. WSDM 2011).
+      Raised 2026-10-02.
+
 - [ ] **Restore Health and Restore Stamina trade one slot in a fight, below
       the hold margin.** LoreRim 2026-09-30 21:35:20-35, one beast: health
       crossed the Critical/VeryLow line every ~3 s and slot 5 went Health ->
