@@ -115,10 +115,15 @@ namespace Huginn::Learning
         // Deliberately lowercase: the 'A'..'E' space belongs to attribution
         // case labels, and the two are recorded through different counters.
         //
-        // The wheel-open and anti-spam skips went with the one selection path:
-        // Huginn's own wheel picks are marked Huginn equips and never reach
-        // here, the player's own wheel picks are now selections, and a repeat
-        // event for one pick merges into its pending selection.
+        // The wheel-open and anti-spam skips went with the one selection path.
+        // Huginn's own wheel picks DO reach here first: Wheeler equips before it
+        // calls back, so the equip event arrives before WheelerClient marks it
+        // (measured on LoreRim 2026-10-02: event at .096, callback at .102).
+        // The pick is recorded as an outside selection, then relabelled as a
+        // Wheeler pick -- or withdrawn, for a Remembrance swap-back -- when the
+        // callback lands (SelectionTracker::Select / Withdraw). The player's own
+        // wheel picks are outside selections, and a repeat event for one pick
+        // merges into its pending selection.
         static constexpr char SKIP_NONE     = '\0';  // do not skip
         static constexpr char SKIP_NO_INPUT = 'n';    // a CONSUMABLE with no player input behind it (a script)
         static constexpr char SKIP_ENGINE   = 'e';    // a non-consumable with no input: the engine refilling

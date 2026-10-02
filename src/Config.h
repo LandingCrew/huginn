@@ -167,7 +167,7 @@ namespace Huginn::Config
    // than PLAYER_INPUT_WINDOW_MS to leave room for a frame hitch.
    inline constexpr float MENU_CLOSE_INPUT_WINDOW_MS = 2000.0f;
 
-   // Mirror of the grace window above, for the UNLOAD side. Quitting to the main
+   // Teardown guard, for the UNLOAD side of a session. Quitting to the main
    // menu fires no SKSE message, so there is nothing to start a timer from: the
    // only evidence is the shape of the scan itself. When the player's container
    // is torn down, one delta scan sees every tracked stack drop to zero and
