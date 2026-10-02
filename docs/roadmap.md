@@ -276,6 +276,12 @@ v0.22.8, in the `goals` field of the `[Soak]` heartbeat
       COMBAT_EXIT, hence no `Combat:` flip. Now raw to enter, published to
       leave. If `Enemies:` still flaps with combat steady, the remaining cause
       is the hostile falling out of `highActorHandles` for a poll.
+      **Likely trigger (the user, 2026-10-01): the arrest process.** Guards
+      attack, the player lowers their weapon to talk, then combat can start
+      again -- so the hostile genuinely stops being hostile for a moment and
+      comes back. That is a real state change, not a sensor flap, and would
+      explain why no fight since has reproduced it. To confirm: get arrested,
+      yield, then re-engage, and watch `Enemies:` against `Combat:`.
 
 - [ ] **Thirst is not tracked -- PARKED 2026-09-30.** Skipped with the user:
       there is no reliable way to buy water from innkeepers on LoreRim, so a
