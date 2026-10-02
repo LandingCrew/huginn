@@ -70,9 +70,8 @@ namespace Huginn::Telemetry
     void SoakMetrics::RecordEquipSkip(char reasonCode)
     {
         switch (reasonCode) {
-        case 'w': m_skipWheel.fetch_add(1, std::memory_order_relaxed); break;
+        case 'n': m_skipInput.fetch_add(1, std::memory_order_relaxed); break;
         case 's': m_skipStale.fetch_add(1, std::memory_order_relaxed); break;
-        case 'a': m_skipSpam.fetch_add(1, std::memory_order_relaxed); break;
         case 'x': m_skipOff.fetch_add(1, std::memory_order_relaxed); break;
         default: break;
         }
@@ -183,9 +182,8 @@ namespace Huginn::Telemetry
         const uint32_t near_ = m_near.exchange(0, std::memory_order_relaxed);
         const uint32_t miss  = m_miss.exchange(0, std::memory_order_relaxed);
         const uint32_t novel = m_novel.exchange(0, std::memory_order_relaxed);
-        const uint32_t skipWheel = m_skipWheel.exchange(0, std::memory_order_relaxed);
+        const uint32_t skipInput = m_skipInput.exchange(0, std::memory_order_relaxed);
         const uint32_t skipStale = m_skipStale.exchange(0, std::memory_order_relaxed);
-        const uint32_t skipSpam  = m_skipSpam.exchange(0, std::memory_order_relaxed);
         const uint32_t skipOff   = m_skipOff.exchange(0, std::memory_order_relaxed);
         const uint32_t ticks = m_ticks.exchange(0, std::memory_order_relaxed);
         const uint32_t recomputes   = m_recomputes.exchange(0, std::memory_order_relaxed);
@@ -227,10 +225,10 @@ namespace Huginn::Telemetry
         // Breakdown only when something was actually filtered — a bare skipped=0
         // keeps the common line short while still holding the column, so a soak
         // log stays parseable across windows.
-        const uint32_t skipTotal = skipWheel + skipStale + skipSpam + skipOff;
+        const uint32_t skipTotal = skipInput + skipStale + skipOff;
         const std::string skipStr = skipTotal
-            ? std::format("{} (wheel={} stale={} spam={} off={})",
-                  skipTotal, skipWheel, skipStale, skipSpam, skipOff)
+            ? std::format("{} (input={} stale={} off={})",
+                  skipTotal, skipInput, skipStale, skipOff)
             : std::string("0");
         // Same convention as skipped=: a bare 0 when nothing changed, the full
         // breakdown (every cause, zeros included, so columns line up across

@@ -604,7 +604,7 @@ Where:
 | `MATCH_THRESHOLD` | 3 uses | Minimum matching events to trigger boost |
 | `RECENCY_BOOST` | 1.5 | Additive to `learningScore` inside `(1 + λ × learn)` |
 
-UsageMemory also detects **misclicks**: if the player switches to a different item within `MISCLICK_WINDOW_SECONDS` in the same context, the previous equip is flagged as unintentional. Thread-safe via internal mutex (multiple writers: Wheeler, equip callback, ExternalEquipLearner; one reader: update thread).
+UsageMemory records only confirmed selections (one per decision). It used to detect misclicks too; the selection confirm window replaced that in v0.22.9. Thread-safe via internal mutex (writer: confirmed selections; reader: update thread).
 
 **Cold-Start Fallback:**
 
@@ -787,9 +787,6 @@ graph LR
     Decay -->|L2 regularization| D1[Per-update weight shrinkage]
     Decay -->|MaybeDecay| D2[2%/hr on idle items > 5 min]
 
-    Misclick[Rapid re-equip < 3s] -->|UsageMemory| Penalty[-3.0 penalty]
-    Penalty --> QL
-
     QL --> Future[Future<br/>Recommendations]
 
     style E1 fill:#ccffcc
@@ -807,26 +804,24 @@ graph LR
 
 | Signal | Source | Effect | Purpose |
 |--------|--------|--------|---------|
-| Equip reward | Wheeler selection / hotkey 1-0 | +8.0 (`EQUIP_REWARD`) to equipped item | Positive reinforcement (Huginn-mediated) |
-| Consume reward | Potion/scroll consumption | +5.0 (`CONSUME_REWARD`) to consumed item | Separate tuning for finite resources |
-| External equip reward | Vanilla menu / favorites | 0.0 to +8.0 (tiered by pipeline attribution) | Learn from non-Huginn equips |
-| Misclick penalty | Rapid equip-then-switch (< 3s) | -3.0 (`MISCLICK_PENALTY`) to discarded item | Penalize accidental equips |
+| Equip reward | A confirmed selection of a worn/held item -- Huginn key, Huginn wheel, menu, vanilla hotkey, own wheel | +8.0 (`EQUIP_REWARD`), once | One selection, one reward (`SelectionTracker`) |
+| Consume reward | A confirmed selection of a consumable, any device | +5.0 (`CONSUME_REWARD`), once | Confirmed by the count drop; a drop with no selection teaches nothing |
 | Recency boost | UsageMemory ring buffer | +1.5 after 3+ uses in same context | Short-term situational recall |
 | L2 regularization | Per gradient descent step | Weight shrinkage (λ=0.01) | Continuous dampening, prevents unbounded drift |
 | Time-based decay | `MaybeDecay()` per candidate read | 2%/hr exponential decay (idle > 5 min) | Stale entries erode over time |
 
-**External Equip Attribution Cases** (`ExternalEquipLearner`, Phase 3b):
+**External Equip Attribution Cases** (`ExternalEquipLearner`) -- labels for telemetry and the selection log; since v0.22.9 they no longer scale the reward:
 
-| Case | Condition | Reward Multiplier | Rationale |
-|------|-----------|-------------------|-----------|
-| A | Not in candidate pool | x1.0 = +8.0 (strongest) | Player went out of their way — strongest preference signal |
-| B-low | Low-rank (beyond `FAR_MISS_SLOTS` overshoot) | x0.20 = +1.6 | Scored low, possible noise |
-| B-med | Mid-rank (between `NEAR_MISS_SLOTS` and `FAR_MISS_SLOTS`) | x0.40 = +3.2 | Scoring undervalued |
-| C | High-rank (within `NEAR_MISS_SLOTS`), not displayed | x0.80 = +6.4 | Near-miss — scoring correct, slot allocation missed |
-| D | Displayed on different page | x0.50 = +4.0 | Multi-page UX issue |
-| E | Displayed on current page | 0.0 (skip) | Player saw it, chose vanilla UI anyway |
+| Case | Condition |
+|------|-----------|
+| A | Not in candidate pool |
+| B-low | Low-rank (beyond `FAR_MISS_SLOTS` overshoot) |
+| B-med | Mid-rank (between `NEAR_MISS_SLOTS` and `FAR_MISS_SLOTS`) |
+| C | High-rank (within `NEAR_MISS_SLOTS`), not displayed |
+| D | Displayed, page changed since the snapshot |
+| E | Displayed on current page |
 
-**Anti-spam filters:** 3s minimum between same-item equips, low-stakes filter (skip if not in combat with full health), re-equip filter, recent-Wheeler filter (skip if Wheeler open in last 2s).
+**Filters:** an outside equip needs player input behind it (`PlayerInputGate`: an open inventory/favorites/magic menu, a vanilla hotkey, or an own-wheel pick); the master toggle and a stale-cache check are the others. See [4-contextual-bandits.md](4-contextual-bandits.md#outside-selections-and-attribution).
 
 **Removed signals (v0.13.0):**
 
@@ -834,6 +829,8 @@ graph LR
 |---------------|----------------|
 | Skip penalty (-1.0 on wheel close) | Punished correct recommendations during state transitions. Learning should not be coupled to presentation layer. |
 | Cast bonus (+3.0) | Never implemented; `CAST_BONUS` has since been deleted from `src/Config.h` entirely. |
+| Misclick penalty (-3.0), v0.22.9 | Fired falsely off the late consumption event; the selection confirm window replaced it. |
+| Separate consumption reward (+5.0), v0.22.9 | Made every drink train twice; the count drop now only confirms a selection. |
 
 See [4-contextual-bandits.md](4-contextual-bandits.md) for learning update details and [../roadmap.md](../roadmap.md) for design rationale.
 

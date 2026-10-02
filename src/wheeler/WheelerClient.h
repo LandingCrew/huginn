@@ -243,9 +243,18 @@ namespace Huginn::Wheeler
             /// what a SourceType is.
             std::function<void(RE::FormID)> startCooldown;
 
-            /// Announce a Wheeler-mediated equip to the learning subscribers.
+            /// A Huginn-wheel activation is a player selection (SelectionTracker).
             /// Called WITHOUT m_callbackMutex held.
             std::function<void(RE::FormID)> publishWheelerEquip;
+
+            /// A remembered item was put back (Remembrance): withdraw any selection
+            /// its equip event already recorded. Wheeler equips BEFORE it calls
+            /// back, so that event arrives first and looks like an outside pick.
+            std::function<void(RE::FormID)> withdrawSelection;
+
+            /// The player activated an item on one of their OWN wheels: player
+            /// input behind the equip event that follows (PlayerInputGate).
+            std::function<void(RE::FormID)> noteOwnWheelPick;
 
             /// Show or hide the Intuition widget as the wheel opens and closes.
             std::function<void(bool visible)> setWidgetVisible;
@@ -272,7 +281,7 @@ namespace Huginn::Wheeler
             [[nodiscard]] bool Complete() const noexcept
             {
                 return lockSlotForActivation && onItemUsed && markHuginnEquip &&
-                       startCooldown && publishWheelerEquip && setWidgetVisible &&
+                       startCooldown && publishWheelerEquip && withdrawSelection && noteOwnWheelPick && setWidgetVisible &&
                        noteSlotActivated &&
                        setCurrentPage && markPageDirty;
             }

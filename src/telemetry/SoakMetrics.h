@@ -187,14 +187,10 @@ namespace Huginn::Telemetry
         //
         // Without this the heartbeat cannot distinguish "the player equipped
         // nothing this window" from "the player equipped a dozen things and
-        // every one was filtered" — both print accept=n/a. The second is the
-        // NORMAL case for a player who equips through the Huginn wheel: the
-        // wheel-open filter fires on every activation by design, because
-        // grading Huginn on items the player picked off Huginn's own
-        // recommendation list would be circular. Measured 2026-08-26: a 44-min
-        // session logged 21 external-equip events, all skipped (wheel open),
-        // and reported accept=n/a for its whole duration with no way to tell
-        // from the heartbeat alone that the path had run at all.
+        // every one was filtered" — both print accept=n/a. (The wheel-open
+        // filter that made this the normal case for a wheel player is gone:
+        // Huginn-wheel picks never reach attribution, and own-wheel picks are
+        // now attributed like any other outside selection.)
         void RecordEquipSkip(char reasonCode);
 
         // One pipeline recompute produced `candidateCount` scored candidates and
@@ -253,9 +249,8 @@ namespace Huginn::Telemetry
         // External equips filtered before attribution (window). These are NOT
         // failures — wheel-open is the expected outcome for a wheel activation.
         // They exist to make accept=n/a self-explaining.
-        std::atomic<uint32_t> m_skipWheel{0};  // w: Huginn/Wheeler wheel was open
+        std::atomic<uint32_t> m_skipInput{0};  // n: no player input behind it (a script)
         std::atomic<uint32_t> m_skipStale{0};  // s: pipeline snapshot too old to attribute
-        std::atomic<uint32_t> m_skipSpam{0};   // a: same FormID re-equipped too soon
         std::atomic<uint32_t> m_skipOff{0};    // x: external-equip learning disabled
 
         // Workarounds (window). Regular and labeled partition the presses;

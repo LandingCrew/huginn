@@ -8,10 +8,10 @@ namespace Huginn::Candidate
     enum class SourceType : uint8_t;
 
     /// Policy for handling spells the player can't currently afford (insufficient magicka).
-    /// Disallow removes them in PassesAffordabilityFilter(); Penalize/Allow both keep them.
+    /// Disallow removes them in PassesAffordabilityFilter(); Allow keeps them.
+    /// A legacy INI value of "Penalize" loads as Allow -- it never had a penalty behind it.
     enum class UncastableSpellPolicy : uint8_t {
         Disallow,   // Filter out uncastable spells (current behavior)
-        Penalize,   // Keep but reduce relevance by magicka shortfall ratio
         Allow       // Keep at full relevance (no penalty)
     };
 
@@ -19,7 +19,6 @@ namespace Huginn::Candidate
     [[nodiscard]] constexpr const char* ToString(UncastableSpellPolicy policy) noexcept {
         switch (policy) {
             case UncastableSpellPolicy::Disallow:  return "Disallow";
-            case UncastableSpellPolicy::Penalize:  return "Penalize";
             case UncastableSpellPolicy::Allow:     return "Allow";
             default: return "Unknown";
         }

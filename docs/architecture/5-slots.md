@@ -757,10 +757,12 @@ See [6-ui-ux.md](6-ui-ux.md) for the display side. The slot-relevant parts:
 | **Sticky** | `LockSlotForActivation()` holds the slot for 10 s and the cooldown is skipped, so the activated item stays visible |
 | **Empty** | `OnItemUsed` plus `MarkActivationEmptied`; the Wheeler entry is cleared and re-subtexted "Equipped", and a cooldown starts |
 
-- **Feedback.** Every Wheeler activation publishes to the `EquipEventBus` as
-  `EquipSource::Wheeler` with `rewardMultiplier = 1.0` and
-  `wasRecommended = true` (`src/Main.cpp:496`); the learning subscriber applies
-  `Config::EQUIP_REWARD * 1.0 = +8.0`.
+- **Feedback.** Every Wheeler activation is a player selection
+  (`SelectionTracker::Select`, `EquipSource::Wheeler`, wired in `src/Main.cpp`).
+  Once it confirms -- a consumable's count drops, an equip is still worn 3 s
+  later -- the learner gets one reward, `EQUIP_REWARD` (+8.0) or
+  `CONSUME_REWARD` (+5.0). A pick off the player's own wheel is noted as player
+  input instead, so the equip that follows counts as an outside selection.
 - Opening and closing a wheel without acting carries **no penalty** — there is
   no skip-penalty path in the code.
 

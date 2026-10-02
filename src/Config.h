@@ -41,13 +41,15 @@ namespace Huginn::Config
    // Reward Shaping Configuration (v0.3.0+)
    // -----------------------------------------------------------------------------
 
-   // Reward for equipping an item (positive reinforcement)
-   // Recommended: 1.0 - 10.0
+   // Reward for one confirmed selection of a worn/held item (weapon, spell,
+   // scroll, ammo, torch, apparel). One selection = one reward, whatever the
+   // device (SelectionTracker). The 8/5 split stays until the choice target
+   // (roadmap Phase 3 #1) replaces both with 1.
    inline constexpr float EQUIP_REWARD = 8.0f;
 
-   // Reward for consuming a potion or scroll (strongest preference signal — finite resource committed)
-   // Separate from EQUIP_REWARD so it can be tuned independently
-   // Recommended: 3.0 - 10.0
+   // Reward for one confirmed selection of a consumable (potion, food,
+   // poison, soul gem). Before the one selection path a drink earned BOTH
+   // rewards -- the key press and the count drop -- so this now stands alone.
    inline constexpr float CONSUME_REWARD = 5.0f;
 
    // -----------------------------------------------------------------------------
@@ -137,28 +139,35 @@ namespace Huginn::Config
    // Accessing them causes EXCEPTION_ACCESS_VIOLATION crashes
    inline constexpr float EXTRALIST_STABILIZATION_MS = 500.0f;
 
-   // Grace window after a game load / new game during which item removals are
-   // NOT rewarded as consumption. Alternate-start mods and settling scripts
-   // strip starter/quest items in bulk shortly after load; without this window
-   // those removals train the learner as if the player drank them (observed:
-   // 6 starter potions each +5.0 bandit reward ~1.1 s after kNewGame). Must exceed
-   // the observed strip delay with margin; real player consumption in the first
-   // few seconds after a load is rare and low-value to learn.
-   inline constexpr float CONSUMPTION_POST_LOAD_GRACE_MS = 5000.0f;
 
-   // How far back a consumption may look for a Huginn-mediated equip of the same
-   // form before deciding somebody else did it.
+   // How long a consumable selection waits for its count to drop before it
+   // is dropped unconfirmed (SelectionTracker).
    //
-   // Much wider than EquipSourceTracker's 400 ms default because the two events
-   // are detected differently: an equip is an event, a consumption is a COUNT
-   // CHANGE noticed by the 2 Hz delta scan. Measured gap between Huginn using a
-   // potion and the scan seeing it go: 1.33 s (2026-09-21 18:05:21.397 ->
-   // 18:05:22.730). Too short and Huginn's own drinks look external; too long
-   // and a genuine external drink inherits credit from an unrelated Huginn equip
-   // of the same form.
+   // A selection is an event, a consumption is a COUNT CHANGE noticed by the
+   // 2 Hz delta scan. Measured gap between Huginn using a potion and the scan
+   // seeing it go: 1.33 s (2026-09-21 18:05:21.397 -> 18:05:22.730). Too short
+   // and real drinks go unconfirmed; too long and a count drop from something
+   // else (a script, a second potion of the same form) inherits a stale pick.
    inline constexpr float CONSUMPTION_HUGINN_WINDOW_MS = 2500.0f;
 
-   // Mirror of the grace window above, for the UNLOAD side. Quitting to the main
+   // How long an equip selection must survive to confirm: a weapon, spell or
+   // ring still on the player this long after the pick is a choice; one
+   // swapped away inside it was not (this replaced misclick detection).
+   inline constexpr float SELECTION_CONFIRM_MS = 3000.0f;
+
+   // How recent a vanilla hotkey press or an own-wheel pick must be for an
+   // outside equip to count as the player's (PlayerInputGate). Equips land in
+   // the same frame or the next few, so this is generous.
+   inline constexpr float PLAYER_INPUT_WINDOW_MS = 1000.0f;
+
+   // How long after the inventory / favorites / magic menu CLOSES an outside
+   // equip still counts as made from it. LoreRim closes the inventory the
+   // moment the player drinks (a drinking animation), and a potion's equip
+   // event lands ~0.85 s after the act -- so by then the menu is gone. Wider
+   // than PLAYER_INPUT_WINDOW_MS to leave room for a frame hitch.
+   inline constexpr float MENU_CLOSE_INPUT_WINDOW_MS = 2000.0f;
+
+   // Teardown guard, for the UNLOAD side of a session. Quitting to the main
    // menu fires no SKSE message, so there is nothing to start a timer from: the
    // only evidence is the shape of the scan itself. When the player's container
    // is torn down, one delta scan sees every tracked stack drop to zero and
@@ -202,9 +211,6 @@ namespace Huginn::Config
    inline constexpr float DECAY_RATE_PER_HOUR = 0.02f;       // 2%/hr exponential decay
    inline constexpr float DECAY_THRESHOLD_MINUTES = 5.0f;     // Don't decay if updated within 5 min
 
-   // Misclick detection: rapid equip-then-switch penalizes the discarded item
-   inline constexpr float MISCLICK_WINDOW_SECONDS = 3.0f;     // Max gap to count as misclick
-   inline constexpr float MISCLICK_PENALTY = -3.0f;           // ~37.5% of EQUIP_REWARD
 
    // -----------------------------------------------------------------------------
    // Debug Configuration

@@ -2,27 +2,32 @@
 
 #include "ScoredCandidate.h"
 #include "slot/SlotAssignment.h"
+#include "slot/SlotClassifier.h"
 #include <chrono>
 #include <limits>
 #include <mutex>
 #include <shared_mutex>
+#include <string>
 #include <unordered_map>
-#include <unordered_set>
+#include <vector>
 
 namespace Huginn::Learning
 {
     // =========================================================================
     // PIPELINE STATE CACHE
     // =========================================================================
-    // Snapshots the most recent pipeline scoring results so that external equip
-    // events (TESEquipEvent) can attribute what the pipeline "thought" at the
-    // time the player equipped an item.
+    // Snapshots the most recent pipeline scoring results so that a player
+    // selection can record what the pipeline "thought" at the moment of the
+    // choice: external-equip attribution (the A-E case labels) and the
+    // selection log (SelectionLog), which records the whole scored list.
     //
-    // Updated every ~100ms by the update loop (single writer).
-    // Read on TESEquipEvent by SpellRegistry::ProcessEvent (rare reader).
+    // Updated by the update loop after each pipeline run (single writer).
+    // Read when a selection is made (SelectionTracker::Select) and on
+    // TESEquipEvent attribution -- rare readers.
     //
-    // Stores a flat FormID -> {rank, utility} map instead of copying the full
-    // ScoredCandidateList to keep memory at ~5KB instead of ~25KB.
+    // Holds one compact row per scored candidate (formID, need, rank and the
+    // full ScoreBreakdown -- ~80 bytes) rather than the ScoredCandidateList
+    // itself, which carries the whole CandidateVariant and its strings.
     // =========================================================================
 
     class PipelineStateCache
@@ -40,6 +45,50 @@ namespace Huginn::Learning
         // compute overshoot = rank - displayedCount, which any real
         // displayedCount keeps far above FAR_MISS_SLOTS for this value.
         static constexpr size_t kUnrankedTail = std::numeric_limits<size_t>::max() / 2;
+
+        /// One scored candidate as the pipeline saw it. Everything a different
+        /// utility formula would need to re-rank it offline.
+        struct ScoreRow
+        {
+            RE::FormID formID = 0;
+            Candidate::SourceType sourceType{};
+            Slot::SlotClassification need = Slot::SlotClassification::Regular;  // SlotClassifier::Classify
+            size_t rank = 0;            // kUnrankedTail past the sorted prefix
+            float utility = 0.0f;
+            Scoring::ScoreBreakdown breakdown;
+            bool isWildcard = false;
+            bool isColdStartBoosted = false;
+            bool isRememberedOnly = false;
+        };
+
+        /// One filled slot on the current page.
+        struct ShownSlot
+        {
+            size_t slotIndex = 0;
+            RE::FormID formID = 0;
+            std::string name;
+            Slot::AssignmentType type = Slot::AssignmentType::Normal;  // Override / Wildcard / Remembered flags
+        };
+
+        /// Everything the selection log needs, read under one lock so the scored
+        /// list and the page come from the same pipeline run.
+        struct Snapshot
+        {
+            bool valid = false;            // A pipeline run has been cached at all
+            size_t page = 0;
+            float ageMs = 0.0f;            // How old the run was when the snapshot was taken
+            size_t sortedPrefix = 0;
+            std::vector<ScoreRow> scores;  // Pipeline order; the first sortedPrefix are ranked
+            std::vector<ShownSlot> shown;  // Current page, slot order
+
+            [[nodiscard]] const ScoreRow* Find(RE::FormID formID) const
+            {
+                for (const auto& row : scores) {
+                    if (row.formID == formID) return &row;
+                }
+                return nullptr;
+            }
+        };
 
         // Called from UpdateLoop after scoring + allocation.
         // sortedPrefix: number of leading entries in `scored` that are actually
@@ -60,24 +109,42 @@ namespace Huginn::Learning
 
             m_timestamp.store(SteadyNow(), std::memory_order_release);
             m_currentPage = currentPage;
+            m_sortedPrefix = std::min(sortedPrefix, scored.size());
+            m_valid = true;
 
-            // Build FormID -> {rank, utility} map from scored candidates
-            m_candidateMap.clear();
+            m_scores.clear();
+            m_scores.reserve(scored.size());
+            m_index.clear();
             for (size_t i = 0; i < scored.size(); ++i) {
-                const size_t rank = (i < sortedPrefix) ? i : kUnrankedTail;
-                m_candidateMap[scored[i].GetFormID()] = CachedCandidate{rank, scored[i].utility};
+                const auto& sc = scored[i];
+                // FIRST row wins, as in Snapshot::Find. One FormID can have
+                // several rows (the weapon registry keeps one per stack), and
+                // the first is the best-ranked -- attribution and the selection
+                // log must agree on which one they mean.
+                m_index.try_emplace(sc.GetFormID(), m_scores.size());
+                m_scores.push_back(ScoreRow{
+                    .formID = sc.GetFormID(),
+                    .sourceType = sc.GetSourceType(),
+                    .need = Slot::SlotClassifier::Classify(sc),
+                    .rank = (i < sortedPrefix) ? i : kUnrankedTail,
+                    .utility = sc.utility,
+                    .breakdown = sc.breakdown,
+                    .isWildcard = sc.isWildcard,
+                    .isColdStartBoosted = sc.isColdStartBoosted,
+                    .isRememberedOnly = sc.isRememberedOnly,
+                });
             }
 
-            // Build displayed FormID set from current page assignments
-            m_displayedFormIDs.clear();
+            m_shown.clear();
             for (const auto& assignment : currentPageAssignments) {
                 if (!assignment.IsEmpty() && assignment.formID != 0) {
-                    m_displayedFormIDs.insert(assignment.formID);
+                    m_shown.push_back(ShownSlot{ assignment.slotIndex, assignment.formID,
+                        assignment.name, assignment.type });
                 }
             }
 
             logger::trace("[PipelineStateCache] Updated: {} candidates, {} displayed, page {}",
-                m_candidateMap.size(), m_displayedFormIDs.size(), m_currentPage);
+                m_scores.size(), m_shown.size(), m_currentPage);
         }
 
         // Refresh the cache timestamp without changing data.
@@ -106,40 +173,54 @@ namespace Huginn::Learning
 
             CandidateInfo info;
 
-            auto it = m_candidateMap.find(formID);
-            if (it != m_candidateMap.end()) {
+            if (auto it = m_index.find(formID); it != m_index.end()) {
+                const auto& row = m_scores[it->second];
                 info.wasCandidate = true;
-                info.rank = it->second.rank;
-                info.utility = it->second.utility;
+                info.rank = row.rank;
+                info.utility = row.utility;
             }
 
-            if (m_displayedFormIDs.contains(formID)) {
-                info.wasDisplayed = true;
-                info.displayPage = m_currentPage;
+            for (const auto& s : m_shown) {
+                if (s.formID == formID) {
+                    info.wasDisplayed = true;
+                    info.displayPage = m_currentPage;
+                    break;
+                }
             }
 
             return info;
         }
 
+        /// Copy of the last run, for a selection to keep until it confirms.
+        [[nodiscard]] Snapshot TakeSnapshot() const
+        {
+            Snapshot snap;
+            snap.ageMs = AgeMs();
+
+            std::shared_lock lock(m_mutex);
+            snap.valid = m_valid;
+            snap.page = m_currentPage;
+            snap.sortedPrefix = m_sortedPrefix;
+            snap.scores = m_scores;
+            snap.shown = m_shown;
+            return snap;
+        }
+
         [[nodiscard]] size_t GetCandidateCount() const
         {
             std::shared_lock lock(m_mutex);
-            return m_candidateMap.size();
+            return m_scores.size();
         }
 
         [[nodiscard]] size_t GetDisplayedCount() const
         {
             std::shared_lock lock(m_mutex);
-            return m_displayedFormIDs.size();
+            return m_shown.size();
         }
 
         [[nodiscard]] bool IsStale(float maxAgeMs = 500.0f) const
         {
-            auto cachedTicks = m_timestamp.load(std::memory_order_acquire);
-            auto nowTicks = SteadyNow();
-            auto elapsed = std::chrono::steady_clock::duration(nowTicks - cachedTicks);
-            float elapsedMs = std::chrono::duration<float, std::milli>(elapsed).count();
-            return elapsedMs > maxAgeMs;
+            return AgeMs() > maxAgeMs;
         }
 
     private:
@@ -153,19 +234,21 @@ namespace Huginn::Learning
             return std::chrono::steady_clock::now().time_since_epoch().count();
         }
 
+        [[nodiscard]] float AgeMs() const
+        {
+            auto cachedTicks = m_timestamp.load(std::memory_order_acquire);
+            auto elapsed = std::chrono::steady_clock::duration(SteadyNow() - cachedTicks);
+            return std::chrono::duration<float, std::milli>(elapsed).count();
+        }
+
         mutable std::shared_mutex m_mutex;
         std::atomic<int64_t> m_timestamp{0};
 
-        // FormID -> {rank, utility} for O(1) lookup
-        struct CachedCandidate
-        {
-            size_t rank = 0;
-            float utility = 0.0f;
-        };
-        std::unordered_map<RE::FormID, CachedCandidate> m_candidateMap;
-
-        // FormIDs that were displayed on the current page
-        std::unordered_set<RE::FormID> m_displayedFormIDs;
+        bool m_valid = false;
+        size_t m_sortedPrefix = 0;
+        std::vector<ScoreRow> m_scores;                     // Pipeline order
+        std::unordered_map<RE::FormID, size_t> m_index;     // FormID -> m_scores index
+        std::vector<ShownSlot> m_shown;                     // Current page, slot order
         size_t m_currentPage = 0;
     };
 

@@ -6,6 +6,7 @@
 #include "override/OverrideManager.h"
 #include "slot/SlotAllocator.h"
 #include "slot/Remembrance.h"
+#include "learning/SelectionTracker.h"
 #include "pipeline/PipelineCoordinator.h"
 
 #include <algorithm>
@@ -69,6 +70,7 @@ void RegistryTimers::ResetAll(std::chrono::steady_clock::time_point now) noexcep
 
 // Global game load timestamp for extraLists stabilization guard (v0.7.9)
 std::chrono::steady_clock::time_point g_lastGameLoad;
+std::atomic<uint32_t> g_loadGeneration{ 0 };
 
 // Track whether we've shown the welcome notification
 bool g_hasShownWelcomeNotification = false;
@@ -109,6 +111,9 @@ void ResetPipelineSubsystems() {
     slotLocker.Reset();
     slotLocker.SetConfig(LoadSlotLockerConfigFromINI());
     Slot::Remembrance::GetSingleton().Reset();
+
+    // A selection pending across a load belongs to the abandoned session.
+    Learning::SelectionTracker::GetSingleton().Clear();
 
     Pipeline::PipelineCoordinator::GetSingleton().ResetCrossSaveState();
 
@@ -188,12 +193,13 @@ void LoadCandidateConfigFromINI(const CSimpleIniA& ini) {
   const char* policyStr = ini.GetValue(section, "sUncastableSpellPolicy", "Disallow");
   std::string lower(policyStr);
   std::transform(lower.begin(), lower.end(), lower.begin(), ::tolower);
-  if (lower == "allow") {
+  // "Penalize" was removed: it never had a penalty behind it and behaved as
+  // Allow, so an INI that still says it keeps the behaviour it always had.
+  if (lower == "allow" || lower == "penalize") {
+    if (lower == "penalize")
+      logger::info("[Candidates] sUncastableSpellPolicy = Penalize is no longer supported; using Allow"sv);
     Candidate::g_candidateConfig.uncastableSpellPolicy =
       Candidate::UncastableSpellPolicy::Allow;
-  } else if (lower == "penalize") {
-    Candidate::g_candidateConfig.uncastableSpellPolicy =
-      Candidate::UncastableSpellPolicy::Penalize;
   } else {
     Candidate::g_candidateConfig.uncastableSpellPolicy =
       Candidate::UncastableSpellPolicy::Disallow;

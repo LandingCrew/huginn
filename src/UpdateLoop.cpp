@@ -11,10 +11,8 @@
 #include "slot/Remembrance.h"
 #include "wheeler/WheelerClient.h"
 #include "learning/PipelineStateCache.h"
-#include "learning/EquipEventBus.h"
 #include "learning/InventoryExitTracker.h"
-#include "learning/EquipSourceTracker.h"
-#include "learning/ExternalEquipLearner.h"
+#include "learning/SelectionTracker.h"
 #include "util/ScopedTimer.h"
 #include "util/InventoryUtil.h"
 #include "weapon/WeaponRegistry.h"
@@ -35,11 +33,11 @@
 using namespace Huginn;
 
 // =============================================================================
-// CONSUMPTION REWARD HELPER
+// CONSUMPTION HELPERS
 // =============================================================================
 
 // Returns true if the count decrease was a real consumption (cast/drink/eat)
-// rather than a drop/sell/store, which must not be rewarded — see
+// rather than a drop/sell/store, which must not confirm anything — see
 // InventoryExitTracker.
 static bool IsConsumption(RE::FormID formID, int32_t delta)
 {
@@ -49,64 +47,42 @@ static bool IsConsumption(RE::FormID formID, int32_t delta)
     return transferred < removed;
 }
 
-// True during the grace window after a game load / new game, when bulk item
-// strips (alt-start mods, settling scripts) masquerade as consumption.
-static bool InPostLoadGraceWindow()
+// A real consumption. Two separate things happen, and only one is learning:
+//
+// - Bookkeeping, always: the item starts its candidate cooldown, so it is not
+//   re-offered the moment it is gone. (The slot lock was already broken by
+//   the caller.) This used to be the CooldownSubscriber, which ran only when
+//   a consumption was published -- now it follows the count drop itself.
+//
+// - Learning, only if a player selection is pending for it: the count drop
+//   CONFIRMS that selection (SelectionTracker), which is then rewarded once,
+//   on the state from when the player chose. A count drop with no selection
+//   behind it -- a script drinking, a quest taking an item, a scroll cast
+//   from a hand it was put in long ago -- teaches nothing. Before the one
+//   selection path every drink earned a second, separate reward here.
+//
+// No post-load grace window any more. It existed because alt-start and
+// settling scripts strip starter items in bulk right after a load, and every
+// removal used to train the learner. Now a removal teaches only by confirming
+// a selection the player made, and pending selections are cleared on load --
+// so a strip has nothing to confirm, while a real key drink in the first
+// seconds after a load must still be able to (code review of #163).
+static void HandleConsumption(RE::FormID formID, std::string_view name)
 {
-    const float sinceLoadMs = std::chrono::duration<float, std::milli>(
-        std::chrono::steady_clock::now() - g_lastGameLoad).count();
-    return sinceLoadMs < Config::CONSUMPTION_POST_LOAD_GRACE_MS;
-}
+    auto& candidateGen = Candidate::CandidateGenerator::GetSingleton();
+    if (candidateGen.IsInitialized()) {
+        auto sourceType = Candidate::SourceType::Spell;
+        if (auto* form = RE::TESForm::LookupByID(formID)) {
+            if (form->Is(RE::FormType::AlchemyItem)) sourceType = Candidate::SourceType::Potion;
+            else if (form->Is(RE::FormType::Scroll)) sourceType = Candidate::SourceType::Scroll;
+        }
+        candidateGen.StartCooldown(formID, sourceType);
+    }
 
-static void ApplyConsumptionReward(RE::FormID formID, std::string_view name)
-{
-    // Suppress rewards right after a load: alt-start/quest scripts strip items
-    // in bulk and would otherwise train the learner on drinks that never
-    // happened (see CONSUMPTION_POST_LOAD_GRACE_MS).
-    if (InPostLoadGraceWindow()) {
-        logger::debug("[Learning] Skipped consumption reward (post-load grace): {} ({:08X})",
+    if (!Learning::SelectionTracker::GetSingleton().OnConsumed(formID)) {
+        logger::debug("[Learning] Consumed with no selection behind it, teaches nothing: {} ({:08X})",
             name, formID);
-        return;
     }
-
-    auto& cache = Learning::PipelineStateCache::GetSingleton();
-    if (cache.IsStale(500.0f)) {
-        logger::debug("[Learning] Skipped consumption reward (stale cache): {} ({:08X})",
-            name, formID);
-        return;
-    }
-
-    // WHO drank it decides what it teaches.
-    //
-    // A consumption Huginn itself triggered is the player acting on a
-    // recommendation, and worth full credit. Anything else is an outside equip
-    // wearing a different hat -- the player's own inventory menu, a favourites
-    // hotkey, or another mod acting on its own -- and it should be attributed
-    // exactly as ExternalEquipLearner attributes an outside equip, because it IS
-    // one. The two paths disagreed before this: for a LoreRim auto-quaff of a
-    // resist-shock potion (2026-09-21), the equip path decided the act taught it
-    // nothing and skipped, and then this path handed out the full +5.0 anyway.
-    // A mod drinking potions on a schedule was quietly teaching Huginn that the
-    // player loves those potions.
-    //
-    // A zero multiplier still PUBLISHES: the cooldown and usage-memory
-    // subscribers need to know the potion went, whoever drank it. Only the
-    // learner stays out (see BanditSubscriber).
-    float multiplier = 1.0f;
-    const char* attributionLabel = "huginn";
-    if (!Learning::EquipSourceTracker::GetSingleton().IsRecentHuginnEquip(
-            formID, Config::CONSUMPTION_HUGINN_WINDOW_MS)) {
-        const auto attribution =
-            Learning::ExternalEquipLearner::GetSingleton().ComputeAttribution(formID);
-        multiplier = attribution.multiplier;
-        attributionLabel = attribution.caseLabel;
-    }
-
-    Learning::EquipEventBus::GetSingleton().Publish(
-        formID, Learning::EquipSource::Consumption, multiplier, false);
-
-    logger::info("[Learning] Consumption event published: {} ({:08X}) [{} x{:.2f}]",
-        name, formID, attributionLabel, multiplier);
 }
 
 // =============================================================================
@@ -206,7 +182,7 @@ template <typename Registry>
             continue;
         }
         logger::debug("[{}] Consumed: {} x{}"sv, tag, change.name, -change.delta);
-        ApplyConsumptionReward(change.formID, change.name);
+        HandleConsumption(change.formID, change.name);
     }
 
     return !changes.empty();
@@ -590,10 +566,8 @@ void OnUpdate(float deltaSeconds)
                 // pipeline stage, which is skipped — so it now reads as stale by
                 // the length of the whole load screen. The delta timer was never
                 // reset either, so the very next MaintainRegistries call this
-                // same tick is guaranteed due, and every legitimate consumption
-                // it finds would be dropped as "stale cache". A cell load fires
-                // no kPostLoadGame, so CONSUMPTION_POST_LOAD_GRACE_MS does not
-                // cover this: the reward would be silently lost, not suppressed.
+                // same tick is guaranteed due. An outside equip made right after
+                // the gap would otherwise be skipped as "stale cache".
                 Learning::PipelineStateCache::GetSingleton().RefreshTimestamp();
 
                 // Slot locks are wall-clock timers that stopped decaying, and
@@ -617,6 +591,15 @@ void OnUpdate(float deltaSeconds)
 
     UpdateSubsystems(deltaSeconds, deltaMs);
     MaintainRegistries(player, now);
+
+    // Confirm or drop pending player selections whose window has run out.
+    // AFTER the inventory scan, deliberately: this loop does not run while a
+    // menu or a wheel pauses the game (the "Clamped deltaSeconds" lines), so on
+    // the first tick back a consumable's deadline and its count drop arrive
+    // together -- the scan must confirm it before the deadline can expire it.
+    // Main thread (the input sink drives this loop), so reading what the
+    // player has equipped is safe here.
+    Learning::SelectionTracker::GetSingleton().Update();
     RunPipelineIfNeeded(deltaMs, player, now);
 
     // Soak telemetry: record whole-tick cost and emit the periodic heartbeat.

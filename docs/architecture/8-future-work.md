@@ -27,7 +27,7 @@ one-off ideas kept here so they are not lost.
 | Item | Status at 0.19.10 | Tracked on the roadmap? |
 |---|---|---|
 | Reward structure refinement | **Shipped** (v0.13.0) | No — done |
-| Misclick detection | **Shipped** (v0.13.0, `EquipEventBus`) | No — done |
+| Misclick detection | Shipped v0.13.0, **replaced** v0.22.9 by the selection confirm window | No — done |
 | Decay / anti-drift (L2 + lazy time decay) | **Shipped** (v0.13.0) | No — done |
 | Stage 1 — urgency multiplier | Not implemented | **No** |
 | Stage 2 — uncertainty-aware prediction | Not implemented | **No** |
@@ -57,11 +57,11 @@ Kept here because the "why" is useful and the constants move.
 | Original issue | Resolution (verified at 0.19.10) |
 |---|---|
 | Skip penalty punishes exploration | No skip penalties exist. `FeatureBanditLearner::Update` applies L2 regularization (`L2_LAMBDA = 0.01f`) on every gradient step, so weights for unused items shrink toward zero naturally (`FeatureBanditLearner.cpp:41`) |
-| Double-dipping (equip + cast) | A cast bonus was never implemented. `EQUIP_REWARD = 8.0f` and `CONSUME_REWARD = 5.0f` are the only positive signals (`Config.h:46`, `Config.h:51`), both scaled by `event.rewardMultiplier` in `BanditSubscriber` |
+| Double-dipping (equip + cast) | A cast bonus was never implemented, and since v0.22.9 a drink no longer earns both the key reward and a consumption reward: one confirmed selection is one reward, `EQUIP_REWARD = 8.0f` or `CONSUME_REWARD = 5.0f` (`SelectionTracker`, `BanditSubscriber`) |
 | Skip penalty ambiguity | Not applicable — reasonable alternatives are never penalized |
 | Weight drift across build changes | L2 pulls weights toward zero without reinforcement; a lazy time-based decay adds explicit staleness handling (`DECAY_RATE_PER_HOUR = 0.02f`, `DECAY_THRESHOLD_MINUTES = 5.0f`, `Config.h:179`) |
 | Positive feedback loop | Mitigated by per-feature clamping (`WEIGHT_CLAMP = 10.0f`, `FeatureBanditLearner.h:130`) applied immediately after each update |
-| Misclick detection | Implemented: a rapid equip-then-switch inside `MISCLICK_WINDOW_SECONDS = 3.0f` in the same context applies `MISCLICK_PENALTY = -3.0f` to the discarded item (`UsageMemory::RecordUsage` → `UsageMemorySubscriber`, `EquipSubscribers.h:66`) |
+| Misclick detection | Replaced in v0.22.9: an item swapped away inside the selection confirm window (`SELECTION_CONFIRM_MS = 3000`) is never confirmed, so it is never rewarded; there is no penalty any more (`SelectionTracker`) |
 
 Two identifier corrections against older revisions of this document:
 
@@ -69,12 +69,10 @@ Two identifier corrections against older revisions of this document:
   acquisitions per scoring tick; it is now one shared-lock collection pass plus one
   unique-lock apply pass, skipped entirely when nothing qualifies
   (`FeatureBanditLearner.h:49`, called from `UtilityScorer.cpp:63`).
-- Rewards are dispatched through the `EquipEventBus` subscriber pattern, not from
-  the update loop: `BanditSubscriber` (rewards), `UsageMemorySubscriber` (recency +
-  misclick penalty), `CooldownSubscriber` (consumption cooldown). Hotkey and
-  Wheeler equips are rewarded **only when the item was recommended**
-  (`event.wasRecommended`); external equips always apply, with attribution
-  scaling already folded into `rewardMultiplier`.
+- Rewards are dispatched through the `EquipEventBus` subscriber pattern, once per
+  CONFIRMED selection (`SelectionTracker`, v0.22.9): `BanditSubscriber` (one
+  reward, by selection kind) and `UsageMemorySubscriber` (recency). Every device
+  earns the same; the cooldown follows the count drop itself.
 
 ---
 
