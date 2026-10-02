@@ -158,7 +158,6 @@ All compile-time `constexpr`. There is no adaptive or combat-scaled timing — s
 | `SPELL_RECONCILE_INTERVAL_MS` | 5,000 ms | Newly learned spells |
 | `SPELL_FAVORITES_REFRESH_INTERVAL_MS` | 500 ms | Spell favorites delta |
 | `EXTRALIST_STABILIZATION_MS` | 500 ms | Post-load window before extraLists may be touched |
-| `CONSUMPTION_POST_LOAD_GRACE_MS` | 5,000 ms | Removals not rewarded as consumption after a load |
 | `REASON_HOLD_MS` | 1,500 ms | Longest a downgraded context label may linger (#62) |
 | `SOAK_HEARTBEAT_INTERVAL_MS` | 300,000 ms | `[Soak]` heartbeat line |
 
@@ -508,8 +507,9 @@ the entire inventory as consumed.
 
 **Bulk inventory strips.** `TEARDOWN_MIN_DROPS = 3` plus
 `TEARDOWN_DROP_RATIO = 0.5` — measured against **live** entries, not registry
-size — catch the teardown-shaped scan. `CONSUMPTION_POST_LOAD_GRACE_MS = 5000`
-covers alternate-start mods stripping starter items shortly after a load.
+size — catch the teardown-shaped scan. Alternate-start mods stripping starter
+items after a load need no guard of their own since v0.22.9: a removal teaches
+only by confirming a selection the player made.
 
 **Player death** is not penalized. Death attribution is genuinely ambiguous, and
 a wrong penalty is worse than no signal.

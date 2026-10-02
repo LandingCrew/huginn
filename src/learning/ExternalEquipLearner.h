@@ -120,7 +120,9 @@ namespace Huginn::Learning
         // here, the player's own wheel picks are now selections, and a repeat
         // event for one pick merges into its pending selection.
         static constexpr char SKIP_NONE     = '\0';  // do not skip
-        static constexpr char SKIP_NO_INPUT = 'n';    // no player input behind it (a script)
+        static constexpr char SKIP_NO_INPUT = 'n';    // a CONSUMABLE with no player input behind it (a script)
+        static constexpr char SKIP_ENGINE   = 'e';    // a non-consumable with no input: the engine refilling
+                                                      // the quiver, a bound weapon... NOT counted in skipped=
         static constexpr char SKIP_STALE    = 's';    // pipeline snapshot too old to attribute
         static constexpr char SKIP_DISABLED = 'x';    // learnFromExternalEquips off
 

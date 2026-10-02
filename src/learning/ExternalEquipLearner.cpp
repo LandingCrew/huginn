@@ -77,16 +77,25 @@ namespace Huginn::Learning
         }
 
         // 2. Player input. A TESEquipEvent with no Huginn mark and no menu,
-        // hotkey or own-wheel pick behind it is a script acting on the player
-        // (LoreRim's auto-quaff, 2026-09-21) -- not a selection.
+        // hotkey or own-wheel pick behind it is not a selection.
+        //
+        // Only a CONSUMABLE without input is reported as a script -- that is the
+        // case the skipped=input counter exists for (LoreRim's auto-quaff,
+        // 2026-09-21). Weapons, spells and ammo equip without input all the time
+        // for ordinary engine reasons -- the quiver refilling, a bound weapon
+        // arriving with its spell -- and counting those would bury the signal.
         via = PlayerInputGate::GetSingleton().Explain(formID);
         if (via.empty()) {
-            logger::info("[ExternalEquipLearner] Skipped (no player input -- a script?) {:08X} '{}'"sv,
-                formID, [formID] {
-                    const auto* form = RE::TESForm::LookupByID(formID);
-                    return form && form->GetName() ? form->GetName() : "?";
-                }());
-            return SKIP_NO_INPUT;
+            const auto* form = RE::TESForm::LookupByID(formID);
+            const char* name = form && form->GetName() ? form->GetName() : "?";
+            if (form && form->Is(RE::FormType::AlchemyItem)) {
+                logger::info("[ExternalEquipLearner] Skipped (no player input -- a script?) {:08X} '{}'"sv,
+                    formID, name);
+                return SKIP_NO_INPUT;
+            }
+            logger::debug("[ExternalEquipLearner] Skipped (no player input, engine equip) {:08X} '{}'"sv,
+                formID, name);
+            return SKIP_ENGINE;
         }
 
         // 3. Cache staleness — pipeline data too old to attribute

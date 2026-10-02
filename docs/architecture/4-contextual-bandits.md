@@ -391,8 +391,9 @@ that moment (`EquipEventBus::Capture`), the pipeline's whole last run
 
 | Kind | Items | Confirms when | Window |
 |---|---|---|---|
-| Consumable | potion, food, poison, soul gem | its count drops for real (`OnConsumed`, from the inventory delta scan; drops/sells/stores excluded by `InventoryExitTracker`) | `CONSUMPTION_HUGINN_WINDOW_MS` (2.5 s) |
+| Consumable | potion, food, poison | its count drops for real (`OnConsumed`, from the inventory delta scan; drops/sells/stores excluded by `InventoryExitTracker`) | `CONSUMPTION_HUGINN_WINDOW_MS` (2.5 s) |
 | Equip | weapon, spell, scroll, ammo, torch, apparel | still equipped at the deadline (`Update`), or its count drops first (a scroll cast at once) | `SELECTION_CONFIRM_MS` (3 s) |
+| Soul gem | soul gem (a Huginn key only) | at once -- the key calls back only when the recharge succeeded, and a reusable gem (Azura's Star) is emptied, not removed, so it has no count drop to wait for | none |
 
 Anything not confirmed expires and teaches nothing (logged as
 `[Selection] Not confirmed`). One pending record per item: both hands, a
@@ -475,7 +476,7 @@ selection's update. Two outputs:
 - **The debug log:** a `[Selection] Confirmed ...` header (source, via, kind,
   reward, how it confirmed, rank / utility / ctx / prediction / need of the
   chosen item, `over=` the best-ranked same-need item it passed over, load
-  generation), then one line per item on the page, with the chosen item marked
+  generation) at info, then one line per item on the page at debug, with the chosen item marked
   `*`, same-need items `=`, and override / wildcard / Remembrance slots
   `[O]` / `[W]` / `[R]`. "Need" is the primary slot class
   (`SlotClassifier::Classify`).
@@ -505,18 +506,21 @@ consumable.
    hotkeys, the player's own Wheeler wheels -- via `ExternalEquipLearner`,
    gated on player input
 
-The inventory delta scan keeps two guards before a count drop can confirm
-anything: a **post-load grace window** (`CONSUMPTION_POST_LOAD_GRACE_MS = 5000`),
-because alt-start mods and settling scripts strip items in bulk right after a
-load; and a teardown heuristic (`TEARDOWN_MIN_DROPS = 3`,
+The inventory delta scan keeps a teardown heuristic (`TEARDOWN_MIN_DROPS = 3`,
 `TEARDOWN_DROP_RATIO = 0.5`) that suppresses the whole-inventory-to-zero scan a
-quit-to-main-menu produces.
+quit-to-main-menu produces. The post-load grace window
+(`CONSUMPTION_POST_LOAD_GRACE_MS`) was removed in v0.22.9: alt-start strips
+used to train the learner because every removal did, but now a removal only
+confirms a selection, and pending selections are cleared on load -- while a
+real key drink in the first seconds after a load still has to confirm.
 
 ### Outside Selections and Attribution
 
 `ExternalEquipLearner::OnExternalEquip` handles a `TESEquipEvent` Huginn did not
 cause. It first asks **`PlayerInputGate`** (`src/learning/PlayerInputGate.h`)
-whether the player made it -- an open Inventory, Favorites or Magic menu, a
+whether the player made it -- an Inventory, Favorites or Magic menu open, or
+closed within `MENU_CLOSE_INPUT_WINDOW_MS` (2 s; LoreRim closes the inventory
+as the player drinks, before the potion's equip event arrives), a
 vanilla favourites hotkey (`Hotkey1`-`Hotkey8`) within
 `PLAYER_INPUT_WINDOW_MS` (1 s), a pick of that item off one of the player's
 own Wheeler wheels, or any Wheeler wheel open. No input, no selection: a
@@ -574,7 +578,8 @@ distinguish "nobody equipped anything" from "every equip was filtered":
 | Code | Filter |
 |---|---|
 | `x` | Master toggle `bLearnFromExternalEquips` is off |
-| `n` | No player input behind it (a script) |
+| `n` | A consumable with no player input behind it (a script) -- counted as `skipped=input` |
+| `e` | A non-consumable with no input: the engine refilling the quiver, a bound weapon arriving. Debug log only, not counted |
 | `s` | Pipeline cache older than `fExternalEquipTimeWindow` |
 
 The wheel-open (`w`) and anti-spam (`a`) filters were removed in v0.22.9:
@@ -1252,7 +1257,6 @@ just-cleared table for the remainder of their lock duration.
 | CONSUMPTION_HUGINN_WINDOW_MS | 2500 | A consumable selection must see its count drop within this |
 | SELECTION_CONFIRM_MS | 3000 | An equip selection must still be equipped after this |
 | PLAYER_INPUT_WINDOW_MS | 1000 | How recent a vanilla hotkey / own-wheel pick must be for an outside equip |
-| CONSUMPTION_POST_LOAD_GRACE_MS | 5000 | No count drop confirms anything right after a load |
 
 ### UsageMemory (`src/learning/UsageMemory.h`)
 

@@ -1,6 +1,7 @@
 #include "HudVisibilityManager.h"
 #include "IntuitionMenu.h"
 #include "IntuitionSettings.h"
+#include "learning/PlayerInputGate.h"
 
 namespace Huginn::UI
 {
@@ -23,6 +24,13 @@ namespace Huginn::UI
         [[maybe_unused]] RE::BSTEventSource<RE::MenuOpenCloseEvent>* a_eventSource)
     {
         if (!a_event) return RE::BSEventNotifyControl::kContinue;
+
+        // An item menu closing: an equip that lands just after it was still made
+        // from it (PlayerInputGate). Noted here because this sink fires while the
+        // update loop is paused by the menu.
+        if (!a_event->opening && Learning::PlayerInputGate::IsSelectionMenu(a_event->menuName)) {
+            Learning::PlayerInputGate::GetSingleton().NoteMenuClosed();
+        }
 
         // Our own menu: logged (rare, and the only record of whether RE::UI
         // actually acted on a kShow) and clears Show()'s pending flag.

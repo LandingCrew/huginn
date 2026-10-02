@@ -139,14 +139,6 @@ namespace Huginn::Config
    // Accessing them causes EXCEPTION_ACCESS_VIOLATION crashes
    inline constexpr float EXTRALIST_STABILIZATION_MS = 500.0f;
 
-   // Grace window after a game load / new game during which item removals are
-   // NOT rewarded as consumption. Alternate-start mods and settling scripts
-   // strip starter/quest items in bulk shortly after load; without this window
-   // those removals train the learner as if the player drank them (observed:
-   // 6 starter potions each +5.0 bandit reward ~1.1 s after kNewGame). Must exceed
-   // the observed strip delay with margin; real player consumption in the first
-   // few seconds after a load is rare and low-value to learn.
-   inline constexpr float CONSUMPTION_POST_LOAD_GRACE_MS = 5000.0f;
 
    // How long a consumable selection waits for its count to drop before it
    // is dropped unconfirmed (SelectionTracker).
@@ -167,6 +159,13 @@ namespace Huginn::Config
    // outside equip to count as the player's (PlayerInputGate). Equips land in
    // the same frame or the next few, so this is generous.
    inline constexpr float PLAYER_INPUT_WINDOW_MS = 1000.0f;
+
+   // How long after the inventory / favorites / magic menu CLOSES an outside
+   // equip still counts as made from it. LoreRim closes the inventory the
+   // moment the player drinks (a drinking animation), and a potion's equip
+   // event lands ~0.85 s after the act -- so by then the menu is gone. Wider
+   // than PLAYER_INPUT_WINDOW_MS to leave room for a frame hitch.
+   inline constexpr float MENU_CLOSE_INPUT_WINDOW_MS = 2000.0f;
 
    // Mirror of the grace window above, for the UNLOAD side. Quitting to the main
    // menu fires no SKSE message, so there is nothing to start a timer from: the

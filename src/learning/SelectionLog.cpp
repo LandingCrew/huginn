@@ -3,6 +3,7 @@
 #include "UtilityScorer.h"
 #include "Globals.h"
 
+#include <cmath>
 #include <format>
 #include <fstream>
 #include <mutex>
@@ -38,12 +39,32 @@ namespace Huginn::Learning
             }
         }
 
+        // Plugin strings are not always UTF-8: many are cp1252 (an 'Épée' is one
+        // byte 0xC9, not two). A record holding such bytes raw is invalid JSON
+        // and a json.loads harness would drop it, so a string that is not valid
+        // UTF-8 has every high byte escaped as its cp1252/Latin-1 code point.
+        bool IsValidUtf8(std::string_view text)
+        {
+            for (size_t i = 0; i < text.size();) {
+                const auto c = static_cast<unsigned char>(text[i]);
+                size_t n = c < 0x80 ? 1 : (c >> 5) == 0x6 ? 2 : (c >> 4) == 0xE ? 3 : (c >> 3) == 0x1E ? 4 : 0;
+                if (n == 0 || i + n > text.size()) return false;
+                for (size_t k = 1; k < n; ++k) {
+                    if ((static_cast<unsigned char>(text[i + k]) & 0xC0) != 0x80) return false;
+                }
+                i += n;
+            }
+            return true;
+        }
+
         std::string JsonString(std::string_view text)
         {
+            const bool utf8 = IsValidUtf8(text);
             std::string out;
             out.reserve(text.size() + 2);
             out += '"';
             for (const char c : text) {
+                const auto u = static_cast<unsigned char>(c);
                 switch (c) {
                 case '"':  out += "\\\""; break;
                 case '\\': out += "\\\\"; break;
@@ -51,8 +72,8 @@ namespace Huginn::Learning
                 case '\r': out += "\\r"; break;
                 case '\t': out += "\\t"; break;
                 default:
-                    if (static_cast<unsigned char>(c) < 0x20) {
-                        out += std::format("\\u{:04x}", static_cast<unsigned>(c));
+                    if (u < 0x20 || (u >= 0x80 && !utf8)) {
+                        out += std::format("\\u{:04x}", static_cast<unsigned>(u));
                     } else {
                         out += c;
                     }
@@ -60,6 +81,12 @@ namespace Huginn::Learning
             }
             out += '"';
             return out;
+        }
+
+        // JSON has no NaN or infinity; {:.4g} would print a bare "nan".
+        std::string Num(float v)
+        {
+            return std::isfinite(v) ? std::format("{:.4g}", v) : std::string("null");
         }
 
         float Predict(RE::FormID formID, const StateFeatures& features)
@@ -111,7 +138,9 @@ namespace Huginn::Learning
                 const char mark = (s.formID == event.formID) ? '*'
                     : (chosen && row && row->need == chosen->need) ? '='
                     : ' ';
-                logger::info("[Selection]   s{} {} {:08X} '{}'{} need={} rank={} util={:.2f} ctx={:.2f} pred={:.2f}"sv,
+                // debug, not info: one line per shown slot is per-item detail
+                // (CLAUDE.md logging levels). The JSONL record has it all.
+                logger::debug("[Selection]   s{} {} {:08X} '{}'{} need={} rank={} util={:.2f} ctx={:.2f} pred={:.2f}"sv,
                     s.slotIndex, mark, s.formID, s.name, TypeMark(s.type),
                     row ? Slot::SlotClassificationToString(row->need) : "-"sv,
                     RankString(row), row ? row->utility : 0.0f,
@@ -153,7 +182,7 @@ namespace Huginn::Learning
             line += R"("phi":[)";
             const auto phi = event.features.ToArray();
             for (size_t i = 0; i < phi.size(); ++i) {
-                line += std::format("{}{:.4g}", i ? "," : "", phi[i]);
+                line += std::format("{}{}", i ? "," : "", Num(phi[i]));
             }
             line += "],";
 
@@ -171,15 +200,15 @@ namespace Huginn::Learning
                 const auto& r = snap.scores[i];
                 const auto& b = r.breakdown;
                 const long long rank = r.rank >= PipelineStateCache::kUnrankedTail ? -1 : static_cast<long long>(r.rank);
-                line += std::format(R"({}["{:08X}","{}","{}",{},{:.4g},{:.4g},{:.4g},{:.4g},{:.4g},{:.4g},)",
+                line += std::format(R"({}["{:08X}","{}","{}",{},{},{},{},{},{},{},)",
                     i ? "," : "", r.formID, Candidate::SourceTypeToString(r.sourceType),
-                    Slot::SlotClassificationToString(r.need), rank, r.utility,
-                    b.contextWeight, b.rewardEstimate, b.prior, b.ucb, b.confidence);
-                line += std::format("{:.4g},{:.4g},{:.4g},{:.4g},{:.4g},{:.4g},{},{},{:.4g}]",
-                    b.learningScore, b.lambda, b.recencyBoost, b.correlationBonus,
-                    b.potionMultiplier, b.favoritesMultiplier,
+                    Slot::SlotClassificationToString(r.need), rank, Num(r.utility),
+                    Num(b.contextWeight), Num(b.rewardEstimate), Num(b.prior), Num(b.ucb), Num(b.confidence));
+                line += std::format("{},{},{},{},{},{},{},{},{}]",
+                    Num(b.learningScore), Num(b.lambda), Num(b.recencyBoost), Num(b.correlationBonus),
+                    Num(b.potionMultiplier), Num(b.favoritesMultiplier),
                     r.isWildcard ? 1 : 0, r.isColdStartBoosted ? 1 : 0,
-                    Predict(r.formID, event.features));
+                    Num(Predict(r.formID, event.features)));
             }
             line += "]}\n";
 

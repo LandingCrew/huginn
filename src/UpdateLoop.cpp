@@ -47,15 +47,6 @@ static bool IsConsumption(RE::FormID formID, int32_t delta)
     return transferred < removed;
 }
 
-// True during the grace window after a game load / new game, when bulk item
-// strips (alt-start mods, settling scripts) masquerade as consumption.
-static bool InPostLoadGraceWindow()
-{
-    const float sinceLoadMs = std::chrono::duration<float, std::milli>(
-        std::chrono::steady_clock::now() - g_lastGameLoad).count();
-    return sinceLoadMs < Config::CONSUMPTION_POST_LOAD_GRACE_MS;
-}
-
 // A real consumption. Two separate things happen, and only one is learning:
 //
 // - Bookkeeping, always: the item starts its candidate cooldown, so it is not
@@ -69,6 +60,13 @@ static bool InPostLoadGraceWindow()
 //   behind it -- a script drinking, a quest taking an item, a scroll cast
 //   from a hand it was put in long ago -- teaches nothing. Before the one
 //   selection path every drink earned a second, separate reward here.
+//
+// No post-load grace window any more. It existed because alt-start and
+// settling scripts strip starter items in bulk right after a load, and every
+// removal used to train the learner. Now a removal teaches only by confirming
+// a selection the player made, and pending selections are cleared on load --
+// so a strip has nothing to confirm, while a real key drink in the first
+// seconds after a load must still be able to (code review of #163).
 static void HandleConsumption(RE::FormID formID, std::string_view name)
 {
     auto& candidateGen = Candidate::CandidateGenerator::GetSingleton();
@@ -79,14 +77,6 @@ static void HandleConsumption(RE::FormID formID, std::string_view name)
             else if (form->Is(RE::FormType::Scroll)) sourceType = Candidate::SourceType::Scroll;
         }
         candidateGen.StartCooldown(formID, sourceType);
-    }
-
-    // Alt-start/quest scripts strip items in bulk right after a load; nothing
-    // the player selected can be pending then anyway, but say so explicitly.
-    if (InPostLoadGraceWindow()) {
-        logger::debug("[Learning] Consumption in post-load grace, not a selection: {} ({:08X})",
-            name, formID);
-        return;
     }
 
     if (!Learning::SelectionTracker::GetSingleton().OnConsumed(formID)) {
@@ -576,10 +566,8 @@ void OnUpdate(float deltaSeconds)
                 // pipeline stage, which is skipped — so it now reads as stale by
                 // the length of the whole load screen. The delta timer was never
                 // reset either, so the very next MaintainRegistries call this
-                // same tick is guaranteed due, and every legitimate consumption
-                // it finds would be dropped as "stale cache". A cell load fires
-                // no kPostLoadGame, so CONSUMPTION_POST_LOAD_GRACE_MS does not
-                // cover this: the reward would be silently lost, not suppressed.
+                // same tick is guaranteed due. An outside equip made right after
+                // the gap would otherwise be skipped as "stale cache".
                 Learning::PipelineStateCache::GetSingleton().RefreshTimestamp();
 
                 // Slot locks are wall-clock timers that stopped decaying, and

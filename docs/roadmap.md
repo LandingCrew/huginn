@@ -89,6 +89,17 @@ Raised in review 2026-10-02, to settle before the run starts:
 - **Comparing Phase 3 against this run.** The character progresses, so a
   before/after is confounded. Keep the run's starting save as a benchmark
   and compare per-hour rates.
+- **Selection-log cost** (code review of #163, deferred): each confirmed
+  selection opens and appends ~13 KB to `Huginn_Selections.jsonl` and runs one
+  learner prediction per candidate, on the game thread. Rare enough for
+  testing; move it to a background writer with a persistent stream before a
+  50-hour run. Smaller: `PipelineStateCache::Update` classifies every
+  candidate on every pipeline run, though the class is read only at selection
+  time.
+- **Two quick drinks of one potion count once** (#163 review). One pending
+  record per item merges them, by design -- but a deliberate double-drink
+  inside 2.5 s is two choices. Decide before the choice target (Phase 3 #1)
+  whether a second count drop opens a second selection.
 - One tester, who knows the internals. LoreRim 5.1 could land mid-run:
   decide now whether the run finishes on 1.6.
 

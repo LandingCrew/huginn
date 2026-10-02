@@ -116,6 +116,18 @@ namespace Huginn::Learning
         const auto deadline = now + std::chrono::duration_cast<std::chrono::steady_clock::duration>(
             std::chrono::duration<float, std::milli>(windowMs));
 
+        // A soul gem is used up the moment Huginn's key succeeds -- and only a
+        // Huginn key can select one, which calls back on success alone. A
+        // reusable gem (Azura's Star, the Black Star) is emptied rather than
+        // removed, so its count never drops and the count-drop confirmation
+        // could never fire. Confirm at once instead.
+        if (const auto* form = RE::TESForm::LookupByID(formID); form && form->Is(RE::FormType::SoulGem)) {
+            logger::info("[Selection] {:08X} '{}' src={} via={} -- soul gem used, confirmed at once"sv,
+                formID, FormName(formID), EquipSourceToString(source), event.via);
+            Confirm(event, now, "used");
+            return;
+        }
+
         logger::info("[Selection] Pending {:08X} '{}' src={} via={} kind={}{}{}"sv,
             formID, FormName(formID), EquipSourceToString(source), event.via,
             SelectionKindToString(event.kind),

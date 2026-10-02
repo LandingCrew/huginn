@@ -117,7 +117,11 @@ namespace Huginn::Learning
             m_index.clear();
             for (size_t i = 0; i < scored.size(); ++i) {
                 const auto& sc = scored[i];
-                m_index[sc.GetFormID()] = m_scores.size();
+                // FIRST row wins, as in Snapshot::Find. One FormID can have
+                // several rows (the weapon registry keeps one per stack), and
+                // the first is the best-ranked -- attribution and the selection
+                // log must agree on which one they mean.
+                m_index.try_emplace(sc.GetFormID(), m_scores.size());
                 m_scores.push_back(ScoreRow{
                     .formID = sc.GetFormID(),
                     .sourceType = sc.GetSourceType(),

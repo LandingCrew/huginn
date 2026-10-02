@@ -63,7 +63,7 @@ Release:
 |-------|---------|---------------|
 | `accept=%` | of external equips Huginn attributed, how many it had **displayed** (`hit`) | **the recommendation-quality number.** Should trend up as learning warms; a flat-low accept% is the signal to investigate |
 | `hit/near/miss/novel` | equip attribution buckets (E / C+D / B / A) | rising `novel` = player keeps reaching for things Huginn never scores as a candidate |
-| `skipped=N (input/stale/off)` | outside equips that a filter caught BEFORE attribution, so they never entered the buckets | **read this whenever `accept=n/a`.** `skipped=0` = nothing was equipped outside Huginn. `input=` counts equips with no player input behind them -- a script or another mod acting on the player (v0.22.9; before that the fields were `wheel/stale/spam/off`) |
+| `skipped=N (input/stale/off)` | outside equips that a filter caught BEFORE attribution, so they never entered the buckets | **read this whenever `accept=n/a`.** `skipped=0` = nothing was equipped outside Huginn. `input=` counts consumables used with no player input behind them -- a script or another mod drinking for the player (engine equips such as the quiver refilling are not counted) (v0.22.9; before that the fields were `wheel/stale/spam/off`) |
 | `recompute/ticks` | pipeline recomputes vs total ticks | very high ratio = state hashing thrashing (churn); near-zero = pipeline may be stuck skipping |
 | `override` | recomputes where a safety override took top slot | sanity-check against how often you actually hit low-health/charge/drowning |
 | `learn items/trains` | learned-item count + total train count | **items must plateau, not climb linearly** across 50 hr — linear climb = unbounded weight table |
