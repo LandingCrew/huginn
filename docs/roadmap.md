@@ -15,9 +15,9 @@ BEFORE the soak -- it is a set of bugs, and a soak on the broken path would
 mostly measure them.
 
 **Phase 1 -- pre-soak cleanup (only #2 touches learning; see above):**
-Landed on branch `pre-soak-cleanup` (0.22.9): #2 through #6 (details on
-each), plus the AS2 `setUrgent` removal with a SWF rebuild and logging for
-both Known Bugs so the soak run can settle them. Only #1 is left, deferred.
+Merged in #163 (0.22.9): #2 through #6 (details on each), plus the AS2
+`setUrgent` removal with a SWF rebuild and logging for both Known Bugs so the
+soak run can settle them. Only #1 is left, deferred.
 1. **Default slot keys off the number row** -- Known Mod Compatability
    Issues. XS, config only (`configs/Huginn.ini` `iSlot1Key`-`iSlot10Key`).
    First because the double-fire is what polluted the last save's weights.
@@ -67,11 +67,11 @@ input -- a script?)` and count in the heartbeat's `skipped=input`, which is
 the place to spot it. Seen in the first 0.22.9 test (08:57:34, a Fortify
 Carry Weight with no key, menu or wheel behind it).
 Raised in review 2026-10-02, to settle before the run starts:
-- **The soak doc contradicts "played normally".**
-  `docs/playtest/LongPlaySoak.md` (the context-coverage checklist and the
-  per-burst protocol) tells the tester to equip from menus on purpose,
-  including items Huginn is not showing. That inflates goal 1 directly and
-  feeds the learner staged choices. Rewrite those parts for this run.
+- ~~**The soak doc contradicts "played normally".**~~ Done (0.22.10):
+  `docs/playtest/LongPlaySoak.md` no longer asks for staged menu equips, says
+  why (they inflate goal 1 and train the learner on staged picks), keeps the
+  layout fixed for the run, and adds the selections file and the start/end
+  dumps to the capture list.
 - **The layout sets goal 2.** The shipped page is six labeled slots and two
   Regular, so labeled presses are high whatever the recommender does. Pick
   the run's layout on purpose.
@@ -89,13 +89,13 @@ Raised in review 2026-10-02, to settle before the run starts:
 - **Comparing Phase 3 against this run.** The character progresses, so a
   before/after is confounded. Keep the run's starting save as a benchmark
   and compare per-hour rates.
-- **Selection-log cost** (code review of #163, deferred): each confirmed
-  selection opens and appends ~13 KB to `Huginn_Selections.jsonl` and runs one
-  learner prediction per candidate, on the game thread. Rare enough for
-  testing; move it to a background writer with a persistent stream before a
-  50-hour run. Smaller: `PipelineStateCache::Update` classifies every
-  candidate on every pipeline run, though the class is read only at selection
-  time.
+- ~~**Selection-log cost**~~ (code review of #163). Done (0.22.10): the
+  predictions are taken under one learner lock, and the JSONL record is
+  formatted and appended by a background writer with a persistent stream,
+  flushed per record. Still open, smaller: `PipelineStateCache::Update`
+  classifies every candidate on every pipeline run, though the class is read
+  only at selection time, and `Select` copies the snapshot even for picks
+  that never confirm.
 - **Two quick drinks of one potion count once** (#163 review). One pending
   record per item merges them, by design -- but a deliberate double-drink
   inside 2.5 s is two choices. Decide before the choice target (Phase 3 #1)

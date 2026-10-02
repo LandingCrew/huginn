@@ -35,8 +35,10 @@ namespace Huginn::Learning
     //    that re-ranks logged selections under a new formula, so a Phase 3
     //    change costs minutes rather than play-hours. Each record names its
     //    candidate columns ("cols"), so the format describes itself. Appended,
-    //    never truncated: one file spans sessions, and `gen` (the load
-    //    generation) separates what a death-and-reload abandoned.
+    //    never truncated: one file spans sessions, `gen` (the load generation)
+    //    separates loads within one game launch -- what a death-and-reload
+    //    abandoned -- and `utc` separates launches. Written by a background
+    //    thread; the game thread only takes the predictions and queues it.
     // =========================================================================
     namespace SelectionLog
     {

@@ -114,13 +114,21 @@ path stays cold. Tick these off across bursts, not per session:
 - [ ] Override triggers — urgent potion, weapon charge < 25%, soul gem, drowning
 - [ ] Multi-page cycling under load
 - [ ] Wheeler open/close during combat (if using Wheeler)
-- [ ] **Manual equips — inventory menu, favorites menu, and vanilla hotkeys.**
-      The ONLY source of accept% data (see the heartbeat note above). Spread
-      them across contexts rather than batching: an attribution is scored
-      against whatever Huginn was showing at that moment, so twenty equips
-      standing still in town measure one state twenty times
-- [ ] Manual equips of things Huginn is NOT showing — the `novel`/`miss`
-      buckets only fill if you sometimes reach past the recommendations
+
+**Do not stage equips.** Earlier versions of this checklist asked for manual
+equips from the inventory, favourites and vanilla hotkeys -- including items
+Huginn was not showing -- to feed accept%. That is wrong for this run, for two
+reasons (review of the soak plan, 2026-10-02):
+- **It inflates goal 1 directly.** Goal 1 *is* "did the player reach into the
+  inventory or favourites for something Huginn could have offered"
+  (`goals reachIns=`). Staged reach-ins count as failures Huginn did not cause.
+- **It feeds the learner staged choices.** Since 0.22.9 an outside selection
+  teaches exactly what a Huginn key press does (one selection path), so a
+  staged pick trains the weights the run is meant to measure.
+
+Reach into a menu when you would anyway -- that IS the measurement. A sparse
+accept% from a run where Huginn's keys and wheel did the work is the good
+outcome, not a void one.
 
 ---
 
@@ -133,15 +141,23 @@ path stays cold. Tick these off across bursts, not per session:
    you mean to test — a stale DLL can pass as a branch test).
 3. Copy out / clear the previous log.
 
-**During:** play naturally, but **equip manually often enough to feed accept%**
-— inventory, favorites, and vanilla hotkeys, in every context on the coverage
-list. Playing purely through the wheel voids the recommendation-quality half of
-the run. Only jot **timestamps** of anything that felt wrong — a wrong
-recommendation, widget stutter, a freeze. Don't narrate; the heartbeat and logs
-carry the rest.
+**During:** play naturally -- use Huginn's keys and wheel when they have what
+you want, and the menus when they do not. Do not equip from menus to feed a
+metric (see "Do not stage equips" above). Keep the page layout fixed for the
+whole run: labeled versus regular presses (goal 2) move with the layout, not
+just the recommender. Only jot **timestamps** of anything that felt wrong -- a
+wrong recommendation, widget stutter, a freeze. Don't narrate; the heartbeat
+and logs carry the rest.
 
 **After, capture:**
 - [ ] The log (`_Huginn_Debug.log` / `Huginn.log`)
+- [ ] `Huginn_Selections.jsonl` (same folder) -- one record per confirmed
+      selection with the whole scored list; the input for re-ranking offline.
+      It is appended across sessions, so copy it rather than clear it; `utc`
+      separates game launches and `gen` separates loads within one
+- [ ] At the first and last burst of the run: `hg dump weights`, `hg dump
+      potions`, `hg dump scrolls` (the learner state the run started and ended
+      with)
 - [ ] The `.tracy` capture (Release+Tracy runs)
 - [ ] Any SKSE crash log (CrashLogger / NetScriptFramework)
 - [ ] Cosave size (`.skse` next to the save)
@@ -160,7 +176,7 @@ carry the rest.
 | `tick avg` | < 0.1 ms | sustained rise across bursts |
 | `tick peak` | stable across bursts | grows hour-over-hour |
 | `accept %` | trends up, stabilizes | flat-low, or falling as learning accrues |
-| `accept %` reported at all | populated in most windows | `n/a` with nothing skipped means the burst made no outside selections — not a pass, a **void run** for this metric |
+| `accept %` reported at all | sparse is fine | `n/a` with nothing skipped means no outside selections -- the GOOD case for goal 1 if `goals presses=` shows Huginn doing the work. Only worrying when presses are low too (Huginn unused) |
 | Log warn/error rate | → ~0 / hr | repeated same-site errors |
 
 ---
@@ -189,14 +205,10 @@ grep -E '\]\[(warning|error|critical)\]' _Huginn_Debug.log | sort | uniq -c | so
 
 ## Future refinements (not in v0.18.x)
 
-- Fold **consumption** events (potions/scrolls drunk) into accept% — currently
-  only external equips are attributed; consumption rewards fire on a separate
-  path without hit/miss classification. **Must exclude wheel-initiated
-  consumption** or it reintroduces the circularity the wheel-open filter exists
-  to prevent: `src=Wheeler` and `src=Hotkey` rewards are Huginn-caused and are
-  not evidence Huginn predicted anything. Only a potion drunk from the vanilla
-  inventory/favorites UI is attributable. On the 2026-08-26 session that would
-  have added 5 of 50 reward events, not 50.
+- ~~Fold consumption into accept%~~ -- done in 0.22.9 by the one selection
+  path: a potion drunk from the inventory or favourites is an outside
+  selection, attributed A-E like an equip and counted once it confirms.
+  Huginn-key and Huginn-wheel drinks stay out, as this item required.
 - Per-context accept% (accept rate split by combat / exploration / etc.).
 - Slot-churn metric (displayed-set change rate) to quantify widget thrash
   independent of state transitions.
