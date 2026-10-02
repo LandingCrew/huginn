@@ -271,6 +271,7 @@ command reference now on the wiki:
 | [Console commands](https://github.com/LandingCrew/huginn/wiki/Console-Commands) | The `hg` console commands |
 | [candidate-system.md](reference/candidate-system.md) | Candidate registries and generation |
 | [Performance.md](reference/Performance.md) | Performance budget and measurements |
+| [classifier-coverage.md](reference/classifier-coverage.md) | How much of each load order the classifiers type, from the `hg dump` commands |
 | [intuition-scaleform-build.md](reference/intuition-scaleform-build.md) | Building `Intuition.swf` from `src/swf/Intuition.as` |
 | [WheelerAPI_minimal.h](reference/WheelerAPI_minimal.h), [WheelerAPIClient.h](reference/WheelerAPIClient.h) | Vendored Wheeler API headers for reference |
 
