@@ -1,53 +1,82 @@
 #pragma once
 
+#include "Config.h"
 #include "StateFeatures.h"
+#include "PipelineStateCache.h"
 #include "state/GameState.h"
 #include <RE/Skyrim.h>
 
 namespace Huginn::Learning
 {
     // =========================================================================
-    // EQUIP SOURCE - Identifies how the player equipped the item
+    // EQUIP SOURCE - Which device the player selected the item with
+    // =========================================================================
+    // A LABEL, never a weight (decided 2026-10-02, "one selection path"): a
+    // selection teaches the same whatever device made it. The source feeds
+    // the logs and the goal metrics -- goal 1 is defined by it.
     // =========================================================================
     enum class EquipSource : uint8_t
     {
         Hotkey = 0,       // Huginn keyboard shortcut (EquipManager)
-        Wheeler = 1,      // Huginn Wheeler radial menu
-        External = 2,     // Vanilla UI (inventory, favorites, console)
-        Consumption = 3   // Item/scroll consumed (count delta detected)
+        Wheeler = 1,      // Huginn's own Wheeler wheel
+        External = 2,     // The player's own UI: inventory / favorites / magic menu,
+                          // a vanilla hotkey, or one of their own Wheeler wheels
     };
 
     [[nodiscard]] inline constexpr const char* EquipSourceToString(EquipSource source) noexcept
     {
         switch (source) {
-        case EquipSource::Hotkey:      return "Hotkey";
-        case EquipSource::Wheeler:     return "Wheeler";
-        case EquipSource::External:    return "External";
-        case EquipSource::Consumption: return "Consumption";
-        default:                       return "Unknown";
+        case EquipSource::Hotkey:   return "Hotkey";
+        case EquipSource::Wheeler:  return "Wheeler";
+        case EquipSource::External: return "External";
+        default:                    return "Unknown";
         }
     }
 
     // =========================================================================
-    // EQUIP EVENT - Published by equip sources, consumed by subscribers
+    // SELECTION KIND - how a selection confirms (SelectionTracker)
     // =========================================================================
-    // Pre-computed state avoids redundant StateManager lock acquisitions.
-    // Each subscriber reads the fields it needs without re-evaluating state.
+    enum class SelectionKind : uint8_t
+    {
+        Consumable,   // Potion, food, poison, soul gem: confirms when the count drops
+        Equip,        // Weapon, spell, scroll, ammo, torch, apparel: confirms if still equipped
+    };
+
+    [[nodiscard]] inline constexpr const char* SelectionKindToString(SelectionKind kind) noexcept
+    {
+        return kind == SelectionKind::Consumable ? "consume" : "equip";
+    }
+
+    /// One confirmed selection, one reward (BanditSubscriber, SelectionLog).
+    [[nodiscard]] inline constexpr float RewardFor(SelectionKind kind) noexcept
+    {
+        return kind == SelectionKind::Consumable ? Config::CONSUME_REWARD : Config::EQUIP_REWARD;
+    }
+
+    // =========================================================================
+    // EQUIP EVENT - one CONFIRMED player selection, dispatched to subscribers
+    // =========================================================================
+    // Everything here is captured when the player CHOSE (SelectionTracker::
+    // Select), not when the choice was confirmed: the state the learner
+    // trains on is the state the player acted in, and the bar is what the
+    // player was looking at.
     // =========================================================================
     struct EquipEvent
     {
         RE::FormID      formID = 0;
         EquipSource     source = EquipSource::Hotkey;
-        float           rewardMultiplier = 1.0f;   // Scaling factor (External uses attribution)
-        bool            wasRecommended = false;     // Per-source semantics:
-                                                    //   Hotkey: true if item was on the Huginn widget
-                                                    //   Wheeler: always true (Huginn-managed wheel)
-                                                    //   External: always false
-                                                    //   Consumption: always false
+        SelectionKind   kind = SelectionKind::Equip;
+        std::string     via;                 // How, in words: "key s3", "inventory menu", "own wheel"...
+        std::string     attribution;         // External only: the A-E case label
 
-        // Pre-computed state (evaluated once per event in EquipEventBus::BuildEvent)
+        // Press-time state (EquipEventBus::Capture)
         StateFeatures   features{};
         State::GameState gameState{};
+
+        // Press-time pipeline view, for the selection log
+        PipelineStateCache::Snapshot shown{};
+        uint32_t        loadGeneration = 0;  // g_loadGeneration at press time
+        float           confirmMs = 0.0f;    // Press -> confirmation
     };
 
 }  // namespace Huginn::Learning

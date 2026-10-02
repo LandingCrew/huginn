@@ -349,95 +349,142 @@ cold-start fallback.
 
 ---
 
-## EquipEventBus Architecture
+## One Selection Path: SelectionTracker and EquipEventBus
 
-All equip-related learning signals flow through the **EquipEventBus** (Observer
-pattern, `src/learning/EquipEventBus.h/.cpp`). Publishers call `Publish()` with
-raw parameters; the bus evaluates state once (`BuildEvent`) and dispatches an
-`EquipEvent` to all subscribers.
+Every learning signal is a **confirmed player selection** (one selection
+path, v0.22.9, `src/learning/SelectionTracker.h/.cpp`). Whatever device the
+player used, the selection is held, confirmed or dropped, and only then
+dispatched -- once -- through the **EquipEventBus** to the subscribers.
 
 ### Event Flow
 
 ```
-Equip Sources (publishers):              Subscribers:
-+---------------------------+            +----------------------------+
-| WheelerClient             |---+        | BanditSubscriber              |
-| EquipManager (hotkeys)    |   |        |   -> FeatureBanditLearner       |
-| ExternalEquipLearner      |   |  Pub   +----------------------------+
-| UpdateLoop (consumption)  |---+------->| UsageMemorySubscriber      |
-+---------------------------+   |        |   -> UsageMemory + misclick|
-                                |        +----------------------------+
-                            EquipEventBus| CooldownSubscriber         |
-                            (evaluates   |   -> CandidateGenerator    |
-                             state once) +----------------------------+
+Selection sources:                SelectionTracker            Subscribers:
++-------------------------+       +------------------+        +-----------------------+
+| EquipManager (key)      |--+    | Select():        |        | BanditSubscriber      |
+| WheelerClient (Huginn   |  |    |  capture state,  | confirm|  -> learner, 1 reward |
+|   wheel)                |  +--->|  bar snapshot    |------->+-----------------------+
+| ExternalEquipLearner    |  |    | pending (1/item) |  bus   | UsageMemorySubscriber |
+|   (menu / vanilla hotkey|--+    |                  |Dispatch|  -> recency memory    |
+|    / own wheel, gated)  |       | OnConsumed():    |        +-----------------------+
++-------------------------+       |  count drop      |
+UpdateLoop count drop ----------->| Update():        |---> SelectionLog (debug log +
+  (also starts the cooldown)      |  still equipped? |      Huginn_Selections.jsonl)
+                                  +------------------+
 ```
 
-Publish sites (verified):
+Selection sites:
 
-| Source | Call site | Args |
+| Source | Call site | `via` |
 |---|---|---|
-| Wheeler | `src/Main.cpp:497` (`publishWheelerEquip`) | `Wheeler, 1.0f, wasRecommended=true` |
-| Hotkey | `src/Main.cpp:599` (`EquipManager` callback) | `Hotkey, 1.0f, wasRecommended` |
-| Consumption | `src/UpdateLoop.cpp:71` (`ApplyConsumptionReward`) | `Consumption, 1.0f, false` |
-| External | `src/learning/ExternalEquipLearner.cpp:59` | `External, attributionMult, false` |
+| Hotkey | `src/Main.cpp` (`EquipManager` equip callback) | `key N (sN-1)` |
+| Wheeler | `src/Main.cpp` (`publishWheelerEquip`) | `Huginn wheel` |
+| External | `src/learning/ExternalEquipLearner.cpp` (`OnExternalEquip`) | `inventory menu` / `favorites menu` / `magic menu` / `vanilla hotkey` / `own wheel` |
+
+The source is a **label, never a weight**: it feeds the logs and the goal
+metrics (goal 1 is defined by it), and a selection teaches the same whatever
+device made it.
+
+**Confirmation.** `Select` records a pending selection with the game state at
+that moment (`EquipEventBus::Capture`), the pipeline's whole last run
+(`PipelineStateCache::TakeSnapshot`) and the load generation. It confirms:
+
+| Kind | Items | Confirms when | Window |
+|---|---|---|---|
+| Consumable | potion, food, poison, soul gem | its count drops for real (`OnConsumed`, from the inventory delta scan; drops/sells/stores excluded by `InventoryExitTracker`) | `CONSUMPTION_HUGINN_WINDOW_MS` (2.5 s) |
+| Equip | weapon, spell, scroll, ammo, torch, apparel | still equipped at the deadline (`Update`), or its count drops first (a scroll cast at once) | `SELECTION_CONFIRM_MS` (3 s) |
+
+Anything not confirmed expires and teaches nothing (logged as
+`[Selection] Not confirmed`). One pending record per item: both hands, a
+doubled `TESEquipEvent`, a key press plus the equip event it causes -- one
+selection. A Remembrance swap-back is not a selection, and it unequips the item
+it undid, so that item does not confirm either. Pending selections are cleared
+on game load.
+
+A **count drop with no pending selection** teaches nothing. It still frees the
+slot and starts the candidate cooldown (`HandleConsumption`,
+`src/UpdateLoop.cpp`) -- bookkeeping, not learning. So a script drinking a
+potion, or a held scroll being cast long after it was equipped, earns nothing.
+
+**Why (2026-10-02, roadmap "The reward path").** Before this, a drink trained
+twice (+8 for the key, then +5 when the delta scan saw the count drop), the late
+consumption event fired false misclick penalties on whatever was equipped next,
+the learner trained on the state at *detection* time (1.3 s after the potion
+started working), and scripted equips counted as the player.
 
 Subscribers are registered once, in `src/Main.cpp` step 5b, after
 `g_featureBanditLearner` and `g_usageMemory` exist.
 
 **Lock ordering** (documented in `EquipEventBus.h`): StateManager shared locks
-(inside `BuildEvent`) → bus `m_mutex` → subscriber internal locks. `BuildEvent`
-runs outside `m_mutex`, and the subscriber list is *snapshotted* under
-`m_mutex` and then dispatched outside it, so no subscriber lock is ever taken
-while the bus lock is held.
+(inside `Capture`) → bus `m_mutex` → subscriber internal locks. `Capture` takes
+no bus lock, and `Dispatch` snapshots the subscriber list under `m_mutex` and
+calls subscribers outside it. `SelectionTracker` captures and dispatches
+outside its own mutex too.
 
 ### EquipEvent
 
 ```cpp
 struct EquipEvent {
     RE::FormID       formID = 0;
-    EquipSource      source = EquipSource::Hotkey;  // Hotkey, Wheeler, External, Consumption
-    float            rewardMultiplier = 1.0f;       // External uses attribution
-    bool             wasRecommended = false;        // Hotkey: was on widget
-                                                    // Wheeler: always true
-                                                    // External/Consumption: always false
-    StateFeatures    features{};    // Pre-computed once per event
-    State::GameState gameState{};   // Pre-computed (for UsageMemory context hashing)
+    EquipSource      source = EquipSource::Hotkey;   // Hotkey, Wheeler, External -- a label
+    SelectionKind    kind = SelectionKind::Equip;    // Consumable or Equip
+    std::string      via;                            // "key 3 (s2)", "inventory menu", ...
+    std::string      attribution;                    // External only: the A-E case label
+    StateFeatures    features{};                     // Press-time (Capture)
+    State::GameState gameState{};                    // Press-time (UsageMemory context hash)
+    PipelineStateCache::Snapshot shown{};            // Press-time scored list + page
+    uint32_t         loadGeneration = 0;
+    float            confirmMs = 0.0f;
 };
 ```
 
-`BuildEvent` derives `features` and `gameState` from the **same** player/targets
+`Capture` derives `features` and `gameState` from the **same** player/targets
 copies, so the continuous and discretized views of the same moment can't
 disagree. `WorldState` is fetched separately and may skew slightly — accepted,
 and stated in the code.
 
 ### Subscribers
 
-| Subscriber | Fires For | Action |
-|------------|-----------|--------|
-| **BanditSubscriber** | Hotkey/Wheeler (only if `wasRecommended`), External, Consumption | `FeatureBanditLearner::Update(formID, features, reward)` |
-| **UsageMemorySubscriber** | All sources | `UsageMemory::RecordUsage` (recency boost) + misclick penalty |
-| **CooldownSubscriber** | Consumption only | `CandidateGenerator::StartCooldown` |
+| Subscriber | Action |
+|------------|--------|
+| **BanditSubscriber** | `FeatureBanditLearner::Update(formID, features, RewardFor(kind))` |
+| **UsageMemorySubscriber** | `UsageMemory::RecordUsage` (recency boost) |
 
-### Reward Calculation (BanditSubscriber)
+The cooldown is no longer a subscriber: it follows the count drop itself, so a
+potion goes on cooldown whoever drank it.
 
-`src/learning/EquipSubscribers.h`:
+### Reward Calculation
+
+One confirmed selection, one reward (`RewardFor`, `src/learning/EquipEvent.h`):
 
 ```cpp
-switch (event.source) {
-case EquipSource::Hotkey:
-case EquipSource::Wheeler:
-    if (!event.wasRecommended) return;              // no reward for non-recommended
-    reward = Config::EQUIP_REWARD * event.rewardMultiplier;    // 8.0 * 1.0
-    break;
-case EquipSource::External:
-    reward = Config::EQUIP_REWARD * event.rewardMultiplier;    // 8.0 * attribution
-    break;
-case EquipSource::Consumption:
-    reward = Config::CONSUME_REWARD * event.rewardMultiplier;  // 5.0 * 1.0
-    break;
-}
-m_fql.Update(event.formID, event.features, reward);
+kind == SelectionKind::Consumable ? Config::CONSUME_REWARD   // 5.0
+                                  : Config::EQUIP_REWARD;    // 8.0
 ```
+
+No source filtering, no multipliers. (The choice target, roadmap Phase 3 #1,
+replaces both values with 1.)
+
+### Selection Log
+
+`SelectionLog::Write` runs at each confirmation, before the dispatch, so it
+records the learner's prediction for the press-time state before this
+selection's update. Two outputs:
+
+- **The debug log:** a `[Selection] Confirmed ...` header (source, via, kind,
+  reward, how it confirmed, rank / utility / ctx / prediction / need of the
+  chosen item, `over=` the best-ranked same-need item it passed over, load
+  generation), then one line per item on the page, with the chosen item marked
+  `*`, same-need items `=`, and override / wildcard / Remembrance slots
+  `[O]` / `[W]` / `[R]`. "Need" is the primary slot class
+  (`SlotClassifier::Classify`).
+- **`Huginn_Selections.jsonl`** in the SKSE log folder, one JSON object per
+  selection: press-time `phi`, the wildcard odds, the page (slot index and
+  assignment type) and **every scored candidate** with its full score
+  breakdown and the learner's press-time prediction. Each record names its
+  candidate columns (`cols`). Appended across sessions; `gen` separates what a
+  death-and-reload abandoned. This is the input for re-ranking logged
+  selections offline under a new formula.
 
 ---
 
@@ -445,37 +492,57 @@ m_fql.Update(event.formID, event.features, reward);
 
 ### Learning Signal Sources
 
-> **Design Principle (v0.13.0+):** Learning is decoupled from the presentation layer (Wheeler/Widget). The system learns exclusively from equip events via the EquipEventBus. Negative signals come from time-based weight decay and misclick detection, not from Wheeler open/close events.
+> **Design Principle (v0.13.0+):** Learning is decoupled from the presentation layer (Wheeler/Widget). The system learns exclusively from confirmed player selections. Negative signals come from time-based weight decay and L2, not from Wheeler open/close events -- and, since v0.22.9, not from misclicks either: an item swapped away inside the confirm window is simply never confirmed.
 
-**Equip reward** is the primary explicit learning signal. It fires when the player equips an item via:
+A confirmed selection is the only explicit learning signal. Every source earns
+the same: `EQUIP_REWARD` (+8.0) for an equip, `CONSUME_REWARD` (+5.0) for a
+consumable.
 
-1. Wheeler radial menu selection (`OnItemActivated` → `publishWheelerEquip`) → +8.0
-2. Huginn slot hotkeys (`EquipManager` callback) → +8.0, only when the item was actually on the widget
-3. **External equips** (vanilla menu, favorites, vanilla hotkeys) → tiered reward via `ExternalEquipLearner`
-4. **Consumption** (potion/scroll count delta detected) → +5.0
+1. Huginn slot keys (`EquipManager` callback)
+2. Huginn's Wheeler wheel (`OnItemActivated` → `publishWheelerEquip`)
+3. **Outside selections** -- inventory / favorites / magic menu, vanilla
+   hotkeys, the player's own Wheeler wheels -- via `ExternalEquipLearner`,
+   gated on player input
 
-Consumption has two extra gates before it publishes
-(`src/UpdateLoop.cpp:58-79`): a **post-load grace window**
-(`CONSUMPTION_POST_LOAD_GRACE_MS = 5000`), because alt-start mods and settling
-scripts strip items in bulk right after a load and would otherwise train the
-learner on drinks that never happened; and a **pipeline cache staleness check**
-(500 ms). A separate teardown heuristic (`TEARDOWN_MIN_DROPS = 3`,
-`TEARDOWN_DROP_RATIO = 0.5`) suppresses the whole-inventory-to-zero scan that a
+The inventory delta scan keeps two guards before a count drop can confirm
+anything: a **post-load grace window** (`CONSUMPTION_POST_LOAD_GRACE_MS = 5000`),
+because alt-start mods and settling scripts strip items in bulk right after a
+load; and a teardown heuristic (`TEARDOWN_MIN_DROPS = 3`,
+`TEARDOWN_DROP_RATIO = 0.5`) that suppresses the whole-inventory-to-zero scan a
 quit-to-main-menu produces.
 
-### External Equip Attribution
+### Outside Selections and Attribution
 
-`ExternalEquipLearner` uses `PipelineStateCache` to determine what the pipeline
-"thought" about the item at equip time, and applies a scaled multiplier on
-`EQUIP_REWARD` (8.0). Defaults from `LearningDefaults`:
+`ExternalEquipLearner::OnExternalEquip` handles a `TESEquipEvent` Huginn did not
+cause. It first asks **`PlayerInputGate`** (`src/learning/PlayerInputGate.h`)
+whether the player made it -- an open Inventory, Favorites or Magic menu, a
+vanilla favourites hotkey (`Hotkey1`-`Hotkey8`) within
+`PLAYER_INPUT_WINDOW_MS` (1 s), a pick of that item off one of the player's
+own Wheeler wheels, or any Wheeler wheel open. No input, no selection: a
+script's equip teaches nothing (LoreRim's auto-quaff trained the learner as the
+player until this gate).
+
+The open-wheel rule exists because Huginn does not control the order of
+Wheeler's equip and its activation callback. If the equip lands first, a
+Huginn-wheel pick arrives here as an outside selection; when Huginn's own
+selection of the same item follows, `SelectionTracker::Select` relabels the
+pending record as `Wheeler` and drops its attribution. The A-E case is recorded
+to the soak telemetry only when an outside selection **confirms**, so neither a
+relabelled Huginn pick nor an unconfirmed one reaches accept%.
+
+It then labels the equip with what the pipeline "thought" of it
+(`PipelineStateCache`). The label goes to the soak telemetry (accept%, goal 1)
+and the selection log. **It is not a reward weight** -- the multipliers that
+used to scale these cases (0.2x-1.0x, and 0 for case E) were removed with the
+one selection path:
 
 ```
-Case A: Not a candidate         -> 1.0x = +8.0  (STRONGEST: player went out of their way)
-Case B-low: Low rank (far miss) -> 0.2x = +1.6  (low rank, scoring disagrees)
-Case B-med: Mid rank            -> 0.4x = +3.2  (moderate preference signal)
-Case C: Near-miss (not shown)   -> 0.8x = +6.4  (near the display cutoff)
-Case D: Displayed, page changed -> 0.5x = +4.0  (multi-page UX issue)
-Case E: Displayed, current page -> 0.0x = +0.0  (Huginn already surfaced it — skip)
+Case A: Not a candidate
+Case B-low: Low rank (far miss)
+Case B-med: Mid rank
+Case C: Near-miss (not shown)
+Case D: Displayed, page changed since the snapshot
+Case E: Displayed, current page (Huginn already surfaced it)
 ```
 
 **Case D is narrower than it reads.** `PipelineStateCache` only records
@@ -483,36 +550,37 @@ assignments for the page that was current when it snapshotted, so an item shown
 on some *other* page never enters the displayed set at all. What separates D
 from E is comparing the snapshot's `displayPage` against the **live** page
 (`m_env.currentDisplayPage()`), so D fires only when the player changed pages
-between the last pipeline run and the equip
-(`src/learning/ExternalEquipLearner.cpp:143-150`).
+between the last pipeline run and the equip.
 
 **Rank thresholds** are slot-relative. With `displayedCount` slots shown,
-`overshoot = max(0, rank - displayedCount)`
-(`src/learning/ExternalEquipLearner.cpp:161-175`):
+`overshoot = max(0, rank - displayedCount)`:
 
 - `overshoot <= NEAR_MISS_SLOTS` (2) → Case C, near-miss
 - `overshoot <= FAR_MISS_SLOTS` (5) → Case B-med, mid rank
 - `overshoot > 5` → Case B-low
 
-**Anti-spam filters** (`ShouldSkip`, `ExternalEquipLearner.cpp:81`). Each
-returns a one-character reason code that is recorded by
-`SoakMetrics::RecordEquipSkip`, so the soak heartbeat can distinguish "nobody
-equipped anything" from "every equip was filtered":
+**Skip filters** (`ShouldSkip`). Each returns a one-character reason code that
+is recorded by `SoakMetrics::RecordEquipSkip`, so the soak heartbeat can
+distinguish "nobody equipped anything" from "every equip was filtered":
 
 | Code | Filter |
 |---|---|
 | `x` | Master toggle `bLearnFromExternalEquips` is off |
+| `n` | No player input behind it (a script) |
 | `s` | Pipeline cache older than `fExternalEquipTimeWindow` |
-| `w` | Wheel open (player may be mid-selection via Huginn) — read **live**, not from the snapshot |
-| `a` | Same FormID within `fExternalEquipMinInterval` |
+
+The wheel-open (`w`) and anti-spam (`a`) filters were removed in v0.22.9:
+Huginn's own wheel picks are marked Huginn equips and never get here, the
+player's own wheel picks are now selections, and a repeat event for one pick
+merges into its pending selection.
 
 Two further guards sit around this path:
 
-- **Environment wiring gate.** `isWheelOpen` and `currentDisplayPage` are
-  injected by the composition root in `Main.cpp` rather than reached for
-  upwards. If either is unwired, `OnExternalEquip` bails *before* recording any
-  telemetry, so a wiring fault can't be mistaken for a recommendation hit.
-- **Double-reward prevention** via `EquipSourceTracker`
+- **Environment wiring gate.** `currentDisplayPage` is injected by the
+  composition root in `Main.cpp` rather than reached for upwards. If it is
+  unwired, `OnExternalEquip` bails *before* recording any telemetry, so a
+  wiring fault can't be mistaken for a recommendation hit.
+- **Huginn equips are not outside selections** -- `EquipSourceTracker`
   (`src/learning/EquipSourceTracker.h`): Huginn equip sites call
   `MarkHuginnEquip(formID)` before triggering the equip, and the external
   listener checks `IsRecentHuginnEquip(formID)` within a
@@ -520,9 +588,6 @@ Two further guards sit around this path:
   ring), so a Huginn equip of X can't suppress a genuine external equip of Y,
   and entries are kept until expiry rather than consumed on first match —
   the game can fire multiple `TESEquipEvent`s for one action.
-
-The anti-spam map self-prunes: once it exceeds `MAX_ANTI_SPAM_ENTRIES` (200),
-entries older than `CLEANUP_AGE_SECONDS` (600) are erased.
 
 ### Weight Decay
 
@@ -560,21 +625,13 @@ inline constexpr float DECAY_THRESHOLD_MINUTES = 5.0f;  // Don't decay within 5 
 
 `SKIP_PENALTY` no longer exists anywhere in `src/`.
 
-### Misclick Detection
+### Misclick Detection (removed in v0.22.9)
 
-`UsageMemorySubscriber` detects rapid equip-then-switch via
-`UsageMemory::RecordUsage` (`src/learning/UsageMemory.h`). The previous item is
-flagged only when **all three** hold:
-
-1. the previous buffered event is a *different* FormID,
-2. its `contextHash` equals the current `GameState::GetHash()`, and
-3. the gap is under `MISCLICK_WINDOW_SECONDS` (3.0).
-
-The flagged item then receives `MISCLICK_PENALTY` (-3.0, about 37.5% of
-`EQUIP_REWARD`). Note that the penalty is applied against the *current* event's
-feature vector, not a stored copy of the features at the discarded item's own
-equip time — inside a 3-second same-context window the two are near-identical,
-and the same-context condition is what makes that substitution defensible.
+`UsageMemory` used to penalise "a different item, same context hash, within
+3 s" by -3.0. The consumption event arrived late, so "drink, then equip a
+spell" penalised the potion and then the spell, and stamina was not in the hash.
+The selection confirm window replaced it: an item swapped away inside the
+window is never confirmed, so it earns nothing -- and nothing is penalised.
 
 ### Wheeler Callback Integration
 
@@ -586,13 +643,15 @@ api->RegisterItemActivatedCallback(itemCb);   // WheelerClient::OnItemActivated
 api->RegisterWheelStateCallback(wheelCb);     // WheelerClient::OnWheelStateChanged
 ```
 
-**ItemActivatedCallback:** fired when the player selects an item from the wheel.
-Ignored for non-Huginn wheels; otherwise publishes to the EquipEventBus with
-`EquipSource::Wheeler` and `wasRecommended = true`.
+**ItemActivatedCallback:** fired when the player selects an item from any wheel.
+On a Huginn wheel it is a selection (`SelectionTracker::Select`,
+`EquipSource::Wheeler`). On one of the player's own wheels it is noted as player
+input (`PlayerInputGate::NoteOwnWheelPick`), so the equip event that follows
+counts as an outside selection.
 
 **WheelStateCallback:** fired when the wheel opens/closes. Used for Wheeler UX
-behaviour (page sync, focus, edit-mode handling) and read live by
-`ExternalEquipLearner`'s wheel-open filter. It applies **no** learning penalty.
+behaviour (page sync, focus, edit-mode handling). It applies **no** learning
+penalty.
 
 **Version support:** `WheelerAPI::API_VERSION_MIN = 1`,
 `API_VERSION_MAX = 4` (`src/wheeler/WheelerAPI.h:23-24`). Both callbacks are
@@ -607,14 +666,12 @@ for version differences.
 
 | Signal | Value | Source | Purpose |
 |--------|-------|--------|---------|
-| Equip reward | +8.0 | Wheeler selection / Huginn slot hotkey | Positive reinforcement for Huginn-mediated equips |
-| Consume reward | +5.0 | Potion/scroll consumption | Signal for finite resources (weaker than equip) |
-| External equip reward | 0.0 to +8.0 | Vanilla menu / favorites / vanilla hotkey | Tiered reward via pipeline attribution (multiplier x EQUIP_REWARD) |
-| Misclick penalty | -3.0 | Rapid equip-then-switch (<3s, same context) | Penalizes discarded item |
+| Equip reward | +8.0 | A confirmed selection of a worn/held item, any device | One reward per selection |
+| Consume reward | +5.0 | A confirmed selection of a consumable, any device | One reward per selection |
 | L2 regularization | Continuous | Applied during each weight update | Pulls weights toward zero |
 | Time-based decay | Lazy | `MaybeDecayBatch` before scoring | 2%/hr exponential decay on idle items |
 
-**Removed signals:** Skip penalty (-1.0) removed in v0.12.x (replaced by implicit decay via L2 regularization + time-based decay).
+**Removed signals:** Skip penalty (-1.0) removed in v0.12.x (replaced by implicit decay via L2 regularization + time-based decay). In v0.22.9: the misclick penalty (-3.0), the separate consumption reward that made every drink train twice, and the external attribution multipliers.
 
 ### Feedback Loop
 
@@ -673,9 +730,9 @@ for version differences.
 |                    |                       |                                 |
 |                    v                       v                                 |
 |             +-------------+        +-------------+                           |
-|             |   EQUIP     |        |   IGNORE    |                           |
-|             |   +8.0      |        |  (time decay|                           |
-|             |  (via Bus)  |        |   handles)  |                           |
+|             |  SELECT     |        |   IGNORE    |                           |
+|             | (confirmed: |        |  (time decay|                           |
+|             |  +8 or +5)  |        |   handles)  |                           |
 |             +------+------+        +-------------+                           |
 |                    |                                                         |
 |                    v                                                         |
@@ -683,7 +740,6 @@ for version differences.
 |          |   EQUIP EVENT BUS       |                                         |
 |          |  -> bandit reward          |                                         |
 |          |  -> Usage memory        |                                         |
-|          |  -> Misclick detect     |                                         |
 |          +-----------+-------------+                                         |
 |                      |                                                       |
 |                      v                                                       |
@@ -1076,23 +1132,23 @@ Keeping them separate allows:
 Important: the learner learns item preference in **game context**, not slot
 context.
 
-`EquipEvent` carries a `FormID`, an `EquipSource`, a reward multiplier, the
-18-float context and the discretized `GameState` — and no slot index. Nothing in
+`EquipEvent` carries a `FormID`, an `EquipSource` label, the selection kind,
+the 18-float context and the discretized `GameState`. Its page snapshot (for the
+selection log) has slot indices, but the learner never reads them. Nothing in
 `FeatureBanditLearner`, `StateFeatures` or the cosave record references a slot or a
 page. The learner is told *what* was equipped in *what situation*; the slot only
 determined visibility.
 
 ```cpp
-// The Wheeler publish site (src/Main.cpp:497) — note the absence of a slot index
+// The Wheeler selection site (src/Main.cpp) — note the absence of a slot index
 .publishWheelerEquip = [](RE::FormID formID) {
-    Learning::EquipEventBus::GetSingleton().Publish(
-        formID, Learning::EquipSource::Wheeler, 1.0f, /*wasRecommended=*/true);
+    Learning::SelectionTracker::GetSingleton().Select(
+        formID, Learning::EquipSource::Wheeler, "Huginn wheel");
 },
 ```
 
-The one place page identity enters learning at all is
-`ExternalEquipLearner`'s Case D/E split, and there it scales the *reward*
-for an equip Huginn did not mediate — it never becomes a feature.
+Page identity reaches only `ExternalEquipLearner`'s Case D/E label, which is
+telemetry -- since v0.22.9 it no longer scales any reward.
 
 ---
 
@@ -1181,13 +1237,14 @@ just-cleared table for the remainder of their lock duration.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| EQUIP_REWARD | 8.0 | Reward for equipping a recommendation |
-| CONSUME_REWARD | 5.0 | Reward for consuming a potion/scroll |
+| EQUIP_REWARD | 8.0 | Reward for one confirmed equip selection |
+| CONSUME_REWARD | 5.0 | Reward for one confirmed consumable selection |
 | DECAY_RATE_PER_HOUR | 0.02 | Exponential weight decay for idle items |
 | DECAY_THRESHOLD_MINUTES | 5.0 | Don't decay if updated within this window |
-| MISCLICK_PENALTY | -3.0 | Penalty for a rapidly discarded item |
-| MISCLICK_WINDOW_SECONDS | 3.0 | Max gap to count as a misclick |
-| CONSUMPTION_POST_LOAD_GRACE_MS | 5000 | Suppress consumption rewards right after a load |
+| CONSUMPTION_HUGINN_WINDOW_MS | 2500 | A consumable selection must see its count drop within this |
+| SELECTION_CONFIRM_MS | 3000 | An equip selection must still be equipped after this |
+| PLAYER_INPUT_WINDOW_MS | 1000 | How recent a vanilla hotkey / own-wheel pick must be for an outside equip |
+| CONSUMPTION_POST_LOAD_GRACE_MS | 5000 | No count drop confirms anything right after a load |
 
 ### UsageMemory (`src/learning/UsageMemory.h`)
 
@@ -1242,40 +1299,22 @@ iTopNCandidates = 10          ; must be >= max slots per page
 
 ### [Learning] section
 
-External-equip learning parameters, loaded by the `LearningSettings` singleton
+Outside-selection parameters, loaded by the `LearningSettings` singleton
 and snapshotted into `LearningConfig` (a POD copy, so `ExternalEquipLearner`
 reads are race-free). Re-snapshotted on `hg reload` via `SetConfig`.
 
 ```ini
 [Learning]
-; bLearnFromExternalEquips: Master toggle for learning from vanilla UI equips
+; bLearnFromExternalEquips: Master toggle for learning from outside selections
 bLearnFromExternalEquips = true
 
 ; fExternalEquipTimeWindow: Max cache age for pipeline state to be valid (ms).
 ; The shipped configs/Huginn.ini uses 500; the compiled default is 2000.
 fExternalEquipTimeWindow = 500.0
-
-; fExternalEquipMinInterval: Anti-spam minimum interval per item (seconds)
-fExternalEquipMinInterval = 3.0
-
-; fHighUtilityRewardMult: Case C (near-miss)
-fHighUtilityRewardMult = 0.8
-
-; fMediumUtilityRewardMult: Case B-med (mid rank)
-fMediumUtilityRewardMult = 0.4
-
-; fLowUtilityRewardMult: Case B-low (low rank)
-fLowUtilityRewardMult = 0.2
-
-; fDifferentPageRewardMult: Case D (displayed, player has since changed page)
-fDifferentPageRewardMult = 0.5
-
-; fNotCandidateRewardMult: Case A (not a candidate).
-; 1.0 = strongest signal (player went out of their way).
-; Added to the shipped configs/Huginn.ini in 0.19.13; it was read-but-undefined
-; before that, silently taking the compiled 1.0.
-fNotCandidateRewardMult = 1.0
 ```
+
+`fExternalEquipMinInterval` and the five `f*RewardMult` keys were removed in
+v0.22.9 with the one selection path; an INI that still has them is ignored.
 
 ---
 

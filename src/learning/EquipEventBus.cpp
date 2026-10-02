@@ -20,16 +20,12 @@ namespace Huginn::Learning
         std::erase(m_subscribers, subscriber);
     }
 
-    void EquipEventBus::Publish(RE::FormID formID, EquipSource source,
-                                 float rewardMultiplier, bool wasRecommended)
+    void EquipEventBus::Dispatch(const EquipEvent& event)
     {
-        // 1. Build event OUTSIDE m_mutex (acquires StateManager shared locks, then releases)
-        auto event = BuildEvent(formID, source, rewardMultiplier, wasRecommended);
-
-        // 2. Snapshot subscriber list under m_mutex, then dispatch OUTSIDE it.
-        //    Subscribers acquire their own internal locks (learner m_mutex, UsageMemory::m_mutex),
-        //    so dispatching under m_mutex would create a lock-inversion risk if any code path
-        //    ever holds those locks and calls Publish() or Subscribe().
+        // Snapshot subscriber list under m_mutex, then dispatch OUTSIDE it.
+        // Subscribers acquire their own internal locks (learner m_mutex, UsageMemory::m_mutex),
+        // so dispatching under m_mutex would create a lock-inversion risk if any code path
+        // ever holds those locks and calls Dispatch() or Subscribe().
         std::vector<IEquipSubscriber*> snapshot;
         {
             std::lock_guard<std::mutex> lock(m_mutex);
@@ -39,19 +35,13 @@ namespace Huginn::Learning
         for (auto* subscriber : snapshot) {
             subscriber->OnEquipEvent(event);
         }
-
-        logger::info("[EquipEventBus] Dispatched {} event for {:08X} (mult={:.2f}, rec={}) to {} subscribers"sv,
-            EquipSourceToString(source), formID, rewardMultiplier, wasRecommended, snapshot.size());
     }
 
-    EquipEvent EquipEventBus::BuildEvent(RE::FormID formID, EquipSource source,
-                                          float rewardMultiplier, bool wasRecommended) const
+    EquipEvent EquipEventBus::Capture(RE::FormID formID, EquipSource source)
     {
         EquipEvent event;
         event.formID = formID;
         event.source = source;
-        event.rewardMultiplier = rewardMultiplier;
-        event.wasRecommended = wasRecommended;
 
         // Evaluate state once for all subscribers. StateFeatures are extracted
         // directly (continuous features for the learner); GameState is the discretized

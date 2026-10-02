@@ -3,28 +3,32 @@
 #include "LearningSettings.h"  // For LearningConfig
 #include <chrono>
 #include <functional>
-#include <mutex>
-#include <unordered_map>
+#include <string>
 
 namespace Huginn::Learning
 {
     // =========================================================================
     // EXTERNAL EQUIP LEARNER
     // =========================================================================
-    // Applies tiered learning rewards when the player equips items through
-    // vanilla UI (inventory, favorites, hotkeys) rather than through Huginn.
+    // Turns an equip Huginn did not trigger -- the player's inventory,
+    // favorites or magic menu, a vanilla hotkey, one of their own Wheeler
+    // wheels -- into a player selection (SelectionTracker), provided there was
+    // player input behind it (PlayerInputGate). A script's equip has none and
+    // teaches nothing.
     //
-    // Attribution uses PipelineStateCache to determine what the pipeline
-    // "thought" about the item at the time of equip, and applies a scaled
-    // reward based on how well Huginn was already surfacing the item.
+    // Attribution uses PipelineStateCache to label how well Huginn was already
+    // surfacing the item. The label feeds the soak telemetry (accept%, goal 1)
+    // and the selection log. It is NOT a reward weight any more: a selection
+    // teaches the same whatever device made it (one selection path,
+    // 2026-10-02). The multipliers that used to scale these cases are gone.
     //
     // Cases:
-    //   A: Not a candidate                     → boosted reward (notCandidateRewardMult)
-    //   B-low: Low-rank candidate              → small reward (0.2×)
-    //   B-med: Mid-rank candidate              → medium reward (0.4×)
-    //   C: High-rank, not displayed            → high reward (0.8×)
-    //   D: Displayed, page changed since snap  → medium reward (0.5×)
-    //   E: Displayed, current page             → skip (Huginn already surfaced it)
+    //   A: Not a candidate
+    //   B-low: Low-rank candidate
+    //   B-med: Mid-rank candidate
+    //   C: High-rank, not displayed (near-miss)
+    //   D: Displayed, page changed since snap
+    //   E: Displayed, current page (Huginn already surfaced it)
     //
     // CASE D IS NARROWER THAN IT READS. PipelineStateCache only ever records
     // assignments for the page that was current when it snapshotted, so an item
@@ -64,22 +68,17 @@ namespace Huginn::Learning
         // state is not.
         struct Environment
         {
-            std::function<bool()>   isWheelOpen;
             std::function<size_t()> currentDisplayPage;
         };
 
         // Validates immediately rather than waiting for an equip event that may
-        // never arrive: equipping through the Huginn wheel takes the wheel-open
-        // early-out, so this path can stay silent for a whole session. Also
-        // catches partial wiring, since this replaces the whole struct.
+        // never arrive: a player who only uses Huginn's keys and wheel never
+        // reaches this path, so it can stay silent for a whole session.
         void SetEnvironment(Environment env)
         {
-            if (!env.isWheelOpen || !env.currentDisplayPage) {
+            if (!env.currentDisplayPage) {
                 logger::error("[ExternalEquipLearner] SetEnvironment incomplete "
-                    "(isWheelOpen={}, currentDisplayPage={}) — external-equip "
-                    "learning will be suppressed"sv,
-                    static_cast<bool>(env.isWheelOpen),
-                    static_cast<bool>(env.currentDisplayPage));
+                    "(currentDisplayPage unset) — external-equip learning will be suppressed"sv);
             }
             m_env = std::move(env);
         }
@@ -96,17 +95,8 @@ namespace Huginn::Learning
         // Injected live queries — see SetEnvironment. Read unsynchronized from
         // the equip path, like m_config above: both writers are main-thread
         // (Main.cpp at init, SettingsReloader on hot-reload, which replaces
-        // m_config only and leaves m_env intact). m_mutex below guards
-        // m_lastLearnTime, not these.
+        // m_config only and leaves m_env intact).
         Environment m_env;
-
-        // Anti-spam: FormID → last learning timestamp
-        std::unordered_map<RE::FormID, std::chrono::steady_clock::time_point> m_lastLearnTime;
-        mutable std::mutex m_mutex;
-
-        // Anti-spam map cleanup thresholds
-        static constexpr size_t MAX_ANTI_SPAM_ENTRIES = 200;
-        static constexpr float CLEANUP_AGE_SECONDS = 600.0f;  // 10 minutes
 
         // Slot-relative thresholds: how many ranks past the display cutoff
         // determines the attribution case. E.g., with 5 display slots:
@@ -124,31 +114,24 @@ namespace Huginn::Learning
         // Skip reason codes for ShouldSkip / SoakMetrics::RecordEquipSkip.
         // Deliberately lowercase: the 'A'..'E' space belongs to attribution
         // case labels, and the two are recorded through different counters.
+        //
+        // The wheel-open and anti-spam skips went with the one selection path:
+        // Huginn's own wheel picks are marked Huginn equips and never reach
+        // here, the player's own wheel picks are now selections, and a repeat
+        // event for one pick merges into its pending selection.
         static constexpr char SKIP_NONE     = '\0';  // do not skip
-        static constexpr char SKIP_WHEEL    = 'w';    // wheel open — the normal wheel-activation path
+        static constexpr char SKIP_NO_INPUT = 'n';    // no player input behind it (a script)
         static constexpr char SKIP_STALE    = 's';    // pipeline snapshot too old to attribute
-        static constexpr char SKIP_ANTISPAM = 'a';    // same FormID re-equipped too soon
         static constexpr char SKIP_DISABLED = 'x';    // learnFromExternalEquips off
 
         /// Which filter (if any) rejects this equip. SKIP_NONE = proceed to
         /// attribution. Returns the reason rather than a bool so the caller can
         /// record WHY nothing was attributed — see SoakMetrics::RecordEquipSkip.
-        char ShouldSkip(RE::FormID formID) const;
+        /// `via` receives how the player made it when there was player input.
+        char ShouldSkip(RE::FormID formID, std::string& via) const;
 
-    public:
-        // Determine reward multiplier and case label from pipeline state.
-        //
-        // Public because the CONSUMPTION path needs the same answer. An item
-        // leaving the inventory and an equip event are two views of one act, and
-        // before this they disagreed: the equip path could decide an act taught
-        // it nothing while the consumption path rewarded it in full. See
-        // UpdateLoop's ApplyConsumptionReward.
-        struct Attribution
-        {
-            float multiplier = 0.0f;
-            const char* caseLabel = "?";
-        };
-        Attribution ComputeAttribution(RE::FormID formID) const;
+        /// The A-E case label for this equip, from pipeline state.
+        const char* ComputeAttribution(RE::FormID formID) const;
     };
 
 }  // namespace Huginn::Learning

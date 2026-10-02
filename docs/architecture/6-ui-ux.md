@@ -717,7 +717,7 @@ sequenceDiagram
 
 | Callback | Trigger | Huginn action |
 |---|---|---|
-| `ItemActivatedCallback` | Player activates a slot | Apply the post-activation policy, mark the equip as Huginn-mediated, start a candidate cooldown (skipped under Sticky), publish an `EquipEventBus` event with `EquipSource::Wheeler` and `wasRecommended = true` |
+| `ItemActivatedCallback` | Player activates a slot | Apply the post-activation policy, mark the equip as Huginn-mediated, start a candidate cooldown (skipped under Sticky), record a player selection (`SelectionTracker`, `EquipSource::Wheeler`). On a wheel that is not Huginn's: note player input (`PlayerInputGate`) |
 | `WheelStateCallback(true)` | Any wheel opens | Distinguish a fresh open from scrolling; on a fresh open hide the widget, sync the page, and auto-focus if configured |
 | `WheelStateCallback(false)` | Any wheel closes | Defer to `CheckPendingWheelClose()` on the update thread |
 | `EditModeCallback` | Edit mode toggled | On *exit*, unconditionally `ReResolveWheelIndices()` |

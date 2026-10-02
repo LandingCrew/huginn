@@ -984,8 +984,9 @@ namespace Huginn::Input
       break;
       }
 
+      // A remembered item put back is the player's undo, not a selection.
       if (success && m_equipCallback && !pressedRemembered) {
-         m_equipCallback(content.formID, true);
+         m_equipCallback(content.formID, slotIndex);
       }
 
       return success;

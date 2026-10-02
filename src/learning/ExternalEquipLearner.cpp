@@ -1,6 +1,7 @@
 #include "ExternalEquipLearner.h"
 #include "PipelineStateCache.h"
-#include "EquipEventBus.h"
+#include "PlayerInputGate.h"
+#include "SelectionTracker.h"
 #include "telemetry/SoakMetrics.h"
 
 // Deliberately does NOT include slot/SlotAllocator.h or wheeler/WheelerClient.h:
@@ -12,7 +13,7 @@ namespace Huginn::Learning
 {
     bool ExternalEquipLearner::EnvironmentReady() const
     {
-        if (m_env.isWheelOpen && m_env.currentDisplayPage) {
+        if (m_env.currentDisplayPage) {
             return true;
         }
         static bool s_warned = false;
@@ -27,58 +28,36 @@ namespace Huginn::Learning
     void ExternalEquipLearner::OnExternalEquip(RE::FormID formID, const char* formType)
     {
         // Before the telemetry call below, deliberately: RecordEquipCase keys on
-        // caseLabel[0], so attributing an unwired environment to any real case
-        // would feed the soak accept% signal a wiring fault dressed as a result.
+        // the case label's first letter, so attributing an unwired environment
+        // to any real case would feed the soak accept% signal a wiring fault
+        // dressed as a result.
         if (!EnvironmentReady()) {
             return;
         }
 
-        if (const char skip = ShouldSkip(formID); skip != SKIP_NONE) {
+        std::string via;
+        if (const char skip = ShouldSkip(formID, via); skip != SKIP_NONE) {
             // Record WHY. A skipped equip never reaches RecordEquipCase, so
             // without this the heartbeat reports accept=n/a identically for
-            // "nobody equipped anything" and "every equip was filtered" — and
-            // for a wheel-driven player the second is the normal case.
+            // "nobody equipped anything" and "every equip was filtered".
             Telemetry::SoakMetrics::GetSingleton().RecordEquipSkip(skip);
             return;
         }
 
-        auto attribution = ComputeAttribution(formID);
+        // The case label is the recommendation-quality signal (E = Huginn
+        // displayed it and the player went past it anyway; A = never surfaced).
+        // SelectionTracker records it to the soak telemetry once the selection
+        // confirms.
+        const char* caseLabel = ComputeAttribution(formID);
 
-        // Soak telemetry: the case label is the recommendation-quality signal
-        // (E = Huginn displayed it and the player equipped it; A = never
-        // surfaced). Record it before the reward early-return so hits count.
-        Telemetry::SoakMetrics::GetSingleton().RecordEquipCase(attribution.caseLabel[0]);
+        logger::debug("[ExternalEquipLearner] {} {:08X} via {} -- case {}"sv,
+            formType, formID, via, caseLabel);
 
-        if (attribution.multiplier <= 0.0f) {
-            logger::debug("[ExternalEquipLearner] Skipped ({}) {:08X} '{}'",
-                attribution.caseLabel, formID, formType);
-            return;
-        }
-
-        // Publish to EquipEventBus (subscribers handle bandit reward + UsageMemory + misclick)
-        EquipEventBus::GetSingleton().Publish(
-            formID, EquipSource::External, attribution.multiplier, false);
-
-        // Update anti-spam timestamp + periodic cleanup
-        {
-            std::lock_guard lock(m_mutex);
-            auto now = std::chrono::steady_clock::now();
-            m_lastLearnTime[formID] = now;
-
-            if (m_lastLearnTime.size() > MAX_ANTI_SPAM_ENTRIES) {
-                std::erase_if(m_lastLearnTime, [now](const auto& pair) {
-                    return std::chrono::duration<float>(now - pair.second).count() > CLEANUP_AGE_SECONDS;
-                });
-            }
-        }
-
-        logger::debug("[ExternalEquipLearner] Published: case={} mult={:.2f} "
-            "form={:08X} '{}'",
-            attribution.caseLabel, attribution.multiplier,
-            formID, formType);
+        SelectionTracker::GetSingleton().Select(formID, EquipSource::External,
+            std::move(via), caseLabel);
     }
 
-    char ExternalEquipLearner::ShouldSkip(RE::FormID formID) const
+    char ExternalEquipLearner::ShouldSkip(RE::FormID formID, std::string& via) const
     {
         // 1. Master toggle
         if (!m_config.learnFromExternalEquips) {
@@ -86,55 +65,41 @@ namespace Huginn::Learning
             return SKIP_DISABLED;
         }
 
-        // 2. Cache staleness — pipeline data too old to attribute
+        // 2. Player input. A TESEquipEvent with no Huginn mark and no menu,
+        // hotkey or own-wheel pick behind it is a script acting on the player
+        // (LoreRim's auto-quaff, 2026-09-21) -- not a selection.
+        via = PlayerInputGate::GetSingleton().Explain(formID);
+        if (via.empty()) {
+            logger::info("[ExternalEquipLearner] Skipped (no player input -- a script?) {:08X} '{}'"sv,
+                formID, [formID] {
+                    const auto* form = RE::TESForm::LookupByID(formID);
+                    return form && form->GetName() ? form->GetName() : "?";
+                }());
+            return SKIP_NO_INPUT;
+        }
+
+        // 3. Cache staleness — pipeline data too old to attribute
         auto& cache = PipelineStateCache::GetSingleton();
         if (cache.IsStale(m_config.externalEquipTimeWindow)) {
             logger::debug("[ExternalEquipLearner] Skipped (stale cache) {:08X}", formID);
             return SKIP_STALE;
         }
 
-        // 3. Wheeler open — player might be mid-selection via Huginn wheel.
-        // Must be read live: a wheel opened since the last pipeline tick is
-        // exactly the case this filter exists for. Wiring is guaranteed by the
-        // EnvironmentReady() gate in OnExternalEquip.
-        if (m_env.isWheelOpen()) {
-            logger::debug("[ExternalEquipLearner] Skipped (wheel open) {:08X}", formID);
-            return SKIP_WHEEL;
-        }
-
-        // 4. Anti-spam — same FormID learned too recently
-        {
-            std::lock_guard lock(m_mutex);
-            auto it = m_lastLearnTime.find(formID);
-            if (it != m_lastLearnTime.end()) {
-                auto elapsed = std::chrono::steady_clock::now() - it->second;
-                float elapsedSec = std::chrono::duration<float>(elapsed).count();
-                if (elapsedSec < m_config.externalEquipMinInterval) {
-                    logger::debug("[ExternalEquipLearner] Skipped (anti-spam, {:.1f}s < {:.1f}s) {:08X}",
-                        elapsedSec, m_config.externalEquipMinInterval, formID);
-                    return SKIP_ANTISPAM;
-                }
-            }
-        }
-
-        // Note: Re-equip filter omitted — the anti-spam timer (3s default) already
-        // prevents double-learning from rapid re-equips of the same item.
-
         return SKIP_NONE;
     }
 
-    ExternalEquipLearner::Attribution ExternalEquipLearner::ComputeAttribution(RE::FormID formID) const
+    const char* ExternalEquipLearner::ComputeAttribution(RE::FormID formID) const
     {
         auto& cache = PipelineStateCache::GetSingleton();
         auto info = cache.GetCandidateInfo(formID);
 
         // Case A: Not a candidate — player went out of their way to equip something
-        // the pipeline didn't even consider. This is the strongest preference signal.
+        // the pipeline didn't even consider.
         if (!info.wasCandidate) {
-            return {m_config.notCandidateRewardMult, "A (not candidate, boosted)"};
+            return "A (not candidate)";
         }
 
-        // Case E: Displayed on current page — Huginn already surfaced it, skip.
+        // Case E: Displayed on current page — Huginn already surfaced it.
         //
         // info.displayPage is the page the cache snapshotted; the comparison is
         // against the LIVE page, so D means "player changed pages since that
@@ -142,11 +107,11 @@ namespace Huginn::Learning
         // Reading the cached page on both sides would make this always equal.
         if (info.wasDisplayed) {
             if (info.displayPage == m_env.currentDisplayPage()) {
-                return {0.0f, "E (displayed current page)"};
+                return "E (displayed current page)";
             }
 
             // Case D: displayed at snapshot time, player has since switched pages
-            return {m_config.differentPageRewardMult, "D (different page)"};
+            return "D (different page)";
         }
 
         // Cases B/C: Candidate but not displayed — use slot-relative ranking.
@@ -165,13 +130,13 @@ namespace Huginn::Learning
 
         if (overshoot <= NEAR_MISS_SLOTS) {
             // Case C: Near-miss — ranked just below the display cutoff
-            return {m_config.highUtilityRewardMult, "C (near-miss)"};
+            return "C (near-miss)";
         } else if (overshoot <= FAR_MISS_SLOTS) {
             // Case B-med: Moderately ranked, not close to display
-            return {m_config.mediumUtilityRewardMult, "B-med (mid rank)"};
+            return "B-med (mid rank)";
         } else {
             // Case B-low: Far from the display cutoff
-            return {m_config.lowUtilityRewardMult, "B-low (low rank)"};
+            return "B-low (low rank)";
         }
     }
 

@@ -11,10 +11,8 @@
 #include "slot/Remembrance.h"
 #include "wheeler/WheelerClient.h"
 #include "learning/PipelineStateCache.h"
-#include "learning/EquipEventBus.h"
 #include "learning/InventoryExitTracker.h"
-#include "learning/EquipSourceTracker.h"
-#include "learning/ExternalEquipLearner.h"
+#include "learning/SelectionTracker.h"
 #include "util/ScopedTimer.h"
 #include "util/InventoryUtil.h"
 #include "weapon/WeaponRegistry.h"
@@ -35,11 +33,11 @@
 using namespace Huginn;
 
 // =============================================================================
-// CONSUMPTION REWARD HELPER
+// CONSUMPTION HELPERS
 // =============================================================================
 
 // Returns true if the count decrease was a real consumption (cast/drink/eat)
-// rather than a drop/sell/store, which must not be rewarded — see
+// rather than a drop/sell/store, which must not confirm anything — see
 // InventoryExitTracker.
 static bool IsConsumption(RE::FormID formID, int32_t delta)
 {
@@ -58,55 +56,43 @@ static bool InPostLoadGraceWindow()
     return sinceLoadMs < Config::CONSUMPTION_POST_LOAD_GRACE_MS;
 }
 
-static void ApplyConsumptionReward(RE::FormID formID, std::string_view name)
+// A real consumption. Two separate things happen, and only one is learning:
+//
+// - Bookkeeping, always: the item starts its candidate cooldown, so it is not
+//   re-offered the moment it is gone. (The slot lock was already broken by
+//   the caller.) This used to be the CooldownSubscriber, which ran only when
+//   a consumption was published -- now it follows the count drop itself.
+//
+// - Learning, only if a player selection is pending for it: the count drop
+//   CONFIRMS that selection (SelectionTracker), which is then rewarded once,
+//   on the state from when the player chose. A count drop with no selection
+//   behind it -- a script drinking, a quest taking an item, a scroll cast
+//   from a hand it was put in long ago -- teaches nothing. Before the one
+//   selection path every drink earned a second, separate reward here.
+static void HandleConsumption(RE::FormID formID, std::string_view name)
 {
-    // Suppress rewards right after a load: alt-start/quest scripts strip items
-    // in bulk and would otherwise train the learner on drinks that never
-    // happened (see CONSUMPTION_POST_LOAD_GRACE_MS).
+    auto& candidateGen = Candidate::CandidateGenerator::GetSingleton();
+    if (candidateGen.IsInitialized()) {
+        auto sourceType = Candidate::SourceType::Spell;
+        if (auto* form = RE::TESForm::LookupByID(formID)) {
+            if (form->Is(RE::FormType::AlchemyItem)) sourceType = Candidate::SourceType::Potion;
+            else if (form->Is(RE::FormType::Scroll)) sourceType = Candidate::SourceType::Scroll;
+        }
+        candidateGen.StartCooldown(formID, sourceType);
+    }
+
+    // Alt-start/quest scripts strip items in bulk right after a load; nothing
+    // the player selected can be pending then anyway, but say so explicitly.
     if (InPostLoadGraceWindow()) {
-        logger::debug("[Learning] Skipped consumption reward (post-load grace): {} ({:08X})",
+        logger::debug("[Learning] Consumption in post-load grace, not a selection: {} ({:08X})",
             name, formID);
         return;
     }
 
-    auto& cache = Learning::PipelineStateCache::GetSingleton();
-    if (cache.IsStale(500.0f)) {
-        logger::debug("[Learning] Skipped consumption reward (stale cache): {} ({:08X})",
+    if (!Learning::SelectionTracker::GetSingleton().OnConsumed(formID)) {
+        logger::debug("[Learning] Consumed with no selection behind it, teaches nothing: {} ({:08X})",
             name, formID);
-        return;
     }
-
-    // WHO drank it decides what it teaches.
-    //
-    // A consumption Huginn itself triggered is the player acting on a
-    // recommendation, and worth full credit. Anything else is an outside equip
-    // wearing a different hat -- the player's own inventory menu, a favourites
-    // hotkey, or another mod acting on its own -- and it should be attributed
-    // exactly as ExternalEquipLearner attributes an outside equip, because it IS
-    // one. The two paths disagreed before this: for a LoreRim auto-quaff of a
-    // resist-shock potion (2026-09-21), the equip path decided the act taught it
-    // nothing and skipped, and then this path handed out the full +5.0 anyway.
-    // A mod drinking potions on a schedule was quietly teaching Huginn that the
-    // player loves those potions.
-    //
-    // A zero multiplier still PUBLISHES: the cooldown and usage-memory
-    // subscribers need to know the potion went, whoever drank it. Only the
-    // learner stays out (see BanditSubscriber).
-    float multiplier = 1.0f;
-    const char* attributionLabel = "huginn";
-    if (!Learning::EquipSourceTracker::GetSingleton().IsRecentHuginnEquip(
-            formID, Config::CONSUMPTION_HUGINN_WINDOW_MS)) {
-        const auto attribution =
-            Learning::ExternalEquipLearner::GetSingleton().ComputeAttribution(formID);
-        multiplier = attribution.multiplier;
-        attributionLabel = attribution.caseLabel;
-    }
-
-    Learning::EquipEventBus::GetSingleton().Publish(
-        formID, Learning::EquipSource::Consumption, multiplier, false);
-
-    logger::info("[Learning] Consumption event published: {} ({:08X}) [{} x{:.2f}]",
-        name, formID, attributionLabel, multiplier);
 }
 
 // =============================================================================
@@ -206,7 +192,7 @@ template <typename Registry>
             continue;
         }
         logger::debug("[{}] Consumed: {} x{}"sv, tag, change.name, -change.delta);
-        ApplyConsumptionReward(change.formID, change.name);
+        HandleConsumption(change.formID, change.name);
     }
 
     return !changes.empty();
@@ -229,6 +215,11 @@ static void UpdateSubsystems(float deltaSeconds, float deltaMs)
     // run. Without this, expired cooldowns/wildcards/latches/locks linger
     // on-screen while the skip gate holds the pipeline idle.
     bool forcePipelineRun = false;
+
+    // Confirm or drop pending player selections whose window has run out.
+    // Main thread (the input sink drives this loop), so reading what the
+    // player has equipped is safe here.
+    Learning::SelectionTracker::GetSingleton().Update();
 
     {
         Huginn_ZONE_NAMED("CandidateGenerator::Update");

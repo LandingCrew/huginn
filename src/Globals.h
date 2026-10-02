@@ -59,6 +59,10 @@ extern RegistryTimers g_registryTimers;
 // Non-registry timers (kept separate — different lifecycle)
 extern std::chrono::steady_clock::time_point g_lastStateLog;
 extern std::chrono::steady_clock::time_point g_lastGameLoad;
+// Incremented on every kPostLoadGame / kNewGame. Tags each selection-log
+// record, so rewards abandoned by a death-and-reload can be told apart from
+// the ones the learner kept (the cosave rolls it back; the log does not).
+extern std::atomic<uint32_t> g_loadGeneration;
 
 // Flags
 extern bool g_hasShownWelcomeNotification;

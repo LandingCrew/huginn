@@ -209,16 +209,17 @@ It is a just-in-time affordance surface.
 ## Feedback Loop
 
 ```
-Player equips item ──► EquipEventBus ──► Subscribers:
+Player selects item ──► SelectionTracker (pending: press-time state + bar)
+                          │  confirms: consumable's count drops / equip still worn at 3 s
+                          ▼
+                      EquipEventBus ──► Subscribers:
                                           ├── BanditSubscriber (FeatureBanditLearner weight update)
-                                          ├── UsageMemorySubscriber (recency tracking + misclick)
-                                          └── CooldownSubscriber (candidate cooldown)
+                                          └── UsageMemorySubscriber (recency tracking)
 
-Equip sources:
-  Wheeler selection / hotkey 1-0  ──► +8.0 EQUIP_REWARD (direct reinforcement)
-  Potion/scroll consumption       ──► +5.0 CONSUME_REWARD
-  Vanilla menu / favorites        ──► ExternalEquipLearner (tiered 0.0-8.0 by attribution)
-  Rapid equip-then-switch (<3s)   ──► -3.0 MISCLICK_PENALTY
+Selection sources (all equal -- the source is a label, not a weight):
+  Huginn key / Huginn wheel
+  Menu, vanilla hotkey, own Wheeler wheel  ──► ExternalEquipLearner (needs player input)
+One confirmed selection ──► +8.0 EQUIP_REWARD or +5.0 CONSUME_REWARD, once
 
 Weight decay:
   L2 regularization (FeatureBanditLearner::L2_LAMBDA = 0.01) folded into each weight update
@@ -231,9 +232,10 @@ Update rule (FeatureBanditLearner::Update):
 See: docs/architecture/4-contextual-bandits.md for full learning system details
 ```
 
-Constants live in `src/Config.h` (`EQUIP_REWARD`, `CONSUME_REWARD`, `MISCLICK_PENALTY`,
-`MISCLICK_WINDOW_SECONDS`, `DECAY_RATE_PER_HOUR`, `DECAY_THRESHOLD_MINUTES`); the
-subscribers in `src/learning/EquipSubscribers.h`; the attribution tiers in
+Constants live in `src/Config.h` (`EQUIP_REWARD`, `CONSUME_REWARD`,
+`SELECTION_CONFIRM_MS`, `CONSUMPTION_HUGINN_WINDOW_MS`, `DECAY_RATE_PER_HOUR`,
+`DECAY_THRESHOLD_MINUTES`); the selection path in `src/learning/SelectionTracker.h`;
+the subscribers in `src/learning/EquipSubscribers.h`; the attribution labels in
 `src/learning/ExternalEquipLearner.h`.
 
 ---

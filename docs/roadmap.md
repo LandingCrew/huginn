@@ -15,31 +15,29 @@ BEFORE the soak -- it is a set of bugs, and a soak on the broken path would
 mostly measure them.
 
 **Phase 1 -- pre-soak cleanup (only #2 touches learning; see above):**
-Landed on branch `pre-soak-cleanup` (0.22.9): #4, #5, #6 and a first cut of
-#3 (details on each), plus the AS2 `setUrgent` removal with a SWF rebuild and
-logging for both Known Bugs so the soak run can settle them.
+Landed on branch `pre-soak-cleanup` (0.22.9): #2 through #6 (details on
+each), plus the AS2 `setUrgent` removal with a SWF rebuild and logging for
+both Known Bugs so the soak run can settle them. Only #1 is left, deferred.
 1. **Default slot keys off the number row** -- Known Mod Compatability
    Issues. XS, config only (`configs/Huginn.ini` `iSlot1Key`-`iSlot10Key`).
    First because the double-fire is what polluted the last save's weights.
    Not F1-F8: F5 is Skyrim's quicksave (see the entry).
    Pushed back 2026-10-02: the user does not use Skyrim's hotkeys.
-2. **One selection path: hold, then confirm** -- Known Bugs. Fixes potions
-   trained twice, the false misclick penalties and the late game-state
-   read; one API for every device, gated on player input. M.
-3. **Reward-time logging** -- on "Learning swamps context". At each
-   confirmed selection: the chosen item's utility, rank and ctx, what it
-   displaced, its source (key / wheel / menu), and **what else was showing
-   for the same need** (the would-be negatives, with their predictions).
-   Changes nothing; sizes the negative weight and k from the soak data and
-   lets a new formula re-rank the logged candidates offline. S.
-   Raised in review 2026-10-02: log the WHOLE scored list per selection,
-   not just the same-need items -- see that entry's review notes.
-   **First cut in 0.22.9** (`src/learning/RewardLog`, `[Reward]` lines):
-   fires at each APPLIED reward, not yet a confirmed selection (that waits
-   on #2), and logs the current page only, with rank/util/ctx/pred/need per
-   shown item. Still to add for the review note: the whole scored list,
-   every breakdown term and phi, override / wildcard flags, a load
-   generation tag.
+2. ~~**One selection path: hold, then confirm**~~ -- done in 0.22.9
+   (`src/learning/SelectionTracker`, `PlayerInputGate`; design in
+   docs/architecture/4-contextual-bandits.md). One confirmed selection, one
+   reward, on the press-time state, whatever the device; a script's equip
+   or a count drop with no selection behind it teaches nothing. Misclick
+   penalties, the attribution multipliers, the separate consumption reward,
+   the wheel-open and anti-spam filters are gone. Heartbeat `skipped=` is
+   now `(input/stale/off)`.
+3. ~~**Reward-time logging**~~ -- done in 0.22.9, hung off the confirm
+   point (`src/learning/SelectionLog`): a `[Selection] Confirmed` header
+   and one line per item on the page in the debug log, and one JSON record
+   per selection in `Huginn_Selections.jsonl` -- press-time phi, wildcard
+   odds, the page with slot index and assignment type (override / wildcard
+   / Remembrance), and the WHOLE scored list with every breakdown term and
+   the learner's press-time prediction, tagged with the load generation.
 4. ~~**`sUncastableSpellPolicy = Penalize`**~~ -- done in 0.22.9: removed,
    a legacy INI value loads as Allow.
 5. ~~**Arcane Mass Inhibition override + spell-type vocabulary**~~ -- done
@@ -80,7 +78,8 @@ Raised in review 2026-10-02, to settle before the run starts:
   choice target.
 - **Death and reload roll the learner back** to the last save, but the log
   keeps the abandoned rewards, so log counts will not match `hg dump
-  weights`. Tag log lines with a load generation. Separately: should
+  weights`. Tag log lines with a load generation (done in 0.22.9: `gen=`
+  on every selection record, bumped per load). Separately: should
   learning survive a reload? Today the fight that killed you is forgotten.
 - **Comparing Phase 3 against this run.** The character progresses, so a
   before/after is confounded. Keep the run's starting save as a benchmark
@@ -129,87 +128,11 @@ that nothing else is needed. Page layouts, slot classes and custom slots
 exist because the recommender is not there yet. Both are counted since
 v0.22.8, in the `goals` field of the `[Soak]` heartbeat
 (docs/playtest/LongPlaySoak.md). Where a selection came from never weights
-learning (one selection path, Known Bugs), but it stays on the event as a
+learning (one selection path, 0.22.9), but it stays on the event as a
 label, because these two goals are defined by it. Both counts also move
 with how the run is played and laid out -- see the Phase 2 review notes.
 
 ## Known Bugs
-- [ ] **The reward path: every potion trains twice, a late event fires false
-      misclick penalties, and scripts count as the player.** Fix decided
-      with the user 2026-10-02 (below); lands in Phase 1, ahead of the soak.
-      - **Two rewards per drink.** A slot press on a potion publishes a
-        Hotkey event worth +8 (`src/input/EquipManager.cpp:988`); ~1.3 s
-        later the delta scan sees the count drop inside the 2.5 s Huginn
-        window and publishes a full-credit Consumption event worth +5
-        (`ApplyConsumptionReward`, `src/UpdateLoop.cpp`). A Wheeler pick
-        and a menu drink (External, then Consumption) do the same. Every
-        drink trains twice and splits the target between 8 and 5 -- part of
-        "consumables rack up trains quickly" on "Learning swamps context".
-        It also records two usage events, so the recency boost (3 matches)
-        can fire after two drinks.
-      - **False misclicks.** UsageMemory penalises "a different item, same
-        context hash, within 3 s" by -3 (`UsageMemory::RecordUsage`,
-        `UsageMemorySubscriber`). The consumption event arrives late, so
-        "drink Fortify Destruction, then equip Firebolt" penalises the
-        potion when Firebolt goes on, then Firebolt when the potion's
-        consumption lands after it. Stamina is not in the hash, so a
-        stamina drink never breaks the match.
-      - **State read late.** The learner sees the game state when the event
-        is detected, not when the player chose (`EquipEventBus::BuildEvent`)
-        -- for a drink, 1.3 s after the potion started working. Possibly
-        part of why the pooling pre-check vectors look like "used at full
-        resources".
-      - **Scripts count as the player.** `ExternalEquipLearner::ShouldSkip`
-        never asks whether a menu was open or a key was pressed, so
-        LoreRim's auto-quaff (2026-09-21, see `ApplyConsumptionReward`)
-        trained the learner. That mod is now off on the test install; the
-        gate is still needed for any other script that equips or drinks.
-      **Decided: one selection path -- hold, then confirm.**
-      - A player selection records a PENDING use: the item, the game state
-        at that moment, what the bar was showing, and the source (a label
-        for the goal metrics, never a weight).
-      - A consumable confirms when the next inventory scan sees its count
-        drop, within ~2.5 s (`CONSUMPTION_HUGINN_WINDOW_MS`). Weapons,
-        spells, ammo, torches and apparel do not change the count; they
-        confirm if still equipped a few seconds later. One confirmed
-        selection is one reward, scored on the press-time state. Anything
-        not confirmed is dropped.
-      - This replaces misclick detection: swapped away inside the window
-        means never confirmed. A circlet and a ring both confirm because
-        both are still worn -- the lesson the misclick code's still-worn
-        rule already encodes.
-      - A count drop with no pending selection behind it teaches nothing.
-        It still frees the slot and starts the cooldown; that is inventory
-        bookkeeping, not learning. Side effect: a held LoreRim throwing
-        knife or a scroll stops earning a reward per throw or cast -- the
-        equip was the selection.
-      - One pending record per item: both hands, a doubled TESEquipEvent,
-        an equip event plus the count drop -- all one selection.
-      - **One API, whatever the device.** A Huginn key, a vanilla hotkey,
-        the inventory menu or Wheeler is "a distinction without a
-        difference" (the user): what counts is that the player selected
-        it. So:
-        - A selection needs player input behind it: a Huginn key, a Wheeler
-          activation, an open Inventory / Favorites / Magic menu, or a
-          vanilla hotkey press just before. A script equip has none.
-        - The attribution multipliers (B-low 0.2 up to A 1.0, and E = 0 for
-          "already displayed") stop weighting learning; a menu pick of a
-          displayed item is a full selection. The A-E cases stay as labels
-          for accept% and the goals (goal 1 is defined by source).
-        - `wasRecommended` stops mattering; it is already true for every
-          slot press.
-        - Picks from the player's own Wheeler wheels probably teach nothing
-          today: `ShouldSkip`'s wheel-open check fires while ANY Wheeler
-          wheel is open (`IsWheelOpen` asks Wheeler about all of them).
-          De-duplicating Huginn's own wheel picks moves to the
-          one-record-per-item rule.
-        - Remembrance swap-backs still earn nothing (decided earlier: an
-          undo takes a selection back). A swap-back inside the confirm
-          window also cancels the item it undid.
-      - The pending record already holds what the bar was showing, which is
-        what the choice target's negatives (Phase 3) need.
-      Raised 2026-10-02.
-
 - [ ] One weapon stack's ExtraHealth has read 0.00, then 1.00, then 1.30 across
       three sessions on the same character, and nothing explains the first two.
       uid87, the LoreRim Long Bow. Either the player tempered it between those
@@ -456,7 +379,7 @@ with how the run is played and laid out -- see the Phase 2 review notes.
       (8 equip / 5 consume), only recommended items are rewarded on keys
       (`wasRecommended`), confidence hits 95% at 15 trains, and consumables
       rack up trains quickly -- partly because each drink is rewarded twice
-      (Known Bugs, the reward path). Rich get richer.
+      (fixed in 0.22.9 by the one selection path). Rich get richer.
       **Why weapons and consumables differ.** For a weapon the preference IS
       the item ("I use this sword"). For a potion or spell the preference is
       mostly the situation, and which of twenty healing potions is a
@@ -514,7 +437,7 @@ with how the run is played and laid out -- see the Phase 2 review notes.
         that one decision can fire several events (a weapon toggled back and
         forth), so: one reward per decision -- no reward for re-equipping the
         same item within a few seconds, Remembrance swap-backs do not count.
-        Hold-then-confirm (Known Bugs, Phase 1) is what implements this.
+        Hold-then-confirm (SelectionTracker, 0.22.9) is what implements this.
         Base rates (weapons equipped often, potions rarely) are absorbed by
         each item's bias weight. The one weighting kept is surprise: an
         item Huginn was not showing ~2x (surprise weighting below). Source
@@ -566,15 +489,12 @@ with how the run is played and laid out -- see the Phase 2 review notes.
       prediction. That changes nothing and lets the soak data size the
       negative weight, the cap and k (and supports offline evaluation --
       see the review note on replay below).
-      First cut landed in 0.22.9 (`src/learning/RewardLog`): at each applied
-      reward, a `[Reward]` line with the chosen item's source, reward, rank,
-      utility, ctx, prediction before the update and need (primary slot
-      class), the best-ranked same-need item it passed over (`over=`), then
-      one line per item on the current page with slot index, same-need peers
-      marked `=`. Short of the replay note below: current page only (a
-      Wheeler pick from another page logs as not shown), no breakdown terms
-      or phi, no override / wildcard flags, and it fires on applied rewards
-      -- so a potion trained twice logs twice until the one selection path.
+      Landed in 0.22.9 as the selection log (`src/learning/SelectionLog`,
+      Phase 1 #3): at each CONFIRMED selection, the whole scored list from
+      the press-time pipeline run, so a new formula can re-rank logged
+      selections offline. Still current page only for the readable lines --
+      the JSONL has every candidate, but "shown" means the current page, so
+      a Wheeler pick from another page shows as not displayed.
       **Raised in review (2026-10-02), not decided:**
       - **Rescale what was sized for 0-8.** The recency boost adds 1.5
         inside lambda (`UtilityScorer.cpp`, Step 4b); on a 0-1 target that
@@ -601,6 +521,8 @@ with how the run is played and laid out -- see the Phase 2 review notes.
       - **Key position and overrides.** "Health on key 1" means the press
         picks the key, not the item; rewarding override-placed picks teaches
         the learner the override rule. Log slot index and override flag.
+        (Logged since 0.22.9: every shown slot carries its index and
+        assignment type in the selection log.)
       - **Migration.** Dividing by 8 keeps every trained item near 1 with
         its full train count (doubled for consumables) -- the convergence,
         imported. Reset, or divide and cap trainCount at 2-3.
@@ -626,6 +548,8 @@ with how the run is played and laid out -- see the Phase 2 review notes.
         phi, slot index, override / wildcard flags, the wildcard roll
         probability), one structured line each -- the input for an offline
         harness, so a Phase 3 change costs minutes rather than play-hours.
+        (Logged since 0.22.9: `Huginn_Selections.jsonl`. The harness itself
+        is not written yet.)
       - **"Soak logs set the negative weight" needs a procedure.** The logs
         cannot show whether the player looked. Fit on the first half of
         the run; keep the weight that best ranks the second half's
