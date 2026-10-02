@@ -19,6 +19,14 @@ namespace Huginn::Persist
    inline constexpr uint32_t kBanditSerializationVersion = 2;
    inline constexpr uint32_t kUniqueID                = 'QCNO';  // 'ONCQ' on disk
 
+   // Which character a save belongs to: a random 64-bit ID, made at new game
+   // (or the first save of a character whose save predates it) and written
+   // with every save. Lets a load tell "the same character, reloaded" from "a
+   // different character" -- see ResolveLoadedLearner. Older Huginn versions
+   // skip the record with one warning.
+   inline constexpr uint32_t kRecordType_CharacterID = 'DICH';  // 'HCID' on disk
+   inline constexpr uint32_t kCharacterIDVersion     = 1;
+
    // Safety caps — prevent corrupted data from causing huge allocations
    inline constexpr uint32_t kMaxBanditItems        = 50'000;
    inline constexpr uint32_t kMaxBanditFeatures     = 256;
@@ -67,4 +75,15 @@ namespace Huginn::Persist
    // Move buffered cosave data into the FeatureBanditLearner instance.
    // Returns true on success. Clears the buffer regardless.
    bool ApplyPendingBanditData(Learning::FeatureBanditLearner& learner);
+
+   // Decide what the learner holds after a new game or a load (kNewGame /
+   // kPostLoadGame), and apply it. Learning survives a reload (decided with
+   // the user, 2026-10-02): the fight that killed you is not forgotten.
+   //   - New game: a fresh learner and a new character ID.
+   //   - Load of the character already in memory (same ID): keep the
+   //     in-memory learner, which holds everything learned since -- the save's
+   //     copy is older and is discarded.
+   //   - Load of a different character, the first load since launch, or a
+   //     save without an ID (predates this): the save's learner, as before.
+   void ResolveLoadedLearner(Learning::FeatureBanditLearner& learner, bool isNewGame);
 }

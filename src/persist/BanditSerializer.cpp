@@ -6,6 +6,9 @@
 #include <cstring>
 #include <type_traits>
 
+#include <chrono>
+#include <random>
+
 namespace Huginn::Persist
 {
    using BanditEntry = Learning::FeatureBanditLearner::SerializedEntry;
@@ -30,6 +33,23 @@ namespace Huginn::Persist
 
    // Static buffer — populated by LoadCallback, consumed by ApplyPendingBanditData
    static std::optional<LoadedBanditData> s_pendingBanditData;
+
+   // The character the in-memory learner belongs to (0 = none yet), and the
+   // character ID the save being loaded carries (none = a save that predates
+   // the HCID record). Game thread only: the SKSE callbacks and
+   // InitializeGameSystems all run on it, with the update loop suspended.
+   static uint64_t s_activeCharacterID = 0;
+   static std::optional<uint64_t> s_loadedCharacterID;
+
+   static uint64_t NewCharacterID()
+   {
+      std::random_device rd;
+      std::mt19937_64 gen((static_cast<uint64_t>(rd()) << 32) ^ rd() ^
+         static_cast<uint64_t>(std::chrono::steady_clock::now().time_since_epoch().count()));
+      uint64_t id = 0;
+      while (id == 0) id = gen();
+      return id;
+   }
 
    std::vector<BanditEntry> DecodeV2EntryBlob(
       const std::byte* data, size_t byteLen, uint32_t numItems, uint32_t diskFeatureCount,
@@ -76,6 +96,19 @@ namespace Huginn::Persist
    // =========================================================================
    static void SaveCallback(SKSE::SerializationInterface* a_intfc)
    {
+      // ── HCID record: which character this save belongs to ─────────────────
+      // Written first and on its own, so a failure in the learner record
+      // below cannot take it down. A character from an older save gets its ID
+      // here, at its first save on this version.
+      if (s_activeCharacterID == 0) {
+         s_activeCharacterID = NewCharacterID();
+         logger::info("[Cosave] Character ID assigned at save: {:016X}"sv, s_activeCharacterID);
+      }
+      if (!a_intfc->OpenRecord(kRecordType_CharacterID, kCharacterIDVersion) ||
+          !a_intfc->WriteRecordData(s_activeCharacterID)) {
+         logger::error("[Cosave] Failed to write the HCID record"sv);
+      }
+
       // ── BNDW record: FeatureBanditLearner weights + train counts ──────────
       if (g_featureBanditLearner) {
          if (!a_intfc->OpenRecord(kRecordType_BanditWeights, kBanditSerializationVersion)) {
@@ -140,10 +173,22 @@ namespace Huginn::Persist
    static void LoadCallback(SKSE::SerializationInterface* a_intfc)
    {
       s_pendingBanditData = LoadedBanditData{};
+      s_loadedCharacterID.reset();
 
       uint32_t type, version, length;
       while (a_intfc->GetNextRecordInfo(type, version, length)) {
          switch (type) {
+         case kRecordType_CharacterID:
+         {
+            uint64_t id = 0;
+            if (version == kCharacterIDVersion && a_intfc->ReadRecordData(id) && id != 0) {
+               s_loadedCharacterID = id;
+            } else {
+               logger::warn("[Cosave] Unreadable HCID record (version {}) -- treating the save as unidentified"sv,
+                  version);
+            }
+            break;
+         }
          case kRecordType_BanditWeights:
          {
             auto& banditData = *s_pendingBanditData;
@@ -333,13 +378,13 @@ namespace Huginn::Persist
    // =========================================================================
    static void RevertCallback([[maybe_unused]] SKSE::SerializationInterface* a_intfc)
    {
+      // Revert no longer clears the learner. It runs before EVERY load, and
+      // clearing here is what made a death-and-reload forget everything
+      // learned since the save. ResolveLoadedLearner decides at
+      // kPostLoadGame / kNewGame, once it knows whose save this is.
       s_pendingBanditData.reset();
-
-      if (g_featureBanditLearner) {
-         g_featureBanditLearner->Clear();
-      }
-
-      logger::info("[Cosave] FeatureBanditLearner cleared on revert"sv);
+      s_loadedCharacterID.reset();
+      logger::debug("[Cosave] Revert: learner kept until the load decides"sv);
    }
 
    // =========================================================================
@@ -353,6 +398,47 @@ namespace Huginn::Persist
       intfc->SetSaveCallback(SaveCallback);
       intfc->SetLoadCallback(LoadCallback);
       intfc->SetRevertCallback(RevertCallback);
+   }
+
+   void ResolveLoadedLearner(Learning::FeatureBanditLearner& learner, bool isNewGame)
+   {
+      if (isNewGame) {
+         s_pendingBanditData.reset();
+         learner.Clear();
+         s_activeCharacterID = NewCharacterID();
+         logger::info("[Cosave] New game: learner cleared, character ID {:016X}"sv, s_activeCharacterID);
+         return;
+      }
+
+      const bool sameCharacter = s_loadedCharacterID.has_value() && s_activeCharacterID != 0 &&
+                                 *s_loadedCharacterID == s_activeCharacterID;
+      if (sameCharacter) {
+         // A reload of the character already in memory: what the learner
+         // holds is everything the save holds plus whatever was learned since.
+         const uint32_t savedItems = s_pendingBanditData ? static_cast<uint32_t>(s_pendingBanditData->entries.size()) : 0;
+         s_pendingBanditData.reset();
+         logger::info("[Cosave] Reload of the same character ({:016X}): kept in-memory learning "
+                      "({} items, {} trains); the save's older copy ({} items) discarded"sv,
+            s_activeCharacterID, learner.GetItemCount(), learner.GetTotalTrainCount(), savedItems);
+         return;
+      }
+
+      // A different character, the first load since launch, or a save from
+      // before character IDs: the save's learner, as before.
+      learner.Clear();
+      const bool applied = ApplyPendingBanditData(learner);
+      if (s_loadedCharacterID) {
+         s_activeCharacterID = *s_loadedCharacterID;
+         logger::info("[Cosave] Loaded character {:016X}: learner from the save ({})"sv,
+            s_activeCharacterID, applied ? "restored" : "empty");
+      } else {
+         // No ID in the save. Assign one now; it is written at the next save,
+         // after which reloads of this character keep their learning.
+         s_activeCharacterID = NewCharacterID();
+         logger::info("[Cosave] Save has no character ID (predates 0.22.11): learner from the save ({}), "
+                      "new ID {:016X} written at the next save"sv,
+            applied ? "restored" : "empty", s_activeCharacterID);
+      }
    }
 
    bool HasPendingBanditData()

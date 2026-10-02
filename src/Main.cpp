@@ -268,12 +268,9 @@ static void InitializeGameSystems(bool isNewGame)
         logger::info("FeatureBanditLearner initialized"sv);
     }
 
-    // Apply any pending learner cosave data (load game only — new game starts fresh)
-    if (!isNewGame && Persist::HasPendingBanditData()) {
-        if (Persist::ApplyPendingBanditData(*g_featureBanditLearner)) {
-            logger::info("FeatureBanditLearner restored from cosave ({} items)"sv, g_featureBanditLearner->GetItemCount());
-        }
-    }
+    // What the learner holds now: fresh for a new game, the in-memory learning
+    // for a reload of the same character, the save's for anything else.
+    Persist::ResolveLoadedLearner(*g_featureBanditLearner, isNewGame);
 
     if (!g_usageMemory) {
         g_usageMemory = std::make_unique<Huginn::Learning::UsageMemory>();
