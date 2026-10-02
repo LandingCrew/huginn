@@ -222,6 +222,31 @@ namespace Huginn::Slot
         mutable std::set<SlotClassification> m_loggedMissingClassifications;
         mutable std::set<Override::OverrideCondition> m_warnedUnplacedConditions;
 
+        // Override placement log dedup, per page x condition: the last item and
+        // slot logged, and whether the condition was last seen displaced. A
+        // member under m_logMutex, NOT thread_local: allocation runs on more
+        // than one thread (see above), and a thread_local copy per thread
+        // re-logged the same placement every tick (LoreRim 2026-10-01: 'LOW
+        // AMMO' x10 in one second, page 0 and page 1 each tick).
+        struct OverrideLogEntry
+        {
+            RE::FormID formID = 0;
+            size_t slot = SIZE_MAX;
+            bool displaced = false;
+            [[nodiscard]] bool Empty() const noexcept { return formID == 0 && slot == SIZE_MAX && !displaced; }
+        };
+        mutable std::array<std::array<OverrideLogEntry, Override::OVERRIDE_CONDITION_COUNT>, MAX_PAGES>
+            m_overrideLogs{};
+
+        /// Should this placement be logged? Returns why (for the debug line), or
+        /// nullptr to stay quiet, and records the placement either way.
+        [[nodiscard]] const char* NoteOverridePlaced(size_t page,
+            Override::OverrideCondition condition, RE::FormID formID, size_t slot) const;
+        /// True on the transition into displaced; records it.
+        [[nodiscard]] bool NoteOverrideDisplaced(size_t page, Override::OverrideCondition condition) const;
+        /// Forget every page's placements (no override active any more).
+        void ResetOverrideLogs(size_t page) const;
+
         // Config snapshot cache — avoids a SlotSettings shared_lock + vector copy
         // on every allocation tick. Refreshed only when SlotSettings bumps its
         // generation (INI reload). The shared_ptr keeps the snapshot alive for
