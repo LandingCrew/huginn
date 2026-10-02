@@ -59,8 +59,13 @@ docs/reference/classifier-coverage.md from them). Checklist to ride along:
   "ExtraHealth reads 0", and a temper change logs at info);
 - the equip flood with the slot hold in.
 
-LoreRim's auto-quaff mod is off for the run (the user, 2026-10-02); the
-player-input gate in Phase 1 #2 is still needed for everyone else.
+LoreRim's auto-quaff mod is meant to be off for the run (the user,
+2026-10-02) -- but a LoreRim minor update re-enabled it the same day, so
+check it after every list update. With the player-input gate (0.22.9) it no
+longer trains the learner either way: its drinks log as `Skipped (no player
+input -- a script?)` and count in the heartbeat's `skipped=input`, which is
+the place to spot it. Seen in the first 0.22.9 test (08:57:34, a Fortify
+Carry Weight with no key, menu or wheel behind it).
 Raised in review 2026-10-02, to settle before the run starts:
 - **The soak doc contradicts "played normally".**
   `docs/playtest/LongPlaySoak.md` (the context-coverage checklist and the
