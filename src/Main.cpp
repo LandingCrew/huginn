@@ -90,7 +90,7 @@ static std::atomic<bool> g_equipEventRegistered{false};
 //   - Load game does TryConnect() + DestroyRecommendationWheels() before creating wheels
 //   - Load game runs debug integration tests
 // =============================================================================
-static void InitializeGameSystems(bool isNewGame)
+static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
 {
     // ── Stamp the load time FIRST ───────────────────────────────────────
     // Util::IsExtraListStable() measures from this stamp. The reconcile
@@ -270,7 +270,7 @@ static void InitializeGameSystems(bool isNewGame)
 
     // What the learner holds now: fresh for a new game, the in-memory learning
     // for a reload of the same character, the save's for anything else.
-    Persist::ResolveLoadedLearner(*g_featureBanditLearner, isNewGame);
+    Persist::ResolveLoadedLearner(*g_featureBanditLearner, isNewGame, loadSucceeded);
 
     if (!g_usageMemory) {
         g_usageMemory = std::make_unique<Huginn::Learning::UsageMemory>();
@@ -776,9 +776,14 @@ void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
         InitializeGameSystems(/*isNewGame=*/true);
         break;
     case SKSE::MessagingInterface::kPostLoadGame:
-        logger::info("Game loaded"sv);
-        InitializeGameSystems(/*isNewGame=*/false);
+    {
+        // SKSE passes the load's success as the data pointer itself (non-null
+        // = loaded). A failed load must not reset the learner's character.
+        const bool loaded = a_msg->data != nullptr;
+        logger::info("Game loaded{}"sv, loaded ? ""sv : " -- FAILED (learner left as it was)"sv);
+        InitializeGameSystems(/*isNewGame=*/false, loaded);
         break;
+    }
     default:
         break;
     }

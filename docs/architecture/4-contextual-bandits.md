@@ -1182,26 +1182,38 @@ exists: `LoadCallback` fills `s_pendingBanditData`, and `ApplyPendingBanditData`
 it into the learner once `Main.cpp` has constructed it.
 
 **Record types:**
-- `HCID` — which character the save belongs to: a random 64-bit ID
-  (`kRecordType_CharacterID = 'DICH'`, `'HCID'` on disk; 0.22.11)
+- `HCID` — which character the save belongs to and how far its learning had
+  got: a 64-bit character ID and the learner's 64-bit learning clock
+  (`kRecordType_CharacterID = 'DICH'`, `'HCID'` on disk; v2, 0.22.11; v1 held
+  the ID only and is still read)
 - `BNDW` — FeatureBanditLearner weight vectors plus the global train count
   (`kRecordType_BanditWeights = 'WDNB'`, `'BNDW'` on disk;
   `kUniqueID = 'QCNO'`, `'ONCQ'` on disk)
 
 **Serialization callbacks** (registered from `SKSEPlugin_Load` via
 `RegisterSerialization`):
-- `Save` → write the character ID, then export learner weights to the cosave
-- `Load` → read the character ID and import into the static buffer
+- `Save` → write the character ID and learning clock, then export learner weights
+- `Load` → read them and import into the static buffer
 - `Revert` → drop the buffer. It no longer clears the learner (0.22.11).
 
 **Learning survives a reload** (0.22.11, `Persist::ResolveLoadedLearner`, called
-at `kNewGame` / `kPostLoadGame`): a new game clears the learner and makes a new
-character ID; a load of the character already in memory keeps the in-memory
-learner -- it holds the save's learning plus everything learned since -- and
-discards the save's older copy; a different character, the first load since
-launch, or a save without an ID restores the save's learner as before. So a
-death-and-reload no longer forgets the fight. A save from before 0.22.11 gets
-its ID at its first save on the new version.
+at `kNewGame` / `kPostLoadGame`). The learner keeps a **learning clock** that
+ticks on every `Update()` and every `Clear()`; it is saved with the character
+ID. Then:
+
+| Load | Learner after it |
+|---|---|
+| New game | Cleared; new random character ID |
+| Load that failed (`kPostLoadGame` data false) | Unchanged, ID unchanged |
+| Same character, save's clock NOT ahead of memory (a reload) | In-memory learning kept; dynamic-form (`0xFF`) entries taken from the save, because the engine can reuse those IDs for different forms |
+| Different character, first load since launch, or a LATER save of the same character (its clock is ahead) | The save's learner, as before |
+
+So a death-and-reload keeps the fight, loading a later save does not throw that
+save's learning away, and `hg reset weights` (a `Clear()`, so a clock tick)
+cannot be undone by reloading an older save. A save from before 0.22.11 gets an
+ID derived from the player's name and race at its first load -- stable across
+loads of that character's old saves -- and train counts stand in for the clock
+until its next save writes one.
 
 **BNDW record format (version 2):**
 ```
@@ -1409,8 +1421,8 @@ exploration), which is what makes a cleared learner recover quickly rather than
 start from noise.
 
 Cleared data is not written back to the cosave until the next save. A reload of
-the same character keeps the cleared state (the in-memory learner wins); a new
-game also clears the learner.
+an older save of the same character keeps the cleared state (the clear ticked
+the learning clock past it); a new game also clears the learner.
 
 ---
 

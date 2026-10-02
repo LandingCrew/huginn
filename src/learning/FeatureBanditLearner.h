@@ -104,6 +104,24 @@ namespace Huginn::Learning
          const std::vector<SerializedEntry>& entries,
          uint32_t totalTrainCount);
 
+      // ── Learning clock (learning survives a reload, 0.22.11) ───────────
+      // Ticks on every Update() and every Clear(); saved with the character ID
+      // (cosave HCID record). A load of the same character keeps the in-memory
+      // learner only when its clock is not behind the save's -- so a reload
+      // after a death keeps the fight, and loading a LATER save of the same
+      // character restores that save's learning instead of discarding it. A
+      // Clear() (hg reset weights) ticks it too, so a reload cannot undo a
+      // reset with an older save.
+      [[nodiscard]] uint64_t GetClock() const;
+      void SetClock(uint64_t clock);
+
+      // Same-character reload: replace every DYNAMIC-form entry (0xFF------:
+      // brewed potions, player enchantments, created spells) with the save's.
+      // The engine can hand those IDs to different forms after a reload, so
+      // in-memory training on them may describe an item that no longer exists.
+      // Static forms keep their in-memory learning. Returns entries removed.
+      size_t ReplaceDynamicEntries(const std::vector<SerializedEntry>& saveEntries);
+
       // ── Pipeline wake-up latch ────────────────────────────────────────
       //
       // Set by Update(), read and cleared by PipelineCoordinator. A reward
@@ -156,6 +174,7 @@ namespace Huginn::Learning
 
       std::unordered_map<RE::FormID, ItemLearningData> m_items;
       uint32_t m_totalTrainCount = 0;
+      uint64_t m_clock = 0;   // Learning clock, see GetClock -- under m_mutex
 
       static constexpr float LEARNING_RATE = 0.1f;
       static constexpr float L2_LAMBDA = 0.01f;
