@@ -99,9 +99,12 @@ Raised in review 2026-10-02, to settle before the run starts:
   weights`. Tag log lines with a load generation (done in 0.22.9: `gen=`
   on every selection record, bumped per load). **Should learning survive a
   reload? Yes** (the user, 2026-10-02): the fight that killed you should not
-  be forgotten. Not built yet -- it needs the cosave to tell "the same
-  character, reloaded" from "a different character", so its own PR before
-  the run.
+  be forgotten. Built in 0.22.11: a random character ID in the cosave (HCID
+  record) lets a load tell "the same character, reloaded" -- keep the
+  in-memory learning -- from a different character or the first load since
+  launch -- the save's learner, as before (`Persist::ResolveLoadedLearner`).
+  A save from before 0.22.11 gets its ID at its first save on the new
+  version; reloads keep learning from then on.
 - **Comparing Phase 3 against this run** -- decided (the user, 2026-10-02):
   the same characters, `hg reset weights` before the run starts, then a few
   hours of play. (Replaces "keep the run's starting save as a benchmark".)

@@ -1182,15 +1182,26 @@ exists: `LoadCallback` fills `s_pendingBanditData`, and `ApplyPendingBanditData`
 it into the learner once `Main.cpp` has constructed it.
 
 **Record types:**
+- `HCID` — which character the save belongs to: a random 64-bit ID
+  (`kRecordType_CharacterID = 'DICH'`, `'HCID'` on disk; 0.22.11)
 - `BNDW` — FeatureBanditLearner weight vectors plus the global train count
   (`kRecordType_BanditWeights = 'WDNB'`, `'BNDW'` on disk;
   `kUniqueID = 'QCNO'`, `'ONCQ'` on disk)
 
 **Serialization callbacks** (registered from `SKSEPlugin_Load` via
 `RegisterSerialization`):
-- `Save` → export learner weights to the cosave
-- `Load` → import into the static buffer, applied after learner construction
-- `Revert` → drop the buffer and `Clear()` the learner
+- `Save` → write the character ID, then export learner weights to the cosave
+- `Load` → read the character ID and import into the static buffer
+- `Revert` → drop the buffer. It no longer clears the learner (0.22.11).
+
+**Learning survives a reload** (0.22.11, `Persist::ResolveLoadedLearner`, called
+at `kNewGame` / `kPostLoadGame`): a new game clears the learner and makes a new
+character ID; a load of the character already in memory keeps the in-memory
+learner -- it holds the save's learning plus everything learned since -- and
+discards the save's older copy; a different character, the first load since
+launch, or a save without an ID restores the save's learner as before. So a
+death-and-reload no longer forgets the fight. A save from before 0.22.11 gets
+its ID at its first save on the new version.
 
 **BNDW record format (version 2):**
 ```
@@ -1397,8 +1408,9 @@ map, and an item with no entry scores `Q = 0` with `UCB = 1.0` (maximum
 exploration), which is what makes a cleared learner recover quickly rather than
 start from noise.
 
-Cleared data is not written back to the cosave until the next save; the `Revert`
-callback also clears the learner whenever SKSE reverts (new game or load).
+Cleared data is not written back to the cosave until the next save. A reload of
+the same character keeps the cleared state (the in-memory learner wins); a new
+game also clears the learner.
 
 ---
 
