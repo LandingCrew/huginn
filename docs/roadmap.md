@@ -13,9 +13,10 @@ entries named.
    Decided with the user 2026-10-01 as the next real piece of work: it is
    the one entry that addresses the decay criticism, the cold start and
    (later) item differentiation together.
-   First step is the pre-check: run `hg dump weights` and `hg dump potions`
-   (v0.22.7, debug builds) on the LoreRim save, group by class/subclass,
-   and see whether the classes differ.
+   Pre-check done 2026-10-01 (results on the entry): on the current save
+   the classes do NOT differ, but that save's weights are reset-heavy and
+   test-polluted. Next: a clean save played normally, then `hg dump weights`
+   again before building anything.
 
 **What Huginn is measured by** (the user, 2026-10-01). Two objective
 metrics; everything else is a proxy:
@@ -25,9 +26,9 @@ metrics; everything else is a proxy:
   they wanted?
 The end state is one page of plain, regular slots, with Huginn good enough
 that nothing else is needed. Page layouts, slot classes and custom slots
-exist because the recommender is not there yet. Neither metric is counted
-today -- see the instrumentation note under "Behavioural modes as a recall
-stage".
+exist because the recommender is not there yet. Both are counted since
+v0.22.8, in the `goals` field of the `[Soak]` heartbeat
+(docs/playtest/LongPlaySoak.md).
 
 ## Known Bugs
 - [ ] One weapon stack's ExtraHealth has read 0.00, then 1.00, then 1.30 across
@@ -330,9 +331,8 @@ stage".
         is prediction and is out.
       - Count decay wants a half-life of a few hours of PLAY time, not the
         learner's 2%/hour.
-      Staging: (0) instrument the two metrics in Next up -- inventory or
-      favourites equips of an item Huginn had as a candidate, and slot-manager
-      label / custom-slot / Kit-page use per hour -- into `[Soak]`; (1) log the
+      Staging: (0) instrument the two metrics -- DONE in v0.22.8, the
+      `[Soak]` `goals` field; (1) log the
       mode on transitions, change nothing; (2) record per-mode counts, show
       them in `hg recs`; (3) recall live; (4) persist counts (cosave bump);
       (5) learned clusters only if hand-written modes visibly misfit.
@@ -365,6 +365,9 @@ stage".
       back Unknown. Worth re-running the #128 analyses over the wider set
       before trusting their conclusions.
       Raised 2026-09-24.
+      2026-10-01: all 107 Unknown scrolls are script-only (nothing to read),
+      as are all 976 Unknown spells -- docs/reference/classifier-coverage.md.
+      Still open: whether the scrolls that ARE typed are typed right.
 
 - [ ] **Script-only powers and scrolls are unclassified -- PARKED 2026-10-01.**
       Not on the user's plate: powers are too much of a grab bag for a
@@ -689,20 +692,6 @@ trigger to pick any of it up.
       form was never seen in play; a refusal is retried and then suppressed
       by WheelSync, so the worst case is a blank wheel entry. Check once
       with a torch on the Kit page's Utility key (XS)
-- [ ] Soak protocol needs deliberate MANUAL equips — accept% is fed only by
-      equips made outside Huginn, so a burst played through the wheel/hotkeys
-      produces no recommendation-quality data at all. Confirmed 2026-08-26: a
-      44-min session reported accept=n/a in every window while 21
-      external-equip events fired and were all filtered as wheel-open (each
-      coinciding with a src=Wheeler reward in the same second). The filter is
-      CORRECT — grading a wheel pick asks whether Huginn predicted the item the
-      player chose off Huginn's own list. v0.19.1 adds `skipped=N (wheel=…)` to
-      the heartbeat so n/a is self-explaining (branch `soak-skip-telemetry`
-      @067397b), and docs/playtest/LongPlaySoak.md now lists manual equips as a
-      coverage requirement and a void-run signal. Remaining: decide whether
-      accept% is the right headline metric for a wheel-driven player at all,
-      and whether to fold non-wheel consumption into it (5 of 50 events on that
-      session, not 50 — wheel/hotkey rewards must stay out)
 - [ ] **Share learning across similar items** — two versions of one idea, pick
       one. Today every item learns alone: `m_items[formID]` zero-initialises on
       first access, so a new item's `learningScore` is 0 and cannot compete with
