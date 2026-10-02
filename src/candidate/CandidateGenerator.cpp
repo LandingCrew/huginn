@@ -294,6 +294,15 @@ namespace Huginn::Candidate
             // showed on a key and the old ones could not return to theirs
             // (2026-09-28 16:23:41).
             candidate.isEquipped = candidate.formID == player.equippedAmmoFormID;
+            // And the count, for the same reason: a bow slot prints the poll's
+            // count while this one came from the registry's 500 ms refresh, so
+            // a widget showing both read `Long Bow - [11]` beside `Iron Arrow -
+            // [12]` after every shot. The poll counts the equipped ammo whenever
+            // there is any, into exactly one of the two fields. Unequipped ammo
+            // keeps the registry's count -- the poll knows nothing about it.
+            if (candidate.isEquipped && candidate.formID != 0) {
+                candidate.count = player.arrowCount + player.boltCount;
+            }
 
             // Stage 1g: baseRelevance removed - now computed by ContextRuleEngine
 

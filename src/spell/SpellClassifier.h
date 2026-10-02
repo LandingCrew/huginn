@@ -56,6 +56,12 @@ namespace Huginn::Spell
       // is the honest answer for the other 89.
       [[nodiscard]] RE::Effect* GetCostliestNonScriptEffect(RE::SpellItem* spell) const;
 
+      // The element a spell PROTECTS against: the first effect whose primary
+      // actor value is a resistance (Fire Shell: kResistFire). None if no
+      // effect is one. Public so `hg dump spells` can print it beside the
+      // element the classifier settled on.
+      [[nodiscard]] static ElementType ResistedElement(const RE::SpellItem* spell) noexcept;
+
    private:
       // OPTIMIZATION (v0.7.19): Methods now accept pre-computed effect to avoid
       // redundant GetCostliestEffect() calls (O(4n) → O(n) per spell at load time)

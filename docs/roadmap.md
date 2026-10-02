@@ -350,23 +350,6 @@ stage".
       else?
       Raised 2026-09-27.
 
-- [ ] Two counts for the same quiver can be on screen at once and disagree by
-      one shot. A bow or crossbow slot prints `playerState.arrowCount` --
-      polled at 10 Hz and, since v0.21.13, forcing a recompute on every shot --
-      while an ammo slot prints the count on its AmmoCandidate, which comes
-      from WeaponRegistry's own 500 ms refresh. During archery a widget holding
-      both can read `Long Bow - [11]` beside `Iron Arrow - [12]` for up to half
-      a second per shot.
-      Pre-existing skew; only visible since v0.21.12 made Minimal -- the
-      default mode -- print counts at all.
-      NOT fixed by pointing both at PlayerActorState: an ammo candidate can be
-      ammo the player has NOT equipped, which PlayerActorState knows nothing
-      about, so the registry is the right source for that slot. The fix is
-      either to push the equipped ammo's count into the candidate at generation
-      time, or to let the equipment poll nudge the weapon registry's ammo index
-      the way it now nudges the pipeline.
-      Raised 2026-09-24, from the #133 review.
-
 - [ ] #128 measured the spell classifier against 1,107 spells and silently
       excluded 1,200 scrolls. `hg dump spells` walked
       `GetFormArray<RE::SpellItem>()`, and GetFormArray keys on T::FORMTYPE --
@@ -383,58 +366,16 @@ stage".
       before trusting their conclusions.
       Raised 2026-09-24.
 
-- [ ] Potions, apparel and weapons have no dump at all, and the item
-      classifier has never had the measurement the spell one got. Food
-      has one now: `hg dump food` (#155) found the untagged vanilla survival
-      food and five drinks typed as food -- the pattern this entry predicts.
-      `hg dump spells` covers spells and (since v0.21.8) scrolls. ItemClassifier
-      -- potions, poisons, food, soul gems -- ApparelClassifier and
-      WeaponClassifier have nothing equivalent, so their rules have only ever
-      been checked by eye against whatever the player happened to be carrying.
-      Every real classifier bug this month was found by dumping the whole load
-      order and grouping, not by looking at a registry: the 375 unclassified
-      spells, the twenty-one weapon enchants a text rule would have broken, the
-      kFame throwing knives. None of those was visible from a registry dump,
-      because a registry only holds what one character owns.
-      Wants one `hg dump forms` covering every classified form type, with the
-      inputs beside the verdict, in the same throwaway spirit as the spell one.
-      Raised 2026-09-24.
-      **Potions done (v0.22.7):** `hg dump potions` covers potions and
-      poisons (type, subclass, magnitude, duration, value, tags, per-effect
-      magnitude/duration, carried count, train count). `hg dump scrolls` and
-      `hg dump weights` landed with it, for the pooling pre-check. Apparel
-      and weapons still have none.
-      First LoreRim run: 34 of 439 potions Unknown, and on inspection all of
-      them correctly so -- quest potions on scripted effects (Dragon Infusion,
-      Potion of the Phantom), camping kits, Vigilant's stat items, trait
-      elixirs, and Wintersun's Potion of Immolation, whose one effect is a
-      hostile Damage Magicka: a cost to drink, never something to offer.
-
-- [ ] A Defensive spell's element may be a word in its name, not a resistance
-      it grants. Found by the #130 review, and the other half of the bug #130
-      fixed. `DetermineElementType` reads the effect's `resistVariable`; when
-      that is unset the element falls back to `DeriveElementFromTags`, which is
-      a NAME keyword -- "ice"/"freeze" -> Frost, "fire"/"flame" -> Fire,
-      "spark"/"thunder" -> Shock.
-      `ContextWeightForCandidate` and `CandidateFilters::IsResistSpellRedundant`
-      both take a Defensive spell's element to be what it protects against, so
-      a spell named after an element is promoted while the player takes that
-      damage and then suppressed once they resist it -- offered for the wrong
-      reason, then withheld for the wrong reason.
-      Measured on LoreRim (2026-09-23): ten Defensive spells carry an element.
-      NINE have a matching resist actor value and are genuine -- Fire Shell and
-      Shield (kResistFire), Frost Shell and Shield (kResistFrost), Shock Shell
-      and Shield (kResistShock), three Resist Poisons (kPoisonResist). The tenth
-      is **Ice Armor**: `kDamageResist`, a physical armour spell, Frost from the
-      word "Ice".
-      Blocked on an instrument, deliberately. All nine genuine ones ALSO have an
-      element word in their names, so `hg dump spells` cannot say which of the
-      two paths set each element -- and clearing name-derived elements on
-      Defensive blind could take all ten. Wants a dump column reporting the
-      API-derived element before the tag fallback, then the rule, then a count
-      on both load orders. The same "measure before shipping a rule that touches
-      many spells" that #128 settled on.
-      Raised 2026-09-23.
+- [ ] **Confirm the Defensive-element rule on both load orders.** v0.22.8: a
+      Defensive spell's element now comes only from a resist actor value on
+      its effects (`SpellClassifier::ResistedElement`), never from a word in
+      its name -- Ice Armor (`kDamageResist`) read as Frost from "Ice" and was
+      promoted under frost damage, then suppressed once the player resisted it.
+      On LoreRim (2026-09-23) the nine genuine Defensive elements all carry the
+      matching resist AV, so the rule keeps them and clears Ice Armor. Check:
+      `hg dump spells` now has a `resistedElement` column; on LoreRim and on
+      simonrim, the Defensive rows whose `element` changed should be Ice Armor
+      and nothing a player would call elemental (XS).
 
 - [ ] Arcane Mass Inhibition is typed Utility and should be Debuff.
       One spell, recorded so it is not rediscovered as a mystery. #128 types a
@@ -533,20 +474,16 @@ stage".
       merit. A stack of 45 is a real combat option and should be able to earn
       its slot
 
-- [ ] Two duplication findings from the PR #114 review, neither blocking:
-      `ItemClassifier::DetermineFortifySkillType` has no case for the
-      "Modifier" actor-value series, so a POTION carrying `kAlchemyModifier`
-      falls into its default and is never tagged — the same bug class that made
-      apparel inert, still live for potions. `ApparelClassifier` copied that
-      vocabulary rather than sharing it, and the two have already drifted in
-      opposite directions; one shared AV -> craft-skill function fixes both.
-      Separately, `ApparelRegistry` hand-copies the key-agnostic half of
-      `Registry::FormRegistry` (`ForEachEntry`, `IsLoading`, `EntryCount`) — the
+- [ ] `ApparelRegistry` hand-copies the key-agnostic half of
+      `Registry::FormRegistry` (`ForEachEntry`, `IsLoading`, `EntryCount`), the
       CRTP base whose own comment says it exists to stop exactly that. Its
-      composite (formID, uniqueID) key genuinely does not fit the FormID-keyed
-      index, which is why it was copied, but the visitor half could be adopted.
-      Both grow in value if the apparel expansion above lands, since it
-      multiplies the effect types being classified (S each)
+      composite (formID, uniqueID) key does not fit the FormID-keyed index,
+      which is why it was copied; the visitor half could be split into a
+      key-agnostic base both use. Deferred to the apparel expansion, which is
+      when it starts paying -- a refactor of the base four registries share,
+      with nothing a player would see (S).
+      (The other half of the PR #114 finding, the craft-skill vocabulary, is
+      fixed: both classifiers share `Apparel::CraftSkillForActorValue`.)
 
 - [ ] **Review the slot classes as a whole.** They grew one at a time and
       overlap in ways a player cannot guess: DamageAny takes weapons and
@@ -565,14 +502,6 @@ change. The churn and override work (#140-#148, #151) closed most of it, and
 Remembrance shipped (#150); what is left is the churn tail and Remembrance's
 follow-ups. The override rethink is done: its last step, an overrides-only
 key, is already a PotionsAny slot with overrides on.
-
-- [ ] **A held spell you cannot afford blinks out.** Swap Back holds what
-      a press took off, but a held spell still goes through the
-      affordability filter: at 13 magicka the Frostbite a torch displaced
-      was "not a candidate", and the key showed a potion for ~0.3 s until
-      magicka ticked back (2026-09-30). Cosmetic; a hold could bypass the
-      filter for its own item.
-      Raised 2026-09-30.
 
 - [ ] **Remembrance follow-ups.** Design and mechanics are in
       `docs/architecture/5-slots.md` (Remembrance). Decided with the user and
@@ -623,9 +552,6 @@ key, is already a PotionsAny slot with overrides on.
         nothing that was not already on another key and stayed empty for
         2.3 s. That is the designed behaviour; revisit only if it shows up
         mid-play.
-      - **Counter nit.** `'Unarmed' -> 'Unarmed'` counts as a change: two
-        Unarmed pseudo-items (likely one per hand) with different FormIDs.
-        The counter should compare what is displayed, not only the form.
       Raised 2026-09-24.
 
 ## Doc-migration findings (2026-08-29)
@@ -729,12 +655,6 @@ trigger to pick any of it up.
       decide whether the modifier is latched at key-down or sampled throughout.
       Also needs a conflict story for modifiers the game itself binds. Nexus page
       currently states "only single keypresses" — update it when this lands (M)
-- [ ] `ValidateWheelState` emits ~11 desync warns during a Wheeler edit-mode
-      session — stale by construction, since Huginn has no signal that indices
-      moved until edit mode exits, and the exit re-resolve corrects everything
-      1.4 s later. Observed 2026-08-29 13:03:18 against a 13:03:20 re-resolve.
-      Skip the check while `IsInEditMode()` — the diagnostic cannot say anything
-      true there (XS)
 - [ ] A torch on a Huginn Wheeler wheel is unverified. Torches (#157) reach
       Wheeler through `AddItemByFormID`, and whether Wheeler accepts a LIGH
       form was never seen in play; a refusal is retried and then suppressed
@@ -754,12 +674,6 @@ trigger to pick any of it up.
       accept% is the right headline metric for a wheel-driven player at all,
       and whether to fold non-wheel consumption into it (5 of 50 events on that
       session, not 50 — wheel/hotkey rewards must stay out)
-- [ ] Positive log line when the text-entry input gate engages — a
-      transition-only `[InputHandler] Input suppressed — text entry active`.
-      Today the gate is only verifiable by the ABSENCE of `KEY PRESS` lines,
-      which is indistinguishable from any other reason input stopped, and
-      unbound letters never log at all. Verified once by watching the widget
-      instead; a log line makes it checkable and catches a regression (XS)
 - [ ] **Share learning across similar items** — two versions of one idea, pick
       one. Today every item learns alone: `m_items[formID]` zero-initialises on
       first access, so a new item's `learningScore` is 0 and cannot compete with
