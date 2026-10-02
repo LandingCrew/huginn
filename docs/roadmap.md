@@ -82,8 +82,13 @@ Raised in review 2026-10-02, to settle before the run starts:
   with the learned term removed (what context-only Huginn would have put on
   the eight keys) and log whether the chosen item was on the live page (A),
   on the shadow page (B), both or neither. Goal 1 for B = the outside picks B
-  would have shown. Not built yet. Nothing has measured context-only Huginn,
-  and the pooling pre-check hints the learner adds little.
+  would have shown. Built in 0.22.10 as `src/learning/ShadowArm` (Debug
+  builds only, one call in SelectionLog): `Huginn_AB.log`, one line per
+  confirmed selection with A / A* (live utility, ranked plainly) / B
+  (utility without the learned term) and a running tally, overall and for
+  outside picks. Delete it after the run. Nothing has measured
+  context-only Huginn, and the pooling pre-check hints the learner adds
+  little.
 - **Death and reload roll the learner back** to the last save, but the log
   keeps the abandoned rewards, so log counts will not match `hg dump
   weights`. Tag log lines with a load generation (done in 0.22.9: `gen=`
