@@ -110,7 +110,9 @@ namespace Huginn::Candidate
 
     std::vector<CandidateVariant> CandidateGenerator::GenerateCandidates(
         const State::PlayerActorState& player,
-        float currentMagicka)
+        float currentMagicka,
+        std::span<const RE::FormID> heldIDs,
+        std::vector<CandidateVariant>* heldUnaffordable)
     {
         if (!m_initialized) {
             logger::warn("CandidateGenerator::GenerateCandidates called before Initialize()");
@@ -139,7 +141,8 @@ namespace Huginn::Candidate
         // candidate, no in-place erase_if chains).  m_gatherBuffer retains
         // its allocated capacity for the next call.
         std::vector<CandidateVariant> output;
-        m_filters->ApplyAllFilters(m_gatherBuffer, output, player, currentMagicka, m_stats.filterStats);
+        m_filters->ApplyAllFilters(m_gatherBuffer, output, player, currentMagicka, m_stats.filterStats,
+            heldIDs, heldUnaffordable);
 
         // Calculate generation time
         const auto endTime = std::chrono::high_resolution_clock::now();
@@ -291,6 +294,15 @@ namespace Huginn::Candidate
             // showed on a key and the old ones could not return to theirs
             // (2026-09-28 16:23:41).
             candidate.isEquipped = candidate.formID == player.equippedAmmoFormID;
+            // And the count, for the same reason: a bow slot prints the poll's
+            // count while this one came from the registry's 500 ms refresh, so
+            // a widget showing both read `Long Bow - [11]` beside `Iron Arrow -
+            // [12]` after every shot. The poll counts the equipped ammo whenever
+            // there is any, into exactly one of the two fields. Unequipped ammo
+            // keeps the registry's count -- the poll knows nothing about it.
+            if (candidate.isEquipped && candidate.formID != 0) {
+                candidate.count = player.arrowCount + player.boltCount;
+            }
 
             // Stage 1g: baseRelevance removed - now computed by ContextRuleEngine
 

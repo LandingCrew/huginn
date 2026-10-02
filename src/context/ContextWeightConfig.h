@@ -10,12 +10,12 @@ namespace Huginn::State
     // POD struct produced by ContextWeightSettings::BuildConfig().
     // Consumers store a copy via SetConfig() for consistent, race-free reads.
     //
-    // A SUBSET of ContextWeightSettings, not a mirror. 35 float fields here
-    // against 38 there, and the gap is deliberate: weightWeaponChargeModerate /
-    // Low / Critical stayed behind when the weapon-charge weight became a
-    // continuous curve (ContextRuleEngine.cpp, pow(chargeDeficit, exponent)).
-    // Their keys were removed from the shipped INI on 2026-08-29; the three
-    // fields in ContextWeightSettings are dead and tracked on the roadmap.
+    // Mirrors ContextWeightSettings' weights: 38 float fields here, 39 there.
+    // The one extra, darkLightLevel, is a state threshold, not a weight -- the
+    // settings hand it straight to StateManager::SetDarkLightLevel. (Until
+    // v0.22.8 the settings also held weightWeaponChargeModerate / Low /
+    // Critical, left behind when the weapon-charge weight became a continuous
+    // curve -- ContextRuleEngine.cpp, pow(chargeDeficit, exponent). Removed.)
     //
     // AUDITING THIS IS A THREE-WAY CHECK, not two. Comparing INI keys against
     // the keys the loader reads finds keys nobody reads and keys nobody can

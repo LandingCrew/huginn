@@ -14,7 +14,8 @@ namespace Huginn::Learning
    // STATE FEATURES (Phase 3.5a)
    // =============================================================================
    // 18-float normalized feature vector for linear function approximation.
-   // Replaces the 36,288-state discrete hash with continuous features so that
+   // Replaces the discrete state hash (36,288 states then; GameState.h has the
+   // current count) with continuous features so that
    // learning in one state generalizes to similar states.
    //
    // All features are in [0, 1]. Extracted from existing state models —

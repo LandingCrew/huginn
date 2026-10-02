@@ -130,10 +130,6 @@ namespace Huginn::Scoring
         // Performance
         // ---------------------------------------------------------------------
 
-        // Maximum candidates to score per cycle
-        // 0 = no limit
-        size_t maxCandidatesPerCycle = 500;
-
         // Number of top candidates to fully sort (rest are partial sorted)
         // Must be >= max slots per page (10) so all slots get correctly ranked fills
         size_t topNCandidates = 10;

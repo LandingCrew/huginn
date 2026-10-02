@@ -139,6 +139,18 @@ namespace Huginn::Spell
       data.element = ElementType::None;
       }
 
+      // A Defensive spell's element is what it protects against, and both
+      // readers -- ContextWeightForCandidate and IsResistSpellRedundant -- take
+      // it that way. Above, it could come from a word in the NAME: Ice Armor
+      // (kDamageResist, a physical armour spell) read as Frost from "Ice", so it
+      // was promoted while the player took frost damage and suppressed once
+      // they resisted it. On LoreRim (2026-09-23) the nine genuine Defensive
+      // elements all carry the matching resist actor value; Ice Armor alone
+      // does not. So take the element from that actor value, or have none.
+      if (data.type == SpellType::Defensive) {
+      data.element = ResistedElement(spell);
+      }
+
       // A weapon coating carries the element of the damage it adds to the
       // WEAPON, and pairing that with type Buff is read downstream as a
       // resistance spell: ContextWeightForCandidate promotes Buff+Fire when the
@@ -1253,6 +1265,25 @@ namespace Huginn::Spell
       case RE::ActorValue::kConjuration:  return MagicSchool::Conjuration;
       default:                            return MagicSchool::Unknown;
       }
+   }
+
+   ElementType SpellClassifier::ResistedElement(const RE::SpellItem* spell) noexcept
+   {
+      if (!spell) {
+      return ElementType::None;
+      }
+      for (const auto* effect : spell->effects) {
+      if (!effect || !effect->baseEffect) continue;
+      switch (effect->baseEffect->data.primaryAV) {
+      case RE::ActorValue::kResistFire:   return ElementType::Fire;
+      case RE::ActorValue::kResistFrost:  return ElementType::Frost;
+      case RE::ActorValue::kResistShock:  return ElementType::Shock;
+      case RE::ActorValue::kPoisonResist: return ElementType::Poison;
+      case RE::ActorValue::kResistMagic:  return ElementType::Magic;
+      default:                            break;
+      }
+      }
+      return ElementType::None;
    }
 
    ElementType SpellClassifier::DetermineElementType(RE::Effect* costliestEffect) const

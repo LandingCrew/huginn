@@ -85,7 +85,7 @@ namespace Huginn::Weapon
       EnchantFear             = 1 << 16,
       EnchantTurnUndead       = 1 << 17,
       EnchantBanish           = 1 << 18,
-      EnchantSilence          = 1 << 19,
+      // 1 << 19 was EnchantSilence: no writer and no reader, removed in 0.22.8.
 
       // Weapon state
       NeedsCharge = 1 << 20,   // Enchanted weapon with low charge

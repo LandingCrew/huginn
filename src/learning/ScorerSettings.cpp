@@ -45,8 +45,6 @@ namespace Huginn::Scoring
         coldStartUCBBoost = ReadClampedFloat(ini, section, "fColdStartUCBBoost", ScorerDefaults::COLD_START_UCB_BOOST, 0.0f, 1000.0f, "ScorerSettings"sv);
 
         // Performance
-        maxCandidatesPerCycle = static_cast<size_t>(
-            ini.GetLongValue(section, "iMaxCandidatesPerCycle", static_cast<long>(ScorerDefaults::MAX_CANDIDATES_PER_CYCLE)));
         topNCandidates = static_cast<size_t>(
             ini.GetLongValue(section, "iTopNCandidates", static_cast<long>(ScorerDefaults::TOP_N_CANDIDATES)));
 
@@ -96,7 +94,6 @@ namespace Huginn::Scoring
         minimumContextWeight = ScorerDefaults::MINIMUM_CONTEXT_WEIGHT;
         coldStartUCBBoost = ScorerDefaults::COLD_START_UCB_BOOST;
 
-        maxCandidatesPerCycle = ScorerDefaults::MAX_CANDIDATES_PER_CYCLE;
         topNCandidates = ScorerDefaults::TOP_N_CANDIDATES;
 
         favoritesMode = FavoritesMode::Boost;
@@ -131,7 +128,6 @@ namespace Huginn::Scoring
         cfg.minimumContextWeight = minimumContextWeight;
         cfg.coldStartUCBBoost = coldStartUCBBoost;
 
-        cfg.maxCandidatesPerCycle = maxCandidatesPerCycle;
         cfg.topNCandidates = topNCandidates;
 
         cfg.favoritesMode = favoritesMode;

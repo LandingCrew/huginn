@@ -18,6 +18,7 @@
 #include "spell/SpellRegistry.h"
 #include "learning/item/ItemClassifier.h"
 #include "scroll/ScrollClassifier.h"
+#include "apparel/ApparelClassifier.h"
 #include "weapon/WeaponClassifier.h"
 #include "util/InventoryUtil.h"
 #include <cmath>
@@ -504,7 +505,7 @@ namespace Huginn::Console
       }
 
       out << "formID,name,castType,huginnType,school,element,tags,tagsExt,"
-             "cost,concentration,range,known,tome,hostile,detrimental,recover,archetype,primaryAV,secondaryAV,delivery,castingType,effects,retry,assocForm,assocKind,assocSpell,evidence,description\n";
+             "cost,concentration,range,known,tome,hostile,detrimental,recover,archetype,primaryAV,secondaryAV,delivery,castingType,effects,retry,assocForm,assocKind,assocSpell,evidence,description,resistedElement\n";
 
       size_t written = 0;
       size_t skipped = 0;
@@ -667,7 +668,7 @@ namespace Huginn::Console
             }
          }
 
-         out << std::format("{:08X},{},{},{},{},{},{:08X},{:04X},{},{},{:.0f},{},{},{},{},{},{},{},{},{},{},{},{},{:08X},{},{:08X},{},{}\n",
+         out << std::format("{:08X},{},{},{},{},{},{:08X},{:04X},{},{},{:.0f},{},{},{},{},{},{},{},{},{},{},{},{},{:08X},{},{:08X},{},{},{}\n",
             spell->GetFormID(),
             csvQuote(rawName),
             castTypeName(castType),
@@ -695,7 +696,11 @@ namespace Huginn::Console
             assocKind,
             assocSpell,
             csvQuote(Spell::TypeEvidenceToString(data.typeEvidence)),
-            csvQuote(description));
+            csvQuote(description),
+            // What the spell protects against, by its resist actor value --
+            // the only source a Defensive spell's element may come from. Beside
+            // `element`, it shows which spells lost a name-derived element.
+            Spell::ElementTypeToString(Spell::SpellClassifier::ResistedElement(spell)));
          ++written;
          if (learnable) {
             ++learnableCount;
@@ -1109,6 +1114,127 @@ namespace Huginn::Console
       Print(msg.c_str());
       logger::info("[Console] {} -> {}"sv, msg, filePath.string());
    }
+
+   // An enchantment's effects as 'name' AV=n, joined by " / " -- the inputs
+   // the weapon and apparel classifiers read.
+   static std::string EnchantmentEffects(const RE::EnchantmentItem* enchantment)
+   {
+      std::string effects;
+      if (!enchantment) return effects;
+      for (const auto* effect : enchantment->effects) {
+         if (!effect || !effect->baseEffect) continue;
+         const char* full = effect->baseEffect->GetFullName();
+         if (!effects.empty()) effects += " / ";
+         effects += std::format("'{}' AV={}", full ? full : "",
+            static_cast<int>(effect->baseEffect->data.primaryAV));
+      }
+      return effects;
+   }
+
+   // `hg dump weapons` -- every weapon and ammo in the LOAD ORDER with the
+   // classifier's verdict and its inputs (base damage, speed, enchantment
+   // effects), carried and train counts. The roadmap's "no dump at all"
+   // entry: WeaponClassifier's rules had only been checked against what one
+   // character carried.
+   static void Cmd_DumpWeapons(std::string_view /*arg*/)
+   {
+      auto* dataHandler = RE::TESDataHandler::GetSingleton();
+      if (!dataHandler) {
+         Print("Data handler unavailable");
+         return;
+      }
+      std::ofstream out;
+      std::filesystem::path filePath;
+      if (!OpenDumpFile("Huginn_Weapons.csv"sv, out, filePath)) return;
+
+      auto* player = RE::PlayerCharacter::GetSingleton();
+      Weapon::WeaponClassifier classifier;
+      out << "formID,plugin,name,kind,type,tags,baseDamage,speed,enchantment,playerCount,trainCount,effects\n";
+
+      auto trains = [](RE::FormID id) {
+         return g_featureBanditLearner ? g_featureBanditLearner->GetTrainCount(id) : 0u;
+      };
+      size_t weapons = 0, ammo = 0, unknown = 0;
+      for (auto* weapon : dataHandler->GetFormArray<RE::TESObjectWEAP>()) {
+         if (!weapon) continue;
+         const char* rawName = weapon->GetName();
+         if (!rawName || !*rawName) continue;
+         const auto data = classifier.ClassifyWeapon(weapon);
+         const auto* enchantment = weapon->formEnchanting;
+         out << std::format("{:08X},{},{},Weapon,{},{:08X},{:g},{:g},{},{},{},{}\n",
+            weapon->GetFormID(), CsvQuote(PluginOf(weapon)), CsvQuote(rawName),
+            Weapon::WeaponTypeToString(data.type), static_cast<uint32_t>(data.tags),
+            data.baseDamage, data.speed,
+            CsvQuote(enchantment && enchantment->GetName() ? enchantment->GetName() : ""),
+            player ? Util::GetItemCountSafe(player, weapon) : 0, trains(weapon->GetFormID()),
+            CsvQuote(EnchantmentEffects(enchantment)));
+         ++weapons;
+         if (data.type == Weapon::WeaponType::Unknown) ++unknown;
+      }
+      for (auto* item : dataHandler->GetFormArray<RE::TESAmmo>()) {
+         if (!item) continue;
+         const char* rawName = item->GetName();
+         if (!rawName || !*rawName) continue;
+         const auto data = classifier.ClassifyAmmo(item);
+         out << std::format("{:08X},{},{},Ammo,{},{:08X},{:g},,,{},{},\n",
+            item->GetFormID(), CsvQuote(PluginOf(item)), CsvQuote(rawName),
+            Weapon::AmmoTypeToString(data.type), static_cast<uint32_t>(data.tags),
+            data.baseDamage,
+            player ? Util::GetItemCountSafe(player, item) : 0, trains(item->GetFormID()));
+         ++ammo;
+      }
+      out.close();
+
+      auto msg = std::format("Wrote {} weapons and {} ammo to Huginn_Weapons.csv - {} weapons unclassified",
+         weapons, ammo, unknown);
+      Print(msg.c_str());
+      logger::info("[Console] {} -> {}"sv, msg, filePath.string());
+   }
+
+   // `hg dump apparel` -- every armour piece in the LOAD ORDER that carries an
+   // enchantment, with the craft skill and slot ApparelClassifier gives it
+   // and the enchantment's effects beside them. Unenchanted gear is skipped:
+   // apparel is classified BY its enchantment, so it has nothing to show.
+   // Base-form enchantments only; a player-applied one lives on the stack.
+   static void Cmd_DumpApparel(std::string_view /*arg*/)
+   {
+      auto* dataHandler = RE::TESDataHandler::GetSingleton();
+      if (!dataHandler) {
+         Print("Data handler unavailable");
+         return;
+      }
+      std::ofstream out;
+      std::filesystem::path filePath;
+      if (!OpenDumpFile("Huginn_Apparel.csv"sv, out, filePath)) return;
+
+      auto* player = RE::PlayerCharacter::GetSingleton();
+      Apparel::ApparelClassifier classifier;
+      out << "formID,plugin,name,slot,craftSkill,magnitude,enchantment,playerCount,effects\n";
+
+      size_t written = 0, craft = 0;
+      for (auto* armor : dataHandler->GetFormArray<RE::TESObjectARMO>()) {
+         if (!armor || !armor->formEnchanting) continue;
+         const char* rawName = armor->GetName();
+         if (!rawName || !*rawName) continue;
+         auto* enchantment = armor->formEnchanting;
+         const auto data = classifier.ClassifyApparel(armor, enchantment);
+         out << std::format("{:08X},{},{},{},{},{:g},{},{},{}\n",
+            armor->GetFormID(), CsvQuote(PluginOf(armor)), CsvQuote(rawName),
+            Apparel::ApparelSlotToString(data.slot), Apparel::CraftSkillToString(data.craftSkill),
+            data.magnitude,
+            CsvQuote(enchantment->GetName() ? enchantment->GetName() : ""),
+            player ? Util::GetItemCountSafe(player, armor) : 0,
+            CsvQuote(EnchantmentEffects(enchantment)));
+         ++written;
+         if (data.IsCraftRelevant()) ++craft;
+      }
+      out.close();
+
+      auto msg = std::format("Wrote {} enchanted apparel pieces to Huginn_Apparel.csv - {} fortify a craft",
+         written, craft);
+      Print(msg.c_str());
+      logger::info("[Console] {} -> {}"sv, msg, filePath.string());
+   }
 #endif  // !NDEBUG
 
    // =========================================================================
@@ -1130,6 +1256,8 @@ namespace Huginn::Console
       { "dump potions",  "Write every potion and poison to Huginn_Potions.csv (debug builds)", false, Cmd_DumpPotions },
       { "dump scrolls",  "Write every scroll to Huginn_Scrolls.csv (debug builds)", false, Cmd_DumpScrolls },
       { "dump weights",  "Write every learner entry to Huginn_Weights.csv (debug builds)", false, Cmd_DumpWeights },
+      { "dump weapons",  "Write every weapon and ammo to Huginn_Weapons.csv (debug builds)", false, Cmd_DumpWeapons },
+      { "dump apparel",  "Write every enchanted armour piece to Huginn_Apparel.csv (debug builds)", false, Cmd_DumpApparel },
 #endif
       { "reset weights", "Clear learned item weights",                  false, Cmd_ResetWeights },
       { "reset w",       "Clear learned item weights",                  false, Cmd_ResetWeights },

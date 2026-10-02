@@ -121,12 +121,11 @@ void ResetPipelineSubsystems() {
 
 EvaluatedGameState EvaluateCurrentGameState() {
   auto& stateMgr = State::StateManager::GetSingleton();
-  auto world = stateMgr.GetWorldState();
   auto playerState = stateMgr.GetPlayerState();
   auto targets = stateMgr.GetTargets();
 
   return {
-    g_stateEvaluator->EvaluateCurrentState(world, playerState, targets),
+    g_stateEvaluator->EvaluateCurrentState(playerState, targets),
     playerState
   };
 }

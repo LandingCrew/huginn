@@ -25,7 +25,7 @@ namespace Huginn::State
    // ARCHITECTURE:
    // - 3 state models (WorldState, PlayerActorState, TargetCollection)
    // - 11 poll methods
-   // - 3 locks (down from 7 sensor locks)
+   // - 4 locks: world, player, targets, tracking (down from 7 sensor locks)
    //
    // THREAD SAFETY:
    // - Copy-out pattern for all state accessors (thread-safe reads)
@@ -361,7 +361,7 @@ namespace Huginn::State
       mutable std::shared_mutex m_trackingMutex;   // Protects Health/Stamina/MagickaTrackingState
 
       // =============================================================================
-      // POLL TIMERS (7 float accumulators)
+      // POLL TIMERS (11 float accumulators, one per poll)
       // =============================================================================
 
       float m_worldObjectsTimer = 0.0f;

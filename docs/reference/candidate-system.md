@@ -51,8 +51,8 @@ Filters 1–4 run in a single `std::visit` dispatch per candidate
 A final truncation to `maxCandidatesAfterFilter` (default 500) applies if the
 survivor count exceeds it.
 
-`FilterStats` still carries a `filteredByRelevance` counter; nothing increments
-it, because the relevance-threshold filter no longer exists.
+`FilterStats` has no relevance counter: the relevance-threshold filter no longer
+exists, and its dead `filteredByRelevance` counter was removed in 0.22.8.
 
 ## Key config flags
 

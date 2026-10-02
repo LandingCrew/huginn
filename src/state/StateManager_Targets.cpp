@@ -230,7 +230,16 @@ namespace Huginn::State
       {
       std::unique_lock lock(m_targetsMutex);
 
-      bool inCombat = player->IsInCombat();
+      // Raw engine flag to ENTER, so hostiles are acquired the moment combat
+      // starts rather than after COMBAT_ENTER; the published (debounced) flag
+      // to LEAVE. The engine drops IsInCombat for a moment mid-fight -- an
+      // enemy breaking line of sight -- and reading it raw here erased every
+      // hostile and skipped the closest-hostile scan on that poll:
+      // Enemies One->None->One four times in 14 s with Combat: never flipping
+      // (LoreRim 2026-10-01 18:17:47). The published flag holds through
+      // COMBAT_EXIT, which is the window those flips fit inside. Same thread
+      // as PollPlayerPosition, the debouncer's only writer.
+      const bool inCombat = player->IsInCombat() || m_combatDebounce.Value();
 
       // Clear SECONDARY ENEMY targets when leaving combat (preserve primary + allies)
       if (!inCombat && !m_targets.targets.empty()) {
@@ -512,8 +521,9 @@ namespace Huginn::State
       // FOLLOWER SCANNING (v0.6.10 bugfix: moved outside combat)
       // =========================================================================
       // Scan for nearby allies (player teammates) ALWAYS (not just in combat).
-      // v0.6.12: Scan ALL process levels (high, middleHigh, middleLow)
-      // Distant allies may be in lower process levels when not in combat.
+      // Scans highActorHandles only: the middle-high and middle-low lists
+      // were dropped for cost, so a distant ally in a lower process level is
+      // not found (v0.6.12 scanned all three).
       // =========================================================================
       {
         auto* processLists = RE::ProcessLists::GetSingleton();

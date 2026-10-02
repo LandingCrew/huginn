@@ -13,9 +13,10 @@ entries named.
    Decided with the user 2026-10-01 as the next real piece of work: it is
    the one entry that addresses the decay criticism, the cold start and
    (later) item differentiation together.
-   First step is the pre-check: run `hg dump weights` and `hg dump potions`
-   (v0.22.7, debug builds) on the LoreRim save, group by class/subclass,
-   and see whether the classes differ.
+   Pre-check done 2026-10-01 (results on the entry): on the current save
+   the classes do NOT differ, but that save's weights are reset-heavy and
+   test-polluted. Next: a clean save played normally, then `hg dump weights`
+   again before building anything.
 
 **What Huginn is measured by** (the user, 2026-10-01). Two objective
 metrics; everything else is a proxy:
@@ -25,9 +26,9 @@ metrics; everything else is a proxy:
   they wanted?
 The end state is one page of plain, regular slots, with Huginn good enough
 that nothing else is needed. Page layouts, slot classes and custom slots
-exist because the recommender is not there yet. Neither metric is counted
-today -- see the instrumentation note under "Behavioural modes as a recall
-stage".
+exist because the recommender is not there yet. Both are counted since
+v0.22.8, in the `goals` field of the `[Soak]` heartbeat
+(docs/playtest/LongPlaySoak.md).
 
 ## Known Bugs
 - [ ] One weapon stack's ExtraHealth has read 0.00, then 1.00, then 1.30 across
@@ -268,6 +269,13 @@ stage".
       short gap while combat is on, or debounce `cachedEnemyCount == 0` like
       CASTING_EXIT. Measure how often it moves a slot before building.
       Raised 2026-10-01.
+      **Likely cause found, fix in v0.22.8 -- confirm in play.** Not the
+      prune: PollTargets read the RAW `player->IsInCombat()`, and on a poll
+      where the engine dropped it for a moment it erased every hostile and
+      skipped the closest-hostile scan. The published combat flag held through
+      COMBAT_EXIT, hence no `Combat:` flip. Now raw to enter, published to
+      leave. If `Enemies:` still flaps with combat steady, the remaining cause
+      is the hostile falling out of `highActorHandles` for a poll.
 
 - [ ] **Thirst is not tracked -- PARKED 2026-09-30.** Skipped with the user:
       there is no reliable way to buy water from innkeepers on LoreRim, so a
@@ -323,9 +331,8 @@ stage".
         is prediction and is out.
       - Count decay wants a half-life of a few hours of PLAY time, not the
         learner's 2%/hour.
-      Staging: (0) instrument the two metrics in Next up -- inventory or
-      favourites equips of an item Huginn had as a candidate, and slot-manager
-      label / custom-slot / Kit-page use per hour -- into `[Soak]`; (1) log the
+      Staging: (0) instrument the two metrics -- DONE in v0.22.8, the
+      `[Soak]` `goals` field; (1) log the
       mode on transitions, change nothing; (2) record per-mode counts, show
       them in `hg recs`; (3) recall live; (4) persist counts (cosave bump);
       (5) learned clusters only if hand-written modes visibly misfit.
@@ -343,23 +350,6 @@ stage".
       else?
       Raised 2026-09-27.
 
-- [ ] Two counts for the same quiver can be on screen at once and disagree by
-      one shot. A bow or crossbow slot prints `playerState.arrowCount` --
-      polled at 10 Hz and, since v0.21.13, forcing a recompute on every shot --
-      while an ammo slot prints the count on its AmmoCandidate, which comes
-      from WeaponRegistry's own 500 ms refresh. During archery a widget holding
-      both can read `Long Bow - [11]` beside `Iron Arrow - [12]` for up to half
-      a second per shot.
-      Pre-existing skew; only visible since v0.21.12 made Minimal -- the
-      default mode -- print counts at all.
-      NOT fixed by pointing both at PlayerActorState: an ammo candidate can be
-      ammo the player has NOT equipped, which PlayerActorState knows nothing
-      about, so the registry is the right source for that slot. The fix is
-      either to push the equipped ammo's count into the candidate at generation
-      time, or to let the equipment poll nudge the weapon registry's ammo index
-      the way it now nudges the pipeline.
-      Raised 2026-09-24, from the #133 review.
-
 - [ ] #128 measured the spell classifier against 1,107 spells and silently
       excluded 1,200 scrolls. `hg dump spells` walked
       `GetFormArray<RE::SpellItem>()`, and GetFormArray keys on T::FORMTYPE --
@@ -375,54 +365,49 @@ stage".
       back Unknown. Worth re-running the #128 analyses over the wider set
       before trusting their conclusions.
       Raised 2026-09-24.
+      2026-10-01: all 107 Unknown scrolls are script-only (nothing to read),
+      as are all 976 Unknown spells -- docs/reference/classifier-coverage.md.
+      Still open: whether the scrolls that ARE typed are typed right.
 
-- [ ] Potions, apparel and weapons have no dump at all, and the item
-      classifier has never had the measurement the spell one got. Food
-      has one now: `hg dump food` (#155) found the untagged vanilla survival
-      food and five drinks typed as food -- the pattern this entry predicts.
-      `hg dump spells` covers spells and (since v0.21.8) scrolls. ItemClassifier
-      -- potions, poisons, food, soul gems -- ApparelClassifier and
-      WeaponClassifier have nothing equivalent, so their rules have only ever
-      been checked by eye against whatever the player happened to be carrying.
-      Every real classifier bug this month was found by dumping the whole load
-      order and grouping, not by looking at a registry: the 375 unclassified
-      spells, the twenty-one weapon enchants a text rule would have broken, the
-      kFame throwing knives. None of those was visible from a registry dump,
-      because a registry only holds what one character owns.
-      Wants one `hg dump forms` covering every classified form type, with the
-      inputs beside the verdict, in the same throwaway spirit as the spell one.
-      Raised 2026-09-24.
-      **Potions done (v0.22.7):** `hg dump potions` covers potions and
-      poisons (type, subclass, magnitude, duration, value, tags, per-effect
-      magnitude/duration, carried count, train count). `hg dump scrolls` and
-      `hg dump weights` landed with it, for the pooling pre-check. Apparel
-      and weapons still have none.
+- [ ] **Script-only powers and scrolls are unclassified -- PARKED 2026-10-01.**
+      Not on the user's plate: powers are too much of a grab bag for a
+      classifier right now. Found by the vanilla `hg dump spells`: all 50
+      vanilla Unknowns have every effect scripted (archetype -1, AV -1), so
+      the classifier has nothing to read. Most are rightly Unknown (quest and
+      FX spells). The player-facing ones: racial powers (Berserker Rage,
+      Night Eye, Command Animal, Vampire's Sight), earned powers (Shadowcloak
+      of Nocturnal, the Dragonborn black-book Secrets and Root of Power,
+      Bardic Knowledge, Secret Servant, Black Market), transformations (Beast
+      Form, Werebear Form, Vampire Lord), and the five Shalidor's Insights
+      scrolls (school cost/potency -- Buffs). Answer when picked up: whether
+      powers should be candidates at all; if not, only the Shalidor scrolls
+      matter, and an override entry or the unbuilt spell-pattern file covers
+      them.
+      Simonrim (same day): all 148 Unknowns are script-only too, and 13 are
+      learnable SPELLS, not powers -- Night Eye, Chameleon, Mark, Shalidor's
+      and Valerica's Beacon, Planar Anchor, Translimination, Silence and
+      Burden Rune, Ash Form, Ash Cloud, The Unwelcome Guest, Daedric
+      Invocation -- plus their 13 scrolls. Those are in scope even if powers
+      stay out.
+      LoreRim (same day): 976 Unknowns, all script-only -- 697 spells, 147
+      lesser powers, 25 powers, 107 scrolls -- and 105 of the 1,107
+      tome-learnable spells. Across all three load orders EVERY unclassified
+      spell and scroll is script-only: the classifier covers every effect it
+      can read, so this entry is the whole remaining classification gap.
 
-- [ ] A Defensive spell's element may be a word in its name, not a resistance
-      it grants. Found by the #130 review, and the other half of the bug #130
-      fixed. `DetermineElementType` reads the effect's `resistVariable`; when
-      that is unset the element falls back to `DeriveElementFromTags`, which is
-      a NAME keyword -- "ice"/"freeze" -> Frost, "fire"/"flame" -> Fire,
-      "spark"/"thunder" -> Shock.
-      `ContextWeightForCandidate` and `CandidateFilters::IsResistSpellRedundant`
-      both take a Defensive spell's element to be what it protects against, so
-      a spell named after an element is promoted while the player takes that
-      damage and then suppressed once they resist it -- offered for the wrong
-      reason, then withheld for the wrong reason.
-      Measured on LoreRim (2026-09-23): ten Defensive spells carry an element.
-      NINE have a matching resist actor value and are genuine -- Fire Shell and
-      Shield (kResistFire), Frost Shell and Shield (kResistFrost), Shock Shell
-      and Shield (kResistShock), three Resist Poisons (kPoisonResist). The tenth
-      is **Ice Armor**: `kDamageResist`, a physical armour spell, Frost from the
-      word "Ice".
-      Blocked on an instrument, deliberately. All nine genuine ones ALSO have an
-      element word in their names, so `hg dump spells` cannot say which of the
-      two paths set each element -- and clearing name-derived elements on
-      Defensive blind could take all ten. Wants a dump column reporting the
-      API-derived element before the tag fallback, then the rule, then a count
-      on both load orders. The same "measure before shipping a rule that touches
-      many spells" that #128 settled on.
-      Raised 2026-09-23.
+- [ ] **Thaumaturgy reuses `kAlchemyModifier` for Fortify Poison Use.**
+      Simonrim, `hg dump apparel` 2026-10-01: 5,609 enchanted pieces, only 6
+      read as craft gear, and those 6 are wrong -- Muiri's Band, the four
+      Thaumaturgy Poisoner rings and Rahgot carry 'Fortify Poison Use' on AV
+      106, the value vanilla uses for Fortify Alchemy, so `CraftSkillForActorValue`
+      files them as Alchemy and Huginn would offer a poisoner's ring at the
+      alchemy table. The rest is correct: Thaumaturgy turns "of the
+      Alchemist" gear into Fortify Potion Duration (AV 124), which is not a
+      crafting buff, and has no Fortify Smithing gear at all -- so on
+      simonrim the #65 craft-gear feature is effectively inert. The AV
+      cannot tell the two apart; the effect can (its name, or a keyword if
+      Thaumaturgy sets one). Vanilla: 147 Alchemy, 81 Smithing, 0 Enchanting
+      -- correct, vanilla has no Fortify Enchanting apparel (S).
 
 - [ ] Arcane Mass Inhibition is typed Utility and should be Debuff.
       One spell, recorded so it is not rediscovered as a mystery. #128 types a
@@ -521,20 +506,16 @@ stage".
       merit. A stack of 45 is a real combat option and should be able to earn
       its slot
 
-- [ ] Two duplication findings from the PR #114 review, neither blocking:
-      `ItemClassifier::DetermineFortifySkillType` has no case for the
-      "Modifier" actor-value series, so a POTION carrying `kAlchemyModifier`
-      falls into its default and is never tagged — the same bug class that made
-      apparel inert, still live for potions. `ApparelClassifier` copied that
-      vocabulary rather than sharing it, and the two have already drifted in
-      opposite directions; one shared AV -> craft-skill function fixes both.
-      Separately, `ApparelRegistry` hand-copies the key-agnostic half of
-      `Registry::FormRegistry` (`ForEachEntry`, `IsLoading`, `EntryCount`) — the
+- [ ] `ApparelRegistry` hand-copies the key-agnostic half of
+      `Registry::FormRegistry` (`ForEachEntry`, `IsLoading`, `EntryCount`), the
       CRTP base whose own comment says it exists to stop exactly that. Its
-      composite (formID, uniqueID) key genuinely does not fit the FormID-keyed
-      index, which is why it was copied, but the visitor half could be adopted.
-      Both grow in value if the apparel expansion above lands, since it
-      multiplies the effect types being classified (S each)
+      composite (formID, uniqueID) key does not fit the FormID-keyed index,
+      which is why it was copied; the visitor half could be split into a
+      key-agnostic base both use. Deferred to the apparel expansion, which is
+      when it starts paying -- a refactor of the base four registries share,
+      with nothing a player would see (S).
+      (The other half of the PR #114 finding, the craft-skill vocabulary, is
+      fixed: both classifiers share `Apparel::CraftSkillForActorValue`.)
 
 - [ ] **Review the slot classes as a whole.** They grew one at a time and
       overlap in ways a player cannot guess: DamageAny takes weapons and
@@ -553,14 +534,6 @@ change. The churn and override work (#140-#148, #151) closed most of it, and
 Remembrance shipped (#150); what is left is the churn tail and Remembrance's
 follow-ups. The override rethink is done: its last step, an overrides-only
 key, is already a PotionsAny slot with overrides on.
-
-- [ ] **A held spell you cannot afford blinks out.** Swap Back holds what
-      a press took off, but a held spell still goes through the
-      affordability filter: at 13 magicka the Frostbite a torch displaced
-      was "not a candidate", and the key showed a potion for ~0.3 s until
-      magicka ticked back (2026-09-30). Cosmetic; a hold could bypass the
-      filter for its own item.
-      Raised 2026-09-30.
 
 - [ ] **Remembrance follow-ups.** Design and mechanics are in
       `docs/architecture/5-slots.md` (Remembrance). Decided with the user and
@@ -611,9 +584,6 @@ key, is already a PotionsAny slot with overrides on.
         nothing that was not already on another key and stayed empty for
         2.3 s. That is the designed behaviour; revisit only if it shows up
         mid-play.
-      - **Counter nit.** `'Unarmed' -> 'Unarmed'` counts as a change: two
-        Unarmed pseudo-items (likely one per hand) with different FormIDs.
-        The counter should compare what is displayed, not only the form.
       Raised 2026-09-24.
 
 ## Doc-migration findings (2026-08-29)
@@ -633,54 +603,16 @@ would notice.
       relevance penalty for an unaffordable spell is wanted at all, and if so
       what the curve is. Until then the option is honest but has only two
       distinct behaviours (M)
-- [ ] **Three tag values have no writer.** `ItemTagExt::Ravage*` and
-      `Damage*Regen` are read by `HasHarmfulSideEffects()` but `PopulateItemTags`
-      never sets them; `WeaponTag::EnchantSilence` has no writer anywhere in
-      `src/`. Either wire them or delete them — as they stand,
-      `HasHarmfulSideEffects()` cannot fire on those grounds (S)
-      A fourth, the other way round: `ItemTagExt::WeaknessElement` HAS a
-      writer but no reader (`IsWeaknessTo` has no caller), and the writer
-      misses most weakness poisons -- it reads `resistVariable` only, so
-      Apothecary's "Weak Aversion to Frost" (Peak, primaryAV = kResistFrost,
-      hostile) tags nothing. Resist POTIONS had the same gap and read
-      primaryAV since the override-potion PR; wire the weakness side the same
-      way if anything ever reads it, or delete it.
-- [ ] **Dead work in Release builds:** `damageRate`, `healingRate`,
-      `damageIncreasing` and `damageDecreasing` are computed unconditionally
-      every tick (`StateManager_HealthTracking.cpp:283-330`, no `_DEBUG` guard)
-      and their only consumer is an ImGui debug widget. Either guard it or wire
-      it — it is also exactly the substrate a future trend feature would need.
-      Adjacent dead code: `SlotAllocator::AllocateSlots` (both overloads), kept
-      as a legacy/test entry point; `IntuitionMenu::SetUrgent` / `setUrgent` /
-      `_urgentSlots`, vestigial with no caller;
-      `maxCandidatesPerCycle` on `ScorerConfig`, still parsed by
-      `ScorerSettings.cpp:47` and read by nothing (0.19.13 removed the INI key
-      only, not the code); `weightWeaponChargeModerate/Low/Critical` on
-      `ContextWeightSettings`, loaded but absent from `ContextWeightConfig` so
-      they reach no consumer — the weapon-charge weight became a continuous
-      `pow()` curve and these three tiers stayed behind (their INI keys were
-      removed in 0.19.13); `FilterStats::filteredByRelevance`, never incremented
-      but still summed;
-      `StateEvaluator::EvaluateCurrentState()`, which takes a
-      `const WorldState&` it never reads (S)
-- [ ] **Code comments that actively mislead**, all found because a doc repeated
-      them. Fixing these is what stops the docs rotting again.
-      `StateManager_Targets.cpp:498` says "Scan ALL process levels (high,
-      middleHigh, middleLow)" above a loop reading `highActorHandles` only — the
-      middle lists were removed for cost, and the doc's headline ally-scanning
-      claim came straight from this line. `ContextRuleEngine.cpp` says "Stage 1a
-      (skeleton): Returns all zeros — no rules implemented yet" above a fully
-      implemented method. `StateManager.h` says "3 locks" and "7 float
-      accumulators"; it is 4 and 11. `StateFeatures.h:17` cites the stale
-      36,288-state figure (it is 48,384 as of v0.21.16, and was 72,576 when
-      this was written — and the file is `src/learning/`, not `src/state/`). `SettingsReloader.cpp:94` says the dMenu INI holds "Widget,
-      Keybindings, Debug" — keybindings moved to the main INI in the 0.19.0
-      split. `FeatureBanditLearner.h` says "~90% confidence at 15 trains"; the
-      sigmoid gives 95.3%. Each verified still present 2026-09-07.
-      Two are already fixed and dropped from this list: the "Semi-gradient
-      TD(0)" claim (0.20.0, with the identifier rename) and
-      `ContextWeightConfig.h`, whose field breakdown now correctly reads 35
-      against 38 (XS each)
+- [ ] **AS2 `setUrgent` / `_urgentSlots` in `Intuition.as`** -- inert, no
+      caller since urgency moved to `SlotVisualState`. The C++ side went in
+      0.22.8 with the rest of this entry's dead code; the AS2 side waits for
+      the next SWF rebuild (XS).
+      Kept on purpose, not dead: `SlotAllocator::AllocateSlots` (Tests.cpp
+      uses it), and the health tracker's damage/healing rates and trends.
+      Those still run every poll with only a debug widget reading them, but
+      the cost is arithmetic over a 10-event ring plus, when a trend flips, one
+      pipeline hash compare -- the hash gate still skips the run -- and they
+      are what a future trend feature would read.
 - [ ] Spell-pattern override file was proposed and never implemented — no
       `m_patterns`, no `pattern=true` parsing, no `Huginn_SpellPatterns.ini`.
       The proposal lived in `reviews/magic-classification.md`, deleted
@@ -691,11 +623,6 @@ would notice.
       scheduling. Related: `Huginn_Overrides.ini` is shared by `SpellRegistry`
       and `ItemRegistry` but the shipped template documents only item types, so
       the spell-type vocabulary `SpellOverrides` parses is undocumented (M)
-- [ ] **Suppress-mode favorites are fully scored every tick to be discarded.**
-      Favorites bypass the `minimumContextWeight` early filter
-      (`UtilityScorer.cpp:77`), then `GetFavoritesMultiplier` returns 0.0, then
-      `minimumUtility` drops them. Low severity, but note that with
-      `fMinimumUtility = 0` suppressed favorites would reappear at utility 0 (XS)
 
 ## Architecture Critique — Backlog
 Tiers 1 and 2 landed (PRs #55-#58); the critique document itself was never
@@ -760,37 +687,11 @@ trigger to pick any of it up.
       decide whether the modifier is latched at key-down or sampled throughout.
       Also needs a conflict story for modifiers the game itself binds. Nexus page
       currently states "only single keypresses" — update it when this lands (M)
-- [ ] `ValidateWheelState` emits ~11 desync warns during a Wheeler edit-mode
-      session — stale by construction, since Huginn has no signal that indices
-      moved until edit mode exits, and the exit re-resolve corrects everything
-      1.4 s later. Observed 2026-08-29 13:03:18 against a 13:03:20 re-resolve.
-      Skip the check while `IsInEditMode()` — the diagnostic cannot say anything
-      true there (XS)
 - [ ] A torch on a Huginn Wheeler wheel is unverified. Torches (#157) reach
       Wheeler through `AddItemByFormID`, and whether Wheeler accepts a LIGH
       form was never seen in play; a refusal is retried and then suppressed
       by WheelSync, so the worst case is a blank wheel entry. Check once
       with a torch on the Kit page's Utility key (XS)
-- [ ] Soak protocol needs deliberate MANUAL equips — accept% is fed only by
-      equips made outside Huginn, so a burst played through the wheel/hotkeys
-      produces no recommendation-quality data at all. Confirmed 2026-08-26: a
-      44-min session reported accept=n/a in every window while 21
-      external-equip events fired and were all filtered as wheel-open (each
-      coinciding with a src=Wheeler reward in the same second). The filter is
-      CORRECT — grading a wheel pick asks whether Huginn predicted the item the
-      player chose off Huginn's own list. v0.19.1 adds `skipped=N (wheel=…)` to
-      the heartbeat so n/a is self-explaining (branch `soak-skip-telemetry`
-      @067397b), and docs/playtest/LongPlaySoak.md now lists manual equips as a
-      coverage requirement and a void-run signal. Remaining: decide whether
-      accept% is the right headline metric for a wheel-driven player at all,
-      and whether to fold non-wheel consumption into it (5 of 50 events on that
-      session, not 50 — wheel/hotkey rewards must stay out)
-- [ ] Positive log line when the text-entry input gate engages — a
-      transition-only `[InputHandler] Input suppressed — text entry active`.
-      Today the gate is only verifiable by the ABSENCE of `KEY PRESS` lines,
-      which is indistinguishable from any other reason input stopped, and
-      unbound letters never log at all. Verified once by watching the widget
-      instead; a log line makes it checkable and catches a regression (XS)
 - [ ] **Share learning across similar items** — two versions of one idea, pick
       one. Today every item learns alone: `m_items[formID]` zero-initialises on
       first access, so a new item's `learningScore` is 0 and cannot compete with

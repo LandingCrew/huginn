@@ -3,6 +3,7 @@
 #include "SlotLocker.h"
 #include "override/OverrideConditions.h"
 #include "override/OverrideConfig.h"
+#include "telemetry/SoakMetrics.h"
 #include <algorithm>
 #include <format>
 #include <set>
@@ -145,6 +146,7 @@ namespace Huginn::Slot
             // Clear all slot locks — stale locks from the previous page's context
             // would prevent the new page's allocations from appearing.
             SlotLocker::GetSingleton().UnlockAll();
+            Telemetry::SoakMetrics::GetSingleton().RecordPageFlip();
 
             SKSE::log::info("[SlotAllocator] Switched to page {} '{}'",
                 pageIndex, GetCurrentPageName());
@@ -224,6 +226,15 @@ namespace Huginn::Slot
         const auto& slots = (*snap)[pageIndex].slots;
         return static_cast<size_t>(std::count_if(slots.begin(), slots.end(),
             [](const SlotConfig& c) { return c.wildcardsEnabled; }));
+    }
+
+    bool SlotAllocator::IsRegularSlot(size_t pageIndex, size_t slotIndex) const
+    {
+        auto snap = GetConfigSnapshot();
+        if (pageIndex >= snap->size()) return true;
+        const auto& slots = (*snap)[pageIndex].slots;
+        return slotIndex >= slots.size() ||
+               slots[slotIndex].classification == SlotClassification::Regular;
     }
 
     SlotConfig SlotAllocator::GetSlotConfig(size_t slotIndex) const
@@ -307,6 +318,48 @@ namespace Huginn::Slot
     // INTERNAL IMPLEMENTATION
     // =========================================================================
 
+    const char* SlotAllocator::NoteOverridePlaced(size_t page,
+        Override::OverrideCondition condition, RE::FormID formID, size_t slot) const
+    {
+        std::lock_guard<std::mutex> lock(m_logMutex);
+        auto& entry = m_overrideLogs[std::min(page, MAX_PAGES - 1)][static_cast<size_t>(condition)];
+        const char* why = nullptr;
+        if (BypassDedup(condition))        why = "unstamped condition (debug builds log every placement)";
+        else if (entry.Empty())            why = "new placement";
+        else if (entry.displaced)          why = "placed again after being displaced";
+        else if (entry.formID != formID)   why = "different item";
+        else if (entry.slot != slot)       why = "different slot";
+        entry = { formID, slot, false };
+        return why;
+    }
+
+    bool SlotAllocator::NoteOverrideDisplaced(size_t page, Override::OverrideCondition condition) const
+    {
+        std::lock_guard<std::mutex> lock(m_logMutex);
+        auto& entry = m_overrideLogs[std::min(page, MAX_PAGES - 1)][static_cast<size_t>(condition)];
+        const bool transition = BypassDedup(condition) || !entry.displaced;
+        entry = { 0, SIZE_MAX, true };
+        return transition;
+    }
+
+    void SlotAllocator::ResetOverrideLogs(size_t page) const
+    {
+        std::lock_guard<std::mutex> lock(m_logMutex);
+        bool hadAny = false;
+        for (auto& pageEntries : m_overrideLogs) {
+            for (auto& entry : pageEntries) {
+                hadAny |= !entry.Empty();
+                entry = {};
+            }
+        }
+        // Transition only: logs the moment the last override goes, not every
+        // quiet tick. If a placement re-logs with "new placement" while an
+        // override is plainly still up, this line just before it is the why.
+        if (hadAny) {
+            SKSE::log::debug("[SlotAllocator] Override log state reset (no override active, page {})", page);
+        }
+    }
+
     SlotAssignments SlotAllocator::AllocateSlotsInternal(
         size_t pageIndex,
         uint32_t configGeneration,
@@ -367,15 +420,7 @@ namespace Huginn::Slot
         // Unknown (unstamped) conditions bypass dedup in DEBUG builds only
         // (see BypassDedup) — loud next to the tripwire warn there, deduped
         // normally through the reserved Unknown row in release.
-        struct LastOverrideLog
-        {
-            RE::FormID formID = 0;
-            size_t slot = SIZE_MAX;
-            bool displaced = false;
-        };
-        thread_local std::array<
-            std::array<LastOverrideLog, Override::OVERRIDE_CONDITION_COUNT>, MAX_PAGES> lastOverrideLogs{};
-        auto& pageLogs = lastOverrideLogs[std::min(pageIndex, MAX_PAGES - 1)];
+        // State lives in m_overrideLogs (NoteOverridePlaced and friends).
         bool overrideAssignedThisFrame = false;
 
         if (overrides.HasActiveOverride()) {
@@ -437,13 +482,10 @@ namespace Huginn::Slot
                         assignedNames.insert(Candidate::GetName(*override.candidate));
                         overrideAssignedThisFrame = true;
 
-                        auto& lastLog = pageLogs[static_cast<size_t>(override.condition)];
-                        const bool unstamped = BypassDedup(override.condition);
-                        if (unstamped || formID != lastLog.formID ||
-                            home != lastLog.slot || lastLog.displaced) {
+                        if (const char* why = NoteOverridePlaced(pageIndex, override.condition, formID, home)) {
                             SKSE::log::info("[SlotAllocator] Override '{}' → Page {} Slot {} (marks the slot already showing it)",
                                 override.reason, pageIndex, home);
-                            lastLog = { formID, home, false };
+                            SKSE::log::debug("[SlotAllocator]   logged: {}", why);
                         }
                         continue;
                     }
@@ -470,10 +512,7 @@ namespace Huginn::Slot
 
                         // Only log if override changed (different formID or slot,
                         // or re-placed after a displacement)
-                        auto& lastLog = pageLogs[static_cast<size_t>(override.condition)];
-                        const bool unstamped = BypassDedup(override.condition);
-                        if (unstamped || formID != lastLog.formID ||
-                            priorityIdx != lastLog.slot || lastLog.displaced) {
+                        if (const char* why = NoteOverridePlaced(pageIndex, override.condition, formID, priorityIdx)) {
                             // Page index is not decoration: allocation runs once
                             // per page (display page here, Wheeler pages in
                             // WheelerBackend), so one override legitimately logs
@@ -483,7 +522,7 @@ namespace Huginn::Slot
                             SKSE::log::info("[SlotAllocator] Override '{}' → Page {} Slot {} ({})",
                                 override.reason, pageIndex, priorityIdx,
                                 SlotClassificationToString(config.classification));
-                            lastLog = { formID, priorityIdx, false };
+                            SKSE::log::debug("[SlotAllocator]   logged: {}", why);
                         }
                         break;
                     }
@@ -521,20 +560,16 @@ namespace Huginn::Slot
 
                     // Only log if override changed (different formID or slot,
                     // or re-placed after a displacement)
-                    auto& lastLog = pageLogs[static_cast<size_t>(override.condition)];
-                    const bool unstamped = BypassDedup(override.condition);
-                    if (unstamped || formID != lastLog.formID ||
-                        priorityIdx != lastLog.slot || lastLog.displaced) {
+                    if (const char* why = NoteOverridePlaced(pageIndex, override.condition, formID, priorityIdx)) {
                         SKSE::log::info("[SlotAllocator] Override '{}' → Page {} Slot {} (fallback, {})",
                             override.reason, pageIndex, priorityIdx,
                             SlotClassificationToString(config.classification));
-                        lastLog = { formID, priorityIdx, false };
+                        SKSE::log::debug("[SlotAllocator]   logged: {}", why);
                     }
                     break;
                 }
 
                 if (!placed) {
-                    auto& lastLog = pageLogs[static_cast<size_t>(override.condition)];
                     const bool unstamped = BypassDedup(override.condition);
                     if (sawAcceptingSlot) {
                         // All accepting slots on THIS page are occupied (typically
@@ -542,11 +577,10 @@ namespace Huginn::Slot
                         // But if the same contention holds on every page, the
                         // override is starved config-wide, so log the transition
                         // at info: it must be diagnosable from release logs.
-                        if (unstamped || !lastLog.displaced) {
+                        if (NoteOverrideDisplaced(pageIndex, override.condition)) {
                             SKSE::log::info("[SlotAllocator] Override '{}' displaced on page {} "
                                 "(accepting slots occupied by higher-priority overrides)",
                                 override.reason, pageIndex);
-                            lastLog = { 0, SIZE_MAX, true };
                         }
                     } else if (!AnyPageAcceptsCategory(override.category)) {
                         // No slot on ANY page accepts this category — a genuine
@@ -572,9 +606,7 @@ namespace Huginn::Slot
         // on this particular page). With multi-page support, Page 1 may have no
         // override-eligible slots, but the override is still active on Page 0.
         if (!overrides.HasActiveOverride()) {
-            for (auto& pageEntry : lastOverrideLogs) {
-                pageEntry.fill(LastOverrideLog{});
-            }
+            ResetOverrideLogs(pageIndex);
         }
 
         // =======================================================================

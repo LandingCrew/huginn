@@ -287,6 +287,17 @@ namespace Huginn::Override
         // Find best ammo in inventory
         auto candidate = FindBestAmmo(player.hasBowEquipped);
 
+        // When the best ammo IS the equipped ammo, show the poll's count, as
+        // the ordinary ammo candidates do (CandidateGenerator::Gather-
+        // AmmoCandidates): the registry's refreshes every 500 ms, so beside the
+        // bow slot it read one shot behind after each arrow.
+        if (candidate) {
+            if (auto* ammo = std::get_if<Candidate::AmmoCandidate>(&*candidate);
+                ammo && ammo->formID != 0 && ammo->formID == player.equippedAmmoFormID) {
+                ammo->count = rawCount;
+            }
+        }
+
         OverrideResult result;
         result.priority = Priority::LOW_AMMO;
         result.category = OverrideCategory::Other;

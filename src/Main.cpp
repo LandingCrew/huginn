@@ -621,6 +621,10 @@ static void OnDataLoaded()
             Slot::SlotAllocator::GetSingleton().MarkPageDirty();
         },
         .noteSlotActivated = [](size_t pageIndex, size_t slotIndex, RE::FormID formID) {
+            // Every Huginn-wheel activation is a slot press, potions included.
+            Telemetry::SoakMetrics::GetSingleton().RecordSlotPress(
+                pageIndex, Slot::SlotAllocator::GetSingleton().IsRegularSlot(pageIndex, slotIndex));
+
             // Worn things only; a potion or soul gem displaces nothing.
             auto* form = RE::TESForm::LookupByID(formID);
             if (!form) {

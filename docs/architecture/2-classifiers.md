@@ -593,6 +593,9 @@ deliberately absent — a script spell called "Bloodstorm" could be anything, an
 
 ### Auditing it: `hg dump spells`
 
+Per-load-order results, for this and the other dumps, are kept in
+[reference/classifier-coverage.md](../reference/classifier-coverage.md).
+
 Debug builds only. Writes every spell in the load order to `Huginn_Spells.csv`
 beside the log, one row per spell, with the classifier's answer next to the raw
 record fields it read — archetype, actor values, flags, effect count — plus:

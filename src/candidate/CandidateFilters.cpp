@@ -232,7 +232,9 @@ namespace Huginn::Candidate
         std::vector<CandidateVariant>& output,
         const State::PlayerActorState& player,
         float currentMagicka,
-        FilterStats& stats)
+        FilterStats& stats,
+        std::span<const RE::FormID> heldIDs,
+        std::vector<CandidateVariant>* heldUnaffordable)
     {
         stats.Reset();
         stats.inputCount = gatherBuffer.size();
@@ -282,6 +284,16 @@ namespace Huginn::Candidate
                         case FilterResult::Affordability:
                             ++stats.filteredByAffordability;
                             if (isWeapon) ++weaponsFilteredByAffordability;
+                            // A Remembrance hold's own item, set aside rather
+                            // than dropped: the hold shows what the player took
+                            // off even at 13 magicka, where the key otherwise
+                            // blinked to a potion until magicka ticked back
+                            // (2026-09-30). Aside, not passed, so the ranking
+                            // can never put an unaffordable spell on ANOTHER key.
+                            if (heldUnaffordable &&
+                                std::ranges::find(heldIDs, GetBase(c).formID) != heldIDs.end()) {
+                                heldUnaffordable->push_back(std::move(c));
+                            }
                             break;
                         case FilterResult::Equipped:
                             ++stats.filteredByEquipped;

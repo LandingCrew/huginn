@@ -76,7 +76,6 @@ namespace Huginn::UI
         void ClearSlot(int index);
         void SetSlotCount(int count);
         void SetPage(int current, int total, std::string_view name);
-        void SetUrgent(int index, bool active);
         void SetWidgetAlpha(double alpha);
         void SetPosition(float x, float y);
         void SetVisible(bool a_visible);

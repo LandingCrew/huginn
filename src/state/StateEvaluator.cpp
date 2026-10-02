@@ -38,7 +38,6 @@ namespace
 namespace Huginn::State
 {
    GameState StateEvaluator::EvaluateCurrentState(
-      const WorldState& world,
       const PlayerActorState& player,
       const TargetCollection& targets) const
    {

@@ -188,8 +188,15 @@ namespace Huginn::Slot
             const bool nowEmpty = shown.IsEmpty();
             const bool changed = nowEmpty != slot.shownEmpty ||
                 (!nowEmpty && (shown.formID != slot.shownFormID || shown.uniqueID != slot.shownUniqueID));
+            // Counted only when the player could SEE it: the slot emptied or
+            // filled, or the name on it changed. Two forms with one name -- the
+            // per-hand Unarmed pseudo-items, a stack swapped for its twin --
+            // read 'Unarmed' -> 'Unarmed' and were counted as churn. The identity
+            // is still recorded below, so the next real change compares right.
+            const bool visible = nowEmpty != slot.shownEmpty ||
+                (!nowEmpty && shown.name != slot.shownName);
 
-            if (changed && !m_churnBaseline) {
+            if (changed && visible && !m_churnBaseline) {
                 const auto cause = Telemetry::ClassifySlotChange(slot.shownEmpty, nowEmpty,
                     filledBeforeDedup[i] && nowEmpty, shown.IsOverride(),
                     shown.IsWildcard() || slot.shownWildcard, slot.releaseCause,

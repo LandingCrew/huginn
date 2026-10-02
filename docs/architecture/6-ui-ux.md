@@ -218,7 +218,7 @@ to the UI thread.
 | `ClearSlot` | `clearSlot` | index | Hide a slot and reset its animation state |
 | `SetSlotCount` | `setSlotCount` | count | Set visible slot count, resize background |
 | `SetPage` | `setPage` | current, total, name | Page pips + inline page-name label (hidden when `total <= 1`) |
-| `SetUrgent` | `setUrgent` | index, active | **Inert** — see below |
+| — | `setUrgent` | index, active | **Inert**, AS2 only — see below |
 | `SetWidgetAlpha` | `setWidgetAlpha` | alpha (0–100) | Overall widget opacity |
 | — | `setChildAlpha` | alpha (0–100) | Secondary element opacity (page pips/label). Invoked directly from the constructor and `ReapplySettings`; no dedicated C++ method |
 | — | `setSlotEffect` | 0=slide, 1=fade, 2=instant | Slot change animation |
@@ -240,10 +240,11 @@ to the UI thread.
 Widget **scale** is not an AS2 call: it is applied by setting `_xscale` and
 `_yscale` on `_root` directly.
 
-**`setUrgent` is inert.** `IntuitionMenu::SetUrgent` and the AS2 `setUrgent`
-both still exist, and AS2 stores the flag in `_urgentSlots`, but nothing reads
-that array any more and no C++ caller invokes `SetUrgent` — urgency is carried
-by `SlotVisualState` on each `setSlot` instead. The AS2 field is commented
+**`setUrgent` is inert.** The C++ `IntuitionMenu::SetUrgent` had no caller and
+was removed in 0.22.8. The AS2 `setUrgent` still exists and stores the flag in
+`_urgentSlots`, but nothing reads that array — urgency is carried by
+`SlotVisualState` on each `setSlot` instead. Removing the AS2 side needs a SWF
+rebuild, so it waits for the next one. The AS2 field is commented
 `deprecated - replaced by visual states`.
 
 ### Thread safety

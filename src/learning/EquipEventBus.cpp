@@ -68,8 +68,7 @@ namespace Huginn::Learning
         event.features = StateFeatures::FromState(player, targets);
 
         if (auto* evaluator = Huginn::GetStateEvaluator()) {
-            auto world = stateMgr.GetWorldState();
-            event.gameState = evaluator->EvaluateCurrentState(world, player, targets);
+            event.gameState = evaluator->EvaluateCurrentState(player, targets);
         }
 
         return event;

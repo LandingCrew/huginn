@@ -40,7 +40,6 @@ namespace Huginn::Scoring
         inline constexpr float COLD_START_UCB_BOOST = 0.2f;
 
         // Performance
-        inline constexpr size_t MAX_CANDIDATES_PER_CYCLE = 500;
         inline constexpr size_t TOP_N_CANDIDATES = 10;
 
         // Favorites
@@ -116,7 +115,6 @@ namespace Huginn::Scoring
         float coldStartUCBBoost = ScorerDefaults::COLD_START_UCB_BOOST;
 
         // --- Performance ---
-        size_t maxCandidatesPerCycle = ScorerDefaults::MAX_CANDIDATES_PER_CYCLE;
         size_t topNCandidates = ScorerDefaults::TOP_N_CANDIDATES;
 
         // --- Favorites ---

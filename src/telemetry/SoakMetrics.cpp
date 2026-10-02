@@ -95,6 +95,19 @@ namespace Huginn::Telemetry
         m_pageRaceBails.fetch_add(1, std::memory_order_relaxed);
     }
 
+    void SoakMetrics::RecordSlotPress(std::size_t pageIndex, bool regularSlot)
+    {
+        (regularSlot ? m_pressRegular : m_pressLabeled).fetch_add(1, std::memory_order_relaxed);
+        if (pageIndex != 0) {
+            m_pressOffPage.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
+
+    void SoakMetrics::RecordPageFlip()
+    {
+        m_pageFlips.fetch_add(1, std::memory_order_relaxed);
+    }
+
     void SoakMetrics::RecordSlotChanges(std::span<const SlotChangeEvent> changes,
         std::chrono::steady_clock::time_point now)
     {
@@ -180,6 +193,10 @@ namespace Huginn::Telemetry
         const uint32_t pageBails    = m_pageRaceBails.exchange(0, std::memory_order_relaxed);
         const uint64_t sumMicros    = m_tickSumMicros.exchange(0, std::memory_order_relaxed);
         const uint32_t peakMicros   = m_tickPeakMicros.exchange(0, std::memory_order_relaxed);
+        const uint32_t pressRegular = m_pressRegular.exchange(0, std::memory_order_relaxed);
+        const uint32_t pressLabeled = m_pressLabeled.exchange(0, std::memory_order_relaxed);
+        const uint32_t pressOffPage = m_pressOffPage.exchange(0, std::memory_order_relaxed);
+        const uint32_t pageFlips    = m_pageFlips.exchange(0, std::memory_order_relaxed);
 
         std::array<uint32_t, static_cast<std::size_t>(SlotChange::Count)> churn{};
         uint32_t churnTotal = 0;
@@ -251,15 +268,24 @@ namespace Huginn::Telemetry
         const int64_t upM = (upSec % 3600) / 60;
         const int64_t upS = upSec % 60;
 
+        // The two objective metrics, last so every existing field keeps its
+        // place. reachIns = every attributed external equip (the player went
+        // past Huginn); candidate = the ones Huginn had scored, i.e. could have
+        // offered (hit+near+miss). workaround = presses that needed a labeled
+        // slot or a page past the first, plus page flips.
+        const uint32_t pressTotal = pressRegular + pressLabeled;
         logger::info(
             "[Soak] up={}h{:02}m{:02}s | equips hit={} near={} miss={} novel={} accept={} skipped={} | "
-            "recompute={}/{} ticks override={} pageBail={} | slotChurn={} | learn items={} trains={} | tick avg={:.3f} peak={:.3f} ms"sv,
+            "recompute={}/{} ticks override={} pageBail={} | slotChurn={} | learn items={} trains={} | tick avg={:.3f} peak={:.3f} ms | "
+            "goals reachIns={} (candidate={}) presses={} (regular={} labeled={} offPage={}) pageFlips={}"sv,
             upH, upM, upS,
             hit, near_, miss, novel, acceptStr, skipStr,
             recomputes, ticks, overrideRuns, pageBails,
             churnStr,
             learnerItems, learnerTrains,
-            avgMs, peakMs);
+            avgMs, peakMs,
+            totalEquips, hit + near_ + miss,
+            pressTotal, pressRegular, pressLabeled, pressOffPage, pageFlips);
 
         Huginn_PLOT("Huginn/Learner Items", static_cast<int64_t>(learnerItems));
         // Only plot windows that carry signal — zero-equip windows would drag the

@@ -215,6 +215,19 @@ namespace Huginn::Telemetry
         void RecordSlotChanges(std::span<const SlotChangeEvent> changes,
             std::chrono::steady_clock::time_point now);
 
+        // Huginn's second objective metric: did the player need a workaround
+        // to get what they wanted? The end state is ONE page of Regular
+        // (unrestricted) slots, so a press on a classified slot ("Heal",
+        // "Potion"...) or on any page past the first is a workaround, and so
+        // is flipping pages. One call per slot activation that resolved to an
+        // item, from the Intuition keys (EquipManager::EquipSlot) and from a
+        // Huginn wheel (the Wheeler activation callback).
+        void RecordSlotPress(std::size_t pageIndex, bool regularSlot);
+
+        // A page change that actually changed the page (SlotAllocator::
+        // SetCurrentPage), whoever asked: Intuition cycle keys, Wheeler, `hg page`.
+        void RecordPageFlip();
+
         // Called every update tick with the measured whole-tick duration (ms).
         // Rolls the window and emits the heartbeat when the interval elapses.
         void RecordTick(float tickMs, std::chrono::steady_clock::time_point now);
@@ -244,6 +257,13 @@ namespace Huginn::Telemetry
         std::atomic<uint32_t> m_skipStale{0};  // s: pipeline snapshot too old to attribute
         std::atomic<uint32_t> m_skipSpam{0};   // a: same FormID re-equipped too soon
         std::atomic<uint32_t> m_skipOff{0};    // x: external-equip learning disabled
+
+        // Workarounds (window). Regular and labeled partition the presses;
+        // offPage overlaps both (a labeled slot on page 2 counts in each).
+        std::atomic<uint32_t> m_pressRegular{0};
+        std::atomic<uint32_t> m_pressLabeled{0};
+        std::atomic<uint32_t> m_pressOffPage{0};
+        std::atomic<uint32_t> m_pageFlips{0};
 
         // Pipeline / perf (window).
         std::atomic<uint32_t> m_ticks{0};
