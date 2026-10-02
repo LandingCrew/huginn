@@ -2,6 +2,7 @@
 #include "Config.h"
 #include "Globals.h"
 #include "learning/EquipSourceTracker.h"
+#include "learning/SelectionTracker.h"
 #include "slot/SlotAllocator.h"
 #include "slot/Remembrance.h"
 #include "slot/SlotLocker.h"
@@ -984,8 +985,11 @@ namespace Huginn::Input
       break;
       }
 
-      // A remembered item put back is the player's undo, not a selection.
-      if (success && m_equipCallback && !pressedRemembered) {
+      // A remembered item put back is the player's undo, not a selection --
+      // and if its equip event already recorded one, that is withdrawn.
+      if (success && pressedRemembered) {
+         Learning::SelectionTracker::GetSingleton().Withdraw(content.formID, "Remembrance swap-back");
+      } else if (success && m_equipCallback) {
          m_equipCallback(content.formID, slotIndex);
       }
 

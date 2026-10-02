@@ -53,6 +53,14 @@ namespace Huginn::Learning
                 return true;
             }
         }
+
+        // Selecting "Unarmed" empties the hand rather than putting a form in it,
+        // so the hand reads as nothing at all (LoreRim 2026-10-02: FE62CA7F never
+        // confirmed). An empty right hand is that selection still standing.
+        if (const auto* weap = RE::TESForm::LookupByID<RE::TESObjectWEAP>(formID);
+            weap && weap->IsHandToHandMelee() && !player->GetEquippedObject(false)) {
+            return true;
+        }
         if (const auto* ammo = player->GetCurrentAmmo(); ammo && ammo->GetFormID() == formID) {
             return true;
         }
@@ -168,6 +176,19 @@ namespace Huginn::Learning
                 MsSince(p.selectedAt, now),
                 p.event.kind == SelectionKind::Consumable ? "count never dropped"sv
                                                           : "no longer equipped"sv);
+        }
+    }
+
+    void SelectionTracker::Withdraw(RE::FormID formID, std::string_view why)
+    {
+        std::lock_guard lock(m_mutex);
+        for (auto it = m_pending.begin(); it != m_pending.end(); ++it) {
+            if (it->event.formID == formID) {
+                logger::info("[Selection] Withdrawn {:08X} '{}' src={} -- {}"sv,
+                    formID, FormName(formID), EquipSourceToString(it->event.source), why);
+                m_pending.erase(it);
+                return;
+            }
         }
     }
 

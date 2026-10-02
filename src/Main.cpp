@@ -596,6 +596,9 @@ static void OnDataLoaded()
             Learning::SelectionTracker::GetSingleton().Select(
                 formID, Learning::EquipSource::Wheeler, "Huginn wheel");
         },
+        .withdrawSelection = [](RE::FormID formID) {
+            Learning::SelectionTracker::GetSingleton().Withdraw(formID, "Remembrance swap-back");
+        },
         .noteOwnWheelPick = [](RE::FormID formID) {
             Learning::PlayerInputGate::GetSingleton().NoteOwnWheelPick(formID);
         },

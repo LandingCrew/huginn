@@ -247,6 +247,11 @@ namespace Huginn::Wheeler
             /// Called WITHOUT m_callbackMutex held.
             std::function<void(RE::FormID)> publishWheelerEquip;
 
+            /// A remembered item was put back (Remembrance): withdraw any selection
+            /// its equip event already recorded. Wheeler equips BEFORE it calls
+            /// back, so that event arrives first and looks like an outside pick.
+            std::function<void(RE::FormID)> withdrawSelection;
+
             /// The player activated an item on one of their OWN wheels: player
             /// input behind the equip event that follows (PlayerInputGate).
             std::function<void(RE::FormID)> noteOwnWheelPick;
@@ -276,7 +281,7 @@ namespace Huginn::Wheeler
             [[nodiscard]] bool Complete() const noexcept
             {
                 return lockSlotForActivation && onItemUsed && markHuginnEquip &&
-                       startCooldown && publishWheelerEquip && noteOwnWheelPick && setWidgetVisible &&
+                       startCooldown && publishWheelerEquip && withdrawSelection && noteOwnWheelPick && setWidgetVisible &&
                        noteSlotActivated &&
                        setCurrentPage && markPageDirty;
             }

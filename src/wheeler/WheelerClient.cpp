@@ -217,7 +217,14 @@ namespace Huginn::Wheeler
         // No pageIndex guard: the locked block above returns early when the
         // wheel isn't ours, so reaching here means pageIndex >= 0.
         // A remembered item put back is the player's undo, not a Huginn pick.
-        if (!pressedRemembered) {
+        //
+        // Wheeler equips BEFORE it calls back (LoreRim 2026-10-02: the equip
+        // event at .096, this callback at .102), so the item is usually already
+        // pending as an outside selection. A Huginn pick relabels it; an undo
+        // must withdraw it, or a swap-back is rewarded as the player's choice.
+        if (pressedRemembered) {
+            client.m_env.withdrawSelection(static_cast<RE::FormID>(formID));
+        } else {
             client.m_env.publishWheelerEquip(static_cast<RE::FormID>(formID));
         }
     }

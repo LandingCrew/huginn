@@ -57,6 +57,21 @@ namespace Huginn::Learning
         /// in which case the drop teaches nothing.
         bool OnConsumed(RE::FormID formID);
 
+        /// Is a selection of `formID` pending? An equip event for it is then part
+        /// of that selection, not a new one (ExternalEquipLearner).
+        [[nodiscard]] bool IsPending(RE::FormID formID) const
+        {
+            std::lock_guard lock(m_mutex);
+            for (const auto& p : m_pending) {
+                if (p.event.formID == formID) return true;
+            }
+            return false;
+        }
+
+        /// Drop a pending selection of `formID` unconfirmed: the player took it
+        /// back (a Remembrance swap-back of the item). Logged with `why`.
+        void Withdraw(RE::FormID formID, std::string_view why);
+
         /// Expire and confirm by deadline. Update thread, every tick.
         void Update();
 

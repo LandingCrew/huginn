@@ -397,8 +397,9 @@ that moment (`EquipEventBus::Capture`), the pipeline's whole last run
 Anything not confirmed expires and teaches nothing (logged as
 `[Selection] Not confirmed`). One pending record per item: both hands, a
 doubled `TESEquipEvent`, a key press plus the equip event it causes -- one
-selection. A Remembrance swap-back is not a selection, and it unequips the item
-it undid, so that item does not confirm either. Pending selections are cleared
+selection. A Remembrance swap-back is not a selection (any record its own equip
+event created is withdrawn), and it unequips the item it undid, so that item
+does not confirm either. Selecting Unarmed confirms on an empty right hand. Pending selections are cleared
 on game load.
 
 A **count drop with no pending selection** teaches nothing. It still frees the
@@ -522,11 +523,18 @@ own Wheeler wheels, or any Wheeler wheel open. No input, no selection: a
 script's equip teaches nothing (LoreRim's auto-quaff trained the learner as the
 player until this gate).
 
-The open-wheel rule exists because Huginn does not control the order of
-Wheeler's equip and its activation callback. If the equip lands first, a
-Huginn-wheel pick arrives here as an outside selection; when Huginn's own
-selection of the same item follows, `SelectionTracker::Select` relabels the
-pending record as `Wheeler` and drops its attribution. The A-E case is recorded
+The open-wheel rule exists because Wheeler equips an item **before** it calls
+Huginn back (measured on LoreRim 2026-10-02: equip event at .096, callback at
+.102). So every Huginn-wheel pick first arrives here as an outside selection;
+when Huginn's own selection of the same item follows, `SelectionTracker::Select`
+relabels the pending record as `Wheeler` and drops its attribution. If the pick
+was a Remembrance swap-back, the callback **withdraws** the record instead
+(`SelectionTracker::Withdraw`), so an undo is never rewarded.
+
+An equip event for an item that already has a pending selection is part of it
+and is ignored here, before the input gate. That is the common case for a
+Huginn key's potion, whose equip event lands ~0.85 s after the press -- past
+`EquipSourceTracker`'s 400 ms mark. The A-E case is recorded
 to the soak telemetry only when an outside selection **confirms**, so neither a
 relabelled Huginn pick nor an unconfirmed one reaches accept%.
 

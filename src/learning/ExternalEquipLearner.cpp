@@ -35,6 +35,17 @@ namespace Huginn::Learning
             return;
         }
 
+        // Part of a selection already pending -- most often a Huginn key's
+        // potion, whose equip event lands ~0.85 s after the press, past the
+        // EquipSourceTracker mark (LoreRim 2026-10-02: every key-drunk potion
+        // was then logged as a script and counted in skipped=input). It is not
+        // a new selection, and not a script.
+        if (SelectionTracker::GetSingleton().IsPending(formID)) {
+            logger::debug("[ExternalEquipLearner] {} {:08X} is part of a pending selection"sv,
+                formType, formID);
+            return;
+        }
+
         std::string via;
         if (const char skip = ShouldSkip(formID, via); skip != SKIP_NONE) {
             // Record WHY. A skipped equip never reaches RecordEquipCase, so

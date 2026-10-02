@@ -216,11 +216,6 @@ static void UpdateSubsystems(float deltaSeconds, float deltaMs)
     // on-screen while the skip gate holds the pipeline idle.
     bool forcePipelineRun = false;
 
-    // Confirm or drop pending player selections whose window has run out.
-    // Main thread (the input sink drives this loop), so reading what the
-    // player has equipped is safe here.
-    Learning::SelectionTracker::GetSingleton().Update();
-
     {
         Huginn_ZONE_NAMED("CandidateGenerator::Update");
         // Cooldown expiry: the item becomes recommendable again
@@ -608,6 +603,15 @@ void OnUpdate(float deltaSeconds)
 
     UpdateSubsystems(deltaSeconds, deltaMs);
     MaintainRegistries(player, now);
+
+    // Confirm or drop pending player selections whose window has run out.
+    // AFTER the inventory scan, deliberately: this loop does not run while a
+    // menu or a wheel pauses the game (the "Clamped deltaSeconds" lines), so on
+    // the first tick back a consumable's deadline and its count drop arrive
+    // together -- the scan must confirm it before the deadline can expire it.
+    // Main thread (the input sink drives this loop), so reading what the
+    // player has equipped is safe here.
+    Learning::SelectionTracker::GetSingleton().Update();
     RunPipelineIfNeeded(deltaMs, player, now);
 
     // Soak telemetry: record whole-tick cost and emit the periodic heartbeat.
