@@ -200,18 +200,21 @@ namespace Huginn::Slot
             bool skipEquipped;
         };
 
-        // One job per key, the same layout the shipped INI's page 0 uses. With
-        // skip-equipped on, key 1 is "the other weapon", and Remembrance makes
-        // it a toggle between the two.
+        // The compiled-in fallback page, the same layout the shipped INI uses.
         inline constexpr SlotDefault PAGE0_SLOTS[] = {
-            { SlotClassification::WeaponsAny,   true, OverrideFilter::HP,    7, true },  // 1 Weapon
-            { SlotClassification::DamageMagic,  true, OverrideFilter::MP,    6, true },  // 2 Attack magic
-            { SlotClassification::HealingAny,   true, OverrideFilter::SP,    5, true },  // 3 Heal
-            { SlotClassification::DefensiveAny, true, OverrideFilter::None,  4, true },  // 4 Defend
-            { SlotClassification::BuffsAny,     true, OverrideFilter::None,  3, true },  // 5 Buff
-            { SlotClassification::PotionsAny,   true, OverrideFilter::None,  2, true },  // 6 Potion
-            { SlotClassification::Regular,      true, OverrideFilter::Other, 1, true },  // 7 Situational (Other-only home for soul-gem/ammo/drowning)
-            { SlotClassification::Regular,      true, OverrideFilter::None,  0, true },  // 8 Wildcard
+            // Eight Regular keys, matching the shipped configs/Huginn.ini since
+            // 0.22.10. Emergencies keep their keys: health on 1, magicka on 2,
+            // stamina on 3, and key 7 is the Other-only home for the soul-gem /
+            // low-ammo / drowning prompts. The old one-job-per-key layout is
+            // configs/templates/job-per-key.ini.
+            { SlotClassification::Regular, true, OverrideFilter::HP,    7, true },  // 1
+            { SlotClassification::Regular, true, OverrideFilter::MP,    6, true },  // 2
+            { SlotClassification::Regular, true, OverrideFilter::SP,    5, true },  // 3
+            { SlotClassification::Regular, true, OverrideFilter::None,  4, true },  // 4
+            { SlotClassification::Regular, true, OverrideFilter::None,  3, true },  // 5
+            { SlotClassification::Regular, true, OverrideFilter::None,  2, true },  // 6
+            { SlotClassification::Regular, true, OverrideFilter::Other, 1, true },  // 7
+            { SlotClassification::Regular, true, OverrideFilter::None,  0, true },  // 8
         };
         static_assert(std::size(PAGE0_SLOTS) == SLOTS_PER_PAGE);
     }

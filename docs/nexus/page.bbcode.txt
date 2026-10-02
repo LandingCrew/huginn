@@ -28,7 +28,7 @@ No... Why Huginn? Oh, that's because [url=https://en.wikipedia.org/wiki/Huginn_a
 [*][b]Learns as you play[/b] — observes what you equip in each situation, bootstrapped with sensible defaults[/*]
 [*][b]On-screen widget[/b] — a small overlay showing what is on each key; hides itself outside combat[/*]
 [*][b]Wheeler integration[/b] — optional [url=https://www.nexusmods.com/skyrimspecialedition/mods/97345]Wheeler[/url] radial menu support[/*]
-[*][b]A job for every key[/b] — the default page gives each key a role (weapon, attack magic, heal, defend…) with emergencies on fixed keys; six ready-made templates for other builds[/*]
+[*][b]Eight plain keys[/b] — the default page lets Huginn fill every key with what suits the moment, with emergencies on fixed keys; seven ready-made templates if you want a job per key or a layout for your build[/*]
 [*][b]Multi-page slots[/b] — organize recommendations by role (up to 10 pages, 10 slots each)[/*]
 [*][b]Swap back[/b] — press a key that swaps what is in your hand (or your arrows), and what it replaced waits under that same key for 15 seconds; press again to swap back[/*]
 [*][b]Workstation awareness[/b] — Fortify Smithing at forges, Fortify Enchanting at enchanters[/*]
@@ -98,44 +98,28 @@ Every slot takes the same six settings:
 [*][font=Courier New]iPriority[/font] — Which slots get first pick of the good options. Higher fills first[/*]
 [/list]
 
-Here is the first slot of the first page in the default setup. It holds the weapon you are [i]not[/i] holding, gets first pick, and hands itself over to a healing potion when your health drops dangerously low:
+Here is the first slot of the first page in the default setup. It takes whatever suits the moment, gets first pick, and hands itself over to a healing potion when your health drops dangerously low:
 
 [code][Page0.Slot0]
-sClassification = WeaponsAny
+sClassification = Regular
 bWildcardsEnabled = true
 bOverridesEnabled = HP
 iPriority = 7[/code]
 
-[b][color=#cc9933]The default pages[/color][/b]
+[b][color=#cc9933]The default page[/color][/b]
 
-By default Huginn comes with two pages: [b]Huginn[/b] and [b]Kit[/b].
+By default Huginn comes with one page of eight plain keys. No key has a job: each shows one of the eight best things for the moment, whatever they are, and Huginn decides which key gets what. That is what Huginn is built to get right -- labels are for when it doesn't yet.
 
-[b]Huginn page[/b]
+Emergencies always land on the same keys: health on 1, magicka on 2, stamina on 3, and key 7 takes the quieter prompts: arrows running low, a soul gem, waterbreathing (see Emergencies — [Overrides] below to change this).
 
-The first page, [b]Huginn[/b], gives every key a job. Each key shows the best thing for that job that is not already in your hands:
-
-[list]
-[*][b]1 — Weapon[/b] — The weapon you're not holding — the bow while the sword is out. Swap, and the sword waits on this key, so one key toggles between two weapons[/*]
-[*][b]2 — Attack magic[/b] — Damage spells and damage scrolls for the target[/*]
-[*][b]3 — Heal[/b] — Healing spells and health potions[/*]
-[*][b]4 — Defend[/b] — Wards, armour spells, resist potions[/*]
-[*][b]5 — Buff[/b] — Fortify, invisibility, muffle[/*]
-[*][b]6 — Potion[/b] — Whatever potion suits the moment[/*]
-[*][b]7 — Situational[/b] — Anything, plus the quieter prompts: arrows running low, a soul gem, waterbreathing[/*]
-[*][b]8 — Wildcard[/b] — The best of everything else, and now and then something new[/*]
-[/list]
-
-Emergencies always land on the same keys: health on 1, magicka on 2, stamina on 3 (see Emergencies — [Overrides] below to change this).
-
-[b]Kit page[/b]
-
-The second page, [b]Kit[/b], is for between fights: potions, food, scrolls, utility spells, summons, arrows and crafting gear, one kind per key.
+Prefer a job per key? The [b]job-per-key[/b] template is the old default: 1 weapon, 2 attack magic, 3 heal, 4 defend, 5 buff, 6 potion, 7 situational, 8 wildcard -- plus a second [b]Kit[/b] page for between fights (potions, food, scrolls, utility spells, summons, arrows and crafting gear, one kind per key). The Kit page is also still in Huginn.ini: set [font=Courier New]iPageCount = 2[/font] to turn it on.
 
 [b][color=#cc9933]Template pages[/color][/b]
 
-[font=Courier New]configs/templates/[/font] has six ready-made layouts:
+[font=Courier New]configs/templates/[/font] has seven ready-made layouts:
 
 [list]
+[*]Job per key (the old default)[/*]
 [*]Battlemage[/*]
 [*]Paladin[/*]
 [*]Pure Mage[/*]
