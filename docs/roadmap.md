@@ -16,9 +16,11 @@ that only logs or fixes config lands BEFORE it.
    Issues. XS, config only (`configs/Huginn.ini` `iSlot1Key`-`iSlot9Key`).
    First because the double-fire is what polluted the last save's weights.
 2. **Reward-time logging** -- on "Learning swamps context". At each reward:
-   the chosen item's utility, rank and ctx, what it displaced, and its
-   source (key / wheel / menu). Changes nothing; sizes the cap and k from
-   the soak data and enables offline replay. S.
+   the chosen item's utility, rank and ctx, what it displaced, its source
+   (key / wheel / menu), and **what else was showing for the same need**
+   (the would-be negatives, with their predictions). Changes nothing; sizes
+   the negative weight and k from the soak data and enables offline
+   replay. S.
 3. **`sUncastableSpellPolicy = Penalize`** -- Doc-migration findings. Remove
    it (treat as Allow). The learner-reward ideas it prompted live on
    "Learning swamps context", not here. XS.
@@ -39,18 +41,26 @@ docs/reference/classifier-coverage.md from them). Checklist to ride along:
 
 **Phase 3 -- learning rework, in this order** (all on "Learning swamps
 context" unless named):
-1. **Restore the balance** -- cap the learned boost per candidate type
-   (weapons high; potions, spells, food low) or rank within context bands.
-   Soak logs set the numbers.
-2. **Prior as pseudo-observations** -- prior on the reward scale,
-   n/(n+n0) instead of the sigmoid, decay n with the weights.
-3. **Surprise-weighted updates** -- capped inverse-propensity step size.
-4. **Share learning across similar items** (pooling) -- under Follow-ups.
+1. **Choice target** -- learn "was this chosen" (1) against "shown for
+   that need and passed over" (0, weighted ~0.25x), one target for equips
+   and consumption alike, one reward per decision. Puts the learned term
+   on 0-1: the prior's scale mismatch disappears and the learned boost
+   tops out at ~4x instead of ~20x. Replaces three earlier items (fixed
+   8/5 target, prior on the reward scale, most of the balance cap).
+   Cosave bump. Soak logs set the negative weight.
+2. **Fine-tune the balance** -- per-candidate-type lambdaMax (weapons high;
+   potions, spells, food low) or rank within context bands, only if ~4x is
+   still too much in play.
+3. **Prior as pseudo-observations** -- n/(n+n0) instead of the sigmoid,
+   decay n with the weights.
+4. **Surprise-weighted updates** -- capped inverse-propensity step size;
+   menu equips ~2x.
+5. **Share learning across similar items** (pooling) -- under Follow-ups.
    Was #1 here until 2026-10-02: pooling only raises the floor for untrained
    items and leaves the 12x multiplier on top, so the balance goes first.
    Class level for potions, spells and scrolls, per item for weapons; class
    = the context-weight tag. Only if the soak dump shows classes differ.
-5. Later: **Behavioural modes as a recall stage**, then **#15/#16
+6. Later: **Behavioural modes as a recall stage**, then **#15/#16
    learnable context weights**.
 
 **Parked tracks** (not in the order): CommonLib migration (waiting on
@@ -329,7 +339,52 @@ v0.22.8, in the `goals` field of the `[Soak]` heartbeat
         learning, context ranks more, and with pooling a misread (Ice Armor's
         name-derived Frost, the Thaumaturgy ring) also trains the wrong
         class. The coverage checks become guarantees the learner relies on.
-      Options, not decided:
+      **Decided direction (with the user, 2026-10-02): a choice target.**
+      The root of the convergence is that the learner only ever sees
+      positives. A used item gets an update, a shown-and-ignored item gets
+      nothing, so a regression whose target is always 8 (or 5) learns
+      "predict 8" from whatever features are present -- the pooling
+      pre-check's scaled-copy vectors and tier siblings differing only in
+      train count. Nothing item-specific can be learned without contrast.
+      - **Target 1 = chosen, 0 = shown for that need and passed over.** The
+        existing update `w += alpha*(target - w.phi)*phi` then sizes every
+        move by surprise with nothing new to tune: a strong item passed over
+        (predicted 0.9) drops a lot, a weak one (0.1) barely; a low-ranked
+        item chosen over a strong one rises a lot, the incumbent chosen
+        again barely moves. That is "reward proportional to what it beat",
+        and the target itself stays fixed -- only the error varies, as it
+        already does today.
+      - **Negatives only at a real choice moment**: the player chose A and
+        B was on the bar for the same need (same context-weight field or
+        slot class). Never because B sat on screen while nothing was
+        needed. A passed-over counts ~0.25x a chosen (weaker evidence: the
+        player may not have looked); size it from the logging.
+      - **No equip/consume split.** 8 vs 5 mixed preference with evidence
+        strength. A choice is 1 either way. The real evidence problem is
+        that one decision can fire several events (a weapon toggled back and
+        forth), so: one reward per decision -- no reward for re-equipping the
+        same item within a few seconds, Remembrance swap-backs do not count.
+        Base rates (weapons equipped often, potions rarely) are absorbed by
+        each item's bias weight. The one weighting kept is source: a menu
+        equip ~2x (surprise weighting below), since Huginn did not offer it.
+      - **Scale falls out.** Predictions live on 0-1, the same scale as the
+        PriorCalculator prior, so the prior-scale fix is not needed; and the
+        learned boost tops out at 1 + lambda*1 = 4x (lambda 3) instead of
+        ~20x, so most of the balance problem goes with it.
+      - **Cost:** a cosave bump. Weights trained towards 8 are divided by 8
+        on load, or reset.
+      - **Not needed:** moving the vitals off the six buckets. The buckets
+        (`GameState.h` HealthBucket etc.) feed only the pipeline skip gate;
+        the learner reads continuous `healthPct` / `magickaPct` /
+        `staminaPct` (`StateFeatures.h`) and the context curves are
+        continuous too. Buckets decide WHEN the bar re-ranks, not what is
+        learned.
+      - Rejected: grading the target by outcome (a potion drunk at 15% HP
+        scores higher than at 90%). It duplicates what context already
+        knows.
+      - Later: a logistic link (true probabilities) instead of least squares
+        on a 0/1 target -- same idea, better calibrated, a bigger change.
+      Options still open on top of it:
       - Cap the learned boost (`lambda*learn` <= ~2-3x) so context stays a
         real gate; or a per-candidate-type lambdaMax (high for weapons, low
         for potions/spells).
@@ -342,16 +397,19 @@ v0.22.8, in the `goals` field of the `[Soak]` heartbeat
         -- inverse-propensity weighting, after Joachims et al. WSDM 2017 and
         Chen et al. WSDM 2019 (capped weights). Fights the feedback loop
         rather than the balance.
-      - Prior as pseudo-observations: put the PriorCalculator prior on the
-        reward scale (0-8, not 0-1), replace the sigmoid with n/(n+n0), decay
-        n alongside the weights so idle items fall back towards the prior.
+      - Prior as pseudo-observations: replace the sigmoid with n/(n+n0),
+        decay n alongside the weights so idle items fall back towards the
+        prior. (Putting the prior on the reward scale was part of this until
+        the choice target made both 0-1.)
       Probably BEFORE pooling: pooling only makes untrained items look more
       trained, which raises the floor but leaves a 12x multiplier on top.
       All of this changes learning behaviour -- not landable during the soak
       run. What IS landable before it: log, at each reward, the chosen item's
-      utility, rank and ctx, what it displaced, and its source (key / wheel /
-      menu). That changes nothing and lets the soak data size the cap and k
-      (and supports offline replay evaluation, Li et al. WSDM 2011).
+      utility, rank and ctx, what it displaced, its source (key / wheel /
+      menu), and what else was showing for the same need with its
+      prediction. That changes nothing and lets the soak data size the
+      negative weight, the cap and k (and supports offline replay
+      evaluation, Li et al. WSDM 2011).
       Raised 2026-10-02.
 
 - [ ] **Restore Health and Restore Stamina trade one slot in a fight, below
