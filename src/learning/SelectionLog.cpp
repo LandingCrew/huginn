@@ -257,8 +257,13 @@ namespace Huginn::Learning
         // and a file open/append/close (#163 review; a 50-hour soak run does a
         // few of these a minute, in combat).
         //
-        // The stream stays open and is flushed after every record, so a crash or
-        // a quit loses at most the record being written. The writer is never
+        // The stream stays open and is flushed after every record. What a crash
+        // can lose: records still queued (normally none, at most a few), and the
+        // record of the selection whose dispatch crashed -- it is queued just
+        // before the learner update runs. The trade for keeping the write off
+        // the game thread. A failed write closes the stream so the next record
+        // reopens it, rather than leaving it failed for the rest of the run
+        // (#164 review). The writer is never
         // destroyed: a thread joined from a static destructor runs inside
         // DLL_PROCESS_DETACH at exit, where joining can deadlock, so it is
         // leaked and its thread detached -- process exit ends both.
@@ -329,6 +334,17 @@ namespace Huginn::Learning
                 }
                 m_out << line;
                 m_out.flush();
+                if (!m_out) {
+                    // Disk full, a file locked by a backup or AV scan... Do not
+                    // stay failed: close, and the next record reopens the file.
+                    if (!m_warnedWrite) {
+                        logger::error("[Selection] Write to Huginn_Selections.jsonl failed -- reopening on the "
+                                      "next record (one record lost)"sv);
+                        m_warnedWrite = true;
+                    }
+                    m_out.close();
+                    m_out.clear();
+                }
             }
 
             std::mutex m_mutex;
@@ -339,6 +355,7 @@ namespace Huginn::Learning
             // Writer thread only.
             std::ofstream m_out;
             bool m_warnedOpen = false;
+            bool m_warnedWrite = false;
         };
     }
 

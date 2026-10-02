@@ -109,6 +109,13 @@ namespace Huginn::Learning
         event.attribution = std::move(attribution);
         event.shown = PipelineStateCache::GetSingleton().TakeSnapshot();
         event.loadGeneration = g_loadGeneration.load(std::memory_order_relaxed);
+        if (auto* player = RE::PlayerCharacter::GetSingleton()) {
+            const auto* right = player->GetEquippedObject(false);
+            const auto* left = player->GetEquippedObject(true);
+            const auto* ammo = player->GetCurrentAmmo();
+            event.handsAtPress = { right ? right->GetFormID() : 0, left ? left->GetFormID() : 0,
+                                   ammo ? ammo->GetFormID() : 0 };
+        }
 
         const float windowMs = event.kind == SelectionKind::Consumable
             ? Config::CONSUMPTION_HUGINN_WINDOW_MS

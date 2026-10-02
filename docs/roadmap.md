@@ -87,8 +87,11 @@ Raised in review 2026-10-02, to settle before the run starts:
   would have shown. Built in 0.22.10 as `src/learning/ShadowArm` (Debug
   builds only, one call in SelectionLog): `Huginn_AB.log`, one line per
   confirmed selection with A / A* (live utility, ranked plainly) / B
-  (utility without the learned term) and a running tally, overall and for
-  outside picks. Delete it after the run. Nothing has measured
+  (context only, the whole learning factor removed) / B' (no learned
+  weights but the prior and recency kept -- added in the #164 review, so the
+  run does not credit the learner with what the prior does) and a running
+  tally, overall and for outside picks. Plain-page selections only; the
+  open slots skip what was in hand. Delete it after the run. Nothing has measured
   context-only Huginn, and the pooling pre-check hints the learner adds
   little.
 - **Death and reload roll the learner back** to the last save, but the log
