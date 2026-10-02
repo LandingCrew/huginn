@@ -287,7 +287,9 @@ with how the run is played and laid out -- see the Phase 2 review notes.
         type and tag names, renaming one breaks them. Document the format on
         the wiki (Mod Compatibility) and give files a format version key.
       - Keep reading the old single file, or move the shipped one into the
-        directory, so existing installs keep working.
+        directory, so existing installs keep working. Since 0.22.9 the build
+        deploys `configs/Huginn_Overrides.ini` and it carries a live section
+        (Arcane Mass Inhibition), so moving it is a real migration.
       - `hg dump spells` has no plugin column (the potion, food and weights
         dumps do) -- add plugin and local id, so an author can build a file
         from a dump.
@@ -295,10 +297,13 @@ with how the run is played and laid out -- see the Phase 2 review notes.
       ("Script-only powers and scrolls are unclassified": simonrim's 13
       learnable script-only spells, LoreRim's 105 tome-learnable ones), and
       their authors are the people who know what they do. Huginn can ship
-      per-list files the same way -- LoreRim's 34 untyped potions, the
-      Thaumaturgy ring misread, Arcane Mass Inhibition (Phase 1 #5; if this
-      lands first, that fix goes in the new layout). The unbuilt spell-pattern
-      file (Doc-migration findings) could become a syntax inside these files.
+      per-list files the same way -- LoreRim's 34 untyped potions, say. Of the
+      two fixes this was first pictured for, the Thaumaturgy misread went into
+      code instead (0.22.9: the effect keyword, plus "Thaumaturgy loaded means
+      AV 106 is never alchemy"), and Arcane Mass Inhibition shipped in 0.22.9
+      as the first ACTIVE section of the single file -- the one existing
+      install to migrate. The unbuilt spell-pattern file (Doc-migration
+      findings) could become a syntax inside these files.
       Not in the Next up order. It changes no learning or scoring until a new
       file appears, so it can land before the soak.
       Raised 2026-10-02.
