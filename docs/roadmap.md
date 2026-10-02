@@ -386,6 +386,11 @@ stage".
       Burden Rune, Ash Form, Ash Cloud, The Unwelcome Guest, Daedric
       Invocation -- plus their 13 scrolls. Those are in scope even if powers
       stay out.
+      LoreRim (same day): 976 Unknowns, all script-only -- 697 spells, 147
+      lesser powers, 25 powers, 107 scrolls -- and 105 of the 1,107
+      tome-learnable spells. Across all three load orders EVERY unclassified
+      spell and scroll is script-only: the classifier covers every effect it
+      can read, so this entry is the whole remaining classification gap.
 
 - [ ] **Thaumaturgy reuses `kAlchemyModifier` for Fortify Poison Use.**
       Simonrim, `hg dump apparel` 2026-10-01: 5,609 enchanted pieces, only 6
