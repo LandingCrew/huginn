@@ -299,6 +299,49 @@ with how the run is played and laid out -- see the Phase 2 review notes.
       of "inert" was ever about Requiem's content. Apparel now answers the
       alchemy lab (#65, PR #114); the forge may still have no live payload
 
+- [ ] **An overrides directory, so mod authors can ship their own.** The
+      user, 2026-10-02: make the overrides file a directory, load every file
+      in it, and let mod authors publish theirs -- the SPID `_DISTR.ini` /
+      KID pattern. Today it is one file, `Data/SKSE/Plugins/Huginn_Overrides.ini`,
+      read by both SpellOverrides and ItemOverrides (path hard-coded in
+      `SpellRegistry.cpp` and `ItemRegistry.cpp`), re-read on `hg rebuild` and
+      `hg reset all`.
+      What it takes beyond "read a folder":
+      - **Keys that survive another install.** Sections key on a display name
+        or a RUNTIME FormID, and the runtime id carries the load-order index,
+        so an author cannot ship it; names break on translated games and on
+        shared names. Published files need a plugin-relative key, e.g.
+        `[Spell:0x800~Mod.esp]` (SPID's form), resolved with
+        `TESDataHandler::LookupForm` at load. Not editor IDs -- the game does
+        not keep them without powerofthree's Tweaks.
+      - **Precedence.** Two files can claim one form. Load in a fixed order
+        (alphabetical, as SPID does) with the player's own file last, so it
+        wins, and log each conflict with both file names.
+      - **Missing plugins are normal.** A section whose plugin is not loaded
+        is skipped at debug level, not warned about. The unmatched-override
+        report names the file each section came from.
+      - **One bad file cannot break the rest.** Last-known-good on a parse
+        failure is per file today; keep it per file inside the directory.
+      - **The vocabulary becomes an API.** Once third-party files use the
+        type and tag names, renaming one breaks them. Document the format on
+        the wiki (Mod Compatibility) and give files a format version key.
+      - Keep reading the old single file, or move the shipped one into the
+        directory, so existing installs keep working.
+      - `hg dump spells` has no plugin column (the potion, food and weights
+        dumps do) -- add plugin and local id, so an author can build a file
+        from a dump.
+      Why it pays: every spell the classifier cannot read is script-only
+      ("Script-only powers and scrolls are unclassified": simonrim's 13
+      learnable script-only spells, LoreRim's 105 tome-learnable ones), and
+      their authors are the people who know what they do. Huginn can ship
+      per-list files the same way -- LoreRim's 34 untyped potions, the
+      Thaumaturgy ring misread, Arcane Mass Inhibition (Phase 1 #5; if this
+      lands first, that fix goes in the new layout). The unbuilt spell-pattern
+      file (Doc-migration findings) could become a syntax inside these files.
+      Not in the Next up order. It changes no learning or scoring until a new
+      file appears, so it can land before the soak.
+      Raised 2026-10-02.
+
 ## Platform and dependencies
 - [ ] **Move off CharmedBaryon CommonLibSSE-NG; support Skyrim 1.7.104.**
       **PAUSED -- waiting on LoreRim 5.1** (the test install is still on 1.6).
