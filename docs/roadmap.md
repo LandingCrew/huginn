@@ -366,26 +366,6 @@ stage".
       before trusting their conclusions.
       Raised 2026-09-24.
 
-- [ ] **Confirm the Defensive-element rule on both load orders.** v0.22.8: a
-      Defensive spell's element now comes only from a resist actor value on
-      its effects (`SpellClassifier::ResistedElement`), never from a word in
-      its name -- Ice Armor (`kDamageResist`) read as Frost from "Ice" and was
-      promoted under frost damage, then suppressed once the player resisted it.
-      On LoreRim (2026-09-23) the nine genuine Defensive elements all carry the
-      matching resist AV, so the rule keeps them and clears Ice Armor. Check:
-      `hg dump spells` now has a `resistedElement` column; on LoreRim and on
-      simonrim, the Defensive rows whose `element` changed should be Ice Armor
-      and nothing a player would call elemental (XS).
-      **LoreRim checked 2026-10-01: the rule changes nothing.** All 80
-      Defensive spells with an element match `resistedElement`, and none lost
-      one. Ice Armor KEEPS Frost, correctly: its second effect resists frost
-      ("...armor rating by <mag> and frost resistance by <mag>%"). The 09-23
-      reading took only the costliest effect (`kDamageResist`) and missed it.
-      Same for Flame Cloak (Frost) and Whirlwind Cloak (Fire). One mixed
-      spell, a frost+shock "Shock Shield on Self" (`FE645828`), takes the
-      first resist found (Frost). The rule stays as a guard for load orders
-      where a name really is the only source. Left: simonrim.
-
 - [ ] Arcane Mass Inhibition is typed Utility and should be Debuff.
       One spell, recorded so it is not rediscovered as a mystery. #128 types a
       self-delivered, non-hostile, detrimental spell as Utility — a cost you pay
