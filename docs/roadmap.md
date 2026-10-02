@@ -6,17 +6,55 @@ once its entry leaves this file. Git history is the only record; check it before
 re-opening something that looks obviously undone.
 
 ## Next up
-Suggested order, each played and measured like #140-#148. Details are in the
-entries named.
+Priority order, set with the user 2026-10-02. Details are in the entries
+named. The rule that orders it: anything that changes learning or scoring
+lands AFTER the soak run, so the run measures one frozen build; anything
+that only logs or fixes config lands BEFORE it.
 
-1. **Share learning across similar items** (pooling) -- under Follow-ups.
-   Decided with the user 2026-10-01 as the next real piece of work: it is
-   the one entry that addresses the decay criticism, the cold start and
-   (later) item differentiation together.
-   Pre-check done 2026-10-01 (results on the entry): on the current save
-   the classes do NOT differ, but that save's weights are reset-heavy and
-   test-polluted. Next: a clean save played normally, then `hg dump weights`
-   again before building anything.
+**Phase 1 -- pre-soak cleanup (none of it touches learning):**
+1. **Default slot keys off the number row** -- Known Mod Compatability
+   Issues. XS, config only (`configs/Huginn.ini` `iSlot1Key`-`iSlot9Key`).
+   First because the double-fire is what polluted the last save's weights.
+2. **Reward-time logging** -- on "Learning swamps context". At each reward:
+   the chosen item's utility, rank and ctx, what it displaced, and its
+   source (key / wheel / menu). Changes nothing; sizes the cap and k from
+   the soak data and enables offline replay. S.
+3. **`sUncastableSpellPolicy = Penalize`** -- Doc-migration findings. Remove
+   it (treat as Allow). The learner-reward ideas it prompted live on
+   "Learning swamps context", not here. XS.
+4. **Arcane Mass Inhibition override + document the spell-type vocabulary
+   in `Huginn_Overrides.ini`** -- one pass over one file. S.
+5. Optional: **Thaumaturgy Fortify Poison Use** misread -- simonrim only. S.
+
+**Phase 2 -- the soak run.** Clean save, `hg reset weights`, no test
+sessions on it, played normally. `hg dump weights` / `potions` / `scrolls`
+at both ends (and add a carried-and-trained section to
+docs/reference/classifier-coverage.md from them). Checklist to ride along:
+- torch on a Huginn Wheeler wheel (Kit page, Utility key);
+- arrest, yield, re-engage -- watch `Enemies:` against `Combat:`;
+- Restore Health/Stamina in a fight that is not a kite;
+- `hg rebuild` once -- does `870710C4` register?
+- uid87 Long Bow ExtraHealth at each session start;
+- the equip flood with the slot hold in.
+
+**Phase 3 -- learning rework, in this order** (all on "Learning swamps
+context" unless named):
+1. **Restore the balance** -- cap the learned boost per candidate type
+   (weapons high; potions, spells, food low) or rank within context bands.
+   Soak logs set the numbers.
+2. **Prior as pseudo-observations** -- prior on the reward scale,
+   n/(n+n0) instead of the sigmoid, decay n with the weights.
+3. **Surprise-weighted updates** -- capped inverse-propensity step size.
+4. **Share learning across similar items** (pooling) -- under Follow-ups.
+   Was #1 here until 2026-10-02: pooling only raises the floor for untrained
+   items and leaves the 12x multiplier on top, so the balance goes first.
+   Class level for potions, spells and scrolls, per item for weapons; class
+   = the context-weight tag. Only if the soak dump shows classes differ.
+5. Later: **Behavioural modes as a recall stage**, then **#15/#16
+   learnable context weights**.
+
+**Parked tracks** (not in the order): CommonLib migration (waiting on
+LoreRim 5.1), dMenu -> SKSE Menu Framework, apparel expansion, Tier 3 perf.
 
 **What Huginn is measured by** (the user, 2026-10-01). Two objective
 metrics; everything else is a proxy:
@@ -265,6 +303,32 @@ v0.22.8, in the `goals` field of the `[Soak]` heartbeat
       detail. So per-item learning suits the few, and class-level learning
       plus context suits the many -- the same split pooling (Follow-ups) is
       reaching for from the other side.
+      Per category (carried counts, not the load-order totals in
+      docs/reference/classifier-coverage.md):
+      - Weapons: a handful, each used constantly -- per item, high or no cap.
+      - Apparel: craft gear only, out of combat -- small pool, per item.
+      - Spells: dozens, situational -- class level, low cap.
+      - Potions: ~69 carried, 63 untrained -- class level;
+        `sPotionTierPreference` already orders tier siblings.
+      - Scrolls: ~52 carried, 46 untrained, rarely used -- per-item learning
+        never converges at that rate; class level is the only way in.
+      - Food: already context-driven, vectors uncorrelated even within the
+        class -- lowest cap, let hunger/cold decide.
+      Three consequences:
+      - **Unclassified items keep per-item learning at full strength.**
+        Script-only spells, LoreRim's 34 untyped potions and simonrim's 13
+        learnable script-only spells have no class to pool and draw only the
+        0.05 baseline; under a cap a heavily used one could never climb. Never
+        pool them into one Unknown bucket.
+      - **Class grain is the real decision.** Probably the tag that maps to a
+        context-weight field (what `WeightForCandidate` matches on), so
+        learning and context share one grouping. Re-run the pooling pre-check
+        grouped that way -- "classes do not differ" may have been the wrong
+        grain.
+      - **Classifier errors start to train the wrong class.** With less
+        learning, context ranks more, and with pooling a misread (Ice Armor's
+        name-derived Frost, the Thaumaturgy ring) also trains the wrong
+        class. The coverage checks become guarantees the learner relies on.
       Options, not decided:
       - Cap the learned boost (`lambda*learn` <= ~2-3x) so context stays a
         real gate; or a per-candidate-type lambdaMax (high for weapons, low
@@ -799,6 +863,8 @@ trigger to pick any of it up.
       Neither is measured. (A) is cheap enough to try and discard; (B) should
       not be started until (A) has shown that pooling helps at all on real play
       data.
+      **2026-10-02: moved behind "Learning swamps context"** (Known
+      Recommendation Issues) -- fix the 12x balance first; see Next up.
       **Picked as next up (with the user, 2026-10-01).** Three criticisms it
       has to answer, in order:
       - **Decay.** Lazy decay is 2%/hour once an item is idle for 5 minutes
