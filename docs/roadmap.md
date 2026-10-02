@@ -366,6 +366,21 @@ stage".
       before trusting their conclusions.
       Raised 2026-09-24.
 
+- [ ] **Script-only powers and scrolls are unclassified -- PARKED 2026-10-01.**
+      Not on the user's plate: powers are too much of a grab bag for a
+      classifier right now. Found by the vanilla `hg dump spells`: all 50
+      vanilla Unknowns have every effect scripted (archetype -1, AV -1), so
+      the classifier has nothing to read. Most are rightly Unknown (quest and
+      FX spells). The player-facing ones: racial powers (Berserker Rage,
+      Night Eye, Command Animal, Vampire's Sight), earned powers (Shadowcloak
+      of Nocturnal, the Dragonborn black-book Secrets and Root of Power,
+      Bardic Knowledge, Secret Servant, Black Market), transformations (Beast
+      Form, Werebear Form, Vampire Lord), and the five Shalidor's Insights
+      scrolls (school cost/potency -- Buffs). Answer when picked up: whether
+      powers should be candidates at all; if not, only the Shalidor scrolls
+      matter, and an override entry or the unbuilt spell-pattern file covers
+      them.
+
 - [ ] Arcane Mass Inhibition is typed Utility and should be Debuff.
       One spell, recorded so it is not rediscovered as a mystery. #128 types a
       self-delivered, non-hostile, detrimental spell as Utility — a cost you pay
