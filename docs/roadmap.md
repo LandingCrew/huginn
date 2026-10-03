@@ -789,10 +789,16 @@ with how the run is played and laid out -- see the Phase 2 review notes.
       explain why no fight since has reproduced it. To confirm: get arrested,
       yield, then re-engage, and watch `Enemies:` against `Combat:`.
 
-- [ ] **Thirst is not tracked -- PARKED 2026-09-30.** Skipped with the user:
-      there is no reliable way to buy water from innkeepers on LoreRim, so a
-      thirst prompt would point at drinks the player often cannot get. Pick
-      it up if a load order makes water easy to come by.
+- [ ] **Thirst is not tracked -- UNPARKED 2026-10-03.** Parked 2026-09-30
+      because there was no reliable way to buy water from innkeepers on
+      LoreRim. The user found the way: LoreRim's waterskins are craftable,
+      and once you own one an innkeeper refills it for free -- so water is
+      easy to come by after all. Check before the rule: a drunk waterskin
+      probably becomes an empty-waterskin form, which must not be offered
+      for thirst (tag only the filled one).
+      Aside, not Huginn: telling the player where a need can be met (a
+      refill at the innkeeper) is a follow-on mod idea of the user's,
+      "immersive hints".
       Original entry: **Thirst is not tracked.** LoreRim runs a thirst need ("Thirst -
       Parched" in Active Effects, from DVSMP Survival Tweaks per research,
       unverified), and waters, teas and waterskins carry `Hydrated` /
