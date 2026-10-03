@@ -199,10 +199,17 @@ context" unless named):
   bane weapons against undead and daedra, resist potions and gear for a
   dragon's element, poisons by target (the poisons half of "Gear and
   poisons, decided direction"), and uses for beast and construct. Only
-  what the player can perceive -- the target's type, race, and what it
-  visibly wields or casts -- never its stats or spell list (CLAUDE.md,
-  Forbidden Information). The behaviour-modes idea lists enemy race and
-  visible enemy weapon as count-only sensors; this is the rule-based half.
+  what the player can perceive (the perception line below). The
+  behaviour-modes idea lists enemy race and visible enemy weapon as
+  count-only sensors; this is the rule-based half.
+  **The perception line** (the user, 2026-10-02 -- earlier wording here
+  and under "Gear and poisons" said "never its stats", which overstated
+  it): what the HUD shows the player, Huginn may read. The target's
+  health, magicka and stamina bars, its type and race, and the weapons it
+  has equipped are all on screen. Spells are the hard case: what it holds
+  in hand is visible when cast, its spell list is not (CLAUDE.md,
+  Forbidden Information). Hidden numbers -- resistances, perks, level --
+  stay out.
 - **Hunger weight: a ramp, not two steps.** Today `HungerTier` gives food
   nothing below Hungry (3), half at Hungry, full from Famished (4), so
   Starving (5) weighs no more than Famished, and the weight drops to zero
@@ -227,8 +234,9 @@ context" unless named):
     "in combat".
   - *Powder of Burning* (inventory): the damage-over-time effect was wanted
     for a boss. The user: hard to capture in Huginn today. Perceivable
-    stand-ins: one tough hostile rather than many, a long fight, its health
-    falling slowly -- never its stats (Forbidden Information).
+    signals: one tough hostile rather than many, a long fight, its health
+    bar falling slowly (the bar is on screen, so it may be read -- see the
+    perception line above).
   Both are the context half; the learner cannot invent a situation the
   feature vector does not describe.
 - **Score compression for repeated re-equips.** Seen the same run: the
@@ -238,9 +246,10 @@ context" unless named):
   selection. The user, 2026-10-02: needs score compression for continuous
   re-equips. Phase 3 #1 (choice target, learned term on 0-1, ~4x cap) and
   #2 (per-type lambdaMax, weapons high) are the planned answer; check them
-  against this case, and consider whether a return to the main weapon
-  within seconds of a scroll is the same choice repeated rather than a new
-  one.
+  against this case. Decided (the user, 2026-10-02): a return to the main
+  weapon within seconds of a scroll or spell is not a new choice -- no
+  reward, or a very weak one. Remembrance already knows the displaced
+  piece, so "putting back what the scroll took off" is detectable.
 
 **Parked tracks** (not in the order): CommonLib migration (waiting on
 LoreRim 5.1), dMenu -> SKSE Menu Framework, apparel expansion, Tier 3 perf.
@@ -961,9 +970,11 @@ with how the run is played and laid out -- see the Phase 2 review notes.
       Poisons are the same problem: the right poison depends on what is
       being fought (a paralysis poison on a dragon, frost on a fire atronach,
       damage-magicka on a mage). Only perceivable target facts may drive it
-      -- race/type (undead, daedra, dragon, humanoid), what the target is
-      visibly casting or wielding -- never a stat sheet (CLAUDE.md,
-      Forbidden Information). Wants a poison dump (effects, keywords) and a
+      -- race/type (undead, daedra, dragon, humanoid), its health,
+      magicka and stamina bars, what it is visibly casting or wielding --
+      not its spell list or hidden numbers (CLAUDE.md, Forbidden
+      Information; see "the perception line" under Next up). Wants a
+      poison dump (effects, keywords) and a
       target-keyword survey before a rule.
       Raised 2026-09-30.
 
