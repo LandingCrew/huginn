@@ -153,6 +153,104 @@ context" unless named):
 6. Later: **Behavioural modes as a recall stage**, then **#15/#16
    learnable context weights**.
 
+**After the soak, not learning** (raised by the user during the run,
+2026-10-02; not ordered against Phase 3 yet):
+- **Haggling gear at a merchant.** Seen in play: at a vendor the user
+  swapped Amulet of Zenithar for Necklace of Minor Haggling by hand, in the
+  inventory -- a goal-1 reach-in. Promotes the haggling tier of "Recommend
+  enchanted apparel beyond the three craft skills" (Known Recommendation
+  Issues): there is still no merchant or barter context in `src/`. It is
+  the craft-gear case again -- out of combat, one jewellery slot, no armour
+  stripped -- so the combat BLOCKER on that entry does not apply. It needs:
+  - **A merchant context** from what the player can see: talking to, or
+    looking at, someone who trades (vendor faction / services). The swap
+    has to be offered before the BarterMenu opens, since Huginn's keys do
+    not fire inside a menu.
+  - **Worn against offered.** Both pieces in that swap read "Prices are 5%
+    more favorable", so the right answer was no swap. Compare the barter
+    magnitude of what the slot holds now -- the worn-vs-candidate check
+    the apparel entry lists as (b).
+  - **Taking it back off** on Remembrance, as decided for craft gear ("Gear
+    and poisons, decided direction").
+- **The emergency potion: smallest that covers the deficit -- learned, not
+  a rule.** Today `ItemRegistry::GetBestPotion` gives the emergency key the
+  potion that restores the most within the urgent window (pure first), so
+  30 missing health spends the 50 potion. The user (2026-10-02): this
+  should be learnable rather than a fixed "optimal" rule, as in auto-potion
+  mods (Swift Potion NG) -- some players top off, some hoard the big ones.
+  The pick is deterministic and outside the learner today; it needs a
+  restore-to-deficit fit term the learner can see, and the emergency key
+  choosing among the qualifying potions by score.
+- **No second restore while one is still working -- over-time lists
+  only.** Vanilla restores are instant; LoreRim and other Requiem-style
+  lists restore over time, so the emergency key can offer another potion
+  while the first is still ticking. Read the player's active restore
+  effects (the active-effect walk `StateManager_MagicEffects` already does)
+  and hold the key back while what is left of them covers the deficit --
+  unless the vital is still falling. Must change nothing on an instant
+  list.
+- Food as the last emergency fallback -- decided against (the user,
+  2026-10-02): food does not do what an emergency needs in most cases.
+- **Items matched to the enemy, beyond spells.** Raised in play,
+  2026-10-02. Built today: `TargetType` (closest hostile: humanoid,
+  undead, beast, dragon, construct, daedra) raises the anti-undead,
+  anti-daedra and anti-dragon weights, which only spells answer; beast and
+  construct are read and drive nothing. Still open: silver and other
+  bane weapons against undead and daedra, resist potions and gear for a
+  dragon's element, poisons by target (the poisons half of "Gear and
+  poisons, decided direction"), and uses for beast and construct. Only
+  what the player can perceive (the perception line below). The
+  behaviour-modes idea lists enemy race and visible enemy weapon as
+  count-only sensors; this is the rule-based half.
+  **The perception line** (the user, 2026-10-02 -- earlier wording here
+  and under "Gear and poisons" said "never its stats", which overstated
+  it): what the HUD shows the player, Huginn may read. The target's
+  health, magicka and stamina bars, its type and race, and the weapons it
+  has equipped are all on screen. Spells are the hard case: what it holds
+  in hand is visible when cast, its spell list is not (CLAUDE.md,
+  Forbidden Information). Hidden numbers -- resistances, perks, level --
+  stay out.
+- **Hunger weight: a ramp, not two steps.** Today `HungerTier` gives food
+  nothing below Hungry (3), half at Hungry, full from Famished (4), so
+  Starving (5) weighs no more than Famished, and the weight drops to zero
+  the moment the player reaches Peckish. Seen on LoreRim, 2026-10-02
+  21:45: the player ate six meals in eight seconds on one key, hunger
+  5 -> 1; the food's context went 0.50, 0.50, 0.50, 0.50, 0.25, 0.05 --
+  the last two meals were eaten past where Huginn thought hunger mattered.
+  The user: the worse the survival need, the more weight food should get.
+  Options: ramp on the 0-1000 hunger need value `StateManager_Survival`
+  already reads, with Starving above Famished; and once the player starts
+  eating, keep food up until Fed rather than dropping it at Peckish. Same
+  shape for cold (`ColdTier`) and fatigue. Scoring, so after the soak.
+- **Fight shape: a summon when pressed, damage over time on a boss.** Two
+  reach-ins from the LoreRim run, 2026-10-02, both explained by the user:
+  - *Scroll of Conjure Spectral Warhound* (23:31:38): a heavy-weapons
+    paladin in close with a faster enemy needs a distraction that keeps
+    them alive and adds damage. Huginn's summon rule is "in combat and no
+    summon active" at a flat weight (`summonWeight`), so the scroll ranked
+    too low to show. Signals that already exist: distance to the closest
+    hostile (v0.22.5), health falling (VitalEnvelope), melee build.
+    "Pressed in melee, no summon up" should lift summons well above
+    "in combat".
+  - *Powder of Burning* (inventory): the damage-over-time effect was wanted
+    for a boss. The user: hard to capture in Huginn today. Perceivable
+    signals: one tough hostile rather than many, a long fight, its health
+    bar falling slowly (the bar is on screen, so it may be read -- see the
+    perception line above).
+  Both are the context half; the learner cannot invent a situation the
+  feature vector does not describe.
+- **Score compression for repeated re-equips.** Seen the same run: the
+  Wooden Battlestaff's utility went 2.2 -> 16.2 in one session at context
+  0.2-0.3, nearly all learned weight -- a heavy-weapons build re-equips its
+  main weapon after every scroll or spell, and each re-equip is a full
+  selection. The user, 2026-10-02: needs score compression for continuous
+  re-equips. Phase 3 #1 (choice target, learned term on 0-1, ~4x cap) and
+  #2 (per-type lambdaMax, weapons high) are the planned answer; check them
+  against this case. Decided (the user, 2026-10-02): a return to the main
+  weapon within seconds of a scroll or spell is not a new choice -- no
+  reward, or a very weak one. Remembrance already knows the displaced
+  piece, so "putting back what the scroll took off" is detectable.
+
 **Parked tracks** (not in the order): CommonLib migration (waiting on
 LoreRim 5.1), dMenu -> SKSE Menu Framework, apparel expansion, Tier 3 perf.
 
@@ -282,6 +380,53 @@ with how the run is played and laid out -- see the Phase 2 review notes.
       same tick. That hit fortify potions on vanilla too, so re-check how much
       of "inert" was ever about Requiem's content. Apparel now answers the
       alchemy lab (#65, PR #114); the forge may still have no live payload
+- [ ] **An overrides directory, so mod authors can ship their own.** The
+      user, 2026-10-02: make the overrides file a directory, load every file
+      in it, and let mod authors publish theirs -- the SPID `_DISTR.ini` /
+      KID pattern. Today it is one file, `Data/SKSE/Plugins/Huginn_Overrides.ini`,
+      read by both SpellOverrides and ItemOverrides (path hard-coded in
+      `SpellRegistry.cpp` and `ItemRegistry.cpp`), re-read on `hg rebuild` and
+      `hg reset all`.
+      What it takes beyond "read a folder":
+      - **Keys that survive another install.** Sections key on a display name
+        or a RUNTIME FormID, and the runtime id carries the load-order index,
+        so an author cannot ship it; names break on translated games and on
+        shared names. Published files need a plugin-relative key, e.g.
+        `[Spell:0x800~Mod.esp]` (SPID's form), resolved with
+        `TESDataHandler::LookupForm` at load. Not editor IDs -- the game does
+        not keep them without powerofthree's Tweaks.
+      - **Precedence.** Two files can claim one form. Load in a fixed order
+        (alphabetical, as SPID does) with the player's own file last, so it
+        wins, and log each conflict with both file names.
+      - **Missing plugins are normal.** A section whose plugin is not loaded
+        is skipped at debug level, not warned about. The unmatched-override
+        report names the file each section came from.
+      - **One bad file cannot break the rest.** Last-known-good on a parse
+        failure is per file today; keep it per file inside the directory.
+      - **The vocabulary becomes an API.** Once third-party files use the
+        type and tag names, renaming one breaks them. Document the format on
+        the wiki (Mod Compatibility) and give files a format version key.
+      - Keep reading the old single file, or move the shipped one into the
+        directory, so existing installs keep working. Since 0.22.9 the build
+        deploys `configs/Huginn_Overrides.ini` and it carries a live section
+        (Arcane Mass Inhibition), so moving it is a real migration.
+      - `hg dump spells` has no plugin column (the potion, food and weights
+        dumps do) -- add plugin and local id, so an author can build a file
+        from a dump.
+      Why it pays: every spell the classifier cannot read is script-only
+      ("Script-only powers and scrolls are unclassified": simonrim's 13
+      learnable script-only spells, LoreRim's 105 tome-learnable ones), and
+      their authors are the people who know what they do. Huginn can ship
+      per-list files the same way -- LoreRim's 34 untyped potions, say. Of the
+      two fixes this was first pictured for, the Thaumaturgy misread went into
+      code instead (0.22.9: the effect keyword, plus "Thaumaturgy loaded means
+      AV 106 is never alchemy"), and Arcane Mass Inhibition shipped in 0.22.9
+      as the first ACTIVE section of the single file -- the one existing
+      install to migrate. The unbuilt spell-pattern file (Doc-migration
+      findings) could become a syntax inside these files.
+      Not in the Next up order. It changes no learning or scoring until a new
+      file appears, so it can land before the soak.
+      Raised 2026-10-02.
 
 ## Platform and dependencies
 - [ ] **Move off CharmedBaryon CommonLibSSE-NG; support Skyrim 1.7.104.**
@@ -644,10 +789,25 @@ with how the run is played and laid out -- see the Phase 2 review notes.
       explain why no fight since has reproduced it. To confirm: get arrested,
       yield, then re-engage, and watch `Enemies:` against `Combat:`.
 
-- [ ] **Thirst is not tracked -- PARKED 2026-09-30.** Skipped with the user:
-      there is no reliable way to buy water from innkeepers on LoreRim, so a
-      thirst prompt would point at drinks the player often cannot get. Pick
-      it up if a load order makes water easy to come by.
+- [ ] **Thirst is not tracked -- UNPARKED 2026-10-03.** Parked 2026-09-30
+      because there was no reliable way to buy water from innkeepers on
+      LoreRim. The user found the way: LoreRim's waterskins are craftable,
+      and once you own one an innkeeper refills it for free -- so water is
+      easy to come by after all. Checked in play (2026-10-03 00:03, LoreRim):
+      - `Waterskin (Full)` (FE350801, a light plugin) carries `Hydrated`,
+        `Restore Thirst` and a scripted `Waterskin` effect. Drinking it left
+        the count unchanged -- the script keeps the charges, there is no
+        empty form to exclude -- so the selection path logged `Not confirmed
+        ... count never dropped`, and the drink taught nothing. Scripted
+        consumables need a second confirm signal: the effect appearing on
+        the player (`Hydrated` here) rather than a count drop.
+      - It is not a candidate at all today (`case=A (not candidate)`), and
+        `hg dump food` leaves it out: it is not classified as food.
+      - 95 items in the dump carry `Restore Thirst`, LoreRim's soups and
+        stews among them, so the effect name alone tags a broad set.
+      Aside, not Huginn: telling the player where a need can be met (a
+      refill at the innkeeper) is a follow-on mod idea of the user's,
+      "immersive hints".
       Original entry: **Thirst is not tracked.** LoreRim runs a thirst need ("Thirst -
       Parched" in Active Effects, from DVSMP Survival Tweaks per research,
       unverified), and waters, teas and waterskins carry `Hydrated` /
@@ -825,9 +985,11 @@ with how the run is played and laid out -- see the Phase 2 review notes.
       Poisons are the same problem: the right poison depends on what is
       being fought (a paralysis poison on a dragon, frost on a fire atronach,
       damage-magicka on a mage). Only perceivable target facts may drive it
-      -- race/type (undead, daedra, dragon, humanoid), what the target is
-      visibly casting or wielding -- never a stat sheet (CLAUDE.md,
-      Forbidden Information). Wants a poison dump (effects, keywords) and a
+      -- race/type (undead, daedra, dragon, humanoid), its health,
+      magicka and stamina bars, what it is visibly casting or wielding --
+      not its spell list or hidden numbers (CLAUDE.md, Forbidden
+      Information; see "the perception line" under Next up). Wants a
+      poison dump (effects, keywords) and a
       target-keyword survey before a rule.
       Raised 2026-09-30.
 
