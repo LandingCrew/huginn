@@ -153,9 +153,9 @@ namespace Huginn::Learning
         }
 
         const std::string line = std::format(
-            "{:%F %T} list={} launch={} gen={} page={} {:08X} '{}' src={} via={}{}{} kind={} | A={} A*={} B={} B'={} (open slots {}, "
+            "{:%F %T} list={} launch={} char={:016X} gen={} page={} {:08X} '{}' src={} via={}{}{} kind={} | A={} A*={} B={} B'={} (open slots {}, "
             "rank A*={} B={} B'={}{}){} | all: {} | outside: {}\n",
-            utc, g_listName, g_launchStamp, event.loadGeneration, snap.page, event.formID, name, EquipSourceToString(event.source), event.via,
+            utc, g_listName, g_launchStamp, g_activeCharacterID.load(std::memory_order_relaxed), event.loadGeneration, snap.page, event.formID, name, EquipSourceToString(event.source), event.via,
             event.attribution.empty() ? "" : " case=", event.attribution, SelectionKindToString(event.kind),
             onLivePage ? std::format("s{}", liveSlot) : std::string("no"),
             onAStar ? "yes" : "no", onB ? "yes" : "no", onBp ? "yes" : "no", openSlots, rankA, rankB, rankBp,

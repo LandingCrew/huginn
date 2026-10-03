@@ -71,6 +71,10 @@ extern std::atomic<uint32_t> g_loadGeneration;
 //   g_listName     the modlist folder the game runs from ("LoreRim-5", ...)
 extern std::string g_launchStamp;
 extern std::string g_listName;
+// The character the learner currently belongs to (cosave HCID; 0 = none yet).
+// Mirrored from Persist's own copy so the selection and A|B logs can stamp it
+// without reaching into the serializer.
+extern std::atomic<uint64_t> g_activeCharacterID;
 
 // Flags
 extern bool g_hasShownWelcomeNotification;

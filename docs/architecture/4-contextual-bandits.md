@@ -487,8 +487,8 @@ selection's update. Two outputs:
   candidate columns (`cols`). Appended across sessions, instances and
   characters, so each record says where it came from (v2, 0.22.10): `list`
   (the modlist folder the game runs from), `launch` (UTC start of the game
-  launch) and `gen` (the load within it -- what a death-and-reload
-  abandoned). This is the input for re-ranking logged selections
+  launch), `char` (the cosave character ID, 0.22.11) and `gen` (the load
+  within it -- what a death-and-reload abandoned). This is the input for re-ranking logged selections
   offline under a new formula. The game thread only takes the predictions
   (one learner lock) and queues the record; a background writer formats it
   and appends it to a stream it keeps open, flushed per record (0.22.10).

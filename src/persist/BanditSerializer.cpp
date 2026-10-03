@@ -133,6 +133,7 @@ namespace Huginn::Persist
       // the save is still identified.
       if (s_activeCharacterID == 0) {
          s_activeCharacterID = NewCharacterID();
+         g_activeCharacterID.store(s_activeCharacterID, std::memory_order_relaxed);
          logger::warn("[Cosave] No character ID at save time (unexpected) -- assigned {:016X}"sv,
             s_activeCharacterID);
       }
@@ -451,6 +452,7 @@ namespace Huginn::Persist
          learner.Clear();
          learner.SetClock(0);
          s_activeCharacterID = NewCharacterID();
+         g_activeCharacterID.store(s_activeCharacterID, std::memory_order_relaxed);
          logger::info("[Cosave] New game: learner cleared, character ID {:016X}"sv, s_activeCharacterID);
          return;
       }
@@ -503,6 +505,7 @@ namespace Huginn::Persist
       }
       learner.SetClock(s_loadedClock.value_or(0));
       s_activeCharacterID = loadedID;
+      g_activeCharacterID.store(s_activeCharacterID, std::memory_order_relaxed);
       logger::info("[Cosave] Loaded character {:016X}{} ({}): learner from the save ({} items, clock {})"sv,
          s_activeCharacterID, derived ? " [derived: save predates character IDs]" : "", why,
          learner.GetItemCount(), learner.GetClock());

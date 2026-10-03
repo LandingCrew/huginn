@@ -198,6 +198,7 @@ namespace Huginn::Learning
             float wildcardBase = 0.0f;
             float wildcardMax = 0.0f;
             std::vector<float> predictions;   // Parallel to event.shown.scores
+            uint64_t character = 0;           // g_activeCharacterID at confirmation
         };
 
         // Pure formatting -- runs on the writer thread.
@@ -211,8 +212,8 @@ namespace Huginn::Learning
             // v2 (0.22.10): "launch" and "list" say which game launch and which
             // modlist the record came from -- one file collects every launch of
             // every instance.
-            line += std::format(R"({{"v":2,"utc":"{:%F %T}","launch":"{}","list":{},"gen":{},"form":"{:08X}","name":{},"src":"{}","via":{},)",
-                r.utc, g_launchStamp, JsonString(g_listName), event.loadGeneration, event.formID, JsonString(r.name),
+            line += std::format(R"({{"v":2,"utc":"{:%F %T}","launch":"{}","list":{},"char":"{:016X}","gen":{},"form":"{:08X}","name":{},"src":"{}","via":{},)",
+                r.utc, g_launchStamp, JsonString(g_listName), r.character, event.loadGeneration, event.formID, JsonString(r.name),
                 EquipSourceToString(event.source), JsonString(event.via));
             line += std::format(R"("case":{},"kind":"{}","reward":{:.2f},"how":"{}","confirmMs":{:.0f},)",
                 JsonString(event.attribution), SelectionKindToString(event.kind), r.reward, r.how, event.confirmMs);
@@ -381,6 +382,7 @@ namespace Huginn::Learning
             record.wildcardMax = wc.GetMaxProbability();
         }
         record.predictions = std::move(pred.scores);
+        record.character = g_activeCharacterID.load(std::memory_order_relaxed);
         RecordWriter::Get().Enqueue(std::move(record));
     }
 }
