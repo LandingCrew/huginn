@@ -19,6 +19,18 @@ namespace Huginn::Persist
    inline constexpr uint32_t kBanditSerializationVersion = 2;
    inline constexpr uint32_t kUniqueID                = 'QCNO';  // 'ONCQ' on disk
 
+   // Which character a save belongs to, and how far its learning had got:
+   //   v2: [characterID: uint64] [learning clock: uint64]
+   //   v1: [characterID: uint64]   (pre-release 0.22.11 builds; still read)
+   // The ID is random at new game; a save from before it gets one derived
+   // from the player's name and race at its first load. Lets a load tell "the
+   // same character, reloaded" from "a different character", and "this save
+   // is behind what is in memory" from "this save is ahead" -- see
+   // ResolveLoadedLearner. Older Huginn versions skip the record with one
+   // warning.
+   inline constexpr uint32_t kRecordType_CharacterID = 'DICH';  // 'HCID' on disk
+   inline constexpr uint32_t kCharacterIDVersion     = 2;
+
    // Safety caps — prevent corrupted data from causing huge allocations
    inline constexpr uint32_t kMaxBanditItems        = 50'000;
    inline constexpr uint32_t kMaxBanditFeatures     = 256;
@@ -61,10 +73,21 @@ namespace Huginn::Persist
    // Must be called from SKSEPlugin_Load (before any save/load events fire).
    void RegisterSerialization();
 
-   // Check if the Load callback has buffered learner data waiting to be applied.
-   bool HasPendingBanditData();
-
    // Move buffered cosave data into the FeatureBanditLearner instance.
    // Returns true on success. Clears the buffer regardless.
    bool ApplyPendingBanditData(Learning::FeatureBanditLearner& learner);
+
+   // Decide what the learner holds after a new game or a load (kNewGame /
+   // kPostLoadGame), and apply it. Learning survives a reload (decided with
+   // the user, 2026-10-02): the fight that killed you is not forgotten.
+   //   - New game: a fresh learner and a new character ID.
+   //   - Failed load (`loadSucceeded` false): change nothing.
+   //   - Load of the character already in memory, whose learning clock is NOT
+   //     ahead of memory (a reload): keep the in-memory learner, except
+   //     dynamic-form (0xFF) entries, which are taken from the save.
+   //   - Anything else -- a different character, the first load since launch,
+   //     or a later save of the same character (its clock is ahead): the
+   //     save's learner, as before.
+   void ResolveLoadedLearner(Learning::FeatureBanditLearner& learner, bool isNewGame,
+      bool loadSucceeded = true);
 }

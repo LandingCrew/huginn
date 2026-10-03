@@ -153,7 +153,9 @@ namespace Huginn::Console
       // Run under the update mutex to prevent data races with the update loop.
       // Without this, the console thread could reset subsystems mid-update.
       Huginn::Update::UpdateHandler::GetSingleton()->RunExclusive([&] {
-         // 1. Clear learning data (console-specific — init path restores from cosave)
+         // 1. Clear learning data. A reload of the same character keeps this
+         //    cleared state (Clear ticks the learning clock past any older
+         //    save); a different character or a later save restores from it.
          size_t learnerItems = 0;
          if (g_featureBanditLearner) {
             learnerItems = g_featureBanditLearner->GetItemCount();

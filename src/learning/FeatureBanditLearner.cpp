@@ -45,6 +45,7 @@ namespace Huginn::Learning
       // Update train counts and last-update timestamp
       data.trainCount++;
       m_totalTrainCount++;
+      m_clock++;
       data.lastUpdate = std::chrono::steady_clock::now();
 
       logger::trace("Learner update: item={:08X}, reward={:.2f}, error={:.3f}, est {:.3f}->{:.3f}"sv,
@@ -271,9 +272,58 @@ namespace Huginn::Learning
 
       m_items.clear();
       m_totalTrainCount = 0;
+      m_clock++;
 
       logger::info("FeatureBanditLearner cleared: {} items, {} total trains removed"sv,
          itemCount, totalTrains);
+   }
+
+   uint64_t FeatureBanditLearner::GetClock() const
+   {
+      std::shared_lock lock(m_mutex);
+      return m_clock;
+   }
+
+   void FeatureBanditLearner::SetClock(uint64_t clock)
+   {
+      std::unique_lock lock(m_mutex);
+      m_clock = clock;
+   }
+
+   size_t FeatureBanditLearner::ReplaceDynamicEntries(const std::vector<SerializedEntry>& saveEntries)
+   {
+      const auto isDynamic = [](RE::FormID id) { return (id >> 24) == 0xFF; };
+
+      std::unique_lock lock(m_mutex);
+
+      size_t removed = 0;
+      for (auto it = m_items.begin(); it != m_items.end();) {
+         if (isDynamic(it->first)) {
+            m_totalTrainCount -= std::min(m_totalTrainCount, it->second.trainCount);
+            it = m_items.erase(it);
+            ++removed;
+         } else {
+            ++it;
+         }
+      }
+
+      const auto now = std::chrono::steady_clock::now();
+      size_t added = 0;
+      for (const auto& entry : saveEntries) {
+         if (!isDynamic(entry.formID)) continue;
+         m_items[entry.formID] = ItemLearningData{
+            entry.weights,
+            entry.trainCount,
+            now - std::chrono::minutes(entry.minutesSinceLastUpdate)};
+         m_totalTrainCount += entry.trainCount;
+         ++added;
+      }
+
+      if (removed || added) {
+         logger::info("FeatureBanditLearner: dynamic-form entries replaced from the save ({} removed, {} restored)"sv,
+            removed, added);
+      }
+      return removed;
    }
 
    void FeatureBanditLearner::ExportData(
