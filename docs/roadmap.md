@@ -191,6 +191,30 @@ context" unless named):
   list.
 - Food as the last emergency fallback -- decided against (the user,
   2026-10-02): food does not do what an emergency needs in most cases.
+- **Items matched to the enemy, beyond spells.** Raised in play,
+  2026-10-02. Built today: `TargetType` (closest hostile: humanoid,
+  undead, beast, dragon, construct, daedra) raises the anti-undead,
+  anti-daedra and anti-dragon weights, which only spells answer; beast and
+  construct are read and drive nothing. Still open: silver and other
+  bane weapons against undead and daedra, resist potions and gear for a
+  dragon's element, poisons by target (the poisons half of "Gear and
+  poisons, decided direction"), and uses for beast and construct. Only
+  what the player can perceive -- the target's type, race, and what it
+  visibly wields or casts -- never its stats or spell list (CLAUDE.md,
+  Forbidden Information). The behaviour-modes idea lists enemy race and
+  visible enemy weapon as count-only sensors; this is the rule-based half.
+- **Hunger weight: a ramp, not two steps.** Today `HungerTier` gives food
+  nothing below Hungry (3), half at Hungry, full from Famished (4), so
+  Starving (5) weighs no more than Famished, and the weight drops to zero
+  the moment the player reaches Peckish. Seen on LoreRim, 2026-10-02
+  21:45: the player ate six meals in eight seconds on one key, hunger
+  5 -> 1; the food's context went 0.50, 0.50, 0.50, 0.50, 0.25, 0.05 --
+  the last two meals were eaten past where Huginn thought hunger mattered.
+  The user: the worse the survival need, the more weight food should get.
+  Options: ramp on the 0-1000 hunger need value `StateManager_Survival`
+  already reads, with Starving above Famished; and once the player starts
+  eating, keep food up until Fed rather than dropping it at Peckish. Same
+  shape for cold (`ColdTier`) and fatigue. Scoring, so after the soak.
 
 **Parked tracks** (not in the order): CommonLib migration (waiting on
 LoreRim 5.1), dMenu -> SKSE Menu Framework, apparel expansion, Tier 3 perf.
