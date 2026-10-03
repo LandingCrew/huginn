@@ -153,6 +153,45 @@ context" unless named):
 6. Later: **Behavioural modes as a recall stage**, then **#15/#16
    learnable context weights**.
 
+**After the soak, not learning** (raised by the user during the run,
+2026-10-02; not ordered against Phase 3 yet):
+- **Haggling gear at a merchant.** Seen in play: at a vendor the user
+  swapped Amulet of Zenithar for Necklace of Minor Haggling by hand, in the
+  inventory -- a goal-1 reach-in. Promotes the haggling tier of "Recommend
+  enchanted apparel beyond the three craft skills" (Known Recommendation
+  Issues): there is still no merchant or barter context in `src/`. It is
+  the craft-gear case again -- out of combat, one jewellery slot, no armour
+  stripped -- so the combat BLOCKER on that entry does not apply. It needs:
+  - **A merchant context** from what the player can see: talking to, or
+    looking at, someone who trades (vendor faction / services). The swap
+    has to be offered before the BarterMenu opens, since Huginn's keys do
+    not fire inside a menu.
+  - **Worn against offered.** Both pieces in that swap read "Prices are 5%
+    more favorable", so the right answer was no swap. Compare the barter
+    magnitude of what the slot holds now -- the worn-vs-candidate check
+    the apparel entry lists as (b).
+  - **Taking it back off** on Remembrance, as decided for craft gear ("Gear
+    and poisons, decided direction").
+- **The emergency potion: smallest that covers the deficit -- learned, not
+  a rule.** Today `ItemRegistry::GetBestPotion` gives the emergency key the
+  potion that restores the most within the urgent window (pure first), so
+  30 missing health spends the 50 potion. The user (2026-10-02): this
+  should be learnable rather than a fixed "optimal" rule, as in auto-potion
+  mods (Swift Potion NG) -- some players top off, some hoard the big ones.
+  The pick is deterministic and outside the learner today; it needs a
+  restore-to-deficit fit term the learner can see, and the emergency key
+  choosing among the qualifying potions by score.
+- **No second restore while one is still working -- over-time lists
+  only.** Vanilla restores are instant; LoreRim and other Requiem-style
+  lists restore over time, so the emergency key can offer another potion
+  while the first is still ticking. Read the player's active restore
+  effects (the active-effect walk `StateManager_MagicEffects` already does)
+  and hold the key back while what is left of them covers the deficit --
+  unless the vital is still falling. Must change nothing on an instant
+  list.
+- Food as the last emergency fallback -- decided against (the user,
+  2026-10-02): food does not do what an emergency needs in most cases.
+
 **Parked tracks** (not in the order): CommonLib migration (waiting on
 LoreRim 5.1), dMenu -> SKSE Menu Framework, apparel expansion, Tier 3 perf.
 
@@ -282,6 +321,53 @@ with how the run is played and laid out -- see the Phase 2 review notes.
       same tick. That hit fortify potions on vanilla too, so re-check how much
       of "inert" was ever about Requiem's content. Apparel now answers the
       alchemy lab (#65, PR #114); the forge may still have no live payload
+- [ ] **An overrides directory, so mod authors can ship their own.** The
+      user, 2026-10-02: make the overrides file a directory, load every file
+      in it, and let mod authors publish theirs -- the SPID `_DISTR.ini` /
+      KID pattern. Today it is one file, `Data/SKSE/Plugins/Huginn_Overrides.ini`,
+      read by both SpellOverrides and ItemOverrides (path hard-coded in
+      `SpellRegistry.cpp` and `ItemRegistry.cpp`), re-read on `hg rebuild` and
+      `hg reset all`.
+      What it takes beyond "read a folder":
+      - **Keys that survive another install.** Sections key on a display name
+        or a RUNTIME FormID, and the runtime id carries the load-order index,
+        so an author cannot ship it; names break on translated games and on
+        shared names. Published files need a plugin-relative key, e.g.
+        `[Spell:0x800~Mod.esp]` (SPID's form), resolved with
+        `TESDataHandler::LookupForm` at load. Not editor IDs -- the game does
+        not keep them without powerofthree's Tweaks.
+      - **Precedence.** Two files can claim one form. Load in a fixed order
+        (alphabetical, as SPID does) with the player's own file last, so it
+        wins, and log each conflict with both file names.
+      - **Missing plugins are normal.** A section whose plugin is not loaded
+        is skipped at debug level, not warned about. The unmatched-override
+        report names the file each section came from.
+      - **One bad file cannot break the rest.** Last-known-good on a parse
+        failure is per file today; keep it per file inside the directory.
+      - **The vocabulary becomes an API.** Once third-party files use the
+        type and tag names, renaming one breaks them. Document the format on
+        the wiki (Mod Compatibility) and give files a format version key.
+      - Keep reading the old single file, or move the shipped one into the
+        directory, so existing installs keep working. Since 0.22.9 the build
+        deploys `configs/Huginn_Overrides.ini` and it carries a live section
+        (Arcane Mass Inhibition), so moving it is a real migration.
+      - `hg dump spells` has no plugin column (the potion, food and weights
+        dumps do) -- add plugin and local id, so an author can build a file
+        from a dump.
+      Why it pays: every spell the classifier cannot read is script-only
+      ("Script-only powers and scrolls are unclassified": simonrim's 13
+      learnable script-only spells, LoreRim's 105 tome-learnable ones), and
+      their authors are the people who know what they do. Huginn can ship
+      per-list files the same way -- LoreRim's 34 untyped potions, say. Of the
+      two fixes this was first pictured for, the Thaumaturgy misread went into
+      code instead (0.22.9: the effect keyword, plus "Thaumaturgy loaded means
+      AV 106 is never alchemy"), and Arcane Mass Inhibition shipped in 0.22.9
+      as the first ACTIVE section of the single file -- the one existing
+      install to migrate. The unbuilt spell-pattern file (Doc-migration
+      findings) could become a syntax inside these files.
+      Not in the Next up order. It changes no learning or scoring until a new
+      file appears, so it can land before the soak.
+      Raised 2026-10-02.
 
 ## Platform and dependencies
 - [ ] **Move off CharmedBaryon CommonLibSSE-NG; support Skyrim 1.7.104.**
