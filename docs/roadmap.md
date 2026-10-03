@@ -215,6 +215,32 @@ context" unless named):
   already reads, with Starving above Famished; and once the player starts
   eating, keep food up until Fed rather than dropping it at Peckish. Same
   shape for cold (`ColdTier`) and fatigue. Scoring, so after the soak.
+- **Fight shape: a summon when pressed, damage over time on a boss.** Two
+  reach-ins from the LoreRim run, 2026-10-02, both explained by the user:
+  - *Scroll of Conjure Spectral Warhound* (23:31:38): a heavy-weapons
+    paladin in close with a faster enemy needs a distraction that keeps
+    them alive and adds damage. Huginn's summon rule is "in combat and no
+    summon active" at a flat weight (`summonWeight`), so the scroll ranked
+    too low to show. Signals that already exist: distance to the closest
+    hostile (v0.22.5), health falling (VitalEnvelope), melee build.
+    "Pressed in melee, no summon up" should lift summons well above
+    "in combat".
+  - *Powder of Burning* (inventory): the damage-over-time effect was wanted
+    for a boss. The user: hard to capture in Huginn today. Perceivable
+    stand-ins: one tough hostile rather than many, a long fight, its health
+    falling slowly -- never its stats (Forbidden Information).
+  Both are the context half; the learner cannot invent a situation the
+  feature vector does not describe.
+- **Score compression for repeated re-equips.** Seen the same run: the
+  Wooden Battlestaff's utility went 2.2 -> 16.2 in one session at context
+  0.2-0.3, nearly all learned weight -- a heavy-weapons build re-equips its
+  main weapon after every scroll or spell, and each re-equip is a full
+  selection. The user, 2026-10-02: needs score compression for continuous
+  re-equips. Phase 3 #1 (choice target, learned term on 0-1, ~4x cap) and
+  #2 (per-type lambdaMax, weapons high) are the planned answer; check them
+  against this case, and consider whether a return to the main weapon
+  within seconds of a scroll is the same choice repeated rather than a new
+  one.
 
 **Parked tracks** (not in the order): CommonLib migration (waiting on
 LoreRim 5.1), dMenu -> SKSE Menu Framework, apparel expansion, Tier 3 perf.
