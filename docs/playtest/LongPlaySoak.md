@@ -150,11 +150,17 @@ wrong recommendation, widget stutter, a freeze. Don't narrate; the heartbeat
 and logs carry the rest.
 
 **After, capture:**
-- [ ] The log (`_Huginn_Debug.log` / `Huginn.log`)
+- [ ] The log (`_Huginn_Debug.log` / `Huginn.log`). Since 0.22.10 each launch
+      keeps the previous one as `HuginnLogs/<name>-<date-time>.log` (the newest
+      20), so a forgotten copy-out no longer loses a session -- but copy them
+      out before 20 more launches pass
 - [ ] `Huginn_Selections.jsonl` (same folder) -- one record per confirmed
       selection with the whole scored list; the input for re-ranking offline.
-      It is appended across sessions, so copy it rather than clear it; `utc`
-      separates game launches and `gen` separates loads within one
+      It is appended across sessions, instances and characters, so copy it
+      rather than clear it. Every record says where it came from: `list` (the
+      modlist folder: LoreRim-5, simonrim-essentails), `launch` (UTC start of
+      the game launch), `gen` (the load within it) and, from 0.22.11, `char`
+      (the character ID). `Huginn_AB.log` lines carry the same stamps
 - [ ] At the first and last burst of the run: `hg dump weights`, `hg dump
       potions`, `hg dump scrolls` (the learner state the run started and ended
       with)

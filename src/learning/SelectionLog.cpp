@@ -208,8 +208,11 @@ namespace Huginn::Learning
             std::string line;
             line.reserve(256 + snap.scores.size() * 120);
 
-            line += std::format(R"({{"v":1,"utc":"{:%F %T}","gen":{},"form":"{:08X}","name":{},"src":"{}","via":{},)",
-                r.utc, event.loadGeneration, event.formID, JsonString(r.name),
+            // v2 (0.22.10): "launch" and "list" say which game launch and which
+            // modlist the record came from -- one file collects every launch of
+            // every instance.
+            line += std::format(R"({{"v":2,"utc":"{:%F %T}","launch":"{}","list":{},"gen":{},"form":"{:08X}","name":{},"src":"{}","via":{},)",
+                r.utc, g_launchStamp, JsonString(g_listName), event.loadGeneration, event.formID, JsonString(r.name),
                 EquipSourceToString(event.source), JsonString(event.via));
             line += std::format(R"("case":{},"kind":"{}","reward":{:.2f},"how":"{}","confirmMs":{:.0f},)",
                 JsonString(event.attribution), SelectionKindToString(event.kind), r.reward, r.how, event.confirmMs);
