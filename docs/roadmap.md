@@ -793,9 +793,18 @@ with how the run is played and laid out -- see the Phase 2 review notes.
       because there was no reliable way to buy water from innkeepers on
       LoreRim. The user found the way: LoreRim's waterskins are craftable,
       and once you own one an innkeeper refills it for free -- so water is
-      easy to come by after all. Check before the rule: a drunk waterskin
-      probably becomes an empty-waterskin form, which must not be offered
-      for thirst (tag only the filled one).
+      easy to come by after all. Checked in play (2026-10-03 00:03, LoreRim):
+      - `Waterskin (Full)` (FE350801, a light plugin) carries `Hydrated`,
+        `Restore Thirst` and a scripted `Waterskin` effect. Drinking it left
+        the count unchanged -- the script keeps the charges, there is no
+        empty form to exclude -- so the selection path logged `Not confirmed
+        ... count never dropped`, and the drink taught nothing. Scripted
+        consumables need a second confirm signal: the effect appearing on
+        the player (`Hydrated` here) rather than a count drop.
+      - It is not a candidate at all today (`case=A (not candidate)`), and
+        `hg dump food` leaves it out: it is not classified as food.
+      - 95 items in the dump carry `Restore Thirst`, LoreRim's soups and
+        stews among them, so the effect name alone tags a broad set.
       Aside, not Huginn: telling the player where a need can be met (a
       refill at the innkeeper) is a follow-on mod idea of the user's,
       "immersive hints".
