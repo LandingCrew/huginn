@@ -73,10 +73,12 @@ inline constexpr size_t MAX_SLOTS_PER_PAGE = 10;
 
 **Code default vs shipped INI.** The compiled-in fallback is **1 page with 8
 slots** (`Defaults::PAGE_COUNT`, `Defaults::SLOTS_PER_PAGE`,
-`src/slot/SlotSettings.h`), the same layout as the shipped page 1 "Huginn". The
-shipped `configs/Huginn.ini` has **2 pages** (`Huginn`, `Kit`). Six archetype
-layouts and a set of five test pages live in `configs/templates/` (see
-[Shipped INI layout](#shipped-ini-layout-2-pages)).
+`src/slot/SlotSettings.h`), the same layout as page 1 of the shipped
+`configs/Huginn.ini`: **8 Regular keys** since 0.22.10. The shipped INI adds a
+second page, `Jobs` (the old one-job-per-key default), as a measured fallback,
+and keeps `Kit` as a third page, off unless `iPageCount = 3`. Seven layouts --
+the old default and six archetypes -- and a set of five test pages live in
+`configs/templates/` (see [Shipped INI layout](#shipped-ini-layout-2-pages)).
 
 **Page state and dirty flags** (`src/slot/SlotAllocator.h`):
 
@@ -307,7 +309,7 @@ Slots restrict which override categories they accept
 | **SP** | CriticalStamina only | `sp`, `stamina` |
 | **Other** | Drowning, LowAmmo, WeaponCharge only | `other`, `misc` |
 
-`Other` is why the shipped Page 0 reserves Slot 6: an `Other`-only slot rejects
+`Other` is why the shipped Page 0 reserves Slot 6 (key 7): an `Other`-only slot rejects
 HP/MP/SP, so the vitals overrides — which outrank all three `Other` conditions —
 cannot starve the soul-gem / ammo / drowning prompts when several fire at once.
 Parsing is case-insensitive; an unrecognised value falls back to `Any` with a
@@ -466,37 +468,49 @@ priority governs fill order only. Neither reads the other.
 
 ### Code default layout (1 page, 8 slots)
 
-`Defaults::PAGE0_SLOTS`, `src/slot/SlotSettings.h` -- one job per key, the same
-as the shipped page 1:
+`Defaults::PAGE0_SLOTS`, `src/slot/SlotSettings.h` -- eight Regular keys, the
+same as the shipped INI since 0.22.10:
 
-| Key | Job | Classification | Priority | Overrides |
-|-----|-----|----------------|----------|-----------|
-| 1 | Weapon | WeaponsAny | 7 | HP |
-| 2 | Attack magic | DamageMagic | 6 | MP |
-| 3 | Heal | HealingAny | 5 | SP |
-| 4 | Defend | DefensiveAny | 4 | None |
-| 5 | Buff | BuffsAny | 3 | None |
-| 6 | Potion | PotionsAny | 2 | None |
-| 7 | Situational | Regular | 1 | **Other** |
-| 8 | Wildcard | Regular | 0 | None |
+| Key | Classification | Priority | Overrides |
+|-----|----------------|----------|-----------|
+| 1 | Regular | 7 | HP |
+| 2 | Regular | 6 | MP |
+| 3 | Regular | 5 | SP |
+| 4 | Regular | 4 | None |
+| 5 | Regular | 3 | None |
+| 6 | Regular | 2 | None |
+| 7 | Regular | 1 | **Other** |
+| 8 | Regular | 0 | None |
 
 Every slot has wildcards on (the health key turns them off itself),
-skip-equipped on and swap back on. With skip-equipped, key 1 is "the weapon you
-are not holding"; with swap back, pressing it toggles between two weapons. Key
-7's `Other` filter reserves a home for the soul-gem / low-ammo / drowning
-prompts. Slots on pages 1+ default to `Regular`, wildcards on, override filter
+skip-equipped on and swap back on. Key 7's `Other` filter reserves a home for
+the soul-gem / low-ammo / drowning prompts.
+
+**Why Regular.** One page of plain slots is the end state Huginn is measured
+against (roadmap, "What Huginn is measured by"): labels and classes exist
+because the recommender is not there yet, and goal 2 counts presses on labeled
+slots, so a labeled default would set that number rather than the recommender.
+The previous default gave every key a job (1 weapon, 2 attack magic, 3 heal,
+4 defend, 5 buff, 6 potion, 7 situational, 8 wildcard) and is kept as
+`configs/templates/job-per-key.ini`. Slots on pages 1+ default to `Regular`, wildcards on, override filter
 `None`, skip-equipped on, priority `slotCount - index - 1`.
 
 ### Shipped INI layout (2 pages)
 
-Most players never edit the INI, so these two pages are the product.
+Most players never edit the INI, so these pages are the product.
 
 | In game | Name | Layout |
 |---------|------|--------|
-| 1 | Huginn | The code default above |
-| 2 | Kit | Potions, Food, Scrolls, Utility, Summons, Ammo, craft gear, Regular; no overrides |
+| 1 | Huginn | The code default above: eight Regular keys |
+| 2 | Jobs | The previous default: Weapon, Attack magic, Heal, Defend, Buff, Potion, Regular, Regular; emergencies on the same keys as page 1 |
+| (3) | Kit | Off by default (`iPageCount = 3` turns it on): Potions, Food, Scrolls, Utility, Summons, Ammo, craft gear, Regular; no overrides |
 
-**Test pages** (`configs/templates/test-pages.ini`), added after the two above
+**Why Jobs is shipped.** It is the fallback, and it is measured. Every press on
+it counts as `labeled=` (keys 1-6) and `offPage=`, and every trip to it as
+`pageFlips=`, in the `[Soak]` heartbeat's goal-2 fields. If those stay rare the
+slot filters can go; if not, they show where the plain page falls short.
+
+**Test pages** (`configs/templates/test-pages.ini`), added after the pages above
 for testing and log reading:
 
 | In game | Name | Layout |
@@ -510,7 +524,8 @@ for testing and log reading:
 The test pages run with wildcards and swap back off unless that is what they
 test.
 
-**Templates** (`configs/templates/`): battlemage, paladin, pure-mage,
+**Templates** (`configs/templates/`): job-per-key (the default before 0.22.10:
+a job per key plus the Kit page), battlemage, paladin, pure-mage,
 stealth-archer, summoner, survivalist. Each is a page layout to paste over
 `[Pages]` and the page sections. All keep the flagship's emergency keys (health
 1, magicka 2, stamina 3) and a key-7 home for the `Other` prompts, so switching

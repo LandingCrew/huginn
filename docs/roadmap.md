@@ -15,9 +15,9 @@ BEFORE the soak -- it is a set of bugs, and a soak on the broken path would
 mostly measure them.
 
 **Phase 1 -- pre-soak cleanup (only #2 touches learning; see above):**
-Landed on branch `pre-soak-cleanup` (0.22.9): #2 through #6 (details on
-each), plus the AS2 `setUrgent` removal with a SWF rebuild and logging for
-both Known Bugs so the soak run can settle them. Only #1 is left, deferred.
+Merged in #163 (0.22.9): #2 through #6 (details on each), plus the AS2
+`setUrgent` removal with a SWF rebuild and logging for both Known Bugs so the
+soak run can settle them. Only #1 is left, deferred.
 1. **Default slot keys off the number row** -- Known Mod Compatability
    Issues. XS, config only (`configs/Huginn.ini` `iSlot1Key`-`iSlot10Key`).
    First because the double-fire is what polluted the last save's weights.
@@ -50,7 +50,7 @@ both Known Bugs so the soak run can settle them. Only #1 is left, deferred.
 sessions on it, played normally. `hg dump weights` / `potions` / `scrolls`
 at both ends (and add a carried-and-trained section to
 docs/reference/classifier-coverage.md from them). Checklist to ride along:
-- torch on a Huginn Wheeler wheel (Kit page, Utility key);
+- torch on a Huginn Wheeler wheel (any key on page 1, which is all Regular);
 - arrest, yield, re-engage -- watch `Enemies:` against `Combat:`;
 - Restore Health/Stamina in a fight that is not a kite;
 - `hg rebuild` once -- does `870710C4` register? (the rejection line now names
@@ -67,41 +67,58 @@ input -- a script?)` and count in the heartbeat's `skipped=input`, which is
 the place to spot it. Seen in the first 0.22.9 test (08:57:34, a Fortify
 Carry Weight with no key, menu or wheel behind it).
 Raised in review 2026-10-02, to settle before the run starts:
-- **The soak doc contradicts "played normally".**
-  `docs/playtest/LongPlaySoak.md` (the context-coverage checklist and the
-  per-burst protocol) tells the tester to equip from menus on purpose,
-  including items Huginn is not showing. That inflates goal 1 directly and
-  feeds the learner staged choices. Rewrite those parts for this run.
-- **The layout sets goal 2.** The shipped page is six labeled slots and two
-  Regular, so labeled presses are high whatever the recommender does. Pick
-  the run's layout on purpose.
-- **A learning-off arm.** Nothing has measured context-only Huginn, and the
-  pooling pre-check hints the learner adds little. `fLambdaMin =
-  fLambdaMax = 0` (`[Scoring]`) turns it off by config. Alternating
-  sessions gives a same-save comparison on both goals, and those sessions
-  log selections the learner did not shape -- cleaner data for fitting the
-  choice target.
+- ~~**The soak doc contradicts "played normally".**~~ Done (0.22.10):
+  `docs/playtest/LongPlaySoak.md` no longer asks for staged menu equips, says
+  why (they inflate goal 1 and train the learner on staged picks), keeps the
+  layout fixed for the run, and adds the selections file and the start/end
+  dumps to the capture list.
+- ~~**The layout sets goal 2.**~~ Decided (the user, 2026-10-02): page 1 is
+  eight Regular keys -- the end state Huginn is measured against -- and
+  page 2, "Jobs", is the old one-job-per-key page, kept as a MEASURED
+  fallback: its presses (`labeled=`, `offPage=`) and the flips to reach it
+  (`pageFlips=`) say whether the slot filters are still needed. Shipped as
+  the default from 0.22.10; Kit is page 3, off.
+- **A learning-off arm** -- decided (the user, 2026-10-02): not alternating
+  sessions but a shadow arm on the SAME playthrough, as throwaway debug code
+  with its own log. At each confirmed selection, rank the logged candidates
+  with the learned term removed (what context-only Huginn would have put on
+  the eight keys) and log whether the chosen item was on the live page (A),
+  on the shadow page (B), both or neither. Goal 1 for B = the outside picks B
+  would have shown. Built in 0.22.10 as `src/learning/ShadowArm` (Debug
+  builds only, one call in SelectionLog): `Huginn_AB.log`, one line per
+  confirmed selection with A / A* (live utility, ranked plainly) / B
+  (context only, the whole learning factor removed) / B' (no learned
+  weights but the prior and recency kept -- added in the #164 review, so the
+  run does not credit the learner with what the prior does) and a running
+  tally, overall and for outside picks. Plain-page selections only; the
+  open slots skip what was in hand. Delete it after the run. Nothing has measured
+  context-only Huginn, and the pooling pre-check hints the learner adds
+  little.
 - **Death and reload roll the learner back** to the last save, but the log
   keeps the abandoned rewards, so log counts will not match `hg dump
   weights`. Tag log lines with a load generation (done in 0.22.9: `gen=`
-  on every selection record, bumped per load). Separately: should
-  learning survive a reload? Today the fight that killed you is forgotten.
-- **Comparing Phase 3 against this run.** The character progresses, so a
-  before/after is confounded. Keep the run's starting save as a benchmark
-  and compare per-hour rates.
-- **Selection-log cost** (code review of #163, deferred): each confirmed
-  selection opens and appends ~13 KB to `Huginn_Selections.jsonl` and runs one
-  learner prediction per candidate, on the game thread. Rare enough for
-  testing; move it to a background writer with a persistent stream before a
-  50-hour run. Smaller: `PipelineStateCache::Update` classifies every
-  candidate on every pipeline run, though the class is read only at selection
-  time.
-- **Two quick drinks of one potion count once** (#163 review). One pending
-  record per item merges them, by design -- but a deliberate double-drink
-  inside 2.5 s is two choices. Decide before the choice target (Phase 3 #1)
-  whether a second count drop opens a second selection.
-- One tester, who knows the internals. LoreRim 5.1 could land mid-run:
-  decide now whether the run finishes on 1.6.
+  on every selection record, bumped per load). **Should learning survive a
+  reload? Yes** (the user, 2026-10-02): the fight that killed you should not
+  be forgotten. Not built yet -- it needs the cosave to tell "the same
+  character, reloaded" from "a different character", so its own PR before
+  the run.
+- **Comparing Phase 3 against this run** -- decided (the user, 2026-10-02):
+  the same characters, `hg reset weights` before the run starts, then a few
+  hours of play. (Replaces "keep the run's starting save as a benchmark".)
+- ~~**Selection-log cost**~~ (code review of #163). Done (0.22.10): the
+  predictions are taken under one learner lock, and the JSONL record is
+  formatted and appended by a background writer with a persistent stream,
+  flushed per record. Still open, smaller: `PipelineStateCache::Update`
+  classifies every candidate on every pipeline run, though the class is read
+  only at selection time, and `Select` copies the snapshot even for picks
+  that never confirm.
+- ~~**Two quick drinks of one potion count once**~~ (#163 review). Decided
+  (the user, 2026-10-02): leave it. Back-to-back chugging of one potion is
+  one choice; two different potions (stamina regen, then resist shock) are
+  already two selections, because the pending record is per item.
+- One tester, who knows the internals. LoreRim 5.1 could land mid-run --
+  decided (the user, 2026-10-02): hold the update, the run finishes on 1.6
+  (LoreRim runs from Stock Game, so nothing updates under it).
 
 **Phase 3 -- learning rework, in this order** (all on "Learning swamps
 context" unless named):
@@ -528,12 +545,14 @@ with how the run is played and laid out -- see the Phase 2 review notes.
         one hand, body slot or need -- not circlet + ring, sword + ward or
         dual-wield. Delay negatives and cancel any whose item is chosen
         next; the confirm window is the natural place.
-      - **The shipped layout rarely shows two items for one need.** One job
-        per key; same-need items share the screen only through class
-        overlaps (HealingAny / PotionsAny) and the two Regular slots --
-        what "Review the slot classes" wants to trim. On that page the
-        target falls back to positives only. The strong negative there is
-        a menu bypass: the key's item loses to what the player fetched.
+      - **The shipped layout rarely shows two items for one need** -- true of
+        the old one-job-per-key default, where same-need items shared the
+        screen only through class overlaps and the two Regular slots, so
+        the target fell back to positives only. Changed in 0.22.10: the
+        default is eight Regular keys, so two healing options can sit side
+        by side and the passed-over one is a real negative. The strong
+        negative is still a menu bypass: the bar's item loses to what the
+        player fetched.
       - **Key position and overrides.** "Health on key 1" means the press
         picks the key, not the item; rewarding override-placed picks teaches
         the learner the override rule. Log slot index and override flag.
@@ -984,7 +1003,7 @@ trigger to pick any of it up.
       Wheeler through `AddItemByFormID`, and whether Wheeler accepts a LIGH
       form was never seen in play; a refusal is retried and then suppressed
       by WheelSync, so the worst case is a blank wheel entry. Check once
-      with a torch on the Kit page's Utility key (XS)
+      with a torch on any key of the Huginn wheel (XS)
 - [ ] **Share learning across similar items** — two versions of one idea, pick
       one. Today every item learns alone: `m_items[formID]` zero-initialises on
       first access, so a new item's `learningScore` is 0 and cannot compete with

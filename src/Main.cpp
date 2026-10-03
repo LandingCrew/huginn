@@ -787,6 +787,68 @@ void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
     }
 }
 
+// Keep the previous launch's log. The logger truncates its file at every
+// launch, so a session nobody copied out was gone at the next start -- which a
+// 50-hour soak run of many sessions cannot afford. The old file is moved to
+// HuginnLogs/<name>-<its last-write time>.log and the newest kKeep are kept.
+// Runs before the logger exists, so it reports through the returned string.
+static std::string RotatePreviousLog(const std::filesystem::path& logFile)
+{
+    namespace fs = std::filesystem;
+    constexpr size_t kKeep = 20;
+    try {
+        if (!fs::exists(logFile) || fs::file_size(logFile) == 0) return {};
+
+        const fs::path dir = logFile.parent_path() / "HuginnLogs";
+        fs::create_directories(dir);
+
+        const auto written = std::chrono::clock_cast<std::chrono::system_clock>(fs::last_write_time(logFile));
+        const auto local = std::chrono::zoned_time{ std::chrono::current_zone(),
+            std::chrono::floor<std::chrono::seconds>(written) };
+        const std::string stem = logFile.stem().string();
+        const fs::path kept = dir / std::format("{}-{:%Y%m%d-%H%M%S}.log", stem, local);
+        fs::rename(logFile, kept);
+
+        // Prune: names sort by time, so the oldest come first.
+        std::vector<fs::path> old;
+        for (const auto& e : fs::directory_iterator(dir)) {
+            const std::string name = e.path().filename().string();
+            if (e.is_regular_file() && name.starts_with(stem + "-") && e.path().extension() == ".log") {
+                old.push_back(e.path());
+            }
+        }
+        std::sort(old.begin(), old.end());
+        size_t removed = 0;
+        while (old.size() > kKeep) {
+            fs::remove(old.front());
+            old.erase(old.begin());
+            ++removed;
+        }
+        return std::format("Previous log kept as HuginnLogs/{}{}", kept.filename().string(),
+            removed ? std::format(" ({} older removed, keeping {})", removed, kKeep) : std::string{});
+    } catch (const std::exception& e) {
+        return std::format("Could not keep the previous log: {}", e.what());
+    }
+}
+
+// Which modlist the game runs from: the MO2 instance's folder. The working
+// directory is the game root, e.g. F:/Modlists/LoreRim-5/Stock Game -- so the
+// list is its parent when the root is a "Stock Game" / "Game Root" folder,
+// else the folder itself.
+static std::string ListNameFromWorkingDir()
+{
+    try {
+        const auto cwd = std::filesystem::current_path();
+        const std::string leaf = cwd.filename().string();
+        if (leaf == "Stock Game" || leaf == "Game Root" || leaf == "Stock Folder") {
+            return cwd.parent_path().filename().string();
+        }
+        return leaf;
+    } catch (...) {
+        return "?";
+    }
+}
+
 void OpenLog()
 {
     auto path = SKSE::log::log_directory();
@@ -794,11 +856,17 @@ void OpenLog()
     if (!path)
         return;
 
+    g_launchStamp = std::format("{:%Y%m%d-%H%M%S}",
+        std::chrono::floor<std::chrono::seconds>(std::chrono::system_clock::now()));
+    g_listName = ListNameFromWorkingDir();
+
 #ifndef NDEBUG
     *path /= "_Huginn_Debug.log";  // Underscore prefix sorts to top in debug builds
 #else
     *path /= "Huginn.log";
 #endif
+
+    const std::string rotated = RotatePreviousLog(*path);
 
     std::vector<spdlog::sink_ptr> sinks{
         std::make_shared<spdlog::sinks::basic_file_sink_mt>(path->string(), true),
@@ -817,6 +885,11 @@ void OpenLog()
 
     spdlog::set_default_logger(std::move(logger_obj));
     spdlog::set_pattern("[%Y-%m-%d %T.%e][%-16s:%-4#][%L]: %v");
+
+    logger::info("Launch {} (UTC) on modlist '{}'"sv, g_launchStamp, g_listName);
+    if (!rotated.empty()) {
+        logger::info("{}"sv, rotated);
+    }
 }
 
 extern "C" DLLEXPORT constinit auto SKSEPlugin_Version = []() {

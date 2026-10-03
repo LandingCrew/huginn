@@ -63,6 +63,14 @@ extern std::chrono::steady_clock::time_point g_lastGameLoad;
 // record, so rewards abandoned by a death-and-reload can be told apart from
 // the ones the learner kept (the cosave rolls it back; the log does not).
 extern std::atomic<uint32_t> g_loadGeneration;
+// Which launch and which modlist a record comes from. The selection log and
+// the A|B log are appended across launches, characters and instances (both
+// MO2 instances write to the same SKSE log folder), so every record carries
+// these. Set once in OpenLog, before anything logs.
+//   g_launchStamp  UTC start of this game launch, "YYYYMMDD-HHMMSS"
+//   g_listName     the modlist folder the game runs from ("LoreRim-5", ...)
+extern std::string g_launchStamp;
+extern std::string g_listName;
 
 // Flags
 extern bool g_hasShownWelcomeNotification;
