@@ -51,6 +51,42 @@ Top hot zones + analysis + finding mapping.
 
 ---
 
+## 2026-10-03 (23:30) — `fdb0b95` (v0.22.12) — LoreRim soak session, dungeon combat
+
+- Session: SkyrimSE.exe @ 2026-10-03 23:30:29, Tracy 0.14.1, 246,889 frames,
+  ~1:25:44 capture (~33 min shown), Tracy 614.94 MB.
+- Save: LoreRim benchmark character, 64 -> 80 learner items over the session;
+  125-181 candidates per pipeline run (`Huginn/Candidates` plot).
+- Notes: **DEBUG + TRACY (relative only)**, Timing = Self only. Read from
+  the user's screenshot, so the top 42 zones only.
+
+| Zone | MTPC | Count | Total | 2026-09-19 (20:46) MTPC |
+|---|---|---|---|---|
+| `Pipeline::ScoreCandidates` | **4.82 ms** | 3,240 | **15.61 s** (0.30%) | 178.18 µs -- **~27x** |
+| `ReconcileWeapons::ExtractMetadata` | 3.39 ms | 125 | 424.25 ms | |
+| `Inventory::DeltaScan` | **1.62 ms** | 6,426 | **10.41 s** (0.20%) | 135.68 µs -- **~12x** |
+| `ItemRegistry::Reconcile` | 1.25 ms | 123 | 153.85 ms | |
+| `ApparelRegistry::Reconcile` | 1.04 ms | 124 | 129.07 ms | |
+| `Display::Wheeler` | 688.2 µs | 3,240 | 2.23 s | |
+| `PollPlayerMagicEffects` | 181.12 µs | 31,301 | **5.67 s** (0.11%) | 109.42 µs |
+| `PollTargets` | 129.99 µs | 31,301 | 4.07 s (0.08%) | 118.12 µs |
+| `RunPipeline` | 191.74 µs | 11,411 | 2.19 s | |
+
+- **Memory: flat.** The Tracy memory plot holds at ~1.6 MB across the
+  capture -- no growth with play time or learner items. The soak's memory
+  signal passes for this session.
+- **Skip gate holds:** 3,240 scoring runs in 31,300 ticks (~10%).
+- **`ScoreCandidates` is ~27x the 09-19 cost per call, same flavour.** The
+  zone covers `GenerateCandidates` AND `UtilityScorer::ScoreCandidates`,
+  neither zoned, so the trace cannot say which grew. Candidates: dungeon
+  kit on LoreRim (125-181) vs a quiet town then; learner: 80 trained
+  items with UCB per candidate vs few. Next step: split the zone
+  (generate / context weights / learner predict / wildcards) and capture
+  again. At Debug's ~40x the Release cost it is ~0.1 ms in Release, so a
+  priority question, not a stutter.
+- **`Inventory::DeltaScan` ~12x per call**, likely LoreRim's larger
+  inventory; it runs every ~0.8 s, the second-largest total.
+
 ## 2026-09-19 (20:46) — `f5fa110` + uncommitted (v0.20.23) — MATCHED quiet-town capture; closes the ally question
 
 - Session: SkyrimSE.exe @ 2026-09-19 20:46:43, Tracy 0.14.1, 74,949 frames,

@@ -1202,6 +1202,12 @@ Tiers 1 and 2 landed (PRs #55-#58); the critique document itself was never
 committed. The only live work here is Tier 3.
 
 ### Tier 3 — hot-path perf (trace-prioritized; see docs/profiling/tracy-traces.md)
+- [ ] **`Pipeline::ScoreCandidates` is ~27x its 2026-09-19 cost per call**
+      (Debug, 178 µs -> 4.82 ms; the 2026-10-03 23:30 trace), and
+      `Inventory::DeltaScan` ~12x (136 µs -> 1.62 ms). Split the zone
+      (generate / context weights / learner predict / wildcards) before
+      guessing; candidates (125-181 on LoreRim) and trained learner items
+      (80) both grew since. Memory was flat over the session.
 **Nothing in this tier exceeds 0.10% of runtime** on the 44:40 capture of
 2026-08-26, which is the only capture long enough to trust — the 5-15 minute
 runs that set the original ranking were dominated by cold calls. #14 is archived
