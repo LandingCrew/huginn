@@ -289,6 +289,20 @@ after the soak:
   rank of the same spell" preference -- the tier selection the
   behaviour-modes entry lists -- or pooling (Phase 3 #5) so Stoneflesh
   inherits what Oakflesh learned.
+  Confirmed by the A|B log the next session (2026-10-03 21:31-23:26): the
+  first three cases where context-only had the chosen item and the live
+  page did not were Stoneflesh on Self (context rank 2, live 11),
+  Stoneflesh on Target (5 vs 17) and a bow (7 vs 11) -- the learned weight
+  on Oakflesh and the battlestaff crowding them out.
+- **Healing spells cast at full health are filtered out.** Healing Aura on
+  Self was taken from the magic menu 7 times in one session, 6 of them
+  "not a candidate": `CandidateFilters` drops every RestoreHealth spell
+  while health is full (`filterHealingWhenFull`), and the user was at
+  100%. Right for a direct heal; wrong for an aura or regeneration cast
+  ahead of a fight, and for the player who heals at full health to train
+  Restoration. Likely the same for the "Healing" picks reported as not
+  candidates on 2026-10-03. Exempt effects with a duration (aura, regen)
+  from the filter, or let the learner see them and decide.
 - **Buffs matched to the loadout.** Fortify potions are matched to a
   situation only for the three crafting skills at a workbench; every other
   buff potion gets a flat baseline (`buffPotionWeight` /
