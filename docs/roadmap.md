@@ -153,6 +153,287 @@ context" unless named):
 6. Later: **Behavioural modes as a recall stage**, then **#15/#16
    learnable context weights**.
 
+**After the soak, not learning** (raised by the user during the run,
+2026-10-02; not ordered against Phase 3 yet):
+- **Haggling gear at a merchant.** Seen in play: at a vendor the user
+  swapped Amulet of Zenithar for Necklace of Minor Haggling by hand, in the
+  inventory -- a goal-1 reach-in. Promotes the haggling tier of "Recommend
+  enchanted apparel beyond the three craft skills" (Known Recommendation
+  Issues): there is still no merchant or barter context in `src/`. It is
+  the craft-gear case again -- out of combat, one jewellery slot, no armour
+  stripped -- so the combat half of the BLOCKER on that entry does not
+  apply. Its part (a) still does: group by slot, so two necklaces or two
+  rings never surface side by side. It needs:
+  - **A merchant context** from what the player can see: looking at
+    someone who trades (vendor faction / services) in the crosshair. Not
+    talking to them -- dialogue is DialogueMenu, and Huginn's keys do not
+    fire inside a menu, so the swap has to be offered before the player
+    speaks, let alone opens the BarterMenu.
+  - **Worn against offered.** Both pieces in that swap read "Prices are 5%
+    more favorable", so the right answer was no swap. Compare the barter
+    magnitude of what the slot holds now -- the worn-vs-candidate check
+    the apparel entry lists as (b).
+  - **Taking it back off** on Remembrance, as decided for craft gear ("Gear
+    and poisons, decided direction").
+- **The emergency potion: smallest that covers the deficit -- learned, not
+  a rule.** Today `ItemRegistry::GetBestPotion` gives the emergency key the
+  potion that restores the most within the urgent window (pure first), so
+  30 missing health spends the 50 potion. The user (2026-10-02): this
+  should be learnable rather than a fixed "optimal" rule, as in auto-potion
+  mods (Swift Potion NG) -- some players top off, some hoard the big ones.
+  The pick is deterministic and outside the learner today; it needs a
+  restore-to-deficit fit term the learner can see, and the emergency key
+  choosing among the qualifying potions by score.
+- **No second restore while one is still working -- over-time lists
+  only.** Vanilla restores are instant; LoreRim and other Requiem-style
+  lists restore over time, so the emergency key can offer another potion
+  while the first is still ticking. Read the player's active restore
+  effects (the active-effect walk `StateManager_MagicEffects` already does)
+  and hold the key back while what is left of them covers the deficit --
+  unless the vital is still falling. Must change nothing on an instant
+  list.
+- Food as the last emergency fallback -- decided against (the user,
+  2026-10-02): food does not do what an emergency needs in most cases.
+- **Expire learner entries for items the player no longer has.** The
+  learner keeps an entry for every item ever selected and drops one only
+  on `hg reset weights` or a reload's dynamic-form swap, so `learn items`
+  counts everything chosen since the reset (80 after ~7 h of the soak),
+  not what is carried -- it grows without bound over a playthrough of
+  picking up and dropping gear. Decided (the user, 2026-10-04): when the
+  registries reconcile, an item missing from the inventory and spell list
+  for N hours of play is removed. Needs a last-seen time per entry,
+  saved in the cosave and counted in play time (the learning clock does
+  not track time). Cases to settle: gear stored in a chest and fetched
+  later loses its learning (N sets how long it survives); a potion type
+  the player ran out of and restocks -- pooling (Phase 3 #5) would keep
+  what its class learned. Replaces the `hg stress learner` idea: with
+  expiry, the entry count is bounded by what one character uses in N
+  hours.
+- **Items matched to the enemy, beyond spells.** Raised in play,
+  2026-10-02. Built today: `TargetType` (closest hostile: humanoid,
+  undead, beast, dragon, construct, daedra) raises the anti-undead,
+  anti-daedra and anti-dragon weights, which only spells answer; beast and
+  construct are read and drive nothing. Still open: silver and other
+  bane weapons against undead and daedra, resist potions and gear for a
+  dragon's element, poisons by target (the poisons half of "Gear and
+  poisons, decided direction"), and uses for beast and construct. Only
+  what the player can perceive (the perception line below). The
+  behaviour-modes idea lists enemy race and visible enemy weapon as
+  count-only sensors; this is the rule-based half.
+  **The perception line** (the user, 2026-10-02 -- earlier wording here
+  and under "Gear and poisons" said "never its stats", which overstated
+  it): what the HUD shows the player, Huginn may read. The target's
+  health, magicka and stamina bars, its type and race, and the weapons it
+  has equipped are all on screen. That assumes a HUD mod (TrueHUD, as on
+  LoreRim): vanilla shows only the enemy health bar, so a rule on enemy
+  magicka or stamina has to check that such a HUD is drawing them, or
+  stay on health. Spells are the hard case: what it holds in hand is
+  visible when cast, its spell list is not (CLAUDE.md,
+  Forbidden Information). Hidden numbers -- resistances, perks, level --
+  stay out.
+- **Hunger weight: a ramp, not two steps.** Today `HungerTier` gives food
+  nothing below Hungry (3), half at Hungry, full from Famished (4), so
+  Starving (5) weighs no more than Famished, and the weight drops to zero
+  the moment the player reaches Peckish. Seen on LoreRim, 2026-10-02
+  21:45: the player ate six meals in eight seconds on one key, hunger
+  5 -> 1; the food's context went 0.50, 0.50, 0.50, 0.50, 0.25, 0.05 --
+  the last two meals were eaten past where Huginn thought hunger mattered.
+  The user: the worse the survival need, the more weight food should get.
+  Options: ramp on the 0-1000 hunger need value, with Starving above
+  Famished -- but `StateManager_Survival` reads that value only on the
+  vanilla CC fallback; with SMI installed (as on LoreRim) it reads SMI's 0-5
+  stage globals, so the continuous value has to be plumbed through for SMI
+  first, or the ramp falls back to the same stage steps; and once the player
+  starts eating, keep food up until Fed rather than dropping it at Peckish.
+  Same shape for cold (`ColdTier`) and fatigue. Scoring, so after the soak.
+- **Fight shape: a summon when pressed, damage over time on a boss.** Two
+  reach-ins from the LoreRim run, 2026-10-02, both explained by the user:
+  - *Scroll of Conjure Spectral Warhound* (23:31:38): a heavy-weapons
+    paladin in close with a faster enemy needs a distraction that keeps
+    them alive and adds damage. Huginn's summon rule is "in combat and no
+    summon active" at a flat weight (`summonWeight`), so the scroll ranked
+    too low to show. Signals that already exist: distance to the closest
+    hostile (v0.22.5), health falling (VitalEnvelope), melee build.
+    "Pressed in melee, no summon up" should lift summons well above
+    "in combat".
+  - *Powder of Burning* (inventory): the damage-over-time effect was wanted
+    for a boss. The user: hard to capture in Huginn today. Perceivable
+    signals: one tough hostile rather than many, a long fight, its health
+    bar falling slowly (the bar is on screen, so it may be read -- see the
+    perception line above).
+  Both are the context half; the learner cannot invent a situation the
+  feature vector does not describe.
+- **Score compression for repeated re-equips.** Seen the same run: the
+  Wooden Battlestaff's utility went 2.2 -> 16.2 in one session at context
+  0.2-0.3, nearly all learned weight -- a heavy-weapons build re-equips its
+  main weapon after every scroll or spell, and each re-equip is a full
+  selection. The user, 2026-10-02: needs score compression for continuous
+  re-equips. Phase 3 #1 (choice target, learned term on 0-1, ~4x cap) and
+  #2 (per-type lambdaMax, weapons high) are the planned answer; check them
+  against this case. Decided (the user, 2026-10-02): a return to the main
+  weapon within seconds of a scroll or spell is not a new choice -- no
+  reward, or a very weak one. Remembrance already knows the displaced
+  piece, so "putting back what the scroll took off" is detectable.
+
+**Field notes from the soak run, 2026-10-03** (LoreRim, 1.5 h, Windward
+Ruins and High Gate Ruins; the user's observations, checked against the log).
+From `Huginn_AB.log` through 00:54:33 UTC (20:54 local): 134 selections --
+94 Huginn presses (88 keys, 6 Wheeler) and 40 reach-ins (19 from the magic
+menu, 12 from the inventory, 9 from other menus). 125 of the 134 were on the
+plain page and tallied (the other 9 were on page 2, "Jobs", which the A|B
+arm does not rank); the live page held the chosen item 92 of those 125
+times, context-only 68. 40 reach-ins in 1.5 h is about 27 an hour; the four
+earlier 2026-10-03 launches logged 5 in about 1 h 45 m, about 3 an hour.
+That jump is not explained yet -- check whether it is the play (two ruins,
+heavy combat, healing from the menu) or a change in what counts as a
+reach-in before reading it as a regression. The reach-ins: healing spells 11
+(Healing x6, Healing Touch x4, Wild Healing), non-restore potions 9, attack
+and utility spells 8, raw food 4, weapons 4, scrolls and the waterskin 4.
+All scoring, so all after the soak:
+- **Darkness in daylight (bug).** Magelight on key 1 outdoors at in-game
+  11:30, in snow. The light reading flipped between raw 220.9 and 27.1
+  (tree shadow, most likely) and 27 read as dark (19:24:45-19:25:34). The
+  sun being up is perceivable: outdoors in daytime should not be Darkness
+  however the shadow falls.
+- **Target type misses and flickers.** A Gloom Wraith read Beast, then
+  Humanoid (19:35), never Undead, so nothing anti-undead surfaced; the
+  user took Sunbeam from the magic menu. `StateEvaluator` matches words
+  in the race editor ID ("draugr", "ghost", ...), and "wraith" is not one.
+  Read the game's keywords first (`ActorTypeUndead`, `ActorTypeDaedra`,
+  `ActorTypeAnimal`, `ActorTypeDwarven`, `ActorTypeDragon`), the name
+  list as fallback. Where an undead WAS read (19:47-19:50), the target
+  flipped Undead <-> None every few seconds, so Sunbeam reached the page
+  once (19:49:19) and fell off again; the type wants to hold for the
+  fight, not the crosshair moment. Correction to earlier notes: silver
+  weapons, turn-undead enchantments and sun scrolls answer anti-undead
+  too, not only spells.
+- **Self versus target spells are one thing to Huginn.** `Oakflesh on
+  Self` and `Oakflesh on Target` classify identically (type Defensive,
+  tags 00040000; only the range differs), Stoneflesh likewise; Healing and
+  Healing Touch differ by one tag. A targeted ally spell is useful only
+  with an ally to aim at -- a follower or summon nearby, which is
+  perceivable -- and does nothing for the caster. Separate them by
+  delivery (`GetDelivery()`), and gate the targeted ones on an ally:
+  `StateEvaluator::EvaluateAllyStatus` already gives that as
+  `AllyStatus` (None / Present / InjuredPresent) -- read it, do not add a
+  second ally scan.
+  Healing spells were the biggest reach-in group of the session (11).
+- **Oakflesh over Stoneflesh.** Same tags, Stoneflesh is the higher rank
+  (cost 150 vs 100); Oakflesh carries the learned weight. Needs a "higher
+  rank of the same spell" preference -- the tier selection the
+  behaviour-modes entry lists -- or pooling (Phase 3 #5) so Stoneflesh
+  inherits what Oakflesh learned.
+  Confirmed by the A|B log the next session (2026-10-03 21:31-23:26): the
+  first three cases where context-only had the chosen item and the live
+  page did not were Stoneflesh on Self (context rank 2, live 11),
+  Stoneflesh on Target (5 vs 17) and a bow (7 vs 11) -- the learned weight
+  on Oakflesh and the battlestaff crowding them out.
+- **Healing spells cast at full health are filtered out.** Healing Aura on
+  Self was taken from the magic menu 7 times in one session, 6 of them
+  "not a candidate": `CandidateFilters` drops every RestoreHealth spell
+  while health is full (`filterHealingWhenFull`), and the user was at
+  100%. Right for a direct heal; wrong for an aura or regeneration cast
+  ahead of a fight, and for the player who heals at full health to train
+  Restoration. Likely the same for the "Healing" picks reported as not
+  candidates on 2026-10-03. Exempt effects with a duration (aura, regen)
+  from the filter, or let the learner see them and decide. The filter has
+  three branches in `CandidateFilters.cpp` -- spells, RestoreHealth
+  potions (regen potions, soups) and scrolls (a healing-aura scroll) --
+  and the exemption belongs in all three. `filterHealingWhenFull` is a
+  `CandidateConfig` default with no INI key, so there is no workaround
+  until then; exposing it under `[Candidates]` is a cheap first step.
+- **Buffs matched to the loadout.** Fortify potions are matched to a
+  situation only for the three crafting skills at a workbench; every other
+  buff potion gets a flat baseline (`buffPotionWeight` /
+  `buffCombatWeight`). Fortify Two-Handed, Speed and Fortify Destruction
+  were never recommended in combat; at 20:49 the user equipped Ember and
+  six seconds later took Fortify Destruction from the menu -- the user's
+  own example. Link a fortify potion to what is in hand (school of the
+  equipped spell, type of the equipped weapon). The same for enchanted
+  armour in combat, the user's idea: a bow equipped brings bow-enchanted
+  gear forward, two-handed brings two-handed gear (the apparel entry's
+  combat blocker still applies).
+- **Resist potions on a single hit.** Frost damage was detected five times
+  (19:53:56 onward), each a single pulse at 87-97% health, scaled down by
+  the player's 40% frost resistance (`resistScale`), and Resist Frost
+  never outranked Undead or Darkness. The user took it from the menu at
+  20:16. Weight the frost already taken -- health lost to frost, repeated
+  hits, an enemy visibly casting frost -- rather than "a hit happened".
+- **Poisons have no context weight at all.** `ContextWeightForCandidate`
+  gives `ItemType::Poison` nothing above the noise floor, so poisons never
+  surface. The "Gear and poisons" entry has the direction.
+- **Encumbered, no potion.** `isOverencumbered` is polled and Fortify
+  Carry Weight is tagged, but no weight reads either; the user carried
+  three carry-weight potions and took one from the menu at 20:46.
+- **Cure Disease on LoreRim is not instant.** LoreRim's changelog: a Cure
+  Disease potion now cures at random within 1-4 days; three combine into
+  Cure Greater Disease, which is instant. So when diseased, prefer Cure
+  Greater Disease. That may also explain the 2026-10-02 Cure Disease that
+  "did not work". Huginn never flagged a disease in either session, and
+  `hg dump diseases` (#167) says why: its check sees **1 of LoreRim's 94
+  diseases**. Disease effects carry no resistance AV -- the engine resists
+  a disease by its spell type -- and most of them use the value-modifier
+  archetypes, which land in the `kValueModifier` / `kPeakValueModifier` case
+  of the archetype switch (`StateManager_MagicEffects.cpp`). That case only
+  sets the drain flags (`hasHealthDrain`, `hasMagickaPoison`,
+  `hasStaminaPoison`) for a `kDisease` spell; the resist-AV check that sets
+  `isDiseased` is in the `default:` branch, which they never reach. Its
+  other two hits are attack spells resisted by disease resistance (false
+  positives). The fix: set `isDiseased` from the active effect's spell type,
+  `kDisease`, before the archetype switch so every archetype sees it, and
+  drop the resist-AV rule. `isPoisoned` has the same gap -- a value-modifier
+  poison only sets `hasHealthDrain` -- so key it on `kPoison` in the same
+  change. Decide what not to offer a cure for -- Wintersun's "Peryite's
+  Gift" (34 variants, a worship gift), Sanguinare Vampiris (the player may
+  want the vampirism) -- and note that some mods use the disease type for
+  debuffs (Lock Bashing's "Sapped Grip", Alternate Perspective's
+  "Wounded").
+- **Healing can be blocked by survival needs on LoreRim.** A LoreRim note
+  (the user, 2026-10-04): thirst, hunger and dehydration can disable
+  incoming healing -- "my healing spell does 0 healing". While such an
+  effect is on the player, a heal on the key is a wasted cast; food or
+  drink is the fix. The effect is on the player's Active Effects, so it is
+  perceivable. Wants: find the effect (a dump of the player's active
+  effects in that state), then lower healing and raise food/drink while it
+  is up. Ties to "Hunger weight: a ramp" and thirst.
+- **Soul Gem Fragment (Filled) counts as a soul gem.** LoreRim's fragment is
+  a MISC item (the inventory says "Misc"), so Huginn's soul-gem registry
+  never sees it -- it is in no log. The user: it counts as a soul gem.
+  Find how LoreRim uses it (recharge directly, or combined into gems by a
+  recipe or script) before deciding whether the weapon-charge override may
+  offer it.
+- **Poison detection has the same flaw -- confirmed 2026-10-04 12:04.** A
+  spider fight (target Beast, health down to 31%), then the user drank Cure
+  Poison from the menu at 12:04:30 -- poisoned -- while the magic-state
+  line, logged on every change, stayed at `poison=false` from 12:01 on. So
+  Cure Poison was "not a candidate" (it is offered only while poisoned).
+  `isPoisoned` never fired in ~8 h of the soak, including the spider
+  fights of 2026-10-04 (10:14-10:19, target Beast). It is set in the same default branch as the
+  disease check -- a detrimental effect resisted by Poison Resist -- and
+  poison damage is usually a value or dual value modifier (LoreRim's
+  "Frostbite Venom" is archetype 5, dual value modifier), which breaks out
+  before it. The likely fix is the same as for diseases, the spell type
+  (`kPoison`), which the health tracking already reads; which archetype
+  the bite uses is still unlogged, so log the effect on the player when
+  building the fix. Fire, frost and
+  shock are read in a branch that does fire (7 / 5 / 11 times).
+
+**Enemy detection, a future release** (the user, 2026-10-04: expand it).
+Gathers what the run found; details in each entry above:
+- *What the enemy is*: read creature keywords before race-name words (the
+  Gloom Wraith read Humanoid), and hold the type for the fight rather than
+  the crosshair moment (Undead <-> None every few seconds) -- "Target type
+  misses and flickers".
+- *What the HUD shows about it*: health, magicka and stamina bars, type,
+  race, equipped weapons, a spell as visibly cast -- "the perception line".
+- *What to do about it*: bane weapons, resist gear for a dragon's element,
+  poisons by target, beast and construct uses -- "Items matched to the
+  enemy"; a summon when pressed in melee, damage over time on a boss with a
+  slowly falling bar -- "Fight shape".
+- *What it is doing to the player*: poison detection likely never fires
+  (same flaw as diseases); resist potions weighted by damage taken, not one
+  hit -- "Poison detection" and "Resist potions on a single hit".
+
 **Parked tracks** (not in the order): CommonLib migration (waiting on
 LoreRim 5.1), dMenu -> SKSE Menu Framework, apparel expansion, Tier 3 perf.
 
@@ -282,6 +563,58 @@ with how the run is played and laid out -- see the Phase 2 review notes.
       same tick. That hit fortify potions on vanilla too, so re-check how much
       of "inert" was ever about Requiem's content. Apparel now answers the
       alchemy lab (#65, PR #114); the forge may still have no live payload
+- [ ] **An overrides directory, so mod authors can ship their own.** The
+      user, 2026-10-02: make the overrides file a directory, load every file
+      in it, and let mod authors publish theirs -- the SPID `_DISTR.ini` /
+      KID pattern. Today it is one file, `Data/SKSE/Plugins/Huginn_Overrides.ini`,
+      read by both SpellOverrides and ItemOverrides (path hard-coded in
+      `SpellRegistry.cpp` and `ItemRegistry.cpp`), re-read on `hg rebuild` and
+      `hg reset all`.
+      What it takes beyond "read a folder":
+      - **Keys that survive another install.** Sections key on a display name
+        or a RUNTIME FormID, and the runtime id carries the load-order index,
+        so an author cannot ship it; names break on translated games and on
+        shared names. Published files need a plugin-relative key, e.g.
+        `[Spell:0x800~Mod.esp]` (SPID's form), resolved with
+        `TESDataHandler::LookupForm` at load. Not editor IDs -- the game does
+        not keep them without powerofthree's Tweaks.
+      - **Precedence.** Two files can claim one form. Load in a fixed order
+        (alphabetical, as SPID does) with the player's own file last, so it
+        wins, and log each conflict with both file names.
+      - **Missing plugins are normal.** A section whose plugin is not loaded
+        is skipped at debug level, not warned about. The unmatched-override
+        report names the file each section came from.
+      - **One bad file cannot break the rest.** Last-known-good on a parse
+        failure is per file today; keep it per file inside the directory.
+      - **The vocabulary becomes an API.** Once third-party files use the
+        type and tag names, renaming one breaks them. Document the format on
+        the wiki (Mod Compatibility) and give files a format version key.
+      - Keep reading the old single file, or move the shipped one into the
+        directory, so existing installs keep working. Since 0.22.9 the build
+        deploys `configs/Huginn_Overrides.ini` and it carries a live section
+        (Arcane Mass Inhibition), so moving it is a real migration.
+      - `hg dump spells` has no plugin column (the potion, food and weights
+        dumps do) -- add plugin and local id, so an author can build a file
+        from a dump. Every `hg dump *` is registered for debug builds only
+        (`#ifndef NDEBUG` in `ConsoleCommands.cpp`), and authors run the
+        release DLL -- so at least `hg dump spells` has to ship in release
+        for this to work.
+      Why it pays: every spell the classifier cannot read is script-only
+      ("Script-only powers and scrolls are unclassified": simonrim's 13
+      learnable script-only spells, LoreRim's 105 tome-learnable ones), and
+      their authors are the people who know what they do. Huginn can ship
+      per-list files the same way -- LoreRim's 34 untyped potions, say. Of the
+      two fixes this was first pictured for, the Thaumaturgy misread went into
+      code instead (0.22.9: the effect keyword, plus "Thaumaturgy loaded means
+      AV 106 is never alchemy"), and Arcane Mass Inhibition shipped in 0.22.9
+      as the first ACTIVE section of the single file -- the one existing
+      install to migrate. The unbuilt spell-pattern file (Doc-migration
+      findings) could become a syntax inside these files.
+      Not in the Next up order. It changes no learning or scoring until a new
+      file appears -- but moving the live Arcane Mass Inhibition section
+      changes a classification input, and the soak is now running, so it
+      waits for the soak to end.
+      Raised 2026-10-02.
 
 ## Platform and dependencies
 - [ ] **Move off CharmedBaryon CommonLibSSE-NG; support Skyrim 1.7.104.**
@@ -644,10 +977,25 @@ with how the run is played and laid out -- see the Phase 2 review notes.
       explain why no fight since has reproduced it. To confirm: get arrested,
       yield, then re-engage, and watch `Enemies:` against `Combat:`.
 
-- [ ] **Thirst is not tracked -- PARKED 2026-09-30.** Skipped with the user:
-      there is no reliable way to buy water from innkeepers on LoreRim, so a
-      thirst prompt would point at drinks the player often cannot get. Pick
-      it up if a load order makes water easy to come by.
+- [ ] **Thirst is not tracked -- UNPARKED 2026-10-03.** Parked 2026-09-30
+      because there was no reliable way to buy water from innkeepers on
+      LoreRim. The user found the way: LoreRim's waterskins are craftable,
+      and once you own one an innkeeper refills it for free -- so water is
+      easy to come by after all. Checked in play (2026-10-03 00:03, LoreRim):
+      - `Waterskin (Full)` (FE350801, a light plugin) carries `Hydrated`,
+        `Restore Thirst` and a scripted `Waterskin` effect. Drinking it left
+        the count unchanged -- the script keeps the charges, there is no
+        empty form to exclude -- so the selection path logged `Not confirmed
+        ... count never dropped`, and the drink taught nothing. Scripted
+        consumables need a second confirm signal: the effect appearing on
+        the player (`Hydrated` here) rather than a count drop.
+      - It is not a candidate at all today (`case=A (not candidate)`), and
+        `hg dump food` leaves it out: it is not classified as food.
+      - 95 items in the dump carry `Restore Thirst`, LoreRim's soups and
+        stews among them, so the effect name alone tags a broad set.
+      Aside, not Huginn: telling the player where a need can be met (a
+      refill at the innkeeper) is a follow-on mod idea of the user's,
+      "immersive hints".
       Original entry: **Thirst is not tracked.** LoreRim runs a thirst need ("Thirst -
       Parched" in Active Effects, from DVSMP Survival Tweaks per research,
       unverified), and waters, teas and waterskins carry `Hydrated` /
@@ -825,9 +1173,12 @@ with how the run is played and laid out -- see the Phase 2 review notes.
       Poisons are the same problem: the right poison depends on what is
       being fought (a paralysis poison on a dragon, frost on a fire atronach,
       damage-magicka on a mage). Only perceivable target facts may drive it
-      -- race/type (undead, daedra, dragon, humanoid), what the target is
-      visibly casting or wielding -- never a stat sheet (CLAUDE.md,
-      Forbidden Information). Wants a poison dump (effects, keywords) and a
+      -- race/type (undead, daedra, dragon, humanoid), its health bar
+      (magicka and stamina only where a HUD mod draws them), what it is
+      visibly casting or wielding --
+      not its spell list or hidden numbers (CLAUDE.md, Forbidden
+      Information; see "the perception line" under Next up). Wants a
+      poison dump (effects, keywords) and a
       target-keyword survey before a rule.
       Raised 2026-09-30.
 
@@ -947,6 +1298,74 @@ Tiers 1 and 2 landed (PRs #55-#58); the critique document itself was never
 committed. The only live work here is Tier 3.
 
 ### Tier 3 — hot-path perf (trace-prioritized; see docs/profiling/tracy-traces.md)
+- [ ] **`Pipeline::ScoreCandidates` is ~27x its 2026-09-19 cost per call**
+      (Debug, 178 µs -> 4.82 ms; the 2026-10-03 23:30 trace), and
+      `Inventory::DeltaScan` ~12x (136 µs -> 1.62 ms). Split the zone
+      (generate / context weights / learner predict / wildcards) before
+      guessing; candidates (125-181 on LoreRim) and trained learner items
+      (80) both grew since. Memory was flat over the session.
+      Zones split in #168 (0.22.13): `Gather::*` per source,
+      `Candidates::Filter`, `Score::*` per part and per candidate. **Next:
+      one Tracy capture on 0.22.13**, then fix whatever it names.
+- [ ] **Cache each spell's magicka cost** -- BUILT in #168 (0.22.14,
+      `be4e452`): the 2026-10-04 10:06 capture on 0.22.13 named
+      `Gather::Spells` ~2/3 of `Pipeline::ScoreCandidates` (flame graph),
+      `Candidates::Filter` most of the rest; per-candidate scoring was under
+      0.5 ms a run. Shipped as: cache dropped on any of the ten school
+      skill / modifier AVs changing, and every 10 s (perks and worn gear,
+      not watched). Left open: confirm with a capture on 0.22.14, then look
+      at `Candidates::Filter`. Original entry: the first suspect, pending that
+      capture.
+      Confirmed by the 2026-10-04 11:55 capture on 0.22.14 (flame graph):
+      `Gather::Spells` fell from ~2/3 of `Pipeline::ScoreCandidates` to
+      ~1/4, and `ScoreCandidates` from ~26% of `OnUpdate` to ~15%. Memory
+      flat at ~1.6 MB again. What is now widest: `Inventory::DeltaScan` under
+      `Update::Registries` (~1/4 of `OnUpdate`), then `PollPlayerMagicEffects`
+      and `PollTargets` under `Update::Subsystems` (~30% together, every
+      tick), and `Score::Decay` (~90 us a run, the top scoring zone).
+      Numbers, same capture (Debug, Self only): `ScoreCandidates` is now
+      ~1.5 ms a run in all (was 4.82 ms in one zone): `Candidates::Filter`
+      365 us, `Gather::Spells` 259 us (likely mostly the 10 s refresh --
+      lengthen it), per-candidate scoring ~420 us, `Score::FavoritesAndTiers`
+      176 us, own 101 us, `Score::Decay` 90 us. Session totals, the next
+      order of work: `Inventory::DeltaScan` 1.52 ms x 4,811 = **7.32 s**
+      (twice anything else), `PollPlayerMagicEffects` 3.72 s, `PollTargets`
+      2.66 s, `Display::Wheeler` 2.49 s (789 us a run),
+      `Pipeline::AllocateAndLock` 1.38 s, `Candidates::Filter` 1.15 s,
+      `Pipeline::UpdateCaches` 1.13 s (358 us a run -- PipelineStateCache
+      classifying every candidate every run, the #163 review's note).
+- [ ] **`Inventory::DeltaScan`: scan only when the inventory changed.** The
+      largest cost on the 0.22.14 capture (1.52 ms x 4,811 = 7.32 s, Debug).
+      Every ~1 s, `UpdateLoop` calls `Util::GetInventorySafe`, which builds a
+      `std::map` and COPIES each matching `InventoryEntryData`
+      (`make_unique<RE::InventoryEntryData>(*entry)`) for every potion, soul
+      gem, scroll and light the player carries -- then diffs it against the
+      registries. Most seconds nothing changed. Two fixes, biggest first:
+      1. Gate it on change: `InventoryExitTracker` already sinks
+         `TESContainerChangedEvent`; mark the inventory dirty on any event
+         involving the player and scan only then, with a slow safety timer
+         for changes no event reports.
+      2. Make the scan itself cheap: walk `entryList` with the filter and
+         compare counts in place, no map and no entry copies (the base
+         container contribution is starting gear and can be cached).
+      Raised 2026-10-04 by the user's find, jiayev/InventoryRefreshFix: that
+      plugin speeds up the game's inventory MENU rebuild (a near-quadratic
+      materializer made linear, faster sort, incremental updates), not data
+      walks like this one, so installing it does not help Huginn -- but its
+      lesson, rebuild only what changed, is fix 1. `GatherSpellCandidates` looks up every known spell's form and
+      runs `CalculateMagickaCost` (perk entry points included) on every
+      scoring run, ~once a second. The registry already holds only spells
+      the player knows, so the saving is in not recomputing. Not
+      one-and-done (the user's first take, 2026-10-04): the cost moves with
+      school skill level, cost-reduction perks, and Fortify potions or
+      enchanted gear while they are active, and the affordability filter
+      hides spells on it -- a frozen cost hides a spell the player can now
+      afford, or shows one after the potion wears off. Cache per spell;
+      recompute all on an equipment change, an active effect starting or
+      ending (both already polled), a magic school's skill or the perk
+      count changing (new: five AVs and a count), and compute only the new
+      spell when one is learned. Decided with the user: wait for the
+      capture to confirm `Gather::Spells` is the cost before building it.
 **Nothing in this tier exceeds 0.10% of runtime** on the 44:40 capture of
 2026-08-26, which is the only capture long enough to trust — the 5-15 minute
 runs that set the original ranking were dominated by cold calls. #14 is archived
