@@ -456,6 +456,22 @@ label, because these two goals are defined by it. Both counts also move
 with how the run is played and laid out -- see the Phase 2 review notes.
 
 ## Known Bugs
+- [ ] **Player-enchanted weapons are invisible to the weapon-charge
+      override.** Seen 2026-10-04 15:24-15:37 (LoreRim): holding *Steel
+      Sword of Embers (1.4)*, an enchanter-made sword on a plain Steel Sword
+      (`00013989`), every `[Context]` line read `charge=n/a` and no soul gem
+      was offered as it ran down. `StateManager_Equipment` sets
+      `hasEnchantedWeapon` and the capacity only from the base form
+      (`TESEnchantableForm::formEnchanting`, `amountofEnchantment`), and
+      the startup list of enchanted weapons named the four base-enchanted
+      ones only; WeaponRegistry tags the sword with no enchantment either
+      (so no fire context). Fix: read the held stack's
+      `ExtraEnchantment` (enchantment and capacity, `charge`) from
+      `GetEquippedEntryData` -- exonerated in the #41 bisect -- with the
+      base form as the fallback; current charge stays `kRightItemCharge`,
+      which tracks both. WheelerAPI has the mirror bug (base-form bow
+      missed, player enchantments handled); both should check both
+      sources. Part of the post-soak detection fixes (Milestone A).
 - [ ] One weapon stack's ExtraHealth has read 0.00, then 1.00, then 1.30 across
       three sessions on the same character, and nothing explains the first two.
       uid87, the LoreRim Long Bow. Either the player tempered it between those
