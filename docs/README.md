@@ -331,6 +331,7 @@ Known-current, because they are maintained alongside the work:
 - [roadmap.md](roadmap.md)
 - [profiling/tracy-traces.md](profiling/tracy-traces.md)
 - [playtest/LongPlaySoak.md](playtest/LongPlaySoak.md)
+- [playtest/Soak-2026-10-LoreRim.md](playtest/Soak-2026-10-LoreRim.md) -- the Phase 2 soak run's report
 - [architecture/0-pipeline.md](architecture/0-pipeline.md) (v0.20.0)
 - [refactor/wheeler-push-spikes.md](refactor/wheeler-push-spikes.md)
 

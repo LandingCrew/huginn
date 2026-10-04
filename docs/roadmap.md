@@ -46,7 +46,10 @@ soak run can settle them. Only #1 is left, deferred.
 6. ~~**Thaumaturgy Fortify Poison Use** misread~~ -- done in 0.22.9:
    excluded by its effect keyword, `MAG_MagicEnchFortifyPoisonUse`.
 
-**Phase 2 -- the soak run.** Clean save, `hg reset weights`, no test
+**Phase 2 -- the soak run.** DONE 2026-10-04: 9.1 h over 11 launches,
+0 errors; the report is
+[playtest/Soak-2026-10-LoreRim.md](playtest/Soak-2026-10-LoreRim.md).
+The plan as run: clean save, `hg reset weights`, no test
 sessions on it, played normally. `hg dump weights` / `potions` / `scrolls`
 at both ends (and add a carried-and-trained section to
 docs/reference/classifier-coverage.md from them). Checklist to ride along:
