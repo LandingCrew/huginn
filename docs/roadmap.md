@@ -6,6 +6,50 @@ once its entry leaves this file. Git history is the only record; check it before
 re-opening something that looks obviously undone.
 
 ## Next up
+
+**The next phase, in this order** (set with the user 2026-10-04, after the
+soak; the report is playtest/Soak-2026-10-LoreRim.md). The user's verdict
+after 10+ hours: the main goal is met -- menu trips for potions and swaps
+are seriously cut down, Remembrance pulls its weight, the widget and
+Wheeler are fine -- and consumables and gear are where Huginn fails. The
+rule that orders it: fix what is broken before tuning what is learned,
+and change the learning before tuning anything that competes with it.
+
+1. **Detection fixes** -- small, evidenced bugs, and potions and gear
+   depend on them: disease and poison by spell type (Field notes; Cure
+   Greater Disease on LoreRim), player-enchanted weapons in the charge
+   override (Known Bugs), darkness in daylight, target type by keyword
+   and held for the fight, the full-health filter on auras, self versus
+   target spells.
+2. **Learning rework** -- Phase 3 below, from #1, plus the re-equip rule
+   (a return to the main weapon is not a new choice) and expiring entries
+   for items no longer owned. The root of the crowding the soak measured:
+   Oakflesh beside Stoneflesh, alchemy gear at the lab losing to combat
+   items, off-habit items missing from the page (A|B: on menu picks,
+   context alone offered 13 to the live page's 7).
+3. **Slot stability** -- the soft slot manager (Slot temporal memory) first,
+   then the rest of "Remaining slot churn". The user saw an unheld sword
+   and bow jump slots after refresh bursts.
+4. **Potion recommendations** -- buffs matched to the loadout, resist
+   potions weighted by damage taken, the emergency potion's smallest
+   cover learned, no second restore on over-time lists, carry weight when
+   encumbered, food buff captions (After the soak, Field notes).
+5. **Gear recommendations** -- workstation gear holding its key at the
+   bench, enchanted gear by weapon type, haggling gear at merchants.
+6. **Context expansion** -- the enemy-detection release, hunger and cold as
+   a ramp, thirst, LoreRim's healing block.
+7. **Wild cards** -- Estimated altitude (decide what it drives), poison
+   handling (After the soak).
+
+Then the next stress test: a new mage-focused character quick-swapping
+spells as the game state changes (the user expects spell issues to wash
+out). The soak character was a deliberate stress test -- a level 10 LoreRim
+character should not carry that kit -- so per-hour numbers from it are a
+baseline, not a norm.
+
+---
+
+The order before the soak, kept for the record:
 Priority order, set with the user 2026-10-02. Details are in the entries
 named. The rule that orders it: anything that changes learning or scoring
 lands AFTER the soak run, so the run measures one frozen build; anything
@@ -197,6 +241,17 @@ context" unless named):
   list.
 - Food as the last emergency fallback -- decided against (the user,
   2026-10-02): food does not do what an emergency needs in most cases.
+- **Poison handling** (wild card, the user 2026-10-04). Do not offer a
+  poison for a weapon that is already poisoned with another; DO allow
+  stacking more charges of the same poison (a mod enables it) without
+  switching poisons. The held weapon's poison is on its inventory entry
+  (`ExtraPoison`: which poison, how many charges) and visible in game, so
+  it is fair to read. Needs poison detection fixed first and a playtest
+  with poisons -- the user does not run them now.
+- **Food buff captions** (the user 2026-10-04). Soups and cooked crab
+  carry different buffs and the player cannot tell which from the key.
+  Show a food's notable effect in its subtext. It does not matter for how
+  the user plays, but may for others. Display only.
 - **Expire learner entries for items the player no longer has.** The
   learner keeps an entry for every item ever selected and drops one only
   on `hg reset weights` or a reload's dynamic-form swap, so `learn items`
@@ -1262,6 +1317,36 @@ key, is already a PotionsAny slot with overrides on.
         not necessarily the one you took off.
       - Untested with Wheeler's `Empty` post-activation policy.
       - No dMenu toggle, like the rest of `[SlotLocker]`.
+
+- [ ] **Soft slot manager: per-slot memory of recent occupants.** The
+      user's idea, 2026-10-04, from the soak: a sword that was not in a
+      Remembrance slot jumped keys after a burst of state refreshes, and so
+      did the bow. Seating (5-slots.md, "Seating (anti-juggling)") already
+      returns an on-screen item to the slot it held, but its memory is ONE
+      key per slot and is overwritten: when the sword leaves the page, the
+      slot's next occupant owns the seat, and the returning sword has no
+      claim and lands in whatever slot is open. Remembrance covers only 15 s
+      and the pressed key.
+      - **Memory:** a small ring buffer per slot per page -- the last ~3
+        occupants' dedup keys -- on the allocator beside the seating array,
+        under the same mutex. In memory only: no cosave, rebuilt each
+        session, cleared on a layout generation bump as seating is. Decided
+        with the user: slot management stays stateless across saves.
+      - **Home:** a returning item's home is the slot whose ring lists it
+        most recently.
+      - **Fill policy**, INI (`[SlotLocker]`, e.g. `sSlotFill`):
+        `FirstAvailable` -- today's behaviour, fast; `LastUsed` -- go home
+        if the home slot is free, else wait for it to open, up to a cap
+        (~10 s), then fall back to first available. Speed against
+        stability.
+      - **Never waits:** overrides and Remembrance keep their passes, and a
+        returner still passes the slot's classification tests, as seating
+        requires.
+      - **A contested seat:** the occupant with the weaker claim (less
+        recent in that ring) moves, not the item whose home it is.
+      "Soft" against today's "hard" job slots: items settle where they keep
+      ending up -- the one-page, all-Regular end state with muscle memory
+      -- instead of a slot's class deciding what may sit there.
 
 - [ ] **Remaining slot churn.** Instrumentation shipped in v0.21.19: the
       `slotChurn=` heartbeat field with causes and challenger ratios, plus a
