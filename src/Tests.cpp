@@ -3127,6 +3127,48 @@ void RunUnitTests()
                 diseaseW, poisonW);
         }
 
+        // Test 6k: a spell for someone else answers that someone. With no
+        // follower near it has no one to land on; with a hurt follower a heal
+        // draws allyHealWeight -- never the caster's own health (Healing Touch
+        // and Oakflesh on Target, 2026-10-04).
+        {
+            State::WorldState testWorld{};
+            State::PlayerActorState hurtPlayer{};
+            hurtPlayer.vitals.health = 0.2f;   // the CASTER is hurt; that must not matter
+
+            Candidate::SpellCandidate healOther{};
+            healOther.name = "Healing Touch";
+            healOther.tags = Spell::SpellTag::RestoreHealth;
+            healOther.tagsExt = Spell::SpellTagExt::TargetsOthers;
+
+            const auto alone = engine.EvaluateRules(hurtPlayer, testTargets, testWorld);
+            if (Context::WeightForCandidate(healOther, alone) != 0.0f) {
+                logger::error("TEST FAIL (6k): a heal for others with no follower near should weigh 0");
+                return;
+            }
+
+            State::TargetCollection withFollower;
+            State::TargetActorState follower;
+            follower.actorFormID = 0x50001;
+            follower.isFollower = true;
+            follower.distanceToPlayerSq = 400.0f * 400.0f;
+            follower.vitals.health = 0.2f;
+            withFollower.InsertOrUpdate(follower.actorFormID, follower);
+            const auto hurt = engine.EvaluateRules(State::PlayerActorState{}, withFollower, testWorld);
+            if (!hurt.followerPresent || hurt.allyHealWeight <= 0.0f) {
+                logger::error("TEST FAIL (6k): a hurt follower should set followerPresent and allyHealWeight");
+                return;
+            }
+            const float w = Context::WeightForCandidate(healOther, hurt);
+            if (std::abs(w - std::max(hurt.allyHealWeight, std::max(hurt.spellWeight, hurt.baseRelevanceWeight))) > 0.001f) {
+                logger::error("TEST FAIL (6k): a heal for others with a hurt follower should weigh allyHealWeight "
+                    "{:.3f}, got {:.3f}", hurt.allyHealWeight, w);
+                return;
+            }
+
+            logger::info("  ✓ PASS: spells for others: 0 alone, {:.2f} with a hurt follower"sv, w);
+        }
+
         // Test 6g: No environmental conditions → all weights zero
         {
             State::PlayerActorState testPlayer{};

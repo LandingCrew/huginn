@@ -89,6 +89,8 @@ namespace Huginn::Context
         float wardWeight = 0.0f;            // Ward spells (when enemy casting)
         float aoeWeight = 0.0f;             // Area-of-effect spells (multiple enemies)
         float summonWeight = 0.0f;          // Summon spells (in combat, no active summon)
+        float allyHealWeight = 0.0f;        // A heal aimed at someone else: a follower is hurt
+        bool followerPresent = false;       // A living follower is near (gates spells for others)
 
         // =========================================================================
         // TARGET-SPECIFIC
@@ -155,6 +157,7 @@ namespace Huginn::Context
             maxWeight = std::max(maxWeight, wardWeight);
             maxWeight = std::max(maxWeight, aoeWeight);
             maxWeight = std::max(maxWeight, summonWeight);
+            maxWeight = std::max(maxWeight, allyHealWeight);
             maxWeight = std::max(maxWeight, antiUndeadWeight);
             maxWeight = std::max(maxWeight, antiDaedraWeight);
             maxWeight = std::max(maxWeight, antiDragonWeight);
@@ -247,8 +250,9 @@ namespace Huginn::Context
     // =============================================================================
     // Perceivable facts that DominantReason() reports but no scoring rule keys
     // on, so they have no ContextWeightMap entry to read them off:
-    //   - injured follower: no heal-other weight exists (healingWeight is the
-    //     player's own deficit)
+    //   - injured follower: allyHealWeight exists since 2026-10-04 and drives
+    //     heals aimed at someone else; the label still reads this signal, so
+    //     the migration this comment asks for below is still to do
     //   - ore vein: no mining weight exists
     // Darkness used to be the third; it grew darknessWeight and left.
     //

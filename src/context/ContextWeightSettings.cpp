@@ -67,6 +67,7 @@ namespace Huginn::State
         weightWeapon = ReadClampedFloat(ini, section, "fWeightWeapon", ContextWeightDefaults::WEAPON, 0.0f, 100.0f, "ContextWeightSettings"sv);
         weightSpell = ReadClampedFloat(ini, section, "fWeightSpell", ContextWeightDefaults::SPELL, 0.0f, 100.0f, "ContextWeightSettings"sv);
         weightSummon = ReadClampedFloat(ini, section, "fWeightSummon", ContextWeightDefaults::SUMMON, 0.0f, 100.0f, "ContextWeightSettings"sv);
+        weightAllyInjured = ReadClampedFloat(ini, section, "fWeightAllyInjured", ContextWeightDefaults::ALLY_INJURED, 0.0f, 100.0f, "ContextWeightSettings"sv);
 
         // Soul gems (always-on baseline; urgency comes from fWeightWeaponCharge)
         weightSoulGem = ReadClampedFloat(ini, section, "fWeightSoulGem", ContextWeightDefaults::SOUL_GEM, 0.0f, 100.0f, "ContextWeightSettings"sv);
@@ -153,6 +154,7 @@ namespace Huginn::State
         weightWeapon = ContextWeightDefaults::WEAPON;
         weightSpell = ContextWeightDefaults::SPELL;
         weightSummon = ContextWeightDefaults::SUMMON;
+        weightAllyInjured = ContextWeightDefaults::ALLY_INJURED;
 
         weightSoulGem = ContextWeightDefaults::SOUL_GEM;
         weightBuffPotion = ContextWeightDefaults::BUFF_POTION;
@@ -213,6 +215,7 @@ namespace Huginn::State
         config.weightWeapon = weightWeapon;
         config.weightSpell = weightSpell;
         config.weightSummon = weightSummon;
+        config.weightAllyInjured = weightAllyInjured;
 
         config.weightSoulGem = weightSoulGem;
         config.weightBuffPotion = weightBuffPotion;

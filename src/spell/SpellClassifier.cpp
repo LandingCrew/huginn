@@ -1048,6 +1048,35 @@ namespace Huginn::Spell
       }
       }
 
+      // TargetsOthers / HealsOverTime -- for the full-health filter and the
+      // follower gate (2026-10-04 soak: Healing Aura on Self taken from the
+      // menu 7 times while filtered as "not a candidate" at full health;
+      // Oakflesh on Self and on Target classified alike). Narrow on purpose:
+      // only restores and armour count as "for someone else", so a Calm --
+      // aimed, and not flagged hostile -- is not gated on a follower.
+      {
+      const auto delivery = spell->GetDelivery();
+      const bool concentration = spell->GetCastingType() == RE::MagicSystem::CastingType::kConcentration;
+      bool helpsATarget = false;
+      for (const auto* effect : spell->effects) {
+        if (!effect || !effect->baseEffect) continue;
+        const auto* base = effect->baseEffect;
+        if (base->data.flags.any(RE::EffectSetting::EffectSettingData::Flag::kHostile)) continue;
+        const auto av = base->data.primaryAV;
+        if (av == RE::ActorValue::kHealth || av == RE::ActorValue::kMagicka ||
+            av == RE::ActorValue::kStamina || av == RE::ActorValue::kDamageResist) {
+           helpsATarget = true;
+        }
+        const bool aura = base->GetArchetype() == RE::EffectSetting::Archetype::kCloak;
+        if ((av == RE::ActorValue::kHealth && !concentration && effect->effectItem.duration >= 5) || aura) {
+           tags |= SpellTagExt::HealsOverTime;
+        }
+      }
+      if (helpsATarget && delivery != RE::MagicSystem::Delivery::kSelf) {
+        tags |= SpellTagExt::TargetsOthers;
+      }
+      }
+
       // Name fallback, for the parts no API describes.
       const std::string_view name = spell->GetName();
 
