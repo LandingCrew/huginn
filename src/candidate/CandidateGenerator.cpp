@@ -173,18 +173,53 @@ namespace Huginn::Candidate
         // OPTIMIZATION: Zero-copy iteration via ForEach visitor pattern
         size_t count = 0;
         auto* playerRef = RE::PlayerCharacter::GetSingleton();
+
+        // Drop the cost cache when a cost driver moved, or when it is old.
+        if (playerRef) {
+            static constexpr std::array<RE::ActorValue, 10> kDrivers{
+                RE::ActorValue::kAlteration, RE::ActorValue::kConjuration,
+                RE::ActorValue::kDestruction, RE::ActorValue::kIllusion,
+                RE::ActorValue::kRestoration,
+                RE::ActorValue::kAlterationModifier, RE::ActorValue::kConjurationModifier,
+                RE::ActorValue::kDestructionModifier, RE::ActorValue::kIllusionModifier,
+                RE::ActorValue::kRestorationModifier,
+            };
+            std::array<float, 10> drivers{};
+            auto* avOwner = playerRef->AsActorValueOwner();
+            for (size_t i = 0; i < kDrivers.size(); ++i) {
+                drivers[i] = avOwner->GetActorValue(kDrivers[i]);
+            }
+            const auto now = std::chrono::steady_clock::now();
+            if (drivers != m_spellCosts.drivers || now - m_spellCosts.builtAt >= SPELL_COST_REFRESH) {
+                m_spellCosts.costs.clear();
+                m_spellCosts.drivers = drivers;
+                m_spellCosts.builtAt = now;
+            }
+        }
+
         m_spellRegistry->ForEachSpell([&](const Spell::SpellData& spellData) {
             ++count;
             SpellCandidate candidate = SpellCandidate::FromSpellData(spellData);
 
-            // Cache effective cost (perk/enchant-adjusted) to avoid form lookup in filter
-            auto* form = RE::TESForm::LookupByID(candidate.formID);
-            auto* spellItem = form ? form->As<RE::SpellItem>() : nullptr;
-            candidate.effectiveCost = (spellItem && playerRef)
-                ? spellItem->CalculateMagickaCost(playerRef)
-                : static_cast<float>(candidate.baseCost);
-            if (candidate.isConcentration && candidate.effectiveCost <= 0.0f) {
-                candidate.effectiveCost = static_cast<float>(candidate.baseCost);
+            // Effective cost (perk/enchant-adjusted), from the cache when it
+            // holds one; a newly learned spell is computed here once.
+            const auto cached = playerRef ? m_spellCosts.costs.find(candidate.formID)
+                                          : m_spellCosts.costs.end();
+            if (cached != m_spellCosts.costs.end()) {
+                candidate.effectiveCost = cached->second;
+            } else {
+                auto* form = RE::TESForm::LookupByID(candidate.formID);
+                auto* spellItem = form ? form->As<RE::SpellItem>() : nullptr;
+                candidate.effectiveCost = (spellItem && playerRef)
+                    ? spellItem->CalculateMagickaCost(playerRef)
+                    : static_cast<float>(candidate.baseCost);
+                if (candidate.isConcentration && candidate.effectiveCost <= 0.0f) {
+                    candidate.effectiveCost = static_cast<float>(candidate.baseCost);
+                }
+                // No player: the base cost is a placeholder, not worth keeping.
+                if (playerRef) {
+                    m_spellCosts.costs.emplace(candidate.formID, candidate.effectiveCost);
+                }
             }
 
             candidate.isEquipped = player.IsSpellEquipped(candidate.formID);
