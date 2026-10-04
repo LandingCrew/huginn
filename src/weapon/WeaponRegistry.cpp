@@ -881,7 +881,10 @@ namespace Huginn::Weapon
       // from the base form only, an enchanter-made Steel Sword of Embers was
       // listed at charge 0% and never offered a soul gem (2026-10-04).
       const auto* playerEnchant = extraList ? extraList->GetByType<RE::ExtraEnchantment>() : nullptr;
-      const bool hasPlayerEnchantment = playerEnchant && playerEnchant->enchantment && playerEnchant->charge > 0;
+      // A constant-effect enchantment (the Soul Sword's Enduring Strikes) has
+      // no charge to track; see Util::WornEnchantmentCapacity.
+      const bool hasPlayerEnchantment = playerEnchant && playerEnchant->enchantment && playerEnchant->charge > 0 &&
+          playerEnchant->enchantment->GetCastingType() != RE::MagicSystem::CastingType::kConstantEffect;
 
       // Detect enchanted staves (no formEnchanting but still use charges)
       const bool isStaff = weapon->GetWeaponType() == RE::WEAPON_TYPE::kStaff;

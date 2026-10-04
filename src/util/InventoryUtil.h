@@ -303,6 +303,14 @@ namespace Huginn::Util
             }
         }
         const auto* xEnch = worn ? worn->GetByType<RE::ExtraEnchantment>() : nullptr;
-        return (xEnch && xEnch->enchantment) ? static_cast<float>(xEnch->charge) : 0.0f;
+        // Only an enchantment CAST on a hit has charge. A constant-effect one
+        // is always on -- the Soul Sword's "Enduring Strikes: power attacks
+        // cost 10% less stamina" carries a capacity field and showed no charge
+        // bar in game, yet read 89.6% -> 83.3% here (2026-10-04 16:48).
+        if (!xEnch || !xEnch->enchantment ||
+            xEnch->enchantment->GetCastingType() == RE::MagicSystem::CastingType::kConstantEffect) {
+            return 0.0f;
+        }
+        return static_cast<float>(xEnch->charge);
     }
 }
