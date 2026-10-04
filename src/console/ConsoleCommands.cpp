@@ -880,6 +880,133 @@ namespace Huginn::Console
       return "-"sv;
    }
 
+   // `hg dump diseases` -- every disease, plus every other spell with an
+   // effect resisted by Resist Disease, one row each: whether Huginn's
+   // isDiseased check can see it, and whether it is on the player now.
+   //
+   // Why (2026-10-03): Huginn flagged no disease on LoreRim in two sessions.
+   // StateManager_MagicEffects sets isDiseased only for a detrimental effect
+   // resisted by Resist Disease that reaches the walk's DEFAULT branch, and
+   // the value-modifier archetypes -- how most diseases work -- have branches
+   // of their own that break out first. `huginnSees` mirrors that walk, so
+   // the dump shows what the check misses before the rule changes.
+   static void Cmd_DumpDiseases(std::string_view /*arg*/)
+   {
+      auto* dataHandler = RE::TESDataHandler::GetSingleton();
+      if (!dataHandler) {
+         Print("Data handler unavailable");
+         return;
+      }
+      std::ofstream out;
+      std::filesystem::path filePath;
+      if (!OpenDumpFile("Huginn_Diseases.csv"sv, out, filePath)) return;
+
+      // The spells behind the player's live active effects.
+      std::unordered_set<RE::FormID> onPlayer;
+      if (auto* player = RE::PlayerCharacter::GetSingleton()) {
+         if (auto* target = player->AsMagicTarget()) {
+            if (auto* list = target->GetActiveEffectList()) {
+               for (auto* ae : *list) {
+                  if (ae && ae->spell && !ae->flags.any(RE::ActiveEffect::Flag::kInactive)) {
+                     onPlayer.insert(ae->spell->GetFormID());
+                  }
+               }
+            }
+         }
+      }
+
+      // Mirrors the active-effect walk: these archetypes take their own
+      // branch and never reach the disease check.
+      auto reachesDiseaseCheck = [](const RE::EffectSetting* base) {
+         using A = RE::EffectSetting::Archetype;
+         switch (base->GetArchetype()) {
+         case A::kNightEye:
+         case A::kLight:
+         case A::kInvisibility:
+         case A::kValueModifier:
+         case A::kPeakValueModifier:
+         case A::kDualValueModifier:
+         case A::kCloak:
+         case A::kSummonCreature:
+            return false;
+         default:
+            return base->IsDetrimental() &&
+                   base->data.resistVariable == RE::ActorValue::kResistDisease;
+         }
+      };
+
+      out << "formID,plugin,name,diseaseType,spellType,huginnSees,onPlayer,effects\n";
+
+      size_t written = 0, diseases = 0, seen = 0, active = 0;
+      std::string missedNow;
+      for (auto* spell : dataHandler->GetFormArray<RE::SpellItem>()) {
+         if (!spell) continue;
+         const auto spellType = spell->GetSpellType();
+         const bool isDisease = spellType == RE::MagicSystem::SpellType::kDisease;
+
+         bool resistedByDisease = false;
+         bool sees = false;
+         std::string effects;
+         for (const auto* effect : spell->effects) {
+            if (!effect || !effect->baseEffect) continue;
+            const auto* base = effect->baseEffect;
+            if (base->data.resistVariable == RE::ActorValue::kResistDisease) resistedByDisease = true;
+            if (reachesDiseaseCheck(base)) sees = true;
+
+            std::string keywords;
+            for (uint32_t k = 0; k < base->GetNumKeywords(); ++k) {
+               if (auto kw = base->GetKeywordAt(k); kw && *kw) {
+                  if (!keywords.empty()) keywords += ';';
+                  keywords += (*kw)->GetFormEditorID();
+               }
+            }
+            if (!effects.empty()) effects += " / ";
+            const char* full = base->GetFullName();
+            effects += std::format("'{}'{{{}}} arch={} pAV={} resist={} det={} [{}]",
+               full ? full : "", base->GetFormEditorID(),
+               static_cast<int>(base->GetArchetype()),
+               static_cast<int>(base->data.primaryAV),
+               static_cast<int>(base->data.resistVariable),
+               base->IsDetrimental() ? 1 : 0, keywords);
+         }
+         if (!isDisease && !resistedByDisease) continue;
+
+         // The walk skips abilities and addictions before any effect.
+         if (spellType == RE::MagicSystem::SpellType::kAbility ||
+             spellType == RE::MagicSystem::SpellType::kAddiction) {
+            sees = false;
+         }
+         const bool now = onPlayer.contains(spell->GetFormID());
+         const char* name = spell->GetName();
+
+         out << std::format("{:08X},{},{},{},{},{},{},{}\n",
+            spell->GetFormID(), CsvQuote(PluginOf(spell)), CsvQuote(name ? name : ""),
+            isDisease ? 1 : 0, static_cast<int>(spellType),
+            sees ? 1 : 0, now ? 1 : 0, CsvQuote(effects));
+         ++written;
+         if (isDisease) ++diseases;
+         if (sees) ++seen;
+         if (now) {
+            ++active;
+            if (!sees) {
+               if (!missedNow.empty()) missedNow += ", ";
+               missedNow += name ? name : "?";
+            }
+         }
+      }
+      out.close();
+
+      auto msg = std::format("Wrote {} spells to Huginn_Diseases.csv - {} diseases, {} Huginn can see, {} on you now",
+         written, diseases, seen, active);
+      Print(msg.c_str());
+      logger::info("[Console] {} -> {}"sv, msg, filePath.string());
+      if (!missedNow.empty()) {
+         auto missed = std::format("On you now but invisible to Huginn: {}", missedNow);
+         Print(missed.c_str());
+         logger::info("[Console] {}"sv, missed);
+      }
+   }
+
    // `hg dump weights` -- every item the learner holds, one row each: what
    // it is (kind / class / subclass), how much it has been trained, how
    // stale it is, and its full weight vector.
@@ -1260,6 +1387,7 @@ namespace Huginn::Console
       { "dump weights",  "Write every learner entry to Huginn_Weights.csv (debug builds)", false, Cmd_DumpWeights },
       { "dump weapons",  "Write every weapon and ammo to Huginn_Weapons.csv (debug builds)", false, Cmd_DumpWeapons },
       { "dump apparel",  "Write every enchanted armour piece to Huginn_Apparel.csv (debug builds)", false, Cmd_DumpApparel },
+      { "dump diseases", "Write every disease to Huginn_Diseases.csv (debug builds)", false, Cmd_DumpDiseases },
 #endif
       { "reset weights", "Clear learned item weights",                  false, Cmd_ResetWeights },
       { "reset w",       "Clear learned item weights",                  false, Cmd_ResetWeights },

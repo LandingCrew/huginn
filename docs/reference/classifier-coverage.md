@@ -16,11 +16,28 @@ hg dump potions    (potions and poisons -> Huginn_Potions.csv)
 hg dump weapons    (weapons and ammo -> Huginn_Weapons.csv)
 hg dump apparel    (enchanted armour -> Huginn_Apparel.csv)
 hg dump food       (-> Huginn_Food.csv)
+hg dump diseases   (diseases, and whether Huginn can see each -> Huginn_Diseases.csv)
 ```
 
 Files land in the SKSE log folder (`My Games\Skyrim.INI\SKSE` on the dev
 machine) and are overwritten by the next run, so copy them out before
 switching load orders.
+
+## 2026-10-03 -- v0.22.12, diseases (LoreRim 5 only)
+
+`hg dump diseases`: 94 disease-type spells in the load order (Survival Mode
+26, Wintersun 34 -- every one "Peryite's Gift" -- Skyrim.esm 13, the rest
+from 15 mods). **Huginn's `isDiseased` check can see 1 of them** (Alternate
+Perspective's "Wounded", a scripted effect). Disease effects carry no
+resistance AV -- 125 of the file's 160 effects say none -- because the
+engine resists a disease by its spell TYPE, while the check wants an effect
+resisted by Resist Disease that also reaches the walk's default branch.
+Their archetypes: value modifier 93, peak value modifier 40, dual value
+modifier 25, script 2. The other two rows the check sees are attack spells
+resisted by disease resistance (Apocalypse's Life's Finale, Ordinator's
+Bitter Wine) -- false positives if cast on the player. The sturdy signal is
+the active effect's spell type, `kDisease`, which the health tracking
+already uses (roadmap, Field notes 2026-10-03).
 
 ## 2026-10-01 -- v0.22.8
 
