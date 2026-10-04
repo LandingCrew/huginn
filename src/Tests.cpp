@@ -1805,6 +1805,31 @@ void RunUnitTests()
             logger::error("TEST FAIL: ScoringTargetType with no primary should be None"sv);
             return;
         }
+
+        // The crosshair off the enemy: the closest LIVING hostile stands in
+        // (the Undead <-> None flicker, 2026-10-03). A corpse does not.
+        {
+            auto targets = withPrimary(TargetType::Humanoid, false, false);  // a townsperson under the crosshair
+            TargetActorState draugr;
+            draugr.actorFormID = 0x30001;
+            draugr.targetType = TargetType::Undead;
+            draugr.isHostile = true;
+            draugr.distanceToPlayerSq = 300.0f * 300.0f;
+            draugr.isDead = true;
+            targets.InsertOrUpdate(draugr.actorFormID, draugr);
+            if (targets.ScoringTargetType() != TargetType::None) {
+                logger::error("TEST FAIL: a dead hostile must not stand in for the crosshair target"sv);
+                return;
+            }
+            draugr.isDead = false;
+            targets.InsertOrUpdate(draugr.actorFormID, draugr);
+            if (targets.ScoringTargetType() != TargetType::Undead) {
+                logger::error("TEST FAIL: with the crosshair off the enemy, the closest living hostile's "
+                    "type should stand in (Undead), got {}"sv,
+                    BucketNames::kTarget[std::to_underlying(targets.ScoringTargetType())]);
+                return;
+            }
+        }
     }
 
     logger::info("TEST PASS: All hash tests passed! {} unique states verified, stamina excluded, distance from the closest hostile, allyStatus hashed as its injured bit, target type hostile-only."sv, GameState::kTotalStates);
