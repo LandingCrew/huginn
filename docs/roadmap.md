@@ -1333,7 +1333,26 @@ committed. The only live work here is Tier 3.
       2.66 s, `Display::Wheeler` 2.49 s (789 us a run),
       `Pipeline::AllocateAndLock` 1.38 s, `Candidates::Filter` 1.15 s,
       `Pipeline::UpdateCaches` 1.13 s (358 us a run -- PipelineStateCache
-      classifying every candidate every run, the #163 review's note). `GatherSpellCandidates` looks up every known spell's form and
+      classifying every candidate every run, the #163 review's note).
+- [ ] **`Inventory::DeltaScan`: scan only when the inventory changed.** The
+      largest cost on the 0.22.14 capture (1.52 ms x 4,811 = 7.32 s, Debug).
+      Every ~1 s, `UpdateLoop` calls `Util::GetInventorySafe`, which builds a
+      `std::map` and COPIES each matching `InventoryEntryData`
+      (`make_unique<RE::InventoryEntryData>(*entry)`) for every potion, soul
+      gem, scroll and light the player carries -- then diffs it against the
+      registries. Most seconds nothing changed. Two fixes, biggest first:
+      1. Gate it on change: `InventoryExitTracker` already sinks
+         `TESContainerChangedEvent`; mark the inventory dirty on any event
+         involving the player and scan only then, with a slow safety timer
+         for changes no event reports.
+      2. Make the scan itself cheap: walk `entryList` with the filter and
+         compare counts in place, no map and no entry copies (the base
+         container contribution is starting gear and can be cached).
+      Raised 2026-10-04 by the user's find, jiayev/InventoryRefreshFix: that
+      plugin speeds up the game's inventory MENU rebuild (a near-quadratic
+      materializer made linear, faster sort, incremental updates), not data
+      walks like this one, so installing it does not help Huginn -- but its
+      lesson, rebuild only what changed, is fix 1. `GatherSpellCandidates` looks up every known spell's form and
       runs `CalculateMagickaCost` (perk entry points included) on every
       scoring run, ~once a second. The registry already holds only spells
       the player knows, so the saving is in not recomputing. Not
