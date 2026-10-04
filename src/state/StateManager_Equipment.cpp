@@ -60,6 +60,7 @@ namespace Huginn::State
       RE::FormID newRightHandSpell = 0;
       RE::FormID newLeftHandSpell = 0;
       RE::FormID newEquippedShield = 0;
+      float rightPlayerEnchantCapacity = 0.0f;  // set when the right hand's enchantment is the player's
 
       // Check right hand
       if (rightHand) {
@@ -106,6 +107,11 @@ namespace Huginn::State
         auto* enchantable = weapon->As<RE::TESEnchantableForm>();
         if (enchantable && enchantable->formEnchanting) {
            newHasEnchantedWeapon = true;
+        } else if (const float capacity = Util::WornEnchantmentCapacity(player, false); capacity > 0.0f) {
+           // A player enchantment: nothing on the form, the enchantment and
+           // its capacity on the worn stack.
+           newHasEnchantedWeapon = true;
+           rightPlayerEnchantCapacity = capacity;
         }
         // v0.10.0: Staves are inherently enchanted (use charges when casting)
         // They don't use formEnchanting but are still "enchanted weapons"
@@ -159,7 +165,12 @@ namespace Huginn::State
       auto* weapon = rightHand->As<RE::TESObjectWEAP>();
       auto* enchantable = weapon ? weapon->As<RE::TESEnchantableForm>() : nullptr;
       if (enchantable) {
-        float maxCharge = static_cast<float>(enchantable->amountofEnchantment);
+        // The form's capacity, or the player enchantment's when the form has
+        // none. The current charge is kRightItemCharge either way -- the AV
+        // the game's HUD reads tracks both kinds.
+        float maxCharge = enchantable->amountofEnchantment > 0
+           ? static_cast<float>(enchantable->amountofEnchantment)
+           : rightPlayerEnchantCapacity;
         if (maxCharge > 0.0f) {
            float currentCharge = player->AsActorValueOwner()->GetActorValue(
             RE::ActorValue::kRightItemCharge);

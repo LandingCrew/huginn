@@ -875,13 +875,23 @@ namespace Huginn::Weapon
       auto* enchantable = weapon->As<RE::TESEnchantableForm>();
       const bool hasEnchantment = enchantable && enchantable->formEnchanting;
 
+      // A weapon the PLAYER enchanted has nothing on its form -- formEnchanting
+      // null, amountofEnchantment 0, exactly like a plain one -- and carries the
+      // enchantment and its capacity on this stack's ExtraEnchantment. Read
+      // from the base form only, an enchanter-made Steel Sword of Embers was
+      // listed at charge 0% and never offered a soul gem (2026-10-04).
+      const auto* playerEnchant = extraList ? extraList->GetByType<RE::ExtraEnchantment>() : nullptr;
+      const bool hasPlayerEnchantment = playerEnchant && playerEnchant->enchantment && playerEnchant->charge > 0;
+
       // Detect enchanted staves (no formEnchanting but still use charges)
       const bool isStaff = weapon->GetWeaponType() == RE::WEAPON_TYPE::kStaff;
-      const bool isEnchanted = hasEnchantment || isStaff;
+      const bool isEnchanted = hasEnchantment || isStaff || hasPlayerEnchantment;
 
-      // Get max charge from base form
-      if (isEnchanted && enchantable) {
+      // Max charge from the base form, else from the player's enchantment
+      if (isEnchanted && enchantable && enchantable->amountofEnchantment > 0) {
       sw.maxCharge = static_cast<float>(enchantable->amountofEnchantment);
+      } else if (hasPlayerEnchantment) {
+      sw.maxCharge = static_cast<float>(playerEnchant->charge);
       }
 
       bool foundExtraCharge = false;

@@ -732,7 +732,7 @@ namespace Huginn::Input
       auto* rightHand = player->GetEquippedObject(false);
       auto* leftHand = player->GetEquippedObject(true);
 
-      auto tryHand = [](RE::TESForm* hand, RE::ActorValue av)
+      auto tryHand = [player](RE::TESForm* hand, RE::ActorValue av, bool leftHand)
          -> std::optional<std::pair<RE::ActorValue, float>> {
          if (!hand) return std::nullopt;
          auto* weapon = hand->As<RE::TESObjectWEAP>();
@@ -740,6 +740,11 @@ namespace Huginn::Input
          if (enchantable && (enchantable->formEnchanting ||
              weapon->GetWeaponType() == RE::WEAPON_TYPE::kStaff)) {
             float max = static_cast<float>(enchantable->amountofEnchantment);
+            if (max > 0.0f) return std::make_pair(av, max);
+         }
+         // A weapon the player enchanted: the capacity is on the worn stack.
+         if (weapon) {
+            const float max = Util::WornEnchantmentCapacity(player, leftHand);
             if (max > 0.0f) return std::make_pair(av, max);
          }
          return std::nullopt;
@@ -751,11 +756,11 @@ namespace Huginn::Input
       float currentCharge = 0.0f;
       float restoreAmount = 0.0f;
 
-      for (auto [hand, av] : {
-         std::pair{rightHand, RE::ActorValue::kRightItemCharge},
-         std::pair{leftHand, RE::ActorValue::kLeftItemCharge}
+      for (auto [hand, av, isLeft] : {
+         std::tuple{rightHand, RE::ActorValue::kRightItemCharge, false},
+         std::tuple{leftHand, RE::ActorValue::kLeftItemCharge, true}
       }) {
-         if (auto result = tryHand(hand, av)) {
+         if (auto result = tryHand(hand, av, isLeft)) {
             float cur = player->AsActorValueOwner()->GetActorValue(result->first);
             float restore = std::min(chargeValue, result->second - cur);
             if (restore > 0.0f) {
