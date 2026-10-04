@@ -1,4 +1,5 @@
 #include "CandidateGenerator.h"
+#include "Profiling.h"
 #include <algorithm>
 
 namespace Huginn::Candidate
@@ -127,22 +128,28 @@ namespace Huginn::Candidate
         // Gather candidates from all registries into the persistent buffer.
         // No relevance metadata is stamped here: the per-tick display reason is
         // derived by the pipeline from the scorer's context weights (#10).
-        GatherSpellCandidates(m_gatherBuffer, player);
-        GatherPotionCandidates(m_gatherBuffer, player);
-        GatherScrollCandidates(m_gatherBuffer, player);
-        GatherWeaponCandidates(m_gatherBuffer, player);
-        GatherAmmoCandidates(m_gatherBuffer, player);
-        GatherSoulGemCandidates(m_gatherBuffer, player);
-        GatherApparelCandidates(m_gatherBuffer, player);
-        GatherTorchCandidates(m_gatherBuffer, player);
+        // One Tracy zone per source: Pipeline::ScoreCandidates went from ~180 us
+        // to ~4.8 ms per call (Debug, 2026-09-19 -> 2026-10-03) and the gather,
+        // filter and scoring halves were all inside one zone.
+        { Huginn_ZONE_NAMED("Gather::Spells");    GatherSpellCandidates(m_gatherBuffer, player); }
+        { Huginn_ZONE_NAMED("Gather::Items");     GatherPotionCandidates(m_gatherBuffer, player); }
+        { Huginn_ZONE_NAMED("Gather::Scrolls");   GatherScrollCandidates(m_gatherBuffer, player); }
+        { Huginn_ZONE_NAMED("Gather::Weapons");   GatherWeaponCandidates(m_gatherBuffer, player); }
+        { Huginn_ZONE_NAMED("Gather::Ammo");      GatherAmmoCandidates(m_gatherBuffer, player); }
+        { Huginn_ZONE_NAMED("Gather::SoulGems");  GatherSoulGemCandidates(m_gatherBuffer, player); }
+        { Huginn_ZONE_NAMED("Gather::Apparel");   GatherApparelCandidates(m_gatherBuffer, player); }
+        { Huginn_ZONE_NAMED("Gather::Torches");   GatherTorchCandidates(m_gatherBuffer, player); }
 
         // Step 3: Filter gathered candidates into a local output vector.
         // Survivors are moved from m_gatherBuffer into output (one move per
         // candidate, no in-place erase_if chains).  m_gatherBuffer retains
         // its allocated capacity for the next call.
         std::vector<CandidateVariant> output;
-        m_filters->ApplyAllFilters(m_gatherBuffer, output, player, currentMagicka, m_stats.filterStats,
-            heldIDs, heldUnaffordable);
+        {
+            Huginn_ZONE_NAMED("Candidates::Filter");
+            m_filters->ApplyAllFilters(m_gatherBuffer, output, player, currentMagicka, m_stats.filterStats,
+                heldIDs, heldUnaffordable);
+        }
 
         // Calculate generation time
         const auto endTime = std::chrono::high_resolution_clock::now();

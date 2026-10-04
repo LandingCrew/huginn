@@ -537,6 +537,7 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
 
 void PipelineCoordinator::UpdateCaches(PipelineContext& ctx)
 {
+    Huginn_ZONE_NAMED("Pipeline::UpdateCaches");
     // Cache pipeline state for external equip attribution.
     // sortedPrefix = topNCandidates: only that prefix of scoredCandidates is in
     // utility order (partial_sort); see PipelineStateCache::Update. Page comes
