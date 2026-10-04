@@ -3064,6 +3064,44 @@ void RunUnitTests()
                 gemWeight);
         }
 
+        // Test 6j: a cure answers its affliction. The CureDisease / CurePoison
+        // tags were set by the classifier and read by nothing, so a cure sat at
+        // the noise floor while the player was diseased or poisoned (Cure
+        // Poison taken from the menu mid-fight, 2026-10-04 12:04:30).
+        {
+            State::WorldState testWorld{};
+            State::PlayerActorState sick{};
+            sick.effects.isDiseased = true;
+            sick.effects.isPoisoned = true;
+            const auto weights = engine.EvaluateRules(sick, testTargets, testWorld);
+
+            Candidate::ItemCandidate cureDisease{};
+            cureDisease.name = "Potion of Cure Disease";
+            cureDisease.type = Item::ItemType::CurePotion;
+            cureDisease.tags = Item::ItemTag::CureDisease;
+            Candidate::ItemCandidate curePoison = cureDisease;
+            curePoison.name = "Potion of Cure Poison";
+            curePoison.tags = Item::ItemTag::CurePoison;
+
+            const float diseaseW = Context::WeightForCandidate(cureDisease, weights);
+            const float poisonW = Context::WeightForCandidate(curePoison, weights);
+            if (diseaseW < weights.resistDiseaseWeight - 0.001f || poisonW < weights.resistPoisonWeight - 0.001f) {
+                logger::error("TEST FAIL (6j): cures should draw the affliction weights, got disease {:.3f} "
+                    "(want {:.3f}) poison {:.3f} (want {:.3f})",
+                    diseaseW, weights.resistDiseaseWeight, poisonW, weights.resistPoisonWeight);
+                return;
+            }
+
+            const auto healthy = engine.EvaluateRules(State::PlayerActorState{}, testTargets, testWorld);
+            if (Context::WeightForCandidate(cureDisease, healthy) > healthy.baseRelevanceWeight + 0.001f) {
+                logger::error("TEST FAIL (6j): a cure should stay at the floor when nothing afflicts the player");
+                return;
+            }
+
+            logger::info("  ✓ PASS: cures draw disease {:.2f} / poison {:.2f} only while afflicted"sv,
+                diseaseW, poisonW);
+        }
+
         // Test 6g: No environmental conditions → all weights zero
         {
             State::PlayerActorState testPlayer{};

@@ -184,6 +184,18 @@ namespace Huginn::Context
                 if (HasTag(c.tags, ItemTag::ResistDisease)) {
                     maxWeight = std::max(maxWeight, weights.resistDiseaseWeight);
                 }
+                // Cures answer the affliction they cure. The tags were set by
+                // the classifier and read by nothing, so a cure was stuck at the
+                // noise floor even while diseased or poisoned -- a Cure Poison
+                // taken from the menu mid-fight logged "not a candidate"
+                // (2026-10-04 12:04:30). The two weights are nonzero only while
+                // the player is diseased / poisoned.
+                if (HasTag(c.tags, ItemTag::CureDisease)) {
+                    maxWeight = std::max(maxWeight, weights.resistDiseaseWeight);
+                }
+                if (HasTag(c.tags, ItemTag::CurePoison)) {
+                    maxWeight = std::max(maxWeight, weights.resistPoisonWeight);
+                }
                 // Resist Magic: relevant when an enemy is casting (same
                 // perceivable trigger as ward spells)
                 if (HasTag(c.tags, ItemTag::ResistMagic)) {
