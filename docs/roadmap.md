@@ -316,10 +316,19 @@ after the soak:
   Disease potion now cures at random within 1-4 days; three combine into
   Cure Greater Disease, which is instant. So when diseased, prefer Cure
   Greater Disease. That may also explain the 2026-10-02 Cure Disease that
-  "did not work". Huginn never flagged a disease in either session: it
-  detects one as a detrimental effect resisted by Resist Disease, which is
-  unverified for LoreRim's diseases; the spell's type (`kDisease`) is the
-  sturdier signal.
+  "did not work". Huginn never flagged a disease in either session, and
+  `hg dump diseases` (#167) says why: its check sees **1 of LoreRim's 94
+  diseases**. Disease effects carry no resistance AV -- the engine resists
+  a disease by its spell type -- and the value-modifier archetypes most of
+  them use break out of the active-effect walk before the check. Its other
+  two hits are attack spells resisted by disease resistance (false
+  positives). The fix: set `isDiseased` from the active effect's spell
+  type, `kDisease`, as the health tracking already does, and drop the
+  resist-AV rule. Decide what not to offer a cure for -- Wintersun's
+  "Peryite's Gift" (34 variants, a worship gift), Sanguinare Vampiris (the
+  player may want the vampirism) -- and note that some mods use the
+  disease type for debuffs (Lock Bashing's "Sapped Grip", Alternate
+  Perspective's "Wounded").
 
 **Parked tracks** (not in the order): CommonLib migration (waiting on
 LoreRim 5.1), dMenu -> SKSE Menu Framework, apparel expansion, Tier 3 perf.
