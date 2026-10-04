@@ -10,8 +10,10 @@
 #include "scroll/ScrollRegistry.h"
 #include "apparel/ApparelRegistry.h"   // #65
 #include "state/PlayerActorState.h"    // GenerateCandidates / Gather* take PlayerActorState
+#include <array>
 #include <chrono>
 #include <memory>
+#include <unordered_map>
 
 namespace Huginn::Candidate
 {
@@ -207,6 +209,24 @@ namespace Huginn::Candidate
         // local output vector by ApplyAllFilters.  Never moved-from, so
         // the allocation persists for the lifetime of the singleton.
         std::vector<CandidateVariant> m_gatherBuffer;
+
+        // Each known spell's magicka cost, perk- and Fortify-adjusted. Looking
+        // the form up and running CalculateMagickaCost (perk entry points
+        // included) for every spell on every scoring run was ~2/3 of
+        // Pipeline::ScoreCandidates on the 2026-10-04 trace. The cost moves
+        // with the school skills, the school modifiers Fortify potions and
+        // gear change, perks, and equipment-conditional perk entries, so the
+        // cache is dropped when any of the ten AVs in `drivers` changes, and
+        // every SPELL_COST_REFRESH regardless (perks and worn gear are not
+        // cheap to watch).
+        struct SpellCostCache
+        {
+            std::unordered_map<RE::FormID, float> costs;
+            std::array<float, 10> drivers{};
+            std::chrono::steady_clock::time_point builtAt{};
+        };
+        SpellCostCache m_spellCosts;
+        static constexpr auto SPELL_COST_REFRESH = std::chrono::seconds(10);
 
         // =========================================================================
         // CANDIDATE GATHERING (from registries)

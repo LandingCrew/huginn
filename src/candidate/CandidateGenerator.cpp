@@ -1,4 +1,5 @@
 #include "CandidateGenerator.h"
+#include "Profiling.h"
 #include <algorithm>
 
 namespace Huginn::Candidate
@@ -127,22 +128,28 @@ namespace Huginn::Candidate
         // Gather candidates from all registries into the persistent buffer.
         // No relevance metadata is stamped here: the per-tick display reason is
         // derived by the pipeline from the scorer's context weights (#10).
-        GatherSpellCandidates(m_gatherBuffer, player);
-        GatherPotionCandidates(m_gatherBuffer, player);
-        GatherScrollCandidates(m_gatherBuffer, player);
-        GatherWeaponCandidates(m_gatherBuffer, player);
-        GatherAmmoCandidates(m_gatherBuffer, player);
-        GatherSoulGemCandidates(m_gatherBuffer, player);
-        GatherApparelCandidates(m_gatherBuffer, player);
-        GatherTorchCandidates(m_gatherBuffer, player);
+        // One Tracy zone per source: Pipeline::ScoreCandidates went from ~180 us
+        // to ~4.8 ms per call (Debug, 2026-09-19 -> 2026-10-03) and the gather,
+        // filter and scoring halves were all inside one zone.
+        { Huginn_ZONE_NAMED("Gather::Spells");    GatherSpellCandidates(m_gatherBuffer, player); }
+        { Huginn_ZONE_NAMED("Gather::Items");     GatherPotionCandidates(m_gatherBuffer, player); }
+        { Huginn_ZONE_NAMED("Gather::Scrolls");   GatherScrollCandidates(m_gatherBuffer, player); }
+        { Huginn_ZONE_NAMED("Gather::Weapons");   GatherWeaponCandidates(m_gatherBuffer, player); }
+        { Huginn_ZONE_NAMED("Gather::Ammo");      GatherAmmoCandidates(m_gatherBuffer, player); }
+        { Huginn_ZONE_NAMED("Gather::SoulGems");  GatherSoulGemCandidates(m_gatherBuffer, player); }
+        { Huginn_ZONE_NAMED("Gather::Apparel");   GatherApparelCandidates(m_gatherBuffer, player); }
+        { Huginn_ZONE_NAMED("Gather::Torches");   GatherTorchCandidates(m_gatherBuffer, player); }
 
         // Step 3: Filter gathered candidates into a local output vector.
         // Survivors are moved from m_gatherBuffer into output (one move per
         // candidate, no in-place erase_if chains).  m_gatherBuffer retains
         // its allocated capacity for the next call.
         std::vector<CandidateVariant> output;
-        m_filters->ApplyAllFilters(m_gatherBuffer, output, player, currentMagicka, m_stats.filterStats,
-            heldIDs, heldUnaffordable);
+        {
+            Huginn_ZONE_NAMED("Candidates::Filter");
+            m_filters->ApplyAllFilters(m_gatherBuffer, output, player, currentMagicka, m_stats.filterStats,
+                heldIDs, heldUnaffordable);
+        }
 
         // Calculate generation time
         const auto endTime = std::chrono::high_resolution_clock::now();
@@ -166,18 +173,53 @@ namespace Huginn::Candidate
         // OPTIMIZATION: Zero-copy iteration via ForEach visitor pattern
         size_t count = 0;
         auto* playerRef = RE::PlayerCharacter::GetSingleton();
+
+        // Drop the cost cache when a cost driver moved, or when it is old.
+        if (playerRef) {
+            static constexpr std::array<RE::ActorValue, 10> kDrivers{
+                RE::ActorValue::kAlteration, RE::ActorValue::kConjuration,
+                RE::ActorValue::kDestruction, RE::ActorValue::kIllusion,
+                RE::ActorValue::kRestoration,
+                RE::ActorValue::kAlterationModifier, RE::ActorValue::kConjurationModifier,
+                RE::ActorValue::kDestructionModifier, RE::ActorValue::kIllusionModifier,
+                RE::ActorValue::kRestorationModifier,
+            };
+            std::array<float, 10> drivers{};
+            auto* avOwner = playerRef->AsActorValueOwner();
+            for (size_t i = 0; i < kDrivers.size(); ++i) {
+                drivers[i] = avOwner->GetActorValue(kDrivers[i]);
+            }
+            const auto now = std::chrono::steady_clock::now();
+            if (drivers != m_spellCosts.drivers || now - m_spellCosts.builtAt >= SPELL_COST_REFRESH) {
+                m_spellCosts.costs.clear();
+                m_spellCosts.drivers = drivers;
+                m_spellCosts.builtAt = now;
+            }
+        }
+
         m_spellRegistry->ForEachSpell([&](const Spell::SpellData& spellData) {
             ++count;
             SpellCandidate candidate = SpellCandidate::FromSpellData(spellData);
 
-            // Cache effective cost (perk/enchant-adjusted) to avoid form lookup in filter
-            auto* form = RE::TESForm::LookupByID(candidate.formID);
-            auto* spellItem = form ? form->As<RE::SpellItem>() : nullptr;
-            candidate.effectiveCost = (spellItem && playerRef)
-                ? spellItem->CalculateMagickaCost(playerRef)
-                : static_cast<float>(candidate.baseCost);
-            if (candidate.isConcentration && candidate.effectiveCost <= 0.0f) {
-                candidate.effectiveCost = static_cast<float>(candidate.baseCost);
+            // Effective cost (perk/enchant-adjusted), from the cache when it
+            // holds one; a newly learned spell is computed here once.
+            const auto cached = playerRef ? m_spellCosts.costs.find(candidate.formID)
+                                          : m_spellCosts.costs.end();
+            if (cached != m_spellCosts.costs.end()) {
+                candidate.effectiveCost = cached->second;
+            } else {
+                auto* form = RE::TESForm::LookupByID(candidate.formID);
+                auto* spellItem = form ? form->As<RE::SpellItem>() : nullptr;
+                candidate.effectiveCost = (spellItem && playerRef)
+                    ? spellItem->CalculateMagickaCost(playerRef)
+                    : static_cast<float>(candidate.baseCost);
+                if (candidate.isConcentration && candidate.effectiveCost <= 0.0f) {
+                    candidate.effectiveCost = static_cast<float>(candidate.baseCost);
+                }
+                // No player: the base cost is a placeholder, not worth keeping.
+                if (playerRef) {
+                    m_spellCosts.costs.emplace(candidate.formID, candidate.effectiveCost);
+                }
             }
 
             candidate.isEquipped = player.IsSpellEquipped(candidate.formID);

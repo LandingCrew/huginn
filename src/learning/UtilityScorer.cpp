@@ -4,6 +4,7 @@
 #include "util/ScopedTimer.h"
 #include "state/StateManager.h"                 // GetPlayerVitals: vital envelopes tick every frame
 #include "override/OverrideConfig.h"                // URGENT_RESTORE_WINDOW_SEC: one "strongest" for slots and override
+#include "Profiling.h"
 #include <algorithm>
 #include <chrono>
 #include <map>
@@ -53,8 +54,16 @@ namespace Huginn::Scoring
 
         // Stage 1f: Evaluate context rules ONCE for all candidates
         // This replaces per-candidate relevance from CandidateGenerator
-        Context::ContextWeightMap weights = m_contextEngine.EvaluateRules(
-            scoringPlayer, targets, world);
+        // Tracy zones below split this function (and Pipeline::ScoreCandidates,
+        // its caller) so a trace can say which part costs: see the 2026-10-03
+        // entry in docs/profiling/tracy-traces.md. The per-candidate ones
+        // (Score::Candidate, Score::LearnerMetrics, Score::Prior,
+        // Score::Correlation) give MTPC per candidate; Counts / runs = pool size.
+        Context::ContextWeightMap weights{};
+        {
+            Huginn_ZONE_NAMED("Score::ContextRules");
+            weights = m_contextEngine.EvaluateRules(scoringPlayer, targets, world);
+        }
 
         // Hand the map back so the display explanation is read off the SAME
         // weights that ranked the list, not a second derivation (#10).
@@ -69,12 +78,15 @@ namespace Huginn::Scoring
         // Lazy decay: apply time-based weight decay to candidates about to be scored.
         // Only decays items idle > DECAY_THRESHOLD_MINUTES. Batched: one shared-lock
         // pass over the pool instead of ~N per-candidate lock acquisitions.
-        m_decayScratch.clear();
-        m_decayScratch.reserve(candidates.size());
-        for (const auto& candidate : candidates) {
-            m_decayScratch.push_back(Candidate::GetFormID(candidate));
+        {
+            Huginn_ZONE_NAMED("Score::Decay");
+            m_decayScratch.clear();
+            m_decayScratch.reserve(candidates.size());
+            for (const auto& candidate : candidates) {
+                m_decayScratch.push_back(Candidate::GetFormID(candidate));
+            }
+            m_featureLearner.MaybeDecayBatch(m_decayScratch);
         }
-        m_featureLearner.MaybeDecayBatch(m_decayScratch);
 
         // Acquire locked readers once for the entire scoring loop.
         // Eliminates per-candidate mutex acquire/release (~200 lock ops → 2).
@@ -84,6 +96,7 @@ namespace Huginn::Scoring
         // Score all candidates
         float maxUtilitySeen = 0.0f;
         for (const auto& candidate : candidates) {
+            Huginn_ZONE_NAMED("Score::Candidate");
             // Early filter: Skip candidates with very low context weight
             // Stage 1f: Use GetContextWeight instead of Candidate::GetRelevance
             // Favorites always pass — they represent explicit player intent and must
@@ -102,7 +115,10 @@ namespace Huginn::Scoring
             }
 
             RE::FormID formID = Candidate::GetFormID(candidate);
-            auto metrics = qReader.GetMetrics(formID, phi);
+            const auto metrics = [&] {
+                Huginn_ZONE_NAMED("Score::LearnerMetrics");
+                return qReader.GetMetrics(formID, phi);
+            }();
             float recencyBoost = usageReader.GetRecencyBoost(formID);
 
             ScoredCandidate result = ScoreCandidateInternal(
@@ -136,6 +152,7 @@ namespace Huginn::Scoring
         // which covers both "Top 0" (empty weight table) and "Top 1" (only 1 item has real
         // context weight, e.g. a favorited weapon). The fallback self-heals as UCB decays.
         if (scored.size() < m_config.topNCandidates && m_config.coldStartUCBBoost > 0.0f) {
+            Huginn_ZONE_NAMED("Score::ColdStart");
             // Dedup against already-scored candidates by linear scan — this branch
             // only runs when scored.size() < topNCandidates (<10), so a scan beats
             // allocating a hash set every cold-start tick.
@@ -218,12 +235,16 @@ namespace Huginn::Scoring
 
         // Rank-scaled favorites boost: replace Step 7's provisional uniform max
         // boost with the documented rank-scaled value (ScorerConfig.h).
-        ApplyFavoritesRankScaling(scored);
-        ApplyPotionTierPreference(scored);
+        {
+            Huginn_ZONE_NAMED("Score::FavoritesAndTiers");
+            ApplyFavoritesRankScaling(scored);
+            ApplyPotionTierPreference(scored);
+        }
 
         // Partial sort for top N (much faster than full sort for large lists)
         size_t topN = std::min(m_config.topNCandidates, scored.size());
         if (topN > 0) {
+            Huginn_ZONE_NAMED("Score::Sort");
             if (scored.size() > topN) {
                 std::partial_sort(scored.begin(), scored.begin() + topN, scored.end());
             } else {
@@ -236,7 +257,10 @@ namespace Huginn::Scoring
         // SlotAllocator::GetSlotCount() live, so a page switch landing mid-tick
         // could size wildcards against the new page while the pipeline allocated
         // the snapshotted one — resolves TODO(page-consistency).
-        m_wildcardMgr.ApplyWildcards(scored, displayPage);
+        {
+            Huginn_ZONE_NAMED("Score::Wildcards");
+            m_wildcardMgr.ApplyWildcards(scored, displayPage);
+        }
 
         return scored;
     }
@@ -374,7 +398,10 @@ namespace Huginn::Scoring
         // =====================================================================
         // Step 3: Calculate prior from PriorCalculator
         // =====================================================================
-        result.breakdown.prior = m_priorCalc.CalculatePrior(player, candidate);
+        result.breakdown.prior = [&] {
+            Huginn_ZONE_NAMED("Score::Prior");
+            return m_priorCalc.CalculatePrior(player, candidate);
+        }();
 
         // =====================================================================
         // Step 4: Compute learning score: α*R + (1-α)*prior + β*UCB
@@ -401,8 +428,10 @@ namespace Huginn::Scoring
         // =====================================================================
         // Step 5: Calculate correlation bonus
         // =====================================================================
-        result.breakdown.correlationBonus =
-            m_correlationBooster.CalculateBonus(player, targets, candidate);
+        result.breakdown.correlationBonus = [&] {
+            Huginn_ZONE_NAMED("Score::Correlation");
+            return m_correlationBooster.CalculateBonus(player, targets, candidate);
+        }();
 
         // =====================================================================
         // Step 6: Get potion multiplier (1.0 for non-potions)
