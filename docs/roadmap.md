@@ -1259,6 +1259,24 @@ committed. The only live work here is Tier 3.
       (generate / context weights / learner predict / wildcards) before
       guessing; candidates (125-181 on LoreRim) and trained learner items
       (80) both grew since. Memory was flat over the session.
+      Zones split in #168 (0.22.13): `Gather::*` per source,
+      `Candidates::Filter`, `Score::*` per part and per candidate. **Next:
+      one Tracy capture on 0.22.13**, then fix whatever it names.
+- [ ] **Cache each spell's magicka cost** -- the first suspect, pending that
+      capture. `GatherSpellCandidates` looks up every known spell's form and
+      runs `CalculateMagickaCost` (perk entry points included) on every
+      scoring run, ~once a second. The registry already holds only spells
+      the player knows, so the saving is in not recomputing. Not
+      one-and-done (the user's first take, 2026-10-04): the cost moves with
+      school skill level, cost-reduction perks, and Fortify potions or
+      enchanted gear while they are active, and the affordability filter
+      hides spells on it -- a frozen cost hides a spell the player can now
+      afford, or shows one after the potion wears off. Cache per spell;
+      recompute all on an equipment change, an active effect starting or
+      ending (both already polled), a magic school's skill or the perk
+      count changing (new: five AVs and a count), and compute only the new
+      spell when one is learned. Decided with the user: wait for the
+      capture to confirm `Gather::Spells` is the cost before building it.
 **Nothing in this tier exceeds 0.10% of runtime** on the 44:40 capture of
 2026-08-26, which is the only capture long enough to trust — the 5-15 minute
 runs that set the original ranking were dominated by cold calls. #14 is archived
