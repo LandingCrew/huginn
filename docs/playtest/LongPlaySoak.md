@@ -1,5 +1,8 @@
 # Long-Play Soak Testing
 
+Runs so far: [Soak-2026-10-LoreRim.md](Soak-2026-10-LoreRim.md) (9.1 h,
+v0.22.11-0.22.14, the Phase 3 baseline).
+
 Endurance testing for Huginn over a 20–50 hr playthrough, played in 1–6 hr
 bursts. This is **not** feature QA — it answers the questions that only appear
 with time:
