@@ -194,6 +194,21 @@ context" unless named):
   list.
 - Food as the last emergency fallback -- decided against (the user,
   2026-10-02): food does not do what an emergency needs in most cases.
+- **Expire learner entries for items the player no longer has.** The
+  learner keeps an entry for every item ever selected and drops one only
+  on `hg reset weights` or a reload's dynamic-form swap, so `learn items`
+  counts everything chosen since the reset (80 after ~7 h of the soak),
+  not what is carried -- it grows without bound over a playthrough of
+  picking up and dropping gear. Decided (the user, 2026-10-04): when the
+  registries reconcile, an item missing from the inventory and spell list
+  for N hours of play is removed. Needs a last-seen time per entry,
+  saved in the cosave and counted in play time (the learning clock does
+  not track time). Cases to settle: gear stored in a chest and fetched
+  later loses its learning (N sets how long it survives); a potion type
+  the player ran out of and restocks -- pooling (Phase 3 #5) would keep
+  what its class learned. Replaces the `hg stress learner` idea: with
+  expiry, the entry count is bounded by what one character uses in N
+  hours.
 - **Items matched to the enemy, beyond spells.** Raised in play,
   2026-10-02. Built today: `TargetType` (closest hostile: humanoid,
   undead, beast, dragon, construct, daedra) raises the anti-undead,
