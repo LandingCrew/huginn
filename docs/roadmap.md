@@ -399,6 +399,22 @@ All scoring, so all after the soak:
   (`kPoison`), which the health tracking already reads. Fire, frost and
   shock are read in a branch that does fire (7 / 5 / 11 times).
 
+**Enemy detection, a future release** (the user, 2026-10-04: expand it).
+Gathers what the run found; details in each entry above:
+- *What the enemy is*: read creature keywords before race-name words (the
+  Gloom Wraith read Humanoid), and hold the type for the fight rather than
+  the crosshair moment (Undead <-> None every few seconds) -- "Target type
+  misses and flickers".
+- *What the HUD shows about it*: health, magicka and stamina bars, type,
+  race, equipped weapons, a spell as visibly cast -- "the perception line".
+- *What to do about it*: bane weapons, resist gear for a dragon's element,
+  poisons by target, beast and construct uses -- "Items matched to the
+  enemy"; a summon when pressed in melee, damage over time on a boss with a
+  slowly falling bar -- "Fight shape".
+- *What it is doing to the player*: poison detection likely never fires
+  (same flaw as diseases); resist potions weighted by damage taken, not one
+  hit -- "Poison detection" and "Resist potions on a single hit".
+
 **Parked tracks** (not in the order): CommonLib migration (waiting on
 LoreRim 5.1), dMenu -> SKSE Menu Framework, apparel expansion, Tier 3 perf.
 
@@ -1272,7 +1288,14 @@ committed. The only live work here is Tier 3.
       Zones split in #168 (0.22.13): `Gather::*` per source,
       `Candidates::Filter`, `Score::*` per part and per candidate. **Next:
       one Tracy capture on 0.22.13**, then fix whatever it names.
-- [ ] **Cache each spell's magicka cost** -- the first suspect, pending that
+- [ ] **Cache each spell's magicka cost** -- BUILT in #168 (0.22.14,
+      `be4e452`): the 2026-10-04 10:06 capture on 0.22.13 named
+      `Gather::Spells` ~2/3 of `Pipeline::ScoreCandidates` (flame graph),
+      `Candidates::Filter` most of the rest; per-candidate scoring was under
+      0.5 ms a run. Shipped as: cache dropped on any of the ten school
+      skill / modifier AVs changing, and every 10 s (perks and worn gear,
+      not watched). Left open: confirm with a capture on 0.22.14, then look
+      at `Candidates::Filter`. Original entry: the first suspect, pending that
       capture. `GatherSpellCandidates` looks up every known spell's form and
       runs `CalculateMagickaCost` (perk entry points included) on every
       scoring run, ~once a second. The registry already holds only spells
