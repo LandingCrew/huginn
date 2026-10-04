@@ -388,15 +388,20 @@ All scoring, so all after the soak:
   want the vampirism) -- and note that some mods use the disease type for
   debuffs (Lock Bashing's "Sapped Grip", Alternate Perspective's
   "Wounded").
-- **Poison detection probably has the same flaw.** `isPoisoned` never fired
-  in ~8 h of the soak, including the spider fights of 2026-10-04
-  (10:14-10:19, target Beast). It is set in the same default branch as the
+- **Poison detection has the same flaw -- confirmed 2026-10-04 12:04.** A
+  spider fight (target Beast, health down to 31%), then the user drank Cure
+  Poison from the menu at 12:04:30 -- poisoned -- while the magic-state
+  line, logged on every change, stayed at `poison=false` from 12:01 on. So
+  Cure Poison was "not a candidate" (it is offered only while poisoned).
+  `isPoisoned` never fired in ~8 h of the soak, including the spider
+  fights of 2026-10-04 (10:14-10:19, target Beast). It is set in the same default branch as the
   disease check -- a detrimental effect resisted by Poison Resist -- and
   poison damage is usually a value or dual value modifier (LoreRim's
   "Frostbite Venom" is archetype 5, dual value modifier), which breaks out
-  before it. Unverified until a dump or a logged bite shows the effect on
-  the player; the likely fix is the same as for diseases, the spell type
-  (`kPoison`), which the health tracking already reads. Fire, frost and
+  before it. The likely fix is the same as for diseases, the spell type
+  (`kPoison`), which the health tracking already reads; which archetype
+  the bite uses is still unlogged, so log the effect on the player when
+  building the fix. Fire, frost and
   shock are read in a branch that does fire (7 / 5 / 11 times).
 
 **Enemy detection, a future release** (the user, 2026-10-04: expand it).
