@@ -16,6 +16,7 @@ hg dump potions    (potions and poisons -> Huginn_Potions.csv)
 hg dump weapons    (weapons and ammo -> Huginn_Weapons.csv)
 hg dump apparel    (enchanted armour -> Huginn_Apparel.csv)
 hg dump food       (-> Huginn_Food.csv)
+hg dump diseases   (diseases, and whether Huginn can see each -> Huginn_Diseases.csv)
 ```
 
 Files land in the SKSE log folder (`My Games\Skyrim.INI\SKSE` on the dev
