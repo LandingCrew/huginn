@@ -13,6 +13,24 @@
 
 namespace Huginn::State
 {
+   // Outdoors, under a full sky, between the end of the climate's sunrise and
+   // the start of its sunset. A full sky and not just "exterior": Blackreach
+   // and its like are exterior worldspaces that are dark at noon. Climate
+   // timing is in 10-minute units; without a climate, 07:00-18:00.
+   static bool InOpenDaylight(float hour, bool interior)
+   {
+      if (interior) return false;
+      auto* sky = RE::Sky::GetSingleton();
+      if (!sky || sky->mode.get() != RE::Sky::Mode::kFull) return false;
+      float dayStart = 7.0f;
+      float dayEnd = 18.0f;
+      if (const auto* climate = sky->currentClimate) {
+         dayStart = climate->timing.sunrise.end / 6.0f;
+         dayEnd = climate->timing.sunset.begin / 6.0f;
+      }
+      return dayStart < dayEnd && hour >= dayStart && hour < dayEnd;
+   }
+
    // =============================================================================
    // WORLD OBJECT DETECTION HELPERS
    // =============================================================================
@@ -189,7 +207,19 @@ namespace Huginn::State
         placeID = worldspace->GetFormID();
       }
       std::optional<BoolDebouncer::Suppressed> dropped;
-      newState.isDark = m_darkGate.Update(newState.lightLevel, m_darkLightLevel.load(),
+      // Outdoors under an open sky, in the climate's daytime, it is not dark
+      // however the shadow falls: the light on the player read 220.9 and 27.1
+      // by turns in snow at 11:30, tree shadow most likely, and Magelight took
+      // key 1 (2026-10-03 19:24-19:25). The gate is fed "lit" then, so its
+      // hysteresis still governs the edges; the published light level stays
+      // the measured one.
+      const bool openDaylight = InOpenDaylight(newState.timeOfDay, newState.isInterior);
+      if (openDaylight != m_lastOpenDaylight) {
+        logger::debug("[World] open daylight {} at {:.2f}h ({})"sv, openDaylight ? "began" : "ended",
+          newState.timeOfDay, newState.isInterior ? "interior" : "exterior");
+        m_lastOpenDaylight = openDaylight;
+      }
+      newState.isDark = m_darkGate.Update(openDaylight ? 1.0f : newState.lightLevel, m_darkLightLevel.load(),
           placeID, BoolDebouncer::Clock::now(), &dropped);
       if (dropped) {
         logger::debug("[Debounce] dark {} for {} ms, not published"sv,
