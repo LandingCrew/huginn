@@ -161,11 +161,14 @@ context" unless named):
   enchanted apparel beyond the three craft skills" (Known Recommendation
   Issues): there is still no merchant or barter context in `src/`. It is
   the craft-gear case again -- out of combat, one jewellery slot, no armour
-  stripped -- so the combat BLOCKER on that entry does not apply. It needs:
-  - **A merchant context** from what the player can see: talking to, or
-    looking at, someone who trades (vendor faction / services). The swap
-    has to be offered before the BarterMenu opens, since Huginn's keys do
-    not fire inside a menu.
+  stripped -- so the combat half of the BLOCKER on that entry does not
+  apply. Its part (a) still does: group by slot, so two necklaces or two
+  rings never surface side by side. It needs:
+  - **A merchant context** from what the player can see: looking at
+    someone who trades (vendor faction / services) in the crosshair. Not
+    talking to them -- dialogue is DialogueMenu, and Huginn's keys do not
+    fire inside a menu, so the swap has to be offered before the player
+    speaks, let alone opens the BarterMenu.
   - **Worn against offered.** Both pieces in that swap read "Prices are 5%
     more favorable", so the right answer was no swap. Compare the barter
     magnitude of what the slot holds now -- the worn-vs-candidate check
@@ -206,8 +209,11 @@ context" unless named):
   and under "Gear and poisons" said "never its stats", which overstated
   it): what the HUD shows the player, Huginn may read. The target's
   health, magicka and stamina bars, its type and race, and the weapons it
-  has equipped are all on screen. Spells are the hard case: what it holds
-  in hand is visible when cast, its spell list is not (CLAUDE.md,
+  has equipped are all on screen. That assumes a HUD mod (TrueHUD, as on
+  LoreRim): vanilla shows only the enemy health bar, so a rule on enemy
+  magicka or stamina has to check that such a HUD is drawing them, or
+  stay on health. Spells are the hard case: what it holds in hand is
+  visible when cast, its spell list is not (CLAUDE.md,
   Forbidden Information). Hidden numbers -- resistances, perks, level --
   stay out.
 - **Hunger weight: a ramp, not two steps.** Today `HungerTier` gives food
@@ -218,10 +224,13 @@ context" unless named):
   5 -> 1; the food's context went 0.50, 0.50, 0.50, 0.50, 0.25, 0.05 --
   the last two meals were eaten past where Huginn thought hunger mattered.
   The user: the worse the survival need, the more weight food should get.
-  Options: ramp on the 0-1000 hunger need value `StateManager_Survival`
-  already reads, with Starving above Famished; and once the player starts
-  eating, keep food up until Fed rather than dropping it at Peckish. Same
-  shape for cold (`ColdTier`) and fatigue. Scoring, so after the soak.
+  Options: ramp on the 0-1000 hunger need value, with Starving above
+  Famished -- but `StateManager_Survival` reads that value only on the
+  vanilla CC fallback; with SMI installed (as on LoreRim) it reads SMI's 0-5
+  stage globals, so the continuous value has to be plumbed through for SMI
+  first, or the ramp falls back to the same stage steps; and once the player
+  starts eating, keep food up until Fed rather than dropping it at Peckish.
+  Same shape for cold (`ColdTier`) and fatigue. Scoring, so after the soak.
 - **Fight shape: a summon when pressed, damage over time on a boss.** Two
   reach-ins from the LoreRim run, 2026-10-02, both explained by the user:
   - *Scroll of Conjure Spectral Warhound* (23:31:38): a heavy-weapons
@@ -253,12 +262,19 @@ context" unless named):
 
 **Field notes from the soak run, 2026-10-03** (LoreRim, 1.5 h, Windward
 Ruins and High Gate Ruins; the user's observations, checked against the log).
-The session had 40 reach-ins against 113 Huginn presses -- about 2 an hour
-before it -- and the live page held the chosen item 92 of 125 times (A|B;
-context-only 68). The reach-ins: healing spells 11 (Healing x6, Healing
-Touch x4, Wild Healing), non-restore potions 9, attack and utility spells
-8, raw food 4, weapons 4, scrolls and the waterskin 4. All scoring, so all
-after the soak:
+From `Huginn_AB.log` through 00:54:33 UTC (20:54 local): 134 selections --
+94 Huginn presses (88 keys, 6 Wheeler) and 40 reach-ins (19 from the magic
+menu, 12 from the inventory, 9 from other menus). 125 of the 134 were on the
+plain page and tallied (the other 9 were on page 2, "Jobs", which the A|B
+arm does not rank); the live page held the chosen item 92 of those 125
+times, context-only 68. 40 reach-ins in 1.5 h is about 27 an hour; the four
+earlier 2026-10-03 launches logged 5 in about 1 h 45 m, about 3 an hour.
+That jump is not explained yet -- check whether it is the play (two ruins,
+heavy combat, healing from the menu) or a change in what counts as a
+reach-in before reading it as a regression. The reach-ins: healing spells 11
+(Healing x6, Healing Touch x4, Wild Healing), non-restore potions 9, attack
+and utility spells 8, raw food 4, weapons 4, scrolls and the waterskin 4.
+All scoring, so all after the soak:
 - **Darkness in daylight (bug).** Magelight on key 1 outdoors at in-game
   11:30, in snow. The light reading flipped between raw 220.9 and 27.1
   (tree shadow, most likely) and 27 read as dark (19:24:45-19:25:34). The
@@ -282,7 +298,10 @@ after the soak:
   Healing Touch differ by one tag. A targeted ally spell is useful only
   with an ally to aim at -- a follower or summon nearby, which is
   perceivable -- and does nothing for the caster. Separate them by
-  delivery (`GetDelivery()`), and gate the targeted ones on an ally.
+  delivery (`GetDelivery()`), and gate the targeted ones on an ally:
+  `StateEvaluator::EvaluateAllyStatus` already gives that as
+  `AllyStatus` (None / Present / InjuredPresent) -- read it, do not add a
+  second ally scan.
   Healing spells were the biggest reach-in group of the session (11).
 - **Oakflesh over Stoneflesh.** Same tags, Stoneflesh is the higher rank
   (cost 150 vs 100); Oakflesh carries the learned weight. Needs a "higher
@@ -302,7 +321,12 @@ after the soak:
   ahead of a fight, and for the player who heals at full health to train
   Restoration. Likely the same for the "Healing" picks reported as not
   candidates on 2026-10-03. Exempt effects with a duration (aura, regen)
-  from the filter, or let the learner see them and decide.
+  from the filter, or let the learner see them and decide. The filter has
+  three branches in `CandidateFilters.cpp` -- spells, RestoreHealth
+  potions (regen potions, soups) and scrolls (a healing-aura scroll) --
+  and the exemption belongs in all three. `filterHealingWhenFull` is a
+  `CandidateConfig` default with no INI key, so there is no workaround
+  until then; exposing it under `[Candidates]` is a cheap first step.
 - **Buffs matched to the loadout.** Fortify potions are matched to a
   situation only for the three crafting skills at a workbench; every other
   buff potion gets a flat baseline (`buffPotionWeight` /
@@ -333,16 +357,22 @@ after the soak:
   "did not work". Huginn never flagged a disease in either session, and
   `hg dump diseases` (#167) says why: its check sees **1 of LoreRim's 94
   diseases**. Disease effects carry no resistance AV -- the engine resists
-  a disease by its spell type -- and the value-modifier archetypes most of
-  them use break out of the active-effect walk before the check. Its other
-  two hits are attack spells resisted by disease resistance (false
-  positives). The fix: set `isDiseased` from the active effect's spell
-  type, `kDisease`, as the health tracking already does, and drop the
-  resist-AV rule. Decide what not to offer a cure for -- Wintersun's
-  "Peryite's Gift" (34 variants, a worship gift), Sanguinare Vampiris (the
-  player may want the vampirism) -- and note that some mods use the
-  disease type for debuffs (Lock Bashing's "Sapped Grip", Alternate
-  Perspective's "Wounded").
+  a disease by its spell type -- and most of them use the value-modifier
+  archetypes, which land in the `kValueModifier` / `kPeakValueModifier` case
+  of the archetype switch (`StateManager_MagicEffects.cpp`). That case only
+  sets the drain flags (`hasHealthDrain`, `hasMagickaPoison`,
+  `hasStaminaPoison`) for a `kDisease` spell; the resist-AV check that sets
+  `isDiseased` is in the `default:` branch, which they never reach. Its
+  other two hits are attack spells resisted by disease resistance (false
+  positives). The fix: set `isDiseased` from the active effect's spell type,
+  `kDisease`, before the archetype switch so every archetype sees it, and
+  drop the resist-AV rule. `isPoisoned` has the same gap -- a value-modifier
+  poison only sets `hasHealthDrain` -- so key it on `kPoison` in the same
+  change. Decide what not to offer a cure for -- Wintersun's "Peryite's
+  Gift" (34 variants, a worship gift), Sanguinare Vampiris (the player may
+  want the vampirism) -- and note that some mods use the disease type for
+  debuffs (Lock Bashing's "Sapped Grip", Alternate Perspective's
+  "Wounded").
 
 **Parked tracks** (not in the order): CommonLib migration (waiting on
 LoreRim 5.1), dMenu -> SKSE Menu Framework, apparel expansion, Tier 3 perf.
@@ -505,7 +535,10 @@ with how the run is played and laid out -- see the Phase 2 review notes.
         (Arcane Mass Inhibition), so moving it is a real migration.
       - `hg dump spells` has no plugin column (the potion, food and weights
         dumps do) -- add plugin and local id, so an author can build a file
-        from a dump.
+        from a dump. Every `hg dump *` is registered for debug builds only
+        (`#ifndef NDEBUG` in `ConsoleCommands.cpp`), and authors run the
+        release DLL -- so at least `hg dump spells` has to ship in release
+        for this to work.
       Why it pays: every spell the classifier cannot read is script-only
       ("Script-only powers and scrolls are unclassified": simonrim's 13
       learnable script-only spells, LoreRim's 105 tome-learnable ones), and
@@ -518,7 +551,9 @@ with how the run is played and laid out -- see the Phase 2 review notes.
       install to migrate. The unbuilt spell-pattern file (Doc-migration
       findings) could become a syntax inside these files.
       Not in the Next up order. It changes no learning or scoring until a new
-      file appears, so it can land before the soak.
+      file appears -- but moving the live Arcane Mass Inhibition section
+      changes a classification input, and the soak is now running, so it
+      waits for the soak to end.
       Raised 2026-10-02.
 
 ## Platform and dependencies
@@ -1078,8 +1113,9 @@ with how the run is played and laid out -- see the Phase 2 review notes.
       Poisons are the same problem: the right poison depends on what is
       being fought (a paralysis poison on a dragon, frost on a fire atronach,
       damage-magicka on a mage). Only perceivable target facts may drive it
-      -- race/type (undead, daedra, dragon, humanoid), its health,
-      magicka and stamina bars, what it is visibly casting or wielding --
+      -- race/type (undead, daedra, dragon, humanoid), its health bar
+      (magicka and stamina only where a HUD mod draws them), what it is
+      visibly casting or wielding --
       not its spell list or hidden numbers (CLAUDE.md, Forbidden
       Information; see "the perception line" under Next up). Wants a
       poison dump (effects, keywords) and a
