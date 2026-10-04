@@ -1322,7 +1322,18 @@ committed. The only live work here is Tier 3.
       flat at ~1.6 MB again. What is now widest: `Inventory::DeltaScan` under
       `Update::Registries` (~1/4 of `OnUpdate`), then `PollPlayerMagicEffects`
       and `PollTargets` under `Update::Subsystems` (~30% together, every
-      tick), and `Score::Decay` (~90 us a run, the top scoring zone). `GatherSpellCandidates` looks up every known spell's form and
+      tick), and `Score::Decay` (~90 us a run, the top scoring zone).
+      Numbers, same capture (Debug, Self only): `ScoreCandidates` is now
+      ~1.5 ms a run in all (was 4.82 ms in one zone): `Candidates::Filter`
+      365 us, `Gather::Spells` 259 us (likely mostly the 10 s refresh --
+      lengthen it), per-candidate scoring ~420 us, `Score::FavoritesAndTiers`
+      176 us, own 101 us, `Score::Decay` 90 us. Session totals, the next
+      order of work: `Inventory::DeltaScan` 1.52 ms x 4,811 = **7.32 s**
+      (twice anything else), `PollPlayerMagicEffects` 3.72 s, `PollTargets`
+      2.66 s, `Display::Wheeler` 2.49 s (789 us a run),
+      `Pipeline::AllocateAndLock` 1.38 s, `Candidates::Filter` 1.15 s,
+      `Pipeline::UpdateCaches` 1.13 s (358 us a run -- PipelineStateCache
+      classifying every candidate every run, the #163 review's note). `GatherSpellCandidates` looks up every known spell's form and
       runs `CalculateMagickaCost` (perk entry points included) on every
       scoring run, ~once a second. The registry already holds only spells
       the player knows, so the saving is in not recomputing. Not

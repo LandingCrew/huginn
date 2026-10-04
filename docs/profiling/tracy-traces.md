@@ -51,6 +51,41 @@ Top hot zones + analysis + finding mapping.
 
 ---
 
+## 2026-10-04 (11:55) — `be4e452` (v0.22.14) — LoreRim, after the spell-cost cache
+
+- Session: SkyrimSE.exe @ 2026-10-04 11:55:38, Tracy 0.14.1, 221,768 frames,
+  ~1:15:52 capture, Tracy 719.36 MB.
+- Notes: **DEBUG + TRACY (relative only)**, Self only. First capture with the
+  #168 zones inside `Pipeline::ScoreCandidates` and the spell-cost cache.
+
+| Zone | MTPC | Count | Total |
+|---|---|---|---|
+| `ReconcileWeapons::ExtractMetadata` | 3.14 ms | 104 | 326.55 ms |
+| `Inventory::DeltaScan` | **1.52 ms** | 4,811 | **7.32 s** (0.16%) |
+| `ApparelRegistry::Reconcile` | 1.23 ms | 103 | 126.62 ms |
+| `ItemRegistry::Reconcile` | 1.1 ms | 102 | 112.7 ms |
+| `Display::Wheeler` | 788.62 µs | 3,156 | 2.49 s |
+| `Pipeline::AllocateAndLock` | 438.48 µs | 3,156 | 1.38 s |
+| `Candidates::Filter` | 365.49 µs | 3,156 | 1.15 s |
+| `Pipeline::UpdateCaches` | 358.22 µs | 3,156 | 1.13 s |
+| `Gather::Spells` | 258.71 µs | 3,156 | 816.49 ms |
+| `Score::FavoritesAndTiers` | 176.07 µs | 3,156 | 555.68 ms |
+| `PollPlayerMagicEffects` | 157.26 µs | 23,679 | 3.72 s |
+| `PollTargets` | 112.36 µs | 23,679 | 2.66 s |
+| `Pipeline::ScoreCandidates` (own) | 100.93 µs | 3,156 | 318.52 ms |
+| `Score::Decay` | 90.28 µs | 3,156 | 284.91 ms |
+| `Score::Candidate` / `LearnerMetrics` / `Prior` / `Correlation` | 1.29 µs / 542 ns / 235 ns / 200 ns | 591,525-591,705 | 765 / 316 / 137 / 117 ms |
+
+- **`ScoreCandidates` ~1.5 ms a run in all, from 4.82 ms** on 2026-10-03:
+  the cache took `Gather::Spells` from ~2/3 of the zone to ~1/6. Its
+  remaining 259 µs is likely the 10 s refresh recomputing every cost.
+- **Per-candidate scoring is cheap** (~187 candidates a run, ~420 µs in all).
+- **The order of work now**: `Inventory::DeltaScan` (7.32 s, twice anything
+  else), the per-tick `PollPlayerMagicEffects` and `PollTargets`,
+  `Display::Wheeler`, then `AllocateAndLock`, `Candidates::Filter` and
+  `Pipeline::UpdateCaches` (PipelineStateCache, first zoned here).
+- Memory flat at ~1.6 MB.
+
 ## 2026-10-03 (23:30) — `fdb0b95` (v0.22.12) — LoreRim soak session, dungeon combat
 
 - Session: SkyrimSE.exe @ 2026-10-03 23:30:29, Tracy 0.14.1, 246,889 frames,
