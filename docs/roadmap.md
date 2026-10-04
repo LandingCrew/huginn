@@ -388,6 +388,20 @@ All scoring, so all after the soak:
   want the vampirism) -- and note that some mods use the disease type for
   debuffs (Lock Bashing's "Sapped Grip", Alternate Perspective's
   "Wounded").
+- **Healing can be blocked by survival needs on LoreRim.** A LoreRim note
+  (the user, 2026-10-04): thirst, hunger and dehydration can disable
+  incoming healing -- "my healing spell does 0 healing". While such an
+  effect is on the player, a heal on the key is a wasted cast; food or
+  drink is the fix. The effect is on the player's Active Effects, so it is
+  perceivable. Wants: find the effect (a dump of the player's active
+  effects in that state), then lower healing and raise food/drink while it
+  is up. Ties to "Hunger weight: a ramp" and thirst.
+- **Soul Gem Fragment (Filled) counts as a soul gem.** LoreRim's fragment is
+  a MISC item (the inventory says "Misc"), so Huginn's soul-gem registry
+  never sees it -- it is in no log. The user: it counts as a soul gem.
+  Find how LoreRim uses it (recharge directly, or combined into gems by a
+  recipe or script) before deciding whether the weapon-charge override may
+  offer it.
 - **Poison detection has the same flaw -- confirmed 2026-10-04 12:04.** A
   spider fight (target Beast, health down to 31%), then the user drank Cure
   Poison from the menu at 12:04:30 -- poisoned -- while the magic-state
@@ -1301,7 +1315,14 @@ committed. The only live work here is Tier 3.
       skill / modifier AVs changing, and every 10 s (perks and worn gear,
       not watched). Left open: confirm with a capture on 0.22.14, then look
       at `Candidates::Filter`. Original entry: the first suspect, pending that
-      capture. `GatherSpellCandidates` looks up every known spell's form and
+      capture.
+      Confirmed by the 2026-10-04 11:55 capture on 0.22.14 (flame graph):
+      `Gather::Spells` fell from ~2/3 of `Pipeline::ScoreCandidates` to
+      ~1/4, and `ScoreCandidates` from ~26% of `OnUpdate` to ~15%. Memory
+      flat at ~1.6 MB again. What is now widest: `Inventory::DeltaScan` under
+      `Update::Registries` (~1/4 of `OnUpdate`), then `PollPlayerMagicEffects`
+      and `PollTargets` under `Update::Subsystems` (~30% together, every
+      tick), and `Score::Decay` (~90 us a run, the top scoring zone). `GatherSpellCandidates` looks up every known spell's form and
       runs `CalculateMagickaCost` (perk entry points included) on every
       scoring run, ~once a second. The registry already holds only spells
       the player knows, so the saving is in not recomputing. Not
