@@ -251,6 +251,76 @@ context" unless named):
   reward, or a very weak one. Remembrance already knows the displaced
   piece, so "putting back what the scroll took off" is detectable.
 
+**Field notes from the soak run, 2026-10-03** (LoreRim, 1.5 h, Windward
+Ruins and High Gate Ruins; the user's observations, checked against the log).
+The session had 40 reach-ins against 113 Huginn presses -- about 2 an hour
+before it -- and the live page held the chosen item 92 of 125 times (A|B;
+context-only 68). The reach-ins: healing spells 11 (Healing x6, Healing
+Touch x4, Wild Healing), non-restore potions 9, attack and utility spells
+8, raw food 4, weapons 4, scrolls and the waterskin 4. All scoring, so all
+after the soak:
+- **Darkness in daylight (bug).** Magelight on key 1 outdoors at in-game
+  11:30, in snow. The light reading flipped between raw 220.9 and 27.1
+  (tree shadow, most likely) and 27 read as dark (19:24:45-19:25:34). The
+  sun being up is perceivable: outdoors in daytime should not be Darkness
+  however the shadow falls.
+- **Target type misses and flickers.** A Gloom Wraith read Beast, then
+  Humanoid (19:35), never Undead, so nothing anti-undead surfaced; the
+  user took Sunbeam from the magic menu. `StateEvaluator` matches words
+  in the race editor ID ("draugr", "ghost", ...), and "wraith" is not one.
+  Read the game's keywords first (`ActorTypeUndead`, `ActorTypeDaedra`,
+  `ActorTypeAnimal`, `ActorTypeDwarven`, `ActorTypeDragon`), the name
+  list as fallback. Where an undead WAS read (19:47-19:50), the target
+  flipped Undead <-> None every few seconds, so Sunbeam reached the page
+  once (19:49:19) and fell off again; the type wants to hold for the
+  fight, not the crosshair moment. Correction to earlier notes: silver
+  weapons, turn-undead enchantments and sun scrolls answer anti-undead
+  too, not only spells.
+- **Self versus target spells are one thing to Huginn.** `Oakflesh on
+  Self` and `Oakflesh on Target` classify identically (type Defensive,
+  tags 00040000; only the range differs), Stoneflesh likewise; Healing and
+  Healing Touch differ by one tag. A targeted ally spell is useful only
+  with an ally to aim at -- a follower or summon nearby, which is
+  perceivable -- and does nothing for the caster. Separate them by
+  delivery (`GetDelivery()`), and gate the targeted ones on an ally.
+  Healing spells were the biggest reach-in group of the session (11).
+- **Oakflesh over Stoneflesh.** Same tags, Stoneflesh is the higher rank
+  (cost 150 vs 100); Oakflesh carries the learned weight. Needs a "higher
+  rank of the same spell" preference -- the tier selection the
+  behaviour-modes entry lists -- or pooling (Phase 3 #5) so Stoneflesh
+  inherits what Oakflesh learned.
+- **Buffs matched to the loadout.** Fortify potions are matched to a
+  situation only for the three crafting skills at a workbench; every other
+  buff potion gets a flat baseline (`buffPotionWeight` /
+  `buffCombatWeight`). Fortify Two-Handed, Speed and Fortify Destruction
+  were never recommended in combat; at 20:49 the user equipped Ember and
+  six seconds later took Fortify Destruction from the menu -- the user's
+  own example. Link a fortify potion to what is in hand (school of the
+  equipped spell, type of the equipped weapon). The same for enchanted
+  armour in combat, the user's idea: a bow equipped brings bow-enchanted
+  gear forward, two-handed brings two-handed gear (the apparel entry's
+  combat blocker still applies).
+- **Resist potions on a single hit.** Frost damage was detected five times
+  (19:53:56 onward), each a single pulse at 87-97% health, scaled down by
+  the player's 40% frost resistance (`resistScale`), and Resist Frost
+  never outranked Undead or Darkness. The user took it from the menu at
+  20:16. Weight the frost already taken -- health lost to frost, repeated
+  hits, an enemy visibly casting frost -- rather than "a hit happened".
+- **Poisons have no context weight at all.** `ContextWeightForCandidate`
+  gives `ItemType::Poison` nothing above the noise floor, so poisons never
+  surface. The "Gear and poisons" entry has the direction.
+- **Encumbered, no potion.** `isOverencumbered` is polled and Fortify
+  Carry Weight is tagged, but no weight reads either; the user carried
+  three carry-weight potions and took one from the menu at 20:46.
+- **Cure Disease on LoreRim is not instant.** LoreRim's changelog: a Cure
+  Disease potion now cures at random within 1-4 days; three combine into
+  Cure Greater Disease, which is instant. So when diseased, prefer Cure
+  Greater Disease. That may also explain the 2026-10-02 Cure Disease that
+  "did not work". Huginn never flagged a disease in either session: it
+  detects one as a detrimental effect resisted by Resist Disease, which is
+  unverified for LoreRim's diseases; the spell's type (`kDisease`) is the
+  sturdier signal.
+
 **Parked tracks** (not in the order): CommonLib migration (waiting on
 LoreRim 5.1), dMenu -> SKSE Menu Framework, apparel expansion, Tier 3 perf.
 
