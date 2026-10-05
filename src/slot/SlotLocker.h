@@ -63,6 +63,7 @@ namespace Huginn::Slot
         bool shownWildcard = false;
         bool shownRemembered = false;
         std::string shownName;
+        std::chrono::steady_clock::time_point shownSince{};  // when the shown item arrived (churn tenure)
 
         // Why this slot's last lock let go (expiry, OnItemUsed, a page switch,
         // an override break), held until the slot next locks, so the change

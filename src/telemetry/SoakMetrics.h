@@ -8,6 +8,8 @@
 #include <deque>
 #include <mutex>
 #include <span>
+#include <string>
+#include <string_view>
 #include <string_view>
 
 namespace Huginn::Telemetry
@@ -143,11 +145,81 @@ namespace Huginn::Telemetry
         return ChallengerRatio::Above150;
     }
 
+    // How long the item a change replaced had been on the slot. The churn
+    // SPEED: a window of changes says how much the bar moves, the tenure of
+    // what it threw away says how fast -- the "I pressed my staff and got a
+    // spell" juggling is a pile of short tenures (the user, 2026-10-05: give
+    // churn speed banded increments to optimise for).
+    enum class TenureBand : uint8_t
+    {
+        Under1s, Under3s, Under10s, Under30s, Under2m, Over2m,
+        Count
+    };
+
+    [[nodiscard]] constexpr const char* TenureBandName(TenureBand b) noexcept
+    {
+        switch (b) {
+        case TenureBand::Under1s:  return "<1s";
+        case TenureBand::Under3s:  return "1-3s";
+        case TenureBand::Under10s: return "3-10s";
+        case TenureBand::Under30s: return "10-30s";
+        case TenureBand::Under2m:  return "30s-2m";
+        case TenureBand::Over2m:   return ">=2m";
+        default:                   return "?";
+        }
+    }
+
+    [[nodiscard]] constexpr TenureBand BucketTenure(float seconds) noexcept
+    {
+        if (seconds < 1.0f) return TenureBand::Under1s;
+        if (seconds < 3.0f) return TenureBand::Under3s;
+        if (seconds < 10.0f) return TenureBand::Under10s;
+        if (seconds < 30.0f) return TenureBand::Under30s;
+        if (seconds < 120.0f) return TenureBand::Under2m;
+        return TenureBand::Over2m;
+    }
+
+    // How long a key had held its item when it was pressed (the user,
+    // 2026-10-05). A young key is one of two things: a MISSED press -- the
+    // player aimed at what was there a moment ago -- or a very RELEVANT one:
+    // Huginn put it there and the player took it at once. The heartbeat counts
+    // the bands; a "[KeyAge]" debug line per young press names what the key
+    // held before, and the selection's outcome (confirmed, or not) beside it
+    // tells the two apart.
+    enum class PressAgeBand : uint8_t
+    {
+        Under500ms, Under1500ms, Under5s, Under30s, Over30s,
+        Count
+    };
+
+    [[nodiscard]] constexpr const char* PressAgeBandName(PressAgeBand b) noexcept
+    {
+        switch (b) {
+        case PressAgeBand::Under500ms:  return "<0.5s";
+        case PressAgeBand::Under1500ms: return "0.5-1.5s";
+        case PressAgeBand::Under5s:     return "1.5-5s";
+        case PressAgeBand::Under30s:    return "5-30s";
+        case PressAgeBand::Over30s:     return ">=30s";
+        default:                        return "?";
+        }
+    }
+
+    [[nodiscard]] constexpr PressAgeBand BucketPressAge(float seconds) noexcept
+    {
+        if (seconds < 0.5f) return PressAgeBand::Under500ms;
+        if (seconds < 1.5f) return PressAgeBand::Under1500ms;
+        if (seconds < 5.0f) return PressAgeBand::Under5s;
+        if (seconds < 30.0f) return PressAgeBand::Under30s;
+        return PressAgeBand::Over30s;
+    }
+
     struct SlotChangeEvent
     {
         std::size_t slotIndex = 0;
         SlotChange cause = SlotChange::Unheld;
         ChallengerRatio ratio = ChallengerRatio::NotApplicable;
+        float tenureSec = -1.0f;   // how long the replaced item was shown; < 0 = the slot was empty
+        std::string_view fromName; // what the slot showed before (valid for the call only)
     };
 
     // =========================================================================
@@ -218,7 +290,12 @@ namespace Huginn::Telemetry
         // is flipping pages. One call per slot activation that resolved to an
         // item, from the Intuition keys (EquipManager::EquipSlot) and from a
         // Huginn wheel (the Wheeler activation callback).
-        void RecordSlotPress(std::size_t pageIndex, bool regularSlot);
+        //
+        // `slotIndex` and `displayedPage` feed the press-age bands: how long the
+        // key had held its item. Wheel pages that are not displayed are not
+        // churn-tracked, so they pass displayedPage = false.
+        void RecordSlotPress(std::size_t pageIndex, std::size_t slotIndex, bool regularSlot,
+            bool displayedPage);
 
         // A page change that actually changed the page (SlotAllocator::
         // SetCurrentPage), whoever asked: Intuition cycle keys, Wheeler, `hg page`.
@@ -281,5 +358,15 @@ namespace Huginn::Telemetry
         std::array<std::deque<int64_t>, SLOT_CHURN_SLOTS> m_recentChanges;  // steady_clock ticks, per slot
         uint32_t m_churnPeak = 0;       // guarded by m_churnMutex
         std::size_t m_churnPeakSlot = 0;
+
+        // Churn speed (window): tenure bands of what each change replaced, and
+        // how long a pressed key had held its item. Page switches excluded --
+        // the player asked for those. A "[KeyAge]" line is logged for presses
+        // younger than KEY_AGE_LOG_SEC.
+        static constexpr float KEY_AGE_LOG_SEC = 5.0f;
+        std::array<std::atomic<uint32_t>, static_cast<std::size_t>(TenureBand::Count)> m_tenure{};
+        std::array<std::atomic<int64_t>, SLOT_CHURN_SLOTS> m_lastChangeTicks{};  // steady_clock ticks, 0 = never
+        std::array<std::string, SLOT_CHURN_SLOTS> m_prevShown;  // guarded by m_churnMutex
+        std::array<std::atomic<uint32_t>, static_cast<std::size_t>(PressAgeBand::Count)> m_pressAge{};
     };
 }

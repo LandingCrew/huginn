@@ -94,11 +94,30 @@ namespace Huginn::Telemetry
         m_pageRaceBails.fetch_add(1, std::memory_order_relaxed);
     }
 
-    void SoakMetrics::RecordSlotPress(std::size_t pageIndex, bool regularSlot)
+    void SoakMetrics::RecordSlotPress(std::size_t pageIndex, std::size_t slotIndex, bool regularSlot,
+        bool displayedPage)
     {
         (regularSlot ? m_pressRegular : m_pressLabeled).fetch_add(1, std::memory_order_relaxed);
         if (pageIndex != 0) {
             m_pressOffPage.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (displayedPage && slotIndex < SLOT_CHURN_SLOTS) {
+            const int64_t last = m_lastChangeTicks[slotIndex].load(std::memory_order_relaxed);
+            if (last != 0) {
+                const auto now = std::chrono::steady_clock::now();
+                const float ageSec = std::chrono::duration<float>(
+                    now.time_since_epoch() - std::chrono::steady_clock::duration(last)).count();
+                m_pressAge[static_cast<std::size_t>(BucketPressAge(ageSec))].fetch_add(1, std::memory_order_relaxed);
+                if (ageSec < KEY_AGE_LOG_SEC) {
+                    std::string before;
+                    {
+                        std::lock_guard<std::mutex> lock(m_churnMutex);
+                        before = m_prevShown[slotIndex];
+                    }
+                    logger::debug("[KeyAge] page {} key {} pressed {:.2f}s after it changed (was '{}')"sv,
+                        pageIndex, slotIndex + 1, ageSec, before);
+                }
+            }
         }
     }
 
@@ -126,6 +145,11 @@ namespace Huginn::Telemetry
                     continue;
                 }
                 ++counted;
+                if (change.tenureSec >= 0.0f) {
+                    m_tenure[static_cast<std::size_t>(BucketTenure(change.tenureSec))].fetch_add(1, std::memory_order_relaxed);
+                }
+                m_lastChangeTicks[change.slotIndex].store(nowTicks, std::memory_order_relaxed);
+                m_prevShown[change.slotIndex] = std::string(change.fromName);
 
                 auto& recent = m_recentChanges[change.slotIndex];
                 recent.push_back(nowTicks);
@@ -195,6 +219,14 @@ namespace Huginn::Telemetry
         const uint32_t pressLabeled = m_pressLabeled.exchange(0, std::memory_order_relaxed);
         const uint32_t pressOffPage = m_pressOffPage.exchange(0, std::memory_order_relaxed);
         const uint32_t pageFlips    = m_pageFlips.exchange(0, std::memory_order_relaxed);
+        std::array<uint32_t, static_cast<std::size_t>(PressAgeBand::Count)> pressAge{};
+        for (std::size_t b = 0; b < pressAge.size(); ++b) {
+            pressAge[b] = m_pressAge[b].exchange(0, std::memory_order_relaxed);
+        }
+        std::array<uint32_t, static_cast<std::size_t>(TenureBand::Count)> tenure{};
+        for (std::size_t b = 0; b < tenure.size(); ++b) {
+            tenure[b] = m_tenure[b].exchange(0, std::memory_order_relaxed);
+        }
 
         std::array<uint32_t, static_cast<std::size_t>(SlotChange::Count)> churn{};
         uint32_t churnTotal = 0;
@@ -244,6 +276,22 @@ namespace Huginn::Telemetry
             for (std::size_t r = 0; r < ratios.size(); ++r) {
                 churnStr += std::format("{}{}={}", r ? " " : "",
                     ChallengerRatioName(static_cast<ChallengerRatio>(r)), ratios[r]);
+            }
+            churnStr += ") tenure(";
+            for (std::size_t b = 0; b < tenure.size(); ++b) {
+                churnStr += std::format("{}{}={}", b ? " " : "",
+                    TenureBandName(static_cast<TenureBand>(b)), tenure[b]);
+            }
+            churnStr += ')';
+        }
+        // Press age rides with churn: how long each pressed key had held its
+        // item. Printed whenever a key was pressed, so it shows even in a
+        // window where nothing moved.
+        if (pressRegular + pressLabeled) {
+            churnStr += " pressAge(";
+            for (std::size_t b = 0; b < pressAge.size(); ++b) {
+                churnStr += std::format("{}{}={}", b ? " " : "",
+                    PressAgeBandName(static_cast<PressAgeBand>(b)), pressAge[b]);
             }
             churnStr += ')';
         }
