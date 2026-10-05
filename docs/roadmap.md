@@ -1069,7 +1069,15 @@ with how the run is played and laid out -- see the Phase 2 review notes.
       explain why no fight since has reproduced it. To confirm: get arrested,
       yield, then re-engage, and watch `Enemies:` against `Combat:`.
 
-- [ ] **Thirst is not tracked -- UNPARKED 2026-10-03.** Parked 2026-09-30
+- [ ] **Thirst is not tracked -- UNPARKED 2026-10-03; a future release,
+      ONLY WHEN DETECTED** (the user, 2026-10-05). Seen again with the mage:
+      thirsty, a full waterskin carried, nothing offered. The feature turns
+      itself on only when a thirst system is present -- its stage global or
+      effect found at load (LoreRim's DVSMP thirst, SunHelm, Last Seed) --
+      and stays off, with no thirst weight and no drink tagging, on a list
+      without one, as cold and hunger already key on survival mode being
+      active. Log at load which system was found, or that none was.
+      Original title: **Thirst is not tracked -- UNPARKED 2026-10-03.** Parked 2026-09-30
       because there was no reliable way to buy water from innkeepers on
       LoreRim. The user found the way: LoreRim's waterskins are craftable,
       and once you own one an innkeeper refills it for free -- so water is
