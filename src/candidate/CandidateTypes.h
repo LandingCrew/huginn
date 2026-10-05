@@ -122,6 +122,7 @@ namespace Huginn::Candidate
         Item::UtilitySkill utilitySkill = Item::UtilitySkill::None; // Which utility skill (for FortifyUtilitySkill)
         float magnitude = 0.0f;   // Effect strength (e.g., restore 50 health)
         float duration = 0.0f;    // Effect duration in seconds
+        uint32_t value = 0;       // Gold value: the potency proxy when magnitude and duration are both 0
         int32_t count = 0;        // Inventory count
 
         ItemCandidate() { sourceType = SourceType::Potion; }

@@ -272,4 +272,45 @@ namespace Huginn::Util
 
         return results;
     }
+
+    // =============================================================================
+    // PLAYER-ENCHANTED WEAPON CAPACITY (v0.22.15)
+    // =============================================================================
+    // Capacity of a player-applied enchantment on a hand's worn stack
+    // (ExtraEnchantment::charge), or 0 when the stack has none. A weapon the
+    // player enchanted says nothing on its base form -- formEnchanting null,
+    // amountofEnchantment 0, like a plain one -- so a check of the form alone
+    // saw a plain sword: charge read n/a all session and no soul gem was
+    // offered (Steel Sword of Embers, 2026-10-04), and the soul-gem key would
+    // have found nothing to recharge.
+    //
+    // GetEquippedEntryData returns the hand's own entry; it is the call PR
+    // #41's bisect cleared, and WeaponRegistry::RefreshCharges reads charge
+    // through it the same way. The worn list is preferred, else the first.
+    inline float WornEnchantmentCapacity(RE::PlayerCharacter* player, bool leftHand)
+    {
+        RE::InventoryEntryData* entry = player ? player->GetEquippedEntryData(leftHand) : nullptr;
+        if (!entry || !entry->extraLists) {
+            return 0.0f;
+        }
+        RE::ExtraDataList* worn = nullptr;
+        for (auto* extraList : *entry->extraLists) {
+            if (!extraList) continue;
+            if (!worn) worn = extraList;
+            if (extraList->HasType<RE::ExtraWorn>() || extraList->HasType<RE::ExtraWornLeft>()) {
+                worn = extraList;
+                break;
+            }
+        }
+        const auto* xEnch = worn ? worn->GetByType<RE::ExtraEnchantment>() : nullptr;
+        // Only an enchantment CAST on a hit has charge. A constant-effect one
+        // is always on -- the Soul Sword's "Enduring Strikes: power attacks
+        // cost 10% less stamina" carries a capacity field and showed no charge
+        // bar in game, yet read 89.6% -> 83.3% here (2026-10-04 16:48).
+        if (!xEnch || !xEnch->enchantment ||
+            xEnch->enchantment->GetCastingType() == RE::MagicSystem::CastingType::kConstantEffect) {
+            return 0.0f;
+        }
+        return static_cast<float>(xEnch->charge);
+    }
 }

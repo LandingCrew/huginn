@@ -71,6 +71,7 @@ namespace Huginn::Candidate
         candidate.utilitySkill = data.utilitySkill;
         candidate.magnitude = data.magnitude;
         candidate.duration = data.duration;
+        candidate.value = data.value;
         candidate.count = inventoryCount;
 
         // Can afford if we have at least one

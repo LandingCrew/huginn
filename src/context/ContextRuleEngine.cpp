@@ -355,6 +355,14 @@ namespace Huginn::Context
         }
 
         // =====================================================================
+        // FOLLOWERS -- spells aimed at someone else (Healing Touch, Oakflesh
+        // on Target) have no one to land on without one, and a heal for
+        // someone else answers THEIR wound, not the player's.
+        result.followerPresent = !targets.GetNearbyFollowers().empty();
+        if (targets.HasInjuredFollower()) {
+            result.allyHealWeight = m_config.weightAllyInjured;
+        }
+
         // SUMMON SPELLS
         // =====================================================================
         // Relevant when in combat AND no active summon

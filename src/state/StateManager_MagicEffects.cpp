@@ -15,6 +15,20 @@
 
 namespace Huginn::State
 {
+  // A disease the player may want to keep, so it is not one to cure:
+  // Sanguinare Vampiris turns into vampirism, and Wintersun gives Peryite's
+  // worshippers diseases as the god's gift (34 variants on LoreRim). By name,
+  // as the Night Eye and warming matches below are -- nothing on the form
+  // marks a disease as chosen.
+  static bool IsChosenAffliction(const RE::MagicItem* spell)
+  {
+    const char* name = spell ? spell->GetName() : nullptr;
+    if (!name) return false;
+    const std::string_view n{ name };
+    return n.find("Sanguinare Vampiris") != std::string_view::npos ||
+           n.find("Peryite's Gift") != std::string_view::npos;
+  }
+
   // =============================================================================
   // RACE FORMID CACHING (v0.6.6)
   // =============================================================================
@@ -160,6 +174,25 @@ namespace Huginn::State
         auto primaryAV = baseEffect->data.primaryAV;
         auto resistAV = baseEffect->data.resistVariable;
         float magnitude = effect->magnitude;
+
+        // Disease and poison come from the SPELL's type, ahead of the archetype
+        // switch. Most of both are value modifiers, whose cases below break out
+        // before the resist-AV test in `default` ever ran: isDiseased saw 1 of
+        // LoreRim's 94 diseases (`hg dump diseases`, 2026-10-03) -- disease
+        // effects carry no resist AV at all, the engine resists them by spell
+        // type -- and isPoisoned never fired in a 9-hour soak, a spider bite
+        // and a Cure Poison from the menu included (2026-10-04 12:04). A poison
+        // effect resisted by Poison Resist counts whatever delivered it.
+        if (spell && baseEffect->IsDetrimental()) {
+          const auto st = spell->GetSpellType();
+          if (st == RE::MagicSystem::SpellType::kDisease && !IsChosenAffliction(spell)) {
+            newEffects.isDiseased = true;
+          }
+          if (st == RE::MagicSystem::SpellType::kPoison ||
+              resistAV == RE::ActorValue::kPoisonResist) {
+            newEffects.isPoisoned = true;
+          }
+        }
 
 #ifdef _DEBUG
         // Debug logging for buff detection
@@ -462,11 +495,11 @@ namespace Huginn::State
                 newEffects.isFrozen = true;
               } else if (resistAV == RE::ActorValue::kResistShock) {
                 newEffects.isShocked = true;
-              } else if (resistAV == RE::ActorValue::kPoisonResist) {
-                newEffects.isPoisoned = true;
-              } else if (resistAV == RE::ActorValue::kResistDisease) {
-                newEffects.isDiseased = true;
               }
+              // Poison and disease are read above, by spell type. The disease
+              // test that stood here keyed on Resist Disease, which only
+              // attack spells carry (Ordinator's Bitter Wine) -- a false
+              // positive, never a disease.
             }
             break;
         }

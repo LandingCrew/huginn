@@ -1805,6 +1805,31 @@ void RunUnitTests()
             logger::error("TEST FAIL: ScoringTargetType with no primary should be None"sv);
             return;
         }
+
+        // The crosshair off the enemy: the closest LIVING hostile stands in
+        // (the Undead <-> None flicker, 2026-10-03). A corpse does not.
+        {
+            auto targets = withPrimary(TargetType::Humanoid, false, false);  // a townsperson under the crosshair
+            TargetActorState draugr;
+            draugr.actorFormID = 0x30001;
+            draugr.targetType = TargetType::Undead;
+            draugr.isHostile = true;
+            draugr.distanceToPlayerSq = 300.0f * 300.0f;
+            draugr.isDead = true;
+            targets.InsertOrUpdate(draugr.actorFormID, draugr);
+            if (targets.ScoringTargetType() != TargetType::None) {
+                logger::error("TEST FAIL: a dead hostile must not stand in for the crosshair target"sv);
+                return;
+            }
+            draugr.isDead = false;
+            targets.InsertOrUpdate(draugr.actorFormID, draugr);
+            if (targets.ScoringTargetType() != TargetType::Undead) {
+                logger::error("TEST FAIL: with the crosshair off the enemy, the closest living hostile's "
+                    "type should stand in (Undead), got {}"sv,
+                    BucketNames::kTarget[std::to_underlying(targets.ScoringTargetType())]);
+                return;
+            }
+        }
     }
 
     logger::info("TEST PASS: All hash tests passed! {} unique states verified, stamina excluded, distance from the closest hostile, allyStatus hashed as its injured bit, target type hostile-only."sv, GameState::kTotalStates);
@@ -3062,6 +3087,86 @@ void RunUnitTests()
 
             logger::info("  ✓ PASS: soul gem baseline {:.2f} clears fMinimumUtility, charge still promotes"sv,
                 gemWeight);
+        }
+
+        // Test 6j: a cure answers its affliction. The CureDisease / CurePoison
+        // tags were set by the classifier and read by nothing, so a cure sat at
+        // the noise floor while the player was diseased or poisoned (Cure
+        // Poison taken from the menu mid-fight, 2026-10-04 12:04:30).
+        {
+            State::WorldState testWorld{};
+            State::PlayerActorState sick{};
+            sick.effects.isDiseased = true;
+            sick.effects.isPoisoned = true;
+            const auto weights = engine.EvaluateRules(sick, testTargets, testWorld);
+
+            Candidate::ItemCandidate cureDisease{};
+            cureDisease.name = "Potion of Cure Disease";
+            cureDisease.type = Item::ItemType::CurePotion;
+            cureDisease.tags = Item::ItemTag::CureDisease;
+            Candidate::ItemCandidate curePoison = cureDisease;
+            curePoison.name = "Potion of Cure Poison";
+            curePoison.tags = Item::ItemTag::CurePoison;
+
+            const float diseaseW = Context::WeightForCandidate(cureDisease, weights);
+            const float poisonW = Context::WeightForCandidate(curePoison, weights);
+            if (diseaseW < weights.resistDiseaseWeight - 0.001f || poisonW < weights.resistPoisonWeight - 0.001f) {
+                logger::error("TEST FAIL (6j): cures should draw the affliction weights, got disease {:.3f} "
+                    "(want {:.3f}) poison {:.3f} (want {:.3f})",
+                    diseaseW, weights.resistDiseaseWeight, poisonW, weights.resistPoisonWeight);
+                return;
+            }
+
+            const auto healthy = engine.EvaluateRules(State::PlayerActorState{}, testTargets, testWorld);
+            if (Context::WeightForCandidate(cureDisease, healthy) > healthy.baseRelevanceWeight + 0.001f) {
+                logger::error("TEST FAIL (6j): a cure should stay at the floor when nothing afflicts the player");
+                return;
+            }
+
+            logger::info("  ✓ PASS: cures draw disease {:.2f} / poison {:.2f} only while afflicted"sv,
+                diseaseW, poisonW);
+        }
+
+        // Test 6k: a spell for someone else answers that someone. With no
+        // follower near it has no one to land on; with a hurt follower a heal
+        // draws allyHealWeight -- never the caster's own health (Healing Touch
+        // and Oakflesh on Target, 2026-10-04).
+        {
+            State::WorldState testWorld{};
+            State::PlayerActorState hurtPlayer{};
+            hurtPlayer.vitals.health = 0.2f;   // the CASTER is hurt; that must not matter
+
+            Candidate::SpellCandidate healOther{};
+            healOther.name = "Healing Touch";
+            healOther.tags = Spell::SpellTag::RestoreHealth;
+            healOther.tagsExt = Spell::SpellTagExt::TargetsOthers;
+
+            const auto alone = engine.EvaluateRules(hurtPlayer, testTargets, testWorld);
+            if (Context::WeightForCandidate(healOther, alone) != 0.0f) {
+                logger::error("TEST FAIL (6k): a heal for others with no follower near should weigh 0");
+                return;
+            }
+
+            State::TargetCollection withFollower;
+            State::TargetActorState follower;
+            follower.actorFormID = 0x50001;
+            follower.isFollower = true;
+            follower.distanceToPlayerSq = 400.0f * 400.0f;
+            follower.vitals.health = 0.2f;
+            withFollower.InsertOrUpdate(follower.actorFormID, follower);
+            const auto hurt = engine.EvaluateRules(State::PlayerActorState{}, withFollower, testWorld);
+            if (!hurt.followerPresent || hurt.allyHealWeight <= 0.0f) {
+                logger::error("TEST FAIL (6k): a hurt follower should set followerPresent and allyHealWeight");
+                return;
+            }
+            const float w = Context::WeightForCandidate(healOther, hurt);
+            if (std::abs(w - std::max(hurt.allyHealWeight, std::max(hurt.spellWeight, hurt.baseRelevanceWeight))) > 0.001f) {
+                logger::error("TEST FAIL (6k): a heal for others with a hurt follower should weigh allyHealWeight "
+                    "{:.3f}, got {:.3f}", hurt.allyHealWeight, w);
+                return;
+            }
+
+            logger::info("  ✓ PASS: spells for others: 0 alone, {:.2f} with a hurt follower"sv, w);
         }
 
         // Test 6g: No environmental conditions → all weights zero

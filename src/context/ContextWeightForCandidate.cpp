@@ -19,6 +19,20 @@ namespace Huginn::Context
             // SPELL CANDIDATES
             // =====================================================================
             if constexpr (std::is_same_v<T, Candidate::SpellCandidate>) {
+                // A spell for someone else answers that someone: nothing without
+                // a follower near, and a heal only for a follower's wound --
+                // never the caster's own health or armour.
+                if (HasTagExt(c.tagsExt, SpellTagExt::TargetsOthers)) {
+                    if (!weights.followerPresent) {
+                        return 0.0f;
+                    }
+                    float forOthers = std::max(weights.spellWeight, weights.baseRelevanceWeight);
+                    if (HasTag(c.tags, SpellTag::RestoreHealth)) {
+                        forOthers = std::max(forOthers, weights.allyHealWeight);
+                    }
+                    return forOthers;
+                }
+
                 // Start with spell baseline (like weaponWeight for weapons)
                 // Ensures spells surface on typed slots even without specific context
                 float maxWeight = std::max(weights.spellWeight, weights.baseRelevanceWeight);
@@ -184,6 +198,18 @@ namespace Huginn::Context
                 if (HasTag(c.tags, ItemTag::ResistDisease)) {
                     maxWeight = std::max(maxWeight, weights.resistDiseaseWeight);
                 }
+                // Cures answer the affliction they cure. The tags were set by
+                // the classifier and read by nothing, so a cure was stuck at the
+                // noise floor even while diseased or poisoned -- a Cure Poison
+                // taken from the menu mid-fight logged "not a candidate"
+                // (2026-10-04 12:04:30). The two weights are nonzero only while
+                // the player is diseased / poisoned.
+                if (HasTag(c.tags, ItemTag::CureDisease)) {
+                    maxWeight = std::max(maxWeight, weights.resistDiseaseWeight);
+                }
+                if (HasTag(c.tags, ItemTag::CurePoison)) {
+                    maxWeight = std::max(maxWeight, weights.resistPoisonWeight);
+                }
                 // Resist Magic: relevant when an enemy is casting (same
                 // perceivable trigger as ward spells)
                 if (HasTag(c.tags, ItemTag::ResistMagic)) {
@@ -316,6 +342,18 @@ namespace Huginn::Context
             // SCROLL CANDIDATES
             // =====================================================================
             else if constexpr (std::is_same_v<T, Candidate::ScrollCandidate>) {
+                // A scroll for someone else: as the spell arm above.
+                if (HasTagExt(c.tagsExt, Scroll::ScrollTagExt::TargetsOthers)) {
+                    if (!weights.followerPresent) {
+                        return 0.0f;
+                    }
+                    float forOthers = std::max(weights.spellWeight, weights.baseRelevanceWeight);
+                    if (HasTag(c.tags, Scroll::ScrollTag::RestoreHealth)) {
+                        forOthers = std::max(forOthers, weights.allyHealWeight);
+                    }
+                    return forOthers;
+                }
+
                 // Scrolls have spell tags, use same logic as spells
                 float maxWeight = std::max(weights.spellWeight, weights.baseRelevanceWeight);
 

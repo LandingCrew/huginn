@@ -297,11 +297,18 @@ namespace Huginn::State
       // (LoreRim 2026-09-25). A follower's atronach is not a reason for
       // anti-daedra either. A dormant draugr is still hostile, so looking at
       // one keeps working. `primary` itself is untouched: ally logic needs it.
+      //
+      // When the crosshair is NOT on a living hostile, the closest living
+      // hostile's type stands in -- the same enemy the distance band already
+      // reads. The crosshair leaves the enemy constantly in a fight, and the
+      // type flipped Undead <-> None every few seconds (2026-10-03
+      // 19:47-19:50): Sunbeam reached the page once and fell off again.
       [[nodiscard]] TargetType ScoringTargetType() const noexcept {
-      if (!primary.has_value() || !primary->isHostile || primary->isDead) {
-        return TargetType::None;
+      if (primary.has_value() && primary->isHostile && !primary->isDead) {
+        return primary->targetType;
       }
-      return primary->targetType;
+      const auto enemy = GetClosestEnemy();
+      return enemy.has_value() ? enemy->targetType : TargetType::None;
       }
 
       // Distance band of the closest living hostile (GameState::distance and

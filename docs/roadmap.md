@@ -15,7 +15,8 @@ Wheeler are fine -- and consumables and gear are where Huginn fails. The
 rule that orders it: fix what is broken before tuning what is learned,
 and change the learning before tuning anything that competes with it.
 
-1. **Detection fixes** -- small, evidenced bugs, and potions and gear
+1. **Detection fixes** -- BUILT in 0.22.15 (branch `detection-fixes`),
+   in-game test pending. Small, evidenced bugs, and potions and gear
    depend on them: disease and poison by spell type (Field notes; Cure
    Greater Disease on LoreRim), player-enchanted weapons in the charge
    override (Known Bugs), darkness in daylight, target type by keyword
@@ -511,8 +512,9 @@ label, because these two goals are defined by it. Both counts also move
 with how the run is played and laid out -- see the Phase 2 review notes.
 
 ## Known Bugs
-- [ ] **Player-enchanted weapons are invisible to the weapon-charge
-      override.** Seen 2026-10-04 15:24-15:37 (LoreRim): holding *Steel
+- [x] **Player-enchanted weapons are invisible to the weapon-charge
+      override.** FIXED in 0.22.15: `Util::WornEnchantmentCapacity` feeds the
+      player state, Huginn's soul-gem recharge and the weapon registry. Seen 2026-10-04 15:24-15:37 (LoreRim): holding *Steel
       Sword of Embers (1.4)*, an enchanter-made sword on a plain Steel Sword
       (`00013989`), every `[Context]` line read `charge=n/a` and no soul gem
       was offered as it ran down. `StateManager_Equipment` sets

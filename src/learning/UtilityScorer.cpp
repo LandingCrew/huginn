@@ -297,8 +297,14 @@ namespace Huginn::Scoring
                     // Magnitude x duration: a buff's strength can live in
                     // either. Waterbreathing is magnitude 0 at every strength
                     // and differs only in duration (180/240/300 s on LoreRim),
-                    // so magnitude alone called Faint and Fair equal.
-                    .push_back({ i, std::max(item->magnitude, 1.0f) * std::max(item->duration, 1.0f) });
+                    // so magnitude alone called Faint and Fair equal. With
+                    // neither -- a cure -- the gold value is the only potency
+                    // there is: LoreRim's Cure Disease (value 100) now cures
+                    // within 1-4 days, its Cure Greater Disease (200) at once,
+                    // and both read 'Cure Disease' 0/0s.
+                    .push_back({ i, (item->magnitude <= 0.0f && item->duration <= 0.0f)
+                        ? static_cast<float>(item->value)
+                        : std::max(item->magnitude, 1.0f) * std::max(item->duration, 1.0f) });
                 break;
             default:
                 break;

@@ -95,7 +95,15 @@ namespace Huginn::Spell
       AntiDragon     = 1 << 2,  // Dragonrend and friends      → antiDragonWeight
       Waterbreathing = 1 << 3,  // → waterbreathingWeight (the potion half already worked)
       DarkVision     = 1 << 4,  // Night Eye or a light (Candlelight) → darknessWeight
-      Warming        = 1 << 5   // Raises survival warmth (Warming Aura) → coldWeight
+      Warming        = 1 << 5,  // Raises survival warmth (Warming Aura) → coldWeight
+      // For someone else: delivered to a target, not the caster, and restores
+      // health / magicka / stamina or raises armour -- Healing Touch, Oakflesh
+      // on Target. Weighted only with a follower near, and never by the
+      // caster's own health (2026-10-04).
+      TargetsOthers  = 1 << 6,
+      // Heals over time, or an aura: a self heal worth casting BEFORE the hit,
+      // so the full-health filter does not apply (Healing Aura on Self).
+      HealsOverTime  = 1 << 7
    };
 
    // Enable bitwise operations on SpellTag

@@ -123,6 +123,25 @@ namespace Huginn::State
       return TargetType::Humanoid;  // Default fallback
       }
 
+      // The game's own creature keywords first; the race-name words below are
+      // the fallback. Mods tag their creatures with these, and their race IDs
+      // follow no pattern: a LoreRim Gloom Wraith read Beast and then Humanoid
+      // and never Undead, so nothing anti-undead surfaced (2026-10-03 19:35).
+      // On the race or the actor base; vampires are ActorTypeNPC with the
+      // Vampire keyword, so the undead test runs before the humanoid one.
+      {
+      auto* base = actor->GetActorBase();
+      auto has = [&](std::string_view kw) {
+        return race->HasKeywordString(kw) || (base && base->HasKeywordString(kw));
+      };
+      if (has("ActorTypeDragon")) return TargetType::Dragon;
+      if (has("ActorTypeUndead") || has("ActorTypeGhost") || has("Vampire")) return TargetType::Undead;
+      if (has("ActorTypeDaedra")) return TargetType::Daedra;
+      if (has("ActorTypeDwarven")) return TargetType::Construct;
+      if (has("ActorTypeAnimal") || has("ActorTypeCreature")) return TargetType::Beast;
+      if (has("ActorTypeNPC")) return TargetType::Humanoid;
+      }
+
       // Get race editor ID for classification
       const char* raceEditorID = race->GetFormEditorID();
       if (!raceEditorID) {

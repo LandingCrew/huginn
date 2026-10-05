@@ -65,6 +65,7 @@ namespace Huginn::State
         inline constexpr float WEAPON = 0.2f;               // Physical weapons (always-on baseline)
         inline constexpr float SPELL = 0.2f;                // Spells (always-on baseline for typed spell slots)
         inline constexpr float SUMMON = 0.4f;               // Summon spells (in combat, no active summon)
+        inline constexpr float ALLY_INJURED = 0.6f;         // Heals aimed at others, while a follower is hurt
 
         // Buff & resist potions (fortify skill, resist element, etc.)
         // BUFF_POTION is the always-on baseline — same lockout fix as WEAPON/
@@ -182,6 +183,7 @@ namespace Huginn::State
         float weightWeapon = ContextWeightDefaults::WEAPON;
         float weightSpell = ContextWeightDefaults::SPELL;
         float weightSummon = ContextWeightDefaults::SUMMON;
+        float weightAllyInjured = ContextWeightDefaults::ALLY_INJURED;
 
         // --- Buff & resist potions ---
         float weightSoulGem = ContextWeightDefaults::SOUL_GEM;

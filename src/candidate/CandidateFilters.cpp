@@ -46,9 +46,13 @@ namespace Huginn::Candidate
                 if (player.IsSpellEquipped(c.formID))
                     return FilterResult::Equipped;
 
-                // 3. Full Vitals
+                // 3. Full Vitals -- the CASTER's, so not for a heal aimed at
+                // someone else, nor one that works over time (an aura is cast
+                // ahead of the hit).
                 if (m_config.filterHealingWhenFull &&
                     Spell::HasTag(c.tags, Spell::SpellTag::RestoreHealth) &&
+                    !Spell::HasTagExt(c.tagsExt, Spell::SpellTagExt::TargetsOthers) &&
+                    !Spell::HasTagExt(c.tagsExt, Spell::SpellTagExt::HealsOverTime) &&
                     player.vitals.health >= State::DefaultState::FULL_VITAL - FULL_VITAL_EPSILON)
                     return FilterResult::FullVitals;
                 if (m_config.filterMagickaWhenFull &&
@@ -121,9 +125,11 @@ namespace Huginn::Candidate
                 if (c.count <= 0)
                     return FilterResult::Affordability;
 
-                // 3. Full Vitals
+                // 3. Full Vitals (as for spells: not for others, not over time)
                 if (m_config.filterHealingWhenFull &&
                     Spell::HasTag(c.tags, Spell::SpellTag::RestoreHealth) &&
+                    !Spell::HasTagExt(c.tagsExt, Spell::SpellTagExt::TargetsOthers) &&
+                    !Spell::HasTagExt(c.tagsExt, Spell::SpellTagExt::HealsOverTime) &&
                     player.vitals.health >= State::DefaultState::FULL_VITAL - FULL_VITAL_EPSILON)
                     return FilterResult::FullVitals;
 
