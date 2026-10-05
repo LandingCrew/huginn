@@ -147,10 +147,17 @@ namespace Huginn::Learning
 
    float FeatureBanditLearner::ComputeConfidence(uint32_t trains) const noexcept
    {
-      // Sigmoid: 1 / (1 + exp(-steepness * (x - midpoint)))
-      // 50% at 5 trains, ~90% at 15 trains
-      float x = static_cast<float>(trains);
-      return 1.0f / (1.0f + std::exp(-CONFIDENCE_STEEPNESS * (x - CONFIDENCE_MIDPOINT)));
+      // The prior as pseudo-observations (roadmap Phase 3 #3, 0.23.0):
+      // n / (n + n0). The item's own evidence weighs against n0 imaginary
+      // observations at the prior, so with no evidence the learned score IS
+      // the prior, and the prior keeps n0's share however much is learned.
+      // Replaced a sigmoid (50% at 5 trains, ~95% at 15) that gave the prior
+      // nothing to say once an item was trained. tools/replay over the soak
+      // run: n0 = 2 put the chosen item in the top 8 on 73.9% of picks and
+      // 28.9% of menu picks, against 71.3% / 26.7% for the sigmoid under the
+      // same choice target (n0 1-3 within a point; 5 and 8 worse).
+      const float n = static_cast<float>(trains);
+      return n / (n + PRIOR_PSEUDO_OBSERVATIONS);
    }
 
    float FeatureBanditLearner::ComputeUCB(uint32_t itemTrains) const noexcept
