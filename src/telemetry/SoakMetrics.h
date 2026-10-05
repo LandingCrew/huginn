@@ -219,7 +219,10 @@ namespace Huginn::Telemetry
         SlotChange cause = SlotChange::Unheld;
         ChallengerRatio ratio = ChallengerRatio::NotApplicable;
         float tenureSec = -1.0f;   // how long the replaced item was shown; < 0 = the slot was empty
-        std::string_view fromName; // what the slot showed before (valid for the call only)
+        // What the slot showed before. Owned, not a view: SlotLocker overwrites
+        // the slot's own name in the same pass, before the events are read, so
+        // a view into it logged half the new name over the old (2026-10-05).
+        std::string fromName;
     };
 
     // =========================================================================

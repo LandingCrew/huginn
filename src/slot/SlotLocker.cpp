@@ -222,7 +222,7 @@ namespace Huginn::Slot
                     tenureSec = std::chrono::duration<float>(runNow - slot.shownSince).count();
                 }
                 changes[changeCount++] = { i, cause, ratio, tenureSec,
-                    slot.shownEmpty ? std::string_view{} : std::string_view{ slot.shownName } };
+                    slot.shownEmpty ? std::string{} : slot.shownName };
 
                 const std::string_view from = slot.shownEmpty ? std::string_view{} : std::string_view{ slot.shownName };
                 const std::string_view to = nowEmpty ? std::string_view{} : std::string_view{ shown.name };
