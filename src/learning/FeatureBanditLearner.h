@@ -43,7 +43,11 @@ namespace Huginn::Learning
    public:
       // Core API
       [[nodiscard]] float GetRewardEstimate(RE::FormID formID, const StateFeatures& features) const;
-      void Update(RE::FormID formID, const StateFeatures& features, float reward);
+      // `step` scales the gradient step; `countsAsTrain` false leaves the train
+      // counts (confidence, UCB) alone. Both are for the choice target's
+      // passed-over items: a quarter step, and no claim of evidence (0.23.0).
+      void Update(RE::FormID formID, const StateFeatures& features, float reward,
+         float step = 1.0f, bool countsAsTrain = true);
 
       // Lazy decay, batched: apply time-based weight decay to the given items
       // when idle > threshold. One shared-lock pass collects items needing

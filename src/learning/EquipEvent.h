@@ -48,10 +48,12 @@ namespace Huginn::Learning
         return kind == SelectionKind::Consumable ? "consume" : "equip";
     }
 
-    /// One confirmed selection, one reward (BanditSubscriber, SelectionLog).
-    [[nodiscard]] inline constexpr float RewardFor(SelectionKind kind) noexcept
+    /// One confirmed selection, one target (BanditSubscriber, SelectionLog).
+    /// The same for every kind since the choice target (0.23.0); the kind
+    /// stays a parameter for the log.
+    [[nodiscard]] inline constexpr float RewardFor(SelectionKind /*kind*/) noexcept
     {
-        return kind == SelectionKind::Consumable ? Config::CONSUME_REWARD : Config::EQUIP_REWARD;
+        return Config::CHOICE_TARGET;
     }
 
     // =========================================================================

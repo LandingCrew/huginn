@@ -240,9 +240,17 @@ namespace Huginn::Persist
                logger::error("[Cosave] Failed to read BNDW version"sv);
                break;
             }
-            if (recVersion != 1 && recVersion != 2) {
-               logger::warn("[Cosave] BNDW version unsupported: got {} (expected 1 or 2) — skipping"sv,
-                  recVersion);
+            if (recVersion == 1 || recVersion == 2) {
+               // Learning on the old 8/5 target (see kBanditSerializationVersion).
+               // Leave the pending data empty: the character starts fresh.
+               logger::info("[Cosave] BNDW v{} holds learning on the old 8/5 target -- discarded; "
+                  "the choice target (v{}) starts this character fresh"sv,
+                  recVersion, kBanditSerializationVersion);
+               break;
+            }
+            if (recVersion != kBanditSerializationVersion) {
+               logger::warn("[Cosave] BNDW version unsupported: got {} (expected {}) — skipping"sv,
+                  recVersion, kBanditSerializationVersion);
                break;
             }
             // Nothing has ever written a v1 BNDW record — the tag is new as of

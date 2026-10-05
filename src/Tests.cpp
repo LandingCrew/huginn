@@ -18,6 +18,7 @@
 #include "learning/StateFeatures.h"
 #include "learning/FeatureBanditLearner.h"
 #include "learning/PipelineStateCache.h"
+#include "learning/EquipSubscribers.h"
 #include "learning/EquipSourceTracker.h"
 #include "learning/UsageMemory.h"
 #include "util/ScopedTimer.h"
@@ -1558,7 +1559,74 @@ void RunFeatureBanditLearnerTests()
         logger::info("  Test 8 PASS: Clear"sv);
     }
 
-    logger::info("TEST PASS: All FeatureBanditLearner tests passed! (8 tests)"sv);
+    // ── Test 9: the choice target (0.23.0) ────────────────────────────────
+    // A confirmed choice teaches the chosen item 1 and each item shown for
+    // the same need and passed over 0 (a quarter step, not a train); an item
+    // for another need is untouched; the same pick again inside the repeat
+    // window teaches nothing.
+    {
+        FeatureBanditLearner learner;
+        BanditSubscriber subscriber(learner);
+        constexpr RE::FormID chosenID = 0xC0000001, rivalID = 0xC0000002, otherNeedID = 0xC0000003;
+        StateFeatures state;
+        state.inCombat = 1.0f;
+        state.healthPct = 0.4f;
+
+        for (int i = 0; i < 10; ++i) {
+            learner.Update(rivalID, state, 1.0f);   // a well-trained rival
+        }
+        const float rivalBefore = learner.GetRewardEstimate(rivalID, state);
+        const uint32_t rivalTrains = learner.GetTrainCount(rivalID);
+
+        EquipEvent event;
+        event.formID = chosenID;
+        event.kind = SelectionKind::Equip;
+        event.features = state;
+        auto& snap = event.shown;
+        snap.valid = true;
+        auto row = [](RE::FormID id, Slot::SlotClassification need) {
+            PipelineStateCache::ScoreRow r;
+            r.formID = id;
+            r.need = need;
+            return r;
+        };
+        snap.scores = { row(chosenID, Slot::SlotClassification::HealingAny),
+                        row(rivalID, Slot::SlotClassification::HealingAny),
+                        row(otherNeedID, Slot::SlotClassification::DamageAny) };
+        snap.shown = { { 0, chosenID, "chosen", Slot::AssignmentType::Normal },
+                       { 1, rivalID, "rival", Slot::AssignmentType::Normal },
+                       { 2, otherNeedID, "other need", Slot::AssignmentType::Normal } };
+
+        subscriber.OnEquipEvent(event);
+
+        const float chosenAfter = learner.GetRewardEstimate(chosenID, state);
+        if (chosenAfter <= 0.0f || learner.GetTrainCount(chosenID) != 1) {
+            logger::error("TEST FAIL (9): the chosen item should rise and count one train, got est {:.3f} trains {}"sv,
+                chosenAfter, learner.GetTrainCount(chosenID));
+            return;
+        }
+        if (learner.GetRewardEstimate(rivalID, state) >= rivalBefore ||
+            learner.GetTrainCount(rivalID) != rivalTrains) {
+            logger::error("TEST FAIL (9): the passed-over rival should drop and keep its train count, got est "
+                "{:.3f} (was {:.3f}) trains {} (was {})"sv, learner.GetRewardEstimate(rivalID, state), rivalBefore,
+                learner.GetTrainCount(rivalID), rivalTrains);
+            return;
+        }
+        if (!feq(learner.GetRewardEstimate(otherNeedID, state), 0.0f) || learner.GetTrainCount(otherNeedID) != 0) {
+            logger::error("TEST FAIL (9): an item for another need must be untouched"sv);
+            return;
+        }
+
+        subscriber.OnEquipEvent(event);   // the same pick, inside the repeat window
+        if (!feq(learner.GetRewardEstimate(chosenID, state), chosenAfter) || learner.GetTrainCount(chosenID) != 1) {
+            logger::error("TEST FAIL (9): a repeat pick within the window should teach nothing"sv);
+            return;
+        }
+        logger::info("  Test 9 PASS: choice target -- chosen {:.2f}, rival {:.2f} -> {:.2f}, repeat ignored"sv,
+            chosenAfter, rivalBefore, learner.GetRewardEstimate(rivalID, state));
+    }
+
+    logger::info("TEST PASS: All FeatureBanditLearner tests passed! (9 tests)"sv);
 #endif
 }
 

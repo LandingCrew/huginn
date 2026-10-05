@@ -198,7 +198,8 @@ class ChoiceTarget(Current):
             c = by_form.get(form)
             if c is None or need is None or c["need"] != need:
                 continue
-            self.learner.update(form, phi, 0.0, step=self.neg_weight, count=self.neg_weight)
+            # A quarter step, not a train -- as BanditSubscriber does in the game.
+            self.learner.update(form, phi, 0.0, step=self.neg_weight, count=0)
 
 
 # --------------------------------------------------------------------------

@@ -48,7 +48,10 @@ namespace Huginn::Learning
     public:
         static constexpr size_t BUFFER_CAPACITY = 20;
         static constexpr size_t MATCH_THRESHOLD = 3;
-        static constexpr float  RECENCY_BOOST = 1.5f;
+        // Added to the learned score, so it is on the target's scale: 1.5 was
+        // sized for the 0-8 target and, on 0-1, would exceed the whole learned
+        // term (roadmap review note "Rescale what was sized for 0-8"). /8.
+        static constexpr float  RECENCY_BOOST = 1.5f / 8.0f;
 
         UsageMemory() = default;
 
