@@ -72,7 +72,8 @@ namespace Huginn::Display
 
     /// Derive the subtext explanation for one slot assignment.
     /// Priority: a Remembrance hold ("Swap Back") > the override's own reason >
-    /// this tick's context reason, IF it ranked this item > "Favorite" > no label.
+    /// this tick's context reason, IF it ranked this item > "Ally Support" (a
+    /// spell for someone else) > "Favorite" > no label.
     /// @param contextReason Reason for THIS tick (DisplayContext::contextReason),
     ///        derived once by the pipeline from the tick's context weights.
     [[nodiscard]] inline std::string DeriveExplanationLabel(
@@ -108,6 +109,19 @@ namespace Huginn::Display
             if (const auto label = ReasonLabel(contextReason); !label.empty()) {
                 return std::string(label);
             }
+        }
+
+        // A spell or scroll for someone else (Healing Touch, Oakflesh on
+        // Target) is on the page only with a follower near, so it says who it
+        // is for -- on the widget and on the Wheeler entry alike (the user,
+        // 2026-10-04).
+        if (const auto* spell = std::get_if<Candidate::SpellCandidate>(&candidate);
+            spell && Spell::HasTagExt(spell->tagsExt, Spell::SpellTagExt::TargetsOthers)) {
+            return "Ally Support";
+        }
+        if (const auto* scroll = std::get_if<Candidate::ScrollCandidate>(&candidate);
+            scroll && Spell::HasTagExt(scroll->tagsExt, Spell::SpellTagExt::TargetsOthers)) {
+            return "Ally Support";
         }
 
         // Nothing situational applies — mark the player's own picks.
