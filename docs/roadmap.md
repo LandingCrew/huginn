@@ -1383,6 +1383,15 @@ key, is already a PotionsAny slot with overrides on.
         (decided 2026-09-29): per-slot `bWildcardsEnabled` already keeps
         the keys that matter steady, and no play session showed a wildcard
         in the way mid-fight. Revisit only if one does.
+      - **One need fills the whole page.** Worse form of the item below,
+        seen 2026-10-05 17:11 with a hungry paladin at an alchemy lab: food
+        drew ctx 0.94-1.00 and a 1.8x potion multiplier (u ~2.2), and all
+        eight keys went to eight different foods -- salmon, apple pie,
+        cabbage soup, sweet roll, mammoth snout... -- while the craft gear
+        (ctx 0.80, u ~1.0) got none. Cap the page per need (2-3 items of one
+        SlotClassifier class on the Regular page), so a strong need takes a
+        couple of keys and leaves the rest. Also check whether food should
+        draw the potion multiplier at all. Slot stability step.
       - **One potion in several slots.** Drowning put Waterbreathing Good
         (the override), Fair and Faint on screen together (2026-09-26
         14:56:43). The tier rule orders strengths; it does not say only one
