@@ -412,6 +412,17 @@ All scoring, so all after the soak:
   armour in combat, the user's idea: a bow equipped brings bow-enchanted
   gear forward, two-handed brings two-handed gear (the apparel entry's
   combat blocker still applies).
+  **It replaces the shims, not adds to them** (the user, 2026-10-04: "I
+  shimmed those in there to get something going"). `[ContextWeights]
+  fWeightBuffPotion` (0.15, every buff/resist potion, always) and
+  `fWeightBuffCombat` (0.35, every one in combat) exist only so a buff could
+  clear `fMinimumUtility` at all. Once a buff draws weight from the loadout,
+  the situation (resist by element taken, Fortify Sneak while sneaking,
+  the workstation fortifies) or the learner, delete both -- keep at most a
+  small fallback for buffs nothing matches. Watch for the reverse in the
+  meantime: with learning capped near 4x by the choice target (0.23.0), a
+  flat 0.35 in combat puts every carried buff -- Carry Weight, Fortify
+  Block -- above the 0.2-0.3 weapon and spell baselines.
 - **Resist potions on a single hit.** Frost damage was detected five times
   (19:53:56 onward), each a single pulse at 87-97% health, scaled down by
   the player's 40% frost resistance (`resistScale`), and Resist Frost
