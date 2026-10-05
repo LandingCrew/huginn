@@ -235,6 +235,27 @@ namespace Huginn::State
       DetectWorkstationTarget(crosshairRef, newState);
       }
 
+      // Hold the workstation after the crosshair leaves it. The bench is read
+      // off the crosshair only, so glancing at the ingredients, the inventory
+      // or round the room dropped it: at an alchemy lab on 2026-10-05 it was
+      // on for 39.6 s of 164 s in 37 on/off stints of about a second, and the
+      // craft gear never settled on a key. The player is still standing at
+      // the bench; the context stays for WORKSTATION_HOLD_SEC after the last
+      // sighting, and a different bench replaces it at once.
+      {
+        const auto now = std::chrono::steady_clock::now();
+        if (newState.workstationType != 0) {
+          m_heldWorkstation = newState.workstationType;
+          m_workstationSeenAt = now;
+        } else if (m_heldWorkstation != 0 &&
+                   now - m_workstationSeenAt < std::chrono::duration<float>(Config::WORKSTATION_HOLD_SEC)) {
+          newState.workstationType = m_heldWorkstation;
+          newState.isLookingAtWorkstation = true;
+        } else {
+          m_heldWorkstation = 0;
+        }
+      }
+
       // Stage 3b: Return change detection flag
       bool changed = UpdateStateIfChanged(m_worldMutex, m_worldState, newState);
 #ifdef _DEBUG

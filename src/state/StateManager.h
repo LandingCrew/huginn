@@ -339,6 +339,10 @@ namespace Huginn::State
       // Poll thread only (PollWorldObjects), so no lock. Reset on save load.
       DarknessGate m_darkGate;
       bool m_lastOpenDaylight = false;   // for the transition-only "[World] open daylight" line
+      // The last workstation the crosshair found, held for WORKSTATION_HOLD_SEC
+      // (PollWorldObjects). Poll thread only, so no lock.
+      uint8_t m_heldWorkstation = 0;
+      std::chrono::steady_clock::time_point m_workstationSeenAt{};
       // Light below which it counts as dark ([ContextWeights] fDarkLightLevel,
       // pushed in by ContextWeightSettings). Leaving takes this + DARK_EXIT_GAP.
       std::atomic<float> m_darkLightLevel{ LightLevel::DARK_THRESHOLD };

@@ -37,6 +37,12 @@ namespace Huginn::Config
    // duration; keep the two arguments together if this number changes.
    inline constexpr float REASON_HOLD_MS = 1500.0f;
 
+   // How long the workstation context outlives the crosshair leaving the
+   // bench (StateManager::PollWorldObjects). Long enough to look at the
+   // ingredients or the inventory while crafting; a different bench takes
+   // over at once.
+   inline constexpr float WORKSTATION_HOLD_SEC = 10.0f;
+
    // -----------------------------------------------------------------------------
    // Reward Shaping Configuration (v0.3.0+)
    // -----------------------------------------------------------------------------
