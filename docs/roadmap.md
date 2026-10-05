@@ -1464,6 +1464,17 @@ key, is already a PotionsAny slot with overrides on.
         SlotClassifier class on the Regular page), so a strong need takes a
         couple of keys and leaves the rest. Also check whether food should
         draw the potion multiplier at all. Slot stability step.
+        Decided (the user, 2026-10-05): a SOFT per-need discount -- the 1st
+        item of a need at full utility, the 2nd x d, the 3rd x d^2 -- applied
+        in the slot manager ONLY, for placement on Regular slots. Ranking,
+        the learner and the selection log keep each item's true utility, so
+        learning never sees an item as worse for a sibling placed first. An
+        INI setting (e.g. `[SlotLocker] fNeedRepeatDiscount`, 1.0 = off,
+        ~0.5 to start). Measure it in tools/replay (top-8 with the discount)
+        before shipping. Root cause: the job-per-key layout gave diversity by
+        construction, the eight-Regular default (0.22.10) removed it, and the
+        old learner's ~20x boosts hid the gap until the choice target
+        compressed scores.
       - **One potion in several slots.** Drowning put Waterbreathing Good
         (the override), Fair and Faint on screen together (2026-09-26
         14:56:43). The tier rule orders strengths; it does not say only one
