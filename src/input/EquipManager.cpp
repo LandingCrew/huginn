@@ -755,6 +755,8 @@ namespace Huginn::Input
       float maxCharge = 0.0f;
       float currentCharge = 0.0f;
       float restoreAmount = 0.0f;
+      const RE::TESForm* chargedForm = nullptr;   // for the log line: which weapon, which hand
+      bool chargedLeft = false;
 
       for (auto [hand, av, isLeft] : {
          std::tuple{rightHand, RE::ActorValue::kRightItemCharge, false},
@@ -768,6 +770,8 @@ namespace Huginn::Input
                maxCharge = result->second;
                currentCharge = cur;
                restoreAmount = restore;
+               chargedForm = hand;
+               chargedLeft = isLeft;
                break;
             }
          }
@@ -795,7 +799,11 @@ namespace Huginn::Input
       // Award enchanting XP
       player->AddSkillExperience(RE::ActorValue::kEnchanting, expValue);
 
-      logger::info("[EquipManager] Recharged weapon with '{}' ({} soul, {}, +{:.0f} charge, {:.0f}/{:.0f})"sv,
+      // Names the weapon and hand: a staff in one hand and a sword in the
+      // other made "Recharged weapon" ambiguous in a test (2026-10-04 20:13).
+      logger::info("[EquipManager] Recharged '{}' ({} hand) with '{}' ({} soul, {}, +{:.0f} charge, {:.0f}/{:.0f})"sv,
+         chargedForm && chargedForm->GetName() ? chargedForm->GetName() : "?",
+         chargedLeft ? "left" : "right",
          soulGem->GetName(), static_cast<int>(soulLevel),
          isReusable ? "emptied" : "consumed",
          restoreAmount, currentCharge + restoreAmount, maxCharge);
