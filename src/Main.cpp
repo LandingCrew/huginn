@@ -48,6 +48,7 @@
 #include "learning/ScorerSettings.h"
 #include "learning/LearningSettings.h"
 #include "learning/ExternalEquipListener.h"
+#include "apparel/ApparelWornListener.h"
 #include "learning/ExternalEquipLearner.h"
 #include "context/ContextWeightSettings.h"
 #include "context/ContextWeightConfig.h"
@@ -177,7 +178,9 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
             eventSource->GetEventSource<RE::TESEquipEvent>()->AddEventSink(g_spellRegistry.get());
             eventSource->GetEventSource<RE::TESEquipEvent>()->AddEventSink(
                 &Learning::ExternalEquipListener::GetSingleton());
-            logger::info("SpellRegistry + ExternalEquipListener registered for TESEquipEvent notifications"sv);
+            eventSource->GetEventSource<RE::TESEquipEvent>()->AddEventSink(
+                &Apparel::ApparelWornListener::GetSingleton());
+            logger::info("SpellRegistry + ExternalEquipListener + ApparelWornListener registered for TESEquipEvent notifications"sv);
         }
     }
 
