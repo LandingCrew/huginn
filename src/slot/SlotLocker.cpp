@@ -182,6 +182,7 @@ namespace Huginn::Slot
         DedupePreferLocked(result, newAssignments);
 
         // Churn: compare what is shown now against what was shown last run.
+        const auto runNow = std::chrono::steady_clock::now();
         for (size_t i = 0; i < result.size() && i < MAX_SLOTS; ++i) {
             const auto& shown = result[i];
             auto& slot = m_lockedSlots[i];
@@ -215,7 +216,13 @@ namespace Huginn::Slot
                     }
                     ratio = Telemetry::BucketChallengerRatio(shown.utility, incumbentUtility);
                 }
-                changes[changeCount++] = { i, cause, ratio };
+                // Tenure: how long the item being replaced was on the slot.
+                float tenureSec = -1.0f;
+                if (!slot.shownEmpty && slot.shownSince != std::chrono::steady_clock::time_point{}) {
+                    tenureSec = std::chrono::duration<float>(runNow - slot.shownSince).count();
+                }
+                changes[changeCount++] = { i, cause, ratio, tenureSec,
+                    slot.shownEmpty ? std::string_view{} : std::string_view{ slot.shownName } };
 
                 const std::string_view from = slot.shownEmpty ? std::string_view{} : std::string_view{ slot.shownName };
                 const std::string_view to = nowEmpty ? std::string_view{} : std::string_view{ shown.name };
@@ -238,6 +245,7 @@ namespace Huginn::Slot
                 slot.shownFormID = nowEmpty ? 0 : shown.formID;
                 slot.shownUniqueID = nowEmpty ? 0 : shown.uniqueID;
                 slot.shownName = nowEmpty ? std::string{} : shown.name;
+                slot.shownSince = runNow;
             }
 
             // A held lock means the next change is not "because the lock let
@@ -266,7 +274,7 @@ namespace Huginn::Slot
         // Under m_mutex, which is safe: SoakMetrics takes only its own mutex
         // and never calls back into the locker.
         Telemetry::SoakMetrics::GetSingleton().RecordSlotChanges(
-            std::span{ changes.data(), changeCount }, std::chrono::steady_clock::now());
+            std::span{ changes.data(), changeCount }, runNow);
 
         return result;
     }

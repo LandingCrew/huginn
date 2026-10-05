@@ -843,7 +843,7 @@ namespace Huginn::Input
          auto& allocator = Slot::SlotAllocator::GetSingleton();
          const size_t page = allocator.GetCurrentPage();
          Telemetry::SoakMetrics::GetSingleton().RecordSlotPress(
-            page, allocator.IsRegularSlot(page, slotIndex));
+            page, slotIndex, allocator.IsRegularSlot(page, slotIndex), /*displayedPage=*/true);
       }
 
       // Remembrance: note the press, so what the equip takes off can be held
