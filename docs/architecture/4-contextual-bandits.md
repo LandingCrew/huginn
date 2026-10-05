@@ -282,8 +282,7 @@ private:
     static constexpr float LEARNING_RATE           = 0.1f;
     static constexpr float L2_LAMBDA               = 0.01f;
     static constexpr float WEIGHT_CLAMP            = 10.0f;
-    static constexpr float CONFIDENCE_MIDPOINT     = 5.0f;
-    static constexpr float CONFIDENCE_STEEPNESS    = 0.3f;
+    static constexpr float PRIOR_PSEUDO_OBSERVATIONS = 2.0f;  // confidence = n / (n + 2)
     static constexpr float UCB_NORMALIZATION_FACTOR = 0.2f;
 
     mutable std::shared_mutex m_mutex;
@@ -1291,8 +1290,7 @@ just-cleared table for the remainder of their lock duration.
 | LEARNING_RATE | 0.1 | Semi-gradient update step size |
 | L2_LAMBDA | 0.01 | L2 regularization (implicit weight decay on update) |
 | WEIGHT_CLAMP | +/-10.0 | Hard bounds on individual weights |
-| CONFIDENCE_MIDPOINT | 5.0 | 50% confidence at 5 trains per item |
-| CONFIDENCE_STEEPNESS | 0.3 | Sigmoid steepness (≈82% at 10 trains, ≈95% at 15) |
+| PRIOR_PSEUDO_OBSERVATIONS | 2.0 | Confidence = n / (n + n0): 33% at 1 train, 50% at 2, 75% at 6, 90% at 18 (v0.23.0; was a sigmoid, 50% at 5 and ~95% at 15). The prior counts as n0 observations, so an untrained item scores at its prior and the prior keeps a share however much is learned |
 | UCB_NORMALIZATION_FACTOR | 0.2 | Scales the UCB1 bonus into [0, 1] |
 
 ### Rewards and decay (`src/Config.h`)

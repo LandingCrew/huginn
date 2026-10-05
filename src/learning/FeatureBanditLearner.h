@@ -186,8 +186,8 @@ namespace Huginn::Learning
       static constexpr float LEARNING_RATE = 0.1f;
       static constexpr float L2_LAMBDA = 0.01f;
       static constexpr float WEIGHT_CLAMP = 10.0f;
-      static constexpr float CONFIDENCE_MIDPOINT = 5.0f;    // 50% confidence at 5 trains
-      static constexpr float CONFIDENCE_STEEPNESS = 0.3f;   // ~95% confidence at 15 trains
+      // Confidence = n / (n + n0): 1 train 33%, 2 -> 50%, 6 -> 75%, 18 -> 90%.
+      static constexpr float PRIOR_PSEUDO_OBSERVATIONS = 2.0f;
       static constexpr float UCB_NORMALIZATION_FACTOR = 0.2f;
 
       mutable std::shared_mutex m_mutex;

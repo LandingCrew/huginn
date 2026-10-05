@@ -59,7 +59,13 @@ def dot(a, b):
 
 
 def confidence(n):
+    """The sigmoid the game used up to the choice target (50% at 5, ~95% at 15)."""
     return 1.0 / (1.0 + math.exp(-CONF_STEEPNESS * (n - CONF_MIDPOINT)))
+
+
+def pseudo_confidence(n, n0):
+    """n / (n + n0): the prior as n0 pseudo-observations (0.23.0)."""
+    return n / (n + n0)
 
 
 def ucb(n, total):
@@ -163,8 +169,11 @@ class ChoiceTarget(Current):
     that was sized for the 0-8 target.
     """
 
-    def __init__(self, neg_weight=0.25, lambda_max=LAMBDA_MAX, rec_scale=1.0 / 8.0, repeat_window=0.0, label=None):
+    def __init__(self, neg_weight=0.25, lambda_max=LAMBDA_MAX, rec_scale=1.0 / 8.0, repeat_window=0.0,
+                 pseudo_n0=None, label=None):
         super().__init__(rec_scale=rec_scale)
+        # None: the sigmoid confidence; a number: n / (n + pseudo_n0).
+        self.pseudo_n0 = pseudo_n0
         self.neg_weight = neg_weight
         self.lambda_max = lambda_max
         # One decision, one reward: a pick of the same item within this many
@@ -173,11 +182,14 @@ class ChoiceTarget(Current):
         self.repeat_window = repeat_window
         self._last = {}
         self.name = label or (f"choice target (neg {neg_weight}, lmax {lambda_max}, rec x{rec_scale:.3g}"
-                              + (f", repeat {repeat_window:g}s" if repeat_window else "") + ")")
+                              + (f", repeat {repeat_window:g}s" if repeat_window else "")
+                              + (f", pseudo-obs n0={pseudo_n0:g}" if pseudo_n0 is not None else "") + ")")
 
     def learn_score(self, c, phi):
-        learn, _ = super().learn_score(c, phi)
-        a = confidence(self.learner.n[c["form"]])
+        L = self.learner
+        n = L.n[c["form"]]
+        a = confidence(n) if self.pseudo_n0 is None else pseudo_confidence(n, self.pseudo_n0)
+        learn = a * L.predict(c["form"], phi) + (1 - a) * c["prior"] + BETA * ucb(n, L.total) + self.rec_scale * c["rec"]
         lam = LAMBDA_MIN + a * (self.lambda_max - LAMBDA_MIN)
         return learn, lam
 
@@ -294,6 +306,9 @@ def main():
         ChoiceTarget(neg_weight=0.25, repeat_window=30),
         ChoiceTarget(neg_weight=0.25, repeat_window=60),
         ChoiceTarget(neg_weight=0.25, repeat_window=120),
+        ChoiceTarget(neg_weight=0.25, repeat_window=30, pseudo_n0=1),
+        ChoiceTarget(neg_weight=0.25, repeat_window=30, pseudo_n0=2, label="SHIPPED: choice target + pseudo-obs n0=2 (0.23.0)"),
+        ChoiceTarget(neg_weight=0.25, repeat_window=30, pseudo_n0=3),
     ]
     groups = ["all", "huginn", "outside", "type:Weapon", "type:Spell", "type:Potion", "type:Food", "type:Scroll"]
     results = {p.name: replay(recs, p) for p in policies}
