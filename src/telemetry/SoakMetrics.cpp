@@ -149,7 +149,7 @@ namespace Huginn::Telemetry
                     m_tenure[static_cast<std::size_t>(BucketTenure(change.tenureSec))].fetch_add(1, std::memory_order_relaxed);
                 }
                 m_lastChangeTicks[change.slotIndex].store(nowTicks, std::memory_order_relaxed);
-                m_prevShown[change.slotIndex] = std::string(change.fromName);
+                m_prevShown[change.slotIndex] = change.fromName;
 
                 auto& recent = m_recentChanges[change.slotIndex];
                 recent.push_back(nowTicks);
