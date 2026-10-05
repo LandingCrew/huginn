@@ -1307,9 +1307,10 @@ void RunFeatureBanditLearnerTests()
             logger::error("TEST FAIL: Cold-start reward estimate should be 0.0, got {:.4f}"sv, q);
             return;
         }
-        // Confidence at 0 trains: 1/(1+exp(-0.3*(0-5))) = 1/(1+exp(1.5)) ≈ 0.182
-        if (conf > 0.25f || conf < 0.10f) {
-            logger::error("TEST FAIL: Cold start confidence should be ~0.182, got {:.4f}"sv, conf);
+        // Confidence at 0 trains: n / (n + n0) = 0 -- an untrained item scores
+        // at its prior (pseudo-observations, 0.23.0; the sigmoid gave ~0.182).
+        if (!feq(conf, 0.0f)) {
+            logger::error("TEST FAIL: Cold start confidence should be 0, got {:.4f}"sv, conf);
             return;
         }
         if (!feq(ucb, 1.0f)) {
