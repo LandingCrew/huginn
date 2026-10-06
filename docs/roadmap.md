@@ -28,9 +28,15 @@ and change the learning before tuning anything that competes with it.
    Oakflesh beside Stoneflesh, alchemy gear at the lab losing to combat
    items, off-habit items missing from the page (A|B: on menu picks,
    context alone offered 13 to the live page's 7).
-3. **Slot stability** -- the soft slot manager (Slot temporal memory) first,
-   then the rest of "Remaining slot churn". The user saw an unheld sword
-   and bow jump slots after refresh bursts.
+3. **Slot stability** -- in this order (2026-10-06): the per-need discount
+   (what goes on the page: eight foods filled eight keys; measured in
+   tools/replay first), then the soft slot manager (where it sits: an
+   unheld sword and bow jumped slots after refresh bursts), then combat
+   suppressing the workstation context (the flicker while standing still
+   at a bench is a separate, open problem), then a `fChallengerMargin` 0.25
+   vs 0.5 comparison on the `slotChurn=` heartbeat. All under "Remaining
+   slot churn" and "Soft slot manager" below; #174's key-age and tenure
+   bands are the before/after measure.
 4. **Potion recommendations** -- buffs matched to the loadout, resist
    potions weighted by damage taken, the emergency potion's smallest
    cover learned, no second restore on over-time lists, carry weight when
@@ -1116,7 +1122,15 @@ with how the run is played and laid out -- see the Phase 2 review notes.
       explain why no fight since has reproduced it. To confirm: get arrested,
       yield, then re-engage, and watch `Enemies:` against `Combat:`.
 
-- [ ] **Thirst is not tracked -- UNPARKED 2026-10-03.** Parked 2026-09-30
+- [ ] **Thirst is not tracked -- UNPARKED 2026-10-03; a future release,
+      ONLY WHEN DETECTED** (the user, 2026-10-05). Seen again with the mage:
+      thirsty, a full waterskin carried, nothing offered. The feature turns
+      itself on only when a thirst system is present -- its stage global or
+      effect found at load (LoreRim's DVSMP thirst, SunHelm, Last Seed) --
+      and stays off, with no thirst weight and no drink tagging, on a list
+      without one, as cold and hunger already key on survival mode being
+      active. Log at load which system was found, or that none was.
+      Unparked 2026-10-03. It was parked 2026-09-30
       because there was no reliable way to buy water from innkeepers on
       LoreRim. The user found the way: LoreRim's waterskins are craftable,
       and once you own one an innkeeper refills it for free -- so water is
@@ -1455,6 +1469,49 @@ key, is already a PotionsAny slot with overrides on.
         (decided 2026-09-29): per-slot `bWildcardsEnabled` already keeps
         the keys that matter steady, and no play session showed a wildcard
         in the way mid-fight. Revisit only if one does.
+      - **Workstation flicker at the bench, in combat too.** Vanilla+
+        (simonrim-essentials, 0.23.2, 2026-10-06 15:53-16:11): the
+        workstation context changed 109 times in 18 minutes, often in
+        pairs a second apart as the crosshair crossed a forge, grindstone
+        or workbench (15:53:21-24: forge on, off, on, off, on, off). 24 of
+        the 109 were in combat, fighting beside a forge (15:58:45-59:03),
+        each one swapping craft gear in and out mid-fight. A 10 s hold
+        after the crosshair leaves the bench was tried (#175) and closed
+        unmerged: the user judged it not needed, and it kept the craft
+        context alive while walking through town.
+        Two fixes, two problems:
+        - **In combat: combat suppresses the workstation context** -- no
+          one crafts mid-fight.
+        - **Out of combat, standing still: still open.** Measured on 0.23.4
+          the same day: 8 changes in 2.3 s standing at the forge
+          (17:14:08-10, none -> forge -> none ...), and 26 in 65 s standing
+          between the forge and the armour workbench (18:05:37-53,
+          none / forge / workbench every 100-500 ms). The combat rule does
+          not touch this. The smithing rings came and went on keys 1 and 2
+          with each 3 s lock expiry (17:14:03-11); at 18:05 they stayed only
+          because they outscored everything else enough to be held. Look
+          at the crosshair read itself (what makes it drop between frames
+          while the camera is still) before any hold or debounce.
+      - **One need fills the whole page.** Worse form of the item below,
+        seen 2026-10-05 17:11 with a hungry paladin at an alchemy lab: food
+        drew ctx 0.94-1.00 and a 1.8x potion multiplier (u ~2.2), and all
+        eight keys went to eight different foods -- salmon, apple pie,
+        cabbage soup, sweet roll, mammoth snout... -- while the craft gear
+        (ctx 0.80, u ~1.0) got none. Cap the page per need (2-3 items of one
+        SlotClassifier class on the Regular page), so a strong need takes a
+        couple of keys and leaves the rest. Also check whether food should
+        draw the potion multiplier at all. Slot stability step.
+        Decided (the user, 2026-10-05): a SOFT per-need discount -- the 1st
+        item of a need at full utility, the 2nd x d, the 3rd x d^2 -- applied
+        in the slot manager ONLY, for placement on Regular slots. Ranking,
+        the learner and the selection log keep each item's true utility, so
+        learning never sees an item as worse for a sibling placed first. An
+        INI setting (e.g. `[SlotLocker] fNeedRepeatDiscount`, 1.0 = off,
+        ~0.5 to start). Measure it in tools/replay (top-8 with the discount)
+        before shipping. Root cause: the job-per-key layout gave diversity by
+        construction, the eight-Regular default (0.22.10) removed it, and the
+        old learner's ~20x boosts hid the gap until the choice target
+        compressed scores.
       - **One potion in several slots.** Drowning put Waterbreathing Good
         (the override), Fair and Faint on screen together (2026-09-26
         14:56:43). The tier rule orders strengths; it does not say only one
