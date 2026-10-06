@@ -97,22 +97,30 @@ namespace Huginn::Slot
     void NeedCap::NoteSkipped(const Scoring::ScoredCandidate& skipped)
     {
         const RE::FormID id = skipped.GetFormID();
-        if (std::none_of(m_skipped.begin(), m_skipped.end(), [id](const auto& s) { return s.first == id; })) {
-            m_skipped.emplace_back(id, CachedNeed(skipped));
-            m_skippedNames.emplace_back(skipped.GetName());
+        if (std::none_of(m_skipped.begin(), m_skipped.end(), [id](const Skipped& s) { return s.formID == id; })) {
+            m_skipped.push_back({ id, CachedNeed(skipped), skipped.utility, std::string(skipped.GetName()) });
         }
+    }
+
+    void NeedCap::DropSkipsSince(size_t mark, float threshold)
+    {
+        if (mark >= m_skipped.size()) {
+            return;
+        }
+        m_skipped.erase(std::remove_if(m_skipped.begin() + static_cast<std::ptrdiff_t>(mark), m_skipped.end(),
+                            [threshold](const Skipped& s) { return s.utility <= threshold; }),
+            m_skipped.end());
     }
 
     std::string NeedCap::Summary(const SlotAssignments& assignments) const
     {
         std::vector<std::string> kept;
-        for (size_t i = 0; i < m_skipped.size(); ++i) {
-            const RE::FormID id = m_skipped[i].first;
+        for (const auto& s : m_skipped) {
+            const RE::FormID id = s.formID;
             const bool shown = std::any_of(assignments.begin(), assignments.end(),
                 [id](const SlotAssignment& a) { return !a.IsEmpty() && a.formID == id; });
             if (!shown) {
-                kept.push_back(std::format("'{}' ({})", m_skippedNames[i],
-                    SlotClassificationToString(m_skipped[i].second)));
+                kept.push_back(std::format("'{}' ({})", s.name, SlotClassificationToString(s.need)));
             }
         }
         std::sort(kept.begin(), kept.end());

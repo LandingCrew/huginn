@@ -6435,6 +6435,114 @@ void RunNeedCapTest()
 }
 
 // =============================================================================
+// Need cap through the slot hold: the 4th weapon may not slip in early
+// =============================================================================
+// Vanilla 2026-10-06 17:13:24: the hold judged slots in priority order and
+// counted each holder as it went, so the axe challenging slot 0 could not see
+// the three weapons held further down, and the page showed four. This seats a
+// made-up all-Regular page (pass 1), then weakens slot 0's item so the axe
+// challenges it (pass 2). Uncapped the axe would win; as a 4th weapon at
+// x discount it must not. Utilities are set from the live margin and discount,
+// so a tuned INI does not break the test.
+void RunNeedCapHoldTest()
+{
+#ifndef NDEBUG
+    using namespace Huginn::Slot;
+    logger::info("Running need cap hold test..."sv);
+
+    const auto& settings = SlotSettings::GetSingleton();
+    const float discount = settings.NeedRepeatDiscount();
+    const float margin = settings.ChallengerMargin();
+    if (!settings.KeepSlotPositions() || !settings.HoldSeatedItems() || discount >= 1.0f ||
+        settings.NeedFreeSlots() != 3) {
+        logger::info("  need cap hold test skipped: needs seating, the hold, and the cap at 3 free"sv);
+        return;
+    }
+
+    std::vector<SlotConfig> configs(8);
+    for (size_t i = 0; i < configs.size(); ++i) {
+        configs[i].classification = SlotClassification::Regular;
+        configs[i].priority = static_cast<int8_t>(7 - i);
+        configs[i].skipEquipped = false;   // no player: nothing is equipped
+        configs[i].wildcardsEnabled = true;
+    }
+
+    static std::array<std::string, 10> names;
+    auto spell = [](size_t i, Spell::SpellType type, float utility) {
+        names[i] = "NeedCapHoldProbe" + std::to_string(i);
+        Candidate::SpellCandidate s{};
+        s.formID = 0x0BADF300 + static_cast<RE::FormID>(i); s.name = names[i]; s.type = type;
+        Scoring::ScoredCandidate sc{}; sc.candidate = s; sc.utility = utility;
+        return sc;
+    };
+    auto weapon = [](size_t i, float utility) {
+        names[i] = "NeedCapHoldProbe" + std::to_string(i);
+        Candidate::WeaponCandidate w{};
+        w.formID = 0x0BADF300 + static_cast<RE::FormID>(i); w.name = names[i];
+        w.tags = Weapon::WeaponTag::Melee;
+        Scoring::ScoredCandidate sc{}; sc.candidate = w; sc.utility = utility;
+        return sc;
+    };
+
+    // Pass 2's slot-0 item sits halfway between what the axe needs to beat
+    // it capped and uncapped, and the other challenger ties it (no win).
+    constexpr float kAxe = 0.325f;
+    const float weakened = kAxe * (1.0f + discount) / 2.0f / (1.0f + margin);
+
+    using SpellType = Spell::SpellType;
+    const Scoring::ScoredCandidateList first = {
+        spell(0, SpellType::Healing, 1.0f),   // slot 0
+        weapon(1, 0.44f), weapon(2, 0.43f),
+        spell(3, SpellType::Buff, 0.40f),
+        weapon(4, 0.33f),                      // three weapons held
+        spell(5, SpellType::Defensive, 0.28f), spell(6, SpellType::Summon, 0.27f),
+        spell(7, SpellType::Utility, 0.26f),
+    };
+    Scoring::ScoredCandidateList second = {
+        first[1], first[2], first[3], first[4],
+        weapon(8, kAxe),                       // the 4th weapon
+        first[5], first[6], first[7],
+        spell(0, SpellType::Healing, weakened),
+        spell(9, SpellType::Damage, weakened),
+    };
+
+    auto& allocator = SlotAllocator::GetSingleton();
+    allocator.Reset();
+    constexpr uint32_t kGeneration = 0xFFFF0001u;
+    const auto before = allocator.AllocateForTest(0, kGeneration, configs, first);
+    const auto after = allocator.AllocateForTest(0, kGeneration, configs, second);
+    allocator.Reset();   // no probe seats left for the first real pass
+
+    auto slotOf = [](const SlotAssignments& a, RE::FormID id) -> size_t {
+        for (const auto& s : a) {
+            if (!s.IsEmpty() && s.formID == id) return s.slotIndex;
+        }
+        return SIZE_MAX;
+    };
+    bool passed = true;
+    auto expect = [&](bool ok, std::string_view what) {
+        if (!ok) { logger::error("TEST FAIL: need cap hold: {}"sv, what); passed = false; }
+    };
+
+    expect(slotOf(before, 0x0BADF300) == 0, "setup: the healing probe is not on slot 0");
+    size_t weapons = 0;
+    for (const RE::FormID id : { 0x0BADF301u, 0x0BADF302u, 0x0BADF304u, 0x0BADF308u }) {
+        weapons += slotOf(after, id) != SIZE_MAX;
+    }
+    expect(weapons == 3, "the page does not show exactly three weapons");
+    expect(slotOf(after, 0x0BADF308) == SIZE_MAX, "the 4th weapon took a slot it beats only uncapped");
+    expect(slotOf(after, 0x0BADF300) == 0, "slot 0's item lost its slot to a challenger it out-holds");
+    for (const RE::FormID id : { 0x0BADF301u, 0x0BADF302u, 0x0BADF304u }) {
+        expect(slotOf(after, id) == slotOf(before, id), "a held weapon moved");
+    }
+
+    if (passed) {
+        logger::info("  need cap hold test PASSED"sv);
+    }
+#endif
+}
+
+// =============================================================================
 // THROWAWAY: a Buff's element is not a resist claim (0.20.63)
 // =============================================================================
 // Delete this block, its Tests.h declaration and its Main.cpp call site
