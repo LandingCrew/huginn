@@ -32,7 +32,8 @@ and change the learning before tuning anything that competes with it.
    (what goes on the page: eight foods filled eight keys; measured in
    tools/replay first), then the soft slot manager (where it sits: an
    unheld sword and bow jumped slots after refresh bursts), then combat
-   suppressing the workstation context, then a `fChallengerMargin` 0.25
+   suppressing the workstation context (the flicker while standing still
+   at a bench is a separate, open problem), then a `fChallengerMargin` 0.25
    vs 0.5 comparison on the `slotChurn=` heartbeat. All under "Remaining
    slot churn" and "Soft slot manager" below; #174's key-age and tenure
    bands are the before/after measure.
@@ -1477,10 +1478,20 @@ key, is already a PotionsAny slot with overrides on.
         each one swapping craft gear in and out mid-fight. A 10 s hold
         after the crosshair leaves the bench was tried (#175) and closed
         unmerged: the user judged it not needed, and it kept the craft
-        context alive while walking through town. Instead: **combat suppresses the
-        workstation context** -- no one crafts mid-fight. Then re-measure
-        the out-of-combat flicker before deciding whether anything else is
-        needed.
+        context alive while walking through town.
+        Two fixes, two problems:
+        - **In combat: combat suppresses the workstation context** -- no
+          one crafts mid-fight.
+        - **Out of combat, standing still: still open.** Measured on 0.23.4
+          the same day: 8 changes in 2.3 s standing at the forge
+          (17:14:08-10, none -> forge -> none ...), and 26 in 65 s standing
+          between the forge and the armour workbench (18:05:37-53,
+          none / forge / workbench every 100-500 ms). The combat rule does
+          not touch this. The smithing rings came and went on keys 1 and 2
+          with each 3 s lock expiry (17:14:03-11); at 18:05 they stayed only
+          because they outscored everything else enough to be held. Look
+          at the crosshair read itself (what makes it drop between frames
+          while the camera is still) before any hold or debounce.
       - **One need fills the whole page.** Worse form of the item below,
         seen 2026-10-05 17:11 with a hungry paladin at an alchemy lab: food
         drew ctx 0.94-1.00 and a 1.8x potion multiplier (u ~2.2), and all
