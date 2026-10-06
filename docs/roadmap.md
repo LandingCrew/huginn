@@ -189,7 +189,12 @@ context" unless named):
    still too much in play.
 3. **Prior as pseudo-observations** -- n/(n+n0) instead of the sigmoid,
    decay n with the weights. Review note (2026-10-02): may need to ship
-   WITH #1 -- see "zero now means rejected" on the entry.
+   WITH #1 -- see "zero now means rejected" on the entry. SHIPPED in
+   0.23.0 WITHOUT the decay of n. Code review of #173: n/(n+2) gives a
+   lightly trained item more confidence than the sigmoid did (3 trains:
+   0.60 vs 0.35), so an item left idle for days -- weights decayed toward
+   0, n kept -- now reads as "rejected" harder than before. Decaying n is
+   the fix; it changes the cosave.
 4. **Surprise-weighted updates** -- capped inverse-propensity step size;
    an item Huginn was not showing ~2x, whichever device picked it (one
    selection path, decided 2026-10-02 -- source is never a weight).

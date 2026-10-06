@@ -9,16 +9,26 @@
 
 Huginn is an SKSE plugin that watches how your fight is going and keeps your hotkeys stocked with whatever suits the moment — the right spell, potion, weapon, or item, already on the key, before you have to go digging for it in the menus.
 
-It also learns as you play. Huginn notices what you actually reach for in each kind of situation and starts offering that sooner. And it never acts on its own: it puts the item on the key, you decide whether to press it.
-
-Huginn provides a HUD widget showing the rolling state of each hotkey.
+It also learns as you play. Huginn notices what you actually reach for in each kind of situation and starts offering that sooner. And it never acts on its own: it puts the item on the key, you decide whether to press it. Huginn provides a HUD widget showing the rolling state of each hotkey.
 
 [line]
 [size=4][b]Why[/b][/size]
 
-Huginn is an attempt to solve inventory and spell selection without the player having to remember whether they have a potion, spell, or item for the job. Ideally Huginn abstracts away the inventory and ...
+Huginn is an attempt to take the chore out of inventory management.
 
-No... Why Huginn? Oh, that's because [url=https://en.wikipedia.org/wiki/Huginn_and_Muninn]Huginn is the raven that sits on Odin's shoulder bringing knowledge and gossip.[/url] That, and there are already one too many mods named Mimir.
+One of the long-standing bugbears in Skyrim is getting at your inventory and spell menus without it turning into busywork. The problem comes down to three things:
+
+[list]
+[*][b]Remembering everything you carry.[/b] Players have to keep the whole list of potions, spells, and items in their heads. Under pressure, like in a boss fight, it's easy to forget you're carrying the one potion that would have turned it around.[/*]
+[*][b]Leaving the game to use it.[/b] Every trip into the menus means opening them, finding the right submenu, and picking the item. Each one pulls you out of the fight and breaks the flow.[/*]
+[*][b]Wanting depth without the upkeep.[/b] Players want rich systems, not the constant tending of an inventory.[/*]
+[/list]
+
+The vanilla Favorites menu helps, and several mods have attempted to solve it in various ways. UI mods like Wheeler give you fast radial wheels, and automation mods drink potions, eat food, and consume soul gems for you. Each one solves part of the problem. Wheels go stale as items get used up and need resetting by hand. Automation is convenient, but it takes the decision out of your hands.
+
+Huginn aims at the gap between them. It keeps an intuition menu stocked with what it thinks you need, when you need it, and leaves the choice to you. If you'd rather pick from a wheel, the optional wheelerAPI download lets Huginn keep your Wheeler wheels filled the same way (see [b]Optional Extension[/b] below).
+
+No... Why [i]Huginn[/i]? Oh, that's because [url=https://en.wikipedia.org/wiki/Huginn_and_Muninn]Huginn is the raven that sits on Odin's shoulder, bringing him knowledge and gossip.[/url] That, and there are already one too many mods named Mimir.
 
 [line]
 [size=4][b]Features[/b][/size]
@@ -54,7 +64,7 @@ Huginn is entirely self-contained with its own rendering pipeline. Install the d
 
 [size=3][b]Upgrading[/b][/size]
 
-If you are uninstalling or upgrading, you might want to clear what Huginn has learned first: type [font=Courier New]hg reset weights[/font] in the console, or press [b]Reset Learned Weights[/b] in Huginn's dMenu panel. Huginn stores its learned preferences in the SKSE co-save.
+If you are uninstalling or upgrading, you might want to clear what Huginn has learned first: type [font=Courier New]hg reset weights[/font] in the console, or press [b]Reset Learned Weights[/b] in Huginn's dMenu panel. Huginn stores its learned preferences in the SKSE co-save and these commands reset it.
 
 [size=3][b]Uninstall[/b][/size]
 
@@ -106,7 +116,7 @@ bWildcardsEnabled = true
 bOverridesEnabled = HP
 iPriority = 7[/code]
 
-[b][color=#cc9933]The default page[/color][/b]
+[b][color=#cc9933]The default page - Huginn[/color][/b]
 
 By default Huginn comes with two pages. The first, [b]Huginn[/b], is eight plain keys. No key has a job: each shows one of the eight best things for the moment, whatever they are, and Huginn decides which key gets what. That is what Huginn is built to get right -- labels are for when it doesn't yet.
 

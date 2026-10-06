@@ -1342,8 +1342,10 @@ void RunFeatureBanditLearnerTests()
             logger::error("TEST FAIL: After 20 trains with reward=1.0, reward estimate should be >0.5, got {:.4f}"sv, q);
             return;
         }
-        if (conf < 0.9f) {
-            logger::error("TEST FAIL: After 20 trains, confidence should be >0.9, got {:.4f}"sv, conf);
+        const float expectConf = 20.0f / (20.0f + FeatureBanditLearner::PriorPseudoObservations());
+        if (!feq(conf, expectConf)) {
+            logger::error("TEST FAIL: After 20 trains, confidence should be 20/(20+n0) = {:.4f}, got {:.4f}"sv,
+                expectConf, conf);
             return;
         }
         logger::info("  Test 2 PASS: Learning convergence (est={:.3f}, conf={:.3f})"sv, q, conf);

@@ -319,13 +319,23 @@ linear reward model.
 
 ### Confidence and UCB
 
-`ComputeConfidence` (`FeatureBanditLearner.cpp:127`) is a logistic on the *per-item*
-train count:
+`ComputeConfidence` (`FeatureBanditLearner.cpp`) treats the prior as
+`PRIOR_PSEUDO_OBSERVATIONS` (n0 = 2) imaginary observations against the item's
+*per-item* train count (0.23.0; it replaced a logistic, 50% at 5 trains):
 
 ```
-confidence(n) = 1 / (1 + exp(-0.3 * (n - 5)))
-   0 trains → ~18%     5 → 50%     10 → ~82%     15 → ~95%
+confidence(n) = n / (n + 2)
+   0 trains → 0%     1 → 33%     2 → 50%     6 → 75%     18 → 90%     38 → 95%
 ```
+
+With no evidence the learned score IS the prior, and the prior keeps n0's
+share however much is learned. Confidence also sets the boost
+(`lambda = lambdaMin + confidence * (lambdaMax - lambdaMin)`), so an untrained
+item gets lambdaMin (0.5); replaying the soak with lambda left on the old
+logistic scored worse (71.5% vs 74.1% top-8). The estimate is an LMS
+regression at rate 0.1, so it converges more slowly than confidence rises --
+a high-prior item picked once blends a little lower, but its boost rises
+more and its utility still goes up.
 
 `ComputeUCB` (`FeatureBanditLearner.cpp:135`) is UCB1, normalized and clamped:
 
@@ -482,8 +492,10 @@ It replaced 8 (equip) / 5 (consume), which regressed every used item onto a
 fixed number with no contrast and let a trained item's boost reach ~24x (the
 soak run's crowding). On 0-1 the boost tops out near 1 + lambdaMax = 4x.
 Chosen with `tools/replay/replay.py` over the soak run: on menu picks -- the
-unbiased signal -- the chosen item was in the top 8 25.8% of the time against
-10.1% for the old target, at 71.1% vs 72.7% overall. Learning saved under the
+unbiased signal -- the chosen item was in the top 8 27.0% of the time against
+10.1% for the old target, at 71.7% vs 72.7% overall (the game as it ships:
+repeats on equips only, deferred passed-over updates; with the pseudo-
+observation confidence, 29.2% and 74.1%). Learning saved under the
 old target (cosave BNDW v1/v2) is discarded on load: v3 starts fresh.
 
 ### Selection Log
@@ -1415,8 +1427,8 @@ The periodic line is gated by `DebugSettings::recLogVerbosity`
      verifiable. -->
 
 The per-item confidence curve is the honest answer to "how long until it
-learns": an item reaches 50% confidence at **5** rewarded uses and ~95% at
-**15**. Until then its score is dominated by its prior and its context weight.
+learns": an item reaches 50% confidence at **2** picks and 75% at **6** (the
+prior keeps the rest: 90% takes 18). Until then its score is dominated by its prior and its context weight.
 
 1. **Train the system** — use the recommended items when appropriate
 2. **Favorite preferred equipment** — favorited spells/weapons get up to a 2.5x
