@@ -16,7 +16,7 @@ namespace Huginn::Learning
    {
       float rewardEstimate;      // w . phi(s)
       float ucb;         // Exploration bonus (per-item train count)
-      float confidence;  // Sigmoid on per-item train count
+      float confidence;  // n / (n + PRIOR_PSEUDO_OBSERVATIONS), n = per-item trains
    };
 
    // =============================================================================
@@ -62,6 +62,8 @@ namespace Huginn::Learning
 
       // Metrics API (3.5d-compatible shape)
       [[nodiscard]] float GetConfidence(RE::FormID formID) const;
+      /// n0 in confidence = n / (n + n0): the prior's weight in observations.
+      [[nodiscard]] static constexpr float PriorPseudoObservations() noexcept { return PRIOR_PSEUDO_OBSERVATIONS; }
       [[nodiscard]] float GetUCB(RE::FormID formID) const;
       [[nodiscard]] FeatureItemMetrics GetMetrics(RE::FormID formID, const StateFeatures& features) const;
 
@@ -186,8 +188,9 @@ namespace Huginn::Learning
       static constexpr float LEARNING_RATE = 0.1f;
       static constexpr float L2_LAMBDA = 0.01f;
       static constexpr float WEIGHT_CLAMP = 10.0f;
-      static constexpr float CONFIDENCE_MIDPOINT = 5.0f;    // 50% confidence at 5 trains
-      static constexpr float CONFIDENCE_STEEPNESS = 0.3f;   // ~95% confidence at 15 trains
+      // Confidence = n / (n + n0): 1 train 33%, 2 -> 50%, 6 -> 75%, 18 -> 90%.
+      static constexpr float PRIOR_PSEUDO_OBSERVATIONS = 2.0f;
+      static_assert(PRIOR_PSEUDO_OBSERVATIONS > 0.0f, "n0 = 0 makes an untrained item's confidence 0/0");
       static constexpr float UCB_NORMALIZATION_FACTOR = 0.2f;
 
       mutable std::shared_mutex m_mutex;
