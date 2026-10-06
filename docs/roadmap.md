@@ -36,7 +36,8 @@ and change the learning before tuning anything that competes with it.
    cover learned, no second restore on over-time lists, carry weight when
    encumbered, food buff captions (After the soak, Field notes).
 5. **Gear recommendations** -- workstation gear holding its key at the
-   bench, enchanted gear by weapon type, haggling gear at merchants.
+   bench, enchanted gear by weapon type, haggling gear at merchants, and
+   only the best piece per body slot ("Dominated gear", below).
 6. **Context expansion** -- the enemy-detection release, hunger and cold as
    a ramp, thirst, LoreRim's healing block.
 7. **Wild cards** -- Estimated altitude (decide what it drives), poison
@@ -1295,6 +1296,31 @@ with how the run is played and laid out -- see the Phase 2 review notes.
       consumer and comes back here; (b) a worn-vs-candidate comparison, is the
       enchantment worth the armor lost, which is scoring not filtering; and
       (c) a restore story, or an explicit decision not to have one (M/L)
+- [ ] **Dominated gear: offer only the best piece per body slot** (the
+      user, 2026-10-06, greedy). Seen on vanilla+ at the forge: Ring of
+      Smithing and Ring of Minor Smithing on keys 7 and 8 together (u 1.060
+      vs 1.056) -- two keys for one ring finger. A CANDIDATE FILTER, before
+      scoring, not the slot manager: a strictly weaker piece of the same job
+      has no value while the better one is carried, so it should not be
+      scored, ranked, logged, passed over in learning or put on a wheel.
+      (The per-need discount is the slot manager's tool for items that are
+      different but all useful; this is for items that are not.)
+      - Group craft apparel by (skill fortified, biped body slot); keep the
+        strongest unworn piece per group.
+      - What is worn counts: a worn piece at least as strong offers nothing
+        (already set); a stronger unworn piece is offered (an upgrade).
+        Wearing Minor Smithing at the forge offers Ring of Smithing;
+        wearing Ring of Smithing offers no ring.
+      - Different body slots still stack (circlet + ring for alchemy, as at
+        the LoreRim lab). Two-ring mods fall out of using the real biped
+        slot: a ring on its own slot is its own group.
+      - Ties: the instance already learned or worn wins; otherwise either.
+      - Apparel only. Weapons are preference, not dominance; potions use
+        the opposite rule (smallest that covers the deficit); soul gems
+        have their own fill rule.
+      - Related: the prior barely separates the two rings (learn 0.65 vs
+        0.64), so enchantment magnitude is almost flat in the apparel
+        prior -- worth weighting properly in the same milestone.
 - [ ] **Gear and poisons, decided direction (with the user, 2026-09-30).**
       For the two apparel entries above:
       - Enchanted gear is recommended OUT OF COMBAT only. Mid-fight swaps
