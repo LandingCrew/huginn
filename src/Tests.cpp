@@ -18,6 +18,7 @@
 #include "learning/StateFeatures.h"
 #include "learning/FeatureBanditLearner.h"
 #include "learning/PipelineStateCache.h"
+#include "learning/EquipSubscribers.h"
 #include "learning/EquipSourceTracker.h"
 #include "learning/UsageMemory.h"
 #include "util/ScopedTimer.h"
@@ -1558,7 +1559,110 @@ void RunFeatureBanditLearnerTests()
         logger::info("  Test 8 PASS: Clear"sv);
     }
 
-    logger::info("TEST PASS: All FeatureBanditLearner tests passed! (8 tests)"sv);
+    // ── Test 9: the choice target (0.23.0) ────────────────────────────────
+    // A confirmed choice teaches the chosen item 1 at once. Each item shown
+    // for the same need and passed over gets 0 (a quarter step, not a train)
+    // PASSED_OVER_DELAY_SEC later -- unless it is picked next (a companion),
+    // or the learner has never seen it. An item for another need is
+    // untouched; an event flagged repeatPick teaches nothing.
+    {
+        FeatureBanditLearner learner;
+        BanditSubscriber subscriber(learner);
+        constexpr RE::FormID chosenID = 0xC0000001, rivalID = 0xC0000002, otherNeedID = 0xC0000003,
+                             companionID = 0xC0000004, unseenID = 0xC0000005;
+        StateFeatures state;
+        state.inCombat = 1.0f;
+        state.healthPct = 0.4f;
+
+        for (int i = 0; i < 10; ++i) {
+            learner.Update(rivalID, state, 1.0f);       // a well-trained rival
+            learner.Update(companionID, state, 1.0f);   // and a well-trained companion
+        }
+        const float rivalBefore = learner.GetRewardEstimate(rivalID, state);
+        const uint32_t rivalTrains = learner.GetTrainCount(rivalID);
+        const float companionBefore = learner.GetRewardEstimate(companionID, state);
+
+        EquipEvent event;
+        event.formID = chosenID;
+        event.kind = SelectionKind::Equip;
+        event.features = state;
+        auto& snap = event.shown;
+        snap.valid = true;
+        auto row = [](RE::FormID id, Slot::SlotClassification need) {
+            PipelineStateCache::ScoreRow r;
+            r.formID = id;
+            r.need = need;
+            return r;
+        };
+        snap.scores = { row(chosenID, Slot::SlotClassification::HealingAny),
+                        row(rivalID, Slot::SlotClassification::HealingAny),
+                        row(otherNeedID, Slot::SlotClassification::DamageAny),
+                        row(companionID, Slot::SlotClassification::HealingAny),
+                        row(unseenID, Slot::SlotClassification::HealingAny) };
+        snap.shown = { { 0, chosenID, "chosen", Slot::AssignmentType::Normal },
+                       { 1, rivalID, "rival", Slot::AssignmentType::Normal },
+                       { 2, otherNeedID, "other need", Slot::AssignmentType::Normal },
+                       { 3, companionID, "companion", Slot::AssignmentType::Normal },
+                       { 4, unseenID, "never seen", Slot::AssignmentType::Normal } };
+
+        subscriber.OnEquipEvent(event);
+
+        const float chosenAfter = learner.GetRewardEstimate(chosenID, state);
+        if (chosenAfter <= 0.0f || learner.GetTrainCount(chosenID) != 1) {
+            logger::error("TEST FAIL (9): the chosen item should rise and count one train, got est {:.3f} trains {}"sv,
+                chosenAfter, learner.GetTrainCount(chosenID));
+            return;
+        }
+        if (!feq(learner.GetRewardEstimate(rivalID, state), rivalBefore)) {
+            logger::error("TEST FAIL (9): the passed-over update should wait for its delay"sv);
+            return;
+        }
+
+        // The companion is picked next: its own passed-over update is cancelled.
+        EquipEvent companionPick = event;
+        companionPick.formID = companionID;
+        subscriber.OnEquipEvent(companionPick);
+
+        subscriber.OnTick(std::chrono::steady_clock::now() +
+                          std::chrono::seconds(static_cast<int>(Config::PASSED_OVER_DELAY_SEC) + 1));
+
+        if (learner.GetRewardEstimate(rivalID, state) >= rivalBefore ||
+            learner.GetTrainCount(rivalID) != rivalTrains) {
+            logger::error("TEST FAIL (9): the passed-over rival should drop and keep its train count, got est "
+                "{:.3f} (was {:.3f}) trains {} (was {})"sv, learner.GetRewardEstimate(rivalID, state), rivalBefore,
+                learner.GetTrainCount(rivalID), rivalTrains);
+            return;
+        }
+        if (learner.GetRewardEstimate(companionID, state) <= companionBefore) {
+            logger::error("TEST FAIL (9): a companion picked next must not be passed over, got est {:.3f} (was {:.3f})"sv,
+                learner.GetRewardEstimate(companionID, state), companionBefore);
+            return;
+        }
+        if (learner.HasItem(unseenID)) {
+            logger::error("TEST FAIL (9): a passed-over item the learner never saw must not get an entry"sv);
+            return;
+        }
+        if (learner.HasItem(otherNeedID)) {
+            logger::error("TEST FAIL (9): an item for another need must be untouched"sv);
+            return;
+        }
+
+        const float chosenNow = learner.GetRewardEstimate(chosenID, state);
+        const uint32_t chosenTrains = learner.GetTrainCount(chosenID);
+        EquipEvent repeat = event;
+        repeat.repeatPick = true;
+        subscriber.OnEquipEvent(repeat);
+        if (!feq(learner.GetRewardEstimate(chosenID, state), chosenNow) ||
+            learner.GetTrainCount(chosenID) != chosenTrains) {
+            logger::error("TEST FAIL (9): a repeat pick should teach nothing"sv);
+            return;
+        }
+        logger::info("  Test 9 PASS: choice target -- chosen {:.2f}, rival {:.2f} -> {:.2f}, companion kept, "
+            "unseen skipped, repeat ignored"sv,
+            chosenAfter, rivalBefore, learner.GetRewardEstimate(rivalID, state));
+    }
+
+    logger::info("TEST PASS: All FeatureBanditLearner tests passed! (9 tests)"sv);
 #endif
 }
 

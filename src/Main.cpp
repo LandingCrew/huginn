@@ -48,6 +48,7 @@
 #include "learning/ScorerSettings.h"
 #include "learning/LearningSettings.h"
 #include "learning/ExternalEquipListener.h"
+#include "apparel/ApparelWornListener.h"
 #include "learning/ExternalEquipLearner.h"
 #include "context/ContextWeightSettings.h"
 #include "context/ContextWeightConfig.h"
@@ -177,7 +178,12 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
             eventSource->GetEventSource<RE::TESEquipEvent>()->AddEventSink(g_spellRegistry.get());
             eventSource->GetEventSource<RE::TESEquipEvent>()->AddEventSink(
                 &Learning::ExternalEquipListener::GetSingleton());
-            logger::info("SpellRegistry + ExternalEquipListener registered for TESEquipEvent notifications"sv);
+            eventSource->GetEventSource<RE::TESEquipEvent>()->AddEventSink(
+                &Apparel::ApparelWornListener::GetSingleton());
+            // Armour leaving the inventory: reconcile at once (a dropped worn ring).
+            eventSource->GetEventSource<RE::TESContainerChangedEvent>()->AddEventSink(
+                &Apparel::ApparelWornListener::GetSingleton());
+            logger::info("SpellRegistry + ExternalEquipListener + ApparelWornListener registered for TESEquipEvent notifications"sv);
         }
     }
 
@@ -747,19 +753,6 @@ static void OnDataLoaded()
                 std::format("key {} (s{})", slotIndex + 1, slotIndex));
         });
 
-        // Apparel is worn, not used, so it has no cooldown to stop it being
-        // re-offered: the registry's isEquipped flag is the whole mechanism, and
-        // the 30 s reconcile is far too slow to be it on its own. Mark the piece
-        // worn here and force a re-allocation, so the slot swaps to the next
-        // useful thing instead of showing the ring the player is now wearing.
-        // Wired here rather than inside EquipManager because this is the layer
-        // that knows about both input/ and apparel/.
-        equipManager.SetApparelEquippedCallback([](RE::FormID formID, uint16_t uniqueID) {
-            if (!g_apparelRegistry) return;
-            if (g_apparelRegistry->MarkEquipped(formID, uniqueID)) {
-                Slot::SlotAllocator::GetSingleton().MarkPageDirty();
-            }
-        });
 
         logger::info("Input handler and equip manager initialized (keys 1-5)"sv);
     }

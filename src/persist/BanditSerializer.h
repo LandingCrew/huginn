@@ -16,7 +16,12 @@ namespace Huginn::Persist
 
    // Record type (packed 4CC — SKSE interprets as little-endian uint32_t)
    inline constexpr uint32_t kRecordType_BanditWeights  = 'WDNB';  // 'BNDW' on disk
-   inline constexpr uint32_t kBanditSerializationVersion = 2;
+   // v3 (0.23.0): the choice target -- learning on 0-1. Same wire format as
+   // v2. A v1/v2 record holds learning on the old 8 (equip) / 5 (consume)
+   // target and is DISCARDED on load: those scores came from rules the
+   // rework replaced, so the character starts learning fresh (decided with
+   // the user, 2026-10-04 -- reset, not rescale).
+   inline constexpr uint32_t kBanditSerializationVersion = 3;
    inline constexpr uint32_t kUniqueID                = 'QCNO';  // 'ONCQ' on disk
 
    // Which character a save belongs to, and how far its learning had got:

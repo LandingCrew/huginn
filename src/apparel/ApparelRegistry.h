@@ -70,6 +70,16 @@ namespace Huginn::Apparel
        */
       size_t ReconcileApparel();
 
+      /// Ask for a reconcile on the next update tick, ahead of the 30 s timer:
+      /// armour left the player's inventory (ApparelWornListener). The
+      /// update loop reconciles before it scores, so a piece dropped, sold or
+      /// stored is gone before the page is filled again.
+      void RequestReconcile() noexcept { m_reconcileRequested.store(true, std::memory_order_relaxed); }
+      [[nodiscard]] bool TakeReconcileRequest() noexcept
+      {
+         return m_reconcileRequested.exchange(false, std::memory_order_relaxed);
+      }
+
       // =============================================================================
       // ACCESSORS
       // =============================================================================
@@ -100,7 +110,11 @@ namespace Huginn::Apparel
        * so the flag is true the moment the piece goes on. Equipping also clears
        * the flag on whatever this piece displaces; see the note on the sweep.
        */
-      bool MarkEquipped(RE::FormID formID, uint16_t uniqueID, bool equipped = true);
+      /// sweepSlot: on an equip, also clear other pieces flagged worn in the
+      /// same body slot. A heuristic for callers that see only the piece going
+      /// ON; ApparelWornListener passes false -- it gets the engine's own
+      /// unequip event for whatever was displaced.
+      bool MarkEquipped(RE::FormID formID, uint16_t uniqueID, bool equipped = true, bool sweepSlot = true);
 
       /**
        * @brief Iterate all tracked apparel without copying
@@ -171,5 +185,6 @@ namespace Huginn::Apparel
       ApparelClassifier          m_classifier;
       mutable std::shared_mutex  m_mutex;
       std::atomic<bool>          m_isLoading{false};
+      std::atomic<bool>          m_reconcileRequested{false};
    };
 }

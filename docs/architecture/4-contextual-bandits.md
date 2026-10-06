@@ -457,15 +457,35 @@ potion goes on cooldown whoever drank it.
 
 ### Reward Calculation
 
-One confirmed selection, one reward (`RewardFor`, `src/learning/EquipEvent.h`):
+The choice target (roadmap Phase 3 #1, v0.23.0; `BanditSubscriber`,
+`src/learning/EquipSubscribers.h`). One confirmed selection teaches:
 
-```cpp
-kind == SelectionKind::Consumable ? Config::CONSUME_REWARD   // 5.0
-                                  : Config::EQUIP_REWARD;    // 8.0
-```
+- the chosen item -> `CHOICE_TARGET` (1), equip or consume alike;
+- each item shown on the page for the SAME need (`SlotClassifier::Classify`,
+  the selection log's `need`) and passed over -> `PASSED_OVER_TARGET` (0), at
+  a `PASSED_OVER_STEP` (0.25) step that does not count as a train. Only plain
+  recommendations: overrides, Remembrance holds and wildcards are not the
+  learner's offer. The update waits `PASSED_OVER_DELAY_SEC` (10 s) and is
+  cancelled if its item is the next pick: companions -- circlet then ring,
+  Oakflesh then Muffle, sword then off-hand dagger -- share a need class but
+  are used together. It is skipped for an item the learner holds no entry
+  for (estimate 0, target 0: a no-op that would only grow the cosave).
 
-No source filtering, no multipliers. (The choice target, roadmap Phase 3 #1,
-replaces both values with 1.)
+`w += a*(target - w.phi)*phi` sizes every move by surprise. EQUIPPING the same
+item again within `REPEAT_PICK_WINDOW_SEC` (30 s) teaches nothing -- one
+decision, one reward. `SelectionTracker::Confirm` decides it once and flags the
+event (`repeatPick`); the learner and the recency memory both skip it. The
+window is cleared on a load and on `hg reset weights`. Consumables are exempt:
+two drinks of one potion are two decisions. No source filtering, no
+multipliers.
+
+It replaced 8 (equip) / 5 (consume), which regressed every used item onto a
+fixed number with no contrast and let a trained item's boost reach ~24x (the
+soak run's crowding). On 0-1 the boost tops out near 1 + lambdaMax = 4x.
+Chosen with `tools/replay/replay.py` over the soak run: on menu picks -- the
+unbiased signal -- the chosen item was in the top 8 25.8% of the time against
+10.1% for the old target, at 71.1% vs 72.7% overall. Learning saved under the
+old target (cosave BNDW v1/v2) is discarded on load: v3 starts fresh.
 
 ### Selection Log
 
@@ -502,8 +522,8 @@ selection's update. Two outputs:
 > **Design Principle (v0.13.0+):** Learning is decoupled from the presentation layer (Wheeler/Widget). The system learns exclusively from confirmed player selections. Negative signals come from time-based weight decay and L2, not from Wheeler open/close events -- and, since v0.22.9, not from misclicks either: an item swapped away inside the confirm window is simply never confirmed.
 
 A confirmed selection is the only explicit learning signal. Every source earns
-the same: `EQUIP_REWARD` (+8.0) for an equip, `CONSUME_REWARD` (+5.0) for a
-consumable.
+the same: the chosen item -> 1, and the same-need items shown and passed over
+-> 0 at a quarter step (Reward Calculation, above).
 
 1. Huginn slot keys (`EquipManager` callback)
 2. Huginn's Wheeler wheel (`OnItemActivated` → `publishWheelerEquip`)
@@ -684,8 +704,8 @@ for version differences.
 
 | Signal | Value | Source | Purpose |
 |--------|-------|--------|---------|
-| Equip reward | +8.0 | A confirmed selection of a worn/held item, any device | One reward per selection |
-| Consume reward | +5.0 | A confirmed selection of a consumable, any device | One reward per selection |
+| Chosen | target 1 | A confirmed selection, equip or consume, any device | One per decision (30 s repeat window, equips only) |
+| Passed over | target 0, step 0.25, not a train | Shown on the page for the chosen item's need, not chosen, not picked next; 10 s later | Contrast: the learner sees what lost |
 | L2 regularization | Continuous | Applied during each weight update | Pulls weights toward zero |
 | Time-based decay | Lazy | `MaybeDecayBatch` before scoring | 2%/hr exponential decay on idle items |
 
@@ -750,7 +770,7 @@ for version differences.
 |             +-------------+        +-------------+                           |
 |             |  SELECT     |        |   IGNORE    |                           |
 |             | (confirmed: |        |  (time decay|                           |
-|             |  +8 or +5)  |        |   handles)  |                           |
+|             |  chosen->1) |        |   handles)  |                           |
 |             +------+------+        +-------------+                           |
 |                    |                                                         |
 |                    v                                                         |
@@ -856,7 +876,8 @@ return contextWeight * (1.0f + lambda * learningScore)
        * correlationBonus * potionMultiplier * favoritesMultiplier;
 ```
 
-`recencyBoost` is `UsageMemory::RECENCY_BOOST` (1.5), granted when at least
+`recencyBoost` is `UsageMemory::RECENCY_BOOST` (1.5/8 since v0.23.0 -- the
+learned score is on 0-1 now), granted when at least
 `MATCH_THRESHOLD` (3) events for the same FormID *and* the same context hash
 sit in the 20-slot ring buffer. `UsageMemory` is read through a
 `SnapshotReader` that copies the ring under a brief shared lock and then scans
@@ -1278,8 +1299,11 @@ just-cleared table for the remainder of their lock duration.
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| EQUIP_REWARD | 8.0 | Reward for one confirmed equip selection |
-| CONSUME_REWARD | 5.0 | Reward for one confirmed consumable selection |
+| CHOICE_TARGET | 1.0 | Target for the chosen item (v0.23.0; was 8 equip / 5 consume) |
+| PASSED_OVER_TARGET | 0.0 | Target for a same-need item shown and passed over |
+| PASSED_OVER_STEP | 0.25 | Step scale for a passed-over item; not counted as a train |
+| REPEAT_PICK_WINDOW_SEC | 30 | Equipping the same item again inside this teaches nothing |
+| PASSED_OVER_DELAY_SEC | 10 | A passed-over update waits this long; cancelled if its item is picked next |
 | DECAY_RATE_PER_HOUR | 0.02 | Exponential weight decay for idle items |
 | DECAY_THRESHOLD_MINUTES | 5.0 | Don't decay if updated within this window |
 | CONSUMPTION_HUGINN_WINDOW_MS | 2500 | A consumable selection must see its count drop within this |
@@ -1292,7 +1316,7 @@ just-cleared table for the remainder of their lock duration.
 |-----------|---------|-------------|
 | BUFFER_CAPACITY | 20 | Ring buffer of recent usage events |
 | MATCH_THRESHOLD | 3 | Matching (formID, contextHash) events needed for a boost |
-| RECENCY_BOOST | 1.5 | Additive boost to `learningScore` |
+| RECENCY_BOOST | 1.5 / 8 | Additive boost to `learningScore` (on the 0-1 target's scale) |
 
 ### ExternalEquipLearner (`src/learning/ExternalEquipLearner.h`)
 

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <unordered_map>
+
 #include "EquipEvent.h"
 #include <chrono>
 #include <mutex>
@@ -77,6 +79,9 @@ namespace Huginn::Learning
 
         /// Forget everything pending (game load). Nothing is confirmed.
         void Clear();
+        /// Forget the repeat window (`hg reset weights`): the next pick of
+        /// anything is a new decision.
+        void ForgetRepeats();
 
         [[nodiscard]] size_t PendingCount() const
         {
@@ -98,11 +103,13 @@ namespace Huginn::Learning
 
         static SelectionKind KindOf(RE::FormID formID);
         static bool IsStillEquipped(RE::FormID formID);
-        static void Confirm(EquipEvent& event, std::chrono::steady_clock::time_point selectedAt,
+        void Confirm(EquipEvent& event, std::chrono::steady_clock::time_point selectedAt,
                             const char* how);
 
         mutable std::mutex m_mutex;
         std::vector<Pending> m_pending;
+        // Last confirmed EQUIP of each item, for the repeat window (guarded by m_mutex).
+        std::unordered_map<RE::FormID, std::chrono::steady_clock::time_point> m_lastEquipPick;
     };
 
 }  // namespace Huginn::Learning

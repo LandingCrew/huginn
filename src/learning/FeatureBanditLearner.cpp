@@ -20,7 +20,8 @@ namespace Huginn::Learning
       return DotProduct(it->second.weights, phi);
    }
 
-   void FeatureBanditLearner::Update(RE::FormID formID, const StateFeatures& features, float reward)
+   void FeatureBanditLearner::Update(RE::FormID formID, const StateFeatures& features, float reward,
+      float step, bool countsAsTrain)
    {
       // Compute feature array outside lock (pure computation, no shared state)
       auto phi = features.ToArray();
@@ -37,14 +38,19 @@ namespace Huginn::Learning
 
       // Gradient step on the immediate-reward error, with L2 regularization:
       //   w[i] += alpha * error * phi[i] - alpha * lambda * w[i]
+      const float rate = LEARNING_RATE * step;
       for (size_t i = 0; i < StateFeatures::NUM_FEATURES; ++i) {
-         w[i] += LEARNING_RATE * error * phi[i] - LEARNING_RATE * L2_LAMBDA * w[i];
+         w[i] += rate * error * phi[i] - rate * L2_LAMBDA * w[i];
          w[i] = std::clamp(w[i], -WEIGHT_CLAMP, WEIGHT_CLAMP);
       }
 
-      // Update train counts and last-update timestamp
-      data.trainCount++;
-      m_totalTrainCount++;
+      // Update train counts and last-update timestamp. A passed-over item's
+      // update moves its weights but is not a train (see the header). The
+      // clock ticks either way: the learning changed.
+      if (countsAsTrain) {
+         data.trainCount++;
+         m_totalTrainCount++;
+      }
       m_clock++;
       data.lastUpdate = std::chrono::steady_clock::now();
 
@@ -250,6 +256,12 @@ namespace Huginn::Learning
          return 0;
       }
       return it->second.trainCount;
+   }
+
+   bool FeatureBanditLearner::HasItem(RE::FormID formID) const
+   {
+      std::shared_lock lock(m_mutex);
+      return m_items.contains(formID);
    }
 
    std::array<float, StateFeatures::NUM_FEATURES> FeatureBanditLearner::GetWeights(RE::FormID formID) const

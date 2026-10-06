@@ -22,7 +22,6 @@ namespace Huginn::Input
     * @param formID Base form of the equipped piece
     * @param uniqueID ExtraUniqueID of the stack that was worn (0 if none)
     */
-   using ApparelEquippedCallback = std::function<void(RE::FormID formID, uint16_t uniqueID)>;
 
    /**
     * @brief Manages spell equipping from widget slot selections
@@ -70,19 +69,6 @@ namespace Huginn::Input
        */
       void SetSoundsEnabled(bool enabled) { m_soundsEnabled = enabled; }
 
-      /**
-       * @brief Set the callback fired after apparel is successfully equipped
-       *
-       * Separate from SetEquipCallback, which feeds the learner. This one exists
-       * so ApparelRegistry's isEquipped flag can be true the moment the piece
-       * goes on rather than up to 30 s later — apparel has no cooldown, so that
-       * flag is the only thing that stops Huginn re-recommending what it just
-       * equipped. Wired in Main.cpp, which is the layer that knows about both
-       * input/ and apparel/.
-       */
-      void SetApparelEquippedCallback(ApparelEquippedCallback callback) {
-         m_apparelEquippedCallback = std::move(callback);
-      }
 
    private:
       EquipManager() = default;
@@ -144,7 +130,6 @@ namespace Huginn::Input
       EquipCallback m_equipCallback;
 
       /// Callback so the apparel registry can mark the piece worn immediately
-      ApparelEquippedCallback m_apparelEquippedCallback;
 
       /// Sound settings
       bool m_soundsEnabled = true;

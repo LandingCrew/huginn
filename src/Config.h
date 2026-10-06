@@ -41,16 +41,38 @@ namespace Huginn::Config
    // Reward Shaping Configuration (v0.3.0+)
    // -----------------------------------------------------------------------------
 
-   // Reward for one confirmed selection of a worn/held item (weapon, spell,
-   // scroll, ammo, torch, apparel). One selection = one reward, whatever the
-   // device (SelectionTracker). The 8/5 split stays until the choice target
-   // (roadmap Phase 3 #1) replaces both with 1.
-   inline constexpr float EQUIP_REWARD = 8.0f;
+   // The choice target (roadmap Phase 3 #1, 0.23.0). The learner learns "was
+   // this chosen": 1 for the item the player confirmed -- equip or consume
+   // alike, one selection one target -- and 0 for an item shown on the page
+   // for the same need and passed over. It replaced 8 (equip) / 5 (consume),
+   // which regressed every used item onto a fixed number with no contrast and
+   // let a trained item's learned boost reach ~24x: the soak run's crowding
+   // (docs/playtest/Soak-2026-10-LoreRim.md). On 0-1 the boost tops out near
+   // 1 + lambdaMax = 4x.
+   inline constexpr float CHOICE_TARGET = 1.0f;
+   inline constexpr float PASSED_OVER_TARGET = 0.0f;
 
-   // Reward for one confirmed selection of a consumable (potion, food,
-   // poison, soul gem). Before the one selection path a drink earned BOTH
-   // rewards -- the key press and the count drop -- so this now stands alone.
-   inline constexpr float CONSUME_REWARD = 5.0f;
+   // A passed-over item is weaker evidence than a chosen one (the player may
+   // not have looked), so its update is a quarter step -- the best of 0.25 /
+   // 0.5 / 1.0 in tools/replay over the soak run -- and it does not count as a
+   // train: confidence climbs only on choices.
+   inline constexpr float PASSED_OVER_STEP = 0.25f;
+
+   // One decision, one reward: EQUIPPING the same item again within this
+   // window teaches nothing -- the main weapon taken back after every scroll is
+   // not a new choice (the user, 2026-10-02: "not really, or a really weak
+   // reward"). The soak's top item, Soul Sword, held 16% of all trains from
+   // exactly this. Equips only: two drinks of one potion are two decisions.
+   // Decided once, in SelectionTracker::Confirm, and honoured by every
+   // subscriber (the learner AND the recency memory) via EquipEvent::repeatPick.
+   inline constexpr float REPEAT_PICK_WINDOW_SEC = 30.0f;
+
+   // A passed-over update waits this long, and is cancelled if its item is the
+   // NEXT pick: companions -- circlet then ring, Oakflesh then Muffle, sword
+   // then off-hand dagger -- share a need class but are worn or cast together,
+   // so the one picked second was not passed over (code review of #172; the
+   // roadmap's "Substitutes, not complements").
+   inline constexpr float PASSED_OVER_DELAY_SEC = 10.0f;
 
    // -----------------------------------------------------------------------------
    // Update System Configuration (v0.5.0+)

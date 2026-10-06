@@ -37,6 +37,30 @@ namespace Huginn::Learning
         }
     }
 
+    void EquipEventBus::Tick(std::chrono::steady_clock::time_point now)
+    {
+        std::vector<IEquipSubscriber*> snapshot;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            snapshot = m_subscribers;
+        }
+        for (auto* subscriber : snapshot) {
+            subscriber->OnTick(now);
+        }
+    }
+
+    void EquipEventBus::Reset()
+    {
+        std::vector<IEquipSubscriber*> snapshot;
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            snapshot = m_subscribers;
+        }
+        for (auto* subscriber : snapshot) {
+            subscriber->OnReset();
+        }
+    }
+
     EquipEvent EquipEventBus::Capture(RE::FormID formID, EquipSource source)
     {
         EquipEvent event;

@@ -431,10 +431,17 @@ static void MaintainRegistries(RE::PlayerCharacter* player,
     // no delta scan: craft gear is not consumed, so there is no consumption event
     // to detect, and picking up a new fortify ring mid-fight is not urgent. The
     // reconcile is a no-op until extraLists stabilize (ApparelRegistry.h).
+    // Armour leaving the inventory requests one at once (ApparelWornListener):
+    // a worn ring dropped or sold fires its unequip BEFORE it leaves, so the
+    // worn flag alone would offer a ring the player no longer has.
     if (g_apparelRegistry) {
-        if (g_registryTimers.apparelReconcile.CheckAndReset(now, Config::ITEM_RECONCILE_INTERVAL_MS)) {
+        const bool requested = g_apparelRegistry->TakeReconcileRequest();
+        const bool due = g_registryTimers.apparelReconcile.CheckAndReset(now, Config::ITEM_RECONCILE_INTERVAL_MS);
+        if (requested || due) {
             Huginn_ZONE_NAMED("ApparelRegistry::Reconcile");
-            g_apparelRegistry->ReconcileApparel();
+            if (g_apparelRegistry->ReconcileApparel() > 0 && requested) {
+                Slot::SlotAllocator::GetSingleton().MarkPageDirty();
+            }
         }
     }
 }

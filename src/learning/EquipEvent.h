@@ -48,10 +48,12 @@ namespace Huginn::Learning
         return kind == SelectionKind::Consumable ? "consume" : "equip";
     }
 
-    /// One confirmed selection, one reward (BanditSubscriber, SelectionLog).
-    [[nodiscard]] inline constexpr float RewardFor(SelectionKind kind) noexcept
+    /// One confirmed selection, one target (BanditSubscriber, SelectionLog).
+    /// The same for every kind since the choice target (0.23.0); the kind
+    /// stays a parameter for the log.
+    [[nodiscard]] inline constexpr float RewardFor(SelectionKind /*kind*/) noexcept
     {
-        return kind == SelectionKind::Consumable ? Config::CONSUME_REWARD : Config::EQUIP_REWARD;
+        return Config::CHOICE_TARGET;
     }
 
     // =========================================================================
@@ -79,6 +81,10 @@ namespace Huginn::Learning
         uint32_t        loadGeneration = 0;  // g_loadGeneration at press time
         std::array<RE::FormID, 3> handsAtPress{};  // right, left, ammo when chosen (ShadowArm: skip-equipped)
         float           confirmMs = 0.0f;    // Press -> confirmation
+        // The same item EQUIPPED again within REPEAT_PICK_WINDOW_SEC: the same
+        // decision. Set by SelectionTracker::Confirm; every subscriber honours
+        // it (no learner update, no recency record). Logged regardless.
+        bool            repeatPick = false;
     };
 
 }  // namespace Huginn::Learning

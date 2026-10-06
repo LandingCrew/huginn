@@ -44,6 +44,11 @@ namespace Huginn::Persist
    static uint64_t s_activeCharacterID = 0;
    static std::optional<uint64_t> s_loadedCharacterID;
    static std::optional<uint64_t> s_loadedClock;
+   // The save's BNDW record was old-format (v1/v2) and discarded. A pre-upgrade
+   // save of the character in memory then holds NOTHING newer than memory, so
+   // memory is kept whatever its clock says -- the clock of a pre-upgrade save
+   // measures old-target learning that no longer exists (code review of #172).
+   static bool s_loadedOldFormat = false;
 
    static uint64_t NewCharacterID()
    {
@@ -210,6 +215,7 @@ namespace Huginn::Persist
       s_pendingBanditData = LoadedBanditData{};
       s_loadedCharacterID.reset();
       s_loadedClock.reset();
+      s_loadedOldFormat = false;
 
       uint32_t type, version, length;
       while (a_intfc->GetNextRecordInfo(type, version, length)) {
@@ -240,16 +246,22 @@ namespace Huginn::Persist
                logger::error("[Cosave] Failed to read BNDW version"sv);
                break;
             }
-            if (recVersion != 1 && recVersion != 2) {
-               logger::warn("[Cosave] BNDW version unsupported: got {} (expected 1 or 2) — skipping"sv,
-                  recVersion);
+            if (recVersion == 1 || recVersion == 2) {
+               // Learning on the old 8/5 target (see kBanditSerializationVersion).
+               // Leave the pending data empty: the character starts fresh.
+               logger::info("[Cosave] BNDW v{} holds learning on the old 8/5 target -- discarded; "
+                  "the choice target (v{}) starts this character fresh"sv,
+                  recVersion, kBanditSerializationVersion);
+               s_loadedOldFormat = true;
                break;
             }
-            // Nothing has ever written a v1 BNDW record — the tag is new as of
-            // 0.20.0, and every writer under it emits v2. The v1 branch below is
-            // kept only because the decode path and its tests already existed
-            // under the old FQLW tag; it is unreachable in practice.
-            // A header/in-data mismatch is logged rather than rejected, and the
+            if (recVersion != kBanditSerializationVersion) {
+               logger::warn("[Cosave] BNDW version unsupported: got {} (expected {}) — skipping"sv,
+                  recVersion, kBanditSerializationVersion);
+               break;
+            }
+            // Only v3 reaches here (v1/v2 are discarded above); v3 keeps v2's
+            // fixed-stride wire format. A header/in-data mismatch is logged rather than rejected, and the
             // in-data version is trusted. The version check, bounds checks, and
             // exact-length reads below validate everything decode relies on.
             if (recVersion != version) {
@@ -320,8 +332,8 @@ namespace Huginn::Persist
                }
             };
 
-            if (recVersion >= 2) {
-               // v2: fixed-stride entries — read the whole array in one call, using
+            {
+               // v2/v3: fixed-stride entries — read the whole array in one call, using
                // the stride the record was WRITTEN with (differs from sizeof(BanditEntry)
                // during feature-count migration). A short read rejects the record
                // wholesale (no silent partial import). byteLen cannot overflow:
@@ -340,50 +352,6 @@ namespace Huginn::Persist
                      break;
                   }
                   raw = DecodeV2EntryBlob(blob.data(), blob.size(), numItems, numFeatures);
-               }
-               for (auto& entry : raw) {
-                  acceptEntry(entry);
-               }
-            } else {
-               // v1 legacy: entries lack minutesSinceLastUpdate — read per field.
-               // Reads the on-disk feature count; positions beyond the compiled
-               // count are discarded (truncation), missing tail stays zero (pad).
-               // Like v2, an incomplete read rejects the record wholesale (no
-               // silent partial import): entries are buffered and committed only
-               // after every read succeeded.
-               std::vector<BanditEntry> raw;
-               raw.reserve(numItems);
-               bool readOk = true;
-               for (uint32_t i = 0; i < numItems && readOk; ++i) {
-                  BanditEntry entry{};                  // weights zeroed for migration pad
-                  entry.minutesSinceLastUpdate = 0;  // v1: treat as fresh
-                  if (!a_intfc->ReadRecordData(entry.formID)) {
-                     logger::error("[Cosave] Failed to read BNDW formID at index {}"sv, i);
-                     readOk = false;
-                     break;
-                  }
-                  for (uint32_t f = 0; f < numFeatures; ++f) {
-                     float w;
-                     if (!a_intfc->ReadRecordData(w)) {
-                        logger::error("[Cosave] Failed to read BNDW weight at item {}, feature {}"sv, i, f);
-                        readOk = false;
-                        break;
-                     }
-                     if (f < compiledFeatures) {
-                        entry.weights[f] = w;
-                     }
-                  }
-                  if (!readOk) break;
-                  if (!a_intfc->ReadRecordData(entry.trainCount)) {
-                     logger::error("[Cosave] Failed to read BNDW trainCount at index {}"sv, i);
-                     readOk = false;
-                     break;
-                  }
-                  raw.push_back(entry);
-               }
-               if (!readOk) {
-                  logger::error("[Cosave] BNDW v1 read incomplete — skipping record"sv);
-                  break;
                }
                for (auto& entry : raw) {
                   acceptEntry(entry);
@@ -428,6 +396,7 @@ namespace Huginn::Persist
       s_pendingBanditData.reset();
       s_loadedCharacterID.reset();
       s_loadedClock.reset();
+      s_loadedOldFormat = false;
       logger::debug("[Cosave] Revert: learner kept until the load decides"sv);
    }
 
@@ -475,9 +444,10 @@ namespace Huginn::Persist
       // Is the save behind memory? By the learning clock when the save has
       // one; by train count when it does not (v1 records, derived IDs).
       const uint64_t memClock = learner.GetClock();
-      const bool saveNotAhead = s_loadedClock
-         ? *s_loadedClock <= memClock
-         : saveTrains <= learner.GetTotalTrainCount();
+      // A pre-upgrade save's learning was discarded, so it is never ahead.
+      const bool saveNotAhead = s_loadedOldFormat ||
+         (s_loadedClock ? *s_loadedClock <= memClock
+                        : saveTrains <= learner.GetTotalTrainCount());
 
       if (s_activeCharacterID != 0 && loadedID == s_activeCharacterID && saveNotAhead) {
          // A reload of the character in memory: memory holds the save's

@@ -169,6 +169,9 @@ namespace Huginn::Learning
     void SelectionTracker::Update()
     {
         const auto now = std::chrono::steady_clock::now();
+        // Deferred subscriber work (the learner's passed-over updates) runs on
+        // this tick whether or not anything is pending here.
+        EquipEventBus::GetSingleton().Tick(now);
 
         std::vector<Pending> due;
         {
@@ -213,17 +216,42 @@ namespace Huginn::Learning
 
     void SelectionTracker::Clear()
     {
-        std::lock_guard lock(m_mutex);
-        if (!m_pending.empty()) {
-            logger::info("[Selection] Cleared {} pending selection(s) unconfirmed (reset)"sv, m_pending.size());
+        {
+            std::lock_guard lock(m_mutex);
+            if (!m_pending.empty()) {
+                logger::info("[Selection] Cleared {} pending selection(s) unconfirmed (reset)"sv, m_pending.size());
+            }
+            m_pending.clear();
+            m_lastEquipPick.clear();   // a repeat across a load or a reset is a new decision
         }
-        m_pending.clear();
+        EquipEventBus::GetSingleton().Reset();
+    }
+
+    void SelectionTracker::ForgetRepeats()
+    {
+        std::lock_guard lock(m_mutex);
+        m_lastEquipPick.clear();
     }
 
     void SelectionTracker::Confirm(EquipEvent& event, std::chrono::steady_clock::time_point selectedAt,
                                    const char* how)
     {
-        event.confirmMs = MsSince(selectedAt, std::chrono::steady_clock::now());
+        const auto confirmedAt = std::chrono::steady_clock::now();
+        event.confirmMs = MsSince(selectedAt, confirmedAt);
+
+        // One decision, one reward: the same item EQUIPPED again inside the
+        // window is the same decision (Config::REPEAT_PICK_WINDOW_SEC). Decided
+        // here, once, so the learner and the recency memory agree; the window
+        // slides, so toggling back and forth never re-earns it.
+        if (event.kind == SelectionKind::Equip) {
+            std::lock_guard lock(m_mutex);
+            auto [it, fresh] = m_lastEquipPick.try_emplace(event.formID, confirmedAt);
+            if (!fresh) {
+                event.repeatPick = std::chrono::duration<float>(confirmedAt - it->second).count()
+                                   < Config::REPEAT_PICK_WINDOW_SEC;
+                it->second = confirmedAt;
+            }
+        }
 
         // Soak telemetry: an outside selection's A-E case, counted once it is
         // real. Counted here, not when the equip event arrived, so a Huginn pick
