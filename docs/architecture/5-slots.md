@@ -384,7 +384,7 @@ else about a call is still a pure function of its inputs.
            |
            v
   PASS 2   remaining slots <- best matching candidate, deduped
-           by FormID and by name
+           by FormID and by name (Regular keys: after the need cap)
            |
            v
      SlotLocker::ApplyLocks -> ComputeVisualStates -> widget / Wheeler
@@ -451,6 +451,34 @@ wildcards.
 
 Duplicates are simply filtered out. There is no learner penalty for being a
 duplicate.
+
+### The need cap (Regular keys)
+
+One strong need could take the whole page: a hungry character at an alchemy lab
+got eight foods on eight keys and none of the craft gear (2026-10-05). On a
+**Regular** key, the first `iNeedFreeSlots` items of one need on the page (3)
+compete at full utility; each one past that competes at x`fNeedRepeatDiscount`
+(0.5), then x0.25, and so on. Keys with a job are never capped, and overrides
+and Remembrance holds are never moved for it, though they count towards their
+need.
+
+- **A need** is `SlotClassifier::Classify`, except that all food and drink is
+  one need: foods classify by their effect (HealingAny, DefensiveAny, BuffsAny,
+  FoodAny), so seven foods on a page never had more than three in one class.
+- **Placement only.** `FindBestCandidate` weighs a Regular key's choice by the
+  cap (`src/slot/NeedCap.h`); ranking, the learner and the selection log keep
+  every item's true utility, so learning never sees an item as worse because a
+  sibling took a key first.
+- **The hold uses it too** (Pass 1c): a held item whose need is already full
+  holds at its capped utility, or a crowd that formed before the cap applied
+  would stay.
+- **Why from the 4th item, not the 2nd.** Replayed on 653 picks
+  (`tools/replay/replay.py`): the cap at 3 free and x0.5 kept the chosen item
+  in the top 8 at 76.3% (76.7% without) and menu picks at 30.8% (29.7%), and no
+  page held five of one need (196 did without). Discounting from the 2nd item
+  cost 3-10 points overall and up to 25 on potions.
+- `[NeedCap]` (debug) logs, on change, which items the cap kept off a page.
+  `fNeedRepeatDiscount = 1.0` turns it off.
 
 ---
 
@@ -819,6 +847,8 @@ per-slot defaults described under
 bKeepSlotPositions = true       ; Keep an item in the slot it was already in (seating)
 bHoldSeatedItems = true         ; Hold a seated item until a challenger beats it by the margin
 fChallengerMargin = 0.25        ; How much better a challenger must score (0.25 = 25%)
+iNeedFreeSlots = 3              ; Need cap: items of one need on Regular keys at full utility
+fNeedRepeatDiscount = 0.5       ; ...and x this for each one past them; 1.0 = off
 fRemembranceDurationMs = 15000  ; Remembrance hold length; 0 = off everywhere
 fRemembranceMismatchDurationMs = 5000  ; ...on a key whose class it does not fit
 sRemembranceTarget = Pressed    ; Pressed | Job (the key whose class fits)

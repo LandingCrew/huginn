@@ -109,6 +109,18 @@ namespace Huginn::Slot
             return m_challengerMargin.load(std::memory_order_acquire);
         }
 
+        /// The per-need soft cap on Regular keys (NeedCap.h): items of one need
+        /// past the first NeedFreeSlots() compete at x NeedRepeatDiscount() each.
+        /// 1.0 = off. `[SlotLocker] fNeedRepeatDiscount`, `iNeedFreeSlots`.
+        [[nodiscard]] float NeedRepeatDiscount() const noexcept
+        {
+            return m_needRepeatDiscount.load(std::memory_order_acquire);
+        }
+        [[nodiscard]] uint32_t NeedFreeSlots() const noexcept
+        {
+            return m_needFreeSlots.load(std::memory_order_acquire);
+        }
+
         /// How long a slot holds what pressing it took off (Remembrance.h), in
         /// ms; 0 = off everywhere. `[SlotLocker] fRemembranceDurationMs`. The
         /// per-slot switch is SlotConfig::remembrance (`bRemembrance`).
@@ -160,6 +172,8 @@ namespace Huginn::Slot
         std::atomic<bool> m_keepSlotPositions{true};
         std::atomic<bool> m_holdSeatedItems{true};
         std::atomic<float> m_challengerMargin{0.25f};
+        std::atomic<float> m_needRepeatDiscount{0.5f};
+        std::atomic<uint32_t> m_needFreeSlots{3};
         std::atomic<float> m_remembranceDurationMs{15000.0f};
         std::atomic<float> m_remembranceMismatchMs{5000.0f};
         std::atomic<bool> m_fillJobKeysFromRegular{false};

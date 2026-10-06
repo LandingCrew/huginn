@@ -22,6 +22,7 @@ void RunSlotLockerResetTest();
 void RunSlotLockerInstanceLockTest();
 void RunSlotSeatingTest();
 void RunFillJobKeysTest();
+void RunNeedCapTest();             // Regular-key need cap (NeedCap.h)
 void RunBuffElementResistTest();
 
 // =============================================================================

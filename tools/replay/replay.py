@@ -274,6 +274,53 @@ def replay(recs, policy):
     return stats
 
 
+def need_of(c):
+    """The need cap's grouping (src/slot/NeedCap.cpp): the slot class, all food one need."""
+    return "FoodAny" if c["type"] == "Food" else c["need"]
+
+
+def capped_page(cands, util, free, discount, page=PAGE):
+    """The eight a Regular page would show under the need cap: greedy, each pick
+    weighed by discount ** (items of its need already shown - free + 1)."""
+    best = {}
+    for c in cands:
+        u = util(c)
+        if c["form"] not in best or u > best[c["form"]][1]:
+            best[c["form"]] = (c, u)
+    pool, shown, count = list(best.values()), [], defaultdict(int)
+    while pool and len(shown) < page:
+        i = max(range(len(pool)),
+                key=lambda j: pool[j][1] * discount ** max(0, count[need_of(pool[j][0])] - free + 1))
+        c, _ = pool.pop(i)
+        shown.append(c)
+        count[need_of(c)] += 1
+    return shown
+
+
+def replay_need_cap(recs, make_policy, free, discount):
+    """hit@8 when the page is filled under the need cap, and how many pages held
+    five or more of one need."""
+    stats = defaultdict(lambda: [0, 0, 0.0])
+    crowded = 0
+    policy = make_policy()
+    for r in recs:
+        phi = r["phi"]
+        cands = r["_cands"]
+        chosen = next((c for c in cands if c["form"] == r["form"]), None)
+        if chosen is not None:
+            shown = capped_page(cands, lambda c: policy.utility(c, phi), free, discount)
+            hit = any(c["form"] == r["form"] for c in shown)
+            for g in ["all", "outside" if r["src"] == "External" else "huginn", "type:" + chosen["type"]]:
+                stats[g][0] += 1
+                stats[g][1] += hit
+            per_need = defaultdict(int)
+            for c in shown:
+                per_need[need_of(c)] += 1
+            crowded += max(per_need.values(), default=0) >= 5
+        policy.learn(r, chosen, phi)
+    return stats, crowded
+
+
 def validate(recs):
     """The replica must reproduce what the game logged before its answers mean anything."""
     util_err, est_err, n_util, n_est = 0.0, 0.0, 0, 0
@@ -336,6 +383,20 @@ def main():
             n, hits, _ = results[p.name][g]
             cells.append(f"{(100 * hits / n if n else 0):5.1f}% ({n:4d})")
         print(f"{p.name:<{width}} " + " ".join(f"{c:>14}" for c in cells))
+
+    # The need cap (src/slot/NeedCap.h): placement on Regular keys, under the
+    # shipped learner. discount 1.0 = no cap.
+    shipped = lambda: ChoiceTarget(neg_weight=0.25, repeat_window=30, pseudo_n0=2)
+    print(f"\nneed cap, shipped learner: hit@{PAGE}, and pages with 5+ of one need")
+    print(f"{'cap':<26} {head} {'crowded':>9}")
+    for free, discount in [(3, 1.0), (1, 0.5), (3, 0.75), (3, 0.5)]:
+        stats, crowded = replay_need_cap(recs, shipped, free, discount)
+        label = "off" if discount >= 1.0 else f"first {free} free, x{discount}"
+        cells = []
+        for g in groups:
+            n, hits, _ = stats[g]
+            cells.append(f"{(100 * hits / n if n else 0):5.1f}% ({n:4d})")
+        print(f"{label:<26} " + " ".join(f"{c:>14}" for c in cells) + f" {crowded:>9}")
 
 
 if __name__ == "__main__":
