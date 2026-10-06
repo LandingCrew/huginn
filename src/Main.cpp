@@ -631,10 +631,14 @@ static void OnDataLoaded()
         },
         .noteSlotActivated = [](size_t pageIndex, size_t slotIndex, RE::FormID formID) {
             // Every Huginn-wheel activation is a slot press, potions included.
+            // Key age only for the displayed page: SlotLocker tracks that one.
             auto& allocator = Slot::SlotAllocator::GetSingleton();
+            const auto age = pageIndex == allocator.GetCurrentPage()
+                ? Slot::SlotLocker::GetSingleton().GetKeyAge(slotIndex)
+                : std::nullopt;
             Telemetry::SoakMetrics::GetSingleton().RecordSlotPress(
                 pageIndex, slotIndex, allocator.IsRegularSlot(pageIndex, slotIndex),
-                pageIndex == allocator.GetCurrentPage());
+                age ? age->ageSec : -1.0f, age ? std::string_view{ age->wasName } : std::string_view{});
 
             // Worn things only; a potion or soul gem displaces nothing.
             auto* form = RE::TESForm::LookupByID(formID);

@@ -10,7 +10,6 @@
 #include <span>
 #include <string>
 #include <string_view>
-#include <string_view>
 
 namespace Huginn::Telemetry
 {
@@ -219,10 +218,6 @@ namespace Huginn::Telemetry
         SlotChange cause = SlotChange::Unheld;
         ChallengerRatio ratio = ChallengerRatio::NotApplicable;
         float tenureSec = -1.0f;   // how long the replaced item was shown; < 0 = the slot was empty
-        // What the slot showed before. Owned, not a view: SlotLocker overwrites
-        // the slot's own name in the same pass, before the events are read, so
-        // a view into it logged half the new name over the old (2026-10-05).
-        std::string fromName;
     };
 
     // =========================================================================
@@ -294,11 +289,14 @@ namespace Huginn::Telemetry
         // item, from the Intuition keys (EquipManager::EquipSlot) and from a
         // Huginn wheel (the Wheeler activation callback).
         //
-        // `slotIndex` and `displayedPage` feed the press-age bands: how long the
-        // key had held its item. Wheel pages that are not displayed are not
-        // churn-tracked, so they pass displayedPage = false.
+        // `keyAgeSec` and `wasName` feed the press-age bands: how long the key
+        // had shown its item, and what it showed before. Both come from ONE
+        // read of SlotLocker::GetKeyAge, the single owner of that fact (code
+        // review of #174: a second copy here drifted on page switches, loads
+        // and same-name swaps). keyAgeSec < 0 = unknown -- a wheel page that is
+        // not displayed, or a key not yet filled since the load.
         void RecordSlotPress(std::size_t pageIndex, std::size_t slotIndex, bool regularSlot,
-            bool displayedPage);
+            float keyAgeSec, std::string_view wasName);
 
         // A page change that actually changed the page (SlotAllocator::
         // SetCurrentPage), whoever asked: Intuition cycle keys, Wheeler, `hg page`.
@@ -368,8 +366,6 @@ namespace Huginn::Telemetry
         // younger than KEY_AGE_LOG_SEC.
         static constexpr float KEY_AGE_LOG_SEC = 5.0f;
         std::array<std::atomic<uint32_t>, static_cast<std::size_t>(TenureBand::Count)> m_tenure{};
-        std::array<std::atomic<int64_t>, SLOT_CHURN_SLOTS> m_lastChangeTicks{};  // steady_clock ticks, 0 = never
-        std::array<std::string, SLOT_CHURN_SLOTS> m_prevShown;  // guarded by m_churnMutex
         std::array<std::atomic<uint32_t>, static_cast<std::size_t>(PressAgeBand::Count)> m_pressAge{};
     };
 }
