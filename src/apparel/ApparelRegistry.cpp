@@ -293,7 +293,7 @@ namespace Huginn::Apparel
       return result;
    }
 
-   bool ApparelRegistry::MarkEquipped(RE::FormID formID, uint16_t uniqueID, bool equipped)
+   bool ApparelRegistry::MarkEquipped(RE::FormID formID, uint16_t uniqueID, bool equipped, bool sweepSlot)
    {
       InventoryApparel probe{};
       probe.data.formID = formID;
@@ -329,7 +329,7 @@ namespace Huginn::Apparel
       // The heuristic errs by offering a worn piece for up to one reconcile;
       // the bug it replaces hid a usable piece for the same span. Unknown and
       // Other are excluded because they lump unrelated slots together.
-      if (equipped) {
+      if (equipped && sweepSlot) {
          const auto slot = entry.data.slot;
          if (slot != ApparelSlot::Unknown && slot != ApparelSlot::Other) {
             for (size_t i = 0; i < m_apparel.size(); ++i) {

@@ -151,7 +151,8 @@ class Current(Policy):
         return c["ctx"] * (1 + lam * learn) * self.multipliers(c)
 
     def learn(self, rec, chosen, phi):
-        self.learner.update(rec["form"], phi, rec["reward"])
+        # 8 / 5 by kind, not rec["reward"]: since 0.23.0 the log writes 1.0.
+        self.learner.update(rec["form"], phi, 8.0 if rec.get("kind") == "equip" else 5.0)
 
 
 class ChoiceTarget(Current):
@@ -206,7 +207,7 @@ class ChoiceTarget(Current):
 # Replay
 # --------------------------------------------------------------------------
 
-def load(path, char, from_launch):
+def load(path, char, from_launch, to_launch=None):
     recs = []
     with open(path, encoding="utf-8", errors="replace") as f:
         for line in f:
@@ -217,6 +218,8 @@ def load(path, char, from_launch):
             if char and r.get("char") != char:
                 continue
             if from_launch and r.get("launch", "") < from_launch:
+                continue
+            if to_launch and r.get("launch", "") > to_launch:
                 continue
             if "phi" not in r or "cands" not in r:
                 continue
@@ -270,9 +273,11 @@ def main():
     ap.add_argument("log", nargs="?", default=DEFAULT_LOG)
     ap.add_argument("--char", default="3F3E2A8817962D59")
     ap.add_argument("--from-launch", default="20261003-013602", help="first launch of the run (UTC stamp)")
+    ap.add_argument("--to-launch", default="20261004-235959",
+                    help="last launch to include (UTC stamp); the default ends the soak run, before 0.23.0")
     args = ap.parse_args()
 
-    recs = load(args.log, args.char, args.from_launch)
+    recs = load(args.log, args.char, args.from_launch, args.to_launch)
     print(f"{len(recs)} selections from {args.log}")
     validate(recs)
 

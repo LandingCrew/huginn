@@ -156,6 +156,9 @@ namespace Huginn::Learning
       [[nodiscard]] size_t GetItemCount() const;
       [[nodiscard]] uint32_t GetTotalTrainCount() const;
       [[nodiscard]] uint32_t GetTrainCount(RE::FormID formID) const;
+      /// True if the learner holds an entry for the item (chosen at least
+      /// once, or carrying a passed-over update).
+      [[nodiscard]] bool HasItem(RE::FormID formID) const;
       [[nodiscard]] std::array<float, StateFeatures::NUM_FEATURES> GetWeights(RE::FormID formID) const;
       void Clear();
 

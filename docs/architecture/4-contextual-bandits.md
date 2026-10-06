@@ -465,11 +465,19 @@ The choice target (roadmap Phase 3 #1, v0.23.0; `BanditSubscriber`,
   the selection log's `need`) and passed over -> `PASSED_OVER_TARGET` (0), at
   a `PASSED_OVER_STEP` (0.25) step that does not count as a train. Only plain
   recommendations: overrides, Remembrance holds and wildcards are not the
-  learner's offer.
+  learner's offer. The update waits `PASSED_OVER_DELAY_SEC` (10 s) and is
+  cancelled if its item is the next pick: companions -- circlet then ring,
+  Oakflesh then Muffle, sword then off-hand dagger -- share a need class but
+  are used together. It is skipped for an item the learner holds no entry
+  for (estimate 0, target 0: a no-op that would only grow the cosave).
 
-`w += a*(target - w.phi)*phi` sizes every move by surprise. A pick of the same
-item within `REPEAT_PICK_WINDOW_SEC` (30 s) teaches nothing -- one decision,
-one reward. No source filtering, no multipliers.
+`w += a*(target - w.phi)*phi` sizes every move by surprise. EQUIPPING the same
+item again within `REPEAT_PICK_WINDOW_SEC` (30 s) teaches nothing -- one
+decision, one reward. `SelectionTracker::Confirm` decides it once and flags the
+event (`repeatPick`); the learner and the recency memory both skip it. The
+window is cleared on a load and on `hg reset weights`. Consumables are exempt:
+two drinks of one potion are two decisions. No source filtering, no
+multipliers.
 
 It replaced 8 (equip) / 5 (consume), which regressed every used item onto a
 fixed number with no contrast and let a trained item's boost reach ~24x (the
@@ -696,8 +704,8 @@ for version differences.
 
 | Signal | Value | Source | Purpose |
 |--------|-------|--------|---------|
-| Chosen | target 1 | A confirmed selection, equip or consume, any device | One per decision (30 s repeat window) |
-| Passed over | target 0, step 0.25, not a train | Shown on the page for the chosen item's need, not chosen | Contrast: the learner sees what lost |
+| Chosen | target 1 | A confirmed selection, equip or consume, any device | One per decision (30 s repeat window, equips only) |
+| Passed over | target 0, step 0.25, not a train | Shown on the page for the chosen item's need, not chosen, not picked next; 10 s later | Contrast: the learner sees what lost |
 | L2 regularization | Continuous | Applied during each weight update | Pulls weights toward zero |
 | Time-based decay | Lazy | `MaybeDecayBatch` before scoring | 2%/hr exponential decay on idle items |
 
@@ -1294,7 +1302,8 @@ just-cleared table for the remainder of their lock duration.
 | CHOICE_TARGET | 1.0 | Target for the chosen item (v0.23.0; was 8 equip / 5 consume) |
 | PASSED_OVER_TARGET | 0.0 | Target for a same-need item shown and passed over |
 | PASSED_OVER_STEP | 0.25 | Step scale for a passed-over item; not counted as a train |
-| REPEAT_PICK_WINDOW_SEC | 30 | A repeat pick of the same item inside this teaches nothing |
+| REPEAT_PICK_WINDOW_SEC | 30 | Equipping the same item again inside this teaches nothing |
+| PASSED_OVER_DELAY_SEC | 10 | A passed-over update waits this long; cancelled if its item is picked next |
 | DECAY_RATE_PER_HOUR | 0.02 | Exponential weight decay for idle items |
 | DECAY_THRESHOLD_MINUTES | 5.0 | Don't decay if updated within this window |
 | CONSUMPTION_HUGINN_WINDOW_MS | 2500 | A consumable selection must see its count drop within this |

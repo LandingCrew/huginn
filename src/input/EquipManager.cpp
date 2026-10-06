@@ -527,14 +527,8 @@ namespace Huginn::Input
       logger::info("[EquipManager] Equipped apparel '{}' (FormID: {:08X}, uniqueID: {})"sv,
       armor->GetName(), formID, uniqueID);
 
-      // Tell the registry the piece is on NOW. Apparel has no cooldown -- the
-      // isEquipped flag is the only thing keeping a worn piece out of the pool --
-      // and that flag is otherwise only refreshed by the 30 s reconcile. Without
-      // this the slot lock expires a few seconds later and the ring Huginn just
-      // equipped is scored and re-assigned for the rest of the interval.
-      if (m_apparelEquippedCallback) {
-      m_apparelEquippedCallback(formID, uniqueID);
-      }
+      // The registry learns the piece is on from the TESEquipEvent this equip
+      // fires (ApparelWornListener), as it does for every other equip.
 
       return true;
    }

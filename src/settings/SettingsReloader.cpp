@@ -1,4 +1,6 @@
 #include "SettingsReloader.h"
+#include "learning/SelectionTracker.h"
+#include "learning/EquipEventBus.h"
 
 #include "Globals.h"
 #include "update/UpdateHandler.h"
@@ -249,6 +251,10 @@ namespace Huginn::Settings
 
     std::optional<size_t> SettingsReloader::ResetLearningData()
     {
+        // Deferred passed-over updates and the repeat window belong to the
+        // learning being reset.
+        Learning::EquipEventBus::GetSingleton().Reset();
+        Learning::SelectionTracker::GetSingleton().ForgetRepeats();
         auto* learner = g_featureBanditLearner.get();
         if (!learner) {
             return std::nullopt;

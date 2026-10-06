@@ -3,6 +3,7 @@
 #include "Globals.h"
 #include "apparel/ApparelRegistry.h"
 #include "slot/SlotAllocator.h"
+#include "util/InventoryUtil.h"
 
 namespace Huginn::Apparel
 {
@@ -45,9 +46,22 @@ namespace Huginn::Apparel
             if (!form || form->GetFormType() != RE::FormType::Armor) {
                 return RE::BSEventNotifyControl::kContinue;
             }
-            // MarkEquipped returns false for a piece the registry does not
-            // hold -- ordinary armour, which is most of this traffic.
-            if (g_apparelRegistry->MarkEquipped(event->baseObject, event->uniqueID, event->equipped)) {
+            // An unequip also fires when a worn piece LEAVES the inventory --
+            // sold, dropped, stored. Marking it "not worn" then would offer a
+            // piece the player no longer owns until the 30 s reconcile removes
+            // it; leave it as it is and let the reconcile drop it.
+            auto* player = RE::PlayerCharacter::GetSingleton();
+            if (!event->equipped &&
+                Util::GetItemCountSafe(player, form->As<RE::TESBoundObject>()) <= 0) {
+                return RE::BSEventNotifyControl::kContinue;
+            }
+            // No slot sweep: the engine sends its own unequip for whatever this
+            // equip displaced, and the sweep's one-piece-per-slot guess can
+            // clear a still-worn piece (two-ring mods). MarkEquipped returns
+            // false for a piece the registry does not hold -- ordinary armour,
+            // most of this traffic.
+            if (g_apparelRegistry->MarkEquipped(event->baseObject, event->uniqueID, event->equipped,
+                    /*sweepSlot=*/false)) {
                 Slot::SlotAllocator::GetSingleton().MarkPageDirty();
             }
             return RE::BSEventNotifyControl::kContinue;

@@ -81,6 +81,10 @@ namespace Huginn::Learning
         uint32_t        loadGeneration = 0;  // g_loadGeneration at press time
         std::array<RE::FormID, 3> handsAtPress{};  // right, left, ammo when chosen (ShadowArm: skip-equipped)
         float           confirmMs = 0.0f;    // Press -> confirmation
+        // The same item EQUIPPED again within REPEAT_PICK_WINDOW_SEC: the same
+        // decision. Set by SelectionTracker::Confirm; every subscriber honours
+        // it (no learner update, no recency record). Logged regardless.
+        bool            repeatPick = false;
     };
 
 }  // namespace Huginn::Learning

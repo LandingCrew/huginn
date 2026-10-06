@@ -100,7 +100,11 @@ namespace Huginn::Apparel
        * so the flag is true the moment the piece goes on. Equipping also clears
        * the flag on whatever this piece displaces; see the note on the sweep.
        */
-      bool MarkEquipped(RE::FormID formID, uint16_t uniqueID, bool equipped = true);
+      /// sweepSlot: on an equip, also clear other pieces flagged worn in the
+      /// same body slot. A heuristic for callers that see only the piece going
+      /// ON; ApparelWornListener passes false -- it gets the engine's own
+      /// unequip event for whatever was displaced.
+      bool MarkEquipped(RE::FormID formID, uint16_t uniqueID, bool equipped = true, bool sweepSlot = true);
 
       /**
        * @brief Iterate all tracked apparel without copying

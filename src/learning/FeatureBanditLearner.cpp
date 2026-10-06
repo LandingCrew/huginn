@@ -258,6 +258,12 @@ namespace Huginn::Learning
       return it->second.trainCount;
    }
 
+   bool FeatureBanditLearner::HasItem(RE::FormID formID) const
+   {
+      std::shared_lock lock(m_mutex);
+      return m_items.contains(formID);
+   }
+
    std::array<float, StateFeatures::NUM_FEATURES> FeatureBanditLearner::GetWeights(RE::FormID formID) const
    {
       std::shared_lock lock(m_mutex);

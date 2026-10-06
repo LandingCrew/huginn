@@ -1,6 +1,7 @@
 #pragma once
 
 #include "EquipEvent.h"
+#include <chrono>
 #include <mutex>
 #include <vector>
 
@@ -14,6 +15,11 @@ namespace Huginn::Learning
     public:
         virtual ~IEquipSubscriber() = default;
         virtual void OnEquipEvent(const EquipEvent& event) = 0;
+        /// Called every update tick (SelectionTracker::Update), for work a
+        /// subscriber defers -- the learner's delayed passed-over updates.
+        virtual void OnTick(std::chrono::steady_clock::time_point /*now*/) {}
+        /// Called on a game load and on `hg reset`: drop anything deferred.
+        virtual void OnReset() {}
     };
 
     // =========================================================================
@@ -48,6 +54,8 @@ namespace Huginn::Learning
 
         /// Hand a confirmed selection to every subscriber.
         void Dispatch(const EquipEvent& event);
+        void Tick(std::chrono::steady_clock::time_point now);
+        void Reset();
 
     private:
         EquipEventBus() = default;

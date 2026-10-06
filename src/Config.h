@@ -58,11 +58,21 @@ namespace Huginn::Config
    // train: confidence climbs only on choices.
    inline constexpr float PASSED_OVER_STEP = 0.25f;
 
-   // One decision, one reward: picking the same item again within this window
-   // teaches nothing -- the main weapon taken back after every scroll is not a
-   // new choice (the user, 2026-10-02: "not really, or a really weak reward").
-   // The soak's top item, Soul Sword, held 16% of all trains from exactly this.
+   // One decision, one reward: EQUIPPING the same item again within this
+   // window teaches nothing -- the main weapon taken back after every scroll is
+   // not a new choice (the user, 2026-10-02: "not really, or a really weak
+   // reward"). The soak's top item, Soul Sword, held 16% of all trains from
+   // exactly this. Equips only: two drinks of one potion are two decisions.
+   // Decided once, in SelectionTracker::Confirm, and honoured by every
+   // subscriber (the learner AND the recency memory) via EquipEvent::repeatPick.
    inline constexpr float REPEAT_PICK_WINDOW_SEC = 30.0f;
+
+   // A passed-over update waits this long, and is cancelled if its item is the
+   // NEXT pick: companions -- circlet then ring, Oakflesh then Muffle, sword
+   // then off-hand dagger -- share a need class but are worn or cast together,
+   // so the one picked second was not passed over (code review of #172; the
+   // roadmap's "Substitutes, not complements").
+   inline constexpr float PASSED_OVER_DELAY_SEC = 10.0f;
 
    // -----------------------------------------------------------------------------
    // Update System Configuration (v0.5.0+)
