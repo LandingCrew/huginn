@@ -1056,6 +1056,31 @@ namespace Huginn::Slot
         std::sort(tentative.begin(), tentative.begin() + tentativeCount,
             [&rank](const Tentative& a, const Tentative& b) { return rank[a.slot] < rank[b.slot]; });
 
+        // The need cap over the holders TOGETHER, by utility, before any is
+        // judged. Counted slot by slot instead, a challenger for an early slot
+        // could not see the holders of its need further down: the axe took
+        // slot 0 while the sword and mace still held slots 1 and 4, and the
+        // page showed four weapons (vanilla, 2026-10-06 17:13:24) -- or the
+        // axe came in at slot 0 only for the sword to be capped out of slot 7,
+        // a swap of one weapon for another (17:14:11). Each holder's factor is
+        // its rank in its need; a holder being judged is taken out of the
+        // count, so a challenger of the same need is weighed as it would be.
+        std::array<float, MAX_SLOTS_PER_PAGE> holderCap{};
+        holderCap.fill(1.0f);
+        {
+            std::array<size_t, MAX_SLOTS_PER_PAGE> byUtility{};
+            for (size_t t = 0; t < tentativeCount; ++t) byUtility[t] = t;
+            std::stable_sort(byUtility.begin(), byUtility.begin() + tentativeCount,
+                [&tentative](size_t a, size_t b) { return tentative[a].item->utility > tentative[b].item->utility; });
+            for (size_t i = 0; i < tentativeCount; ++i) {
+                const auto& [slot, item] = tentative[byUtility[i]];
+                if (slotConfigs[slot].classification == SlotClassification::Regular) {
+                    holderCap[byUtility[i]] = needCap.Factor(*item);
+                }
+                needCap.Add(*item);
+            }
+        }
+
         // Phase B: each holder against the best challenger for its own slot.
         // Challengers exclude every other holder -- an item staying put in
         // slot 3 is not about to move into slot 5 -- and every challenger
@@ -1089,27 +1114,35 @@ namespace Huginn::Slot
                     AssignmentType::Wildcard);
                 assignedFormIDs.insert(item->GetFormID());
                 assignedNames.insert(item->GetName());
-                needCap.Add(*item);
                 continue;
             }
 
             // On a Regular key both sides are weighed after the need cap: a
-            // holder whose need is already full on the page holds at its
-            // capped utility, or a crowd that formed before the cap applied
-            // would be held there for good.
+            // holder past its need's free count holds at its capped utility,
+            // or a crowd that formed before the cap applied would be held
+            // there for good.
+            needCap.Remove(*item);
             const auto challenger = FindBestCandidate(candidates, config.classification,
                 excludedIDs, excludedNames, config.skipEquipped, player,
                 /*skipWildcards=*/!config.wildcardsEnabled, &needCap);
             const bool capped = config.classification == SlotClassification::Regular;
-            const float itemCap = capped ? needCap.Factor(*item) : 1.0f;
+            const float itemCap = capped ? holderCap[t] : 1.0f;
             const float challengerCap = capped && challenger ? needCap.Factor(*challenger) : 1.0f;
+            const float itemScore = item->utility * itemCap;
+            const float challengerScore = challenger ? challenger->utility * challengerCap : 0.0f;
 
-            if (challenger && challenger->utility * challengerCap > item->utility * itemCap * factor) {
-                SKSE::log::debug("[Hold] Page {} slot {}: '{}' gives way to '{}' (u={:.3f} vs {:.3f}, x{:.2f} > x{:.2f}){}",
-                    pageIndex, j, item->GetName(), challenger->GetName(), challenger->utility, item->utility,
-                    item->utility > 0.0f ? challenger->utility / item->utility : 0.0f, factor,
-                    itemCap < 1.0f || challengerCap < 1.0f
-                        ? std::format(" need cap x{:.2f} vs x{:.2f}", challengerCap, itemCap) : std::string{});
+            if (challenger && challengerScore > itemScore * factor) {
+                needCap.Add(*challenger);
+                if (itemCap < 1.0f || challengerCap < 1.0f) {
+                    SKSE::log::debug("[Hold] Page {} slot {}: '{}' gives way to '{}' (u={:.3f} vs {:.3f}; "
+                        "need cap x{:.2f} vs x{:.2f}: x{:.2f} > x{:.2f})",
+                        pageIndex, j, item->GetName(), challenger->GetName(), challenger->utility, item->utility,
+                        challengerCap, itemCap, itemScore > 0.0f ? challengerScore / itemScore : 0.0f, factor);
+                } else {
+                    SKSE::log::debug("[Hold] Page {} slot {}: '{}' gives way to '{}' (u={:.3f} vs {:.3f}, x{:.2f} > x{:.2f})",
+                        pageIndex, j, item->GetName(), challenger->GetName(), challenger->utility, item->utility,
+                        item->utility > 0.0f ? challenger->utility / item->utility : 0.0f, factor);
+                }
 
                 assignments[j] = SlotAssignment::FromCandidate(j, config.classification, *challenger,
                     challenger->isWildcard ? AssignmentType::Wildcard : AssignmentType::Normal);
@@ -1117,7 +1150,6 @@ namespace Huginn::Slot
                 assignedNames.insert(challenger->GetName());
                 excludedIDs.insert(challenger->GetFormID());
                 excludedNames.insert(challenger->GetName());
-                needCap.Add(*challenger);
 
                 // The loser is free again -- the fill may show it elsewhere --
                 // but not as this seat's owner. A guest owns a seat somewhere
@@ -1138,7 +1170,7 @@ namespace Huginn::Slot
                 item->isWildcard ? AssignmentType::Wildcard : AssignmentType::Normal);
             assignedFormIDs.insert(item->GetFormID());
             assignedNames.insert(item->GetName());
-            needCap.Add(*item);
+            needCap.Add(*item);   // back in the count it left to be judged
         }
     }
 

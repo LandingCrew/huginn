@@ -83,6 +83,17 @@ namespace Huginn::Slot
         }
     }
 
+    void NeedCap::Remove(const Scoring::ScoredCandidate& c)
+    {
+        if (!Active()) {
+            return;
+        }
+        auto& count = m_onPage[static_cast<size_t>(CachedNeed(c))];
+        if (count > 0) {
+            --count;
+        }
+    }
+
     void NeedCap::NoteSkipped(const Scoring::ScoredCandidate& skipped)
     {
         const RE::FormID id = skipped.GetFormID();
