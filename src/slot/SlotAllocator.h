@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SlotConfig.h"
+#include "NeedCap.h"
 #include "SlotAssignment.h"
 #include "SlotClassifier.h"
 #include "SlotSettings.h"
@@ -13,6 +14,7 @@
 #include <memory>
 #include <mutex>
 #include <set>
+#include <string>
 #include <vector>
 
 namespace Huginn::Slot
@@ -198,6 +200,17 @@ namespace Huginn::Slot
             const std::array<size_t, MAX_SLOTS_PER_PAGE>& priorityOrder,
             size_t priorityCount) const;
 
+#ifndef NDEBUG
+        /// Tests only: one allocation of a made-up layout on `pageIndex`, with
+        /// no overrides and no player, under layout generation `generation`.
+        /// Two calls with the same generation run the seating memory and the
+        /// slot hold, as two pipeline passes would. Leaves seating behind for
+        /// that generation; the caller Reset()s.
+        [[nodiscard]] SlotAssignments AllocateForTest(size_t pageIndex, uint32_t generation,
+            const std::vector<SlotConfig>& slotConfigs,
+            const Scoring::ScoredCandidateList& candidates) const;
+#endif
+
     private:
         SlotAllocator() = default;
         ~SlotAllocator() = default;
@@ -237,6 +250,10 @@ namespace Huginn::Slot
         };
         mutable std::array<std::array<OverrideLogEntry, Override::OVERRIDE_CONDITION_COUNT>, MAX_PAGES>
             m_overrideLogs{};
+
+        // What the need cap kept off each page last pass (NeedCap::Summary),
+        // so [NeedCap] logs when that changes, not every pass. m_logMutex.
+        mutable std::array<std::string, MAX_PAGES> m_needCapLog{};
 
         /// Should this placement be logged? Returns why (for the debug line), or
         /// nullptr to stay quiet, and records the placement either way.
@@ -338,7 +355,8 @@ namespace Huginn::Slot
             const State::PlayerActorState* player,
             float margin,
             const std::array<size_t, MAX_SLOTS_PER_PAGE>& priorityOrder,
-            size_t priorityCount) const;
+            size_t priorityCount,
+            NeedCap& needCap) const;
 
         /// Put items back in the slots they were in last pass, where the layout
         /// still allows it.
@@ -386,7 +404,9 @@ namespace Huginn::Slot
             const std::vector<SlotConfig>& configs,
             std::array<size_t, MAX_SLOTS_PER_PAGE>& outOrder) const;
 
-        /// Helper: Try to find the best candidate for a slot
+        /// Helper: Try to find the best candidate for a slot. With an active
+        /// `needCap` and a Regular slot, "best" is the highest utility after
+        /// the cap's factor (NeedCap.h); otherwise the first match in rank order.
         [[nodiscard]] std::optional<Scoring::ScoredCandidate> FindBestCandidate(
             const Scoring::ScoredCandidateList& candidates,
             SlotClassification classification,
@@ -394,7 +414,8 @@ namespace Huginn::Slot
             const std::set<std::string_view>& assignedNames,
             bool skipEquipped = false,
             const State::PlayerActorState* player = nullptr,
-            bool skipWildcards = false) const;
+            bool skipWildcards = false,
+            NeedCap* needCap = nullptr) const;
     };
 
 }  // namespace Huginn::Slot

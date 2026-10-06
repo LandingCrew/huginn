@@ -199,6 +199,19 @@ namespace Huginn::Slot
         SKSE::log::info("[SlotSettings] Hold seated items: {} (challenger margin {:.0f}%)"sv,
             hold ? "on" : "off", margin * 100.0f);
 
+        const float needDiscount = std::clamp(
+            static_cast<float>(ini.GetDoubleValue("SlotLocker", "fNeedRepeatDiscount", 0.5)), 0.0f, 1.0f);
+        const auto needFree = static_cast<uint32_t>(std::clamp(
+            ini.GetLongValue("SlotLocker", "iNeedFreeSlots", 3), 1L, static_cast<long>(MAX_SLOTS_PER_PAGE)));
+        m_needRepeatDiscount.store(needDiscount, std::memory_order_release);
+        m_needFreeSlots.store(needFree, std::memory_order_release);
+        if (needDiscount < 1.0f) {
+            SKSE::log::info("[SlotSettings] Need cap: on Regular keys, items of one need past the first {} at x{:.2f} each"sv,
+                needFree, needDiscount);
+        } else {
+            SKSE::log::info("[SlotSettings] Need cap: off"sv);
+        }
+
         const float remembranceMs = std::max(0.0f,
             static_cast<float>(ini.GetDoubleValue("SlotLocker", "fRemembranceDurationMs", 15000.0)));
         m_remembranceDurationMs.store(remembranceMs, std::memory_order_release);
@@ -249,6 +262,8 @@ namespace Huginn::Slot
         m_keepSlotPositions.store(true, std::memory_order_release);
         m_holdSeatedItems.store(true, std::memory_order_release);
         m_challengerMargin.store(0.25f, std::memory_order_release);
+        m_needRepeatDiscount.store(0.5f, std::memory_order_release);
+        m_needFreeSlots.store(3, std::memory_order_release);
         m_generation.fetch_add(1, std::memory_order_release);
         SKSE::log::info("[SlotSettings] Reset to defaults (1 page, {} slots)"sv, slotCount);
     }
