@@ -194,7 +194,49 @@ context" unless named):
    lightly trained item more confidence than the sigmoid did (3 trains:
    0.60 vs 0.35), so an item left idle for days -- weights decayed toward
    0, n kept -- now reads as "rejected" harder than before. Decaying n is
-   the fix; it changes the cosave.
+   the fix; it changes the cosave. **Decay of n: REPLACED by #3a.**
+3a. **Memory with a useful life -- delayed decay to the floor, then
+   eviction** (the user, 2026-10-06; next after this stack merges).
+   REPLACES "Expire learner entries for items the player no longer has",
+   the decay of n under #3 above, and the "Decay" criticism under Pooled
+   learning -- one mechanism for all three. Self-cleaning memory: what the
+   player stops choosing drifts to a floor and is forgotten, and an item
+   that comes back is seen for the first time.
+   - **The shape: a battery's discharge curve, not an exponential.** Full
+     strength for a "useful life" after the item was last chosen, then a
+     knee and a fast fall. An exponential erodes a rarely needed item (a
+     cure used every few hours) between uses and leaves an abandoned one
+     in a long half-forgotten tail; the delayed curve leaves the first
+     alone and clears the second at a predictable time.
+     ```
+     retention(t) = 1 / (1 + exp((t - T) / s))   t = PLAY time since last chosen
+     n_eff        = n * retention(t)             confidence = n_eff / (n_eff + 2)
+     evict when retention < ~0.05                entry deleted; next time is the first time
+     ```
+   - **Evidence buys life** ("area under the curve equals capacity"): the
+     plateau grows with picks, `T = T0 + k * ln(1 + n)`. A main weapon
+     survives a long break; a sword tried twice fades within a session
+     or two.
+   - **What fades is confidence, not the weights.** As n_eff falls the
+     score slides back to the PRIOR ("don't know any more"), not to 0
+     ("rejected") -- the #173 review's finding 3 -- and UCB rises, so a
+     forgotten item is re-explored. Retention is computed from idle time
+     at scoring, so the 2%/hour weight decay (`DECAY_RATE_PER_HOUR`,
+     `MaybeDecayBatch`) goes.
+   - **No inventory hook.** A dropped, sold or stored item cannot be
+     chosen, so it ages past the knee like an unused one. Option: a
+     shorter T for items no longer carried.
+   - **Play time, not wall time**: per character, counted only while
+     playing; a month away from the game forgets nothing. The cosave's
+     per-entry time-since-update carries it across loads.
+   - **Not the context noise floor.** `baseRelevanceWeight` (0.05) decides
+     relevance; this floor is on evidence (retention), a learner setting.
+   - Starting values, INI keys, tuned on soak logs (tools/replay covers
+     hours, not days): T0 ~8 play-hours, k ~2 h, s ~1 h, evict at 0.05.
+     Risk to watch: rarely used consumables -- if cures are forgotten
+     between diseases, a longer T0 for consumables.
+   - Cosave v4 (n becomes fractional) -- CONVERTS v3 (n_eff = trainCount),
+     no learning reset.
 4. **Surprise-weighted updates** -- capped inverse-propensity step size;
    an item Huginn was not showing ~2x, whichever device picked it (one
    selection path, decided 2026-10-02 -- source is never a weight).
@@ -258,7 +300,9 @@ context" unless named):
   carry different buffs and the player cannot tell which from the key.
   Show a food's notable effect in its subtext. It does not matter for how
   the user plays, but may for others. Display only.
-- **Expire learner entries for items the player no longer has.** The
+- **REPLACED by Phase 3 #3a (memory with a useful life, 2026-10-06)** --
+  kept for its cases (gear in a chest, restocked potions), which #3a must
+  still answer. **Expire learner entries for items the player no longer has.** The
   learner keeps an entry for every item ever selected and drops one only
   on `hg reset weights` or a reload's dynamic-form swap, so `learn items`
   counts everything chosen since the reset (80 after ~7 h of the soak),
@@ -942,7 +986,8 @@ with how the run is played and laid out -- see the Phase 2 review notes.
         rather than the balance.
       - Prior as pseudo-observations: replace the sigmoid with n/(n+n0),
         decay n alongside the weights so idle items fall back towards the
-        prior. (Putting the prior on the reward scale was part of this until
+        prior. (Shipped in 0.23.0 without the decay; the decay is now
+        Phase 3 #3a, a delayed curve rather than a rate.) (Putting the prior on the reward scale was part of this until
         the choice target made both 0-1.)
       Probably BEFORE pooling: pooling only makes untrained items look more
       trained, which raises the floor but leaves a 12x multiplier on top.
@@ -971,7 +1016,8 @@ with how the run is played and laid out -- see the Phase 2 review notes.
         back to its prior. If a 0.25x negative counts as a whole train,
         confidence climbs four times faster than the evidence. Pseudo-
         observations (Phase 3 #3) fix both -- an argument for shipping them
-        with #1.
+        with #1. (#3 shipped; the idle drift is fixed by #3a: confidence,
+        not the weights, fades.)
       - **Substitutes, not complements.** Negatives fit items competing for
         one hand, body slot or need -- not circlet + ring, sword + ward or
         dual-wield. Delay negatives and cancel any whose item is chosen
@@ -1602,7 +1648,8 @@ trigger to pick any of it up.
       Recommendation Issues) -- fix the 12x balance first; see Next up.
       **Picked as next up (with the user, 2026-10-01).** Three criticisms it
       has to answer, in order:
-      - **Decay.** Lazy decay is 2%/hour once an item is idle for 5 minutes
+      - **Decay -- REPLACED by Phase 3 #3a** (delayed decay of confidence to
+        a floor, then eviction). Lazy decay is 2%/hour once an item is idle for 5 minutes
         (`Config.h` `DECAY_RATE_PER_HOUR`, `MaybeDecayBatch`): after 20 idle
         hours an item keeps ~2/3 of its weight. Only the weights decay --
         `trainCount` does not, so a long-unused item keeps full confidence.
