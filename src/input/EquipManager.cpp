@@ -842,8 +842,10 @@ namespace Huginn::Input
       {
          auto& allocator = Slot::SlotAllocator::GetSingleton();
          const size_t page = allocator.GetCurrentPage();
+         const auto age = Slot::SlotLocker::GetSingleton().GetKeyAge(slotIndex);
          Telemetry::SoakMetrics::GetSingleton().RecordSlotPress(
-            page, allocator.IsRegularSlot(page, slotIndex));
+            page, slotIndex, allocator.IsRegularSlot(page, slotIndex),
+            age ? age->ageSec : -1.0f, age ? std::string_view{ age->wasName } : std::string_view{});
       }
 
       // Remembrance: note the press, so what the equip takes off can be held

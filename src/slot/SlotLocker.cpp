@@ -182,6 +182,7 @@ namespace Huginn::Slot
         DedupePreferLocked(result, newAssignments);
 
         // Churn: compare what is shown now against what was shown last run.
+        const auto runNow = std::chrono::steady_clock::now();
         for (size_t i = 0; i < result.size() && i < MAX_SLOTS; ++i) {
             const auto& shown = result[i];
             auto& slot = m_lockedSlots[i];
@@ -215,7 +216,12 @@ namespace Huginn::Slot
                     }
                     ratio = Telemetry::BucketChallengerRatio(shown.utility, incumbentUtility);
                 }
-                changes[changeCount++] = { i, cause, ratio };
+                // Tenure: how long the item being replaced was on the slot.
+                float tenureSec = -1.0f;
+                if (!slot.shownEmpty && slot.shownSince != std::chrono::steady_clock::time_point{}) {
+                    tenureSec = std::chrono::duration<float>(runNow - slot.shownSince).count();
+                }
+                changes[changeCount++] = { i, cause, ratio, tenureSec };
 
                 const std::string_view from = slot.shownEmpty ? std::string_view{} : std::string_view{ slot.shownName };
                 const std::string_view to = nowEmpty ? std::string_view{} : std::string_view{ shown.name };
@@ -231,7 +237,14 @@ namespace Huginn::Slot
                         incumbentUtility > 0.0f ? shown.utility / incumbentUtility : 0.0f);
                 }
             }
-            if (changed) {
+            // The key's age restarts on what the player can SEE change -- a
+            // same-name swap keeps it, a page switch or the baseline fill
+            // after a load starts it.
+            if (visible) {
+                slot.prevName = slot.shownEmpty ? std::string{} : slot.shownName;
+                slot.shownSince = runNow;
+            }
+            if (changed || visible) {
                 slot.shownEmpty = nowEmpty;
                 slot.shownWildcard = !nowEmpty && shown.IsWildcard();
                 slot.shownRemembered = !nowEmpty && shown.IsRemembered();
@@ -266,7 +279,7 @@ namespace Huginn::Slot
         // Under m_mutex, which is safe: SoakMetrics takes only its own mutex
         // and never calls back into the locker.
         Telemetry::SoakMetrics::GetSingleton().RecordSlotChanges(
-            std::span{ changes.data(), changeCount }, std::chrono::steady_clock::now());
+            std::span{ changes.data(), changeCount }, runNow);
 
         return result;
     }
@@ -450,6 +463,16 @@ namespace Huginn::Slot
             slot.releaseCause = Telemetry::SlotChange::Used;
             // Don't break - item might be in multiple slots (unlikely but safe)
         }
+    }
+
+    std::optional<SlotLocker::KeyAge> SlotLocker::GetKeyAge(size_t slotIndex) const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (slotIndex >= MAX_SLOTS) return std::nullopt;
+        const auto& slot = m_lockedSlots[slotIndex];
+        if (slot.shownSince == std::chrono::steady_clock::time_point{}) return std::nullopt;
+        return KeyAge{ std::chrono::duration<float>(std::chrono::steady_clock::now() - slot.shownSince).count(),
+                       slot.prevName };
     }
 
     void SlotLocker::Reset()

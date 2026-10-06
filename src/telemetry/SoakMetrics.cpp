@@ -94,11 +94,19 @@ namespace Huginn::Telemetry
         m_pageRaceBails.fetch_add(1, std::memory_order_relaxed);
     }
 
-    void SoakMetrics::RecordSlotPress(std::size_t pageIndex, bool regularSlot)
+    void SoakMetrics::RecordSlotPress(std::size_t pageIndex, std::size_t slotIndex, bool regularSlot,
+        float keyAgeSec, std::string_view wasName)
     {
         (regularSlot ? m_pressRegular : m_pressLabeled).fetch_add(1, std::memory_order_relaxed);
         if (pageIndex != 0) {
             m_pressOffPage.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (keyAgeSec >= 0.0f) {
+            m_pressAge[static_cast<std::size_t>(BucketPressAge(keyAgeSec))].fetch_add(1, std::memory_order_relaxed);
+            if (keyAgeSec < KEY_AGE_LOG_SEC) {
+                logger::debug("[KeyAge] page {} key {} pressed {:.2f}s after it changed (was '{}')"sv,
+                    pageIndex, slotIndex + 1, keyAgeSec, wasName);
+            }
         }
     }
 
@@ -126,6 +134,13 @@ namespace Huginn::Telemetry
                     continue;
                 }
                 ++counted;
+                // Tenure measures juggling the player did not ask for: a change
+                // the player's own press caused -- the Used backfill, a
+                // Remembrance hold arriving or leaving -- is left out.
+                if (change.tenureSec >= 0.0f && change.cause != SlotChange::Used &&
+                    change.cause != SlotChange::Remembrance) {
+                    m_tenure[static_cast<std::size_t>(BucketTenure(change.tenureSec))].fetch_add(1, std::memory_order_relaxed);
+                }
 
                 auto& recent = m_recentChanges[change.slotIndex];
                 recent.push_back(nowTicks);
@@ -195,6 +210,14 @@ namespace Huginn::Telemetry
         const uint32_t pressLabeled = m_pressLabeled.exchange(0, std::memory_order_relaxed);
         const uint32_t pressOffPage = m_pressOffPage.exchange(0, std::memory_order_relaxed);
         const uint32_t pageFlips    = m_pageFlips.exchange(0, std::memory_order_relaxed);
+        std::array<uint32_t, static_cast<std::size_t>(PressAgeBand::Count)> pressAge{};
+        for (std::size_t b = 0; b < pressAge.size(); ++b) {
+            pressAge[b] = m_pressAge[b].exchange(0, std::memory_order_relaxed);
+        }
+        std::array<uint32_t, static_cast<std::size_t>(TenureBand::Count)> tenure{};
+        for (std::size_t b = 0; b < tenure.size(); ++b) {
+            tenure[b] = m_tenure[b].exchange(0, std::memory_order_relaxed);
+        }
 
         std::array<uint32_t, static_cast<std::size_t>(SlotChange::Count)> churn{};
         uint32_t churnTotal = 0;
@@ -244,6 +267,22 @@ namespace Huginn::Telemetry
             for (std::size_t r = 0; r < ratios.size(); ++r) {
                 churnStr += std::format("{}{}={}", r ? " " : "",
                     ChallengerRatioName(static_cast<ChallengerRatio>(r)), ratios[r]);
+            }
+            churnStr += ") tenure(";
+            for (std::size_t b = 0; b < tenure.size(); ++b) {
+                churnStr += std::format("{}{}={}", b ? " " : "",
+                    TenureBandName(static_cast<TenureBand>(b)), tenure[b]);
+            }
+            churnStr += ')';
+        }
+        // Press age rides with churn: how long each pressed key had held its
+        // item. Printed whenever a key was pressed, so it shows even in a
+        // window where nothing moved.
+        if (pressRegular + pressLabeled) {
+            churnStr += " pressAge(";
+            for (std::size_t b = 0; b < pressAge.size(); ++b) {
+                churnStr += std::format("{}{}={}", b ? " " : "",
+                    PressAgeBandName(static_cast<PressAgeBand>(b)), pressAge[b]);
             }
             churnStr += ')';
         }
