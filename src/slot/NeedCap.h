@@ -59,6 +59,9 @@ namespace Huginn::Slot
         /// One more item of `c`'s need is on the page.
         void Add(const Scoring::ScoredCandidate& c);
 
+        /// One fewer: a holder taken out of the count while it is judged.
+        void Remove(const Scoring::ScoredCandidate& c);
+
         /// The pick for a Regular key went past `skipped` (the higher utility)
         /// because of the cap. Kept for the transition log.
         void NoteSkipped(const Scoring::ScoredCandidate& skipped);
