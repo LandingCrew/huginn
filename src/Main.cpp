@@ -180,6 +180,9 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
                 &Learning::ExternalEquipListener::GetSingleton());
             eventSource->GetEventSource<RE::TESEquipEvent>()->AddEventSink(
                 &Apparel::ApparelWornListener::GetSingleton());
+            // Armour leaving the inventory: reconcile at once (a dropped worn ring).
+            eventSource->GetEventSource<RE::TESContainerChangedEvent>()->AddEventSink(
+                &Apparel::ApparelWornListener::GetSingleton());
             logger::info("SpellRegistry + ExternalEquipListener + ApparelWornListener registered for TESEquipEvent notifications"sv);
         }
     }

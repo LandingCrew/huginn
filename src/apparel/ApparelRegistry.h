@@ -70,6 +70,16 @@ namespace Huginn::Apparel
        */
       size_t ReconcileApparel();
 
+      /// Ask for a reconcile on the next update tick, ahead of the 30 s timer:
+      /// armour left the player's inventory (ApparelWornListener). The
+      /// update loop reconciles before it scores, so a piece dropped, sold or
+      /// stored is gone before the page is filled again.
+      void RequestReconcile() noexcept { m_reconcileRequested.store(true, std::memory_order_relaxed); }
+      [[nodiscard]] bool TakeReconcileRequest() noexcept
+      {
+         return m_reconcileRequested.exchange(false, std::memory_order_relaxed);
+      }
+
       // =============================================================================
       // ACCESSORS
       // =============================================================================
@@ -175,5 +185,6 @@ namespace Huginn::Apparel
       ApparelClassifier          m_classifier;
       mutable std::shared_mutex  m_mutex;
       std::atomic<bool>          m_isLoading{false};
+      std::atomic<bool>          m_reconcileRequested{false};
    };
 }
