@@ -6467,16 +6467,20 @@ void RunNeedCapHoldTest()
         configs[i].wildcardsEnabled = true;
     }
 
+    // Candidates keep a view of their name: set every name once, before any
+    // list is built. Assigning names[0] again for the second list freed the
+    // string the first list still viewed (the first run logged it as garbage).
     static std::array<std::string, 10> names;
-    auto spell = [](size_t i, Spell::SpellType type, float utility) {
+    for (size_t i = 0; i < names.size(); ++i) {
         names[i] = "NeedCapHoldProbe" + std::to_string(i);
+    }
+    auto spell = [](size_t i, Spell::SpellType type, float utility) {
         Candidate::SpellCandidate s{};
         s.formID = 0x0BADF300 + static_cast<RE::FormID>(i); s.name = names[i]; s.type = type;
         Scoring::ScoredCandidate sc{}; sc.candidate = s; sc.utility = utility;
         return sc;
     };
     auto weapon = [](size_t i, float utility) {
-        names[i] = "NeedCapHoldProbe" + std::to_string(i);
         Candidate::WeaponCandidate w{};
         w.formID = 0x0BADF300 + static_cast<RE::FormID>(i); w.name = names[i];
         w.tags = Weapon::WeaponTag::Melee;
