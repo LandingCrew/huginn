@@ -221,8 +221,7 @@ namespace Huginn::Slot
                 if (!slot.shownEmpty && slot.shownSince != std::chrono::steady_clock::time_point{}) {
                     tenureSec = std::chrono::duration<float>(runNow - slot.shownSince).count();
                 }
-                changes[changeCount++] = { i, cause, ratio, tenureSec,
-                    slot.shownEmpty ? std::string{} : slot.shownName };
+                changes[changeCount++] = { i, cause, ratio, tenureSec };
 
                 const std::string_view from = slot.shownEmpty ? std::string_view{} : std::string_view{ slot.shownName };
                 const std::string_view to = nowEmpty ? std::string_view{} : std::string_view{ shown.name };
@@ -238,14 +237,20 @@ namespace Huginn::Slot
                         incumbentUtility > 0.0f ? shown.utility / incumbentUtility : 0.0f);
                 }
             }
-            if (changed) {
+            // The key's age restarts on what the player can SEE change -- a
+            // same-name swap keeps it, a page switch or the baseline fill
+            // after a load starts it.
+            if (visible) {
+                slot.prevName = slot.shownEmpty ? std::string{} : slot.shownName;
+                slot.shownSince = runNow;
+            }
+            if (changed || visible) {
                 slot.shownEmpty = nowEmpty;
                 slot.shownWildcard = !nowEmpty && shown.IsWildcard();
                 slot.shownRemembered = !nowEmpty && shown.IsRemembered();
                 slot.shownFormID = nowEmpty ? 0 : shown.formID;
                 slot.shownUniqueID = nowEmpty ? 0 : shown.uniqueID;
                 slot.shownName = nowEmpty ? std::string{} : shown.name;
-                slot.shownSince = runNow;
             }
 
             // A held lock means the next change is not "because the lock let
@@ -458,6 +463,16 @@ namespace Huginn::Slot
             slot.releaseCause = Telemetry::SlotChange::Used;
             // Don't break - item might be in multiple slots (unlikely but safe)
         }
+    }
+
+    std::optional<SlotLocker::KeyAge> SlotLocker::GetKeyAge(size_t slotIndex) const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (slotIndex >= MAX_SLOTS) return std::nullopt;
+        const auto& slot = m_lockedSlots[slotIndex];
+        if (slot.shownSince == std::chrono::steady_clock::time_point{}) return std::nullopt;
+        return KeyAge{ std::chrono::duration<float>(std::chrono::steady_clock::now() - slot.shownSince).count(),
+                       slot.prevName };
     }
 
     void SlotLocker::Reset()

@@ -95,28 +95,17 @@ namespace Huginn::Telemetry
     }
 
     void SoakMetrics::RecordSlotPress(std::size_t pageIndex, std::size_t slotIndex, bool regularSlot,
-        bool displayedPage)
+        float keyAgeSec, std::string_view wasName)
     {
         (regularSlot ? m_pressRegular : m_pressLabeled).fetch_add(1, std::memory_order_relaxed);
         if (pageIndex != 0) {
             m_pressOffPage.fetch_add(1, std::memory_order_relaxed);
         }
-        if (displayedPage && slotIndex < SLOT_CHURN_SLOTS) {
-            const int64_t last = m_lastChangeTicks[slotIndex].load(std::memory_order_relaxed);
-            if (last != 0) {
-                const auto now = std::chrono::steady_clock::now();
-                const float ageSec = std::chrono::duration<float>(
-                    now.time_since_epoch() - std::chrono::steady_clock::duration(last)).count();
-                m_pressAge[static_cast<std::size_t>(BucketPressAge(ageSec))].fetch_add(1, std::memory_order_relaxed);
-                if (ageSec < KEY_AGE_LOG_SEC) {
-                    std::string before;
-                    {
-                        std::lock_guard<std::mutex> lock(m_churnMutex);
-                        before = m_prevShown[slotIndex];
-                    }
-                    logger::debug("[KeyAge] page {} key {} pressed {:.2f}s after it changed (was '{}')"sv,
-                        pageIndex, slotIndex + 1, ageSec, before);
-                }
+        if (keyAgeSec >= 0.0f) {
+            m_pressAge[static_cast<std::size_t>(BucketPressAge(keyAgeSec))].fetch_add(1, std::memory_order_relaxed);
+            if (keyAgeSec < KEY_AGE_LOG_SEC) {
+                logger::debug("[KeyAge] page {} key {} pressed {:.2f}s after it changed (was '{}')"sv,
+                    pageIndex, slotIndex + 1, keyAgeSec, wasName);
             }
         }
     }
@@ -145,11 +134,13 @@ namespace Huginn::Telemetry
                     continue;
                 }
                 ++counted;
-                if (change.tenureSec >= 0.0f) {
+                // Tenure measures juggling the player did not ask for: a change
+                // the player's own press caused -- the Used backfill, a
+                // Remembrance hold arriving or leaving -- is left out.
+                if (change.tenureSec >= 0.0f && change.cause != SlotChange::Used &&
+                    change.cause != SlotChange::Remembrance) {
                     m_tenure[static_cast<std::size_t>(BucketTenure(change.tenureSec))].fetch_add(1, std::memory_order_relaxed);
                 }
-                m_lastChangeTicks[change.slotIndex].store(nowTicks, std::memory_order_relaxed);
-                m_prevShown[change.slotIndex] = change.fromName;
 
                 auto& recent = m_recentChanges[change.slotIndex];
                 recent.push_back(nowTicks);

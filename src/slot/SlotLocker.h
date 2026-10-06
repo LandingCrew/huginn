@@ -1,5 +1,7 @@
 #pragma once
 
+#include <optional>
+
 #include "SlotAssignment.h"
 #include "SlotSettings.h"
 #include "override/OverrideConditions.h"
@@ -63,7 +65,12 @@ namespace Huginn::Slot
         bool shownWildcard = false;
         bool shownRemembered = false;
         std::string shownName;
-        std::chrono::steady_clock::time_point shownSince{};  // when the shown item arrived (churn tenure)
+        // When the shown NAME arrived, and what the key showed before it: the
+        // key's age as the player sees it. Stamped on every visible change --
+        // page switches and the post-load baseline included, same-name swaps
+        // not. Read by tenure and by GetKeyAge.
+        std::chrono::steady_clock::time_point shownSince{};
+        std::string prevName;
 
         // Why this slot's last lock let go (expiry, OnItemUsed, a page switch,
         // an override break), held until the slot next locks, so the change
@@ -101,6 +108,16 @@ namespace Huginn::Slot
     {
     public:
         static SlotLocker& GetSingleton();
+
+        /// How long key `slotIndex` of the displayed page has shown its item,
+        /// and what it showed before -- one locked read, so the two always
+        /// describe the same change. nullopt before the key's first fill.
+        struct KeyAge
+        {
+            float ageSec = 0.0f;
+            std::string wasName;
+        };
+        [[nodiscard]] std::optional<KeyAge> GetKeyAge(size_t slotIndex) const;
 
         // =========================================================================
         // CONFIGURATION
