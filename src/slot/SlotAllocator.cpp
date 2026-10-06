@@ -689,6 +689,13 @@ namespace Huginn::Slot
             }
         }
 
+        // The per-need soft cap on Regular keys (NeedCap.h), from here on:
+        // what overrides and Remembrance placed above counts against it, but
+        // they are never moved for it.
+        NeedCap needCap(SlotSettings::GetSingleton().NeedRepeatDiscount(),
+            SlotSettings::GetSingleton().NeedFreeSlots(), &candidates);
+        needCap.Recount(assignments);
+
         // =======================================================================
         // PASS 1c: Hold seated items against near-tied challengers
         // =======================================================================
@@ -697,7 +704,7 @@ namespace Huginn::Slot
             if (settings.KeepSlotPositions() && settings.HoldSeatedItems()) {
                 HoldIncumbents(pageIndex, configGeneration, slotConfigs, candidates, assignments,
                     assignedFormIDs, assignedNames, &player, settings.ChallengerMargin(),
-                    priorityOrder, priorityCount);
+                    priorityOrder, priorityCount, needCap);
             }
         }
 
@@ -714,7 +721,8 @@ namespace Huginn::Slot
 
             // Find best matching candidate
             auto bestCandidate = FindBestCandidate(
-                candidates, config.classification, assignedFormIDs, assignedNames, config.skipEquipped, &player);
+                candidates, config.classification, assignedFormIDs, assignedNames, config.skipEquipped, &player,
+                /*skipWildcards=*/false, &needCap);
 
             if (!bestCandidate) {
                 // Rate-limit "no candidate found" logs per classification type
@@ -742,7 +750,7 @@ namespace Huginn::Slot
                     bestCandidate = FindBestCandidate(
                         candidates, config.classification, assignedFormIDs,
                         assignedNames, config.skipEquipped, &player,
-                        /*skipWildcards=*/true);
+                        /*skipWildcards=*/true, &needCap);
                     assignType = AssignmentType::Normal;
                 }
 
@@ -754,6 +762,7 @@ namespace Huginn::Slot
                         assignType);
                     assignedFormIDs.insert(bestCandidate->GetFormID());
                     assignedNames.insert(bestCandidate->GetName());
+                    needCap.Add(*bestCandidate);
                 }
             }
         }
@@ -764,19 +773,21 @@ namespace Huginn::Slot
 
             // Without seating there is no pass 4, so refill the Regular key the
             // pull just emptied here, or it stays blank (/code-review #151).
+            needCap.Recount(assignments);
             for (size_t k = 0; k < priorityCount; ++k) {
                 const size_t idx = priorityOrder[k];
                 if (!assignments[idx].IsEmpty()) continue;
                 const auto& config = slotConfigs[idx];
                 auto refill = FindBestCandidate(
                     candidates, config.classification, assignedFormIDs, assignedNames,
-                    config.skipEquipped, &player, /*skipWildcards=*/!config.wildcardsEnabled);
+                    config.skipEquipped, &player, /*skipWildcards=*/!config.wildcardsEnabled, &needCap);
                 if (!refill) continue;
                 assignments[idx] = SlotAssignment::FromCandidate(
                     idx, config.classification, *refill,
                     refill->isWildcard ? AssignmentType::Wildcard : AssignmentType::Normal);
                 assignedFormIDs.insert(refill->GetFormID());
                 assignedNames.insert(refill->GetName());
+                needCap.Add(*refill);
             }
         }
 
@@ -808,6 +819,7 @@ namespace Huginn::Slot
             // the middle of the widget is a worse trade than the shuffle this
             // whole thing exists to prevent. The dedup sets are still the ones
             // pass 2 built, so this cannot re-place an item already on screen.
+            needCap.Recount(assignments);
             for (size_t k = 0; k < priorityCount; ++k) {
                 const size_t priorityIdx = priorityOrder[k];
                 auto& assignment = assignments[priorityIdx];
@@ -816,7 +828,7 @@ namespace Huginn::Slot
                 const auto& config = slotConfigs[priorityIdx];
                 auto refill = FindBestCandidate(
                     candidates, config.classification, assignedFormIDs, assignedNames,
-                    config.skipEquipped, &player, /*skipWildcards=*/!config.wildcardsEnabled);
+                    config.skipEquipped, &player, /*skipWildcards=*/!config.wildcardsEnabled, &needCap);
                 if (!refill) continue;
 
                 assignment = SlotAssignment::FromCandidate(
@@ -824,10 +836,26 @@ namespace Huginn::Slot
                     refill->isWildcard ? AssignmentType::Wildcard : AssignmentType::Normal);
                 assignedFormIDs.insert(refill->GetFormID());
                 assignedNames.insert(refill->GetName());
+                needCap.Add(*refill);
             }
 
             // PASS 5: remember the result for next time.
             RecordSeating(pageIndex, generation, assignments);
+        }
+
+        // What the need cap kept off the page, on change only.
+        if (needCap.Active() && pageIndex < MAX_PAGES) {
+            std::string kept = needCap.Summary(assignments);
+            std::lock_guard<std::mutex> logLock(m_logMutex);
+            if (kept != m_needCapLog[pageIndex]) {
+                if (kept.empty()) {
+                    SKSE::log::debug("[NeedCap] Page {}: nothing kept off", pageIndex);
+                } else {
+                    SKSE::log::debug("[NeedCap] Page {}: kept off, {} of their need already shown: {}",
+                        pageIndex, SlotSettings::GetSingleton().NeedFreeSlots(), kept);
+                }
+                m_needCapLog[pageIndex] = std::move(kept);
+            }
         }
 
         return assignments;
@@ -897,7 +925,8 @@ namespace Huginn::Slot
         const State::PlayerActorState* player,
         float margin,
         const std::array<size_t, MAX_SLOTS_PER_PAGE>& priorityOrder,
-        size_t priorityCount) const
+        size_t priorityCount,
+        NeedCap& needCap) const
     {
         if (pageIndex >= MAX_PAGES) {
             return;
@@ -1060,17 +1089,27 @@ namespace Huginn::Slot
                     AssignmentType::Wildcard);
                 assignedFormIDs.insert(item->GetFormID());
                 assignedNames.insert(item->GetName());
+                needCap.Add(*item);
                 continue;
             }
 
+            // On a Regular key both sides are weighed after the need cap: a
+            // holder whose need is already full on the page holds at its
+            // capped utility, or a crowd that formed before the cap applied
+            // would be held there for good.
             const auto challenger = FindBestCandidate(candidates, config.classification,
                 excludedIDs, excludedNames, config.skipEquipped, player,
-                /*skipWildcards=*/!config.wildcardsEnabled);
+                /*skipWildcards=*/!config.wildcardsEnabled, &needCap);
+            const bool capped = config.classification == SlotClassification::Regular;
+            const float itemCap = capped ? needCap.Factor(*item) : 1.0f;
+            const float challengerCap = capped && challenger ? needCap.Factor(*challenger) : 1.0f;
 
-            if (challenger && challenger->utility > item->utility * factor) {
-                SKSE::log::debug("[Hold] Page {} slot {}: '{}' gives way to '{}' (u={:.3f} vs {:.3f}, x{:.2f} > x{:.2f})",
+            if (challenger && challenger->utility * challengerCap > item->utility * itemCap * factor) {
+                SKSE::log::debug("[Hold] Page {} slot {}: '{}' gives way to '{}' (u={:.3f} vs {:.3f}, x{:.2f} > x{:.2f}){}",
                     pageIndex, j, item->GetName(), challenger->GetName(), challenger->utility, item->utility,
-                    item->utility > 0.0f ? challenger->utility / item->utility : 0.0f, factor);
+                    item->utility > 0.0f ? challenger->utility / item->utility : 0.0f, factor,
+                    itemCap < 1.0f || challengerCap < 1.0f
+                        ? std::format(" need cap x{:.2f} vs x{:.2f}", challengerCap, itemCap) : std::string{});
 
                 assignments[j] = SlotAssignment::FromCandidate(j, config.classification, *challenger,
                     challenger->isWildcard ? AssignmentType::Wildcard : AssignmentType::Normal);
@@ -1078,6 +1117,7 @@ namespace Huginn::Slot
                 assignedNames.insert(challenger->GetName());
                 excludedIDs.insert(challenger->GetFormID());
                 excludedNames.insert(challenger->GetName());
+                needCap.Add(*challenger);
 
                 // The loser is free again -- the fill may show it elsewhere --
                 // but not as this seat's owner. A guest owns a seat somewhere
@@ -1098,6 +1138,7 @@ namespace Huginn::Slot
                 item->isWildcard ? AssignmentType::Wildcard : AssignmentType::Normal);
             assignedFormIDs.insert(item->GetFormID());
             assignedNames.insert(item->GetName());
+            needCap.Add(*item);
         }
     }
 
@@ -1434,8 +1475,14 @@ namespace Huginn::Slot
         const std::set<std::string_view>& assignedNames,
         bool skipEquipped,
         const State::PlayerActorState* player,
-        bool skipWildcards) const
+        bool skipWildcards,
+        NeedCap* needCap) const
     {
+        const bool capped = needCap && needCap->Active() && classification == SlotClassification::Regular;
+        const Scoring::ScoredCandidate* first = nullptr;  // the pick without the cap
+        const Scoring::ScoredCandidate* best = nullptr;
+        float bestUtility = 0.0f;
+
         // Candidates are already sorted by utility (highest first)
         // Find the first candidate that matches and isn't already assigned
         for (const auto& candidate : candidates) {
@@ -1477,10 +1524,42 @@ namespace Huginn::Slot
                 }
             }
 
-            return candidate;
+            if (!capped) {
+                return candidate;
+            }
+
+            // Under the need cap: the first match wins outright unless its
+            // need is already full on the page; then every later match is
+            // weighed by its own factor. Past the sorted prefix the list is
+            // in no order, so the scan does not stop early. A wildcard keeps
+            // its POSITION semantics (see HoldIncumbents): it wins only as the
+            // first match, and is never weighed against capped items.
+            if (!best) {
+                const float factor = needCap->Factor(candidate);
+                if (candidate.isWildcard || factor >= 1.0f) {
+                    return candidate;
+                }
+                first = best = &candidate;
+                bestUtility = candidate.utility * factor;
+                continue;
+            }
+            if (candidate.isWildcard) {
+                continue;
+            }
+            const float effective = candidate.utility * needCap->Factor(candidate);
+            if (effective > bestUtility) {
+                best = &candidate;
+                bestUtility = effective;
+            }
         }
 
-        return std::nullopt;
+        if (!best) {
+            return std::nullopt;
+        }
+        if (best != first) {
+            needCap->NoteSkipped(*first);
+        }
+        return *best;
     }
 
     // =========================================================================

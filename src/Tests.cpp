@@ -30,6 +30,7 @@
 #include "IniLoad.h"                   // MatchOverrideSection (override namespacing tests)
 #include "slot/SlotLocker.h"          // THROWAWAY: RunSlotLockerResetTest (0.19.21)
 #include "slot/SlotAllocator.h"       // THROWAWAY: RunSlotSeatingTest (0.20.30)
+#include "slot/NeedCap.h"
 #include "slot/SlotSettings.h"         // THROWAWAY: MAX_SLOTS_PER_PAGE for the same
 #include "override/OverrideConditions.h"  // THROWAWAY: OverrideCollection for the same
 
@@ -6365,6 +6366,70 @@ void RunFillJobKeysTest()
 
     if (passed) {
         logger::info("  fill-job-keys test PASSED"sv);
+    }
+#endif
+}
+
+// =============================================================================
+// Need cap: a soft cap per need on Regular keys (NeedCap.h)
+// =============================================================================
+// The arithmetic and the grouping, without a layout: the shipped INI decides
+// how many Regular keys a page has, so an allocation-level check would test
+// the INI. Three healing spells shown, a fourth at u 2.0 weighs 1.0 at x0.5
+// and loses to a damage spell at 1.1; a food that heals and a food that
+// fortifies are ONE need.
+void RunNeedCapTest()
+{
+#ifndef NDEBUG
+    using namespace Huginn::Slot;
+    logger::info("Running need cap test..."sv);
+
+    auto spell = [](RE::FormID id, Spell::SpellType type, float utility) {
+        Candidate::SpellCandidate s{};
+        s.formID = id; s.name = "NeedCapProbe"; s.type = type;
+        Scoring::ScoredCandidate sc{}; sc.candidate = s; sc.utility = utility;
+        return sc;
+    };
+    auto food = [](RE::FormID id, Item::ItemType type) {
+        Candidate::ItemCandidate f{};
+        f.formID = id; f.name = "NeedCapFood"; f.sourceType = Candidate::SourceType::Food; f.type = type;
+        Scoring::ScoredCandidate sc{}; sc.candidate = f; sc.utility = 1.0f;
+        return sc;
+    };
+
+    bool passed = true;
+    auto expect = [&](bool ok, std::string_view what) {
+        if (!ok) { logger::error("TEST FAIL: need cap: {}"sv, what); passed = false; }
+    };
+
+    NeedCap cap(0.5f, 3);
+    const auto heal4 = spell(0x0BADF204, Spell::SpellType::Healing, 2.0f);
+    const auto flames = spell(0x0BADF205, Spell::SpellType::Damage, 1.1f);
+    expect(cap.Factor(heal4) == 1.0f, "an empty page discounted a healing spell");
+    for (RE::FormID id = 0x0BADF201; id <= 0x0BADF203; ++id) {
+        expect(cap.Factor(heal4) == 1.0f, "a need under its 3 free items was discounted");
+        cap.Add(spell(id, Spell::SpellType::Healing, 3.0f));
+    }
+    expect(cap.Factor(heal4) == 0.5f, "the 4th healing item is not at x0.5");
+    expect(cap.Factor(flames) == 1.0f, "a damage spell paid for the healing crowd");
+    expect(heal4.utility * cap.Factor(heal4) < flames.utility * cap.Factor(flames),
+        "the 4th healing spell (2.0 x0.5) still beats a damage spell at 1.1");
+    cap.Add(heal4);
+    expect(cap.Factor(heal4) == 0.25f, "the 5th item of a need is not at x0.25");
+
+    expect(NeedCap::NeedOf(food(0x0BADF206, Item::ItemType::HealthPotion)) == SlotClassification::FoodAny,
+        "food that heals is not counted as food");
+    expect(NeedCap::NeedOf(food(0x0BADF207, Item::ItemType::BuffPotion)) == SlotClassification::FoodAny,
+        "food that fortifies is not counted as food");
+
+    NeedCap off(1.0f, 3);
+    for (RE::FormID id = 0x0BADF201; id <= 0x0BADF206; ++id) {
+        off.Add(spell(id, Spell::SpellType::Healing, 3.0f));
+    }
+    expect(!off.Active() && off.Factor(heal4) == 1.0f, "fNeedRepeatDiscount = 1.0 still discounts");
+
+    if (passed) {
+        logger::info("  need cap test PASSED"sv);
     }
 #endif
 }
