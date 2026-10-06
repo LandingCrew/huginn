@@ -28,9 +28,14 @@ and change the learning before tuning anything that competes with it.
    Oakflesh beside Stoneflesh, alchemy gear at the lab losing to combat
    items, off-habit items missing from the page (A|B: on menu picks,
    context alone offered 13 to the live page's 7).
-3. **Slot stability** -- the soft slot manager (Slot temporal memory) first,
-   then the rest of "Remaining slot churn". The user saw an unheld sword
-   and bow jump slots after refresh bursts.
+3. **Slot stability** -- in this order (2026-10-06): the per-need discount
+   (what goes on the page: eight foods filled eight keys; measured in
+   tools/replay first), then the soft slot manager (where it sits: an
+   unheld sword and bow jumped slots after refresh bursts), then combat
+   suppressing the workstation context, then a `fChallengerMargin` 0.25
+   vs 0.5 comparison on the `slotChurn=` heartbeat. All under "Remaining
+   slot churn" and "Soft slot manager" below; #174's key-age and tenure
+   bands are the before/after measure.
 4. **Potion recommendations** -- buffs matched to the loadout, resist
    potions weighted by damage taken, the emergency potion's smallest
    cover learned, no second restore on over-time lists, carry weight when
@@ -1124,7 +1129,7 @@ with how the run is played and laid out -- see the Phase 2 review notes.
       and stays off, with no thirst weight and no drink tagging, on a list
       without one, as cold and hunger already key on survival mode being
       active. Log at load which system was found, or that none was.
-      Original title: **Thirst is not tracked -- UNPARKED 2026-10-03.** Parked 2026-09-30
+      Unparked 2026-10-03. It was parked 2026-09-30
       because there was no reliable way to buy water from innkeepers on
       LoreRim. The user found the way: LoreRim's waterskins are craftable,
       and once you own one an innkeeper refills it for free -- so water is
@@ -1463,6 +1468,19 @@ key, is already a PotionsAny slot with overrides on.
         (decided 2026-09-29): per-slot `bWildcardsEnabled` already keeps
         the keys that matter steady, and no play session showed a wildcard
         in the way mid-fight. Revisit only if one does.
+      - **Workstation flicker at the bench, in combat too.** Vanilla+
+        (simonrim-essentials, 0.23.2, 2026-10-06 15:53-16:11): the
+        workstation context changed 109 times in 18 minutes, often in
+        pairs a second apart as the crosshair crossed a forge, grindstone
+        or workbench (15:53:21-24: forge on, off, on, off, on, off). 24 of
+        the 109 were in combat, fighting beside a forge (15:58:45-59:03),
+        each one swapping craft gear in and out mid-fight. A 10 s hold
+        after the crosshair leaves the bench was tried (#175) and closed
+        unmerged: the user judged it not needed, and it kept the craft
+        context alive while walking through town. Instead: **combat suppresses the
+        workstation context** -- no one crafts mid-fight. Then re-measure
+        the out-of-combat flicker before deciding whether anything else is
+        needed.
       - **One need fills the whole page.** Worse form of the item below,
         seen 2026-10-05 17:11 with a hungry paladin at an alchemy lab: food
         drew ctx 0.94-1.00 and a 1.8x potion multiplier (u ~2.2), and all
