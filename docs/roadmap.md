@@ -1508,7 +1508,12 @@ key, is already a PotionsAny slot with overrides on.
         while the cap held top-8 (76.3% vs 76.7%), raised menu picks (30.8%
         vs 29.7%) and left no page with five of one need (196 before). Food
         is one need because foods classify by effect, so seven foods never
-        had more than three of a class. In-game check pending.
+        had more than three of a class. Checked in game (vanilla+,
+        2026-10-06 18:04-18:15, two fights): at most 3 weapons across 99
+        page updates; weapons and, in combat, resist potions past the 3rd
+        were kept off; the hold weighed a 4th weapon at x0.5 (18:13:06).
+        The first build counted the hold slot by slot and let four weapons
+        through (17:13:24); fixed before merge.
         First decision (the user, 2026-10-05): a SOFT per-need discount -- the 1st
         item of a need at full utility, the 2nd x d, the 3rd x d^2 -- applied
         in the slot manager ONLY, for placement on Regular slots. Ranking,

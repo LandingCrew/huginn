@@ -851,7 +851,7 @@ namespace Huginn::Slot
                 if (kept.empty()) {
                     SKSE::log::debug("[NeedCap] Page {}: nothing kept off", pageIndex);
                 } else {
-                    SKSE::log::debug("[NeedCap] Page {}: kept off, {} of their need already shown: {}",
+                    SKSE::log::debug("[NeedCap] Page {}: kept off, {} or more of their need already shown: {}",
                         pageIndex, SlotSettings::GetSingleton().NeedFreeSlots(), kept);
                 }
                 m_needCapLog[pageIndex] = std::move(kept);
@@ -860,6 +860,17 @@ namespace Huginn::Slot
 
         return assignments;
     }
+
+#ifndef NDEBUG
+    SlotAssignments SlotAllocator::AllocateForTest(size_t pageIndex, uint32_t generation,
+        const std::vector<SlotConfig>& slotConfigs, const Scoring::ScoredCandidateList& candidates) const
+    {
+        const Override::OverrideCollection noOverrides{};
+        const State::PlayerActorState noPlayer{};
+        const State::WorldState noWorld{};
+        return AllocateSlotsInternal(pageIndex, generation, slotConfigs, candidates, noOverrides, noPlayer, noWorld);
+    }
+#endif
 
     // =========================================================================
     // SEATING (anti-juggling)
@@ -1122,6 +1133,7 @@ namespace Huginn::Slot
             // or a crowd that formed before the cap applied would be held
             // there for good.
             needCap.Remove(*item);
+            const size_t skipMark = needCap.SkipMark();
             const auto challenger = FindBestCandidate(candidates, config.classification,
                 excludedIDs, excludedNames, config.skipEquipped, player,
                 /*skipWildcards=*/!config.wildcardsEnabled, &needCap);
@@ -1171,6 +1183,10 @@ namespace Huginn::Slot
             assignedFormIDs.insert(item->GetFormID());
             assignedNames.insert(item->GetName());
             needCap.Add(*item);   // back in the count it left to be judged
+            // The search was hypothetical: an item it passed for the cap was
+            // kept off by the cap only if, uncapped, it would have taken the
+            // slot from this holder.
+            needCap.DropSkipsSince(skipMark, itemScore * factor);
         }
     }
 

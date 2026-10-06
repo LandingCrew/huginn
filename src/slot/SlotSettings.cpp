@@ -202,7 +202,7 @@ namespace Huginn::Slot
         const float needDiscount = std::clamp(
             static_cast<float>(ini.GetDoubleValue("SlotLocker", "fNeedRepeatDiscount", 0.5)), 0.0f, 1.0f);
         const auto needFree = static_cast<uint32_t>(std::clamp(
-            ini.GetLongValue("SlotLocker", "iNeedFreeSlots", 3), 0L, static_cast<long>(MAX_SLOTS_PER_PAGE)));
+            ini.GetLongValue("SlotLocker", "iNeedFreeSlots", 3), 1L, static_cast<long>(MAX_SLOTS_PER_PAGE)));
         m_needRepeatDiscount.store(needDiscount, std::memory_order_release);
         m_needFreeSlots.store(needFree, std::memory_order_release);
         if (needDiscount < 1.0f) {

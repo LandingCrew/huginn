@@ -469,9 +469,15 @@ need.
   cap (`src/slot/NeedCap.h`); ranking, the learner and the selection log keep
   every item's true utility, so learning never sees an item as worse because a
   sibling took a key first.
-- **The hold uses it too** (Pass 1c): a held item whose need is already full
-  holds at its capped utility, or a crowd that formed before the cap applied
-  would stay.
+- **The hold uses it too** (Pass 1c), or a crowd that formed before the cap
+  applied would stay. Every held item is counted before any is judged, and a
+  held item's factor is its rank by utility within its need -- the weakest of
+  four held weapons holds at x0.5, the other three at full. The item being
+  judged leaves the count while its challenger is found, so a challenger of
+  the same need is weighed as the holder was. Counted slot by slot instead,
+  a challenger for a high-priority slot could not see the holders further
+  down: four weapons got through on an all-Regular page (vanilla, 2026-10-06
+  17:13:24), and a weapon was swapped for a weapon (17:14:11).
 - **Why from the 4th item, not the 2nd.** Replayed on 653 picks
   (`tools/replay/replay.py`): the cap at 3 free and x0.5 kept the chosen item
   in the top 8 at 76.3% (76.7% without) and menu picks at 30.8% (29.7%), and no
@@ -847,7 +853,7 @@ per-slot defaults described under
 bKeepSlotPositions = true       ; Keep an item in the slot it was already in (seating)
 bHoldSeatedItems = true         ; Hold a seated item until a challenger beats it by the margin
 fChallengerMargin = 0.25        ; How much better a challenger must score (0.25 = 25%)
-iNeedFreeSlots = 3              ; Need cap: items of one need on Regular keys at full utility
+iNeedFreeSlots = 3              ; Need cap: items of one need on Regular keys at full utility (1-10)
 fNeedRepeatDiscount = 0.5       ; ...and x this for each one past them; 1.0 = off
 fRemembranceDurationMs = 15000  ; Remembrance hold length; 0 = off everywhere
 fRemembranceMismatchDurationMs = 5000  ; ...on a key whose class it does not fit

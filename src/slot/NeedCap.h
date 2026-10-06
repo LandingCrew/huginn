@@ -66,6 +66,12 @@ namespace Huginn::Slot
         /// because of the cap. Kept for the transition log.
         void NoteSkipped(const Scoring::ScoredCandidate& skipped);
 
+        /// The slot hold's challenger search is hypothetical: when the holder
+        /// stays, the notes that search made are dropped unless the skipped
+        /// item, uncapped, would have beaten the holder (`threshold`).
+        [[nodiscard]] size_t SkipMark() const noexcept { return m_skipped.size(); }
+        void DropSkipsSince(size_t mark, float threshold);
+
         /// Items the cap kept off the page: noted as skipped and not shown in
         /// the end. Empty when the cap changed nothing. Sorted, so equal pages
         /// give equal strings.
@@ -79,8 +85,14 @@ namespace Huginn::Slot
         std::array<uint8_t, SLOT_CLASSIFICATION_COUNT> m_onPage{};
         const Scoring::ScoredCandidateList* m_candidates;
         mutable std::vector<uint8_t> m_needCache;  // per index of m_candidates; kUnknown = not yet
-        std::vector<std::pair<RE::FormID, SlotClassification>> m_skipped;
-        std::vector<std::string> m_skippedNames;
+        struct Skipped
+        {
+            RE::FormID formID;
+            SlotClassification need;
+            float utility;
+            std::string name;
+        };
+        std::vector<Skipped> m_skipped;
     };
 
 }  // namespace Huginn::Slot
