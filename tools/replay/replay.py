@@ -50,6 +50,7 @@ CONF_MIDPOINT = 5.0
 CONF_STEEPNESS = 0.3
 UCB_NORM = 0.2
 BETA = 0.2
+PASSED_OVER_DELAY_SEC = 10   # Config::PASSED_OVER_DELAY_SEC
 LAMBDA_MIN, LAMBDA_MAX = 0.5, 3.0
 PAGE = 8
 
@@ -143,13 +144,17 @@ class Current(Policy):
     def __init__(self, rec_scale=1.0):
         super().__init__()
         self.rec_scale = rec_scale
+        self.lambda_max = LAMBDA_MAX
+
+    def conf(self, n):
+        return confidence(n)
 
     def learn_score(self, c, phi):
         L = self.learner
         n = L.n[c["form"]]
-        a = confidence(n)
+        a = self.conf(n)
         learn = a * L.predict(c["form"], phi) + (1 - a) * c["prior"] + BETA * ucb(n, L.total) + self.rec_scale * c["rec"]
-        lam = LAMBDA_MIN + a * (LAMBDA_MAX - LAMBDA_MIN)
+        lam = LAMBDA_MIN + a * (self.lambda_max - LAMBDA_MIN)
         return learn, lam
 
     def utility(self, c, phi):
@@ -181,21 +186,30 @@ class ChoiceTarget(Current):
         # weapon taken back after every scroll is not a new choice.
         self.repeat_window = repeat_window
         self._last = {}
+        self._pending = []   # (due, form, phi): deferred passed-over updates
         self.name = label or (f"choice target (neg {neg_weight}, lmax {lambda_max}, rec x{rec_scale:.3g}"
                               + (f", repeat {repeat_window:g}s" if repeat_window else "")
                               + (f", pseudo-obs n0={pseudo_n0:g}" if pseudo_n0 is not None else "") + ")")
 
-    def learn_score(self, c, phi):
-        L = self.learner
-        n = L.n[c["form"]]
-        a = confidence(n) if self.pseudo_n0 is None else pseudo_confidence(n, self.pseudo_n0)
-        learn = a * L.predict(c["form"], phi) + (1 - a) * c["prior"] + BETA * ucb(n, L.total) + self.rec_scale * c["rec"]
-        lam = LAMBDA_MIN + a * (self.lambda_max - LAMBDA_MIN)
-        return learn, lam
+    def conf(self, n):
+        return confidence(n) if self.pseudo_n0 is None else pseudo_confidence(n, self.pseudo_n0)
 
     def learn(self, rec, chosen, phi):
-        if self.repeat_window:
-            t = dt.datetime.strptime(rec["utc"][:19], "%Y-%m-%d %H:%M:%S")
+        # As the game: passed-over updates wait PASSED_OVER_DELAY_SEC, are
+        # cancelled if their item is the next pick (a companion), and are
+        # skipped for an item the learner holds no entry for.
+        t = dt.datetime.strptime(rec["utc"][:19], "%Y-%m-%d %H:%M:%S")
+        self._pending = [p for p in self._pending if p[1] != rec["form"]]
+        keep = []
+        for due, form, pphi in self._pending:
+            if t < due:
+                keep.append((due, form, pphi))
+            elif form in self.learner.w:
+                # A quarter step, not a train -- as BanditSubscriber does in the game.
+                self.learner.update(form, pphi, 0.0, step=self.neg_weight, count=0)
+        self._pending = keep
+        # The repeat window covers equips only: two drinks are two decisions.
+        if self.repeat_window and rec.get("kind") == "equip":
             prev = self._last.get(rec["form"])
             self._last[rec["form"]] = (t, rec["launch"])
             if prev and prev[1] == rec["launch"] and (t - prev[0]).total_seconds() < self.repeat_window:
@@ -211,8 +225,7 @@ class ChoiceTarget(Current):
             c = by_form.get(form)
             if c is None or need is None or c["need"] != need:
                 continue
-            # A quarter step, not a train -- as BanditSubscriber does in the game.
-            self.learner.update(form, phi, 0.0, step=self.neg_weight, count=0)
+            self._pending.append((t + dt.timedelta(seconds=PASSED_OVER_DELAY_SEC), form, phi))
 
 
 # --------------------------------------------------------------------------

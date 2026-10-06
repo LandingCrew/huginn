@@ -153,9 +153,13 @@ namespace Huginn::Learning
       // the prior, and the prior keeps n0's share however much is learned.
       // Replaced a sigmoid (50% at 5 trains, ~95% at 15) that gave the prior
       // nothing to say once an item was trained. tools/replay over the soak
-      // run: n0 = 2 put the chosen item in the top 8 on 73.9% of picks and
-      // 28.9% of menu picks, against 71.3% / 26.7% for the sigmoid under the
-      // same choice target (n0 1-3 within a point; 5 and 8 worse).
+      // run, modelling the game as it ships (repeats on equips only, deferred
+      // passed-over updates): n0 = 2 put the chosen item in the top 8 on 74.1%
+      // of picks and 29.2% of menu picks, against 71.7% / 27.0% for the sigmoid
+      // under the same choice target (n0 1-3 within a point; 5 and 8 worse).
+      // Code review of #173 tried the alternatives: lambda back on the sigmoid
+      // 71.5% / 28.1%, an effective-sample-size alpha 72.3% / 29.2% -- none
+      // clearly better on 502 scored picks (a point is ~5 picks).
       const float n = static_cast<float>(trains);
       return n / (n + PRIOR_PSEUDO_OBSERVATIONS);
    }
