@@ -343,6 +343,12 @@ namespace Huginn::Slot
         static constexpr size_t HOME_MEMORY_PER_SLOT = 3;
         mutable std::array<std::array<std::array<Departure, HOME_MEMORY_PER_SLOT>, MAX_SLOTS_PER_PAGE>, MAX_PAGES>
             m_departed{};
+        /// Per slot: the item that claimed it through home keys and has not sat
+        /// in it yet (a returner, or one waiting out an override). Seating and
+        /// the hold mark the move that finally puts it there
+        /// (SlotAssignment::seatMoved) -- that move, and the gap-filler it
+        /// swaps out, are the only ones that release a lock early.
+        mutable std::array<std::array<uint64_t, MAX_SLOTS_PER_PAGE>, MAX_PAGES> m_homeClaims{};
 
         /// Before the rank-ordered fill: keep each seated item in its own seat,
         /// unless the slot no longer accepts it or the best challenger FOR THAT

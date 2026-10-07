@@ -106,24 +106,51 @@ namespace Huginn::Slot
         // landed a lock later, three visible changes for one (LoreRim
         // 2026-10-06 20:47:10, 20:50:17). Not for the hold's own moves: those
         // wait out the lock as before.
-        for (size_t j = 0; j < newAssignments.size() && j < MAX_SLOTS; ++j) {
-            auto& held = m_lockedSlots[j];
+        //
+        // A seating move releases only if the item will SHOW at its
+        // destination: that slot is unlocked, or its own lock is letting go
+        // in this pass too (a swap, a chain). Into a slot still locked on
+        // something else, releasing would hide the item until that lock ran
+        // out (code review of #179); the old slot keeps showing it instead.
+        const size_t n = std::min(newAssignments.size(), MAX_SLOTS);
+        std::array<size_t, MAX_SLOTS> dest{};
+        dest.fill(SIZE_MAX);
+        for (size_t j = 0; j < n; ++j) {
+            const auto& held = m_lockedSlots[j];
             if (!held.isLocked || held.assignment.IsEmpty()) continue;
-            for (size_t i = 0; i < newAssignments.size() && i < MAX_SLOTS; ++i) {
+            for (size_t i = 0; i < n; ++i) {
                 const auto& ovr = newAssignments[i];
                 if (i != j && (ovr.IsPinned() || ovr.seatMoved) && ovr.formID == held.assignment.formID &&
                     ovr.uniqueID == held.assignment.uniqueID) {
-                    const auto cause = ovr.IsOverride()   ? Telemetry::SlotChange::Override
-                                     : ovr.IsRemembered() ? Telemetry::SlotChange::Remembrance
-                                                          : Telemetry::SlotChange::Seated;
-                    spdlog::debug("[SlotLocker] Slot {} lock released: its item moved to {} slot {}",
-                        j, Telemetry::SlotChangeName(cause), i);
-                    held.isLocked = false;
-                    held.remainingMs = 0.0f;
-                    held.releaseCause = cause;
+                    dest[j] = i;
                     break;
                 }
             }
+        }
+        for (bool changed = true; changed;) {
+            changed = false;
+            for (size_t j = 0; j < n; ++j) {
+                const size_t i = dest[j];
+                if (i == SIZE_MAX || newAssignments[i].IsPinned()) continue;
+                if (m_lockedSlots[i].isLocked && dest[i] == SIZE_MAX) {
+                    dest[j] = SIZE_MAX;
+                    changed = true;
+                }
+            }
+        }
+        for (size_t j = 0; j < n; ++j) {
+            const size_t i = dest[j];
+            if (i == SIZE_MAX) continue;
+            auto& held = m_lockedSlots[j];
+            const auto& ovr = newAssignments[i];
+            const auto cause = ovr.IsOverride()   ? Telemetry::SlotChange::Override
+                             : ovr.IsRemembered() ? Telemetry::SlotChange::Remembrance
+                                                  : Telemetry::SlotChange::Seated;
+            spdlog::debug("[SlotLocker] Slot {} lock released: its item moved to {} slot {}",
+                j, Telemetry::SlotChangeName(cause), i);
+            held.isLocked = false;
+            held.remainingMs = 0.0f;
+            held.releaseCause = cause;
         }
 
         for (size_t i = 0; i < newAssignments.size() && i < MAX_SLOTS; ++i) {

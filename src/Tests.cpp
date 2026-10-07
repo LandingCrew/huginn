@@ -6562,6 +6562,11 @@ void RunNeedCapHoldTest()
 // stays there while B's slot 1 empties with the override still up (it is
 // held where it stands, not moved by the fill), and takes slot 0 when the
 // override ends.
+//
+// Code review of #179, two more: (3) A OUTRANKED off slot 0 by the hold --
+// still a candidate, its seat cleared on the spot -- is remembered and takes
+// slot 0 back; (4) an override marking the gap-filler on its OWN seat keeps
+// that seat when A returns, and does not jump to its configured slot.
 void RunHomeKeyTest()
 {
 #ifndef NDEBUG
@@ -6585,7 +6590,7 @@ void RunHomeKeyTest()
     }
 
     // Candidates keep a view of their name: every name set once, up front.
-    static std::array<std::string, 10> names;
+    static std::array<std::string, 11> names;
     for (size_t i = 0; i < names.size(); ++i) {
         names[i] = "HomeKeyProbe" + std::to_string(i);
     }
@@ -6663,6 +6668,51 @@ void RunHomeKeyTest()
     const auto cleared = allocator.AllocateForTest(0, kGeneration, guarded, withoutB);
     allocator.Reset();
 
+    // (3) Outranked off the page by the hold, then back.
+    allocator.Reset();
+    (void)allocator.AllocateForTest(0, kGeneration, configs, pass1);
+    const Scoring::ScoredCandidateList outranked = {
+        spell(10, SpellType::Damage, 2.0f), B, C, D, E, F, G, H, spell(0, SpellType::Healing, 0.2f) };
+    const auto beaten = allocator.AllocateForTest(0, kGeneration, configs, outranked);
+    const Scoring::ScoredCandidateList outrankedBack = {
+        spell(10, SpellType::Damage, 2.0f), B, C, D, E, F, G, spell(0, SpellType::Healing, returned), H };
+    const auto backAfterBeaten = allocator.AllocateForTest(0, kGeneration, configs, outrankedBack);
+    allocator.Reset();
+
+    // (4) An override marking the gap-filler on its own seat 0 (mark in
+    // place), with its configured fallback on slot 3.
+    std::vector<SlotConfig> marking = configs;
+    for (auto& c : marking) c.overrideFilter = OverrideFilter::None;
+    marking[3].overrideFilter = OverrideFilter::Any;
+    auto potionN = [&] {
+        Candidate::ItemCandidate p{};
+        p.formID = kBase + 8; p.name = names[8]; p.type = Item::ItemType::BuffPotion;
+        return p;
+    }();
+    Scoring::ScoredCandidate potionScored{}; potionScored.candidate = potionN; potionScored.utility = 0.35f;
+    Override::OverrideCollection drowning;
+    {
+        Override::OverrideResult result;
+        result.priority = 50;
+        result.category = Override::OverrideCategory::Other;
+        result.condition = Override::OverrideCondition::Drowning;
+        result.reason = "home key test (marks in place)";
+        result.candidate = potionN;
+        drowning.activeOverrides.push_back(std::move(result));
+    }
+    const Scoring::ScoredCandidateList markGap = { B, C, D, E, F, G, potionScored, H };
+    const Scoring::ScoredCandidateList markBack = { B, C, D, E, F, G, spell(0, SpellType::Healing, returned), potionScored, H };
+    allocator.Reset();
+    (void)allocator.AllocateForTest(0, kGeneration, marking, pass1);
+    const auto markFilled = allocator.AllocateForTest(0, kGeneration, marking, markGap);
+    (void)allocator.AllocateForTest(0, kGeneration, marking, markBack, drowning);
+    const auto markHeld = allocator.AllocateForTest(0, kGeneration, marking, markBack, drowning);
+    allocator.Reset();
+
+    expect(slotOf(beaten, 0) == SIZE_MAX, "setup: the hold did not push A off the page");
+    expect(slotOf(backAfterBeaten, 0) == 0, "A, outranked off slot 0 by the hold, did not take it back");
+    expect(slotOf(markFilled, 8) == 0, "setup: the potion did not fill slot 0");
+    expect(slotOf(markHeld, 8) == 0, "the override marking its own seat jumped when A came back");
     expect(slotOf(first, 0) == 0, "setup: A is not on slot 0");
     expect(slotOf(blocked, 9) == 0, "setup: the override is not on slot 0");
     expect(slotOf(blocked, 0) == 7, "A was not shown on slot 7 while it waited for slot 0");

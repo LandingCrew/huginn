@@ -33,9 +33,12 @@ and change the learning before tuning anything that competes with it.
    tools/replay first), then the soft slot manager (where it sits: an
    unheld sword and bow jumped slots after refresh bursts; home keys,
    0.23.5), then combat
-   suppressing the workstation context (the flicker while standing still
-   at a bench is a separate, open problem), then a `fChallengerMargin` 0.25
-   vs 0.5 comparison on the `slotChurn=` heartbeat. All under "Remaining
+   suppressing the workstation context (undecided; it must restore itself
+   after the fight), then a `fChallengerMargin` 0.25 vs 0.5 comparison on
+   the `slotChurn=` heartbeat -- an INI-only session (0.5 would have
+   blocked ~82 of ~255 hold-governed changes across the last 8 windows).
+   The standing-still bench flicker is likely the tester; confirm with a
+   still camera. All under "Remaining
    slot churn" and "Soft slot manager" below; #174's key-age and tenure
    bands are the before/after measure.
 4. **Potion recommendations** -- buffs matched to the loadout, resist
@@ -1495,10 +1498,17 @@ key, is already a PotionsAny slot with overrides on.
         after the crosshair leaves the bench was tried (#175) and closed
         unmerged: the user judged it not needed, and it kept the craft
         context alive while walking through town.
-        Two fixes, two problems:
+        Two fixes, two problems (re-weighed 2026-10-06, after the need cap
+        and home keys):
         - **In combat: combat suppresses the workstation context** -- no
-          one crafts mid-fight.
-        - **Out of combat, standing still: still open.** Measured on 0.23.4
+          one crafts mid-fight. Undecided whether it is worth it now that
+          the hold, home keys and the need cap damp the juggling; if built,
+          the craft context must come back by itself when the fight ends
+          (the user), with no need to look away and back at the bench.
+        - **Out of combat, standing still: probably the tester** (the
+          user: moving the camera on and off the forge and workbench while
+          testing). To confirm with a still camera before treating it as a
+          bug. Measured on 0.23.4
           the same day: 8 changes in 2.3 s standing at the forge
           (17:14:08-10, none -> forge -> none ...), and 26 in 65 s standing
           between the forge and the armour workbench (18:05:37-53,

@@ -636,11 +636,22 @@ minutes landed on a different key, nearly all of them within a minute. So:
   it leaves the page meanwhile, the claim lapses with it. On LoreRim's first
   run this was 17 of the 22 returns that missed their key (2026-10-06).
 - **One run, not three.** The gap-filler has usually been on the returner's
-  key under three seconds, so it is still locked. Seating marks what it moves
-  (`SlotAssignment::seatMoved`), and `SlotLocker` lets go of a lock whose item
-  seating moved elsewhere, as it already did for an override or Remembrance
-  item -- otherwise the returner showed on the wrong key first and the swap
-  landed a lock later (churn cause `seated`).
+  key under three seconds, so it is still locked. The move that puts a home
+  claimant on its key -- in seating or the hold -- and the gap-filler it swaps
+  out are marked (`SlotAssignment::seatMoved`, claims in `m_homeClaims`), and
+  `SlotLocker` lets go of a lock whose item moved that way, as it already did
+  for an override or Remembrance item -- but only when the destination will
+  show it (unlocked, or releasing in the same pass); otherwise the old slot
+  keeps showing it. Ordinary seating moves still wait out the lock. Churn
+  cause `seated`.
+- **What counts as leaving.** A seat owner leaving the screen, and also an
+  item with no seat leaving from where it stood: the slot hold clears an
+  outranked item's seat on the spot, and that item is exactly the one that
+  drops off for a few seconds. Every returner's departure is spent when it
+  comes back, whatever the outcome, so it is counted and logged once.
+- **Not an override's own item.** A returner never claims a key whose pinned
+  item is that key's seat owner (an override marking its item in place): the
+  override would lose the seat and jump to its configured slot.
 - **Not Remembrance.** Remembrance puts the item a press took off under that
   key, whatever the ranking says. Home keys never add an item: the ranking
   still decides what is shown; this decides where a returning item sits.
