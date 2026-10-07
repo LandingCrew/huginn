@@ -19,7 +19,8 @@ namespace Huginn::Learning
     // Huginn (EquipManager, WheelerClient). Covers all form types: spells,
     // weapons, potions, ammo, armor, etc.
     //
-    // Phase 3a: Logging only. Phase 3b will wire in ExternalEquipLearner.
+    // Each outside equip goes to ExternalEquipLearner, which gates it (player
+    // input, a fresh pipeline cache) and hands it to SelectionTracker.
     // =========================================================================
 
     class ExternalEquipListener : public RE::BSTEventSink<RE::TESEquipEvent>

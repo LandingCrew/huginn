@@ -311,6 +311,12 @@ def load(path, char, from_launch, to_launch=None):
                 continue
             cols = r["cols"]
             r["_cands"] = [dict(zip(cols, c)) for c in r["cands"]]
+            # The recency term on ONE scale, the pre-0.23.0 one (1.5): since
+            # the choice target the game logs it already divided by 8
+            # (0.1875), and the policies' rec_scale = 1/8 would divide again.
+            for c in r["_cands"]:
+                if 0.0 < c.get("rec", 0.0) < 1.0:
+                    c["rec"] *= 8.0
             recs.append(r)
     recs.sort(key=lambda r: r["utc"])
     return recs

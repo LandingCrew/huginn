@@ -15,9 +15,10 @@ namespace Huginn::Learning
    // (dropped into the world, sold, stored in a container, given to a follower).
    //
    // PROBLEM:
-   // - UpdateLoop's delta scan rewards ANY count decrease as a consumption,
-   //   so dropping or selling scrolls/potions teaches the learner the player
-   //   favors items they are actually discarding.
+   // - UpdateLoop's delta scan reads a count decrease as a consumption, and
+   //   since 0.22.9 that confirms a pending consumable selection. Without this
+   //   tracker, dropping or selling a potion the player had just selected
+   //   would confirm it as drunk.
    //
    // SOLUTION:
    // - TESContainerChangedEvent fires for every transfer out of the player's

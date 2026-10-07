@@ -83,12 +83,6 @@ namespace Huginn::Learning
         /// anything is a new decision.
         void ForgetRepeats();
 
-        [[nodiscard]] size_t PendingCount() const
-        {
-            std::lock_guard lock(m_mutex);
-            return m_pending.size();
-        }
-
     private:
         SelectionTracker() = default;
         SelectionTracker(const SelectionTracker&) = delete;

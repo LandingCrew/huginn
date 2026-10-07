@@ -342,32 +342,6 @@ namespace Huginn::Scoring
     }
 
     // =========================================================================
-    // SINGLE CANDIDATE SCORING (Public)
-    // =========================================================================
-
-    ScoredCandidate UtilityScorer::ScoreCandidate(
-        const Candidate::CandidateVariant& candidate,
-        const State::GameState& state,
-        const State::PlayerActorState& player,
-        const State::TargetCollection& targets,
-        const State::WorldState& world)  // Stage 1f: Added WorldState
-    {
-        // Stage 1f: Evaluate context rules for single candidate
-        Context::ContextWeightMap weights = m_contextEngine.EvaluateRules(
-            player, targets, world);
-
-        // Single candidate — no lock amortization benefit, use direct APIs
-        RE::FormID formID = Candidate::GetFormID(candidate);
-        auto stateFeatures = Learning::StateFeatures::FromState(player, targets);
-        float contextWeight = Context::WeightForCandidate(candidate, weights);
-        auto metrics = m_featureLearner.GetMetrics(formID, stateFeatures);
-        float recencyBoost = m_usageMemory.GetRecencyBoost(formID, state);
-
-        return ScoreCandidateInternal(candidate, state, player, targets, world, weights,
-            contextWeight, metrics, recencyBoost);
-    }
-
-    // =========================================================================
     // INTERNAL SCORING IMPLEMENTATION
     // =========================================================================
 

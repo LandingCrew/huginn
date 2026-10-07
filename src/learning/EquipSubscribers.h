@@ -42,21 +42,26 @@ namespace Huginn::Learning
 
         void OnEquipEvent(const EquipEvent& event) override
         {
-            if (event.repeatPick) {
-                logger::info("[BanditSubscriber] {:08X} picked again within {:.0f}s -- the same decision, no update"sv,
-                    event.formID, Config::REPEAT_PICK_WINDOW_SEC);
-                return;
-            }
-
             const auto now = std::chrono::steady_clock::now();
             size_t cancelled = 0;
             size_t queued = 0;
             {
                 std::scoped_lock lock(m_pendingMutex);
                 // The chosen item was not passed over after all: a companion.
+                // Before the repeat check, not after: B, then A (B queued as
+                // passed over), then B again inside the repeat window is the
+                // main weapon taken back -- B must not be trained toward 0 for
+                // the pick it was just chosen again in (learner audit, 0.23.6).
                 const auto before = m_pending.size();
                 std::erase_if(m_pending, [&](const PendingNegative& p) { return p.formID == event.formID; });
                 cancelled = before - m_pending.size();
+
+                if (event.repeatPick) {
+                    logger::info("[BanditSubscriber] {:08X} picked again within {:.0f}s -- the same decision, no update{}"sv,
+                        event.formID, Config::REPEAT_PICK_WINDOW_SEC,
+                        cancelled ? std::format("; {} passed-over update(s) for it cancelled", cancelled) : std::string{});
+                    return;
+                }
 
                 const auto& snap = event.shown;
                 if (const auto* chosen = snap.Find(event.formID)) {

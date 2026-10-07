@@ -462,7 +462,7 @@ and stated in the code.
 
 | Subscriber | Action |
 |------------|--------|
-| **BanditSubscriber** | `FeatureBanditLearner::Update(formID, features, RewardFor(kind))` |
+| **BanditSubscriber** | `FeatureBanditLearner::Update(formID, features, CHOICE_TARGET)` for the chosen item; queues a passed-over update (target 0, step 0.25, not a train) for each same-need item shown, applied 10 s later from `OnTick` unless that item is picked first -- a repeat pick inside the window cancels its own pending update too (0.23.6) -- and skipped for an item the learner has no entry for |
 | **UsageMemorySubscriber** | `UsageMemory::RecordUsage` (recency boost) |
 
 The cooldown is no longer a subscriber: it follows the count drop itself, so a
@@ -534,7 +534,7 @@ selection's update. Two outputs:
 
 ### Learning Signal Sources
 
-> **Design Principle (v0.13.0+):** Learning is decoupled from the presentation layer (Wheeler/Widget). The system learns exclusively from confirmed player selections. Negative signals come from time-based weight decay and L2, not from Wheeler open/close events -- and, since v0.22.9, not from misclicks either: an item swapped away inside the confirm window is simply never confirmed.
+> **Design Principle (v0.13.0+):** Learning is decoupled from the presentation layer (Wheeler/Widget). The system learns exclusively from confirmed player selections. Negative signals come from the passed-over update (a same-need item shown and not chosen), L2 and forgetting (the useful life, 0.23.6), not from Wheeler open/close events -- and, since v0.22.9, not from misclicks either: an item swapped away inside the confirm window is simply never confirmed.
 
 A confirmed selection is the only explicit learning signal. Every source earns
 the same: the chosen item -> 1, and the same-need items shown and passed over
@@ -774,9 +774,9 @@ for version differences.
 |   +-------+--------+  +-------+--------+  +-------+--------+                 |
 |           |                   |                   |                          |
 |           |              +----+----+              |                          |
-|           |              | Decay:  |              |                          |
+|           |              | Aging:  |              |                          |
 |           |              | L2 reg  |              |                          |
-|           |              | + time  |              |                          |
+|           |              | + life  |              |                          |
 |           |              +----+----+              |                          |
 |           |                   |                   |                          |
 |           +-------------------+-------------------+                          |
@@ -804,9 +804,9 @@ for version differences.
 |                    |                       |                                 |
 |                    v                       v                                 |
 |             +-------------+        +-------------+                           |
-|             |  SELECT     |        |   IGNORE    |                           |
-|             | (confirmed: |        |  (time decay|                           |
-|             |  chosen->1) |        |   handles)  |                           |
+|             |  SELECT     |        | PASS OVER   |                           |
+|             | (confirmed: |        | (same need: |                           |
+|             |  chosen->1) |        |  ->0, x0.25)|                           |
 |             +------+------+        +-------------+                           |
 |                    |                                                         |
 |                    v                                                         |
@@ -1372,8 +1372,6 @@ just-cleared table for the remainder of their lock duration.
 |-----------|---------|-------------|
 | NEAR_MISS_SLOTS | 2 | Overshoot ≤ this → Case C |
 | FAR_MISS_SLOTS | 5 | Overshoot ≤ this → Case B-med, beyond → B-low |
-| MAX_ANTI_SPAM_ENTRIES | 200 | Anti-spam map size before cleanup |
-| CLEANUP_AGE_SECONDS | 600 | Age at which anti-spam entries are pruned |
 | `EquipSourceTracker::DEFAULT_WINDOW_MS` | 400 | Huginn-equip suppression window (per FormID) |
 
 **Removed parameters:**

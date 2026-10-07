@@ -93,12 +93,6 @@ namespace Huginn::Learning
       m_life = clamped;
    }
 
-   MemoryLife FeatureBanditLearner::GetMemoryLife() const
-   {
-      std::shared_lock lock(m_mutex);
-      return m_life;
-   }
-
    void FeatureBanditLearner::AdvancePlayTime(float seconds) noexcept
    {
       if (seconds > 0.0f) {
@@ -198,14 +192,7 @@ namespace Huginn::Learning
       return it == m_items.end() ? 1.0f : RetentionAt(it->second, PlayNow());
    }
 
-   float FeatureBanditLearner::GetEffectiveTrains(RE::FormID formID) const
-   {
-      std::shared_lock lock(m_mutex);
-      auto it = m_items.find(formID);
-      return it == m_items.end() ? 0.0f : it->second.trainCount * RetentionAt(it->second, PlayNow());
-   }
-
-   // Private helpers — formulas shared by GetConfidence/GetUCB/GetMetrics.
+   // Private helpers — formulas shared by GetConfidence/GetUCB/LockedReader::GetMetrics.
    // Callers MUST hold m_mutex before calling (ComputeUCB reads m_totalTrains).
 
    float FeatureBanditLearner::ComputeConfidence(float effectiveTrains) const noexcept
@@ -256,28 +243,6 @@ namespace Huginn::Learning
          itemTrains = it->second.trainCount * RetentionAt(it->second, PlayNow());
       }
       return ComputeUCB(itemTrains);
-   }
-
-   FeatureItemMetrics FeatureBanditLearner::GetMetrics(RE::FormID formID, const StateFeatures& features) const
-   {
-      // Compute feature array outside lock
-      auto phi = features.ToArray();
-
-      std::shared_lock lock(m_mutex);
-
-      FeatureItemMetrics metrics{0.0f, 1.0f, 0.0f};  // Defaults: Q=0, UCB=max, confidence=0
-
-      // ONE lookup yields weights + train count (previously two parallel maps)
-      float itemTrains = 0.0f;
-      if (auto it = m_items.find(formID); it != m_items.end()) {
-         metrics.rewardEstimate = DotProduct(it->second.weights, phi);
-         itemTrains = it->second.trainCount * RetentionAt(it->second, PlayNow());
-      }
-
-      metrics.confidence = ComputeConfidence(itemTrains);
-      metrics.ucb = ComputeUCB(itemTrains);
-
-      return metrics;
    }
 
    // ── LockedReader ──────────────────────────────────────────────────

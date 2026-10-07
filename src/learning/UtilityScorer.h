@@ -81,15 +81,6 @@ namespace Huginn::Scoring
             const WildcardPage& displayPage,
             Context::ContextWeightMap* outWeights = nullptr);
 
-        // Score a single candidate (useful for debugging)
-        // Stage 1f: Added WorldState parameter for ContextRuleEngine
-        [[nodiscard]] ScoredCandidate ScoreCandidate(
-            const Candidate::CandidateVariant& candidate,
-            const State::GameState& state,
-            const State::PlayerActorState& player,
-            const State::TargetCollection& targets,
-            const State::WorldState& world);
-
         // Configuration access
         [[nodiscard]] const ScorerConfig& GetConfig() const noexcept { return m_config; }
         void SetConfig(const ScorerConfig& config) { m_config = config; }
@@ -109,7 +100,6 @@ namespace Huginn::Scoring
 
         // Component access (for advanced configuration)
         [[nodiscard]] WildcardManager& GetWildcardManager() noexcept { return m_wildcardMgr; }
-        [[nodiscard]] PotionDiscriminator& GetPotionDiscriminator() noexcept { return m_potionDiscrim; }
 
         // Combat state tracking (call from main update loop)
         void OnCombatStart();

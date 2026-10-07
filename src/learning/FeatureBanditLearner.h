@@ -74,7 +74,6 @@ namespace Huginn::Learning
 
       // ── Memory with a useful life (see MemoryLife above) ──────────────
       void SetMemoryLife(const MemoryLife& life);
-      [[nodiscard]] MemoryLife GetMemoryLife() const;
 
       // The play clock: seconds of unpaused, loaded play since launch,
       // advanced by the update loop. Time with the game closed, paused or in
@@ -96,15 +95,12 @@ namespace Huginn::Learning
 
       /// Retention of the item's evidence now (1 for an unknown item).
       [[nodiscard]] float GetRetention(RE::FormID formID) const;
-      /// n_eff: the item's evidence after fading (0 for an unknown item).
-      [[nodiscard]] float GetEffectiveTrains(RE::FormID formID) const;
 
       // Metrics API (3.5d-compatible shape)
       [[nodiscard]] float GetConfidence(RE::FormID formID) const;
       /// n0 in confidence = n / (n + n0): the prior's weight in observations.
       [[nodiscard]] static constexpr float PriorPseudoObservations() noexcept { return PRIOR_PSEUDO_OBSERVATIONS; }
       [[nodiscard]] float GetUCB(RE::FormID formID) const;
-      [[nodiscard]] FeatureItemMetrics GetMetrics(RE::FormID formID, const StateFeatures& features) const;
 
       // ── Locked reader for amortized scoring loops ────────────────────
       // Acquires shared_lock once; caller loops N candidates under it.
@@ -114,7 +110,7 @@ namespace Huginn::Learning
       public:
          LockedReader(LockedReader&&) = default;
 
-         // Same semantics as GetMetrics, but caller pre-computes phi once
+         // Estimate, UCB and confidence (n_eff) for one item; caller pre-computes phi once
          [[nodiscard]] FeatureItemMetrics GetMetrics(
             RE::FormID formID,
             const std::array<float, StateFeatures::NUM_FEATURES>& phi) const;
@@ -201,10 +197,10 @@ namespace Huginn::Learning
       [[nodiscard]] size_t GetItemCount() const;
       /// Sum of the stored evidence n over every entry, rounded.
       [[nodiscard]] uint32_t GetTotalTrainCount() const;
-      /// The stored evidence n (before fading; see GetEffectiveTrains).
+      /// The stored evidence n (before fading; times GetRetention for n_eff).
       [[nodiscard]] float GetTrainCount(RE::FormID formID) const;
       /// True if the learner holds an entry for the item (chosen at least
-      /// once, or carrying a passed-over update).
+      /// once and not forgotten since; a passed-over update never creates one).
       [[nodiscard]] bool HasItem(RE::FormID formID) const;
       [[nodiscard]] std::array<float, StateFeatures::NUM_FEATURES> GetWeights(RE::FormID formID) const;
       void Clear();

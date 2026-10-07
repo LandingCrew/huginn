@@ -42,8 +42,6 @@ namespace Huginn::Learning
         MemoryLife memory{};
     };
 
-    inline constexpr LearningConfig DefaultLearningConfig{};
-
     // =========================================================================
     // LEARNING SETTINGS
     // =========================================================================
@@ -66,10 +64,6 @@ namespace Huginn::Learning
 
         /// Produce an immutable snapshot of all learning settings.
         [[nodiscard]] LearningConfig BuildConfig() const;
-
-        // Accessors
-        [[nodiscard]] bool IsExternalEquipLearningEnabled() const noexcept { return learnFromExternalEquips; }
-        [[nodiscard]] float GetExternalEquipTimeWindow() const noexcept { return externalEquipTimeWindow; }
 
     private:
         LearningSettings() = default;
