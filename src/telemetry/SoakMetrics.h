@@ -302,6 +302,11 @@ namespace Huginn::Telemetry
         // SetCurrentPage), whoever asked: Intuition cycle keys, Wheeler, `hg page`.
         void RecordPageFlip();
 
+        // An item came back to the displayed page within the home-key memory
+        // (SlotAllocator::ApplySeating): did it land on the key it left? The
+        // before/after measure for home keys; counted with them off as well.
+        void RecordReturn(bool home);
+
         // Called every update tick with the measured whole-tick duration (ms).
         // Rolls the window and emits the heartbeat when the interval elapses.
         void RecordTick(float tickMs, std::chrono::steady_clock::time_point now);
@@ -337,6 +342,8 @@ namespace Huginn::Telemetry
         std::atomic<uint32_t> m_pressLabeled{0};
         std::atomic<uint32_t> m_pressOffPage{0};
         std::atomic<uint32_t> m_pageFlips{0};
+        std::atomic<uint32_t> m_returnsHome{0};
+        std::atomic<uint32_t> m_returnsAway{0};
 
         // Pipeline / perf (window).
         std::atomic<uint32_t> m_ticks{0};

@@ -24,6 +24,7 @@ void RunSlotSeatingTest();
 void RunFillJobKeysTest();
 void RunNeedCapTest();             // Regular-key need cap (NeedCap.h)
 void RunNeedCapHoldTest();         // the need cap through the slot hold
+void RunHomeKeyTest();             // home keys: a returner takes its key back
 void RunBuffElementResistTest();
 
 // =============================================================================

@@ -199,6 +199,14 @@ namespace Huginn::Slot
         SKSE::log::info("[SlotSettings] Hold seated items: {} (challenger margin {:.0f}%)"sv,
             hold ? "on" : "off", margin * 100.0f);
 
+        const bool returnHome = ini.GetBoolValue("SlotLocker", "bReturnToHomeKey", true);
+        const float homeMemorySec = std::clamp(
+            static_cast<float>(ini.GetDoubleValue("SlotLocker", "fHomeKeyMemorySec", 60.0)), 0.0f, 600.0f);
+        m_returnToHomeKey.store(returnHome, std::memory_order_release);
+        m_homeKeyMemorySec.store(homeMemorySec, std::memory_order_release);
+        SKSE::log::info("[SlotSettings] Home keys: {} (an item back within {:.0f}s takes its key back)"sv,
+            returnHome && homeMemorySec > 0.0f ? "on" : "off", homeMemorySec);
+
         const float needDiscount = std::clamp(
             static_cast<float>(ini.GetDoubleValue("SlotLocker", "fNeedRepeatDiscount", 0.5)), 0.0f, 1.0f);
         const auto needFree = static_cast<uint32_t>(std::clamp(
@@ -262,6 +270,8 @@ namespace Huginn::Slot
         m_keepSlotPositions.store(true, std::memory_order_release);
         m_holdSeatedItems.store(true, std::memory_order_release);
         m_challengerMargin.store(0.25f, std::memory_order_release);
+        m_returnToHomeKey.store(true, std::memory_order_release);
+        m_homeKeyMemorySec.store(60.0f, std::memory_order_release);
         m_needRepeatDiscount.store(0.5f, std::memory_order_release);
         m_needFreeSlots.store(3, std::memory_order_release);
         m_generation.fetch_add(1, std::memory_order_release);

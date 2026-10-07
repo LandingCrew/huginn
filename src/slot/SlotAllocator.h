@@ -11,6 +11,7 @@
 #include "state/WorldState.h"
 #include <array>
 #include <atomic>
+#include <chrono>
 #include <memory>
 #include <mutex>
 #include <set>
@@ -326,6 +327,21 @@ namespace Huginn::Slot
         /// mutex and generation as m_seating.
         mutable std::array<std::array<uint64_t, MAX_SLOTS_PER_PAGE>, MAX_PAGES> m_lastPlaced{};
         mutable uint32_t m_seatingGeneration = UINT32_MAX;
+
+        /// Home keys: the last HOME_MEMORY_PER_SLOT seat owners that left each
+        /// slot's page entirely, most recent first, and when. A seat is freed
+        /// the moment its owner leaves the screen; this is what lets the owner
+        /// claim it back (ApplySeating). Same mutex and generation as
+        /// m_seating, in memory only -- slot management stays stateless across
+        /// saves.
+        struct Departure
+        {
+            uint64_t key = 0;
+            std::chrono::steady_clock::time_point leftAt{};
+        };
+        static constexpr size_t HOME_MEMORY_PER_SLOT = 3;
+        mutable std::array<std::array<std::array<Departure, HOME_MEMORY_PER_SLOT>, MAX_SLOTS_PER_PAGE>, MAX_PAGES>
+            m_departed{};
 
         /// Before the rank-ordered fill: keep each seated item in its own seat,
         /// unless the slot no longer accepts it or the best challenger FOR THAT

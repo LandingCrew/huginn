@@ -115,6 +115,11 @@ namespace Huginn::Telemetry
         m_pageFlips.fetch_add(1, std::memory_order_relaxed);
     }
 
+    void SoakMetrics::RecordReturn(bool home)
+    {
+        (home ? m_returnsHome : m_returnsAway).fetch_add(1, std::memory_order_relaxed);
+    }
+
     void SoakMetrics::RecordSlotChanges(std::span<const SlotChangeEvent> changes,
         std::chrono::steady_clock::time_point now)
     {
@@ -210,6 +215,8 @@ namespace Huginn::Telemetry
         const uint32_t pressLabeled = m_pressLabeled.exchange(0, std::memory_order_relaxed);
         const uint32_t pressOffPage = m_pressOffPage.exchange(0, std::memory_order_relaxed);
         const uint32_t pageFlips    = m_pageFlips.exchange(0, std::memory_order_relaxed);
+        const uint32_t returnsHome  = m_returnsHome.exchange(0, std::memory_order_relaxed);
+        const uint32_t returnsAway  = m_returnsAway.exchange(0, std::memory_order_relaxed);
         std::array<uint32_t, static_cast<std::size_t>(PressAgeBand::Count)> pressAge{};
         for (std::size_t b = 0; b < pressAge.size(); ++b) {
             pressAge[b] = m_pressAge[b].exchange(0, std::memory_order_relaxed);
@@ -285,6 +292,11 @@ namespace Huginn::Telemetry
                     PressAgeBandName(static_cast<PressAgeBand>(b)), pressAge[b]);
             }
             churnStr += ')';
+        }
+        // Returns ride with churn too: items back on the page within the
+        // home-key memory, on the key they left or elsewhere.
+        if (returnsHome + returnsAway) {
+            churnStr += std::format(" returns(home={} away={})", returnsHome, returnsAway);
         }
 
         const float avgMs  = ticks ? (static_cast<float>(sumMicros) / 1000.0f / ticks) : 0.0f;

@@ -6547,6 +6547,104 @@ void RunNeedCapHoldTest()
 }
 
 // =============================================================================
+// Home keys: an item back within the memory takes its key back
+// =============================================================================
+// The soak's case: an item drops off the page for a moment, a newcomer fills
+// its key, and the item comes back. Three passes on a made-up all-Regular
+// page: (1) eight items seated, A on slot 0; (2) A gone, newcomer N fills slot
+// 0; (3) A back, scoring between N and H with the hold's margin, so the hold
+// puts it on H's slot 7. Seating must then swap A home to slot 0 and N to
+// slot 7, and leave everyone else where they were. Distinct needs, so the
+// need cap does not take part; utilities come from the live margin.
+void RunHomeKeyTest()
+{
+#ifndef NDEBUG
+    using namespace Huginn::Slot;
+    logger::info("Running home key test..."sv);
+
+    const auto& settings = SlotSettings::GetSingleton();
+    if (!settings.KeepSlotPositions() || !settings.HoldSeatedItems() || !settings.ReturnToHomeKey() ||
+        settings.HomeKeyMemorySec() <= 0.0f) {
+        logger::info("  home key test skipped: needs seating, the hold and home keys on"sv);
+        return;
+    }
+    const float margin = settings.ChallengerMargin();
+
+    std::vector<SlotConfig> configs(8);
+    for (size_t i = 0; i < configs.size(); ++i) {
+        configs[i].classification = SlotClassification::Regular;
+        configs[i].priority = static_cast<int8_t>(7 - i);
+        configs[i].skipEquipped = false;   // no player: nothing is equipped
+        configs[i].wildcardsEnabled = true;
+    }
+
+    // Candidates keep a view of their name: every name set once, up front.
+    static std::array<std::string, 9> names;
+    for (size_t i = 0; i < names.size(); ++i) {
+        names[i] = "HomeKeyProbe" + std::to_string(i);
+    }
+    constexpr RE::FormID kBase = 0x0BADF400;
+    auto spell = [](size_t i, Spell::SpellType type, float utility) {
+        Candidate::SpellCandidate s{};
+        s.formID = kBase + static_cast<RE::FormID>(i); s.name = names[i]; s.type = type;
+        Scoring::ScoredCandidate sc{}; sc.candidate = s; sc.utility = utility;
+        return sc;
+    };
+    auto weapon = [](size_t i, float utility) {
+        Candidate::WeaponCandidate w{};
+        w.formID = kBase + static_cast<RE::FormID>(i); w.name = names[i];
+        w.tags = Weapon::WeaponTag::Melee;
+        Scoring::ScoredCandidate sc{}; sc.candidate = w; sc.utility = utility;
+        return sc;
+    };
+
+    using SpellType = Spell::SpellType;
+    // 0 = A (the returner), 1-6 = B..G, 7 = H (weakest), 8 = N (the newcomer).
+    const auto B = spell(1, SpellType::Damage, 0.9f), C = spell(2, SpellType::Defensive, 0.8f),
+               D = spell(3, SpellType::Utility, 0.7f), E = spell(4, SpellType::Summon, 0.6f),
+               F = spell(5, SpellType::Buff, 0.5f),    G = spell(6, SpellType::Debuff, 0.4f),
+               H = weapon(7, 0.3f), N = weapon(8, 0.35f);
+    // Back, A beats H by the margin but not N: the hold puts it on slot 7.
+    const float returned = (0.3f + 0.35f) / 2.0f * (1.0f + margin);
+    const Scoring::ScoredCandidateList pass1 = { spell(0, SpellType::Healing, 1.0f), B, C, D, E, F, G, H };
+    const Scoring::ScoredCandidateList pass2 = { B, C, D, E, F, G, N, H };
+    const Scoring::ScoredCandidateList pass3 = { B, C, D, E, F, G, spell(0, SpellType::Healing, returned), N, H };
+
+    auto& allocator = SlotAllocator::GetSingleton();
+    allocator.Reset();
+    constexpr uint32_t kGeneration = 0xFFFF0002u;
+    const auto first = allocator.AllocateForTest(0, kGeneration, configs, pass1);
+    const auto gap = allocator.AllocateForTest(0, kGeneration, configs, pass2);
+    const auto back = allocator.AllocateForTest(0, kGeneration, configs, pass3);
+    allocator.Reset();   // no probe seats or departures left for the first real pass
+
+    auto slotOf = [](const SlotAssignments& a, size_t probe) -> size_t {
+        for (const auto& s : a) {
+            if (!s.IsEmpty() && s.formID == kBase + static_cast<RE::FormID>(probe)) return s.slotIndex;
+        }
+        return SIZE_MAX;
+    };
+    bool passed = true;
+    auto expect = [&](bool ok, std::string_view what) {
+        if (!ok) { logger::error("TEST FAIL: home key: {}"sv, what); passed = false; }
+    };
+
+    expect(slotOf(first, 0) == 0, "setup: A is not on slot 0");
+    expect(slotOf(gap, 8) == 0, "setup: the newcomer did not fill A's slot 0");
+    expect(slotOf(back, 0) == 0, "A came back and did not take slot 0 back");
+    expect(slotOf(back, 8) == 7, "the newcomer did not move to the slot A landed on");
+    expect(slotOf(back, 7) == SIZE_MAX, "setup: H was not the item A replaced");
+    for (size_t probe = 1; probe <= 6; ++probe) {
+        expect(slotOf(back, probe) == slotOf(first, probe), "an item that never left moved");
+    }
+
+    if (passed) {
+        logger::info("  home key test PASSED"sv);
+    }
+#endif
+}
+
+// =============================================================================
 // THROWAWAY: a Buff's element is not a resist claim (0.20.63)
 // =============================================================================
 // Delete this block, its Tests.h declaration and its Main.cpp call site

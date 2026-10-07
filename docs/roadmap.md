@@ -31,7 +31,8 @@ and change the learning before tuning anything that competes with it.
 3. **Slot stability** -- in this order (2026-10-06): the per-need discount
    (what goes on the page: eight foods filled eight keys; measured in
    tools/replay first), then the soft slot manager (where it sits: an
-   unheld sword and bow jumped slots after refresh bursts), then combat
+   unheld sword and bow jumped slots after refresh bursts; home keys,
+   0.23.5), then combat
    suppressing the workstation context (the flicker while standing still
    at a bench is a separate, open problem), then a `fChallengerMargin` 0.25
    vs 0.5 comparison on the `slotChurn=` heartbeat. All under "Remaining
@@ -1422,7 +1423,17 @@ key, is already a PotionsAny slot with overrides on.
       - Untested with Wheeler's `Empty` post-activation policy.
       - No dMenu toggle, like the rest of `[SlotLocker]`.
 
-- [ ] **Soft slot manager: per-slot memory of recent occupants.** The
+- [x] **Soft slot manager: per-slot memory of recent occupants -- SHIPPED in
+      0.23.5 as home keys** (5-slots.md, "Home keys"). Built from the entry
+      below with two decisions by the user (2026-10-06): a returner takes its
+      key back from whatever filled the gap (the gap-filler swaps to where the
+      returner landed), and there is NO wait mode -- a returner that cannot go
+      home shows where it lands, which becomes its key. The memory is 3
+      departures per slot with a 60 s window (`fHomeKeyMemorySec`): 1,073 of
+      1,365 returns in 21 logs landed on a different key, almost all within a
+      minute. Measure: the heartbeat's `returns(home= away=)`, with
+      `bReturnToHomeKey = 0` for the baseline. In-game check pending.
+      Original entry: **Soft slot manager: per-slot memory of recent occupants.** The
       user's idea, 2026-10-04, from the soak: a sword that was not in a
       Remembrance slot jumped keys after a burst of state refreshes, and so
       did the bow. Seating (5-slots.md, "Seating (anti-juggling)") already
