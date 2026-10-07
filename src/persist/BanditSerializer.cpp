@@ -35,8 +35,8 @@ namespace Huginn::Persist
    static std::optional<LoadedBanditData> s_pendingBanditData;
 
    // The character the in-memory learner belongs to (0 = none yet), and the
-   // character ID / learning clock the save being loaded carries (none = a
-   // save that predates the record, or a v1 record without a clock). Touched
+   // character ID / learning clock the save being loaded carries (none = no
+   // readable HCID record: the save is treated as a different character). Touched
    // only from the SKSE callbacks and InitializeGameSystems, all on the game
    // thread. NOT under the update loop's exclusion -- InitializeGameSystems
    // does not run inside RunExclusive -- which is why the learner is replaced
@@ -44,11 +44,6 @@ namespace Huginn::Persist
    static uint64_t s_activeCharacterID = 0;
    static std::optional<uint64_t> s_loadedCharacterID;
    static std::optional<uint64_t> s_loadedClock;
-   // The save's BNDW record was old-format (v1/v2) and discarded. A pre-upgrade
-   // save of the character in memory then holds NOTHING newer than memory, so
-   // memory is kept whatever its clock says -- the clock of a pre-upgrade save
-   // measures old-target learning that no longer exists (code review of #172).
-   static bool s_loadedOldFormat = false;
 
    static uint64_t NewCharacterID()
    {
@@ -58,31 +53,6 @@ namespace Huginn::Persist
       uint64_t id = 0;
       while (id == 0) id = gen();
       return id;
-   }
-
-   // An ID for a save that predates character IDs, derived from the player so
-   // that loading the same character's old saves again gives the same ID --
-   // a random one per load would split one character across several IDs, and
-   // a death right after loading an old save would still forget the fight.
-   // FNV-1a over name and race; two characters sharing both would share an
-   // ID, an acceptable cost for a one-time migration (it becomes the
-   // character's permanent ID at the next save).
-   static uint64_t DerivedCharacterID()
-   {
-      uint64_t h = 0xcbf29ce484222325ull;
-      auto mix = [&h](const void* data, size_t len) {
-         const auto* p = static_cast<const unsigned char*>(data);
-         for (size_t i = 0; i < len; ++i) { h ^= p[i]; h *= 0x100000001b3ull; }
-      };
-      if (auto* player = RE::PlayerCharacter::GetSingleton()) {
-         const char* name = player->GetName();
-         if (name) mix(name, std::strlen(name));
-         if (const auto* race = player->GetRace()) {
-            const RE::FormID raceID = race->GetFormID();
-            mix(&raceID, sizeof(raceID));
-         }
-      }
-      return h ? h : 1;
    }
 
    std::vector<BanditEntry> DecodeV2EntryBlob(
@@ -222,22 +192,21 @@ namespace Huginn::Persist
       s_pendingBanditData = LoadedBanditData{};
       s_loadedCharacterID.reset();
       s_loadedClock.reset();
-      s_loadedOldFormat = false;
 
       uint32_t type, version, length;
       while (a_intfc->GetNextRecordInfo(type, version, length)) {
          switch (type) {
          case kRecordType_CharacterID:
          {
-            // v1 (pre-release 0.22.11 builds) holds the ID only; v2 adds the
-            // learning clock. Without a clock the train count stands in for it.
+            // v2: the ID and the learning clock. (v1, pre-release 0.22.11
+            // builds, is no longer read: one tester, no saves that old.)
             uint64_t id = 0;
             uint64_t clock = 0;
-            const bool ok = (version == 1 || version == 2) && a_intfc->ReadRecordData(id) && id != 0 &&
-                            (version == 1 || a_intfc->ReadRecordData(clock));
+            const bool ok = version == kCharacterIDVersion && a_intfc->ReadRecordData(id) && id != 0 &&
+                            a_intfc->ReadRecordData(clock);
             if (ok) {
                s_loadedCharacterID = id;
-               if (version == 2) s_loadedClock = clock;
+               s_loadedClock = clock;
             } else {
                logger::warn("[Cosave] Unreadable HCID record (version {}) -- treating the save as unidentified"sv,
                   version);
@@ -253,21 +222,12 @@ namespace Huginn::Persist
                logger::error("[Cosave] Failed to read BNDW version"sv);
                break;
             }
-            if (recVersion == 1 || recVersion == 2) {
-               // Learning on the old 8/5 target (see kBanditSerializationVersion).
-               // Leave the pending data empty: the character starts fresh.
-               logger::info("[Cosave] BNDW v{} holds learning on the old 8/5 target -- discarded; "
-                  "the choice target (v3+) starts this character fresh"sv,
-                  recVersion);
-               s_loadedOldFormat = true;
-               break;
-            }
             if (recVersion != 3 && recVersion != kBanditSerializationVersion) {
                logger::warn("[Cosave] BNDW version unsupported: got {} (expected 3 or {}) — skipping"sv,
                   recVersion, kBanditSerializationVersion);
                break;
             }
-            // Only v3 and v4 reach here (v1/v2 are discarded above); both keep
+            // Only v3 and v4 reach here (v1/v2, the old 8/5 target, are skipped); both keep
             // v2's fixed-stride wire format. A header/in-data mismatch is logged rather than rejected, and the
             // in-data version is trusted. The version check, bounds checks, and
             // exact-length reads below validate everything decode relies on.
@@ -415,7 +375,6 @@ namespace Huginn::Persist
       s_pendingBanditData.reset();
       s_loadedCharacterID.reset();
       s_loadedClock.reset();
-      s_loadedOldFormat = false;
       logger::debug("[Cosave] Revert: learner kept until the load decides"sv);
    }
 
@@ -454,19 +413,16 @@ namespace Huginn::Persist
          return;
       }
 
-      // An unidentified save (predates character IDs): a stable ID derived
-      // from the player, so every load of this character's old saves agrees.
-      const bool derived = !s_loadedCharacterID.has_value();
-      const uint64_t loadedID = derived ? DerivedCharacterID() : *s_loadedCharacterID;
+      // A save with no readable HCID record is a different character: it
+      // gets a new ID. (Saves from before 0.22.11 used to get one derived
+      // from name and race; one tester, no saves that old.)
+      const bool identified = s_loadedCharacterID.has_value() && s_loadedClock.has_value();
+      const uint64_t loadedID = identified ? *s_loadedCharacterID : NewCharacterID();
       const uint32_t saveTrains = s_pendingBanditData ? s_pendingBanditData->totalTrainCount : 0;
 
-      // Is the save behind memory? By the learning clock when the save has
-      // one; by train count when it does not (v1 records, derived IDs).
+      // Is the save behind memory? By the learning clock.
       const uint64_t memClock = learner.GetClock();
-      // A pre-upgrade save's learning was discarded, so it is never ahead.
-      const bool saveNotAhead = s_loadedOldFormat ||
-         (s_loadedClock ? *s_loadedClock <= memClock
-                        : saveTrains <= learner.GetTotalTrainCount());
+      const bool saveNotAhead = identified && *s_loadedClock <= memClock;
 
       if (s_activeCharacterID != 0 && loadedID == s_activeCharacterID && saveNotAhead) {
          // A reload of the character in memory: memory holds the save's
@@ -479,14 +435,15 @@ namespace Huginn::Persist
          logger::info("[Cosave] Reload of the same character ({:016X}): kept in-memory learning "
                       "({} items, {} trains, clock {}); the save is not ahead ({} trains, clock {})"sv,
             s_activeCharacterID, learner.GetItemCount(), learner.GetTotalTrainCount(), memClock,
-            saveTrains, s_loadedClock ? std::to_string(*s_loadedClock) : std::string("-"));
+            saveTrains, *s_loadedClock);
          return;
       }
 
       // A different character, the first load since launch, or a later save
       // of this one: the save's learner. ImportData replaces everything under
       // one lock; Clear() only when the save carries no learner at all.
-      const char* why = (s_activeCharacterID == 0) ? "first load"
+      const char* why = !identified ? "unidentified save"
+                      : (s_activeCharacterID == 0) ? "first load"
                       : (loadedID != s_activeCharacterID) ? "different character"
                       : "save is ahead of memory";
       if (!ApplyPendingBanditData(learner)) {
@@ -495,9 +452,8 @@ namespace Huginn::Persist
       learner.SetClock(s_loadedClock.value_or(0));
       s_activeCharacterID = loadedID;
       g_activeCharacterID.store(s_activeCharacterID, std::memory_order_relaxed);
-      logger::info("[Cosave] Loaded character {:016X}{} ({}): learner from the save ({} items, clock {})"sv,
-         s_activeCharacterID, derived ? " [derived: save predates character IDs]" : "", why,
-         learner.GetItemCount(), learner.GetClock());
+      logger::info("[Cosave] Loaded character {:016X} ({}): learner from the save ({} items, clock {})"sv,
+         s_activeCharacterID, why, learner.GetItemCount(), learner.GetClock());
    }
 
    bool ApplyPendingBanditData(Learning::FeatureBanditLearner& learner)

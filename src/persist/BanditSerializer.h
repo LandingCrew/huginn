@@ -18,7 +18,7 @@ namespace Huginn::Persist
    inline constexpr uint32_t kRecordType_BanditWeights  = 'WDNB';  // 'BNDW' on disk
    // v3 (0.23.0): the choice target -- learning on 0-1. Same wire format as
    // v2. A v1/v2 record holds learning on the old 8 (equip) / 5 (consume)
-   // target and is DISCARDED on load: those scores came from rules the
+   // target and is SKIPPED on load (an unsupported version): those scores came from rules the
    // rework replaced, so the character starts learning fresh (decided with
    // the user, 2026-10-04 -- reset, not rescale).
    // v4 (0.23.6): memory with a useful life. Same stride as v3; the count is
@@ -31,9 +31,8 @@ namespace Huginn::Persist
 
    // Which character a save belongs to, and how far its learning had got:
    //   v2: [characterID: uint64] [learning clock: uint64]
-   //   v1: [characterID: uint64]   (pre-release 0.22.11 builds; still read)
-   // The ID is random at new game; a save from before it gets one derived
-   // from the player's name and race at its first load. Lets a load tell "the
+   // The ID is random at new game; a save without the record is treated as a
+   // different character and given a new one. Lets a load tell "the
    // same character, reloaded" from "a different character", and "this save
    // is behind what is in memory" from "this save is ahead" -- see
    // ResolveLoadedLearner. Older Huginn versions skip the record with one

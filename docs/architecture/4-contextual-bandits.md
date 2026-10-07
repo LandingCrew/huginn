@@ -1241,8 +1241,8 @@ it into the learner once `Main.cpp` has constructed it.
 **Record types:**
 - `HCID` — which character the save belongs to and how far its learning had
   got: a 64-bit character ID and the learner's 64-bit learning clock
-  (`kRecordType_CharacterID = 'DICH'`, `'HCID'` on disk; v2, 0.22.11; v1 held
-  the ID only and is still read)
+  (`kRecordType_CharacterID = 'DICH'`, `'HCID'` on disk; v2, 0.22.11; v1 is no
+  longer read)
 - `BNDW` — FeatureBanditLearner weight vectors plus the global train count
   (`kRecordType_BanditWeights = 'WDNB'`, `'BNDW'` on disk;
   `kUniqueID = 'QCNO'`, `'ONCQ'` on disk)
@@ -1267,10 +1267,10 @@ ID. Then:
 
 So a death-and-reload keeps the fight, loading a later save does not throw that
 save's learning away, and `hg reset weights` (a `Clear()`, so a clock tick)
-cannot be undone by reloading an older save. A save from before 0.22.11 gets an
-ID derived from the player's name and race at its first load -- stable across
-loads of that character's old saves -- and train counts stand in for the clock
-until its next save writes one.
+cannot be undone by reloading an older save. A save with no readable HCID
+record is treated as a different character and gets a new ID (since 0.23.6;
+before, a save from before 0.22.11 got one derived from name and race -- dropped
+with the other compatibility paths, there being one tester and no such saves).
 
 **BNDW record format (version 4):**
 ```
@@ -1289,7 +1289,7 @@ Then ONE contiguous blob of numItems fixed-stride entries:
 v4 (0.23.6) keeps v3's stride. A v3 record **converts**: n = its train count,
 and every item's useful life starts at the load, since v3's minutes counted
 from the last decay stamp, not the last pick. v1/v2 (the old 8/5 target) are
-still discarded.
+skipped as unsupported.
 
 The entry array is written as a single bulk blob rather than 21 calls per item.
 Two `static_assert`s lock that in: `SerializedEntry` must be trivially copyable
@@ -1305,7 +1305,7 @@ between the batch and per-field code paths.
 | Version | Reads 3 (converted) and 4; 1 and 2 are discarded (learning on the old target). A SKSE-header/in-data version mismatch is logged, and the in-data version is trusted |
 | Feature count | **Migrated positionally, not rejected.** Fewer features on disk → tail zero-pads (new features start untrained); more → tail truncates. Sound only because the vector is APPEND-ONLY. `numFeatures` outside `[1, kMaxBanditFeatures=256]` is treated as corrupt and the record is skipped |
 | Item cap | `numItems > kMaxBanditItems` (50,000) → record skipped wholesale |
-| Short read | v2 bulk read or v1 per-field read that comes up short rejects the record wholesale — never a silent partial import |
+| Short read | A bulk read that comes up short rejects the record wholesale — never a silent partial import |
 | Non-finite weights | Entries containing any non-finite weight are dropped before they can reach the scorer |
 | FormID resolution | `ResolveFormID` on every FormID (mod reordering); unresolvable entries are dropped and counted |
 | Train-count repair | `totalTrainCount` is **recomputed** as the sum of surviving entries, so trains belonging to dropped/unresolvable items can't inflate the UCB exploration term |
