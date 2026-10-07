@@ -101,6 +101,13 @@ namespace Huginn::Slot
         // Visual state for UI animation (computed by pipeline)
         SlotVisualState visualState = SlotVisualState::Normal;
 
+        // A home-key move: this item reaching the key it claimed (a returner,
+        // or one that waited out an override), or the gap-filler it swapped
+        // out. SlotLocker lets go of a lock still holding it in its old slot,
+        // when its new slot will show it, so the move lands in one run.
+        // Other seating moves wait out the lock.
+        bool seatMoved = false;
+
         // =======================================================================
         // FACTORY METHODS
         // =======================================================================

@@ -109,6 +109,20 @@ namespace Huginn::Slot
             return m_challengerMargin.load(std::memory_order_acquire);
         }
 
+        /// Home keys: an item back on the page within HomeKeyMemorySec() of
+        /// leaving a slot takes that slot back from whatever filled the gap
+        /// (SlotAllocator::ApplySeating). Needs KeepSlotPositions.
+        /// `[SlotLocker] bReturnToHomeKey`, `fHomeKeyMemorySec`. The memory is
+        /// kept, and returns counted, with the switch off too.
+        [[nodiscard]] bool ReturnToHomeKey() const noexcept
+        {
+            return m_returnToHomeKey.load(std::memory_order_acquire);
+        }
+        [[nodiscard]] float HomeKeyMemorySec() const noexcept
+        {
+            return m_homeKeyMemorySec.load(std::memory_order_acquire);
+        }
+
         /// The per-need soft cap on Regular keys (NeedCap.h): items of one need
         /// past the first NeedFreeSlots() compete at x NeedRepeatDiscount() each.
         /// 1.0 = off. `[SlotLocker] fNeedRepeatDiscount`, `iNeedFreeSlots`.
@@ -172,6 +186,8 @@ namespace Huginn::Slot
         std::atomic<bool> m_keepSlotPositions{true};
         std::atomic<bool> m_holdSeatedItems{true};
         std::atomic<float> m_challengerMargin{0.25f};
+        std::atomic<bool> m_returnToHomeKey{true};
+        std::atomic<float> m_homeKeyMemorySec{60.0f};
         std::atomic<float> m_needRepeatDiscount{0.5f};
         std::atomic<uint32_t> m_needFreeSlots{3};
         std::atomic<float> m_remembranceDurationMs{15000.0f};

@@ -459,6 +459,7 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
         RunFillJobKeysTest();             // bFillJobKeysFromRegular
         RunNeedCapTest();                 // [SlotLocker] need cap
         RunNeedCapHoldTest();             // ...through the slot hold
+        RunHomeKeyTest();                 // [SlotLocker] home keys
         RunBuffElementResistTest();       // THROWAWAY (0.20.63): buff element != resist
         logger::info("Debug build ready. Console command functions available for hotkey integration"sv);
     }

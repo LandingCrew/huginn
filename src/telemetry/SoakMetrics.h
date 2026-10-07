@@ -37,8 +37,10 @@ namespace Huginn::Telemetry
         Page,      // page switch (UnlockAll) -- player-driven, kept out of peak
         Unheld,    // replaced with no lock ever in the way (locking disabled)
         Remembrance,  // a Remembrance hold arriving or leaving -- the player's
-                      // own press, not the ranking. Last, so the heartbeat's
-                      // existing columns keep their order.
+                      // own press, not the ranking.
+        Seated,    // seating moved the slot's locked item to another slot (a
+                   // home-key return, a guest going home), releasing the
+                   // lock. Last, so the existing columns keep their order.
         Count
     };
 
@@ -55,6 +57,7 @@ namespace Huginn::Telemetry
         case SlotChange::Page:     return "page";
         case SlotChange::Unheld:   return "unheld";
         case SlotChange::Remembrance: return "remembrance";
+        case SlotChange::Seated:   return "seated";
         default:                   return "?";
         }
     }
@@ -87,6 +90,7 @@ namespace Huginn::Telemetry
         case SlotChange::Used:
         case SlotChange::Override:
         case SlotChange::Remembrance:
+        case SlotChange::Seated:
             return released;
         default:
             return SlotChange::Unheld;
@@ -302,6 +306,13 @@ namespace Huginn::Telemetry
         // SetCurrentPage), whoever asked: Intuition cycle keys, Wheeler, `hg page`.
         void RecordPageFlip();
 
+        // An item came back to the displayed page within the home-key memory
+        // (SlotAllocator::ApplySeating): on the key it left, waiting for it
+        // (an override or Remembrance item holds it), or elsewhere. The
+        // before/after measure for home keys; counted with them off as well.
+        enum class ReturnOutcome : uint8_t { Home, Waiting, Away };
+        void RecordReturn(ReturnOutcome outcome);
+
         // Called every update tick with the measured whole-tick duration (ms).
         // Rolls the window and emits the heartbeat when the interval elapses.
         void RecordTick(float tickMs, std::chrono::steady_clock::time_point now);
@@ -337,6 +348,9 @@ namespace Huginn::Telemetry
         std::atomic<uint32_t> m_pressLabeled{0};
         std::atomic<uint32_t> m_pressOffPage{0};
         std::atomic<uint32_t> m_pageFlips{0};
+        std::atomic<uint32_t> m_returnsHome{0};
+        std::atomic<uint32_t> m_returnsWaiting{0};
+        std::atomic<uint32_t> m_returnsAway{0};
 
         // Pipeline / perf (window).
         std::atomic<uint32_t> m_ticks{0};

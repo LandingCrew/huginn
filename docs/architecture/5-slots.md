@@ -606,6 +606,60 @@ seat is ever empty.
   potion would permanently move the displaced item's key, which is the failure
   this feature exists to prevent.
 
+**Home keys: a seat survives a short absence.** A seat is freed the moment
+its owner leaves the screen, so an item that dropped off for a few seconds --
+outranked through a burst of refreshes -- came back to whatever key was open.
+Across 21 logs (2026-09-30 to 10-06), 1,073 of 1,365 returns within ten
+minutes landed on a different key, nearly all of them within a minute. So:
+
+- **The memory.** `m_departed`: per page and slot, the last 3 seat owners that
+  left the screen entirely, and when. Written by `RecordSeating`, cleared with
+  the seats (game load, layout reload). In memory only.
+- **The rule** (phase 0 of `ApplySeating`). A *returner* is on screen, has no
+  seat, and left a slot of this page within `fHomeKeyMemorySec` (60 s). It
+  takes that slot's seat back from whatever filled the gap -- anything that
+  arrived after it left only filled the gap -- and phases 1-2 move it: into
+  the slot if empty, else by the swap, which puts the gap-filler where the
+  returner landed. The transfer is written to `m_seating` at once; left to
+  `RecordSeating`, the gap-filler, still on screen, would keep the seat.
+- **Only where the move can happen.** The home slot must take the returner,
+  and its occupant must fit the returner's slot. Otherwise the returner keeps
+  the key it landed on, which becomes its seat: a recommendation is never
+  hidden to wait for a key. Two returners for one slot: the one that left last
+  wins.
+- **The right of first refusal.** Blocked only by an override or a Remembrance
+  hold, the returner claims the seat anyway and waits, shown where it landed --
+  as an item an override displaced already does. It is held there (a guest in
+  the slot hold) until the hold ends, not moved by the fill when another slot
+  empties. When the slot frees, the slot
+  hold seats it there unless a challenger beats it by `fChallengerMargin`; if
+  it leaves the page meanwhile, the claim lapses with it. On LoreRim's first
+  run this was 17 of the 22 returns that missed their key (2026-10-06).
+- **One run, not three.** The gap-filler has usually been on the returner's
+  key under three seconds, so it is still locked. The move that puts a home
+  claimant on its key -- in seating or the hold -- and the gap-filler it swaps
+  out are marked (`SlotAssignment::seatMoved`, claims in `m_homeClaims`), and
+  `SlotLocker` lets go of a lock whose item moved that way, as it already did
+  for an override or Remembrance item -- but only when the destination will
+  show it (unlocked, or releasing in the same pass); otherwise the old slot
+  keeps showing it. Ordinary seating moves still wait out the lock. Churn
+  cause `seated`.
+- **What counts as leaving.** A seat owner leaving the screen, and also an
+  item with no seat leaving from where it stood: the slot hold clears an
+  outranked item's seat on the spot, and that item is exactly the one that
+  drops off for a few seconds. Every returner's departure is spent when it
+  comes back, whatever the outcome, so it is counted and logged once.
+- **Not an override's own item.** A returner never claims a key whose pinned
+  item is that key's seat owner (an override marking its item in place): the
+  override would lose the seat and jump to its configured slot.
+- **Not Remembrance.** Remembrance puts the item a press took off under that
+  key, whatever the ranking says. Home keys never add an item: the ranking
+  still decides what is shown; this decides where a returning item sits.
+- **Measured.** The heartbeat's `returns(home= wait= away=)` counts returns to the
+  displayed page, with the switch off too, so `bReturnToHomeKey = 0` gives the
+  baseline from the same build. `[HomeKey]` (debug) logs each return, and why
+  an item could not go home.
+
 **The visible cost.** Pass 4 refills the slot a departure freed, so normally one
 slot changes and nothing else moves. With fewer candidates than slots there is
 nothing to refill with, and the gap stays where the departed item was instead of
@@ -853,6 +907,8 @@ per-slot defaults described under
 bKeepSlotPositions = true       ; Keep an item in the slot it was already in (seating)
 bHoldSeatedItems = true         ; Hold a seated item until a challenger beats it by the margin
 fChallengerMargin = 0.25        ; How much better a challenger must score (0.25 = 25%)
+bReturnToHomeKey = true         ; A returning item takes back the key it left (home keys)
+fHomeKeyMemorySec = 60          ; ...if it left within this long; 0-600, 0 = off
 iNeedFreeSlots = 3              ; Need cap: items of one need on Regular keys at full utility (1-10)
 fNeedRepeatDiscount = 0.5       ; ...and x this for each one past them; 1.0 = off
 fRemembranceDurationMs = 15000  ; Remembrance hold length; 0 = off everywhere

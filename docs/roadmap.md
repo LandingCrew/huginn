@@ -31,10 +31,14 @@ and change the learning before tuning anything that competes with it.
 3. **Slot stability** -- in this order (2026-10-06): the per-need discount
    (what goes on the page: eight foods filled eight keys; measured in
    tools/replay first), then the soft slot manager (where it sits: an
-   unheld sword and bow jumped slots after refresh bursts), then combat
-   suppressing the workstation context (the flicker while standing still
-   at a bench is a separate, open problem), then a `fChallengerMargin` 0.25
-   vs 0.5 comparison on the `slotChurn=` heartbeat. All under "Remaining
+   unheld sword and bow jumped slots after refresh bursts; home keys,
+   0.23.5), then combat
+   suppressing the workstation context (undecided; it must restore itself
+   after the fight), then a `fChallengerMargin` 0.25 vs 0.5 comparison on
+   the `slotChurn=` heartbeat -- an INI-only session (0.5 would have
+   blocked ~82 of ~255 hold-governed changes across the last 8 windows).
+   The standing-still bench flicker is likely the tester; confirm with a
+   still camera. All under "Remaining
    slot churn" and "Soft slot manager" below; #174's key-age and tenure
    bands are the before/after measure.
 4. **Potion recommendations** -- buffs matched to the loadout, resist
@@ -1422,7 +1426,22 @@ key, is already a PotionsAny slot with overrides on.
       - Untested with Wheeler's `Empty` post-activation policy.
       - No dMenu toggle, like the rest of `[SlotLocker]`.
 
-- [ ] **Soft slot manager: per-slot memory of recent occupants.** The
+- [x] **Soft slot manager: per-slot memory of recent occupants -- SHIPPED in
+      0.23.5 as home keys** (5-slots.md, "Home keys"). Built from the entry
+      below with two decisions by the user (2026-10-06): a returner takes its
+      key back from whatever filled the gap (the gap-filler swaps to where the
+      returner landed), and there is NO wait mode -- a returner that cannot go
+      home shows where it lands, which becomes its key. The memory is 3
+      departures per slot with a 60 s window (`fHomeKeyMemorySec`): 1,073 of
+      1,365 returns in 21 logs landed on a different key, almost all within a
+      minute. Measure: the heartbeat's `returns(home= wait= away=)`, with
+      `bReturnToHomeKey = 0` for the baseline. First run (LoreRim,
+      2026-10-06 20:14-20:25): 22 of 35 returns to the displayed page went
+      home, against ~21% before; 17 of the misses were a home key under an
+      override or Remembrance hold, so a blocked returner now gets the right
+      of first refusal (the user): it claims the key and waits, and takes it
+      when the hold ends unless a challenger beats it by the margin.
+      Original entry: **Soft slot manager: per-slot memory of recent occupants.** The
       user's idea, 2026-10-04, from the soak: a sword that was not in a
       Remembrance slot jumped keys after a burst of state refreshes, and so
       did the bow. Seating (5-slots.md, "Seating (anti-juggling)") already
@@ -1479,10 +1498,17 @@ key, is already a PotionsAny slot with overrides on.
         after the crosshair leaves the bench was tried (#175) and closed
         unmerged: the user judged it not needed, and it kept the craft
         context alive while walking through town.
-        Two fixes, two problems:
+        Two fixes, two problems (re-weighed 2026-10-06, after the need cap
+        and home keys):
         - **In combat: combat suppresses the workstation context** -- no
-          one crafts mid-fight.
-        - **Out of combat, standing still: still open.** Measured on 0.23.4
+          one crafts mid-fight. Undecided whether it is worth it now that
+          the hold, home keys and the need cap damp the juggling; if built,
+          the craft context must come back by itself when the fight ends
+          (the user), with no need to look away and back at the bench.
+        - **Out of combat, standing still: probably the tester** (the
+          user: moving the camera on and off the forge and workbench while
+          testing). To confirm with a still camera before treating it as a
+          bug. Measured on 0.23.4
           the same day: 8 changes in 2.3 s standing at the forge
           (17:14:08-10, none -> forge -> none ...), and 26 in 65 s standing
           between the forge and the armour workbench (18:05:37-53,

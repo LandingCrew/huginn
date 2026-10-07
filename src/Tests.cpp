@@ -6547,6 +6547,192 @@ void RunNeedCapHoldTest()
 }
 
 // =============================================================================
+// Home keys: an item back within the memory takes its key back
+// =============================================================================
+// The soak's case: an item drops off the page for a moment, a newcomer fills
+// its key, and the item comes back. Three passes on a made-up all-Regular
+// page: (1) eight items seated, A on slot 0; (2) A gone, newcomer N fills slot
+// 0; (3) A back, scoring between N and H with the hold's margin, so the hold
+// puts it on H's slot 7. Seating must then swap A home to slot 0 and N to
+// slot 7, and leave everyone else where they were. Distinct needs, so the
+// need cap does not take part; utilities come from the live margin.
+//
+// Then the right of first refusal: the same three passes with an override
+// on slot 0 in pass 3. A cannot go home, waits on slot 7 holding the claim,
+// stays there while B's slot 1 empties with the override still up (it is
+// held where it stands, not moved by the fill), and takes slot 0 when the
+// override ends.
+//
+// Code review of #179, two more: (3) A OUTRANKED off slot 0 by the hold --
+// still a candidate, its seat cleared on the spot -- is remembered and takes
+// slot 0 back; (4) an override marking the gap-filler on its OWN seat keeps
+// that seat when A returns, and does not jump to its configured slot.
+void RunHomeKeyTest()
+{
+#ifndef NDEBUG
+    using namespace Huginn::Slot;
+    logger::info("Running home key test..."sv);
+
+    const auto& settings = SlotSettings::GetSingleton();
+    if (!settings.KeepSlotPositions() || !settings.HoldSeatedItems() || !settings.ReturnToHomeKey() ||
+        settings.HomeKeyMemorySec() <= 0.0f) {
+        logger::info("  home key test skipped: needs seating, the hold and home keys on"sv);
+        return;
+    }
+    const float margin = settings.ChallengerMargin();
+
+    std::vector<SlotConfig> configs(8);
+    for (size_t i = 0; i < configs.size(); ++i) {
+        configs[i].classification = SlotClassification::Regular;
+        configs[i].priority = static_cast<int8_t>(7 - i);
+        configs[i].skipEquipped = false;   // no player: nothing is equipped
+        configs[i].wildcardsEnabled = true;
+    }
+
+    // Candidates keep a view of their name: every name set once, up front.
+    static std::array<std::string, 11> names;
+    for (size_t i = 0; i < names.size(); ++i) {
+        names[i] = "HomeKeyProbe" + std::to_string(i);
+    }
+    constexpr RE::FormID kBase = 0x0BADF400;
+    auto spell = [](size_t i, Spell::SpellType type, float utility) {
+        Candidate::SpellCandidate s{};
+        s.formID = kBase + static_cast<RE::FormID>(i); s.name = names[i]; s.type = type;
+        Scoring::ScoredCandidate sc{}; sc.candidate = s; sc.utility = utility;
+        return sc;
+    };
+    auto weapon = [](size_t i, float utility) {
+        Candidate::WeaponCandidate w{};
+        w.formID = kBase + static_cast<RE::FormID>(i); w.name = names[i];
+        w.tags = Weapon::WeaponTag::Melee;
+        Scoring::ScoredCandidate sc{}; sc.candidate = w; sc.utility = utility;
+        return sc;
+    };
+
+    using SpellType = Spell::SpellType;
+    // 0 = A (the returner), 1-6 = B..G, 7 = H (weakest), 8 = N (the newcomer).
+    const auto B = spell(1, SpellType::Damage, 0.9f), C = spell(2, SpellType::Defensive, 0.8f),
+               D = spell(3, SpellType::Utility, 0.7f), E = spell(4, SpellType::Summon, 0.6f),
+               F = spell(5, SpellType::Buff, 0.5f),    G = spell(6, SpellType::Debuff, 0.4f),
+               H = weapon(7, 0.3f), N = weapon(8, 0.35f);
+    // Back, A beats H by the margin but not N: the hold puts it on slot 7.
+    const float returned = (0.3f + 0.35f) / 2.0f * (1.0f + margin);
+    const Scoring::ScoredCandidateList pass1 = { spell(0, SpellType::Healing, 1.0f), B, C, D, E, F, G, H };
+    const Scoring::ScoredCandidateList pass2 = { B, C, D, E, F, G, N, H };
+    const Scoring::ScoredCandidateList pass3 = { B, C, D, E, F, G, spell(0, SpellType::Healing, returned), N, H };
+
+    auto& allocator = SlotAllocator::GetSingleton();
+    allocator.Reset();
+    constexpr uint32_t kGeneration = 0xFFFF0002u;
+    const auto first = allocator.AllocateForTest(0, kGeneration, configs, pass1);
+    const auto gap = allocator.AllocateForTest(0, kGeneration, configs, pass2);
+    const auto back = allocator.AllocateForTest(0, kGeneration, configs, pass3);
+    allocator.Reset();   // no probe seats or departures left for the first real pass
+
+    auto slotOf = [](const SlotAssignments& a, size_t probe) -> size_t {
+        for (const auto& s : a) {
+            if (!s.IsEmpty() && s.formID == kBase + static_cast<RE::FormID>(probe)) return s.slotIndex;
+        }
+        return SIZE_MAX;
+    };
+    bool passed = true;
+    auto expect = [&](bool ok, std::string_view what) {
+        if (!ok) { logger::error("TEST FAIL: home key: {}"sv, what); passed = false; }
+    };
+
+    // The right of first refusal: an override on slot 0 when A comes back.
+    std::vector<SlotConfig> guarded = configs;
+    for (size_t i = 1; i < guarded.size(); ++i) {
+        guarded[i].overrideFilter = OverrideFilter::None;   // the override can only take slot 0
+    }
+    guarded[0].overrideFilter = OverrideFilter::Any;
+    Override::OverrideCollection override;
+    {
+        Candidate::ItemCandidate potion{};
+        potion.formID = kBase + 9; potion.name = names[9]; potion.type = Item::ItemType::HealthPotion;
+        Override::OverrideResult result;
+        result.priority = 100;
+        result.category = Override::OverrideCategory::HP;
+        result.condition = Override::OverrideCondition::CriticalHealth;
+        result.reason = "home key test";
+        result.candidate = potion;
+        override.activeOverrides.push_back(std::move(result));
+    }
+    allocator.Reset();
+    (void)allocator.AllocateForTest(0, kGeneration, guarded, pass1);
+    (void)allocator.AllocateForTest(0, kGeneration, guarded, pass2);
+    const auto blocked = allocator.AllocateForTest(0, kGeneration, guarded, pass3, override);
+    Scoring::ScoredCandidateList withoutB = pass3;
+    std::erase_if(withoutB, [](const Scoring::ScoredCandidate& c) { return c.GetFormID() == kBase + 1; });
+    const auto stillBlocked = allocator.AllocateForTest(0, kGeneration, guarded, withoutB, override);
+    const auto cleared = allocator.AllocateForTest(0, kGeneration, guarded, withoutB);
+    allocator.Reset();
+
+    // (3) Outranked off the page by the hold, then back.
+    allocator.Reset();
+    (void)allocator.AllocateForTest(0, kGeneration, configs, pass1);
+    const Scoring::ScoredCandidateList outranked = {
+        spell(10, SpellType::Damage, 2.0f), B, C, D, E, F, G, H, spell(0, SpellType::Healing, 0.2f) };
+    const auto beaten = allocator.AllocateForTest(0, kGeneration, configs, outranked);
+    const Scoring::ScoredCandidateList outrankedBack = {
+        spell(10, SpellType::Damage, 2.0f), B, C, D, E, F, G, spell(0, SpellType::Healing, returned), H };
+    const auto backAfterBeaten = allocator.AllocateForTest(0, kGeneration, configs, outrankedBack);
+    allocator.Reset();
+
+    // (4) An override marking the gap-filler on its own seat 0 (mark in
+    // place), with its configured fallback on slot 3.
+    std::vector<SlotConfig> marking = configs;
+    for (auto& c : marking) c.overrideFilter = OverrideFilter::None;
+    marking[3].overrideFilter = OverrideFilter::Any;
+    auto potionN = [&] {
+        Candidate::ItemCandidate p{};
+        p.formID = kBase + 8; p.name = names[8]; p.type = Item::ItemType::BuffPotion;
+        return p;
+    }();
+    Scoring::ScoredCandidate potionScored{}; potionScored.candidate = potionN; potionScored.utility = 0.35f;
+    Override::OverrideCollection drowning;
+    {
+        Override::OverrideResult result;
+        result.priority = 50;
+        result.category = Override::OverrideCategory::Other;
+        result.condition = Override::OverrideCondition::Drowning;
+        result.reason = "home key test (marks in place)";
+        result.candidate = potionN;
+        drowning.activeOverrides.push_back(std::move(result));
+    }
+    const Scoring::ScoredCandidateList markGap = { B, C, D, E, F, G, potionScored, H };
+    const Scoring::ScoredCandidateList markBack = { B, C, D, E, F, G, spell(0, SpellType::Healing, returned), potionScored, H };
+    allocator.Reset();
+    (void)allocator.AllocateForTest(0, kGeneration, marking, pass1);
+    const auto markFilled = allocator.AllocateForTest(0, kGeneration, marking, markGap);
+    (void)allocator.AllocateForTest(0, kGeneration, marking, markBack, drowning);
+    const auto markHeld = allocator.AllocateForTest(0, kGeneration, marking, markBack, drowning);
+    allocator.Reset();
+
+    expect(slotOf(beaten, 0) == SIZE_MAX, "setup: the hold did not push A off the page");
+    expect(slotOf(backAfterBeaten, 0) == 0, "A, outranked off slot 0 by the hold, did not take it back");
+    expect(slotOf(markFilled, 8) == 0, "setup: the potion did not fill slot 0");
+    expect(slotOf(markHeld, 8) == 0, "the override marking its own seat jumped when A came back");
+    expect(slotOf(first, 0) == 0, "setup: A is not on slot 0");
+    expect(slotOf(blocked, 9) == 0, "setup: the override is not on slot 0");
+    expect(slotOf(blocked, 0) == 7, "A was not shown on slot 7 while it waited for slot 0");
+    expect(slotOf(stillBlocked, 0) == 7, "A, waiting, moved when another slot emptied");
+    expect(slotOf(cleared, 0) == 0, "A did not take slot 0 when the override ended");
+    expect(slotOf(gap, 8) == 0, "setup: the newcomer did not fill A's slot 0");
+    expect(slotOf(back, 0) == 0, "A came back and did not take slot 0 back");
+    expect(slotOf(back, 8) == 7, "the newcomer did not move to the slot A landed on");
+    expect(slotOf(back, 7) == SIZE_MAX, "setup: H was not the item A replaced");
+    for (size_t probe = 1; probe <= 6; ++probe) {
+        expect(slotOf(back, probe) == slotOf(first, probe), "an item that never left moved");
+    }
+
+    if (passed) {
+        logger::info("  home key test PASSED"sv);
+    }
+#endif
+}
+
+// =============================================================================
 // THROWAWAY: a Buff's element is not a resist claim (0.20.63)
 // =============================================================================
 // Delete this block, its Tests.h declaration and its Main.cpp call site

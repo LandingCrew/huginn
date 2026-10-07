@@ -31,6 +31,8 @@ namespace Huginn::Telemetry
         static_assert(ClassifySlotChange(false, false, false, false, true, Expired) == Wildcard);
         static_assert(ClassifySlotChange(false, false, false, false, false, Expired) == Expired);
         static_assert(ClassifySlotChange(false, false, false, false, false, Used) == Used);
+        static_assert(ClassifySlotChange(false, false, false, false, false, Seated) == Seated);
+        static_assert(ClassifySlotChange(false, false, false, false, true, Seated) == Wildcard);
         static_assert(ClassifySlotChange(false, false, false, false, false, Override) == Override);
         static_assert(ClassifySlotChange(false, false, false, false, false, Unheld) == Unheld);
         // A remembrance hold names itself over a wildcard and a lock, not over
@@ -113,6 +115,14 @@ namespace Huginn::Telemetry
     void SoakMetrics::RecordPageFlip()
     {
         m_pageFlips.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    void SoakMetrics::RecordReturn(ReturnOutcome outcome)
+    {
+        auto& counter = outcome == ReturnOutcome::Home    ? m_returnsHome
+                      : outcome == ReturnOutcome::Waiting ? m_returnsWaiting
+                                                          : m_returnsAway;
+        counter.fetch_add(1, std::memory_order_relaxed);
     }
 
     void SoakMetrics::RecordSlotChanges(std::span<const SlotChangeEvent> changes,
@@ -210,6 +220,9 @@ namespace Huginn::Telemetry
         const uint32_t pressLabeled = m_pressLabeled.exchange(0, std::memory_order_relaxed);
         const uint32_t pressOffPage = m_pressOffPage.exchange(0, std::memory_order_relaxed);
         const uint32_t pageFlips    = m_pageFlips.exchange(0, std::memory_order_relaxed);
+        const uint32_t returnsHome  = m_returnsHome.exchange(0, std::memory_order_relaxed);
+        const uint32_t returnsWait  = m_returnsWaiting.exchange(0, std::memory_order_relaxed);
+        const uint32_t returnsAway  = m_returnsAway.exchange(0, std::memory_order_relaxed);
         std::array<uint32_t, static_cast<std::size_t>(PressAgeBand::Count)> pressAge{};
         for (std::size_t b = 0; b < pressAge.size(); ++b) {
             pressAge[b] = m_pressAge[b].exchange(0, std::memory_order_relaxed);
@@ -285,6 +298,11 @@ namespace Huginn::Telemetry
                     PressAgeBandName(static_cast<PressAgeBand>(b)), pressAge[b]);
             }
             churnStr += ')';
+        }
+        // Returns ride with churn too: items back on the page within the
+        // home-key memory, on the key they left or elsewhere.
+        if (returnsHome + returnsWait + returnsAway) {
+            churnStr += std::format(" returns(home={} wait={} away={})", returnsHome, returnsWait, returnsAway);
         }
 
         const float avgMs  = ticks ? (static_cast<float>(sumMicros) / 1000.0f / ticks) : 0.0f;

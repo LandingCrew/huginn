@@ -121,6 +121,8 @@ namespace Huginn::Slot
             for (auto& page : m_lastPlaced) {
                 page.fill(0);
             }
+            m_departed = {};
+            m_homeClaims = {};
             m_seatingGeneration = UINT32_MAX;
         }
         SKSE::log::info("[SlotAllocator] Reset to page 0");
@@ -863,12 +865,12 @@ namespace Huginn::Slot
 
 #ifndef NDEBUG
     SlotAssignments SlotAllocator::AllocateForTest(size_t pageIndex, uint32_t generation,
-        const std::vector<SlotConfig>& slotConfigs, const Scoring::ScoredCandidateList& candidates) const
+        const std::vector<SlotConfig>& slotConfigs, const Scoring::ScoredCandidateList& candidates,
+        const Override::OverrideCollection& overrides) const
     {
-        const Override::OverrideCollection noOverrides{};
         const State::PlayerActorState noPlayer{};
         const State::WorldState noWorld{};
-        return AllocateSlotsInternal(pageIndex, generation, slotConfigs, candidates, noOverrides, noPlayer, noWorld);
+        return AllocateSlotsInternal(pageIndex, generation, slotConfigs, candidates, overrides, noPlayer, noWorld);
     }
 #endif
 
@@ -947,6 +949,7 @@ namespace Huginn::Slot
 
         std::array<uint64_t, MAX_SLOTS_PER_PAGE> seats{};
         std::array<uint64_t, MAX_SLOTS_PER_PAGE> placed{};
+        std::array<uint64_t, MAX_SLOTS_PER_PAGE> claims{};
         {
             std::lock_guard<std::mutex> lock(m_seatingMutex);
             // A stale generation means a layout reload; ApplySeating clears
@@ -956,6 +959,7 @@ namespace Huginn::Slot
             }
             seats = m_seating[pageIndex];
             placed = m_lastPlaced[pageIndex];
+            claims = m_homeClaims[pageIndex];
         }
 
         // Phase A: which seat owners are still candidates, and still allowed
@@ -1002,9 +1006,9 @@ namespace Huginn::Slot
         // challengers. Free to challenge, the Iron Dagger an override pushed
         // out of slot 1 beat Sparks in slot 4, Sparks landed in slot 3, and
         // it all ran backwards when the override ended -- one override, six
-        // slot changes (2026-09-27 19:08:30-37). It may still fill a slot
-        // that is genuinely empty (the fill), and goes home when the override
-        // ends.
+        // slot changes (2026-09-27 19:08:30-37). It is still held where it
+        // stands (the guests below), and goes home when the override ends.
+        std::set<RE::FormID> displacedOwners;
         for (size_t j = 0; j < slotCount; ++j) {
             // A remembered item sitting in someone's seat displaces its owner
             // the same way an override does.
@@ -1016,6 +1020,7 @@ namespace Huginn::Slot
                 if (Candidate::GetBase(c.candidate).GetDeduplicationKey() == seats[j]) {
                     excludedIDs.insert(c.GetFormID());
                     excludedNames.insert(c.GetName());
+                    displacedOwners.insert(c.GetFormID());
                     break;
                 }
             }
@@ -1028,6 +1033,14 @@ namespace Huginn::Slot
         // for half a minute (2026-09-26 14:28:49-14:29:20). Held where it
         // stands, under the same test, until the override ends and seating
         // takes it home.
+        //
+        // The displaced owners above are exactly these items, and the loop
+        // above put them in the excluded sets -- which this loop read as
+        // "already held", so a guest was never held: it went to whichever
+        // empty slot the fill reached first, and a lock left on its old slot
+        // cleared and refilled that slot twice in 0.4 s (Raw Crab Meat,
+        // waiting for an override on its home key, LoreRim 2026-10-06
+        // 21:07:58). Home keys make such guests common.
         for (size_t k = 0; k < priorityCount; ++k) {
             const size_t j = priorityOrder[k];
             if (j >= slotCount || !assignments[j].IsEmpty() || placed[j] == 0) continue;
@@ -1045,9 +1058,15 @@ namespace Huginn::Slot
                     break;
                 }
             }
-            if (!guest || excludedIDs.contains(guest->GetFormID()) ||
-                excludedNames.contains(guest->GetName())) {
-                continue;  // gone, shown by an override, or already held in its own seat
+            if (!guest) {
+                continue;  // gone
+            }
+            if (displacedOwners.contains(guest->GetFormID())) {
+                if (assignedFormIDs.contains(guest->GetFormID()) || assignedNames.contains(guest->GetName())) {
+                    continue;  // an override or Remembrance hold is showing it
+                }
+            } else if (excludedIDs.contains(guest->GetFormID()) || excludedNames.contains(guest->GetName())) {
+                continue;  // shown by an override, or already held in its own seat
             }
             const auto probe = SlotAssignment::FromCandidate(j, slotConfigs[j].classification, *guest);
             if (!SlotAccepts(slotConfigs[j], probe, player)) {
@@ -1165,9 +1184,14 @@ namespace Huginn::Slot
 
                 // The loser is free again -- the fill may show it elsewhere --
                 // but not as this seat's owner. A guest owns a seat somewhere
-                // else, and the seat here is not its to give up.
-                excludedIDs.erase(item->GetFormID());
-                excludedNames.erase(item->GetName());
+                // else, and the seat here is not its to give up. An owner an
+                // override displaced stays out of the challengers even so
+                // (code review of #179): freed, it could take another held
+                // slot -- the one-override, six-changes cascade.
+                if (!displacedOwners.contains(item->GetFormID())) {
+                    excludedIDs.erase(item->GetFormID());
+                    excludedNames.erase(item->GetName());
+                }
                 const uint64_t loserKey = Candidate::GetBase(item->candidate).GetDeduplicationKey();
                 if (seats[j] == loserKey) {
                     std::lock_guard<std::mutex> lock(m_seatingMutex);
@@ -1180,6 +1204,12 @@ namespace Huginn::Slot
 
             assignments[j] = SlotAssignment::FromCandidate(j, config.classification, *item,
                 item->isWildcard ? AssignmentType::Wildcard : AssignmentType::Normal);
+            // A home claimant arriving at its key from where it waited: the
+            // lock still showing it there may let go (SlotLocker).
+            {
+                const uint64_t key = Candidate::GetBase(item->candidate).GetDeduplicationKey();
+                assignments[j].seatMoved = claims[j] == key && placed[j] != key;
+            }
             assignedFormIDs.insert(item->GetFormID());
             assignedNames.insert(item->GetName());
             needCap.Add(*item);   // back in the count it left to be judged
@@ -1209,6 +1239,8 @@ namespace Huginn::Slot
         // Work on a copy: the pass reads one consistent snapshot of where things
         // sat, and the lock is not held across the moves.
         std::array<uint64_t, MAX_SLOTS_PER_PAGE> seats{};
+        std::array<std::array<Departure, HOME_MEMORY_PER_SLOT>, MAX_SLOTS_PER_PAGE> departed{};
+        std::array<uint64_t, MAX_SLOTS_PER_PAGE> claims{};
         {
             std::lock_guard<std::mutex> lock(m_seatingMutex);
             if (m_seatingGeneration != generation) {
@@ -1220,10 +1252,14 @@ namespace Huginn::Slot
                 for (auto& page : m_lastPlaced) {
                     page.fill(0);
                 }
+                m_departed = {};
+                m_homeClaims = {};
                 m_seatingGeneration = generation;
                 return;
             }
             seats = m_seating[pageIndex];
+            departed = m_departed[pageIndex];
+            claims = m_homeClaims[pageIndex];
         }
 
         auto keyOf = [](const SlotAssignment& a) -> uint64_t {
@@ -1249,12 +1285,143 @@ namespace Huginn::Slot
             return !assignments[idx].IsPinned();
         };
 
+        // Only a home claimant's move is marked (code review of #179): every
+        // other seating move waits out the lock on its old slot, as before.
         auto moveTo = [&](size_t from, size_t to) {
+            const bool claimant = claims[to] != 0 && claims[to] == keyOf(assignments[from]);
             assignments[to] = std::move(assignments[from]);
+            assignments[to].seatMoved = claimant;
             assignments[to].slotIndex = to;
             assignments[to].classification = slotConfigs[to].classification;
             assignments[from] = SlotAssignment::Empty(from, slotConfigs[from].classification);
         };
+
+        // Phase 0: home keys. A seat is freed the moment its owner leaves the
+        // screen, so an item that drops off for a few seconds -- outranked
+        // through a burst of refreshes -- came back to whatever key was open:
+        // 1,073 of 1,365 returns within ten minutes landed on a different key
+        // (21 logs, 2026-09-30 to 10-06), most of them within a minute.
+        //
+        // A RETURNER is on screen with no seat and left a slot of this page
+        // within fHomeKeyMemorySec. It takes that slot's seat back from the
+        // item that filled the gap (the user's rule, 2026-10-06: whoever
+        // arrived after the returner left only filled the gap), and the
+        // phases below move it there -- into the slot if empty, else by the
+        // phase-2 swap, which puts the gap-filler where the returner landed.
+        // Only where the move can happen: the home slot takes the returner,
+        // and its occupant fits the returner's slot. Otherwise the returner
+        // keeps the key it landed on, which becomes its home -- a
+        // recommendation is never hidden to wait for a key. Two returners for
+        // one slot: the later leaver wins.
+        //
+        // Blocked only by an override or a Remembrance hold -- both pass --
+        // the returner gets the right of first refusal (the user, 2026-10-06):
+        // it claims the seat and waits, shown where it landed, as an item an
+        // override displaced already does. When the slot frees, the slot hold
+        // seats it there unless a challenger beats it by the margin; if it
+        // leaves the page meanwhile, the claim lapses with it. 17 of 22 misses
+        // on LoreRim's first run were this case (2026-10-06 20:14-20:25).
+        //
+        // Not when the pinned item IS that slot's seat owner -- an override
+        // marking its own seat (code review of #179): taking the seat would
+        // make the override jump to its configured slot mid-emergency.
+        enum class Away : uint8_t { None, Off, Taken, Waits, Class, Owned };
+        struct Returner
+        {
+            uint64_t key;
+            size_t at;
+            size_t home;
+            float awaySec;
+            Away why;
+            uint64_t displaced = 0;   // the gap-filler on the home slot, for the log
+        };
+        std::array<Returner, MAX_SLOTS_PER_PAGE> returners{};
+        size_t returnerCount = 0;
+        const auto& slotSettings = SlotSettings::GetSingleton();
+        const float memorySec = slotSettings.HomeKeyMemorySec();
+        if (memorySec > 0.0f) {
+            const auto now = std::chrono::steady_clock::now();
+            for (size_t i = 0; i < slotCount; ++i) {
+                const uint64_t key = keyOf(assignments[i]);
+                if (key == 0 || !movable(i) || seatWantedBy(key) != SIZE_MAX) continue;
+                size_t home = SIZE_MAX;
+                std::chrono::steady_clock::time_point leftAt{};
+                for (size_t j = 0; j < slotCount; ++j) {
+                    for (const auto& d : departed[j]) {
+                        if (d.key == key && (home == SIZE_MAX || d.leftAt > leftAt)) {
+                            home = j;
+                            leftAt = d.leftAt;
+                        }
+                    }
+                }
+                const float awaySec = std::chrono::duration<float>(now - leftAt).count();
+                if (home == SIZE_MAX || awaySec > memorySec) continue;
+                returners[returnerCount++] = { key, i, home, awaySec, Away::None, 0 };
+            }
+            std::sort(returners.begin(), returners.begin() + returnerCount,
+                [](const Returner& a, const Returner& b) { return a.awaySec < b.awaySec; });
+        }
+
+        bool seatsReclaimed = false;
+        {
+            std::array<bool, MAX_SLOTS_PER_PAGE> claimed{};
+            const bool returnHome = slotSettings.ReturnToHomeKey();
+            for (size_t r = 0; r < returnerCount; ++r) {
+                auto& ret = returners[r];
+                const size_t h = ret.home;
+                if (!returnHome) { ret.why = Away::Off; continue; }
+                if (claimed[h]) { ret.why = Away::Taken; continue; }
+                if (ret.at != h) {
+                    if (!SlotAccepts(slotConfigs[h], assignments[ret.at], player)) {
+                        ret.why = Away::Class;
+                        continue;
+                    }
+                    if (!movable(h)) {
+                        if (keyOf(assignments[h]) == seats[h]) {
+                            ret.why = Away::Owned;
+                            continue;
+                        }
+                        ret.why = Away::Waits;   // claims the seat; phases 1-2 leave a pinned slot alone
+                    } else if (!assignments[h].IsEmpty() &&
+                               !SlotAccepts(slotConfigs[ret.at], assignments[h], player)) {
+                        ret.why = Away::Class;
+                        continue;
+                    }
+                    if (movable(h)) {
+                        ret.displaced = keyOf(assignments[h]);
+                    }
+                }
+                claimed[h] = true;
+                seats[h] = ret.key;   // the gap-filler's claim ends; it takes a seat where it lands
+                claims[h] = ret.key;
+                seatsReclaimed = true;
+            }
+        }
+        if (returnerCount > 0) {
+            // Written back now, not left to RecordSeating: that keeps "you keep
+            // your seat while on screen", and the gap-filler -- still on screen
+            // -- would otherwise keep the seat it just lost.
+            //
+            // Every returner's departure is spent, whatever the outcome (code
+            // review of #179): one kept would make the item a returner again
+            // on every pass while it stays seatless -- a [HomeKey] line and a
+            // counted return ten times a second -- and could later send it to
+            // that stale key instead of its latest one.
+            std::lock_guard<std::mutex> lock(m_seatingMutex);
+            if (m_seatingGeneration == generation) {
+                if (seatsReclaimed) {
+                    m_seating[pageIndex] = seats;
+                    m_homeClaims[pageIndex] = claims;
+                }
+                for (size_t r = 0; r < returnerCount; ++r) {
+                    for (auto& slot : m_departed[pageIndex]) {
+                        for (auto& d : slot) {
+                            if (d.key == returners[r].key) d = {};
+                        }
+                    }
+                }
+            }
+        }
 
         // Phase 1: moves into empty seats, repeated.
         //
@@ -1312,7 +1479,10 @@ namespace Huginn::Slot
                 if (!SlotAccepts(slotConfigs[want], assignments[i], player)) continue;
                 if (!SlotAccepts(slotConfigs[i], assignments[want], player)) continue;
 
+                const bool claimant = claims[want] != 0 && claims[want] == keyOf(assignments[i]);
                 std::swap(assignments[i], assignments[want]);
+                assignments[i].seatMoved = claimant;      // the gap-filler, swapped out
+                assignments[want].seatMoved = claimant;   // the claimant, home
                 assignments[i].slotIndex = i;
                 assignments[i].classification = slotConfigs[i].classification;
                 assignments[want].slotIndex = want;
@@ -1320,6 +1490,46 @@ namespace Huginn::Slot
                 swapped = true;
             }
             if (!swapped) break;
+        }
+
+        // Where each returner ended up: the heartbeat's returns(home= wait= away=)
+        // for the displayed page, and one line per return.
+        for (size_t r = 0; r < returnerCount; ++r) {
+            const auto& ret = returners[r];
+            size_t now = SIZE_MAX;
+            for (size_t i = 0; i < slotCount; ++i) {
+                if (keyOf(assignments[i]) == ret.key) { now = i; break; }
+            }
+            if (now == SIZE_MAX) continue;
+            const bool home = now == ret.home;
+            using Outcome = Telemetry::SoakMetrics::ReturnOutcome;
+            if (pageIndex == GetCurrentPage()) {
+                Telemetry::SoakMetrics::GetSingleton().RecordReturn(
+                    home ? Outcome::Home : ret.why == Away::Waits ? Outcome::Waiting : Outcome::Away);
+            }
+            if (!home && ret.why == Away::Waits) {
+                SKSE::log::debug("[HomeKey] Page {}: '{}' back after {:.1f}s, waits on slot {} for slot {} "
+                    "(an override or Remembrance holds it)",
+                    pageIndex, assignments[now].name, ret.awaySec, now, ret.home);
+            } else if (home) {
+                // The gap-filler named at the claim, wherever it ended up.
+                std::string moved;
+                for (size_t i = 0; ret.displaced != 0 && i < slotCount; ++i) {
+                    if (keyOf(assignments[i]) == ret.displaced) {
+                        moved = std::format(" ('{}' moved to slot {})", assignments[i].name, i);
+                        break;
+                    }
+                }
+                SKSE::log::debug("[HomeKey] Page {}: '{}' back on slot {} after {:.1f}s{}",
+                    pageIndex, assignments[now].name, now, ret.awaySec, moved);
+            } else {
+                static constexpr std::array<std::string_view, 6> kWhy = {
+                    "seating could not reach it", "home keys off", "a later leaver took it",
+                    "it waits for it", "its class does not fit", "an override marks that key's own item" };
+                SKSE::log::debug("[HomeKey] Page {}: '{}' left slot {} {:.1f}s ago, now on slot {} ({})",
+                    pageIndex, assignments[now].name, ret.home, ret.awaySec, now,
+                    kWhy[static_cast<size_t>(ret.why)]);
+            }
         }
     }
 
@@ -1443,6 +1653,49 @@ namespace Huginn::Slot
         for (size_t i = 0; i < slotCount; ++i) {
             if (!assignments[i].IsPinned()) {
                 placedNow[i] = keyOf(assignments[i]);
+            }
+        }
+
+        // An item that left the screen entirely is remembered against the
+        // slot it owned, for home keys (ApplySeating, phase 0) -- or, with no
+        // seat, the slot it stood in last pass. The second is not a corner
+        // case: an item the slot hold outranked loses its seat on the spot
+        // (HoldIncumbents), so its seat reads empty here, and without the
+        // fallback the item the feature exists for -- outranked off the page
+        // for a few seconds -- was never remembered (code review of #179).
+        const auto now = std::chrono::steady_clock::now();
+        auto onScreen = [&](uint64_t key) {
+            return std::any_of(assignments.begin(), assignments.end(),
+                [&](const SlotAssignment& a) { return keyOf(a) == key; });
+        };
+        // Not from a slot a home claimant has claimed: an item that lost the
+        // seat to the claim only filled the gap, and remembering it there let
+        // it come back and claim the seat from the claimant still waiting for
+        // it (RunHomeKeyTest, 2026-10-06 21:56:10).
+        auto& claims = m_homeClaims[pageIndex];
+        auto remember = [&](size_t j, uint64_t key) {
+            if (claims[j] != 0 && claims[j] != key) return;
+            auto& ring = m_departed[pageIndex][j];
+            std::move_backward(ring.begin(), ring.end() - 1, ring.end());
+            ring[0] = { key, now };
+        };
+        for (size_t j = 0; j < slotCount; ++j) {
+            if (previous[j] != 0 && !onScreen(previous[j])) remember(j, previous[j]);
+        }
+        const auto& stood = m_lastPlaced[pageIndex];
+        for (size_t j = 0; j < slotCount; ++j) {
+            const uint64_t key = stood[j];
+            if (key == 0 || onScreen(key)) continue;
+            if (std::find(previous.begin(), previous.begin() + slotCount, key) != previous.begin() + slotCount) {
+                continue;  // remembered by its seat above
+            }
+            remember(j, key);
+        }
+
+        // A home claim ends when its item sits in the slot, or loses the seat.
+        for (size_t j = 0; j < slotCount; ++j) {
+            if (claims[j] != 0 && (seats[j] != claims[j] || keyOf(assignments[j]) == claims[j])) {
+                claims[j] = 0;
             }
         }
 
