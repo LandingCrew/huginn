@@ -1668,7 +1668,13 @@ namespace Huginn::Slot
             return std::any_of(assignments.begin(), assignments.end(),
                 [&](const SlotAssignment& a) { return keyOf(a) == key; });
         };
+        // Not from a slot a home claimant has claimed: an item that lost the
+        // seat to the claim only filled the gap, and remembering it there let
+        // it come back and claim the seat from the claimant still waiting for
+        // it (RunHomeKeyTest, 2026-10-06 21:56:10).
+        auto& claims = m_homeClaims[pageIndex];
         auto remember = [&](size_t j, uint64_t key) {
+            if (claims[j] != 0 && claims[j] != key) return;
             auto& ring = m_departed[pageIndex][j];
             std::move_backward(ring.begin(), ring.end() - 1, ring.end());
             ring[0] = { key, now };
@@ -1687,7 +1693,6 @@ namespace Huginn::Slot
         }
 
         // A home claim ends when its item sits in the slot, or loses the seat.
-        auto& claims = m_homeClaims[pageIndex];
         for (size_t j = 0; j < slotCount; ++j) {
             if (claims[j] != 0 && (seats[j] != claims[j] || keyOf(assignments[j]) == claims[j])) {
                 claims[j] = 0;
