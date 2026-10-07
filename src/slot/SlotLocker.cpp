@@ -99,19 +99,28 @@ namespace Huginn::Slot
         // allocator never places an override's item twice; only a lock can.
         // A remembered item likewise: the thing you just took off belongs
         // under the key you pressed, not under a lock somewhere else.
+        // And an item SEATING moved (SlotAssignment::seatMoved): a home-key
+        // return swaps the gap-filler out of the returner's key, and the
+        // gap-filler, there under three seconds, was nearly always still
+        // locked -- the returner showed on the wrong key first, and the swap
+        // landed a lock later, three visible changes for one (LoreRim
+        // 2026-10-06 20:47:10, 20:50:17). Not for the hold's own moves: those
+        // wait out the lock as before.
         for (size_t j = 0; j < newAssignments.size() && j < MAX_SLOTS; ++j) {
             auto& held = m_lockedSlots[j];
             if (!held.isLocked || held.assignment.IsEmpty()) continue;
             for (size_t i = 0; i < newAssignments.size() && i < MAX_SLOTS; ++i) {
                 const auto& ovr = newAssignments[i];
-                if (i != j && ovr.IsPinned() && ovr.formID == held.assignment.formID &&
+                if (i != j && (ovr.IsPinned() || ovr.seatMoved) && ovr.formID == held.assignment.formID &&
                     ovr.uniqueID == held.assignment.uniqueID) {
+                    const auto cause = ovr.IsOverride()   ? Telemetry::SlotChange::Override
+                                     : ovr.IsRemembered() ? Telemetry::SlotChange::Remembrance
+                                                          : Telemetry::SlotChange::Seated;
                     spdlog::debug("[SlotLocker] Slot {} lock released: its item moved to {} slot {}",
-                        j, ovr.IsOverride() ? "override" : "remembrance", i);
+                        j, Telemetry::SlotChangeName(cause), i);
                     held.isLocked = false;
                     held.remainingMs = 0.0f;
-                    held.releaseCause = ovr.IsOverride()
-                        ? Telemetry::SlotChange::Override : Telemetry::SlotChange::Remembrance;
+                    held.releaseCause = cause;
                     break;
                 }
             }
@@ -269,7 +278,8 @@ namespace Huginn::Slot
                 slot.releaseCause = Telemetry::SlotChange::Unheld;
             } else if (slot.releaseCause == Telemetry::SlotChange::Used ||
                        slot.releaseCause == Telemetry::SlotChange::Override ||
-                       slot.releaseCause == Telemetry::SlotChange::Remembrance) {
+                       slot.releaseCause == Telemetry::SlotChange::Remembrance ||
+                       slot.releaseCause == Telemetry::SlotChange::Seated) {
                 slot.releaseCause = m_config.lockDurationMs > 0.0f
                     ? Telemetry::SlotChange::Expired : Telemetry::SlotChange::Unheld;
             }

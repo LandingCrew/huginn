@@ -1255,6 +1255,7 @@ namespace Huginn::Slot
 
         auto moveTo = [&](size_t from, size_t to) {
             assignments[to] = std::move(assignments[from]);
+            assignments[to].seatMoved = true;
             assignments[to].slotIndex = to;
             assignments[to].classification = slotConfigs[to].classification;
             assignments[from] = SlotAssignment::Empty(from, slotConfigs[from].classification);
@@ -1423,6 +1424,8 @@ namespace Huginn::Slot
                 if (!SlotAccepts(slotConfigs[i], assignments[want], player)) continue;
 
                 std::swap(assignments[i], assignments[want]);
+                assignments[i].seatMoved = true;
+                assignments[want].seatMoved = true;
                 assignments[i].slotIndex = i;
                 assignments[i].classification = slotConfigs[i].classification;
                 assignments[want].slotIndex = want;

@@ -31,6 +31,8 @@ namespace Huginn::Telemetry
         static_assert(ClassifySlotChange(false, false, false, false, true, Expired) == Wildcard);
         static_assert(ClassifySlotChange(false, false, false, false, false, Expired) == Expired);
         static_assert(ClassifySlotChange(false, false, false, false, false, Used) == Used);
+        static_assert(ClassifySlotChange(false, false, false, false, false, Seated) == Seated);
+        static_assert(ClassifySlotChange(false, false, false, false, true, Seated) == Wildcard);
         static_assert(ClassifySlotChange(false, false, false, false, false, Override) == Override);
         static_assert(ClassifySlotChange(false, false, false, false, false, Unheld) == Unheld);
         // A remembrance hold names itself over a wildcard and a lock, not over

@@ -633,6 +633,12 @@ minutes landed on a different key, nearly all of them within a minute. So:
   hold seats it there unless a challenger beats it by `fChallengerMargin`; if
   it leaves the page meanwhile, the claim lapses with it. On LoreRim's first
   run this was 17 of the 22 returns that missed their key (2026-10-06).
+- **One run, not three.** The gap-filler has usually been on the returner's
+  key under three seconds, so it is still locked. Seating marks what it moves
+  (`SlotAssignment::seatMoved`), and `SlotLocker` lets go of a lock whose item
+  seating moved elsewhere, as it already did for an override or Remembrance
+  item -- otherwise the returner showed on the wrong key first and the swap
+  landed a lock later (churn cause `seated`).
 - **Not Remembrance.** Remembrance puts the item a press took off under that
   key, whatever the ranking says. Home keys never add an item: the ranking
   still decides what is shown; this decides where a returning item sits.

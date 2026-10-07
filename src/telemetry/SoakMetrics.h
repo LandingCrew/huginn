@@ -37,8 +37,10 @@ namespace Huginn::Telemetry
         Page,      // page switch (UnlockAll) -- player-driven, kept out of peak
         Unheld,    // replaced with no lock ever in the way (locking disabled)
         Remembrance,  // a Remembrance hold arriving or leaving -- the player's
-                      // own press, not the ranking. Last, so the heartbeat's
-                      // existing columns keep their order.
+                      // own press, not the ranking.
+        Seated,    // seating moved the slot's locked item to another slot (a
+                   // home-key return, a guest going home), releasing the
+                   // lock. Last, so the existing columns keep their order.
         Count
     };
 
@@ -55,6 +57,7 @@ namespace Huginn::Telemetry
         case SlotChange::Page:     return "page";
         case SlotChange::Unheld:   return "unheld";
         case SlotChange::Remembrance: return "remembrance";
+        case SlotChange::Seated:   return "seated";
         default:                   return "?";
         }
     }
@@ -87,6 +90,7 @@ namespace Huginn::Telemetry
         case SlotChange::Used:
         case SlotChange::Override:
         case SlotChange::Remembrance:
+        case SlotChange::Seated:
             return released;
         default:
             return SlotChange::Unheld;
