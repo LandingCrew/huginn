@@ -24,6 +24,12 @@ It is a just-in-time affordance surface.
 > **Upgrading to 0.20.0 resets learning.** The cosave record tag changed to `BNDW` when the learner's identifiers were renamed, and nothing reads the old tag. Saves written before 0.20.0 lose their learned weights and start over; nothing else in the save is affected.
 
 
+## In 24 seconds
+
+![Huginn pipeline: one fight, compressed. Game state feeds context weights, the learner multiplies them into utility, and the top items fill the slots.](assets/pipeline-story.svg)
+
+One scripted fight, about 3.5 minutes of play, compressed into six beats. Read it left to right: game state sets the **context** weights, the learner's **preference** multiplies them, and the resulting **utility** fills the slots. Two beats show the exceptions: the critical-health **override**, which skips scoring, and the **slot lock**, which keeps a near-tie from flickering. The values are illustrative; the parameters are the shipped `Huginn.ini` defaults. To change it, edit `BEATS` in `tools/docs-anim/pipeline_story.py` and re-run the script. `--frame N` writes a still of beat N.
+
 ---
 
 ## The Problem
