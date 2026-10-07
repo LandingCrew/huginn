@@ -203,13 +203,14 @@ namespace Huginn::Slot
 
 #ifndef NDEBUG
         /// Tests only: one allocation of a made-up layout on `pageIndex`, with
-        /// no overrides and no player, under layout generation `generation`.
+        /// no player and the given overrides, under layout generation `generation`.
         /// Two calls with the same generation run the seating memory and the
         /// slot hold, as two pipeline passes would. Leaves seating behind for
         /// that generation; the caller Reset()s.
         [[nodiscard]] SlotAssignments AllocateForTest(size_t pageIndex, uint32_t generation,
             const std::vector<SlotConfig>& slotConfigs,
-            const Scoring::ScoredCandidateList& candidates) const;
+            const Scoring::ScoredCandidateList& candidates,
+            const Override::OverrideCollection& overrides = {}) const;
 #endif
 
     private:

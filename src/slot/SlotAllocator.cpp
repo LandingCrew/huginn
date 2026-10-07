@@ -864,12 +864,12 @@ namespace Huginn::Slot
 
 #ifndef NDEBUG
     SlotAssignments SlotAllocator::AllocateForTest(size_t pageIndex, uint32_t generation,
-        const std::vector<SlotConfig>& slotConfigs, const Scoring::ScoredCandidateList& candidates) const
+        const std::vector<SlotConfig>& slotConfigs, const Scoring::ScoredCandidateList& candidates,
+        const Override::OverrideCollection& overrides) const
     {
-        const Override::OverrideCollection noOverrides{};
         const State::PlayerActorState noPlayer{};
         const State::WorldState noWorld{};
-        return AllocateSlotsInternal(pageIndex, generation, slotConfigs, candidates, noOverrides, noPlayer, noWorld);
+        return AllocateSlotsInternal(pageIndex, generation, slotConfigs, candidates, overrides, noPlayer, noWorld);
     }
 #endif
 
@@ -1272,12 +1272,20 @@ namespace Huginn::Slot
         // arrived after the returner left only filled the gap), and the
         // phases below move it there -- into the slot if empty, else by the
         // phase-2 swap, which puts the gap-filler where the returner landed.
-        // Only where the move can happen: the home slot takes the returner, is
-        // not pinned (an override or Remembrance hold), and its occupant fits
-        // the returner's slot. Otherwise the returner keeps the key it landed
-        // on, which becomes its home -- a recommendation is never hidden to
-        // wait for a key. Two returners for one slot: the later leaver wins.
-        enum class Away : uint8_t { None, Off, Taken, Pinned, Class };
+        // Only where the move can happen: the home slot takes the returner,
+        // and its occupant fits the returner's slot. Otherwise the returner
+        // keeps the key it landed on, which becomes its home -- a
+        // recommendation is never hidden to wait for a key. Two returners for
+        // one slot: the later leaver wins.
+        //
+        // Blocked only by an override or a Remembrance hold -- both pass --
+        // the returner gets the right of first refusal (the user, 2026-10-06):
+        // it claims the seat and waits, shown where it landed, as an item an
+        // override displaced already does. When the slot frees, the slot hold
+        // seats it there unless a challenger beats it by the margin; if it
+        // leaves the page meanwhile, the claim lapses with it. 17 of 22 misses
+        // on LoreRim's first run were this case (2026-10-06 20:14-20:25).
+        enum class Away : uint8_t { None, Off, Taken, Waits, Class };
         struct Returner
         {
             uint64_t key;
@@ -1323,9 +1331,14 @@ namespace Huginn::Slot
                 if (!returnHome) { ret.why = Away::Off; continue; }
                 if (claimed[h]) { ret.why = Away::Taken; continue; }
                 if (ret.at != h) {
-                    if (!movable(h)) { ret.why = Away::Pinned; continue; }
-                    if (!SlotAccepts(slotConfigs[h], assignments[ret.at], player) ||
-                        (!assignments[h].IsEmpty() && !SlotAccepts(slotConfigs[ret.at], assignments[h], player))) {
+                    if (!SlotAccepts(slotConfigs[h], assignments[ret.at], player)) {
+                        ret.why = Away::Class;
+                        continue;
+                    }
+                    if (!movable(h)) {
+                        ret.why = Away::Waits;   // claims the seat; phases 1-2 leave a pinned slot alone
+                    } else if (!assignments[h].IsEmpty() &&
+                               !SlotAccepts(slotConfigs[ret.at], assignments[h], player)) {
                         ret.why = Away::Class;
                         continue;
                     }
@@ -1343,7 +1356,7 @@ namespace Huginn::Slot
             if (m_seatingGeneration == generation) {
                 m_seating[pageIndex] = seats;
                 for (size_t r = 0; r < returnerCount; ++r) {
-                    if (returners[r].why != Away::None) continue;
+                    if (returners[r].why != Away::None && returners[r].why != Away::Waits) continue;
                     for (auto& slot : m_departed[pageIndex]) {
                         for (auto& d : slot) {
                             if (d.key == returners[r].key) d = {};
@@ -1419,7 +1432,7 @@ namespace Huginn::Slot
             if (!swapped) break;
         }
 
-        // Where each returner ended up: the heartbeat's returns(home= away=)
+        // Where each returner ended up: the heartbeat's returns(home= wait= away=)
         // for the displayed page, and one line per return.
         for (size_t r = 0; r < returnerCount; ++r) {
             const auto& ret = returners[r];
@@ -1429,10 +1442,16 @@ namespace Huginn::Slot
             }
             if (now == SIZE_MAX) continue;
             const bool home = now == ret.home;
+            using Outcome = Telemetry::SoakMetrics::ReturnOutcome;
             if (pageIndex == GetCurrentPage()) {
-                Telemetry::SoakMetrics::GetSingleton().RecordReturn(home);
+                Telemetry::SoakMetrics::GetSingleton().RecordReturn(
+                    home ? Outcome::Home : ret.why == Away::Waits ? Outcome::Waiting : Outcome::Away);
             }
-            if (home) {
+            if (!home && ret.why == Away::Waits) {
+                SKSE::log::debug("[HomeKey] Page {}: '{}' back after {:.1f}s, waits on slot {} for slot {} "
+                    "(an override or Remembrance holds it)",
+                    pageIndex, assignments[now].name, ret.awaySec, now, ret.home);
+            } else if (home) {
                 const bool moved = ret.at != ret.home && !assignments[ret.at].IsEmpty();
                 SKSE::log::debug("[HomeKey] Page {}: '{}' back on slot {} after {:.1f}s{}",
                     pageIndex, assignments[now].name, now, ret.awaySec,
@@ -1440,7 +1459,7 @@ namespace Huginn::Slot
             } else {
                 static constexpr std::array<std::string_view, 5> kWhy = {
                     "seating could not reach it", "home keys off", "a later leaver took it",
-                    "an override or Remembrance holds it", "its class does not fit" };
+                    "it waits for it", "its class does not fit" };
                 SKSE::log::debug("[HomeKey] Page {}: '{}' left slot {} {:.1f}s ago, now on slot {} ({})",
                     pageIndex, assignments[now].name, ret.home, ret.awaySec, now,
                     kWhy[static_cast<size_t>(ret.why)]);

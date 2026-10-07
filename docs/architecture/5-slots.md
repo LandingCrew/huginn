@@ -622,15 +622,21 @@ minutes landed on a different key, nearly all of them within a minute. So:
   the slot if empty, else by the swap, which puts the gap-filler where the
   returner landed. The transfer is written to `m_seating` at once; left to
   `RecordSeating`, the gap-filler, still on screen, would keep the seat.
-- **Only where the move can happen.** The home slot must take the returner, not
-  be pinned (an override or Remembrance hold), and its occupant must fit the
-  returner's slot. Otherwise the returner keeps the key it landed on, which
-  becomes its seat: a recommendation is never hidden to wait for a key. Two
-  returners for one slot: the one that left last wins.
+- **Only where the move can happen.** The home slot must take the returner,
+  and its occupant must fit the returner's slot. Otherwise the returner keeps
+  the key it landed on, which becomes its seat: a recommendation is never
+  hidden to wait for a key. Two returners for one slot: the one that left last
+  wins.
+- **The right of first refusal.** Blocked only by an override or a Remembrance
+  hold, the returner claims the seat anyway and waits, shown where it landed --
+  as an item an override displaced already does. When the slot frees, the slot
+  hold seats it there unless a challenger beats it by `fChallengerMargin`; if
+  it leaves the page meanwhile, the claim lapses with it. On LoreRim's first
+  run this was 17 of the 22 returns that missed their key (2026-10-06).
 - **Not Remembrance.** Remembrance puts the item a press took off under that
   key, whatever the ranking says. Home keys never add an item: the ranking
   still decides what is shown; this decides where a returning item sits.
-- **Measured.** The heartbeat's `returns(home= away=)` counts returns to the
+- **Measured.** The heartbeat's `returns(home= wait= away=)` counts returns to the
   displayed page, with the switch off too, so `bReturnToHomeKey = 0` gives the
   baseline from the same build. `[HomeKey]` (debug) logs each return, and why
   an item could not go home.

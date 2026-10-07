@@ -1431,8 +1431,13 @@ key, is already a PotionsAny slot with overrides on.
       home shows where it lands, which becomes its key. The memory is 3
       departures per slot with a 60 s window (`fHomeKeyMemorySec`): 1,073 of
       1,365 returns in 21 logs landed on a different key, almost all within a
-      minute. Measure: the heartbeat's `returns(home= away=)`, with
-      `bReturnToHomeKey = 0` for the baseline. In-game check pending.
+      minute. Measure: the heartbeat's `returns(home= wait= away=)`, with
+      `bReturnToHomeKey = 0` for the baseline. First run (LoreRim,
+      2026-10-06 20:14-20:25): 22 of 35 returns to the displayed page went
+      home, against ~21% before; 17 of the misses were a home key under an
+      override or Remembrance hold, so a blocked returner now gets the right
+      of first refusal (the user): it claims the key and waits, and takes it
+      when the hold ends unless a challenger beats it by the margin.
       Original entry: **Soft slot manager: per-slot memory of recent occupants.** The
       user's idea, 2026-10-04, from the soak: a sword that was not in a
       Remembrance slot jumped keys after a burst of state refreshes, and so

@@ -6556,6 +6556,10 @@ void RunNeedCapHoldTest()
 // puts it on H's slot 7. Seating must then swap A home to slot 0 and N to
 // slot 7, and leave everyone else where they were. Distinct needs, so the
 // need cap does not take part; utilities come from the live margin.
+//
+// Then the right of first refusal: the same three passes with an override
+// on slot 0 in pass 3. A cannot go home, waits on slot 7 holding the claim,
+// and takes slot 0 in pass 4 when the override ends.
 void RunHomeKeyTest()
 {
 #ifndef NDEBUG
@@ -6579,7 +6583,7 @@ void RunHomeKeyTest()
     }
 
     // Candidates keep a view of their name: every name set once, up front.
-    static std::array<std::string, 9> names;
+    static std::array<std::string, 10> names;
     for (size_t i = 0; i < names.size(); ++i) {
         names[i] = "HomeKeyProbe" + std::to_string(i);
     }
@@ -6629,7 +6633,35 @@ void RunHomeKeyTest()
         if (!ok) { logger::error("TEST FAIL: home key: {}"sv, what); passed = false; }
     };
 
+    // The right of first refusal: an override on slot 0 when A comes back.
+    std::vector<SlotConfig> guarded = configs;
+    for (size_t i = 1; i < guarded.size(); ++i) {
+        guarded[i].overrideFilter = OverrideFilter::None;   // the override can only take slot 0
+    }
+    guarded[0].overrideFilter = OverrideFilter::Any;
+    Override::OverrideCollection override;
+    {
+        Candidate::ItemCandidate potion{};
+        potion.formID = kBase + 9; potion.name = names[9]; potion.type = Item::ItemType::HealthPotion;
+        Override::OverrideResult result;
+        result.priority = 100;
+        result.category = Override::OverrideCategory::HP;
+        result.condition = Override::OverrideCondition::CriticalHealth;
+        result.reason = "home key test";
+        result.candidate = potion;
+        override.activeOverrides.push_back(std::move(result));
+    }
+    allocator.Reset();
+    (void)allocator.AllocateForTest(0, kGeneration, guarded, pass1);
+    (void)allocator.AllocateForTest(0, kGeneration, guarded, pass2);
+    const auto blocked = allocator.AllocateForTest(0, kGeneration, guarded, pass3, override);
+    const auto cleared = allocator.AllocateForTest(0, kGeneration, guarded, pass3);
+    allocator.Reset();
+
     expect(slotOf(first, 0) == 0, "setup: A is not on slot 0");
+    expect(slotOf(blocked, 9) == 0, "setup: the override is not on slot 0");
+    expect(slotOf(blocked, 0) != SIZE_MAX, "A was not shown while it waited for slot 0");
+    expect(slotOf(cleared, 0) == 0, "A did not take slot 0 when the override ended");
     expect(slotOf(gap, 8) == 0, "setup: the newcomer did not fill A's slot 0");
     expect(slotOf(back, 0) == 0, "A came back and did not take slot 0 back");
     expect(slotOf(back, 8) == 7, "the newcomer did not move to the slot A landed on");

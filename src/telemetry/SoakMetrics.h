@@ -303,9 +303,11 @@ namespace Huginn::Telemetry
         void RecordPageFlip();
 
         // An item came back to the displayed page within the home-key memory
-        // (SlotAllocator::ApplySeating): did it land on the key it left? The
+        // (SlotAllocator::ApplySeating): on the key it left, waiting for it
+        // (an override or Remembrance item holds it), or elsewhere. The
         // before/after measure for home keys; counted with them off as well.
-        void RecordReturn(bool home);
+        enum class ReturnOutcome : uint8_t { Home, Waiting, Away };
+        void RecordReturn(ReturnOutcome outcome);
 
         // Called every update tick with the measured whole-tick duration (ms).
         // Rolls the window and emits the heartbeat when the interval elapses.
@@ -343,6 +345,7 @@ namespace Huginn::Telemetry
         std::atomic<uint32_t> m_pressOffPage{0};
         std::atomic<uint32_t> m_pageFlips{0};
         std::atomic<uint32_t> m_returnsHome{0};
+        std::atomic<uint32_t> m_returnsWaiting{0};
         std::atomic<uint32_t> m_returnsAway{0};
 
         // Pipeline / perf (window).
