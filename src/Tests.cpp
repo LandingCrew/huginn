@@ -6559,7 +6559,9 @@ void RunNeedCapHoldTest()
 //
 // Then the right of first refusal: the same three passes with an override
 // on slot 0 in pass 3. A cannot go home, waits on slot 7 holding the claim,
-// and takes slot 0 in pass 4 when the override ends.
+// stays there while B's slot 1 empties with the override still up (it is
+// held where it stands, not moved by the fill), and takes slot 0 when the
+// override ends.
 void RunHomeKeyTest()
 {
 #ifndef NDEBUG
@@ -6655,12 +6657,16 @@ void RunHomeKeyTest()
     (void)allocator.AllocateForTest(0, kGeneration, guarded, pass1);
     (void)allocator.AllocateForTest(0, kGeneration, guarded, pass2);
     const auto blocked = allocator.AllocateForTest(0, kGeneration, guarded, pass3, override);
-    const auto cleared = allocator.AllocateForTest(0, kGeneration, guarded, pass3);
+    Scoring::ScoredCandidateList withoutB = pass3;
+    std::erase_if(withoutB, [](const Scoring::ScoredCandidate& c) { return c.GetFormID() == kBase + 1; });
+    const auto stillBlocked = allocator.AllocateForTest(0, kGeneration, guarded, withoutB, override);
+    const auto cleared = allocator.AllocateForTest(0, kGeneration, guarded, withoutB);
     allocator.Reset();
 
     expect(slotOf(first, 0) == 0, "setup: A is not on slot 0");
     expect(slotOf(blocked, 9) == 0, "setup: the override is not on slot 0");
-    expect(slotOf(blocked, 0) != SIZE_MAX, "A was not shown while it waited for slot 0");
+    expect(slotOf(blocked, 0) == 7, "A was not shown on slot 7 while it waited for slot 0");
+    expect(slotOf(stillBlocked, 0) == 7, "A, waiting, moved when another slot emptied");
     expect(slotOf(cleared, 0) == 0, "A did not take slot 0 when the override ended");
     expect(slotOf(gap, 8) == 0, "setup: the newcomer did not fill A's slot 0");
     expect(slotOf(back, 0) == 0, "A came back and did not take slot 0 back");

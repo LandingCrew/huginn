@@ -1003,9 +1003,9 @@ namespace Huginn::Slot
         // challengers. Free to challenge, the Iron Dagger an override pushed
         // out of slot 1 beat Sparks in slot 4, Sparks landed in slot 3, and
         // it all ran backwards when the override ended -- one override, six
-        // slot changes (2026-09-27 19:08:30-37). It may still fill a slot
-        // that is genuinely empty (the fill), and goes home when the override
-        // ends.
+        // slot changes (2026-09-27 19:08:30-37). It is still held where it
+        // stands (the guests below), and goes home when the override ends.
+        std::set<RE::FormID> displacedOwners;
         for (size_t j = 0; j < slotCount; ++j) {
             // A remembered item sitting in someone's seat displaces its owner
             // the same way an override does.
@@ -1017,6 +1017,7 @@ namespace Huginn::Slot
                 if (Candidate::GetBase(c.candidate).GetDeduplicationKey() == seats[j]) {
                     excludedIDs.insert(c.GetFormID());
                     excludedNames.insert(c.GetName());
+                    displacedOwners.insert(c.GetFormID());
                     break;
                 }
             }
@@ -1029,6 +1030,14 @@ namespace Huginn::Slot
         // for half a minute (2026-09-26 14:28:49-14:29:20). Held where it
         // stands, under the same test, until the override ends and seating
         // takes it home.
+        //
+        // The displaced owners above are exactly these items, and the loop
+        // above put them in the excluded sets -- which this loop read as
+        // "already held", so a guest was never held: it went to whichever
+        // empty slot the fill reached first, and a lock left on its old slot
+        // cleared and refilled that slot twice in 0.4 s (Raw Crab Meat,
+        // waiting for an override on its home key, LoreRim 2026-10-06
+        // 21:07:58). Home keys make such guests common.
         for (size_t k = 0; k < priorityCount; ++k) {
             const size_t j = priorityOrder[k];
             if (j >= slotCount || !assignments[j].IsEmpty() || placed[j] == 0) continue;
@@ -1046,9 +1055,15 @@ namespace Huginn::Slot
                     break;
                 }
             }
-            if (!guest || excludedIDs.contains(guest->GetFormID()) ||
-                excludedNames.contains(guest->GetName())) {
-                continue;  // gone, shown by an override, or already held in its own seat
+            if (!guest) {
+                continue;  // gone
+            }
+            if (displacedOwners.contains(guest->GetFormID())) {
+                if (assignedFormIDs.contains(guest->GetFormID()) || assignedNames.contains(guest->GetName())) {
+                    continue;  // an override or Remembrance hold is showing it
+                }
+            } else if (excludedIDs.contains(guest->GetFormID()) || excludedNames.contains(guest->GetName())) {
+                continue;  // shown by an override, or already held in its own seat
             }
             const auto probe = SlotAssignment::FromCandidate(j, slotConfigs[j].classification, *guest);
             if (!SlotAccepts(slotConfigs[j], probe, player)) {

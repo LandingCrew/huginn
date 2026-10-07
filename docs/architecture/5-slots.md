@@ -629,7 +629,9 @@ minutes landed on a different key, nearly all of them within a minute. So:
   wins.
 - **The right of first refusal.** Blocked only by an override or a Remembrance
   hold, the returner claims the seat anyway and waits, shown where it landed --
-  as an item an override displaced already does. When the slot frees, the slot
+  as an item an override displaced already does. It is held there (a guest in
+  the slot hold) until the hold ends, not moved by the fill when another slot
+  empties. When the slot frees, the slot
   hold seats it there unless a challenger beats it by `fChallengerMargin`; if
   it leaves the page meanwhile, the claim lapses with it. On LoreRim's first
   run this was 17 of the 22 returns that missed their key (2026-10-06).
