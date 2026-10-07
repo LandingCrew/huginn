@@ -229,9 +229,9 @@ namespace Huginn::Config
    // Negative Learning Configuration (v0.13.0+)
    // -----------------------------------------------------------------------------
 
-   // Lazy weight decay: items unused for hours gradually lose learned preference
-   inline constexpr float DECAY_RATE_PER_HOUR = 0.02f;       // 2%/hr exponential decay
-   inline constexpr float DECAY_THRESHOLD_MINUTES = 5.0f;     // Don't decay if updated within 5 min
+   // The 2%/hour weight decay (DECAY_RATE_PER_HOUR) is gone: what the player
+   // stops choosing now fades by confidence and is forgotten -- memory with a
+   // useful life, FeatureBanditLearner::MemoryLife and [Learning] in the INI.
 
 
    // -----------------------------------------------------------------------------

@@ -199,9 +199,6 @@ namespace Huginn::Scoring
         Context::VitalEnvelope m_staminaEnvelope;
         Context::ContextRuleEngine m_contextEngine;  // Stage 1f: New component
 
-        // Scratch buffer for batch decay (update thread only, reused per tick)
-        std::vector<RE::FormID> m_decayScratch;
-
         // Scratch buffer for favorites rank scaling (update thread only, reused per tick)
         std::vector<size_t> m_favoriteRankScratch;
     };

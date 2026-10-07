@@ -310,9 +310,11 @@ namespace Huginn::Telemetry
 
         std::size_t learnerItems = 0;
         uint32_t learnerTrains = 0;
+        uint64_t learnerForgot = 0;
         if (g_featureBanditLearner) {
             learnerItems  = g_featureBanditLearner->GetItemCount();
             learnerTrains = g_featureBanditLearner->GetTotalTrainCount();
+            learnerForgot = g_featureBanditLearner->GetForgottenTotal();
         }
 
         const int64_t upTicks = now.time_since_epoch().count() -
@@ -331,13 +333,13 @@ namespace Huginn::Telemetry
         const uint32_t pressTotal = pressRegular + pressLabeled;
         logger::info(
             "[Soak] up={}h{:02}m{:02}s | equips hit={} near={} miss={} novel={} accept={} skipped={} | "
-            "recompute={}/{} ticks override={} pageBail={} | slotChurn={} | learn items={} trains={} | tick avg={:.3f} peak={:.3f} ms | "
+            "recompute={}/{} ticks override={} pageBail={} | slotChurn={} | learn items={} trains={} forgot={} | tick avg={:.3f} peak={:.3f} ms | "
             "goals reachIns={} (candidate={}) presses={} (regular={} labeled={} offPage={}) pageFlips={}"sv,
             upH, upM, upS,
             hit, near_, miss, novel, acceptStr, skipStr,
             recomputes, ticks, overrideRuns, pageBails,
             churnStr,
-            learnerItems, learnerTrains,
+            learnerItems, learnerTrains, learnerForgot,
             avgMs, peakMs,
             totalEquips, hit + near_ + miss,
             pressTotal, pressRegular, pressLabeled, pressOffPage, pageFlips);

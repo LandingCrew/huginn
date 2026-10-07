@@ -13,6 +13,7 @@
 #include "learning/PipelineStateCache.h"
 #include "learning/InventoryExitTracker.h"
 #include "learning/SelectionTracker.h"
+#include "learning/FeatureBanditLearner.h"
 #include "util/ScopedTimer.h"
 #include "util/InventoryUtil.h"
 #include "weapon/WeaponRegistry.h"
@@ -592,6 +593,16 @@ void OnUpdate(float deltaSeconds)
             }
         }
         if (!loaded) return;
+    }
+
+    // The learner's play clock (memory with a useful life): loaded, unpaused
+    // play only -- an open inventory or journal does not age what was learned.
+    // deltaSeconds is already clamped to 1 s after an alt-tab.
+    if (g_featureBanditLearner) {
+        auto* ui = RE::UI::GetSingleton();
+        if (ui && !ui->GameIsPaused()) {
+            g_featureBanditLearner->AdvancePlayTime(deltaSeconds);
+        }
     }
 
     float deltaMs = deltaSeconds * 1000.0f;

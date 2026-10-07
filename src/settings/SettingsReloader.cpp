@@ -370,9 +370,13 @@ namespace Huginn::Settings
             }
         }
 
-        // 1b. Apply learning config to ExternalEquipLearner
+        // 1b. Apply learning config to ExternalEquipLearner and the learner's
+        // useful life
         Learning::ExternalEquipLearner::GetSingleton().SetConfig(
             Learning::LearningSettings::GetSingleton().BuildConfig());
+        if (g_featureBanditLearner) {
+            g_featureBanditLearner->SetMemoryLife(Learning::LearningSettings::GetSingleton().BuildConfig().memory);
+        }
 
         // 2. Re-initialize slot allocator FIRST (re-reads SlotSettings for new page count)
         Slot::SlotAllocator::GetSingleton().Initialize();

@@ -1,5 +1,6 @@
 #pragma once
 
+#include "FeatureBanditLearner.h"
 #include <SimpleIni.h>
 #include <filesystem>
 
@@ -36,6 +37,9 @@ namespace Huginn::Learning
     {
         bool learnFromExternalEquips = LearningDefaults::LEARN_FROM_EXTERNAL_EQUIPS;
         float externalEquipTimeWindow = LearningDefaults::EXTERNAL_EQUIP_TIME_WINDOW;
+        // Memory with a useful life (FeatureBanditLearner::SetMemoryLife);
+        // the defaults live on the struct.
+        MemoryLife memory{};
     };
 
     inline constexpr LearningConfig DefaultLearningConfig{};
@@ -75,6 +79,7 @@ namespace Huginn::Learning
 
         bool learnFromExternalEquips = LearningDefaults::LEARN_FROM_EXTERNAL_EQUIPS;
         float externalEquipTimeWindow = LearningDefaults::EXTERNAL_EQUIP_TIME_WINDOW;
+        MemoryLife memory{};
     };
 
 }  // namespace Huginn::Learning

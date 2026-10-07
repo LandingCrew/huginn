@@ -207,7 +207,15 @@ context" unless named):
    0, n kept -- now reads as "rejected" harder than before. Decaying n is
    the fix; it changes the cosave. **Decay of n: REPLACED by #3a.**
 3a. **Memory with a useful life -- delayed decay to the floor, then
-   eviction** (the user, 2026-10-06; next after this stack merges).
+   eviction** (the user, 2026-10-06). BUILT in 0.23.6 (branch
+   `learner-useful-life`), in-game test pending: the curve below with
+   the starting values as INI keys under `[Learning]`, a play clock in the
+   update loop (loaded and unpaused only), a forget sweep once a minute of
+   play, `forgot=` in the heartbeat, cosave v4 converting v3. tools/replay
+   (11.4 play-hours, 820 picks): the defaults forget nothing and change no
+   hit; T0 4h -0.1 point, T0 1h -2 points (food, potions, outside picks --
+   the consumables risk below). Design detail in
+   docs/architecture/4-contextual-bandits.md, "Forgetting".
    REPLACES "Expire learner entries for items the player no longer has",
    the decay of n under #3 above, and the "Decay" criticism under Pooled
    learning -- one mechanism for all three. Self-cleaning memory: what the
@@ -313,7 +321,9 @@ context" unless named):
   the user plays, but may for others. Display only.
 - **REPLACED by Phase 3 #3a (memory with a useful life, 2026-10-06)** --
   kept for its cases (gear in a chest, restocked potions), which #3a must
-  still answer. **Expire learner entries for items the player no longer has.** The
+  still answer. **Expire learner entries for items the player no longer has.**
+  REPLACED by Phase 3 #3a (0.23.6), the useful life: an item no longer
+  carried cannot be chosen, so it ages out like an unused one. The
   learner keeps an entry for every item ever selected and drops one only
   on `hg reset weights` or a reload's dynamic-form swap, so `learn items`
   counts everything chosen since the reset (80 after ~7 h of the soak),

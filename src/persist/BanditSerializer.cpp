@@ -19,15 +19,15 @@ namespace Huginn::Persist
    // check equals the exact field sum — if a field is added/reordered or padding
    // appears, this fails to compile, forcing a wire-format + version bump instead
    // of silently writing an incompatible blob. The byte order also matches the
-   // legacy per-field format (formID, weights[18], trainCount, minutes), so v2
-   // saves round-trip identically between the batch and per-field code paths.
+   // legacy per-field format (formID, weights[18], trainCount, minutes); v4
+   // keeps the stride and makes the count a float.
    static_assert(std::is_trivially_copyable_v<BanditEntry>,
       "SerializedEntry must be trivially copyable for batch cosave I/O");
    static_assert(sizeof(BanditEntry) ==
          sizeof(RE::FormID)
        + sizeof(float) * Learning::StateFeatures::NUM_FEATURES
-       + sizeof(uint32_t)   // trainCount
-       + sizeof(uint32_t),  // minutesSinceLastUpdate (v2)
+       + sizeof(float)      // trainCount (v4: float; v2/v3: uint32)
+       + sizeof(uint32_t),  // minutesSinceChosen (v4; v2/v3: since the last update)
       "SerializedEntry layout changed — batch cosave I/O assumes tight packing; "
       "bump kBanditSerializationVersion and update the wire format");
 
@@ -87,8 +87,9 @@ namespace Huginn::Persist
 
    std::vector<BanditEntry> DecodeV2EntryBlob(
       const std::byte* data, size_t byteLen, uint32_t numItems, uint32_t diskFeatureCount,
-      bool unitTest)
+      uint32_t recordVersion, bool unitTest)
    {
+      static_assert(sizeof(float) == sizeof(uint32_t), "v3 and v4 share one stride");
       constexpr auto compiled = static_cast<uint32_t>(Learning::StateFeatures::NUM_FEATURES);
       const size_t stride = sizeof(RE::FormID)
                           + sizeof(float) * diskFeatureCount
@@ -118,9 +119,15 @@ namespace Huginn::Persist
          std::memcpy(&e.formID, p, sizeof(e.formID));
          std::memcpy(e.weights.data(), p + sizeof(e.formID), sizeof(float) * copyCount);
          const std::byte* tail = p + sizeof(e.formID) + sizeof(float) * diskFeatureCount;
-         std::memcpy(&e.trainCount, tail, sizeof(e.trainCount));
-         std::memcpy(&e.minutesSinceLastUpdate, tail + sizeof(e.trainCount),
-            sizeof(e.minutesSinceLastUpdate));
+         if (recordVersion >= 4) {
+            std::memcpy(&e.trainCount, tail, sizeof(e.trainCount));
+         } else {
+            uint32_t count = 0;
+            std::memcpy(&count, tail, sizeof(count));
+            e.trainCount = static_cast<float>(count);
+         }
+         std::memcpy(&e.minutesSinceChosen, tail + sizeof(e.trainCount),
+            sizeof(e.minutesSinceChosen));
       }
       return out;
    }
@@ -250,18 +257,18 @@ namespace Huginn::Persist
                // Learning on the old 8/5 target (see kBanditSerializationVersion).
                // Leave the pending data empty: the character starts fresh.
                logger::info("[Cosave] BNDW v{} holds learning on the old 8/5 target -- discarded; "
-                  "the choice target (v{}) starts this character fresh"sv,
-                  recVersion, kBanditSerializationVersion);
+                  "the choice target (v3+) starts this character fresh"sv,
+                  recVersion);
                s_loadedOldFormat = true;
                break;
             }
-            if (recVersion != kBanditSerializationVersion) {
-               logger::warn("[Cosave] BNDW version unsupported: got {} (expected {}) — skipping"sv,
+            if (recVersion != 3 && recVersion != kBanditSerializationVersion) {
+               logger::warn("[Cosave] BNDW version unsupported: got {} (expected 3 or {}) — skipping"sv,
                   recVersion, kBanditSerializationVersion);
                break;
             }
-            // Only v3 reaches here (v1/v2 are discarded above); v3 keeps v2's
-            // fixed-stride wire format. A header/in-data mismatch is logged rather than rejected, and the
+            // Only v3 and v4 reach here (v1/v2 are discarded above); both keep
+            // v2's fixed-stride wire format. A header/in-data mismatch is logged rather than rejected, and the
             // in-data version is trusted. The version check, bounds checks, and
             // exact-length reads below validate everything decode relies on.
             if (recVersion != version) {
@@ -351,7 +358,17 @@ namespace Huginn::Persist
                         got, byteLen);
                      break;
                   }
-                  raw = DecodeV2EntryBlob(blob.data(), blob.size(), numItems, numFeatures);
+                  raw = DecodeV2EntryBlob(blob.data(), blob.size(), numItems, numFeatures, recVersion);
+               }
+               // v3 -> v4: the evidence is kept as it was (n_eff = the train
+               // count) and every life starts now. v3's minutes counted from
+               // the last update or decay stamp, not the last pick.
+               if (recVersion == 3) {
+                  for (auto& entry : raw) {
+                     entry.minutesSinceChosen = 0;
+                  }
+                  logger::info("[Cosave] BNDW v3 converted to v{}: {} entries keep their evidence; "
+                     "each one's useful life starts now"sv, kBanditSerializationVersion, raw.size());
                }
                for (auto& entry : raw) {
                   acceptEntry(entry);
@@ -360,12 +377,14 @@ namespace Huginn::Persist
 
             // Recompute totalTrainCount from surviving entries so trains belonging
             // to failed/dropped FormIDs don't inflate the UCB exploration term.
-            // Invariant: m_totalTrainCount == sum of per-item trainCounts (the
-            // learner increments both together on every train).
-            uint32_t survivingTrains = 0;
+            // Invariant: the learner's total == sum of per-item counts (it
+            // moves both together on every train). Rounded: v4 counts are
+            // fractional, and ImportData sums them again exactly.
+            float survivingSum = 0.0f;
             for (const auto& e : banditData.entries) {
-               survivingTrains += e.trainCount;
+               survivingSum += std::max(0.0f, e.trainCount);
             }
+            const auto survivingTrains = static_cast<uint32_t>(std::lround(survivingSum));
             if (survivingTrains != banditData.totalTrainCount) {
                logger::info("[Cosave] Adjusted totalTrainCount {} -> {} ({} failed, {} corrupt)"sv,
                   banditData.totalTrainCount, survivingTrains, banditData.failedFormIDs, droppedCorrupt);

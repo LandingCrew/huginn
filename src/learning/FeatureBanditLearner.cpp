@@ -2,6 +2,7 @@
 #include "Config.h"
 #include <cmath>
 #include <algorithm>
+#include <format>
 
 namespace Huginn::Learning
 {
@@ -27,9 +28,14 @@ namespace Huginn::Learning
       auto phi = features.ToArray();
 
       std::unique_lock lock(m_mutex);
+      const double now = PlayNow();
 
-      // Zero-init on first access (operator[] default-constructs the struct)
-      auto& data = m_items[formID];
+      // Zero-init on first access; a new entry's life is counted from now.
+      auto [slot, created] = m_items.try_emplace(formID);
+      auto& data = slot->second;
+      if (created) {
+         data.chosenAt = now;
+      }
       auto& w = data.weights;
 
       // Prediction error: delta = reward - R(context, item)
@@ -44,15 +50,19 @@ namespace Huginn::Learning
          w[i] = std::clamp(w[i], -WEIGHT_CLAMP, WEIGHT_CLAMP);
       }
 
-      // Update train counts and last-update timestamp. A passed-over item's
-      // update moves its weights but is not a train (see the header). The
-      // clock ticks either way: the learning changed.
+      // A pick restarts the item's life from the evidence it has LEFT: n_eff
+      // + 1, so a sword abandoned past the knee and taken up again does not
+      // get its old confidence back at once (roadmap Phase 3 #3a). A
+      // passed-over item's update moves its weights but is not a train (see
+      // the header) and does not renew its life. The learning clock ticks
+      // either way: the learning changed.
       if (countsAsTrain) {
-         data.trainCount++;
-         m_totalTrainCount++;
+         const float before = data.trainCount;
+         data.trainCount = before * RetentionAt(data, now) + 1.0f;
+         m_totalTrains += data.trainCount - before;
+         data.chosenAt = now;
       }
       m_clock++;
-      data.lastUpdate = std::chrono::steady_clock::now();
 
       logger::trace("Learner update: item={:08X}, reward={:.2f}, error={:.3f}, est {:.3f}->{:.3f}"sv,
          formID, reward, error, prediction, DotProduct(w, phi));
@@ -72,80 +82,133 @@ namespace Huginn::Learning
       m_weightsChanged.store(true, std::memory_order_release);
    }
 
-   size_t FeatureBanditLearner::MaybeDecayBatch(
-      const std::vector<RE::FormID>& formIDs,
-      std::chrono::steady_clock::time_point now)
+   void FeatureBanditLearner::SetMemoryLife(const MemoryLife& life)
    {
-      // Phase 1: ONE shared_lock — collect items whose idle time crosses the
-      // decay threshold. Most ticks collect nothing and never take the
-      // unique lock at all.
-      std::vector<RE::FormID> needsDecay;
+      MemoryLife clamped = life;
+      clamped.lifeHours = std::clamp(life.lifeHours, 0.1f, 10000.0f);
+      clamped.lifePerPickHours = std::clamp(life.lifePerPickHours, 0.0f, 1000.0f);
+      clamped.fadeHours = std::clamp(life.fadeHours, 0.05f, 1000.0f);
+      clamped.forgetBelow = std::clamp(life.forgetBelow, 0.0f, 0.5f);
+      std::unique_lock lock(m_mutex);
+      m_life = clamped;
+   }
+
+   MemoryLife FeatureBanditLearner::GetMemoryLife() const
+   {
+      std::shared_lock lock(m_mutex);
+      return m_life;
+   }
+
+   void FeatureBanditLearner::AdvancePlayTime(float seconds) noexcept
+   {
+      if (seconds > 0.0f) {
+         // One writer: a load and a store, not a read-modify-write.
+         m_playSeconds.store(PlayNow() + seconds, std::memory_order_relaxed);
+      }
+   }
+
+   double FeatureBanditLearner::GetPlaySeconds() const noexcept
+   {
+      return PlayNow();
+   }
+
+   float FeatureBanditLearner::RetentionAt(const ItemLearningData& data, double now) const noexcept
+   {
+      if (!m_life.enabled) {
+         return 1.0f;
+      }
+      // Hours, in double: the clock runs for days.
+      const double idle = std::max(0.0, now - data.chosenAt) / 3600.0;
+      const double life = m_life.lifeHours + m_life.lifePerPickHours * std::log1p(std::max(0.0f, data.trainCount));
+      const double s = m_life.fadeHours;
+      const double x = (idle - life) / s;
+      if (x > 60.0) {
+         return 0.0f;
+      }
+      return static_cast<float>(std::min(1.0, (1.0 + std::exp(-life / s)) / (1.0 + std::exp(x))));
+   }
+
+   size_t FeatureBanditLearner::MaybeForgetFaded()
+   {
+      const double now = PlayNow();
+      if (now - m_lastForgetSweep.load(std::memory_order_relaxed) < FORGET_SWEEP_INTERVAL_SEC) {
+         return 0;
+      }
+      m_lastForgetSweep.store(now, std::memory_order_relaxed);
+      return ForgetFaded();
+   }
+
+   size_t FeatureBanditLearner::ForgetFaded()
+   {
+      const double now = PlayNow();
+
+      // Phase 1: ONE shared lock -- most sweeps find nothing and stop here.
+      std::vector<RE::FormID> due;
       {
          std::shared_lock lock(m_mutex);
-
-         for (RE::FormID formID : formIDs) {
-            auto it = m_items.find(formID);
-            if (it == m_items.end()) {
-               continue;  // Never trained, nothing to decay
-            }
-
-            const float elapsedMinutes = std::chrono::duration<float, std::ratio<60>>(
-               now - it->second.lastUpdate).count();
-
-            if (elapsedMinutes >= Config::DECAY_THRESHOLD_MINUTES) {
-               needsDecay.push_back(formID);
+         if (!m_life.enabled) {
+            return 0;
+         }
+         for (const auto& [formID, data] : m_items) {
+            if (RetentionAt(data, now) < m_life.forgetBelow) {
+               due.push_back(formID);
             }
          }
       }
-
-      if (needsDecay.empty()) {
+      if (due.empty()) {
          return 0;
       }
 
-      // Phase 2: ONE unique_lock — re-check and apply (an Update from the
-      // game thread may have refreshed an item between the locks).
-      size_t decayed = 0;
+      // Phase 2: re-check under the unique lock (a pick from the game thread
+      // may have renewed one between the locks), then delete.
+      size_t forgotten = 0;
+      std::string named;
       {
          std::unique_lock lock(m_mutex);
-
-         for (RE::FormID formID : needsDecay) {
+         for (RE::FormID formID : due) {
             auto it = m_items.find(formID);
-            if (it == m_items.end()) {
+            if (it == m_items.end() || RetentionAt(it->second, now) >= m_life.forgetBelow) {
                continue;
             }
-
-            auto& data = it->second;
-            const float elapsedMinutes = std::chrono::duration<float, std::ratio<60>>(
-               now - data.lastUpdate).count();
-
-            if (elapsedMinutes < Config::DECAY_THRESHOLD_MINUTES) {
-               continue;  // Became fresh between the locks
+            if (forgotten < 6) {
+               named += std::format("{}{:08X} (n={:.1f}, idle {:.1f}h)", forgotten ? ", " : "", formID,
+                  it->second.trainCount, (now - it->second.chosenAt) / 3600.0);
             }
-
-            const float elapsedHours = elapsedMinutes / 60.0f;
-            const float decayFactor = std::pow(1.0f - Config::DECAY_RATE_PER_HOUR, elapsedHours);
-
-            for (size_t i = 0; i < StateFeatures::NUM_FEATURES; ++i) {
-               data.weights[i] *= decayFactor;
-            }
-
-            // Stamp to now so we don't re-decay on the next scoring pass
-            // (also feeds minutesSinceLastUpdate in cosave export)
-            data.lastUpdate = now;
-            ++decayed;
-
-            logger::debug("Learner decay: item={:08X}, elapsed={:.1f}min, factor={:.4f}"sv,
-               formID, elapsedMinutes, decayFactor);
+            m_totalTrains = std::max(0.0f, m_totalTrains - it->second.trainCount);
+            m_items.erase(it);
+            ++forgotten;
+         }
+         if (m_items.empty()) {
+            m_totalTrains = 0.0f;   // no float residue once nothing is left
          }
       }
 
-      return decayed;
+      if (forgotten) {
+         m_forgottenTotal.fetch_add(forgotten, std::memory_order_relaxed);
+         logger::info("[Learner] Forgot {} item(s) past their useful life: {}{}"sv,
+            forgotten, named, forgotten > 6 ? ", ..." : "");
+      }
+      return forgotten;
+   }
+
+   float FeatureBanditLearner::GetRetention(RE::FormID formID) const
+   {
+      std::shared_lock lock(m_mutex);
+      auto it = m_items.find(formID);
+      return it == m_items.end() ? 1.0f : RetentionAt(it->second, PlayNow());
+   }
+
+   float FeatureBanditLearner::GetEffectiveTrains(RE::FormID formID) const
+   {
+      std::shared_lock lock(m_mutex);
+      auto it = m_items.find(formID);
+      return it == m_items.end() ? 0.0f : it->second.trainCount * RetentionAt(it->second, PlayNow());
    }
 
    // Private helpers — formulas shared by GetConfidence/GetUCB/GetMetrics.
-   // Callers MUST hold m_mutex before calling (ComputeUCB reads m_totalTrainCount).
+   // Callers MUST hold m_mutex before calling (ComputeUCB reads m_totalTrains).
 
-   float FeatureBanditLearner::ComputeConfidence(uint32_t trains) const noexcept
+   float FeatureBanditLearner::ComputeConfidence(float effectiveTrains) const noexcept
    {
       // The prior as pseudo-observations (roadmap Phase 3 #3, 0.23.0):
       // n / (n + n0). The item's own evidence weighs against n0 imaginary
@@ -160,26 +223,27 @@ namespace Huginn::Learning
       // Code review of #173 tried the alternatives: lambda back on the sigmoid
       // 71.5% / 28.1%, an effective-sample-size alpha 72.3% / 29.2% -- none
       // clearly better on 502 scored picks (a point is ~5 picks).
-      const float n = static_cast<float>(trains);
+      // Since 0.23.6 n is the evidence LEFT after fading (n_eff).
+      const float n = std::max(0.0f, effectiveTrains);
       return n / (n + PRIOR_PSEUDO_OBSERVATIONS);
    }
 
-   float FeatureBanditLearner::ComputeUCB(uint32_t itemTrains) const noexcept
+   float FeatureBanditLearner::ComputeUCB(float effectiveTrains) const noexcept
    {
-      if (itemTrains == 0 || m_totalTrainCount == 0) [[unlikely]] {
+      if (effectiveTrains <= 0.0f || m_totalTrains <= 0.0f) [[unlikely]] {
          return 1.0f;
       }
-      float ucb = std::sqrt((2.0f * std::log(static_cast<float>(m_totalTrainCount))) /
-                            static_cast<float>(itemTrains));
+      // ln of at least 1: a fractional total under 1 would make it negative.
+      float ucb = std::sqrt((2.0f * std::log(std::max(1.0f, m_totalTrains))) / effectiveTrains);
       return std::clamp(ucb * UCB_NORMALIZATION_FACTOR, 0.0f, 1.0f);
    }
 
    float FeatureBanditLearner::GetConfidence(RE::FormID formID) const
    {
       std::shared_lock lock(m_mutex);
-      uint32_t trains = 0;
+      float trains = 0.0f;
       if (auto it = m_items.find(formID); it != m_items.end()) {
-         trains = it->second.trainCount;
+         trains = it->second.trainCount * RetentionAt(it->second, PlayNow());
       }
       return ComputeConfidence(trains);
    }
@@ -187,9 +251,9 @@ namespace Huginn::Learning
    float FeatureBanditLearner::GetUCB(RE::FormID formID) const
    {
       std::shared_lock lock(m_mutex);
-      uint32_t itemTrains = 0;
+      float itemTrains = 0.0f;
       if (auto it = m_items.find(formID); it != m_items.end()) {
-         itemTrains = it->second.trainCount;
+         itemTrains = it->second.trainCount * RetentionAt(it->second, PlayNow());
       }
       return ComputeUCB(itemTrains);
    }
@@ -204,10 +268,10 @@ namespace Huginn::Learning
       FeatureItemMetrics metrics{0.0f, 1.0f, 0.0f};  // Defaults: Q=0, UCB=max, confidence=0
 
       // ONE lookup yields weights + train count (previously two parallel maps)
-      uint32_t itemTrains = 0;
+      float itemTrains = 0.0f;
       if (auto it = m_items.find(formID); it != m_items.end()) {
          metrics.rewardEstimate = DotProduct(it->second.weights, phi);
-         itemTrains = it->second.trainCount;
+         itemTrains = it->second.trainCount * RetentionAt(it->second, PlayNow());
       }
 
       metrics.confidence = ComputeConfidence(itemTrains);
@@ -218,7 +282,7 @@ namespace Huginn::Learning
 
    // ── LockedReader ──────────────────────────────────────────────────
    FeatureBanditLearner::LockedReader::LockedReader(const FeatureBanditLearner& owner)
-      : m_owner(owner), m_lock(owner.m_mutex)
+      : m_owner(owner), m_lock(owner.m_mutex), m_now(owner.PlayNow())
    {}
 
    FeatureItemMetrics FeatureBanditLearner::LockedReader::GetMetrics(
@@ -229,10 +293,10 @@ namespace Huginn::Learning
       FeatureItemMetrics metrics{0.0f, 1.0f, 0.0f};
 
       // ONE lookup per candidate (previously two parallel-map finds)
-      uint32_t itemTrains = 0;
+      float itemTrains = 0.0f;
       if (auto it = m_owner.m_items.find(formID); it != m_owner.m_items.end()) {
          metrics.rewardEstimate = DotProduct(it->second.weights, phi);
-         itemTrains = it->second.trainCount;
+         itemTrains = it->second.trainCount * m_owner.RetentionAt(it->second, m_now);
       }
 
       metrics.confidence = m_owner.ComputeConfidence(itemTrains);
@@ -255,16 +319,16 @@ namespace Huginn::Learning
    uint32_t FeatureBanditLearner::GetTotalTrainCount() const
    {
       std::shared_lock lock(m_mutex);
-      return m_totalTrainCount;
+      return static_cast<uint32_t>(std::lround(std::max(0.0f, m_totalTrains)));
    }
 
-   uint32_t FeatureBanditLearner::GetTrainCount(RE::FormID formID) const
+   float FeatureBanditLearner::GetTrainCount(RE::FormID formID) const
    {
       std::shared_lock lock(m_mutex);
 
       auto it = m_items.find(formID);
       if (it == m_items.end()) {
-         return 0;
+         return 0.0f;
       }
       return it->second.trainCount;
    }
@@ -291,13 +355,13 @@ namespace Huginn::Learning
       std::unique_lock lock(m_mutex);
 
       const size_t itemCount = m_items.size();
-      const uint32_t totalTrains = m_totalTrainCount;
+      const float totalTrains = m_totalTrains;
 
       m_items.clear();
-      m_totalTrainCount = 0;
+      m_totalTrains = 0.0f;
       m_clock++;
 
-      logger::info("FeatureBanditLearner cleared: {} items, {} total trains removed"sv,
+      logger::info("FeatureBanditLearner cleared: {} items, {:.0f} total trains removed"sv,
          itemCount, totalTrains);
    }
 
@@ -322,7 +386,7 @@ namespace Huginn::Learning
       size_t removed = 0;
       for (auto it = m_items.begin(); it != m_items.end();) {
          if (isDynamic(it->first)) {
-            m_totalTrainCount -= std::min(m_totalTrainCount, it->second.trainCount);
+            m_totalTrains = std::max(0.0f, m_totalTrains - it->second.trainCount);
             it = m_items.erase(it);
             ++removed;
          } else {
@@ -330,15 +394,16 @@ namespace Huginn::Learning
          }
       }
 
-      const auto now = std::chrono::steady_clock::now();
+      const double now = PlayNow();
       size_t added = 0;
       for (const auto& entry : saveEntries) {
          if (!isDynamic(entry.formID)) continue;
+         const float n = std::max(0.0f, entry.trainCount);
          m_items[entry.formID] = ItemLearningData{
             entry.weights,
-            entry.trainCount,
-            now - std::chrono::minutes(entry.minutesSinceLastUpdate)};
-         m_totalTrainCount += entry.trainCount;
+            n,
+            now - 60.0 * entry.minutesSinceChosen};
+         m_totalTrains += n;
          ++added;
       }
 
@@ -355,8 +420,8 @@ namespace Huginn::Learning
    {
       std::shared_lock lock(m_mutex);
 
-      outTotalTrainCount = m_totalTrainCount;
-      auto now = std::chrono::steady_clock::now();
+      outTotalTrainCount = static_cast<uint32_t>(std::lround(std::max(0.0f, m_totalTrains)));
+      const double now = PlayNow();
 
       for (const auto& [formID, data] : m_items) {
          SerializedEntry entry;
@@ -364,11 +429,10 @@ namespace Huginn::Learning
          entry.weights = data.weights;
          entry.trainCount = data.trainCount;
 
-         // v2: compute minutes since last update for decay persistence
-         auto elapsed = std::chrono::duration_cast<std::chrono::minutes>(
-            now - data.lastUpdate).count();
-         entry.minutesSinceLastUpdate = (elapsed > 0)
-            ? static_cast<uint32_t>(elapsed) : 0;
+         // v4: PLAY minutes since the last pick; the load counts back from
+         // its own play clock.
+         const double minutes = std::floor(std::max(0.0, now - data.chosenAt) / 60.0);
+         entry.minutesSinceChosen = static_cast<uint32_t>(std::min(minutes, 4.0e9));
 
          entryCallback(std::move(entry));
       }
@@ -376,26 +440,31 @@ namespace Huginn::Learning
 
    void FeatureBanditLearner::ImportData(
       const std::vector<SerializedEntry>& entries,
-      uint32_t totalTrainCount)
+      [[maybe_unused]] uint32_t totalTrainCount)
    {
       std::unique_lock lock(m_mutex);
 
       m_items.clear();
-      m_totalTrainCount = totalTrainCount;
       m_items.reserve(entries.size());
 
-      auto now = std::chrono::steady_clock::now();
+      // The total is summed from the entries rather than taken from the
+      // header: since v4 it is a sum of fractions, and the header holds it
+      // rounded.
+      m_totalTrains = 0.0f;
+      const double now = PlayNow();
 
       for (const auto& entry : entries) {
-         // Reconstruct last-update timestamp from saved minutes-ago offset
+         // The last pick, counted back on this launch's play clock
+         const float n = std::max(0.0f, entry.trainCount);
          m_items[entry.formID] = ItemLearningData{
             entry.weights,
-            entry.trainCount,
-            now - std::chrono::minutes(entry.minutesSinceLastUpdate)};
+            n,
+            now - 60.0 * entry.minutesSinceChosen};
+         m_totalTrains += n;
       }
 
-      logger::info("FeatureBanditLearner imported: {} items, {} total trains"sv,
-         m_items.size(), m_totalTrainCount);
+      logger::info("FeatureBanditLearner imported: {} items, {:.1f} total trains"sv,
+         m_items.size(), m_totalTrains);
    }
 
    float FeatureBanditLearner::DotProduct(

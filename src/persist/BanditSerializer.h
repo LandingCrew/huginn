@@ -21,7 +21,12 @@ namespace Huginn::Persist
    // target and is DISCARDED on load: those scores came from rules the
    // rework replaced, so the character starts learning fresh (decided with
    // the user, 2026-10-04 -- reset, not rescale).
-   inline constexpr uint32_t kBanditSerializationVersion = 3;
+   // v4 (0.23.6): memory with a useful life. Same stride as v3; the count is
+   // a float (the evidence n, fractional after a fade) and the minutes are
+   // PLAY minutes since the item was last chosen. A v3 record CONVERTS: n =
+   // its train count, and every item's life starts at the load (v3's minutes
+   // counted since the last decay stamp, not the last pick).
+   inline constexpr uint32_t kBanditSerializationVersion = 4;
    inline constexpr uint32_t kUniqueID                = 'QCNO';  // 'ONCQ' on disk
 
    // Which character a save belongs to, and how far its learning had got:
@@ -55,16 +60,19 @@ namespace Huginn::Persist
    // feature vector is APPEND-ONLY (see StateFeatures.h): features may be
    // added at the end, never reordered or removed.
 
-   // Decode a v2 BNDW entry blob written with diskFeatureCount weights per
+   // Decode a v2+ BNDW entry blob written with diskFeatureCount weights per
    // entry into compiled-layout entries (positional pad/truncate migration).
    // data/byteLen must hold exactly numItems entries of on-disk stride
    //   sizeof(RE::FormID) + sizeof(float) * diskFeatureCount + 2 * sizeof(uint32_t);
    // returns empty if byteLen does not match. Exposed for tests.
+   // `recordVersion` 4 reads the count as a float; 2 and 3 as an integer,
+   // converted. The minutes are copied as stored either way.
    // `unitTest` marks a call from the unit tests' negative case: the rejection
    // is then logged at info as a test, not at error as a save fault.
    [[nodiscard]] std::vector<Learning::FeatureBanditLearner::SerializedEntry>
    DecodeV2EntryBlob(const std::byte* data, size_t byteLen,
-      uint32_t numItems, uint32_t diskFeatureCount, bool unitTest = false);
+      uint32_t numItems, uint32_t diskFeatureCount, uint32_t recordVersion,
+      bool unitTest = false);
 
    // Buffered learner data from cosave Load callback
    struct LoadedBanditData {
