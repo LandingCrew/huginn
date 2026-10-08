@@ -50,11 +50,12 @@ namespace Huginn::TestHarness
                 if (msg.level >= spdlog::level::err) {
                     ++counts->errorLines;
                 } else if (msg.level == spdlog::level::warn) {
-                    std::string text(msg.payload.data(), msg.payload.size());
-                    for (auto& ch : text) {
-                        ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-                    }
-                    if (text.find("skipping") != std::string::npos) {
+                    // Tests.cpp's own phrase ("[Test] ItemRegistry not ready,
+                    // skipping tests"). Not bare "skipping": registries warn
+                    // "... skipping" about single forms (a weapon that fails to
+                    // classify), which is no reason to call a suite skipped.
+                    const std::string_view text(msg.payload.data(), msg.payload.size());
+                    if (text.find("skipping tests") != std::string_view::npos) {
                         ++counts->skipLines;
                     }
                 }

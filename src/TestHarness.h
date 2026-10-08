@@ -7,7 +7,7 @@
 // no shared counter; each one logs "TEST FAIL ..." or "<name> FAIL ..." and
 // usually returns). RunSuite runs one suite with a counting sink armed on the
 // calling thread: a suite FAILED if it logged at error or above, or threw;
-// SKIPPED if it only warned that it was "skipping" (a registry not ready);
+// SKIPPED if it only warned "skipping tests" (a registry not ready);
 // else PASSED. Lines other threads log meanwhile are not counted.
 //
 // After each batch, EndPhase logs one sentinel line:
