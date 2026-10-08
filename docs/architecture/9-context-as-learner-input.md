@@ -216,6 +216,7 @@ Open points:
 **Decided in discussion**
 
 - The learner is the primary driver; hand-tuned values are a bootstrap, not an authority.
+- **The hand-tuned layer is tech debt to pay off** (the user, 2026-10-07): it was always meant as a one-time bootstrap, not something to rely on continuously. So the replacement half of this proposal is paying down debt, not a new direction.
 - No minimum on θ: unlearning a rule is the player's prerogative.
 - Track current utility; don't converge.
 - Keep the battery model for per-item memory.
@@ -236,6 +237,10 @@ Open points:
 - [ ] **The 23-point gain is partly self-fulfilling.** The live page was the one shown, and most picks were presses of its keys; the context-only page was never shown. On the 83 menu picks, which the display did not steer, context alone won 13 to 7, and B′ (prior and recency kept, no learned weights) scored 56% against B's 58%. That strengthens the case for this redesign but weakens "Options ruled out": a cap or context bands stays a cheap stopgap while this is built. Success in step 3 should weight menu picks, not the overall hit rate.
 - [ ] **The slot manager assumes a positive multiplicative score.** The hold margin (×1.5 challenger ratio), the need cap (×0.5, ×0.25), `fMinimumUtility` and the override thresholds are all ratios or floors on today's utility. An additive θ·need·cap + bᵢ can be zero or negative. Decide whether the slot manager works on exp(score) (the choice model's odds) or every one of those is re-derived.
 - [ ] **Weapons need a capability vector too.** The extractor reads MagicEffect data, which covers spells, potions, scrolls and enchantments. A plain weapon has none, so its cap(i) is empty and bᵢ carries everything -- the soak's concentration (Soul Sword, 16% of trains) under a new name. Describe weapons by type, hand, damage, speed and enchantment.
+- [ ] **Derive the minimum utility; do not set it** (the user, 2026-10-07: "should be derived, not something we should set"). Today `fMinimumUtility` (0.1) drops anything under it (`UtilityScorer.cpp:127`), and at least four always-on baselines exist only to clear it -- `weightWeapon`, `weightSpell`, `weightBuffPotion`/`weightBuffCombat`, `weightSoulGem` (`ContextRuleEngine.cpp:455-492`) -- plus `fColdStartUCBBoost`. One hand-set floor, five hand-set workarounds. Three ways to derive it, cheapest first:
+  1. **The noise floor** (today's formula): the utility of an item with no context reason and no training, `baseRelevance × (1 + λmin × prior)`. It moves with the other parameters instead of drifting out of sync, and a category it keeps out has a sensor gap, not a threshold problem. The baselines then retire one by one as their sensors arrive.
+  2. **Replay**: bin shown items by utility, measure the pick rate per bin, put the floor where it reaches ~0. Answers "when is a blank key better than the 9th-best item?" from play, and checks where (1) lands.
+  3. **The outside option** (this model): the choice model gets a "nothing on the page" alternative -- no press, or a menu pick -- with its own learned score, fit from menu picks (goal 1's count). Show an item when it beats the outside option. The threshold is then learned like everything else.
 - [ ] **Measure the wildcard target against relevant wildcards.** "8 of 333" counts wildcards placed when nothing called for them. Count picks against wildcards whose relevance was above the noise floor at the time.
 
 **Risks**
