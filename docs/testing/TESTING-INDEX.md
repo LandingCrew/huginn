@@ -197,14 +197,18 @@ launch's log holds a `DONE` (taken at once when found). A game up for
 folder's Documents part comes from the Windows known-folder API, so a
 OneDrive-redirected Documents is found.
 
-The game it tracks is its own only: a `SkyrimSE.exe` created after the launch,
-with its image under the chosen instance, held open by handle from first
-sight (so PID reuse cannot redirect the kill). Whatever starts the game closes
+The game it tracks is its own only: an image named `SkyrimSE.exe` under the
+chosen instance, created after the launch (5 s of slack for a clock step),
+held open by handle from first sight (so PID reuse cannot redirect the
+kill). Whatever starts the game closes
 it: when the run ends, whatever the verdict, every game of its own still
 running 15 s later is ended through that handle (after `DONE` Huginn has
 normally ended it already), and the `ModOrganizer.exe` the runner started is
-closed if still open (asked first, then `/F /T` after 30 s). Another
-instance's game is never touched. Exit 0 = PASS; 1 = a failed or skipped
+closed if still open (asked first, then `/F /T` after 30 s). Throughout, and
+for 20 s after MO2 is gone (3 minutes at most), it keeps scanning for and
+ending games of its own, so a game MO2 was still starting when the run ended
+(`--timeout 0`) is not orphaned; `/T` cannot reach it once its parent
+`skse64_loader` has exited. Another instance's game is never touched. Exit 0 = PASS; 1 = a failed or skipped
 suite (`--allow-skips` accepts skips), timeout, crash or unread flag;
 2 = refused.
 It reads MO2's config and never writes it, and it does **not** deploy the DLL:
