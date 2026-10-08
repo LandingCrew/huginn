@@ -22,6 +22,7 @@
 #include "apparel/ApparelClassifier.h"
 #include "weapon/WeaponClassifier.h"
 #include "util/InventoryUtil.h"
+#include "util/FormRead.h"
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -45,6 +46,11 @@
 
 namespace Huginn::Console
 {
+   using Util::AvName;
+   using Util::CsvQuote;
+   using Util::KeywordList;
+   using Util::PluginOf;
+
    // =========================================================================
    // HELPERS
    // =========================================================================
@@ -851,27 +857,7 @@ namespace Huginn::Console
       return true;
    }
 
-   // Same quoting rules as the spell dump: always quoted, quotes doubled,
-   // newlines folded to a space so line-counting tools stay honest.
-   static std::string CsvQuote(std::string_view text)
-   {
-      std::string quoted;
-      quoted.reserve(text.size() + 2);
-      quoted += '"';
-      for (const char c : text) {
-         if (c == '\r' || c == '\n') { quoted += ' '; continue; }
-         if (c == '"') quoted += '"';
-         quoted += c;
-      }
-      quoted += '"';
-      return quoted;
-   }
-
-   static std::string_view PluginOf(const RE::TESForm* form)
-   {
-      const auto* file = form ? form->GetFile(0) : nullptr;
-      return file ? file->GetFilename() : ""sv;
-   }
+   // CsvQuote and PluginOf live in util/FormRead.h (shared with src/effect/).
 
    // The one sub-classification an item carries, whichever field its type
    // fills: element for resists, school/skill for fortifies. "-" if none.
@@ -1378,27 +1364,7 @@ namespace Huginn::Console
    // research tool; the per-type dumps above stay the classifier views.
    // Ingredients are left out: Huginn dropped them (the user, 2026-10-07) --
    // they matter only at an alchemy lab.
-   static std::string_view AvName(RE::ActorValue av)
-   {
-      if (av == RE::ActorValue::kNone || av >= RE::ActorValue::kTotal) return ""sv;
-      const auto* list = RE::ActorValueList::GetSingleton();
-      const auto* info = list ? list->GetActorValue(av) : nullptr;
-      return info && info->enumName ? std::string_view(info->enumName) : ""sv;
-   }
-
-   static std::string KeywordList(const RE::BGSKeywordForm* form)
-   {
-      std::string list;
-      if (!form) return list;
-      for (std::uint32_t i = 0; i < form->numKeywords; ++i) {
-         const auto* kw = form->keywords[i];
-         const char* id = kw ? kw->GetFormEditorID() : nullptr;
-         if (!id || !*id) continue;
-         if (!list.empty()) list += ';';
-         list += id;
-      }
-      return list;
-   }
+   // AvName and KeywordList live in util/FormRead.h.
 
    static void Cmd_DumpAll(std::string_view /*arg*/)
    {
