@@ -15,9 +15,10 @@ tests/core/ActorTypeClassifierTests.cpp): a row flagged in today_mismatch reads
 its primary family folded onto today's six types; every other row reads the
 map's `today`.
 
-Exit code: 0 when every row matches; 1 on a mismatch, a missing row, or a
-duplicated (plugin, editorID) key in either file; 2 when an input lacks a
-column this needs.
+Exit code: 0 when every row matches; 1 on a mismatch, a missing row, a
+truncated row (fewer fields than the header) or a duplicated
+(plugin, editorID) key in either file; 2 when an input cannot be read, lacks
+a column this needs, or the map has no rows (a vacuous pass is not a pass).
 """
 import csv
 import os
@@ -32,11 +33,33 @@ DUMP_COLUMNS = ('formID', 'editorID', 'plugin', 'huginnReading')
 MAP_COLUMNS = ('formID', 'editorID', 'plugin', 'family', 'today', 'today_mismatch')
 
 
+class BadInput(Exception):
+    """An input this cannot use (exit code 2)."""
+
+
 def read_csv(path, encoding):
-    with open(path, encoding=encoding, errors='replace', newline='') as f:
-        reader = csv.DictReader(f)
-        rows = list(reader)
-        return reader.fieldnames or [], rows
+    try:
+        with open(path, encoding=encoding, errors='replace', newline='') as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+            return reader.fieldnames or [], rows
+    except OSError as e:
+        raise BadInput(f"cannot read {path}: {e.strerror or e}") from None
+
+
+def drop_truncated(rows, needed, name):
+    """Rows with a needed field missing (csv fills a short row with None).
+    Reported and left out: a None on both sides would otherwise compare
+    equal."""
+    kept, bad = [], 0
+    for i, r in enumerate(rows, start=2):   # line 1 is the header
+        gone = [c for c in needed if r.get(c) is None]
+        if gone:
+            bad += 1
+            print(f"TRUNCATED {name} line {i}: no {', '.join(gone)} (formID {r.get('formID')})")
+        else:
+            kept.append(r)
+    return kept, bad
 
 
 def missing_columns(name, fields, needed):
@@ -72,10 +95,19 @@ def main(argv):
     here = os.path.dirname(os.path.abspath(__file__))
     map_path = argv[2] if len(argv) > 2 else os.path.join(
         here, '..', '..', 'docs', 'architecture', '9-data', 'race_map.csv')
-    dump_fields, dump_rows = read_csv(argv[1], 'utf-8-sig')
-    map_fields, rows = read_csv(map_path, 'utf-8-sig')
+    try:
+        dump_fields, dump_rows = read_csv(argv[1], 'utf-8-sig')
+        map_fields, rows = read_csv(map_path, 'utf-8-sig')
+    except BadInput as e:
+        print(e)
+        return 2
     if missing_columns('dump', dump_fields, DUMP_COLUMNS) | missing_columns('map', map_fields, MAP_COLUMNS):
         return 2
+    if not rows:
+        print(f"the map {map_path} has no rows: nothing to check")
+        return 2
+    dump_rows, dump_truncated = drop_truncated(dump_rows, DUMP_COLUMNS, 'dump')
+    rows, map_truncated = drop_truncated(rows, MAP_COLUMNS, 'map')
 
     dump_by_key, _, dump_dupes = index(dump_rows, 'dump')
     _, _, map_dupes = index(rows, 'map')
@@ -86,7 +118,7 @@ def main(argv):
         dump_any_form.setdefault(d['formID'], []).append(d)
 
     used = set()   # id() of dump rows already matched
-    bad = dump_dupes + map_dupes
+    bad = dump_dupes + map_dupes + dump_truncated + map_truncated
     for r in rows:
         if r['editorID']:
             d = dump_by_key.get((r['plugin'], r['editorID']))
