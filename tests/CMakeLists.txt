@@ -73,6 +73,8 @@ target_compile_features(huginn_core_tests PRIVATE cxx_std_23)
 # PCH, no CommonLib), which is the point.
 target_include_directories(huginn_core_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
 target_link_libraries(huginn_core_tests PRIVATE doctest::doctest)
+# Data-driven tests (the race map) read repo files by absolute path.
+target_compile_definitions(huginn_core_tests PRIVATE "HUGINN_REPO_ROOT=\"${PROJECT_SOURCE_DIR}\"")
 if(MSVC)
    target_compile_options(huginn_core_tests PRIVATE /utf-8 /permissive- /Zc:preprocessor)
 endif()

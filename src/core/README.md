@@ -41,6 +41,11 @@ Where things go:
 | Its host tests | `tests/core/*Tests.cpp` (doctest) |
 | The game-side caller | wherever it was; it calls `Huginn::Core::...` |
 
+New code goes in `Huginn::Core`. Code moved here whole keeps its namespace, so
+its callers do not change: `ActorTypeClassifier.h` (from `src/state/`, 0.23.9)
+and `TargetType.h` (from `state/GameState.h`, which includes it) stay in
+`Huginn::State`.
+
 Both targets compile `src/core/`: the plugin through its `GLOB_RECURSE` over
 `src/`, and `huginn_core_tests` directly. Tests live outside `src/` so the
 plugin never compiles them.

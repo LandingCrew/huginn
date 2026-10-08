@@ -3,10 +3,11 @@
 // =============================================================================
 // ACTOR TYPE CLASSIFIER -- race and actor keywords to TargetType
 // =============================================================================
-// Pure code: no RE:: or SKSE types, so it runs the same in the game
-// (StateEvaluator::ClassifyActor), in `hg dump races` (one reading per race),
-// and on the host against docs/architecture/9-data/race_map.csv
-// (tools/races/race_reading_host_check.cpp).
+// Pure code (src/core/README.md): no game types, so it runs the same in the
+// game (StateEvaluator::ClassifyActor), in `hg dump races` (one reading per
+// race), and on the host against docs/architecture/9-data/race_map.csv
+// (tests/core/ActorTypeClassifierTests.cpp, part of huginn_core_tests).
+// Moved from src/state/ in 0.23.9; the namespace is unchanged.
 //
 // The rules are the race map's (docs/architecture/9-data/target_types.csv),
 // folded onto today's six types: humanoid, undead, daedra, dragon and
@@ -43,7 +44,7 @@
 //   7. Race-name words, for races with no type keyword at all; then Humanoid.
 // =============================================================================
 
-#include "GameState.h"
+#include "TargetType.h"
 
 #include <algorithm>
 #include <array>

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/TargetType.h"   // TargetType, GetTargetTypeName
+
 namespace Huginn::State
 {
    // Health percentage buckets (6 levels - exponential for better low-HP granularity)
@@ -43,30 +45,8 @@ namespace Huginn::State
       Ranged = 2   // 769+ units (>12m)
    };
 
-   // Target type buckets (7 types)
-   enum class TargetType : uint8_t
-   {
-      None = 0,       // No target
-      Humanoid = 1,   // NPCs, bandits, etc.
-      Undead = 2,     // Draugr, skeletons, vampires
-      Beast = 3,      // Wolves, bears, sabre cats
-      Dragon = 4,     // Dragons
-      Construct = 5,  // Dwemer automatons (mechanical)
-      Daedra = 6      // Atronachs, Dremora (from Oblivion) - affected by anti-daedra magic
-   };
-
-   // Helper to get target type name for UI display (v0.6.11)
-   [[nodiscard]] inline constexpr const char* GetTargetTypeName(TargetType type) noexcept {
-      switch (type) {
-      case TargetType::Humanoid: return "Humanoid";
-      case TargetType::Undead: return "Undead";
-      case TargetType::Beast: return "Beast";
-      case TargetType::Dragon: return "Dragon";
-      case TargetType::Construct: return "Construct";
-      case TargetType::Daedra: return "Daedra";
-      default: return "None";
-      }
-   }
+   // TargetType and GetTargetTypeName live in core/TargetType.h (pure, so the
+   // actor-type classifier can be host-tested); included above.
 
    // Combat status
    enum class CombatStatus : uint8_t

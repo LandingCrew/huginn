@@ -71,8 +71,10 @@ second agent's check; this section leaves the file when that PR merges.
 Detail in the PR and the [implementation map](architecture/9-implementation-map.md#phase-0-behaviour-neutral-cleanup-can-ship-now).
 Left for the game: run `hg dump races` on LoreRim and
 `python -I tools/races/check_race_reading.py <Huginn_Races.csv>`; the host
-check (`tools/races/race_reading_host_check.cpp`) already matches all 539 rows
-and 20 actor-keyword cases.
+tests (`tests/core/ActorTypeClassifierTests.cpp` in `huginn_core_tests`, since
+R1; the classifier is `src/core/ActorTypeClassifier.h`) match all 539 rows and
+20 actor-keyword cases, and made-up races pin the rule parts no real race
+exercises.
 
 ### R1. Host test target
 

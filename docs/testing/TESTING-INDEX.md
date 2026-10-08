@@ -51,7 +51,11 @@ Rules and limits: [src/core/README.md](../../src/core/README.md).
 the change only re-runs the configure and still builds the old file list.
 Build twice, or reconfigure first, before trusting a result.
 
-Covered so far: the slot class cap's arithmetic (`core/SlotClassCapMath.h`, the pattern
+Covered so far: the actor-type classifier (`core/ActorTypeClassifier.h`, with
+`core/TargetType.h`) against all 539 rows of `race_map.csv`, 20 actor-keyword
+cases and made-up races that pin each rule part (`ActorTypeClassifierTests.cpp`;
+it reads the CSVs through `HUGINN_REPO_ROOT`); the slot class cap's arithmetic
+(`core/SlotClassCapMath.h`, the pattern
 port, checked bit for bit against the loop it replaced) and `core/RingBuffer.h`.
 
 ---
