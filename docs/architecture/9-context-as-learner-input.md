@@ -153,11 +153,26 @@ Open points:
 
 The goal is current utility: follow what's useful now and let old usefulness fade, because a level-5 kit and a level-40 kit want different things.
 
-- **Shared θ → Kalman-style update with process noise.** A Kalman filter with process noise is built to follow a drifting value. The noise is one parameter meaning "how fast preferences change," and the filter's variance is what drives exploration.
+- **Shared θ → an update that keeps tracking.** A Kalman filter with process noise is built to follow a drifting value; a constant-step online update does the same with one number. Either way the variance drives exploration. Not the battery -- see "Why the battery is not θ's forgetting" below.
 - **Per-item bᵢ → keep the battery (useful-life) model.** Items come and go from inventory, so a useful-life shape fits. The battery is already Kalman-like: uncertainty grows while there's no evidence, the score falls back to its prior, and UCB rises so the item is re-explored. It just uses a hand-shaped curve with a delay and a knee.
 - **The battery's role narrows:** from "how long the whole item vector is trusted" to "how long this item's personal preference is trusted."
 
 **No minimum on θ.** A player who never uses resist potions under fire can unlearn that pairing completely. Correcting a wrongly unlearned pairing is the job of exploration and surprise weighting, not a floor.
+
+**Why the battery is not θ's forgetting** (reviewed 2026-10-07 after the user asked "isn't this what the battery model should be?"; a fresh-context review corrected the first answer, which proposed a battery for θ clocked by need-active time):
+
+- **The battery only acts when evidence stops.** A pick resets retention (`FeatureBanditLearner.cpp:65-69`), and a passed-over update does not renew it (`:61-63`). The level-5 to level-40 drift happens on pairings still in use, where a battery sits at full and does nothing. Today's tracking comes from the constant step and L2 (`:53-55`), not the battery.
+- **Fading confidence while keeping the weights needs a prior to fall back to.** Today's score blends `α·R + (1−α)·prior` (`UtilityScorer.cpp:388-391`). The score here has no such blend, so a faded θ would change almost nothing, and deleting a θ entry sets the pairing to 0: "rejected", the meaning the battery was built to avoid.
+- **The plateau-and-knee shape fits a discrete event** (an item dropped or replaced). Preference drift is gradual. A scheduled knee on a shared θ would also make a whole class of items lose trust at once.
+- **Passed-over updates do not cover "faced the need and did not act."** Doing nothing produces no event. Negatives exist only after a pick, only for same-need-class items shown on Normal slots, already known to the learner, still pending after 10 s, at a quarter step (`EquipSubscribers.h:56-71`, `Config.h:59,75`). Healing instead of resisting is a different need class, so nothing is passed over.
+
+**What θ uses instead:**
+
+1. **The update rule is the tracking knob.** With the simple online logistic step (diagonal variance), the step size is the one number and no separate process noise is needed. With a Kalman/Laplace step, process noise is applied per opportunity, not per second.
+2. **θ's variance grows only on real opportunities**: the need is active (counted by onsets, not seconds, so a long fight does not outweigh several short ones) and an item answering it was shown. Idle play time is not evidence -- the player is not on fire most of the time. The variance feeds the wildcard list and the challenger margin. θ entries are never deleted.
+3. **The battery stays on the play clock, for bᵢ only.** There zero means "no particular taste", which is the right fallback.
+
+The process-noise level cannot be fitted from the soak log (11.4 play-hours, no level progression, no need vector); choose it conservatively and lean on the θ-drift telemetry.
 
 ## Item tiers and the greedy potion
 
@@ -227,7 +242,8 @@ Open points:
 **Open questions**
 
 - [ ] How sparse is the hand-listed pair set, and how strongly is the dense block held at zero?
-- [ ] What process-noise level for θ, and does it interact badly with the battery on bᵢ?
+- [x] ~~What process-noise level for θ, and does it interact badly with the battery on bᵢ?~~ Answered in "Why the battery is not θ's forgetting": the update rule's step size (or process noise per opportunity) tracks θ; the battery stays on bᵢ only.
+- [ ] **When a pairing goes unused, should θ drift back toward its starting value θ0?** That is the true battery analogue for θ (a mean-reverting model rather than a random walk), but it softens "no minimum on θ" decided above.
 - [ ] Kalman/Laplace update on a choice-model likelihood, or a simpler online logistic step with a diagonal variance?
 - [ ] Which effect features to extract first, and from which game data (MagicEffect archetype, actor value, keywords)?
 - [ ] What new sensors the emergent tier needs first (edge/drop detection, stable target type).
@@ -264,7 +280,7 @@ The effect feature extractor comes first; everything else can be tested offline 
 2. **Need vector.** Expose the rule outputs as a vector, each through its response curve, instead of the per-item `std::max`.
 3. **Replay the new score.** Fit θ offline on the soak selections and re-rank. Success = overall hit rate at or above 81% *and* menu-pick hits above 7 of 83.
 4. **Bootstrap θ** from that fit; re-express the INI as an override.
-5. **Online update** for θ with process noise; move the battery to bᵢ.
+5. **Online update** for θ (step size as the tracking knob; variance grown per opportunity); move the battery to bᵢ.
 6. **Wildcard rework** on θ uncertainty.
 7. **θ drift telemetry** and sensor grooming in parallel.
 8. **Cosave bump** and a soak run as the new baseline.
