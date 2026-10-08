@@ -152,7 +152,9 @@ on with either:
 
 The save is loaded with `RE::BGSSaveLoadManager::Load(name, checkForMods=false)`
 on the main thread, 3 s after the main menu opens: no missing-plugins dialog
-to block an unattended run, and no console or Papyrus round trip.
+to block an unattended run, and no console or Papyrus round trip. The name is
+the file name without `.ess` (proven on simonrim, 2026-10-08; Huginn strips a
+`.ess` if one is given).
 
 **The runner**, `tools/ingame/run_tests.py`:
 
