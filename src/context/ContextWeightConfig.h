@@ -47,12 +47,6 @@ namespace Huginn::State
         // NORMALIZED WEIGHTS [0,1] for ContextRuleEngine
         // =====================================================================
 
-        // Health/resource restoration
-        float weightCriticalHealth = ContextWeightDefaults::CRITICAL_HEALTH;
-        float weightLowHealth = ContextWeightDefaults::LOW_HEALTH;
-        float weightLowMagicka = ContextWeightDefaults::LOW_MAGICKA;
-        float weightLowStamina = ContextWeightDefaults::LOW_STAMINA;
-
         // Combat/tactical
         float weightInCombat = ContextWeightDefaults::IN_COMBAT;
         float weightMultipleEnemies = ContextWeightDefaults::MULTIPLE_ENEMIES;
@@ -85,9 +79,6 @@ namespace Huginn::State
         float weightSoulGem = ContextWeightDefaults::SOUL_GEM;
         float weightBuffPotion = ContextWeightDefaults::BUFF_POTION;
         float weightBuffCombat = ContextWeightDefaults::BUFF_COMBAT;
-
-        // Utility baseline
-        float weightBaseRelevance = ContextWeightDefaults::BASE_RELEVANCE;
 
         // =====================================================================
         // CONTINUOUS FUNCTION SMOOTHING PARAMETERS

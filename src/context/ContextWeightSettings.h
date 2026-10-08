@@ -34,11 +34,8 @@ namespace Huginn::State
         // Mapping: 10.0 → 1.0 (critical), 5.0 → 0.5 (high), 3.0 → 0.3 (moderate)
         // =====================================================================
 
-        // Health/resource restoration
-        inline constexpr float CRITICAL_HEALTH = 1.0f;      // < 20% HP
-        inline constexpr float LOW_HEALTH = 0.5f;           // < 50% HP
-        inline constexpr float LOW_MAGICKA = 0.4f;          // < 30% magicka
-        inline constexpr float LOW_STAMINA = 0.3f;          // < 30% stamina
+        // Health/magicka/stamina have no weight here: their rules are the
+        // deficit curves (the smoothing exponents below).
 
         // Combat/tactical
         inline constexpr float IN_COMBAT = 0.3f;            // General combat damage
@@ -82,7 +79,8 @@ namespace Huginn::State
         // learning; urgency still comes from WEAPON_CHARGE when a weapon needs it.
         inline constexpr float SOUL_GEM = 0.15f;            // Always-on baseline (Regular slots)
 
-        // Utility baseline
+        // Utility baseline. Not an INI key: ContextWeights::baseRelevanceWeight
+        // (ContextRuleEngine.h) takes it directly.
         inline constexpr float BASE_RELEVANCE = 0.05f;      // Noise floor for always-available items
 
         // =====================================================================
@@ -150,12 +148,6 @@ namespace Huginn::State
         // to produce normalized context weights for multiplicative scoring.
         // =====================================================================
 
-        // --- Health/resource restoration ---
-        float weightCriticalHealth = ContextWeightDefaults::CRITICAL_HEALTH;
-        float weightLowHealth = ContextWeightDefaults::LOW_HEALTH;
-        float weightLowMagicka = ContextWeightDefaults::LOW_MAGICKA;
-        float weightLowStamina = ContextWeightDefaults::LOW_STAMINA;
-
         // --- Combat/tactical ---
         float weightInCombat = ContextWeightDefaults::IN_COMBAT;
         float weightMultipleEnemies = ContextWeightDefaults::MULTIPLE_ENEMIES;
@@ -189,9 +181,6 @@ namespace Huginn::State
         float weightSoulGem = ContextWeightDefaults::SOUL_GEM;
         float weightBuffPotion = ContextWeightDefaults::BUFF_POTION;
         float weightBuffCombat = ContextWeightDefaults::BUFF_COMBAT;
-
-        // --- Utility baseline ---
-        float weightBaseRelevance = ContextWeightDefaults::BASE_RELEVANCE;
 
         // =====================================================================
         // CONTINUOUS FUNCTION SMOOTHING PARAMETERS

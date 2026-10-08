@@ -389,7 +389,7 @@ missing, still loading, or disabled by config (e.g. `enableSoulGemRecharge`). Th
 and buff potions are all gathered every tick and *gated by context weight* instead, which
 is why `[ContextWeights]` carries always-on baselines like `fWeightSoulGem`,
 `fWeightBuffPotion`, `fWeightWeapon` and `fWeightSpell`. Without those baselines an item
-sits at `fWeightBaseRelevance` (0.05), never clears `fMinimumUtility` (0.1), and so never
+sits at the built-in base relevance (0.05, `ContextWeightDefaults::BASE_RELEVANCE`), never clears `fMinimumUtility` (0.1), and so never
 gets a chance to be learned at all.
 
 Staves are treated as weapons with charge. Items are classified by **effect type** (not

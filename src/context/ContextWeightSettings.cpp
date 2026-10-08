@@ -33,12 +33,6 @@ namespace Huginn::State
         // NEW: NORMALIZED WEIGHTS [0,1] for ContextRuleEngine
         // =====================================================================
 
-        // Health/resource restoration
-        weightCriticalHealth = ReadClampedFloat(ini, section, "fWeightCriticalHealth", ContextWeightDefaults::CRITICAL_HEALTH, 0.0f, 100.0f, "ContextWeightSettings"sv);
-        weightLowHealth = ReadClampedFloat(ini, section, "fWeightLowHealth", ContextWeightDefaults::LOW_HEALTH, 0.0f, 100.0f, "ContextWeightSettings"sv);
-        weightLowMagicka = ReadClampedFloat(ini, section, "fWeightLowMagicka", ContextWeightDefaults::LOW_MAGICKA, 0.0f, 100.0f, "ContextWeightSettings"sv);
-        weightLowStamina = ReadClampedFloat(ini, section, "fWeightLowStamina", ContextWeightDefaults::LOW_STAMINA, 0.0f, 100.0f, "ContextWeightSettings"sv);
-
         // Combat/tactical
         weightInCombat = ReadClampedFloat(ini, section, "fWeightInCombat", ContextWeightDefaults::IN_COMBAT, 0.0f, 100.0f, "ContextWeightSettings"sv);
         weightMultipleEnemies = ReadClampedFloat(ini, section, "fWeightMultipleEnemies", ContextWeightDefaults::MULTIPLE_ENEMIES, 0.0f, 100.0f, "ContextWeightSettings"sv);
@@ -76,9 +70,6 @@ namespace Huginn::State
         weightBuffPotion = ReadClampedFloat(ini, section, "fWeightBuffPotion", ContextWeightDefaults::BUFF_POTION, 0.0f, 100.0f, "ContextWeightSettings"sv);
         weightBuffCombat = ReadClampedFloat(ini, section, "fWeightBuffCombat", ContextWeightDefaults::BUFF_COMBAT, 0.0f, 100.0f, "ContextWeightSettings"sv);
 
-        // Utility baseline
-        weightBaseRelevance = ReadClampedFloat(ini, section, "fWeightBaseRelevance", ContextWeightDefaults::BASE_RELEVANCE, 0.0f, 100.0f, "ContextWeightSettings"sv);
-
         // =====================================================================
         // CONTINUOUS FUNCTION SMOOTHING PARAMETERS
         // =====================================================================
@@ -97,10 +88,10 @@ namespace Huginn::State
             weightOnFire, weightPoisoned, weightFrozen, weightShocked,
             weightDiseased, weightUnderwater, weightFallingHigh, weightLookingAtLock);
 
-        logger::info("[ContextWeightSettings] Loaded normalized weights: critHealth={:.2f}, lowHealth={:.2f}, "
-            "combat={:.2f}, multiEnemy={:.2f}, forge={:.2f}, buffPotion={:.2f}, buffCombat={:.2f}, baseRelevance={:.2f}",
-            weightCriticalHealth, weightLowHealth, weightInCombat, weightMultipleEnemies,
-            weightAtForge, weightBuffPotion, weightBuffCombat, weightBaseRelevance);
+        logger::info("[ContextWeightSettings] Loaded normalized weights: "
+            "combat={:.2f}, multiEnemy={:.2f}, forge={:.2f}, buffPotion={:.2f}, buffCombat={:.2f}",
+            weightInCombat, weightMultipleEnemies,
+            weightAtForge, weightBuffPotion, weightBuffCombat);
 
         // All FOUR exponents. weaponCharge was omitted here for as long as it was
         // also missing from the shipped INI, so a setting nobody could see was
@@ -125,11 +116,6 @@ namespace Huginn::State
         weightLookingAtLock = ContextWeightDefaults::LOOKING_AT_LOCK;
 
         // Normalized weights [0,1]
-        weightCriticalHealth = ContextWeightDefaults::CRITICAL_HEALTH;
-        weightLowHealth = ContextWeightDefaults::LOW_HEALTH;
-        weightLowMagicka = ContextWeightDefaults::LOW_MAGICKA;
-        weightLowStamina = ContextWeightDefaults::LOW_STAMINA;
-
         weightInCombat = ContextWeightDefaults::IN_COMBAT;
         weightMultipleEnemies = ContextWeightDefaults::MULTIPLE_ENEMIES;
         weightEnemyCasting = ContextWeightDefaults::ENEMY_CASTING;
@@ -160,8 +146,6 @@ namespace Huginn::State
         weightBuffPotion = ContextWeightDefaults::BUFF_POTION;
         weightBuffCombat = ContextWeightDefaults::BUFF_COMBAT;
 
-        weightBaseRelevance = ContextWeightDefaults::BASE_RELEVANCE;
-
         // Smoothing parameters
         fHealthSmoothingExponent = ContextWeightDefaults::HEALTH_SMOOTHING_EXPONENT;
         fMagickaSmoothingExponent = ContextWeightDefaults::MAGICKA_SMOOTHING_EXPONENT;
@@ -188,11 +172,6 @@ namespace Huginn::State
         config.weightLookingAtLock = weightLookingAtLock * 0.1f;
 
         // Normalized weights [0,1]
-        config.weightCriticalHealth = weightCriticalHealth;
-        config.weightLowHealth = weightLowHealth;
-        config.weightLowMagicka = weightLowMagicka;
-        config.weightLowStamina = weightLowStamina;
-
         config.weightInCombat = weightInCombat;
         config.weightMultipleEnemies = weightMultipleEnemies;
         config.weightEnemyCasting = weightEnemyCasting;
@@ -220,8 +199,6 @@ namespace Huginn::State
         config.weightSoulGem = weightSoulGem;
         config.weightBuffPotion = weightBuffPotion;
         config.weightBuffCombat = weightBuffCombat;
-
-        config.weightBaseRelevance = weightBaseRelevance;
 
         // Smoothing exponents
         config.fHealthSmoothingExponent = fHealthSmoothingExponent;
