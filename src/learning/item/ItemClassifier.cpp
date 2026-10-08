@@ -207,17 +207,9 @@ namespace Huginn::Item
       return ItemType::Food;
       }
 
-      // Check if it's a raw ingredient (no "medicine" flag, has effects)
-      // Ingredients have effects but aren't classified as medicine
+      // Not food, poison or medicine: Unknown, and the caller falls back to
+      // the tags (DeriveItemTypeFromTags).
       if (!item->IsMedicine()) {
-      // Could be an ingredient if it has effects but isn't food/poison/medicine
-      if (!item->effects.empty()) {
-        // Check if it's actually usable as-is or needs to be crafted
-        // Ingredients typically have 4 effects that need discovery
-        // For now, classify non-medicine items with effects as Unknown
-        // (will be derived from tags if needed)
-        return ItemType::Unknown;
-      }
       return ItemType::Unknown;
       }
 

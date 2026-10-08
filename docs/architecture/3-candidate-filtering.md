@@ -29,7 +29,7 @@ candidate came from. It has exactly eight values, asserted at compile time
 | `Weapon` | 3 | `WeaponCandidate` | |
 | `Ammo` | 4 | `AmmoCandidate` | |
 | `SoulGem` | 5 | `ItemCandidate` | |
-| `Food` | 6 | `ItemCandidate` | Also Alcohol and Ingredient |
+| `Food` | 6 | `ItemCandidate` | Also Alcohol |
 | `Staff` | 7 | `WeaponCandidate` | `WeaponType::Staff` promotes the source type |
 
 > **There is no armor / apparel source type.** Fortify gear can never be gathered,
@@ -50,7 +50,7 @@ persistent gather buffer in a fixed order:
 
 1. Spells (`SpellRegistry::ForEachSpell`) — effective magicka cost is computed here, once,
    via `spellItem->CalculateMagickaCost(player)` and cached on the candidate
-2. Potions / food / ingredients (`ItemRegistry::ForEachItem`, skipping soul gems)
+2. Potions / food (`ItemRegistry::ForEachItem`, skipping soul gems)
 3. Scrolls (`ScrollRegistry::ForEachScroll`)
 4. Weapons and staves (`WeaponRegistry::ForEachWeapon`)
 5. Ammo (`WeaponRegistry::ForEachAmmo`)

@@ -52,7 +52,6 @@ namespace Huginn::Candidate
                 break;
             case Item::ItemType::Food:
             case Item::ItemType::Alcohol:  // Shares Food equip path; slot separation is via SlotClassification
-            case Item::ItemType::Ingredient:
                 candidate.sourceType = SourceType::Food;
                 break;
             case Item::ItemType::SoulGem:

@@ -33,7 +33,6 @@ namespace Huginn::Learning
             switch (form->GetFormType()) {
             case RE::FormType::AlchemyItem:
             case RE::FormType::SoulGem:
-            case RE::FormType::Ingredient:
                 return SelectionKind::Consumable;
             default:
                 break;

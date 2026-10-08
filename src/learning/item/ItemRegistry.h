@@ -108,7 +108,7 @@ namespace Huginn::Item
    // =============================================================================
    // ITEM REGISTRY (v0.7.4)
    // =============================================================================
-   // Tracks alchemy items (potions, poisons, food, ingredients) in player inventory.
+   // Tracks alchemy items (potions, poisons, food) and soul gems in player inventory.
    //
    // KEY DIFFERENCE FROM SPELLREGISTRY:
    // Items have quantities that change frequently (consumption/looting), requiring
