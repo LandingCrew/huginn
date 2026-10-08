@@ -24,6 +24,12 @@ in terms an agent can check without the game.
   into it; it merges to `main` after the baseline soak (R12).
 - **The old engine is frozen** on `main`: only fixes that block play. No
   tuning of multipliers, margins or context weights.
+- **Two agents per task** (the user, 2026-10-08). One agent does the work. A
+  second agent, in a fresh context, checks it on the assumption that it is
+  wrong: it reads the diff and the task's done-criteria, tries to break each
+  claim (re-runs the build and tests, reads the cited lines, looks for callers
+  missed), and reports what it could not invalidate. Only then is the task
+  done; findings go back to a worker, and the check repeats.
 - **Agent-checkable means:** builds clean in Debug and Release; the host test
   target passes (R1); the replay tool's numbers; a dump or log diff against a
   checked-in expectation.
