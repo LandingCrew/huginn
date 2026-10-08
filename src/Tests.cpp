@@ -4494,7 +4494,7 @@ void RunUnitTests()
         expect(savedB.minutesSinceChosen == 252, std::format("B saved {} play minutes, not 252",
             savedB.minutesSinceChosen));
         FeatureBanditLearner reloaded;
-        reloaded.ImportData({ savedB }, savedTotal);
+        reloaded.ImportData({ savedB });
         expect(std::abs(reloaded.GetRetention(kB) - learner.GetRetention(kB)) < 0.01f &&
                    reloaded.GetTrainCount(kB) == nB,
             "a round trip lost the evidence or the time since the pick");
@@ -6891,7 +6891,7 @@ void RunCosaveTests()
 
         // Import into fresh learner
         FeatureBanditLearner dest;
-        dest.ImportData(exported, totalTrains);
+        dest.ImportData(exported);
 
         if (dest.GetItemCount() != 2) {
             logger::error("[Cosave Test] FAIL: learner import should have 2 items, got {}"sv, dest.GetItemCount());
@@ -6934,7 +6934,7 @@ void RunCosaveTests()
         }
 
         FeatureBanditLearner dest;
-        dest.ImportData(exported, totalTrains);
+        dest.ImportData(exported);
         if (dest.GetItemCount() != 0) {
             logger::error("[Cosave Test] FAIL: Empty learner import should have 0 items"sv);
             return;
@@ -6964,7 +6964,7 @@ void RunCosaveTests()
         entry.trainCount = 5;
         newEntries.push_back(entry);
 
-        learner.ImportData(newEntries, 5);
+        learner.ImportData(newEntries);
 
         // Old data gone
         if (learner.GetTrainCount(0x00031000) != 0) {

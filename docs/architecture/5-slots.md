@@ -906,7 +906,7 @@ per-slot defaults described under
 [SlotLocker]
 bKeepSlotPositions = true       ; Keep an item in the slot it was already in (seating)
 bHoldSeatedItems = true         ; Hold a seated item until a challenger beats it by the margin
-fChallengerMargin = 0.25        ; How much better a challenger must score (0.25 = 25%)
+fChallengerMargin = 0.5         ; How much better a challenger must score (0.5 = 50%; 0.25 before 0.23.6)
 bReturnToHomeKey = true         ; A returning item takes back the key it left (home keys)
 fHomeKeyMemorySec = 60          ; ...if it left within this long; 0-600, 0 = off
 iNeedFreeSlots = 3              ; Need cap: items of one need on Regular keys at full utility (1-10)

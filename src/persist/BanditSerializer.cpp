@@ -278,7 +278,15 @@ namespace Huginn::Persist
 
             // Validate + resolve one decoded entry, keeping only survivors.
             auto acceptEntry = [&](BanditEntry& entry) {
-               // Reject non-finite weights before corrupt data reaches the scorer.
+               // Reject non-finite data before it reaches the scorer. Since
+               // v4 the train count is a float too: an Inf there made n_eff
+               // Inf and the confidence NaN (code review of #180).
+               if (!std::isfinite(entry.trainCount)) {
+                  ++droppedCorrupt;
+                  logger::warn("[Cosave] learner entry {:08X} has a non-finite train count — dropping"sv,
+                     entry.formID);
+                  return;
+               }
                for (float w : entry.weights) {
                   if (!std::isfinite(w)) {
                      ++droppedCorrupt;
@@ -333,22 +341,6 @@ namespace Huginn::Persist
                for (auto& entry : raw) {
                   acceptEntry(entry);
                }
-            }
-
-            // Recompute totalTrainCount from surviving entries so trains belonging
-            // to failed/dropped FormIDs don't inflate the UCB exploration term.
-            // Invariant: the learner's total == sum of per-item counts (it
-            // moves both together on every train). Rounded: v4 counts are
-            // fractional, and ImportData sums them again exactly.
-            float survivingSum = 0.0f;
-            for (const auto& e : banditData.entries) {
-               survivingSum += std::max(0.0f, e.trainCount);
-            }
-            const auto survivingTrains = static_cast<uint32_t>(std::lround(survivingSum));
-            if (survivingTrains != banditData.totalTrainCount) {
-               logger::info("[Cosave] Adjusted totalTrainCount {} -> {} ({} failed, {} corrupt)"sv,
-                  banditData.totalTrainCount, survivingTrains, banditData.failedFormIDs, droppedCorrupt);
-               banditData.totalTrainCount = survivingTrains;
             }
 
             logger::info("[Cosave] Loaded {} learner entries ({} resolved, {} failed, {} corrupt)"sv,
@@ -470,7 +462,7 @@ namespace Huginn::Persist
          return false;
       }
 
-      learner.ImportData(data.entries, data.totalTrainCount);
+      learner.ImportData(data.entries);
 
       logger::info("[Cosave] Applied {} learner entries, {} total trains ({} resolved, {} failed)"sv,
          data.entries.size(), data.totalTrainCount, data.resolvedFormIDs, data.failedFormIDs);

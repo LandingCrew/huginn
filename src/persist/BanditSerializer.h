@@ -76,7 +76,7 @@ namespace Huginn::Persist
    // Buffered learner data from cosave Load callback
    struct LoadedBanditData {
       std::vector<Learning::FeatureBanditLearner::SerializedEntry> entries;
-      uint32_t totalTrainCount = 0;
+      uint32_t totalTrainCount = 0;   // the header's, for the log; ImportData sums the entries
       uint32_t resolvedFormIDs = 0;
       uint32_t failedFormIDs = 0;
    };

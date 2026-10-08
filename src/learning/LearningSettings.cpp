@@ -24,18 +24,19 @@ namespace Huginn::Learning
             ini.GetDoubleValue(section, "fExternalEquipTimeWindow",
                 LearningDefaults::EXTERNAL_EQUIP_TIME_WINDOW));
 
-        // Memory with a useful life (roadmap Phase 3 #3a). Clamped again by
-        // the learner; these ranges are the documented ones.
+        // Memory with a useful life (roadmap Phase 3 #3a). The ranges live
+        // in MemoryLife::Clamped, which the learner applies too.
         const MemoryLife defaults{};
         memory.enabled = ini.GetBoolValue(section, "bForgetUnusedItems", defaults.enabled);
-        memory.lifeHours = std::clamp(static_cast<float>(
-            ini.GetDoubleValue(section, "fUsefulLifeHours", defaults.lifeHours)), 0.1f, 10000.0f);
-        memory.lifePerPickHours = std::clamp(static_cast<float>(
-            ini.GetDoubleValue(section, "fUsefulLifePerPickHours", defaults.lifePerPickHours)), 0.0f, 1000.0f);
-        memory.fadeHours = std::clamp(static_cast<float>(
-            ini.GetDoubleValue(section, "fFadeHours", defaults.fadeHours)), 0.05f, 1000.0f);
-        memory.forgetBelow = std::clamp(static_cast<float>(
-            ini.GetDoubleValue(section, "fForgetBelow", defaults.forgetBelow)), 0.0f, 0.5f);
+        memory.lifeHours = static_cast<float>(
+            ini.GetDoubleValue(section, "fUsefulLifeHours", defaults.lifeHours));
+        memory.lifePerPickHours = static_cast<float>(
+            ini.GetDoubleValue(section, "fUsefulLifePerPickHours", defaults.lifePerPickHours));
+        memory.fadeHours = static_cast<float>(
+            ini.GetDoubleValue(section, "fFadeHours", defaults.fadeHours));
+        memory.forgetBelow = static_cast<float>(
+            ini.GetDoubleValue(section, "fForgetBelow", defaults.forgetBelow));
+        memory = memory.Clamped();
 
         logger::info("[LearningSettings] Loaded: external={}, timeWindow={:.0f}ms"sv,
             learnFromExternalEquips ? "on" : "off", externalEquipTimeWindow);

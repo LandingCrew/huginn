@@ -34,11 +34,14 @@ and change the learning before tuning anything that competes with it.
    unheld sword and bow jumped slots after refresh bursts; home keys,
    0.23.5), then combat
    suppressing the workstation context (undecided; it must restore itself
-   after the fight), then a `fChallengerMargin` 0.25 vs 0.5 comparison on
-   the `slotChurn=` heartbeat -- an INI-only session (0.5 would have
-   blocked ~82 of ~255 hold-governed changes across the last 8 windows).
-   The standing-still bench flicker is likely the tester; confirm with a
-   still camera. All under "Remaining
+   after the fight). `fChallengerMargin` is 0.5 from 0.23.6: on both lists
+   (2026-10-07) no hold give-up was under x1.5, against 35% of 1,966 at
+   0.25, and nothing better was kept out. Churn per press barely moved: what
+   is left is scores jumping by more than any margin -- the correlation and
+   food/potion multipliers switching on and off with combat and distance
+   (Oakflesh x2.5 -> x5.5; one key changed four times in 11 s). That is the
+   next churn lever. The standing-still bench flicker is likely the tester;
+   confirm with a still camera. All under "Remaining
    slot churn" and "Soft slot manager" below; #174's key-age and tenure
    bands are the before/after measure.
 4. **Potion recommendations** -- buffs matched to the loadout, resist

@@ -193,7 +193,7 @@ namespace Huginn::Slot
 
         const bool hold = ini.GetBoolValue("SlotLocker", "bHoldSeatedItems", true);
         const float margin = std::clamp(
-            static_cast<float>(ini.GetDoubleValue("SlotLocker", "fChallengerMargin", 0.25)), 0.0f, 10.0f);
+            static_cast<float>(ini.GetDoubleValue("SlotLocker", "fChallengerMargin", 0.5)), 0.0f, 10.0f);
         m_holdSeatedItems.store(hold, std::memory_order_release);
         m_challengerMargin.store(margin, std::memory_order_release);
         SKSE::log::info("[SlotSettings] Hold seated items: {} (challenger margin {:.0f}%)"sv,
@@ -269,7 +269,7 @@ namespace Huginn::Slot
         }
         m_keepSlotPositions.store(true, std::memory_order_release);
         m_holdSeatedItems.store(true, std::memory_order_release);
-        m_challengerMargin.store(0.25f, std::memory_order_release);
+        m_challengerMargin.store(0.5f, std::memory_order_release);
         m_returnToHomeKey.store(true, std::memory_order_release);
         m_homeKeyMemorySec.store(60.0f, std::memory_order_release);
         m_needRepeatDiscount.store(0.5f, std::memory_order_release);
