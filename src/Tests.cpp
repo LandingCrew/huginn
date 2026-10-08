@@ -1,4 +1,5 @@
 #include "Tests.h"
+#include "TestHarness.h"           // MarkSkipped: a skip is not a pass
 #include "util/InventoryUtil.h"
 #include "Globals.h"
 
@@ -341,10 +342,12 @@ void RunSpellRegistryTests()
     // Guard: Skip if registry not initialized or still loading (v0.7.10)
     if (!g_spellRegistry) {
         logger::warn("[Test] SpellRegistry not initialized, skipping tests"sv);
+        TestHarness::MarkSkipped("SpellRegistry not initialized"sv);
         return;
     }
     if (g_spellRegistry->IsLoading()) {
         logger::warn("[Test] SpellRegistry still loading, skipping tests"sv);
+        TestHarness::MarkSkipped("SpellRegistry still loading"sv);
         return;
     }
 
@@ -428,10 +431,12 @@ void RunItemClassifierTests()
     // Guard: Skip if registry not ready (v0.7.10)
     if (!g_itemRegistry) {
         logger::warn("[Test] ItemRegistry not initialized, skipping tests"sv);
+        TestHarness::MarkSkipped("ItemRegistry not initialized"sv);
         return;
     }
     if (g_itemRegistry->IsLoading()) {
         logger::warn("[Test] ItemRegistry still loading, skipping tests"sv);
+        TestHarness::MarkSkipped("ItemRegistry still loading"sv);
         return;
     }
 
@@ -440,6 +445,7 @@ void RunItemClassifierTests()
     auto* player = RE::PlayerCharacter::GetSingleton();
     if (!player) {
         logger::error("TEST SKIP: Player not available"sv);
+        TestHarness::MarkSkipped("player not available"sv);
         return;
     }
 
@@ -541,6 +547,7 @@ void RunItemRegistryTests()
     // Guard: Skip if registry not ready (v0.7.10)
     if (!g_itemRegistry || g_itemRegistry->IsLoading()) {
         logger::warn("[Test] ItemRegistry not ready, skipping tests"sv);
+        TestHarness::MarkSkipped("ItemRegistry not ready"sv);
         return;
     }
 
@@ -607,6 +614,7 @@ void RunItemRegistryTests()
     } else {
         logger::info("TEST SKIP: Not enough health potions to test sorting ({} found)"sv,
             sortedHealthPotions.size());
+        TestHarness::MarkSkipped("fewer than 2 health potions: sort test not run"sv);
     }
 
     // Test 6: Verify RefreshCounts returns empty when no changes
@@ -751,6 +759,7 @@ void RunWeaponRegistryTests()
     // Guard: Skip if registry not ready (v0.7.10)
     if (!g_weaponRegistry || g_weaponRegistry->IsLoading()) {
         logger::warn("[Test] WeaponRegistry not ready, skipping tests"sv);
+        TestHarness::MarkSkipped("WeaponRegistry not ready"sv);
         return;
     }
 
@@ -6238,6 +6247,7 @@ void RunSlotSeatingTest()
     // that was otherwise clean (2026-09-19 23:11:59, bKeepSlotPositions = 0).
     if (!SlotSettings::GetSingleton().KeepSlotPositions()) {
         logger::info("  seating test skipped: bKeepSlotPositions is off in this INI"sv);
+        TestHarness::MarkSkipped("bKeepSlotPositions off"sv);
         return;
     }
 
@@ -6304,6 +6314,7 @@ void RunSlotSeatingTest()
     if (placed < 2) {
         logger::info("  seating test skipped: layout placed {} of {} probes "
                      "(needs 2 survivors to show a shift)"sv, placed, kCount - 1);
+        TestHarness::MarkSkipped("layout placed fewer than 2 probes"sv);
         allocator.Reset();
         return;
     }
@@ -6489,6 +6500,7 @@ void RunSlotClassCapHoldTest()
     if (!settings.KeepSlotPositions() || !settings.HoldSeatedItems() || discount >= 1.0f ||
         settings.ClassFreeSlots() != 3) {
         logger::info("  class cap hold test skipped: needs seating, the hold, and the cap at 3 free"sv);
+        TestHarness::MarkSkipped("needs seating, the hold and the class cap at 3 free"sv);
         return;
     }
 
@@ -6610,6 +6622,7 @@ void RunHomeKeyTest()
     if (!settings.KeepSlotPositions() || !settings.HoldSeatedItems() || !settings.ReturnToHomeKey() ||
         settings.HomeKeyMemorySec() <= 0.0f) {
         logger::info("  home key test skipped: needs seating, the hold and home keys on"sv);
+        TestHarness::MarkSkipped("needs seating, the hold and home keys"sv);
         return;
     }
     const float margin = settings.ChallengerMargin();

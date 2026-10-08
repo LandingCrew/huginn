@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <filesystem>
 #include <format>
+#include <mutex>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -31,7 +32,7 @@ namespace Huginn::TestHarness
         struct SuiteCounts
         {
             uint32_t errorLines = 0;
-            uint32_t skipLines = 0;
+            std::string skipReason;   // the first MarkSkipped reason; empty = not skipped
         };
 
         // The suite running on THIS thread, or null. A thread_local, so lines
@@ -49,15 +50,6 @@ namespace Huginn::TestHarness
                 }
                 if (msg.level >= spdlog::level::err) {
                     ++counts->errorLines;
-                } else if (msg.level == spdlog::level::warn) {
-                    // Tests.cpp's own phrase ("[Test] ItemRegistry not ready,
-                    // skipping tests"). Not bare "skipping": registries warn
-                    // "... skipping" about single forms (a weapon that fails to
-                    // classify), which is no reason to call a suite skipped.
-                    const std::string_view text(msg.payload.data(), msg.payload.size());
-                    if (text.find("skipping tests") != std::string_view::npos) {
-                        ++counts->skipLines;
-                    }
                 }
             }
             void flush_() override {}
@@ -71,6 +63,7 @@ namespace Huginn::TestHarness
             uint32_t skipped = 0;
             uint32_t failLines = 0;
             std::vector<std::string> failedSuites;
+            std::vector<std::string> skippedSuites;
 
             void Add(const Tally& o)
             {
@@ -80,22 +73,31 @@ namespace Huginn::TestHarness
                 skipped += o.skipped;
                 failLines += o.failLines;
                 failedSuites.insert(failedSuites.end(), o.failedSuites.begin(), o.failedSuites.end());
+                skippedSuites.insert(skippedSuites.end(), o.skippedSuites.begin(), o.skippedSuites.end());
+            }
+
+            [[nodiscard]] static std::string Join(const std::vector<std::string>& names)
+            {
+                std::string out;
+                for (const auto& n : names) {
+                    if (!out.empty()) out += ',';
+                    out += n;
+                }
+                return out.empty() ? "-" : out;
             }
 
             [[nodiscard]] std::string Counts() const
             {
-                std::string names;
-                for (const auto& n : failedSuites) {
-                    if (!names.empty()) names += ',';
-                    names += n;
-                }
-                return std::format("suites={} passed={} failed={} skipped={} fail_lines={} failed_suites={}",
-                    suites, passed, failed, skipped, failLines, names.empty() ? "-" : names);
+                return std::format(
+                    "suites={} passed={} failed={} skipped={} fail_lines={} failed_suites={} skipped_suites={}",
+                    suites, passed, failed, skipped, failLines, Join(failedSuites), Join(skippedSuites));
             }
         };
 
         // Suites run on the main thread (kDataLoaded, kPostLoadGame), one at a
-        // time; only the watchdog thread reads g_finished.
+        // time, but the load watchdog's Finish runs on its own thread and reads
+        // g_total: every touch of the tallies holds g_tallyMutex.
+        std::mutex g_tallyMutex;
         Tally g_phase;
         Tally g_total;
 
@@ -145,12 +147,20 @@ namespace Huginn::TestHarness
         // Exactly once per launch: the DONE line, then the process ends.
         void Finish(std::string_view reason)
         {
-            if (g_finished.exchange(true)) {
-                return;
+            std::string counts;
+            bool pass = false;
+            {
+                std::scoped_lock lock(g_tallyMutex);
+                // Under the lock: the main thread and the watchdog can both get
+                // here; the first one through logs and ends the process.
+                if (g_finished.exchange(true)) {
+                    return;
+                }
+                pass = g_total.failed == 0 && reason.empty();
+                counts = g_total.Counts();
             }
-            const bool pass = g_total.failed == 0 && reason.empty();
             logger::info("[HuginnTest] DONE result={} {} reason={}"sv,
-                pass ? "PASS"sv : "FAIL"sv, g_total.Counts(), reason.empty() ? "-"sv : reason);
+                pass ? "PASS"sv : "FAIL"sv, counts, reason.empty() ? "-"sv : reason);
             Quit(pass);
         }
 
@@ -246,7 +256,11 @@ namespace Huginn::TestHarness
                 const bool parsed = LoadIniFile(ini, path, "HuginnTest"sv);
                 std::filesystem::remove(path, ec);
                 if (parsed) {
-                    const long long expires = ini.GetLongValue("Test", "iExpiresUnix", 0);
+                    // 64-bit: GetLongValue is a 32-bit long on Windows.
+                    long long expires = 0;
+                    if (const char* raw = ini.GetValue("Test", "iExpiresUnix", nullptr); raw && *raw) {
+                        expires = std::strtoll(raw, nullptr, 10);
+                    }
                     const long long now = std::chrono::duration_cast<std::chrono::seconds>(
                         std::chrono::system_clock::now().time_since_epoch()).count();
                     if (expires != 0 && now > expires) {
@@ -282,6 +296,13 @@ namespace Huginn::TestHarness
         g_loadArrived.store(true);
     }
 
+    void MarkSkipped(std::string_view reason)
+    {
+        if (SuiteCounts* counts = t_current; counts && counts->skipReason.empty()) {
+            counts->skipReason = reason.empty() ? std::string("unspecified") : std::string(reason);
+        }
+    }
+
     void RunSuite(const char* name, void (*suite)())
     {
         SuiteCounts counts;
@@ -300,29 +321,45 @@ namespace Huginn::TestHarness
         }
         t_current = nullptr;
 
-        ++g_phase.suites;
-        g_phase.failLines += counts.errorLines;
+        // A failure outranks a skip: a suite that logged an error and then
+        // skipped the rest still failed.
         std::string_view outcome;
-        if (threw || counts.errorLines > 0) {
-            ++g_phase.failed;
-            g_phase.failedSuites.emplace_back(name);
-            outcome = "FAILED"sv;
-        } else if (counts.skipLines > 0) {
-            ++g_phase.skipped;
-            outcome = "SKIPPED"sv;
-        } else {
-            ++g_phase.passed;
-            outcome = "passed"sv;
+        {
+            std::scoped_lock lock(g_tallyMutex);
+            ++g_phase.suites;
+            g_phase.failLines += counts.errorLines;
+            if (threw || counts.errorLines > 0) {
+                ++g_phase.failed;
+                g_phase.failedSuites.emplace_back(name);
+                outcome = "FAILED"sv;
+            } else if (!counts.skipReason.empty()) {
+                ++g_phase.skipped;
+                g_phase.skippedSuites.emplace_back(name);
+                outcome = "SKIPPED"sv;
+            } else {
+                ++g_phase.passed;
+                outcome = "passed"sv;
+            }
         }
-        logger::info("[HuginnTest] suite {} {} ({} error line(s))"sv, name, outcome, counts.errorLines);
+        if (counts.skipReason.empty()) {
+            logger::info("[HuginnTest] suite {} {} ({} error line(s))"sv, name, outcome, counts.errorLines);
+        } else {
+            logger::info("[HuginnTest] suite {} {} ({} error line(s); skipped: {})"sv,
+                name, outcome, counts.errorLines, counts.skipReason);
+        }
     }
 
     void EndPhase(Phase phase, bool gameLoaded)
     {
         const auto phaseName = phase == Phase::Menu ? "menu"sv : "load"sv;
-        logger::info("[HuginnTest] RESULT phase={} {}"sv, phaseName, g_phase.Counts());
-        g_total.Add(g_phase);
-        g_phase = {};
+        std::string counts;
+        {
+            std::scoped_lock lock(g_tallyMutex);
+            counts = g_phase.Counts();
+            g_total.Add(g_phase);
+            g_phase = {};
+        }
+        logger::info("[HuginnTest] RESULT phase={} {}"sv, phaseName, counts);
 
         if (!g_active || g_finished.load()) {
             return;
@@ -352,6 +389,7 @@ namespace Huginn::TestHarness
     void ReadTestMode() {}
     bool Active() noexcept { return false; }
     void OnGameLoaded() noexcept {}
+    void MarkSkipped(std::string_view) {}
     void RunSuite(const char*, void (*)()) {}
     void EndPhase(Phase, bool) {}
 }

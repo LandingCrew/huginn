@@ -7,11 +7,16 @@
 // no shared counter; each one logs "TEST FAIL ..." or "<name> FAIL ..." and
 // usually returns). RunSuite runs one suite with a counting sink armed on the
 // calling thread: a suite FAILED if it logged at error or above, or threw;
-// SKIPPED if it only warned "skipping tests" (a registry not ready);
-// else PASSED. Lines other threads log meanwhile are not counted.
+// SKIPPED if it called MarkSkipped (a registry not ready, a setting off, too
+// few potions in the save) and logged no error; else PASSED. Lines other
+// threads log meanwhile are not counted.
+//
+// RunSuite catches exceptions in every Debug session, not only in test mode: a
+// suite that throws is logged FAILED and the next suite runs. Before 0.23.9 an
+// exception from a suite went up into the SKSE message handler.
 //
 // After each batch, EndPhase logs one sentinel line:
-//   [HuginnTest] RESULT phase=menu suites=1 passed=1 failed=0 skipped=0 fail_lines=0 failed_suites=-
+//   [HuginnTest] RESULT phase=menu suites=1 passed=1 failed=0 skipped=0 fail_lines=0 failed_suites=- skipped_suites=-
 //
 // TEST MODE (unattended run, tools/ingame/run_tests.py). Off unless asked for:
 //   - environment: HUGINN_TEST_MODE=1, optional HUGINN_TEST_SAVE=<save name>
@@ -33,6 +38,7 @@
 // =============================================================================
 
 #include <memory>
+#include <string_view>
 
 namespace spdlog::sinks
 {
@@ -59,6 +65,11 @@ namespace Huginn::TestHarness
 
     /// kPostLoadGame arrived (call first thing): stands the load watchdog down.
     void OnGameLoaded() noexcept;
+
+    /// The running suite did not (fully) run its checks: call at every early
+    /// return or skipped block, next to the existing log line. The first
+    /// reason is kept. No-op outside RunSuite, and in Release.
+    void MarkSkipped(std::string_view reason);
 
     /// Run one suite and tally it.
     void RunSuite(const char* name, void (*suite)());
