@@ -30,12 +30,18 @@ namespace Huginn::Learning
       std::unique_lock lock(m_mutex);
       const double now = PlayNow();
 
-      // Zero-init on first access; a new entry's life is counted from now.
-      auto [slot, created] = m_items.try_emplace(formID);
-      auto& data = slot->second;
-      if (created) {
-         data.chosenAt = now;
+      // A passed-over update never creates an entry (see the header). Checked
+      // here under the lock: a caller's HasItem check could race a Clear().
+      auto slot = m_items.find(formID);
+      if (slot == m_items.end()) {
+         if (!countsAsTrain) {
+            return;
+         }
+         // Zero-init on first pick; the entry's life is counted from now.
+         slot = m_items.try_emplace(formID).first;
+         slot->second.chosenAt = now;
       }
+      auto& data = slot->second;
       auto& w = data.weights;
 
       // Prediction error: delta = reward - R(context, item)
@@ -84,11 +90,7 @@ namespace Huginn::Learning
 
    void FeatureBanditLearner::SetMemoryLife(const MemoryLife& life)
    {
-      MemoryLife clamped = life;
-      clamped.lifeHours = std::clamp(life.lifeHours, 0.1f, 10000.0f);
-      clamped.lifePerPickHours = std::clamp(life.lifePerPickHours, 0.0f, 1000.0f);
-      clamped.fadeHours = std::clamp(life.fadeHours, 0.05f, 1000.0f);
-      clamped.forgetBelow = std::clamp(life.forgetBelow, 0.0f, 0.5f);
+      const MemoryLife clamped = life.Clamped();
       std::unique_lock lock(m_mutex);
       m_life = clamped;
    }
@@ -125,10 +127,13 @@ namespace Huginn::Learning
    size_t FeatureBanditLearner::MaybeForgetFaded()
    {
       const double now = PlayNow();
-      if (now - m_lastForgetSweep.load(std::memory_order_relaxed) < FORGET_SWEEP_INTERVAL_SEC) {
+      double last = m_lastForgetSweep.load(std::memory_order_relaxed);
+      // Claimed with a compare-exchange: of two callers inside one minute,
+      // only one sweeps.
+      if (now - last < FORGET_SWEEP_INTERVAL_SEC ||
+          !m_lastForgetSweep.compare_exchange_strong(last, now, std::memory_order_relaxed)) {
          return 0;
       }
-      m_lastForgetSweep.store(now, std::memory_order_relaxed);
       return ForgetFaded();
    }
 
@@ -230,7 +235,7 @@ namespace Huginn::Learning
       std::shared_lock lock(m_mutex);
       float trains = 0.0f;
       if (auto it = m_items.find(formID); it != m_items.end()) {
-         trains = it->second.trainCount * RetentionAt(it->second, PlayNow());
+         trains = EffectiveTrains(it->second, PlayNow());
       }
       return ComputeConfidence(trains);
    }
@@ -240,7 +245,7 @@ namespace Huginn::Learning
       std::shared_lock lock(m_mutex);
       float itemTrains = 0.0f;
       if (auto it = m_items.find(formID); it != m_items.end()) {
-         itemTrains = it->second.trainCount * RetentionAt(it->second, PlayNow());
+         itemTrains = EffectiveTrains(it->second, PlayNow());
       }
       return ComputeUCB(itemTrains);
    }
@@ -261,7 +266,7 @@ namespace Huginn::Learning
       float itemTrains = 0.0f;
       if (auto it = m_owner.m_items.find(formID); it != m_owner.m_items.end()) {
          metrics.rewardEstimate = DotProduct(it->second.weights, phi);
-         itemTrains = it->second.trainCount * m_owner.RetentionAt(it->second, m_now);
+         itemTrains = m_owner.EffectiveTrains(it->second, m_now);
       }
 
       metrics.confidence = m_owner.ComputeConfidence(itemTrains);
@@ -403,9 +408,7 @@ namespace Huginn::Learning
       }
    }
 
-   void FeatureBanditLearner::ImportData(
-      const std::vector<SerializedEntry>& entries,
-      [[maybe_unused]] uint32_t totalTrainCount)
+   void FeatureBanditLearner::ImportData(const std::vector<SerializedEntry>& entries)
    {
       std::unique_lock lock(m_mutex);
 

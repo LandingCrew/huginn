@@ -106,7 +106,7 @@ namespace Huginn::Learning
                 }
             }
             for (const auto& p : due) {
-                if (!m_learner.HasItem(p.formID)) continue;   // never seen: a no-op
+                // An item the learner has never seen is skipped inside Update.
                 m_learner.Update(p.formID, p.features, Config::PASSED_OVER_TARGET,
                     Config::PASSED_OVER_STEP, /*countsAsTrain=*/false);
             }

@@ -8,6 +8,7 @@
 #include <array>
 #include <functional>
 #include <vector>
+#include <algorithm>
 
 namespace Huginn::Learning
 {
@@ -40,6 +41,18 @@ namespace Huginn::Learning
       float lifePerPickHours = 2.0f;   // k: each doubling of the picks adds ~1.4 k
       float fadeHours = 1.0f;          // s: the width of the knee
       float forgetBelow = 0.05f;       // retention under this deletes the entry
+
+      // The one copy of the allowed ranges (the INI loader and the learner
+      // both clamp through this).
+      [[nodiscard]] MemoryLife Clamped() const noexcept
+      {
+         MemoryLife c = *this;
+         c.lifeHours = std::clamp(lifeHours, 0.1f, 10000.0f);
+         c.lifePerPickHours = std::clamp(lifePerPickHours, 0.0f, 1000.0f);
+         c.fadeHours = std::clamp(fadeHours, 0.05f, 1000.0f);
+         c.forgetBelow = std::clamp(forgetBelow, 0.0f, 0.5f);
+         return c;
+      }
    };
 
    // =============================================================================
@@ -69,6 +82,8 @@ namespace Huginn::Learning
       // `step` scales the gradient step; `countsAsTrain` false leaves the train
       // counts (confidence, UCB) alone. Both are for the choice target's
       // passed-over items: a quarter step, and no claim of evidence (0.23.0).
+      // An update with `countsAsTrain` false never creates an entry: an item
+      // the learner has not seen has estimate 0 against a target of 0.
       void Update(RE::FormID formID, const StateFeatures& features, float reward,
          float step = 1.0f, bool countsAsTrain = true);
 
@@ -145,9 +160,8 @@ namespace Huginn::Learning
          uint32_t& outTotalTrainCount) const;
 
       // Import data from cosave load (acquires unique_lock, clears existing data first)
-      void ImportData(
-         const std::vector<SerializedEntry>& entries,
-         uint32_t totalTrainCount);
+      // The total is summed from the entries, not taken from the header.
+      void ImportData(const std::vector<SerializedEntry>& entries);
 
       // ── Learning clock (learning survives a reload, 0.22.11) ───────────
       // Ticks on every Update() and every Clear(); saved with the character ID
@@ -224,6 +238,11 @@ namespace Huginn::Learning
 
       // Retention of an entry at play time `now` -- callers MUST hold m_mutex.
       [[nodiscard]] float RetentionAt(const ItemLearningData& data, double now) const noexcept;
+      // n_eff = n x retention: the evidence confidence and UCB see. Same lock rule.
+      [[nodiscard]] float EffectiveTrains(const ItemLearningData& data, double now) const noexcept
+      {
+         return data.trainCount * RetentionAt(data, now);
+      }
       // Play-clock reads for the locked paths.
       [[nodiscard]] double PlayNow() const noexcept {
          return m_playSeconds.load(std::memory_order_relaxed);
