@@ -30,22 +30,38 @@ Pre-flight (refuses, exit 2, before writing or launching anything):
   refused when a running MO2 belongs to this instance or its path is unknown.
 - The MO2 executable title, the profile, and the save must exist.
 
+Which game is "ours": a SkyrimSE.exe created after the launch whose image
+lies under the chosen instance's folder. The runner opens a handle to it the
+first time it sees it and keeps it for the whole run, so the PID cannot be
+reused under it, and it ends that process through the handle. A game from
+another instance, or one that was already running, is never tracked or
+killed.
+
 Whatever starts the game closes it. When the run ends, whatever the verdict:
-- the game: any SkyrimSE.exe still running 15 s later is killed. None was
-  running when the runner launched (it refuses otherwise), so any that runs
-  now is the one its launch started. Huginn ends the game itself after DONE, so
-  after a DONE there is normally nothing to kill; the kill matters on a
-  timeout, a hang, or an unread flag;
+- the game: every game of ours still running 15 s later is ended (through its
+  handle). Huginn ends the game itself after DONE, so after a DONE there is
+  normally nothing to end; this matters on a timeout, a hang, or an unread
+  flag;
 - MO2: the ModOrganizer.exe the runner started, if still open 30 s after the
   game is gone, is asked to close (taskkill without /F), and after 30 s more
   is ended with its children (/F /T). The runner starts MO2 only when no MO2
-  is running, so this is never the user's own MO2.
+  of this instance is running, so this is never the user's own MO2.
+
+Fail-fast: a game of ours that has been up for --log-start-timeout seconds
+(default 90) without a Huginn log for this launch ends the run (wrong log
+folder, Huginn not loaded) instead of waiting out --timeout. A game that exits
+counts as a crash unless this launch's log holds a DONE, and a DONE found when
+the game exits is taken at once.
+
+The log folder defaults to <Documents>/My Games/Skyrim.INI/SKSE, with
+Documents resolved through the Windows known-folder API (so a OneDrive-
+redirected Documents folder is found); --log-dir overrides it.
 
 Reads MO2's ModOrganizer.ini and profile settings; never writes MO2 config.
 Does not deploy the DLL: put the Debug Huginn.dll in the list first.
 
 Usage:
-    python -I tools/ingame/run_tests.py [--list simonrim|lorerim]
+    python -I tools/ingame/run_tests.py [--list vanilla+|simonrim|lorerim]
         [--save NAME | --save latest | --no-save] [--timeout 600]
         [--allow-skips] [--multiple] [--dry-run]
 
@@ -59,7 +75,9 @@ from __future__ import annotations
 import argparse
 import configparser
 import csv
+import ctypes
 import datetime as dt
+import os
 import hashlib
 import io
 import re
@@ -67,9 +85,8 @@ import subprocess
 import sys
 import time
 from dataclasses import dataclass
+from ctypes import wintypes
 from pathlib import Path
-
-DEFAULT_LOG_DIR = Path.home() / "Documents" / "My Games" / "Skyrim.INI" / "SKSE"
 LOG_NAME = "_Huginn_Debug.log"   # the Debug build's log; only Debug has the suites
 FLAG_NAME = "Huginn_TestMode.ini"
 GAME_EXE = "SkyrimSE.exe"
@@ -79,6 +96,7 @@ DEFAULT_SAVE = "HuginnTest"
 HARNESS_MARKERS = (b"Huginn_TestMode.ini", b"[HuginnTest] DONE")
 KILL_GRACE_SEC = 15
 MO2_GRACE_SEC = 30
+LOG_START_TIMEOUT_SEC = 90
 
 
 @dataclass(frozen=True)
@@ -89,10 +107,15 @@ class ModList:
 
 
 LISTS = {
-    # simonrim first: it reaches the main menu fastest.
+    # vanilla+ is the default: the simonrim instance (fast to the menu), on the
+    # profile that holds the test character (level 4). "Simonrim Essentials"
+    # has no save past the opening cinematic. Both profiles share the
+    # instance's overwrite folder, so the same Huginn.dll.
+    "vanilla+": ModList(Path("F:/Modlists/simonrim-essentails"), "vanilla+", "SKSE"),
     "simonrim": ModList(Path("F:/Modlists/simonrim-essentails"), "Simonrim Essentials", "SKSE"),
     "lorerim": ModList(Path("F:/Modlists/LoreRim-5"), "Ultra", "LoreRim"),
 }
+DEFAULT_LIST = "vanilla+"
 
 RE_LAUNCH = re.compile(r"Launch (\d{8}-\d{6}) \(UTC\)")
 RE_DONE = re.compile(r"\[HuginnTest\] DONE result=(\w+) (.*)$")
@@ -107,6 +130,142 @@ def say(msg: str) -> None:
 
 class Refused(Exception):
     """Nothing was launched (exit code 2)."""
+
+
+# --- Windows ------------------------------------------------------------------
+
+_k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+_k32.OpenProcess.restype = wintypes.HANDLE
+_k32.OpenProcess.argtypes = (wintypes.DWORD, wintypes.BOOL, wintypes.DWORD)
+_k32.GetProcessTimes.restype = wintypes.BOOL
+_k32.GetProcessTimes.argtypes = (wintypes.HANDLE,) + (ctypes.POINTER(wintypes.FILETIME),) * 4
+_k32.QueryFullProcessImageNameW.restype = wintypes.BOOL
+_k32.QueryFullProcessImageNameW.argtypes = (wintypes.HANDLE, wintypes.DWORD, wintypes.LPWSTR,
+                                            ctypes.POINTER(wintypes.DWORD))
+_k32.WaitForSingleObject.restype = wintypes.DWORD
+_k32.WaitForSingleObject.argtypes = (wintypes.HANDLE, wintypes.DWORD)
+_k32.TerminateProcess.restype = wintypes.BOOL
+_k32.TerminateProcess.argtypes = (wintypes.HANDLE, wintypes.UINT)
+_k32.CloseHandle.restype = wintypes.BOOL
+_k32.CloseHandle.argtypes = (wintypes.HANDLE,)
+_PROCESS_TERMINATE = 0x0001
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_SYNCHRONIZE = 0x00100000
+_WAIT_TIMEOUT = 0x102
+_EPOCH_1601 = dt.datetime(1601, 1, 1, tzinfo=dt.timezone.utc)
+
+
+def documents_dir() -> Path:
+    """The user's Documents folder via SHGetKnownFolderPath(FOLDERID_Documents):
+    right even when OneDrive (or a policy) has moved it."""
+    class GUID(ctypes.Structure):
+        _fields_ = [("Data1", wintypes.DWORD), ("Data2", wintypes.WORD),
+                    ("Data3", wintypes.WORD), ("Data4", ctypes.c_ubyte * 8)]
+    folder_id = GUID(0xFDD39AD0, 0x238F, 0x46AF,
+                     (ctypes.c_ubyte * 8)(0xAD, 0xB4, 0x6C, 0x85, 0x48, 0x03, 0x69, 0xC7))
+    path_ptr = ctypes.c_wchar_p()
+    try:
+        shell32 = ctypes.WinDLL("shell32")
+        ole32 = ctypes.WinDLL("ole32")
+        hr = shell32.SHGetKnownFolderPath(ctypes.byref(folder_id), 0, None, ctypes.byref(path_ptr))
+        if hr == 0 and path_ptr.value:
+            found = Path(path_ptr.value)
+            ole32.CoTaskMemFree(path_ptr)
+            return found
+    except OSError:
+        pass
+    return Path.home() / "Documents"
+
+
+DEFAULT_LOG_DIR = documents_dir() / "My Games" / "Skyrim.INI" / "SKSE"
+
+
+class Proc:
+    """A process held open by handle from first sight: the PID cannot be
+    reused while the handle is open, so the kill always reaches this one."""
+
+    def __init__(self, pid: int, handle: int, created: dt.datetime, image: str):
+        self.pid, self.handle, self.created, self.image = pid, handle, created, image
+
+    @staticmethod
+    def open(pid: int) -> "Proc | None":
+        h = _k32.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION | _SYNCHRONIZE | _PROCESS_TERMINATE, False, pid)
+        if not h:
+            return None
+        times = [wintypes.FILETIME() for _ in range(4)]
+        size = wintypes.DWORD(1024)
+        buf = ctypes.create_unicode_buffer(size.value)
+        if not _k32.GetProcessTimes(h, *[ctypes.byref(t) for t in times]) or \
+                not _k32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(size)):
+            _k32.CloseHandle(h)
+            return None
+        ticks = (times[0].dwHighDateTime << 32) | times[0].dwLowDateTime
+        created = _EPOCH_1601 + dt.timedelta(microseconds=ticks // 10)
+        return Proc(pid, h, created, buf.value)
+
+    def alive(self) -> bool:
+        return _k32.WaitForSingleObject(self.handle, 0) == _WAIT_TIMEOUT
+
+    def terminate(self) -> None:
+        _k32.TerminateProcess(self.handle, 1)
+
+    def close(self) -> None:
+        if self.handle:
+            _k32.CloseHandle(self.handle)
+            self.handle = 0
+
+
+def under(path: str, root: Path) -> bool:
+    a = os.path.normcase(os.path.abspath(path))
+    b = os.path.normcase(os.path.abspath(str(root)))
+    return a == b or a.startswith(b.rstrip("\\/") + os.sep)
+
+
+class GameTracker:
+    """The games this run started: SkyrimSE.exe created after the launch, with
+    its image under the instance folder. Everything else is left alone."""
+
+    def __init__(self, root: Path, launched: dt.datetime):
+        self.root, self.launched = root, launched
+        self.ours: dict[int, Proc] = {}
+        self.ignored: set[tuple[int, dt.datetime | None]] = set()
+        self.first: Proc | None = None
+        self.first_seen: float | None = None   # time.monotonic() at first sight
+
+    def scan(self) -> None:
+        for pid in pids_of(GAME_EXE):
+            if pid in self.ours:
+                continue
+            p = Proc.open(pid)
+            if p is None:
+                continue
+            key = (pid, p.created)
+            mine = p.created >= self.launched and under(p.image, self.root)
+            if not mine:
+                if key not in self.ignored:
+                    self.ignored.add(key)
+                    say(f"ignoring {GAME_EXE} pid {pid} (created {p.created:%H:%M:%S} UTC, {p.image}): "
+                        "not started by this run")
+                p.close()
+                continue
+            self.ours[pid] = p
+            if self.first is None:
+                self.first, self.first_seen = p, time.monotonic()
+                say(f"{GAME_EXE} started (pid {pid}, {p.image})")
+
+    def first_gone(self) -> bool:
+        return self.first is not None and not self.first.alive()
+
+    def end_all(self, grace: float) -> None:
+        self.scan()
+        end = time.monotonic() + grace
+        while time.monotonic() < end and any(p.alive() for p in self.ours.values()):
+            time.sleep(1)
+        for p in self.ours.values():
+            if p.alive():
+                say(f"ending {GAME_EXE} pid {p.pid} (ours, still running at the end of the run)")
+                p.terminate()
+            p.close()
 
 
 # --- processes ---------------------------------------------------------------
@@ -139,10 +298,6 @@ def mo2_processes() -> list[tuple[int, Path | None]]:
         if pid.isdigit():
             paths[int(pid)] = Path(path) if path.strip() else None
     return [(pid, paths.get(pid)) for pid in pids_of(MO2_EXE)]
-
-
-def kill(pid: int) -> None:
-    subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True, check=False)
 
 
 def close_mo2(proc: subprocess.Popen) -> None:
@@ -309,12 +464,14 @@ def done_verdict(lines: list[str], allow_skips: bool) -> tuple[int, str] | None:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--list", choices=sorted(LISTS), default="simonrim")
+    ap.add_argument("--list", choices=list(LISTS), default=DEFAULT_LIST)
     g = ap.add_mutually_exclusive_group()
     g.add_argument("--save", help="save to load after the main menu (no .ess); 'latest' = newest in the profile")
     g.add_argument("--no-save", action="store_true", help="main-menu suites only")
     ap.add_argument("--timeout", type=int, default=600, help="seconds from launch to the sentinel (default 600)")
     ap.add_argument("--load-timeout", type=int, default=300, help="Huginn's own wait for the save to load")
+    ap.add_argument("--log-start-timeout", type=int, default=LOG_START_TIMEOUT_SEC,
+                    help="seconds the game may run without this launch's Huginn log (default 90)")
     ap.add_argument("--log-dir", type=Path, default=DEFAULT_LOG_DIR)
     ap.add_argument("--allow-skips", action="store_true", help="a skipped suite does not fail the run")
     ap.add_argument("--multiple", action="store_true",
@@ -344,7 +501,9 @@ def main() -> int:
     if args.dry_run:
         return 0
 
-    launched_utc = dt.datetime.now(dt.timezone.utc).replace(microsecond=0)
+    launched_precise = dt.datetime.now(dt.timezone.utc)
+    launched_utc = launched_precise.replace(microsecond=0)   # the log's stamp is to the second
+    games = GameTracker(ml.root, launched_precise)
     expires = int(time.time()) + args.timeout + 120
     flag_path.write_text(
         "; written by tools/ingame/run_tests.py; Huginn deletes it when it reads it\n"
@@ -356,7 +515,6 @@ def main() -> int:
         encoding="utf-8")
 
     deadline = time.monotonic() + args.timeout
-    game_pid: int | None = None
     verdict: tuple[int, str] | None = None
     lines: list[str] = []
     fresh = False
@@ -367,10 +525,7 @@ def main() -> int:
         build_seen = False
         while time.monotonic() < deadline:
             time.sleep(2)
-            pids = game_pids()
-            if game_pid is None and pids:
-                game_pid = pids[0]
-                say(f"{GAME_EXE} started (pid {game_pid})")
+            games.scan()
             lines = read_log(log_path)
             if not fresh:
                 fresh = log_is_fresh(log_path, lines, launched_utc)
@@ -389,27 +544,27 @@ def main() -> int:
                         not any("[HuginnTest] test mode ON" in l for l in lines):
                     verdict = (1, "Huginn ran its suites without test mode: the flag file was not read")
                     break
-            if game_pid is not None and game_pid not in pids:
-                # The game is gone. Only a DONE line in THIS launch's log counts.
+            elif games.first_seen is not None and \
+                    time.monotonic() - games.first_seen > args.log_start_timeout:
+                verdict = (1, f"the game has run {args.log_start_timeout}s without a Huginn log for this "
+                              f"launch in {log_path.parent} (Huginn not loaded, or the wrong log folder?)")
+                break
+            if games.first_gone():
+                # The game is gone. Only a DONE line in THIS launch's log
+                # counts; one found now is taken at once.
                 time.sleep(2)
                 lines = read_log(log_path)
                 fresh = fresh or log_is_fresh(log_path, lines, launched_utc)
-                if fresh and done_verdict(lines, args.allow_skips):
-                    continue   # parsed on the next pass
-                verdict = (1, "the game exited before the sentinel (crash?)"
-                              + ("" if fresh else "; this launch never started a Huginn log"))
+                verdict = done_verdict(lines, args.allow_skips) if fresh else None
+                if verdict is None:
+                    verdict = (1, "the game exited before the sentinel (crash?)"
+                                  + ("" if fresh else "; this launch never started a Huginn log"))
                 break
         else:
             verdict = (1, f"timeout after {args.timeout}s" + ("" if fresh else " (the log never started)"))
     finally:
-        if mo2_proc is not None and game_pids():
-            # None ran before the launch (checked), so these are the launch's.
-            end = time.monotonic() + KILL_GRACE_SEC
-            while time.monotonic() < end and game_pids():
-                time.sleep(1)
-            for pid in game_pids():
-                say(f"killing {GAME_EXE} pid {pid} (still running at the end of the run)")
-                kill(pid)
+        if mo2_proc is not None:
+            games.end_all(KILL_GRACE_SEC)
         try:
             flag_path.unlink()
             say("removed the test-mode file (Huginn had not consumed it)")
