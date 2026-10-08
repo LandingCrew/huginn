@@ -78,31 +78,40 @@ and 20 actor-keyword cases.
 
 The suites in `src/Tests.cpp` run only inside the game, so an agent cannot
 prove a change. Add a test executable that builds and runs on the host.
-- [ ] A CMake target (e.g. `huginn_core_tests`) over a `src/core/` of pure
+- [x] A CMake target (e.g. `huginn_core_tests`) over a `src/core/` of pure
       code: no `RE::` or SKSE includes. A small header-only framework from
-      vcpkg, or plain asserts.
-- [ ] Rule for the rewrite: every new piece of math lives in `src/core/`
+      vcpkg, or plain asserts. *(0.23.9: `huginn_core_tests`, doctest,
+      `tests/CMakeLists.txt`; configure fails if a core file reaches for the
+      game.)*
+- [x] Rule for the rewrite: every new piece of math lives in `src/core/`
       (response curves, the learner update, σ_Δ and the challenger rule, the
       effect mapper over plain records) and gets host tests. The game layer
-      only reads forms and calls it.
-- [ ] Done when: the target runs in CI-like fashion from the command line with
+      only reads forms and calls it. *(`src/core/README.md`.)*
+- [x] Done when: the target runs in CI-like fashion from the command line with
       a non-zero exit on failure, and one existing pure function (a curve, or
-      `SlotClassCap::Factor`) is ported with tests as the pattern.
+      `SlotClassCap::Factor`) is ported with tests as the pattern. *(`ctest -C Debug
+      --test-dir build`; `SlotClassCap::Factor` -> `core/SlotClassCapMath.h`.)*
 
 **And an unattended in-game run** for the code that needs real game data. The
 Debug suites that run at the main menu (`RunUnitTests()` at kDataLoaded,
 `Main.cpp:679`) need no save. About 20 more (SlotClassCap, SlotLocker, home keys,
 cosave, the registries; `Main.cpp:443-466`) run only after a save loads,
 including the ratio tests R7 must update:
-- [ ] Huginn: after the suites, log one sentinel line with pass/fail counts;
+- [x] Huginn: after the suites, log one sentinel line with pass/fail counts;
       with a test flag set (INI or environment variable), quit the game.
-- [ ] `tools/ingame/run_tests.py`: launch through MO2's command line
+      *(`src/TestHarness.h`: `[HuginnTest] RESULT` per batch, `DONE` in test
+      mode; flag = one-shot `Huginn_TestMode.ini` or `HUGINN_TEST_MODE`.)*
+- [x] `tools/ingame/run_tests.py`: launch through MO2's command line
       (`ModOrganizer.exe -p "Simonrim Essentials" "moshortcut://:SKSE"`;
       LoreRim's executable is `LoreRim`, profile `Ultra`), wait for the
       sentinel in the Huginn log, kill the game on a timeout, exit non-zero on
       failure. simonrim first: it reaches the menu faster.
-- [ ] Auto-load a named test save after the main menu, so the after-load
-      suites run too (needed by R7).
+- [x] Auto-load a named test save after the main menu, so the after-load
+      suites run too (needed by R7). *(`BGSSaveLoadManager::Load(name, false)`
+      3 s after the main menu opens. How to run:
+      `docs/testing/TESTING-INDEX.md` section 1a.)*
+- [ ] Proven by a live run on simonrim (a `DONE` line from a real launch).
+      *Pending: the game was running when R1 landed, so the run was not made.*
 - Rule: agents launch the game only when the user has said the machine is
   free; the game must not already be running.
 

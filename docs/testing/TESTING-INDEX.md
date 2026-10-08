@@ -1,7 +1,8 @@
 # Huginn Testing Index
 
-**Applies to:** v0.19.x (verified against v0.19.10)
-**Last verified:** 2026-08-29
+**Applies to:** v0.19.x (verified against v0.19.10); sections 0 and 1a added
+for v0.23.9 (R1, host tests and the unattended in-game run)
+**Last verified:** 2026-08-29 (suite inventory), 2026-10-08 (sections 0, 1a)
 **Status:** Current — the suite list below was read out of `src/Tests.cpp` and
 `src/Main.cpp`, not carried over from an older doc.
 
@@ -15,17 +16,47 @@
 
 ---
 
-## 1. How Huginn's tests actually run
+## 0. Host tests (`huginn_core_tests`)
 
-There is **no test target and no test binary.** `cmake --preset vs2022-windows`
-prints `Build Tests: OFF`, but that line comes from a *dependency*: Huginn's root
-`CMakeLists.txt:35` does `set(BUILD_TESTS OFF)` to suppress CommonLibSSE-NG's own
-test target, and CommonLibSSE-NG echoes the value back
-(`$CommonLibSSEPath_NG/CMakeLists.txt:13`). It says nothing about Huginn's tests,
-and there is no way to turn a Huginn test target on, because there isn't one.
+Pure code -- no `RE::`, no SKSE, no CommonLib -- lives in `src/core/` and is
+tested on the host, without the game. The rule for the engine rewrite: every
+new piece of math goes there with host tests; the game layer only reads forms
+and calls it. See [src/core/README.md](../../src/core/README.md).
 
-Instead: **`src/Tests.cpp` (~5,200 lines) is compiled into the plugin DLL in
-Debug configurations only, and its suites run inside the game.**
+| What | Where |
+|---|---|
+| The pure code | `src/core/` (compiled into the plugin too, by its `GLOB_RECURSE`) |
+| The tests | `tests/core/*Tests.cpp`, [doctest](https://github.com/doctest/doctest) from vcpkg |
+| The target | `huginn_core_tests` (`tests/CMakeLists.txt`), registered with CTest |
+
+```sh
+# Configure with deploy OFF if you do not want the Debug DLL copied into the game
+cmake --preset vs2022-windows -DCOPY_OUTPUT=OFF
+cmake --build build --config Debug --target huginn_core_tests
+ctest -C Debug --test-dir build --output-on-failure
+```
+
+The executable (`build/tests/Debug/huginn_core_tests.exe`) exits non-zero when
+any check fails, and so does `ctest`. It compiles `src/core/` **without** the
+plugin's PCH, so a core header that leans on `PCH.h` fails here first; the
+configure step also fails if a core file includes `RE/`, `REL/`, `SKSE/`,
+`PCH.h`, `SimpleIni` or `spdlog/`. `-DHUGINN_CORE_TESTS=OFF` drops the target.
+
+Covered so far: the need cap's arithmetic (`core/NeedCapMath.h`, the pattern
+port, checked bit for bit against the loop it replaced) and `core/RingBuffer.h`.
+
+---
+
+## 1. How Huginn's in-game tests run
+
+Beyond `huginn_core_tests` (section 0), there is no host binary for the game
+code. `cmake --preset vs2022-windows` prints `Build Tests: OFF`, but that line
+comes from a *dependency*: Huginn's root `CMakeLists.txt` does
+`set(BUILD_TESTS OFF)` to suppress CommonLibSSE-NG's own test target, and
+CommonLibSSE-NG echoes the value back. It says nothing about Huginn's tests.
+
+**`src/Tests.cpp` is compiled into the plugin DLL in Debug configurations
+only, and its suites run inside the game.**
 
 - `src/CMakeLists.txt` marks `Tests.cpp` `HEADER_FILE_ONLY` for every non-Debug
   config, so Release does not even parse it.
@@ -55,6 +86,76 @@ none of it.
 
 There is **no console command to re-run the tests.** `hg rebuild` rebuilds
 registries, not tests. To re-run, reload the save.
+
+### 1a. Counts, the sentinel, and the unattended run
+
+Each suite runs through `TestHarness::RunSuite` (`src/TestHarness.h`): a suite
+**failed** if it logged at error level or above on its own thread (how every
+suite reports a failure) or threw, **skipped** if it warned "skipping tests"
+(a registry not ready), else **passed**. One line per suite, then one per
+batch:
+
+```
+[HuginnTest] suite RunNeedCapTest passed (0 error line(s))
+[HuginnTest] RESULT phase=load suites=18 passed=18 failed=0 skipped=0 fail_lines=0 failed_suites=-
+```
+
+`phase=menu` is `RunUnitTests()` at `kDataLoaded`; `phase=load` is the
+after-load batch. These lines are logged in every Debug session.
+
+**Test mode** (Debug only, off unless asked for) makes the run unattended:
+after the main-menu suites Huginn loads a named save, runs the after-load
+suites, logs
+
+```
+[HuginnTest] DONE result=PASS suites=19 passed=19 failed=0 skipped=0 fail_lines=0 failed_suites=- reason=-
+```
+
+and ends the process (exit code 0 on PASS, 1 on FAIL). `reason` is `-`,
+`load-failed` (kPostLoadGame reported failure), `load-timeout` (no load within
+`iLoadTimeoutSec`, e.g. a misspelt save) or `no-ui`/`no-save-manager`. Turn it
+on with either:
+
+- a one-shot `Huginn_TestMode.ini` in the SKSE log folder (what the runner
+  uses; Huginn deletes it when it reads it, and ignores it past `iExpiresUnix`):
+  ```ini
+  [Test]
+  bEnabled=1
+  sSaveName=HuginnTest      ; no .ess; empty = main-menu suites only
+  iExpiresUnix=1791500000   ; optional
+  iLoadTimeoutSec=300       ; optional
+  ```
+- or `HUGINN_TEST_MODE=1` (and `HUGINN_TEST_SAVE=<name>`) in the game's
+  environment. MO2 hands a shortcut to an already-running MO2, which launches
+  with its own environment, so the file is the reliable way.
+
+The save is loaded with `RE::BGSSaveLoadManager::Load(name, checkForMods=false)`
+on the main thread, 3 s after the main menu opens: no missing-plugins dialog
+to block an unattended run, and no console or Papyrus round trip.
+
+**The runner**, `tools/ingame/run_tests.py`:
+
+```sh
+python -I tools/ingame/run_tests.py                     # simonrim, HuginnTest.ess or the newest save
+python -I tools/ingame/run_tests.py --save HuginnTest   # a named save (no .ess)
+python -I tools/ingame/run_tests.py --list lorerim      # LoreRim-5, profile Ultra, executable LoreRim
+python -I tools/ingame/run_tests.py --no-save --dry-run # check, print the MO2 command, launch nothing
+```
+
+It launches `ModOrganizer.exe -p <profile> "moshortcut://:<executable>"`,
+waits for a `_Huginn_Debug.log` started by this launch (the first line's UTC
+launch stamp and the file's mtime), fails at once on a Release build or when
+Huginn ran its suites without seeing the flag, waits for `DONE`, kills the game
+it saw start only on a timeout (`--timeout`, default 600 s), and prints each
+suite's result. Exit 0 = PASS; 1 = a failed or skipped suite (`--allow-skips`
+accepts skips), timeout, or crash; 2 = refused to launch. It refuses while
+`SkyrimSE.exe` is running, or while an MO2 from another instance is running
+(the shortcut would go to it; `--multiple` passes MO2's unsupported
+`--multiple`). It reads MO2's config and never writes it, and it does **not**
+deploy the DLL: copy the Debug `Huginn.dll`/`.pdb` into the list first
+(simonrim: `overwrite/SKSE/Plugins/`, by hand). Make a dedicated save once, in
+game: console, `save HuginnTest`. Agents launch the game only when the user has
+said the machine is free.
 
 ### Reading the results
 
@@ -202,7 +303,8 @@ Listed so nobody reintroduces a reference to it:
 
 - No `scripts/` directory — no `parse_perf_logs.py`, no `compare_perf.py`
 - No `.github/` directory — no CI, no `performance-tests.yml`
-- No `tests/` directory, no gtest dependency, no `HuginnTests.exe`
+- No gtest dependency, no `HuginnTests.exe`. (`tests/` exists since v0.23.9:
+  it holds `huginn_core_tests`, the doctest host target of section 0.)
 - No `docs/testing/baseline_data/`, `refactor_data/` or `reports/`
 - No `docs/refactor/staged-implementation.md`, no `docs/reviews/SESSION-SUMMARY.md`,
   no `docs/testing/performance-issues.md`
