@@ -24,6 +24,8 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <map>
+#include <unordered_map>
 #include <unordered_set>
 #include "context/ContextWeightSettings.h"
 #include "context/ContextWeightConfig.h"
@@ -1366,6 +1368,307 @@ namespace Huginn::Console
       Print(msg.c_str());
       logger::info("[Console] {} -> {}"sv, msg, filePath.string());
    }
+
+   // `hg dump all` -- every item-like form in the LOAD ORDER in ONE schema, a
+   // row per item x effect, read straight off the game data with no Huginn
+   // classifier in the way. The input for designing the effect vector of
+   // docs/architecture/9-context-as-learner-input.md: which effects really
+   // occur, and what weapons and armour look like by their stats. One-time
+   // research tool; the per-type dumps above stay the classifier views.
+   // Ingredients are left out: Huginn dropped them (the user, 2026-10-07) --
+   // they matter only at an alchemy lab.
+   static std::string_view AvName(RE::ActorValue av)
+   {
+      if (av == RE::ActorValue::kNone || av >= RE::ActorValue::kTotal) return ""sv;
+      const auto* list = RE::ActorValueList::GetSingleton();
+      const auto* info = list ? list->GetActorValue(av) : nullptr;
+      return info && info->enumName ? std::string_view(info->enumName) : ""sv;
+   }
+
+   static std::string KeywordList(const RE::BGSKeywordForm* form)
+   {
+      std::string list;
+      if (!form) return list;
+      for (std::uint32_t i = 0; i < form->numKeywords; ++i) {
+         const auto* kw = form->keywords[i];
+         const char* id = kw ? kw->GetFormEditorID() : nullptr;
+         if (!id || !*id) continue;
+         if (!list.empty()) list += ';';
+         list += id;
+      }
+      return list;
+   }
+
+   static void Cmd_DumpAll(std::string_view /*arg*/)
+   {
+      auto* dataHandler = RE::TESDataHandler::GetSingleton();
+      if (!dataHandler) {
+         Print("Data handler unavailable");
+         return;
+      }
+      std::ofstream out;
+      std::filesystem::path filePath;
+      if (!OpenDumpFile("Huginn_All.csv"sv, out, filePath)) return;
+
+      auto* player = RE::PlayerCharacter::GetSingleton();
+
+      // Spells a tome teaches: the line between a player spell and one only
+      // NPCs cast, which spellType alone cannot draw.
+      std::unordered_set<RE::FormID> taughtByTome;
+      for (auto* book : dataHandler->GetFormArray<RE::TESObjectBOOK>()) {
+         if (const auto* taught = book ? book->GetSpell() : nullptr) {
+            taughtByTome.insert(taught->GetFormID());
+         }
+      }
+
+      out << "kind,formID,plugin,winningPlugin,name,playable,value,weight,playerCount,keywords,"
+             "spellType,castingType,delivery,magickaCost,taughtByTome,"
+             "weaponType,twoHanded,damage,speed,reach,critDamage,"
+             "armorSlots,armorRating,armorType,"
+             "soulCapacity,soulContained,lightRadius,"
+             "enchantment,enchantmentCharge,"
+             "effectIndex,effectFormID,effectName,archetype,primaryAV,secondaryAV,resistAV,"
+             "effectDelivery,effectCasting,magnitude,duration,area,effectBaseCost,detrimental,hostile,effectFlags,effectKeywords,effectDescription\n";
+
+      // Columns up to (not including) the effect block. Each form fills its
+      // own stat columns and leaves the rest empty.
+      struct Base {
+         std::string_view kind;
+         const RE::TESBoundObject* form;
+         std::string keywords;
+         std::string magic;    // spellType..taughtByTome (5 columns)
+         std::string weapon;   // weaponType..critDamage (6 columns)
+         std::string armor;    // armorSlots..armorType (3 columns)
+         std::string misc;     // soulCapacity..lightRadius (3 columns)
+         const RE::EnchantmentItem* enchantment = nullptr;
+         std::uint16_t charge = 0;
+      };
+      static constexpr std::string_view kNoMagic = ",,,,"sv;
+      static constexpr std::string_view kNoWeapon = ",,,,,"sv;
+      static constexpr std::string_view kNoArmor = ",,"sv;
+      static constexpr std::string_view kNoMisc = ",,"sv;
+      static constexpr std::string_view kNoEffect = ",,,,,,,,,,,,,,,,,"sv;  // 18 columns
+
+      size_t forms = 0, rows = 0;
+      auto prefix = [&](const Base& b) {
+         const char* rawName = b.form->GetName();
+         const auto* lastFile = b.form->GetFile(-1);
+         // A spell's "gold value" is its magicka cost, and spells and ammo
+         // report weight -1: leave both blank rather than mislead.
+         const bool isSpell = b.form->Is(RE::FormType::Spell);
+         const float weight = b.form->GetWeight();
+         return std::format("{},{:08X},{},{},{},{},{},{},{},{},{},{},{},{},{},{},",
+            b.kind, b.form->GetFormID(), CsvQuote(PluginOf(b.form)),
+            CsvQuote(lastFile ? lastFile->GetFilename() : ""sv), CsvQuote(rawName ? rawName : ""),
+            b.form->GetPlayable() ? 1 : 0,
+            isSpell ? std::string{} : std::to_string(b.form->GetGoldValue()),
+            weight < 0.0f ? std::string{} : std::format("{:g}", weight),
+            player ? Util::GetItemCountSafe(player, b.form) : 0,
+            CsvQuote(b.keywords),
+            b.magic.empty() ? kNoMagic : std::string_view(b.magic),
+            b.weapon.empty() ? kNoWeapon : std::string_view(b.weapon),
+            b.armor.empty() ? kNoArmor : std::string_view(b.armor),
+            b.misc.empty() ? kNoMisc : std::string_view(b.misc),
+            CsvQuote(b.enchantment && b.enchantment->GetName() ? b.enchantment->GetName() : ""),
+            b.enchantment ? std::to_string(b.charge) : std::string{});
+      };
+      auto effectCols = [](size_t i, const RE::Effect* e) {
+         const auto* m = e->baseEffect;
+         const char* full = m->GetFullName();
+         // The description is the game's own text for the effect, with
+         // <mag>/<dur> unfilled: the one readable account of a script-only
+         // effect (LoreRim Arcaneum's spell text is this field).
+         return std::format("{},{:08X},{},{},{},{},{},{},{},{:g},{},{},{:g},{},{},{:08X},{},{}",
+            i, m->GetFormID(), CsvQuote(full ? full : ""),
+            static_cast<int>(m->data.archetype),
+            AvName(m->data.primaryAV), AvName(m->data.secondaryAV), AvName(m->data.resistVariable),
+            static_cast<int>(m->data.delivery), static_cast<int>(m->data.castingType),
+            e->effectItem.magnitude, e->effectItem.duration, e->effectItem.area, m->data.baseCost,
+            m->IsDetrimental() ? 1 : 0, m->IsHostile() ? 1 : 0,
+            static_cast<std::uint32_t>(m->data.flags.underlying()),
+            CsvQuote(KeywordList(m)),
+            CsvQuote(m->magicItemDescription.c_str() ? m->magicItemDescription.c_str() : ""));
+      };
+      // One row per effect of `effects` (the item's own, or its
+      // enchantment's); one row with the effect block empty if it has none.
+      auto emit = [&](const Base& b, const RE::BSTArray<RE::Effect*>* effects) {
+         const auto head = prefix(b);
+         size_t written = 0;
+         if (effects) {
+            for (size_t i = 0; i < effects->size(); ++i) {
+               const auto* e = (*effects)[i];
+               if (!e || !e->baseEffect) continue;
+               out << head << effectCols(i, e) << '\n';
+               ++written;
+            }
+         }
+         if (written == 0) {
+            out << head << kNoEffect << '\n';
+            written = 1;
+         }
+         rows += written;
+         ++forms;
+      };
+      auto named = [](const RE::TESForm* f) {
+         const char* n = f ? f->GetName() : nullptr;
+         return n && *n;
+      };
+      // Magicka cost for spells only: a scroll costs nothing to cast, and
+      // CalculateMagickaCost on one returned garbage (up to 37.7M on vanilla).
+      auto magicCols = [&](const RE::MagicItem* m, bool isSpell) {
+         return std::format("{},{},{},{},{}",
+            static_cast<int>(m->GetSpellType()), static_cast<int>(m->GetCastingType()),
+            static_cast<int>(m->GetDelivery()),
+            isSpell ? std::format("{:g}", m->CalculateMagickaCost(nullptr)) : std::string{},
+            isSpell ? (taughtByTome.contains(m->GetFormID()) ? "1" : "0") : "");
+      };
+
+      for (auto* s : dataHandler->GetFormArray<RE::SpellItem>()) {
+         if (!named(s)) continue;
+         Base b{ "Spell", s, KeywordList(s) };
+         b.magic = magicCols(s, true);
+         emit(b, &s->effects);
+      }
+      for (auto* s : dataHandler->GetFormArray<RE::ScrollItem>()) {
+         if (!named(s)) continue;
+         Base b{ "Scroll", s, KeywordList(s) };
+         b.magic = magicCols(s, false);
+         emit(b, &s->effects);
+      }
+      for (auto* a : dataHandler->GetFormArray<RE::AlchemyItem>()) {
+         if (!named(a)) continue;
+         Base b{ a->IsPoison() ? "Poison"sv : a->IsFood() ? "Food"sv : "Potion"sv, a, KeywordList(a) };
+         emit(b, &a->effects);
+      }
+      for (auto* w : dataHandler->GetFormArray<RE::TESObjectWEAP>()) {
+         if (!named(w)) continue;
+         Base b{ "Weapon", w, KeywordList(w) };
+         const bool twoHanded = w->IsTwoHandedSword() || w->IsTwoHandedAxe() || w->IsBow() || w->IsCrossbow();
+         b.weapon = std::format("{},{},{},{:g},{:g},{}",
+            static_cast<int>(w->GetWeaponType()), twoHanded ? 1 : 0, w->GetAttackDamage(),
+            w->weaponData.speed, w->weaponData.reach, w->criticalData.damage);
+         b.enchantment = w->formEnchanting;
+         b.charge = w->amountofEnchantment;
+         emit(b, b.enchantment ? &b.enchantment->effects : nullptr);
+      }
+      for (auto* a : dataHandler->GetFormArray<RE::TESAmmo>()) {
+         if (!named(a)) continue;
+         Base b{ "Ammo", a, KeywordList(a) };
+         b.weapon = std::format(",,{:g},,,", a->data.damage);
+         emit(b, nullptr);
+      }
+      for (auto* a : dataHandler->GetFormArray<RE::TESObjectARMO>()) {
+         if (!named(a)) continue;
+         Base b{ "Armor", a, KeywordList(a) };
+         b.armor = std::format("{:08X},{:g},{}",
+            static_cast<std::uint32_t>(a->GetSlotMask()), a->GetArmorRating(),
+            a->IsHeavyArmor() ? "Heavy"sv : a->IsLightArmor() ? "Light"sv : "None"sv);
+         b.enchantment = a->formEnchanting;
+         b.charge = a->amountofEnchantment;
+         emit(b, b.enchantment ? &b.enchantment->effects : nullptr);
+      }
+      for (auto* g : dataHandler->GetFormArray<RE::TESSoulGem>()) {
+         if (!named(g)) continue;
+         Base b{ "SoulGem", g, KeywordList(g) };
+         b.misc = std::format("{},{},", static_cast<int>(g->GetMaximumCapacity()),
+            static_cast<int>(g->GetContainedSoul()));
+         emit(b, nullptr);
+      }
+      for (auto* l : dataHandler->GetFormArray<RE::TESObjectLIGH>()) {
+         if (!named(l) || !l->CanBeCarried()) continue;
+         Base b{ "Light", l, {} };
+         b.misc = std::format(",,{}", l->data.radius);
+         emit(b, nullptr);
+      }
+      out.close();
+
+      auto msg = std::format("Wrote {} forms as {} rows to Huginn_All.csv", forms, rows);
+      Print(msg.c_str());
+      logger::info("[Console] {} -> {}"sv, msg, filePath.string());
+   }
+
+   // `hg dump races` -- every race in the LOAD ORDER with its keywords and how
+   // many NPC records use it, plus the ActorType* keywords those NPCs carry
+   // themselves. The input for widening the target-type need past vanilla's
+   // six (LoreRim's creature mods add many more). Type and race are on screen,
+   // so inside the perception line.
+   static void Cmd_DumpRaces(std::string_view /*arg*/)
+   {
+      auto* dataHandler = RE::TESDataHandler::GetSingleton();
+      if (!dataHandler) {
+         Print("Data handler unavailable");
+         return;
+      }
+      std::ofstream out;
+      std::filesystem::path filePath;
+      if (!OpenDumpFile("Huginn_Races.csv"sv, out, filePath)) return;
+
+      struct Usage {
+         size_t npcs = 0;
+         size_t uniques = 0;
+         std::vector<std::string> samples;
+         std::map<std::string, size_t> npcKeywords;  // ActorType* on the NPC record
+      };
+      std::unordered_map<const RE::TESRace*, Usage> usage;
+      for (auto* npc : dataHandler->GetFormArray<RE::TESNPC>()) {
+         if (!npc) continue;
+         const auto* race = npc->GetRace();
+         if (!race) continue;
+         auto& u = usage[race];
+         ++u.npcs;
+         if (npc->IsUnique()) ++u.uniques;
+         const char* name = npc->GetName();
+         if (name && *name && u.samples.size() < 5 &&
+             std::ranges::find(u.samples, std::string(name)) == u.samples.end()) {
+            u.samples.emplace_back(name);
+         }
+         for (std::uint32_t i = 0; i < npc->numKeywords; ++i) {
+            const auto* kw = npc->keywords[i];
+            const char* id = kw ? kw->GetFormEditorID() : nullptr;
+            if (id && std::string_view(id).starts_with("ActorType")) ++u.npcKeywords[id];
+         }
+      }
+
+      out << "formID,plugin,winningPlugin,editorID,name,playable,child,flies,swims,"
+             "keywords,npcCount,uniqueNpcCount,npcActorTypeKeywords,sampleNPCs\n";
+      size_t written = 0, used = 0;
+      for (auto* race : dataHandler->GetFormArray<RE::TESRace>()) {
+         if (!race) continue;
+         const auto it = usage.find(race);
+         const Usage empty{};
+         const auto& u = it != usage.end() ? it->second : empty;
+         std::string npcKw;
+         for (const auto& [kw, n] : u.npcKeywords) {
+            if (!npcKw.empty()) npcKw += ';';
+            npcKw += std::format("{}={}", kw, n);
+         }
+         std::string samples;
+         for (const auto& s : u.samples) {
+            if (!samples.empty()) samples += ';';
+            samples += s;
+         }
+         const auto* lastFile = race->GetFile(-1);
+         const char* edid = race->GetFormEditorID();
+         const char* name = race->GetName();
+         const auto flags = race->data.flags;
+         out << std::format("{:08X},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+            race->GetFormID(), CsvQuote(PluginOf(race)),
+            CsvQuote(lastFile ? lastFile->GetFilename() : ""sv),
+            CsvQuote(edid ? edid : ""), CsvQuote(name ? name : ""),
+            flags.all(RE::RACE_DATA::Flag::kPlayable) ? 1 : 0,
+            flags.all(RE::RACE_DATA::Flag::kChild) ? 1 : 0,
+            flags.all(RE::RACE_DATA::Flag::kFlies) ? 1 : 0,
+            flags.all(RE::RACE_DATA::Flag::kSwims) ? 1 : 0,
+            CsvQuote(KeywordList(race)), u.npcs, u.uniques, CsvQuote(npcKw), CsvQuote(samples));
+         ++written;
+         if (u.npcs > 0) ++used;
+      }
+      out.close();
+
+      auto msg = std::format("Wrote {} races to Huginn_Races.csv - {} used by an NPC record", written, used);
+      Print(msg.c_str());
+      logger::info("[Console] {} -> {}"sv, msg, filePath.string());
+   }
 #endif  // !NDEBUG
 
    // =========================================================================
@@ -1390,6 +1693,8 @@ namespace Huginn::Console
       { "dump weapons",  "Write every weapon and ammo to Huginn_Weapons.csv (debug builds)", false, Cmd_DumpWeapons },
       { "dump apparel",  "Write every enchanted armour piece to Huginn_Apparel.csv (debug builds)", false, Cmd_DumpApparel },
       { "dump diseases", "Write every disease to Huginn_Diseases.csv (debug builds)", false, Cmd_DumpDiseases },
+      { "dump all",      "Write every item, spell and effect in one schema to Huginn_All.csv (debug builds)", false, Cmd_DumpAll },
+      { "dump races",    "Write every race, its keywords and NPC count to Huginn_Races.csv (debug builds)", false, Cmd_DumpRaces },
 #endif
       { "reset weights", "Clear learned item weights",                  false, Cmd_ResetWeights },
       { "reset w",       "Clear learned item weights",                  false, Cmd_ResetWeights },
