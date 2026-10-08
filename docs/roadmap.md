@@ -15,13 +15,23 @@ Wheeler are fine -- and consumables and gear are where Huginn fails. The
 rule that orders it: fix what is broken before tuning what is learned,
 and change the learning before tuning anything that competes with it.
 
-1. **Detection fixes** -- BUILT in 0.22.15 (branch `detection-fixes`),
-   in-game test pending. Small, evidenced bugs, and potions and gear
+1. **Detection fixes** -- DONE in 0.22.15 (#171, merged 2026-10-05),
+   tested in game on LoreRim and simonrim; every item in the PR's test plan
+   passed. Small, evidenced bugs, and potions and gear
    depend on them: disease and poison by spell type (Field notes; Cure
    Greater Disease on LoreRim), player-enchanted weapons in the charge
    override (Known Bugs), darkness in daylight, target type by keyword
    and held for the fight, the full-health filter on auras, self versus
-   target spells.
+   target spells. Two checks left for the next in-game test:
+   - **Do the cures reach the page now?** Detection gave Cure Poison and
+     Cure Greater Disease their weight, but in the #171 test learned items
+     outranked them (Cure Poison u 1.66 under Stoneflesh 61.5; Cure Greater
+     Disease under Stoneflesh, Oakflesh and the Soul Sword) and both were
+     taken from the menu. The learning rework (#172, #173, #180) was meant
+     to fix that crowding; recheck while poisoned and diseased.
+   - **Cure Greater Disease over plain Cure Disease** (ranked by gold value
+     when neither has a magnitude or duration) -- untested, no plain Cure
+     Disease was carried. Carry both and catch a disease.
 2. **Learning rework** -- Phase 3 below, from #1, plus the re-equip rule
    (a return to the main weapon is not a new choice) and expiring entries
    for items no longer owned. The root of the crowding the soak measured:
