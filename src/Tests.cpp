@@ -552,14 +552,24 @@ namespace
     // alchemy items with ONE effect (so no quest potion like the White Phial,
     // whose second effect is its quest's) that the classifier calls
     // HealthPotion, each of a magnitude the player does not already hold.
-    std::vector<RE::AlchemyItem*> SupplyHealthPotionsForTest(RE::PlayerCharacter* player,
-        std::vector<float> magnitudes, size_t needed)
+    //
+    // Each potion is recorded in `supplied` right after it is added, so the
+    // caller's take-back guard (declared before this is called) returns every
+    // one even if something later throws.
+    //
+    // The magnitude dedupe uses a default ItemClassifier, not the registry's
+    // own (that one is private and carries Huginn_Overrides.ini). An override
+    // that reclassifies a supplied potion only means the registry may still
+    // see fewer than two, and the check then skips honestly; it cannot make it
+    // pass falsely.
+    void SupplyHealthPotionsForTest(RE::PlayerCharacter* player, std::vector<float> magnitudes,
+        size_t needed, std::vector<RE::AlchemyItem*>& supplied)
     {
-        std::vector<RE::AlchemyItem*> supplied;
         auto* data = RE::TESDataHandler::GetSingleton();
         if (!data || !player || needed == 0) {
-            return supplied;
+            return;
         }
+        const size_t target = supplied.size() + needed;
         Item::ItemClassifier classifier;
         for (auto* alch : data->GetFormArray<RE::AlchemyItem>()) {
             if (!alch || alch->IsFood() || alch->IsPoison() || alch->effects.size() != 1 ||
@@ -573,16 +583,18 @@ namespace
             if (std::find(magnitudes.begin(), magnitudes.end(), item.magnitude) != magnitudes.end()) {
                 continue;
             }
+            // Add, then record: the guard must never remove a potion this did
+            // not add (it would take one of the player's own). Game code does
+            // not throw, so nothing can come between the two.
             player->AddObjectToContainer(alch, nullptr, 1, nullptr);
             supplied.push_back(alch);
             magnitudes.push_back(item.magnitude);
             logger::info("  [test mode] supplied 1x '{}' ({:08X}, restore health {:.0f})"sv,
                 alch->GetFullName(), alch->GetFormID(), item.magnitude);
-            if (supplied.size() == needed) {
+            if (supplied.size() == target) {
                 break;
             }
         }
-        return supplied;
     }
 }
 #endif
@@ -650,15 +662,8 @@ void RunItemRegistryTests()
     // sortedHealthPotions, whose pointers a reconcile would invalidate.
     std::vector<RE::AlchemyItem*> suppliedPotions;
     auto* testPlayer = RE::PlayerCharacter::GetSingleton();
-    if (TestHarness::Active()) {
-        const auto held = g_itemRegistry->GetHealthPotionsByMagnitude();
-        if (held.size() < 2) {
-            std::vector<float> heldMagnitudes;
-            for (const auto* h : held) heldMagnitudes.push_back(h->data.magnitude);
-            suppliedPotions = SupplyHealthPotionsForTest(testPlayer, heldMagnitudes, 2 - held.size());
-            g_itemRegistry->ReconcileItems();
-        }
-    }
+    // The guard exists before anything is supplied, so a throw anywhere after
+    // (supply, reconcile, a later check) still takes every potion back.
     struct TakeBack
     {
         std::vector<RE::AlchemyItem*>& items;
@@ -673,6 +678,15 @@ void RunItemRegistryTests()
             logger::info("  [test mode] took the {} supplied potion(s) back"sv, items.size());
         }
     } takeBack{ suppliedPotions, testPlayer };
+    if (TestHarness::Active()) {
+        const auto held = g_itemRegistry->GetHealthPotionsByMagnitude();
+        if (held.size() < 2) {
+            std::vector<float> heldMagnitudes;
+            for (const auto* h : held) heldMagnitudes.push_back(h->data.magnitude);
+            SupplyHealthPotionsForTest(testPlayer, heldMagnitudes, 2 - held.size(), suppliedPotions);
+            g_itemRegistry->ReconcileItems();
+        }
+    }
     auto sortedHealthPotions = g_itemRegistry->GetHealthPotionsByMagnitude();
     if (sortedHealthPotions.size() >= 2) {
         bool isSorted = true;
