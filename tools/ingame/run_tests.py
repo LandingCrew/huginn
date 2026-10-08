@@ -32,11 +32,18 @@ Pre-flight (refuses, exit 2, before writing or launching anything):
 
 Which game is "ours": a process whose image is named SkyrimSE.exe and lies
 under the chosen instance's folder, created after the launch (5 s of slack
-for a clock step; the path and name carry the rest). The runner opens a handle to it the
-first time it sees it and keeps it for the whole run, so the PID cannot be
-reused under it, and it ends that process through the handle. A game from
-another instance, or one that was already running, is never tracked or
-killed.
+for a clock step; the path and name carry the rest). The runner opens a
+handle to it the first time it sees it and keeps it for the whole run, so the
+PID cannot be reused under it, and it ends that process through the handle.
+A game of another instance, or one already running at launch (the runner
+refuses to launch then anyway), is never tracked or ended.
+
+DO NOT LAUNCH ANYTHING FROM THIS INSTANCE WHILE THE RUNNER RUNS. A game you
+start from the same instance during a run -- from the runner's MO2 window, the
+instance's MO2 shortcut, or its Stock Game skse64_loader -- cannot be told
+apart from the runner's and will be ended. And the last stage of closing MO2
+(taskkill /F /T) ends everything started from that MO2 window, xEdit
+included.
 
 Whatever starts the game closes it. When the run ends, whatever the verdict:
 - the game: every game of ours still running 15 s later is ended (through its
@@ -51,7 +58,14 @@ Whatever starts the game closes it. When the run ends, whatever the verdict:
   timeout, or --timeout 0). Such a game's parent (skse64_loader) has already
   exited, so MO2's /T does not reach it. The runner keeps scanning for and
   ending games of ours while it closes MO2, and afterwards until none has
-  appeared for 20 s (3 minutes at most), then scans once more.
+  appeared for 20 s (3 minutes at most), then scans once more. A game that
+  appears more than 20 s after MO2 is gone is not caught (accepted: nothing of
+  the run is left to start one).
+
+The shutdown takes up to about 3 minutes and says what it is doing. A Ctrl+C
+during it is noted and the shutdown carries on; the interrupt is re-raised
+when it is done. Removing the test-mode file is retried and reported, never
+allowed to skip the shutdown.
 
 A game of ours is ended with TerminateProcess on the held handle, and the
 runner waits for it to be gone; if it is not, it says so.
@@ -87,6 +101,7 @@ import csv
 import ctypes
 import datetime as dt
 import os
+import signal
 import hashlib
 import io
 import re
@@ -285,6 +300,8 @@ class GameTracker:
             if self.first is None:
                 self.first, self.first_seen = p, time.monotonic()
                 say(f"{GAME_EXE} started (pid {pid}, {p.image})")
+            else:
+                say(f"another {GAME_EXE} of this run (pid {pid}, {p.image}); claimed as ours")
 
     def first_gone(self) -> bool:
         return self.first is not None and not self.first.alive()
@@ -315,9 +332,33 @@ def shut_down(games: GameTracker, mo2_proc: subprocess.Popen) -> None:
     by itself, then end it; close the MO2 this run started; and keep scanning
     for games of ours the whole time, and for QUIET_SEC after MO2 is gone, so
     a game MO2 was still starting when the run ended is not orphaned (its
-    parent skse64_loader has exited, so MO2's /T does not reach it)."""
+    parent skse64_loader has exited, so MO2's /T does not reach it).
+
+    A Ctrl+C during the shutdown is noted, not obeyed: stopping halfway is
+    what leaves a game and an MO2 behind. It is re-raised at the end."""
+    interrupted = []
+
+    def note_interrupt(signum, frame):
+        interrupted.append(signum)
+        say("Ctrl+C: still shutting down (the game and MO2 this run started must be closed); "
+            "it will stop when that is done")
+
+    previous = signal.signal(signal.SIGINT, note_interrupt)
+    try:
+        say(f"shutting down (up to ~{SHUTDOWN_CAP_SEC // 60} min): closing the game and the MO2 this run started")
+        _shut_down(games, mo2_proc)
+        say("shutdown done")
+    finally:
+        signal.signal(signal.SIGINT, previous)
+    if interrupted:
+        raise KeyboardInterrupt
+
+
+def _shut_down(games: GameTracker, mo2_proc: subprocess.Popen) -> None:
     cap = time.monotonic() + SHUTDOWN_CAP_SEC
     end = time.monotonic() + KILL_GRACE_SEC
+    if games.alive_count():
+        say(f"waiting up to {KILL_GRACE_SEC}s for the game to end by itself")
     while time.monotonic() < end:
         games.scan()
         if games.alive_count() == 0:
@@ -326,6 +367,8 @@ def shut_down(games: GameTracker, mo2_proc: subprocess.Popen) -> None:
     games.reap()
 
     # MO2: wait, ask, force -- reaping games every second throughout.
+    if mo2_proc.poll() is None:
+        say(f"waiting up to {MO2_GRACE_SEC}s for MO2 (pid {mo2_proc.pid}) to close by itself")
     stages = [(MO2_GRACE_SEC, None, "closed by itself"),
               (MO2_GRACE_SEC, ["taskkill", "/PID"], "closed"),
               (15, ["taskkill", "/F", "/T", "/PID"], "ended")]
@@ -347,6 +390,7 @@ def shut_down(games: GameTracker, mo2_proc: subprocess.Popen) -> None:
             say(f"WARNING: MO2 (pid {mo2_proc.pid}) is STILL running; close it by hand")
 
     # Quiet window: no new game of ours for QUIET_SEC.
+    say(f"watching {QUIET_SEC}s for a late game of this run")
     quiet_until = time.monotonic() + QUIET_SEC
     while time.monotonic() < quiet_until and time.monotonic() < cap:
         if games.reap():
@@ -524,6 +568,24 @@ def done_verdict(lines: list[str], allow_skips: bool) -> tuple[int, str] | None:
     return None
 
 
+def remove_flag(path: Path) -> None:
+    """Delete the test-mode file if Huginn has not. Retried: Huginn's own read,
+    OneDrive, an antivirus or the indexer can hold it for a moment."""
+    for attempt in range(10):
+        try:
+            path.unlink()
+            say("removed the test-mode file (Huginn had not consumed it)")
+            return
+        except FileNotFoundError:
+            return
+        except OSError as e:
+            if attempt == 9:
+                say(f"WARNING: could not remove {path}: {e}. It expires on its own "
+                    "(iExpiresUnix), but delete it by hand")
+                return
+            time.sleep(0.3)
+
+
 # --- main --------------------------------------------------------------------
 
 def main() -> int:
@@ -627,14 +689,13 @@ def main() -> int:
         else:
             verdict = (1, f"timeout after {args.timeout}s" + ("" if fresh else " (the log never started)"))
     finally:
-        # The flag first: a game MO2 starts late must not enter test mode.
+        # The flag first, so a game MO2 starts late does not enter test mode;
+        # but nothing here may skip the shutdown.
         try:
-            flag_path.unlink()
-            say("removed the test-mode file (Huginn had not consumed it)")
-        except FileNotFoundError:
-            pass
-        if mo2_proc is not None:
-            shut_down(games, mo2_proc)
+            remove_flag(flag_path)
+        finally:
+            if mo2_proc is not None:
+                shut_down(games, mo2_proc)
 
     # Report: only from this launch's log.
     if fresh:
@@ -653,6 +714,13 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    # A path or name the console code page cannot show must not abort a run
+    # (or, worse, its shutdown) with UnicodeEncodeError.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
     try:
         sys.exit(main())
     except Refused as e:
