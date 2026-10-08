@@ -3,6 +3,7 @@
 #ifndef NDEBUG
 
 #include "IniLoad.h"
+#include "slot/SlotSnapshot.h"
 
 #include <spdlog/details/null_mutex.h>
 #include <spdlog/sinks/base_sink.h>
@@ -104,6 +105,7 @@ namespace Huginn::TestHarness
         bool g_active = false;
         std::string g_saveName;
         int g_loadTimeoutSec = kDefaultLoadTimeoutSec;
+        int g_captureSlotsSec = 0;   // iCaptureSlotsSec: slot snapshots after the load suites (R7)
         std::atomic<bool> g_loadRequested{ false };
         std::atomic<bool> g_loadArrived{ false };
         std::atomic<bool> g_finished{ false };
@@ -242,6 +244,7 @@ namespace Huginn::TestHarness
         if (Truthy(ReadEnv("HUGINN_TEST_MODE"))) {
             g_active = true;
             g_saveName = ReadEnv("HUGINN_TEST_SAVE");
+            g_captureSlotsSec = std::atoi(ReadEnv("HUGINN_CAPTURE_SLOTS").c_str());
             source = "environment";
         }
 
@@ -272,6 +275,7 @@ namespace Huginn::TestHarness
                         }
                         g_loadTimeoutSec = static_cast<int>(
                             ini.GetLongValue("Test", "iLoadTimeoutSec", kDefaultLoadTimeoutSec));
+                        g_captureSlotsSec = static_cast<int>(ini.GetLongValue("Test", "iCaptureSlotsSec", 0));
                         source = source.empty() ? "file" : source + "+file";
                     }
                 }
@@ -283,6 +287,10 @@ namespace Huginn::TestHarness
             if (g_loadTimeoutSec <= 0) g_loadTimeoutSec = kDefaultLoadTimeoutSec;
             logger::info("[HuginnTest] test mode ON (from {}): save='{}', load timeout {}s; the game ends after the suites"sv,
                 source, g_saveName, g_loadTimeoutSec);
+            if (g_captureSlotsSec > 0) {
+                logger::info("[HuginnTest] after the load suites: {}s of slot capture (Huginn_SlotSnapshots.txt)"sv,
+                    g_captureSlotsSec);
+            }
         }
     }
 
@@ -375,6 +383,12 @@ namespace Huginn::TestHarness
         if (!g_loadRequested.load()) {
             // A load the harness did not ask for (the player's own, before the
             // auto-load fired): its suites are tallied, the run goes on.
+            return;
+        }
+        if (gameLoaded && g_captureSlotsSec > 0) {
+            // Slot snapshots for the golden test (SlotCapture.cpp): play a
+            // scripted session while every allocation is recorded, then end.
+            Slot::Capture::StartSession(g_captureSlotsSec, []() { Finish({}); });
             return;
         }
         Finish(gameLoaded ? std::string_view{} : "load-failed"sv);

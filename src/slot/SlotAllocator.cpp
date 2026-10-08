@@ -30,20 +30,6 @@ namespace Huginn::Slot
 #endif
     }
 
-    // File-local helper: Does this slot's filter accept the given override category?
-    [[nodiscard]] static constexpr bool AcceptsOverride(OverrideFilter filter, Override::OverrideCategory category) noexcept
-    {
-        switch (filter) {
-            case OverrideFilter::None: return false;
-            case OverrideFilter::Any:  return true;
-            case OverrideFilter::HP:   return category == Override::OverrideCategory::HP;
-            case OverrideFilter::MP:   return category == Override::OverrideCategory::MP;
-            case OverrideFilter::SP:   return category == Override::OverrideCategory::SP;
-            case OverrideFilter::Other: return category == Override::OverrideCategory::Other;
-            default:                   return false;
-        }
-    }
-
     SlotAllocator& SlotAllocator::GetSingleton()
     {
         static SlotAllocator instance;
@@ -371,6 +357,31 @@ namespace Huginn::Slot
         const State::PlayerActorState& player,
         [[maybe_unused]] const State::WorldState& world) const
     {
+        // One clock reading for the whole pass: home keys measure how long an
+        // item was away against it, and departures are stamped with it.
+        const auto now = std::chrono::steady_clock::now();
+
+#ifndef NDEBUG
+        // Slot capture (SlotSnapshot.h): this allocation's input, before
+        // anything below changes the seating memory.
+        std::optional<Core::SlotAlloc::Snapshot> capture;
+        if (Capture::Enabled() && !slotConfigs.empty()) {
+            capture.emplace();
+            capture->tag = Capture::ThreadTag();
+            capture->in = BuildAllocInput(pageIndex, now, slotConfigs, candidates, overrides, &player,
+                ReadAllocSettings(), nullptr);
+            capture->in.memoryAvailable = pageIndex < MAX_PAGES;
+            {
+                std::lock_guard<std::mutex> lock(m_seatingMutex);
+                capture->in.generationMatches = m_seatingGeneration == configGeneration;
+                if (pageIndex < MAX_PAGES) {
+                    capture->in.memory = MemoryOfLocked(pageIndex);
+                }
+            }
+            Capture::NoteRealList(pageIndex, candidates, slotConfigs);
+        }
+#endif
+
         SlotAssignments assignments;
         assignments.reserve(slotConfigs.size());
 
@@ -807,7 +818,7 @@ namespace Huginn::Slot
             // next one, and the mismatch check below would then miss it.
             const uint32_t generation = configGeneration;
 
-            ApplySeating(pageIndex, generation, slotConfigs, assignments, &player);
+            ApplySeating(pageIndex, generation, slotConfigs, assignments, &player, now);
 
             // Optional: a key with a job that would be blank takes a matching
             // item off a Regular key. After seating, so seating does not undo
@@ -842,7 +853,7 @@ namespace Huginn::Slot
             }
 
             // PASS 5: remember the result for next time.
-            RecordSeating(pageIndex, generation, assignments);
+            RecordSeating(pageIndex, generation, assignments, now);
         }
 
         // What the class cap kept off the page, on change only.
@@ -860,7 +871,46 @@ namespace Huginn::Slot
             }
         }
 
+#ifndef NDEBUG
+        if (capture) {
+            capture->hasResult = true;
+            capture->page = PageOf(assignments);
+            capture->keptOff.clear();
+            for (const RE::FormID id : classCap.KeptOffIDs(assignments)) {
+                capture->keptOff.push_back(id);
+            }
+            const bool keep = SlotSettings::GetSingleton().KeepSlotPositions();
+            capture->clearedAllPages = !capture->in.generationMatches && keep && capture->in.memoryAvailable;
+            {
+                std::lock_guard<std::mutex> lock(m_seatingMutex);
+                capture->generationAfter = m_seatingGeneration == configGeneration;
+                if (pageIndex < MAX_PAGES) {
+                    capture->memoryAfter = MemoryOfLocked(pageIndex);
+                }
+            }
+            Capture::Write(*capture);
+        }
+#endif
+
         return assignments;
+    }
+
+    Core::SlotAlloc::PageMemory SlotAllocator::MemoryOfLocked(size_t pageIndex) const
+    {
+        Core::SlotAlloc::PageMemory m;
+        if (pageIndex >= MAX_PAGES) {
+            return m;
+        }
+        m.seats = m_seating[pageIndex];
+        m.lastPlaced = m_lastPlaced[pageIndex];
+        m.homeClaims = m_homeClaims[pageIndex];
+        for (size_t j = 0; j < MAX_SLOTS_PER_PAGE; ++j) {
+            for (size_t k = 0; k < HOME_MEMORY_PER_SLOT; ++k) {
+                const auto& d = m_departed[pageIndex][j][k];
+                m.departed[j][k] = { d.key, ToCoreNs(d.leftAt) };
+            }
+        }
+        return m;
     }
 
 #ifndef NDEBUG
@@ -871,6 +921,13 @@ namespace Huginn::Slot
         const State::PlayerActorState noPlayer{};
         const State::WorldState noWorld{};
         return AllocateSlotsInternal(pageIndex, generation, slotConfigs, candidates, overrides, noPlayer, noWorld);
+    }
+
+    uint32_t SlotAllocator::CurrentGenerationForTest() const
+    {
+        uint32_t generation = UINT32_MAX;
+        (void)GetConfigSnapshot(&generation);
+        return generation;
     }
 #endif
 
@@ -1225,7 +1282,8 @@ namespace Huginn::Slot
         uint32_t generation,
         const std::vector<SlotConfig>& slotConfigs,
         SlotAssignments& assignments,
-        const State::PlayerActorState* player) const
+        const State::PlayerActorState* player,
+        std::chrono::steady_clock::time_point now) const
     {
         if (pageIndex >= MAX_PAGES) {
             return;
@@ -1340,7 +1398,6 @@ namespace Huginn::Slot
         const auto& slotSettings = SlotSettings::GetSingleton();
         const float memorySec = slotSettings.HomeKeyMemorySec();
         if (memorySec > 0.0f) {
-            const auto now = std::chrono::steady_clock::now();
             for (size_t i = 0; i < slotCount; ++i) {
                 const uint64_t key = keyOf(assignments[i]);
                 if (key == 0 || !movable(i) || seatWantedBy(key) != SIZE_MAX) continue;
@@ -1536,7 +1593,8 @@ namespace Huginn::Slot
     void SlotAllocator::RecordSeating(
         size_t pageIndex,
         uint32_t generation,
-        const SlotAssignments& assignments) const
+        const SlotAssignments& assignments,
+        std::chrono::steady_clock::time_point now) const
     {
         if (pageIndex >= MAX_PAGES) {
             return;
@@ -1663,7 +1721,6 @@ namespace Huginn::Slot
         // (HoldIncumbents), so its seat reads empty here, and without the
         // fallback the item the feature exists for -- outranked off the page
         // for a few seconds -- was never remembered (code review of #179).
-        const auto now = std::chrono::steady_clock::now();
         auto onScreen = [&](uint64_t key) {
             return std::any_of(assignments.begin(), assignments.end(),
                 [&](const SlotAssignment& a) { return keyOf(a) == key; });

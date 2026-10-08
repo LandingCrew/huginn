@@ -107,6 +107,21 @@ namespace Huginn::Slot
             m_skipped.end());
     }
 
+    std::vector<RE::FormID> SlotClassCap::KeptOffIDs(const SlotAssignments& assignments) const
+    {
+        std::vector<RE::FormID> kept;
+        for (const auto& s : m_skipped) {
+            const RE::FormID id = s.formID;
+            const bool shown = std::any_of(assignments.begin(), assignments.end(),
+                [id](const SlotAssignment& a) { return !a.IsEmpty() && a.formID == id; });
+            if (!shown) {
+                kept.push_back(id);
+            }
+        }
+        std::sort(kept.begin(), kept.end());
+        return kept;
+    }
+
     std::string SlotClassCap::Summary(const SlotAssignments& assignments) const
     {
         std::vector<std::string> kept;

@@ -5,6 +5,7 @@
 #include "SlotAssignment.h"
 #include "SlotClassifier.h"
 #include "SlotSettings.h"
+#include "SlotSnapshot.h"
 #include "learning/ScoredCandidate.h"
 #include "override/OverrideConditions.h"
 #include "state/PlayerActorState.h"
@@ -211,6 +212,11 @@ namespace Huginn::Slot
             const std::vector<SlotConfig>& slotConfigs,
             const Scoring::ScoredCandidateList& candidates,
             const Override::OverrideCollection& overrides = {}) const;
+
+        /// Tests only: the layout generation real allocations run under now,
+        /// so a test allocation can share the seating memory without making
+        /// every page start over (the slot capture's campaign, SlotCapture.cpp).
+        [[nodiscard]] uint32_t CurrentGenerationForTest() const;
 #endif
 
     private:
@@ -350,6 +356,10 @@ namespace Huginn::Slot
         /// swaps out, are the only ones that release a lock early.
         mutable std::array<std::array<uint64_t, MAX_SLOTS_PER_PAGE>, MAX_PAGES> m_homeClaims{};
 
+        /// One page's seating memory as the slot core's record. Caller holds
+        /// m_seatingMutex.
+        [[nodiscard]] Core::SlotAlloc::PageMemory MemoryOfLocked(size_t pageIndex) const;
+
         /// Before the rank-ordered fill: keep each seated item in its own seat,
         /// unless the slot no longer accepts it or the best challenger FOR THAT
         /// SLOT beats it by `margin` (0.25 = 25%).
@@ -395,7 +405,8 @@ namespace Huginn::Slot
             uint32_t generation,
             const std::vector<SlotConfig>& slotConfigs,
             SlotAssignments& assignments,
-            const State::PlayerActorState* player) const;
+            const State::PlayerActorState* player,
+            std::chrono::steady_clock::time_point now) const;
 
         /// Remember where everything ended up, for the next allocation of this
         /// page. Called after the refill, so an item that has just arrived gets
@@ -411,7 +422,8 @@ namespace Huginn::Slot
         void RecordSeating(
             size_t pageIndex,
             uint32_t generation,
-            const SlotAssignments& assignments) const;
+            const SlotAssignments& assignments,
+            std::chrono::steady_clock::time_point now) const;
 
         /// Whether `assignment` may sit in slot `slotIndex` of this layout:
         /// the same classification, wildcard and skip-equipped rules

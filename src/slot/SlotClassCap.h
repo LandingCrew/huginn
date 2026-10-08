@@ -80,6 +80,9 @@ namespace Huginn::Slot
         /// give equal strings.
         [[nodiscard]] std::string Summary(const SlotAssignments& assignments) const;
 
+        /// The same set as Summary, as sorted formIDs (slot snapshots).
+        [[nodiscard]] std::vector<RE::FormID> KeptOffIDs(const SlotAssignments& assignments) const;
+
     private:
         [[nodiscard]] SlotClassification CachedClass(const Scoring::ScoredCandidate& c) const;
 
