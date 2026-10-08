@@ -1,22 +1,11 @@
 #include "StateEvaluator.h"
+#include "ActorTypeClassifier.h"
 #include "util/ScopedTimer.h"
 
 #include <algorithm>
 
 namespace
 {
-   // Case-insensitive substring search - zero heap allocations
-   [[nodiscard]] inline bool ContainsIgnoreCase(std::string_view haystack, std::string_view needle) noexcept
-   {
-      auto caseInsensitiveEqual = [](char a, char b) noexcept {
-      return std::tolower(static_cast<unsigned char>(a)) ==
-             std::tolower(static_cast<unsigned char>(b));
-      };
-      return std::search(haystack.begin(), haystack.end(),
-                         needle.begin(), needle.end(),
-                         caseInsensitiveEqual) != haystack.end();
-   }
-
    // Vital percentage bucketing - all three enums have identical ordinal layout
    template<typename BucketEnum>
    [[nodiscard]] constexpr BucketEnum ClassifyVitalPercentage(float percentage) noexcept
@@ -123,93 +112,18 @@ namespace Huginn::State
       return TargetType::Humanoid;  // Default fallback
       }
 
-      // The game's own creature keywords first; the race-name words below are
-      // the fallback. Mods tag their creatures with these, and their race IDs
-      // follow no pattern: a LoreRim Gloom Wraith read Beast and then Humanoid
-      // and never Undead, so nothing anti-undead surfaced (2026-10-03 19:35).
-      // On the race or the actor base; vampires are ActorTypeNPC with the
-      // Vampire keyword, so the undead test runs before the humanoid one.
-      {
-      auto* base = actor->GetActorBase();
-      auto has = [&](std::string_view kw) {
-        return race->HasKeywordString(kw) || (base && base->HasKeywordString(kw));
-      };
-      if (has("ActorTypeDragon")) return TargetType::Dragon;
-      if (has("ActorTypeUndead") || has("ActorTypeGhost") || has("Vampire")) return TargetType::Undead;
-      if (has("ActorTypeDaedra")) return TargetType::Daedra;
-      if (has("ActorTypeDwarven")) return TargetType::Construct;
-      if (has("ActorTypeAnimal") || has("ActorTypeCreature")) return TargetType::Beast;
-      if (has("ActorTypeNPC")) return TargetType::Humanoid;
-      }
-
-      // Get race editor ID for classification
-      const char* raceEditorID = race->GetFormEditorID();
-      if (!raceEditorID) {
-      return TargetType::Humanoid;
-      }
-
-      // Use string_view to avoid heap allocation
-      std::string_view raceID{raceEditorID};
-
-      // Classify based on race keywords (case-insensitive, zero allocations)
-      // Dragon detection (check first before other checks)
-      if (ContainsIgnoreCase(raceID, "dragon")) {
-      return TargetType::Dragon;
-      }
-
-      // Also check race flags for flying creatures (dragons have kFlies flag)
-      // This catches dragons even if their race ID doesn't contain "dragon"
-      if (race->data.flags.all(RE::RACE_DATA::Flag::kFlies)) {
-      return TargetType::Dragon;
-      }
-
-      // Undead detection
-      if (ContainsIgnoreCase(raceID, "draugr") ||
-          ContainsIgnoreCase(raceID, "skeleton") ||
-          ContainsIgnoreCase(raceID, "vampire") ||
-          ContainsIgnoreCase(raceID, "ghost") ||
-          ContainsIgnoreCase(raceID, "zombie")) {
-      return TargetType::Undead;
-      }
-
-      // Daedra detection (creatures from Oblivion - affected by anti-daedra magic)
-      // Check BEFORE Construct so atronachs are correctly classified
-      if (ContainsIgnoreCase(raceID, "atronach") ||
-          ContainsIgnoreCase(raceID, "dremora") ||
-          ContainsIgnoreCase(raceID, "daedra") ||
-          ContainsIgnoreCase(raceID, "scamp") ||
-          ContainsIgnoreCase(raceID, "daedroth") ||
-          ContainsIgnoreCase(raceID, "seeker") ||      // Hermaeus Mora's servants
-          ContainsIgnoreCase(raceID, "lurker")) {      // Hermaeus Mora's servants
-      return TargetType::Daedra;
-      }
-
-      // Construct detection (Dwemer automatons - mechanical, NOT affected by anti-daedra magic)
-      // Check BEFORE Beast so Dwemer spiders are correctly classified as Construct, not Beast
-      if (ContainsIgnoreCase(raceID, "dwarven") ||
-          ContainsIgnoreCase(raceID, "dwemer") ||
-          ContainsIgnoreCase(raceID, "sphere") ||
-          ContainsIgnoreCase(raceID, "centurion") ||
-          ContainsIgnoreCase(raceID, "ballista")) {
-      return TargetType::Construct;
-      }
-
-      // Beast detection (natural creatures)
-      if (ContainsIgnoreCase(raceID, "wolf") ||
-          ContainsIgnoreCase(raceID, "bear") ||
-          ContainsIgnoreCase(raceID, "saber") ||
-          ContainsIgnoreCase(raceID, "sabre") ||
-          ContainsIgnoreCase(raceID, "spider") ||
-          ContainsIgnoreCase(raceID, "troll") ||
-          ContainsIgnoreCase(raceID, "mammoth") ||
-          ContainsIgnoreCase(raceID, "skeever") ||
-          ContainsIgnoreCase(raceID, "horker") ||
-          ContainsIgnoreCase(raceID, "mudcrab") ||
-          ContainsIgnoreCase(raceID, "slaughterfish")) {
-      return TargetType::Beast;
-      }
-
-      // Default to humanoid (humans, elves, orcs, khajiit, argonians, etc.)
-      return TargetType::Humanoid;
+      // The rules live in ActorTypeClassifier (pure, so `hg dump races` and the
+      // host check against race_map.csv run the very same code). Keywords come
+      // from the race and from the actor's own NPC record; mods tag their
+      // creatures with these, and their race IDs follow no pattern (a LoreRim
+      // Gloom Wraith read Beast and then Humanoid and never Undead,
+      // 2026-10-03 19:35).
+      const auto* base = actor->GetActorBase();
+      const char* edid = race->GetFormEditorID();
+      return ActorTypeClassifier::Classify(
+      edid ? std::string_view{ edid } : std::string_view{},
+      race->data.flags.all(RE::RACE_DATA::Flag::kFlies),
+      [&](std::string_view kw) { return race->HasKeywordString(kw); },
+      [&](std::string_view kw) { return base && base->HasKeywordString(kw); });
    }
 }

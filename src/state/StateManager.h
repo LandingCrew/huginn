@@ -473,10 +473,21 @@ namespace Huginn::State
       // =============================================================================
       // ACTOR TYPE CACHE (Optimization: avoids repeated ClassifyActor string matching)
       // =============================================================================
-      // Race never changes at runtime, so cache ClassifyActor results by FormID.
-      // Cleared on save load (ResetTrackingState) for safety.
+      // Keyed on the actor, stamped with the race it was classified under: a
+      // race CAN change at runtime (a werewolf or vampire lord transforming, a
+      // race-swap spell), and a stale entry kept a transformed werewolf reading
+      // Humanoid. A lookup whose race differs re-classifies. The actor stays in
+      // the key because the reading also uses the actor's own keywords (a ghost
+      // on a Nord race reads Undead). Cleared on save load (ResetTrackingState)
+      // and when it outgrows kActorTypeCacheMax, so it cannot grow without bound.
 
-      std::unordered_map<RE::FormID, TargetType> m_actorTypeCache;
+      struct ActorTypeCacheEntry
+      {
+         RE::FormID raceID = 0;
+         TargetType type = TargetType::None;
+      };
+      static constexpr size_t kActorTypeCacheMax = 1024;
+      std::unordered_map<RE::FormID, ActorTypeCacheEntry> m_actorTypeCache;
 
       // =============================================================================
       // ALLY DEDUPLICATION SET (Reusable across polls — avoids per-tick allocation)
@@ -551,6 +562,12 @@ namespace Huginn::State
       };
 
       ResourceTracker m_healthTracker;
+
+      // Last hit time (game days, 0 = none) per element timer -- Fire, Frost,
+      // Shock, Poison -- from EVERY queued TESHitEvent, not only the latest.
+      // Kept out of damageHistory so it cannot evict real damage events
+      // (PollHealthTracking). Update thread only, like m_healthTracker.
+      std::array<float, 4> m_extraElementHitTime{};
       ResourceTracker m_staminaTracker;
       ResourceTracker m_magickaTracker;
 

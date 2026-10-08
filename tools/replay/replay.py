@@ -167,7 +167,7 @@ class Current(Policy):
 
 
 class ChoiceTarget(Current):
-    """Phase 3 #1: chosen -> 1, shown for the same need and passed over -> 0.
+    """Phase 3 #1: chosen -> 1, shown for the same slot class and passed over -> 0.
 
     neg_weight scales a negative's step (and how much it counts as a train);
     lambda_max caps the learned boost; rec_scale rescales the recency term
@@ -343,14 +343,15 @@ def replay(recs, policy):
     return stats
 
 
-def need_of(c):
-    """The need cap's grouping (src/slot/NeedCap.cpp): the slot class, all food one need."""
+def class_of(c):
+    """The class cap's grouping (src/slot/SlotClassCap.cpp): the slot class, all food one.
+    The log's "need" column IS the slot class (the name predates 0.23.8)."""
     return "FoodAny" if c["type"] == "Food" else c["need"]
 
 
 def capped_page(cands, util, free, discount, page=PAGE):
-    """The eight a Regular page would show under the need cap: greedy, each pick
-    weighed by discount ** (items of its need already shown - free + 1)."""
+    """The eight a Regular page would show under the class cap: greedy, each pick
+    weighed by discount ** (items of its class already shown - free + 1)."""
     best = {}
     for c in cands:
         u = util(c)
@@ -359,16 +360,16 @@ def capped_page(cands, util, free, discount, page=PAGE):
     pool, shown, count = list(best.values()), [], defaultdict(int)
     while pool and len(shown) < page:
         i = max(range(len(pool)),
-                key=lambda j: pool[j][1] * discount ** max(0, count[need_of(pool[j][0])] - free + 1))
+                key=lambda j: pool[j][1] * discount ** max(0, count[class_of(pool[j][0])] - free + 1))
         c, _ = pool.pop(i)
         shown.append(c)
-        count[need_of(c)] += 1
+        count[class_of(c)] += 1
     return shown
 
 
-def replay_need_cap(recs, make_policy, free, discount):
-    """hit@8 when the page is filled under the need cap, and how many pages held
-    five or more of one need."""
+def replay_class_cap(recs, make_policy, free, discount):
+    """hit@8 when the page is filled under the class cap, and how many pages held
+    five or more of one class."""
     stats = defaultdict(lambda: [0, 0, 0.0])
     crowded = 0
     policy = make_policy()
@@ -382,10 +383,10 @@ def replay_need_cap(recs, make_policy, free, discount):
             for g in ["all", "outside" if r["src"] == "External" else "huginn", "type:" + chosen["type"]]:
                 stats[g][0] += 1
                 stats[g][1] += hit
-            per_need = defaultdict(int)
+            per_class = defaultdict(int)
             for c in shown:
-                per_need[need_of(c)] += 1
-            crowded += max(per_need.values(), default=0) >= 5
+                per_class[class_of(c)] += 1
+            crowded += max(per_class.values(), default=0) >= 5
         policy.learn(r, chosen, phi)
     return stats, crowded
 
@@ -463,13 +464,13 @@ def main():
             cells.append(f"{(100 * hits / n if n else 0):5.1f}% ({n:4d})")
         print(f"{p.name:<{width}} " + " ".join(f"{c:>14}" for c in cells))
 
-    # The need cap (src/slot/NeedCap.h): placement on Regular keys, under the
+    # The class cap (src/slot/SlotClassCap.h): placement on Regular keys, under the
     # shipped learner. discount 1.0 = no cap.
     shipped = lambda: ChoiceTarget(neg_weight=0.25, repeat_window=30, pseudo_n0=2)
-    print(f"\nneed cap, shipped learner: hit@{PAGE}, and pages with 5+ of one need")
+    print(f"\nclass cap, shipped learner: hit@{PAGE}, and pages with 5+ of one class")
     print(f"{'cap':<26} {head} {'crowded':>9}")
     for free, discount in [(3, 1.0), (1, 0.5), (3, 0.75), (3, 0.5)]:
-        stats, crowded = replay_need_cap(recs, shipped, free, discount)
+        stats, crowded = replay_class_cap(recs, shipped, free, discount)
         label = "off" if discount >= 1.0 else f"first {free} free, x{discount}"
         cells = []
         for g in groups:

@@ -15,18 +15,21 @@ namespace Huginn::Learning
     // 1. The debug log -- a readable header and the page:
     //   [Selection] Confirmed 0003EADE 'Potion of Healing' src=Hotkey via=key s3
     //               kind=consume reward=+5.0 (consumed, 1320ms) rank=3 util=1.23
-    //               ctx=0.80 pred=6.20 need=HealingAny over=0003EAE3 '...' shown=7
+    //               ctx=0.80 pred=6.20 class=HealingAny over=0003EAE3 '...' shown=7
     //               page=0 age=40ms gen=2
-    //   [Selection]   s2 * 0003EADE 'Potion of Healing' need=HealingAny rank=3 ...
-    //   [Selection]   s0 = 0003EAE3 'Potion of Minor Healing' need=HealingAny ...
-    //   [Selection]   s1   00012EB7 'Iron Sword' [O] need=WeaponsMelee rank=1 ...
-    // `*` is the chosen item, `=` an item shown for the same need -- the
+    //   [Selection]   s2 * 0003EADE 'Potion of Healing' class=HealingAny rank=3 ...
+    //   [Selection]   s0 = 0003EAE3 'Potion of Minor Healing' class=HealingAny ...
+    //   [Selection]   s1   00012EB7 'Iron Sword' [O] class=WeaponsMelee rank=1 ...
+    // `*` is the chosen item, `=` an item shown for the same class -- the
     // would-be negatives -- and `over` the best-ranked of those. [O] [W] [R]
     // mark an override, wildcard or Remembrance slot. `pred` is the learner's
     // estimate for the press-time state before this selection's update.
-    // "Need" is the primary slot class (SlotClassifier::Classify), which pairs
+    // "Class" is the primary slot class (SlotClassifier::Classify), which pairs
     // a healing spell with a health potion. Coarse on purpose; the JSONL
     // record carries every candidate's class, so read-time grouping can differ.
+    // (Called "need" before 0.23.8; "need" now means the rewrite's need vector.
+    // The JSONL column keeps the name `need` so tools/replay reads old and new
+    // logs alike.)
     //
     // 2. Huginn_Selections.jsonl (SKSE log folder), one JSON object per
     //    selection: the press-time feature vector phi, the wildcard odds, the

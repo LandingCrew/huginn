@@ -15,6 +15,21 @@
 
 namespace Huginn::State
 {
+   namespace
+   {
+      // m_extraElementHitTime's index for an element with a timer, else -1.
+      [[nodiscard]] constexpr int ElementTimerSlot(DamageType type) noexcept
+      {
+      switch (type) {
+        case DamageType::Fire:   return 0;
+        case DamageType::Frost:  return 1;
+        case DamageType::Shock:  return 2;
+        case DamageType::Poison: return 3;
+        default:                 return -1;
+      }
+      }
+   }
+
    // =============================================================================
    // HEALTH TRACKING POLLING (v0.6.2, v0.6.9 - Renamed)
    // =============================================================================
@@ -67,6 +82,22 @@ namespace Huginn::State
       {
       std::shared_lock lock(m_trackingMutex);
       newState = m_healthTracking;
+      }
+
+      // Every typed hit in the queue counts, not only the last: a fire bolt and
+      // a frost bolt landing in the same tick must both refresh their element's
+      // timer (timeSinceLastFire / ...Frost). The latest hit still names the
+      // tick's damage event below, exactly as before. The others go to
+      // m_extraElementHitTime, NOT to damageHistory: that ring holds 10 events,
+      // and extra entries could evict real damage and lower recentDamageTaken,
+      // damageRate and magicDamagePercent. Each hit keeps the game time the
+      // sink stamped at impact (this poll's time if it has none); the latest
+      // hit's history event is stamped with this poll's time, as before.
+      for (const auto& hit : queuedHitEvents) {
+      if (const int slot = ElementTimerSlot(hit.type); slot >= 0) {
+        auto& t = m_extraElementHitTime[static_cast<size_t>(slot)];
+        t = std::max(t, hit.gameTime > 0.0f ? hit.gameTime : gameTime);
+      }
       }
 
       // v0.12.x: Accumulate sub-threshold health losses across ticks.
@@ -269,6 +300,18 @@ namespace Huginn::State
 
       // Calculate time since last hit (convert game-time days to real seconds)
       newState.timeSinceLastHit = VitalTracking::TimeSince(gameTime, latestDamageTime);
+
+      // Same-tick hits kept out of the history (m_extraElementHitTime) count
+      // for their element's timer, and expire like a history event would.
+      for (auto& t : m_extraElementHitTime) {
+      if (t > 0.0f && (gameTime - t) > VitalTracking::HISTORY_RETENTION_DAYS) {
+        t = 0.0f;
+      }
+      }
+      latestFireTime = std::max(latestFireTime, m_extraElementHitTime[0]);
+      latestFrostTime = std::max(latestFrostTime, m_extraElementHitTime[1]);
+      latestShockTime = std::max(latestShockTime, m_extraElementHitTime[2]);
+      latestPoisonTime = std::max(latestPoisonTime, m_extraElementHitTime[3]);
 
       // v0.6.7: Track last damage type and per-type timestamps
       newState.lastDamageType = latestType;

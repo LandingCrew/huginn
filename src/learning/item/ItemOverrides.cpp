@@ -228,7 +228,6 @@ namespace Huginn::Item
       if (lower == "poison") return ItemType::Poison;
       if (lower == "food") return ItemType::Food;
       if (lower == "alcohol") return ItemType::Alcohol;
-      if (lower == "ingredient") return ItemType::Ingredient;
 
       logger::warn("Unknown item type: {}"sv, typeStr);
       return std::nullopt;

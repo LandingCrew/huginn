@@ -11,14 +11,14 @@
 namespace Huginn::Slot
 {
     // =========================================================================
-    // NEED CAP -- a soft cap per need on Regular keys
+    // SLOT CLASS CAP -- a soft cap per slot class on Regular keys
     // =========================================================================
-    // One strong need could take the whole page: a hungry character at an
+    // One strong slot class could take the whole page: a hungry character at an
     // alchemy lab got eight foods on eight keys and none of the craft gear
     // (2026-10-05). The job-per-key layout used to give the page its variety by
     // construction; the all-Regular default (0.22.10) does not.
     //
-    // On a Regular key, the first `free` items of a need on the page compete at
+    // On a Regular key, the first `free` items of a class on the page compete at
     // full utility, and each one past that at x discount, x discount^2, ... It
     // decides PLACEMENT only: ranking, the learner and the selection log keep
     // every item's true utility, so learning never sees an item as worse
@@ -27,36 +27,38 @@ namespace Huginn::Slot
     // Measured before it shipped (tools/replay, 653 picks since 2026-10-03, the
     // shipped learner): first 3 free, then x0.5, kept top-8 at 76.3% (76.7%
     // without) and menu picks at 30.8% (29.7%), and no page held five of one
-    // need (196 did without). Discounting from the 2nd item -- the first
+    // class (196 did without). Discounting from the 2nd item -- the first
     // design -- cost 3-10 points overall and up to 25 on potions: players do
-    // pick the second and third item of a need.
+    // pick the second and third item of a class.
     //
-    // A need is SlotClassifier::Classify, except that all food and drink is one
-    // need. Foods classify by effect (HealingAny, DefensiveAny, BuffsAny,
+    // The class is SlotClassifier::Classify, except that all food and drink is
+    // one class. (Called the "need" before 0.23.8; "need" now means the need
+    // vector of the engine rewrite. The selection log's JSONL keeps its `need`
+    // key for tools/replay.) Foods classify by effect (HealingAny, DefensiveAny, BuffsAny,
     // FoodAny), so a page of seven foods never had more than three of a class.
     // =========================================================================
-    class NeedCap
+    class SlotClassCap
     {
     public:
         /// `discount` >= 1 turns it off: Factor() is then always 1 and nothing
         /// is classified. `candidates`, when given, lets Factor() classify each
         /// candidate of that list once per allocation instead of per call.
-        NeedCap(float discount, uint32_t freePerNeed,
+        SlotClassCap(float discount, uint32_t freePerClass,
             const Scoring::ScoredCandidateList* candidates = nullptr);
 
         [[nodiscard]] bool Active() const noexcept { return m_discount < 1.0f; }
 
-        /// The need `c` counts against.
-        [[nodiscard]] static SlotClassification NeedOf(const Scoring::ScoredCandidate& c) noexcept;
+        /// The slot class `c` counts against.
+        [[nodiscard]] static SlotClassification ClassOf(const Scoring::ScoredCandidate& c) noexcept;
 
-        /// Multiplier on `c`'s utility for one more item of its need on this
-        /// page: 1 while its need has fewer than `free` on the page.
+        /// Multiplier on `c`'s utility for one more item of its class on this
+        /// page: 1 while its class has fewer than `free` on the page.
         [[nodiscard]] float Factor(const Scoring::ScoredCandidate& c) const;
 
         /// Count what the page already shows (overrides, Remembrance, holds).
         void Recount(const SlotAssignments& assignments);
 
-        /// One more item of `c`'s need is on the page.
+        /// One more item of `c`'s class is on the page.
         void Add(const Scoring::ScoredCandidate& c);
 
         /// One fewer: a holder taken out of the count while it is judged.
@@ -78,17 +80,17 @@ namespace Huginn::Slot
         [[nodiscard]] std::string Summary(const SlotAssignments& assignments) const;
 
     private:
-        [[nodiscard]] SlotClassification CachedNeed(const Scoring::ScoredCandidate& c) const;
+        [[nodiscard]] SlotClassification CachedClass(const Scoring::ScoredCandidate& c) const;
 
         float m_discount;
         uint32_t m_free;
         std::array<uint8_t, SLOT_CLASSIFICATION_COUNT> m_onPage{};
         const Scoring::ScoredCandidateList* m_candidates;
-        mutable std::vector<uint8_t> m_needCache;  // per index of m_candidates; kUnknown = not yet
+        mutable std::vector<uint8_t> m_classCache;  // per index of m_candidates; kUnknown = not yet
         struct Skipped
         {
             RE::FormID formID;
-            SlotClassification need;
+            SlotClassification slotClass;
             float utility;
             std::string name;
         };

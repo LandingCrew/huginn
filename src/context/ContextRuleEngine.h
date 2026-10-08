@@ -123,7 +123,7 @@ namespace Huginn::Context
         // =========================================================================
         // UTILITY / ALWAYS-AVAILABLE
         // =========================================================================
-        float baseRelevanceWeight = 0.05f;  // Noise floor for items with no specific context
+        float baseRelevanceWeight = State::ContextWeightDefaults::BASE_RELEVANCE;  // 0.05: noise floor for items with no specific context
 
         // =========================================================================
         // HELPER METHODS

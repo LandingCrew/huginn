@@ -25,7 +25,7 @@ namespace Huginn::Learning
     // Read when a selection is made (SelectionTracker::Select) and on
     // TESEquipEvent attribution -- rare readers.
     //
-    // Holds one compact row per scored candidate (formID, need, rank and the
+    // Holds one compact row per scored candidate (formID, slot class, rank and the
     // full ScoreBreakdown -- ~80 bytes) rather than the ScoredCandidateList
     // itself, which carries the whole CandidateVariant and its strings.
     // =========================================================================
@@ -52,7 +52,7 @@ namespace Huginn::Learning
         {
             RE::FormID formID = 0;
             Candidate::SourceType sourceType{};
-            Slot::SlotClassification need = Slot::SlotClassification::Regular;  // SlotClassifier::Classify
+            Slot::SlotClassification slotClass = Slot::SlotClassification::Regular;  // SlotClassifier::Classify
             size_t rank = 0;            // kUnrankedTail past the sorted prefix
             float utility = 0.0f;
             Scoring::ScoreBreakdown breakdown;
@@ -125,7 +125,7 @@ namespace Huginn::Learning
                 m_scores.push_back(ScoreRow{
                     .formID = sc.GetFormID(),
                     .sourceType = sc.GetSourceType(),
-                    .need = Slot::SlotClassifier::Classify(sc),
+                    .slotClass = Slot::SlotClassifier::Classify(sc),
                     .rank = (i < sortedPrefix) ? i : kUnrankedTail,
                     .utility = sc.utility,
                     .breakdown = sc.breakdown,

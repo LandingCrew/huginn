@@ -29,7 +29,7 @@ Each phase lists what it builds and what it may prune. A phase only prunes what 
 - **Reuse:** move `AvName`, `KeywordList`, `PluginOf`, `CsvQuote` from `ConsoleCommands.cpp` into `src/util/FormRead.h`; take the MagicEffect helpers from `SpellClassifier.cpp` (`GetCostliestEffect` 1182, `ResistedElement` 1299, `DetermineMagicSchool` 1279, cloak/hazard resolution 310-621), keyword checks from `ItemClassifier.cpp`, weapon stat reads from `WeaponClassifier.cpp:241-431`, player enchantments from `WeaponRegistry.cpp:876-889` and `ApparelRegistry.cpp:226-254`.
 - **Split cap into static and runtime.** Static columns go in the catalog. `weapon_charge`, `overshoot_*`, `stack_count`, `ammo_matches_launcher`, `school_fortified` are computed per tick (new `src/learning/CrossFeatures.*`). Tempered and player-enchanted weapons need a per-instance cap.
 - **Candidates carry a catalog index**, not 239 floats (`CandidateTypes.h:382` asserts ≤ 56 bytes).
-- **Armour menu picks must reach the learner.** `ExternalEquipListener.h:81-98` drops every armour equip made outside Huginn (its comment: most of it is ordinary dressing, and turning it on shifts accept%). With all carried armour a candidate and the menu a choice set, lift it; record the accept% shift in the soak baseline. *Open: the user to confirm.*
+- **Armour menu picks must reach the learner.** `ExternalEquipListener.h:81-98` drops every armour equip made outside Huginn (its comment: most of it is ordinary dressing, and turning it on shifts accept%). With all carried armour a candidate and the menu a choice set, lift it; record the accept% shift in the soak baseline. *Decided by the user 2026-10-08: lift the skip* (the lift itself is R2 work).
 - **`hg dump all` becomes a view of the catalog** and absorbs the eight dump gaps in doc 9. Check coverage against `9-data/effects.csv`.
 - Prunes nothing yet.
 
@@ -58,7 +58,7 @@ Unsettled: whether the update loop ticks inside menus. `ExternalEquipLearner.cpp
 
 ### Phase 4: fit offline (`tools/replay`)
 
-- **First, on today's log:** one weight per need class × logged `ctx`, no per-item term. If it does not beat context alone, the full model probably will not.
+- **First, on today's log:** one weight per slot class × logged `ctx`, no per-item term. If it does not beat context alone, the full model probably will not.
 - **Then:** conditional logit with outside option, L2, sparse θ, small b; train/held-out split by launch; read v3 fields.
 - **Needs new play logged with v3.** The October soak cannot rebuild need(s); doc 9's step 3 says "fit on the soak selections", which contradicts its own challenged item.
 - **Restate the bar:** 81% is the live page with overrides and holds; replay's plain ranking matches arm A* at 76% (`Soak-2026-10-LoreRim.md:96-99`). Compare against 76%, or make replay model the page. Keep "menu-pick hits above 7 of 83".
@@ -69,7 +69,7 @@ Unsettled: whether the update loop ticks inside menus. `ExternalEquipLearner.cpp
 Log-odds scores can be zero or negative; the slot code assumes positive ratios.
 
 - **Bridge:** feed `score = ln(utility)` with σ = 0 and m = 1.5. This reproduces today's behaviour exactly, so the slot code can change first.
-- **Fix every positive-score assumption:** the need cap multiplies (helps a negative score) at `SlotAllocator.cpp:1162-1165,1844,1850`, and `DropSkipsSince(itemScore*factor)` at `SlotAllocator.cpp:1219` with its threshold comparison at `NeedCap.cpp:111` → an additive `k·ln d`; ratio logs at `SlotAllocator.cpp:1171,1175`, `SlotLocker.cpp:273`; `-1` as "incumbent gone" at `SlotLocker.cpp:244`, `SoakMetrics.h:141-143`; `utility = 0` for remembered-only rows at `PipelineCoordinator.cpp:366-369`; the `kOverrideUtility = 1000` sentinel (overflows under `exp`); the 0–15 widget bar; the unused "confidence" payload (`SlotUtils.h:66`).
+- **Fix every positive-score assumption:** the slot class cap (`SlotClassCap`, the need cap before R0) multiplies (helps a negative score) at `SlotAllocator.cpp:1162-1165,1844,1850`, and `DropSkipsSince(itemScore*factor)` at `SlotAllocator.cpp:1219` with its threshold comparison at `SlotClassCap.cpp:111` → an additive `k·ln d`; ratio logs at `SlotAllocator.cpp:1171,1175`, `SlotLocker.cpp:273`; `-1` as "incumbent gone" at `SlotLocker.cpp:244`, `SoakMetrics.h:141-143`; `utility = 0` for remembered-only rows at `PipelineCoordinator.cpp:366-369`; the `kOverrideUtility = 1000` sentinel (overflows under `exp`); the 0–15 widget bar; the unused "confidence" payload (`SlotUtils.h:66`).
 - **Full sort:** only the top 10 are sorted (`UtilityScorer.cpp:241-249`); with full pages, slots fill from the unsorted tail.
 - Update the ratio tests at `Tests.cpp:6462-6615`.
 

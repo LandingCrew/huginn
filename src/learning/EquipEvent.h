@@ -5,7 +5,6 @@
 #include "PipelineStateCache.h"
 #include "state/GameState.h"
 #include <RE/Skyrim.h>
-#include <array>
 
 namespace Huginn::Learning
 {
@@ -79,7 +78,6 @@ namespace Huginn::Learning
         // Press-time pipeline view, for the selection log
         PipelineStateCache::Snapshot shown{};
         uint32_t        loadGeneration = 0;  // g_loadGeneration at press time
-        std::array<RE::FormID, 3> handsAtPress{};  // right, left, ammo when chosen (ShadowArm: skip-equipped)
         float           confirmMs = 0.0f;    // Press -> confirmation
         // The same item EQUIPPED again within REPEAT_PICK_WINDOW_SEC: the same
         // decision. Set by SelectionTracker::Confirm; every subscriber honours

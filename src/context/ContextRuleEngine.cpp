@@ -108,10 +108,6 @@ namespace Huginn::Context
         // Exponent controls curve shape (default 2.0 = quadratic):
         //   Higher exponent = steeper at low health (more urgent)
         //   Lower exponent = gentler curve (earlier but less urgent)
-        //
-        // NOTE: Config weights (weightCriticalHealth, weightLowHealth) are NOT
-        // used here. They'll be used in Stage 2+ as category-level multipliers
-        // in the scoring formula, not as threshold overrides.
         // =====================================================================
 
         const float healthPct = player.vitals.health;

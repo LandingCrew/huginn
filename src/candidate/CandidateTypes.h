@@ -110,7 +110,7 @@ namespace Huginn::Candidate
     };
 
     // =============================================================================
-    // ITEM CANDIDATE - Wraps ItemData for potions, food, ingredients, soul gems
+    // ITEM CANDIDATE - Wraps ItemData for potions, food, soul gems
     // =============================================================================
     struct ItemCandidate : CandidateBase
     {

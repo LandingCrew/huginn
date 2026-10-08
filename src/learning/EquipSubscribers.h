@@ -21,14 +21,14 @@ namespace Huginn::Learning
     // Every event is a CONFIRMED player selection (SelectionTracker). It
     // teaches two things, both on the press-time features:
     //   - the chosen item -> 1 (CHOICE_TARGET), equip or consume alike;
-    //   - each item shown on the page for the SAME need (the selection log's
-    //     `need`, SlotClassifier::Classify) and passed over -> 0, at a quarter
+    //   - each item shown on the page for the SAME slot class (the selection
+    //     log's `need` column, SlotClassifier::Classify) and passed over -> 0, at a quarter
     //     step and not counted as a train (PASSED_OVER_*). Only plain
     //     recommendations: an override, a Remembrance hold or a wildcard was
     //     not the learner's offer, so passing it teaches the learner nothing.
     // Passed-over updates wait PASSED_OVER_DELAY_SEC and are cancelled when
     // their item is picked next -- companions (circlet then ring, sword then
-    // off-hand dagger) share a need class but are worn together. They are also
+    // off-hand dagger) share a slot class but are worn together. They are also
     // skipped for an item the learner has never seen: estimate 0, target 0,
     // nothing to learn, and an empty entry would only bloat the cosave.
     // The update `w += a*(target - w.phi)*phi` sizes every move by surprise.
@@ -68,7 +68,7 @@ namespace Huginn::Learning
                     for (const auto& slot : snap.shown) {
                         if (slot.formID == event.formID || slot.type != Slot::AssignmentType::Normal) continue;
                         const auto* row = snap.Find(slot.formID);
-                        if (!row || row->need != chosen->need) continue;
+                        if (!row || row->slotClass != chosen->slotClass) continue;
                         if (std::any_of(m_pending.begin(), m_pending.end(),
                                 [&](const PendingNegative& p) { return p.formID == slot.formID && p.chosenFor == event.formID; })) {
                             continue;   // shown twice on one page

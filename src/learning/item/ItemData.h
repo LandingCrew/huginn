@@ -84,7 +84,6 @@ namespace Huginn::Item
       Poison,           // Hostile (apply to weapon)
       Food,             // CC Survival Mode food
       Alcohol,          // Alcoholic beverages (ale, mead, wine, skooma)
-      Ingredient,       // Raw alchemy ingredient
       SoulGem           // Soul gem for weapon recharge
    };
 
@@ -276,7 +275,6 @@ namespace Huginn::Item
       case ItemType::Poison:         return "Poison";
       case ItemType::Food:           return "Food";
       case ItemType::Alcohol:        return "Alcohol";
-      case ItemType::Ingredient:     return "Ingredient";
       case ItemType::SoulGem:        return "SoulGem";
       default:                       return "Unknown";
       }

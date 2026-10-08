@@ -217,7 +217,6 @@ enum class ItemType : uint8_t
     Poison,           // Hostile (apply to weapon)
     Food,             // CC Survival Mode food
     Alcohol,          // Alcoholic beverages (ale, mead, wine, skooma)
-    Ingredient,       // Raw alchemy ingredient
     SoulGem           // Soul gem for weapon recharge
 };
 ```
@@ -626,7 +625,7 @@ ItemType ItemClassifier::DetermineItemType(RE::AlchemyItem* item) noexcept {
     // TIER 1: Built-in API flags
     if (item->IsPoison()) return ItemType::Poison;
     if (item->IsFood())   return ItemType::Food;   // may be re-typed to Alcohol by the caller
-    if (!item->IsMedicine()) return ItemType::Unknown;  // ingredients etc. → tag fallback
+    if (!item->IsMedicine()) return ItemType::Unknown;  // → tag fallback
 
     // TIER 2: Effect-based classification for medicines
     auto* effect = GetCostliestEffect(item);
@@ -654,12 +653,11 @@ ItemType ItemClassifier::DetermineItemType(RE::AlchemyItem* item) noexcept {
 }
 ```
 
-`ItemType::Ingredient` is never produced by auto-classification — the only
-assignment anywhere in `src/` is `ItemOverrides::ParseItemType` (`type = Ingredient`
-in the INI). Raw ingredients are also `RE::FormType::Ingredient`, which the item
+There is no ingredient type: Huginn leaves ingredients out (the user,
+2026-10-07). Raw ingredients are `RE::FormType::Ingredient`, which the item
 registry's inventory filter does not accept (it takes `AlchemyItem` and
-`SoulGem`), so in practice no ingredient reaches the registry at all. The
-`Unknown` branch above is about non-medicine *alchemy* forms.
+`SoulGem`), so none reaches the registry. The `Unknown` branch above is about
+non-medicine *alchemy* forms.
 
 ### Costliest Effect (Primary Effect)
 
@@ -1230,7 +1228,7 @@ neither a display name nor an editor ID; `WeaponRegistry` tombstones those in
 Each registry stores classification results in its own data struct:
 
 - `SpellData` (`src/spell/SpellData.h:214`) — spells
-- `ItemData` (`src/learning/item/ItemData.h:334`) — potions, poisons, food, alcohol, ingredients, soul gems
+- `ItemData` (`src/learning/item/ItemData.h:334`) — potions, poisons, food, alcohol, soul gems
 - `ScrollData` (`src/scroll/ScrollData.h:21`) — scrolls (reuses `SpellType`/`SpellTag`/`SpellTagExt` via type aliases)
 - `WeaponData` / `AmmoData` (`src/weapon/WeaponData.h:167`, `:211`) — weapons and ammo
 
@@ -1259,7 +1257,7 @@ by a `static_assert` tripwire).
 | `DefensiveAny` | `Defensive` or `Ward`/`Armor` | `ResistPotion` or any `Resist*` | `Defensive` or `Ward`/`Armor` | — |
 | `SummonsAny` | `Summon` or any summon/`BoundWeapon` tag | — | `Summon` or summon tags | — |
 | `Utility` | `Utility` or `Light`/`DetectLife`/`Telekinesis`/**ext `Unlock`** | `CurePotion` or `Waterbreathing`/`Cure*` | `Utility` or `Light`/`DetectLife` | — |
-| `PotionsAny` | — | the seven potion/poison types (not food, alcohol, soul gems, ingredients) | — | — |
+| `PotionsAny` | — | the seven potion/poison types (not food, alcohol, soul gems) | — | — |
 | `FoodAny` / `AlcoholAny` | — | `type == Food` / `type == Alcohol` | — | — |
 | `ScrollsAny` | — | — | all | — |
 | `SpellsAny` | all | — | — | — |

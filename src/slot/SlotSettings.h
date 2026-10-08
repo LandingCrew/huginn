@@ -123,16 +123,16 @@ namespace Huginn::Slot
             return m_homeKeyMemorySec.load(std::memory_order_acquire);
         }
 
-        /// The per-need soft cap on Regular keys (NeedCap.h): items of one need
-        /// past the first NeedFreeSlots() compete at x NeedRepeatDiscount() each.
-        /// 1.0 = off. `[SlotLocker] fNeedRepeatDiscount`, `iNeedFreeSlots`.
-        [[nodiscard]] float NeedRepeatDiscount() const noexcept
+        /// The per-class soft cap on Regular keys (SlotClassCap.h): items of one class
+        /// past the first ClassFreeSlots() compete at x ClassRepeatDiscount() each.
+        /// 1.0 = off. `[SlotLocker] fClassRepeatDiscount`, `iClassFreeSlots`.
+        [[nodiscard]] float ClassRepeatDiscount() const noexcept
         {
-            return m_needRepeatDiscount.load(std::memory_order_acquire);
+            return m_classRepeatDiscount.load(std::memory_order_acquire);
         }
-        [[nodiscard]] uint32_t NeedFreeSlots() const noexcept
+        [[nodiscard]] uint32_t ClassFreeSlots() const noexcept
         {
-            return m_needFreeSlots.load(std::memory_order_acquire);
+            return m_classFreeSlots.load(std::memory_order_acquire);
         }
 
         /// How long a slot holds what pressing it took off (Remembrance.h), in
@@ -188,8 +188,8 @@ namespace Huginn::Slot
         std::atomic<float> m_challengerMargin{0.5f};
         std::atomic<bool> m_returnToHomeKey{true};
         std::atomic<float> m_homeKeyMemorySec{60.0f};
-        std::atomic<float> m_needRepeatDiscount{0.5f};
-        std::atomic<uint32_t> m_needFreeSlots{3};
+        std::atomic<float> m_classRepeatDiscount{0.5f};
+        std::atomic<uint32_t> m_classFreeSlots{3};
         std::atomic<float> m_remembranceDurationMs{15000.0f};
         std::atomic<float> m_remembranceMismatchMs{5000.0f};
         std::atomic<bool> m_fillJobKeysFromRegular{false};

@@ -22,8 +22,8 @@ void RunSlotLockerResetTest();
 void RunSlotLockerInstanceLockTest();
 void RunSlotSeatingTest();
 void RunFillJobKeysTest();
-void RunNeedCapTest();             // Regular-key need cap (NeedCap.h)
-void RunNeedCapHoldTest();         // the need cap through the slot hold
+void RunSlotClassCapTest();        // Regular-key slot class cap (SlotClassCap.h)
+void RunSlotClassCapHoldTest();    // the class cap through the slot hold
 void RunHomeKeyTest();             // home keys: a returner takes its key back
 void RunBuffElementResistTest();
 

@@ -436,7 +436,7 @@ graph TB
 | Field | Type | Description |
 |-------|------|-------------|
 | `actorFormID` | `RE::FormID` | Actor form ID |
-| `targetType` | `TargetType` | None, Humanoid, Undead, Beast, Dragon, Construct, Daedra |
+| `targetType` | `TargetType` | None, Humanoid, Undead, Beast, Dragon, Construct, Daedra. Read by `ActorTypeClassifier` ([src/state/ActorTypeClassifier.h](../../src/state/ActorTypeClassifier.h)): manual race table, the race's family keywords, the actor's undead keywords, giant, goblinoids, then the `ActorTypeNPC` / `ActorTypeCreature` catch-alls. Checked against [9-data/race_map.csv](9-data/race_map.csv) by `tools/races/`. Cached per actor and re-read when the actor's race changes (a transform) |
 | `source` | `TargetSource` | None, Crosshair, CombatPrimary, NearbyEnemy, NearbyAlly |
 | `vitals` | `ActorVitals` | Health/magicka/stamina (shared component) |
 | `effects`, `buffs` | `ActorEffects`, `ActorBuffs` | Present for API symmetry; **not polled** — default-initialized |
@@ -444,7 +444,6 @@ graph TB
 | `isHostile` | `bool` | Target is hostile |
 | `isDead` | `bool` | Target is dead |
 | `isCasting` | `bool` | Target is casting a spell |
-| `level` | `uint16_t` | Actor level for illusion spell caps (v0.6.6) |
 | `isStaggered` | `bool` | Target is staggered — damage window (v0.6.6) |
 | `isFollower` | `bool` | Target is player's teammate, via `IsPlayerTeammate()` (v0.6.10) |
 | `isMage` | `bool` | Target has spell equipped in either hand (v0.6.11) |
@@ -1277,7 +1276,12 @@ graph TB
   Ice Spike) have a ~20-50ms effect lifetime; by the time the 100ms poll runs the
   ActiveEffect is gone and the damage type is unclassifiable.
 - Captures the type at impact, queues it under a mutex, and
-  `PollHealthTracking()` drains it with `DrainQueue()`.
+  `PollHealthTracking()` drains it with `DrainQueue()`. Every queued hit is
+  read (0.23.8; before, only the last): the latest names the tick's damage
+  event as before, and every hit's element timer (`timeSinceLastFire`, ...)
+  is refreshed from `m_extraElementHitTime`, at the hit's own impact time. The
+  other hits stay out of `damageHistory`, so they cannot evict real damage
+  events from its 10-entry ring.
 - Handles sub-threshold hits (high-resist scenarios where the health delta alone
   would never cross `HEALTH_DAMAGE_THRESHOLD`).
 - `ResetTrackingState()` drains the queue so a stale hit cannot survive a save load.
