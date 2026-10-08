@@ -198,5 +198,75 @@ int main(int argc, char** argv)
    std::cout << "readings:";
    for (const auto& [name, n] : readingCounts) std::cout << std::format(" {}={}", name, n);
    std::cout << "\n";
-   return mismatches == 0 ? 0 : 1;
+
+   // ── Actor-keyword cases ─────────────────────────────────────────────────
+   // The map rows above feed a TYPICAL actor (keywords on most NPC records),
+   // so they never exercise a lone actor keyword. These do: one actor's own
+   // NPC-record keywords on top of its race's real keywords (from the
+   // fixture by editorID; a `race` override is a made-up race).
+   std::map<std::string, Row> keywordsByEditorID;
+   for (const auto& [id, r] : keywordsByFormID) keywordsByEditorID.emplace(r.at("editorID"), r);
+   struct ActorCase
+   {
+      const char* race;
+      const char* raceOverride;  // nullptr: the fixture's keywords for `race`
+      const char* actor;         // the actor's own keywords, ';'-separated
+      const char* expected;
+      const char* why;
+   };
+   static constexpr ActorCase kActorCases[] = {
+      { "WerewolfBeastRace", nullptr, "ActorTypeNPC", "Beast",
+        "transformed werewolf: its (person's) NPC record carries ActorTypeNPC, which is not read off the actor" },
+      { "FoxRace", nullptr, "ActorTypeNPC", "Beast", "a FoxRace template record with ActorTypeNPC" },
+      { "NordRace", nullptr, "ActorTypeGhost", "Undead", "a ghost on a playable race (actor undead)" },
+      { "NordRace", nullptr, "ActorTypeUndead", "Undead", "an undead record on a playable race" },
+      { "NordRace", nullptr, "Vampire", "Undead", "a vampire record on a plain race (pre-R0 rule, kept)" },
+      { "WispRace", nullptr, "ActorTypeGhost;ActorTypeUndead", "Undead", "a wisp: race Creature only" },
+      { "TestLichRace", "ActorTypeCreature;ActorTypeLich", "", "Undead", "ActorTypeLich on the race" },
+      { "TestCreatureRace", "ActorTypeCreature", "ActorTypeLich", "Beast",
+        "ActorTypeLich on the actor only: the map reads Lich off the race" },
+      { "DLC2MiraakRace", nullptr, "ActorTypeNPC;ActorTypeDaedra;DLC2ActorTypeMiraak", "Humanoid",
+        "Miraak: manual Humanoid; his record's ActorTypeDaedra is not read" },
+      { "zzzCHFlameQueenRace", nullptr, "ActorTypeUndead", "Daedra", "race daedra beats actor undead" },
+      { "IceWraithRace", nullptr, "ActorTypeGhost;ActorTypeUndead", "Beast",
+        "a ghost ice wraith: the manual table (monster) beats actor undead; spectral is a facet (R3)" },
+      { "NordRace", nullptr, "ActorTypeDaedra", "Humanoid", "actor daedra on a person race is not read" },
+      { "FoxRace", nullptr, "ActorTypeDragon", "Beast", "actor dragon on an animal race is not read" },
+      { "HighElfRace", nullptr, "ActorTypeDwarven", "Humanoid", "actor dwarven on a person race is not read" },
+      { "GiantRace", nullptr, "ActorTypeGiant", "Beast", "vanilla giants carry Giant on the NPC only" },
+      { "IniGiantRace", nullptr, "ActorTypeGiant", "Beast", "giant before the race's ActorTypeNPC" },
+      { "TestBareRace", "", "ActorTypeCreature", "Beast", "no race type keyword: the actor's Creature is the fallback" },
+      { "TestBareRace", "", "ActorTypeNPC", "Humanoid", "no race type keyword: name fallback (Humanoid)" },
+      { "zzzCHIronSpiderRace", nullptr, "", "Construct", "manual beats the race's ActorTypeUndead" },
+      { "UndeadDragonRace", nullptr, "", "Dragon", "dragon beats undead (primary only)" },
+   };
+   int caseFails = 0;
+   for (const auto& c : kActorCases) {
+      std::set<std::string> raceKw;
+      bool flies = false;
+      if (c.raceOverride) {
+         raceKw = SplitSemicolons(c.raceOverride);
+      } else if (auto it = keywordsByEditorID.find(c.race); it != keywordsByEditorID.end()) {
+         raceKw = SplitSemicolons(it->second.at("keywords"));
+         flies = it->second.at("flies") == "1";
+      } else {
+         std::cout << std::format("CASE MISSING race {}\n", c.race);
+         ++caseFails;
+         continue;
+      }
+      const auto actorKw = SplitSemicolons(c.actor);
+      const std::string got = Huginn::State::GetTargetTypeName(Huginn::State::ActorTypeClassifier::Classify(
+         c.race, flies,
+         [&](std::string_view kw) { return raceKw.contains(std::string(kw)); },
+         [&](std::string_view kw) { return actorKw.contains(std::string(kw)); }));
+      if (got != c.expected) {
+         ++caseFails;
+         std::cout << std::format("CASE FAIL {} + actor [{}]: read {}, expected {} -- {}\n",
+            c.race, c.actor, got, c.expected, c.why);
+      }
+   }
+   std::cout << std::format("actor-keyword cases {}  passed {}  failed {}\n",
+      std::size(kActorCases), std::size(kActorCases) - caseFails, caseFails);
+
+   return mismatches == 0 && caseFails == 0 ? 0 : 1;
 }

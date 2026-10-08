@@ -24,16 +24,22 @@
 //   3. The ACTOR's undead keywords (ActorTypeUndead / ActorTypeGhost /
 //      Vampire on the NPC record): wisps, ghosts and zombies on a plain race.
 //      Only undead is read off the actor -- with giant below, the only family
-//      the race map takes from NPC records. A dragon, daedra or dwarven
-//      keyword on one NPC record of a person or animal race is not something
-//      the player can see; the race is.
+//      the race map takes from NPC records (step 6's Animal/Creature fallback
+//      aside, which only a race without ActorTypeNPC / Animal / Creature
+//      reaches). A dragon, daedra or dwarven keyword on one NPC record of a
+//      person or animal race is not something the player can see; the race
+//      is.
 //   4. Giant (race or actor): vanilla GiantRace carries it only on its NPCs.
 //   5. Goblinoids fold into humanoid: DLC2RieklingKeyword, or the race name
 //      says Falmer / Riekling / Goblin / Grummite / Minotaur / Hagraven /
 //      Lamia. Without this they read Beast through ActorTypeCreature.
-//   6. The catch-alls, race or actor: ActorTypeNPC is humanoid, then
-//      ActorTypeAnimal / ActorTypeCreature is beast. NPC first: Vigilant's
-//      minotaurs carry both and are people.
+//   6. The catch-alls: the RACE's ActorTypeNPC is humanoid, then
+//      ActorTypeAnimal / ActorTypeCreature (race, or the actor when the race
+//      has none of the three) is beast. NPC first: Vigilant's minotaurs carry
+//      both and are people. ActorTypeNPC is never read off the actor: a
+//      werewolf's own NPC record carries it (it is a person's record), so
+//      reading it there turned a transformed werewolf -- race
+//      WerewolfBeastRace, ActorTypeCreature -- back into a Humanoid.
 //   7. Race-name words, for races with no type keyword at all; then Humanoid.
 // =============================================================================
 
@@ -158,8 +164,8 @@ namespace Huginn::State::ActorTypeClassifier
       // 5. Goblinoids
       if (raceHas("DLC2RieklingKeyword") || IsGoblinoidName(raceEditorID)) return TargetType::Humanoid;
 
-      // 6. Catch-alls
-      if (raceHas("ActorTypeNPC") || actorHas("ActorTypeNPC")) return TargetType::Humanoid;
+      // 6. Catch-alls (ActorTypeNPC from the race only; see the header)
+      if (raceHas("ActorTypeNPC")) return TargetType::Humanoid;
       if (raceHas("ActorTypeAnimal") || raceHas("ActorTypeCreature") ||
           actorHas("ActorTypeAnimal") || actorHas("ActorTypeCreature")) {
          return TargetType::Beast;
