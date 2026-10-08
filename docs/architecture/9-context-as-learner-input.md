@@ -24,8 +24,8 @@ u = \text{ctx} \times (1 + \lambda(\text{conf}) \cdot \text{learn}) \times \text
 | ctx | 0–1, clamped per rule; most items near the 0.2 baseline | `ContextRuleEngine`, reduced to one number per item by `std::max` in `ContextWeightForCandidate.cpp:38-64` |
 | λ(conf) | 0.5 at zero confidence to 3.0 at full | `ScorerConfig.h:43-44` |
 | learn | α·R + (1−α)·prior + 0.2·UCB + recency (0.19) | R = w·φ, an unclamped dot product, weights clamped ±10 (`FeatureBanditLearner.cpp:263`) |
-| corr | up to 2× | `CorrelationBooster` |
-| potion | up to 1.5× | `PotionDiscriminator` |
+| corr | no cap: each bonus ×1.3–3, compounding (melee + no shield × two-handed = ×5.5; bow + arrows + fortify = ×9) | `CorrelationBooster` |
+| potion | ×0.5–2.5 | `PotionDiscriminator` (`MIN_MULTIPLIER`/`MAX_MULTIPLIER`) |
 | fav | up to 2.5× | favorites, on by default |
 
 - **Learner shape:** one 18-float weight vector per item, 88 items after the soak: about 1,600 parameters fit from 380 choices.
@@ -60,7 +60,7 @@ The problem is the shape of the formula, not the balance between its terms, so b
 3. **Too many parameters.** ~1,600 per-item weights from 380 choices. That explains both the state-copy vectors and the cold start.
 4. **Confidence ignores the situation.** Soul Sword's 61 trains make the learner fully confident about it in every state, including ones it was never chosen in.
 5. **Context has no uncertainty.** It is treated as always right, at a fixed scale.
-6. **The stray multipliers are hand-set.** Favorites 2.5×, correlation 2× and potion 1.5× together outweigh context's ~5× relevance gap.
+6. **The stray multipliers are hand-set.** Favorites up to 2.5×, correlation with no cap (×5.5 and ×9 combinations exist) and potion up to 2.5× each outweigh context's ~5× relevance gap on their own, and correlation switches on and off with combat and distance -- the score jumps behind the remaining slot churn.
 
 Options ruled out:
 
