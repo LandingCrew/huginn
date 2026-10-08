@@ -44,7 +44,8 @@ Each phase lists what it builds and what it may prune. A phase only prunes what 
 
 | Gap today | Fix |
 | --- | --- |
-| No record when nothing is pressed (`SelectionTracker.cpp:261-265`) | Impression records, sampled on page change or need onset; size against the 64-record queue (`SelectionLog.cpp:289-303`) |
+| No record when nothing is pressed (`SelectionTracker.cpp:261-265`) | One record per need episode that expires with nothing pressed, with the page as it stood at the onset (decided 2026-10-08); size against the 64-record queue (`SelectionLog.cpp:289-303`) |
+| Menu picks carry no choice set beyond the page | Log the held items off the page too (sparse cap per held item, or an index the replay can rebuild): the menu is a second choice set (P11) |
 | Choice set is filtered by the floors (`UtilityScorer.cpp:109,127`) | Log every eligible item |
 | No need vector | Log the cached vector from Phase 2 |
 | No effect vector | Log sparse cap per row, snapshotted at Select (dynamic FormIDs change meaning after reload) |
@@ -77,7 +78,7 @@ Order inside the phase matters:
 
 1. **Move hard zeros to `CandidateFilters` first**: spells for others with no follower near, apparel away from a workstation, torches in daylight (`ContextWeightForCandidate.cpp:25-28,346-349,415-444`), and favorites Suppress. Otherwise apparel and torches flood the page.
 2. **Turn `PotionDiscriminator`'s combat timer into the `combat_onset` sensor** (`UpdateLoop.cpp:219-225`).
-3. **`ChoiceLearner`** behind the existing equip bus: sparse θ keyed by a stable (needId, effectId) hash, never by position (positional keys broke once, `StateFeatures.h:264-270`); each entry {μ, σ²}; u0; b with prior N(0, σ_b²). Update over page ∪ {outside}: precision += Var_p(x), step = variance. Opportunity counter on need onsets next to `PipelineStateCache::Update` (`PipelineCoordinator.cpp:545`). Battery code (`RetentionAt`, `ForgetFaded`) kept, retargeted to b. Favorites Boost becomes a battery bonus.
+3. **`ChoiceLearner`** behind the existing equip bus: sparse θ keyed by a stable (needId, effectId) hash, never by position (positional keys broke once, `StateFeatures.h:264-270`); each entry {μ, σ²}; b with prior N(0, σ_b²). The choice set is the page (everything visible, including wildcard, override and Remembrance slots) ∪ the held items off the page at a learned menu cost κ ∪ "nothing pressed". u0 depends on the situation through an outside-option effect column, θ[need, out]. Update: precision += Var_p(x), step = variance. Picks in quick succession are processed in order, each removing the chosen item from the next pick's alternatives (Plackett–Luce); the repeat window still drops re-equips. This replaces the 10 s passed-over delay. Opportunity counter on need onsets next to `PipelineStateCache::Update` (`PipelineCoordinator.cpp:545`). Battery code (`RetentionAt`, `ForgetFaded`) kept, retargeted to b. Favorites Boost becomes a battery bonus.
 4. **Scorer:** v = θᵀ·need once per tick, μᵢ = cap(i)·v + bᵢ, σᵢ² under the diagonal approximation, outside option; explanation = the largest θ·need·cap term. Bootstrap θ from the Phase 4 fit.
 5. **Prune at cutover:** `ComputeUtility` and λ, `CorrelationBooster`, `PriorCalculator`, `PotionDiscriminator`, `ApplyPotionTierPreference`, the favorites multiplier, cold start, `fMinimumUtility`, `fMinimumContextWeight`, `IsHardContextGated`, `ContextWeightMap`, `WeightForCandidate`, `DominantReason`, `ReasonAppliesTo`, the 18-float `StateFeatures`, `BanditSubscriber` and passed-over logic, `UsageMemory` recency, the `Config.h` learning constants except `REPEAT_PICK_WINDOW_SEC`, the old `ScoreBreakdown` fields, the `[Scoring]` keys except `sFavoritesMode` and `iTopNCandidates`, and `[ContextWeights]` except `fDarkLightLevel` and `bAlcoholSatisfiesHunger`.
 
@@ -107,17 +108,17 @@ Order inside the phase matters:
 - Replace `Huginn_Overrides.ini` type/tag semantics with the per-load-order actor-value override (layer 2).
 - Then delete `SpellClassifier`, `ItemClassifier`, the tag enums, the scroll classifier and the per-type dumps (`ConsoleCommands.cpp:435-1370`), and replace the classifier fixtures in `Tests.cpp`.
 
-## Decisions this raises
+## Decisions (the user, 2026-10-08)
 
-- [ ] **The "nothing pressed" event:** sampled on page change, on need onset, or on a timer? It feeds both u0 and opportunity counting, and it is the largest new piece in the learner.
-- [ ] **u0 constant or per need** (u0 = θ₀ᵀ·need)?
-- [ ] **Companion picks.** The 10 s passed-over delay goes away, so a circlet-then-ring sequence pushes the ring down. Exclude same-press complements from the page set?
-- [ ] **Wildcard, override and Remembrance slots:** inside the logit's page set or not? Today they are excluded from negatives (`EquipSubscribers.h:69`).
-- [ ] **Favorites-always-pass.** Today favorites bypass the context filter so the learner sees them (`UtilityScorer.cpp:98-110`). With no floor this may not matter; confirm.
-- [ ] **Armour as candidates.** The 14 armour columns imply all armour enters the pool, against `ApparelClassifier`'s scope guard (craft-fortify gear only).
-- [ ] **Powers and shouts** have no registry path (`SpellRegistry.cpp:450-455`).
-- [ ] **Line of sight** for the hostile scan behind the held target bitmask (`StateManager_Targets.cpp:298-317`).
-- [ ] **Coverage loss.** Script-only spells that today reach a slot class only through the name/tag fallback drop out at ~98.9% extractor coverage.
+- [x] **"Nothing pressed" is recorded when a need expires.** One record per need episode that resets with no press, with the page at the onset. It feeds u0 and opportunity counting.
+- [x] **u0 depends on the situation:** an outside-option effect column, θ[need, out], learned like any other weight. Needs that never fire keep their starting value.
+- [x] **Co-picks are processed in sequence** (Plackett–Luce). The user's reading: co-picks and sequential picks covary, and processing them in order keeps that out of the update.
+- [x] **The page set includes everything visible:** wildcard, override and Remembrance slots too (P5 needs the choice set as shown). This reverses today's exclusion at `EquipSubscribers.h:69`.
+- [x] **The menu is a second choice set** at a learned cost κ (theory page, P11). A menu pick teaches the item picked through its need × effect pairs; κ settles at the observed reach-in rate. The favorites-always-pass rule (`UtilityScorer.cpp:98-110`) goes: menu picks carry that evidence now. Today a menu pick already trains the item's own vector (`ExternalEquipLearner.cpp:67` → `SelectionTracker::Select`); what was missing is the need and effect attribution.
+- [x] **All carried armour is gear and enters the candidate pool.** Mid-fight swaps (gloves of Destruction ↔ gloves of Two-Handed) are free in the engine today; they are not expected to recur often, so the data per armour item will be thin, and b and the shared θ carry it. A future swap cost becomes a feature or part of κ_move. Lift `ApparelClassifier`'s scope guard (`ApparelClassifier.h:11-17`).
+- [x] **Powers stay out; a bonus only if the system works very well.** Mods use powers as a grab bag (debug tools, Weathersense, prayers for favour), players keep them on the favourites list, and their context is harder to judge than spells'. Shouts are filed with powers for now.
+- [x] **Target type keeps the combat-hostile union, no line-of-sight logic.** The engine's combat state is all or nothing, the crosshair sees one actor while the player sees several in frame, and manual tagging per fight is not reasonable.
+- [x] **Coverage loss is not a blocker.** Script-only spells were a back-of-the-envelope concern; unmapped items still get b. Run the coverage diff before Phase 10.
 
 ## Corrections found
 

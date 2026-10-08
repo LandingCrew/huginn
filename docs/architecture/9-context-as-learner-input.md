@@ -313,6 +313,8 @@ Open points:
 - Keep the battery model for per-item memory.
 - Feedback-loop correction comes from surprise weighting plus uncertainty-driven exploration.
 - Overrides stay hard rules. Favorites feed the battery (Boost) or a filter (Suppress), never utility.
+- **The choice model's three outcomes** (the user, 2026-10-08; proofs on the Huginn Learning Theory page, P11): a key press from the page (everything visible, including wildcard, override and Remembrance slots); a menu pick from the held items off the page at a learned cost κ, which teaches that item's need × effect pairs and settles at the observed reach-in rate; and "nothing pressed", recorded once per need episode when the need expires, with the page at the onset. u0 depends on the situation through an outside-option effect column. Co-picks are processed in order (Plackett–Luce). The favorites-always-pass rule goes.
+- **Scope** (the user, 2026-10-08): all carried armour is gear and a candidate; powers (and shouts, for now) stay out as a later bonus; target type keeps the combat-hostile union with no line-of-sight logic. Details in [the implementation map](9-implementation-map.md#decisions-the-user-2026-10-08).
 
 **Open questions**
 
