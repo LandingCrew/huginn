@@ -4,11 +4,11 @@ Launches the game through Mod Organizer 2's command line, lets Huginn run its
 main-menu suites, auto-load a save and run the after-load suites, then waits
 for the sentinel line Huginn logs before it ends the game:
 
-    [HuginnTest] DONE result=PASS suites=19 passed=19 failed=0 skipped=0 fail_lines=0 failed_suites=- reason=-
+    [HuginnTest] DONE result=PASS suites=19 passed=19 failed=0 skipped=0 fail_lines=0 failed_suites=- skipped_suites=- reason=-
 
 Exit code: 0 on PASS (and no skipped suite, unless --allow-skips); 1 on a
 failed suite, a skipped suite, or a run that never reached the sentinel
-(timeout, crash, Release build, stale log); 2 when it refused to launch.
+(timeout, crash, unread flag); 2 when it refused to launch.
 
 How Huginn is told to test (src/TestHarness.h): a one-shot file
 Huginn_TestMode.ini in the SKSE log folder, written here and deleted by Huginn
@@ -18,13 +18,26 @@ ordinary launch into a test. An environment variable would not do: when MO2 is
 already running, the shortcut is handed to that process and runs with its
 environment, not ours.
 
-Safety:
-- Refuses to launch while SkyrimSE.exe is running. Kills only the SkyrimSE.exe
-  it saw start after its own launch, and only on a timeout.
-- Refuses when a ModOrganizer.exe from another MO2 instance is running (the
-  shortcut would go to it); --multiple passes MO2's own --multiple instead.
-- Reads MO2's ModOrganizer.ini and profile settings; never writes MO2 config.
-- Does not deploy the DLL: put the Debug Huginn.dll in the list first.
+Pre-flight (refuses, exit 2, before writing or launching anything):
+- The list's deployed overwrite/SKSE/Plugins/Huginn.dll must carry the test
+  harness (Debug, 0.23.9 or later): it is searched for the harness's strings,
+  which a Release build or an older Debug build does not contain. Its MD5 is
+  printed. Without this a run would only time out.
+- SkyrimSE.exe must not be running.
+- No ModOrganizer.exe may be running: the shortcut would be handed to it, and
+  an MO2 of the same instance open on another profile would launch THAT
+  profile. --multiple passes MO2's own (unsupported) --multiple, and is still
+  refused when a running MO2 belongs to this instance or its path is unknown.
+- The MO2 executable title, the profile, and the save must exist.
+
+When the run ends, whatever the verdict, the runner kills the SkyrimSE.exe it
+saw start after its own launch if that process is still running 15 s later.
+Huginn ends the game itself after DONE, so after a DONE there is normally
+nothing to kill; the kill matters on a timeout, a crash-less hang, or an unread
+flag. It never touches a game it did not see start.
+
+Reads MO2's ModOrganizer.ini and profile settings; never writes MO2 config.
+Does not deploy the DLL: put the Debug Huginn.dll in the list first.
 
 Usage:
     python -I tools/ingame/run_tests.py [--list simonrim|lorerim]
@@ -42,8 +55,8 @@ import argparse
 import configparser
 import csv
 import datetime as dt
+import hashlib
 import io
-import os
 import re
 import subprocess
 import sys
@@ -52,10 +65,14 @@ from dataclasses import dataclass
 from pathlib import Path
 
 DEFAULT_LOG_DIR = Path.home() / "Documents" / "My Games" / "Skyrim.INI" / "SKSE"
-LOG_NAME = "_Huginn_Debug.log"   # the Debug build's log (Release writes Huginn.log)
+LOG_NAME = "_Huginn_Debug.log"   # the Debug build's log; only Debug has the suites
 FLAG_NAME = "Huginn_TestMode.ini"
 GAME_EXE = "SkyrimSE.exe"
+MO2_EXE = "ModOrganizer.exe"
 DEFAULT_SAVE = "HuginnTest"
+# Strings only a DLL with the test harness contains (src/TestHarness.cpp).
+HARNESS_MARKERS = (b"Huginn_TestMode.ini", b"[HuginnTest] DONE")
+KILL_GRACE_SEC = 15
 
 
 @dataclass(frozen=True)
@@ -74,7 +91,7 @@ LISTS = {
 RE_LAUNCH = re.compile(r"Launch (\d{8}-\d{6}) \(UTC\)")
 RE_DONE = re.compile(r"\[HuginnTest\] DONE result=(\w+) (.*)$")
 RE_RESULT = re.compile(r"\[HuginnTest\] RESULT phase=(\w+) (.*)$")
-RE_SUITE = re.compile(r"\[HuginnTest\] suite (\S+) (\S+) \((\d+) error line")
+RE_SUITE = re.compile(r"\[HuginnTest\] suite (\S+) (\S+) \((\d+) error line\(s\)(?:; skipped: (.*))?\)")
 RE_FIELDS = re.compile(r"(\w+)=(\S+)")
 
 
@@ -88,30 +105,41 @@ class Refused(Exception):
 
 # --- processes ---------------------------------------------------------------
 
-def game_pids() -> list[int]:
-    out = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {GAME_EXE}", "/NH", "/FO", "CSV"],
+def pids_of(image: str) -> list[int]:
+    out = subprocess.run(["tasklist", "/FI", f"IMAGENAME eq {image}", "/NH", "/FO", "CSV"],
                          capture_output=True, text=True, check=False).stdout
     pids = []
     for row in csv.reader(io.StringIO(out)):
-        if len(row) >= 2 and row[0].lower() == GAME_EXE.lower():
+        if len(row) >= 2 and row[0].lower() == image.lower():
             pids.append(int(row[1]))
     return pids
 
 
-def mo2_paths() -> list[Path]:
-    """Executable paths of every running ModOrganizer.exe."""
+def game_pids() -> list[int]:
+    return pids_of(GAME_EXE)
+
+
+def mo2_processes() -> list[tuple[int, Path | None]]:
+    """Every running ModOrganizer.exe with its path; None when the path cannot
+    be read (an elevated process hides it). tasklist is the source of truth for
+    which processes exist, so a process CIM leaves out is still listed."""
     cmd = ("Get-CimInstance Win32_Process -Filter \"Name='ModOrganizer.exe'\" | "
-           "ForEach-Object { $_.ExecutablePath }")
+           "ForEach-Object { \"$($_.ProcessId)|$($_.ExecutablePath)\" }")
     out = subprocess.run(["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd],
                          capture_output=True, text=True, check=False).stdout
-    return [Path(line.strip()) for line in out.splitlines() if line.strip()]
+    paths: dict[int, Path | None] = {}
+    for line in out.splitlines():
+        pid, _, path = line.strip().partition("|")
+        if pid.isdigit():
+            paths[int(pid)] = Path(path) if path.strip() else None
+    return [(pid, paths.get(pid)) for pid in pids_of(MO2_EXE)]
 
 
 def kill(pid: int) -> None:
     subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True, check=False)
 
 
-# --- MO2 config (read only) --------------------------------------------------
+# --- pre-flight (read only) --------------------------------------------------
 
 def read_ini(path: Path) -> configparser.RawConfigParser:
     ini = configparser.RawConfigParser(strict=False, interpolation=None)
@@ -129,7 +157,42 @@ def check_executable(ml: ModList) -> None:
                 titles.append(val)
     if ml.executable not in titles:
         raise Refused(f"no MO2 executable titled '{ml.executable}' in "
-                         f"{ml.root / 'ModOrganizer.ini'} (have: {titles})")
+                      f"{ml.root / 'ModOrganizer.ini'} (have: {titles})")
+
+
+def check_deployed_dll(ml: ModList) -> None:
+    """The DLL the list will load carries the test harness."""
+    dll = ml.root / "overwrite" / "SKSE" / "Plugins" / "Huginn.dll"
+    if not dll.is_file():
+        raise Refused(f"no {dll}: deploy the Debug Huginn.dll there first "
+                      "(this runner checks only the list's overwrite folder)")
+    data = dll.read_bytes()
+    md5 = hashlib.md5(data).hexdigest()
+    mtime = dt.datetime.fromtimestamp(dll.stat().st_mtime)
+    say(f"deployed DLL: {dll} md5={md5} size={len(data)} modified={mtime:%Y-%m-%d %H:%M:%S}")
+    missing = [m.decode() for m in HARNESS_MARKERS if m not in data]
+    if missing:
+        raise Refused(f"the deployed Huginn.dll has no test harness (missing {missing}): it is a "
+                      "Release build or older than 0.23.9, and a run would only time out. "
+                      "Deploy a Debug build of 0.23.9 or later")
+
+
+def check_mo2(ml: ModList, multiple: bool) -> list[str]:
+    """MO2 arguments to add, or Refused."""
+    running = mo2_processes()
+    if not running:
+        return []
+    shown = [f"pid {pid}: {path if path else '(path unknown)'}" for pid, path in running]
+    if not multiple:
+        raise Refused(f"MO2 is running ({shown}). The shortcut would go to it, and an MO2 of this "
+                      "instance on another profile would launch that profile. Close it, or pass "
+                      "--multiple if it is another instance")
+    own = (ml.root / MO2_EXE).resolve()
+    risky = [s for (pid, path), s in zip(running, shown) if path is None or path.resolve() == own]
+    if risky:
+        raise Refused(f"--multiple refused: {risky} is this instance's MO2 or cannot be identified; "
+                      "MO2 must never run twice on one instance")
+    return ["--multiple"]
 
 
 def profile_saves_dir(ml: ModList) -> Path | None:
@@ -198,6 +261,20 @@ def fields(text: str) -> dict[str, str]:
     return dict(RE_FIELDS.findall(text))
 
 
+def done_verdict(lines: list[str], allow_skips: bool) -> tuple[int, str] | None:
+    for line in lines:
+        m = RE_DONE.search(line)
+        if m:
+            f = fields(m.group(2))
+            ok = m.group(1) == "PASS"
+            skipped = int(f.get("skipped", "0"))
+            if ok and skipped and not allow_skips:
+                return (1, f"{skipped} suite(s) skipped: {f.get('skipped_suites', '?')} "
+                           "(pass --allow-skips to accept)")
+            return (0 if ok else 1, line.split("]: ", 1)[-1])
+    return None
+
+
 # --- main --------------------------------------------------------------------
 
 def main() -> int:
@@ -211,30 +288,22 @@ def main() -> int:
     ap.add_argument("--log-dir", type=Path, default=DEFAULT_LOG_DIR)
     ap.add_argument("--allow-skips", action="store_true", help="a skipped suite does not fail the run")
     ap.add_argument("--multiple", action="store_true",
-                    help="launch even when another MO2 instance is running (MO2's unsupported --multiple)")
+                    help="launch even when ANOTHER instance's MO2 is running (MO2's unsupported --multiple)")
     ap.add_argument("--dry-run", action="store_true", help="check everything, print the command, launch nothing")
     args = ap.parse_args()
 
     ml = LISTS[args.list]
-    mo2 = ml.root / "ModOrganizer.exe"
+    mo2 = ml.root / MO2_EXE
     if not mo2.is_file():
         raise Refused(f"{mo2} not found")
     check_executable(ml)
+    check_deployed_dll(ml)
     save = resolve_save(ml, "" if args.no_save else args.save)
 
     running = game_pids()
     if running:
-        say(f"refused: {GAME_EXE} is already running (pid {running}); not launching, not killing")
-        return 2
-
-    mo2_args = []
-    others = [p for p in mo2_paths() if p.resolve() != mo2.resolve()]
-    if others:
-        if not args.multiple:
-            say(f"refused: another MO2 instance is running ({[str(p) for p in others]}); "
-                "it would receive the shortcut. Close it, or pass --multiple")
-            return 2
-        mo2_args.append("--multiple")
+        raise Refused(f"{GAME_EXE} is already running (pid {running}); not launching, not killing")
+    mo2_args = check_mo2(ml, args.multiple)
     cmd = [str(mo2), *mo2_args, "-p", ml.profile, f"moshortcut://:{ml.executable}"]
 
     log_path = args.log_dir / LOG_NAME
@@ -260,12 +329,12 @@ def main() -> int:
     game_pid: int | None = None
     verdict: tuple[int, str] | None = None
     lines: list[str] = []
+    fresh = False
     mo2_proc = None
     try:
         mo2_proc = subprocess.Popen(cmd, cwd=str(ml.root))
         say(f"launched MO2 (pid {mo2_proc.pid}); waiting for the game and the log")
-        fresh = False
-        build_checked = False
+        build_seen = False
         while time.monotonic() < deadline:
             time.sleep(2)
             pids = game_pids()
@@ -277,27 +346,13 @@ def main() -> int:
                 fresh = log_is_fresh(log_path, lines, launched_utc)
                 if fresh:
                     say("Huginn log started for this launch: " + lines[0].split("]: ", 1)[-1])
-            if fresh and not build_checked:
-                head = "\n".join(lines[:10])
-                if "[RELEASE]" in head:
-                    verdict = (1, "the deployed Huginn is a Release build; the suites exist only in Debug")
-                    break
-                if "[DEBUG BUILD]" in head:
-                    build_checked = True
-                    ver = next((l.split("]: ", 1)[-1] for l in lines[:10] if "[DEBUG BUILD]" in l), "")
+            if fresh and not build_seen:
+                ver = next((l.split("]: ", 1)[-1] for l in lines[:10] if " Loading" in l), None)
+                if ver:
+                    build_seen = True
                     say("build: " + ver)
             if fresh:
-                for line in lines:
-                    m = RE_DONE.search(line)
-                    if m:
-                        f = fields(m.group(2))
-                        ok = m.group(1) == "PASS"
-                        skipped = int(f.get("skipped", "0"))
-                        if ok and skipped and not args.allow_skips:
-                            verdict = (1, f"{skipped} suite(s) skipped (pass --allow-skips to accept)")
-                        else:
-                            verdict = (0 if ok else 1, line.split("]: ", 1)[-1])
-                        break
+                verdict = done_verdict(lines, args.allow_skips)
                 if verdict:
                     break
                 if any("[HuginnTest] RESULT phase=menu" in l for l in lines) and \
@@ -305,17 +360,25 @@ def main() -> int:
                     verdict = (1, "Huginn ran its suites without test mode: the flag file was not read")
                     break
             if game_pid is not None and game_pid not in pids:
+                # The game is gone. Only a DONE line in THIS launch's log counts.
                 time.sleep(2)
                 lines = read_log(log_path)
-                if not any(RE_DONE.search(l) for l in lines):
-                    verdict = (1, "the game exited before the sentinel (crash?)")
-                    break
+                fresh = fresh or log_is_fresh(log_path, lines, launched_utc)
+                if fresh and done_verdict(lines, args.allow_skips):
+                    continue   # parsed on the next pass
+                verdict = (1, "the game exited before the sentinel (crash?)"
+                              + ("" if fresh else "; this launch never started a Huginn log"))
+                break
         else:
             verdict = (1, f"timeout after {args.timeout}s" + ("" if fresh else " (the log never started)"))
     finally:
-        if game_pid is not None and verdict is not None and verdict[0] != 0 and game_pid in game_pids():
-            say(f"killing {GAME_EXE} pid {game_pid}")
-            kill(game_pid)
+        if game_pid is not None and game_pid in game_pids():
+            end = time.monotonic() + KILL_GRACE_SEC
+            while time.monotonic() < end and game_pid in game_pids():
+                time.sleep(1)
+            if game_pid in game_pids():
+                say(f"killing {GAME_EXE} pid {game_pid} (still running at the end of the run)")
+                kill(game_pid)
         try:
             flag_path.unlink()
             say("removed the test-mode file (Huginn had not consumed it)")
@@ -327,15 +390,17 @@ def main() -> int:
             except subprocess.TimeoutExpired:
                 say(f"MO2 (pid {mo2_proc.pid}) is still running after the game; left open")
 
-    # Report.
-    for line in lines:
-        m = RE_SUITE.search(line)
-        if m:
-            print(f"  {m.group(2):8} {m.group(1)}  ({m.group(3)} error lines)")
-    for line in lines:
-        m = RE_RESULT.search(line)
-        if m:
-            print(f"  RESULT {m.group(1)}: {m.group(2)}")
+    # Report: only from this launch's log.
+    if fresh:
+        for line in lines:
+            m = RE_SUITE.search(line)
+            if m:
+                extra = f"; skipped: {m.group(4)}" if m.group(4) else ""
+                print(f"  {m.group(2):8} {m.group(1)}  ({m.group(3)} error lines{extra})")
+        for line in lines:
+            m = RE_RESULT.search(line)
+            if m:
+                print(f"  RESULT {m.group(1)}: {m.group(2)}")
     code, why = verdict or (1, "no verdict")
     say(("PASS: " if code == 0 else "FAIL: ") + why)
     return code
