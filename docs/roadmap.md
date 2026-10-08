@@ -210,7 +210,8 @@ soak). Order inside: hard zeros to `CandidateFilters` first; `combat_onset`
 sensor from `PotionDiscriminator`'s timer; `ChoiceLearner`; scorer; cosave
 `THTA`/`BIAS`; then the prune list in the map, with every consumer of a
 pruned symbol (console, selection log, `ReasonHold`, debug widget, `Tests.cpp`)
-changed in the same PR so the Debug build stays green.
+changed in the same PR so the Debug build stays green. Done means a grep for
+every pruned symbol finds nothing outside the new code, not a checked list.
 - Done when: host tests cover the update (Var_p precision, step = variance,
   Plackett–Luce, opportunity counting), the explanation label is the largest
   term, the scorer reproduces R6's replay numbers on the logged data.

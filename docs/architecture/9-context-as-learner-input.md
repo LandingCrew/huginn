@@ -261,7 +261,7 @@ Measured 2026-10-07 from `hg dump all` and `hg dump races` on vanilla+, Simonrim
   4. Effect-description patterns.
   5. Unmapped, logged once.
 - **Extractor rules, in order:**
-  1. Player-facing items only, no ingredients. Plain spells must be taught by a tome; powers and shouts keep their own rule.
+  1. Player-facing items only, no ingredients. Plain spells must be taught by a tome. Powers and shouts are out of scope (2026-10-08).
   2. Visible effects, plus a whitelist of hidden ones with real mechanics (frost slow, LoreRim stagger).
   3. One canonical actor value per skill: X, XMod and XPowerMod are the same skill.
   4. The detrimental, Recover and resistAV fields separate restore / fortify / drain and resist / weakness.
@@ -283,7 +283,7 @@ Measured 2026-10-07 from `hg dump all` and `hg dump races` on vanilla+, Simonrim
 4. the per-effect cost, next to the base cost;
 5. descriptions with magnitude and duration filled in;
 6. attached script names, for script effects with no description;
-7. "taught by shout";
+7. "taught by shout" (moot: shouts are out of scope, 2026-10-08);
 8. MGEF or perk conditions, for the bane columns.
 
 ## Favorites
@@ -349,7 +349,7 @@ Open points:
 - [ ] **Derive the minimum utility; do not set it** (the user, 2026-10-07: "should be derived, not something we should set"). Today `fMinimumUtility` (0.1) drops anything under it (`UtilityScorer.cpp:127`), and at least four always-on baselines exist only to clear it -- `weightWeapon`, `weightSpell`, `weightBuffPotion`/`weightBuffCombat`, `weightSoulGem` (`ContextRuleEngine.cpp:455-492`) -- plus `fColdStartUCBBoost`. One hand-set floor, five hand-set workarounds. Three ways to derive it, cheapest first:
   1. **The noise floor** (today's formula): the utility of an item with no context reason and no training, `baseRelevance × (1 + λmin × prior)`. It moves with the other parameters instead of drifting out of sync, and a category it keeps out has a sensor gap, not a threshold problem. The baselines then retire one by one as their sensors arrive.
   2. **Replay**: bin shown items by utility, measure the pick rate per bin, put the floor where it reaches ~0. Answers "when is a blank key better than the 9th-best item?" from play, and checks where (1) lands.
-  3. **The outside option** (this model): the choice model gets a "nothing on the page" alternative -- no press, or a menu pick -- with its own learned score, fit from menu picks (goal 1's count). Show an item when it beats the outside option. (Superseded 2026-10-08: the outside option is "nothing pressed", recorded when a need expires; a menu pick is a choice from the held items off the page at a learned cost κ. Under a logit any item beats a blank key, so a floor needs a measured cost per shown item; theory page, P9 and P11.) The threshold is then learned like everything else.
+  3. **The outside option** (this model): the choice model gets a "nothing on the page" alternative -- no press, or a menu pick -- with its own learned score, fit from menu picks (goal 1's count). Show an item when it beats the outside option. (Superseded 2026-10-08: the outside option is "nothing pressed", recorded when a need expires; a menu pick is a choice from the held items off the page at a learned cost κ. Under a logit any item beats a blank key, so a floor needs a measured cost per shown item; theory page, P9 and P11.)
 - [x] **A prerequisite gate: dump the game through this lens first** (the user, 2026-10-07). Design the effect vector from what the load order contains, not from guesses. Seven dumps exist (`hg dump spells / food / potions / scrolls / weapons / apparel / diseases`, Debug only) but each has its own classifier-shaped columns; unenchanted armour and ingredients are not dumped at all, and weapons lack hand and reach. Wanted: one effect-view dump, one schema, every item type -- a row per item × effect (archetype, actor value, delivery, magnitude, duration, area, cost, keywords) plus physical stats (weapon type, hand, damage, speed, reach; armour slot, rating, weight class) -- run on vanilla+, simonrim and LoreRim. It answers how many distinct effects really occur, which sets the size of cap(i).
 - [x] **Ingredients are out of scope** (the user, 2026-10-07): they matter only at an alchemy lab, so Huginn drops them. No cap(i) for ingredients, and so no need to mask their effects to the ones the player has discovered (the Core Principle issue the LoreRim dump analysis raised). `hg dump all` leaves them out.
 - [x] **Enumerate needs and effects fully; expect most pairs at zero** (the user, 2026-10-07). Both lists are derivable: needs from the sensors (finite, ~25-40), effects from the dump (archetype × actor value is ~50 × ~160 in principle, far fewer in use). The pair space is large -- thousands -- but at ~40 picks an hour play can support only a few dozen nonzero pairs, so every pair starts at zero and needs evidence; the obvious pairs get a nonzero starting value. This replaces the "sparse hand-listed set + dense block" question above with one rule. Suggested with it: give effects two levels, family and specific (Resist, Resist Fire), so a rare effect borrows evidence from its family instead of staying at zero.
@@ -359,13 +359,13 @@ Open points:
 
 - Data volume: ~40 choices an hour. Rare and emergent pairings will learn slowly, possibly never.
 - Shared θ makes the feedback loop wider: one bad drop hides a whole class of items, not one item.
-- One player's soak log as the bootstrap may encode their playstyle as everyone's default.
+- One player's logged play as the bootstrap may encode their playstyle as everyone's default (now the v3-logged mage play, not the soak log).
 - Sensor bugs become silent unless drift is logged.
 - Cosave format change: old per-item vectors are largely state copies, so discarding them is probably fine, but say so in release notes.
 
 ## Suggested sequence
 
-The effect feature extractor comes first; everything else can be tested offline in `tools/replay` against the soak log before any in-game change.
+The effect feature extractor comes first; everything else can be tested offline in `tools/replay` before any in-game change, on play logged with selection log v3 (the soak log cannot rebuild the need vector; corrected 2026-10-08).
 
 0. **Effect-view dump** (prerequisite gate, decided 2026-10-07). One schema for every item type, on three load orders; design the effect vector and the needs × effects enumeration from it.
 1. **Effect extractor.** Describe every candidate as a capability vector from game data -- weapons and armour by their physical stats too. Testable on its own with `hg dump`-style output.
