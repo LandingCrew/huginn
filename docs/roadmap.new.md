@@ -486,6 +486,22 @@ altitude in survival?
 - **A torch on a Huginn Wheeler wheel is unverified** (XS). The soak showed
   the torch on the Huginn page and pressed by key, never picked from the wheel.
   Worst case is a blank wheel entry.
+- **A transformed actor keeps its old target type** (found 2026-10-07 by
+  the race study). `m_actorTypeCache` (`StateManager.h:479`) is keyed by
+  actor FormID alone and cleared only on save load (`StateManager.cpp:126`);
+  its comment says "Race never changes at runtime", but a werewolf or
+  vampire-lord transform does change it, so the beast keeps reading
+  Humanoid. Key the cache by (actor, race). XS.
+- **Target type misreads 37 LoreRim combat races** (366 NPC records; the
+  race study, `docs/architecture/9-data/race_map.csv`). The keyword
+  catch-alls do it: `ActorTypeCreature` reads Beast and `ActorTypeNPC`
+  Humanoid. So Falmer, Hagraven, Rieklings and goblins read Beast; Vigilant's
+  iron spiders Undead; Wispmother and Karstaag Beast or Humanoid; skeletal
+  dragons Dragon only (no anti-undead). The same goblin reads Humanoid or
+  Beast depending on which mod added it. Fixed properly by the 11-family
+  multi-hot target type in doc 9 ("Needs and effects, enumerated"); a smaller
+  fix today is a manual editorID table for the worst rows and multi-type
+  flags for the undead and daedra overlays. S.
 - **`870710C4` warns at every load.** Settled in the soak: a non-playable,
   nameless Requiem weapon, correctly rejected. Left: quiet the warning for
   non-playable forms (XS).

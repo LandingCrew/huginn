@@ -211,6 +211,81 @@ Weights stop being hand-tuned, but sensors stay hand-written and become the main
 - **Preferred:** fit θ offline from the soak selection log (412 logged choices, full candidate list each) and ship that as the default. The INI stays as an emergency override.
 - **Rare needs never converge.** Drowning fired twice in 9 hours. For those, the starting value is effectively permanent. Acceptable, since overrides cover the safety-critical ones, but the design should say so.
 
+## Needs and effects, enumerated
+
+Measured 2026-10-07 from `hg dump all` and `hg dump races` on vanilla+, Simonrim Essentials and LoreRim, plus a survey of the code and roadmap. The tables are in [9-data/](9-data/): `needs.csv`, `effects.csv`, `target_types.csv`, `race_map.csv`.
+
+**Needs: 92.**
+- **Status:** 31 exist today, 11 exist but are on/off only, 27 are partly there and 13 are new.
+- **Sources:** every one of today's 41 `[ContextWeights]` keys maps to a need, or is explained as not being one (the baselines that only clear `fMinimumUtility`, and the dead keys on the roadmap's cleanup chore).
+- **Perception rule:** applied. Target level is read today (`StateManager_Targets.cpp:404,499,667`) but used nowhere; it stays unused.
+- **Mod-dependent needs** switch on only when their system is detected: thirst, the SMI/CC survival meters, TrueHUD's enemy magicka and stamina, and LoreRim's healing block.
+
+**Target type: 11 families, 4 facets, and a summoned flag.** These replace vanilla's six.
+- **Families:** humanoid, undead, daedra, animal, monster, arthropod, construct, dragon, troll, giant, werebeast.
+- **Facets:** spectral (under undead), and element fire, frost and shock (elementals only).
+- **Multi-hot:** a vampire is undead and humanoid, a skeletal dragon dragon and undead.
+- **The classifier:** race keywords first (`ActorType*` plus mod keywords such as Vigilant's and Requiem's), then a manual editorID table (17 LoreRim rows). `ActorTypeCreature` on its own means monster, not beast.
+- **Why it changes:** today 37 LoreRim combat races (366 NPC records) are misread. Falmer, Hagraven and goblins read as beast; Vigilant's iron spiders as undead; skeletal dragons as dragon only. The same goblin reads humanoid or beast depending on which mod added it.
+- **Race is not a need.** That would be 400 races, and only 93 have 10 or more NPC records. Log the race editorID at each pick; add a race θ shrunk toward its family only if replay shows lift.
+- **Decided (the user agreed with the recommendations, 2026-10-07):**
+  - goblinoids fold into humanoid;
+  - multi-hot;
+  - mod keywords are trusted for the flags, and only the primary family is overridden;
+  - elemental facets come from a name table, for elementals only;
+  - arthropod is split from animal;
+  - werebeast is its own family if silver works on werewolves in LoreRim, otherwise it folds into monster;
+  - **Banish pairs with a new `target_summoned` need, not with daedra.**
+- **Effect gaps:**
+  - a `bane_<family>` column for target-conditioned damage (Dragonbane, Dawnguard rune weapons, the silver perk, which today is a correlation multiplier). This needs MGEF or perk conditions in the dump.
+  - Construct, monster and spectral have no obvious pairing. Poison immunity is a hidden number, so θ may learn it, but no hand rule encodes it.
+
+**Effects: 242 flat columns.**
+- **Breakdown:** 25 families, 134 specifics, 19 modifiers, 27 item features, 23 weapon stats and 14 armour stats.
+- **Flat, not factorised:** factorising (family + element axis + skill axis) saves only 11 columns. A linear score cannot express "resist AND fire" from two separate columns.
+- **Stable across lists:** about 175 effect columns on each list. LoreRim adds specifics inside existing families, not new kinds of effect.
+- **Coverage of visible effect rows:**
+
+  | List | Mapped |
+  |---|---|
+  | vanilla+ | 99.2% |
+  | Simonrim | 99.3% |
+  | LoreRim, with the spell-tome filter and effect descriptions | 98.9% (script-only rows 88.5%) |
+
+  What stays unmapped is one-off mechanics (White Phial, spell-copying, walls, curses).
+- **Pairs:** 92 needs × 242 columns. Only about 1.3% are obvious and start nonzero.
+- **Reused actor values are resolved in layers.** Simonrim's OneHandedSkillAdvance means Burden; LoreRim's Fame carries Fear and fire damage. So `*SkillAdvance`, Fame, Infamy, Mood, Morality, `Variable##` and VoicePoints are never trusted alone. The layers, first match wins:
+  1. Keyword table. Editor IDs are language-independent; this alone resolves 85–89%.
+  2. Per-load-order override file, keyed by plugin and local FormID.
+  3. English name table.
+  4. Effect-description patterns.
+  5. Unmapped, logged once.
+- **Extractor rules, in order:**
+  1. Player-facing items only, no ingredients. Plain spells must be taught by a tome; powers and shouts keep their own rule.
+  2. Visible effects, plus a whitelist of hidden ones with real mechanics (frost slow, LoreRim stagger).
+  3. One canonical actor value per skill: X, XMod and XPowerMod are the same skill.
+  4. The detrimental, Recover and resistAV fields separate restore / fortify / drain and resist / weakness.
+  5. Element from keywords, then resistAV.
+  6. Timing: instant, over time, or constant. Total = magnitude × max(duration, 1).
+  7. Clip sentinels (9999+ magnitudes; durations of a day or more).
+  8. Grade each column as a percentile within the load order.
+- **Decided (the user agreed with the recommendations, 2026-10-07):**
+  - graded values are percentiles within the load order, portable across lists whose magnitudes differ about 5×;
+  - the dense block starts at zero everywhere, held there by shrinkage;
+  - LoreRim's extra elements (arcane, entropic, shadow, blood) fold into magic until a need reads them;
+  - override files ship for known lists, with a generator for any other;
+  - hidden perk-conditional effects (Impact stagger) are not used for now.
+
+**Dump gaps**, to batch into one update when the real extractor is built:
+1. the effect's magic school (MGEF `associatedSkill`);
+2. the ammo NonBolt flag;
+3. cloak and hazard payload spells;
+4. the per-effect cost, next to the base cost;
+5. descriptions with magnitude and duration filled in;
+6. attached script names, for script effects with no description;
+7. "taught by shout";
+8. MGEF or perk conditions, for the bane columns.
+
 ## Favorites
 
 Favorites stop being a utility multiplier; in Boost mode they speed up and protect learning through the battery, and in Suppress mode they're filtered out.
