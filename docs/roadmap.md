@@ -61,7 +61,7 @@ in terms an agent can check without the game.
 | R11 | Console, telemetry, docs; retire the classifiers | 9, 10 | Agent |
 | R12 | Baseline soak, merge to `main`, release | -- | **In game (you)** |
 
-R0, R1 and R7 can run in parallel. R2–R4 change no scores, so they ship as one
+R0 and R1 can run in parallel; R7 can run any time after R1. R2–R4 change no scores, so they ship as one
 logging release before any play is needed.
 
 ### R0. Cleanup, no behaviour change
@@ -69,8 +69,9 @@ logging release before any play is needed.
 Done when: Debug and Release build clean, and the listed code is gone. Detail
 and file:line in the [implementation map](architecture/9-implementation-map.md#phase-0-behaviour-neutral-cleanup-can-ship-now).
 - [ ] Drop ingredients (eight sites; they never reach the registry today).
-- [ ] Delete the A|B shadow arm (`src/learning/ShadowArm.*`).
-- [ ] Remove the five dead INI weights: four never read, and
+- [ ] Delete the A|B shadow arm (`src/learning/ShadowArm.*`) and `handsAtPress`,
+      which only it reads.
+- [ ] Remove the five dead INI weights: four read and never used, and
       `fWeightBaseRelevance` read into a field nothing uses (0.05 is hard-coded
       at `ContextRuleEngine.h:126`). Keys, settings, config fields, docs.
 - [ ] Remove the enemy level read (not perceivable; debug widget only).
@@ -81,7 +82,8 @@ and file:line in the [implementation map](architecture/9-implementation-map.md#p
       `hg dump races` column with Huginn's reading matches the CSV.
 - [ ] Read every queued hit, not only the last (`StateManager_HealthTracking.cpp:88,147`).
 - [ ] Rename the slot "need" to slot class (`SlotClassifier`, `NeedCap.h:34`,
-      `SelectionLog.h:27`) before the 92 needs arrive.
+      `SelectionLog.h:27`) before the 92 needs arrive. Keep the JSONL `need`
+      key or update `tools/replay` in the same change.
 
 ### R1. Host test target
 
@@ -99,8 +101,10 @@ prove a change. Add a test executable that builds and runs on the host.
       `NeedCap::Factor`) is ported with tests as the pattern.
 
 **And an unattended in-game run** for the code that needs real game data. The
-Debug suites already run at the main menu (`RunUnitTests()` at kDataLoaded,
-`Main.cpp:679`), so no save has to load:
+Debug suites that run at the main menu (`RunUnitTests()` at kDataLoaded,
+`Main.cpp:679`) need no save. About 20 more (NeedCap, SlotLocker, home keys,
+cosave, the registries; `Main.cpp:443-466`) run only after a save loads,
+including the ratio tests R7 must update:
 - [ ] Huginn: after the suites, log one sentinel line with pass/fail counts;
       with a test flag set (INI or environment variable), quit the game.
 - [ ] `tools/ingame/run_tests.py`: launch through MO2's command line
@@ -108,7 +112,8 @@ Debug suites already run at the main menu (`RunUnitTests()` at kDataLoaded,
       LoreRim's executable is `LoreRim`, profile `Ultra`), wait for the
       sentinel in the Huginn log, kill the game on a timeout, exit non-zero on
       failure. simonrim first: it reaches the menu faster.
-- [ ] Later, for world tests: auto-load a named test save after the main menu.
+- [ ] Auto-load a named test save after the main menu, so the after-load
+      suites run too (needed by R7).
 - Rule: agents launch the game only when the user has said the machine is
   free; the game must not already be running.
 
@@ -116,7 +121,7 @@ Debug suites already run at the main menu (`RunUnitTests()` at kDataLoaded,
 
 Map Phase 1. Describe every item as cap(i) from game data.
 - [ ] `src/effect/`: a reader (game forms → plain records, kDataLoaded) and a
-      mapper in `src/core/` (records → the 242 columns of `9-data/effects.csv`),
+      mapper in `src/core/` (records → the 239 columns of `9-data/effects.csv`),
       with the layered actor-value resolution and load-order percentiles.
 - [ ] Shared helpers move from `ConsoleCommands.cpp` to `src/util/FormRead.h`.
 - [ ] Static cap in a catalog; runtime cross-features (`overshoot_*`,
@@ -125,7 +130,9 @@ Map Phase 1. Describe every item as cap(i) from game data.
       player-enchanted weapons.
 - [ ] **All carried armour is a candidate** (the user, 2026-10-08): lift the
       `ApparelClassifier` scope guard. Gear in combat is not a hard rule; the
-      learner decides it.
+      learner decides it. Armour menu picks are dropped today
+      (`ExternalEquipListener.h:81-98`); lifting that shifts accept% (open:
+      the user to confirm).
 - [ ] `hg dump all` prints the catalog view and closes the eight dump gaps
       (doc 9, "Needs and effects, enumerated").
 - Done when: the mapper's host tests pass on rows taken from the three dumps;
@@ -159,8 +166,10 @@ Map Phase 3. Log everything the fit needs.
 - [ ] "Nothing pressed": one record per need episode that expires with no
       press, with the page at the onset (the user, 2026-10-08).
 - [ ] Menu choice set: the held items off the page.
-- [ ] Settle whether the update loop ticks inside menus; menu picks older than
-      2 s are dropped today (`ExternalEquipLearner.cpp:103`).
+- [ ] Settle whether the update loop ticks inside menus. A menu pick is
+      dropped when the pipeline cache is older than `fExternalEquipTimeWindow`
+      (500 ms shipped, `ExternalEquipLearner.cpp:103`), which a long menu
+      session may trip.
 - [ ] `tools/replay` reads v3; the schema is documented.
 - Done when: replay parses a synthetic v3 file round-trip. **In game:** a
   30-minute session whose log holds all four outcomes.
@@ -199,7 +208,9 @@ Map Phase 5. Lands before the new scorer.
 Map Phase 6, plus the cosave from Phase 9 (θ must survive a load before any
 soak). Order inside: hard zeros to `CandidateFilters` first; `combat_onset`
 sensor from `PotionDiscriminator`'s timer; `ChoiceLearner`; scorer; cosave
-`THTA`/`BIAS`; then the prune list in the map.
+`THTA`/`BIAS`; then the prune list in the map, with every consumer of a
+pruned symbol (console, selection log, `ReasonHold`, debug widget, `Tests.cpp`)
+changed in the same PR so the Debug build stays green.
 - Done when: host tests cover the update (Var_p precision, step = variance,
   Plackett–Luce, opportunity counting), the explanation label is the largest
   term, the scorer reproduces R6's replay numbers on the logged data.

@@ -147,7 +147,6 @@ utility_teleport,specific,utility,"Name/description teleport, portal, recall, ma
 utility_transmute,specific,utility,"Name/description ""transmut"". P.",V:1 / S:2 / L:19,yes,,Script-only.
 utility_size,specific,utility,Name enlarge / shrink. P.,V:0 / S:0 / L:34,yes,,LoreRim only.
 shout_recovery,specific,shout,"AV ShoutRecoveryMult; Simonrim SpeechcraftSkillAdvance / MarksmanSkillAdvance + keyword MagicEnchFortifyShouts / MagicAlchFortifyShouts (shout power, shout duration fold here). G(total).",V:5 / S:113 / L:17,partly,,Repurposed AVs on Simonrim (108 apparel).
-shout_dragonrend,specific,shout,AV DragonRend or keyword MAG_MagicShoutDragonrend. P.,V:3 / S:3 / L:4,no,target_dragon,Answers target_dragon.
 soul_trap,specific,soul_trap,"archetype SoulTrap; Script with keyword containing SoulTrap or name ""soul trap"". P x D.",V:258 / S:389 / L:834,yes,,Vanilla/LoreRim soul trap is Script (name route 256/812 rows): portable via name only; prefer keyword MagicSoulTrap where present.
 survival_hunger,specific,survival,"AV Mood (repurposed) + keyword CCSM_RestoreHunger{Tiny,Small,Medium,Large} / MAG_StarfrostHungerKeyword, else name ""Restore Hunger <size>"". Magnitude is 0: value = size from keyword or name: Very Small/Tiny 0.25, Small 0.5, Medium 0.75, Large 1.0.",V:175 / S:200 / L:379,yes,healing_blocked; hunger,"Mood = Hunger/Cold under Survival Mode. ""Vampire Restore Hunger"" also here."
 survival_thirst,specific,survival,"Script ""Restore Thirst"" (hidden on LoreRim: whitelisted by name) + ""Hydrated"" buff; keyword/name thirst|hydrat. Value P (+0.5 if Hydrated present).",V:0 / S:1 / L:102,yes,healing_blocked; thirst,"LoreRim 102 foods. Simonrim ""Sanguine Thirst"" (vampire ring) is a false hit: exclude by name."
@@ -178,8 +177,6 @@ cure_instant,modifier,,"cure_* effect via a Cure* archetype (engine, instant) = 
 consumable,modifier,,"kind in {Potion, Poison, Food, Scroll, Ammo, SoulGem}: using it spends it. P.",all consumables,no,,
 gold_value,modifier,,percentile of value within kind (consumables only): what using it costs. Item value from the base form.,all consumables,no,,
 kind_spell,item_feature,,"form kind: Spell, spellType Spell (0). P (one-hot).",V:471 / S:789 / L:2489,no,mounted,
-kind_power,item_feature,,"form kind: Spell, spellType Power (2) or LesserPower (3). P (one-hot).",V:67 / S:64 / L:340,no,,
-kind_shout,item_feature,,"form kind: Spell, spellType VoicePower (11). P (one-hot).",V:164 / S:174 / L:249,no,,
 kind_scroll,item_feature,,form kind: Scroll. P (one-hot).,V:101 / S:285 / L:1173,no,,
 kind_staff,item_feature,,form kind: Weapon with weaponType Staff (8). P (one-hot).,V:87 / S:302 / L:2518,no,magicka_deficit,"Staves are 90-98% enchanted: their effect columns come from the enchantment, described as spells."
 kind_potion,item_feature,,form kind: Potion. P (one-hot).,V:211 / S:238 / L:315,no,,

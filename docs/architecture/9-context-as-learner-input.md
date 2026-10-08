@@ -23,13 +23,13 @@ u = \text{ctx} \times (1 + \lambda(\text{conf}) \cdot \text{learn}) \times \text
 | --- | --- | --- |
 | ctx | 0–1, clamped per rule; most items near the 0.2 baseline | `ContextRuleEngine`, reduced to one number per item by `std::max` in `ContextWeightForCandidate.cpp:38-64` |
 | λ(conf) | 0.5 at zero confidence to 3.0 at full | `ScorerConfig.h:43-44` |
-| learn | α·R + (1−α)·prior + 0.2·UCB + recency (0.19) | R = w·φ, an unclamped dot product, weights clamped ±10 (`FeatureBanditLearner.cpp:263`) |
+| learn | α·R + (1−α)·prior + 0.2·UCB + recency (0.19) | R = w·φ, an unclamped dot product, weights clamped ±10 (`FeatureBanditLearner.h:264`) |
 | corr | no cap: each bonus ×1.3–3, compounding (melee + no shield × two-handed = ×5.5; bow + arrows + fortify = ×9) | `CorrelationBooster` |
 | potion | ×0.5–2.5 | `PotionDiscriminator` (`MIN_MULTIPLIER`/`MAX_MULTIPLIER`) |
 | fav | up to 2.5× | favorites, on by default |
 
 - **Learner shape:** one 18-float weight vector per item, 88 items after the soak: about 1,600 parameters fit from 380 choices.
-- **Confidence and UCB are per item, by train count only** (`FeatureBanditLearner.cpp:224`). They don't depend on the situation.
+- **Confidence and UCB are per item, by train count only** (`FeatureBanditLearner.cpp:223-231`). They don't depend on the situation.
 - **Memory:** as of v0.23.6, an item's confidence holds for 8h + 2h·ln(1 + picks) of play, fades over ~1h, and is forgotten under 5%. The weights themselves don't decay.
 - **Wildcards:** random candidates at a slot-scaled probability (base 0.165, max 0.5) held for ~30s (`WildcardManager.h`).
 - **Health override** fires at 10% (`OverrideConfig.h:17`).
@@ -64,7 +64,7 @@ The problem is the shape of the formula, not the balance between its terms, so b
 
 Options ruled out:
 
-- **Cap λ·learn, or rank within context bands** (both on the roadmap). They make the hand-tuned context permanently dominant and give up the learner's 23-point gain.
+- **Cap λ·learn, or rank within context bands** (both frozen with the old engine, 2026-10-08). They make the hand-tuned context permanently dominant and give up the learner's 23-point gain.
 - **Blend by uncertainty, keeping the product.** Better, but the static scalar × learned weight shape remains.
 
 ## Proposed model
@@ -157,7 +157,7 @@ The goal is current utility: follow what's useful now and let old usefulness fad
 - **Per-item bᵢ → keep the battery (useful-life) model.** Items come and go from inventory, so a useful-life shape fits. The battery is already Kalman-like: uncertainty grows while there's no evidence, the score falls back to its prior, and UCB rises so the item is re-explored. It just uses a hand-shaped curve with a delay and a knee.
 - **The battery's role narrows:** from "how long the whole item vector is trusted" to "how long this item's personal preference is trusted."
 
-**No minimum on θ.** A player who never uses resist potions under fire can unlearn that pairing completely. Correcting a wrongly unlearned pairing is the job of exploration and surprise weighting, not a floor.
+**No minimum on θ.** A player who never uses resist potions under fire can unlearn that pairing completely. Correcting a wrongly unlearned pairing is the job of exploration, not a floor. (Surprise weighting was dropped 2026-10-08: the logged page needs no reweighting; theory page, P5.)
 
 **Why the battery is not θ's forgetting** (reviewed 2026-10-07 after the user asked "isn't this what the battery model should be?"; a fresh-context review corrected the first answer, which proposed a battery for θ clocked by need-active time):
 
@@ -179,7 +179,7 @@ The process-noise level cannot be fitted from the soak log (11.4 play-hours, no 
 Learning on effects rather than FormIDs handles both catches without special code.
 
 1. **A higher tier should supersede a lower one.** Restore Health (Fair) has the same effect as (Faint), so it inherits everything learned about healing the moment it's picked up. Nothing has to be unlearned.
-2. **The greediest potion isn't always best.** Add a feature for how far the item overshoots the need (e.g. magnitude minus missing health). A player who saves big potions for big gaps drives that weight negative, so "smallest that covers" is learned from behaviour. Today `PotionDiscriminator` hard-codes it with `POTION_TIER_STEP`.
+2. **The greediest potion isn't always best.** Add a feature for how far the item overshoots the need (e.g. magnitude minus missing health). A player who saves big potions for big gaps drives that weight negative, so "smallest that covers" is learned from behaviour. Today the scorer hard-codes it with `POTION_TIER_STEP` (`ScorerConfig.h:28`, applied at `UtilityScorer.cpp:332`).
 
 What's left is bᵢ: a strong per-item habit could hold onto (Faint). Keeping bᵢ small and letting the battery fade it is the answer; check it in replay.
 
@@ -189,7 +189,7 @@ The same applies to gear generally: tiers of a weapon or armour share effects, a
 
 Wildcards become "Huginn isn't sure about this one" instead of a random pick, which is the real fix for the feedback loop.
 
-- **Why it's needed:** Huginn is deterministic, so an item not shown has a propensity near zero. Once a pairing's θ drops, its items leave the bar and only a menu pick brings them back. Surprise weighting (inverse propensity, capped ~1–3× on the roadmap) helps but isn't built yet; today's update sizes steps by prediction error only (`EquipSubscribers.h:34`).
+- **Why it's needed:** Huginn is deterministic, so an item not shown has a propensity near zero. Once a pairing's θ drops, its items leave the bar and only a menu pick brings them back. Surprise weighting (inverse propensity) was dropped 2026-10-08: with a deterministic page the propensity is 0 or 1, so the weights are undefined, and the likelihood needs no reweighting anyway (theory page, P5). Exploration has to supply the missing information. Menu picks now carry it too: a menu pick is a choice from the held items off the page (P11).
 - **Proposed rework:** wildcard chance = a base random term plus θ uncertainty. Build a list of candidates ranked by relevance × uncertainty in the current situation, then pick from it weighted by that value.
 - **What lands on the list:** items whose battery has run down, pairings with little evidence, newly acquired effect types, emergent combinations the dense block is unsure of.
 - **Keep exploration in the wildcard slot.** Thompson sampling on every 100 ms tick would make the whole bar flicker. If it's used more widely, resample only when the situation hash changes or a slot lock expires.
@@ -208,7 +208,7 @@ Weights stop being hand-tuned, but sensors stay hand-written and become the main
 **Bootstrap**
 
 - The INI fallback exists (`[ContextWeights]` in `configs/Huginn.ini`) but doesn't drop in as θ: scales are mixed (`fWeightOnFire = 8.0`, `fWeightUnderwater = 10.0`, vitals 0.3–1.0, base relevance 0.05) and it has one weight per need, not per pair.
-- **Preferred:** fit θ offline from the soak selection log (412 logged choices, full candidate list each) and ship that as the default. The INI stays as an emergency override.
+- **Preferred:** fit θ offline and ship that as the default. The INI stays as an emergency override. (Superseded 2026-10-08: the soak log cannot rebuild the need vector, so the fit uses new play logged with selection log v3; see the implementation map, Phase 4.)
 - **Rare needs never converge.** Drowning fired twice in 9 hours. For those, the starting value is effectively permanent. Acceptable, since overrides cover the safety-critical ones, but the design should say so.
 
 ## Needs and effects, enumerated
@@ -240,8 +240,8 @@ Measured 2026-10-07 from `hg dump all` and `hg dump races` on vanilla+, Simonrim
   - a `bane_<family>` column for target-conditioned damage (Dragonbane, Dawnguard rune weapons, the silver perk, which today is a correlation multiplier). This needs MGEF or perk conditions in the dump.
   - Construct, monster and spectral have no obvious pairing. Poison immunity is a hidden number, so θ may learn it, but no hand rule encodes it.
 
-**Effects: 242 flat columns.**
-- **Breakdown:** 25 families, 134 specifics, 19 modifiers, 27 item features, 23 weapon stats and 14 armour stats.
+**Effects: 239 flat columns.**
+- **Breakdown:** 25 families, 133 specifics, 19 modifiers, 25 item features, 23 weapon stats and 14 armour stats. (242 before 2026-10-08, when the power and shout columns went with the decision to skip them.)
 - **Flat, not factorised:** factorising (family + element axis + skill axis) saves only 11 columns. A linear score cannot express "resist AND fire" from two separate columns.
 - **Stable across lists:** about 175 effect columns on each list. LoreRim adds specifics inside existing families, not new kinds of effect.
 - **Coverage of visible effect rows:**
@@ -253,7 +253,7 @@ Measured 2026-10-07 from `hg dump all` and `hg dump races` on vanilla+, Simonrim
   | LoreRim, with the spell-tome filter and effect descriptions | 98.9% (script-only rows 88.5%) |
 
   What stays unmapped is one-off mechanics (White Phial, spell-copying, walls, curses).
-- **Pairs:** 92 needs × 242 columns. Only about 1.3% are obvious and start nonzero.
+- **Pairs:** 92 needs × 239 columns. 266 pairs, about 1.2%, are obvious and start nonzero.
 - **Reused actor values are resolved in layers.** Simonrim's OneHandedSkillAdvance means Burden; LoreRim's Fame carries Fear and fire damage. So `*SkillAdvance`, Fame, Infamy, Mood, Morality, `Variable##` and VoicePoints are never trusted alone. The layers, first match wins:
   1. Keyword table. Editor IDs are language-independent; this alone resolves 85–89%.
   2. Per-load-order override file, keyed by plugin and local FormID.
@@ -311,7 +311,7 @@ Open points:
 - No minimum on θ: unlearning a rule is the player's prerogative.
 - Track current utility; don't converge.
 - Keep the battery model for per-item memory.
-- Feedback-loop correction comes from surprise weighting plus uncertainty-driven exploration.
+- Feedback-loop correction comes from uncertainty-driven exploration, and from menu picks as a second choice set. Surprise weighting was dropped (2026-10-08; theory page, P5).
 - Overrides stay hard rules. Favorites feed the battery (Boost) or a filter (Suppress), never utility.
 - **The choice model's three outcomes** (the user, 2026-10-08; proofs on the Huginn Learning Theory page, P11): a key press from the page (everything visible, including wildcard, override and Remembrance slots); a menu pick from the held items off the page at a learned cost κ, which teaches that item's need × effect pairs and settles at the observed reach-in rate; and "nothing pressed", recorded once per need episode when the need expires, with the page at the onset. u0 depends on the situation through an outside-option effect column. Co-picks are processed in order (Plackett–Luce). The favorites-always-pass rule goes.
 - **Scope** (the user, 2026-10-08): all carried armour is gear and a candidate; powers and shouts stay out (powers a later bonus); target type keeps the combat-hostile union with no line-of-sight logic. Details in [the implementation map](9-implementation-map.md#decisions-the-user-2026-10-08).
@@ -328,13 +328,14 @@ Open points:
 **Challenged (2026-10-07, against the code and the soak report)**
 
 - [x] **Expand the selection log; the soak log cannot fit θ** (decided, the user 2026-10-07: "just expand the soak log or redefine as required"). Step 2 adds the need vector -- and each candidate's effect vector -- to every `Huginn_Selections.jsonl` record, and step 3 fits on play logged that way. Step 3 assumes the old log can do it, but `Huginn_Selections.jsonl` holds one `ctx` and one `need` label per candidate plus the 18-float φ (vitals, combat, sneak, distance, target type, equipment, bias). On fire, darkness, hunger level, workstation, damage taken by element and encumbrance are not in it, so need(s) cannot be rebuilt. Steps 1–2 must add need-vector logging, and step 3 needs new play hours logged with it. A test that works on today's log: one learned weight per need class times the logged `ctx`, no per-item term. If that does not beat context only, the full model likely will not.
-- [ ] **The 23-point gain is partly self-fulfilling.** The live page was the one shown, and most picks were presses of its keys; the context-only page was never shown. On the 83 menu picks, which the display did not steer, context alone won 13 to 7, and B′ (prior and recency kept, no learned weights) scored 56% against B's 58%. That strengthens the case for this redesign but weakens "Options ruled out": a cap or context bands stays a cheap stopgap while this is built. Success in step 3 should weight menu picks, not the overall hit rate.
+- [ ] **The 23-point gain is partly self-fulfilling.** The live page was the one shown, and most picks were presses of its keys; the context-only page was never shown. On the 83 menu picks, which the display did not steer, context alone won 13 to 7, and B′ (prior and recency kept, no learned weights) scored 56% against B's 58%. That strengthens the case for this redesign but weakens "Options ruled out": a cap or context bands stays a cheap stopgap while this is built (superseded 2026-10-08: the old engine is frozen, so no stopgap). Success in step 3 should weight menu picks, not the overall hit rate.
 - [x] **Keep the challenger margin; derive it from Bayesian confidence** (the user, 2026-10-07: the margin stays -- it keeps the riffraff out -- and "if we are using likelihood could we leverage some Bayes statistics"; recorded on the user's say-so). The learner keeps a variance per weight, so every score is a best guess with an error bar: mean μ = Σ θ·need·cap + b, variance σ² = Σ (need·cap)² Var(θ) + Var(b) under the diagonal approximation. A challenger takes a key only when the posterior probability that it beats the incumbent clears a threshold:
 
   ```math
-  P(c \succ i) = \Phi\left(\frac{\mu_c - \mu_i - \ln m}{\sqrt{\sigma_c^2 + \sigma_i^2}}\right) > \tau
+  P(c \succ i) = \Phi\left(\frac{\mu_c - \mu_i - \ln m}{\sigma_\Delta}\right) > \tau
   ```
 
+  - **The denominator is the gap's own spread** (corrected 2026-10-08; theory page, P7): σ_Δ² = Σ_k (x_c,k − x_i,k)² Var(θ_k) + Var(b_c) + Var(b_i). Weights the two items share cancel. The earlier √(σ_c² + σ_i²) is only an upper bound and would make similar items (two healing potions) swap too rarely.
   - **What it does:** a challenger barely ahead of a well-known item sits near 50% and stays out; two well-learned items with a real gap swap at once; a new or rarely seen item needs a bigger lead because its error bar is wide. The margin becomes per item and per situation, with no fixed 1.5×.
   - **Stable:** the probability moves only when scores or certainty move -- unlike sampling (Thompson) every tick, already ruled out for flicker.
   - **Still likelihoods:** in the choice model a 1.5× likelihood ratio is a score gap of ln 1.5 ≈ 0.4, so an optional minimum gap is the `ln m` term (m = 1 means confidence alone).
@@ -348,7 +349,7 @@ Open points:
 - [ ] **Derive the minimum utility; do not set it** (the user, 2026-10-07: "should be derived, not something we should set"). Today `fMinimumUtility` (0.1) drops anything under it (`UtilityScorer.cpp:127`), and at least four always-on baselines exist only to clear it -- `weightWeapon`, `weightSpell`, `weightBuffPotion`/`weightBuffCombat`, `weightSoulGem` (`ContextRuleEngine.cpp:455-492`) -- plus `fColdStartUCBBoost`. One hand-set floor, five hand-set workarounds. Three ways to derive it, cheapest first:
   1. **The noise floor** (today's formula): the utility of an item with no context reason and no training, `baseRelevance × (1 + λmin × prior)`. It moves with the other parameters instead of drifting out of sync, and a category it keeps out has a sensor gap, not a threshold problem. The baselines then retire one by one as their sensors arrive.
   2. **Replay**: bin shown items by utility, measure the pick rate per bin, put the floor where it reaches ~0. Answers "when is a blank key better than the 9th-best item?" from play, and checks where (1) lands.
-  3. **The outside option** (this model): the choice model gets a "nothing on the page" alternative -- no press, or a menu pick -- with its own learned score, fit from menu picks (goal 1's count). Show an item when it beats the outside option. The threshold is then learned like everything else.
+  3. **The outside option** (this model): the choice model gets a "nothing on the page" alternative -- no press, or a menu pick -- with its own learned score, fit from menu picks (goal 1's count). Show an item when it beats the outside option. (Superseded 2026-10-08: the outside option is "nothing pressed", recorded when a need expires; a menu pick is a choice from the held items off the page at a learned cost κ. Under a logit any item beats a blank key, so a floor needs a measured cost per shown item; theory page, P9 and P11.) The threshold is then learned like everything else.
 - [x] **A prerequisite gate: dump the game through this lens first** (the user, 2026-10-07). Design the effect vector from what the load order contains, not from guesses. Seven dumps exist (`hg dump spells / food / potions / scrolls / weapons / apparel / diseases`, Debug only) but each has its own classifier-shaped columns; unenchanted armour and ingredients are not dumped at all, and weapons lack hand and reach. Wanted: one effect-view dump, one schema, every item type -- a row per item × effect (archetype, actor value, delivery, magnitude, duration, area, cost, keywords) plus physical stats (weapon type, hand, damage, speed, reach; armour slot, rating, weight class) -- run on vanilla+, simonrim and LoreRim. It answers how many distinct effects really occur, which sets the size of cap(i).
 - [x] **Ingredients are out of scope** (the user, 2026-10-07): they matter only at an alchemy lab, so Huginn drops them. No cap(i) for ingredients, and so no need to mask their effects to the ones the player has discovered (the Core Principle issue the LoreRim dump analysis raised). `hg dump all` leaves them out.
 - [x] **Enumerate needs and effects fully; expect most pairs at zero** (the user, 2026-10-07). Both lists are derivable: needs from the sensors (finite, ~25-40), effects from the dump (archetype × actor value is ~50 × ~160 in principle, far fewer in use). The pair space is large -- thousands -- but at ~40 picks an hour play can support only a few dozen nonzero pairs, so every pair starts at zero and needs evidence; the obvious pairs get a nonzero starting value. This replaces the "sparse hand-listed set + dense block" question above with one rule. Suggested with it: give effects two levels, family and specific (Resist, Resist Fire), so a rare effect borrows evidence from its family instead of staying at zero.
@@ -369,7 +370,7 @@ The effect feature extractor comes first; everything else can be tested offline 
 0. **Effect-view dump** (prerequisite gate, decided 2026-10-07). One schema for every item type, on three load orders; design the effect vector and the needs × effects enumeration from it.
 1. **Effect extractor.** Describe every candidate as a capability vector from game data -- weapons and armour by their physical stats too. Testable on its own with `hg dump`-style output.
 2. **Need vector.** Expose the rule outputs as a vector, each through its response curve, instead of the per-item `std::max`.
-3. **Replay the new score.** Fit θ offline on the soak selections and re-rank. Success = overall hit rate at or above 81% *and* menu-pick hits above 7 of 83.
+3. **Replay the new score.** Fit θ offline on new play logged with selection log v3 (the soak log cannot rebuild the need vector) and re-rank. Success = key hit rate at or above 76% (arm A*, the plain ranking replay reproduces; 81% was the live page with holds) *and* menu-pick hits above 7 of 83.
 4. **Bootstrap θ** from that fit; re-express the INI as an override.
 5. **Online update** for θ (step size as the tracking knob; variance grown per opportunity); move the battery to bᵢ.
 6. **Wildcard rework** on θ uncertainty.

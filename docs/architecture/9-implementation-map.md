@@ -1,6 +1,6 @@
 # Doc 9 implementation map: what to build, what to prune
 
-**Status:** plan, 2026-10-08. Nothing here is built. Merged from six read-only passes over the code, one per part of the redesign (scoring and context, learner and persistence, item description, state and sensors, slots and wildcards, tooling and config), with the claims that change the plan spot-checked against the source.
+**Status:** plan, 2026-10-08. Nothing here is built. Merged from six read-only passes over the code, one per part of the redesign (scoring and context, learner and persistence, item description, state and sensors, slots and wildcards, tooling and config), with the claims that change the plan spot-checked against the source. A fresh-context verifier then tried to invalidate it (2026-10-08); its corrections are applied.
 
 The target is the model in [doc 9](9-context-as-learner-input.md): `score = Σ θ·need·cap + b`, a conditional logit over the page with an outside option, a diagonal-Gaussian belief per weight, the Bayesian challenger rule and uncertainty-ranked wildcards.
 
@@ -15,27 +15,28 @@ Each phase lists what it builds and what it may prune. A phase only prunes what 
 | Item | Where | Note |
 | --- | --- | --- |
 | Drop ingredients | `ItemData.h:87,279`, `ItemOverrides.cpp:231`, `CandidateTypes.cpp:55`, `SelectionTracker.cpp:36`, `ItemClassifier.cpp:210-221`, `configs/Huginn_Overrides.ini:45,53-55`, docs `2-classifiers.md`, `3-candidate-filtering.md` | Ingredients never reach the registry (`ItemRegistry.cpp:790-792`), so nothing changes in play. Check `Tests.cpp` for SoulGem's ordinal |
-| Delete ShadowArm | `src/learning/ShadowArm.*`, call at `SelectionLog.cpp:371` | Debug-only A/B arm; its arms assume the old formula |
+| Delete ShadowArm | `src/learning/ShadowArm.*`, call at `SelectionLog.cpp:371`; `handsAtPress` (`EquipEvent.h:82`, `SelectionTracker.cpp:116`), read only by ShadowArm | Debug-only A/B arm; its arms assume the old formula |
 | Remove the five dead weights | `ContextWeightSettings.cpp:37-40,80,191-194,224` | Four are read and never used; `fWeightBaseRelevance` is read into a field nothing consumes (0.05 is hard-coded at `ContextRuleEngine.h:126`) |
-| Remove target level | `TargetActorState.h:65,130`, `StateManager_Targets.cpp:404,499,667` | Not perceivable; only the debug widget reads it |
+| Remove target level | `TargetActorState.h:65,130,205`, `StateManager_Targets.cpp:404,499,667` | Not perceivable; only the debug widget reads it |
 | Actor-type cache keyed on race | `StateManager.h:476-479`, `StateManager_Targets.cpp:29-40` | Werewolf stays Humanoid today; the map also grows without bound |
 | Race table before the catch-alls | `StateEvaluator.cpp:141-142` | The 37 misread LoreRim races (`9-data/race_map.csv`) |
 | Read every queued hit | `StateManager_HealthTracking.cpp:88,147` | Only the last hit's element is read |
-| Rename the slot "need" | `SlotClassifier`, `NeedCap.h:34`, `SelectionLog.h:27` | "Need" will mean the 92 needs; call this the slot class |
+| Rename the slot "need" | `SlotClassifier`, `NeedCap.h:34`, `SelectionLog.h:27` | "Need" will mean the 92 needs; call this the slot class. The JSONL `need` column is read by `tools/replay/replay.py:220,226,348`: keep the key, or update replay in the same change |
 
 ### Phase 1: describe items (effect extractor)
 
 - **New `src/effect/`**: `EffectExtractor` and `EffectCatalog`, built once at kDataLoaded over the whole load order (percentiles need the full population, not the player's inventory).
 - **Reuse:** move `AvName`, `KeywordList`, `PluginOf`, `CsvQuote` from `ConsoleCommands.cpp` into `src/util/FormRead.h`; take the MagicEffect helpers from `SpellClassifier.cpp` (`GetCostliestEffect` 1182, `ResistedElement` 1299, `DetermineMagicSchool` 1279, cloak/hazard resolution 310-621), keyword checks from `ItemClassifier.cpp`, weapon stat reads from `WeaponClassifier.cpp:241-431`, player enchantments from `WeaponRegistry.cpp:876-889` and `ApparelRegistry.cpp:226-254`.
 - **Split cap into static and runtime.** Static columns go in the catalog. `weapon_charge`, `overshoot_*`, `stack_count`, `ammo_matches_launcher`, `school_fortified` are computed per tick (new `src/learning/CrossFeatures.*`). Tempered and player-enchanted weapons need a per-instance cap.
-- **Candidates carry a catalog index**, not 242 floats (`CandidateTypes.h:382` asserts ≤ 56 bytes).
+- **Candidates carry a catalog index**, not 239 floats (`CandidateTypes.h:382` asserts ≤ 56 bytes).
+- **Armour menu picks must reach the learner.** `ExternalEquipListener.h:81-98` drops every armour equip made outside Huginn (its comment: most of it is ordinary dressing, and turning it on shifts accept%). With all carried armour a candidate and the menu a choice set, lift it; record the accept% shift in the soak baseline. *Open: the user to confirm.*
 - **`hg dump all` becomes a view of the catalog** and absorbs the eight dump gaps in doc 9. Check coverage against `9-data/effects.csv`.
 - Prunes nothing yet.
 
 ### Phase 2: describe situations (need vector)
 
 - **New:** `NeedId`/`NeedVector` generated from `needs.csv`; `ResponseCurve` (linear, quadratic, logistic, logit, gaussian, step); a `[Needs]` INI section for curve parameters.
-- **Sensors to add or fix:** encumbrance ratio (kept as a float, polled at 1 Hz), a decaying damage rate per element, combat-onset/ended and submerged timers on `steady_clock`, a held multi-hot target-family bitmask (union of primary and living hostiles, held until combat ends), target summoned / casting element / archer from the hostile loop, restore-pending from the active-effect walk, drop ahead (raycast; API unconfirmed).
+- **Sensors to add or fix:** encumbrance ratio (kept as a float, polled at 1 Hz), a decaying damage rate per element, combat-onset/ended and submerged timers on `steady_clock`, a held multi-hot target-family bitmask (union of the living combat hostiles, held until combat ends; no line-of-sight logic), target summoned / casting element / archer from the hostile loop, restore-pending from the active-effect walk, drop ahead (raycast; API unconfirmed).
 - **Compute the vector once in `GatherState`** (`PipelineCoordinator.cpp:143-150`) as a pure function of the snapshots, and cache it; reset new timers in `ResetTrackingState`.
 - **Need-signature skip gate:** a quantised (0.05) signature, so continuous needs re-score. It replaces `ambientSignature`, the elemental window and, later, the GameState buckets.
 - Rules stay as they are: the vector is computed and logged only.
@@ -53,7 +54,7 @@ Each phase lists what it builds and what it may prune. A phase only prunes what 
 | Duplicate stacks share a FormID (`PipelineStateCache.h:120-124`) | One row per item |
 | Wildcard logs only base/max (`SelectionLog.cpp:379-382`) | Log each shown wildcard's propensity |
 
-Unsettled: whether the update loop ticks inside menus. `ExternalEquipLearner.cpp:103` drops picks staler than 2 s, which may lose menu picks.
+Unsettled: whether the update loop ticks inside menus. `ExternalEquipLearner.cpp:103` skips an external pick when the pipeline cache is older than `fExternalEquipTimeWindow` (500 ms in the shipped `configs/Huginn.ini:663`; 2000 ms is only the code default). It measures the cache's age, not the pick's, so a long menu session may drop menu picks.
 
 ### Phase 4: fit offline (`tools/replay`)
 
@@ -68,7 +69,7 @@ Unsettled: whether the update loop ticks inside menus. `ExternalEquipLearner.cpp
 Log-odds scores can be zero or negative; the slot code assumes positive ratios.
 
 - **Bridge:** feed `score = ln(utility)` with σ = 0 and m = 1.5. This reproduces today's behaviour exactly, so the slot code can change first.
-- **Fix every positive-score assumption:** the need cap multiplies (helps a negative score) at `SlotAllocator.cpp:1162-1165,1219,1844,1850`, `NeedCap.cpp:111` → an additive `k·ln d`; ratio logs at `SlotAllocator.cpp:1171,1175`, `SlotLocker.cpp:273`; `-1` as "incumbent gone" at `SlotLocker.cpp:244`, `SoakMetrics.h:141-143`; `utility = 0` for remembered-only rows at `PipelineCoordinator.cpp:366-369`; the `kOverrideUtility = 1000` sentinel (overflows under `exp`); the 0–15 widget bar; the unused "confidence" payload (`SlotUtils.h:66`).
+- **Fix every positive-score assumption:** the need cap multiplies (helps a negative score) at `SlotAllocator.cpp:1162-1165,1844,1850`, and `DropSkipsSince(itemScore*factor)` at `SlotAllocator.cpp:1219` with its threshold comparison at `NeedCap.cpp:111` → an additive `k·ln d`; ratio logs at `SlotAllocator.cpp:1171,1175`, `SlotLocker.cpp:273`; `-1` as "incumbent gone" at `SlotLocker.cpp:244`, `SoakMetrics.h:141-143`; `utility = 0` for remembered-only rows at `PipelineCoordinator.cpp:366-369`; the `kOverrideUtility = 1000` sentinel (overflows under `exp`); the 0–15 widget bar; the unused "confidence" payload (`SlotUtils.h:66`).
 - **Full sort:** only the top 10 are sorted (`UtilityScorer.cpp:241-249`); with full pages, slots fill from the unsorted tail.
 - Update the ratio tests at `Tests.cpp:6462-6615`.
 
@@ -78,9 +79,10 @@ Order inside the phase matters:
 
 1. **Move hard zeros to `CandidateFilters` first**: spells for others with no follower near, apparel away from a workstation, torches in daylight (`ContextWeightForCandidate.cpp:25-28,346-349,415-444`), and favorites Suppress. Otherwise apparel and torches flood the page.
 2. **Turn `PotionDiscriminator`'s combat timer into the `combat_onset` sensor** (`UpdateLoop.cpp:219-225`).
-3. **`ChoiceLearner`** behind the existing equip bus: sparse θ keyed by a stable (needId, effectId) hash, never by position (positional keys broke once, `StateFeatures.h:264-270`); each entry {μ, σ²}; b with prior N(0, σ_b²). The choice set is the page (everything visible, including wildcard, override and Remembrance slots) ∪ the held items off the page at a learned menu cost κ ∪ "nothing pressed". u0 depends on the situation through an outside-option effect column, θ[need, out]. Update: precision += Var_p(x), step = variance. Picks in quick succession are processed in order, each removing the chosen item from the next pick's alternatives (Plackett–Luce); the repeat window still drops re-equips. This replaces the 10 s passed-over delay. Opportunity counter on need onsets next to `PipelineStateCache::Update` (`PipelineCoordinator.cpp:545`). Battery code (`RetentionAt`, `ForgetFaded`) kept, retargeted to b. Favorites Boost becomes a battery bonus.
+3. **`ChoiceLearner`** behind the existing equip bus: sparse θ keyed by a stable (needId, effectId) hash, never by position (positional keys broke once, `StateFeatures.h:63-67`); each entry {μ, σ²}; b with prior N(0, σ_b²). The choice set is the page (everything visible, including wildcard, override and Remembrance slots) ∪ the held items off the page at a learned menu cost κ ∪ "nothing pressed". u0 depends on the situation through an outside-option effect column, θ[need, out]. Update: precision += Var_p(x), step = variance. Picks in quick succession are processed in order, each removing the chosen item from the next pick's alternatives (Plackett–Luce); the repeat window still drops re-equips. This replaces the 10 s passed-over delay. Opportunity counter on need onsets next to `PipelineStateCache::Update` (`PipelineCoordinator.cpp:545`). Battery code (`RetentionAt`, `ForgetFaded`) kept, retargeted to b. Favorites Boost becomes a battery bonus.
 4. **Scorer:** v = θᵀ·need once per tick, μᵢ = cap(i)·v + bᵢ, σᵢ² under the diagonal approximation, outside option; explanation = the largest θ·need·cap term. Bootstrap θ from the Phase 4 fit.
-5. **Prune at cutover:** `ComputeUtility` and λ, `CorrelationBooster`, `PriorCalculator`, `PotionDiscriminator`, `ApplyPotionTierPreference`, the favorites multiplier, cold start, `fMinimumUtility`, `fMinimumContextWeight`, `IsHardContextGated`, `ContextWeightMap`, `WeightForCandidate`, `DominantReason`, `ReasonAppliesTo`, the 18-float `StateFeatures`, `BanditSubscriber` and passed-over logic, `UsageMemory` recency, the `Config.h` learning constants except `REPEAT_PICK_WINDOW_SEC`, the old `ScoreBreakdown` fields, the `[Scoring]` keys except `sFavoritesMode` and `iTopNCandidates`, and `[ContextWeights]` except `fDarkLightLevel` and `bAlcoholSatisfiesHunger`.
+5. **The cosave moves in here** from Phase 9 (θ must survive a load before any soak): `THTA` and `BIAS` replace `BanditSerializer`'s `BNDW` in the same change.
+6. **Prune at cutover, with every consumer in the same change**, or the Debug build breaks. Consumers outside the scoring code: `hg weights` and `hg dump weights` (`ConsoleCommands.cpp:280-338` with a static_assert on the feature count, `:1024`), deleted here and replaced by `hg theta` in Phase 9; the selection log's φ and prediction fields (`SelectionLog.cpp:119-126,224-227`), replaced by the v3 fields, with `tools/replay` updated; `ReasonHold`, fed by `DominantReason` today (`PipelineCoordinator.cpp:388-410`), fed by the per-item explanation instead; `ReasonAppliesTo` at `ExplanationLabel.h:108`; `UtilityScorerDebugWidget` (breakdown and `UsageMemory`); and `Tests.cpp` (about 36 `WeightForCandidate`, 37 `StateFeatures`, 35 `FeatureBanditLearner` and 10 `UsageMemory` references), deleted or ported to host tests. The list: `ComputeUtility` and λ, `CorrelationBooster`, `PriorCalculator`, `PotionDiscriminator`, `ApplyPotionTierPreference`, the favorites multiplier, cold start, `fMinimumUtility`, `fMinimumContextWeight`, `IsHardContextGated`, `ContextWeightMap`, `WeightForCandidate`, `DominantReason`, `ReasonAppliesTo`, the 18-float `StateFeatures`, `BanditSubscriber` and passed-over logic, `UsageMemory` recency, the `Config.h` learning constants except `REPEAT_PICK_WINDOW_SEC`, the old `ScoreBreakdown` fields, the `[Scoring]` keys except `iTopNCandidates` (`sFavoritesMode` lives in `[Favorites]` and stays), and `[ContextWeights]` except `fDarkLightLevel` and `bAlcoholSatisfiesHunger`.
 
 ### Phase 7: Bayesian challenger rule
 
@@ -97,16 +99,16 @@ Order inside the phase matters:
 
 ### Phase 9: persistence, console, telemetry, docs
 
-- **Cosave:** new `THTA` (version, pairs {key, μ, σ²}, u0) and `BIAS` ({formID, b, n, minutes since chosen}) records; HCID unchanged; the old `BNDW` record falls to the unknown-record branch, a clean break. `ReplaceDynamicEntries` applies to BIAS only.
-- **Console:** `hg weights` → `hg theta` plus b for an item; `hg dump weights` → a θ/b dump; `hg recs` prints the top need·θ·cap terms, b and the outside option; `hg reset weights` resets θ to the bootstrap and clears b (and the dMenu button text).
+- **Cosave** (built in Phase 6, listed here for the format): new `THTA` (version, pairs {key, μ, σ²}, including the outside option's θ[need, out] entries and its intercept θ_out) and `BIAS` ({formID, b, n, minutes since chosen}) records; HCID unchanged; the old `BNDW` record falls to the unknown-record branch, a clean break. `ReplaceDynamicEntries` applies to BIAS only.
+- **Console:** `hg theta` plus b for an item, and a θ/b dump (the old `hg weights` and `hg dump weights` went in Phase 6); `hg recs` prints the top need·θ·cap terms, b and the outside option; `hg reset weights` resets θ to the bootstrap and clears b (and the dMenu button text).
 - **Telemetry:** θ-drift fields in the `[Soak]` heartbeat; keep `reachIns` and `presses`.
 - **Docs to rewrite or archive:** `CLAUDE.md` (formula, learner, INI, console), `docs/README.md`, `4-contextual-bandits.md` (archive), `0-pipeline.md`, `1-states.md`, `3-candidate-filtering.md`, `7-dmenu-integration.md`, `TESTING-INDEX.md`, the Nexus page (`docs/nexus/page.bbcode.txt:241-271,436`), and the roadmap (rewritten 2026-10-08 around these phases).
 
 ### Phase 10: retire the classifiers
 
-- Re-derive what still reads classifier output from cap: the 24 `SlotClassification` predicates (`SlotClassifier.cpp:116-335`; the enum stays, users name it in INI templates), overrides (`OverrideManager.cpp:402-640`), filters, `ExplanationLabel.h:118-125`, the ammo/charge display (`IntuitionMenu.cpp:593-670`).
+- Re-derive what still reads classifier output from cap: the 24 `SlotClassification` predicates (`SlotClassifier.cpp:116-335`; the enum stays, users name it in INI templates), overrides (`OverrideManager.cpp:402-640`), filters, `ExplanationLabel.h:108,118-125`, the ammo/charge display (`IntuitionMenu.cpp:593-670`).
 - Replace `Huginn_Overrides.ini` type/tag semantics with the per-load-order actor-value override (layer 2).
-- Then delete `SpellClassifier`, `ItemClassifier`, the tag enums, the scroll classifier and the per-type dumps (`ConsoleCommands.cpp:435-1370`), and replace the classifier fixtures in `Tests.cpp`.
+- Then delete `SpellClassifier`, `ItemClassifier`, the tag enums, the scroll classifier and the per-type dumps (spells, food, potions, scrolls, weapons, apparel, diseases, within `ConsoleCommands.cpp:435-1370`; `Cmd_DumpWeights` went in Phase 6 and `CsvQuote`/`PluginOf` moved in Phase 1), and replace the classifier fixtures in `Tests.cpp`.
 
 ## Decisions (the user, 2026-10-08)
 
