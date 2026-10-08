@@ -210,9 +210,10 @@ soak). Order inside: hard zeros to `CandidateFilters` first; `combat_onset`
 sensor from `PotionDiscriminator`'s timer; `ChoiceLearner`; scorer; cosave
 `THTA`/`BIAS`; then the prune list in the map, with every consumer of a
 pruned symbol (console, selection log, `ReasonHold`, debug widget, `Tests.cpp`)
-changed in the same PR so the Debug build stays green. Done means a grep for
-every pruned symbol finds nothing outside the new code, not a checked list.
-- Done when: host tests cover the update (Var_p precision, step = variance,
+changed in the same PR, and the shipped INI and dMenu JSON lose the dead keys.
+- Done when: a grep over `src/` and `tools/` for every pruned symbol finds
+  nothing outside the new code (docs follow in R11); Debug and Release build
+  clean; host tests cover the update (Var_p precision, step = variance,
   Plackett–Luce, opportunity counting), the explanation label is the largest
   term, the scorer reproduces R6's replay numbers on the logged data.
   **In game (you):** a session on the R6 bootstrap; cures, potions and gear
