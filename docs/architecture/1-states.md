@@ -444,7 +444,6 @@ graph TB
 | `isHostile` | `bool` | Target is hostile |
 | `isDead` | `bool` | Target is dead |
 | `isCasting` | `bool` | Target is casting a spell |
-| `level` | `uint16_t` | Actor level for illusion spell caps (v0.6.6) |
 | `isStaggered` | `bool` | Target is staggered — damage window (v0.6.6) |
 | `isFollower` | `bool` | Target is player's teammate, via `IsPlayerTeammate()` (v0.6.10) |
 | `isMage` | `bool` | Target has spell equipped in either hand (v0.6.11) |

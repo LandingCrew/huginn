@@ -61,8 +61,8 @@ namespace Huginn::State
       bool isDead = false;
       bool isCasting = false;  // Is currently casting a spell
 
-      // v0.6.6: Enhanced target state
-      uint16_t level = 0;      // Actor level for illusion spell level cap checks
+      // v0.6.6: Enhanced target state. No level: an enemy's level is not
+      // perceivable (Core Principle), so it is not read.
       bool isStaggered = false;  // Target is staggered (damage window)
 
       // v0.6.10: Follower tracking
@@ -124,11 +124,6 @@ namespace Huginn::State
 
       [[nodiscard]] bool IsTargetStaminaLow() const noexcept {
       return vitals.stamina < VitalThreshold::TARGET_RESOURCE_LOW;
-      }
-
-      // Level helpers (v0.6.6)
-      [[nodiscard]] bool IsAboveLevel(uint16_t spellLevelCap) const noexcept {
-      return level > spellLevelCap;
       }
 
       // Stagger helpers (v0.6.6)
@@ -202,7 +197,6 @@ namespace Huginn::State
              isHostile == other.isHostile &&
              isDead == other.isDead &&
              isCasting == other.isCasting &&
-             level == other.level &&
              isStaggered == other.isStaggered &&
              isFollower == other.isFollower &&
              isMage == other.isMage;

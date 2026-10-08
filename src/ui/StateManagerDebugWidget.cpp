@@ -703,7 +703,6 @@ namespace Huginn::UI
 
          ImGui::Text("FormID: 0x%08X", target.actorFormID);
          ImGui::Text("Distance: %.0f units", target.GetDistanceToPlayer());
-         ImGui::Text("Level: %d", target.level);
          ImGui::Text("Type: %s", State::GetTargetTypeName(target.targetType));
 
          // v0.6.12: IFF (Identification Friend or Foe) display

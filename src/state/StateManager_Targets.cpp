@@ -401,8 +401,6 @@ namespace Huginn::State
               targetState.isMage = isMage;
             }
 
-            targetState.level = actor->GetLevel();
-
             // Opt 3: Cached actor type (avoids per-poll race string matching)
             targetState.targetType = GetCachedActorType(actor);
 
@@ -495,8 +493,6 @@ namespace Huginn::State
            }
            primaryState.isMage = isMage;
         }
-
-        primaryState.level = primaryActor->GetLevel();
 
         // Opt 3: Cached actor type
         primaryState.targetType = GetCachedActorType(primaryActor);
@@ -663,8 +659,6 @@ namespace Huginn::State
               followerState.vitals = existingFollower->vitals;
               followerState.lastVitalsPollTime = existingFollower->lastVitalsPollTime;
             }
-
-            followerState.level = ally->GetLevel();
 
             // Opt 3: Cached actor type
             followerState.targetType = GetCachedActorType(ally);
