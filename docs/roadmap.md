@@ -1830,4 +1830,7 @@ trigger to pick any of it up.
       trained. Most of the inventory is invisible to the learner, so it is
       the cold start, not the weights, that matters most.
 - [ ] Addendum #15/#16 (Kalman learner / learnable context weights) — **parked**: needs a v3
-      cosave bump, NOT landable during an active soak run
+      cosave bump, NOT landable during an active soak run. The 2026-10-07 design
+      discussion turned this into a proposal: context as the learner's input (shared
+      need × effect weights, response curves, uncertainty-ranked wildcards), see
+      [architecture/9-context-as-learner-input.md](architecture/9-context-as-learner-input.md)

@@ -37,7 +37,7 @@ one-off ideas kept here so they are not lost.
 | Experience replay / batch learning | Deferred | No |
 | Combat outcome rewards | Not implemented | **No** |
 | Category-level negative signal | Not implemented | **No** |
-| Kalman learner / learnable context weights (Addendum #15/#16) | Not implemented | **Yes — parked** (needs a v3 cosave bump; not landable during an active soak run) |
+| Kalman learner / learnable context weights (Addendum #15/#16) | Not implemented; proposal in [9-context-as-learner-input.md](9-context-as-learner-input.md) | **Yes — parked** (needs a v3 cosave bump; not landable during an active soak run) |
 
 > **Dead reference, removed:** earlier revisions of this document pointed at
 > the v0.13.x roadmap's "Phase 5" for the implementation order of the four
