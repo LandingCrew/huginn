@@ -333,10 +333,10 @@ Matters less for the user than for others.
 3 s lock expiry (2026-10-06 17:14); they stayed only when they outscored
 everything enough to be held. Overlaps the bench flicker above.
 
-### Dominated gear: only the best piece per body slot
+### Redundant gear: only the best piece per body slot
 **Status:** open (the user, 2026-10-06). Ring of Smithing and Ring of Minor
 Smithing on keys 7 and 8 together (u 1.060 vs 1.056). A **candidate filter**,
-before scoring -- a strictly weaker piece of the same job should not be
+before scoring -- a redundant piece (strictly weaker at the same job) should not be
 scored, logged, passed over in learning or put on a wheel. (The need cap is for
 items that differ but are all useful; this is for items that are not.)
 - Group craft apparel by (skill fortified, biped slot); keep the strongest
@@ -367,7 +367,7 @@ Alchemy/Smithing/Enchanting gear only; narrowness is what keeps it safe.
   bow-enchanted gear forward.
 - **Tier 3**: haggling (above).
 - **Blocker:** Tier 1 is the combat case -- resist robes over 258-armour
-  Orcish means stripping armour mid-fight. Needs (a) slot grouping (dominated
+  Orcish means stripping armour mid-fight. Needs (a) slot grouping (redundant
   gear above), (b) worn-vs-candidate scoring (is the enchantment worth the
   armour lost), (c) the restore story (M/L).
 
