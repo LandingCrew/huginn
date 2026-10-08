@@ -1373,6 +1373,8 @@ namespace Huginn::Console
    // docs/architecture/9-context-as-learner-input.md: which effects really
    // occur, and what weapons and armour look like by their stats. One-time
    // research tool; the per-type dumps above stay the classifier views.
+   // Ingredients are left out: Huginn dropped them (the user, 2026-10-07) --
+   // they matter only at an alchemy lab.
    static std::string_view AvName(RE::ActorValue av)
    {
       if (av == RE::ActorValue::kNone || av >= RE::ActorValue::kTotal) return ""sv;
@@ -1407,14 +1409,24 @@ namespace Huginn::Console
       if (!OpenDumpFile("Huginn_All.csv"sv, out, filePath)) return;
 
       auto* player = RE::PlayerCharacter::GetSingleton();
-      out << "kind,formID,plugin,name,playable,value,weight,playerCount,keywords,"
-             "spellType,castingType,delivery,magickaCost,"
+
+      // Spells a tome teaches: the line between a player spell and one only
+      // NPCs cast, which spellType alone cannot draw.
+      std::unordered_set<RE::FormID> taughtByTome;
+      for (auto* book : dataHandler->GetFormArray<RE::TESObjectBOOK>()) {
+         if (const auto* taught = book ? book->GetSpell() : nullptr) {
+            taughtByTome.insert(taught->GetFormID());
+         }
+      }
+
+      out << "kind,formID,plugin,winningPlugin,name,playable,value,weight,playerCount,keywords,"
+             "spellType,castingType,delivery,magickaCost,taughtByTome,"
              "weaponType,twoHanded,damage,speed,reach,critDamage,"
              "armorSlots,armorRating,armorType,"
              "soulCapacity,soulContained,lightRadius,"
              "enchantment,enchantmentCharge,"
              "effectIndex,effectFormID,effectName,archetype,primaryAV,secondaryAV,resistAV,"
-             "effectDelivery,effectCasting,magnitude,duration,area,effectCost,detrimental,hostile,effectFlags,effectKeywords\n";
+             "effectDelivery,effectCasting,magnitude,duration,area,effectBaseCost,detrimental,hostile,effectFlags,effectKeywords,effectDescription\n";
 
       // Columns up to (not including) the effect block. Each form fills its
       // own stat columns and leaves the rest empty.
@@ -1422,25 +1434,33 @@ namespace Huginn::Console
          std::string_view kind;
          const RE::TESBoundObject* form;
          std::string keywords;
-         std::string magic;    // spellType..magickaCost (4 columns)
+         std::string magic;    // spellType..taughtByTome (5 columns)
          std::string weapon;   // weaponType..critDamage (6 columns)
          std::string armor;    // armorSlots..armorType (3 columns)
          std::string misc;     // soulCapacity..lightRadius (3 columns)
          const RE::EnchantmentItem* enchantment = nullptr;
          std::uint16_t charge = 0;
       };
-      static constexpr std::string_view kNoMagic = ",,,"sv;
+      static constexpr std::string_view kNoMagic = ",,,,"sv;
       static constexpr std::string_view kNoWeapon = ",,,,,"sv;
       static constexpr std::string_view kNoArmor = ",,"sv;
       static constexpr std::string_view kNoMisc = ",,"sv;
-      static constexpr std::string_view kNoEffect = ",,,,,,,,,,,,,,,,"sv;  // 17 columns
+      static constexpr std::string_view kNoEffect = ",,,,,,,,,,,,,,,,,"sv;  // 18 columns
 
       size_t forms = 0, rows = 0;
       auto prefix = [&](const Base& b) {
          const char* rawName = b.form->GetName();
-         return std::format("{},{:08X},{},{},{},{},{:g},{},{},{},{},{},{},{},{},",
-            b.kind, b.form->GetFormID(), CsvQuote(PluginOf(b.form)), CsvQuote(rawName ? rawName : ""),
-            b.form->GetPlayable() ? 1 : 0, b.form->GetGoldValue(), b.form->GetWeight(),
+         const auto* lastFile = b.form->GetFile(-1);
+         // A spell's "gold value" is its magicka cost, and spells and ammo
+         // report weight -1: leave both blank rather than mislead.
+         const bool isSpell = b.form->Is(RE::FormType::Spell);
+         const float weight = b.form->GetWeight();
+         return std::format("{},{:08X},{},{},{},{},{},{},{},{},{},{},{},{},{},{},",
+            b.kind, b.form->GetFormID(), CsvQuote(PluginOf(b.form)),
+            CsvQuote(lastFile ? lastFile->GetFilename() : ""sv), CsvQuote(rawName ? rawName : ""),
+            b.form->GetPlayable() ? 1 : 0,
+            isSpell ? std::string{} : std::to_string(b.form->GetGoldValue()),
+            weight < 0.0f ? std::string{} : std::format("{:g}", weight),
             player ? Util::GetItemCountSafe(player, b.form) : 0,
             CsvQuote(b.keywords),
             b.magic.empty() ? kNoMagic : std::string_view(b.magic),
@@ -1453,15 +1473,19 @@ namespace Huginn::Console
       auto effectCols = [](size_t i, const RE::Effect* e) {
          const auto* m = e->baseEffect;
          const char* full = m->GetFullName();
-         return std::format("{},{:08X},{},{},{},{},{},{},{},{:g},{},{},{:g},{},{},{:08X},{}",
+         // The description is the game's own text for the effect, with
+         // <mag>/<dur> unfilled: the one readable account of a script-only
+         // effect (LoreRim Arcaneum's spell text is this field).
+         return std::format("{},{:08X},{},{},{},{},{},{},{},{:g},{},{},{:g},{},{},{:08X},{},{}",
             i, m->GetFormID(), CsvQuote(full ? full : ""),
             static_cast<int>(m->data.archetype),
             AvName(m->data.primaryAV), AvName(m->data.secondaryAV), AvName(m->data.resistVariable),
             static_cast<int>(m->data.delivery), static_cast<int>(m->data.castingType),
-            e->effectItem.magnitude, e->effectItem.duration, e->effectItem.area, e->cost,
+            e->effectItem.magnitude, e->effectItem.duration, e->effectItem.area, m->data.baseCost,
             m->IsDetrimental() ? 1 : 0, m->IsHostile() ? 1 : 0,
             static_cast<std::uint32_t>(m->data.flags.underlying()),
-            CsvQuote(KeywordList(m)));
+            CsvQuote(KeywordList(m)),
+            CsvQuote(m->magicItemDescription.c_str() ? m->magicItemDescription.c_str() : ""));
       };
       // One row per effect of `effects` (the item's own, or its
       // enchantment's); one row with the effect block empty if it has none.
@@ -1487,33 +1511,32 @@ namespace Huginn::Console
          const char* n = f ? f->GetName() : nullptr;
          return n && *n;
       };
-      auto magicCols = [](const RE::MagicItem* m) {
-         return std::format("{},{},{},{:g}",
+      // Magicka cost for spells only: a scroll costs nothing to cast, and
+      // CalculateMagickaCost on one returned garbage (up to 37.7M on vanilla).
+      auto magicCols = [&](const RE::MagicItem* m, bool isSpell) {
+         return std::format("{},{},{},{},{}",
             static_cast<int>(m->GetSpellType()), static_cast<int>(m->GetCastingType()),
-            static_cast<int>(m->GetDelivery()), m->CalculateMagickaCost(nullptr));
+            static_cast<int>(m->GetDelivery()),
+            isSpell ? std::format("{:g}", m->CalculateMagickaCost(nullptr)) : std::string{},
+            isSpell ? (taughtByTome.contains(m->GetFormID()) ? "1" : "0") : "");
       };
 
       for (auto* s : dataHandler->GetFormArray<RE::SpellItem>()) {
          if (!named(s)) continue;
          Base b{ "Spell", s, KeywordList(s) };
-         b.magic = magicCols(s);
+         b.magic = magicCols(s, true);
          emit(b, &s->effects);
       }
       for (auto* s : dataHandler->GetFormArray<RE::ScrollItem>()) {
          if (!named(s)) continue;
          Base b{ "Scroll", s, KeywordList(s) };
-         b.magic = magicCols(s);
+         b.magic = magicCols(s, false);
          emit(b, &s->effects);
       }
       for (auto* a : dataHandler->GetFormArray<RE::AlchemyItem>()) {
          if (!named(a)) continue;
          Base b{ a->IsPoison() ? "Poison"sv : a->IsFood() ? "Food"sv : "Potion"sv, a, KeywordList(a) };
          emit(b, &a->effects);
-      }
-      for (auto* g : dataHandler->GetFormArray<RE::IngredientItem>()) {
-         if (!named(g)) continue;
-         Base b{ "Ingredient", g, KeywordList(g) };
-         emit(b, &g->effects);
       }
       for (auto* w : dataHandler->GetFormArray<RE::TESObjectWEAP>()) {
          if (!named(w)) continue;
