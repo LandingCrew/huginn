@@ -11,7 +11,10 @@
 #   1. A quoted include must resolve to a file under CORE_DIR: first against
 #      the including file's folder, then against SRC_DIR (the plugin's include
 #      root, so "core/X.h" works). "Globals.h", "state/GameState.h",
-#      "../PCH.h" and anything that resolves nowhere are rejected.
+#      "../PCH.h" and anything that resolves nowhere are rejected. It must
+#      also name a source file (.h .hpp .hxx .inl .ipp .inc), so the
+#      unscanned Markdown -- or a .txt, .cpp.in, ... -- can never be pulled
+#      into a translation unit.
 #   2. An angle include must be a C++ standard library header (the list
 #      below). RE/, REL/, REX/, SKSE/, spdlog/, SimpleIni.h, Windows.h ... are
 #      rejected because they are not on it.
@@ -90,6 +93,12 @@ foreach(f IN LISTS core_files)
             reject("${f}" "angle include not in the standard-library allow-list: ${inc}")
          endif()
       else()
+         # Only source extensions may be included: the Markdown exemption
+         # (and any other unscanned file) must not be reachable by #include.
+         if(NOT path MATCHES "\\.(h|hpp|hxx|inl|ipp|inc)$")
+            reject("${f}" "quoted include of a non-source file (allowed: .h .hpp .hxx .inl .ipp .inc): ${inc}")
+            continue()
+         endif()
          get_filename_component(local "${path}" ABSOLUTE BASE_DIR "${fdir}")
          get_filename_component(rooted "${path}" ABSOLUTE BASE_DIR "${SRC_DIR}")
          if(EXISTS "${local}" AND NOT IS_DIRECTORY "${local}")

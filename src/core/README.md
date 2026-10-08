@@ -12,7 +12,9 @@ What "pure" means here:
   except Markdown:
   - a quoted include must resolve to a file under `src/core/` (against the
     including file's folder, then against `src/`), so `"Globals.h"`,
-    `"state/GameState.h"` and `"../PCH.h"` are rejected;
+    `"state/GameState.h"` and `"../PCH.h"` are rejected; and it must name a
+    source file (`.h .hpp .hxx .inl .ipp .inc`), so the unscanned Markdown
+    (or a `.txt`) cannot be pulled into a translation unit;
   - an angle include must be a C++ standard library header (an allow-list in
     the script), so `<RE/...>`, `<REX/...>`, `<SKSE/...>`, `<spdlog/...>`,
     `<SimpleIni.h>`, `<Windows.h>` are rejected;
