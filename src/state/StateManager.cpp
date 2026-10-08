@@ -109,6 +109,7 @@ namespace Huginn::State
 
       // --- Resource trackers (delta baselines + accumulators) ---
       m_healthTracker.Reset();
+      m_extraElementHitTime.fill(0.0f);
       m_staminaTracker.Reset();
       m_magickaTracker.Reset();
 

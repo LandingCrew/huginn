@@ -562,6 +562,12 @@ namespace Huginn::State
       };
 
       ResourceTracker m_healthTracker;
+
+      // Last hit time (game days, 0 = none) per element timer -- Fire, Frost,
+      // Shock, Poison -- from EVERY queued TESHitEvent, not only the latest.
+      // Kept out of damageHistory so it cannot evict real damage events
+      // (PollHealthTracking). Update thread only, like m_healthTracker.
+      std::array<float, 4> m_extraElementHitTime{};
       ResourceTracker m_staminaTracker;
       ResourceTracker m_magickaTracker;
 
