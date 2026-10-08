@@ -217,6 +217,7 @@ Open points:
 
 - The learner is the primary driver; hand-tuned values are a bootstrap, not an authority.
 - **The hand-tuned layer is tech debt to pay off** (the user, 2026-10-07): it was always meant as a one-time bootstrap, not something to rely on continuously. So the replacement half of this proposal is paying down debt, not a new direction.
+- **Why now: today's engine does not generalise** (the user, 2026-10-07). It was hand-tuned to get a minimum working prototype. About 70 hand-set numbers decide relevance and balance (40 `[ContextWeights]`, 18 `[Scoring]`, 7 correlation bonuses, 8 potion multipliers, plus the tier step, recency and baselines), and every new situation needs another rule, weight or multiplier.
 - No minimum on θ: unlearning a rule is the player's prerogative.
 - Track current utility; don't converge.
 - Keep the battery model for per-item memory.
