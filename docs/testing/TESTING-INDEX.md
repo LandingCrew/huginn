@@ -167,8 +167,9 @@ the file name without `.ess` (proven on simonrim, 2026-10-08; Huginn strips a
 **The runner**, `tools/ingame/run_tests.py`:
 
 ```sh
-python -I tools/ingame/run_tests.py                     # simonrim, HuginnTest.ess or the newest save
+python -I tools/ingame/run_tests.py                     # vanilla+ (simonrim instance), HuginnTest.ess or the newest save
 python -I tools/ingame/run_tests.py --save HuginnTest   # a named save (no .ess)
+python -I tools/ingame/run_tests.py --list simonrim     # the simonrim instance's "Simonrim Essentials" profile
 python -I tools/ingame/run_tests.py --list lorerim      # LoreRim-5, profile Ultra, executable LoreRim
 python -I tools/ingame/run_tests.py --no-save --dry-run # check, print the MO2 command, launch nothing
 ```
@@ -191,15 +192,24 @@ waits for a `_Huginn_Debug.log` started by this launch (the first line's UTC
 launch stamp and the file's mtime), fails at once when Huginn ran its suites
 without seeing the flag, waits for `DONE` (`--timeout`, default 600 s), and
 prints each suite's result. A game that exits counts as a crash unless this
-launch's log holds a `DONE`. Whatever starts the game closes it: when the run
-ends, whatever the verdict, any `SkyrimSE.exe` still running 15 s later is
-killed (none was running at launch, so it is the launch's; after `DONE` Huginn
-has normally ended it already), and the `ModOrganizer.exe` the runner started
-is closed if still open (asked first, then `/F /T` after 30 s). Exit 0 = PASS; 1 = a failed or skipped suite
-(`--allow-skips` accepts skips), timeout, crash or unread flag; 2 = refused.
+launch's log holds a `DONE` (taken at once when found). A game up for
+`--log-start-timeout` (90 s) without this launch's log fails fast. The log
+folder's Documents part comes from the Windows known-folder API, so a
+OneDrive-redirected Documents is found.
+
+The game it tracks is its own only: a `SkyrimSE.exe` created after the launch,
+with its image under the chosen instance, held open by handle from first
+sight (so PID reuse cannot redirect the kill). Whatever starts the game closes
+it: when the run ends, whatever the verdict, every game of its own still
+running 15 s later is ended through that handle (after `DONE` Huginn has
+normally ended it already), and the `ModOrganizer.exe` the runner started is
+closed if still open (asked first, then `/F /T` after 30 s). Another
+instance's game is never touched. Exit 0 = PASS; 1 = a failed or skipped
+suite (`--allow-skips` accepts skips), timeout, crash or unread flag;
+2 = refused.
 It reads MO2's config and never writes it, and it does **not** deploy the DLL:
-copy the Debug `Huginn.dll`/`.pdb` into the list first (simonrim:
-`overwrite/SKSE/Plugins/`, by hand). Make a dedicated save once, in game:
+copy the Debug `Huginn.dll`/`.pdb` into the list first (simonrim/vanilla+:
+the instance's `overwrite/SKSE/Plugins/`, by hand). Make a dedicated save once, in game:
 console, `save HuginnTest`. Agents launch the game only when the user has said
 the machine is free.
 

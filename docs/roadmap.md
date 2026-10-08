@@ -113,12 +113,11 @@ including the ratio tests R7 must update:
       3 s after the main menu opens. How to run:
       `docs/testing/TESTING-INDEX.md` section 1a.)*
 - [x] Proven by a live run on simonrim (a `DONE` line from a real launch).
-      *(2026-10-08, v0.23.9 @ e57732b: launch to DONE in 42 s; the save
-      loaded by name without `.ess`; Huginn ended the game and MO2 closed by
-      itself. 19 suites: 18 passed, 0 failed, 1 skipped -- RunItemRegistryTests'
-      potion-sort check, because the newest simonrim save holds fewer than 2
-      health potions. A dedicated `HuginnTest` save with potions would make
-      the strict run (no `--allow-skips`) pass.)*
+      *(2026-10-08: the save loads by name without `.ess`; Huginn ends the
+      game and MO2 closes by itself. On the vanilla+ profile (the test
+      character, the runner's default) the strict run -- no `--allow-skips`
+      -- passes 19 of 19 in about 20 s from launch to DONE; test mode
+      supplies the healing potions RunItemRegistryTests' sort check needs.)*
 - Rule: agents launch the game only when the user has said the machine is
   free; the game must not already be running.
 
