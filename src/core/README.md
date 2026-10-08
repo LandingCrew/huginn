@@ -8,7 +8,8 @@ of it. The game layer only reads forms and calls into `src/core/`.
 What "pure" means here:
 
 - Standard library only. `cmake/CheckCorePurity.cmake` enforces it on every
-  `.h .hpp .hxx .inl .ipp .cpp .cxx .cc` here:
+  file here whatever its extension (a quoted include can pull in a `.inc`),
+  except Markdown:
   - a quoted include must resolve to a file under `src/core/` (against the
     including file's folder, then against `src/`), so `"Globals.h"`,
     `"state/GameState.h"` and `"../PCH.h"` are rejected;
@@ -17,14 +18,29 @@ What "pure" means here:
     `<SimpleIni.h>`, `<Windows.h>` are rejected;
   - no backslash in an include path;
   - no `RE`, `REL`, `REX`, `SKSE`, `logger` or `spdlog` followed by `::`
-    (spaces allowed, any column), no `using namespace` of and no namespace
-    alias to `RE`/`REL`/`REX`/`SKSE`.
+    (spaces or a line break allowed, any column); no `using namespace` of, no
+    namespace alias to, and no reopening of `RE`/`REL`/`REX`/`SKSE`, with or
+    without a leading `::` (`using namespace ::RE;`, `namespace G = ::SKSE;`,
+    `namespace RE {`).
 
   It runs at configure time and again as a build step whenever a core file
   changes; `huginn_core_tests` and the plugin both depend on that step, so an
   edit made after the configure still fails the build. The scan is textual: a
   comment that names `RE::` or a game header trips it too. Say "the game's
   types" in comments instead.
+
+  **Known limits of a textual guard.** It is a tripwire, not a parser. These
+  get past it, and are not chased: an include through a macro
+  (`#include HEADER`), `__has_include`, `#pragma include_alias`, a comment
+  inside the directive (`# /**/ include`), digraphs and trigraphs, a macro that
+  expands to `RE` or `RE::...`, and a namespace reached only through such a
+  macro. **The real check is the compile:** `huginn_core_tests` builds every
+  core header on its own and every core source, with no PCH, no CommonLib
+  and only `src/` on the include path, so anything that actually needs the
+  game (CommonLib, the plugin's headers) fails to compile there. The one gap
+  in that backstop: the vcpkg include folder reaches the test target through
+  doctest, so `spdlog` or `SimpleIni` smuggled in by a macro would compile;
+  the guard's angle-include allow-list is the stop for those.
 - Do not rely on `PCH.h`. The plugin force-includes it into everything it
   compiles, these files included, but the test target compiles them without
   it, and it compiles every core header on its own (a generated one-line TU per

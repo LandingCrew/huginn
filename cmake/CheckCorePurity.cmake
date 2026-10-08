@@ -5,7 +5,9 @@
 # Called at configure time and, through a custom command, on every build of
 # huginn_core_tests and Huginn whose core files changed (tests/CMakeLists.txt).
 #
-# Rules, for every .h .hpp .hxx .inl .ipp .cpp .cxx .cc under CORE_DIR:
+# Rules, for EVERY file under CORE_DIR whatever its extension (a quoted
+# include can pull in core/foo.inc), except Markdown (*.md, documentation that
+# has to name what it forbids):
 #   1. A quoted include must resolve to a file under CORE_DIR: first against
 #      the including file's folder, then against SRC_DIR (the plugin's include
 #      root, so "core/X.h" works). "Globals.h", "state/GameState.h",
@@ -15,10 +17,14 @@
 #      rejected because they are not on it.
 #   3. Include paths use '/': a backslash is rejected.
 #   4. No game namespaces: RE, REL, REX, SKSE, logger or spdlog followed by
-#      '::' (with or without spaces, at any column); no `using namespace` of
-#      or namespace alias to RE/REL/REX/SKSE.
+#      '::' (with or without spaces, at any column); no `using namespace` of,
+#      namespace alias to, or reopening of RE/REL/REX/SKSE (a leading '::'
+#      and whitespace allowed: `using namespace ::RE;`, `namespace G = ::SKSE;`,
+#      `namespace RE {`).
 # The scan is textual: a comment that names RE:: or a game header trips it
-# too. Write "the game's types" in comments instead.
+# too. Write "the game's types" in comments instead. It is not a parser; the
+# known ways around it are listed in src/core/README.md, and the real check is
+# that every core header compiles on its own without the PCH or CommonLib.
 # =============================================================================
 
 if(NOT CORE_DIR OR NOT SRC_DIR)
@@ -42,10 +48,8 @@ set(STD_HEADERS
    type_traits typeindex typeinfo unordered_map unordered_set utility
    valarray variant vector version)
 
-file(GLOB_RECURSE core_files
-   "${CORE_DIR}/*.h" "${CORE_DIR}/*.hpp" "${CORE_DIR}/*.hxx"
-   "${CORE_DIR}/*.inl" "${CORE_DIR}/*.ipp"
-   "${CORE_DIR}/*.cpp" "${CORE_DIR}/*.cxx" "${CORE_DIR}/*.cc")
+file(GLOB_RECURSE core_files "${CORE_DIR}/*")
+list(FILTER core_files EXCLUDE REGEX "\\.[mM][dD]$")
 
 set(violations "")
 # A function, not a macro: macro arguments are substituted as text, and an
@@ -104,7 +108,7 @@ foreach(f IN LISTS core_files)
    endforeach()
 
    # --- game namespaces -----------------------------------------------------
-   string(REGEX MATCHALL "(^|[^A-Za-z0-9_])(RE|REL|REX|SKSE|logger|spdlog)[ \t]*::" hits "${text}")
+   string(REGEX MATCHALL "(^|[^A-Za-z0-9_])(RE|REL|REX|SKSE|logger|spdlog)[ \t\r\n]*::" hits "${text}")
    foreach(h IN LISTS hits)
       string(STRIP "${h}" h)
       if(h STREQUAL "")
@@ -112,7 +116,7 @@ foreach(f IN LISTS core_files)
       endif()
       reject("${f}" "game namespace: ${h}")
    endforeach()
-   string(REGEX MATCHALL "using[ \t\r\n]+namespace[ \t\r\n]+(RE|REL|REX|SKSE)([^A-Za-z0-9_]|$)" hits "${text}")
+   string(REGEX MATCHALL "using[ \t\r\n]+namespace[ \t\r\n]+(::[ \t\r\n]*)?(RE|REL|REX|SKSE)([^A-Za-z0-9_]|$)" hits "${text}")
    foreach(h IN LISTS hits)
       string(STRIP "${h}" h)
       if(h STREQUAL "")
@@ -120,13 +124,22 @@ foreach(f IN LISTS core_files)
       endif()
       reject("${f}" "${h}")
    endforeach()
-   string(REGEX MATCHALL "namespace[ \t]+[A-Za-z_][A-Za-z0-9_]*[ \t]*=[ \t]*(RE|REL|REX|SKSE)([^A-Za-z0-9_]|$)" hits "${text}")
+   string(REGEX MATCHALL "namespace[ \t\r\n]+[A-Za-z_][A-Za-z0-9_]*[ \t\r\n]*=[ \t\r\n]*(::[ \t\r\n]*)?(RE|REL|REX|SKSE)([^A-Za-z0-9_]|$)" hits "${text}")
    foreach(h IN LISTS hits)
       string(STRIP "${h}" h)
       if(h STREQUAL "")
          continue()   # a match that ended in ";" splits into an empty list item
       endif()
       reject("${f}" "namespace alias to the game: ${h}")
+   endforeach()
+   # Reopening a game namespace: namespace RE {, namespace RE::detail {
+   string(REGEX MATCHALL "namespace[ \t\r\n]+(::[ \t\r\n]*)?(RE|REL|REX|SKSE)[ \t\r\n]*({|::)" hits "${text}")
+   foreach(h IN LISTS hits)
+      string(STRIP "${h}" h)
+      if(h STREQUAL "")
+         continue()
+      endif()
+      reject("${f}" "reopens a game namespace: ${h}")
    endforeach()
 endforeach()
 
