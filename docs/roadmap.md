@@ -66,24 +66,12 @@ logging release before any play is needed.
 
 ### R0. Cleanup, no behaviour change
 
-Done when: Debug and Release build clean, and the listed code is gone. Detail
-and file:line in the [implementation map](architecture/9-implementation-map.md#phase-0-behaviour-neutral-cleanup-can-ship-now).
-- [ ] Drop ingredients (eight sites; they never reach the registry today).
-- [ ] Delete the A|B shadow arm (`src/learning/ShadowArm.*`) and `handsAtPress`,
-      which only it reads.
-- [ ] Remove the five dead INI weights: four read and never used, and
-      `fWeightBaseRelevance` read into a field nothing uses (0.05 is hard-coded
-      at `ContextRuleEngine.h:126`). Keys, settings, config fields, docs.
-- [ ] Remove the enemy level read (not perceivable; debug widget only).
-- [ ] Actor-type cache keyed on race: a transformed werewolf or vampire lord
-      keeps reading Humanoid (`StateManager.h:476-479`).
-- [ ] Race table before the keyword catch-alls: 37 LoreRim races misread
-      (`StateEvaluator.cpp:141-142`, `9-data/race_map.csv`). Done when a
-      `hg dump races` column with Huginn's reading matches the CSV.
-- [ ] Read every queued hit, not only the last (`StateManager_HealthTracking.cpp:88,147`).
-- [ ] Rename the slot "need" to slot class (`SlotClassifier`, `NeedCap.h:34`,
-      `SelectionLog.h:27`) before the 92 needs arrive. Keep the JSONL `need`
-      key or update `tools/replay` in the same change.
+All eight items are done on branch `r0-cleanup` (v0.23.8), waiting for the
+second agent's check; this section leaves the file when that PR merges.
+Detail in the PR and the [implementation map](architecture/9-implementation-map.md#phase-0-behaviour-neutral-cleanup-can-ship-now).
+Left for the game: run `hg dump races` on LoreRim and
+`python -I tools/races/check_race_reading.py <Huginn_Races.csv>`; the host
+check (`tools/races/race_reading_host_check.cpp`) already matches all 539 rows.
 
 ### R1. Host test target
 
@@ -131,8 +119,8 @@ Map Phase 1. Describe every item as cap(i) from game data.
 - [ ] **All carried armour is a candidate** (the user, 2026-10-08): lift the
       `ApparelClassifier` scope guard. Gear in combat is not a hard rule; the
       learner decides it. Armour menu picks are dropped today
-      (`ExternalEquipListener.h:81-98`); lifting that shifts accept% (open:
-      the user to confirm).
+      (`ExternalEquipListener.h:81-98`); lift the skip, though it shifts
+      accept% (decided by the user 2026-10-08).
 - [ ] `hg dump all` prints the catalog view and closes the eight dump gaps
       (doc 9, "Needs and effects, enumerated").
 - Done when: the mapper's host tests pass on rows taken from the three dumps;
@@ -342,7 +330,7 @@ perks, level -- stay out (CLAUDE.md, Forbidden Information).
   (`StateConstants.h:605-618`): wrong under any timescale but 20. New decays in
   R3 use `steady_clock`; fix the old ones when they become needs.
 
-The transform cache and the 37 misread races are in R0.
+The transform cache and the 37 misread races: done in R0.
 
 ## Mod compatibility
 
