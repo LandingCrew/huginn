@@ -134,11 +134,6 @@ namespace Huginn::Scoring
         [[nodiscard]] RE::FormID GetWildcardForSlot(size_t pageIndex, size_t slotIndex) const;
         [[nodiscard]] size_t GetActiveWildcardCount(size_t pageIndex) const;
 
-        // Legacy setters (map to base probability)
-        void SetSlot2Probability(float p) { m_baseProbability = p; }
-        void SetSlot3Probability(float p) { m_maxProbability = p; }
-        [[nodiscard]] float GetSlot2Probability() const noexcept { return m_baseProbability; }
-        [[nodiscard]] float GetSlot3Probability() const noexcept { return m_maxProbability; }
 
         // Reset wildcards on every page (e.g., on save load)
         void Reset();

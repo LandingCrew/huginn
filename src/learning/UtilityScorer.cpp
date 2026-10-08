@@ -75,17 +75,13 @@ namespace Huginn::Scoring
         auto stateFeatures = Learning::StateFeatures::FromState(player, targets);
         auto phi = stateFeatures.ToArray();  // Pre-compute once for locked reader
 
-        // Lazy decay: apply time-based weight decay to candidates about to be scored.
-        // Only decays items idle > DECAY_THRESHOLD_MINUTES. Batched: one shared-lock
-        // pass over the pool instead of ~N per-candidate lock acquisitions.
+        // Forget what faded past its useful life (roadmap Phase 3 #3a). At most
+        // once a minute of play; the fading itself is read off the play clock
+        // per candidate below, so nothing here touches the weights. Replaced
+        // the 2%/hour weight decay.
         {
-            Huginn_ZONE_NAMED("Score::Decay");
-            m_decayScratch.clear();
-            m_decayScratch.reserve(candidates.size());
-            for (const auto& candidate : candidates) {
-                m_decayScratch.push_back(Candidate::GetFormID(candidate));
-            }
-            m_featureLearner.MaybeDecayBatch(m_decayScratch);
+            Huginn_ZONE_NAMED("Score::Forget");
+            m_featureLearner.MaybeForgetFaded();
         }
 
         // Acquire locked readers once for the entire scoring loop.
@@ -343,32 +339,6 @@ namespace Huginn::Scoring
                 entry.utility = u;
             }
         }
-    }
-
-    // =========================================================================
-    // SINGLE CANDIDATE SCORING (Public)
-    // =========================================================================
-
-    ScoredCandidate UtilityScorer::ScoreCandidate(
-        const Candidate::CandidateVariant& candidate,
-        const State::GameState& state,
-        const State::PlayerActorState& player,
-        const State::TargetCollection& targets,
-        const State::WorldState& world)  // Stage 1f: Added WorldState
-    {
-        // Stage 1f: Evaluate context rules for single candidate
-        Context::ContextWeightMap weights = m_contextEngine.EvaluateRules(
-            player, targets, world);
-
-        // Single candidate — no lock amortization benefit, use direct APIs
-        RE::FormID formID = Candidate::GetFormID(candidate);
-        auto stateFeatures = Learning::StateFeatures::FromState(player, targets);
-        float contextWeight = Context::WeightForCandidate(candidate, weights);
-        auto metrics = m_featureLearner.GetMetrics(formID, stateFeatures);
-        float recencyBoost = m_usageMemory.GetRecencyBoost(formID, state);
-
-        return ScoreCandidateInternal(candidate, state, player, targets, world, weights,
-            contextWeight, metrics, recencyBoost);
     }
 
     // =========================================================================

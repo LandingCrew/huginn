@@ -1583,7 +1583,7 @@ void RunFeatureBanditLearnerTests()
             learner.Update(companionID, state, 1.0f);   // and a well-trained companion
         }
         const float rivalBefore = learner.GetRewardEstimate(rivalID, state);
-        const uint32_t rivalTrains = learner.GetTrainCount(rivalID);
+        const float rivalTrains = learner.GetTrainCount(rivalID);
         const float companionBefore = learner.GetRewardEstimate(companionID, state);
 
         EquipEvent event;
@@ -1652,7 +1652,7 @@ void RunFeatureBanditLearnerTests()
         }
 
         const float chosenNow = learner.GetRewardEstimate(chosenID, state);
-        const uint32_t chosenTrains = learner.GetTrainCount(chosenID);
+        const float chosenTrains = learner.GetTrainCount(chosenID);
         EquipEvent repeat = event;
         repeat.repeatPick = true;
         subscriber.OnEquipEvent(repeat);
@@ -4422,65 +4422,98 @@ void RunUnitTests()
         logger::info("TEST PASS: Dedup equivalence holds (IsFavorited, fortify parity)"sv);
     }
 
-    // Test 16: FeatureBanditLearner batch decay — one call decays multiple idle items,
-    // leaves unlisted/fresh items untouched, preserves train counts, and is
-    // idempotent (re-decay at the same injected time is a no-op).
+    // Test 16: memory with a useful life (roadmap Phase 3 #3a). On the play
+    // clock: full strength for the useful life, a knee, then forgotten; the
+    // weights never move, a pick after a fade restarts from n_eff + 1, the
+    // life grows with picks, and the cosave carries play minutes.
     {
-        logger::info("TEST: FeatureBanditLearner batch decay..."sv);
+        logger::info("TEST: FeatureBanditLearner useful life..."sv);
+        using Learning::FeatureBanditLearner;
+        constexpr double kHour = 3600.0;
+        constexpr RE::FormID kA = 0xD001, kB = 0xD002;
 
-        Learning::FeatureBanditLearner learner;
+        FeatureBanditLearner learner;
+        learner.SetMemoryLife(Learning::MemoryLife{});   // 8h + 2h ln(1+n), s 1h, forget < 5%
         Learning::StateFeatures s{};
         s.healthPct = 0.5f;
         s.inCombat = 1.0f;
 
-        learner.Update(0xD001, s, 1.0f);
-        learner.Update(0xD002, s, 1.0f);
-        learner.Update(0xD003, s, 1.0f);
-
-        const auto wBefore1 = learner.GetWeights(0xD001);
-        const auto wBefore3 = learner.GetWeights(0xD003);
-
-        // Inject a future "now" well past the decay threshold (~60 min idle)
-        const auto future = std::chrono::steady_clock::now() + std::chrono::minutes(60);
-        const std::vector<RE::FormID> batch = {0xD001, 0xD002, 0xD999 /* never trained */};
-
-        const size_t decayed = learner.MaybeDecayBatch(batch, future);
-        if (decayed != 2) {
-            logger::error("TEST FAIL: batch decay should decay exactly 2 items, got {}", decayed);
-            return;
-        }
-
-        // ~60 min idle → factor ≈ (1 - rate)^1.0; allow slack for the microseconds
-        // between the Update stamp and the test's now() baseline
-        const float expectedFactor = std::pow(1.0f - Config::DECAY_RATE_PER_HOUR, 1.0f);
-        const auto wAfter1 = learner.GetWeights(0xD001);
-        for (size_t i = 0; i < Learning::StateFeatures::NUM_FEATURES; ++i) {
-            if (std::abs(wAfter1[i] - wBefore1[i] * expectedFactor) > 0.001f) {
-                logger::error("TEST FAIL: weight[{}] should decay by ~{:.4f}: {:.4f} -> {:.4f}",
-                    i, expectedFactor, wBefore1[i], wAfter1[i]);
-                return;
+        learner.Update(kA, s, 1.0f);
+        learner.Update(kA, s, 1.0f);   // A: n 2, life 8 + 2 ln 3 = 10.2h
+        learner.Update(kB, s, 1.0f);   // B: n 1, life 8 + 2 ln 2 = 9.4h
+        const auto wA = learner.GetWeights(kA);
+        const auto wB = learner.GetWeights(kB);
+        const float ucbB0 = learner.GetUCB(kB);
+        bool ok = true;
+        auto expect = [&ok](bool cond, std::string_view what) {
+            if (!cond) {
+                logger::error("TEST FAIL: useful life -- {}"sv, what);
+                ok = false;
             }
-        }
+        };
 
-        // Unlisted item untouched
-        if (learner.GetWeights(0xD003) != wBefore3) {
-            logger::error("TEST FAIL: item not in batch must not decay");
+        expect(learner.GetRetention(kA) == 1.0f && learner.GetTrainCount(kA) == 2.0f,
+            "retention is not exactly 1 at t = 0, or a pick lost evidence");
+
+        learner.AdvancePlayTime(static_cast<float>(4 * kHour));
+        expect(learner.GetRetention(kA) > 0.99f && learner.GetRetention(kB) > 0.99f,
+            "an item faded inside its useful life (4h of 9-10h)");
+
+        learner.AdvancePlayTime(static_cast<float>(5.8 * kHour));   // 9.8h: past B's knee, before A's
+        const float rA = learner.GetRetention(kA);
+        const float rB = learner.GetRetention(kB);
+        expect(rB > 0.2f && rB < 0.6f, std::format("B at 9.8h should be on the knee, kept {:.3f}", rB));
+        expect(rA > rB, "two picks did not buy A a longer life than B's one");
+        expect(learner.GetConfidence(kB) < 1.0f / 3.0f, "B's confidence did not fall with its evidence");
+        expect(learner.GetUCB(kB) > ucbB0, "B's exploration bonus did not rise as it faded");
+        expect(learner.GetWeights(kA) == wA && learner.GetWeights(kB) == wB,
+            "fading moved the weights (only the confidence fades)");
+        expect(learner.MaybeForgetFaded() == 0, "an item on the knee was forgotten");
+
+        learner.Update(kB, s, 1.0f);   // B picked again: n = 1 x rB + 1, life restarts
+        const float nB = learner.GetTrainCount(kB);
+        expect(std::abs(nB - (rB + 1.0f)) < 0.001f,
+            std::format("a pick after a fade gave n {:.3f}, not n_eff + 1 = {:.3f}", nB, rB + 1.0f));
+        expect(learner.GetRetention(kB) == 1.0f, "a pick did not renew the item's life");
+
+        learner.AdvancePlayTime(static_cast<float>(4.2 * kHour));   // 14h: A long past its knee
+        FeatureBanditLearner::SerializedEntry savedB{};
+        uint32_t savedTotal = 0;
+        learner.ExportData([&](FeatureBanditLearner::SerializedEntry e) { if (e.formID == kB) savedB = e; },
+            savedTotal);
+        expect(learner.MaybeForgetFaded() == 1, "A was not forgotten past its useful life");
+        expect(learner.MaybeForgetFaded() == 0, "the forget sweep ran twice in one minute of play");
+        expect(!learner.HasItem(kA) && learner.HasItem(kB), "the sweep took the wrong item");
+        expect(learner.GetConfidence(kA) == 0.0f && learner.GetUCB(kA) == 1.0f,
+            "a forgotten item is not seen as new");
+        expect(learner.GetForgottenTotal() == 1 && learner.GetTotalTrainCount() == 1,
+            "the forgotten item's evidence was not taken off the total");
+
+        // The cosave carries PLAY minutes since the pick: a learner with its
+        // own clock (a fresh launch) sees the same retention.
+        expect(savedB.minutesSinceChosen == 252, std::format("B saved {} play minutes, not 252",
+            savedB.minutesSinceChosen));
+        FeatureBanditLearner reloaded;
+        reloaded.ImportData({ savedB });
+        expect(std::abs(reloaded.GetRetention(kB) - learner.GetRetention(kB)) < 0.01f &&
+                   reloaded.GetTrainCount(kB) == nB,
+            "a round trip lost the evidence or the time since the pick");
+
+        // Off: nothing fades, nothing is forgotten.
+        FeatureBanditLearner keeper;
+        Learning::MemoryLife off{};
+        off.enabled = false;
+        keeper.SetMemoryLife(off);
+        keeper.Update(kA, s, 1.0f);
+        keeper.AdvancePlayTime(static_cast<float>(1000 * kHour));
+        expect(keeper.GetRetention(kA) == 1.0f && keeper.ForgetFaded() == 0 && keeper.HasItem(kA),
+            "bForgetUnusedItems = false still faded or forgot");
+
+        if (!ok) {
             return;
         }
-
-        // Train counts unaffected by decay
-        if (learner.GetTrainCount(0xD001) != 1 || learner.GetTotalTrainCount() != 3) {
-            logger::error("TEST FAIL: decay must not change train counts");
-            return;
-        }
-
-        // Idempotent: lastUpdate was stamped to `future`, so re-decay is a no-op
-        if (learner.MaybeDecayBatch(batch, future) != 0) {
-            logger::error("TEST FAIL: immediate re-decay at same time should be a no-op");
-            return;
-        }
-
-        logger::info("TEST PASS: FeatureBanditLearner batch decay (selective, count-preserving, idempotent)"sv);
+        logger::info("TEST PASS: FeatureBanditLearner useful life (A kept {:.2f} / B {:.2f} at 9.8h, "
+            "B back at n {:.2f}, A forgotten at 14h)"sv, rA, rB, nB);
     }
 
     // Test 17: ContextReason derivation (architecture-critique #10) — the display
@@ -6858,7 +6891,7 @@ void RunCosaveTests()
 
         // Import into fresh learner
         FeatureBanditLearner dest;
-        dest.ImportData(exported, totalTrains);
+        dest.ImportData(exported);
 
         if (dest.GetItemCount() != 2) {
             logger::error("[Cosave Test] FAIL: learner import should have 2 items, got {}"sv, dest.GetItemCount());
@@ -6901,7 +6934,7 @@ void RunCosaveTests()
         }
 
         FeatureBanditLearner dest;
-        dest.ImportData(exported, totalTrains);
+        dest.ImportData(exported);
         if (dest.GetItemCount() != 0) {
             logger::error("[Cosave Test] FAIL: Empty learner import should have 0 items"sv);
             return;
@@ -6931,7 +6964,7 @@ void RunCosaveTests()
         entry.trainCount = 5;
         newEntries.push_back(entry);
 
-        learner.ImportData(newEntries, 5);
+        learner.ImportData(newEntries);
 
         // Old data gone
         if (learner.GetTrainCount(0x00031000) != 0) {
@@ -6952,8 +6985,9 @@ void RunCosaveTests()
         using Huginn::Persist::DecodeV2EntryBlob;
         constexpr auto compiled = static_cast<uint32_t>(StateFeatures::NUM_FEATURES);
 
-        // Build a synthetic v2 blob with diskFeatures weights per entry.
-        auto makeBlob = [](uint32_t diskFeatures, uint32_t numItems) {
+        // Build a synthetic blob with diskFeatures weights per entry: v3's
+        // integer count, or v4's float.
+        auto makeBlob = [](uint32_t diskFeatures, uint32_t numItems, bool v4 = false) {
             const size_t stride = sizeof(RE::FormID)
                                 + sizeof(float) * diskFeatures
                                 + sizeof(uint32_t) * 2;
@@ -6967,9 +7001,14 @@ void RunCosaveTests()
                     std::memcpy(p + sizeof(formID) + f * sizeof(float), &w, sizeof(w));
                 }
                 uint32_t trainCount = 10 + i;
+                float evidence = 10.5f + static_cast<float>(i);
                 uint32_t minutes = 20 + i;
                 std::byte* tail = p + sizeof(formID) + sizeof(float) * diskFeatures;
-                std::memcpy(tail, &trainCount, sizeof(trainCount));
+                if (v4) {
+                    std::memcpy(tail, &evidence, sizeof(evidence));
+                } else {
+                    std::memcpy(tail, &trainCount, sizeof(trainCount));
+                }
                 std::memcpy(tail + sizeof(trainCount), &minutes, sizeof(minutes));
             }
             return blob;
@@ -6979,11 +7018,11 @@ void RunCosaveTests()
         {
             constexpr uint32_t disk = compiled - 2;
             auto blob = makeBlob(disk, 2);
-            auto entries = DecodeV2EntryBlob(blob.data(), blob.size(), 2, disk);
+            auto entries = DecodeV2EntryBlob(blob.data(), blob.size(), 2, disk, 3);
             bool ok = entries.size() == 2
                    && entries[1].formID == 0x00040001
-                   && entries[1].trainCount == 11
-                   && entries[1].minutesSinceLastUpdate == 21
+                   && entries[1].trainCount == 11.0f
+                   && entries[1].minutesSinceChosen == 21
                    && entries[1].weights[0] == 101.0f
                    && entries[1].weights[disk - 1] == static_cast<float>(100 + disk)
                    && entries[1].weights[disk] == 0.0f
@@ -6998,11 +7037,11 @@ void RunCosaveTests()
         {
             constexpr uint32_t disk = compiled + 3;
             auto blob = makeBlob(disk, 2);
-            auto entries = DecodeV2EntryBlob(blob.data(), blob.size(), 2, disk);
+            auto entries = DecodeV2EntryBlob(blob.data(), blob.size(), 2, disk, 3);
             bool ok = entries.size() == 2
                    && entries[0].formID == 0x00040000
-                   && entries[0].trainCount == 10
-                   && entries[0].minutesSinceLastUpdate == 20
+                   && entries[0].trainCount == 10.0f
+                   && entries[0].minutesSinceChosen == 20
                    && entries[0].weights[0] == 1.0f
                    && entries[0].weights[compiled - 1] == static_cast<float>(compiled);
             if (!ok) {
@@ -7011,17 +7050,18 @@ void RunCosaveTests()
             }
         }
 
-        // Equal count: decode must match a straight memcpy of SerializedEntry
+        // Equal count, v4: decode must match a straight memcpy of SerializedEntry
         {
-            auto blob = makeBlob(compiled, 1);
-            auto entries = DecodeV2EntryBlob(blob.data(), blob.size(), 1, compiled);
+            auto blob = makeBlob(compiled, 1, true);
+            auto entries = DecodeV2EntryBlob(blob.data(), blob.size(), 1, compiled, 4);
             FeatureBanditLearner::SerializedEntry direct;
             std::memcpy(&direct, blob.data(), sizeof(direct));
             bool ok = entries.size() == 1
                    && entries[0].formID == direct.formID
                    && entries[0].weights == direct.weights
                    && entries[0].trainCount == direct.trainCount
-                   && entries[0].minutesSinceLastUpdate == direct.minutesSinceLastUpdate;
+                   && entries[0].trainCount == 10.5f
+                   && entries[0].minutesSinceChosen == direct.minutesSinceChosen;
             if (!ok) {
                 logger::error("[Cosave Test] FAIL: equal-count decode differs from raw layout"sv);
                 return;
@@ -7037,7 +7077,7 @@ void RunCosaveTests()
         // for errors (2026-10-01).
         {
             auto blob = makeBlob(compiled, 1);
-            auto entries = DecodeV2EntryBlob(blob.data(), blob.size() - 1, 1, compiled,
+            auto entries = DecodeV2EntryBlob(blob.data(), blob.size() - 1, 1, compiled, 4,
                 /*unitTest=*/true);
             if (!entries.empty()) {
                 logger::error("[Cosave Test] FAIL: byteLen mismatch should reject decode"sv);

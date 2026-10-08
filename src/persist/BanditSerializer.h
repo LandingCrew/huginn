@@ -18,17 +18,21 @@ namespace Huginn::Persist
    inline constexpr uint32_t kRecordType_BanditWeights  = 'WDNB';  // 'BNDW' on disk
    // v3 (0.23.0): the choice target -- learning on 0-1. Same wire format as
    // v2. A v1/v2 record holds learning on the old 8 (equip) / 5 (consume)
-   // target and is DISCARDED on load: those scores came from rules the
+   // target and is SKIPPED on load (an unsupported version): those scores came from rules the
    // rework replaced, so the character starts learning fresh (decided with
    // the user, 2026-10-04 -- reset, not rescale).
-   inline constexpr uint32_t kBanditSerializationVersion = 3;
+   // v4 (0.23.6): memory with a useful life. Same stride as v3; the count is
+   // a float (the evidence n, fractional after a fade) and the minutes are
+   // PLAY minutes since the item was last chosen. A v3 record CONVERTS: n =
+   // its train count, and every item's life starts at the load (v3's minutes
+   // counted since the last decay stamp, not the last pick).
+   inline constexpr uint32_t kBanditSerializationVersion = 4;
    inline constexpr uint32_t kUniqueID                = 'QCNO';  // 'ONCQ' on disk
 
    // Which character a save belongs to, and how far its learning had got:
    //   v2: [characterID: uint64] [learning clock: uint64]
-   //   v1: [characterID: uint64]   (pre-release 0.22.11 builds; still read)
-   // The ID is random at new game; a save from before it gets one derived
-   // from the player's name and race at its first load. Lets a load tell "the
+   // The ID is random at new game; a save without the record is treated as a
+   // different character and given a new one. Lets a load tell "the
    // same character, reloaded" from "a different character", and "this save
    // is behind what is in memory" from "this save is ahead" -- see
    // ResolveLoadedLearner. Older Huginn versions skip the record with one
@@ -55,21 +59,24 @@ namespace Huginn::Persist
    // feature vector is APPEND-ONLY (see StateFeatures.h): features may be
    // added at the end, never reordered or removed.
 
-   // Decode a v2 BNDW entry blob written with diskFeatureCount weights per
+   // Decode a v2+ BNDW entry blob written with diskFeatureCount weights per
    // entry into compiled-layout entries (positional pad/truncate migration).
    // data/byteLen must hold exactly numItems entries of on-disk stride
    //   sizeof(RE::FormID) + sizeof(float) * diskFeatureCount + 2 * sizeof(uint32_t);
    // returns empty if byteLen does not match. Exposed for tests.
+   // `recordVersion` 4 reads the count as a float; 2 and 3 as an integer,
+   // converted. The minutes are copied as stored either way.
    // `unitTest` marks a call from the unit tests' negative case: the rejection
    // is then logged at info as a test, not at error as a save fault.
    [[nodiscard]] std::vector<Learning::FeatureBanditLearner::SerializedEntry>
    DecodeV2EntryBlob(const std::byte* data, size_t byteLen,
-      uint32_t numItems, uint32_t diskFeatureCount, bool unitTest = false);
+      uint32_t numItems, uint32_t diskFeatureCount, uint32_t recordVersion,
+      bool unitTest = false);
 
    // Buffered learner data from cosave Load callback
    struct LoadedBanditData {
       std::vector<Learning::FeatureBanditLearner::SerializedEntry> entries;
-      uint32_t totalTrainCount = 0;
+      uint32_t totalTrainCount = 0;   // the header's, for the log; ImportData sums the entries
       uint32_t resolvedFormIDs = 0;
       uint32_t failedFormIDs = 0;
    };

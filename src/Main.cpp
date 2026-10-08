@@ -319,6 +319,7 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
     if (haveMainIni) Learning::LearningSettings::GetSingleton().LoadFromIni(mainIni);
     Learning::ExternalEquipLearner::GetSingleton().SetConfig(
         Learning::LearningSettings::GetSingleton().BuildConfig());
+    g_featureBanditLearner->SetMemoryLife(Learning::LearningSettings::GetSingleton().BuildConfig().memory);
 
     // Composition root: the learner declares which live values it needs, this
     // wires who answers. Keeps learning/ from including slot/ and wheeler/

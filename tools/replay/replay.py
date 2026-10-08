@@ -228,6 +228,67 @@ class ChoiceTarget(Current):
             self._pending.append((t + dt.timedelta(seconds=PASSED_OVER_DELAY_SEC), form, phi))
 
 
+class UsefulLife(ChoiceTarget):
+    """Phase 3 #3a: confidence fades with PLAY time since the item was last chosen.
+
+    retention(t) = 1 / (1 + exp((t - T) / s)), T = T0 + k ln(1 + n);
+    n_eff = n * retention scores confidence and UCB, and a new pick restarts
+    from n_eff + 1. Evicted (forgotten) below `evict`. Play time is the time
+    between selections in one launch, each gap capped at GAP_CAP_SEC (menus,
+    AFK); time between launches is not play.
+    """
+    GAP_CAP_SEC = 600
+
+    def __init__(self, t0_h=8.0, k_h=2.0, s_h=1.0, evict=0.05, label=None):
+        super().__init__(neg_weight=0.25, repeat_window=30, pseudo_n0=2)
+        self.t0, self.k, self.s, self.evict = t0_h * 3600, k_h * 3600, s_h * 3600, evict
+        self.play = 0.0
+        self._prev = None        # (utc, launch) of the previous record
+        self.chosen_at = {}      # form -> play seconds at its last pick
+        self.forgotten = 0
+        self.name = label or f"useful life T0={t0_h:g}h k={k_h:g}h s={s_h:g}h"
+
+    def retention(self, form):
+        n = self.learner.n[form]
+        if n <= 0:
+            return 1.0
+        t = self.play - self.chosen_at.get(form, self.play)
+        life = self.t0 + self.k * math.log1p(n)
+        x = (t - life) / self.s
+        return 0.0 if x > 50 else 1.0 / (1.0 + math.exp(x))
+
+    def tick(self, rec):
+        t = dt.datetime.strptime(rec["utc"][:19], "%Y-%m-%d %H:%M:%S")
+        if self._prev and self._prev[1] == rec["launch"]:
+            self.play += min(self.GAP_CAP_SEC, max(0.0, (t - self._prev[0]).total_seconds()))
+        self._prev = (t, rec["launch"])
+        L = self.learner
+        for form in [f for f in L.w if L.n[f] > 0 and self.retention(f) < self.evict]:
+            L.total -= L.n[form]
+            del L.w[form]
+            L.n[form] = 0
+            self.chosen_at.pop(form, None)
+            self.forgotten += 1
+
+    def learn_score(self, c, phi):
+        L = self.learner
+        n_eff = L.n[c["form"]] * self.retention(c["form"])
+        a = self.conf(n_eff)
+        learn = (a * L.predict(c["form"], phi) + (1 - a) * c["prior"] + BETA * ucb(n_eff, L.total)
+                 + self.rec_scale * c["rec"])
+        return learn, LAMBDA_MIN + a * (self.lambda_max - LAMBDA_MIN)
+
+    def learn(self, rec, chosen, phi):
+        form = rec["form"]
+        before = self.learner.n[form]
+        n_eff = before * self.retention(form)
+        super().learn(rec, chosen, phi)
+        if self.learner.n[form] != before:       # a train (not a repeat inside the window)
+            self.learner.total += n_eff - before
+            self.learner.n[form] = n_eff + 1
+            self.chosen_at[form] = self.play
+
+
 # --------------------------------------------------------------------------
 # Replay
 # --------------------------------------------------------------------------
@@ -250,6 +311,12 @@ def load(path, char, from_launch, to_launch=None):
                 continue
             cols = r["cols"]
             r["_cands"] = [dict(zip(cols, c)) for c in r["cands"]]
+            # The recency term on ONE scale, the pre-0.23.0 one (1.5): since
+            # the choice target the game logs it already divided by 8
+            # (0.1875), and the policies' rec_scale = 1/8 would divide again.
+            for c in r["_cands"]:
+                if 0.0 < c.get("rec", 0.0) < 1.0:
+                    c["rec"] *= 8.0
             recs.append(r)
     recs.sort(key=lambda r: r["utc"])
     return recs
@@ -271,6 +338,8 @@ def replay(recs, policy):
                 s[1] += rank < PAGE
                 s[2] += 1.0 / (rank + 1)
         policy.learn(r, chosen, phi)
+        if hasattr(policy, "tick"):
+            policy.tick(r)
     return stats
 
 
@@ -370,8 +439,18 @@ def main():
         ChoiceTarget(neg_weight=0.25, repeat_window=30, pseudo_n0=2, label="SHIPPED: choice target + pseudo-obs n0=2 (0.23.0)"),
         ChoiceTarget(neg_weight=0.25, repeat_window=30, pseudo_n0=3),
     ]
+    # Phase 3 #3a: the useful-life curve against the shipped learner.
+    policies += [
+        UsefulLife(),
+        UsefulLife(t0_h=4.0, k_h=1.0),
+        UsefulLife(t0_h=2.0, k_h=1.0, s_h=0.5),
+        UsefulLife(t0_h=1.0, k_h=0.5, s_h=0.25),
+    ]
     groups = ["all", "huginn", "outside", "type:Weapon", "type:Spell", "type:Potion", "type:Food", "type:Scroll"]
     results = {p.name: replay(recs, p) for p in policies}
+    for p in policies:
+        if isinstance(p, UsefulLife):
+            print(f"{p.name}: {p.play / 3600:.1f} play-hours, {p.forgotten} items forgotten")
 
     width = max(len(p.name) for p in policies)
     head = " ".join(f"{g.replace('type:', ''):>14}" for g in groups)

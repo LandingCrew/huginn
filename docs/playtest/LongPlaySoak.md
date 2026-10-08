@@ -70,6 +70,7 @@ Release:
 | `recompute/ticks` | pipeline recomputes vs total ticks | very high ratio = state hashing thrashing (churn); near-zero = pipeline may be stuck skipping |
 | `override` | recomputes where a safety override took top slot | sanity-check against how often you actually hit low-health/charge/drowning |
 | `learn items/trains` | learned-item count + total train count | **items must plateau, not climb linearly** across 50 hr — linear climb = unbounded weight table |
+| `forgot` | items forgotten past their useful life since launch (0.23.6) | what keeps `items` on a plateau; 0 for the first ~8 play-hours is expected |
 | `tick avg/peak` | per-tick cost this window | avg < 0.1 ms target; **peak stable across bursts** — a peak that grows hour-over-hour is the interesting bug |
 | `goals reachIns=N (candidate=M)` | **objective metric 1** (v0.22.8): every attributed external equip — the player went past Huginn to the inventory/favourites. `candidate` = the ones Huginn had scored and could have offered (hit+near+miss) | should fall over a run. `candidate` is the fixable part; the rest (`novel`) is a coverage gap |
 | `presses=N (regular= labeled= offPage=)` | **objective metric 2**: slot activations through Huginn keys or a Huginn wheel. `labeled` = a classified slot (Heal, Potion...), `offPage` = any page past the first (overlaps both) | the end state is one page of Regular slots, so `labeled`+`offPage` are workarounds and should trend to zero |

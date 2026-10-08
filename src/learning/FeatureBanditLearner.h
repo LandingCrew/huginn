@@ -8,6 +8,7 @@
 #include <array>
 #include <functional>
 #include <vector>
+#include <algorithm>
 
 namespace Huginn::Learning
 {
@@ -15,8 +16,43 @@ namespace Huginn::Learning
    struct FeatureItemMetrics
    {
       float rewardEstimate;      // w . phi(s)
-      float ucb;         // Exploration bonus (per-item train count)
-      float confidence;  // n / (n + PRIOR_PSEUDO_OBSERVATIONS), n = per-item trains
+      float ucb;         // Exploration bonus (per-item evidence, n_eff)
+      float confidence;  // n_eff / (n_eff + PRIOR_PSEUDO_OBSERVATIONS), n_eff = trains x retention
+   };
+
+   // Memory with a useful life (roadmap Phase 3 #3a, 0.23.6). What the player
+   // stops choosing keeps full strength for a while, then fades fast and is
+   // forgotten -- a battery's discharge curve, not an exponential:
+   //
+   //   retention(t) = (1 + e^(-T/s)) / (1 + e^((t - T)/s))   t = PLAY hours since last chosen
+   //   T            = lifeHours + lifePerPickHours * ln(1 + n)
+   //   n_eff        = n * retention                         confidence = n_eff / (n_eff + n0)
+   //   forgotten when retention < forgetBelow               (entry deleted)
+   //
+   // The numerator makes retention exactly 1 at t = 0. What fades is the
+   // confidence, not the weights: as n_eff falls the learned score slides back
+   // to the PRIOR ("don't know any more"), not to 0 ("rejected"), and the UCB
+   // rises, so a forgotten item is explored again. Replaces the 2%/hour weight
+   // decay. `enabled` false: nothing fades and nothing is forgotten.
+   struct MemoryLife
+   {
+      bool enabled = true;
+      float lifeHours = 8.0f;          // T0: full strength this long after a pick
+      float lifePerPickHours = 2.0f;   // k: each doubling of the picks adds ~1.4 k
+      float fadeHours = 1.0f;          // s: the width of the knee
+      float forgetBelow = 0.05f;       // retention under this deletes the entry
+
+      // The one copy of the allowed ranges (the INI loader and the learner
+      // both clamp through this).
+      [[nodiscard]] MemoryLife Clamped() const noexcept
+      {
+         MemoryLife c = *this;
+         c.lifeHours = std::clamp(lifeHours, 0.1f, 10000.0f);
+         c.lifePerPickHours = std::clamp(lifePerPickHours, 0.0f, 1000.0f);
+         c.fadeHours = std::clamp(fadeHours, 0.05f, 1000.0f);
+         c.forgetBelow = std::clamp(forgetBelow, 0.0f, 0.5f);
+         return c;
+      }
    };
 
    // =============================================================================
@@ -46,26 +82,40 @@ namespace Huginn::Learning
       // `step` scales the gradient step; `countsAsTrain` false leaves the train
       // counts (confidence, UCB) alone. Both are for the choice target's
       // passed-over items: a quarter step, and no claim of evidence (0.23.0).
+      // An update with `countsAsTrain` false never creates an entry: an item
+      // the learner has not seen has estimate 0 against a target of 0.
       void Update(RE::FormID formID, const StateFeatures& features, float reward,
          float step = 1.0f, bool countsAsTrain = true);
 
-      // Lazy decay, batched: apply time-based weight decay to the given items
-      // when idle > threshold. One shared-lock pass collects items needing
-      // decay; one unique-lock pass applies it (skipped entirely when nothing
-      // qualifies — the common case). Replaces per-candidate MaybeDecay, which
-      // cost ~N lock acquisitions per scoring tick.
-      // `now` is injectable for tests (decay threshold is minutes-scale).
-      // Returns the number of items decayed.
-      size_t MaybeDecayBatch(
-         const std::vector<RE::FormID>& formIDs,
-         std::chrono::steady_clock::time_point now = std::chrono::steady_clock::now());
+      // ── Memory with a useful life (see MemoryLife above) ──────────────
+      void SetMemoryLife(const MemoryLife& life);
+
+      // The play clock: seconds of unpaused, loaded play since launch,
+      // advanced by the update loop. Time with the game closed, paused or in
+      // a load screen does not count -- a month away forgets nothing. One
+      // clock for the process; each entry stores the clock at its last pick,
+      // and the cosave carries "play minutes since" across loads.
+      void AdvancePlayTime(float seconds) noexcept;
+      [[nodiscard]] double GetPlaySeconds() const noexcept;
+
+      // Delete every entry whose retention fell under forgetBelow. One
+      // shared-lock pass finds them; the unique lock is taken only when one
+      // is due. Returns the number forgotten. MaybeForgetFaded runs it at
+      // most once a minute of play, from the scoring pass.
+      size_t ForgetFaded();
+      size_t MaybeForgetFaded();
+      [[nodiscard]] uint64_t GetForgottenTotal() const noexcept {
+         return m_forgottenTotal.load(std::memory_order_relaxed);
+      }
+
+      /// Retention of the item's evidence now (1 for an unknown item).
+      [[nodiscard]] float GetRetention(RE::FormID formID) const;
 
       // Metrics API (3.5d-compatible shape)
       [[nodiscard]] float GetConfidence(RE::FormID formID) const;
       /// n0 in confidence = n / (n + n0): the prior's weight in observations.
       [[nodiscard]] static constexpr float PriorPseudoObservations() noexcept { return PRIOR_PSEUDO_OBSERVATIONS; }
       [[nodiscard]] float GetUCB(RE::FormID formID) const;
-      [[nodiscard]] FeatureItemMetrics GetMetrics(RE::FormID formID, const StateFeatures& features) const;
 
       // ── Locked reader for amortized scoring loops ────────────────────
       // Acquires shared_lock once; caller loops N candidates under it.
@@ -75,7 +125,7 @@ namespace Huginn::Learning
       public:
          LockedReader(LockedReader&&) = default;
 
-         // Same semantics as GetMetrics, but caller pre-computes phi once
+         // Estimate, UCB and confidence (n_eff) for one item; caller pre-computes phi once
          [[nodiscard]] FeatureItemMetrics GetMetrics(
             RE::FormID formID,
             const std::array<float, StateFeatures::NUM_FEATURES>& phi) const;
@@ -86,6 +136,7 @@ namespace Huginn::Learning
 
          const FeatureBanditLearner& m_owner;
          std::shared_lock<std::shared_mutex> m_lock;
+         double m_now;   // the play clock, read once for the whole pass
       };
 
       [[nodiscard]] LockedReader AcquireReader() const;
@@ -96,8 +147,11 @@ namespace Huginn::Learning
       struct SerializedEntry {
          RE::FormID formID;
          std::array<float, StateFeatures::NUM_FEATURES> weights;
-         uint32_t trainCount;
-         uint32_t minutesSinceLastUpdate = 0;  // v2: relative to save time
+         // v4: the evidence n, fractional -- a pick after a fade restarts from
+         // n_eff + 1. (v3 held an integer count here; converted on load.)
+         float trainCount;
+         // v4: PLAY minutes since the item was last chosen, at save time.
+         uint32_t minutesSinceChosen = 0;
       };
 
       // Export all data for cosave save (acquires shared_lock)
@@ -106,9 +160,8 @@ namespace Huginn::Learning
          uint32_t& outTotalTrainCount) const;
 
       // Import data from cosave load (acquires unique_lock, clears existing data first)
-      void ImportData(
-         const std::vector<SerializedEntry>& entries,
-         uint32_t totalTrainCount);
+      // The total is summed from the entries, not taken from the header.
+      void ImportData(const std::vector<SerializedEntry>& entries);
 
       // ── Learning clock (learning survives a reload, 0.22.11) ───────────
       // Ticks on every Update() and every Clear(); saved with the character ID
@@ -139,9 +192,9 @@ namespace Huginn::Learning
       // ally flap happened to move the hash. In a still scene nothing would
       // have moved it at all.
       //
-      // Update() ONLY. Not MaybeDecayBatch, which runs from inside the scoring
-      // loop: a decay that forced a run would be re-entered by the run it
-      // forced, every tick, forever. Not ImportData or Clear either -- the load
+      // Update() ONLY. Not MaybeForgetFaded, which runs from inside the scoring
+      // loop (a forced run would re-enter it), and fading is gradual over
+      // hours -- the next run publishes it. Not ImportData or Clear either -- the load
       // and reset paths already force a pass through
       // PipelineCoordinator::ResetCrossSaveState().
       //
@@ -156,34 +209,55 @@ namespace Huginn::Learning
 
       // Diagnostics
       [[nodiscard]] size_t GetItemCount() const;
+      /// Sum of the stored evidence n over every entry, rounded.
       [[nodiscard]] uint32_t GetTotalTrainCount() const;
-      [[nodiscard]] uint32_t GetTrainCount(RE::FormID formID) const;
+      /// The stored evidence n (before fading; times GetRetention for n_eff).
+      [[nodiscard]] float GetTrainCount(RE::FormID formID) const;
       /// True if the learner holds an entry for the item (chosen at least
-      /// once, or carrying a passed-over update).
+      /// once and not forgotten since; a passed-over update never creates one).
       [[nodiscard]] bool HasItem(RE::FormID formID) const;
       [[nodiscard]] std::array<float, StateFeatures::NUM_FEATURES> GetWeights(RE::FormID formID) const;
       void Clear();
 
    private:
-      // Shared formula helpers — callers MUST hold m_mutex (ComputeUCB reads m_totalTrainCount)
-      [[nodiscard]] float ComputeConfidence(uint32_t trains) const noexcept;
-      [[nodiscard]] float ComputeUCB(uint32_t itemTrains) const noexcept;
+      // Shared formula helpers — callers MUST hold m_mutex (ComputeUCB reads m_totalTrains)
+      [[nodiscard]] float ComputeConfidence(float effectiveTrains) const noexcept;
+      [[nodiscard]] float ComputeUCB(float effectiveTrains) const noexcept;
 
       // Per-item learning state, colocated in one map: one hash lookup per
       // candidate instead of three parallel-map lookups (weights, trainCount,
-      // lastUpdate previously lived in separate unordered_maps).
+      // last-update time previously lived in separate unordered_maps).
       // NOTE: the cosave format is unaffected — serialization goes exclusively
       // through SerializedEntry in ExportData/ImportData.
       struct ItemLearningData
       {
          std::array<float, StateFeatures::NUM_FEATURES> weights{};
-         uint32_t trainCount = 0;
-         std::chrono::steady_clock::time_point lastUpdate{};
+         float trainCount = 0.0f;   // the evidence n
+         double chosenAt = 0.0;     // play clock at the last pick (at creation until one)
       };
 
+      // Retention of an entry at play time `now` -- callers MUST hold m_mutex.
+      [[nodiscard]] float RetentionAt(const ItemLearningData& data, double now) const noexcept;
+      // n_eff = n x retention: the evidence confidence and UCB see. Same lock rule.
+      [[nodiscard]] float EffectiveTrains(const ItemLearningData& data, double now) const noexcept
+      {
+         return data.trainCount * RetentionAt(data, now);
+      }
+      // Play-clock reads for the locked paths.
+      [[nodiscard]] double PlayNow() const noexcept {
+         return m_playSeconds.load(std::memory_order_relaxed);
+      }
+
       std::unordered_map<RE::FormID, ItemLearningData> m_items;
-      uint32_t m_totalTrainCount = 0;
+      float m_totalTrains = 0.0f;   // sum of n over m_items
       uint64_t m_clock = 0;   // Learning clock, see GetClock -- under m_mutex
+      MemoryLife m_life;      // under m_mutex
+
+      // One writer (the update loop); read anywhere, so atomic, not locked.
+      std::atomic<double> m_playSeconds{ 0.0 };
+      std::atomic<double> m_lastForgetSweep{ 0.0 };
+      std::atomic<uint64_t> m_forgottenTotal{ 0 };
+      static constexpr double FORGET_SWEEP_INTERVAL_SEC = 60.0;
 
       static constexpr float LEARNING_RATE = 0.1f;
       static constexpr float L2_LAMBDA = 0.01f;

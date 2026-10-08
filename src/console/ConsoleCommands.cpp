@@ -224,8 +224,9 @@ namespace Huginn::Console
    {
       // Feature contextual bandit
       if (g_featureBanditLearner) {
-      auto msg = std::format("Learner: {} items, {} total trains",
-        g_featureBanditLearner->GetItemCount(), g_featureBanditLearner->GetTotalTrainCount());
+      auto msg = std::format("Learner: {} items, {} total trains, {} forgotten, {:.1f}h of play",
+        g_featureBanditLearner->GetItemCount(), g_featureBanditLearner->GetTotalTrainCount(),
+        g_featureBanditLearner->GetForgottenTotal(), g_featureBanditLearner->GetPlaySeconds() / 3600.0);
       Print(msg.c_str());
       }
 
@@ -310,9 +311,9 @@ namespace Huginn::Console
       const char* name = form ? form->GetName() : "???";
 
       auto weights = g_featureBanditLearner->GetWeights(formID);
-      uint32_t trains = g_featureBanditLearner->GetTrainCount(formID);
+      const float trains = g_featureBanditLearner->GetTrainCount(formID);
 
-      if (trains == 0) {
+      if (!g_featureBanditLearner->HasItem(formID)) {
          auto msg = std::format("{:08X} '{}': no training data", formID, name);
          Print(msg.c_str());
          return;
@@ -327,8 +328,8 @@ namespace Huginn::Console
       float ucb = g_featureBanditLearner->GetUCB(formID);
 
       // Header
-      auto header = std::format("{:08X} '{}' ({} trains, est={:.3f}, conf={:.2f}, ucb={:.2f}):",
-         formID, name, trains, qNow, conf, ucb);
+      auto header = std::format("{:08X} '{}' ({:.2f} trains, {:.0f}% kept, est={:.3f}, conf={:.2f}, ucb={:.2f}):",
+         formID, name, trains, 100.0f * g_featureBanditLearner->GetRetention(formID), qNow, conf, ucb);
       Print(header.c_str());
 
       // Print each weight with its feature name (only non-negligible ones to console)
@@ -1043,7 +1044,7 @@ namespace Huginn::Console
       Item::ItemClassifier itemClassifier;
       Weapon::WeaponClassifier weaponClassifier;
 
-      out << "formID,plugin,name,kind,class,subclass,trainCount,confidence,minutesSinceUpdate,weightNorm";
+      out << "formID,plugin,name,kind,class,subclass,trainCount,confidence,minutesSinceChosen,retention,weightNorm";
       for (const char* feature : kFeatureNames) out << ',' << feature;
       out << '\n';
 
@@ -1096,14 +1097,15 @@ namespace Huginn::Console
          float norm = 0.0f;
          for (const float w : entry.weights) norm += w * w;
 
-         out << std::format("{:08X},{},{},{},{},{},{},{:.3f},{},{:.4f}",
+         out << std::format("{:08X},{},{},{},{},{},{:.2f},{:.3f},{},{:.3f},{:.4f}",
             entry.formID,
             CsvQuote(PluginOf(form)),
             CsvQuote(name ? name : ""),
             kind, cls, sub,
             entry.trainCount,
             g_featureBanditLearner->GetConfidence(entry.formID),
-            entry.minutesSinceLastUpdate,
+            entry.minutesSinceChosen,
+            g_featureBanditLearner->GetRetention(entry.formID),
             std::sqrt(norm));
          for (const float w : entry.weights) out << std::format(",{:.4f}", w);
          out << '\n';
@@ -1169,7 +1171,7 @@ namespace Huginn::Console
             static_cast<uint32_t>(data.tags),
             static_cast<uint32_t>(data.tagsExt),
             count,
-            g_featureBanditLearner ? g_featureBanditLearner->GetTrainCount(item->GetFormID()) : 0,
+            g_featureBanditLearner ? g_featureBanditLearner->GetTrainCount(item->GetFormID()) : 0.0f,
             CsvQuote(effects));
          ++written;
          if (data.type == Item::ItemType::Unknown) ++unknown;
@@ -1231,7 +1233,7 @@ namespace Huginn::Console
             data.duration,
             data.baseCost,
             count,
-            g_featureBanditLearner ? g_featureBanditLearner->GetTrainCount(scroll->GetFormID()) : 0);
+            g_featureBanditLearner ? g_featureBanditLearner->GetTrainCount(scroll->GetFormID()) : 0.0f);
          ++written;
          if (data.type == Spell::SpellType::Unknown) ++unknown;
          if (count > 0) ++carried;
@@ -1281,7 +1283,7 @@ namespace Huginn::Console
       out << "formID,plugin,name,kind,type,tags,baseDamage,speed,enchantment,playerCount,trainCount,effects\n";
 
       auto trains = [](RE::FormID id) {
-         return g_featureBanditLearner ? g_featureBanditLearner->GetTrainCount(id) : 0u;
+         return g_featureBanditLearner ? g_featureBanditLearner->GetTrainCount(id) : 0.0f;
       };
       size_t weapons = 0, ammo = 0, unknown = 0;
       for (auto* weapon : dataHandler->GetFormArray<RE::TESObjectWEAP>()) {

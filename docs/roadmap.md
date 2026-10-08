@@ -34,11 +34,14 @@ and change the learning before tuning anything that competes with it.
    unheld sword and bow jumped slots after refresh bursts; home keys,
    0.23.5), then combat
    suppressing the workstation context (undecided; it must restore itself
-   after the fight), then a `fChallengerMargin` 0.25 vs 0.5 comparison on
-   the `slotChurn=` heartbeat -- an INI-only session (0.5 would have
-   blocked ~82 of ~255 hold-governed changes across the last 8 windows).
-   The standing-still bench flicker is likely the tester; confirm with a
-   still camera. All under "Remaining
+   after the fight). `fChallengerMargin` is 0.5 from 0.23.6: on both lists
+   (2026-10-07) no hold give-up was under x1.5, against 35% of 1,966 at
+   0.25, and nothing better was kept out. Churn per press barely moved: what
+   is left is scores jumping by more than any margin -- the correlation and
+   food/potion multipliers switching on and off with combat and distance
+   (Oakflesh x2.5 -> x5.5; one key changed four times in 11 s). That is the
+   next churn lever. The standing-still bench flicker is likely the tester;
+   confirm with a still camera. All under "Remaining
    slot churn" and "Soft slot manager" below; #174's key-age and tenure
    bands are the before/after measure.
 4. **Potion recommendations** -- buffs matched to the loadout, resist
@@ -207,7 +210,15 @@ context" unless named):
    0, n kept -- now reads as "rejected" harder than before. Decaying n is
    the fix; it changes the cosave. **Decay of n: REPLACED by #3a.**
 3a. **Memory with a useful life -- delayed decay to the floor, then
-   eviction** (the user, 2026-10-06; next after this stack merges).
+   eviction** (the user, 2026-10-06). BUILT in 0.23.6 (branch
+   `learner-useful-life`), in-game test pending: the curve below with
+   the starting values as INI keys under `[Learning]`, a play clock in the
+   update loop (loaded and unpaused only), a forget sweep once a minute of
+   play, `forgot=` in the heartbeat, cosave v4 converting v3. tools/replay
+   (11.4 play-hours, 820 picks): the defaults forget nothing and change no
+   hit; T0 4h -0.1 point, T0 1h -2 points (food, potions, outside picks --
+   the consumables risk below). Design detail in
+   docs/architecture/4-contextual-bandits.md, "Forgetting".
    REPLACES "Expire learner entries for items the player no longer has",
    the decay of n under #3 above, and the "Decay" criticism under Pooled
    learning -- one mechanism for all three. Self-cleaning memory: what the
@@ -313,7 +324,9 @@ context" unless named):
   the user plays, but may for others. Display only.
 - **REPLACED by Phase 3 #3a (memory with a useful life, 2026-10-06)** --
   kept for its cases (gear in a chest, restocked potions), which #3a must
-  still answer. **Expire learner entries for items the player no longer has.** The
+  still answer. **Expire learner entries for items the player no longer has.**
+  REPLACED by Phase 3 #3a (0.23.6), the useful life: an item no longer
+  carried cannot be chosen, so it ages out like an unused one. The
   learner keeps an entry for every item ever selected and drops one only
   on `hg reset weights` or a reload's dynamic-form swap, so `learn items`
   counts everything chosen since the reset (80 after ~7 h of the soak),
@@ -1820,4 +1833,7 @@ trigger to pick any of it up.
       trained. Most of the inventory is invisible to the learner, so it is
       the cold start, not the weights, that matters most.
 - [ ] Addendum #15/#16 (Kalman learner / learnable context weights) — **parked**: needs a v3
-      cosave bump, NOT landable during an active soak run
+      cosave bump, NOT landable during an active soak run. The 2026-10-07 design
+      discussion turned this into a proposal: context as the learner's input (shared
+      need × effect weights, response curves, uncertainty-ranked wildcards), see
+      [architecture/9-context-as-learner-input.md](architecture/9-context-as-learner-input.md)

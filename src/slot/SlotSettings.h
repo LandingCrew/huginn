@@ -102,7 +102,7 @@ namespace Huginn::Slot
         }
 
         /// How much better, as a fraction, a challenger must score than the
-        /// item holding a slot to take it: 0.25 = 25% better.
+        /// item holding a slot to take it: 0.5 = 50% better.
         /// `[SlotLocker] fChallengerMargin`.
         [[nodiscard]] float ChallengerMargin() const noexcept
         {
@@ -185,7 +185,7 @@ namespace Huginn::Slot
         std::atomic<uint32_t> m_generation{0};
         std::atomic<bool> m_keepSlotPositions{true};
         std::atomic<bool> m_holdSeatedItems{true};
-        std::atomic<float> m_challengerMargin{0.25f};
+        std::atomic<float> m_challengerMargin{0.5f};
         std::atomic<bool> m_returnToHomeKey{true};
         std::atomic<float> m_homeKeyMemorySec{60.0f};
         std::atomic<float> m_needRepeatDiscount{0.5f};

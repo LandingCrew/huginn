@@ -231,11 +231,11 @@ public:
     // Semi-gradient step on (reward - prediction). No gamma, no next state.
     void Update(RE::FormID formID, const StateFeatures& features, float reward);
 
-    // Batched lazy time decay over a candidate pool. Returns items decayed.
-    // `now` is injectable for tests.
-    size_t MaybeDecayBatch(const std::vector<RE::FormID>& formIDs,
-                           std::chrono::steady_clock::time_point now =
-                               std::chrono::steady_clock::now());
+    // Memory with a useful life (0.23.6, see "Forgetting" below)
+    void SetMemoryLife(const MemoryLife&);
+    void AdvancePlayTime(float seconds) noexcept;   // the play clock
+    size_t MaybeForgetFaded();                      // at most once a minute of play
+    [[nodiscard]] float GetRetention(RE::FormID) const;
 
     // Metrics
     [[nodiscard]] float GetConfidence(RE::FormID) const;
@@ -253,16 +253,16 @@ public:
     struct SerializedEntry {
         RE::FormID formID;
         std::array<float, StateFeatures::NUM_FEATURES> weights;
-        uint32_t trainCount;
-        uint32_t minutesSinceLastUpdate = 0;  // v2: relative to save time
+        float trainCount;                 // v4: the evidence n, fractional
+        uint32_t minutesSinceChosen = 0;  // v4: PLAY minutes since the last pick
     };
     void ExportData(const std::function<void(SerializedEntry)>&, uint32_t& outTotalTrainCount) const;
     void ImportData(const std::vector<SerializedEntry>&, uint32_t totalTrainCount);
 
     // Diagnostics (backing `hg status` / `hg weights`)
     [[nodiscard]] size_t   GetItemCount() const;
-    [[nodiscard]] uint32_t GetTotalTrainCount() const;
-    [[nodiscard]] uint32_t GetTrainCount(RE::FormID) const;
+    [[nodiscard]] uint32_t GetTotalTrainCount() const;   // sum of n, rounded
+    [[nodiscard]] float    GetTrainCount(RE::FormID) const;
     [[nodiscard]] std::array<float, StateFeatures::NUM_FEATURES> GetWeights(RE::FormID) const;
     void Clear();
 
@@ -273,11 +273,11 @@ private:
     // SerializedEntry.
     struct ItemLearningData {
         std::array<float, StateFeatures::NUM_FEATURES> weights{};
-        uint32_t trainCount = 0;
-        std::chrono::steady_clock::time_point lastUpdate{};
+        float trainCount = 0.0f;   // the evidence n
+        double chosenAt = 0.0;     // play clock at the last pick
     };
     std::unordered_map<RE::FormID, ItemLearningData> m_items;
-    uint32_t m_totalTrainCount = 0;   // for UCB
+    float m_totalTrains = 0.0f;   // for UCB
 
     static constexpr float LEARNING_RATE           = 0.1f;
     static constexpr float L2_LAMBDA               = 0.01f;
@@ -307,9 +307,12 @@ for (size_t i = 0; i < StateFeatures::NUM_FEATURES; ++i) {
     w[i] = std::clamp(w[i], -WEIGHT_CLAMP, WEIGHT_CLAMP);
 }
 
-data.trainCount++;
-m_totalTrainCount++;
-data.lastUpdate = std::chrono::steady_clock::now();
+if (countsAsTrain) {                    // a pick restarts from what is LEFT
+    const float before = data.trainCount;
+    data.trainCount = before * RetentionAt(data, now) + 1.0f;
+    m_totalTrains += data.trainCount - before;
+    data.chosenAt = now;
+}
 ```
 
 `Update` receives one context, one arm and one scalar reward. Nothing in
@@ -321,7 +324,8 @@ linear reward model.
 
 `ComputeConfidence` (`FeatureBanditLearner.cpp`) treats the prior as
 `PRIOR_PSEUDO_OBSERVATIONS` (n0 = 2) imaginary observations against the item's
-*per-item* train count (0.23.0; it replaced a logistic, 50% at 5 trains):
+*per-item* train count (0.23.0; it replaced a logistic, 50% at 5 trains). Since
+0.23.6 the count is the evidence left after fading, n_eff (see "Forgetting"):
 
 ```
 confidence(n) = n / (n + 2)
@@ -340,12 +344,12 @@ more and its utility still goes up.
 `ComputeUCB` (`FeatureBanditLearner.cpp:135`) is UCB1, normalized and clamped:
 
 ```
-UCB(n) = clamp(0.2 * sqrt(2 * ln(totalTrains) / n), 0, 1)
-UCB    = 1.0 exactly when n == 0 or totalTrains == 0   (maximum exploration)
+UCB(n) = clamp(0.2 * sqrt(2 * ln(max(1, totalTrains)) / n_eff), 0, 1)
+UCB    = 1.0 exactly when n_eff == 0 or totalTrains == 0   (maximum exploration)
 ```
 
 Both helpers require `m_mutex` to be held by the caller (`ComputeUCB` reads
-`m_totalTrainCount`).
+`m_totalTrains`).
 
 ### Locking
 
@@ -458,7 +462,7 @@ and stated in the code.
 
 | Subscriber | Action |
 |------------|--------|
-| **BanditSubscriber** | `FeatureBanditLearner::Update(formID, features, RewardFor(kind))` |
+| **BanditSubscriber** | `FeatureBanditLearner::Update(formID, features, CHOICE_TARGET)` for the chosen item; queues a passed-over update (target 0, step 0.25, not a train) for each same-need item shown, applied 10 s later from `OnTick` unless that item is picked first -- a repeat pick inside the window cancels its own pending update too (0.23.6) -- and skipped for an item the learner has no entry for |
 | **UsageMemorySubscriber** | `UsageMemory::RecordUsage` (recency boost) |
 
 The cooldown is no longer a subscriber: it follows the count drop itself, so a
@@ -530,7 +534,7 @@ selection's update. Two outputs:
 
 ### Learning Signal Sources
 
-> **Design Principle (v0.13.0+):** Learning is decoupled from the presentation layer (Wheeler/Widget). The system learns exclusively from confirmed player selections. Negative signals come from time-based weight decay and L2, not from Wheeler open/close events -- and, since v0.22.9, not from misclicks either: an item swapped away inside the confirm window is simply never confirmed.
+> **Design Principle (v0.13.0+):** Learning is decoupled from the presentation layer (Wheeler/Widget). The system learns exclusively from confirmed player selections. Negative signals come from the passed-over update (a same-need item shown and not chosen), L2 and forgetting (the useful life, 0.23.6), not from Wheeler open/close events -- and, since v0.22.9, not from misclicks either: an item swapped away inside the confirm window is simply never confirmed.
 
 A confirmed selection is the only explicit learning signal. Every source earns
 the same: the chosen item -> 1, and the same-need items shown and passed over
@@ -638,39 +642,60 @@ Two further guards sit around this path:
   and entries are kept until expiry rather than consumed on first match —
   the game can fire multiple `TESEquipEvent`s for one action.
 
-### Weight Decay
+### Forgetting: memory with a useful life (0.23.6)
 
-FeatureBanditLearner uses **two complementary decay mechanisms**:
+Two mechanisms age what was learned:
 
 **1. L2 regularization (on every update).**
 The `- LEARNING_RATE * L2_LAMBDA * w[i]` term in `Update` pulls weights toward
-zero. Items that keep being equipped outpace this pull; items that stop
-receiving updates keep their last-trained weights until time decay takes over.
+zero. Items that keep being chosen outpace this pull.
 
-**2. Lazy time-based decay (once per scoring pass).**
-`MaybeDecayBatch` (`FeatureBanditLearner.cpp:54`) is called once per
-`ScoreCandidates` with the whole candidate pool
-(`UtilityScorer.cpp:56-63`). Items idle longer than
-`DECAY_THRESHOLD_MINUTES` (5) have their weights multiplied by
-`(1 - DECAY_RATE_PER_HOUR)^elapsedHours` (2%/hr), then `lastUpdate` is stamped
-to `now` so the next pass doesn't re-decay the same interval. This is lazy — it
-only touches items about to be scored, never a global sweep.
+**2. A useful life on the evidence (roadmap Phase 3 #3a).** What fades is the
+*confidence*, not the weights:
 
-It is also **two-phase**: one `shared_lock` collects the items that cross the
-threshold, and the `unique_lock` phase is skipped entirely when nothing
-qualifies (the common case). The second phase re-checks each item, because an
-`Update` from the game thread may have refreshed it between the locks.
-
-```cpp
-// src/Config.h
-inline constexpr float DECAY_RATE_PER_HOUR    = 0.02f;  // 2%/hr exponential decay
-inline constexpr float DECAY_THRESHOLD_MINUTES = 5.0f;  // Don't decay within 5 min
 ```
+retention(t) = (1 + e^(-T/s)) / (1 + e^((t - T)/s))   t = PLAY hours since last chosen
+T            = T0 + k * ln(1 + n)                      T0 8h, k 2h, s 1h (INI, [Learning])
+n_eff        = n * retention                           confidence = n_eff / (n_eff + 2)
+forgotten when retention < 0.05                        the entry is deleted
+```
+
+A battery's discharge curve, not an exponential: full strength for the useful
+life, a knee, then a fast fall. An exponential erodes a rarely needed item (a
+cure used every few hours) between uses and leaves an abandoned one in a long
+half-forgotten tail; this curve leaves the first alone and clears the second at
+a predictable time. Evidence buys life: a main weapon picked 20 times keeps ~14h
+of play, a sword tried twice ~10h. As n_eff falls the learned score slides back
+to the PRIOR ("don't know any more"), not to 0 ("rejected"), and the UCB rises,
+so a forgotten item is explored again. A pick restarts from what is left
+(`n = n_eff + 1`), so an item taken up again after a long break does not get its
+old confidence back at once. The numerator makes retention exactly 1 at t = 0.
+
+**Play time, not wall time.** The learner's play clock advances in the update
+loop (`UpdateLoop.cpp`, `AdvancePlayTime`) only while the world is loaded and
+the game is not paused; menus, load screens and the game being closed do not
+count. Each entry keeps the clock at its last pick; the cosave carries play
+minutes since, and a load counts back from its own clock.
+
+Retention is read per candidate at scoring (one `exp` each, under the reader's
+one shared lock). Deletion is a sweep, `MaybeForgetFaded`, run from
+`ScoreCandidates` at most once a minute of play: one `shared_lock` finds what
+is due, and the `unique_lock` is taken only when something is, re-checking
+each item because a pick from the game thread may have renewed it between the
+locks. Each forgetting logs `[Learner] Forgot N item(s) past their useful
+life`, and the heartbeat counts them (`learn ... forgot=`).
+
+Replaced the 2%/hour weight decay (`DECAY_RATE_PER_HOUR`, `MaybeDecayBatch`),
+the decay of n planned under Phase 3 #3, and the expiry of entries for items no
+longer owned: a dropped, sold or stored item cannot be chosen, so it ages past
+the knee like an unused one. tools/replay over 11.4 play-hours: the defaults
+forget nothing and change no hit; T0 = 1h cost 2 points of top-8, mostly food
+and potions (the rarely used consumables the curve must not forget).
 
 **Why skip penalties were removed (v0.12.x):**
 - Skip penalties punished correct recommendations during state transitions (e.g. combat ending while wheel was open)
 - All visible items received identical -1.0 regardless of rank
-- L2 regularization + time-based decay provide the same "drift toward zero" signal without these failure modes
+- L2 regularization and forgetting provide the same "drift toward zero" signal without these failure modes
 
 `SKIP_PENALTY` no longer exists anywhere in `src/`.
 
@@ -718,9 +743,9 @@ for version differences.
 | Chosen | target 1 | A confirmed selection, equip or consume, any device | One per decision (30 s repeat window, equips only) |
 | Passed over | target 0, step 0.25, not a train | Shown on the page for the chosen item's need, not chosen, not picked next; 10 s later | Contrast: the learner sees what lost |
 | L2 regularization | Continuous | Applied during each weight update | Pulls weights toward zero |
-| Time-based decay | Lazy | `MaybeDecayBatch` before scoring | 2%/hr exponential decay on idle items |
+| Useful life | Per candidate, on the play clock | `RetentionAt` at scoring; `MaybeForgetFaded` sweep | Confidence fades after the item's useful life; forgotten under 5% (0.23.6; replaced the 2%/hr weight decay) |
 
-**Removed signals:** Skip penalty (-1.0) removed in v0.12.x (replaced by implicit decay via L2 regularization + time-based decay). In v0.22.9: the misclick penalty (-3.0), the separate consumption reward that made every drink train twice, and the external attribution multipliers.
+**Removed signals:** Skip penalty (-1.0) removed in v0.12.x (replaced by implicit decay via L2 regularization + time-based decay; the time decay itself gave way to the useful life in 0.23.6). In v0.22.9: the misclick penalty (-3.0), the separate consumption reward that made every drink train twice, and the external attribution multipliers.
 
 ### Feedback Loop
 
@@ -749,9 +774,9 @@ for version differences.
 |   +-------+--------+  +-------+--------+  +-------+--------+                 |
 |           |                   |                   |                          |
 |           |              +----+----+              |                          |
-|           |              | Decay:  |              |                          |
+|           |              | Aging:  |              |                          |
 |           |              | L2 reg  |              |                          |
-|           |              | + time  |              |                          |
+|           |              | + life  |              |                          |
 |           |              +----+----+              |                          |
 |           |                   |                   |                          |
 |           +-------------------+-------------------+                          |
@@ -779,9 +804,9 @@ for version differences.
 |                    |                       |                                 |
 |                    v                       v                                 |
 |             +-------------+        +-------------+                           |
-|             |  SELECT     |        |   IGNORE    |                           |
-|             | (confirmed: |        |  (time decay|                           |
-|             |  chosen->1) |        |   handles)  |                           |
+|             |  SELECT     |        | PASS OVER   |                           |
+|             | (confirmed: |        | (same need: |                           |
+|             |  chosen->1) |        |  ->0, x0.25)|                           |
 |             +------+------+        +-------------+                           |
 |                    |                                                         |
 |                    v                                                         |
@@ -1216,8 +1241,8 @@ it into the learner once `Main.cpp` has constructed it.
 **Record types:**
 - `HCID` — which character the save belongs to and how far its learning had
   got: a 64-bit character ID and the learner's 64-bit learning clock
-  (`kRecordType_CharacterID = 'DICH'`, `'HCID'` on disk; v2, 0.22.11; v1 held
-  the ID only and is still read)
+  (`kRecordType_CharacterID = 'DICH'`, `'HCID'` on disk; v2, 0.22.11; v1 is no
+  longer read)
 - `BNDW` — FeatureBanditLearner weight vectors plus the global train count
   (`kRecordType_BanditWeights = 'WDNB'`, `'BNDW'` on disk;
   `kUniqueID = 'QCNO'`, `'ONCQ'` on disk)
@@ -1242,23 +1267,29 @@ ID. Then:
 
 So a death-and-reload keeps the fight, loading a later save does not throw that
 save's learning away, and `hg reset weights` (a `Clear()`, so a clock tick)
-cannot be undone by reloading an older save. A save from before 0.22.11 gets an
-ID derived from the player's name and race at its first load -- stable across
-loads of that character's old saves -- and train counts stand in for the clock
-until its next save writes one.
+cannot be undone by reloading an older save. A save with no readable HCID
+record is treated as a different character and gets a new ID (since 0.23.6;
+before, a save from before 0.22.11 got one derived from name and race -- dropped
+with the other compatibility paths, there being one tester and no such saves).
 
-**BNDW record format (version 2):**
+**BNDW record format (version 4):**
 ```
-[version: uint32]                = 2   (also in the SKSE record header; cross-checked)
+[version: uint32]                = 4   (also in the SKSE record header; cross-checked)
 [numFeatures: uint32]            = 18  (validated, then MIGRATED if it differs)
-[totalTrainCount: uint32]        = global train counter
+[totalTrainCount: uint32]        = sum of the evidence, rounded (recomputed on load)
 [numItems: uint32]
 Then ONE contiguous blob of numItems fixed-stride entries:
   [formID: uint32]               -> resolved via ResolveFormID
   [weights: float[numFeatures]]  -> per-item weight vector
-  [trainCount: uint32]           -> per-item training count
-  [minutesSinceLastUpdate: u32]  -> v2: minutes idle at save time
+  [trainCount: float]            -> v4: the evidence n (v2/v3: uint32 count)
+  [minutesSinceChosen: u32]      -> v4: PLAY minutes since the last pick
+                                    (v2/v3: minutes since the last update or decay)
 ```
+
+v4 (0.23.6) keeps v3's stride. A v3 record **converts**: n = its train count,
+and every item's useful life starts at the load, since v3's minutes counted
+from the last decay stamp, not the last pick. v1/v2 (the old 8/5 target) are
+skipped as unsupported.
 
 The entry array is written as a single bulk blob rather than 21 calls per item.
 Two `static_assert`s lock that in: `SerializedEntry` must be trivially copyable
@@ -1271,19 +1302,18 @@ between the batch and per-field code paths.
 
 | Guard | Behaviour |
 |---|---|
-| Version | Accepts 1 and 2. v1 entries lack `minutesSinceLastUpdate` and are read per field, treated as fresh (`0` minutes). A SKSE-header/in-data version mismatch is logged, and the in-data version is trusted |
+| Version | Reads 3 (converted) and 4; 1 and 2 are discarded (learning on the old target). A SKSE-header/in-data version mismatch is logged, and the in-data version is trusted |
 | Feature count | **Migrated positionally, not rejected.** Fewer features on disk → tail zero-pads (new features start untrained); more → tail truncates. Sound only because the vector is APPEND-ONLY. `numFeatures` outside `[1, kMaxBanditFeatures=256]` is treated as corrupt and the record is skipped |
 | Item cap | `numItems > kMaxBanditItems` (50,000) → record skipped wholesale |
-| Short read | v2 bulk read or v1 per-field read that comes up short rejects the record wholesale — never a silent partial import |
+| Short read | A bulk read that comes up short rejects the record wholesale — never a silent partial import |
 | Non-finite weights | Entries containing any non-finite weight are dropped before they can reach the scorer |
 | FormID resolution | `ResolveFormID` on every FormID (mod reordering); unresolvable entries are dropped and counted |
 | Train-count repair | `totalTrainCount` is **recomputed** as the sum of surviving entries, so trains belonging to dropped/unresolvable items can't inflate the UCB exploration term |
 
 `ExportData` takes a `shared_lock`, `ImportData` a `unique_lock` (and clears
-first). `ImportData` reconstructs each `lastUpdate` as
-`now - minutes(minutesSinceLastUpdate)`, which is what lets `MaybeDecayBatch`
-apply time-based decay across a save/load boundary — items idle before saving
-keep decaying proportionally after loading.
+first). `ImportData` reconstructs each last pick as
+`playNow - 60 * minutesSinceChosen` on the loading launch's play clock, so an
+item's useful life carries across a save and load.
 
 `hg reset weights` and the dMenu "reset learning data" button both route through
 `SettingsReloader::ResetLearningData`, which runs `FeatureBanditLearner::Clear()`
@@ -1314,11 +1344,19 @@ just-cleared table for the remainder of their lock duration.
 | PASSED_OVER_STEP | 0.25 | Step scale for a passed-over item; not counted as a train |
 | REPEAT_PICK_WINDOW_SEC | 30 | Equipping the same item again inside this teaches nothing |
 | PASSED_OVER_DELAY_SEC | 10 | A passed-over update waits this long; cancelled if its item is picked next |
-| DECAY_RATE_PER_HOUR | 0.02 | Exponential weight decay for idle items |
-| DECAY_THRESHOLD_MINUTES | 5.0 | Don't decay if updated within this window |
 | CONSUMPTION_HUGINN_WINDOW_MS | 2500 | A consumable selection must see its count drop within this |
 | SELECTION_CONFIRM_MS | 3000 | An equip selection must still be equipped after this |
 | PLAYER_INPUT_WINDOW_MS | 1000 | How recent a vanilla hotkey / own-wheel pick must be for an outside equip |
+
+### Useful life (`[Learning]` in Huginn.ini, `MemoryLife`)
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| bForgetUnusedItems | true | Off: nothing fades and nothing is forgotten |
+| fUsefulLifeHours | 8.0 | T0: play hours at full strength after a pick |
+| fUsefulLifePerPickHours | 2.0 | k: added life, times ln(1 + picks) |
+| fFadeHours | 1.0 | s: the width of the knee |
+| fForgetBelow | 0.05 | Retention under this deletes the entry |
 
 ### UsageMemory (`src/learning/UsageMemory.h`)
 
@@ -1334,8 +1372,6 @@ just-cleared table for the remainder of their lock duration.
 |-----------|---------|-------------|
 | NEAR_MISS_SLOTS | 2 | Overshoot ≤ this → Case C |
 | FAR_MISS_SLOTS | 5 | Overshoot ≤ this → Case B-med, beyond → B-low |
-| MAX_ANTI_SPAM_ENTRIES | 200 | Anti-spam map size before cleanup |
-| CLEANUP_AGE_SECONDS | 600 | Age at which anti-spam entries are pruned |
 | `EquipSourceTracker::DEFAULT_WINDOW_MS` | 400 | Huginn-equip suppression window (per FormID) |
 
 **Removed parameters:**

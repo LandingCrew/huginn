@@ -62,24 +62,6 @@ namespace Huginn::Learning
             m_buffer.push_back(UsageEvent{formID, state.GetHash(), std::chrono::steady_clock::now()});
         }
 
-        // Get recency boost for an item in the current context.
-        // Returns RECENCY_BOOST if >= MATCH_THRESHOLD matching events exist, else 0.
-        [[nodiscard]] float GetRecencyBoost(RE::FormID formID, const State::GameState& state) const
-        {
-            std::shared_lock lock(m_mutex);
-            uint32_t hash = state.GetHash();
-            size_t matchCount = 0;
-
-            for (const auto& event : m_buffer) {
-                if (event.formID == formID && event.contextHash == hash) {
-                    if (++matchCount >= MATCH_THRESHOLD) {
-                        return RECENCY_BOOST;
-                    }
-                }
-            }
-
-            return 0.0f;
-        }
 
         // ── Snapshot reader for amortized scoring loops ────────────────
         // Copies the ring buffer (≤20 events, ~320 bytes) under a brief
