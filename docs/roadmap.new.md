@@ -203,6 +203,18 @@ same-need item they passed over? `tools/replay` has the data.
 - **Delete the A|B shadow arm** (`src/learning/ShadowArm`, Debug only). It was
   meant to go after the soak run; still in the tree. Keep it only if the
   Phase 3 comparison wants it.
+- **Chore: remove five INI weights that do nothing** (found 2026-10-07 by
+  the needs survey). `fWeightCriticalHealth`, `fWeightLowHealth`,
+  `fWeightLowMagicka` and `fWeightLowStamina` are read into
+  `ContextWeightSettings` (`ContextWeightSettings.cpp:37-40`) and never used
+  -- the vitals rules use the smoothing-exponent curves, and
+  `ContextRuleEngine.cpp:112` says so ("NOT used here ... Stage 2+").
+  `fWeightBaseRelevance` is read into `ContextWeightConfig::weightBaseRelevance`
+  and never used either: the 0.05 noise floor is hard-coded at
+  `ContextRuleEngine.h:126`. Delete the keys from `configs/Huginn.ini`, the
+  settings and config fields, the dMenu JSON if it lists them, and the docs
+  that describe them; either wire the base relevance to its key or delete
+  that key too. No behaviour change. XS.
 
 ---
 
