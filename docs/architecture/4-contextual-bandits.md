@@ -474,13 +474,13 @@ The choice target (roadmap Phase 3 #1, v0.23.0; `BanditSubscriber`,
 `src/learning/EquipSubscribers.h`). One confirmed selection teaches:
 
 - the chosen item -> `CHOICE_TARGET` (1), equip or consume alike;
-- each item shown on the page for the SAME need (`SlotClassifier::Classify`,
-  the selection log's `need`) and passed over -> `PASSED_OVER_TARGET` (0), at
+- each item shown on the page for the SAME slot class (`SlotClassifier::Classify`,
+  the selection log's `need` column) and passed over -> `PASSED_OVER_TARGET` (0), at
   a `PASSED_OVER_STEP` (0.25) step that does not count as a train. Only plain
   recommendations: overrides, Remembrance holds and wildcards are not the
   learner's offer. The update waits `PASSED_OVER_DELAY_SEC` (10 s) and is
   cancelled if its item is the next pick: companions -- circlet then ring,
-  Oakflesh then Muffle, sword then off-hand dagger -- share a need class but
+  Oakflesh then Muffle, sword then off-hand dagger -- share a slot class but
   are used together. It is skipped for an item the learner holds no entry
   for (estimate 0, target 0: a no-op that would only grow the cosave).
 
@@ -805,7 +805,7 @@ for version differences.
 |                    v                       v                                 |
 |             +-------------+        +-------------+                           |
 |             |  SELECT     |        | PASS OVER   |                           |
-|             | (confirmed: |        | (same need: |                           |
+|             | (confirmed: |        | (same class:|                           |
 |             |  chosen->1) |        |  ->0, x0.25)|                           |
 |             +------+------+        +-------------+                           |
 |                    |                                                         |

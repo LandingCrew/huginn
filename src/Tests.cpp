@@ -30,7 +30,7 @@
 #include "IniLoad.h"                   // MatchOverrideSection (override namespacing tests)
 #include "slot/SlotLocker.h"          // THROWAWAY: RunSlotLockerResetTest (0.19.21)
 #include "slot/SlotAllocator.h"       // THROWAWAY: RunSlotSeatingTest (0.20.30)
-#include "slot/NeedCap.h"
+#include "slot/SlotClassCap.h"
 #include "slot/SlotSettings.h"         // THROWAWAY: MAX_SLOTS_PER_PAGE for the same
 #include "override/OverrideConditions.h"  // THROWAWAY: OverrideCollection for the same
 
@@ -1565,14 +1565,14 @@ void RunFeatureBanditLearnerTests()
 
     // ── Test 9: the choice target (0.23.0) ────────────────────────────────
     // A confirmed choice teaches the chosen item 1 at once. Each item shown
-    // for the same need and passed over gets 0 (a quarter step, not a train)
+    // for the same slot class and passed over gets 0 (a quarter step, not a train)
     // PASSED_OVER_DELAY_SEC later -- unless it is picked next (a companion),
-    // or the learner has never seen it. An item for another need is
+    // or the learner has never seen it. An item for another class is
     // untouched; an event flagged repeatPick teaches nothing.
     {
         FeatureBanditLearner learner;
         BanditSubscriber subscriber(learner);
-        constexpr RE::FormID chosenID = 0xC0000001, rivalID = 0xC0000002, otherNeedID = 0xC0000003,
+        constexpr RE::FormID chosenID = 0xC0000001, rivalID = 0xC0000002, otherClassID = 0xC0000003,
                              companionID = 0xC0000004, unseenID = 0xC0000005;
         StateFeatures state;
         state.inCombat = 1.0f;
@@ -1592,20 +1592,20 @@ void RunFeatureBanditLearnerTests()
         event.features = state;
         auto& snap = event.shown;
         snap.valid = true;
-        auto row = [](RE::FormID id, Slot::SlotClassification need) {
+        auto row = [](RE::FormID id, Slot::SlotClassification slotClass) {
             PipelineStateCache::ScoreRow r;
             r.formID = id;
-            r.need = need;
+            r.slotClass = slotClass;
             return r;
         };
         snap.scores = { row(chosenID, Slot::SlotClassification::HealingAny),
                         row(rivalID, Slot::SlotClassification::HealingAny),
-                        row(otherNeedID, Slot::SlotClassification::DamageAny),
+                        row(otherClassID, Slot::SlotClassification::DamageAny),
                         row(companionID, Slot::SlotClassification::HealingAny),
                         row(unseenID, Slot::SlotClassification::HealingAny) };
         snap.shown = { { 0, chosenID, "chosen", Slot::AssignmentType::Normal },
                        { 1, rivalID, "rival", Slot::AssignmentType::Normal },
-                       { 2, otherNeedID, "other need", Slot::AssignmentType::Normal },
+                       { 2, otherClassID, "other class", Slot::AssignmentType::Normal },
                        { 3, companionID, "companion", Slot::AssignmentType::Normal },
                        { 4, unseenID, "never seen", Slot::AssignmentType::Normal } };
 
@@ -1646,8 +1646,8 @@ void RunFeatureBanditLearnerTests()
             logger::error("TEST FAIL (9): a passed-over item the learner never saw must not get an entry"sv);
             return;
         }
-        if (learner.HasItem(otherNeedID)) {
-            logger::error("TEST FAIL (9): an item for another need must be untouched"sv);
+        if (learner.HasItem(otherClassID)) {
+            logger::error("TEST FAIL (9): an item for another class must be untouched"sv);
             return;
         }
 
@@ -6404,43 +6404,43 @@ void RunFillJobKeysTest()
 }
 
 // =============================================================================
-// Need cap: a soft cap per need on Regular keys (NeedCap.h)
+// Class cap: a soft cap per slot class on Regular keys (SlotClassCap.h)
 // =============================================================================
 // The arithmetic and the grouping, without a layout: the shipped INI decides
 // how many Regular keys a page has, so an allocation-level check would test
 // the INI. Three healing spells shown, a fourth at u 2.0 weighs 1.0 at x0.5
 // and loses to a damage spell at 1.1; a food that heals and a food that
-// fortifies are ONE need.
-void RunNeedCapTest()
+// fortifies are ONE class.
+void RunSlotClassCapTest()
 {
 #ifndef NDEBUG
     using namespace Huginn::Slot;
-    logger::info("Running need cap test..."sv);
+    logger::info("Running class cap test..."sv);
 
     auto spell = [](RE::FormID id, Spell::SpellType type, float utility) {
         Candidate::SpellCandidate s{};
-        s.formID = id; s.name = "NeedCapProbe"; s.type = type;
+        s.formID = id; s.name = "SlotClassCapProbe"; s.type = type;
         Scoring::ScoredCandidate sc{}; sc.candidate = s; sc.utility = utility;
         return sc;
     };
     auto food = [](RE::FormID id, Item::ItemType type) {
         Candidate::ItemCandidate f{};
-        f.formID = id; f.name = "NeedCapFood"; f.sourceType = Candidate::SourceType::Food; f.type = type;
+        f.formID = id; f.name = "SlotClassCapFood"; f.sourceType = Candidate::SourceType::Food; f.type = type;
         Scoring::ScoredCandidate sc{}; sc.candidate = f; sc.utility = 1.0f;
         return sc;
     };
 
     bool passed = true;
     auto expect = [&](bool ok, std::string_view what) {
-        if (!ok) { logger::error("TEST FAIL: need cap: {}"sv, what); passed = false; }
+        if (!ok) { logger::error("TEST FAIL: class cap: {}"sv, what); passed = false; }
     };
 
-    NeedCap cap(0.5f, 3);
+    SlotClassCap cap(0.5f, 3);
     const auto heal4 = spell(0x0BADF204, Spell::SpellType::Healing, 2.0f);
     const auto flames = spell(0x0BADF205, Spell::SpellType::Damage, 1.1f);
     expect(cap.Factor(heal4) == 1.0f, "an empty page discounted a healing spell");
     for (RE::FormID id = 0x0BADF201; id <= 0x0BADF203; ++id) {
-        expect(cap.Factor(heal4) == 1.0f, "a need under its 3 free items was discounted");
+        expect(cap.Factor(heal4) == 1.0f, "a class under its 3 free items was discounted");
         cap.Add(spell(id, Spell::SpellType::Healing, 3.0f));
     }
     expect(cap.Factor(heal4) == 0.5f, "the 4th healing item is not at x0.5");
@@ -6448,27 +6448,27 @@ void RunNeedCapTest()
     expect(heal4.utility * cap.Factor(heal4) < flames.utility * cap.Factor(flames),
         "the 4th healing spell (2.0 x0.5) still beats a damage spell at 1.1");
     cap.Add(heal4);
-    expect(cap.Factor(heal4) == 0.25f, "the 5th item of a need is not at x0.25");
+    expect(cap.Factor(heal4) == 0.25f, "the 5th item of a class is not at x0.25");
 
-    expect(NeedCap::NeedOf(food(0x0BADF206, Item::ItemType::HealthPotion)) == SlotClassification::FoodAny,
+    expect(SlotClassCap::ClassOf(food(0x0BADF206, Item::ItemType::HealthPotion)) == SlotClassification::FoodAny,
         "food that heals is not counted as food");
-    expect(NeedCap::NeedOf(food(0x0BADF207, Item::ItemType::BuffPotion)) == SlotClassification::FoodAny,
+    expect(SlotClassCap::ClassOf(food(0x0BADF207, Item::ItemType::BuffPotion)) == SlotClassification::FoodAny,
         "food that fortifies is not counted as food");
 
-    NeedCap off(1.0f, 3);
+    SlotClassCap off(1.0f, 3);
     for (RE::FormID id = 0x0BADF201; id <= 0x0BADF206; ++id) {
         off.Add(spell(id, Spell::SpellType::Healing, 3.0f));
     }
-    expect(!off.Active() && off.Factor(heal4) == 1.0f, "fNeedRepeatDiscount = 1.0 still discounts");
+    expect(!off.Active() && off.Factor(heal4) == 1.0f, "fClassRepeatDiscount = 1.0 still discounts");
 
     if (passed) {
-        logger::info("  need cap test PASSED"sv);
+        logger::info("  class cap test PASSED"sv);
     }
 #endif
 }
 
 // =============================================================================
-// Need cap through the slot hold: the 4th weapon may not slip in early
+// Class cap through the slot hold: the 4th weapon may not slip in early
 // =============================================================================
 // Vanilla 2026-10-06 17:13:24: the hold judged slots in priority order and
 // counted each holder as it went, so the axe challenging slot 0 could not see
@@ -6477,18 +6477,18 @@ void RunNeedCapTest()
 // challenges it (pass 2). Uncapped the axe would win; as a 4th weapon at
 // x discount it must not. Utilities are set from the live margin and discount,
 // so a tuned INI does not break the test.
-void RunNeedCapHoldTest()
+void RunSlotClassCapHoldTest()
 {
 #ifndef NDEBUG
     using namespace Huginn::Slot;
-    logger::info("Running need cap hold test..."sv);
+    logger::info("Running class cap hold test..."sv);
 
     const auto& settings = SlotSettings::GetSingleton();
-    const float discount = settings.NeedRepeatDiscount();
+    const float discount = settings.ClassRepeatDiscount();
     const float margin = settings.ChallengerMargin();
     if (!settings.KeepSlotPositions() || !settings.HoldSeatedItems() || discount >= 1.0f ||
-        settings.NeedFreeSlots() != 3) {
-        logger::info("  need cap hold test skipped: needs seating, the hold, and the cap at 3 free"sv);
+        settings.ClassFreeSlots() != 3) {
+        logger::info("  class cap hold test skipped: needs seating, the hold, and the cap at 3 free"sv);
         return;
     }
 
@@ -6505,7 +6505,7 @@ void RunNeedCapHoldTest()
     // string the first list still viewed (the first run logged it as garbage).
     static std::array<std::string, 10> names;
     for (size_t i = 0; i < names.size(); ++i) {
-        names[i] = "NeedCapHoldProbe" + std::to_string(i);
+        names[i] = "SlotClassCapHoldProbe" + std::to_string(i);
     }
     auto spell = [](size_t i, Spell::SpellType type, float utility) {
         Candidate::SpellCandidate s{};
@@ -6558,7 +6558,7 @@ void RunNeedCapHoldTest()
     };
     bool passed = true;
     auto expect = [&](bool ok, std::string_view what) {
-        if (!ok) { logger::error("TEST FAIL: need cap hold: {}"sv, what); passed = false; }
+        if (!ok) { logger::error("TEST FAIL: class cap hold: {}"sv, what); passed = false; }
     };
 
     expect(slotOf(before, 0x0BADF300) == 0, "setup: the healing probe is not on slot 0");
@@ -6574,7 +6574,7 @@ void RunNeedCapHoldTest()
     }
 
     if (passed) {
-        logger::info("  need cap hold test PASSED"sv);
+        logger::info("  class cap hold test PASSED"sv);
     }
 #endif
 }
@@ -6587,8 +6587,8 @@ void RunNeedCapHoldTest()
 // page: (1) eight items seated, A on slot 0; (2) A gone, newcomer N fills slot
 // 0; (3) A back, scoring between N and H with the hold's margin, so the hold
 // puts it on H's slot 7. Seating must then swap A home to slot 0 and N to
-// slot 7, and leave everyone else where they were. Distinct needs, so the
-// need cap does not take part; utilities come from the live margin.
+// slot 7, and leave everyone else where they were. Distinct classes, so the
+// class cap does not take part; utilities come from the live margin.
 //
 // Then the right of first refusal: the same three passes with an override
 // on slot 0 in pass 3. A cannot go home, waits on slot 7 holding the claim,

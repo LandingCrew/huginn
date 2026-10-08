@@ -134,14 +134,14 @@ namespace Huginn::Learning
             const Row* chosen = snap.Find(event.formID);
 
             // What the choice displaced: the best-ranked item shown for the same
-            // need that was not chosen.
+            // slot class that was not chosen.
             const PipelineStateCache::ShownSlot* over = nullptr;
             const Row* overRow = nullptr;
             if (chosen) {
                 for (const auto& s : snap.shown) {
                     if (s.formID == event.formID) continue;
                     const Row* row = snap.Find(s.formID);
-                    if (!row || row->need != chosen->need) continue;
+                    if (!row || row->slotClass != chosen->slotClass) continue;
                     if (!overRow || row->rank < overRow->rank) {
                         over = &s;
                         overRow = row;
@@ -158,25 +158,25 @@ namespace Huginn::Learning
                 : std::string("-");
 
             logger::info("[Selection] Confirmed {:08X} '{}' src={} via={}{}{} kind={} reward={:+.1f} ({}, {:.0f}ms) "
-                         "{} pred={:.2f} need={} over={} shown={} page={} age={:.0f}ms gen={}"sv,
+                         "{} pred={:.2f} class={} over={} shown={} page={} age={:.0f}ms gen={}"sv,
                 event.formID, FormName(event.formID), EquipSourceToString(event.source), event.via,
                 event.attribution.empty() ? ""sv : " case="sv, event.attribution,
                 SelectionKindToString(event.kind), reward, how, event.confirmMs,
                 scorePart, pred.chosen,
-                chosen ? Slot::SlotClassificationToString(chosen->need) : "-"sv,
+                chosen ? Slot::SlotClassificationToString(chosen->slotClass) : "-"sv,
                 overPart, snap.shown.size(), snap.page, snap.ageMs, event.loadGeneration);
 
             for (size_t i = 0; i < snap.shown.size(); ++i) {
                 const auto& s = snap.shown[i];
                 const Row* row = snap.Find(s.formID);
                 const char mark = (s.formID == event.formID) ? '*'
-                    : (chosen && row && row->need == chosen->need) ? '='
+                    : (chosen && row && row->slotClass == chosen->slotClass) ? '='
                     : ' ';
                 // debug, not info: one line per shown slot is per-item detail
                 // (CLAUDE.md logging levels). The JSONL record has it all.
-                logger::debug("[Selection]   s{} {} {:08X} '{}'{} need={} rank={} util={:.2f} ctx={:.2f} pred={:.2f}"sv,
+                logger::debug("[Selection]   s{} {} {:08X} '{}'{} class={} rank={} util={:.2f} ctx={:.2f} pred={:.2f}"sv,
                     s.slotIndex, mark, s.formID, s.name, TypeMark(s.type),
-                    row ? Slot::SlotClassificationToString(row->need) : "-"sv,
+                    row ? Slot::SlotClassificationToString(row->slotClass) : "-"sv,
                     RankString(row), row ? row->utility : 0.0f,
                     row ? row->breakdown.contextWeight : 0.0f,
                     pred.shown[i]);
@@ -235,6 +235,8 @@ namespace Huginn::Learning
             }
             line += "],";
 
+            // "need" is the slot class: the column keeps its pre-0.23.8 name so
+            // tools/replay reads old and new logs alike.
             line += R"("cols":["form","type","need","rank","util","ctx","est","prior","ucb","alpha",)"
                     R"("learn","lambda","rec","corr","potion","fav","wildcard","coldStart","pred"],"cands":[)";
             for (size_t i = 0; i < snap.scores.size(); ++i) {
@@ -243,7 +245,7 @@ namespace Huginn::Learning
                 const long long rank = row.rank >= PipelineStateCache::kUnrankedTail ? -1 : static_cast<long long>(row.rank);
                 line += std::format(R"({}["{:08X}","{}","{}",{},{},{},{},{},{},{},)",
                     i ? "," : "", row.formID, Candidate::SourceTypeToString(row.sourceType),
-                    Slot::SlotClassificationToString(row.need), rank, Num(row.utility),
+                    Slot::SlotClassificationToString(row.slotClass), rank, Num(row.utility),
                     Num(b.contextWeight), Num(b.rewardEstimate), Num(b.prior), Num(b.ucb), Num(b.confidence));
                 line += std::format("{},{},{},{},{},{},{},{},{}]",
                     Num(b.learningScore), Num(b.lambda), Num(b.recencyBoost), Num(b.correlationBonus),

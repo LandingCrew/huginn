@@ -98,11 +98,11 @@ prove a change. Add a test executable that builds and runs on the host.
       only reads forms and calls it.
 - [ ] Done when: the target runs in CI-like fashion from the command line with
       a non-zero exit on failure, and one existing pure function (a curve, or
-      `NeedCap::Factor`) is ported with tests as the pattern.
+      `SlotClassCap::Factor`) is ported with tests as the pattern.
 
 **And an unattended in-game run** for the code that needs real game data. The
 Debug suites that run at the main menu (`RunUnitTests()` at kDataLoaded,
-`Main.cpp:679`) need no save. About 20 more (NeedCap, SlotLocker, home keys,
+`Main.cpp:679`) need no save. About 20 more (SlotClassCap, SlotLocker, home keys,
 cosave, the registries; `Main.cpp:443-466`) run only after a save loads,
 including the ratio tests R7 must update:
 - [ ] Huginn: after the suites, log one sentinel line with pass/fail counts;
@@ -178,7 +178,7 @@ Map Phase 3. Log everything the fit needs.
 
 The mage character, the planned next stress test, played on the R2–R4 build so
 it doubles as the fit data. Several hours, mixed combat and town. Meanwhile an
-agent runs the cheap test on today's log: one weight per need class × logged
+agent runs the cheap test on today's log: one weight per slot class × logged
 `ctx`; if it does not beat context alone, flag it before R6.
 
 ### R6. Offline fit: go / no-go
@@ -196,7 +196,7 @@ Map Phase 4, in `tools/replay`.
 
 Map Phase 5. Lands before the new scorer.
 - [ ] Bridge: score = ln(utility), σ = 0, m = 1.5, which reproduces today.
-- [ ] The need cap, ratio logs, the `-1` "gone" sentinel, `utility = 0` for
+- [ ] The slot class cap, ratio logs, the `-1` "gone" sentinel, `utility = 0` for
       remembered-only rows, `kOverrideUtility`, the widget bar, the
       confidence payload: all made sign-safe.
 - [ ] Full sort instead of the top-10 partial sort.
@@ -285,7 +285,7 @@ start before R8 unless it blocks play.
   charges of the same are fine. Needs a poison playtest.
 - **Food buff captions** (display only).
 - **One potion in several slots** (Waterbreathing Good, Fair and Faint
-  together). Undecided whether only one should show; the need cap and P1
+  together). Undecided whether only one should show; the slot class cap and P1
   inheritance may settle it.
 - **Remembrance follow-ups:** a pair pseudo-item, external equips, instance
   tracking, Wheeler `Empty` policy, a dMenu toggle. Design in

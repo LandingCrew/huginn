@@ -1,4 +1,4 @@
-#include "NeedCap.h"
+#include "SlotClassCap.h"
 #include "SlotClassifier.h"
 #include <algorithm>
 #include <format>
@@ -11,17 +11,17 @@ namespace Huginn::Slot
         static_assert(SLOT_CLASSIFICATION_COUNT < kUnknown);
     }
 
-    NeedCap::NeedCap(float discount, uint32_t freePerNeed, const Scoring::ScoredCandidateList* candidates) :
+    SlotClassCap::SlotClassCap(float discount, uint32_t freePerClass, const Scoring::ScoredCandidateList* candidates) :
         m_discount(std::clamp(discount, 0.0f, 1.0f)),
-        m_free(freePerNeed),
+        m_free(freePerClass),
         m_candidates(candidates)
     {
         if (Active() && m_candidates) {
-            m_needCache.assign(m_candidates->size(), kUnknown);
+            m_classCache.assign(m_candidates->size(), kUnknown);
         }
     }
 
-    SlotClassification NeedCap::NeedOf(const Scoring::ScoredCandidate& c) noexcept
+    SlotClassification SlotClassCap::ClassOf(const Scoring::ScoredCandidate& c) noexcept
     {
         if (c.GetSourceType() == Candidate::SourceType::Food) {
             return SlotClassification::FoodAny;
@@ -29,29 +29,29 @@ namespace Huginn::Slot
         return SlotClassifier::Classify(c);
     }
 
-    SlotClassification NeedCap::CachedNeed(const Scoring::ScoredCandidate& c) const
+    SlotClassification SlotClassCap::CachedClass(const Scoring::ScoredCandidate& c) const
     {
         // A candidate of the list this allocation runs on is classified once;
         // a copy (FindBestCandidate returns one) is classified on the spot.
-        if (m_candidates && !m_needCache.empty()) {
+        if (m_candidates && !m_classCache.empty()) {
             const auto* first = m_candidates->data();
             if (&c >= first && &c < first + m_candidates->size()) {
-                auto& slot = m_needCache[static_cast<size_t>(&c - first)];
+                auto& slot = m_classCache[static_cast<size_t>(&c - first)];
                 if (slot == kUnknown) {
-                    slot = static_cast<uint8_t>(NeedOf(c));
+                    slot = static_cast<uint8_t>(ClassOf(c));
                 }
                 return static_cast<SlotClassification>(slot);
             }
         }
-        return NeedOf(c);
+        return ClassOf(c);
     }
 
-    float NeedCap::Factor(const Scoring::ScoredCandidate& c) const
+    float SlotClassCap::Factor(const Scoring::ScoredCandidate& c) const
     {
         if (!Active()) {
             return 1.0f;
         }
-        const uint32_t shown = m_onPage[static_cast<size_t>(CachedNeed(c))];
+        const uint32_t shown = m_onPage[static_cast<size_t>(CachedClass(c))];
         float factor = 1.0f;
         for (uint32_t n = m_free; n <= shown; ++n) {
             factor *= m_discount;
@@ -59,7 +59,7 @@ namespace Huginn::Slot
         return factor;
     }
 
-    void NeedCap::Recount(const SlotAssignments& assignments)
+    void SlotClassCap::Recount(const SlotAssignments& assignments)
     {
         if (!Active()) {
             return;
@@ -72,37 +72,37 @@ namespace Huginn::Slot
         }
     }
 
-    void NeedCap::Add(const Scoring::ScoredCandidate& c)
+    void SlotClassCap::Add(const Scoring::ScoredCandidate& c)
     {
         if (!Active()) {
             return;
         }
-        auto& count = m_onPage[static_cast<size_t>(CachedNeed(c))];
+        auto& count = m_onPage[static_cast<size_t>(CachedClass(c))];
         if (count < UINT8_MAX) {
             ++count;
         }
     }
 
-    void NeedCap::Remove(const Scoring::ScoredCandidate& c)
+    void SlotClassCap::Remove(const Scoring::ScoredCandidate& c)
     {
         if (!Active()) {
             return;
         }
-        auto& count = m_onPage[static_cast<size_t>(CachedNeed(c))];
+        auto& count = m_onPage[static_cast<size_t>(CachedClass(c))];
         if (count > 0) {
             --count;
         }
     }
 
-    void NeedCap::NoteSkipped(const Scoring::ScoredCandidate& skipped)
+    void SlotClassCap::NoteSkipped(const Scoring::ScoredCandidate& skipped)
     {
         const RE::FormID id = skipped.GetFormID();
         if (std::none_of(m_skipped.begin(), m_skipped.end(), [id](const Skipped& s) { return s.formID == id; })) {
-            m_skipped.push_back({ id, CachedNeed(skipped), skipped.utility, std::string(skipped.GetName()) });
+            m_skipped.push_back({ id, CachedClass(skipped), skipped.utility, std::string(skipped.GetName()) });
         }
     }
 
-    void NeedCap::DropSkipsSince(size_t mark, float threshold)
+    void SlotClassCap::DropSkipsSince(size_t mark, float threshold)
     {
         if (mark >= m_skipped.size()) {
             return;
@@ -112,7 +112,7 @@ namespace Huginn::Slot
             m_skipped.end());
     }
 
-    std::string NeedCap::Summary(const SlotAssignments& assignments) const
+    std::string SlotClassCap::Summary(const SlotAssignments& assignments) const
     {
         std::vector<std::string> kept;
         for (const auto& s : m_skipped) {
@@ -120,7 +120,7 @@ namespace Huginn::Slot
             const bool shown = std::any_of(assignments.begin(), assignments.end(),
                 [id](const SlotAssignment& a) { return !a.IsEmpty() && a.formID == id; });
             if (!shown) {
-                kept.push_back(std::format("'{}' ({})", s.name, SlotClassificationToString(s.need)));
+                kept.push_back(std::format("'{}' ({})", s.name, SlotClassificationToString(s.slotClass)));
             }
         }
         std::sort(kept.begin(), kept.end());

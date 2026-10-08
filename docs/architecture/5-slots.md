@@ -384,7 +384,7 @@ else about a call is still a pure function of its inputs.
            |
            v
   PASS 2   remaining slots <- best matching candidate, deduped
-           by FormID and by name (Regular keys: after the need cap)
+           by FormID and by name (Regular keys: after the class cap)
            |
            v
      SlotLocker::ApplyLocks -> ComputeVisualStates -> widget / Wheeler
@@ -452,39 +452,44 @@ wildcards.
 Duplicates are simply filtered out. There is no learner penalty for being a
 duplicate.
 
-### The need cap (Regular keys)
+### The slot class cap (Regular keys)
 
-One strong need could take the whole page: a hungry character at an alchemy lab
-got eight foods on eight keys and none of the craft gear (2026-10-05). On a
-**Regular** key, the first `iNeedFreeSlots` items of one need on the page (3)
-compete at full utility; each one past that competes at x`fNeedRepeatDiscount`
-(0.5), then x0.25, and so on. Keys with a job are never capped, and overrides
-and Remembrance holds are never moved for it, though they count towards their
-need.
+One strong slot class could take the whole page: a hungry character at an
+alchemy lab got eight foods on eight keys and none of the craft gear
+(2026-10-05). On a **Regular** key, the first `iClassFreeSlots` items of one
+class on the page (3) compete at full utility; each one past that competes at
+x`fClassRepeatDiscount` (0.5), then x0.25, and so on. Keys with a job are never
+capped, and overrides and Remembrance holds are never moved for it, though they
+count towards their class.
 
-- **A need** is `SlotClassifier::Classify`, except that all food and drink is
-  one need: foods classify by their effect (HealingAny, DefensiveAny, BuffsAny,
+Called the "need cap" before 0.23.8 (keys `iNeedFreeSlots`,
+`fNeedRepeatDiscount`, class `NeedCap`); renamed because "need" now means the
+need vector of the engine rewrite. The selection log's JSONL keeps its `need`
+column for `tools/replay`.
+
+- **A class** is `SlotClassifier::Classify`, except that all food and drink is
+  one class: foods classify by their effect (HealingAny, DefensiveAny, BuffsAny,
   FoodAny), so seven foods on a page never had more than three in one class.
 - **Placement only.** `FindBestCandidate` weighs a Regular key's choice by the
-  cap (`src/slot/NeedCap.h`); ranking, the learner and the selection log keep
+  cap (`src/slot/SlotClassCap.h`); ranking, the learner and the selection log keep
   every item's true utility, so learning never sees an item as worse because a
   sibling took a key first.
 - **The hold uses it too** (Pass 1c), or a crowd that formed before the cap
   applied would stay. Every held item is counted before any is judged, and a
-  held item's factor is its rank by utility within its need -- the weakest of
+  held item's factor is its rank by utility within its class -- the weakest of
   four held weapons holds at x0.5, the other three at full. The item being
   judged leaves the count while its challenger is found, so a challenger of
-  the same need is weighed as the holder was. Counted slot by slot instead,
+  the same class is weighed as the holder was. Counted slot by slot instead,
   a challenger for a high-priority slot could not see the holders further
   down: four weapons got through on an all-Regular page (vanilla, 2026-10-06
   17:13:24), and a weapon was swapped for a weapon (17:14:11).
 - **Why from the 4th item, not the 2nd.** Replayed on 653 picks
   (`tools/replay/replay.py`): the cap at 3 free and x0.5 kept the chosen item
   in the top 8 at 76.3% (76.7% without) and menu picks at 30.8% (29.7%), and no
-  page held five of one need (196 did without). Discounting from the 2nd item
+  page held five of one class (196 did without). Discounting from the 2nd item
   cost 3-10 points overall and up to 25 on potions.
-- `[NeedCap]` (debug) logs, on change, which items the cap kept off a page.
-  `fNeedRepeatDiscount = 1.0` turns it off.
+- `[SlotClassCap]` (debug) logs, on change, which items the cap kept off a page.
+  `fClassRepeatDiscount = 1.0` turns it off.
 
 ---
 
@@ -909,8 +914,8 @@ bHoldSeatedItems = true         ; Hold a seated item until a challenger beats it
 fChallengerMargin = 0.5         ; How much better a challenger must score (0.5 = 50%; 0.25 before 0.23.6)
 bReturnToHomeKey = true         ; A returning item takes back the key it left (home keys)
 fHomeKeyMemorySec = 60          ; ...if it left within this long; 0-600, 0 = off
-iNeedFreeSlots = 3              ; Need cap: items of one need on Regular keys at full utility (1-10)
-fNeedRepeatDiscount = 0.5       ; ...and x this for each one past them; 1.0 = off
+iClassFreeSlots = 3             ; Class cap: items of one slot class on Regular keys at full utility (1-10)
+fClassRepeatDiscount = 0.5      ; ...and x this for each one past them; 1.0 = off
 fRemembranceDurationMs = 15000  ; Remembrance hold length; 0 = off everywhere
 fRemembranceMismatchDurationMs = 5000  ; ...on a key whose class it does not fit
 sRemembranceTarget = Pressed    ; Pressed | Job (the key whose class fits)

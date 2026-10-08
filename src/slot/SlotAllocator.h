@@ -1,7 +1,7 @@
 #pragma once
 
 #include "SlotConfig.h"
-#include "NeedCap.h"
+#include "SlotClassCap.h"
 #include "SlotAssignment.h"
 #include "SlotClassifier.h"
 #include "SlotSettings.h"
@@ -253,9 +253,9 @@ namespace Huginn::Slot
         mutable std::array<std::array<OverrideLogEntry, Override::OVERRIDE_CONDITION_COUNT>, MAX_PAGES>
             m_overrideLogs{};
 
-        // What the need cap kept off each page last pass (NeedCap::Summary),
-        // so [NeedCap] logs when that changes, not every pass. m_logMutex.
-        mutable std::array<std::string, MAX_PAGES> m_needCapLog{};
+        // What the class cap kept off each page last pass (SlotClassCap::Summary),
+        // so [SlotClassCap] logs when that changes, not every pass. m_logMutex.
+        mutable std::array<std::string, MAX_PAGES> m_classCapLog{};
 
         /// Should this placement be logged? Returns why (for the debug line), or
         /// nullptr to stay quiet, and records the placement either way.
@@ -379,7 +379,7 @@ namespace Huginn::Slot
             float margin,
             const std::array<size_t, MAX_SLOTS_PER_PAGE>& priorityOrder,
             size_t priorityCount,
-            NeedCap& needCap) const;
+            SlotClassCap& classCap) const;
 
         /// Put items back in the slots they were in last pass, where the layout
         /// still allows it.
@@ -428,8 +428,8 @@ namespace Huginn::Slot
             std::array<size_t, MAX_SLOTS_PER_PAGE>& outOrder) const;
 
         /// Helper: Try to find the best candidate for a slot. With an active
-        /// `needCap` and a Regular slot, "best" is the highest utility after
-        /// the cap's factor (NeedCap.h); otherwise the first match in rank order.
+        /// `classCap` and a Regular slot, "best" is the highest utility after
+        /// the cap's factor (SlotClassCap.h); otherwise the first match in rank order.
         [[nodiscard]] std::optional<Scoring::ScoredCandidate> FindBestCandidate(
             const Scoring::ScoredCandidateList& candidates,
             SlotClassification classification,
@@ -438,7 +438,7 @@ namespace Huginn::Slot
             bool skipEquipped = false,
             const State::PlayerActorState* player = nullptr,
             bool skipWildcards = false,
-            NeedCap* needCap = nullptr) const;
+            SlotClassCap* classCap = nullptr) const;
     };
 
 }  // namespace Huginn::Slot

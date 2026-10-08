@@ -207,17 +207,17 @@ namespace Huginn::Slot
         SKSE::log::info("[SlotSettings] Home keys: {} (an item back within {:.0f}s takes its key back)"sv,
             returnHome && homeMemorySec > 0.0f ? "on" : "off", homeMemorySec);
 
-        const float needDiscount = std::clamp(
-            static_cast<float>(ini.GetDoubleValue("SlotLocker", "fNeedRepeatDiscount", 0.5)), 0.0f, 1.0f);
-        const auto needFree = static_cast<uint32_t>(std::clamp(
-            ini.GetLongValue("SlotLocker", "iNeedFreeSlots", 3), 1L, static_cast<long>(MAX_SLOTS_PER_PAGE)));
-        m_needRepeatDiscount.store(needDiscount, std::memory_order_release);
-        m_needFreeSlots.store(needFree, std::memory_order_release);
-        if (needDiscount < 1.0f) {
-            SKSE::log::info("[SlotSettings] Need cap: on Regular keys, items of one need past the first {} at x{:.2f} each"sv,
-                needFree, needDiscount);
+        const float classDiscount = std::clamp(
+            static_cast<float>(ini.GetDoubleValue("SlotLocker", "fClassRepeatDiscount", 0.5)), 0.0f, 1.0f);
+        const auto classFree = static_cast<uint32_t>(std::clamp(
+            ini.GetLongValue("SlotLocker", "iClassFreeSlots", 3), 1L, static_cast<long>(MAX_SLOTS_PER_PAGE)));
+        m_classRepeatDiscount.store(classDiscount, std::memory_order_release);
+        m_classFreeSlots.store(classFree, std::memory_order_release);
+        if (classDiscount < 1.0f) {
+            SKSE::log::info("[SlotSettings] Class cap: on Regular keys, items of one slot class past the first {} at x{:.2f} each"sv,
+                classFree, classDiscount);
         } else {
-            SKSE::log::info("[SlotSettings] Need cap: off"sv);
+            SKSE::log::info("[SlotSettings] Class cap: off"sv);
         }
 
         const float remembranceMs = std::max(0.0f,
@@ -272,8 +272,8 @@ namespace Huginn::Slot
         m_challengerMargin.store(0.5f, std::memory_order_release);
         m_returnToHomeKey.store(true, std::memory_order_release);
         m_homeKeyMemorySec.store(60.0f, std::memory_order_release);
-        m_needRepeatDiscount.store(0.5f, std::memory_order_release);
-        m_needFreeSlots.store(3, std::memory_order_release);
+        m_classRepeatDiscount.store(0.5f, std::memory_order_release);
+        m_classFreeSlots.store(3, std::memory_order_release);
         m_generation.fetch_add(1, std::memory_order_release);
         SKSE::log::info("[SlotSettings] Reset to defaults (1 page, {} slots)"sv, slotCount);
     }
