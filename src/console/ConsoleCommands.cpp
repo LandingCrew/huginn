@@ -24,6 +24,8 @@
 #include <cmath>
 #include <filesystem>
 #include <fstream>
+#include <map>
+#include <unordered_map>
 #include <unordered_set>
 #include "context/ContextWeightSettings.h"
 #include "context/ContextWeightConfig.h"
@@ -1584,6 +1586,89 @@ namespace Huginn::Console
       Print(msg.c_str());
       logger::info("[Console] {} -> {}"sv, msg, filePath.string());
    }
+
+   // `hg dump races` -- every race in the LOAD ORDER with its keywords and how
+   // many NPC records use it, plus the ActorType* keywords those NPCs carry
+   // themselves. The input for widening the target-type need past vanilla's
+   // six (LoreRim's creature mods add many more). Type and race are on screen,
+   // so inside the perception line.
+   static void Cmd_DumpRaces(std::string_view /*arg*/)
+   {
+      auto* dataHandler = RE::TESDataHandler::GetSingleton();
+      if (!dataHandler) {
+         Print("Data handler unavailable");
+         return;
+      }
+      std::ofstream out;
+      std::filesystem::path filePath;
+      if (!OpenDumpFile("Huginn_Races.csv"sv, out, filePath)) return;
+
+      struct Usage {
+         size_t npcs = 0;
+         size_t uniques = 0;
+         std::vector<std::string> samples;
+         std::map<std::string, size_t> npcKeywords;  // ActorType* on the NPC record
+      };
+      std::unordered_map<const RE::TESRace*, Usage> usage;
+      for (auto* npc : dataHandler->GetFormArray<RE::TESNPC>()) {
+         if (!npc) continue;
+         const auto* race = npc->GetRace();
+         if (!race) continue;
+         auto& u = usage[race];
+         ++u.npcs;
+         if (npc->IsUnique()) ++u.uniques;
+         const char* name = npc->GetName();
+         if (name && *name && u.samples.size() < 5 &&
+             std::ranges::find(u.samples, std::string(name)) == u.samples.end()) {
+            u.samples.emplace_back(name);
+         }
+         for (std::uint32_t i = 0; i < npc->numKeywords; ++i) {
+            const auto* kw = npc->keywords[i];
+            const char* id = kw ? kw->GetFormEditorID() : nullptr;
+            if (id && std::string_view(id).starts_with("ActorType")) ++u.npcKeywords[id];
+         }
+      }
+
+      out << "formID,plugin,winningPlugin,editorID,name,playable,child,flies,swims,"
+             "keywords,npcCount,uniqueNpcCount,npcActorTypeKeywords,sampleNPCs\n";
+      size_t written = 0, used = 0;
+      for (auto* race : dataHandler->GetFormArray<RE::TESRace>()) {
+         if (!race) continue;
+         const auto it = usage.find(race);
+         const Usage empty{};
+         const auto& u = it != usage.end() ? it->second : empty;
+         std::string npcKw;
+         for (const auto& [kw, n] : u.npcKeywords) {
+            if (!npcKw.empty()) npcKw += ';';
+            npcKw += std::format("{}={}", kw, n);
+         }
+         std::string samples;
+         for (const auto& s : u.samples) {
+            if (!samples.empty()) samples += ';';
+            samples += s;
+         }
+         const auto* lastFile = race->GetFile(-1);
+         const char* edid = race->GetFormEditorID();
+         const char* name = race->GetName();
+         const auto flags = race->data.flags;
+         out << std::format("{:08X},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+            race->GetFormID(), CsvQuote(PluginOf(race)),
+            CsvQuote(lastFile ? lastFile->GetFilename() : ""sv),
+            CsvQuote(edid ? edid : ""), CsvQuote(name ? name : ""),
+            flags.all(RE::RACE_DATA::Flag::kPlayable) ? 1 : 0,
+            flags.all(RE::RACE_DATA::Flag::kChild) ? 1 : 0,
+            flags.all(RE::RACE_DATA::Flag::kFlies) ? 1 : 0,
+            flags.all(RE::RACE_DATA::Flag::kSwims) ? 1 : 0,
+            CsvQuote(KeywordList(race)), u.npcs, u.uniques, CsvQuote(npcKw), CsvQuote(samples));
+         ++written;
+         if (u.npcs > 0) ++used;
+      }
+      out.close();
+
+      auto msg = std::format("Wrote {} races to Huginn_Races.csv - {} used by an NPC record", written, used);
+      Print(msg.c_str());
+      logger::info("[Console] {} -> {}"sv, msg, filePath.string());
+   }
 #endif  // !NDEBUG
 
    // =========================================================================
@@ -1609,6 +1694,7 @@ namespace Huginn::Console
       { "dump apparel",  "Write every enchanted armour piece to Huginn_Apparel.csv (debug builds)", false, Cmd_DumpApparel },
       { "dump diseases", "Write every disease to Huginn_Diseases.csv (debug builds)", false, Cmd_DumpDiseases },
       { "dump all",      "Write every item, spell and effect in one schema to Huginn_All.csv (debug builds)", false, Cmd_DumpAll },
+      { "dump races",    "Write every race, its keywords and NPC count to Huginn_Races.csv (debug builds)", false, Cmd_DumpRaces },
 #endif
       { "reset weights", "Clear learned item weights",                  false, Cmd_ResetWeights },
       { "reset w",       "Clear learned item weights",                  false, Cmd_ResetWeights },
