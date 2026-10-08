@@ -210,7 +210,7 @@ soak). Order inside: hard zeros to `CandidateFilters` first; `combat_onset`
 sensor from `PotionDiscriminator`'s timer; `ChoiceLearner`; scorer; cosave
 `THTA`/`BIAS`; then the prune list in the map, with every consumer of a
 pruned symbol (console, selection log, `ReasonHold`, debug widget, `Tests.cpp`)
-changed in the same PR, and the shipped INI and dMenu JSON lose the dead keys.
+changed in the same PR, and the shipped INI loses the dead keys.
 - Done when: a grep over `src/` and `tools/` for every pruned symbol finds
   nothing outside the new code (docs follow in R11); Debug and Release build
   clean; host tests cover the update (Var_p precision, step = variance,
