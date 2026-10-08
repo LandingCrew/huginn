@@ -234,7 +234,7 @@ wildcard picks against the soak's 8 of 333.
 
 ### R11. Console, telemetry, docs; retire the classifiers
 
-Map Phases 9–10. `hg theta`, `hg recs`, `hg reset weights`; θ-drift fields in
+Map Phases 9–10. `hg theta`, `hg recs`, the dMenu reset text; θ-drift fields in
 `[Soak]`; slot classes, overrides and labels re-derived from cap; per-list
 override layer (and the [overrides directory](#an-overrides-directory-so-mod-authors-can-ship-their-own));
 delete the classifiers and per-type dumps; rewrite `CLAUDE.md`,
