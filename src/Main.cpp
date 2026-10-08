@@ -6,6 +6,7 @@
 #include "Globals.h"
 #include "UpdateLoop.h"
 #include "Tests.h"
+#include "TestHarness.h"
 
 #include "state/StateManager.h"
 #include "state/DamageEventSink.h"
@@ -444,25 +445,27 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
 #ifndef NDEBUG
     if (!isNewGame) {
         g_spellRegistry->LogAllSpells();
-        RunSpellRegistryTests();
-        RunItemClassifierTests();
-        RunItemRegistryTests();
-        RunWeaponRegistryTests();
-        RunMultiplicativeScoringTests();  // Stage 2d: Test multiplicative scoring formula
-        RunRegressionTests();             // Regression suite for v1.0 refactor validation
-        RunCosaveTests();                 // FeatureBanditLearner serialization round-trip
-        RunStateFeaturesTests();          // Phase 3.5a: StateFeatures extraction tests
-        RunFeatureBanditLearnerTests();        // Phase 3.5b: Feature-based bandit learner tests
-        RunOverrideNamespaceTests();      // Huginn_Overrides.ini section namespacing
-        RunSlotLockerResetTest();         // THROWAWAY (0.19.21): Reset() field completeness
-        RunSlotLockerInstanceLockTest();  // THROWAWAY (0.20.28): per-stack lock breaking
-        RunSlotSeatingTest();             // THROWAWAY (0.20.30): anti-juggling seating
-        RunFillJobKeysTest();             // bFillJobKeysFromRegular
-        RunSlotClassCapTest();            // [SlotLocker] class cap
-        RunSlotClassCapHoldTest();        // ...through the slot hold
-        RunHomeKeyTest();                 // [SlotLocker] home keys
-        RunBuffElementResistTest();       // THROWAWAY (0.20.63): buff element != resist
+        HUGINN_RUN_SUITE(RunSpellRegistryTests);
+        HUGINN_RUN_SUITE(RunItemClassifierTests);
+        HUGINN_RUN_SUITE(RunItemRegistryTests);
+        HUGINN_RUN_SUITE(RunWeaponRegistryTests);
+        HUGINN_RUN_SUITE(RunMultiplicativeScoringTests);  // Stage 2d: Test multiplicative scoring formula
+        HUGINN_RUN_SUITE(RunRegressionTests);             // Regression suite for v1.0 refactor validation
+        HUGINN_RUN_SUITE(RunCosaveTests);                 // FeatureBanditLearner serialization round-trip
+        HUGINN_RUN_SUITE(RunStateFeaturesTests);          // Phase 3.5a: StateFeatures extraction tests
+        HUGINN_RUN_SUITE(RunFeatureBanditLearnerTests);   // Phase 3.5b: Feature-based bandit learner tests
+        HUGINN_RUN_SUITE(RunOverrideNamespaceTests);      // Huginn_Overrides.ini section namespacing
+        HUGINN_RUN_SUITE(RunSlotLockerResetTest);         // THROWAWAY (0.19.21): Reset() field completeness
+        HUGINN_RUN_SUITE(RunSlotLockerInstanceLockTest);  // THROWAWAY (0.20.28): per-stack lock breaking
+        HUGINN_RUN_SUITE(RunSlotSeatingTest);             // THROWAWAY (0.20.30): anti-juggling seating
+        HUGINN_RUN_SUITE(RunFillJobKeysTest);             // bFillJobKeysFromRegular
+        HUGINN_RUN_SUITE(RunSlotClassCapTest);            // [SlotLocker] class cap
+        HUGINN_RUN_SUITE(RunSlotClassCapHoldTest);        // ...through the slot hold
+        HUGINN_RUN_SUITE(RunHomeKeyTest);                 // [SlotLocker] home keys
+        HUGINN_RUN_SUITE(RunBuffElementResistTest);       // THROWAWAY (0.20.63): buff element != resist
         logger::info("Debug build ready. Console command functions available for hotkey integration"sv);
+        // One RESULT line for the batch; in test mode this ends the run.
+        TestHarness::EndPhase(TestHarness::Phase::Load, loadSucceeded);
     }
 #endif
 }
@@ -676,7 +679,10 @@ static void OnDataLoaded()
     // ever leaves NDEBUG undefined while still excluding Tests.cpp, this call becomes
     // an unresolved symbol. Standard MSVC Debug/Release presets keep them aligned.
 #ifndef NDEBUG
-    RunUnitTests();
+    HUGINN_RUN_SUITE(RunUnitTests);
+    // One RESULT line; in test mode, arms the auto-load (or ends the run when
+    // no save is named).
+    TestHarness::EndPhase(TestHarness::Phase::Menu);
 #endif
 
     // Register UpdateHandler
@@ -783,6 +789,7 @@ void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
         // SKSE passes the load's success as the data pointer itself (non-null
         // = loaded). A failed load must not reset the learner's character.
         const bool loaded = a_msg->data != nullptr;
+        TestHarness::OnGameLoaded();
         logger::info("Game loaded{}"sv, loaded ? ""sv : " -- FAILED (learner left as it was)"sv);
         InitializeGameSystems(/*isNewGame=*/false, loaded);
         break;
@@ -877,6 +884,10 @@ void OpenLog()
         std::make_shared<spdlog::sinks::basic_file_sink_mt>(path->string(), true),
         std::make_shared<spdlog::sinks::msvc_sink_mt>()
     };
+    // Debug: counts the error lines each in-game test suite logs (TestHarness.h).
+    if (auto counting = TestHarness::MakeCountingSink()) {
+        sinks.push_back(std::move(counting));
+    }
 
     auto logger_obj = std::make_shared<spdlog::logger>("global", sinks.begin(), sinks.end());
 
@@ -947,6 +958,7 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_s
 #endif
 
     SKSE::Init(a_skse);
+    TestHarness::ReadTestMode();   // Debug only: the unattended-run flag
 
     // Register cosave serialization (must be before any save/load events)
     Persist::RegisterSerialization();
