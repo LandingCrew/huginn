@@ -541,6 +541,52 @@ void RunItemClassifierTests()
 // =============================================================================
 
 // Run ItemRegistry integration tests (debug mode only) - v0.7.4
+#ifndef NDEBUG
+namespace
+{
+    // TEST MODE ONLY (TestHarness::Active): give the player enough healing
+    // potions that the magnitude-sort check has two to sort, on a save that
+    // carries fewer. A test-mode run never saves (Huginn ends the process
+    // after DONE), and the caller takes them back anyway. Picked from the load
+    // order, not by FormID, so any list works: named, non-food, non-poison
+    // alchemy items with ONE effect (so no quest potion like the White Phial,
+    // whose second effect is its quest's) that the classifier calls
+    // HealthPotion, each of a magnitude the player does not already hold.
+    std::vector<RE::AlchemyItem*> SupplyHealthPotionsForTest(RE::PlayerCharacter* player,
+        std::vector<float> magnitudes, size_t needed)
+    {
+        std::vector<RE::AlchemyItem*> supplied;
+        auto* data = RE::TESDataHandler::GetSingleton();
+        if (!data || !player || needed == 0) {
+            return supplied;
+        }
+        Item::ItemClassifier classifier;
+        for (auto* alch : data->GetFormArray<RE::AlchemyItem>()) {
+            if (!alch || alch->IsFood() || alch->IsPoison() || alch->effects.size() != 1 ||
+                !alch->GetFullName() || !*alch->GetFullName()) {
+                continue;
+            }
+            const auto item = classifier.ClassifyItem(alch);
+            if (item.type != Item::ItemType::HealthPotion || item.magnitude <= 0.0f) {
+                continue;
+            }
+            if (std::find(magnitudes.begin(), magnitudes.end(), item.magnitude) != magnitudes.end()) {
+                continue;
+            }
+            player->AddObjectToContainer(alch, nullptr, 1, nullptr);
+            supplied.push_back(alch);
+            magnitudes.push_back(item.magnitude);
+            logger::info("  [test mode] supplied 1x '{}' ({:08X}, restore health {:.0f})"sv,
+                alch->GetFullName(), alch->GetFormID(), item.magnitude);
+            if (supplied.size() == needed) {
+                break;
+            }
+        }
+        return supplied;
+    }
+}
+#endif
+
 void RunItemRegistryTests()
 {
 #ifndef NDEBUG
@@ -596,7 +642,37 @@ void RunItemRegistryTests()
 
     logger::info("TEST PASS: GetItemsByType works"sv);
 
-    // Test 5: Verify GetHealthPotionsByMagnitude returns sorted results
+    // Test 5: Verify GetHealthPotionsByMagnitude returns sorted results.
+    // In test mode a save short of healing potions gets two (see
+    // SupplyHealthPotionsForTest); in a normal session the check is skipped.
+    // The supplied potions are taken back when this function returns (the
+    // guard below), not right after the sort check: later checks still read
+    // sortedHealthPotions, whose pointers a reconcile would invalidate.
+    std::vector<RE::AlchemyItem*> suppliedPotions;
+    auto* testPlayer = RE::PlayerCharacter::GetSingleton();
+    if (TestHarness::Active()) {
+        const auto held = g_itemRegistry->GetHealthPotionsByMagnitude();
+        if (held.size() < 2) {
+            std::vector<float> heldMagnitudes;
+            for (const auto* h : held) heldMagnitudes.push_back(h->data.magnitude);
+            suppliedPotions = SupplyHealthPotionsForTest(testPlayer, heldMagnitudes, 2 - held.size());
+            g_itemRegistry->ReconcileItems();
+        }
+    }
+    struct TakeBack
+    {
+        std::vector<RE::AlchemyItem*>& items;
+        RE::PlayerCharacter* player;
+        ~TakeBack()
+        {
+            if (items.empty() || !player) return;
+            for (auto* alch : items) {
+                player->RemoveItem(alch, 1, RE::ITEM_REMOVE_REASON::kRemove, nullptr, nullptr);
+            }
+            g_itemRegistry->ReconcileItems();
+            logger::info("  [test mode] took the {} supplied potion(s) back"sv, items.size());
+        }
+    } takeBack{ suppliedPotions, testPlayer };
     auto sortedHealthPotions = g_itemRegistry->GetHealthPotionsByMagnitude();
     if (sortedHealthPotions.size() >= 2) {
         bool isSorted = true;

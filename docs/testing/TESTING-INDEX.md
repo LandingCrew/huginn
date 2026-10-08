@@ -134,8 +134,16 @@ suites, logs
 
 and ends the process (exit code 0 on PASS, 1 on FAIL). `reason` is `-`,
 `load-failed` (kPostLoadGame reported failure), `load-timeout` (no load within
-`iLoadTimeoutSec`, e.g. a misspelt save) or `no-ui`/`no-save-manager`. Turn it
-on with either:
+`iLoadTimeoutSec`, e.g. a misspelt save) or `no-ui`/`no-save-manager`.
+
+Test mode may change the loaded game, because it never saves (the process is
+ended after `DONE`). One suite uses that: `RunItemRegistryTests` gives the
+player enough single-effect healing potions for its magnitude-sort check when
+the save holds fewer than two, and takes them back when the suite ends. In a
+normal Debug session it still skips that check (and the suite reports
+SKIPPED).
+
+Turn it on with either:
 
 - a one-shot `Huginn_TestMode.ini` in the SKSE log folder (what the runner
   uses; Huginn deletes it when it reads it, and ignores it past `iExpiresUnix`):
@@ -220,9 +228,13 @@ terminal marker is as much a signal as an explicit `TEST FAIL` line. Skips
 
 ## 2. Suite inventory
 
+Suites are named by function, not line: `grep -n "^void Run" src/Tests.cpp`
+finds each one (line numbers drift with every edit, so this index no longer
+carries them). The run order is the `HUGINN_RUN_SUITE` list in `src/Main.cpp`.
+
 ### 2.1 Runs at `kDataLoaded` (no save data needed)
 
-**`RunUnitTests()`** — `src/Tests.cpp:1484`. Terminal marker:
+**`RunUnitTests()`**. Terminal marker:
 `=== All unit tests passed! ===`.
 
 | Group | Contents |
@@ -232,24 +244,35 @@ terminal marker is as much a signal as an explicit `TEST FAIL` line. Skips
 | PriorCalculator context independence | Tests 1–8: healing and damage priors identical in/out of context; magnitude, scarcity, spell cost, weapon charge, ammo matching and scroll magnitude *do* affect the prior. This is the guard on the `ContextRuleEngine` / `PriorCalculator` separation |
 | Optimization + engine | Test 1 partial-sort correctness, Test 3 `SCOPED_TIMER` compiles and runs, Tests 4–9 `ContextRuleEngine` vital / elemental / environmental / combat / target / equipment rules, Test 10 end-to-end `ContextRuleEngine` → `UtilityScorer` (subtests 1a/1b/2–5: forge, enchanter, resist-fire, healing at 30% HP, AOE damage, soul gem), Test 11 `TargetCollection` cache invariant, Test 12 `PipelineStateCache` rank clamping, Test 13 `EquipSourceTracker` FormID keying, Test 14 `UsageMemory` snapshot reader, Test 15 dedup equivalence (`IsFavorited`, fortify-school parity), Test 16 `FeatureBanditLearner` batch decay, Test 17 `ContextReason` derivation, and an unnumbered wildcard-page-cache block |
 
-The wildcard-page-cache block (`src/Tests.cpp:4187` ff.) is the regression guard
+The wildcard-page-cache block (search `wildcardSlots` in `src/Tests.cpp`) is the regression guard
 for issue #70 and its two siblings: it pins roll probabilities to 1.0 and the
 refractory to 0 so the rolls are deterministic, then asserts per-page bounds — it
 asserts bounds, not randomness.
 
 ### 2.2 Runs at `kPostLoadGame` (needs a loaded save)
 
-| Suite | Entry point | What it covers |
-|---|---|---|
-| `RunSpellRegistryTests()` | `Tests.cpp:329` | Spell registry against real form data |
-| `RunItemClassifierTests()` | `Tests.cpp:416` | Item classification against real forms |
-| `RunItemRegistryTests()` | `Tests.cpp:527` | Item registry against real inventory |
-| `RunWeaponRegistryTests()` | `Tests.cpp:715` | Weapon registry against real inventory |
-| `RunMultiplicativeScoringTests()` | `Tests.cpp:44` | 6 tests: zero context gates utility, adaptive lambda vs confidence, learning amplification, correlation compounding, full integration, favorites boost by rank |
-| `RunRegressionTests()` | `Tests.cpp:4370` | See below |
-| `RunCosaveTests()` | `Tests.cpp:4980` | 4 tests: `FeatureBanditLearner` export/import round-trip, empty round-trip, import clears existing data, feature-count migration (pad / truncate / equal / reject) |
-| `RunStateFeaturesTests()` | `Tests.cpp:872` | 8 tests: default state, low-health combat, one-hot correctness across all 7 target types, distance normalisation, `ToArray` round-trip, normalisation bounds, no-enemy fallback, vital clamping |
-| `RunFeatureBanditLearnerTests()` | `Tests.cpp:1199` | 8 tests: cold start, convergence, weight interpretability, regularisation prevents explosion, weight clamping, generalisation across states, item independence, `Clear()` |
+The 18 suites, in run order:
+
+| Suite | What it covers |
+|---|---|
+| `RunSpellRegistryTests()` | Spell registry against real form data |
+| `RunItemClassifierTests()` | Item classification against real forms |
+| `RunItemRegistryTests()` | Item registry against real inventory. Its potion-sort check needs 2+ health potions; in test mode it supplies them (section 1a), otherwise it marks the suite skipped |
+| `RunWeaponRegistryTests()` | Weapon registry against real inventory |
+| `RunMultiplicativeScoringTests()` | 6 tests: zero context gates utility, adaptive lambda vs confidence, learning amplification, correlation compounding, full integration, favorites boost by rank |
+| `RunRegressionTests()` | See below |
+| `RunCosaveTests()` | 4 tests: `FeatureBanditLearner` export/import round-trip, empty round-trip, import clears existing data, feature-count migration (pad / truncate / equal / reject) |
+| `RunStateFeaturesTests()` | 8 tests: default state, low-health combat, one-hot correctness across all 7 target types, distance normalisation, `ToArray` round-trip, normalisation bounds, no-enemy fallback, vital clamping |
+| `RunFeatureBanditLearnerTests()` | Feature-based learner: cold start, convergence, weight interpretability, regularisation, clamping, generalisation, item independence, `Clear()`, passed-over updates |
+| `RunOverrideNamespaceTests()` | `Huginn_Overrides.ini` section namespacing (`[Spell:...]` / `[Item:...]`) |
+| `RunSlotLockerResetTest()` | `SlotLocker::Reset()` clears every `LockedSlot` field (throwaway) |
+| `RunSlotLockerInstanceLockTest()` | Per-stack lock breaking (throwaway) |
+| `RunSlotSeatingTest()` | Anti-juggling seating; skipped when `bKeepSlotPositions` is off |
+| `RunFillJobKeysTest()` | `bFillJobKeysFromRegular` |
+| `RunSlotClassCapTest()` | The slot class cap: free items, then x discount per item; food counts as one class |
+| `RunSlotClassCapHoldTest()` | The class cap through the slot hold; skipped unless seating, the hold and the cap at 3 free are on |
+| `RunHomeKeyTest()` | Home keys: a returner takes its key back; skipped unless seating, the hold and home keys are on |
+| `RunBuffElementResistTest()` | A buff element is not a resist (throwaway) |
 
 **`RunRegressionTests()`** carries numbered `TC-*` cases (numbering has gaps —
 TC-04, 06, 08, 09 and 13 are not present). Terminal marker:
@@ -279,25 +302,23 @@ Suite names above use the real identifiers.
 
 ## 3. Known open items
 
-Both are recorded in [../roadmap.md](../roadmap.md) under *Follow-ups*.
+Recorded in [../roadmap.md](../roadmap.md) under *Follow-ups*.
 
 1. **`Context::WeightForCandidate` is hand-reimplemented in two tests instead of
-   being called.** The roadmap cites `Tests.cpp:2656/3374`; those line numbers
-   have since drifted. The live sites are `src/Tests.cpp:3183` ("Extract weight
-   using UtilityScorer's `GetContextWeight` logic", inside unit test 10) and
-   `src/Tests.cpp:4516` ("Simulate `GetContextWeight` logic with `max()`
-   accumulation", inside TC-05). Both should call
+   being called.** The sites, by their comments in `src/Tests.cpp`: "Extract
+   weight using UtilityScorer's GetContextWeight logic" (inside unit test 10)
+   and the TC-05 block that simulates `GetContextWeight` with `max()`
+   accumulation. Both should call
    `Context::WeightForCandidate()` from
    `src/context/ContextWeightForCandidate.h`, which most of the rest of the file
    already does (18 call sites). `DominantReason` / `ReasonLabel` are covered by
    unit test 17 and are not part of this gap.
 
-2. **The cosave decode negative test logs a real-looking error every Debug
-   startup.** `[E] DecodeV2EntryBlob: byteLen 83 != stride 84` is the assertion
-   firing, not a failure — the "length mismatch must reject the decode" block at
-   `src/Tests.cpp:5195` deliberately feeds a short blob. The roadmap cites
-   `Tests.cpp:5159` (drifted). It should be silenced so a genuine rejection stays
-   visible; it has cost triage time twice.
+2. *(Resolved.)* The cosave decode negative test used to log a real-looking
+   `[E] DecodeV2EntryBlob: byteLen 83 != stride 84`. The "length mismatch must
+   reject the decode" block now passes `unitTest=true`, so the rejection logs
+   at info and names itself a test; it no longer counts as a failure line for
+   the harness (section 1a).
 
 ---
 
