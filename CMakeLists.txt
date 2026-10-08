@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 
 # Version can be overridden via -DPROJECT_VERSION=x.y.z
 if(NOT DEFINED PROJECT_VERSION)
-   set(PROJECT_VERSION "0.23.8")
+   set(PROJECT_VERSION "0.23.9")
 endif()
 
 project(
@@ -60,4 +60,12 @@ else()
 endif()
 
 add_subdirectory(src)
+
+# Host tests over src/core/ (pure code, no game): ctest -C Debug --test-dir build
+option(HUGINN_CORE_TESTS "Build huginn_core_tests, the host test target over src/core/" ON)
+if(HUGINN_CORE_TESTS)
+   enable_testing()
+   add_subdirectory(tests)
+endif()
+
 include(cmake/packaging.cmake)
