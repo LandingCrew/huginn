@@ -3,8 +3,11 @@
     python -I tools/races/check_race_reading.py <Huginn_Races.csv> [race_map.csv]
 
 The dump comes from the game (Debug build, `hg dump races`, written next to the
-SKSE log). Rows are joined on formID; a race the map lists but the dump lacks
-is reported, races the dump has and the map does not are ignored.
+SKSE log). Rows are joined on plugin + editorID: a runtime formID moves when the
+load order changes (an ESL record's FE-prefixed ID shifts with its slot). The
+formID is the fallback for a race with no editorID. A race the map lists but
+the dump lacks is reported; races the dump has and the map does not are
+ignored.
 
 Expected reading per map row (the same rule as race_reading_host_check.cpp):
 a row flagged in today_mismatch reads its primary family folded onto today's
@@ -30,16 +33,20 @@ def main(argv):
     map_path = argv[2] if len(argv) > 2 else os.path.join(
         here, '..', '..', 'docs', 'architecture', '9-data', 'race_map.csv')
     with open(argv[1], encoding='utf-8-sig', errors='replace', newline='') as f:
-        dump = {r['formID']: r for r in csv.DictReader(f)}
-    if dump and 'huginnReading' not in next(iter(dump.values())):
+        dump_rows = list(csv.DictReader(f))
+    if dump_rows and 'huginnReading' not in dump_rows[0]:
         print('dump has no huginnReading column: made by a build before 0.23.8')
         return 2
+    by_key = {(r['plugin'], r['editorID']): r for r in dump_rows if r['editorID']}
+    by_form = {r['formID']: r for r in dump_rows}
     with open(map_path, encoding='utf-8', newline='') as f:
         rows = list(csv.DictReader(f))
 
     bad = 0
     for r in rows:
-        d = dump.get(r['formID'])
+        d = by_key.get((r['plugin'], r['editorID'])) if r['editorID'] else None
+        if d is None:
+            d = by_form.get(r['formID'])
         if d is None:
             print(f"MISSING  {r['formID']} {r['editorID']}")
             bad += 1
