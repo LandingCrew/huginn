@@ -34,8 +34,17 @@ namespace Huginn::Core
     /// discount^(shown - freePerNeed + 1). 1 when the cap is off.
     ///
     /// Repeated multiplication, not std::pow, so the result is bit-identical
-    /// to the loop NeedCap::Factor ran before it moved here. Stops early once
-    /// the product is exactly 0, so a huge `shown` cannot spin.
+    /// to the loop NeedCap::Factor ran before it moved here.
+    ///
+    /// The loop stops once one more multiplication would not change the
+    /// product (factor * d == factor). From there every further step yields
+    /// the same value, so stopping changes no bit. That fixed point is 0 for a
+    /// small discount, but for d > 0.5 the product sticks at a nonzero
+    /// denormal instead (x * 0.75 rounds back to x), which a "stop at 0" test
+    /// never reached: NeedCapFactor(0.75f, 0, 1e8) ran 1e8 steps. With the
+    /// fixed-point test the work is bounded by the steps to that point (about
+    /// 10^5 at d = 0.999), whatever `shown` is. NeedCap passes a uint8 count,
+    /// so in the game it is at most 256 steps either way.
     [[nodiscard]] inline float NeedCapFactor(float discount, std::uint32_t freePerNeed, std::uint32_t shown) noexcept
     {
         const float d = ClampNeedCapDiscount(discount);
@@ -47,8 +56,12 @@ namespace Huginn::Core
         }
         const std::uint64_t steps = static_cast<std::uint64_t>(shown) - freePerNeed + 1;
         float factor = 1.0f;
-        for (std::uint64_t i = 0; i < steps && factor != 0.0f; ++i) {
-            factor *= d;
+        for (std::uint64_t i = 0; i < steps; ++i) {
+            const float next = factor * d;
+            if (next == factor) {
+                break;   // a fixed point: every remaining step gives this value again
+            }
+            factor = next;
         }
         return factor;
     }
