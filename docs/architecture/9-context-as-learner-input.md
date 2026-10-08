@@ -230,6 +230,14 @@ Open points:
 - [ ] Which effect features to extract first, and from which game data (MagicEffect archetype, actor value, keywords)?
 - [ ] What new sensors the emergent tier needs first (edge/drop detection, stable target type).
 
+**Challenged (2026-10-07, against the code and the soak report)**
+
+- [ ] **The soak log cannot fit θ.** Step 3 assumes it can, but `Huginn_Selections.jsonl` holds one `ctx` and one `need` label per candidate plus the 18-float φ (vitals, combat, sneak, distance, target type, equipment, bias). On fire, darkness, hunger level, workstation, damage taken by element and encumbrance are not in it, so need(s) cannot be rebuilt. Steps 1–2 must add need-vector logging, and step 3 needs new play hours logged with it. A test that works on today's log: one learned weight per need class times the logged `ctx`, no per-item term. If that does not beat context only, the full model likely will not.
+- [ ] **The 23-point gain is partly self-fulfilling.** The live page was the one shown, and most picks were presses of its keys; the context-only page was never shown. On the 83 menu picks, which the display did not steer, context alone won 13 to 7, and B′ (prior and recency kept, no learned weights) scored 56% against B's 58%. That strengthens the case for this redesign but weakens "Options ruled out": a cap or context bands stays a cheap stopgap while this is built. Success in step 3 should weight menu picks, not the overall hit rate.
+- [ ] **The slot manager assumes a positive multiplicative score.** The hold margin (×1.5 challenger ratio), the need cap (×0.5, ×0.25), `fMinimumUtility` and the override thresholds are all ratios or floors on today's utility. An additive θ·need·cap + bᵢ can be zero or negative. Decide whether the slot manager works on exp(score) (the choice model's odds) or every one of those is re-derived.
+- [ ] **Weapons need a capability vector too.** The extractor reads MagicEffect data, which covers spells, potions, scrolls and enchantments. A plain weapon has none, so its cap(i) is empty and bᵢ carries everything -- the soak's concentration (Soul Sword, 16% of trains) under a new name. Describe weapons by type, hand, damage, speed and enchantment.
+- [ ] **Measure the wildcard target against relevant wildcards.** "8 of 333" counts wildcards placed when nothing called for them. Count picks against wildcards whose relevance was above the noise floor at the time.
+
 **Risks**
 
 - Data volume: ~40 choices an hour. Rare and emergent pairings will learn slowly, possibly never.

@@ -25,7 +25,7 @@ before tuning anything that competes with it.
 | # | Phase | Status |
 |---|---|---|
 | 1 | Detection fixes | **Done** -- 0.22.15 (#171), tested in game. Two checks left (below). |
-| 2 | [Learning rework](#1-learning) | Choice target (#172), prior as pseudo-observations (#173), re-equip rule and passed-over weight (0.23.0) shipped; useful life (#180, 0.23.6) **test pending**. Open: balance, surprise weighting, pooling. |
+| 2 | [Learning rework](#1-learning) | Choice target (#172), prior as pseudo-observations (#173), re-equip rule and passed-over weight (0.23.0) shipped; useful life (#180, 0.23.6) **test pending**. Open: [context as the learner's input](#context-as-the-learners-input) (proposal, doc 9), balance stopgap, surprise weighting, pooling. |
 | 3 | [Slot stability](#2-slot-stability) | Need cap (0.23.4), home keys (0.23.5), margin 0.5 (0.23.6) shipped. **Next: score jumps** from switching multipliers. |
 | 4 | [Potion recommendations](#3-potions) | Not started. |
 | 5 | [Gear recommendations](#4-gear) | Not started. |
@@ -86,8 +86,42 @@ the choice target (chosen 1, passed over 0 at a quarter step, delayed 10 s and
 cancelled if picked next), one reward per decision (a re-equip within 30 s
 teaches nothing), confidence n/(n+2), and forgetting (useful life, 0.23.6).
 
-### Fine-tune the balance
+### Context as the learner's input
+**Status:** proposal (2026-10-07), nothing built:
+[architecture/9-context-as-learner-input.md](architecture/9-context-as-learner-input.md).
+Instead of `ctx x (1 + lambda*learn) x mults`, rules give a need vector (each
+need through a response curve), items give an effect vector read from game
+data, and the learner fits a shared weight per need x effect pair plus a small
+per-item taste term. The doc's open questions and its challenge
+(2026-10-07) are on the doc. **Next, in order:**
+1. **A cheap replay test on today's log**: one learned weight per need class
+   times the logged `ctx`, no per-item learning. If it does not beat the
+   context-only page (58%, menu picks 13 of 83), the full model probably
+   will not either.
+2. **Effect extractor + need-vector logging** (doc steps 1-2). Changes no
+   scores, so it can ship any time. The soak log CANNOT fit the full model:
+   it holds one `ctx` and one `need` label per candidate and the 18-float
+   phi, which has no fire, darkness, hunger, workstation or encumbrance.
+   The fit needs play hours logged with the need vector.
+3. The rest of the doc's sequence, on that new log.
+
+Cuts across the plan:
+- **Slot stability is tuned on today's score scale.** The hold margin
+  (x1.5), the need cap (x0.5, x0.25), `fMinimumUtility` and the override
+  thresholds all assume a positive product; an additive score can be zero or
+  negative. If this lands, re-derive each of them.
+- **Build needs as curves now.** Most of phases 4-6 are need curves in
+  disguise -- hunger as a ramp, resist by damage taken, a summon by
+  distance, the smallest potion that covers, encumbrance, darkness on a
+  soft edge. Built as response curves they carry over to either model; new
+  hand-set weights and shims do not.
+
+### Fine-tune the balance (stopgap)
 **Status:** open, only if the ~4x learned cap is still too much in play.
+Doc 9 rules both options out as permanent ("they give up the learner's
+23-point gain"), but that gain is partly self-fulfilling -- the live page is
+the one the player saw and pressed -- and on the 83 menu picks context alone
+won 13 to 7. So they stay as a cheap stopgap while doc 9 is built.
 **Next:** read the cure checks above and the Phase 3 comparison first.
 Options: a per-candidate-type `lambdaMax` (weapons high; potions, spells, food
 low), or rank within context bands (learning orders items of similar ctx and
@@ -119,7 +153,8 @@ update, so the estimate reflects the last two or three picks while confidence
 claims more. Normalised or 1/n steps.
 
 ### Share learning across similar items (pooling)
-**Status:** open, behind the balance. Today every item learns alone, so a new
+**Status:** open, behind the balance. Doc 9's shared need x effect weight is
+pooling by effect rather than by class, and would replace this if it lands. Today every item learns alone, so a new
 item cannot compete with a trained one -- the cold start, which is most of the
 inventory: 63 of 69 carried potions and 46 of 52 scrolls never trained
 (2026-10-01). Scrolls show it worst (LoreRim's throwing knives are scrolls; a
@@ -146,10 +181,6 @@ same-need item they passed over? `tools/replay` has the data.
 ### Later
 - **Logistic link** instead of least squares on a 0/1 target -- same idea,
   better calibrated, a bigger change.
-- **Context as the learner's input** (supersedes #15/#16 Kalman learner /
-  learnable context weights): a learned weight per need x effect pair, a small
-  per-item preference, exploration from uncertainty. Proposal only, nothing
-  built: [architecture/9-context-as-learner-input.md](architecture/9-context-as-learner-input.md).
 - **Behavioural modes as a recall stage** (design doc 2026-10-01). Hand-written
   modes (combat, stealth, crafting/town, exploring) choose a short list of ~15
   by per-mode use counts; the scorer ranks it. Absorbs the "two weight sets:
@@ -185,7 +216,10 @@ switching on and off with combat and distance (Oakflesh x2.5 -> x5.5; one key
 changed four times in 11 s).
 **Next:** find which multiplier moves at each change in the `[SlotChurn]`
 lines, then smooth or debounce it at the source. Also check whether food should
-draw the potion multiplier at all.
+draw the potion multiplier at all. Doc 9 folds these multipliers into learned
+features and takes favourites out of utility (a battery bonus in Boost mode, a
+filter in Suppress) -- so prefer a fix that removes a multiplier over one that
+tunes it.
 
 ### Workstation flicker at the bench
 **Status:** two problems, two decisions pending.
