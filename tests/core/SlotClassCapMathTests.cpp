@@ -6,6 +6,7 @@
 
 #include <doctest/doctest.h>
 
+#include <bit>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
@@ -85,14 +86,30 @@ TEST_CASE("slot class cap: matches the loop it replaced, bit for bit")
         }
         return factor;
     };
-    for (float d : { 0.0f, 0.1f, 0.33f, 0.5f, 0.75f, 0.9f, 0.999f }) {
+    // Compared as bits, so the sign of a zero counts (-0.0 == +0.0 as floats).
+    // The old member clamped first, as ClassCapFactor does; std::clamp keeps
+    // -0.0, so feeding it straight in is what the old code saw.
+    for (float d : { -0.0f, 0.0f, 0.1f, 0.33f, 0.5f, 0.75f, 0.9f, 0.999f }) {
+        CAPTURE(d);
         for (std::uint32_t free = 0; free <= 8; ++free) {
             for (std::uint32_t shown = 0; shown <= 255; ++shown) {
                 const auto s = static_cast<std::uint8_t>(shown);
-                CHECK(ClassCapFactor(d, free, s) == old(d, free, s));
+                CHECK(std::bit_cast<std::uint32_t>(ClassCapFactor(d, free, s)) ==
+                      std::bit_cast<std::uint32_t>(old(d, free, s)));
             }
         }
     }
+}
+
+TEST_CASE("slot class cap: -0.0 alternates sign like the old loop, and still ends")
+{
+    CHECK(std::signbit(ClassCapFactor(-0.0f, 0, 0)));    // 1 step: -0
+    CHECK(!std::signbit(ClassCapFactor(-0.0f, 0, 1)));   // 2 steps: +0
+    CHECK(std::signbit(ClassCapFactor(-0.0f, 0, 2)));    // 3 steps: -0
+    CHECK(ClassCapFactor(-0.0f, 3, 2) == 1.0f);          // still free
+    // UINT32_MAX shown, 0 free: 2^32 steps, an even count, answered at once
+    CHECK(!std::signbit(ClassCapFactor(-0.0f, 0, std::numeric_limits<std::uint32_t>::max())));
+    CHECK(std::signbit(ClassCapFactor(-0.0f, 1, std::numeric_limits<std::uint32_t>::max())));
 }
 
 TEST_CASE("slot class cap: a huge count ends (and ends at 0)")

@@ -46,6 +46,12 @@ namespace Huginn::Core
     /// fixed-point test the work is bounded by the steps to that point (about
     /// 10^5 at d = 0.999), whatever `shown` is. SlotClassCap passes a uint8
     /// count, so in the game it is at most 256 steps either way.
+    ///
+    /// A zero discount is answered directly: -0.0 (std::clamp keeps the sign)
+    /// made the old loop alternate -0, +0, -0, ..., which never reaches a
+    /// fixed point but is just d^steps -- -0 for an odd count, +0 otherwise.
+    /// So the result matches the old loop bit for bit for -0.0 too, sign
+    /// included.
     [[nodiscard]] inline float ClassCapFactor(float discount, std::uint32_t freePerClass, std::uint32_t shown) noexcept
     {
         const float d = ClampClassCapDiscount(discount);
@@ -56,6 +62,9 @@ namespace Huginn::Core
             return 1.0f;
         }
         const std::uint64_t steps = static_cast<std::uint64_t>(shown) - freePerClass + 1;
+        if (d == 0.0f) {   // +0 or -0
+            return (steps % 2 == 1) ? d : 0.0f;
+        }
         float factor = 1.0f;
         for (std::uint64_t i = 0; i < steps; ++i) {
             const float next = factor * d;
