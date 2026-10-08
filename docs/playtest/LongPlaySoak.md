@@ -167,7 +167,8 @@ and logs carry the rest.
       rather than clear it. Every record says where it came from: `list` (the
       modlist folder: LoreRim-5, simonrim-essentails), `launch` (UTC start of
       the game launch), `gen` (the load within it) and, from 0.22.11, `char`
-      (the character ID). `Huginn_AB.log` lines carry the same stamps
+      (the character ID). (`Huginn_AB.log`, which carried the same stamps,
+      went with the A|B shadow arm in 0.23.8.)
 - [ ] At the first and last burst of the run: `hg dump weights`, `hg dump
       potions`, `hg dump scrolls` (the learner state the run started and ended
       with)

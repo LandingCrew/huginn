@@ -1,6 +1,5 @@
 #include "SelectionLog.h"
 #include "FeatureBanditLearner.h"
-#include "ShadowArm.h"
 #include "UtilityScorer.h"
 #include "Globals.h"
 
@@ -368,7 +367,6 @@ namespace Huginn::Learning
         const float reward = RewardFor(event.kind);
         Predictions pred = Predict(event);
         WriteReadable(event, how, reward, pred);
-        ShadowArm::Record(event);   // THROWAWAY: soak-run A|B arm, Debug only
 
         Record record;
         record.event = event;
