@@ -1,6 +1,7 @@
 #pragma once
 
 #include "SlotAssignment.h"
+#include "core/SlotClassCapMath.h"
 #include "SlotConfig.h"
 #include "learning/ScoredCandidate.h"
 #include <array>
@@ -46,7 +47,7 @@ namespace Huginn::Slot
         SlotClassCap(float discount, uint32_t freePerClass,
             const Scoring::ScoredCandidateList* candidates = nullptr);
 
-        [[nodiscard]] bool Active() const noexcept { return m_discount < 1.0f; }
+        [[nodiscard]] bool Active() const noexcept { return Core::ClassCapActive(m_discount); }
 
         /// The slot class `c` counts against.
         [[nodiscard]] static SlotClassification ClassOf(const Scoring::ScoredCandidate& c) noexcept;

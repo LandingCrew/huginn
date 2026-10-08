@@ -6,7 +6,7 @@
 #include "learning/StateFeatures.h"
 #include "learning/PipelineStateCache.h"
 #include "state/StateManager.h"
-#include "state/ActorTypeClassifier.h"
+#include "core/ActorTypeClassifier.h"
 #include "candidate/CandidateGenerator.h"
 #include "override/OverrideManager.h"
 #include "override/OverrideConfig.h"

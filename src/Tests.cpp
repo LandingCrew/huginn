@@ -1,4 +1,5 @@
 #include "Tests.h"
+#include "TestHarness.h"           // MarkSkipped: a skip is not a pass
 #include "util/InventoryUtil.h"
 #include "Globals.h"
 
@@ -341,10 +342,12 @@ void RunSpellRegistryTests()
     // Guard: Skip if registry not initialized or still loading (v0.7.10)
     if (!g_spellRegistry) {
         logger::warn("[Test] SpellRegistry not initialized, skipping tests"sv);
+        TestHarness::MarkSkipped("SpellRegistry not initialized"sv);
         return;
     }
     if (g_spellRegistry->IsLoading()) {
         logger::warn("[Test] SpellRegistry still loading, skipping tests"sv);
+        TestHarness::MarkSkipped("SpellRegistry still loading"sv);
         return;
     }
 
@@ -428,10 +431,12 @@ void RunItemClassifierTests()
     // Guard: Skip if registry not ready (v0.7.10)
     if (!g_itemRegistry) {
         logger::warn("[Test] ItemRegistry not initialized, skipping tests"sv);
+        TestHarness::MarkSkipped("ItemRegistry not initialized"sv);
         return;
     }
     if (g_itemRegistry->IsLoading()) {
         logger::warn("[Test] ItemRegistry still loading, skipping tests"sv);
+        TestHarness::MarkSkipped("ItemRegistry still loading"sv);
         return;
     }
 
@@ -440,6 +445,7 @@ void RunItemClassifierTests()
     auto* player = RE::PlayerCharacter::GetSingleton();
     if (!player) {
         logger::error("TEST SKIP: Player not available"sv);
+        TestHarness::MarkSkipped("player not available"sv);
         return;
     }
 
@@ -535,12 +541,71 @@ void RunItemClassifierTests()
 // =============================================================================
 
 // Run ItemRegistry integration tests (debug mode only) - v0.7.4
+#ifndef NDEBUG
+namespace
+{
+    // TEST MODE ONLY (TestHarness::Active): give the player enough healing
+    // potions that the magnitude-sort check has two to sort, on a save that
+    // carries fewer. A test-mode run never saves (Huginn ends the process
+    // after DONE), and the caller takes them back anyway. Picked from the load
+    // order, not by FormID, so any list works: named, non-food, non-poison
+    // alchemy items with ONE effect (so no quest potion like the White Phial,
+    // whose second effect is its quest's) that the classifier calls
+    // HealthPotion, each of a magnitude the player does not already hold.
+    //
+    // Each potion is recorded in `supplied` right after it is added, so the
+    // caller's take-back guard (declared before this is called) returns every
+    // one even if something later throws.
+    //
+    // The magnitude dedupe uses a default ItemClassifier, not the registry's
+    // own (that one is private and carries Huginn_Overrides.ini). An override
+    // that reclassifies a supplied potion only means the registry may still
+    // see fewer than two, and the check then skips honestly; it cannot make it
+    // pass falsely.
+    void SupplyHealthPotionsForTest(RE::PlayerCharacter* player, std::vector<float> magnitudes,
+        size_t needed, std::vector<RE::AlchemyItem*>& supplied)
+    {
+        auto* data = RE::TESDataHandler::GetSingleton();
+        if (!data || !player || needed == 0) {
+            return;
+        }
+        const size_t target = supplied.size() + needed;
+        Item::ItemClassifier classifier;
+        for (auto* alch : data->GetFormArray<RE::AlchemyItem>()) {
+            if (!alch || alch->IsFood() || alch->IsPoison() || alch->effects.size() != 1 ||
+                !alch->GetFullName() || !*alch->GetFullName()) {
+                continue;
+            }
+            const auto item = classifier.ClassifyItem(alch);
+            if (item.type != Item::ItemType::HealthPotion || item.magnitude <= 0.0f) {
+                continue;
+            }
+            if (std::find(magnitudes.begin(), magnitudes.end(), item.magnitude) != magnitudes.end()) {
+                continue;
+            }
+            // Add, then record: the guard must never remove a potion this did
+            // not add (it would take one of the player's own). Game code does
+            // not throw, so nothing can come between the two.
+            player->AddObjectToContainer(alch, nullptr, 1, nullptr);
+            supplied.push_back(alch);
+            magnitudes.push_back(item.magnitude);
+            logger::info("  [test mode] supplied 1x '{}' ({:08X}, restore health {:.0f})"sv,
+                alch->GetFullName(), alch->GetFormID(), item.magnitude);
+            if (supplied.size() == target) {
+                break;
+            }
+        }
+    }
+}
+#endif
+
 void RunItemRegistryTests()
 {
 #ifndef NDEBUG
     // Guard: Skip if registry not ready (v0.7.10)
     if (!g_itemRegistry || g_itemRegistry->IsLoading()) {
         logger::warn("[Test] ItemRegistry not ready, skipping tests"sv);
+        TestHarness::MarkSkipped("ItemRegistry not ready"sv);
         return;
     }
 
@@ -589,7 +654,48 @@ void RunItemRegistryTests()
 
     logger::info("TEST PASS: GetItemsByType works"sv);
 
-    // Test 5: Verify GetHealthPotionsByMagnitude returns sorted results
+    // Test 5: Verify GetHealthPotionsByMagnitude returns sorted results.
+    // In test mode a save short of healing potions gets two (see
+    // SupplyHealthPotionsForTest); in a normal session the check is skipped.
+    // The supplied potions are taken back when this function returns (the
+    // guard below), not right after the sort check: later checks still read
+    // sortedHealthPotions, whose pointers a reconcile would invalidate.
+    std::vector<RE::AlchemyItem*> suppliedPotions;
+    auto* testPlayer = RE::PlayerCharacter::GetSingleton();
+    // The guard exists before anything is supplied, so a throw anywhere after
+    // (supply, reconcile, a later check) still takes every potion back.
+    struct TakeBack
+    {
+        std::vector<RE::AlchemyItem*>& items;
+        RE::PlayerCharacter* player;
+        ~TakeBack()
+        {
+            if (items.empty() || !player) return;
+            for (auto* alch : items) {
+                player->RemoveItem(alch, 1, RE::ITEM_REMOVE_REASON::kRemove, nullptr, nullptr);
+            }
+            // A destructor may run while an exception unwinds: a second throw
+            // here would be std::terminate. Catch it and report (an error
+            // line, so RunSuite counts the suite failed).
+            try {
+                g_itemRegistry->ReconcileItems();
+                logger::info("  [test mode] took the {} supplied potion(s) back"sv, items.size());
+            } catch (const std::exception& e) {
+                try { logger::error("TEST FAIL: reconcile after the potion take-back threw: {}"sv, e.what()); } catch (...) {}
+            } catch (...) {
+                try { logger::error("TEST FAIL: reconcile after the potion take-back threw"sv); } catch (...) {}
+            }
+        }
+    } takeBack{ suppliedPotions, testPlayer };
+    if (TestHarness::Active()) {
+        const auto held = g_itemRegistry->GetHealthPotionsByMagnitude();
+        if (held.size() < 2) {
+            std::vector<float> heldMagnitudes;
+            for (const auto* h : held) heldMagnitudes.push_back(h->data.magnitude);
+            SupplyHealthPotionsForTest(testPlayer, heldMagnitudes, 2 - held.size(), suppliedPotions);
+            g_itemRegistry->ReconcileItems();
+        }
+    }
     auto sortedHealthPotions = g_itemRegistry->GetHealthPotionsByMagnitude();
     if (sortedHealthPotions.size() >= 2) {
         bool isSorted = true;
@@ -607,6 +713,7 @@ void RunItemRegistryTests()
     } else {
         logger::info("TEST SKIP: Not enough health potions to test sorting ({} found)"sv,
             sortedHealthPotions.size());
+        TestHarness::MarkSkipped("fewer than 2 health potions: sort test not run"sv);
     }
 
     // Test 6: Verify RefreshCounts returns empty when no changes
@@ -751,6 +858,7 @@ void RunWeaponRegistryTests()
     // Guard: Skip if registry not ready (v0.7.10)
     if (!g_weaponRegistry || g_weaponRegistry->IsLoading()) {
         logger::warn("[Test] WeaponRegistry not ready, skipping tests"sv);
+        TestHarness::MarkSkipped("WeaponRegistry not ready"sv);
         return;
     }
 
@@ -6238,6 +6346,7 @@ void RunSlotSeatingTest()
     // that was otherwise clean (2026-09-19 23:11:59, bKeepSlotPositions = 0).
     if (!SlotSettings::GetSingleton().KeepSlotPositions()) {
         logger::info("  seating test skipped: bKeepSlotPositions is off in this INI"sv);
+        TestHarness::MarkSkipped("bKeepSlotPositions off"sv);
         return;
     }
 
@@ -6304,6 +6413,7 @@ void RunSlotSeatingTest()
     if (placed < 2) {
         logger::info("  seating test skipped: layout placed {} of {} probes "
                      "(needs 2 survivors to show a shift)"sv, placed, kCount - 1);
+        TestHarness::MarkSkipped("layout placed fewer than 2 probes"sv);
         allocator.Reset();
         return;
     }
@@ -6489,6 +6599,7 @@ void RunSlotClassCapHoldTest()
     if (!settings.KeepSlotPositions() || !settings.HoldSeatedItems() || discount >= 1.0f ||
         settings.ClassFreeSlots() != 3) {
         logger::info("  class cap hold test skipped: needs seating, the hold, and the cap at 3 free"sv);
+        TestHarness::MarkSkipped("needs seating, the hold and the class cap at 3 free"sv);
         return;
     }
 
@@ -6610,6 +6721,7 @@ void RunHomeKeyTest()
     if (!settings.KeepSlotPositions() || !settings.HoldSeatedItems() || !settings.ReturnToHomeKey() ||
         settings.HomeKeyMemorySec() <= 0.0f) {
         logger::info("  home key test skipped: needs seating, the hold and home keys on"sv);
+        TestHarness::MarkSkipped("needs seating, the hold and home keys"sv);
         return;
     }
     const float margin = settings.ChallengerMargin();

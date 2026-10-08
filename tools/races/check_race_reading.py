@@ -5,14 +5,20 @@
 The dump comes from the game (Debug build, `hg dump races`, written next to the
 SKSE log). Rows are joined on plugin + editorID: a runtime formID moves when the
 load order changes (an ESL record's FE-prefixed ID shifts with its slot). The
-formID is the fallback for a race with no editorID. A race the map lists but
-the dump lacks is reported; races the dump has and the map does not are
-ignored.
+formID is used only for a map row with no editorID; a map row WITH an editorID
+that the dump lacks is reported missing, not looked up by formID. No dump row
+is matched twice. A race the map lists but the dump lacks is reported; races
+the dump has and the map does not are ignored.
 
-Expected reading per map row (the same rule as race_reading_host_check.cpp):
-a row flagged in today_mismatch reads its primary family folded onto today's
-six types; every other row reads the map's `today`. Exit code 1 on any
-mismatch.
+Expected reading per map row (the same rule as the host tests in
+tests/core/ActorTypeClassifierTests.cpp): a row flagged in today_mismatch reads
+its primary family folded onto today's six types; every other row reads the
+map's `today`.
+
+Exit code: 0 when every row matches; 1 on a mismatch, a missing row, a
+truncated row (fewer fields than the header) or a duplicated
+(plugin, editorID) key in either file; 2 when an input cannot be read, lacks
+a column this needs, or the map has no rows (a vacuous pass is not a pass).
 """
 import csv
 import os
@@ -23,6 +29,63 @@ FOLD = {
     'dragon': 'Dragon', 'construct': 'Construct', 'animal': 'Beast', 'arthropod': 'Beast',
     'troll': 'Beast', 'giant': 'Beast', 'werebeast': 'Beast', 'monster': 'Beast',
 }
+DUMP_COLUMNS = ('formID', 'editorID', 'plugin', 'huginnReading')
+MAP_COLUMNS = ('formID', 'editorID', 'plugin', 'family', 'today', 'today_mismatch')
+
+
+class BadInput(Exception):
+    """An input this cannot use (exit code 2)."""
+
+
+def read_csv(path, encoding):
+    try:
+        with open(path, encoding=encoding, errors='replace', newline='') as f:
+            reader = csv.DictReader(f)
+            rows = list(reader)
+            return reader.fieldnames or [], rows
+    except OSError as e:
+        raise BadInput(f"cannot read {path}: {e.strerror or e}") from None
+
+
+def drop_truncated(rows, needed, name):
+    """Rows with a needed field missing (csv fills a short row with None).
+    Reported and left out: a None on both sides would otherwise compare
+    equal."""
+    kept, bad = [], 0
+    for i, r in enumerate(rows, start=2):   # line 1 is the header
+        gone = [c for c in needed if r.get(c) is None]
+        if gone:
+            bad += 1
+            print(f"TRUNCATED {name} line {i}: no {', '.join(gone)} (formID {r.get('formID')})")
+        else:
+            kept.append(r)
+    return kept, bad
+
+
+def missing_columns(name, fields, needed):
+    gone = [c for c in needed if c not in fields]
+    if gone:
+        hint = ' (made by a build before 0.23.8?)' if name == 'dump' and 'huginnReading' in gone else ''
+        print(f"{name} lacks column(s) {', '.join(gone)}{hint}")
+    return bool(gone)
+
+
+def index(rows, name):
+    """(plugin, editorID) -> row, and formID -> rows for rows without an
+    editorID. A key on more than one row is reported, never last-wins."""
+    by_key, by_form, dupes = {}, {}, 0
+    for r in rows:
+        if r['editorID']:
+            key = (r['plugin'], r['editorID'])
+            if key in by_key:
+                dupes += 1
+                print(f"DUPLICATE {name} key plugin={key[0]} editorID={key[1]} "
+                      f"(formIDs {by_key[key]['formID']}, {r['formID']})")
+                continue
+            by_key[key] = r
+        else:
+            by_form.setdefault(r['formID'], []).append(r)
+    return by_key, by_form, dupes
 
 
 def main(argv):
@@ -32,31 +95,60 @@ def main(argv):
     here = os.path.dirname(os.path.abspath(__file__))
     map_path = argv[2] if len(argv) > 2 else os.path.join(
         here, '..', '..', 'docs', 'architecture', '9-data', 'race_map.csv')
-    with open(argv[1], encoding='utf-8-sig', errors='replace', newline='') as f:
-        dump_rows = list(csv.DictReader(f))
-    if dump_rows and 'huginnReading' not in dump_rows[0]:
-        print('dump has no huginnReading column: made by a build before 0.23.8')
+    try:
+        dump_fields, dump_rows = read_csv(argv[1], 'utf-8-sig')
+        map_fields, rows = read_csv(map_path, 'utf-8-sig')
+    except BadInput as e:
+        print(e)
         return 2
-    by_key = {(r['plugin'], r['editorID']): r for r in dump_rows if r['editorID']}
-    by_form = {r['formID']: r for r in dump_rows}
-    with open(map_path, encoding='utf-8', newline='') as f:
-        rows = list(csv.DictReader(f))
+    if missing_columns('dump', dump_fields, DUMP_COLUMNS) | missing_columns('map', map_fields, MAP_COLUMNS):
+        return 2
+    if not rows:
+        print(f"the map {map_path} has no rows: nothing to check")
+        return 2
+    dump_rows, dump_truncated = drop_truncated(dump_rows, DUMP_COLUMNS, 'dump')
+    rows, map_truncated = drop_truncated(rows, MAP_COLUMNS, 'map')
 
-    bad = 0
+    dump_by_key, _, dump_dupes = index(dump_rows, 'dump')
+    _, _, map_dupes = index(rows, 'map')
+    # Every dump row a formID could reach, so a no-editorID map row can still
+    # find a dump row that has an editorID.
+    dump_any_form = {}
+    for d in dump_rows:
+        dump_any_form.setdefault(d['formID'], []).append(d)
+
+    used = set()   # id() of dump rows already matched
+    bad = dump_dupes + map_dupes + dump_truncated + map_truncated
     for r in rows:
-        d = by_key.get((r['plugin'], r['editorID'])) if r['editorID'] else None
+        if r['editorID']:
+            d = dump_by_key.get((r['plugin'], r['editorID']))
+        else:
+            candidates = [c for c in dump_any_form.get(r['formID'], []) if id(c) not in used]
+            if len(candidates) > 1:
+                print(f"AMBIGUOUS {r['formID']} (no editorID): {len(candidates)} dump rows share the formID")
+                bad += 1
+                continue
+            d = candidates[0] if candidates else None
         if d is None:
-            d = by_form.get(r['formID'])
-        if d is None:
-            print(f"MISSING  {r['formID']} {r['editorID']}")
+            print(f"MISSING  {r['formID']} {r['plugin']} {r['editorID'] or '(no editorID)'}")
             bad += 1
             continue
-        expected = FOLD[r['family']] if r['today_mismatch'] else r['today']
+        if id(d) in used:
+            print(f"REUSED   {r['formID']} {r['editorID']}: its dump row already matched another map row")
+            bad += 1
+            continue
+        used.add(id(d))
+        family = r['family']
+        if r['today_mismatch'] and family not in FOLD:
+            print(f"UNKNOWN family '{family}' on {r['formID']} {r['editorID']}")
+            bad += 1
+            continue
+        expected = FOLD[family] if r['today_mismatch'] else r['today']
         if d['huginnReading'] != expected:
             bad += 1
             print(f"MISMATCH {r['formID']} {r['editorID']}: read {d['huginnReading']}, expected {expected} "
-                  f"(family {r['family']}, today {r['today']}, flag '{r['today_mismatch']}')")
-    print(f"rows {len(rows)}  matched {len(rows) - bad}  mismatched {bad}")
+                  f"(family {family}, today {r['today']}, flag '{r['today_mismatch']}')")
+    print(f"rows {len(rows)}  problems {bad}  (duplicate keys: dump {dump_dupes}, map {map_dupes})")
     return 0 if bad == 0 else 1
 
 

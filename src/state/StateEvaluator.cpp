@@ -1,5 +1,5 @@
 #include "StateEvaluator.h"
-#include "ActorTypeClassifier.h"
+#include "core/ActorTypeClassifier.h"
 #include "util/ScopedTimer.h"
 
 #include <algorithm>

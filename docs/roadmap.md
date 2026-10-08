@@ -71,38 +71,53 @@ second agent's check; this section leaves the file when that PR merges.
 Detail in the PR and the [implementation map](architecture/9-implementation-map.md#phase-0-behaviour-neutral-cleanup-can-ship-now).
 Left for the game: run `hg dump races` on LoreRim and
 `python -I tools/races/check_race_reading.py <Huginn_Races.csv>`; the host
-check (`tools/races/race_reading_host_check.cpp`) already matches all 539 rows
-and 20 actor-keyword cases.
+tests (`tests/core/ActorTypeClassifierTests.cpp` in `huginn_core_tests`, since
+R1; the classifier is `src/core/ActorTypeClassifier.h`) match all 539 rows and
+20 actor-keyword cases, and made-up races pin the rule parts no real race
+exercises.
 
 ### R1. Host test target
 
 The suites in `src/Tests.cpp` run only inside the game, so an agent cannot
 prove a change. Add a test executable that builds and runs on the host.
-- [ ] A CMake target (e.g. `huginn_core_tests`) over a `src/core/` of pure
+- [x] A CMake target (e.g. `huginn_core_tests`) over a `src/core/` of pure
       code: no `RE::` or SKSE includes. A small header-only framework from
-      vcpkg, or plain asserts.
-- [ ] Rule for the rewrite: every new piece of math lives in `src/core/`
+      vcpkg, or plain asserts. *(0.23.9: `huginn_core_tests`, doctest,
+      `tests/CMakeLists.txt`; configure fails if a core file reaches for the
+      game.)*
+- [x] Rule for the rewrite: every new piece of math lives in `src/core/`
       (response curves, the learner update, σ_Δ and the challenger rule, the
       effect mapper over plain records) and gets host tests. The game layer
-      only reads forms and calls it.
-- [ ] Done when: the target runs in CI-like fashion from the command line with
+      only reads forms and calls it. *(`src/core/README.md`.)*
+- [x] Done when: the target runs in CI-like fashion from the command line with
       a non-zero exit on failure, and one existing pure function (a curve, or
-      `SlotClassCap::Factor`) is ported with tests as the pattern.
+      `SlotClassCap::Factor`) is ported with tests as the pattern. *(`ctest -C Debug
+      --test-dir build`; `SlotClassCap::Factor` -> `core/SlotClassCapMath.h`.)*
 
 **And an unattended in-game run** for the code that needs real game data. The
 Debug suites that run at the main menu (`RunUnitTests()` at kDataLoaded,
-`Main.cpp:679`) need no save. About 20 more (SlotClassCap, SlotLocker, home keys,
-cosave, the registries; `Main.cpp:443-466`) run only after a save loads,
+`Main.cpp:682`) need no save. 18 more (SlotClassCap, SlotLocker, home keys,
+cosave, the registries; `Main.cpp:448-465`) run only after a save loads,
 including the ratio tests R7 must update:
-- [ ] Huginn: after the suites, log one sentinel line with pass/fail counts;
+- [x] Huginn: after the suites, log one sentinel line with pass/fail counts;
       with a test flag set (INI or environment variable), quit the game.
-- [ ] `tools/ingame/run_tests.py`: launch through MO2's command line
+      *(`src/TestHarness.h`: `[HuginnTest] RESULT` per batch, `DONE` in test
+      mode; flag = one-shot `Huginn_TestMode.ini` or `HUGINN_TEST_MODE`.)*
+- [x] `tools/ingame/run_tests.py`: launch through MO2's command line
       (`ModOrganizer.exe -p "Simonrim Essentials" "moshortcut://:SKSE"`;
       LoreRim's executable is `LoreRim`, profile `Ultra`), wait for the
       sentinel in the Huginn log, kill the game on a timeout, exit non-zero on
       failure. simonrim first: it reaches the menu faster.
-- [ ] Auto-load a named test save after the main menu, so the after-load
-      suites run too (needed by R7).
+- [x] Auto-load a named test save after the main menu, so the after-load
+      suites run too (needed by R7). *(`BGSSaveLoadManager::Load(name, false)`
+      3 s after the main menu opens. How to run:
+      `docs/testing/TESTING-INDEX.md` section 1a.)*
+- [x] Proven by a live run on simonrim (a `DONE` line from a real launch).
+      *(2026-10-08: the save loads by name without `.ess`; Huginn ends the
+      game and MO2 closes by itself. On the vanilla+ profile (the test
+      character, the runner's default) the strict run -- no `--allow-skips`
+      -- passes 19 of 19 in about 20 s from launch to DONE; test mode
+      supplies the healing potions RunItemRegistryTests' sort check needs.)*
 - Rule: agents launch the game only when the user has said the machine is
   free; the game must not already be running.
 
