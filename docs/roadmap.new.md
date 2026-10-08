@@ -98,12 +98,19 @@ per-item taste term. The doc's open questions and its challenge
    times the logged `ctx`, no per-item learning. If it does not beat the
    context-only page (58%, menu picks 13 of 83), the full model probably
    will not either.
-2. **Effect extractor + need-vector logging** (doc steps 1-2). Changes no
+2. **Effect-view dump** (prerequisite gate, the user 2026-10-07): every
+   item type in one schema -- per item x effect, plus weapon and armour
+   physical stats -- on vanilla+, simonrim and LoreRim. The seven existing
+   dumps are classifier-shaped and skip unenchanted armour and ingredients.
+   Design the effect vector and the full needs x effects enumeration
+   (most pairs expected at zero) from it.
+3. **Effect extractor + need-vector logging** (doc steps 1-2), weapons and
+   armour described by their stats too. Changes no
    scores, so it can ship any time. The soak log CANNOT fit the full model:
    it holds one `ctx` and one `need` label per candidate and the 18-float
    phi, which has no fire, darkness, hunger, workstation or encumbrance.
    The fit needs play hours logged with the need vector.
-3. The rest of the doc's sequence, on that new log.
+4. The rest of the doc's sequence, on that new log.
 
 Cuts across the plan:
 - **Slot stability is tuned on today's score scale.** The hold margin
