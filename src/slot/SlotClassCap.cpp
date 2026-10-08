@@ -12,7 +12,7 @@ namespace Huginn::Slot
     }
 
     SlotClassCap::SlotClassCap(float discount, uint32_t freePerClass, const Scoring::ScoredCandidateList* candidates) :
-        m_discount(Core::ClampNeedCapDiscount(discount)),
+        m_discount(Core::ClampClassCapDiscount(discount)),
         m_free(freePerClass),
         m_candidates(candidates)
     {
@@ -51,7 +51,7 @@ namespace Huginn::Slot
         if (!Active()) {
             return 1.0f;
         }
-        return Core::NeedCapFactor(m_discount, m_free, m_onPage[static_cast<size_t>(CachedClass(c))]);
+        return Core::ClassCapFactor(m_discount, m_free, m_onPage[static_cast<size_t>(CachedClass(c))]);
     }
 
     void SlotClassCap::Recount(const SlotAssignments& assignments)

@@ -53,15 +53,15 @@ ctest -C Debug --test-dir build --output-on-failure
 ```
 
 The executable is `build/tests/Debug/huginn_core_tests.exe`. It exits non-zero
-when a test fails; `--help` lists doctest's filters (`-tc="need cap*"`).
+when a test fails; `--help` lists doctest's filters (`-tc="slot class cap*"`).
 
 Adding or removing a file: the globs use `CONFIGURE_DEPENDS`, and with the
 Visual Studio generator the first build after the change only re-runs the
 configure, still building the old file list. Build a second time (or
 reconfigure first) before trusting the result.
 
-The pattern, ported first: `NeedCapMath.h` holds the arithmetic of the slot
-need cap; `Slot::NeedCap` (`src/slot/NeedCap.*`) keeps the counting and the
-classification and calls `Core::NeedCapFactor`. `NeedCapMathTests.cpp`
+The pattern, ported first: `SlotClassCapMath.h` holds the arithmetic of the
+slot class cap; `Slot::SlotClassCap` (`src/slot/SlotClassCap.*`) keeps the
+counting and the classification and calls `Core::ClassCapFactor`. `SlotClassCapMathTests.cpp`
 includes a check that the port matches the old loop bit for bit, including
 past the denormal fixed point the product reaches for discounts above 0.5.

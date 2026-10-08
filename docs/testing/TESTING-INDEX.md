@@ -51,7 +51,7 @@ Rules and limits: [src/core/README.md](../../src/core/README.md).
 the change only re-runs the configure and still builds the old file list.
 Build twice, or reconfigure first, before trusting a result.
 
-Covered so far: the need cap's arithmetic (`core/NeedCapMath.h`, the pattern
+Covered so far: the slot class cap's arithmetic (`core/SlotClassCapMath.h`, the pattern
 port, checked bit for bit against the loop it replaced) and `core/RingBuffer.h`.
 
 ---
@@ -108,7 +108,7 @@ skip must do the same, or it counts as a pass. One line per suite, then one
 per batch:
 
 ```
-[HuginnTest] suite RunNeedCapTest passed (0 error line(s))
+[HuginnTest] suite RunSlotClassCapTest passed (0 error line(s))
 [HuginnTest] suite RunHomeKeyTest SKIPPED (0 error line(s); skipped: needs seating, the hold and home keys)
 [HuginnTest] RESULT phase=load suites=18 passed=17 failed=0 skipped=1 fail_lines=0 failed_suites=- skipped_suites=RunHomeKeyTest
 ```
