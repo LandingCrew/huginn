@@ -674,8 +674,17 @@ void RunItemRegistryTests()
             for (auto* alch : items) {
                 player->RemoveItem(alch, 1, RE::ITEM_REMOVE_REASON::kRemove, nullptr, nullptr);
             }
-            g_itemRegistry->ReconcileItems();
-            logger::info("  [test mode] took the {} supplied potion(s) back"sv, items.size());
+            // A destructor may run while an exception unwinds: a second throw
+            // here would be std::terminate. Catch it and report (an error
+            // line, so RunSuite counts the suite failed).
+            try {
+                g_itemRegistry->ReconcileItems();
+                logger::info("  [test mode] took the {} supplied potion(s) back"sv, items.size());
+            } catch (const std::exception& e) {
+                try { logger::error("TEST FAIL: reconcile after the potion take-back threw: {}"sv, e.what()); } catch (...) {}
+            } catch (...) {
+                try { logger::error("TEST FAIL: reconcile after the potion take-back threw"sv); } catch (...) {}
+            }
         }
     } takeBack{ suppliedPotions, testPlayer };
     if (TestHarness::Active()) {

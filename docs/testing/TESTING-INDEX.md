@@ -208,7 +208,18 @@ closed if still open (asked first, then `/F /T` after 30 s). Throughout, and
 for 20 s after MO2 is gone (3 minutes at most), it keeps scanning for and
 ending games of its own, so a game MO2 was still starting when the run ended
 (`--timeout 0`) is not orphaned; `/T` cannot reach it once its parent
-`skse64_loader` has exited. Another instance's game is never touched. Exit 0 = PASS; 1 = a failed or skipped
+`skse64_loader` has exited (a game appearing more than 20 s after MO2 is gone is
+not caught; nothing of the run is left to start one). Another instance's game is
+never touched. The shutdown takes up to about 3 minutes and prints its
+progress; a Ctrl+C during it is noted and the shutdown finishes first.
+
+**Do not launch anything from the same instance while the runner runs.** A
+game you start from it -- the runner's MO2 window, the instance's MO2
+shortcut, or its Stock Game `skse64_loader` -- cannot be told apart from the
+runner's and will be ended, and the last stage of closing MO2 (`taskkill /F
+/T`) ends everything started from that MO2 window, xEdit included.
+
+Exit 0 = PASS; 1 = a failed or skipped
 suite (`--allow-skips` accepts skips), timeout, crash or unread flag;
 2 = refused.
 It reads MO2's config and never writes it, and it does **not** deploy the DLL:
