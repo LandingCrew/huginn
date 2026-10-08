@@ -181,10 +181,11 @@ waits for a `_Huginn_Debug.log` started by this launch (the first line's UTC
 launch stamp and the file's mtime), fails at once when Huginn ran its suites
 without seeing the flag, waits for `DONE` (`--timeout`, default 600 s), and
 prints each suite's result. A game that exits counts as a crash unless this
-launch's log holds a `DONE`. When the run ends, whatever the verdict, it kills
-the `SkyrimSE.exe` it saw start if that process is still running 15 s later
-(after `DONE` Huginn has normally ended it already); it never touches a game
-it did not see start. Exit 0 = PASS; 1 = a failed or skipped suite
+launch's log holds a `DONE`. Whatever starts the game closes it: when the run
+ends, whatever the verdict, any `SkyrimSE.exe` still running 15 s later is
+killed (none was running at launch, so it is the launch's; after `DONE` Huginn
+has normally ended it already), and the `ModOrganizer.exe` the runner started
+is closed if still open (asked first, then `/F /T` after 30 s). Exit 0 = PASS; 1 = a failed or skipped suite
 (`--allow-skips` accepts skips), timeout, crash or unread flag; 2 = refused.
 It reads MO2's config and never writes it, and it does **not** deploy the DLL:
 copy the Debug `Huginn.dll`/`.pdb` into the list first (simonrim:

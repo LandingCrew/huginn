@@ -30,11 +30,16 @@ Pre-flight (refuses, exit 2, before writing or launching anything):
   refused when a running MO2 belongs to this instance or its path is unknown.
 - The MO2 executable title, the profile, and the save must exist.
 
-When the run ends, whatever the verdict, the runner kills the SkyrimSE.exe it
-saw start after its own launch if that process is still running 15 s later.
-Huginn ends the game itself after DONE, so after a DONE there is normally
-nothing to kill; the kill matters on a timeout, a crash-less hang, or an unread
-flag. It never touches a game it did not see start.
+Whatever starts the game closes it. When the run ends, whatever the verdict:
+- the game: any SkyrimSE.exe still running 15 s later is killed. None was
+  running when the runner launched (it refuses otherwise), so any that runs
+  now is the one its launch started. Huginn ends the game itself after DONE, so
+  after a DONE there is normally nothing to kill; the kill matters on a
+  timeout, a hang, or an unread flag;
+- MO2: the ModOrganizer.exe the runner started, if still open 30 s after the
+  game is gone, is asked to close (taskkill without /F), and after 30 s more
+  is ended with its children (/F /T). The runner starts MO2 only when no MO2
+  is running, so this is never the user's own MO2.
 
 Reads MO2's ModOrganizer.ini and profile settings; never writes MO2 config.
 Does not deploy the DLL: put the Debug Huginn.dll in the list first.
@@ -73,6 +78,7 @@ DEFAULT_SAVE = "HuginnTest"
 # Strings only a DLL with the test harness contains (src/TestHarness.cpp).
 HARNESS_MARKERS = (b"Huginn_TestMode.ini", b"[HuginnTest] DONE")
 KILL_GRACE_SEC = 15
+MO2_GRACE_SEC = 30
 
 
 @dataclass(frozen=True)
@@ -137,6 +143,30 @@ def mo2_processes() -> list[tuple[int, Path | None]]:
 
 def kill(pid: int) -> None:
     subprocess.run(["taskkill", "/F", "/PID", str(pid)], capture_output=True, check=False)
+
+
+def close_mo2(proc: subprocess.Popen) -> None:
+    """Close the MO2 this run started: politely, then by force."""
+    try:
+        proc.wait(timeout=MO2_GRACE_SEC)
+        say(f"MO2 (pid {proc.pid}) closed by itself")
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    say(f"closing the MO2 this run started (pid {proc.pid})")
+    subprocess.run(["taskkill", "/PID", str(proc.pid)], capture_output=True, check=False)
+    try:
+        proc.wait(timeout=MO2_GRACE_SEC)
+        say("MO2 closed")
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    say(f"MO2 (pid {proc.pid}) did not close; ending it and its children")
+    subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True, check=False)
+    try:
+        proc.wait(timeout=15)
+    except subprocess.TimeoutExpired:
+        say(f"MO2 (pid {proc.pid}) is STILL running; close it by hand")
 
 
 # --- pre-flight (read only) --------------------------------------------------
@@ -372,23 +402,21 @@ def main() -> int:
         else:
             verdict = (1, f"timeout after {args.timeout}s" + ("" if fresh else " (the log never started)"))
     finally:
-        if game_pid is not None and game_pid in game_pids():
+        if mo2_proc is not None and game_pids():
+            # None ran before the launch (checked), so these are the launch's.
             end = time.monotonic() + KILL_GRACE_SEC
-            while time.monotonic() < end and game_pid in game_pids():
+            while time.monotonic() < end and game_pids():
                 time.sleep(1)
-            if game_pid in game_pids():
-                say(f"killing {GAME_EXE} pid {game_pid} (still running at the end of the run)")
-                kill(game_pid)
+            for pid in game_pids():
+                say(f"killing {GAME_EXE} pid {pid} (still running at the end of the run)")
+                kill(pid)
         try:
             flag_path.unlink()
             say("removed the test-mode file (Huginn had not consumed it)")
         except FileNotFoundError:
             pass
         if mo2_proc is not None:
-            try:
-                mo2_proc.wait(timeout=60)
-            except subprocess.TimeoutExpired:
-                say(f"MO2 (pid {mo2_proc.pid}) is still running after the game; left open")
+            close_mo2(mo2_proc)
 
     # Report: only from this launch's log.
     if fresh:
