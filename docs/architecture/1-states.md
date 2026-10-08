@@ -436,7 +436,7 @@ graph TB
 | Field | Type | Description |
 |-------|------|-------------|
 | `actorFormID` | `RE::FormID` | Actor form ID |
-| `targetType` | `TargetType` | None, Humanoid, Undead, Beast, Dragon, Construct, Daedra |
+| `targetType` | `TargetType` | None, Humanoid, Undead, Beast, Dragon, Construct, Daedra. Read by `ActorTypeClassifier` ([src/state/ActorTypeClassifier.h](../../src/state/ActorTypeClassifier.h)): manual race table, the race's family keywords, the actor's undead keywords, giant, goblinoids, then the `ActorTypeNPC` / `ActorTypeCreature` catch-alls. Checked against [9-data/race_map.csv](9-data/race_map.csv) by `tools/races/`. Cached per actor and re-read when the actor's race changes (a transform) |
 | `source` | `TargetSource` | None, Crosshair, CombatPrimary, NearbyEnemy, NearbyAlly |
 | `vitals` | `ActorVitals` | Health/magicka/stamina (shared component) |
 | `effects`, `buffs` | `ActorEffects`, `ActorBuffs` | Present for API symmetry; **not polled** — default-initialized |

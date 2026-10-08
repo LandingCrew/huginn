@@ -6,6 +6,7 @@
 #include "learning/StateFeatures.h"
 #include "learning/PipelineStateCache.h"
 #include "state/StateManager.h"
+#include "state/ActorTypeClassifier.h"
 #include "candidate/CandidateGenerator.h"
 #include "override/OverrideManager.h"
 #include "override/OverrideConfig.h"
@@ -1592,6 +1593,13 @@ namespace Huginn::Console
    // themselves. The input for widening the target-type need past vanilla's
    // six (LoreRim's creature mods add many more). Type and race are on screen,
    // so inside the perception line.
+   //
+   // Two readings per race, both from ActorTypeClassifier (the code the game
+   // runs): huginnRace from the race alone, and huginnReading for a typical
+   // actor of the race -- the race plus the keywords carried by more than half
+   // of its NPC records, the race map's rule for per-actor families
+   // (target_types.csv). tools/races/check_race_reading.py compares
+   // huginnReading with docs/architecture/9-data/race_map.csv.
    static void Cmd_DumpRaces(std::string_view /*arg*/)
    {
       auto* dataHandler = RE::TESDataHandler::GetSingleton();
@@ -1608,6 +1616,7 @@ namespace Huginn::Console
          size_t uniques = 0;
          std::vector<std::string> samples;
          std::map<std::string, size_t> npcKeywords;  // ActorType* on the NPC record
+         size_t npcVampire = 0;                      // "Vampire" on the NPC record (classifier reads it)
       };
       std::unordered_map<const RE::TESRace*, Usage> usage;
       for (auto* npc : dataHandler->GetFormArray<RE::TESNPC>()) {
@@ -1626,11 +1635,12 @@ namespace Huginn::Console
             const auto* kw = npc->keywords[i];
             const char* id = kw ? kw->GetFormEditorID() : nullptr;
             if (id && std::string_view(id).starts_with("ActorType")) ++u.npcKeywords[id];
+            if (id && std::string_view(id) == "Vampire"sv) ++u.npcVampire;
          }
       }
 
       out << "formID,plugin,winningPlugin,editorID,name,playable,child,flies,swims,"
-             "keywords,npcCount,uniqueNpcCount,npcActorTypeKeywords,sampleNPCs\n";
+             "keywords,npcCount,uniqueNpcCount,npcActorTypeKeywords,sampleNPCs,huginnRace,huginnReading\n";
       size_t written = 0, used = 0;
       for (auto* race : dataHandler->GetFormArray<RE::TESRace>()) {
          if (!race) continue;
@@ -1651,7 +1661,25 @@ namespace Huginn::Console
          const char* edid = race->GetFormEditorID();
          const char* name = race->GetName();
          const auto flags = race->data.flags;
-         out << std::format("{:08X},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
+
+         // A typical actor of this race: the keywords on most of its NPC records.
+         auto onMost = [&](std::string_view kw) {
+            size_t n = 0;
+            if (kw == "Vampire"sv) {
+               n = u.npcVampire;
+            } else if (const auto k = u.npcKeywords.find(std::string(kw)); k != u.npcKeywords.end()) {
+               n = k->second;
+            }
+            return u.npcs > 0 && n * 2 > u.npcs;
+         };
+         auto raceHas = [&](std::string_view kw) { return race->HasKeywordString(kw); };
+         const std::string_view edidView = edid ? std::string_view{ edid } : std::string_view{};
+         const bool flies = flags.all(RE::RACE_DATA::Flag::kFlies);
+         const auto readRace = State::ActorTypeClassifier::Classify(edidView, flies, raceHas,
+            [](std::string_view) { return false; });
+         const auto readTypical = State::ActorTypeClassifier::Classify(edidView, flies, raceHas, onMost);
+
+         out << std::format("{:08X},{},{},{},{},{},{},{},{},{},{},{},{},{},{},{}\n",
             race->GetFormID(), CsvQuote(PluginOf(race)),
             CsvQuote(lastFile ? lastFile->GetFilename() : ""sv),
             CsvQuote(edid ? edid : ""), CsvQuote(name ? name : ""),
@@ -1659,7 +1687,8 @@ namespace Huginn::Console
             flags.all(RE::RACE_DATA::Flag::kChild) ? 1 : 0,
             flags.all(RE::RACE_DATA::Flag::kFlies) ? 1 : 0,
             flags.all(RE::RACE_DATA::Flag::kSwims) ? 1 : 0,
-            CsvQuote(KeywordList(race)), u.npcs, u.uniques, CsvQuote(npcKw), CsvQuote(samples));
+            CsvQuote(KeywordList(race)), u.npcs, u.uniques, CsvQuote(npcKw), CsvQuote(samples),
+            State::GetTargetTypeName(readRace), State::GetTargetTypeName(readTypical));
          ++written;
          if (u.npcs > 0) ++used;
       }
