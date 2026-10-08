@@ -28,14 +28,21 @@ namespace Huginn::State
 
    TargetType StateManager::GetCachedActorType(RE::Actor* actor)
    {
-      RE::FormID formID = actor->GetFormID();
-      auto it = m_actorTypeCache.find(formID);
-      if (it != m_actorTypeCache.end()) {
-      return it->second;
+      const RE::FormID formID = actor->GetFormID();
+      const auto* race = actor->GetRace();
+      const RE::FormID raceID = race ? race->GetFormID() : 0;
+      if (auto it = m_actorTypeCache.find(formID);
+          it != m_actorTypeCache.end() && it->second.raceID == raceID) {
+      return it->second.type;
       }
 
-      TargetType type = StateEvaluator{}.ClassifyActor(actor);
-      m_actorTypeCache[formID] = type;
+      // New actor, or its race changed since it was classified (transform).
+      const TargetType type = StateEvaluator{}.ClassifyActor(actor);
+      if (m_actorTypeCache.size() >= kActorTypeCacheMax &&
+          !m_actorTypeCache.contains(formID)) {
+      m_actorTypeCache.clear();
+      }
+      m_actorTypeCache[formID] = { raceID, type };
       return type;
    }
 
