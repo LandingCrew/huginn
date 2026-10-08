@@ -378,6 +378,54 @@ namespace Huginn::Core
     };
 
     // =========================================================================
+    // Search prefilter: which bytes can start a match
+    // =========================================================================
+    namespace
+    {
+        using RNode = MiniRegex::Node;
+        bool FirstOfNode(const RNode& n, Set& first);
+
+        /// Adds to `first` the bytes a non-empty match of s[from..] can start
+        /// with; true if s[from..] can match the empty string. Zero-width
+        /// assertions are transparent (they never add a byte).
+        bool FirstOfSeq(const MiniRegex::Seq& s, Set& first)
+        {
+            for (const auto* n : s) {
+                if (!FirstOfNode(*n, first)) return false;
+            }
+            return true;
+        }
+
+        bool FirstOfNode(const RNode& n, Set& first)
+        {
+            switch (n.kind) {
+                case RNode::Kind::Char: Add(first, n.ch); return false;
+                case RNode::Kind::Any: {
+                    Set all{};
+                    Invert(all);
+                    Merge(first, all);
+                    return false;
+                }
+                case RNode::Kind::Class: Merge(first, n.set); return false;
+                case RNode::Kind::WordBoundary:
+                case RNode::Kind::NotWordBoundary:
+                case RNode::Kind::Begin:
+                case RNode::Kind::End: return true;
+                case RNode::Kind::Group: {
+                    if (n.look != RNode::Look::None) return true;
+                    bool empty = false;
+                    for (const auto* alt : n.alts) {
+                        if (FirstOfSeq(*alt, first)) empty = true;
+                    }
+                    return empty;
+                }
+                case RNode::Kind::Repeat: return FirstOfNode(*n.child, first) || n.min == 0;
+            }
+            return true;
+        }
+    }
+
+    // =========================================================================
     // Matcher: continuation-passing backtracking
     // =========================================================================
     class MiniRegexMatcher
@@ -394,7 +442,12 @@ namespace Huginn::Core
 
         bool SearchAll(MiniRegex::Match* match)
         {
-            for (std::size_t start = 0; start <= t_.size(); ++start) {
+            const std::size_t last = re_.anchored_ ? 0 : t_.size();
+            for (std::size_t start = 0; start <= last; ++start) {
+                if (!re_.canBeEmpty_ &&
+                    (start >= t_.size() || !Has(re_.first_, static_cast<unsigned char>(t_[start])))) {
+                    continue;
+                }
                 for (auto& c : caps_) c = MiniRegex::Span{};
                 Cont accept{};
                 accept.kind = ContKind::Accept;
@@ -635,6 +688,12 @@ namespace Huginn::Core
             root_ = nullptr;
             if (error_.empty()) error_ = "invalid pattern";
             return false;
+        }
+        first_ = {};
+        canBeEmpty_ = FirstOfNode(*root_, first_);
+        anchored_ = !root_->alts.empty();
+        for (const auto* alt : root_->alts) {
+            if (alt->empty() || (*alt)[0]->kind != Node::Kind::Begin) anchored_ = false;
         }
         return true;
     }

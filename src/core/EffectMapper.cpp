@@ -338,11 +338,10 @@ namespace Huginn::Core::Effect
 
         /// The hidden row's name must not name another family (damage and
         /// absorb count as one).
-        bool NameAgrees(const MagicEffectRecord& m, Col c)
+        bool NameAgrees(const EffectClass& cls, Col c)
         {
-            const auto n = NameColumn(m.name);
-            if (!n) return true;
-            const Col a = FamilyKey(*n);
+            if (cls.nameFamily == Col::_Count) return true;
+            const Col a = cls.nameFamily;
             const Col b = FamilyKey(c);
             if (a == b) return true;
             const auto dmgAbs = [](Col x) { return x == Col::damage || x == Col::absorb; };
@@ -424,7 +423,7 @@ namespace Huginn::Core::Effect
             const auto& cls = classes[row.effect];
             o.cls = cls;
             o.hidden = mg.HiddenInUI();
-            if (Lower(mg.name).find("hydrat") != std::string::npos) hydrated = true;
+            if (cls.hydrated) hydrated = true;
 
             if (!o.hidden) {
                 ++m.tally.visible;
@@ -464,7 +463,7 @@ namespace Huginn::Core::Effect
             else {
                 ++m.tally.hidden;
                 if (cls.Mapped() && cls.route != Route::Helper && HiddenWhitelisted(cls.col) &&
-                    !IsHelperName(mg.name) && NameAgrees(mg, cls.col)) {
+                    !cls.helperName && NameAgrees(cls, cls.col)) {
                     o.kept = true;
                     ++m.tally.hiddenKept;
                     m.rows.push_back(MakeRow(row, mg, cls, false, m.constantItem));

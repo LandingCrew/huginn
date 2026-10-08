@@ -93,6 +93,11 @@ namespace Huginn::Core
         std::vector<std::unique_ptr<Seq>> seqs_;
         Node* root_ = nullptr;  // a capture-less group holding the alternatives
         std::size_t groupCount_ = 0;
+        // Search prefilter: the bytes a match can start with (when it cannot be
+        // empty), and whether every alternative is anchored at ^.
+        std::array<std::uint64_t, 4> first_{};
+        bool canBeEmpty_ = true;
+        bool anchored_ = false;
 
         friend class MiniRegexParser;
         friend class MiniRegexMatcher;

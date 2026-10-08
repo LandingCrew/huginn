@@ -99,6 +99,12 @@ namespace Huginn::Core::Effect
         Col col2 = Col::_Count;  // a second column it also sets, if any
         Route route = Route::Unmapped;
         bool cureByArchetype = false;  // a cure through an engine Cure* archetype (cure_instant)
+        // Per-MGEF facts the item mapper needs for every row, computed once
+        // (ClassifyEffect): the helper-name check and the name table's family
+        // (hidden effects only: the name-agreement check), and a "Hydrated" name.
+        bool helperName = false;
+        Col nameFamily = Col::_Count;
+        bool hydrated = false;
 
         [[nodiscard]] bool Mapped() const noexcept { return col != Col::_Count; }
     };

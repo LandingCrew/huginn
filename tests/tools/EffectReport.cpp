@@ -102,6 +102,9 @@ int main(int argc, char** argv)
     const auto t1 = std::chrono::steady_clock::now();
     const BuildResult r = BuildCaps(dump.items, dump.effects, nullptr);
     const auto t2 = std::chrono::steady_clock::now();
+    // The classification step alone, timed again for the report.
+    const auto classesAgain = ClassifyAll(dump.effects, nullptr);
+    const auto t3 = std::chrono::steady_clock::now();
     const auto ms = [](auto a, auto b) { return std::chrono::duration<double, std::milli>(b - a).count(); };
 
     std::size_t inScope = 0;
@@ -144,7 +147,8 @@ int main(int argc, char** argv)
     for (const auto& [k, v] : byKind) {
         std::printf(" %s=%.2f%%(%d)", k.c_str(), v.first ? 100.0 * v.second / v.first : 100.0, v.first);
     }
-    std::printf("\ntiming: parse %.0f ms, map+grade %.0f ms\n", ms(t0, t1), ms(t1, t2));
+    std::printf("\ntiming: parse %.0f ms, classify+map+grade %.0f ms (classify alone %.0f ms, %zu effects)\n",
+                ms(t0, t1), ms(t1, t2), ms(t2, t3), classesAgain.size());
 
     std::vector<std::pair<int, std::string>> top;
     for (const auto& [k, v] : unmapped) top.emplace_back(v, k);

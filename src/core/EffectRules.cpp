@@ -845,7 +845,26 @@ namespace Huginn::Core::Effect
         return it->second;
     }
 
+    namespace
+    {
+        EffectClass ClassifyColumns(const MagicEffectRecord& r, const OverrideTable* overrides);
+    }
+
     EffectClass ClassifyEffect(const MagicEffectRecord& r, const OverrideTable* overrides)
+    {
+        EffectClass out = ClassifyColumns(r, overrides);
+        const std::string ln = Lower(r.name);
+        out.helperName = HelperRe().Contains(ln);
+        out.hydrated = ln.find("hydrat") != std::string::npos;
+        if (r.HiddenInUI()) {
+            if (const auto n = NameColumn(r.name)) out.nameFamily = FamilyKey(*n);
+        }
+        return out;
+    }
+
+    namespace
+    {
+    EffectClass ClassifyColumns(const MagicEffectRecord& r, const OverrideTable* overrides)
     {
         EffectClass out;
         if (overrides) {
@@ -908,6 +927,7 @@ namespace Huginn::Core::Effect
         }
         return out;
     }
+    }  // namespace
 
     std::optional<Col> NameColumn(std::string_view name)
     {

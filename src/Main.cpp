@@ -55,6 +55,7 @@
 #include "context/ContextWeightConfig.h"
 #include "settings/SettingsReloader.h"
 #include "console/ConsoleCommands.h"
+#include "effect/EffectCatalog.h"
 #include "persist/BanditSerializer.h"
 #include "learning/EquipEventBus.h"
 #include "learning/EquipSourceTracker.h"  // MarkHuginnEquip (Wheeler environment)
@@ -527,6 +528,11 @@ static void OnDataLoaded()
         RE::DebugNotification(versionMsg.c_str());
         logger::warn("ImGui init failed, using DebugNotification fallback: {}"sv, versionMsg);
     }
+
+    // Effect catalog (R2): cap(i) for every item in the load order. Reads the
+    // forms here and maps them on a worker thread. Nothing reads it for
+    // scoring yet; `hg dump all` and `hg cap` show it.
+    Effect::EffectCatalog::GetSingleton().Build();
 
     // Initialize StateEvaluator
     g_stateEvaluator = std::make_unique<Huginn::State::StateEvaluator>();
