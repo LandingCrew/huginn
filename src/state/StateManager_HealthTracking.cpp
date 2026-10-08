@@ -8,6 +8,8 @@
 // =============================================================================
 
 #include "../PCH.h"
+#include <array>
+#include <utility>
 #include "StateManager.h"
 #include "StateConstants.h"
 #include "DamageEventSink.h"
@@ -68,6 +70,24 @@ namespace Huginn::State
       std::shared_lock lock(m_trackingMutex);
       newState = m_healthTracking;
       }
+
+      // Every typed hit in the queue counts, not only the last: a fire bolt and
+      // a frost bolt landing in the same tick must both refresh their element's
+      // timestamp (timeSinceLastFire / ...Frost). The latest hit still names the
+      // tick's damage (pushed first, so lastDamageType stays the latest hit);
+      // each OTHER element seen is recorded once, at zero magnitude, like the
+      // sub-threshold path below -- so it moves no damage total or rate.
+      auto recordOtherHitTypes = [&](DamageType alreadyRecorded) {
+      std::array<bool, 8> seen{};
+      seen[std::to_underlying(alreadyRecorded) & 7] = true;
+      for (auto it = queuedHitEvents.rbegin(); it != queuedHitEvents.rend(); ++it) {
+        const DamageType t = it->type;
+        if (t == DamageType::Physical || t == DamageType::Unknown) continue;
+        if (std::exchange(seen[std::to_underlying(t) & 7], true)) continue;
+        newState.damageHistory.push_back(DamageEvent(gameTime, 0.0f, t));
+        logger::trace("[StateManager] Same-tick hit recorded: {}"sv, GetDamageTypeName(t));
+      }
+      };
 
       // v0.12.x: Accumulate sub-threshold health losses across ticks.
       // A 3 HP/sec poison deals ~0.3 HP per 100ms tick — below the 5.0 HP threshold.
@@ -139,6 +159,7 @@ namespace Huginn::State
       // Create and record damage event with accumulated amount
       newState.damageHistory.push_back(DamageEvent(gameTime, damageAmount, damageType));
       m_healthTracker.accumulated = 0.0f;
+      recordOtherHitTypes(damageType);
       }
       else if (!queuedHitEvents.empty()) {
       // v0.12.x: Accumulated damage hasn't crossed threshold yet, but DamageEventSink
@@ -150,6 +171,7 @@ namespace Huginn::State
         logger::trace("[StateManager] Sub-threshold elemental hit recorded: {} (accumulated={:.1f}, threshold={:.1f})"sv,
            GetDamageTypeName(latestEvent.type), m_healthTracker.accumulated, VitalTracking::HEALTH_DAMAGE_THRESHOLD);
       }
+      recordOtherHitTypes(latestEvent.type);
       }
 
       // Detect healing (health increased)

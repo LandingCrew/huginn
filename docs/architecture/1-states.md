@@ -1276,7 +1276,11 @@ graph TB
   Ice Spike) have a ~20-50ms effect lifetime; by the time the 100ms poll runs the
   ActiveEffect is gone and the damage type is unclassifiable.
 - Captures the type at impact, queues it under a mutex, and
-  `PollHealthTracking()` drains it with `DrainQueue()`.
+  `PollHealthTracking()` drains it with `DrainQueue()`. Every queued hit is
+  read: the latest names the tick's damage event, and each other element seen
+  in the same tick is recorded once at zero magnitude, so its per-type
+  timestamp (`timeSinceLastFire`, ...) updates too (0.23.8; before, only the
+  last hit's element was read).
 - Handles sub-threshold hits (high-resist scenarios where the health delta alone
   would never cross `HEALTH_DAMAGE_THRESHOLD`).
 - `ResetTrackingState()` drains the queue so a stale hit cannot survive a save load.
