@@ -94,8 +94,8 @@ prove a change. Add a test executable that builds and runs on the host.
 
 **And an unattended in-game run** for the code that needs real game data. The
 Debug suites that run at the main menu (`RunUnitTests()` at kDataLoaded,
-`Main.cpp:679`) need no save. About 20 more (SlotClassCap, SlotLocker, home keys,
-cosave, the registries; `Main.cpp:443-466`) run only after a save loads,
+`Main.cpp:682`) need no save. 18 more (SlotClassCap, SlotLocker, home keys,
+cosave, the registries; `Main.cpp:448-465`) run only after a save loads,
 including the ratio tests R7 must update:
 - [x] Huginn: after the suites, log one sentinel line with pass/fail counts;
       with a test flag set (INI or environment variable), quit the game.

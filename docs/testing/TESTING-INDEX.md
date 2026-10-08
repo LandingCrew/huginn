@@ -38,9 +38,18 @@ ctest -C Debug --test-dir build --output-on-failure
 
 The executable (`build/tests/Debug/huginn_core_tests.exe`) exits non-zero when
 any check fails, and so does `ctest`. It compiles `src/core/` **without** the
-plugin's PCH, so a core header that leans on `PCH.h` fails here first; the
-configure step also fails if a core file includes `RE/`, `REL/`, `SKSE/`,
-`PCH.h`, `SimpleIni` or `spdlog/`. `-DHUGINN_CORE_TESTS=OFF` drops the target.
+plugin's PCH, and compiles every core header on its own, so a core header that
+leans on `PCH.h` fails here. `cmake/CheckCorePurity.cmake` keeps `src/core/`
+free of the game (quoted includes only within `src/core/`, angle includes only
+from the standard library, no `RE`/`REL`/`REX`/`SKSE`/`logger`/`spdlog` scope);
+it runs at configure and as a build step of both this target and the plugin.
+Rules and limits: [src/core/README.md](../../src/core/README.md).
+`-DHUGINN_CORE_TESTS=OFF` drops the target (and the build-step check).
+
+**Adding or removing a file** under `src/core/` or `tests/core/`: the globs use
+`CONFIGURE_DEPENDS`, and with the Visual Studio generator the first build after
+the change only re-runs the configure and still builds the old file list.
+Build twice, or reconfigure first, before trusting a result.
 
 Covered so far: the need cap's arithmetic (`core/NeedCapMath.h`, the pattern
 port, checked bit for bit against the loop it replaced) and `core/RingBuffer.h`.
@@ -64,7 +73,7 @@ only, and its suites run inside the game.**
 - The `#ifndef NDEBUG` guard around the `RunUnitTests()` call site in
   `src/Main.cpp` **must stay in sync** with that `HEADER_FILE_ONLY` property — a
   config that leaves `NDEBUG` undefined while excluding `Tests.cpp` produces an
-  unresolved external. There is a comment saying so at `src/Main.cpp:521`.
+  unresolved external. There is a comment saying so at `src/Main.cpp:677`.
 
 ### Running them
 
@@ -77,8 +86,8 @@ Then launch Skyrim. Two trigger points:
 
 | When | What runs | Where |
 |---|---|---|
-| **`kDataLoaded`** (main menu, once per process) | `RunUnitTests()` | `src/Main.cpp:526` |
-| **`kPostLoadGame`** — loading a save, **not** a new game | the nine game-data suites | `InitializeGameSystems()`, `src/Main.cpp:364–378` |
+| **`kDataLoaded`** (main menu, once per process) | `RunUnitTests()` | `src/Main.cpp:682` |
+| **`kPostLoadGame`** — loading a save, **not** a new game | the 18 after-load suites | `InitializeGameSystems()`, `src/Main.cpp:448–465` |
 
 The second group is gated on `!isNewGame` because it needs real form data
 (spells, items, weapons) in the player's inventory. Starting a new game runs
@@ -91,24 +100,32 @@ registries, not tests. To re-run, reload the save.
 
 Each suite runs through `TestHarness::RunSuite` (`src/TestHarness.h`): a suite
 **failed** if it logged at error level or above on its own thread (how every
-suite reports a failure) or threw, **skipped** if it warned "skipping tests"
-(a registry not ready), else **passed**. One line per suite, then one per
-batch:
+suite reports a failure) or threw; **skipped** if it called
+`TestHarness::MarkSkipped(reason)` and logged no error; else **passed**. Every
+early return or skipped block in `Tests.cpp` calls `MarkSkipped` next to its
+log line (a registry not ready, a slot setting off, too few potions): a new
+skip must do the same, or it counts as a pass. One line per suite, then one
+per batch:
 
 ```
 [HuginnTest] suite RunNeedCapTest passed (0 error line(s))
-[HuginnTest] RESULT phase=load suites=18 passed=18 failed=0 skipped=0 fail_lines=0 failed_suites=-
+[HuginnTest] suite RunHomeKeyTest SKIPPED (0 error line(s); skipped: needs seating, the hold and home keys)
+[HuginnTest] RESULT phase=load suites=18 passed=17 failed=0 skipped=1 fail_lines=0 failed_suites=- skipped_suites=RunHomeKeyTest
 ```
 
 `phase=menu` is `RunUnitTests()` at `kDataLoaded`; `phase=load` is the
 after-load batch. These lines are logged in every Debug session.
+
+**A behaviour change in every Debug session (0.23.9):** `RunSuite` catches
+exceptions, test mode or not. A suite that throws is logged FAILED and the
+next suite runs; before, the exception went up into the SKSE message handler.
 
 **Test mode** (Debug only, off unless asked for) makes the run unattended:
 after the main-menu suites Huginn loads a named save, runs the after-load
 suites, logs
 
 ```
-[HuginnTest] DONE result=PASS suites=19 passed=19 failed=0 skipped=0 fail_lines=0 failed_suites=- reason=-
+[HuginnTest] DONE result=PASS suites=19 passed=19 failed=0 skipped=0 fail_lines=0 failed_suites=- skipped_suites=- reason=-
 ```
 
 and ends the process (exit code 0 on PASS, 1 on FAIL). `reason` is `-`,
@@ -142,25 +159,39 @@ python -I tools/ingame/run_tests.py --list lorerim      # LoreRim-5, profile Ult
 python -I tools/ingame/run_tests.py --no-save --dry-run # check, print the MO2 command, launch nothing
 ```
 
-It launches `ModOrganizer.exe -p <profile> "moshortcut://:<executable>"`,
+Before it writes or launches anything it refuses (exit 2) unless:
+
+- the list's `overwrite/SKSE/Plugins/Huginn.dll` contains the harness strings
+  (`Huginn_TestMode.ini`, `[HuginnTest] DONE`). A Release build or a Debug
+  build older than 0.23.9 lacks them and would only time out. It prints the
+  DLL's MD5 either way;
+- `SkyrimSE.exe` is not running;
+- no `ModOrganizer.exe` is running. The shortcut would be handed to it, and an
+  MO2 of the same instance open on another profile would launch that profile.
+  `--multiple` passes MO2's unsupported `--multiple`, and is still refused if
+  a running MO2 is this instance's or its path cannot be read;
+- the MO2 executable title, the profile and the save exist.
+
+Then it launches `ModOrganizer.exe -p <profile> "moshortcut://:<executable>"`,
 waits for a `_Huginn_Debug.log` started by this launch (the first line's UTC
-launch stamp and the file's mtime), fails at once on a Release build or when
-Huginn ran its suites without seeing the flag, waits for `DONE`, kills the game
-it saw start only on a timeout (`--timeout`, default 600 s), and prints each
-suite's result. Exit 0 = PASS; 1 = a failed or skipped suite (`--allow-skips`
-accepts skips), timeout, or crash; 2 = refused to launch. It refuses while
-`SkyrimSE.exe` is running, or while an MO2 from another instance is running
-(the shortcut would go to it; `--multiple` passes MO2's unsupported
-`--multiple`). It reads MO2's config and never writes it, and it does **not**
-deploy the DLL: copy the Debug `Huginn.dll`/`.pdb` into the list first
-(simonrim: `overwrite/SKSE/Plugins/`, by hand). Make a dedicated save once, in
-game: console, `save HuginnTest`. Agents launch the game only when the user has
-said the machine is free.
+launch stamp and the file's mtime), fails at once when Huginn ran its suites
+without seeing the flag, waits for `DONE` (`--timeout`, default 600 s), and
+prints each suite's result. A game that exits counts as a crash unless this
+launch's log holds a `DONE`. When the run ends, whatever the verdict, it kills
+the `SkyrimSE.exe` it saw start if that process is still running 15 s later
+(after `DONE` Huginn has normally ended it already); it never touches a game
+it did not see start. Exit 0 = PASS; 1 = a failed or skipped suite
+(`--allow-skips` accepts skips), timeout, crash or unread flag; 2 = refused.
+It reads MO2's config and never writes it, and it does **not** deploy the DLL:
+copy the Debug `Huginn.dll`/`.pdb` into the list first (simonrim:
+`overwrite/SKSE/Plugins/`, by hand). Make a dedicated save once, in game:
+console, `save HuginnTest`. Agents launch the game only when the user has said
+the machine is free.
 
 ### Reading the results
 
 Tests report to the log — Debug builds write `_Huginn_Debug.log` in CommonLibSSE's
-`log_directory()` (see `OpenLog()`, `src/Main.cpp:625`). **A failing test logs an
+`log_directory()` (see `OpenLog()`, `src/Main.cpp:864`). **A failing test logs an
 error and returns early from its suite; nothing asserts, nothing crashes, and the
 game keeps running.** That means a silent suite is a *failed* suite, and the only
 reliable check is to grep:
@@ -174,8 +205,9 @@ grep -E "All unit tests passed!|Regression Test Suite PASSED|Cosave Serializatio
 ```
 
 Because a failure aborts the rest of its suite, the *absence* of a suite's
-terminal marker is as much a signal as an explicit `TEST FAIL` line. Two
-`TEST SKIP` sites also exist for cases that need data a save may not have.
+terminal marker is as much a signal as an explicit `TEST FAIL` line. Skips
+(data a save may not have, settings that are off) log a line and call
+`TestHarness::MarkSkipped`; the `[HuginnTest]` lines of section 1a count them.
 
 ---
 
