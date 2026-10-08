@@ -240,17 +240,20 @@ namespace
             if (c.raceOverride) {
                 raceKw = SplitSemicolons(c.raceOverride);
             } else {
-                CHECK_MESSAGE(!fixture.ambiguousEditorIDs.contains(c.race),
-                    c.race << " is on more than one fixture row");
-                auto it = fixture.byEditorID.find(c.race);
-                CHECK_MESSAGE(it != fixture.byEditorID.end(), "no fixture race " << c.race);
+                CHECK_MESSAGE(!fixture.ambiguousEditorIDs.contains(race),
+                    race << " is on more than one fixture row");
+                auto it = fixture.byEditorID.find(race);
+                CHECK_MESSAGE(it != fixture.byEditorID.end(), "no fixture race " << race);
                 if (it == fixture.byEditorID.end()) continue;
                 raceKw = SplitSemicolons(it->second.at("keywords"));
                 flies = it->second.at("flies") == "1";
             }
-            const std::string got = Read(c.race, flies, raceKw, SplitSemicolons(c.actor));
-            CHECK_MESSAGE(got == c.expected, c.race << " + actor [" << c.actor << "]: read " << got
-                                                    << ", expected " << c.expected << " -- " << c.why);
+            // std::string throughout: doctest prints a const char* as a pointer.
+            const std::string expected = c.expected;
+            const std::string why = c.why;
+            const std::string got = Read(race, flies, raceKw, SplitSemicolons(actor));
+            CHECK_MESSAGE(got == expected, race << " + actor [" << actor << "]: read " << got
+                                                << ", expected " << expected << " -- " << why);
         }
     }
 }  // namespace
@@ -374,6 +377,20 @@ TEST_CASE("race reading: made-up races pin rule order and single keywords")
           "goblinoid before the actor-side Animal/Creature fallback" },
         { "TestGoblinRace", "ActorTypeCreature", "ActorTypeGhost", "Undead", "actor undead (step 3) before goblinoid" },
         { "TestGoblinRace", "ActorTypeGiant", "", "Beast", "giant (step 4) before goblinoid" },
+        // Step 6: the actor-side Animal fallback (Creature has its own case above)
+        { "TestRaceA", "", "ActorTypeAnimal", "Beast",
+          "no race type keyword: the actor's ActorTypeAnimal is the fallback" },
+        // Step 7 guard: an empty editorID reads Humanoid before the name rules,
+        // even for a flying race (there is no name to read)
+        { "", "", "", "Humanoid", "empty editorID, no keywords: Humanoid", true },
+        // Step 1: the manual table comes before the race's family keywords
+        { "DLC2MiraakRace", "ActorTypeDragon", "", "Humanoid", "manual before race dragon" },
+        { "DLC2MiraakRace", "ActorTypeDaedra", "", "Humanoid", "manual before race daedra" },
+        // Step 1: the manual table matches the whole editorID, not a substring
+        { "zzzCHIronSpiderRaceVariant", "ActorTypeUndead", "", "Undead",
+          "an editorID that only contains a manual one is not in the table" },
+        { "IronSpiderRace", "ActorTypeUndead", "", "Undead",
+          "an editorID that is only part of a manual one is not in the table" },
         // Step 1: the manual table is case-insensitive
         { "ZZZCHIRONSPIDERRACE", "ActorTypeUndead", "", "Construct",
           "manual lookup ignores case (an editorID in other case still hits the table)" },
