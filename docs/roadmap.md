@@ -66,7 +66,7 @@ logging release before any play is needed.
 
 ### R0. Cleanup, no behaviour change
 
-All eight items are done on branch `r0-cleanup` (v0.23.8), waiting for the
+All eight items are done in PR #183 (`r0-cleanup`, v0.23.8), waiting for the
 second agent's check; this section leaves the file when that PR merges.
 Detail in the PR and the [implementation map](architecture/9-implementation-map.md#phase-0-behaviour-neutral-cleanup-can-ship-now).
 Left for the game: run `hg dump races` on LoreRim and
