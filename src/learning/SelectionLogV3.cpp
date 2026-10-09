@@ -38,7 +38,11 @@ namespace Huginn::Learning::SelectionLogV3
         constexpr auto kTestFileName = "Huginn_Selections_v3_test.jsonl";   // test mode: never the player's data
         constexpr std::uintmax_t kRotateBytes = 64ull * 1024 * 1024;
         constexpr size_t kMaxQueued = 1024;
-        constexpr double kHeldCacheSec = 1.0;
+        // The held set is re-read for every press (the state right then), and
+        // otherwise only when the player's inventory or equipment changed
+        // (TESContainerChangedEvent / TESEquipEvent) or it is older than this
+        // (charges drain without an event).
+        constexpr double kHeldCacheSec = 5.0;
         constexpr size_t kInstanceCacheMax = 512;
         // preEquipped: the equipped state from the newest tick at least this
         // long before the press (a Huginn key's hand swap can wait a frame or
@@ -237,17 +241,48 @@ namespace Huginn::Learning::SelectionLogV3
             return out;
         }
 
-        /// The held set, read at most once a second; a basic read (inside the
-        /// post-load window) is redone as soon as a full one is possible.
-        /// `readMs` is the time spent reading (0 for a cache hit).
-        std::shared_ptr<const HeldSet> Held(double nowSec, double& readMs)
+        /// The player's inventory or equipment changed since the last read.
+        std::atomic<bool> g_heldDirty{ true };
+
+        class HeldChangeSink final : public RE::BSTEventSink<RE::TESContainerChangedEvent>,
+                                     public RE::BSTEventSink<RE::TESEquipEvent>
+        {
+        public:
+            RE::BSEventNotifyControl ProcessEvent(const RE::TESContainerChangedEvent* e,
+                                                  RE::BSTEventSource<RE::TESContainerChangedEvent>*) override
+            {
+                constexpr RE::FormID kPlayer = 0x14;
+                if (e && (e->oldContainer == kPlayer || e->newContainer == kPlayer)) {
+                    g_heldDirty.store(true, std::memory_order_relaxed);
+                }
+                return RE::BSEventNotifyControl::kContinue;
+            }
+            RE::BSEventNotifyControl ProcessEvent(const RE::TESEquipEvent* e,
+                                                  RE::BSTEventSource<RE::TESEquipEvent>*) override
+            {
+                if (e && e->actor.get() == RE::PlayerCharacter::GetSingleton()) {
+                    g_heldDirty.store(true, std::memory_order_relaxed);
+                }
+                return RE::BSEventNotifyControl::kContinue;
+            }
+        };
+        HeldChangeSink g_heldChangeSink;
+
+        /// The held set. `fresh` (a press) always reads; otherwise the cache
+        /// serves until the inventory or equipment changes or kHeldCacheSec
+        /// passes, and a basic read (inside the post-load window) is redone as
+        /// soon as a full one is possible. `readMs`: the time spent reading
+        /// (0 for a cache hit).
+        std::shared_ptr<const HeldSet> Held(double nowSec, double& readMs, bool fresh)
         {
             readMs = 0.0;
             const bool stable = Util::IsExtraListStable();
             std::lock_guard lock(g_heldMutex);
             const bool upgrade = g_held && !g_held->full && stable;
-            if (!g_held || upgrade || nowSec - g_heldAt >= kHeldCacheSec || nowSec < g_heldAt) {
+            const bool dirty = g_heldDirty.load(std::memory_order_relaxed);
+            if (!g_held || fresh || upgrade || dirty || nowSec - g_heldAt >= kHeldCacheSec || nowSec < g_heldAt) {
                 const auto t0 = Clock::now();
+                g_heldDirty.store(false, std::memory_order_relaxed);   // before the read: a change during it re-dirties
                 g_held = std::make_shared<const HeldSet>(ReadHeld(stable));
                 g_heldAt = nowSec;
                 readMs = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
@@ -433,7 +468,7 @@ namespace Huginn::Learning::SelectionLogV3
 
             // Held items: flag the eligible rows, add the rest.
             double heldMs = 0.0;
-            const auto held = Held(ctx->tSec, heldMs);
+            const auto held = Held(ctx->tSec, heldMs, std::string_view(why) == "press");
             ctx->heldFull = held->full;
             std::unordered_map<uint64_t, size_t> index;
             index.reserve((ctx->rows.size() + held->items.size()) * 2);
@@ -983,6 +1018,10 @@ namespace Huginn::Learning::SelectionLogV3
             ui->AddEventSink<RE::MenuOpenCloseEvent>(&g_menuSink);
             logger::info("[SelectionV3] menu sink registered"sv);
         }
+        if (auto* events = RE::ScriptEventSourceHolder::GetSingleton()) {
+            events->AddEventSink<RE::TESContainerChangedEvent>(&g_heldChangeSink);
+            events->AddEventSink<RE::TESEquipEvent>(&g_heldChangeSink);
+        }
     }
 
     void Tick(Clock::time_point now)
@@ -1028,7 +1067,7 @@ namespace Huginn::Learning::SelectionLogV3
         if (!g_heldWarm.load(std::memory_order_relaxed) && Util::IsExtraListStable() &&
             Effect::EffectCatalog::GetSingleton().Ready()) {
             double ms = 0.0;
-            const auto held = Held(nowSec, ms);
+            const auto held = Held(nowSec, ms, false);
             g_heldWarm.store(true, std::memory_order_relaxed);
             logger::debug("[SelectionV3] held set warmed after the load: {} item(s) in {:.2f} ms"sv, held->items.size(), ms);
         }
@@ -1231,6 +1270,7 @@ namespace Huginn::Learning::SelectionLogV3
             std::lock_guard lock(g_heldMutex);
             g_held.reset();
             g_heldAt = -1e300;
+            g_heldDirty.store(true, std::memory_order_relaxed);
             g_instances.clear();   // dynamic enchantment IDs mean other things in another save
         }
         g_heldWarm.store(false, std::memory_order_relaxed);
