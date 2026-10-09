@@ -2,6 +2,7 @@
 #include "FeatureBanditLearner.h"
 #include "UtilityScorer.h"
 #include "Globals.h"
+#include "slot/SlotSnapshot.h"
 
 #include <chrono>
 #include <cmath>
@@ -369,6 +370,12 @@ namespace Huginn::Learning
         const float reward = RewardFor(event.kind);
         Predictions pred = Predict(event);
         WriteReadable(event, how, reward, pred);
+
+        // A slot capture session's scripted presses (test mode, Debug) are not
+        // the player's choices: keep them out of the JSONL tools/replay reads.
+        if (Slot::Capture::SessionActive()) {
+            return;
+        }
 
         Record record;
         record.event = event;

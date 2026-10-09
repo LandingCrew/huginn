@@ -289,6 +289,24 @@ namespace Huginn::Slot
         return ids;
     }
 
+#ifndef NDEBUG
+    void Remembrance::SetHoldForTest(size_t page, size_t slot, RE::FormID formID)
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        if (page >= MAX_PAGES || slot >= MAX_SLOTS_PER_PAGE) {
+            return;
+        }
+        auto& e = m_pages[page][slot];
+        e = {};
+        if (formID != 0) {
+            e.formID = formID;
+            e.remainingMs = 600000.0f;
+            e.fullMs = 600000.0f;
+            e.startedAtMs = NowMs();
+        }
+    }
+#endif
+
     void Remembrance::Reset()
     {
         std::lock_guard<std::mutex> lock(m_mutex);

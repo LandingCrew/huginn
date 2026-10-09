@@ -607,6 +607,10 @@ def main() -> int:
                     help="after the load suites, play SEC seconds of scripted input while Huginn records every "
                          "slot allocation to Huginn_SlotSnapshots.txt in the log folder (Debug; R7 golden test)")
     args = ap.parse_args()
+    # The capture session runs after the suites: its seconds, plus the
+    # campaign and the shutdown, come on top of --timeout.
+    if args.capture_slots > 0:
+        args.timeout += args.capture_slots + 180
 
     ml = LISTS[args.list]
     mo2 = ml.root / MO2_EXE
@@ -714,10 +718,20 @@ def main() -> int:
                 print(f"  RESULT {m.group(1)}: {m.group(2)}")
     if args.capture_slots > 0:
         snaps = args.log_dir / "Huginn_SlotSnapshots.txt"
-        if snaps.is_file():
+        # Only a file written by THIS launch counts (a stale one from an
+        # earlier run would pass for this one's).
+        fresh_snaps = snaps.is_file() and \
+            dt.datetime.fromtimestamp(snaps.stat().st_mtime, dt.timezone.utc) >= launched_utc
+        if fresh_snaps:
             say(f"slot snapshots: {snaps} ({snaps.stat().st_size} bytes)")
+        elif snaps.is_file():
+            say(f"WARNING: {snaps} is older than this launch: no snapshots were written")
+            if verdict and verdict[0] == 0:
+                verdict = (1, "--capture-slots: no snapshot file from this launch")
         else:
             say(f"WARNING: no slot snapshot file at {snaps}")
+            if verdict and verdict[0] == 0:
+                verdict = (1, "--capture-slots: no snapshot file")
     code, why = verdict or (1, "no verdict")
     say(("PASS: " if code == 0 else "FAIL: ") + why)
     return code

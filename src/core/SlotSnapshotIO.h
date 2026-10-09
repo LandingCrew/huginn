@@ -36,6 +36,8 @@
 //   A <kind> <formID> <uniqueID> <key> <seatMoved> =<name>          (one per slot)
 //   OMEM ... / ODEP ...                        (memory after, as MEM/DEP)
 //   KEPT <formID>...                           (what the class cap kept off)
+//   EVENTS                                     (events recorded, optional)
+//   EV <code> <f> <value>...                   (one per event, PageEvent below)
 //   END
 //
 // formIDs and keys are hex; floats and doubles in the shortest form that reads
@@ -61,6 +63,25 @@ namespace Huginn::Core::SlotAlloc
         friend bool operator==(const PageSlot&, const PageSlot&) = default;
     };
 
+    /// One event of an allocation in a form the old code can record too: items
+    /// by formID or dedup key, never by list index. Codes and values:
+    ///   OVM/OVP/OVF  override marked in place / placed / fallback: formID, slot
+    ///   OVU          override not placed: formID, 1 if the page had an accepting slot
+    ///   OVI          no override active
+    ///   HNC          Remembrance hold whose item is not a candidate: slot, formID
+    ///   HSH          Remembrance hold shown: slot pressed, slot shown, 1 if its class does not fit
+    ///   NOC          slot with no candidate: slot
+    ///   HGW          the slot hold gave way: slot, holder key, challenger key, 1 if a cap applied
+    ///   PUL          job key pulled from a Regular key: to, from, key
+    ///   RET          returner: key, home slot, slot now, why (Away), displaced key (0), its slot (ffffffff); f = seconds away
+    struct PageEvent
+    {
+        std::string code;
+        std::vector<std::uint64_t> v;
+        float f = 0.0f;
+        friend bool operator==(const PageEvent&, const PageEvent&) = default;
+    };
+
     struct Snapshot
     {
         std::string tag;                 // where it came from (tick, page, campaign, synthetic)
@@ -72,10 +93,15 @@ namespace Huginn::Core::SlotAlloc
         bool generationAfter = false;
         bool clearedAllPages = false;
         std::vector<std::uint32_t> keptOff;   // sorted formIDs
+        bool hasEvents = false;          // events were recorded (EV lines)
+        std::vector<PageEvent> events;
     };
 
     /// The page a core output describes.
     [[nodiscard]] std::vector<PageSlot> PageOf(const Input& in, const Output& out);
+
+    /// The events of a core output, in the recordable form.
+    [[nodiscard]] std::vector<PageEvent> EventsOf(const Input& in, const Output& out);
 
     /// Fill `snap`'s result fields from a core output.
     void SetResult(Snapshot& snap, const Output& out);

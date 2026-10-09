@@ -189,23 +189,23 @@ namespace Huginn::Slot
 
         bool Enabled() noexcept { return g_enabled.load(std::memory_order_relaxed); }
 
-        void SetEnabled(bool on)
+        bool SetEnabled(bool on)
         {
             std::lock_guard lock(g_fileMutex);
             if (on == g_enabled.load()) {
-                return;
+                return true;
             }
             if (on) {
                 auto dir = SKSE::log::log_directory();
                 if (!dir) {
                     SKSE::log::error("[SlotCapture] no SKSE log folder; capture stays off");
-                    return;
+                    return false;
                 }
                 const auto path = *dir / "Huginn_SlotSnapshots.txt";
                 g_file.open(path, std::ios::out | std::ios::trunc | std::ios::binary);
                 if (!g_file) {
                     SKSE::log::error("[SlotCapture] cannot write {}", path.string());
-                    return;
+                    return false;
                 }
                 g_file << "# Huginn slot snapshots (src/core/SlotSnapshotIO.h), version " << Plugin::VERSION.string()
                        << "\n";
@@ -219,6 +219,7 @@ namespace Huginn::Slot
                 g_file.close();
                 SKSE::log::info("[SlotCapture] stopped after {} snapshot(s)", g_count.load());
             }
+            return true;
         }
 
         void Write(const Core::SlotAlloc::Snapshot& snap)
@@ -245,7 +246,8 @@ namespace Huginn::Slot
         const char* ThreadTag() noexcept { return t_tag ? t_tag : "tick"; }
 #else
         bool Enabled() noexcept { return false; }
-        void SetEnabled(bool) {}
+        bool SetEnabled(bool) { return false; }
+        bool SessionActive() noexcept { return false; }
         void Write(const Core::SlotAlloc::Snapshot&) {}
         size_t Count() noexcept { return 0; }
         void SetThreadTag(const char*) noexcept {}
