@@ -35,10 +35,13 @@
 // inside a pausing menu the world is frozen and the page is hidden), and
 // carry its age. They are never dropped for staleness.
 //
-// Threads: Tick runs on the update loop; presses come from the input sink,
-// the TESEquipEvent sinks and Wheeler's callback; the menu sink on the UI
-// thread. Records are formatted and written by a background thread: the
-// caller builds the record (copies) and queues it.
+// Threads: Tick runs on the update loop (a job thread in gameplay, the main
+// thread in menus: UpdateLoop.cpp, THREADS above OnUpdate); presses come from
+// the input sink, the TESEquipEvent sinks and Wheeler's callback; the menu
+// sink on whatever thread the game sends MenuOpenCloseEvent from (not
+// traced; this said "the UI thread", unverified). Records are formatted and
+// written by a background thread: the caller builds the record (copies) and
+// queues it.
 // =============================================================================
 
 #include "DecisionCapture.h"

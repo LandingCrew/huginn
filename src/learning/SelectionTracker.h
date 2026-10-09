@@ -37,8 +37,10 @@ namespace Huginn::Learning
     // scripted equips counted as the player.
     //
     // Thread: Select from the input sink, Wheeler callbacks and TESEquipEvent
-    // sinks; OnConsumed and Update from the update loop. All game-thread in
-    // practice; a mutex anyway, and Dispatch always runs outside it.
+    // sinks; OnConsumed and Update from the update loop. Game threads, not
+    // one: the input sink and the update loop run on job threads in
+    // gameplay and the main thread in menus (UpdateLoop.cpp, THREADS above
+    // OnUpdate). Hence the mutex; Dispatch always runs outside it.
     // =========================================================================
     class SelectionTracker
     {

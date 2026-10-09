@@ -49,8 +49,13 @@ namespace Huginn::Learning::SelectionLogV3
     {
         using namespace std::chrono_literals;
 
-        float g_healthLowered = 0.0f;   // main thread only
-        std::atomic<bool> g_wheelAttempted{ false };   // set on the main thread, read by the session
+        // Touched only from the session's SKSE tasks (Task, below), one at a time
+        // and seconds apart. Not "the main thread", as this said: in gameplay
+        // SKSE tasks run on job threads (seen by an earlier verifier round,
+        // 9-implementation-map.md:62; not in a Tracy trace), at the main menu
+        // on the main thread (traced; UpdateLoop.cpp, THREADS above OnUpdate).
+        float g_healthLowered = 0.0f;
+        std::atomic<bool> g_wheelAttempted{ false };   // set in a task, read by the session thread
 
         void Task(void (*fn)())
         {
@@ -144,7 +149,7 @@ namespace Huginn::Learning::SelectionLogV3
         // Wildcards on every eligible slot, so the logged pages carry wildcard
         // rows and their propensities (the shipped odds show one ~20% of the
         // time). Test mode only; nothing is saved.
-        float g_wcBase = 0.0f, g_wcMax = 0.0f, g_wcRefractory = 0.0f;   // main thread only
+        float g_wcBase = 0.0f, g_wcMax = 0.0f, g_wcRefractory = 0.0f;   // session tasks only (see above)
 
         void ForceWildcards()
         {

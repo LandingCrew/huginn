@@ -27,7 +27,9 @@ namespace Huginn::Slot
     //
     // Capture is by observation, not by asking the engine at press time: the
     // press registers a PENDING capture, and Update() -- every tick, on the
-    // main thread -- watches the hands and the quiver. When the pressed item
+    // update loop's thread (a job thread in gameplay, the main thread in
+    // menus: UpdateLoop.cpp, THREADS above OnUpdate) -- watches the hands and
+    // the quiver. When the pressed item
     // arrives in a hand, what that hand held before the change is the thing
     // to remember. Equips are asynchronous and Wheeler equips before telling
     // us, so this is the one way that works the same for both.
@@ -92,7 +94,8 @@ namespace Huginn::Slot
         ///   not reward the learner for the press.
         bool OnSlotActivated(size_t page, size_t slot, RE::FormID formID, Kind kind);
 
-        /// Every tick, main thread: sample the hands, resolve pending captures,
+        /// Every tick, on the update loop's thread (not the main thread in
+        /// gameplay): sample the hands, resolve pending captures,
         /// age the holds, and end any whose item is back in a hand (re-equipped
         /// some other way: it is no longer what you took off).
         /// @return true when a hold started or ended -- the caller forces a

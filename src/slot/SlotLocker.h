@@ -99,9 +99,11 @@ namespace Huginn::Slot
     //   SlotAllocator (stateless) -> [SlotLocker (stateful)] -> Widget/Wheeler
     //
     // THREAD SAFETY:
-    //   SlotLocker is primarily accessed from the main update thread (Update,
-    //   ApplyLocks), but Wheeler callbacks may call OnItemUsed / LockSlotForActivation
-    //   from a different thread.  All public methods are guarded by m_mutex.
+    //   SlotLocker is primarily accessed from the update loop's thread (Update,
+    //   ApplyLocks): a game job thread in gameplay, the main thread in menus
+    //   (UpdateLoop.cpp, THREADS above OnUpdate). Wheeler callbacks may call
+    //   OnItemUsed / LockSlotForActivation from a different thread.  All public
+    //   methods are guarded by m_mutex.
     // =============================================================================
 
     class SlotLocker
