@@ -115,6 +115,13 @@ namespace Huginn::State
 
     auto* activeEffects = magicTarget->GetActiveEffectList();
 
+    // R3 restore_pending_*: magnitude x remaining duration of the restores
+    // still running (over-time potions, soups, Requiem/LoreRim heals). Read in
+    // this same walk; kept in NeedSensorState, not in the scoring buffs.
+    float pendingHealth = 0.0f;
+    float pendingMagicka = 0.0f;
+    float pendingStamina = 0.0f;
+
     // Single iteration over active effects (pattern from EffectsSensor.cpp)
     if (activeEffects) {
       for (auto* effect : *activeEffects) {
@@ -345,6 +352,27 @@ namespace Huginn::State
 #ifdef _DEBUG
             logger::trace("[StateManager] --> Detected FORTIFY ILLUSION (LORERIM, mag: {})", magnitude);
 #endif
+          }
+        }
+
+        // R3: an over-time restore of a vital (not instant: duration > 0).
+        // Not a Fortify: those carry kRecover (the value goes back when the
+        // effect ends; vanilla Fortify Health/Magicka/Stamina are flags
+        // 0x00200802), and magnitude x duration of one is no pending restore
+        // (Sleeping Tree Sap read 4500). The regen-buff test below still lumps
+        // them in; it feeds scoring, so it is left as it was (frozen engine).
+        if ((archetype == RE::EffectSetting::Archetype::kValueModifier ||
+             archetype == RE::EffectSetting::Archetype::kPeakValueModifier) &&
+            !baseEffect->IsDetrimental() &&
+            !baseEffect->data.flags.all(RE::EffectSetting::EffectSettingData::Flag::kRecover) &&
+            magnitude > 0.0f && effect->duration > 0.0f) {
+          const float remaining = magnitude * std::max(effect->duration - effect->elapsedSeconds, 0.0f);
+          if (primaryAV == RE::ActorValue::kHealth) {
+            pendingHealth += remaining;
+          } else if (primaryAV == RE::ActorValue::kMagicka) {
+            pendingMagicka += remaining;
+          } else if (primaryAV == RE::ActorValue::kStamina) {
+            pendingStamina += remaining;
           }
         }
 
@@ -583,6 +611,13 @@ namespace Huginn::State
         newIsWerewolf = true;
       }
     }
+
+    // R3: publish the pending restores (not part of this poll's change flag).
+    UpdateNeedSensors([&](NeedSensorState& n) {
+      n.restoreHealthPending = pendingHealth;
+      n.restoreMagickaPending = pendingMagicka;
+      n.restoreStaminaPending = pendingStamina;
+    });
 
     // Update effects and buffs with change detection
     {

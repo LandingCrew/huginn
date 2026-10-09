@@ -5,6 +5,10 @@
 #include "IniLoad.h"
 #include "slot/SlotSnapshot.h"
 #include "effect/EffectDump.h"
+#include "pipeline/PipelineCoordinator.h"
+#include "slot/SlotAllocator.h"
+#include "update/UpdateHandler.h"
+#include "state/DropAheadProbe.h"
 
 #include <spdlog/details/null_mutex.h>
 #include <spdlog/sinks/base_sink.h>
@@ -110,9 +114,14 @@ namespace Huginn::TestHarness
         std::string g_dumpAllName;
         int g_loadTimeoutSec = kDefaultLoadTimeoutSec;
         int g_captureSlotsSec = 0;   // iCaptureSlotsSec: slot snapshots after the load suites (R7)
+        int g_captureNeeds = 0;      // iCaptureNeeds: need snapshots, at most this many (R3)
+        int g_dumpRecsAfterSec = 0;  // iDumpRecsAfterSec: a recs dump after the load suites, then end
+        std::string g_cocCells;      // sCocCells: "a;b": after the load suites, coc to each in turn, then end (R3)
         std::atomic<bool> g_loadRequested{ false };
         std::atomic<bool> g_loadArrived{ false };
         std::atomic<bool> g_finished{ false };
+        std::atomic<bool> g_requireDropAhead{ false };  // R3: set once a test-mode load completed
+        std::atomic<bool> g_cocFailed{ false };
 
         std::string ReadEnv(const char* name)
         {
@@ -151,8 +160,18 @@ namespace Huginn::TestHarness
         }
 
         // Exactly once per launch: the DONE line, then the process ends.
-        void Finish(std::string_view reason)
+        void Finish(std::string_view reasonIn)
         {
+            // R3: a run that loaded a game must have seen at least one
+            // measured drop-ahead reading (the save stands on flat ground), so
+            // a dead PlayerCharacter::Update hook or an all-blocking ray
+            // filter cannot pass.
+            std::string reason(reasonIn);
+            if (reason.empty() && g_requireDropAhead.load() && State::DropAheadProbe::MeasuredCount() == 0) {
+                logger::error("[HuginnTest] TEST FAIL: no measured drop-ahead reading since the load ({})"sv,
+                    State::DropAheadProbe::StatusName(State::DropAheadProbe::Latest().status));
+                reason = "drop-ahead-unmeasured";
+            }
             std::string counts;
             bool pass = false;
             {
@@ -249,6 +268,7 @@ namespace Huginn::TestHarness
             g_active = true;
             g_saveName = ReadEnv("HUGINN_TEST_SAVE");
             g_captureSlotsSec = std::atoi(ReadEnv("HUGINN_CAPTURE_SLOTS").c_str());
+            g_captureNeeds = std::atoi(ReadEnv("HUGINN_CAPTURE_NEEDS").c_str());
             source = "environment";
         }
 
@@ -280,6 +300,11 @@ namespace Huginn::TestHarness
                         g_loadTimeoutSec = static_cast<int>(
                             ini.GetLongValue("Test", "iLoadTimeoutSec", kDefaultLoadTimeoutSec));
                         g_captureSlotsSec = static_cast<int>(ini.GetLongValue("Test", "iCaptureSlotsSec", 0));
+                        g_captureNeeds = static_cast<int>(ini.GetLongValue("Test", "iCaptureNeeds", 0));
+                        g_dumpRecsAfterSec = static_cast<int>(ini.GetLongValue("Test", "iDumpRecsAfterSec", 0));
+                        if (const char* coc = ini.GetValue("Test", "sCocCells", nullptr); coc && *coc) {
+                            g_cocCells = coc;
+                        }
                         if (const char* dump = ini.GetValue("Test", "sDumpAll", nullptr); dump && *dump) {
                             g_dumpAllName = dump;
                         }
@@ -298,12 +323,21 @@ namespace Huginn::TestHarness
                 logger::info("[HuginnTest] after the load suites: {}s of slot capture (Huginn_SlotSnapshots.txt)"sv,
                     g_captureSlotsSec);
             }
+            if (g_captureNeeds > 0) {
+                logger::info("[HuginnTest] need capture: up to {} snapshot(s) (Huginn_NeedSnapshots.txt)"sv,
+                    g_captureNeeds);
+            }
         }
     }
 
     bool Active() noexcept
     {
         return g_active;
+    }
+
+    int NeedCaptureLimit() noexcept
+    {
+        return g_captureNeeds;
     }
 
     void OnGameLoaded() noexcept
@@ -419,13 +453,80 @@ namespace Huginn::TestHarness
             return;
         }
         if (gameLoaded) DumpAllIfAsked();
+        if (gameLoaded) g_requireDropAhead.store(true);  // Finish checks it
+        if (gameLoaded && !g_cocCells.empty() && g_captureSlotsSec > 0) {
+            logger::error("[HuginnTest] sCocCells and iCaptureSlotsSec together are not supported"sv);
+            Finish("coc-with-capture-slots");
+            return;
+        }
+        if (gameLoaded && !g_cocCells.empty()) {
+            // Cross cells the way a load door or fast travel does (`coc`,
+            // PlayerCharacter::CenterOnCell, in an SKSE task as the save load
+            // above is), 12 s apart, so code that reads the world mid-load is
+            // exercised; then end. A coc that fails fails the run.
+            std::thread([]() {
+                std::vector<std::string> cells;
+                for (size_t start = 0; start <= g_cocCells.size();) {
+                    const size_t end = std::min(g_cocCells.find(';', start), g_cocCells.size());
+                    if (end > start) cells.emplace_back(g_cocCells.substr(start, end - start));
+                    start = end + 1;
+                }
+                for (const auto& cell : cells) {
+                    std::this_thread::sleep_for(std::chrono::seconds(12));
+                    SKSE::GetTaskInterface()->AddTask([cell]() {
+                        auto* player = RE::PlayerCharacter::GetSingleton();
+                        const bool ok = player && player->CenterOnCell(cell.c_str());
+                        if (ok) {
+                            logger::info("[HuginnTest] coc {}: moving"sv, cell);
+                        } else {
+                            logger::error("[HuginnTest] TEST FAIL: coc {} failed (no such cell?)"sv, cell);
+                            g_cocFailed.store(true);
+                        }
+                    });
+                }
+                std::this_thread::sleep_for(std::chrono::seconds(12));
+                Finish(g_cocFailed.load() ? "coc-failed"sv : std::string_view{});
+            }).detach();
+            return;
+        }
+        if (gameLoaded && g_dumpRecsAfterSec > 0 && g_captureSlotsSec <= 0) {
+            // A recommendation dump after N idle seconds (the `hg recs 40`
+            // path), then end: two builds on one save can be compared.
+            std::thread([]() {
+                std::this_thread::sleep_for(std::chrono::seconds(g_dumpRecsAfterSec));
+                SKSE::GetTaskInterface()->AddTask([]() {
+                    logger::info("[HuginnTest] dumping recommendations"sv);
+                    Pipeline::PipelineCoordinator::GetSingleton().RequestRecommendationDump(40);
+                    Slot::SlotAllocator::GetSingleton().MarkPageDirty();
+                    Update::UpdateHandler::GetSingleton()->ForceUpdate();
+                });
+                std::this_thread::sleep_for(std::chrono::seconds(3));
+                Finish({});
+            }).detach();
+            return;
+        }
         if (gameLoaded && g_captureSlotsSec > 0) {
             // Slot snapshots for the golden test (SlotCapture.cpp): play a
             // scripted session while every allocation is recorded, then end.
             Slot::Capture::StartSession(g_captureSlotsSec, []() { Finish({}); });
             return;
         }
-        Finish(gameLoaded ? std::string_view{} : "load-failed"sv);
+        if (!gameLoaded) {
+            Finish("load-failed"sv);
+            return;
+        }
+        // A plain run: give the drop-ahead probe (PlayerCharacter::Update,
+        // which starts after the load) up to 10 s to take a measured reading,
+        // which Finish requires, then end.
+        std::thread([]() {
+            for (int i = 0; i < 100 && State::DropAheadProbe::MeasuredCount() == 0; ++i) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            }
+            const auto r = State::DropAheadProbe::Latest();
+            logger::info("[HuginnTest] drop ahead after the load: {} measured reading(s), last {} (drop {:.0f})"sv,
+                State::DropAheadProbe::MeasuredCount(), State::DropAheadProbe::StatusName(r.status), r.drop);
+            Finish({});
+        }).detach();
     }
 }  // namespace Huginn::TestHarness
 
@@ -436,6 +537,7 @@ namespace Huginn::TestHarness
     std::shared_ptr<spdlog::sinks::sink> MakeCountingSink() { return nullptr; }
     void ReadTestMode() {}
     bool Active() noexcept { return false; }
+    int NeedCaptureLimit() noexcept { return 0; }
     void OnGameLoaded() noexcept {}
     void MarkSkipped(std::string_view) {}
     void RunSuite(const char*, void (*)()) {}

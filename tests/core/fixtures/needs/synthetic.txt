@@ -1,0 +1,544 @@
+# Synthetic need snapshots: hand-designed to activate every non-deferred need
+# (value >= 0.5 in at least one block) and to hit the edges of the r3_input
+# formulas and curves. Expected vectors: synthetic.expected.csv, made by
+#   python -I tools/needs/expected_vectors.py tests/core/fixtures/needs/synthetic.txt -o tests/core/fixtures/needs/synthetic.expected.csv
+# The five deferred needs (healing_blocked, thirst, target_magicka_low,
+# target_stamina_low, sneak_detected) always read input 0.
+
+# Every field omitted: the NeedSnapshot.h defaults. closestEnemy -1 reads as
+# 4096 (enemy_far ~1), no hand gear (hands_empty 1), out of combat with
+# combatEndAgo NEVER and no enemies (downtime ~1), timers NEVER elsewhere.
+snapshot default
+end
+
+# Low vitals: deficits via health / magickaHeld / staminaHeld. magicka and
+# stamina (the raw fractions) stay full, so the deficits must read the Held
+# fields.
+snapshot vitals_low
+health 0.2
+magickaHeld 0.15
+staminaHeld 0.1
+end
+
+# Curve centres: 1 - 0.5 = 0.5 exactly, so the three deficits read 0.5.
+snapshot vitals_centre
+health 0.5
+magicka 0.5
+stamina 0.5
+magickaHeld 0.5
+staminaHeld 0.5
+end
+
+# Net loss rates well above the 3% / 5% centres.
+snapshot vitals_falling_burn
+damageRate 15
+healingRate 5
+magickaUsageRate 20
+magickaRegenRate 5
+staminaUsageRate 30
+staminaRegenRate 10
+maxStamina 200
+end
+
+# Rates exactly at the centres: 3/100 = 0.03, 5/100 = 0.05, 10/200 = 0.05.
+snapshot vitals_rates_centre
+damageRate 3
+magickaUsageRate 5
+staminaUsageRate 12
+staminaRegenRate 2
+maxStamina 200
+end
+
+# Healing outpaces damage and regen outpaces use: negative rates.
+snapshot vitals_rates_negative
+damageRate 2
+healingRate 40
+magickaUsageRate 0
+magickaRegenRate 50
+staminaRegenRate 1000
+end
+
+# maxHealth / maxMagicka / maxStamina 0: every "/ max" input guards to 0.
+# The pending ratios divide by max((1 - frac) * 0, 1) = 1 instead.
+snapshot max_zero
+health 0.5
+magicka 0.5
+stamina 0.5
+maxHealth 0
+maxMagicka 0
+maxStamina 0
+damageRate 50
+magickaUsageRate 50
+staminaUsageRate 50
+dmgFire 10
+dmgFrost 10
+dmgShock 10
+dmgMagic 10
+dmgPhysical 10
+restoreHealthPending 5
+restoreMagickaPending 0.4
+restoreStaminaPending 30
+end
+
+# Over-time restores that cover the deficit (pending ratio > 0.8). magicka
+# uses the raw `magicka` field (not magickaHeld) per r3_input.
+snapshot restore_pending_covering
+health 0.6
+restoreHealthPending 60
+magicka 0.7
+magickaHeld 0.2
+maxMagicka 200
+restoreMagickaPending 100
+stamina 0.25
+maxStamina 120
+restoreStaminaPending 200
+end
+
+# Ratio exactly at the 0.8 centre for stamina (40 / 50); health ratio 0.5;
+# magicka pending negative -> 0.
+snapshot restore_pending_centre
+stamina 0.5
+restoreStaminaPending 40
+health 0.5
+restoreHealthPending 25
+magicka 0.5
+restoreMagickaPending -5
+end
+
+# Restore pending with zero deficit: max(0 * max, 1) = 1, ratio capped at 10.
+snapshot restore_pending_zero_deficit
+restoreHealthPending 30
+restoreMagickaPending 0.5
+restoreStaminaPending 1000
+end
+
+# Heavy elemental and physical damage: 0.3 of maxHealth each.
+snapshot elemental_damage
+dmgFire 30
+dmgFrost 45
+dmgShock 30
+dmgMagic 60
+dmgPhysical 30
+end
+
+# Damage sums at the 0.15 centre (15 / 100), and shock with a bigger max.
+snapshot elemental_centre
+dmgFire 15
+dmgFrost 15
+dmgShock 30
+dmgMagic 0
+dmgPhysical 14
+maxHealth 200
+end
+
+# Hostiles casting now: castFireAgo 0 -> 1, frost 0.5 s -> 0.75,
+# shock 0.4 s -> 0.8; any-cast and target-caster flags.
+snapshot enemy_casting_now
+inCombat 1
+combatStartAgo 4
+enemyCount 2
+closestEnemy 900
+castFireAgo 0
+castFrostAgo 0.5
+castShockAgo 0.4
+anyCasting 1
+targetCaster 1
+end
+
+# Cast-timer edges: 2 s (ramp end -> 0), 2.5 s (past it -> 0), 1 s (-> 0.5),
+# and a negative time (clamps to 1).
+snapshot cast_edges
+castFireAgo 2
+castFrostAgo 2.5
+castShockAgo 1
+end
+
+snapshot cast_negative
+castFireAgo -1
+castFrostAgo 1e6
+castShockAgo 1.999
+end
+
+# Status flags all on, encumbrance over the cap.
+snapshot status_flags
+poisoned 1
+diseased 1
+drainHealth 1
+drainMagicka 1
+drainStamina 1
+regenSuppressed 1
+encumbrance 1.1
+end
+
+# Encumbrance at the 0.95 centre (float32 0.95 is a hair under 0.95).
+snapshot encumbrance_centre
+encumbrance 0.95
+end
+
+# Vampire stage 3 in open daylight: sun exposure on. openDaylight with a dark
+# light reading: darkness is forced to input 0.
+snapshot vampire_day
+vampireStage 3
+openDaylight 1
+light 0.05
+end
+
+# Stage edge: stage 2 in daylight does not count.
+snapshot vampire_stage2_day
+vampireStage 2
+openDaylight 1
+end
+
+# Stage 4 at night (no openDaylight): no sun; dark -> darkness on.
+snapshot vampire_stage4_night
+vampireStage 4
+openDaylight 0
+light 0.1
+end
+
+# Darkness exactly at the curve centre: light 0.35 -> 1 - f32(0.35).
+snapshot darkness_centre
+light 0.35
+end
+
+# Survival on, raw meters read (stages ignored when raw >= 0); warmth 0.
+snapshot survival_raw
+survival 1
+hungerRaw 1000
+hungerStage 0
+coldRaw 800
+coldStage 0
+fatigueRaw 900
+fatigueStage 1
+warmth 0
+end
+
+# Survival on, raw -1 so the stages are read; fatigueStage 7 clamps to 5;
+# warmth 50 -> 0.75 deficit; coldStage 4 -> 0.8 -> 0.64.
+snapshot survival_stage
+survival 1
+hungerStage 5
+coldStage 4
+fatigueStage 7
+warmth 50
+end
+
+# Survival off with every meter maxed: all four survival needs read 0.
+snapshot survival_off_high
+survival 0
+hungerStage 5
+coldStage 5
+fatigueStage 5
+hungerRaw 1000
+coldRaw 1000
+fatigueRaw 1000
+warmth 0
+end
+
+# Survival on: fatigueStage negative (rested) clamps to 0; hungerRaw 0 (>= 0,
+# so raw wins over hungerStage 5); coldRaw -1 with coldStage 2 -> 0.4;
+# warmth 300 over the 200 threshold -> deficit clamps to 0; hungerRaw edge.
+snapshot survival_negative_fatigue
+survival 1
+fatigueStage -2
+hungerRaw 0
+hungerStage 5
+coldStage 2
+warmth 300
+end
+
+# Survival on, raw meters over 1000 (input > 1 clamps the ramp) and the
+# 1000-unit midpoint for cold; warmth exactly 200 -> deficit 0, fatigue raw
+# at 707.1 -> about 0.5.
+snapshot survival_raw_edges
+survival 1
+hungerRaw 1500
+coldRaw 500
+fatigueRaw 707.1068
+warmth 200
+end
+
+# Fight onset at close range: closestEnemy 0, 3 hostiles in melee reach
+# (surrounded 3/3 = 1), enemyCount 2, combat 2 s old.
+snapshot combat_onset_close
+inCombat 1
+combatStartAgo 2
+enemyCount 2
+enemiesNear256 3
+closestEnemy 0
+targetHealth 0.8
+families 3
+end
+
+# Mid range (600: gaussian peak), 6 enemies (enemy_count 1), combat 10 s old
+# (one sigma of combat_onset).
+snapshot enemy_mid_range
+inCombat 1
+combatStartAgo 10
+enemyCount 6
+enemiesNear256 1
+closestEnemy 600
+end
+
+# closestEnemy 4096 reads the same as none; one enemy with soleHostileTtk -1
+# (n/a) -> boss input 0.
+snapshot enemy_far_4096
+inCombat 1
+combatStartAgo 0
+enemyCount 1
+closestEnemy 4096
+soleHostileTtk -1
+end
+
+# Curve centres of the distance bands: 300 (enemy_close 0.5) and 1000
+# (enemy_far 0.5); enemyCount 12 saturates.
+snapshot enemy_at_close_centre
+inCombat 1
+combatStartAgo 30
+enemyCount 12
+enemiesNear256 2
+closestEnemy 300
+end
+
+snapshot enemy_at_far_centre
+inCombat 1
+combatStartAgo 20
+enemyCount 3
+closestEnemy 1000
+end
+
+# One hostile, slow bar: TTK 60 s -> boss_fight; dragon; target bar low.
+snapshot boss_fight
+inCombat 1
+combatStartAgo 45
+enemyCount 1
+closestEnemy 1500
+soleHostileTtk 60
+targetHealth 0.1
+families 8
+end
+
+# Boss TTK exactly at the 30 s centre; target health exactly 0.25 (1 - 0.25
+# = 0.75, the target_health_low centre).
+snapshot boss_ttk_centre
+inCombat 1
+enemyCount 1
+soleHostileTtk 30
+targetHealth 0.25
+end
+
+# soleHostileTtk >= 0 but two enemies: the gate gives input 0. targetHealth 0
+# (an empty bar, not "none").
+snapshot boss_two_enemies
+inCombat 1
+enemyCount 2
+soleHostileTtk 60
+targetHealth 0
+end
+
+# One enemy with TTK 0 (>= 0, so input 0 by value), out of combat.
+snapshot boss_ttk_zero
+enemyCount 1
+soleHostileTtk 0
+combatEndAgo 50
+end
+
+# Target is an archer and a summon.
+snapshot target_archer_summon
+inCombat 1
+enemyCount 1
+closestEnemy 2000
+targetArcher 1
+hostileSummoned 1
+families 4
+end
+
+# Family bits 0-7 (humanoid .. troll).
+snapshot families_low
+inCombat 1
+enemyCount 4
+families 255
+end
+
+# Family bits 8-14 (giant .. element_shock) plus unmapped bit 15.
+snapshot families_high
+inCombat 1
+enemyCount 4
+families 65280
+end
+
+# Bit 31 (unmapped, top of the uint32) plus bit 0: only target_humanoid.
+snapshot families_bit31
+families 2147483649
+end
+
+# A downed follower.
+snapshot ally_bleedout
+followerPresent 1
+followerBleedout 1
+end
+
+# Underwater 15 s (input 0.75).
+snapshot underwater_deep
+underwater 1
+submergedFor 15
+swimming 0
+end
+
+# Underwater at the 10 s centre (input 0.5).
+snapshot underwater_centre
+underwater 1
+submergedFor 10
+end
+
+# underwater false with submergedFor > 0: input 0. Swimming at the surface.
+snapshot underwater_false_submerged
+underwater 0
+submergedFor 30
+swimming 1
+end
+
+# Falling past the ramp top (700 > 600) and a big drop ahead.
+snapshot falling_deep
+fallDepth 700
+dropAhead 1000
+end
+
+# Ramp bottom edge (200 -> 0) and drop_ahead at its 600 centre.
+snapshot falling_low_edge
+fallDepth 200
+dropAhead 600
+end
+
+# Ramp middle (400 -> 0.5) and ramp top exactly; dropAhead 0 (measured, flat).
+snapshot falling_mid
+fallDepth 400
+dropAhead 0
+end
+
+snapshot falling_top_edge
+fallDepth 600
+dropAhead -1
+end
+
+# Crosshair: lock, smithing bench, ore vein, merchant.
+snapshot crosshair_smithing
+lock 1
+workstation 1
+oreVein 1
+merchant 1
+end
+
+snapshot crosshair_enchanting
+workstation 2
+end
+
+snapshot crosshair_alchemy
+workstation 3
+end
+
+# Out-of-range workstation value: no bench need fires.
+snapshot crosshair_workstation4
+workstation 4
+end
+
+# Enchanted bow, charge 0.1, 3 arrows; crossbow flag also set with plenty of
+# bolts: bow takes precedence, so arrows are read.
+snapshot enchanted_bow
+enchantedWeapon 1
+weaponCharge 0.1
+bow 1
+crossbow 1
+arrows 3
+bolts 100
+end
+
+# Crossbow only, 2 bolts (arrows ignored); unenchanted with charge 0 ->
+# weapon_charge_deficit input 0.
+snapshot crossbow_bolts
+crossbow 1
+bolts 2
+arrows 100
+enchantedWeapon 0
+weaponCharge 0
+end
+
+# Bow with more than the cap (input clamps to 0); enchanted weapon at the 0.25
+# charge centre (input 0.75).
+snapshot bow_ammo_overfull
+bow 1
+arrows 50
+enchantedWeapon 1
+weaponCharge 0.25
+end
+
+# Bow with exactly 10 arrows (1 - 10/25 = 0.6, the ammo_low centre).
+snapshot bow_ammo_centre
+bow 1
+arrows 10
+end
+
+# Every hand loadout and all five school bits; sneaking, mounted.
+snapshot loadout_everything
+melee 1
+spell 1
+staff 1
+shield 1
+oneHanded 1
+twoHanded 1
+handSchools 31
+sneaking 1
+mounted 1
+end
+
+# Shield only: not a weapon, bow, crossbow, spell or staff -> hands_empty 1.
+snapshot shield_only
+shield 1
+end
+
+# Only a spell in hand (school bits 2 and 4, plus unmapped bit 5).
+snapshot spell_only
+spell 1
+handSchools 52
+end
+
+# Downtime at its 20 s centre; combat_ended_recent at exp(-20/15).
+snapshot downtime_centre
+combatEndAgo 20
+end
+
+# A fight just ended (0 s): decay input 0 -> 1; downtime input 0.
+snapshot combat_just_ended
+combatEndAgo 0
+combatStartAgo 30
+end
+
+# Ended 5 s ago: combat_ended_recent exp(-1/3).
+snapshot combat_ended_5s
+combatEndAgo 5
+end
+
+# Out of combat with a hostile in view and a long-ago end: downtime gated to
+# input 0.
+snapshot downtime_enemy_visible
+combatEndAgo 100
+enemyCount 1
+closestEnemy 1800
+end
+
+# In combat with every timer NEVER or set: combat_onset reads combatStartAgo
+# (NEVER -> 0); combat_ended_recent reads NEVER (in combat); downtime 0.
+snapshot in_combat_timers_never
+inCombat 1
+combatEndAgo 5
+end
+
+# Added in verifier round 1 (the enemy_casting_* curve became a step with a
+# 0.5 s decay): frost and shock seen casting right now / 0.2 s ago.
+snapshot enemy_casting_frost_shock_now
+inCombat 1
+enemyCount 2
+anyCasting 1
+castFrostAgo 0
+castShockAgo 0.2
+end

@@ -62,6 +62,8 @@
 #include "learning/SelectionTracker.h"
 #include "learning/PlayerInputGate.h"
 #include "learning/EquipSubscribers.h"
+#include "needs/NeedSettings.h"
+#include "state/DropAheadProbe.h"
 
 using namespace Huginn;
 
@@ -317,6 +319,9 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
     if (haveMainIni) State::ContextWeightSettings::GetSingleton().LoadFromIni(mainIni);
     g_utilityScorer->SetContextWeightConfig(State::ContextWeightSettings::GetSingleton().BuildConfig());
 
+    // ── 6a. NeedSettings (R3: the [Needs] response curves; logged only) ─
+    if (haveMainIni) Needs::NeedSettings::GetSingleton().LoadFromIni(mainIni);
+
     // ── 6b. LearningSettings ────────────────────────────────────────────
     if (haveMainIni) Learning::LearningSettings::GetSingleton().LoadFromIni(mainIni);
     Learning::ExternalEquipLearner::GetSingleton().SetConfig(
@@ -464,6 +469,7 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
         HUGINN_RUN_SUITE(RunSlotClassCapHoldTest);        // ...through the slot hold
         HUGINN_RUN_SUITE(RunHomeKeyTest);                 // [SlotLocker] home keys
         HUGINN_RUN_SUITE(RunBuffElementResistTest);       // THROWAWAY (0.20.63): buff element != resist
+        HUGINN_RUN_SUITE(RunNeedVectorTests);             // R3: the need vector on the live game
         logger::info("Debug build ready. Console command functions available for hotkey integration"sv);
         // One RESULT line for the batch; in test mode this ends the run.
         TestHarness::EndPhase(TestHarness::Phase::Load, loadSucceeded);
@@ -777,10 +783,14 @@ void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
     case SKSE::MessagingInterface::kDataLoaded:
         OnDataLoaded();
         break;
+    case SKSE::MessagingInterface::kPreLoadGame:
+        State::DropAheadProbe::SetGameLoaded(false);  // R3: off through the load
+        break;
     case SKSE::MessagingInterface::kNewGame:
         logger::info("New game started"sv);
         Effect::EffectCatalog::GetSingleton().Build();  // no-op once built at the main menu
         InitializeGameSystems(/*isNewGame=*/true);
+        State::DropAheadProbe::SetGameLoaded(true);  // R3: the probe hook may cast now
         break;
     case SKSE::MessagingInterface::kPostLoadGame:
     {
@@ -791,6 +801,7 @@ void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
         TestHarness::OnGameLoaded();
         logger::info("Game loaded{}"sv, loaded ? ""sv : " -- FAILED (learner left as it was)"sv);
         InitializeGameSystems(/*isNewGame=*/false, loaded);
+        if (loaded) State::DropAheadProbe::SetGameLoaded(true);  // R3: the probe hook may cast now
         break;
     }
     default:
@@ -976,6 +987,14 @@ static void InstallHooks()
         logger::info("D3D11 render hook installed"sv);
     } else {
         logger::error("Failed to install D3D11 render hook"sv);
+    }
+
+    // R3: drop_ahead casts its rays from PlayerCharacter::Update, on the
+    // main thread (a vtable hook, no trampoline). Inert until a game loads.
+    if (State::DropAheadProbe::InstallPlayerUpdateHook()) {
+        logger::info("PlayerCharacter::Update hook installed (drop ahead)"sv);
+    } else {
+        logger::error("Failed to install the PlayerCharacter::Update hook (drop ahead stays unmeasured)"sv);
     }
 
 #ifdef _DEBUG

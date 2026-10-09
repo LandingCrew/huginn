@@ -111,6 +111,12 @@ namespace Huginn::Scoring
         // Reset state (e.g., on save load)
         void Reset();
 
+        // R3, read-only: magicka / stamina as the envelopes hold them (what the
+        // magicka_deficit / stamina_deficit needs read, needs.csv). No state
+        // change; the envelopes tick in Update as before.
+        [[nodiscard]] float HeldMagicka(float raw) const noexcept { return m_magickaEnvelope.Value(raw); }
+        [[nodiscard]] float HeldStamina(float raw) const noexcept { return m_staminaEnvelope.Value(raw); }
+
         // Recommendation logging (release-available; see DebugSettings::recLogVerbosity).
         // detail: append learn's inputs (Q/P/UCB/α) to each line.
         // force: bypass the membership-change dedup (on-demand `hg recs` dumps).

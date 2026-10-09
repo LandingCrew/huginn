@@ -18,6 +18,7 @@
 #include "util/InventoryUtil.h"
 #include "weapon/WeaponRegistry.h"
 #include "telemetry/SoakMetrics.h"
+#include "needs/NeedMonitor.h"
 
 // For the ProcessInventoryChanges constraint: std::same_as / std::convertible_to
 // from <concepts>, std::remove_cvref_t from <type_traits>. Both explicit because
@@ -609,6 +610,10 @@ void OnUpdate(float deltaSeconds)
 
     UpdateSubsystems(deltaSeconds, deltaMs);
     MaintainRegistries(player, now);
+
+    // R3: the need vector, every tick, logged only. Reads the state the polls
+    // just wrote; touches neither skip gate (NeedMonitor.h).
+    Needs::NeedMonitor::GetSingleton().Tick(now);
 
     // Confirm or drop pending player selections whose window has run out.
     // AFTER the inventory scan, deliberately: this loop does not run while a

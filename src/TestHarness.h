@@ -29,6 +29,13 @@
 //       iCaptureSlotsSec=<seconds>         ; optional (env HUGINN_CAPTURE_SLOTS):
 //                                          ; after the load suites, record slot
 //                                          ; snapshots that long (SlotSnapshot.h)
+//       iCaptureNeeds=<count>              ; optional (env HUGINN_CAPTURE_NEEDS, 0.23.14):
+//                                          ; record up to <count> need snapshots
+//                                          ; (needs/NeedCapture.h)
+//       iDumpRecsAfterSec=<seconds>        ; optional (0.23.14): after the load suites wait,
+//                                          ; log a 40-row `hg recs` dump, then end
+//       sCocCells=<cell;cell>              ; optional (0.23.14): after the load suites,
+//                                          ; coc to each cell 12 s apart, then end
 //       sDumpAll=<file name>               ; optional (0.23.12): after the save loads
 //                                          ; and its suites ran, write `hg dump all`
 //                                          ; there (a plain name, in the SKSE log
@@ -69,6 +76,10 @@ namespace Huginn::TestHarness
 
     /// Test mode is on for this launch.
     [[nodiscard]] bool Active() noexcept;
+
+    /// iCaptureNeeds (env HUGINN_CAPTURE_NEEDS): the most need snapshots to
+    /// record (needs/NeedCapture.h); 0 = off.
+    [[nodiscard]] int NeedCaptureLimit() noexcept;
 
     /// kPostLoadGame arrived (call first thing): stands the load watchdog down.
     void OnGameLoaded() noexcept;

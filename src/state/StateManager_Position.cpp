@@ -10,6 +10,7 @@
 #include "StateManager.h"
 #include "StateConstants.h"
 #include "../Profiling.h"
+#include "DropAheadProbe.h"
 
 namespace Huginn::State
 {
@@ -124,10 +125,12 @@ namespace Huginn::State
 
       // Overencumbered check (pattern from EnvironmentSensor.cpp)
       auto* actorValueOwner = player->AsActorValueOwner();
+      float newEncumbrance = 0.0f;  // R3: the ratio, not just the bool
       if (actorValueOwner) {
       float carryWeight = actorValueOwner->GetActorValue(RE::ActorValue::kCarryWeight);
       float inventoryWeight = player->GetWeightInContainer();
       newIsOverencumbered = (inventoryWeight > carryWeight);
+      newEncumbrance = Core::Needs::EncumbranceRatio(inventoryWeight, carryWeight);
       }
 
       // Sneaking check
@@ -216,10 +219,39 @@ namespace Huginn::State
             std::memory_order_release);
         m_isInCombat.store(newIsInCombat, std::memory_order_release);
         m_wasInCombat = newIsInCombat;
+        // R3: the combat timers, on the same published transition.
+        const double nowSec = NeedClock::Now();
+        UpdateNeedSensors([&](NeedSensorState& n) {
+          (newIsInCombat ? n.combatStartAt : n.combatEndAt) = nowSec;
+        });
       }
+
+      // R3 need sensors: encumbrance ratio, the submerged timer, drop ahead.
+      // Kept out of PlayerActorState (scoring input) and out of `changed`.
+      PollNeedPosition(newEncumbrance, newIsUnderwater);
 
       return changed;
       }
+   }
+
+   void StateManager::PollNeedPosition(float encumbrance, bool underwater)
+   {
+      const double nowSec = NeedClock::Now();
+      // drop_ahead: the last reading DropAheadProbe took on the main thread
+      // (PlayerCharacter::Update); a stale one (the hook stopped: a menu, a
+      // load) reads "not measured".
+      const auto reading = DropAheadProbe::Latest();
+      const float drop = (reading.atSec >= 0.0 && nowSec - reading.atSec <= DropAheadProbe::kMaxAgeSec)
+                             ? reading.drop
+                             : -1.0f;
+      UpdateNeedSensors([&](NeedSensorState& n) {
+        n.encumbrance = encumbrance;
+        n.dropAhead = drop;
+        if (underwater != m_wasUnderwaterForTimer) {
+          n.submergedAt = underwater ? nowSec : -1.0;
+        }
+      });
+      m_wasUnderwaterForTimer = underwater;
    }
 
 } // namespace Huginn::State

@@ -160,6 +160,15 @@ namespace Huginn::State
       // --- Elemental window flag (stale true would hold the outer gate open) ---
       m_elementalWindowActive.store(false, std::memory_order_relaxed);
 
+      // --- R3 need sensors: timers, damage sums, the held families ---
+      {
+         std::unique_lock lock(m_needMutex);
+         m_needSensors = NeedSensorState{};
+      }
+      m_familyCache.clear();
+      m_soleHostileTtk.Reset();
+      m_wasUnderwaterForTimer = false;
+
       m_lastUpdateChanged = true;  // Force pipeline to run on next update
    }
 
@@ -224,6 +233,12 @@ namespace Huginn::State
    {
       std::shared_lock lock(m_trackingMutex);
       return m_magickaTracking;  // Copy-out pattern
+   }
+
+   NeedSensorState StateManager::GetNeedSensors() const noexcept
+   {
+      std::shared_lock lock(m_needMutex);
+      return m_needSensors;  // Copy-out pattern
    }
 
 } // namespace Huginn::State

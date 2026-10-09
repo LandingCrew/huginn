@@ -126,3 +126,13 @@ than Python's `sre` on some nested quantifiers -- `.{0,40}.{0,40}.{0,40}z` on
 20k characters took 16 s against Python's 1.8 s before the budget, and
 `(a|b)*c` on 100k characters 270 s, which the budget now stops. No rule
 pattern has that shape; the whole LoreRim classification runs in seconds.
+
+The need vector (R3): `ResponseCurve.h` (the curve kinds), `NeedIds.h`
+(generated from `needs.csv` by `tools/needs/make_need_ids.py`),
+`NeedSnapshot.h` (the plain record of every reading a need is computed from)
+and `NeedSnapshotIO` (its text form), `NeedEvaluator` (the inputs of
+`needs.csv`'s `r3_input` column, the skip-gate signature, `TimeDriven`),
+`NeedSensorMath.h` and `DropAhead.h` (the sensors' arithmetic; the game side
+only reads forms and casts rays), `TargetFamilies.h` (the multi-hot family
+reading). Tests and the replayed fixtures: docs/testing/TESTING-INDEX.md
+section 0.

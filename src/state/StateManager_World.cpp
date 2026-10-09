@@ -235,6 +235,20 @@ namespace Huginn::State
       DetectWorkstationTarget(crosshairRef, newState);
       }
 
+      // R3 need sensors: open daylight (darkness, vampire sun exposure) and a
+      // merchant under the crosshair. Not in WorldState: that feeds scoring.
+      bool merchant = false;
+      if (crosshairRef) {
+      if (auto* actor = crosshairRef->As<RE::Actor>(); actor && !actor->IsDead() && !actor->IsHostileToActor(player)) {
+        merchant = actor->CanOfferServices();
+      }
+      }
+      const bool openDaylightNow = m_lastOpenDaylight;
+      UpdateNeedSensors([&](NeedSensorState& n) {
+      n.openDaylight = openDaylightNow;
+      n.merchant = merchant;
+      });
+
       // Stage 3b: Return change detection flag
       bool changed = UpdateStateIfChanged(m_worldMutex, m_worldState, newState);
 #ifdef _DEBUG

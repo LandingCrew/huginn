@@ -26,6 +26,7 @@ void RunSlotClassCapTest();        // Regular-key slot class cap (SlotClassCap.h
 void RunSlotClassCapHoldTest();    // the class cap through the slot hold
 void RunHomeKeyTest();             // home keys: a returner takes its key back
 void RunBuffElementResistTest();
+void RunNeedVectorTests();          // R3 (0.23.14): the need vector on the live game
 
 // =============================================================================
 // CONSOLE COMMANDS - Manual testing via Skyrim console (debug mode only)

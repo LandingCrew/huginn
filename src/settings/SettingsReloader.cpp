@@ -12,6 +12,7 @@
 #include "learning/LearningSettings.h"
 #include "learning/ExternalEquipLearner.h"
 #include "context/ContextWeightSettings.h"
+#include "needs/NeedSettings.h"
 #include "context/ContextWeightConfig.h"
 #include "override/OverrideConfig.h"
 #include "wheeler/WheelerSettings.h"
@@ -146,6 +147,10 @@ namespace Huginn::Settings
             // 3. Context weight settings
             State::ContextWeightSettings::GetSingleton().LoadFromIni(mainIni);
             logger::debug("[SettingsReloader]   [ContextWeights] reloaded"sv);
+
+            // 3b. Need curves (R3; the pipeline reads them every gathered tick)
+            Needs::NeedSettings::GetSingleton().LoadFromIni(mainIni);
+            logger::debug("[SettingsReloader]   [Needs] reloaded"sv);
 
             // 4. Override settings
             Override::Settings::GetSingleton().LoadFromIni(mainIni);
@@ -297,6 +302,7 @@ namespace Huginn::Settings
         Slot::SlotSettings::GetSingleton().ResetToDefaults();
         Scoring::ScorerSettings::GetSingleton().ResetToDefaults();
         State::ContextWeightSettings::GetSingleton().ResetToDefaults();
+        Needs::NeedSettings::GetSingleton().ResetToDefaults();
         Override::Settings::GetSingleton().ResetToDefaults();
         Learning::LearningSettings::GetSingleton().ResetToDefaults();
         logger::debug("[SettingsReloader]   [Learning] reset to defaults"sv);

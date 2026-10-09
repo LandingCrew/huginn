@@ -9,6 +9,8 @@
 #include "StateTypes.h"              // For HealthTrackingState
 #include "StateManagerConstants.h"
 #include "DamageEventSink.h"         // For instant damage classification (v0.6.8)
+#include "NeedSensorState.h"         // R3: readings only the need vector uses
+#include "core/DropAhead.h"
 #include <array>
 #include <atomic>
 #include <shared_mutex>
@@ -167,6 +169,10 @@ namespace Huginn::State
       // Get magicka tracking state (copy-out) (v0.6.9)
       [[nodiscard]] MagickaTrackingState GetMagickaTracking() const noexcept;
 
+      // R3: the need vector's own readings (copy-out). Nothing that scores
+      // reads them; see NeedSensorState.h.
+      [[nodiscard]] NeedSensorState GetNeedSensors() const noexcept;
+
       // =============================================================================
       // CONFIGURATION (Optional - defaults from StateManagerConstants.h)
       // =============================================================================
@@ -266,6 +272,12 @@ namespace Huginn::State
       // Updates: PlayerActorState position fields
       // Returns: true if state changed
       [[nodiscard]] bool PollPlayerPosition();
+      // R3: the position poll's need sensors (encumbrance ratio, submerged
+      // timer, and drop ahead's last reading from DropAheadProbe, which casts
+      // its rays on the main thread). They do not feed the poll's change flag:
+      // the need vector has its own cadence (needs/NeedMonitor.h) and must not
+      // move the pipeline's skip gates.
+      void PollNeedPosition(float encumbrance, bool underwater);
 
       // Target tracking polling (multi-target detection, vitals, distance)
       // Updates: TargetCollection (primary + targets map)
@@ -351,6 +363,7 @@ namespace Huginn::State
       HealthTrackingState m_healthTracking;
       StaminaTrackingState m_staminaTracking;   // v0.6.9
       MagickaTrackingState m_magickaTracking;   // v0.6.9
+      NeedSensorState m_needSensors;            // R3, under m_needMutex
 
       // =============================================================================
       // THREAD SYNCHRONIZATION (4 locks)
@@ -360,6 +373,7 @@ namespace Huginn::State
       mutable std::shared_mutex m_playerMutex;     // Protects PlayerActorState
       mutable std::shared_mutex m_targetsMutex;    // Protects TargetCollection
       mutable std::shared_mutex m_trackingMutex;   // Protects Health/Stamina/MagickaTrackingState
+      mutable std::shared_mutex m_needMutex;       // Protects NeedSensorState (R3)
 
       // =============================================================================
       // POLL TIMERS (11 float accumulators, one per poll)
@@ -539,6 +553,31 @@ namespace Huginn::State
 
       // Helper method to initialize survival mode globals cache
       void CacheSurvivalGlobals() noexcept;
+
+      // =============================================================================
+      // NEED SENSORS (R3) -- poll-thread state behind NeedSensorState
+      // =============================================================================
+      // Apply `fn` to m_needSensors under its lock. Nothing here reports a
+      // change to the poll: the need sensors never open a skip gate.
+      template <class Fn>
+      void UpdateNeedSensors(Fn&& fn)
+      {
+         std::unique_lock lock(m_needMutex);
+         fn(m_needSensors);
+      }
+
+      // The multi-hot family reading per actor, stamped with the race it was
+      // read under (a werewolf transforming re-reads). Cleared on load.
+      struct FamilyCacheEntry
+      {
+         RE::FormID raceID = 0;
+         std::uint32_t mask = 0;
+      };
+      std::unordered_map<RE::FormID, FamilyCacheEntry> m_familyCache;
+      [[nodiscard]] std::uint32_t GetCachedFamilies(RE::Actor* actor);
+
+      Core::Needs::SoleHostileTtk m_soleHostileTtk;   // PollTargets only
+      bool m_wasUnderwaterForTimer = false;   // PollPlayerPosition only
 
       // =============================================================================
       // RESOURCE TRACKING STATE (Persistent across polls)

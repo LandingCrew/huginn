@@ -170,6 +170,24 @@ namespace Huginn::State
       // Create and record damage event with accumulated amount
       newState.damageHistory.push_back(DamageEvent(gameTime, damageAmount, damageType));
       m_healthTracker.accumulated = 0.0f;
+
+      // R3: the same amount, by element, into the decaying sums the
+      // *_damage_rate needs read (tau 3 s, steady clock). Poison and disease
+      // have no rate need; Unknown counts as physical, as the history does.
+      {
+        const double nowSec = NeedClock::Now();
+        UpdateNeedSensors([&](NeedSensorState& n) {
+          switch (damageType) {
+            case DamageType::Fire:     n.dmgFire.Add(nowSec, damageAmount); break;
+            case DamageType::Frost:    n.dmgFrost.Add(nowSec, damageAmount); break;
+            case DamageType::Shock:    n.dmgShock.Add(nowSec, damageAmount); break;
+            case DamageType::Magic:    n.dmgMagic.Add(nowSec, damageAmount); break;
+            case DamageType::Physical:
+            case DamageType::Unknown:  n.dmgPhysical.Add(nowSec, damageAmount); break;
+            default: break;
+          }
+        });
+      }
       }
       else if (!queuedHitEvents.empty()) {
       // v0.12.x: Accumulated damage hasn't crossed threshold yet, but DamageEventSink

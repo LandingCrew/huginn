@@ -34,6 +34,11 @@
 #include "slot/SlotClassCap.h"
 #include "slot/SlotSettings.h"         // THROWAWAY: MAX_SLOTS_PER_PAGE for the same
 #include "override/OverrideConditions.h"  // THROWAWAY: OverrideCollection for the same
+#include "needs/NeedCapture.h"           // R3: RunNeedVectorTests
+#include "needs/NeedSettings.h"
+#include "needs/NeedSnapshotBuilder.h"
+#include "state/DropAheadProbe.h"
+#include "state/StateManager.h"
 
 #include <random>
 #include <algorithm>
@@ -7246,5 +7251,124 @@ void RunCosaveTests()
 
     logger::info("=== Cosave Serialization Tests PASSED ==="sv);
 
+#endif
+}
+
+// =============================================================================
+// R3: THE NEED VECTOR ON THE LIVE GAME (0.23.14)
+// =============================================================================
+// The math is host-tested (tests/core/Need*Tests.cpp); this checks the game
+// half: the sensors fill the snapshot, the drop-ahead rays reach the physics
+// world on the main thread and hit ground, and a hit lands in the damage sum.
+// Logs the live vector as `hg needs` prints it. The hurt step changes the
+// player's health, so it runs in test mode only (the run never saves); an
+// ordinary Debug session skips it and the suite reports SKIPPED.
+
+void RunNeedVectorTests()
+{
+#ifndef NDEBUG
+   using namespace Huginn::Core::Needs;
+   logger::info("Running need vector tests (R3)..."sv);
+   auto* player = RE::PlayerCharacter::GetSingleton();
+   if (!player || !player->Get3D()) {
+      logger::info("[NeedTest] no player 3D -- skipped"sv);
+      TestHarness::MarkSkipped("no player 3D"sv);
+      return;
+   }
+
+   bool ok = true;
+   auto fail = [&](std::string_view what) {
+      logger::error("TEST FAIL [NeedTest] {}"sv, what);
+      ok = false;
+   };
+   const auto curves = Needs::NeedSettings::GetSingleton().GetCurves();
+
+   // 1. The live vector: every value in [0, 1], every input a number.
+   auto live = Needs::ReadLiveNeeds();
+   Needs::Capture::Record(live.snapshot, "suite_start");
+   for (std::size_t i = 0; i < kNeedCount; ++i) {
+      if (!(live.vector.value[i] >= 0.0f && live.vector.value[i] <= 1.0f) || std::isnan(live.vector.input[i])) {
+         fail(fmt::format("{} = {} (input {})", kNeeds[i].id, live.vector.value[i], live.vector.input[i]));
+      }
+   }
+   logger::info("[NeedTest] live (as `hg needs`):"sv);
+   for (const auto& line : Needs::FormatNeeds(live.vector)) logger::info("[NeedTest]   {}"sv, line);
+
+   // 2. health_deficit is the curve of the player's own health.
+   {
+      const float health = live.snapshot.health;
+      const float want = Evaluate(curves[Index(NeedId::health_deficit)], 1.0f - health);
+      const float got = live.vector.value[Index(NeedId::health_deficit)];
+      if (std::abs(got - want) > 1e-6f) fail(fmt::format("health_deficit {} != curve(1 - {}) = {}", got, health, want));
+   }
+
+   // 3. Drop ahead: the rays are cast on the main thread from the
+   //    PlayerCharacter::Update hook, which starts once the load is done
+   //    (after these suites), so the suite only reports the probe's state; the
+   //    live readings are in the [DropAhead] lines and the captured snapshots.
+   {
+      const auto reading = State::DropAheadProbe::Latest();
+      logger::info("[NeedTest] drop ahead probe: {} (drop {:.0f})"sv,
+         State::DropAheadProbe::StatusName(reading.status), reading.drop);
+      // Evidence for the filter: which layers the LOS layer collides with.
+      if (auto* filter = RE::bhkCollisionFilter::GetSingleton()) {
+         const auto bits = filter->layerBitfields[static_cast<int>(RE::COL_LAYER::kLOS)];
+         auto has = [&](RE::COL_LAYER l) { return static_cast<int>((bits >> static_cast<int>(l)) & 1); };
+         logger::info("[NeedTest] LOS layer collides with: static {} terrain {} ground {} props {} trees {} | "
+                      "biped {} charController {} clutter {} water {}"sv,
+            has(RE::COL_LAYER::kStatic), has(RE::COL_LAYER::kTerrain), has(RE::COL_LAYER::kGround),
+            has(RE::COL_LAYER::kProps), has(RE::COL_LAYER::kTrees), has(RE::COL_LAYER::kBiped),
+            has(RE::COL_LAYER::kCharController), has(RE::COL_LAYER::kClutter), has(RE::COL_LAYER::kWater));
+      }
+   }
+
+   // 4. Encumbrance: the sensor reads weight / carry weight.
+   auto& sm = State::StateManager::GetSingleton();
+   {
+      sm.ForceUpdate();
+      const float carry = player->AsActorValueOwner()->GetActorValue(RE::ActorValue::kCarryWeight);
+      const float weight = player->GetWeightInContainer();
+      const float want = EncumbranceRatio(weight, carry);
+      const float got = sm.GetNeedSensors().encumbrance;
+      logger::info("[NeedTest] encumbrance {:.3f} (weight {:.1f} / carry {:.1f})"sv, got, weight, carry);
+      if (std::abs(got - want) > 1e-4f) fail(fmt::format("encumbrance {} != {}", got, want));
+   }
+
+   // 5. A hit: health down 30% lands in health_deficit and a damage sum,
+   //    which then decays on its own (TimeDriven).
+   if (!TestHarness::Active()) {
+      logger::info("[NeedTest] hurt step skipped outside test mode (it changes the player's health)"sv);
+      TestHarness::MarkSkipped("hurt step: test mode only"sv);
+   } else {
+      auto* av = player->AsActorValueOwner();
+      sm.ForceUpdate();  // a baseline for the health delta
+      const float maxHealth = std::max(av->GetPermanentActorValue(RE::ActorValue::kHealth), 1.0f);
+      const float beforeFrac = av->GetActorValue(RE::ActorValue::kHealth) / maxHealth;
+      const float dmg = 0.3f * maxHealth;
+      av->RestoreActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, RE::ActorValue::kHealth, -dmg);
+      sm.ForceUpdate();
+      const auto hurt = Needs::ReadLiveNeeds();
+      Needs::Capture::Record(hurt.snapshot, "suite_hurt");
+      av->RestoreActorValue(RE::ACTOR_VALUE_MODIFIER::kDamage, RE::ActorValue::kHealth, dmg);
+      sm.ForceUpdate();
+      const bool timeDriven = TimeDriven(hurt.snapshot, curves);
+      logger::info("[NeedTest] hurt {:.0f} -> health {:.2f}: dmgPhysical {:.1f} fire {:.1f} | health_deficit {:.3f} "
+                   "physical_damage_rate {:.3f} health_falling {:.3f} | time-driven {}"sv,
+         dmg, hurt.snapshot.health, hurt.snapshot.dmgPhysical, hurt.snapshot.dmgFire,
+         hurt.vector.value[Index(NeedId::health_deficit)], hurt.vector.value[Index(NeedId::physical_damage_rate)],
+         hurt.vector.value[Index(NeedId::health_falling)], timeDriven);
+      const float sum = hurt.snapshot.dmgPhysical + hurt.snapshot.dmgFire + hurt.snapshot.dmgFrost +
+                        hurt.snapshot.dmgShock + hurt.snapshot.dmgMagic;
+      if (!(sum > 0.5f * dmg)) fail(fmt::format("a {:.0f}-point hit put only {:.1f} in the damage sums", dmg, sum));
+      if (!(hurt.snapshot.health < beforeFrac - 0.2f)) fail("health did not drop in the snapshot");
+      if (!timeDriven) fail("a fresh damage sum should still be decaying (TimeDriven)");
+   }
+
+   // 6. Timers: an end without a start would be a bookkeeping slip.
+   if (!live.snapshot.inCombat && live.snapshot.combatEndAgo < kNever && live.snapshot.combatStartAgo >= kNever) {
+      fail("combat ended with no start recorded");
+   }
+
+   if (ok) logger::info("=== Need Vector Tests PASSED ==="sv);
 #endif
 }

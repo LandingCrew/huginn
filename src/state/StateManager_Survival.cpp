@@ -318,6 +318,22 @@ namespace Huginn::State
            newHungerLevel, newColdLevel, newFatigueLevel, newWarmthRating, m_smiInstalled);
 #endif
       }
+
+      // R3: the CC meters themselves (0-1000) for the hunger / cold / fatigue
+      // ramps, on the vanilla CC path only; SMI's meters are not plumbed, so
+      // there the needs read the stage / 5 (needs.csv). -1 = not read.
+      float hungerRaw = -1.0f, coldRaw = -1.0f, fatigueRaw = -1.0f;
+      if (newSurvivalModeActive && !m_smiInstalled) {
+        if (m_survivalHungerNeedValue) hungerRaw = m_survivalHungerNeedValue->value;
+        if (m_survivalColdNeedValue) coldRaw = m_survivalColdNeedValue->value;
+        if (m_survivalExhaustionNeedValue) fatigueRaw = m_survivalExhaustionNeedValue->value;
+      }
+      // Not part of `changed`: the need sensors never open a skip gate.
+      UpdateNeedSensors([&](NeedSensorState& n) {
+        n.hungerRaw = hungerRaw;
+        n.coldRaw = coldRaw;
+        n.fatigueRaw = fatigueRaw;
+      });
       return changed;
       }
    }
