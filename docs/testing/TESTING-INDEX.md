@@ -94,6 +94,7 @@ the checked-in fixtures byte for byte.
 | `NeedSensorTests.cpp` | drop-ahead geometry (points, direction, the 20 units/s threshold, cliff, slope, no hit, bridge over water, wading; unknown probes: uphill, a wall, stairs, a crowd); the probe sequence (`ProbeAll`) over a scripted world: the picks it casts, a cliff, a parapet blocked at the knee, an invisible wall, walkable slopes of 5-30 degrees, a crest then a cliff, a step up, stairs, a crowd; the teleport test, the decaying sum, the time-to-kill estimate; the drop reading's unpaused age (0.23.16); the bench kind by workbench keyword (0.23.16) |
 | `TargetFamiliesTests.cpp` | the multi-hot family reading on all 539 `race_map.csv` rows (family \| also) and named cases |
 | `NeedFixtureTests.cpp` | every snapshot in `tests/core/fixtures/needs/*.txt` gives the vector in its `.expected.csv` |
+| `ObviousPairsTests.cpp` | the obvious need x effect pairs (`effects.csv` `obvious_needs`, `needs.csv` `obvious_effects`): `cold` pairs with soups only (`survival_warmth`), never with Resist Frost, warm apparel or warming spells, and `warmth_deficit` never with Resist Frost (0.23.17); `diseased` never with Resist Disease (0.23.16); every pair names a need; doc 9's count (263) |
 
 The fixtures' expectations come from `tools/needs/expected_vectors.py`, an
 oracle written from `needs.csv`, `NeedSnapshot.h` and the curve formulas by an

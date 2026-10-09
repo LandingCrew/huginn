@@ -180,6 +180,9 @@ namespace Huginn::Display
             if (page == currentPage) {
                 pageAssignments = ctx.assignments;
             } else {
+                // A page the player is not viewing: allocated here, on the
+                // push, inside Display::Wheeler's time (Tracy, 2026-10-09).
+                Huginn_ZONE_NAMED("Wheeler::AllocateOtherPage");
                 pageAssignments = slotAllocator.AllocateSlotsForPage(
                     page, ctx.scoredCandidates, ctx.overrides, ctx.playerState, ctx.worldState);
             }
