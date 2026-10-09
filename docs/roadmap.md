@@ -145,7 +145,9 @@ and accept% and so ship as their own small PR.
       `ApparelClassifier` scope guard. Gear in combat is not a hard rule; the
       learner decides it. Armour menu picks are dropped today
       (`ExternalEquipListener.h:81-98`); lift the skip, though it shifts
-      accept% (decided by the user 2026-10-08).
+      accept% (decided by the user 2026-10-08). *(R4 lifted it for the
+      selection log v3 only; the learner and accept% take armour picks with
+      this item.)*
 - [x] `hg dump all` prints the catalog view and closes the eight dump gaps
       (doc 9, "Needs and effects, enumerated"). *(`effect/EffectDump`; gap 6
       reads the MGEF's VMAD from the winning plugin file, gap 7 is moot.)*
@@ -199,24 +201,53 @@ in. What was built: the [implementation map](architecture/9-implementation-map.m
 
 ### R4. Selection log v3
 
-Map Phase 3. Log everything the fit needs.
-- [ ] Compute the runtime cross-features per tick (`overshoot_*`,
+Map Phase 3. Log everything the fit needs. Built in 0.23.15
+(`r4-selection-log-v3`); schema:
+[architecture/9-selection-log-v3.md](architecture/9-selection-log-v3.md).
+Logging only: `Huginn_Selections_v3.jsonl` beside the unchanged v2 log.
+- [x] Compute the runtime cross-features per tick (`overshoot_*`,
       `weapon_charge`, `stack_count`, `ammo_matches_launcher`,
       `school_fortified`; `effect/CrossFeatures` from R2), for the candidates
-      the log holds. First reader: this selection log.
-- [ ] Per decision: the need vector, sparse cap per row, explicit outcome
+      the log holds. First reader: this selection log. *(Every update tick for
+      the eligible rows of the last pipeline run, `learning/SelectionLogV3`;
+      for the held rows when a context is taken.)*
+- [x] Per decision: the need vector, sparse cap per row, explicit outcome
       (key / wheel / menu / nothing), every eligible item (no floor), one row
-      per item, wildcard propensity.
-- [ ] "Nothing pressed": one record per need episode that expires with no
-      press, with the page at the onset (the user, 2026-10-08).
-- [ ] Menu choice set: the held items off the page.
-- [ ] Settle whether the update loop ticks inside menus. A menu pick is
-      dropped when the pipeline cache is older than `fExternalEquipTimeWindow`
-      (500 ms shipped, `ExternalEquipLearner.cpp:103`), which a long menu
-      session may trip.
-- [ ] `tools/replay` reads v3; the schema is documented.
-- Done when: replay parses a synthetic v3 file round-trip. **In game:** a
-  30-minute session whose log holds all four outcomes.
+      per item, wildcard propensity. *(Caps content-addressed and written
+      once per file segment; contexts shared by the picks of one menu visit
+      and by episodes that start together; propensity = P(slot rolled) ×
+      1/pool, recorded at the roll.)*
+- [x] "Nothing pressed": one record per need episode that expires with no
+      press, with the page at the onset (the user, 2026-10-08). *(Episode:
+      onset at 0.5, expiry below 0.25, at least 1 s, answered by a confirmed
+      selection pressed in [onset, expiry + 0.5 s], judged 4 s after the
+      expiry; frozen while the game is paused. `core/NeedEpisodes.h`.)*
+- [x] Menu choice set: the held items off the page. *(Every carried item and
+      known spell the catalog describes is a row (`held`), all armour
+      included; H \ A = held, not shown, not equipped.)*
+- [x] Armour menu picks reach the log (the user, 2026-10-08: lift the
+      `ExternalEquipListener` skip). *(To the v3 log only, `learned: 0`: the
+      frozen learner and accept% would change scores. Making all carried
+      armour candidates stays in R8.)*
+- [x] Settle whether the update loop ticks inside menus. *(It does: 57 ticks
+      in 5.9 s in the inventory menu, all with the game paused, and the
+      pipeline ran 4–5 times; the page cache was ~100 ms old at the close, so
+      the 500 ms `fExternalEquipTimeWindow` does not trip in an ordinary menu
+      visit. The v3 log never drops a pick for staleness: a stale pick is
+      written with `learned: 0, skip: "stale"`; menu picks join the context
+      taken when the menu opened, with its age.)*
+- [x] `tools/replay` reads v3; the schema is documented.
+- [x] Done when (agent): replay parses a synthetic v3 file round-trip
+  (`tests/core/DecisionLogTests.cpp` pins the encoder to
+  `tests/core/fixtures/decisions/synthetic_v3.jsonl`;
+  `tools/replay/test_replay_v3.py` decodes it and round-trips its own; CTest
+  `replay_v3_roundtrip`); an unattended session writes every outcome
+  (`run_tests.py --decision-session`: key 3, wheel 1, menu 2, nothing 4 on
+  vanilla+; the wheel pick runs Huginn's own Wheeler handler, not Wheeler's
+  UI); no score changes (`hg recs 40` identical to the base build, pipeline
+  11.69 allocations/s against 11.85).
+- [ ] **In game (you):** a 30-minute session whose log holds all four
+  outcomes. Checklist in the PR.
 
 ### R5. Data play (in game, you)
 

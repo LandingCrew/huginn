@@ -28,6 +28,14 @@ What is replayed, and what is not:
 Usage:
     python tools/replay/replay.py [path/to/Huginn_Selections.jsonl]
         [--char 3F3E2A8817962D59] [--from-launch 20261003-013602]
+
+Selection log v3 (R4, Huginn_Selections_v3.jsonl; schema in
+docs/architecture/9-selection-log-v3.md): `iter_v3(paths)` / `load_v3(paths)`
+decode it -- every decision with its context, the need vector by name, every
+row with cap(i) by column name and the cross-features -- and
+    python -I tools/replay/replay.py --v3 [FILE ...]
+prints counts, sizes and the old ranking's hit rate on it. The R6 fit reads
+v3; the policies above stay on the v2 log (R5's cheap test).
 """
 
 from __future__ import annotations
