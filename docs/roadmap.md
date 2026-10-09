@@ -154,6 +154,14 @@ them.
       submerged timers on `steady_clock`, the held multi-hot target families
       (union of combat hostiles; no line-of-sight logic, the user 2026-10-08),
       target summoned / casting / archer, restore pending, drop ahead.
+- [ ] Drop ahead (the user, 2026-10-08): a Havok ray cast straight down from
+      2–3 points ahead of the player (`bhkWorld::PickObject`), not a guessed
+      floor and not the terrain heightmap, which sees through rock meshes.
+      Method in `9-data/needs.csv` (`drop_ahead`). Costs a few rays per
+      position poll; works in interiors (ruins) too. Check the physics-world
+      read lock and the main thread. **In game (you):** stand at cliff edges,
+      on rock spires and bridges, and above deep water; `hg needs` shows
+      `drop_ahead` high only at a real drop.
 - [ ] Computed once in `GatherState`; a quantised need signature joins the
       skip gate.
 - [ ] `hg needs` prints the live vector.
@@ -306,7 +314,7 @@ after R8.
 | Items matched to the enemy (silver, bane, sun, resist for a dragon's element, poisons by target) | Target families × effects | R3 |
 | A summon when pressed in melee | Enemy-distance (gaussian) need | R3 |
 | Damage over time on a boss | `boss_fight` need | Missing |
-| Feather Fall before the jump | `drop_ahead` need (replaces "estimated altitude") | R3 |
+| Feather Fall before the jump | `drop_ahead` need: a downward ray cast ahead (replaces "estimated altitude") | R3 |
 | Soul Gem Fragment (LoreRim MISC item) | Find how LoreRim uses it first | Open |
 
 ## Kept outside the rewrite
