@@ -172,6 +172,63 @@ TEST_CASE("slot golden: old and new arithmetic give identical pages on every rec
     CHECK(acc.withDisagreement == 0);
 }
 
+TEST_CASE("slot golden: the full sort -- what it changes against the old top-10 order (characterised)")
+{
+    // Not an identity: the point of the full sort is to change these pages.
+    // The old scorer sorted only the top 10 (partial_sort) and the slot code
+    // takes the first match in list order, so a job key (or an uncapped
+    // Regular key) reaching past the prefix took whichever match came first
+    // in the unsorted tail. Re-sorting each recorded play list (rank order:
+    // utility, then DPS; remembered-only rows stay last) shows how often that
+    // happened. Wildcard lists are left out: a wildcard's position is set
+    // after the sort and cannot be re-derived from the snapshot.
+    std::string error;
+    const auto files = LoadSlotFixtures(&error);
+    REQUIRE(error.empty());
+    std::size_t considered = 0, alreadySorted = 0, differing = 0, reachedTail = 0, withWildcard = 0;
+    for (const auto& f : files) {
+        if (!EndsWith(f.name, "-old.txt")) continue;
+        for (const auto& snap : f.snaps) {
+            if (snap.tag != "tick") continue;
+            const auto& in = snap.in;
+            if (std::any_of(in.candidates.begin(), in.candidates.end(), [](const SA::CandidateRec& c) { return c.isWildcard; })) {
+                ++withWildcard;
+                continue;
+            }
+            ++considered;
+            SA::Input sorted = in;
+            std::stable_partition(sorted.candidates.begin(), sorted.candidates.end(),
+                [](const SA::CandidateRec& c) { return !c.isRememberedOnly; });
+            const auto ranked = std::find_if(sorted.candidates.begin(), sorted.candidates.end(),
+                [](const SA::CandidateRec& c) { return c.isRememberedOnly; });
+            std::stable_sort(sorted.candidates.begin(), ranked, [](const SA::CandidateRec& a, const SA::CandidateRec& b) {
+                if (a.utility != b.utility) return a.utility > b.utility;
+                return a.tieBreak > b.tieBreak;
+            });
+            const bool same = std::equal(in.candidates.begin(), in.candidates.end(), sorted.candidates.begin(),
+                [](const SA::CandidateRec& a, const SA::CandidateRec& b) { return a.dedupKey == b.dedupKey && a.name == b.name; });
+            const auto recorded = Allocate(in);
+            const auto full = Allocate(sorted);
+            if (same) {
+                ++alreadySorted;
+                CHECK(DiffOutputs(in, recorded, full).empty());
+                continue;
+            }
+            if (SA::PageOf(in, recorded) != SA::PageOf(sorted, full)) {
+                ++differing;
+                bool tail = false;
+                for (const auto& s : recorded.slots) {
+                    tail = tail || ((s.kind == SA::Kind::Normal || s.kind == SA::Kind::Wildcard) && s.src >= 10);
+                }
+                reachedTail += tail ? 1 : 0;
+            }
+        }
+    }
+    MESSAGE("full sort on recorded play lists: ", considered, " considered (", withWildcard, " with a wildcard left out), ",
+        alreadySorted, " already in full order (identical, checked), ", differing,
+        " pages change; of those, the old page took an item from past the sorted top 10 in ", reachedTail);
+}
+
 TEST_CASE("slot golden: old and new arithmetic agree on synthetic snapshots (shipped settings)")
 {
     // Sequences of passes on one layout, the seating memory carried from pass

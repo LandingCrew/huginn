@@ -259,7 +259,7 @@ namespace Huginn::Slot
         mutable std::array<std::array<OverrideLogEntry, Override::OVERRIDE_CONDITION_COUNT>, MAX_PAGES>
             m_overrideLogs{};
 
-        // What the class cap kept off each page last pass (SlotClassCap::Summary),
+        // What the class cap kept off each page last pass (its [SlotClassCap] line),
         // so [SlotClassCap] logs when that changes, not every pass. m_logMutex.
         mutable std::array<std::string, MAX_PAGES> m_classCapLog{};
 
@@ -356,101 +356,21 @@ namespace Huginn::Slot
         /// swaps out, are the only ones that release a lock early.
         mutable std::array<std::array<uint64_t, MAX_SLOTS_PER_PAGE>, MAX_PAGES> m_homeClaims{};
 
-        /// One page's seating memory as the slot core's record. Caller holds
-        /// m_seatingMutex.
+        /// One page's seating memory as the slot core's record, and back.
+        /// Caller holds m_seatingMutex.
         [[nodiscard]] Core::SlotAlloc::PageMemory MemoryOfLocked(size_t pageIndex) const;
+        void SetMemoryLocked(size_t pageIndex, const Core::SlotAlloc::PageMemory& memory) const;
 
-        /// Before the rank-ordered fill: keep each seated item in its own seat,
-        /// unless the slot no longer accepts it or the best challenger FOR THAT
-        /// SLOT beats it by `margin` (0.25 = 25%).
-        ///
-        /// Two problems, one pass. Near-tied items were trading slots every
-        /// time a lock expired -- most slot changes in play were under 10%
-        /// better. And the fill runs in slot-priority order, so a
-        /// high-priority slot could take an item out of its seat further down
-        /// (a WeaponsAny slot pulling the bow out of slot 5 whenever the axe in
-        /// slot 1 left), which seating could not undo. Held items go into the
-        /// assigned sets, so the fill never sees them.
-        /// The slot on this page that shows the item with `key`: its seat, or
-        /// failing that where it stood last pass. SIZE_MAX if none (or seating
-        /// is off, or the layout generation moved on).
-        [[nodiscard]] size_t FindItemSlot(
-            size_t pageIndex, uint32_t generation, uint64_t key, size_t slotCount) const;
-
-        void HoldIncumbents(
+        /// The game's side of an allocation's events: override placement logs
+        /// (deduped per page and condition), the Remembrance notes, the
+        /// [Hold], [HomeKey] and pull lines, and the home-key telemetry.
+        void ReportEvents(
             size_t pageIndex,
-            uint32_t generation,
             const std::vector<SlotConfig>& slotConfigs,
             const Scoring::ScoredCandidateList& candidates,
-            SlotAssignments& assignments,
-            std::set<RE::FormID>& assignedFormIDs,
-            std::set<std::string_view>& assignedNames,
-            const State::PlayerActorState* player,
-            float margin,
-            const std::array<size_t, MAX_SLOTS_PER_PAGE>& priorityOrder,
-            size_t priorityCount,
-            SlotClassCap& classCap) const;
-
-        /// Put items back in the slots they were in last pass, where the layout
-        /// still allows it.
-        ///
-        /// Runs AFTER the rank-ordered fill, so it never changes WHICH items are
-        /// shown -- only where they sit. Overrides are pinned (they were placed
-        /// in a slot chosen for them, and their subtext says so). It can leave a
-        /// slot empty, by moving its occupant back to the seat it wants; the
-        /// caller refills those from the remaining candidates before recording,
-        /// so seating never opens a hole in the middle of the widget.
-        void ApplySeating(
-            size_t pageIndex,
-            uint32_t generation,
-            const std::vector<SlotConfig>& slotConfigs,
-            SlotAssignments& assignments,
-            const State::PlayerActorState* player,
-            std::chrono::steady_clock::time_point now) const;
-
-        /// Remember where everything ended up, for the next allocation of this
-        /// page. Called after the refill, so an item that has just arrived gets
-        /// a seat of its own straight away.
-        ///
-        /// The rule is: you keep your seat for as long as you are on screen, and
-        /// you only get a new one if you do not have one. Recording where things
-        /// ENDED UP instead would turn every reason an item could not reach its
-        /// seat into a permanent move -- an override pins a slot for a second,
-        /// and the item that lives there is rehomed for the rest of the session.
-        /// That applies just as much to the item displaced by the displaced one,
-        /// which no override ever touched.
-        void RecordSeating(
-            size_t pageIndex,
-            uint32_t generation,
-            const SlotAssignments& assignments,
-            std::chrono::steady_clock::time_point now) const;
-
-        /// Whether `assignment` may sit in slot `slotIndex` of this layout:
-        /// the same classification, wildcard and skip-equipped rules
-        /// FindBestCandidate applies when it picks one in the first place.
-        [[nodiscard]] static bool SlotAccepts(
-            const SlotConfig& config,
-            const SlotAssignment& assignment,
-            const State::PlayerActorState* player);
-
-        /// Compute priority order from configs into a caller-provided buffer
-        /// (no heap allocation). Returns the number of valid entries written.
-        [[nodiscard]] size_t ComputePriorityOrder(
-            const std::vector<SlotConfig>& configs,
-            std::array<size_t, MAX_SLOTS_PER_PAGE>& outOrder) const;
-
-        /// Helper: Try to find the best candidate for a slot. With an active
-        /// `classCap` and a Regular slot, "best" is the highest utility after
-        /// the cap's factor (SlotClassCap.h); otherwise the first match in rank order.
-        [[nodiscard]] std::optional<Scoring::ScoredCandidate> FindBestCandidate(
-            const Scoring::ScoredCandidateList& candidates,
-            SlotClassification classification,
-            const std::set<RE::FormID>& assignedFormIDs,
-            const std::set<std::string_view>& assignedNames,
-            bool skipEquipped = false,
-            const State::PlayerActorState* player = nullptr,
-            bool skipWildcards = false,
-            SlotClassCap* classCap = nullptr) const;
+            const Override::OverrideCollection& overrides,
+            const std::vector<size_t>& overrideIndex,
+            const std::vector<Core::SlotAlloc::Event>& events) const;
     };
 
 }  // namespace Huginn::Slot

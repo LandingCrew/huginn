@@ -146,7 +146,7 @@ namespace Huginn::Slot
         /// @param newAssignments Fresh assignments from SlotAllocator
         /// @param overrides Active overrides (for priority-based lock breaking)
         /// @param scored This run's full scored list, used only for churn
-        ///   telemetry: the utility of an item a slot just dropped, which the
+        ///   telemetry: the score of an item a slot just dropped, which the
         ///   assignments no longer carry. Empty = no challenger ratios.
         /// @return Stable assignments with locks applied
         [[nodiscard]] SlotAssignments ApplyLocks(

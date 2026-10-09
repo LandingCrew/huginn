@@ -41,14 +41,9 @@ namespace Huginn::Telemetry
         static_assert(ClassifySlotChange(false, false, false, true, false, Expired, true) == Override);
         static_assert(ClassifySlotChange(true, false, false, false, false, Unheld, true) == Fill);
 
-        // Bucket edges are half-open: exactly 10% better is NOT "<1.1".
-        static_assert(BucketChallengerRatio(1.0f, -1.0f) == ChallengerRatio::Gone);
-        static_assert(BucketChallengerRatio(1.0f, 0.0f) == ChallengerRatio::Above150);
-        static_assert(BucketChallengerRatio(0.9f, 1.0f) == ChallengerRatio::Below1);
-        static_assert(BucketChallengerRatio(1.0f, 1.0f) == ChallengerRatio::Below110);
-        static_assert(BucketChallengerRatio(1.2f, 1.0f) == ChallengerRatio::Below125);
-        static_assert(BucketChallengerRatio(1.25f, 1.0f) == ChallengerRatio::Below150);
-        static_assert(BucketChallengerRatio(1.5f, 1.0f) == ChallengerRatio::Above150);
+        // BucketChallengerRatio works on scores now (std::log is not
+        // constexpr); its edges are checked on the host, against the old
+        // utility buckets (tests/core/SlotScoreMathTests.cpp).
     }
 
     SoakMetrics& SoakMetrics::GetSingleton()

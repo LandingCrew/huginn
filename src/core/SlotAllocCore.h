@@ -37,8 +37,8 @@
 // The structure is a line-by-line port of SlotAllocator 0.23.9: the same
 // passes in the same order, the same std::sort/std::stable_sort calls on the
 // same inputs (their tie orders are part of the behaviour), the same dedup
-// sets. Comments that explain WHY a rule exists stay in SlotAllocator.cpp and
-// docs/architecture/5-slots.md; the ones here say what maps to what.
+// sets. The comments that say WHY a rule exists, and which play-test made it,
+// moved here with the code (more in docs/architecture/5-slots.md).
 //
 // A Policy provides:
 //   using Score, Cap;
@@ -418,7 +418,19 @@ namespace Huginn::Core::SlotAlloc
 
             std::size_t ComputePriorityOrder() { return PriorityOrder(m_in.slots, m_order); }
 
-            /// SlotAllocator::FindBestCandidate. `cap` null = no class cap.
+            /// SlotAllocator::FindBestCandidate (0.23.9): the best candidate for
+            /// a slot. With the class cap on and a Regular slot, "best" is the
+            /// highest score after the cap's term; otherwise the first match
+            /// in list order -- the scorer's rank order, which is why the
+            /// scorer sorts the WHOLE list since R7 (past a top-10 prefix the
+            /// first match was not the best one).
+            ///
+            /// Checks, in order: wildcards when the slot refuses them; rows
+            /// only a Remembrance hold may place; anything already shown, by
+            /// formID and by NAME (two enchanted copies with different formIDs
+            /// and one name); the slot's class; and, under skipEquipped, both
+            /// the candidate's own isEquipped (registry scan) and the player
+            /// state's 100 ms equipment poll, to cover the gap between the two.
             [[nodiscard]] std::optional<std::uint32_t> FindBest(const SlotRec& slot,
                 const std::set<std::uint32_t>& ids, const std::set<std::string_view>& names,
                 bool skipEquipped, bool skipWildcards, bool useCap)
@@ -439,6 +451,12 @@ namespace Huginn::Core::SlotAlloc
                     if (!capped) {
                         return i;
                     }
+                    // Under the class cap: the first match wins outright
+                    // unless its class is already full on the page; then
+                    // every later match is weighed with its own cap term, to
+                    // the end of the list. A wildcard keeps its POSITION
+                    // semantics (see HoldIncumbents): it wins only as the
+                    // first match, and is never weighed against capped items.
                     if (best == kNone) {
                         const Cap cap = CapOf(c.capClass);
                         if (c.isWildcard || !m_p.IsCapped(cap)) {
@@ -464,7 +482,10 @@ namespace Huginn::Core::SlotAlloc
                 return best;
             }
 
-            /// SlotAllocator::FindItemSlot.
+            /// SlotAllocator::FindItemSlot: the slot on this page that shows the
+            /// item with `key` -- its seat, or failing that where it stood last
+            /// pass. npos if none (or seating is off, or the layout generation
+            /// moved on).
             [[nodiscard]] std::size_t FindItemSlot(std::uint64_t key, std::size_t slotCount) const
             {
                 if (key == 0 || !m_in.memoryAvailable || !m_in.settings.keepSlotPositions) return npos;
@@ -543,19 +564,35 @@ namespace Huginn::Core::SlotAlloc
             Fill(priorityCount, /*refill=*/false);
 
             if (!set.keepSlotPositions && set.fillJobKeysFromRegular) {
+                // Without seating there is no pass 4, so refill the Regular key
+                // the pull just emptied here, or it stays blank (/code-review #151).
                 PullIntoEmptyJobKeys(priorityCount);
                 Recount();
                 Fill(priorityCount, /*refill=*/true);
             }
 
-            // PASS 3-5: seating, the optional pull, the refill, the record.
+            // PASS 3: seat returning items where they were (anti-juggling).
+            // Passes 1 and 2 decided WHICH items the player sees; this decides
+            // WHERE. Without it, one item arriving or leaving shifts every
+            // item below it by a slot -- the recommendations stay right and
+            // every key under the player's fingers changes meaning.
             if (set.keepSlotPositions) {
                 ApplySeating();
+                // Optional: a key with a job that would be blank takes a
+                // matching item off a Regular key. After seating, so seating
+                // does not undo it; before the refill, which fills the
+                // Regular key.
                 if (set.fillJobKeysFromRegular) {
                     PullIntoEmptyJobKeys(priorityCount);
                 }
+                // PASS 4: refill what pass 3 vacated. An item moving back to
+                // its own seat can leave the slot it was sitting in empty, and
+                // a gap in the middle of the widget is a worse trade than the
+                // shuffle seating exists to prevent. The dedup sets are still
+                // pass 2's, so this cannot re-place an item already shown.
                 Recount();
                 Fill(priorityCount, /*refill=*/true);
+                // PASS 5: remember the result for next time.
                 RecordSeating();
             }
 
@@ -573,8 +610,20 @@ namespace Huginn::Core::SlotAlloc
                 const auto& ov = ovs[o];
                 if (m_ids.contains(ov.formID)) continue;
 
-                // Already on this page: mark that slot (unless a vital pinned
-                // to its configured slot).
+                // If the item is ALREADY on this page, the override marks that
+                // slot -- label and pulse on the key the player already knows
+                // -- instead of putting a second copy in its configured slot.
+                // The copy was the worst churn left: dedup bounced the potion
+                // between the two slots four times a second, and the item the
+                // configured slot held was pushed out and evicted another
+                // (2026-09-27 19:03:07, 19:08:56).
+                //
+                // Except the VITALS, which by default keep their configured
+                // slots: in an emergency the key is muscle memory (health
+                // 2026-09-27, the user's call; magicka and stamina when the
+                // flagship page gave every key a job, 2026-09-28). [Overrides]
+                // bPin{Health,Magicka,Stamina}ToSlot. The quieter prompts --
+                // ammo, soul gem, drowning -- always mark in place.
                 if (const std::size_t home = ov.pinnedToSlot ? npos
                             : FindItemSlot(ov.dedupKey, std::min(slots.size(), kMaxSlots));
                     home != npos && m_state[home].IsEmpty()) {
@@ -625,6 +674,15 @@ namespace Huginn::Core::SlotAlloc
             }
         }
 
+        // PASS 1a: Remembrance -- what pressing a slot took off, held there.
+        // A rule, not a ranking: it takes the slot the player pressed whatever
+        // that slot's classification or skipEquipped says, and only an
+        // override (placed above) outranks it. sRemembranceTarget = Job sends
+        // an item that does not fit the pressed key to the first empty
+        // swap-back key whose class fits it (a dagger taken off by the
+        // attack-magic key goes to the Weapon key). Two sweeps, so a routed
+        // item cannot take a key another hold was pressed on: the ones
+        // staying put are placed first.
         template <class Policy>
         void Engine<Policy>::PassRemembrance(std::size_t priorityCount)
         {
@@ -662,6 +720,9 @@ namespace Huginn::Core::SlotAlloc
                             const std::size_t t = m_order[k];
                             if (t >= n || t == j || !slots[t].remembrance) continue;
                             if (slots[t].regular) continue;
+                            // Another hold was pressed there, and that key is
+                            // its fallback: taking it could leave that item
+                            // nowhere (/code-review #151).
                             if (held[t].active) continue;
                             if (!m_state[t].IsEmpty() || !fits(t)) continue;
                             target = t;
@@ -681,6 +742,18 @@ namespace Huginn::Core::SlotAlloc
             }
         }
 
+        // PASS 1c: the slot hold. Before the rank-ordered fill, keep each
+        // seated item in its own seat unless the slot no longer accepts it or
+        // the best challenger FOR THAT SLOT beats it by the margin: score
+        // difference > ln m (m = 1 + fChallengerMargin; the old u_c > m u_i).
+        //
+        // Two problems, one pass. Near-tied items were trading slots every
+        // time a lock expired -- most slot changes in play were under 10%
+        // better. And the fill runs in slot-priority order, so a high-priority
+        // slot could take an item out of its seat further down (a WeaponsAny
+        // slot pulling the bow out of slot 5 whenever the axe in slot 1 left),
+        // which seating could not undo. Held items go into the assigned sets,
+        // so the fill never sees them.
         template <class Policy>
         void Engine<Policy>::HoldIncumbents(std::size_t priorityCount)
         {
@@ -699,7 +772,13 @@ namespace Huginn::Core::SlotAlloc
             std::set<std::uint32_t> excludedIDs = m_ids;
             std::set<std::string_view> excludedNames = m_names;
 
-            // Phase A: seat owners still candidates, still allowed in their seat.
+            // Phase A: which seat owners are still candidates, and still
+            // allowed in their seat? An item the slot has given up -- now
+            // equipped under skip-equipped, a wildcard in a slot that refuses
+            // them -- is not held, however well it scores: holding it would
+            // keep something the slot itself just rejected. Priority order,
+            // the order the fill uses: when two held slots want the same
+            // challenger, the one the fill would have served first gets it.
             for (std::size_t k = 0; k < priorityCount; ++k) {
                 const std::size_t j = m_order[k];
                 if (j >= slotCount) continue;
@@ -717,7 +796,13 @@ namespace Huginn::Core::SlotAlloc
                 excludedNames.insert(cands[owner].name);
             }
 
-            // Owners whose seat a pinned item is sitting in stay out of the challengers.
+            // Owners whose seat an override (or a remembered item) is sitting
+            // in stay out of the challengers. Free to challenge, the Iron
+            // Dagger an override pushed out of slot 1 beat Sparks in slot 4,
+            // Sparks landed in slot 3, and it all ran backwards when the
+            // override ended -- one override, six slot changes (2026-09-27
+            // 19:08:30-37). It is still held where it stands (the guests
+            // below), and goes home when the override ends.
             std::set<std::uint32_t> displacedOwners;
             for (std::size_t j = 0; j < slotCount; ++j) {
                 if (!m_state[j].IsPinned() || seats[j] == 0) continue;
@@ -732,7 +817,16 @@ namespace Huginn::Core::SlotAlloc
                 }
             }
 
-            // Guests: held where they stand.
+            // Guests: an item standing in a slot that is not its seat, because
+            // an override occupies the seat. Without this it was a free
+            // challenger every pass -- the mace whose seat the health potion
+            // held beat Wine in slot 5, then the sword in slot 1, then Wine
+            // again, for half a minute (2026-09-26 14:28:49-14:29:20). Held
+            // where it stands, under the same test, until the override ends
+            // and seating takes it home. The displaced owners above are these
+            // items, and are in the excluded sets: a guest is judged against
+            // what is SHOWN, not against the exclusion (Raw Crab Meat waiting
+            // for an override on its home key, LoreRim 2026-10-06 21:07:58).
             for (std::size_t k = 0; k < priorityCount; ++k) {
                 const std::size_t j = m_order[k];
                 if (j >= slotCount || !m_state[j].IsEmpty() || placed[j] == 0) continue;
@@ -766,7 +860,14 @@ namespace Huginn::Core::SlotAlloc
             std::sort(tentative.begin(), tentative.begin() + static_cast<std::ptrdiff_t>(tentativeCount),
                 [&rank](const Tentative& a, const Tentative& b) { return rank[a.slot] < rank[b.slot]; });
 
-            // The class cap over the holders together, by score.
+            // The class cap over the holders TOGETHER, by score, before any is
+            // judged. Counted slot by slot instead, a challenger for an early
+            // slot could not see the holders of its class further down: the
+            // axe took slot 0 while the sword and mace still held slots 1 and
+            // 4, and the page showed four weapons (vanilla, 2026-10-06
+            // 17:13:24). Each holder's cap is its rank in its class; a holder
+            // being judged is taken out of the count, so a challenger of the
+            // same class is weighed as it would be.
             std::array<Cap, kMaxSlots> holderCap{};
             holderCap.fill(m_p.NoCap());
             {
@@ -785,18 +886,35 @@ namespace Huginn::Core::SlotAlloc
                 }
             }
 
-            // Phase B: each holder against the best challenger for its slot.
+            // Phase B: each holder against the best challenger for its own
+            // slot. Challengers exclude every other holder and every
+            // challenger already given a slot this pass. A winner is placed
+            // on the spot and reserved: leaving the placement to the fill let
+            // two held slots lose to the SAME challenger (2026-09-26 14:04:35,
+            // slots 3 and 6 both yielding to one Resist Cold). And the loser
+            // gives up its seat, or "you keep your seat while you are on
+            // screen" hands it straight back and the release repeats every run.
             for (std::size_t t = 0; t < tentativeCount; ++t) {
                 const auto [j, item] = tentative[t];
                 const auto& config = slots[j];
                 const auto& it = cands[item];
 
+                // A wildcard is not challenged on score: WildcardManager
+                // swaps it into a rank POSITION and leaves its own low score,
+                // so a score comparison always finds it beaten and it was
+                // released and re-placed elsewhere every pass (2026-09-27
+                // 19:02:40-46). It stays until WildcardManager ends it or the
+                // slot stops accepting it (Phase A).
                 if (it.isWildcard) {
                     Place(j, Kind::Wildcard, item);
                     Assign(it.formID, it.name);
                     continue;
                 }
 
+                // On a Regular key both sides are weighed after the class cap:
+                // a holder past its class's free count holds at its capped
+                // score, or a crowd that formed before the cap applied would
+                // be held there for good.
                 m_cap.Remove(it.capClass);
                 const std::size_t skipMark = m_cap.skipped.size();
                 const auto challenger = FindBest(config, excludedIDs, excludedNames, config.skipEquipped,
@@ -824,6 +942,11 @@ namespace Huginn::Core::SlotAlloc
                         excludedIDs.insert(ch.formID);
                         excludedNames.insert(ch.name);
 
+                        // The loser is free again -- the fill may show it
+                        // elsewhere -- but not as this seat's owner. A guest's
+                        // seat is somewhere else and not its to give up. An
+                        // owner an override displaced stays out of the
+                        // challengers even so (code review of #179).
                         if (!displacedOwners.contains(it.formID)) {
                             excludedIDs.erase(it.formID);
                             excludedNames.erase(it.name);
@@ -837,12 +960,17 @@ namespace Huginn::Core::SlotAlloc
                 }
 
                 Place(j, it.isWildcard ? Kind::Wildcard : Kind::Normal, item);
+                // A home claimant arriving at its key from where it waited:
+                // the lock still showing it there may let go (SlotLocker).
                 {
                     const std::uint64_t key = it.dedupKey;
                     m_state[j].seatMoved = claims[j] == key && placed[j] != key;
                 }
                 Assign(it.formID, it.name);
-                m_cap.Add(it.capClass);
+                m_cap.Add(it.capClass);   // back in the count it left to be judged
+                // The search was hypothetical: an item it passed for the cap
+                // was kept off by the cap only if, uncapped, it would have
+                // taken the slot from this holder.
                 DropSkipsSince(skipMark, itemScore);
             }
         }
@@ -874,6 +1002,9 @@ namespace Huginn::Core::SlotAlloc
                     continue;
                 }
                 Kind kind = m_in.candidates[*best].isWildcard ? Kind::Wildcard : Kind::Normal;
+                // A slot that forbids wildcards re-runs the search without
+                // them (still honouring skipEquipped), and stays empty when
+                // nothing else fits: a wildcard is never left in such a slot.
                 if (kind == Kind::Wildcard && !config.wildcardsEnabled) {
                     best = FindBest(config, m_ids, m_names, config.skipEquipped, /*skipWildcards=*/true, /*useCap=*/true);
                     kind = Kind::Normal;
@@ -887,6 +1018,13 @@ namespace Huginn::Core::SlotAlloc
             }
         }
 
+        // Put items back in the slots they were in last pass, where the layout
+        // still allows it. Runs AFTER the rank-ordered fill, so it never
+        // changes WHICH items are shown -- only where they sit. Overrides and
+        // Remembrance holds are pinned (placed by a rule for that slot). It can
+        // leave a slot empty, by moving its occupant back to the seat it
+        // wants; pass 4 refills those, so seating never opens a hole in the
+        // middle of the widget.
         template <class Policy>
         void Engine<Policy>::ApplySeating()
         {
@@ -906,6 +1044,9 @@ namespace Huginn::Core::SlotAlloc
             const auto departed = m_out.memory.departed;
             auto claims = m_out.memory.homeClaims;
 
+            // Which slot does this item want? At most one seat per key and one
+            // key per seat, so no two items can want the same slot -- the
+            // mapping is injective by construction, and nothing arbitrates.
             auto seatWantedBy = [&](std::uint64_t key) -> std::size_t {
                 if (key == 0) return npos;
                 for (std::size_t j = 0; j < slotCount; ++j) {
@@ -913,7 +1054,12 @@ namespace Huginn::Core::SlotAlloc
                 }
                 return npos;
             };
+            // An override sits where the override pass put it, a remembered
+            // item under the key the player pressed: nothing moves them, and
+            // nothing moves into them.
             auto movable = [&](std::size_t idx) { return !m_state[idx].IsPinned(); };
+            // Only a home claimant's move is marked (code review of #179):
+            // every other seating move waits out the lock on its old slot.
             auto moveTo = [&](std::size_t from, std::size_t to) {
                 const bool claimant = claims[to] != 0 && claims[to] == KeyOf(m_state[from]);
                 m_state[to] = m_state[from];
@@ -921,7 +1067,31 @@ namespace Huginn::Core::SlotAlloc
                 m_state[from] = SlotState{};
             };
 
-            // Phase 0: home keys.
+            // Phase 0: home keys. A seat is freed the moment its owner leaves
+            // the screen, so an item that drops off for a few seconds came
+            // back to whatever key was open: 1,073 of 1,365 returns within ten
+            // minutes landed on a different key (21 logs, 2026-09-30 to
+            // 10-06), most of them within a minute.
+            //
+            // A RETURNER is on screen with no seat and left a slot of this
+            // page within fHomeKeyMemorySec. It takes that slot's seat back
+            // from the item that filled the gap (the user's rule, 2026-10-06:
+            // whoever arrived after the returner left only filled the gap),
+            // and the phases below move it there -- into the slot if empty,
+            // else by the phase-2 swap. Only where the move can happen: the
+            // home slot takes the returner and its occupant fits the
+            // returner's slot; otherwise the returner keeps the key it landed
+            // on, which becomes its home -- a recommendation is never hidden
+            // to wait for a key. Two returners for one slot: the later leaver
+            // wins.
+            //
+            // Blocked only by an override or a Remembrance hold, the returner
+            // gets the right of first refusal (the user, 2026-10-06): it
+            // claims the seat and waits, shown where it landed; the slot hold
+            // seats it when the slot frees. 17 of 22 misses on LoreRim's first
+            // run were this case. Not when the pinned item IS that slot's seat
+            // owner -- an override marking its own seat (code review of #179):
+            // taking the seat would make the override jump mid-emergency.
             struct Returner
             {
                 std::uint64_t key;
@@ -993,7 +1163,12 @@ namespace Huginn::Core::SlotAlloc
                 }
             }
             if (returnerCount > 0) {
-                // m_out.generationMatches is true here.
+                // Written back now, not left to RecordSeating: that keeps "you
+                // keep your seat while on screen", and the gap-filler -- still
+                // on screen -- would otherwise keep the seat it just lost.
+                // Every returner's departure is spent, whatever the outcome
+                // (code review of #179): one kept would make the item a
+                // returner again on every pass while it stays seatless.
                 if (seatsReclaimed) {
                     m_out.memory.seats = seats;
                     m_out.memory.homeClaims = claims;
@@ -1007,7 +1182,12 @@ namespace Huginn::Core::SlotAlloc
                 }
             }
 
-            // Phase 1: moves into empty seats, repeated.
+            // Phase 1: moves into empty seats, repeated. The common case is a
+            // chain, not a swap: one item leaves, everything below it moves up
+            // a slot, and putting them back starts with the last one dropping
+            // into the hole at the bottom, which frees the seat the one above
+            // it wants, and so on up. One round per slot is enough for any
+            // chain; the loop stops as soon as nothing moved.
             for (std::size_t round = 0; round < slotCount; ++round) {
                 bool moved = false;
                 for (std::size_t i = 0; i < slotCount; ++i) {
@@ -1022,7 +1202,14 @@ namespace Huginn::Core::SlotAlloc
                 if (!moved) break;
             }
 
-            // Phase 2: two items holding each other's seats.
+            // Phase 2: two items holding each other's seats -- what a pure
+            // reorder of an unchanged set looks like; a chain cannot resolve
+            // it. Repeated: a swap can throw an item BELOW the index the sweep
+            // has passed (2026-09-19 23:53:38, the Iron Sword left in the
+            // wrong slot for 3.5 s). It terminates: a swap fires only when the
+            // item at i can reach its OWN seat, and the seat map is injective,
+            // so each swap raises the number of items in their own seat.
+            // Only when BOTH are legal in the other's slot.
             for (std::size_t round = 0; round < slotCount; ++round) {
                 bool swapped = false;
                 for (std::size_t i = 0; i < slotCount; ++i) {
@@ -1067,6 +1254,18 @@ namespace Huginn::Core::SlotAlloc
             }
         }
 
+        // PASS 5: remember where everything ended up, for the next allocation
+        // of this page. The rule is one sentence: you keep your seat for as
+        // long as you are on screen, and you only get a new one if you do not
+        // have one. Stated the other way round -- "record where everything
+        // ended up" -- every reason an item could not reach its seat this pass
+        // became a permanent move: an override pins a slot for a second and
+        // the item that lives there is rehomed for the session, and the
+        // cascade reached items no override touched (the BOW, 2026-09-19
+        // 23:31:23-26). Both loops write at most one slot per key and one key
+        // per slot, so the map stays injective (ApplySeating relies on it).
+        // An item that left the screen entirely is in neither loop, so its
+        // seat is not carried over -- which is how a seat is ever freed.
         template <class Policy>
         void Engine<Policy>::RecordSeating()
         {
@@ -1086,6 +1285,10 @@ namespace Huginn::Core::SlotAlloc
             };
 
             std::array<std::uint64_t, kMaxSlots> seats{};
+            // Anyone on screen but not in their own seat keeps the claim they
+            // had (override guests included). An override that marked its
+            // item's OWN seat keeps it too, or the seat would lapse and the
+            // override jump to its configured slot.
             for (std::size_t i = 0; i < slotCount; ++i) {
                 const std::uint64_t key = KeyOf(m_state[i]);
                 if (key == 0) continue;
@@ -1094,6 +1297,9 @@ namespace Huginn::Core::SlotAlloc
                     seats[home] = key;
                 }
             }
+            // Anyone in their own seat keeps it, and an item with no seat
+            // takes the one it is sitting in -- unless someone displaced still
+            // owns it. A pinned item claims nothing: it is passing through.
             for (std::size_t i = 0; i < slotCount; ++i) {
                 if (m_state[i].IsPinned()) continue;
                 const std::uint64_t key = KeyOf(m_state[i]);
@@ -1113,10 +1319,19 @@ namespace Huginn::Core::SlotAlloc
                 }
             }
 
+            // An item that left the screen entirely is remembered against the
+            // slot it owned, for home keys -- or, with no seat, the slot it
+            // stood in last pass: an item the slot hold outranked loses its
+            // seat on the spot, and without the fallback the item home keys
+            // exist for was never remembered (code review of #179).
             auto onScreen = [&](std::uint64_t key) {
                 return std::any_of(m_state.begin(), m_state.end(),
                     [&](const SlotState& s) { return KeyOf(s) == key; });
             };
+            // Not from a slot a home claimant has claimed: an item that lost
+            // the seat to the claim only filled the gap, and remembering it
+            // there let it come back and take the seat from the claimant
+            // still waiting for it (RunHomeKeyTest, 2026-10-06 21:56:10).
             auto& claims = mem.homeClaims;
             auto remember = [&](std::size_t j, std::uint64_t key) {
                 if (claims[j] != 0 && claims[j] != key) return;
@@ -1136,6 +1351,7 @@ namespace Huginn::Core::SlotAlloc
                 remember(j, key);
             }
 
+            // A home claim ends when its item sits in the slot, or loses the seat.
             for (std::size_t j = 0; j < slotCount; ++j) {
                 if (claims[j] != 0 && (seats[j] != claims[j] || KeyOf(m_state[j]) == claims[j])) {
                     claims[j] = 0;
@@ -1147,6 +1363,9 @@ namespace Huginn::Core::SlotAlloc
             mem.lastPlaced = placedNow;
         }
 
+        // [SlotLocker] bFillJobKeysFromRegular: an empty key with a class takes
+        // the best-scoring matching item standing on a Regular key (never a
+        // pinned item or a wildcard).
         template <class Policy>
         void Engine<Policy>::PullIntoEmptyJobKeys(std::size_t priorityCount)
         {

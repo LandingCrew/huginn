@@ -237,15 +237,16 @@ namespace Huginn::Scoring
             ApplyPotionTierPreference(scored);
         }
 
-        // Partial sort for top N (much faster than full sort for large lists)
-        size_t topN = std::min(m_config.topNCandidates, scored.size());
-        if (topN > 0) {
+        // The whole list in rank order (R7). It used to be only the top N
+        // (partial_sort), and the slot code takes the FIRST match in list
+        // order for a job key or an uncapped Regular key: with full pages it
+        // reached into the unsorted tail and took whichever match came first
+        // there, not the best. Stable, so exact ties (same utility, same DPS)
+        // keep the order the candidates were generated in rather than a
+        // heap's. A few hundred candidates: the cost is nothing.
+        if (!scored.empty()) {
             Huginn_ZONE_NAMED("Score::Sort");
-            if (scored.size() > topN) {
-                std::partial_sort(scored.begin(), scored.begin() + topN, scored.end());
-            } else {
-                std::sort(scored.begin(), scored.end());
-            }
+            std::stable_sort(scored.begin(), scored.end());
         }
 
         // Apply wildcards for exploration, keyed and sized against the page

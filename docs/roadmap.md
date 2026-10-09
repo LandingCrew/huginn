@@ -198,14 +198,34 @@ Map Phase 4, in `tools/replay`.
 
 ### R7. Slot code handles any score sign
 
-Map Phase 5. Lands before the new scorer.
-- [ ] Bridge: score = ln(utility), σ = 0, m = 1.5, which reproduces today.
-- [ ] The slot class cap, ratio logs, the `-1` "gone" sentinel, `utility = 0` for
+Map Phase 5. Lands before the new scorer. Built in 0.23.11 ("R7: sign-safe
+slot code"); detail in the map's "As built (R7)".
+- [x] Bridge: score = ln(utility), σ = 0, m = 1.5, which reproduces today.
+      One function, `ScoredCandidate::SlotScore` (`Core::BridgeScore`); the
+      score is a double, so no two utilities collapse into one score.
+- [x] The slot class cap, ratio logs, the `-1` "gone" sentinel, `utility = 0` for
       remembered-only rows, `kOverrideUtility`, the widget bar, the
-      confidence payload: all made sign-safe.
-- [ ] Full sort instead of the top-10 partial sort.
-- Done when: a golden test feeds recorded pipeline snapshots through the old
-  and new slot code and gets identical pages; the ratio tests are updated.
+      confidence payload: all made sign-safe. The allocator's decisions moved
+      whole into `src/core/SlotAllocCore.h` (plain records, host-tested); the
+      cap is `+ k ln d`, the hold `s_c − s_i > ln m`, "gone" an empty
+      optional, unranked rows −inf, overrides +inf (never compared).
+- [x] Full sort instead of the top-10 partial sort (`std::stable_sort`; the
+      selection log still reports ranks for the top 10 only, so attribution
+      is unchanged).
+- [x] Done when: a golden test feeds recorded pipeline snapshots through the
+  old and new slot code and gets identical pages; the ratio tests are updated.
+  The old code's own pages, recorded in play on vanilla+ (3,443 snapshots,
+  300 checked in), replay bit for bit through the core with the old
+  arithmetic; the sign-safe arithmetic gives identical pages on all of them
+  and on 24k synthetic passes. `RunSlotClassCapTest`, `RunSlotClassCapHoldTest`
+  and `RunHomeKeyTest` derive their utilities in score space.
+- Different by design: the full sort changes a page where the old fill
+  reached past the sorted top 10 (4 of 113 recorded play pages); exact ties
+  now keep generation order rather than the partial sort's. One
+  float-rounding boundary separates the two arithmetics (a challenger exactly
+  `float(1.5 × holder)`); no snapshot hit it.
+- For R8: `ScoredCandidate::operator<` still orders on utility (the same
+  order as the score under the bridge); it moves to the score with the scorer.
 
 ### R8. Cutover
 

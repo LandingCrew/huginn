@@ -7,6 +7,8 @@
 #include <cstdint>
 #include <deque>
 #include <mutex>
+#include "core/SlotScoreMath.h"
+#include <optional>
 #include <span>
 #include <string>
 #include <string_view>
@@ -103,7 +105,8 @@ namespace Huginn::Telemetry
 
     // How much better the challenger scored than the item it replaced, for the
     // changes a challenger margin would govern (Expired, Unheld): the item
-    // that took the slot, over the displaced item's utility in the SAME run.
+    // that took the slot against the displaced item in the SAME run, as
+    // exp(score difference) -- the old utility ratio under the R7 bridge.
     // The distribution is what sizes the margin -- a margin of m would have
     // blocked every change below 1+m whose incumbent was still a candidate.
     // Below 1.0 means the slot changed to something that scored WORSE: the
@@ -134,18 +137,21 @@ namespace Huginn::Telemetry
         }
     }
 
-    // incumbentUtility < 0 means the incumbent is no longer a candidate.
-    [[nodiscard]] constexpr ChallengerRatio BucketChallengerRatio(
-        float challengerUtility, float incumbentUtility) noexcept
+    // On SCORES (the slot code's, any sign): the ratio is exp(challenger -
+    // incumbent), bucketed on the difference (Core::BucketLogRatio). No
+    // incumbent (it is no longer a candidate) is an empty optional -- the old
+    // -1 utility sentinel would be a valid score now. An unranked incumbent
+    // (-inf, the old utility 0) counts as 50%+.
+    [[nodiscard]] inline ChallengerRatio BucketChallengerRatio(
+        Core::SlotScore challengerScore, std::optional<Core::SlotScore> incumbentScore) noexcept
     {
-        if (incumbentUtility < 0.0f) return ChallengerRatio::Gone;
-        if (incumbentUtility == 0.0f) return ChallengerRatio::Above150;
-        const float r = challengerUtility / incumbentUtility;
-        if (r < 1.0f) return ChallengerRatio::Below1;
-        if (r < 1.10f) return ChallengerRatio::Below110;
-        if (r < 1.25f) return ChallengerRatio::Below125;
-        if (r < 1.50f) return ChallengerRatio::Below150;
-        return ChallengerRatio::Above150;
+        static_assert(static_cast<int>(Core::LogRatioBucket::Gone) == static_cast<int>(ChallengerRatio::Gone) &&
+                      static_cast<int>(Core::LogRatioBucket::Below1) == static_cast<int>(ChallengerRatio::Below1) &&
+                      static_cast<int>(Core::LogRatioBucket::Below110) == static_cast<int>(ChallengerRatio::Below110) &&
+                      static_cast<int>(Core::LogRatioBucket::Below125) == static_cast<int>(ChallengerRatio::Below125) &&
+                      static_cast<int>(Core::LogRatioBucket::Below150) == static_cast<int>(ChallengerRatio::Below150) &&
+                      static_cast<int>(Core::LogRatioBucket::Above150) == static_cast<int>(ChallengerRatio::Above150));
+        return static_cast<ChallengerRatio>(Core::BucketLogRatio(challengerScore, incumbentScore));
     }
 
     // How long the item a change replaced had been on the slot. The churn

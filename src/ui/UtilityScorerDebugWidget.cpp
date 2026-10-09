@@ -346,8 +346,10 @@ namespace Huginn::UI
             ImGui::Text("%.*s", static_cast<int>(name.length()), name.data());
         }
 
-        // Utility bar
-        DrawUtilityBar(candidate.utility, 15.0f);  // Max ~15 for typical utility
+        // Utility bar, from the slot score so it is defined for any sign:
+        // exp(score) is the utility under R7's bridge (Max ~15 for typical
+        // utility); an unranked row is 0.
+        DrawUtilityBar(Core::DisplayUtility(candidate.SlotScore()), 15.0f);
 
         // Compact inline score summary
         DrawScoreSummary(candidate.breakdown);

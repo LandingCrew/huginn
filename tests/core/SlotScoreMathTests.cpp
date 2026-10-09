@@ -167,7 +167,12 @@ TEST_CASE("slot score: churn buckets on scores match the old ratio buckets on ut
         }
     }
     MESSAGE("bucket boundary disagreements (float ratio rounding): ", boundary, " of 200000");
-    // Exact ratios land where they did.
+    // Exact ratios land where they did (the old static_asserts in
+    // SoakMetrics.cpp): edges are half-open, exactly 10% better is NOT "<1.1".
+    CHECK(BucketLogRatio(BridgeScore(0.9f), BridgeScore(1.0f)) == LogRatioBucket::Below1);
+    CHECK(BucketLogRatio(BridgeScore(1.2f), BridgeScore(1.0f)) == LogRatioBucket::Below125);
+    CHECK(BucketLogRatio(BridgeScore(1.25f), BridgeScore(1.0f)) == LogRatioBucket::Below150);
+    CHECK(BucketLogRatio(BridgeScore(1.10f), BridgeScore(1.0f)) == LogRatioBucket::Below125);
     CHECK(BucketLogRatio(BridgeScore(1.0f), BridgeScore(1.0f)) == LogRatioBucket::Below110);
     CHECK(BucketLogRatio(BridgeScore(1.5f), BridgeScore(1.0f)) == LogRatioBucket::Above150);
     CHECK(BucketLogRatio(BridgeScore(0.5f), BridgeScore(1.0f)) == LogRatioBucket::Below1);
