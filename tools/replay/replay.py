@@ -528,7 +528,16 @@ def iter_v3(paths, stats=None):
                            the same head), and skipped otherwise;
       stats["truncated"]   .gz files that end mid-stream (read up to there).
     Without damage, a reference to an undefined id is a malformed file
-    (V3FormatError), as is a version other than 3."""
+    (V3FormatError), as is a version other than 3.
+
+    Limit (0.23.16): in a .gz that fails to decompress whole (_gzip_corrupt),
+    EVERY format error of that file is counted as a bad line, not raised --
+    not only the ones after the break. The reader cannot tell where the
+    corruption starts: the deflate output after a flipped byte can parse as
+    records (a record of an unknown type was seen) until the stream's CRC
+    fails at its end, and the decompression error names no earlier offset.
+    The file's good records still decode; only the strictness is lost, and
+    only for a corrupt .gz -- a plain .jsonl and an intact .gz stay strict."""
     if stats is None:
         stats = {}
     for key in ("bad_lines", "skipped", "lost_heads", "truncated"):

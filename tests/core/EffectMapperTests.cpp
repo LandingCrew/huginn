@@ -923,6 +923,25 @@ TEST_CASE("effect mapper: a harm row on a food or potion is a side effect, never
     CHECK(CapOf(r, 6, Col::damage_stamina) > 0.0f);
     CHECK(CapOf(r, 6, Col::self_harm) == 0.0f);
 
+    // Fix round: every row that harms the user stays out of `hostile`, whatever
+    // column it keeps -- survival_intoxication's "Drugged" (Sleeping Tree Sap,
+    // Redwater Skooma) is detrimental and hostile and is not remapped.
+    {
+        World w2;
+        const auto drugged = w2.Add(Mgef(kArchScript, "", "Drugged", kFlagDetrimental | kFlagHostile));
+        const auto fortify = w2.Add(Mgef(kArchValueModifier, "Health", "Fortify Health", kFlagRecover));
+        auto& sap = w2.Item(Kind::Potion, "Sleeping Tree Sap");
+        World::Fx(sap, fortify, 50, 45);
+        World::Fx(sap, drugged, 0, 45);
+        auto& poisonDrug = w2.Item(Kind::Poison, "A drugging poison");  // a poison's target is the enemy
+        World::Fx(poisonDrug, drugged, 0, 45);
+        const auto r2 = w2.Build();
+        CHECK(r2.mappings[0].outcomes[1].cls.col == Col::survival_intoxication);
+        CHECK(CapOf(r2, 0, Col::survival_intoxication) == doctest::Approx(1.0));
+        CHECK(CapOf(r2, 0, Col::hostile) == 0.0f);
+        CHECK(CapOf(r2, 1, Col::hostile) == 1.0f);
+    }
+
     CHECK(SelfHarmColumn(Col::damage_health_fire) == Col::self_harm_health);
     CHECK(SelfHarmColumn(Col::drain_vital_stamina) == Col::self_harm_stamina);
     CHECK(SelfHarmColumn(Col::control_slow) == Col::self_harm);

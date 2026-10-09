@@ -45,7 +45,12 @@ schema of that log, field by field.
   launch than the head in force are skipped. A truncated or corrupt `.gz` ends
   that file where it breaks (`stats["truncated"]`). None of this damage is
   raised. Without damage, a reference to an undefined id is a malformed file
-  and an error.
+  and an error -- except in a `.gz` that fails to decompress whole: there the
+  reader cannot tell where the corruption starts (a flipped byte can decode
+  to lines that parse, up to the CRC check at the stream's end), so every
+  format error of that file is counted as a bad line instead (0.23.16). Its
+  good records still decode; a plain `.jsonl` and an intact `.gz` stay
+  strict.
 
 ## Versioning
 

@@ -346,6 +346,16 @@ class PythonRoundTrip(unittest.TestCase):
         self.assertEqual(stats["truncated"], 1)
         self.assertGreaterEqual(len(decs), 1)
 
+    def test_intact_gzip_stays_strict(self):
+        # Only a .gz that fails to decompress whole is read leniently: an
+        # intact one holding a malformed record still raises, like a .jsonl.
+        lines, heads = self.golden_lines()
+        bad = b"\n".join(lines[:heads[1]] + [b'{"t":"ced","id":0}'] + lines[heads[1]:]) + b"\n"
+        with self.assertRaises(replay.V3FormatError):
+            self._read_bytes(gzip.compress(bad), ".jsonl.gz")
+        with self.assertRaises(replay.V3FormatError):
+            self._read_bytes(bad)
+
     def test_corrupt_gzip_never_raises(self):
         # A flipped byte inside the deflate stream raises zlib.error, not
         # EOFError: every position must end the file cleanly or decode.

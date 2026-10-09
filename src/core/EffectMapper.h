@@ -46,8 +46,10 @@
 //     user, so it sets self_harm_<vital> (a vital's damage or drain, graded
 //     as an Amount within its own population) or the family self_harm (any
 //     other harm), never the target-harm column (core/EffectRules.h,
-//     SelfHarmColumn). Such a row does not set `hostile` and is the primary
-//     row (delivery, timing) only when the item keeps nothing else.
+//     SelfHarmColumn). Such a row, whatever column it keeps (survival_
+//     intoxication's "Drugged" too), does not set `hostile`; a self_harm*
+//     row is the primary row (delivery, timing) only when the item keeps
+//     nothing else. A Cloak/hazard's payload hits others: no such rule there.
 //
 // Coverage (doc 9's "Mapped" figure): over in-scope items, the share of
 // visible effect rows that map to a column, not counting helper rows (visual,
