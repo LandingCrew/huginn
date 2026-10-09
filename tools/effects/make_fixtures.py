@@ -6,7 +6,10 @@ deviations (EffectRules.h), which are applied here as explicit oracle rules and
 listed per row in `expectNote`. The C++ output is NOT used to make expectations.
 
 usage: python -I tools/effects/make_fixtures.py <repo> vanilla=<dump> simonrim=<dump> lorerim=<dump>
-(R2 used: vanilla+ 0.23.10 test-mode dump, Simonrim 2026-10-07 dump, LoreRim 2026-10-07 v2 dump.)
+R2's inputs: vanilla = Huginn_All_vanilla_r2.csv, the vanilla+ profile's test-mode dump of
+2026-10-08 18:21 (0.23.10 at 3e0d2a8, the first catalog-view dump); simonrim = the Simonrim
+Essentials Huginn_All.csv of 2026-10-07 (0.23.6 schema); lorerim = LoreRim's Huginn_All.csv of
+2026-10-07 22:33 (0.23.7 schema). Dumps are user data, not in the repo.
 """
 import sys, csv, re, random, collections
 import os

@@ -135,11 +135,10 @@ and accept% and so ship as their own small PR.
 - [x] Shared helpers move from `ConsoleCommands.cpp` to `src/util/FormRead.h`.
 - [x] Static cap in a catalog; runtime cross-features (`overshoot_*`,
       `weapon_charge`, `stack_count`, `ammo_matches_launcher`,
-      `school_fortified`) as `src/core` functions. Per-instance cap for tempered and
-      player-enchanted weapons. *(`effect/EffectCatalog`,
-      `core/CrossFeatures.h` + `effect/CrossFeatures`. Wired as far as
-      `hg cap <FormID>`: nothing computes them per tick yet, since nothing
-      reads them; R4's selection log is the first per-tick reader.)*
+      `school_fortified`) as `src/core` functions + `hg cap`. Per-instance cap
+      for tempered and player-enchanted weapons. *(`effect/EffectCatalog`,
+      `core/CrossFeatures.h` + `effect/CrossFeatures`. Not computed per tick:
+      nothing reads them yet. The per-tick computation moved to R4.)*
 - [ ] **All carried armour is a candidate** (the user, 2026-10-08): lift the
       `ApparelClassifier` scope guard. Gear in combat is not a hard rule; the
       learner decides it. Armour menu picks are dropped today
@@ -183,6 +182,10 @@ them.
 ### R4. Selection log v3
 
 Map Phase 3. Log everything the fit needs.
+- [ ] Compute the runtime cross-features per tick (`overshoot_*`,
+      `weapon_charge`, `stack_count`, `ammo_matches_launcher`,
+      `school_fortified`; `effect/CrossFeatures` from R2), for the candidates
+      the log holds. First reader: this selection log.
 - [ ] Per decision: the need vector, sparse cap per row, explicit outcome
       (key / wheel / menu / nothing), every eligible item (no floor), one row
       per item, wildcard propensity.

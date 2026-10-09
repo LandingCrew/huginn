@@ -1,6 +1,6 @@
 """Reference extractor for cap(i) (doc 9, 2026-10-07; copied into the repo by R2 as the
-test oracle -- see tools/effects/README.md). One fix from the original: a stray backspace
-byte where the fortify_vital name rule meant \b.
+test oracle -- see docs/testing/TESTING-INDEX.md, section 0). One fix from the original: a
+stray backspace byte where the fortify_vital name rule meant a word boundary.
 
 Reference extractor for cap(i): effect row -> column, following effects.csv.
 Order: helper/visibility -> repurposed-AV resolution (keyword, override, name) ->

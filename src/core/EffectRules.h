@@ -28,14 +28,18 @@
 //
 // Ported from the Python reference extractor that measured doc 9's coverage
 // (scratch `effects-v2/scripts/cap.py` + `desc.py`, 2026-10-07), with the
-// column names of effects.csv and these deliberate changes, each from a note
-// in effects.csv:
+// column names of effects.csv and these deliberate changes (from a note in
+// effects.csv where one exists; tools/effects/make_fixtures.py applies the
+// same list to the reference when it writes the test expectations):
 //   - "ethereal" names -> defense_ethereal (was utility_slow_time);
 //   - "<race> Polymorph" / "Shapeshift: <race>" -> stealth_disguise (was
 //     transform_werewolf);
 //   - "^fortify (health|magicka|stamina)\b" matches again: the reference had a
 //     stray backspace byte where the \b should be, so it never matched;
-//   - "vampire form" -> transform_vampire_lord (was transform_werewolf);
+//   - a bare "Polymorph" (LoreRim's hostile one) no longer matches a name rule:
+//     the description route decides (no effects.csv note);
+//   - "vampire form" -> transform_vampire_lord (was transform_werewolf; no
+//     effects.csv note);
 //   - Simonrim Fortify Potion Duration (AlchemySkillAdvance with
 //     MagicEnchFortifyAlchemy) -> meta_potion_duration;
 //   - Simonrim Fortify Security (PickPocketSkillAdvance) sets lockpicking AND
@@ -45,7 +49,17 @@
 //     damage-health name rule (which used to swallow them);
 //   - an elemental summon (archetype SummonCreature + MagicSummonFire/Frost/
 //     Shock) sets summon_creature_<element> and summon_creature;
-//   - the regen name rule also takes the misspelt "Regneration" (Simonrim).
+//   - the regen name rule also takes the misspelt "Regneration" (Simonrim);
+//   - a "damage" name maps to damage only on a detrimental effect (script
+//     effects exempt) and never with "resist" in it (effects.csv lines 45-46:
+//     Simonrim's beneficial "Resist Magicka/Stamina Damage");
+//   - a Cloak/SpawnHazard is damage itself only by a MagicDamage* keyword, not
+//     by its resisted actor value (Simonrim's Whirlwind Cloak carries
+//     FrostResist): otherwise its payload, or failing that its description,
+//     decides (core/EffectMapper.cpp);
+//   - helper names no longer swallow "Blank Slate" (only a bare "Blank"), and
+//     Requiem's "Dispel Soul Gems" is neither a helper nor a dispel (unmapped
+//     by name).
 //   Spec names with no column of their own fall back to their family column
 //   (weaken_combat_crit -> weaken_combat; Dragonrend -> shout; a detrimental
 //   warmth effect -> survival; Cure Addiction -> cure; weakness to disease ->
