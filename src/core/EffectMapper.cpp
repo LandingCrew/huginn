@@ -433,10 +433,7 @@ namespace Huginn::Core::Effect
                     ++m.tally.helper;
                 }
                 else if (cls.route == Route::Wrapper) {
-                    if (!mg.payloadKnown) {
-                        ++m.tally.wrapperUnknown;
-                    }
-                    else {
+                    if (!mg.payload.empty()) {
                         o.counted = true;
                         // The payload spell's effects describe the wrapper. Their
                         // own hidden flag does not matter: the payload is never
@@ -449,6 +446,25 @@ namespace Huginn::Core::Effect
                             o.mapped = true;
                             o.kept = true;
                         }
+                    }
+                    else if (cls.wrapperDescription != Col::_Count) {
+                        // No payload to read (none, or a dump without the
+                        // column): the wrapper's own description, as for any
+                        // effect nothing else maps.
+                        EffectClass d = cls;
+                        d.col = cls.wrapperDescription;
+                        d.col2 = Col::_Count;
+                        d.route = Route::Description;
+                        o.cls = d;
+                        o.counted = true;
+                        o.mapped = true;
+                        o.kept = true;
+                        m.rows.push_back(MakeRow(row, mg, d, true, m.constantItem));
+                    }
+                    else {
+                        // A wrapper with nothing to read is not counted, like a
+                        // helper: the payload is where its mechanics live.
+                        ++m.tally.wrapperUnknown;
                     }
                 }
                 else {
@@ -693,14 +709,15 @@ namespace Huginn::Core::Effect
         std::uint32_t maxArea = 0;
         std::uint32_t maxDur = 0;
         bool longLasting = false;
+        bool healsOthers = false;
         for (const auto& r : m.rows) {
             for (const Col c : { r.col, r.col2 }) {
+                // Any kept heal that reaches others, visible or not: Breath of
+                // Life's visible row heals the caster and a hidden twin with
+                // an area heals the allies around.
+                if (c == Col::restore_health && (r.delivery != kDeliverySelf || r.area > 0)) healsOthers = true;
                 if (!eligible(r, c)) continue;
-                const float v = RowValue(r, c, pops);
-                put(c, v);
-                if (c == Col::restore_health && (r.delivery != kDeliverySelf || r.area > 0)) {
-                    put(Col::restore_health_other, v);
-                }
+                put(c, RowValue(r, c, pops));
             }
             anyHostile = anyHostile || r.hostile;
             anyFullRestore = anyFullRestore || r.fullRestore;
@@ -709,6 +726,8 @@ namespace Huginn::Core::Effect
             maxDur = std::max(maxDur, r.duration);
             if (r.duration >= kDurationSentinel) longLasting = true;
         }
+        // restore_health_other: a conjunctive column, valued as restore_health.
+        if (healsOthers) put(Col::restore_health_other, val[Index(Col::restore_health)]);
         // Families: max over their specifics.
         for (std::size_t i = 0; i < kColumnCount; ++i) {
             if (val[i] <= 0.0f) continue;

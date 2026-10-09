@@ -859,6 +859,9 @@ namespace Huginn::Core::Effect
         if (r.HiddenInUI()) {
             if (const auto n = NameColumn(r.name)) out.nameFamily = FamilyKey(*n);
         }
+        if (out.route == Route::Wrapper) {
+            if (const auto d = DescriptionColumn(r.description, r.detrimental)) out.wrapperDescription = *d;
+        }
         return out;
     }
 
@@ -957,6 +960,17 @@ namespace Huginn::Core::Effect
         return cols.col;
     }
 
+    std::vector<std::string> RulePatterns()
+    {
+        std::vector<std::string> out;
+        for (const Table* t : { &KwElement(), &NameElement(), &KwTable(), &NameTable(), &DescTable(), &DescElement(),
+                                &StrongName() }) {
+            for (const auto& rule : *t) out.push_back(rule.re.Pattern());
+        }
+        out.push_back(HelperRe().Pattern());
+        return out;
+    }
+
     std::string CheckRuleTables()
     {
         for (const Table* t : { &KwElement(), &NameElement(), &KwTable(), &NameTable(), &DescTable(), &DescElement(),
@@ -966,6 +980,9 @@ namespace Huginn::Core::Effect
             }
         }
         if (!HelperRe().Valid()) return HelperRe().Error();
+        for (const auto& p : RulePatterns()) {
+            if (const MiniRegex re(p); !re.Valid()) return re.Error();
+        }
         // Every fixed spec in the tables resolves to a column.
         for (const Table* t : { &KwTable(), &NameTable(), &DescTable(), &StrongName() }) {
             for (const auto& rule : *t) {

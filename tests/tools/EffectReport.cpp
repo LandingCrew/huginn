@@ -15,6 +15,8 @@
 //     --mgef-out <csv>          write every MGEF's column and route
 //     --caps-out <csv>          write every in-scope item's cap
 //     --unmapped-out <csv>      write the unmapped visible effects, by rows
+//   huginn_effect_report --patterns-out <file>
+//                             write the rule tables' patterns, one per line
 //
 // Exit: 0 ok, 1 below --min-coverage or the in-game catalog disagrees, 2 usage.
 // The dump is untrusted data: parsed, never evaluated.
@@ -74,6 +76,12 @@ namespace
 int main(int argc, char** argv)
 {
     if (argc < 2) return Usage();
+    if (std::string(argv[1]) == "--patterns-out" && argc >= 3) {
+        // The rule tables' patterns, one per line (for the regex oracle).
+        std::ofstream out(argv[2], std::ios::binary);
+        for (const auto& p : RulePatterns()) out << p << '\n';
+        return 0;
+    }
     std::string path = argv[1];
     std::string name = path.substr(path.find_last_of("/\\") + 1);
     double minCoverage = -1.0;

@@ -124,12 +124,19 @@ namespace Huginn::Test
         std::vector<std::vector<std::string>> gameRowRoute;
         // Per item: the legacy slot class the game wrote ("" if none).
         std::vector<std::string> gameSlotClass;
+        // DumpReader::extraColumns, per item (its first row) and per direct row.
+        std::vector<std::vector<std::string>> itemExtra;
+        std::vector<std::vector<std::vector<std::string>>> rowExtra;
         std::size_t rows = 0;
     };
 
     class DumpReader
     {
     public:
+        /// Extra columns to keep (a fixture's expectations), in Dump::itemExtra
+        /// and Dump::rowExtra; "" where absent.
+        std::vector<std::string> extraColumns;
+
         bool Load(const std::string& path, Dump& out, std::string* error = nullptr)
         {
             std::ifstream in(path, std::ios::binary);
@@ -188,6 +195,7 @@ namespace Huginn::Test
                     continue;
                 }
                 item.effects.push_back(row);
+                out.rowExtra.back().push_back(Extra(f));
                 out.gameRowColumn.back().push_back(Get(f, "effectColumn"));
                 out.gameRowRoute.back().push_back(Get(f, "effectRoute"));
                 rowEffectByIndex[Get(f, "effectIndex")] = mi;
@@ -255,6 +263,16 @@ namespace Huginn::Test
             out.gameSlotClass.push_back(Get(f, "slotClass"));
             out.gameRowColumn.emplace_back();
             out.gameRowRoute.emplace_back();
+            out.itemExtra.push_back(Extra(f));
+            out.rowExtra.emplace_back();
+        }
+
+        std::vector<std::string> Extra(const std::vector<std::string>& f) const
+        {
+            std::vector<std::string> v;
+            v.reserve(extraColumns.size());
+            for (const auto& c : extraColumns) v.push_back(Get(f, c));
+            return v;
         }
 
         std::uint32_t Effect(const std::vector<std::string>& f, Dump& out)

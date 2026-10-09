@@ -39,8 +39,10 @@
 //
 // Coverage (doc 9's "Mapped" figure): over in-scope items, the share of
 // visible effect rows that map to a column, not counting helper rows (visual,
-// dummy ...) and Cloak/hazard wrappers whose payload is unknown. A wrapper
-// whose payload is known counts, and maps when its payload does.
+// dummy ...) and Cloak/hazard wrappers with nothing to read. A wrapper with a
+// payload (dump gap 3) counts, and maps when its payload does; one without a
+// payload (none, or a dump that predates the column) counts and maps when its
+// own description maps, and is left out otherwise.
 //
 // Pure: standard library only (src/core/README.md).
 // =============================================================================
@@ -102,7 +104,7 @@ namespace Huginn::Core::Effect
         int hiddenKept = 0;
         int visible = 0;
         int helper = 0;           // visible helper rows (not counted)
-        int wrapperUnknown = 0;   // visible wrappers with no known payload (not counted)
+        int wrapperUnknown = 0;   // visible wrappers with no payload and no description to read (not counted)
         int counted = 0;
         int mapped = 0;
 

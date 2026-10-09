@@ -63,6 +63,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace Huginn::Core::Effect
 {
@@ -105,6 +106,10 @@ namespace Huginn::Core::Effect
         bool helperName = false;
         Col nameFamily = Col::_Count;
         bool hydrated = false;
+        // A wrapper's column from its own description, used only when it
+        // carries no payload the mapper can read (doc 9's layer 4 applied to
+        // a Cloak/hazard whose spell is missing or unknown).
+        Col wrapperDescription = Col::_Count;
 
         [[nodiscard]] bool Mapped() const noexcept { return col != Col::_Count; }
     };
@@ -154,6 +159,10 @@ namespace Huginn::Core::Effect
     /// Every pattern in the rule tables compiles (for a host test); the first
     /// failure's message otherwise.
     [[nodiscard]] std::string CheckRuleTables();
+
+    /// Every rule-table pattern, as written (for the regex oracle fixture,
+    /// which checks MiniRegex against Python's `re` on each of them).
+    [[nodiscard]] std::vector<std::string> RulePatterns();
 
     /// Lower-case ASCII copy.
     [[nodiscard]] std::string Lower(std::string_view s);

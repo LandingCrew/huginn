@@ -1,13 +1,18 @@
 // Host tests for core/MiniRegex.h: the regex subset the effect rules use.
 // Hand cases here; tests/core/fixtures/regex_oracle.csv compares the engine
 // with Python's `re` on every rule-table pattern over real effect names and
-// descriptions (EffectRulesTests.cpp).
+// descriptions (the last test case here).
 
+#include "DumpCsv.h"
+#include "core/EffectRules.h"
 #include "core/MiniRegex.h"
 
 #include <doctest/doctest.h>
 
+#include <fstream>
+#include <map>
 #include <ostream>
+#include <set>
 #include <string>
 
 using Huginn::Core::MiniRegex;
@@ -130,4 +135,46 @@ TEST_CASE("mini regex: long input does not blow the stack")
     const std::string longText(200000, 'a');
     CHECK(Find("a*b", longText + "b").size() == longText.size() + 1);
     CHECK(MiniRegex(R"(\b(deal|deals)\b.{0,40}damage)").Contains(longText) == false);
+}
+
+// Every rule-table pattern against Python's `re` on real effect names,
+// normalised descriptions and keyword lists (tests/core/fixtures/
+// regex_oracle.csv, written by Python from the effect fixtures): same match or
+// not, same span, same first group.
+TEST_CASE("mini regex: agrees with Python re on the rule tables (oracle fixture)")
+{
+    std::ifstream in(std::string(HUGINN_REPO_ROOT) + "/tests/core/fixtures/regex_oracle.csv", std::ios::binary);
+    REQUIRE(in.good());
+    std::string line;
+    REQUIRE(std::getline(in, line));
+    std::map<std::string, MiniRegex> compiled;
+    std::set<std::string> covered;
+    int rows = 0, matches = 0;
+    while (std::getline(in, line)) {
+        if (line.empty()) continue;
+        const auto f = Huginn::Test::SplitCsv(line);
+        REQUIRE(f.size() == 6);
+        auto it = compiled.find(f[0]);
+        if (it == compiled.end()) it = compiled.emplace(f[0], MiniRegex(f[0])).first;
+        REQUIRE_MESSAGE(it->second.Valid(), it->second.Error());
+        covered.insert(f[0]);
+        MiniRegex::Match m;
+        const bool got = it->second.Search(f[1], &m);
+        INFO("pattern /" << f[0] << "/ text '" << f[1] << "'");
+        CHECK(got == (f[2] == "1"));
+        if (got && f[2] == "1") {
+            ++matches;
+            CHECK(m.whole.begin == std::stoi(f[3]));
+            CHECK(m.whole.end == std::stoi(f[4]));
+            CHECK(std::string(m.Group(f[1], 1)) == f[5]);
+        }
+        ++rows;
+    }
+    // Every pattern the rules use is in the fixture: a changed table means
+    // regenerating it (docs/testing/TESTING-INDEX.md, section 0).
+    for (const auto& p : Huginn::Core::Effect::RulePatterns()) {
+        INFO("pattern not in regex_oracle.csv: /" << p << "/");
+        CHECK(covered.contains(p));
+    }
+    MESSAGE("regex oracle: " << rows << " rows, " << matches << " matches, " << compiled.size() << " patterns");
 }

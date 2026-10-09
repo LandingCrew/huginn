@@ -300,7 +300,8 @@ namespace Huginn::Effect
                 p.newCols = std::format("{},{},{},{},{},{},{},{},{},{},{},", CsvQuote(mg.plugin), Num(row.cost), mg.school,
                     CsvQuote(FillText(mg.description, row.magnitude, row.duration, row.area)),
                     CsvQuote(sc == scripts.end() ? std::string_view{} : std::string_view(sc->second)), CsvQuote(conds),
-                    payloadOf, payloadSpell, Name(cls.col), RouteName(cls.route),
+                    payloadOf, payloadSpell, Name(outcome ? outcome->cls.col : cls.col),
+                    RouteName(outcome ? outcome->cls.route : cls.route),
                     outcome ? (outcome->kept ? "1" : "0") : "");
                 return p;
             };
