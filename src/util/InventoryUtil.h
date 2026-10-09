@@ -134,9 +134,6 @@ namespace Huginn::Util
         bool leveledSkip = false;  // base container skipped: entry is leveled
     };
 
-    // `filter` must be a side-effect-free predicate: it may be invoked on entries
-    // that are ultimately skipped (e.g. leveled base-container duplicates), so its
-    // result must depend only on the object, not on call count or order.
     /// The inventory duplicate warning's dedup (below): one per process. A
     /// non-template inline function's function-local static is a single
     /// object in the whole program; statics inside the template
@@ -148,6 +145,9 @@ namespace Huginn::Util
         return s_dedup.ShouldWarn(formID, signature);
     }
 
+    // `filter` must be a side-effect-free predicate: it may be invoked on entries
+    // that are ultimately skipped (e.g. leveled base-container duplicates), so its
+    // result must depend only on the object, not on call count or order.
     template <typename Filter>
     inline InventoryItemMap GetInventorySafe(RE::TESObjectREFR* ref, Filter&& filter)
     {

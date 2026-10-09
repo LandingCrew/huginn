@@ -9,6 +9,10 @@
 
 #   define Huginn_ZONE          ZoneScoped
 #   define Huginn_ZONE_NAMED(n) ZoneScopedN(n)
+    // A second named zone in a scope that already has one (Huginn_ZONE_NAMED
+    // declares a fixed variable name, so two in one scope do not compile):
+    // `var` names this zone's variable. It ends with the enclosing scope.
+#   define Huginn_ZONE_NAMED_VAR(var, n) ZoneNamedN(var, n, true)
 #   define Huginn_FRAME_MARK    FrameMark
 #   define Huginn_SET_THREAD(n) tracy::SetThreadName(n)
 
@@ -25,6 +29,7 @@
 #else
 #   define Huginn_ZONE          ((void)0)
 #   define Huginn_ZONE_NAMED(n) ((void)0)
+#   define Huginn_ZONE_NAMED_VAR(var, n) ((void)0)
 #   define Huginn_FRAME_MARK    ((void)0)
 #   define Huginn_SET_THREAD(n) ((void)0)
 #   define Huginn_PLOT(name, val) ((void)0)

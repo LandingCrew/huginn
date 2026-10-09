@@ -274,6 +274,17 @@ it doubles as the fit data. Several hours, mixed combat and town. Meanwhile an
 agent runs the cheap test on today's log: one weight per slot class × logged
 `ctx`; if it does not beat context alone, flag it before R6.
 
+- **Newly learned spells reached the page only after a first menu pick**
+  (LoreRim, 2026-10-09). Three spells were learned (SpellRegistry reconcile:
+  +1 spell at 12:44:19, 12:45:00 and 12:46:06; the adds log no names). Ice
+  Spike (0002B96C) was already a candidate -- rolled as a wildcard at
+  12:48:18.708, and WildcardManager draws only from the ranked candidates --
+  but was not seated on the shown page. Its magic-menu pick at 12:51:25 was
+  case A (not a candidate at that moment), and its context weight read
+  ctx=0.00 for DamageMagic at 12:52:15. So candidacy depended on context
+  (ctx=0.00 outside the right one), not a cold-start block. The user accepts
+  this for now; discovery belongs to R10 (wildcards by uncertainty).
+
 ### R6. Offline fit: go / no-go
 
 Map Phase 4, in `tools/replay`.
@@ -421,6 +432,7 @@ after R8.
 | Feather Fall before the jump | `drop_ahead` need: a downward ray cast ahead (replaces "estimated altitude") | R3 |
 | Soul Gem Fragment (LoreRim MISC item) | Find how LoreRim uses it first | Open |
 | Food at a cooking pot or spit (the R3 session: a spit read as a forge) | A `workstation_cooking` need (the bench kind exists: `core/BenchKind.h` reads it from the workbench keyword, 0.23.16) x food effect columns; smelter and tanning rack likewise if a column ever answers them | Sensor exists (`NeedSensorState::bench`); no need row |
+| Soups for the cold meter, apart from warming spells | Split `survival_warmth`: Restore Cold (Update.esm 01002EE5, a soup's; restores the cold meter, `cold`) from Fortify Warmth (01002EE6 / Variable09, warming spells, the Torch, soups; raises the warmth rating, `warmth_deficit`). Two mechanics, confirmed via LoreRim Discord (2026-10-09); one column today, so `cold` x `survival_warmth` also reaches a warming spell. A column change: fixtures regenerate from the dumps | Effect records tell them apart (MGEF, keyword `CCSM_RestoreCold`, name); the columns do not |
 | Resist Disease before a fight with disease carriers | A `disease_exposure` need (hostiles of a disease-carrying race in the fight: skeevers, wolves, bears, sabre cats, vampires -- a race table, as the target families) x `resist_disease`. 0.23.16 removed `diseased` x Resist Disease: resisting does not cure a disease already caught | Missing; no existing need covers it (`target_animal` also holds deer and horses) |
 
 ## Kept outside the rewrite
@@ -517,6 +529,20 @@ effect catalog and the need vector read each of them correctly since 0.23.16:
   create-object bench to Smithing, so `fortifySmithingWeight` still fires at a
   spit. The need vector tells them apart by workbench keyword
   (`core/BenchKind.h`).
+- **A script's equip just after a menu closes is credited as a menu pick**
+  (2026-10-09). `PlayerInputGate::Explain` (`PlayerInputGate.h:91-94`)
+  answers "menu (just closed)" for any equip within 2 s of an Inventory,
+  Favorites or Magic menu closing (`MENU_CLOSE_INPUT_WINDOW_MS`), and
+  `ExternalEquipLearner` opens a pending selection for it
+  (`ExternalEquipLearner.cpp:80`); when that selection confirms,
+  `SelectionLog` logs it with a +1 reward (`SelectionLog.cpp:162`) and
+  `BanditSubscriber` (`EquipSubscribers.h`) trains the learner on it as the
+  player's pick. Seen at
+  12:44:39 with LoreRim's transient "Arcane Anchor" spell-learning spell
+  (37076FA6), which a mod equips after a spell tome is read. Its SpellRegistry
+  add/remove churn is expected (the user ruled it not a bug); only the reward
+  attribution matters, for R8's learner data. The v3 log reads the same `via`
+  as a menu pick (`IsPausingMenuVia`, `SelectionLogV3.cpp:439-443`).
 
 **Fixed in v0.23.13 -- hook-install race (int3 on a load-screen job thread).**
 CommonLib-NG 3.7.0's `write_5branch` patches the call site before it writes
@@ -586,6 +612,16 @@ A budget list, not a work list: a felt stutter is the trigger. Latest capture
 - `PollTargets`: build outside the write lock; `MAX_TRACKED_TARGETS` 50 → ~12.
 - The rewrite adds per-tick work (need vector, cross-features, σ): measure it
   in R8 before optimising anything else.
+- **Wheeler push stalls after a load** (2026-10-09 LoreRim Tracy capture,
+  0.23.16 Debug): re-seat pushes of `Display::Wheeler` in the first ~3 min
+  after a load had a median of 4.3 ms, against 1.0 ms later; 15 of the 18
+  pushes over 5 ms were re-seats. All 7 pushes over 16.6 ms came within
+  100 s of the load, and 3 of them were not re-seats (a wheel close, and two
+  with no re-seat). Wheeler-side report:
+  `wheelerAPI/docs/reports/2026-10-09-huginn-push-spikes-after-load.md`.
+  0.23.17 splits the cost with zones: `Wheeler::AllocateOtherPage`,
+  `WheelSync::UpdatePage` (its `UnchangedCheck` and `WriteSlots`),
+  `WheelSync::RecoverInvalidatedWheels`, `WheelSync::DetectVanishedWheels`.
 
 ---
 

@@ -7,6 +7,7 @@
 #include <spdlog/spdlog.h>
 
 #include "../slot/SlotSettings.h"
+#include "../Profiling.h"
 
 namespace Huginn::Wheeler
 {
@@ -596,6 +597,7 @@ namespace Huginn::Wheeler
 
     bool WheelSync::DetectVanishedWheels()
     {
+        Huginn_ZONE_NAMED("WheelSync::DetectVanishedWheels");
         auto* api = Api();
         if (!api || api->version < 4 || !api->GetManagedWheelsForClient) {
             // Nothing to ask. IsManagedWheel answers "is this wheel managed",
@@ -646,6 +648,7 @@ namespace Huginn::Wheeler
 
     bool WheelSync::RecoverInvalidatedWheels()
     {
+        Huginn_ZONE_NAMED("WheelSync::RecoverInvalidatedWheels");
         int attempt = 0;
         {
             std::lock_guard<std::mutex> lock(m_pageDataMutex);
@@ -1262,6 +1265,17 @@ namespace Huginn::Wheeler
                                const std::vector<uint16_t>& uniqueIDs,
                                const std::vector<std::string>& subtexts)
     {
+        // Tracy (2026-10-09 LoreRim capture): in the first ~3 min after a load,
+        // Display::Wheeler's re-seat pushes had a median of 4.3 ms (1.0 ms
+        // later), and all 7 pushes over 16.6 ms came within 100 s of the load
+        // (3 of them not re-seats). These zones split that cost:
+        // the lock wait and the pre-flight checks stay in this zone's self time,
+        // the compare is UnchangedCheck, the slot writes are WriteSlots. A call
+        // with an UnchangedCheck child and no WriteSlots child took the early-out
+        // (or stopped at a pre-flight check, which logs, except a v4 lookup
+        // that could not answer).
+        Huginn_ZONE_NAMED("WheelSync::UpdatePage");
+
         // Early validation (before lock - no shared state access)
         auto* api = Api();
         if (!api) {
@@ -1298,10 +1312,15 @@ namespace Huginn::Wheeler
         //       — until content changes or the wheels are recreated on reload/postload.
         // Both are rare and self-correcting, and the early-out writes nothing in this
         // state, so it can never corrupt another mod's wheel — detection is only delayed.
-        if (formIDs   == pageWheel.slotFormIDs &&
-            isWildcard == pageWheel.slotWildcard &&
-            uniqueIDs  == pageWheel.slotUniqueIDs &&
-            subtexts   == pageWheel.slotRawSubtexts) {
+        bool unchanged = false;
+        {
+            Huginn_ZONE_NAMED("WheelSync::UnchangedCheck");
+            unchanged = formIDs   == pageWheel.slotFormIDs &&
+                        isWildcard == pageWheel.slotWildcard &&
+                        uniqueIDs  == pageWheel.slotUniqueIDs &&
+                        subtexts   == pageWheel.slotRawSubtexts;
+        }
+        if (unchanged) {
             return;
         }
 
@@ -1363,7 +1382,10 @@ namespace Huginn::Wheeler
             return;
         }
 
-        // Lock now held for the per-slot update loop below
+        // Lock now held for the per-slot update loop below. Its write API calls
+        // (RemoveItem / ClearEntry / AddItemByFormID / SetManagedWheelEntrySubtext)
+        // are what this zone times; it runs to the end of the function.
+        Huginn_ZONE_NAMED_VAR(writeSlotsZone, "WheelSync::WriteSlots");
 
         static constexpr uint8_t MAX_SLOT_RETRIES = 3;
 

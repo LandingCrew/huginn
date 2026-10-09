@@ -83,6 +83,10 @@ if(TARGET Huginn)
 endif()
 
 add_test(NAME huginn_core_tests COMMAND huginn_core_tests)
+# A timeout, so a test that hangs fails the run instead of stalling it (a
+# threaded test can deadlock or spin on a corrupted map; 0.23.17). The Debug
+# suite takes about 40 s.
+set_tests_properties(huginn_core_tests PROPERTIES TIMEOUT 300)
 
 # --- The selection log v3 reader (tools/replay), against the encoder's golden file
 # DecisionLogTests.cpp pins tests/core/fixtures/decisions/synthetic_v3.jsonl byte
@@ -92,6 +96,7 @@ find_package(Python3 COMPONENTS Interpreter)
 if(Python3_Interpreter_FOUND)
    add_test(NAME replay_v3_roundtrip
       COMMAND "${Python3_EXECUTABLE}" -I "${PROJECT_SOURCE_DIR}/tools/replay/test_replay_v3.py")
+   set_tests_properties(replay_v3_roundtrip PROPERTIES TIMEOUT 600)   # runs 43-73 s
 else()
    message(STATUS "Python 3 not found: the replay_v3_roundtrip test is not registered")
 endif()
