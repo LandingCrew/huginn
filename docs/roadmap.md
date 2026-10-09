@@ -175,12 +175,13 @@ in. What was built: the [implementation map](architecture/9-implementation-map.m
 - [x] Drop ahead (the user, 2026-10-08): a Havok ray cast straight down from
       2–3 points ahead of the player (`bhkWorld::PickObject`), not a guessed
       floor and not the terrain heightmap, which sees through rock meshes.
-      Method in `9-data/needs.csv` (`drop_ahead`); each point first checked
-      reachable at waist height, so rising ground or a wall reads "not
-      measured", never a cliff. Physics-world read lock taken; the update
-      loop is not on the main thread, so the rays run in an SKSE task. Proven
-      live: every monitor snapshot of a scripted session reads a measured
-      drop (`tests/core/fixtures/needs/captured_vanilla.txt`).
+      Method in `9-data/needs.csv` (`drop_ahead`); each point first reached by
+      horizontal picks at waist and knee height (any hit blocks), so rising
+      ground, a wall, a parapet or an invisible wall reads "not measured",
+      never a cliff. Cast on the main thread from a `PlayerCharacter::Update`
+      hook under the world's read lock (the update loop and SKSE tasks run on
+      job threads). Proven live: every monitor snapshot of a scripted session
+      reads a measured drop, and five `coc` cell changes ran clean.
 - [ ] **In game (you):** stand at cliff edges, on rock spires and bridges, and
       above deep water; `hg needs` shows `drop_ahead` high only at a real drop.
 - [x] Computed and logged on its own cadence (`needs/NeedMonitor`, every
