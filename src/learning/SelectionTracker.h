@@ -96,7 +96,13 @@ namespace Huginn::Learning
         };
 
         static SelectionKind KindOf(RE::FormID formID);
+
+    public:
+        /// Is `formID` in a hand, worn, or the nocked ammo? (Also used by the
+        /// selection log v3 to confirm the picks it keeps on its own.)
         static bool IsStillEquipped(RE::FormID formID);
+
+    private:
         void Confirm(EquipEvent& event, std::chrono::steady_clock::time_point selectedAt,
                             const char* how);
 

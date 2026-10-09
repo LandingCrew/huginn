@@ -36,6 +36,10 @@
 //                                          ; log a 40-row `hg recs` dump, then end
 //       sCocCells=<cell;cell>              ; optional (0.23.14): after the load suites,
 //                                          ; coc to each cell 12 s apart, then end
+//       bDecisionSession=1                 ; optional (0.23.15): after the load suites, the
+//                                          ; selection log v3 session (key, wheel, menu and
+//                                          ; nothing records, Huginn_Selections_v3_test.jsonl),
+//                                          ; then end (learning/SelectionLogV3Session.cpp)
 //       sDumpAll=<file name>               ; optional (0.23.12): after the save loads
 //                                          ; and its suites ran, write `hg dump all`
 //                                          ; there (a plain name, in the SKSE log

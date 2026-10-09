@@ -35,7 +35,7 @@ suite_start_001,combat_onset,1000000.0,0.0
 suite_start_001,enemy_count,0.0,0.0
 suite_start_001,enemy_close,4096.0,1.0674878334332898e-33
 suite_start_001,enemy_mid,4096.0,4.472740153758267e-67
-suite_start_001,enemy_far,4096.0,0.9999999999999643
+suite_start_001,enemy_far,0.0,4.5397868702434395e-05
 suite_start_001,surrounded,0.0,0.0
 suite_start_001,enemy_casting,0.0,0.0
 suite_start_001,target_caster,0.0,0.0
@@ -127,7 +127,7 @@ suite_hurt_002,combat_onset,1000000.0,0.0
 suite_hurt_002,enemy_count,0.0,0.0
 suite_hurt_002,enemy_close,4096.0,1.0674878334332898e-33
 suite_hurt_002,enemy_mid,4096.0,4.472740153758267e-67
-suite_hurt_002,enemy_far,4096.0,0.9999999999999643
+suite_hurt_002,enemy_far,0.0,4.5397868702434395e-05
 suite_hurt_002,surrounded,0.0,0.0
 suite_hurt_002,enemy_casting,0.0,0.0
 suite_hurt_002,target_caster,0.0,0.0
@@ -219,7 +219,7 @@ monitor_003,combat_onset,1000000.0,0.0
 monitor_003,enemy_count,0.0,0.0
 monitor_003,enemy_close,4096.0,1.0674878334332898e-33
 monitor_003,enemy_mid,4096.0,4.472740153758267e-67
-monitor_003,enemy_far,4096.0,0.9999999999999643
+monitor_003,enemy_far,0.0,4.5397868702434395e-05
 monitor_003,surrounded,0.0,0.0
 monitor_003,enemy_casting,0.0,0.0
 monitor_003,target_caster,0.0,0.0
@@ -311,7 +311,7 @@ monitor_004,combat_onset,1000000.0,0.0
 monitor_004,enemy_count,0.0,0.0
 monitor_004,enemy_close,4096.0,1.0674878334332898e-33
 monitor_004,enemy_mid,4096.0,4.472740153758267e-67
-monitor_004,enemy_far,4096.0,0.9999999999999643
+monitor_004,enemy_far,0.0,4.5397868702434395e-05
 monitor_004,surrounded,0.0,0.0
 monitor_004,enemy_casting,0.0,0.0
 monitor_004,target_caster,0.0,0.0
@@ -403,7 +403,7 @@ monitor_005,combat_onset,1000000.0,0.0
 monitor_005,enemy_count,0.0,0.0
 monitor_005,enemy_close,4096.0,1.0674878334332898e-33
 monitor_005,enemy_mid,4096.0,4.472740153758267e-67
-monitor_005,enemy_far,4096.0,0.9999999999999643
+monitor_005,enemy_far,0.0,4.5397868702434395e-05
 monitor_005,surrounded,0.0,0.0
 monitor_005,enemy_casting,0.0,0.0
 monitor_005,target_caster,0.0,0.0
@@ -495,7 +495,7 @@ monitor_006,combat_onset,1000000.0,0.0
 monitor_006,enemy_count,0.0,0.0
 monitor_006,enemy_close,4096.0,1.0674878334332898e-33
 monitor_006,enemy_mid,4096.0,4.472740153758267e-67
-monitor_006,enemy_far,4096.0,0.9999999999999643
+monitor_006,enemy_far,0.0,4.5397868702434395e-05
 monitor_006,surrounded,0.0,0.0
 monitor_006,enemy_casting,0.0,0.0
 monitor_006,target_caster,0.0,0.0
@@ -587,7 +587,7 @@ monitor_007,combat_onset,1000000.0,0.0
 monitor_007,enemy_count,0.0,0.0
 monitor_007,enemy_close,4096.0,1.0674878334332898e-33
 monitor_007,enemy_mid,4096.0,4.472740153758267e-67
-monitor_007,enemy_far,4096.0,0.9999999999999643
+monitor_007,enemy_far,0.0,4.5397868702434395e-05
 monitor_007,surrounded,0.0,0.0
 monitor_007,enemy_casting,0.0,0.0
 monitor_007,target_caster,0.0,0.0
@@ -679,7 +679,7 @@ monitor_008,combat_onset,1000000.0,0.0
 monitor_008,enemy_count,0.0,0.0
 monitor_008,enemy_close,4096.0,1.0674878334332898e-33
 monitor_008,enemy_mid,4096.0,4.472740153758267e-67
-monitor_008,enemy_far,4096.0,0.9999999999999643
+monitor_008,enemy_far,0.0,4.5397868702434395e-05
 monitor_008,surrounded,0.0,0.0
 monitor_008,enemy_casting,0.0,0.0
 monitor_008,target_caster,0.0,0.0
@@ -771,7 +771,7 @@ monitor_009,combat_onset,1000000.0,0.0
 monitor_009,enemy_count,0.0,0.0
 monitor_009,enemy_close,4096.0,1.0674878334332898e-33
 monitor_009,enemy_mid,4096.0,4.472740153758267e-67
-monitor_009,enemy_far,4096.0,0.9999999999999643
+monitor_009,enemy_far,0.0,4.5397868702434395e-05
 monitor_009,surrounded,0.0,0.0
 monitor_009,enemy_casting,0.0,0.0
 monitor_009,target_caster,0.0,0.0
@@ -863,7 +863,7 @@ monitor_010,combat_onset,1000000.0,0.0
 monitor_010,enemy_count,0.0,0.0
 monitor_010,enemy_close,4096.0,1.0674878334332898e-33
 monitor_010,enemy_mid,4096.0,4.472740153758267e-67
-monitor_010,enemy_far,4096.0,0.9999999999999643
+monitor_010,enemy_far,0.0,4.5397868702434395e-05
 monitor_010,surrounded,0.0,0.0
 monitor_010,enemy_casting,0.0,0.0
 monitor_010,target_caster,0.0,0.0
@@ -955,7 +955,7 @@ monitor_011,combat_onset,1000000.0,0.0
 monitor_011,enemy_count,0.0,0.0
 monitor_011,enemy_close,4096.0,1.0674878334332898e-33
 monitor_011,enemy_mid,4096.0,4.472740153758267e-67
-monitor_011,enemy_far,4096.0,0.9999999999999643
+monitor_011,enemy_far,0.0,4.5397868702434395e-05
 monitor_011,surrounded,0.0,0.0
 monitor_011,enemy_casting,0.0,0.0
 monitor_011,target_caster,0.0,0.0
@@ -1047,7 +1047,7 @@ monitor_012,combat_onset,1000000.0,0.0
 monitor_012,enemy_count,0.0,0.0
 monitor_012,enemy_close,4096.0,1.0674878334332898e-33
 monitor_012,enemy_mid,4096.0,4.472740153758267e-67
-monitor_012,enemy_far,4096.0,0.9999999999999643
+monitor_012,enemy_far,0.0,4.5397868702434395e-05
 monitor_012,surrounded,0.0,0.0
 monitor_012,enemy_casting,0.0,0.0
 monitor_012,target_caster,0.0,0.0
@@ -1139,7 +1139,7 @@ monitor_013,combat_onset,1000000.0,0.0
 monitor_013,enemy_count,0.0,0.0
 monitor_013,enemy_close,4096.0,1.0674878334332898e-33
 monitor_013,enemy_mid,4096.0,4.472740153758267e-67
-monitor_013,enemy_far,4096.0,0.9999999999999643
+monitor_013,enemy_far,0.0,4.5397868702434395e-05
 monitor_013,surrounded,0.0,0.0
 monitor_013,enemy_casting,0.0,0.0
 monitor_013,target_caster,0.0,0.0
@@ -1231,7 +1231,7 @@ monitor_014,combat_onset,1000000.0,0.0
 monitor_014,enemy_count,0.0,0.0
 monitor_014,enemy_close,4096.0,1.0674878334332898e-33
 monitor_014,enemy_mid,4096.0,4.472740153758267e-67
-monitor_014,enemy_far,4096.0,0.9999999999999643
+monitor_014,enemy_far,0.0,4.5397868702434395e-05
 monitor_014,surrounded,0.0,0.0
 monitor_014,enemy_casting,0.0,0.0
 monitor_014,target_caster,0.0,0.0
@@ -1323,7 +1323,7 @@ monitor_015,combat_onset,1000000.0,0.0
 monitor_015,enemy_count,0.0,0.0
 monitor_015,enemy_close,4096.0,1.0674878334332898e-33
 monitor_015,enemy_mid,4096.0,4.472740153758267e-67
-monitor_015,enemy_far,4096.0,0.9999999999999643
+monitor_015,enemy_far,0.0,4.5397868702434395e-05
 monitor_015,surrounded,0.0,0.0
 monitor_015,enemy_casting,0.0,0.0
 monitor_015,target_caster,0.0,0.0
@@ -1415,7 +1415,7 @@ monitor_016,combat_onset,1000000.0,0.0
 monitor_016,enemy_count,0.0,0.0
 monitor_016,enemy_close,4096.0,1.0674878334332898e-33
 monitor_016,enemy_mid,4096.0,4.472740153758267e-67
-monitor_016,enemy_far,4096.0,0.9999999999999643
+monitor_016,enemy_far,0.0,4.5397868702434395e-05
 monitor_016,surrounded,0.0,0.0
 monitor_016,enemy_casting,0.0,0.0
 monitor_016,target_caster,0.0,0.0
@@ -1507,7 +1507,7 @@ monitor_017,combat_onset,1000000.0,0.0
 monitor_017,enemy_count,0.0,0.0
 monitor_017,enemy_close,4096.0,1.0674878334332898e-33
 monitor_017,enemy_mid,4096.0,4.472740153758267e-67
-monitor_017,enemy_far,4096.0,0.9999999999999643
+monitor_017,enemy_far,0.0,4.5397868702434395e-05
 monitor_017,surrounded,0.0,0.0
 monitor_017,enemy_casting,0.0,0.0
 monitor_017,target_caster,0.0,0.0
@@ -1599,7 +1599,7 @@ monitor_018,combat_onset,1000000.0,0.0
 monitor_018,enemy_count,0.0,0.0
 monitor_018,enemy_close,4096.0,1.0674878334332898e-33
 monitor_018,enemy_mid,4096.0,4.472740153758267e-67
-monitor_018,enemy_far,4096.0,0.9999999999999643
+monitor_018,enemy_far,0.0,4.5397868702434395e-05
 monitor_018,surrounded,0.0,0.0
 monitor_018,enemy_casting,0.0,0.0
 monitor_018,target_caster,0.0,0.0
@@ -1691,7 +1691,7 @@ monitor_019,combat_onset,1000000.0,0.0
 monitor_019,enemy_count,0.0,0.0
 monitor_019,enemy_close,4096.0,1.0674878334332898e-33
 monitor_019,enemy_mid,4096.0,4.472740153758267e-67
-monitor_019,enemy_far,4096.0,0.9999999999999643
+monitor_019,enemy_far,0.0,4.5397868702434395e-05
 monitor_019,surrounded,0.0,0.0
 monitor_019,enemy_casting,0.0,0.0
 monitor_019,target_caster,0.0,0.0
@@ -1783,7 +1783,7 @@ monitor_020,combat_onset,1000000.0,0.0
 monitor_020,enemy_count,0.0,0.0
 monitor_020,enemy_close,4096.0,1.0674878334332898e-33
 monitor_020,enemy_mid,4096.0,4.472740153758267e-67
-monitor_020,enemy_far,4096.0,0.9999999999999643
+monitor_020,enemy_far,0.0,4.5397868702434395e-05
 monitor_020,surrounded,0.0,0.0
 monitor_020,enemy_casting,0.0,0.0
 monitor_020,target_caster,0.0,0.0
@@ -1875,7 +1875,7 @@ monitor_021,combat_onset,1000000.0,0.0
 monitor_021,enemy_count,0.0,0.0
 monitor_021,enemy_close,4096.0,1.0674878334332898e-33
 monitor_021,enemy_mid,4096.0,4.472740153758267e-67
-monitor_021,enemy_far,4096.0,0.9999999999999643
+monitor_021,enemy_far,0.0,4.5397868702434395e-05
 monitor_021,surrounded,0.0,0.0
 monitor_021,enemy_casting,0.0,0.0
 monitor_021,target_caster,0.0,0.0
@@ -1967,7 +1967,7 @@ monitor_022,combat_onset,1000000.0,0.0
 monitor_022,enemy_count,0.0,0.0
 monitor_022,enemy_close,4096.0,1.0674878334332898e-33
 monitor_022,enemy_mid,4096.0,4.472740153758267e-67
-monitor_022,enemy_far,4096.0,0.9999999999999643
+monitor_022,enemy_far,0.0,4.5397868702434395e-05
 monitor_022,surrounded,0.0,0.0
 monitor_022,enemy_casting,0.0,0.0
 monitor_022,target_caster,0.0,0.0
@@ -2059,7 +2059,7 @@ monitor_023,combat_onset,1000000.0,0.0
 monitor_023,enemy_count,0.0,0.0
 monitor_023,enemy_close,4096.0,1.0674878334332898e-33
 monitor_023,enemy_mid,4096.0,4.472740153758267e-67
-monitor_023,enemy_far,4096.0,0.9999999999999643
+monitor_023,enemy_far,0.0,4.5397868702434395e-05
 monitor_023,surrounded,0.0,0.0
 monitor_023,enemy_casting,0.0,0.0
 monitor_023,target_caster,0.0,0.0
@@ -2151,7 +2151,7 @@ monitor_024,combat_onset,1000000.0,0.0
 monitor_024,enemy_count,0.0,0.0
 monitor_024,enemy_close,4096.0,1.0674878334332898e-33
 monitor_024,enemy_mid,4096.0,4.472740153758267e-67
-monitor_024,enemy_far,4096.0,0.9999999999999643
+monitor_024,enemy_far,0.0,4.5397868702434395e-05
 monitor_024,surrounded,0.0,0.0
 monitor_024,enemy_casting,0.0,0.0
 monitor_024,target_caster,0.0,0.0
@@ -2243,7 +2243,7 @@ monitor_025,combat_onset,1000000.0,0.0
 monitor_025,enemy_count,0.0,0.0
 monitor_025,enemy_close,4096.0,1.0674878334332898e-33
 monitor_025,enemy_mid,4096.0,4.472740153758267e-67
-monitor_025,enemy_far,4096.0,0.9999999999999643
+monitor_025,enemy_far,0.0,4.5397868702434395e-05
 monitor_025,surrounded,0.0,0.0
 monitor_025,enemy_casting,0.0,0.0
 monitor_025,target_caster,0.0,0.0
@@ -2335,7 +2335,7 @@ monitor_026,combat_onset,1000000.0,0.0
 monitor_026,enemy_count,0.0,0.0
 monitor_026,enemy_close,4096.0,1.0674878334332898e-33
 monitor_026,enemy_mid,4096.0,4.472740153758267e-67
-monitor_026,enemy_far,4096.0,0.9999999999999643
+monitor_026,enemy_far,0.0,4.5397868702434395e-05
 monitor_026,surrounded,0.0,0.0
 monitor_026,enemy_casting,0.0,0.0
 monitor_026,target_caster,0.0,0.0
@@ -2427,7 +2427,7 @@ monitor_027,combat_onset,1000000.0,0.0
 monitor_027,enemy_count,0.0,0.0
 monitor_027,enemy_close,4096.0,1.0674878334332898e-33
 monitor_027,enemy_mid,4096.0,4.472740153758267e-67
-monitor_027,enemy_far,4096.0,0.9999999999999643
+monitor_027,enemy_far,0.0,4.5397868702434395e-05
 monitor_027,surrounded,0.0,0.0
 monitor_027,enemy_casting,0.0,0.0
 monitor_027,target_caster,0.0,0.0
@@ -2519,7 +2519,7 @@ monitor_028,combat_onset,1000000.0,0.0
 monitor_028,enemy_count,0.0,0.0
 monitor_028,enemy_close,4096.0,1.0674878334332898e-33
 monitor_028,enemy_mid,4096.0,4.472740153758267e-67
-monitor_028,enemy_far,4096.0,0.9999999999999643
+monitor_028,enemy_far,0.0,4.5397868702434395e-05
 monitor_028,surrounded,0.0,0.0
 monitor_028,enemy_casting,0.0,0.0
 monitor_028,target_caster,0.0,0.0
@@ -2611,7 +2611,7 @@ monitor_029,combat_onset,1000000.0,0.0
 monitor_029,enemy_count,0.0,0.0
 monitor_029,enemy_close,4096.0,1.0674878334332898e-33
 monitor_029,enemy_mid,4096.0,4.472740153758267e-67
-monitor_029,enemy_far,4096.0,0.9999999999999643
+monitor_029,enemy_far,0.0,4.5397868702434395e-05
 monitor_029,surrounded,0.0,0.0
 monitor_029,enemy_casting,0.0,0.0
 monitor_029,target_caster,0.0,0.0
@@ -2703,7 +2703,7 @@ monitor_030,combat_onset,1000000.0,0.0
 monitor_030,enemy_count,0.0,0.0
 monitor_030,enemy_close,4096.0,1.0674878334332898e-33
 monitor_030,enemy_mid,4096.0,4.472740153758267e-67
-monitor_030,enemy_far,4096.0,0.9999999999999643
+monitor_030,enemy_far,0.0,4.5397868702434395e-05
 monitor_030,surrounded,0.0,0.0
 monitor_030,enemy_casting,0.0,0.0
 monitor_030,target_caster,0.0,0.0
@@ -2795,7 +2795,7 @@ monitor_031,combat_onset,1000000.0,0.0
 monitor_031,enemy_count,0.0,0.0
 monitor_031,enemy_close,4096.0,1.0674878334332898e-33
 monitor_031,enemy_mid,4096.0,4.472740153758267e-67
-monitor_031,enemy_far,4096.0,0.9999999999999643
+monitor_031,enemy_far,0.0,4.5397868702434395e-05
 monitor_031,surrounded,0.0,0.0
 monitor_031,enemy_casting,0.0,0.0
 monitor_031,target_caster,0.0,0.0
@@ -2887,7 +2887,7 @@ monitor_032,combat_onset,1000000.0,0.0
 monitor_032,enemy_count,0.0,0.0
 monitor_032,enemy_close,4096.0,1.0674878334332898e-33
 monitor_032,enemy_mid,4096.0,4.472740153758267e-67
-monitor_032,enemy_far,4096.0,0.9999999999999643
+monitor_032,enemy_far,0.0,4.5397868702434395e-05
 monitor_032,surrounded,0.0,0.0
 monitor_032,enemy_casting,0.0,0.0
 monitor_032,target_caster,0.0,0.0
@@ -2979,7 +2979,7 @@ monitor_033,combat_onset,1000000.0,0.0
 monitor_033,enemy_count,0.0,0.0
 monitor_033,enemy_close,4096.0,1.0674878334332898e-33
 monitor_033,enemy_mid,4096.0,4.472740153758267e-67
-monitor_033,enemy_far,4096.0,0.9999999999999643
+monitor_033,enemy_far,0.0,4.5397868702434395e-05
 monitor_033,surrounded,0.0,0.0
 monitor_033,enemy_casting,0.0,0.0
 monitor_033,target_caster,0.0,0.0
@@ -3071,7 +3071,7 @@ monitor_034,combat_onset,1000000.0,0.0
 monitor_034,enemy_count,0.0,0.0
 monitor_034,enemy_close,4096.0,1.0674878334332898e-33
 monitor_034,enemy_mid,4096.0,4.472740153758267e-67
-monitor_034,enemy_far,4096.0,0.9999999999999643
+monitor_034,enemy_far,0.0,4.5397868702434395e-05
 monitor_034,surrounded,0.0,0.0
 monitor_034,enemy_casting,0.0,0.0
 monitor_034,target_caster,0.0,0.0
@@ -3163,7 +3163,7 @@ monitor_035,combat_onset,1000000.0,0.0
 monitor_035,enemy_count,0.0,0.0
 monitor_035,enemy_close,4096.0,1.0674878334332898e-33
 monitor_035,enemy_mid,4096.0,4.472740153758267e-67
-monitor_035,enemy_far,4096.0,0.9999999999999643
+monitor_035,enemy_far,0.0,4.5397868702434395e-05
 monitor_035,surrounded,0.0,0.0
 monitor_035,enemy_casting,0.0,0.0
 monitor_035,target_caster,0.0,0.0
@@ -3255,7 +3255,7 @@ monitor_036,combat_onset,1000000.0,0.0
 monitor_036,enemy_count,0.0,0.0
 monitor_036,enemy_close,4096.0,1.0674878334332898e-33
 monitor_036,enemy_mid,4096.0,4.472740153758267e-67
-monitor_036,enemy_far,4096.0,0.9999999999999643
+monitor_036,enemy_far,0.0,4.5397868702434395e-05
 monitor_036,surrounded,0.0,0.0
 monitor_036,enemy_casting,0.0,0.0
 monitor_036,target_caster,0.0,0.0
@@ -3347,7 +3347,7 @@ monitor_037,combat_onset,1000000.0,0.0
 monitor_037,enemy_count,0.0,0.0
 monitor_037,enemy_close,4096.0,1.0674878334332898e-33
 monitor_037,enemy_mid,4096.0,4.472740153758267e-67
-monitor_037,enemy_far,4096.0,0.9999999999999643
+monitor_037,enemy_far,0.0,4.5397868702434395e-05
 monitor_037,surrounded,0.0,0.0
 monitor_037,enemy_casting,0.0,0.0
 monitor_037,target_caster,0.0,0.0
@@ -3439,7 +3439,7 @@ monitor_038,combat_onset,1000000.0,0.0
 monitor_038,enemy_count,0.0,0.0
 monitor_038,enemy_close,4096.0,1.0674878334332898e-33
 monitor_038,enemy_mid,4096.0,4.472740153758267e-67
-monitor_038,enemy_far,4096.0,0.9999999999999643
+monitor_038,enemy_far,0.0,4.5397868702434395e-05
 monitor_038,surrounded,0.0,0.0
 monitor_038,enemy_casting,0.0,0.0
 monitor_038,target_caster,0.0,0.0
@@ -3531,7 +3531,7 @@ monitor_039,combat_onset,1000000.0,0.0
 monitor_039,enemy_count,0.0,0.0
 monitor_039,enemy_close,4096.0,1.0674878334332898e-33
 monitor_039,enemy_mid,4096.0,4.472740153758267e-67
-monitor_039,enemy_far,4096.0,0.9999999999999643
+monitor_039,enemy_far,0.0,4.5397868702434395e-05
 monitor_039,surrounded,0.0,0.0
 monitor_039,enemy_casting,0.0,0.0
 monitor_039,target_caster,0.0,0.0
@@ -3623,7 +3623,7 @@ monitor_040,combat_onset,1000000.0,0.0
 monitor_040,enemy_count,0.0,0.0
 monitor_040,enemy_close,4096.0,1.0674878334332898e-33
 monitor_040,enemy_mid,4096.0,4.472740153758267e-67
-monitor_040,enemy_far,4096.0,0.9999999999999643
+monitor_040,enemy_far,0.0,4.5397868702434395e-05
 monitor_040,surrounded,0.0,0.0
 monitor_040,enemy_casting,0.0,0.0
 monitor_040,target_caster,0.0,0.0
@@ -3715,7 +3715,7 @@ monitor_041,combat_onset,1000000.0,0.0
 monitor_041,enemy_count,0.0,0.0
 monitor_041,enemy_close,4096.0,1.0674878334332898e-33
 monitor_041,enemy_mid,4096.0,4.472740153758267e-67
-monitor_041,enemy_far,4096.0,0.9999999999999643
+monitor_041,enemy_far,0.0,4.5397868702434395e-05
 monitor_041,surrounded,0.0,0.0
 monitor_041,enemy_casting,0.0,0.0
 monitor_041,target_caster,0.0,0.0
@@ -3807,7 +3807,7 @@ monitor_042,combat_onset,1000000.0,0.0
 monitor_042,enemy_count,0.0,0.0
 monitor_042,enemy_close,4096.0,1.0674878334332898e-33
 monitor_042,enemy_mid,4096.0,4.472740153758267e-67
-monitor_042,enemy_far,4096.0,0.9999999999999643
+monitor_042,enemy_far,0.0,4.5397868702434395e-05
 monitor_042,surrounded,0.0,0.0
 monitor_042,enemy_casting,0.0,0.0
 monitor_042,target_caster,0.0,0.0
@@ -3899,7 +3899,7 @@ monitor_043,combat_onset,1000000.0,0.0
 monitor_043,enemy_count,0.0,0.0
 monitor_043,enemy_close,4096.0,1.0674878334332898e-33
 monitor_043,enemy_mid,4096.0,4.472740153758267e-67
-monitor_043,enemy_far,4096.0,0.9999999999999643
+monitor_043,enemy_far,0.0,4.5397868702434395e-05
 monitor_043,surrounded,0.0,0.0
 monitor_043,enemy_casting,0.0,0.0
 monitor_043,target_caster,0.0,0.0
@@ -3991,7 +3991,7 @@ monitor_044,combat_onset,1000000.0,0.0
 monitor_044,enemy_count,0.0,0.0
 monitor_044,enemy_close,4096.0,1.0674878334332898e-33
 monitor_044,enemy_mid,4096.0,4.472740153758267e-67
-monitor_044,enemy_far,4096.0,0.9999999999999643
+monitor_044,enemy_far,0.0,4.5397868702434395e-05
 monitor_044,surrounded,0.0,0.0
 monitor_044,enemy_casting,0.0,0.0
 monitor_044,target_caster,0.0,0.0
@@ -4083,7 +4083,7 @@ monitor_045,combat_onset,1000000.0,0.0
 monitor_045,enemy_count,0.0,0.0
 monitor_045,enemy_close,4096.0,1.0674878334332898e-33
 monitor_045,enemy_mid,4096.0,4.472740153758267e-67
-monitor_045,enemy_far,4096.0,0.9999999999999643
+monitor_045,enemy_far,0.0,4.5397868702434395e-05
 monitor_045,surrounded,0.0,0.0
 monitor_045,enemy_casting,0.0,0.0
 monitor_045,target_caster,0.0,0.0
@@ -4175,7 +4175,7 @@ monitor_046,combat_onset,1000000.0,0.0
 monitor_046,enemy_count,0.0,0.0
 monitor_046,enemy_close,4096.0,1.0674878334332898e-33
 monitor_046,enemy_mid,4096.0,4.472740153758267e-67
-monitor_046,enemy_far,4096.0,0.9999999999999643
+monitor_046,enemy_far,0.0,4.5397868702434395e-05
 monitor_046,surrounded,0.0,0.0
 monitor_046,enemy_casting,0.0,0.0
 monitor_046,target_caster,0.0,0.0
@@ -4267,7 +4267,7 @@ monitor_047,combat_onset,1000000.0,0.0
 monitor_047,enemy_count,0.0,0.0
 monitor_047,enemy_close,4096.0,1.0674878334332898e-33
 monitor_047,enemy_mid,4096.0,4.472740153758267e-67
-monitor_047,enemy_far,4096.0,0.9999999999999643
+monitor_047,enemy_far,0.0,4.5397868702434395e-05
 monitor_047,surrounded,0.0,0.0
 monitor_047,enemy_casting,0.0,0.0
 monitor_047,target_caster,0.0,0.0
@@ -4359,7 +4359,7 @@ monitor_048,combat_onset,1000000.0,0.0
 monitor_048,enemy_count,0.0,0.0
 monitor_048,enemy_close,4096.0,1.0674878334332898e-33
 monitor_048,enemy_mid,4096.0,4.472740153758267e-67
-monitor_048,enemy_far,4096.0,0.9999999999999643
+monitor_048,enemy_far,0.0,4.5397868702434395e-05
 monitor_048,surrounded,0.0,0.0
 monitor_048,enemy_casting,0.0,0.0
 monitor_048,target_caster,0.0,0.0
@@ -4451,7 +4451,7 @@ monitor_049,combat_onset,1000000.0,0.0
 monitor_049,enemy_count,0.0,0.0
 monitor_049,enemy_close,4096.0,1.0674878334332898e-33
 monitor_049,enemy_mid,4096.0,4.472740153758267e-67
-monitor_049,enemy_far,4096.0,0.9999999999999643
+monitor_049,enemy_far,0.0,4.5397868702434395e-05
 monitor_049,surrounded,0.0,0.0
 monitor_049,enemy_casting,0.0,0.0
 monitor_049,target_caster,0.0,0.0
@@ -4543,7 +4543,7 @@ monitor_050,combat_onset,1000000.0,0.0
 monitor_050,enemy_count,0.0,0.0
 monitor_050,enemy_close,4096.0,1.0674878334332898e-33
 monitor_050,enemy_mid,4096.0,4.472740153758267e-67
-monitor_050,enemy_far,4096.0,0.9999999999999643
+monitor_050,enemy_far,0.0,4.5397868702434395e-05
 monitor_050,surrounded,0.0,0.0
 monitor_050,enemy_casting,0.0,0.0
 monitor_050,target_caster,0.0,0.0
@@ -4635,7 +4635,7 @@ monitor_051,combat_onset,1000000.0,0.0
 monitor_051,enemy_count,0.0,0.0
 monitor_051,enemy_close,4096.0,1.0674878334332898e-33
 monitor_051,enemy_mid,4096.0,4.472740153758267e-67
-monitor_051,enemy_far,4096.0,0.9999999999999643
+monitor_051,enemy_far,0.0,4.5397868702434395e-05
 monitor_051,surrounded,0.0,0.0
 monitor_051,enemy_casting,0.0,0.0
 monitor_051,target_caster,0.0,0.0
@@ -4727,7 +4727,7 @@ monitor_052,combat_onset,1000000.0,0.0
 monitor_052,enemy_count,0.0,0.0
 monitor_052,enemy_close,4096.0,1.0674878334332898e-33
 monitor_052,enemy_mid,4096.0,4.472740153758267e-67
-monitor_052,enemy_far,4096.0,0.9999999999999643
+monitor_052,enemy_far,0.0,4.5397868702434395e-05
 monitor_052,surrounded,0.0,0.0
 monitor_052,enemy_casting,0.0,0.0
 monitor_052,target_caster,0.0,0.0
@@ -4819,7 +4819,7 @@ monitor_053,combat_onset,1000000.0,0.0
 monitor_053,enemy_count,0.0,0.0
 monitor_053,enemy_close,4096.0,1.0674878334332898e-33
 monitor_053,enemy_mid,4096.0,4.472740153758267e-67
-monitor_053,enemy_far,4096.0,0.9999999999999643
+monitor_053,enemy_far,0.0,4.5397868702434395e-05
 monitor_053,surrounded,0.0,0.0
 monitor_053,enemy_casting,0.0,0.0
 monitor_053,target_caster,0.0,0.0
@@ -4911,7 +4911,7 @@ monitor_054,combat_onset,1000000.0,0.0
 monitor_054,enemy_count,0.0,0.0
 monitor_054,enemy_close,4096.0,1.0674878334332898e-33
 monitor_054,enemy_mid,4096.0,4.472740153758267e-67
-monitor_054,enemy_far,4096.0,0.9999999999999643
+monitor_054,enemy_far,0.0,4.5397868702434395e-05
 monitor_054,surrounded,0.0,0.0
 monitor_054,enemy_casting,0.0,0.0
 monitor_054,target_caster,0.0,0.0
@@ -5003,7 +5003,7 @@ monitor_055,combat_onset,1000000.0,0.0
 monitor_055,enemy_count,0.0,0.0
 monitor_055,enemy_close,4096.0,1.0674878334332898e-33
 monitor_055,enemy_mid,4096.0,4.472740153758267e-67
-monitor_055,enemy_far,4096.0,0.9999999999999643
+monitor_055,enemy_far,0.0,4.5397868702434395e-05
 monitor_055,surrounded,0.0,0.0
 monitor_055,enemy_casting,0.0,0.0
 monitor_055,target_caster,0.0,0.0
@@ -5095,7 +5095,7 @@ monitor_056,combat_onset,1000000.0,0.0
 monitor_056,enemy_count,0.0,0.0
 monitor_056,enemy_close,4096.0,1.0674878334332898e-33
 monitor_056,enemy_mid,4096.0,4.472740153758267e-67
-monitor_056,enemy_far,4096.0,0.9999999999999643
+monitor_056,enemy_far,0.0,4.5397868702434395e-05
 monitor_056,surrounded,0.0,0.0
 monitor_056,enemy_casting,0.0,0.0
 monitor_056,target_caster,0.0,0.0
@@ -5187,7 +5187,7 @@ monitor_057,combat_onset,1000000.0,0.0
 monitor_057,enemy_count,0.0,0.0
 monitor_057,enemy_close,4096.0,1.0674878334332898e-33
 monitor_057,enemy_mid,4096.0,4.472740153758267e-67
-monitor_057,enemy_far,4096.0,0.9999999999999643
+monitor_057,enemy_far,0.0,4.5397868702434395e-05
 monitor_057,surrounded,0.0,0.0
 monitor_057,enemy_casting,0.0,0.0
 monitor_057,target_caster,0.0,0.0
@@ -5279,7 +5279,7 @@ monitor_058,combat_onset,1000000.0,0.0
 monitor_058,enemy_count,0.0,0.0
 monitor_058,enemy_close,4096.0,1.0674878334332898e-33
 monitor_058,enemy_mid,4096.0,4.472740153758267e-67
-monitor_058,enemy_far,4096.0,0.9999999999999643
+monitor_058,enemy_far,0.0,4.5397868702434395e-05
 monitor_058,surrounded,0.0,0.0
 monitor_058,enemy_casting,0.0,0.0
 monitor_058,target_caster,0.0,0.0
@@ -5371,7 +5371,7 @@ monitor_059,combat_onset,1000000.0,0.0
 monitor_059,enemy_count,0.0,0.0
 monitor_059,enemy_close,4096.0,1.0674878334332898e-33
 monitor_059,enemy_mid,4096.0,4.472740153758267e-67
-monitor_059,enemy_far,4096.0,0.9999999999999643
+monitor_059,enemy_far,0.0,4.5397868702434395e-05
 monitor_059,surrounded,0.0,0.0
 monitor_059,enemy_casting,0.0,0.0
 monitor_059,target_caster,0.0,0.0
@@ -5463,7 +5463,7 @@ monitor_060,combat_onset,1000000.0,0.0
 monitor_060,enemy_count,0.0,0.0
 monitor_060,enemy_close,4096.0,1.0674878334332898e-33
 monitor_060,enemy_mid,4096.0,4.472740153758267e-67
-monitor_060,enemy_far,4096.0,0.9999999999999643
+monitor_060,enemy_far,0.0,4.5397868702434395e-05
 monitor_060,surrounded,0.0,0.0
 monitor_060,enemy_casting,0.0,0.0
 monitor_060,target_caster,0.0,0.0
@@ -5555,7 +5555,7 @@ monitor_061,combat_onset,1000000.0,0.0
 monitor_061,enemy_count,0.0,0.0
 monitor_061,enemy_close,4096.0,1.0674878334332898e-33
 monitor_061,enemy_mid,4096.0,4.472740153758267e-67
-monitor_061,enemy_far,4096.0,0.9999999999999643
+monitor_061,enemy_far,0.0,4.5397868702434395e-05
 monitor_061,surrounded,0.0,0.0
 monitor_061,enemy_casting,0.0,0.0
 monitor_061,target_caster,0.0,0.0
@@ -5647,7 +5647,7 @@ monitor_062,combat_onset,1000000.0,0.0
 monitor_062,enemy_count,0.0,0.0
 monitor_062,enemy_close,4096.0,1.0674878334332898e-33
 monitor_062,enemy_mid,4096.0,4.472740153758267e-67
-monitor_062,enemy_far,4096.0,0.9999999999999643
+monitor_062,enemy_far,0.0,4.5397868702434395e-05
 monitor_062,surrounded,0.0,0.0
 monitor_062,enemy_casting,0.0,0.0
 monitor_062,target_caster,0.0,0.0
@@ -5739,7 +5739,7 @@ monitor_063,combat_onset,1000000.0,0.0
 monitor_063,enemy_count,0.0,0.0
 monitor_063,enemy_close,4096.0,1.0674878334332898e-33
 monitor_063,enemy_mid,4096.0,4.472740153758267e-67
-monitor_063,enemy_far,4096.0,0.9999999999999643
+monitor_063,enemy_far,0.0,4.5397868702434395e-05
 monitor_063,surrounded,0.0,0.0
 monitor_063,enemy_casting,0.0,0.0
 monitor_063,target_caster,0.0,0.0
@@ -5831,7 +5831,7 @@ monitor_064,combat_onset,1000000.0,0.0
 monitor_064,enemy_count,0.0,0.0
 monitor_064,enemy_close,4096.0,1.0674878334332898e-33
 monitor_064,enemy_mid,4096.0,4.472740153758267e-67
-monitor_064,enemy_far,4096.0,0.9999999999999643
+monitor_064,enemy_far,0.0,4.5397868702434395e-05
 monitor_064,surrounded,0.0,0.0
 monitor_064,enemy_casting,0.0,0.0
 monitor_064,target_caster,0.0,0.0
@@ -5923,7 +5923,7 @@ monitor_065,combat_onset,1000000.0,0.0
 monitor_065,enemy_count,0.0,0.0
 monitor_065,enemy_close,4096.0,1.0674878334332898e-33
 monitor_065,enemy_mid,4096.0,4.472740153758267e-67
-monitor_065,enemy_far,4096.0,0.9999999999999643
+monitor_065,enemy_far,0.0,4.5397868702434395e-05
 monitor_065,surrounded,0.0,0.0
 monitor_065,enemy_casting,0.0,0.0
 monitor_065,target_caster,0.0,0.0
@@ -6015,7 +6015,7 @@ monitor_066,combat_onset,1000000.0,0.0
 monitor_066,enemy_count,0.0,0.0
 monitor_066,enemy_close,4096.0,1.0674878334332898e-33
 monitor_066,enemy_mid,4096.0,4.472740153758267e-67
-monitor_066,enemy_far,4096.0,0.9999999999999643
+monitor_066,enemy_far,0.0,4.5397868702434395e-05
 monitor_066,surrounded,0.0,0.0
 monitor_066,enemy_casting,0.0,0.0
 monitor_066,target_caster,0.0,0.0
@@ -6107,7 +6107,7 @@ monitor_067,combat_onset,1000000.0,0.0
 monitor_067,enemy_count,0.0,0.0
 monitor_067,enemy_close,4096.0,1.0674878334332898e-33
 monitor_067,enemy_mid,4096.0,4.472740153758267e-67
-monitor_067,enemy_far,4096.0,0.9999999999999643
+monitor_067,enemy_far,0.0,4.5397868702434395e-05
 monitor_067,surrounded,0.0,0.0
 monitor_067,enemy_casting,0.0,0.0
 monitor_067,target_caster,0.0,0.0
@@ -6199,7 +6199,7 @@ monitor_068,combat_onset,1000000.0,0.0
 monitor_068,enemy_count,0.0,0.0
 monitor_068,enemy_close,4096.0,1.0674878334332898e-33
 monitor_068,enemy_mid,4096.0,4.472740153758267e-67
-monitor_068,enemy_far,4096.0,0.9999999999999643
+monitor_068,enemy_far,0.0,4.5397868702434395e-05
 monitor_068,surrounded,0.0,0.0
 monitor_068,enemy_casting,0.0,0.0
 monitor_068,target_caster,0.0,0.0
@@ -6291,7 +6291,7 @@ monitor_069,combat_onset,1000000.0,0.0
 monitor_069,enemy_count,0.0,0.0
 monitor_069,enemy_close,4096.0,1.0674878334332898e-33
 monitor_069,enemy_mid,4096.0,4.472740153758267e-67
-monitor_069,enemy_far,4096.0,0.9999999999999643
+monitor_069,enemy_far,0.0,4.5397868702434395e-05
 monitor_069,surrounded,0.0,0.0
 monitor_069,enemy_casting,0.0,0.0
 monitor_069,target_caster,0.0,0.0
@@ -6383,7 +6383,7 @@ monitor_070,combat_onset,1000000.0,0.0
 monitor_070,enemy_count,0.0,0.0
 monitor_070,enemy_close,4096.0,1.0674878334332898e-33
 monitor_070,enemy_mid,4096.0,4.472740153758267e-67
-monitor_070,enemy_far,4096.0,0.9999999999999643
+monitor_070,enemy_far,0.0,4.5397868702434395e-05
 monitor_070,surrounded,0.0,0.0
 monitor_070,enemy_casting,0.0,0.0
 monitor_070,target_caster,0.0,0.0
@@ -6475,7 +6475,7 @@ monitor_071,combat_onset,1000000.0,0.0
 monitor_071,enemy_count,0.0,0.0
 monitor_071,enemy_close,4096.0,1.0674878334332898e-33
 monitor_071,enemy_mid,4096.0,4.472740153758267e-67
-monitor_071,enemy_far,4096.0,0.9999999999999643
+monitor_071,enemy_far,0.0,4.5397868702434395e-05
 monitor_071,surrounded,0.0,0.0
 monitor_071,enemy_casting,0.0,0.0
 monitor_071,target_caster,0.0,0.0
@@ -6567,7 +6567,7 @@ monitor_072,combat_onset,1000000.0,0.0
 monitor_072,enemy_count,0.0,0.0
 monitor_072,enemy_close,4096.0,1.0674878334332898e-33
 monitor_072,enemy_mid,4096.0,4.472740153758267e-67
-monitor_072,enemy_far,4096.0,0.9999999999999643
+monitor_072,enemy_far,0.0,4.5397868702434395e-05
 monitor_072,surrounded,0.0,0.0
 monitor_072,enemy_casting,0.0,0.0
 monitor_072,target_caster,0.0,0.0
@@ -6659,7 +6659,7 @@ monitor_073,combat_onset,1000000.0,0.0
 monitor_073,enemy_count,0.0,0.0
 monitor_073,enemy_close,4096.0,1.0674878334332898e-33
 monitor_073,enemy_mid,4096.0,4.472740153758267e-67
-monitor_073,enemy_far,4096.0,0.9999999999999643
+monitor_073,enemy_far,0.0,4.5397868702434395e-05
 monitor_073,surrounded,0.0,0.0
 monitor_073,enemy_casting,0.0,0.0
 monitor_073,target_caster,0.0,0.0
@@ -6751,7 +6751,7 @@ monitor_074,combat_onset,1000000.0,0.0
 monitor_074,enemy_count,0.0,0.0
 monitor_074,enemy_close,4096.0,1.0674878334332898e-33
 monitor_074,enemy_mid,4096.0,4.472740153758267e-67
-monitor_074,enemy_far,4096.0,0.9999999999999643
+monitor_074,enemy_far,0.0,4.5397868702434395e-05
 monitor_074,surrounded,0.0,0.0
 monitor_074,enemy_casting,0.0,0.0
 monitor_074,target_caster,0.0,0.0
@@ -6843,7 +6843,7 @@ monitor_075,combat_onset,1000000.0,0.0
 monitor_075,enemy_count,0.0,0.0
 monitor_075,enemy_close,4096.0,1.0674878334332898e-33
 monitor_075,enemy_mid,4096.0,4.472740153758267e-67
-monitor_075,enemy_far,4096.0,0.9999999999999643
+monitor_075,enemy_far,0.0,4.5397868702434395e-05
 monitor_075,surrounded,0.0,0.0
 monitor_075,enemy_casting,0.0,0.0
 monitor_075,target_caster,0.0,0.0
@@ -6935,7 +6935,7 @@ monitor_076,combat_onset,1000000.0,0.0
 monitor_076,enemy_count,0.0,0.0
 monitor_076,enemy_close,4096.0,1.0674878334332898e-33
 monitor_076,enemy_mid,4096.0,4.472740153758267e-67
-monitor_076,enemy_far,4096.0,0.9999999999999643
+monitor_076,enemy_far,0.0,4.5397868702434395e-05
 monitor_076,surrounded,0.0,0.0
 monitor_076,enemy_casting,0.0,0.0
 monitor_076,target_caster,0.0,0.0
@@ -7027,7 +7027,7 @@ monitor_077,combat_onset,1000000.0,0.0
 monitor_077,enemy_count,0.0,0.0
 monitor_077,enemy_close,4096.0,1.0674878334332898e-33
 monitor_077,enemy_mid,4096.0,4.472740153758267e-67
-monitor_077,enemy_far,4096.0,0.9999999999999643
+monitor_077,enemy_far,0.0,4.5397868702434395e-05
 monitor_077,surrounded,0.0,0.0
 monitor_077,enemy_casting,0.0,0.0
 monitor_077,target_caster,0.0,0.0
@@ -7119,7 +7119,7 @@ monitor_078,combat_onset,1000000.0,0.0
 monitor_078,enemy_count,0.0,0.0
 monitor_078,enemy_close,4096.0,1.0674878334332898e-33
 monitor_078,enemy_mid,4096.0,4.472740153758267e-67
-monitor_078,enemy_far,4096.0,0.9999999999999643
+monitor_078,enemy_far,0.0,4.5397868702434395e-05
 monitor_078,surrounded,0.0,0.0
 monitor_078,enemy_casting,0.0,0.0
 monitor_078,target_caster,0.0,0.0
@@ -7211,7 +7211,7 @@ monitor_079,combat_onset,1000000.0,0.0
 monitor_079,enemy_count,0.0,0.0
 monitor_079,enemy_close,4096.0,1.0674878334332898e-33
 monitor_079,enemy_mid,4096.0,4.472740153758267e-67
-monitor_079,enemy_far,4096.0,0.9999999999999643
+monitor_079,enemy_far,0.0,4.5397868702434395e-05
 monitor_079,surrounded,0.0,0.0
 monitor_079,enemy_casting,0.0,0.0
 monitor_079,target_caster,0.0,0.0
@@ -7303,7 +7303,7 @@ monitor_080,combat_onset,1000000.0,0.0
 monitor_080,enemy_count,0.0,0.0
 monitor_080,enemy_close,4096.0,1.0674878334332898e-33
 monitor_080,enemy_mid,4096.0,4.472740153758267e-67
-monitor_080,enemy_far,4096.0,0.9999999999999643
+monitor_080,enemy_far,0.0,4.5397868702434395e-05
 monitor_080,surrounded,0.0,0.0
 monitor_080,enemy_casting,0.0,0.0
 monitor_080,target_caster,0.0,0.0
@@ -7395,7 +7395,7 @@ monitor_081,combat_onset,1000000.0,0.0
 monitor_081,enemy_count,0.0,0.0
 monitor_081,enemy_close,4096.0,1.0674878334332898e-33
 monitor_081,enemy_mid,4096.0,4.472740153758267e-67
-monitor_081,enemy_far,4096.0,0.9999999999999643
+monitor_081,enemy_far,0.0,4.5397868702434395e-05
 monitor_081,surrounded,0.0,0.0
 monitor_081,enemy_casting,0.0,0.0
 monitor_081,target_caster,0.0,0.0
@@ -7487,7 +7487,7 @@ monitor_082,combat_onset,1000000.0,0.0
 monitor_082,enemy_count,0.0,0.0
 monitor_082,enemy_close,4096.0,1.0674878334332898e-33
 monitor_082,enemy_mid,4096.0,4.472740153758267e-67
-monitor_082,enemy_far,4096.0,0.9999999999999643
+monitor_082,enemy_far,0.0,4.5397868702434395e-05
 monitor_082,surrounded,0.0,0.0
 monitor_082,enemy_casting,0.0,0.0
 monitor_082,target_caster,0.0,0.0
@@ -7579,7 +7579,7 @@ monitor_083,combat_onset,1000000.0,0.0
 monitor_083,enemy_count,0.0,0.0
 monitor_083,enemy_close,4096.0,1.0674878334332898e-33
 monitor_083,enemy_mid,4096.0,4.472740153758267e-67
-monitor_083,enemy_far,4096.0,0.9999999999999643
+monitor_083,enemy_far,0.0,4.5397868702434395e-05
 monitor_083,surrounded,0.0,0.0
 monitor_083,enemy_casting,0.0,0.0
 monitor_083,target_caster,0.0,0.0
@@ -7671,7 +7671,7 @@ monitor_084,combat_onset,1000000.0,0.0
 monitor_084,enemy_count,0.0,0.0
 monitor_084,enemy_close,4096.0,1.0674878334332898e-33
 monitor_084,enemy_mid,4096.0,4.472740153758267e-67
-monitor_084,enemy_far,4096.0,0.9999999999999643
+monitor_084,enemy_far,0.0,4.5397868702434395e-05
 monitor_084,surrounded,0.0,0.0
 monitor_084,enemy_casting,0.0,0.0
 monitor_084,target_caster,0.0,0.0

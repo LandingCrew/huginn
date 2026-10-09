@@ -380,6 +380,8 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
         }
     }
 
+    CaptureEligible(ctx, candidates);
+
     // Name the dominant reason once per tick, off the weights the ranking just
     // used — the display explanation can't disagree with the scoring (#10).
     // The two world facts below have no scoring weight to read them off.
@@ -458,6 +460,58 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
                 ? fmt::format("{:.1f}%", ctx.playerState.weaponChargePercent * 100.0f)
                 : "n/a");
         m_lastLoggedReason = nowLogged;
+    }
+}
+
+// -----------------------------------------------------------------------------
+// CaptureEligible — R4: every generated candidate, for the selection log v3
+// -----------------------------------------------------------------------------
+// The choice set the fit needs is every item the player could pick, not the
+// ones that cleared the old engine's floors (fMinimumContextWeight,
+// fMinimumUtility). So the list CandidateGenerator produced is copied out here
+// -- one row per item (a weapon stack is its own row) -- with the utility of the
+// rows the scorer kept and the propensity of a wildcard. Reads only: the scored
+// list, the candidates and the wildcard cache are not touched.
+
+void PipelineCoordinator::CaptureEligible(PipelineContext& ctx,
+    const std::vector<Candidate::CandidateVariant>& candidates)
+{
+    Huginn_ZONE_NAMED("Pipeline::CaptureEligible");
+    // First scored row per dedup key (type, uniqueID, formID) wins, as the
+    // cache's FormID index does.
+    std::unordered_map<uint64_t, const Scoring::ScoredCandidate*> scoredByKey;
+    scoredByKey.reserve(ctx.scoredCandidates.size());
+    for (const auto& sc : ctx.scoredCandidates) {
+        if (sc.isRememberedOnly) continue;   // added for the hold only: not scored
+        scoredByKey.try_emplace(Candidate::GetBase(sc.candidate).GetDeduplicationKey(), &sc);
+    }
+
+    const auto& wildcards = g_utilityScorer->GetWildcardManager();
+    ctx.eligible.reserve(candidates.size());
+    for (const auto& c : candidates) {
+        const auto& base = Candidate::GetBase(c);
+        Learning::PipelineStateCache::EligibleRow row;
+        row.formID = base.formID;
+        row.uniqueID = base.uniqueID;
+        row.sourceType = base.sourceType;
+        std::visit([&row](const auto& cand) {
+            using T = std::decay_t<decltype(cand)>;
+            if constexpr (std::is_same_v<T, Candidate::ItemCandidate> || std::is_same_v<T, Candidate::AmmoCandidate> ||
+                          std::is_same_v<T, Candidate::ScrollCandidate> || std::is_same_v<T, Candidate::TorchCandidate>) {
+                row.count = cand.count;
+            }
+            else if constexpr (std::is_same_v<T, Candidate::WeaponCandidate>) {
+                row.enchanted = cand.hasEnchantment;
+                row.chargeFraction = cand.currentCharge;   // already current / max (WeaponRegistry)
+            }
+        }, c);
+        if (const auto it = scoredByKey.find(base.GetDeduplicationKey()); it != scoredByKey.end()) {
+            row.utility = it->second->utility;
+            if (it->second->isWildcard) {
+                row.wildcardPropensity = wildcards.GetWildcardPropensity(ctx.displayPageIndex, base.formID);
+            }
+        }
+        ctx.eligible.push_back(row);
     }
 }
 
@@ -550,7 +604,8 @@ void PipelineCoordinator::UpdateCaches(PipelineContext& ctx)
     Learning::PipelineStateCache::GetSingleton().Update(
         ctx.scoredCandidates, ctx.assignments,
         ctx.displayPageIndex,
-        g_utilityScorer->GetConfig().topNCandidates);
+        g_utilityScorer->GetConfig().topNCandidates,
+        std::move(ctx.eligible), ctx.displaySlotCount);   // R4: the selection log v3's rows
 
     // Cache slot contents for EquipManager (keyboard equip hotkeys)
     auto& equipMgr = Input::EquipManager::GetSingleton();

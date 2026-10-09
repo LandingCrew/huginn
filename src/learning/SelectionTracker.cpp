@@ -1,6 +1,7 @@
 #include "SelectionTracker.h"
 #include "EquipEventBus.h"
 #include "SelectionLog.h"
+#include "SelectionLogV3.h"
 #include "Config.h"
 #include "Globals.h"
 #include "telemetry/SoakMetrics.h"
@@ -74,6 +75,10 @@ namespace Huginn::Learning
     {
         if (formID == 0) return;
 
+        // R4: a pick of this item the v3 log was keeping on its own (one the
+        // learner skipped, made a moment earlier) is this same selection.
+        SelectionLogV3::OnTrackerSelect(formID);
+
         // One record per item: a second event for an item already pending is
         // the same selection (both hands, a doubled TESEquipEvent, the equip
         // event that follows a Huginn key press...).
@@ -108,6 +113,8 @@ namespace Huginn::Learning
         event.attribution = std::move(attribution);
         event.shown = PipelineStateCache::GetSingleton().TakeSnapshot();
         event.loadGeneration = g_loadGeneration.load(std::memory_order_relaxed);
+        // R4: the selection log v3's context for this press (logging only).
+        event.v3 = SelectionLogV3::CaptureForPress(formID, source, event.via);
 
         const float windowMs = event.kind == SelectionKind::Consumable
             ? Config::CONSUMPTION_HUGINN_WINDOW_MS
@@ -195,6 +202,7 @@ namespace Huginn::Learning
 
     void SelectionTracker::Withdraw(RE::FormID formID, std::string_view why)
     {
+        SelectionLogV3::OnTrackerSelect(formID);   // R4: an undo is not a v3-only pick either
         std::lock_guard lock(m_mutex);
         for (auto it = m_pending.begin(); it != m_pending.end(); ++it) {
             if (it->event.formID == formID) {
@@ -255,6 +263,7 @@ namespace Huginn::Learning
         // Log BEFORE dispatch: the log records the learner's prediction for the
         // press-time state, which the dispatch is about to update.
         SelectionLog::Write(event, how);
+        SelectionLogV3::OnConfirmed(event, selectedAt, how);   // R4: logging only
         EquipEventBus::GetSingleton().Dispatch(event);
     }
 }

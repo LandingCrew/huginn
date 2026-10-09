@@ -28,6 +28,14 @@ What is replayed, and what is not:
 Usage:
     python tools/replay/replay.py [path/to/Huginn_Selections.jsonl]
         [--char 3F3E2A8817962D59] [--from-launch 20261003-013602]
+
+Selection log v3 (R4, Huginn_Selections_v3.jsonl; schema in
+docs/architecture/9-selection-log-v3.md): `iter_v3(paths)` / `load_v3(paths)`
+decode it -- every decision with its context, the need vector by name, every
+row with cap(i) by column name and the cross-features -- and
+    python -I tools/replay/replay.py --v3 [FILE ...]
+prints counts, sizes and the old ranking's hit rate on it. The R6 fit reads
+v3; the policies above stay on the v2 log (R5's cheap test).
 """
 
 from __future__ import annotations
@@ -410,15 +418,246 @@ def validate(recs):
           f"(0-8 scale; reloads of unsaved sessions and time decay make it drift)")
 
 
+# --------------------------------------------------------------------------
+# Selection log v3 (R4): docs/architecture/9-selection-log-v3.md
+# --------------------------------------------------------------------------
+
+DEFAULT_LOG_V3 = os.path.expanduser(r"~/Documents/My Games/Skyrim.INI/SKSE/Huginn_Selections_v3.jsonl")
+V3_FLAGS = {"eligible": 1, "scored": 2, "held": 4, "equipped": 8, "shown": 16, "wildcard": 32,
+            "override": 64, "remembered": 128, "addedAtPick": 256}
+
+
+class V3FormatError(ValueError):
+    """A v3 file that breaks the schema (an id used before it is defined, a
+    record before any head, a version this reader does not know)."""
+
+
+def _raw_lines(path, stats):
+    """The file's lines as bytes. A truncated or corrupt .gz (a copy taken
+    mid-write, a crash while compressing, a flipped byte) ends the file where
+    it breaks: counted in stats["truncated"], never raised."""
+    import gzip
+    import zlib
+    opener = gzip.open if str(path).endswith(".gz") else open
+    with opener(path, "rb") as f:
+        while True:
+            try:
+                line = f.readline()
+            except (EOFError, OSError, gzip.BadGzipFile, zlib.error):
+                stats["truncated"] = stats.get("truncated", 0) + 1
+                return
+            if not line:
+                return
+            yield line
+
+
+def _decode_line(raw):
+    """One line as a JSON object, or None when it is not one (torn mid-record,
+    torn inside a multi-byte character, NUL padding left by a crash)."""
+    try:
+        text = raw.decode("utf-8").strip()
+    except UnicodeDecodeError:
+        return None
+    if not text:
+        return ""
+    try:
+        rec = json.loads(text)
+    except ValueError:
+        return None
+    return rec if isinstance(rec, dict) else None
+
+
+def _sparse(pairs, names):
+    return {names[i]: v for i, v in pairs}
+
+
+def _v3_row(raw, head, caps):
+    form, uid, kind, src, cap, flags, slot, util, x, wp = raw
+    if cap != -1 and cap not in caps:
+        raise V3FormatError(f"cap {cap} used before it is defined")
+    return {
+        "form": form,
+        "uid": uid,
+        "kind": None if kind is None else head["kinds"][kind],
+        "src": None if src is None else head["src"][src],
+        "cap_id": cap,
+        "cap": dict(caps[cap]) if cap != -1 else None,
+        "flags": flags,
+        "slot": slot,
+        "util": util,
+        "x": _sparse(x, head["cross"]),
+        "wp": wp,
+    }
+
+
+def iter_v3(paths, stats=None):
+    """Yield every decision of the given v3 files, in file order, resolved:
+    its context (need/input by name, the rows with cap(i) by column name and
+    the cross-features by name), `rows` = the context's rows then the
+    decision's added rows, and `chosen` = rows[row] (None for nothing).
+    Caps and contexts are per segment: a head line starts a new one.
+
+    Damage is skipped and counted, never raised (a crash or a full disk can
+    tear the last record a launch wrote; the writer starts on a new line):
+      stats["bad_lines"]   lines that are not a JSON object (torn mid-record,
+                           torn inside a UTF-8 character, NUL padding) or
+                           records that lack their fields;
+      stats["skipped"]     records after damage that needed a cap or context
+                           the damage may have taken, or that belong to
+                           another launch than the head in force (a torn head
+                           between two launches);
+      stats["lost_heads"]  after damage, a cap id defined a second time: a
+                           new segment began behind a torn head. Its records
+                           are decoded against the last good head when they
+                           are of its launch (a segment of the same launch has
+                           the same head), and skipped otherwise;
+      stats["truncated"]   .gz files that end mid-stream (read up to there).
+    Without damage, a reference to an undefined id is a malformed file
+    (V3FormatError), as is a version other than 3."""
+    if stats is None:
+        stats = {}
+    for key in ("bad_lines", "skipped", "lost_heads", "truncated"):
+        stats.setdefault(key, 0)
+    for path in paths:
+        head, caps, ctxs = None, {}, {}
+        damaged = False   # damage since the last good head
+        lost_head = False  # a lost head already counted for this damage
+        for lineno, raw in enumerate(_raw_lines(path, stats), 1):
+            rec = _decode_line(raw)
+            if rec == "":
+                continue
+            if rec is None:
+                stats["bad_lines"] += 1
+                damaged, lost_head = True, False
+                continue
+            t = rec.get("t")
+            if t == "head":
+                if rec.get("v") != 3:
+                    raise V3FormatError(f"{path}:{lineno}: version {rec.get('v')} is not 3")
+                if not all(k in rec for k in ("cols", "needs", "cross", "kinds", "src")):
+                    stats["bad_lines"] += 1   # a head that parses but lacks its lists
+                    damaged = True
+                    continue
+                head, caps, ctxs, damaged, lost_head = rec, {}, {}, False, False
+                continue
+            if head is None:
+                if damaged:
+                    stats["skipped"] += 1
+                    continue
+                raise V3FormatError(f"{path}:{lineno}: a '{t}' record before any head")
+            try:
+                if t == "cap":
+                    if damaged and rec["id"] in caps and not lost_head:
+                        stats["lost_heads"] += 1   # a new segment behind a torn head
+                        lost_head = True
+                    caps[rec["id"]] = _sparse(rec["c"], head["cols"])
+                elif t == "ctx":
+                    ctx = {k: v for k, v in rec.items() if k not in ("rows", "need", "in")}
+                    ctx["need"] = _sparse(rec["need"], head["needs"])
+                    ctx["input"] = _sparse(rec["in"], head["needs"])
+                    ctx["rows"] = [_v3_row(r, head, caps) for r in rec["rows"]]
+                    ctxs[rec["id"]] = ctx
+                elif t == "dec":
+                    if rec.get("v") != 3:
+                        raise V3FormatError(f"{path}:{lineno}: decision version {rec.get('v')}")
+                    if damaged and rec.get("launch") != head.get("launch"):
+                        stats["skipped"] += 1   # decoded against another launch's head
+                        continue
+                    ctx_id = rec.get("ctx")
+                    if ctx_id is not None and ctx_id not in ctxs:
+                        raise V3FormatError(f"{path}:{lineno}: context {ctx_id} used before it is defined")
+                    d = dict(rec)
+                    d["ctx"] = ctxs[ctx_id] if ctx_id is not None else None
+                    d["add"] = [_v3_row(r, head, caps) for r in rec["add"]]
+                    d["rows"] = (d["ctx"]["rows"] if d["ctx"] else []) + d["add"]
+                    d["chosen"] = d["rows"][rec["row"]] if rec["row"] >= 0 else None
+                    d["head"] = head
+                    yield d
+                else:
+                    raise V3FormatError(f"{path}:{lineno}: unknown record type {t!r}")
+            except V3FormatError:
+                if not damaged:
+                    raise
+                stats["skipped"] += 1   # it needed what the damage took
+            except (KeyError, TypeError, IndexError, ValueError):
+                # Parses as JSON but is not a whole record of its type.
+                stats["bad_lines"] += 1
+                damaged = True
+
+
+def load_v3(paths, stats=None):
+    """All decisions (iter_v3); torn lines are reported on stderr."""
+    stats = {} if stats is None else stats
+    decs = list(iter_v3(paths, stats))
+    if any(stats.get(k) for k in ("bad_lines", "skipped", "lost_heads", "truncated")):
+        import sys
+        print(f"warning: {stats['bad_lines']} unreadable line(s), {stats['skipped']} record(s) skipped, "
+              f"{stats['lost_heads']} lost head(s), {stats['truncated']} truncated file(s)", file=sys.stderr)
+    return decs
+
+
+def summarize_v3(paths):
+    """Counts, sizes and a plain-ranking smoke number for a v3 log."""
+    sizes = defaultdict(lambda: [0, 0])   # record type -> [count, bytes]
+    size_stats = {}
+    for path in paths:
+        for raw in _raw_lines(path, size_stats):
+            rec = _decode_line(raw)
+            if rec == "":
+                continue
+            t = str(rec.get("t")) if rec else "(torn)"
+            sizes[t][0] += 1
+            sizes[t][1] += len(raw)
+    stats = {}
+    decs = list(iter_v3(paths, stats))
+    by_out = defaultdict(int)
+    rows = []
+    hits = defaultdict(lambda: [0, 0])
+    for d in decs:
+        by_out[d["out"]] += 1
+        rows.append(len(d["rows"]))
+        c = d["chosen"]
+        if c is None:
+            continue
+        # The old engine's ranking (logged util) over the eligible rows: is
+        # the chosen item in the top 8? A smoke number, not the fit.
+        ranked = sorted((r for r in d["rows"] if r["util"] is not None), key=lambda r: -r["util"])
+        top = {(r["form"], r["uid"]) for r in ranked[:PAGE]}
+        h = hits[d["out"]]
+        h[0] += 1
+        h[1] += (c["form"], c["uid"]) in top
+    total_bytes = sum(b for _, b in sizes.values())
+    print(f"{len(decs)} decisions in {len(paths)} file(s), {total_bytes} bytes")
+    if any(stats[k] for k in ("bad_lines", "skipped", "lost_heads", "truncated")):
+        print(f"  damage: {stats['bad_lines']} unreadable line(s), {stats['skipped']} record(s) skipped, "
+              f"{stats['lost_heads']} lost head(s), {stats['truncated']} truncated file(s)")
+    for t, (n, b) in sorted(sizes.items()):
+        print(f"  {t:5} {n:6d} lines {b:10d} bytes ({b / max(1, n):.0f} per line)")
+    print("  outcomes: " + ", ".join(f"{k}={v}" for k, v in sorted(by_out.items())))
+    if rows:
+        print(f"  rows per decision: mean {sum(rows) / len(rows):.1f}, max {max(rows)}")
+    if decs:
+        print(f"  bytes per decision (all lines): {total_bytes / len(decs):.0f}")
+    for out, (n, h) in sorted(hits.items()):
+        print(f"  {out}: chosen in the logged-util top {PAGE}: {h} of {n}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("log", nargs="?", default=DEFAULT_LOG)
+    ap.add_argument("log", nargs="?", default=None)
+    ap.add_argument("--v3", nargs="*", metavar="FILE",
+                    help="read selection log v3 file(s) (.jsonl or .jsonl.gz; default "
+                         "Huginn_Selections_v3.jsonl) and print a summary")
     ap.add_argument("--char", default="3F3E2A8817962D59")
     ap.add_argument("--from-launch", default="20261003-013602", help="first launch of the run (UTC stamp)")
     ap.add_argument("--to-launch", default="20261004-235959",
                     help="last launch to include (UTC stamp); the default ends the soak run, before 0.23.0")
     args = ap.parse_args()
 
+    if args.v3 is not None:
+        summarize_v3(args.v3 or [args.log or DEFAULT_LOG_V3])
+        return
+    args.log = args.log or DEFAULT_LOG
     recs = load(args.log, args.char, args.from_launch, args.to_launch)
     print(f"{len(recs)} selections from {args.log}")
     validate(recs)

@@ -14,6 +14,7 @@ CMakeLists.txt text eol=lf
 
 # Config/data files
 *.json text eol=lf
+*.jsonl text eol=lf
 *.xml text eol=lf
 *.ini text eol=lf
 *.toml text eol=lf

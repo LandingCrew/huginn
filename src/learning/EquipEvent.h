@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Config.h"
+#include "DecisionCapture.h"
 #include "StateFeatures.h"
 #include "PipelineStateCache.h"
 #include "state/GameState.h"
@@ -83,6 +84,9 @@ namespace Huginn::Learning
         // decision. Set by SelectionTracker::Confirm; every subscriber honours
         // it (no learner update, no recency record). Logged regardless.
         bool            repeatPick = false;
+
+        // R4: the selection log v3's capture at the press (logging only).
+        DecisionCapture v3{};
     };
 
 }  // namespace Huginn::Learning

@@ -59,7 +59,7 @@ See [docs/README.md](docs/README.md) for full system design.
 | `src/persist/` | Learner weight serialization (cosave) |
 | `src/settings/` | SettingsReloader (dMenu hot-reload) |
 | `src/effect/` | Effect extractor (R2): EffectReader (forms -> records), EffectCatalog (cap(i) per item, built when the main menu first opens; not read for scoring yet), `hg dump all` |
-| `src/core/` | Pure, host-tested code (`huginn_core_tests`): the effect mapper (EffectColumns, EffectRecords, EffectRules, EffectMapper, CrossFeatures), MiniRegex, ActorTypeClassifier, TargetType, RingBuffer, SlotClassCapMath |
+| `src/core/` | Pure, host-tested code (`huginn_core_tests`): the effect mapper (EffectColumns, EffectRecords, EffectRules, EffectMapper, CrossFeatures), MiniRegex, ActorTypeClassifier, TargetType, RingBuffer, SlotClassCapMath; the need vector (NeedEvaluator, NeedIds, ResponseCurve, R3); the selection log v3 format (DecisionLog) and need episodes (NeedEpisodes, R4) |
 
 ## Configuration
 

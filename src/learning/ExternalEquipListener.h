@@ -95,6 +95,14 @@ namespace Huginn::Learning
                 // Turning it on is a one-line change plus a craft-relevance check
                 // against ApparelRegistry, but it shifts a soak metric, so it
                 // wants its own decision and its own run. See #65.
+                //
+                // R4 (the user, 2026-10-08: lift the skip): the pick now reaches
+                // the selection log v3 -- the menu choice set the fit needs -- and
+                // still nothing else. Feeding it to the learner would train the
+                // apparel candidates' weights and move accept%, i.e. change what
+                // the frozen engine does; that waits for R8, where all carried
+                // armour becomes a candidate.
+                ExternalEquipLearner::GetSingleton().OnArmourEquip(form->GetFormID());
                 return RE::BSEventNotifyControl::kContinue;
             default:
                 // Misc forms (books, keys, ingredients, ...) — not Huginn candidates

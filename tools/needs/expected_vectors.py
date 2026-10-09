@@ -213,6 +213,11 @@ def enemy_distance(s):
     return 4096.0 if s["closestEnemy"] < 0 else s["closestEnemy"]
 
 
+def enemy_far_distance(s):
+    """'0 if closestEnemy < 0 else closestEnemy' (no hostile is not far)."""
+    return 0.0 if s["closestEnemy"] < 0 else s["closestEnemy"]
+
+
 FORMULAS = {
     # Vitals
     "health_deficit": lambda s: 1.0 - s["health"],
@@ -255,7 +260,7 @@ FORMULAS = {
     "enemy_count": lambda s: s["enemyCount"] / 6.0,
     "enemy_close": enemy_distance,
     "enemy_mid": enemy_distance,
-    "enemy_far": enemy_distance,
+    "enemy_far": enemy_far_distance,
     "surrounded": lambda s: s["enemiesNear256"] / 3.0,
     "enemy_casting": lambda s: float(s["anyCasting"]),
     "target_caster": lambda s: float(s["targetCaster"]),

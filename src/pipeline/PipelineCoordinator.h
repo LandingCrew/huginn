@@ -6,6 +6,7 @@
 #include "state/WorldState.h"
 #include "state/StateTypes.h"
 #include "learning/ScoredCandidate.h"
+#include "learning/PipelineStateCache.h"   // EligibleRow (R4, the selection log v3)
 #include "candidate/CandidateTypes.h"
 #include "context/ContextReason.h"     // Context::ContextReason (per-tick display reason)
 #include "context/ReasonHold.h"        // Context::ReasonHold (label stability, #62)
@@ -97,6 +98,11 @@ namespace Huginn::Pipeline
         size_t displayWildcardSlots = 0;
         std::string displayPageName;
 
+        // R4: every eligible candidate of this run (no floor), copied out for
+        // the selection log v3. A read of what ScoreCandidates produced; nothing
+        // downstream of scoring reads it.
+        std::vector<Learning::PipelineStateCache::EligibleRow> eligible;
+
         /// Reset all fields for reuse, preserving allocated container capacity.
         void Reset()
         {
@@ -128,6 +134,7 @@ namespace Huginn::Pipeline
             displaySlotCount = 0;
             displayWildcardSlots = 0;
             displayPageName.clear();
+            eligible.clear();
         }
     };
 
@@ -247,6 +254,8 @@ namespace Huginn::Pipeline
         void LogStateTransition(PipelineContext& ctx);
         void EnrichElementalDamage(PipelineContext& ctx);
         void ScoreCandidates(PipelineContext& ctx);
+        /// R4: copy every generated candidate into ctx.eligible (reads only).
+        void CaptureEligible(PipelineContext& ctx, const std::vector<Candidate::CandidateVariant>& candidates);
         /// Allocate + lock + visual states. Returns false (abandon the tick) if an
         /// off-thread page switch landed after ResolveDisplayPage's snapshot —
         /// locking the stale page would leak page-blind locks across the switch.

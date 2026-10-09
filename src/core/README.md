@@ -136,3 +136,10 @@ and `NeedSnapshotIO` (its text form), `NeedEvaluator` (the inputs of
 only reads forms and casts rays), `TargetFamilies.h` (the multi-hot family
 reading). Tests and the replayed fixtures: docs/testing/TESTING-INDEX.md
 section 0.
+
+The selection log v3 (R4): `DecisionLog` (the records -- context, rows,
+decision -- and the encoder that turns them into JSON Lines, defining each cap
+and context once per file segment) and `NeedEpisodes.h` (when a need episode
+starts, ends and is answered: the "nothing pressed" outcome). The game side
+(`learning/SelectionLogV3*`) builds the records and writes the lines on a
+background thread. Schema: docs/architecture/9-selection-log-v3.md.

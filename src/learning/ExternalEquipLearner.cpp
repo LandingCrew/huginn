@@ -1,6 +1,7 @@
 #include "ExternalEquipLearner.h"
 #include "PipelineStateCache.h"
 #include "PlayerInputGate.h"
+#include "SelectionLogV3.h"
 #include "SelectionTracker.h"
 #include "telemetry/SoakMetrics.h"
 
@@ -52,6 +53,18 @@ namespace Huginn::Learning
             // without this the heartbeat reports accept=n/a identically for
             // "nobody equipped anything" and "every equip was filtered".
             Telemetry::SoakMetrics::GetSingleton().RecordEquipSkip(skip);
+
+            // R4: the selection log v3 never drops a player's pick for a stale
+            // pipeline cache (a long menu visit) or for the learning toggle;
+            // it records it with the age of the context it is joined to. The
+            // learner and accept% still skip it, as before.
+            if (skip == SKIP_STALE || skip == SKIP_DISABLED) {
+                if (via.empty()) via = PlayerInputGate::GetSingleton().Explain(formID);   // disabled returns before the gate
+                if (!via.empty()) {
+                    SelectionLogV3::OnUnlearnedPick(formID, std::move(via), skip == SKIP_STALE ? "stale" : "disabled",
+                        ComputeAttribution(formID));
+                }
+            }
             return;
         }
 
@@ -66,6 +79,27 @@ namespace Huginn::Learning
 
         SelectionTracker::GetSingleton().Select(formID, EquipSource::External,
             std::move(via), caseLabel);
+    }
+
+    void ExternalEquipLearner::OnArmourEquip(RE::FormID formID)
+    {
+        // R4: an armour pick the player made (the user, 2026-10-08: lift the
+        // armour skip) reaches the selection log v3 -- and only it. The frozen
+        // learner would train apparel weights on it and accept% would count
+        // it, both of which change what the old engine does; R8 (all carried
+        // armour a candidate) is where that changes. So: no SelectionTracker,
+        // no telemetry, the player-input gate as for any outside equip.
+        if (!EnvironmentReady()) {
+            return;
+        }
+        if (SelectionTracker::GetSingleton().IsPending(formID)) {
+            return;
+        }
+        std::string via = PlayerInputGate::GetSingleton().Explain(formID);
+        if (via.empty()) {
+            return;   // dressing by the engine or a script (an outfit at load): not a pick
+        }
+        SelectionLogV3::OnUnlearnedPick(formID, std::move(via), "armour", ComputeAttribution(formID));
     }
 
     char ExternalEquipLearner::ShouldSkip(RE::FormID formID, std::string& via) const

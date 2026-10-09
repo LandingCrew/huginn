@@ -1,7 +1,8 @@
 # Huginn Testing Index
 
 **Applies to:** v0.19.x (verified against v0.19.10); sections 0 and 1a added
-for v0.23.9 (R1, host tests and the unattended in-game run)
+for v0.23.9 (R1, host tests and the unattended in-game run); the selection log
+v3 tests and `--decision-session` for v0.23.15 (R4)
 **Last verified:** 2026-08-29 (suite inventory), 2026-10-08 (sections 0, 1a)
 **Status:** Current — the suite list below was read out of `src/Tests.cpp` and
 `src/Main.cpp`, not carried over from an older doc.
@@ -104,6 +105,22 @@ agent that did not see the evaluator; regenerate an expectation only with it.
 or input columns: `python -I tools/needs/make_need_ids.py` (header),
 `--ini` (paste into `configs/Huginn.ini`; `--check` verifies both), then the
 oracle on every fixture.
+
+**The selection log v3 (R4, 0.23.15).** `core/DecisionLog.*` (the records and
+their text form), `core/NeedEpisodes.h` (when a need episode starts, ends and is
+answered); schema: [9-selection-log-v3.md](../architecture/9-selection-log-v3.md):
+
+| Test | What it pins |
+|---|---|
+| `DecisionLogTests.cpp` | the JSON helpers (escaping, numbers, FormIDs); caps and contexts defined once per segment, content-addressed; a synthetic session (key, menu with an added row, a co-pick sharing the context, nothing, wheel, a second segment) equals `fixtures/decisions/synthetic_v3.jsonl` byte for byte (with `heldFull` and `preEquipped`); the run gate that keeps a previous save's cached run out of a context after a load (two loads in one launch) |
+| `NeedEpisodesTests.cpp` | onset 0.5 / expiry 0.25 hysteresis, the 1 s minimum, a selection inside answers and one outside does not, the grace, the 0.5 s slack for a press that ended its episode, payloads, reset |
+| `tools/replay/test_replay_v3.py` (CTest `replay_v3_roundtrip`) | `replay.py`'s v3 reader decodes the golden file to the values the C++ test wrote, round-trips a session written by an encoder of its own (plain and gzip), refuses malformed files, skips a torn line (and what depended on it) and resyncs at the next head, and never raises on damage (torn head, a line torn inside a UTF-8 character, a truncated or corrupt gzip, NUL padding) |
+
+After a deliberate format change: run the tests, copy
+`<build>/tests/synthetic_v3.actual.jsonl` over the fixture, update the Python
+test's expectations (they are copied from `DecisionLogTests.cpp`, not from the
+file), and bump the version if the change is not an addition (schema doc,
+"Versioning").
 
 **Coverage on a whole load order: `huginn_effect_report`** (a host tool built
 with the tests, not run by ctest: it needs a dump, which is user data):
@@ -243,9 +260,32 @@ python -I tools/ingame/run_tests.py --capture-needs 400 --capture-slots 90  # re
 python -I tools/ingame/run_tests.py --dump-recs 8      # `hg recs 40` after 8 idle s, then end (0.23.14+)
 python -I tools/ingame/run_tests.py --coc "RiverwoodSleepingGiantInn;Riverwood"  # cross cells, then end (0.23.14+;
                                                       # a coc that fails fails the run; not with --capture-slots)
+python -I tools/ingame/run_tests.py --decision-session # the selection log v3 session, then end (0.23.15+)
 # Every test-mode run that loads a save (0.23.14+) fails unless the drop-ahead probe took a measured reading
 # (DropAheadProbe::MeasuredCount); a plain run waits up to 10 s for one.
 ```
+
+`--decision-session` (R4) plays a scripted session after the load suites
+(`learning/SelectionLogV3Session.cpp`): health dropped to 30% for 4 s with
+nothing pressed (a `nothing` record), wildcards forced on, three Huginn keys
+pressed (`key`), an item of the page equipped and Huginn's own Wheeler
+activation handler run (`wheel`; Wheeler's UI is not driven; skipped when
+Wheeler is not connected), the inventory opened and an unworn armour piece and
+an off-page weapon (or potion) equipped from it (`menu`, the armour one
+`learned: 0`), the menu closed. It writes `Huginn_Selections_v3_test.jsonl`
+(never the player's `Huginn_Selections_v3.jsonl`), logs
+`[HuginnTest] decision session: key=.. wheel=.. menu=.. nothing=.. ...` with
+the sizes and the tick and context costs, and fails the run when a key, menu or
+nothing record (or a wheel record after a wheel pick) was not **written**, or
+the writer did not drain: the reason reaches the DONE line
+(`reason=decision-no-nothing`, `decision-flush-timeout`...), as a failed `coc`
+does. The runner then decodes the file with `tools/replay/replay.py` and fails
+on any damage count (unreadable lines, skipped records, lost heads, a truncated file) or a missing outcome on its own. (Proven by a local build that
+dropped every `nothing` record: `DONE result=FAIL ... reason=decision-no-nothing`,
+and the runner's own check on that file: `no nothing record in the v3 file`.) The menu sink's
+`[SelectionV3] InventoryMenu was open ... update tick(s) inside` line is the
+measurement of whether the update loop ticks in menus. Read the file with
+`python -I tools/replay/replay.py --v3 <file>`.
 
 `--dump-all NAME` (a plain file name) makes Huginn write `hg dump all` into the
 SKSE log folder after the save's suites (so after the keyword distributors and

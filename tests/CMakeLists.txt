@@ -84,6 +84,18 @@ endif()
 
 add_test(NAME huginn_core_tests COMMAND huginn_core_tests)
 
+# --- The selection log v3 reader (tools/replay), against the encoder's golden file
+# DecisionLogTests.cpp pins tests/core/fixtures/decisions/synthetic_v3.jsonl byte
+# for byte; this decodes it with tools/replay/replay.py and checks the values,
+# and round-trips a session written by an encoder of its own.
+find_package(Python3 COMPONENTS Interpreter)
+if(Python3_Interpreter_FOUND)
+   add_test(NAME replay_v3_roundtrip
+      COMMAND "${Python3_EXECUTABLE}" -I "${PROJECT_SOURCE_DIR}/tools/replay/test_replay_v3.py")
+else()
+   message(STATUS "Python 3 not found: the replay_v3_roundtrip test is not registered")
+endif()
+
 # --- huginn_effect_report: the effect mapper over a whole `hg dump all` ------
 # A host tool, not a test: coverage, the coverage diff and the in-game catalog
 # check need a dump from a real load order, which is user data and not checked

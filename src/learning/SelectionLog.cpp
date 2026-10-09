@@ -2,6 +2,7 @@
 #include "FeatureBanditLearner.h"
 #include "UtilityScorer.h"
 #include "Globals.h"
+#include "TestHarness.h"
 #include "slot/SlotSnapshot.h"
 
 #include <chrono>
@@ -373,7 +374,9 @@ namespace Huginn::Learning
 
         // A slot capture session's scripted presses (test mode, Debug) are not
         // the player's choices: keep them out of the JSONL tools/replay reads.
-        if (Slot::Capture::SessionActive()) {
+        // Nor any other test-mode press (R4's decision session): the v3 log
+        // writes those to its own test file, and this file is the player's.
+        if (Slot::Capture::SessionActive() || TestHarness::Active()) {
             return;
         }
 
