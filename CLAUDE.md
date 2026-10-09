@@ -58,6 +58,8 @@ See [docs/README.md](docs/README.md) for full system design.
 | `src/override/` | Override system (urgent potion surfacing) |
 | `src/persist/` | Learner weight serialization (cosave) |
 | `src/settings/` | SettingsReloader (dMenu hot-reload) |
+| `src/effect/` | Effect extractor (R2): EffectReader (forms -> records), EffectCatalog (cap(i) per item, built at kDataLoaded; not read for scoring yet), `hg dump all` |
+| `src/core/` | Pure, host-tested code (`huginn_core_tests`): the effect mapper (EffectColumns, EffectRecords, EffectRules, EffectMapper, CrossFeatures), MiniRegex, ActorTypeClassifier, TargetType, RingBuffer, SlotClassCapMath |
 
 ## Configuration
 
@@ -84,6 +86,7 @@ Registered as `Huginn` with short alias `hg` (in-game `~` console):
 | `hg unlock` | Clear all slot locks |
 | `hg rebuild` | Force rebuild all registries |
 | `hg weights <FormID>` | Show learner weight vector (hex FormID) |
+| `hg cap <FormID>` | Show an item's effect columns, per-stack cap and runtime cross-features (debug builds) |
 | `hg page <N>` | Switch to page N |
 | `hg reset weights` | Clear learned item weights |
 | `hg reset all` | Full system reset |

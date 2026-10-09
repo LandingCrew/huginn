@@ -123,26 +123,38 @@ including the ratio tests R7 must update:
 
 ### R2. Effect extractor
 
-Map Phase 1. Describe every item as cap(i) from game data.
-- [ ] `src/effect/`: a reader (game forms → plain records, kDataLoaded) and a
+Map Phase 1. Describe every item as cap(i) from game data. Done in 0.23.12
+(`r2-effect-extractor`) except the two armour items, which change candidates
+and accept% and so ship as their own small PR.
+- [x] `src/effect/`: a reader (game forms → plain records, kDataLoaded) and a
       mapper in `src/core/` (records → the 239 columns of `9-data/effects.csv`),
       with the layered actor-value resolution and load-order percentiles.
-- [ ] Shared helpers move from `ConsoleCommands.cpp` to `src/util/FormRead.h`.
-- [ ] Static cap in a catalog; runtime cross-features (`overshoot_*`,
+      *(`effect/EffectReader`, `core/EffectRules` + `core/EffectMapper`,
+      `core/MiniRegex` for the rule tables; the mapping runs on a worker
+      thread. Measured live, Debug build: vanilla+ read 0.27 s + map 0.9 s,
+      Simonrim 0.55 s + 2.4 s, LoreRim 1.4 s + 7.3 s; Release on the host
+      tool maps LoreRim in 0.5 s.)*
+- [x] Shared helpers move from `ConsoleCommands.cpp` to `src/util/FormRead.h`.
+- [x] Static cap in a catalog; runtime cross-features (`overshoot_*`,
       `weapon_charge`, `stack_count`, `ammo_matches_launcher`,
-      `school_fortified`) computed per tick. Per-instance cap for tempered and
-      player-enchanted weapons.
+      `school_fortified`) as `src/core` functions + `hg cap`. Per-instance cap
+      for tempered and player-enchanted weapons. *(`effect/EffectCatalog`,
+      `core/CrossFeatures.h` + `effect/CrossFeatures`. Not computed per tick:
+      nothing reads them yet. The per-tick computation moved to R4.)*
 - [ ] **All carried armour is a candidate** (the user, 2026-10-08): lift the
       `ApparelClassifier` scope guard. Gear in combat is not a hard rule; the
       learner decides it. Armour menu picks are dropped today
       (`ExternalEquipListener.h:81-98`); lift the skip, though it shifts
       accept% (decided by the user 2026-10-08).
-- [ ] `hg dump all` prints the catalog view and closes the eight dump gaps
-      (doc 9, "Needs and effects, enumerated").
+- [x] `hg dump all` prints the catalog view and closes the eight dump gaps
+      (doc 9, "Needs and effects, enumerated"). *(`effect/EffectDump`; gap 6
+      reads the MGEF's VMAD from the winning plugin file, gap 7 is moot.)*
 - Done when: the mapper's host tests pass on rows taken from the three dumps;
   coverage on the LoreRim dump ≥ 98.9% and on vanilla+/simonrim ≥ 99%; a
   coverage-diff report lists items that have a slot class today and an empty
-  cap. Changes no scores.
+  cap. Changes no scores. *(Host tests: `EffectFixtureTests`, expectations
+  from the Python reference extractor. Coverage with `huginn_effect_report`
+  (TESTING-INDEX section 0): numbers and the diff in the PR.)*
 
 ### R3. Need vector, logged only
 
@@ -172,6 +184,10 @@ them.
 ### R4. Selection log v3
 
 Map Phase 3. Log everything the fit needs.
+- [ ] Compute the runtime cross-features per tick (`overshoot_*`,
+      `weapon_charge`, `stack_count`, `ammo_matches_launcher`,
+      `school_fortified`; `effect/CrossFeatures` from R2), for the candidates
+      the log holds. First reader: this selection log.
 - [ ] Per decision: the need vector, sparse cap per row, explicit outcome
       (key / wheel / menu / nothing), every eligible item (no floor), one row
       per item, wildcard propensity.

@@ -55,6 +55,7 @@
 #include "context/ContextWeightConfig.h"
 #include "settings/SettingsReloader.h"
 #include "console/ConsoleCommands.h"
+#include "effect/EffectCatalog.h"
 #include "persist/BanditSerializer.h"
 #include "learning/EquipEventBus.h"
 #include "learning/EquipSourceTracker.h"  // MarkHuginnEquip (Wheeler environment)
@@ -528,6 +529,14 @@ static void OnDataLoaded()
         logger::warn("ImGui init failed, using DebugNotification fallback: {}"sv, versionMsg);
     }
 
+    // Effect catalog (R2): cap(i) for every item in the load order. Not read
+    // here: SKSE hands kDataLoaded to each plugin in turn, and distributors
+    // that run after Huginn (KID, SPID) add keywords the catalog reads. The
+    // build waits for the main menu to open (after every plugin's kDataLoaded
+    // handler and the tasks they queued), reads the forms then on the main
+    // thread and maps them on a worker thread. Nothing reads it for scoring yet.
+    Effect::EffectCatalog::GetSingleton().ScheduleBuild();
+
     // Initialize StateEvaluator
     g_stateEvaluator = std::make_unique<Huginn::State::StateEvaluator>();
     g_lastStateLog = std::chrono::steady_clock::now();
@@ -782,10 +791,12 @@ void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
         break;
     case SKSE::MessagingInterface::kNewGame:
         logger::info("New game started"sv);
+        Effect::EffectCatalog::GetSingleton().Build();  // no-op once built at the main menu
         InitializeGameSystems(/*isNewGame=*/true);
         break;
     case SKSE::MessagingInterface::kPostLoadGame:
     {
+        Effect::EffectCatalog::GetSingleton().Build();  // no-op once built at the main menu
         // SKSE passes the load's success as the data pointer itself (non-null
         // = loaded). A failed load must not reset the learner's character.
         const bool loaded = a_msg->data != nullptr;

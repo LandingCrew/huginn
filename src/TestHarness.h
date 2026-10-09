@@ -29,6 +29,10 @@
 //       iCaptureSlotsSec=<seconds>         ; optional (env HUGINN_CAPTURE_SLOTS):
 //                                          ; after the load suites, record slot
 //                                          ; snapshots that long (SlotSnapshot.h)
+//       sDumpAll=<file name>               ; optional (0.23.12): after the save loads
+//                                          ; and its suites ran, write `hg dump all`
+//                                          ; there (a plain name, in the SKSE log
+//                                          ; folder); needs sSaveName
 //     Read once at plugin load and deleted, so it applies to one launch only.
 // In test mode, after the main-menu suites Huginn loads the named save (so the
 // after-load suites run), then logs

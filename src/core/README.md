@@ -114,3 +114,15 @@ ApplySeating and RecordSeating share one clock reading per allocation
 simonrim, then `python -I tools/ingame/run_tests.py --capture-slots 160`, then
 `python -I tools/slots/trim_snapshots.py <log folder>/Huginn_SlotSnapshots.txt
 tests/core/fixtures/slots/<name>.txt --max 150`.
+The effect extractor (R2): `EffectRules` classifies a magic effect,
+`EffectMapper` maps and grades items into cap(i), `CrossFeatures.h` holds the
+runtime features. The rule tables are regular expressions run by `MiniRegex`,
+a small backtracking matcher for the subset the tables use (Python `re`
+semantics on bytes; `regex_oracle.csv` is Python's answer for every table
+pattern on real names and descriptions). Known limits: a search has a step
+budget (4M instructions) past which it answers "no match" and is counted
+(`MiniRegex::BudgetExceeded`, logged by the catalog); and it is still slower
+than Python's `sre` on some nested quantifiers -- `.{0,40}.{0,40}.{0,40}z` on
+20k characters took 16 s against Python's 1.8 s before the budget, and
+`(a|b)*c` on 100k characters 270 s, which the budget now stops. No rule
+pattern has that shape; the whole LoreRim classification runs in seconds.

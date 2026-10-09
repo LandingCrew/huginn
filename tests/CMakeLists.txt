@@ -69,7 +69,7 @@ target_compile_features(huginn_core_tests PRIVATE cxx_std_23)
 # Only src/ is on the include path, and core headers are included as
 # "core/X.h". A test that includes a game header fails to compile here (no
 # PCH, no CommonLib), which is the point.
-target_include_directories(huginn_core_tests PRIVATE "${PROJECT_SOURCE_DIR}/src")
+target_include_directories(huginn_core_tests PRIVATE "${PROJECT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}/support")
 target_link_libraries(huginn_core_tests PRIVATE doctest::doctest)
 # Data-driven tests (the race map) read repo files by absolute path.
 target_compile_definitions(huginn_core_tests PRIVATE "HUGINN_REPO_ROOT=\"${PROJECT_SOURCE_DIR}\"")
@@ -83,3 +83,16 @@ if(TARGET Huginn)
 endif()
 
 add_test(NAME huginn_core_tests COMMAND huginn_core_tests)
+
+# --- huginn_effect_report: the effect mapper over a whole `hg dump all` ------
+# A host tool, not a test: coverage, the coverage diff and the in-game catalog
+# check need a dump from a real load order, which is user data and not checked
+# in (tests/core/fixtures/ holds the sampled rows the tests use). Usage at the
+# top of tests/tools/EffectReport.cpp; docs/testing/TESTING-INDEX.md section 0.
+add_executable(huginn_effect_report "${CMAKE_CURRENT_SOURCE_DIR}/tools/EffectReport.cpp" ${HUGINN_CORE_SOURCES})
+target_compile_features(huginn_effect_report PRIVATE cxx_std_23)
+target_include_directories(huginn_effect_report PRIVATE "${PROJECT_SOURCE_DIR}/src" "${CMAKE_CURRENT_SOURCE_DIR}/support")
+if(MSVC)
+   target_compile_options(huginn_effect_report PRIVATE /utf-8 /permissive- /Zc:preprocessor)
+endif()
+add_dependencies(huginn_effect_report huginn_core_purity)

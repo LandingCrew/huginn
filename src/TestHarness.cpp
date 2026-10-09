@@ -4,6 +4,7 @@
 
 #include "IniLoad.h"
 #include "slot/SlotSnapshot.h"
+#include "effect/EffectDump.h"
 
 #include <spdlog/details/null_mutex.h>
 #include <spdlog/sinks/base_sink.h>
@@ -104,6 +105,9 @@ namespace Huginn::TestHarness
 
         bool g_active = false;
         std::string g_saveName;
+        // Test mode only: write `hg dump all` to this file in the SKSE log
+        // folder after the main-menu suites (R2: fresh dumps from the runner).
+        std::string g_dumpAllName;
         int g_loadTimeoutSec = kDefaultLoadTimeoutSec;
         int g_captureSlotsSec = 0;   // iCaptureSlotsSec: slot snapshots after the load suites (R7)
         std::atomic<bool> g_loadRequested{ false };
@@ -276,6 +280,9 @@ namespace Huginn::TestHarness
                         g_loadTimeoutSec = static_cast<int>(
                             ini.GetLongValue("Test", "iLoadTimeoutSec", kDefaultLoadTimeoutSec));
                         g_captureSlotsSec = static_cast<int>(ini.GetLongValue("Test", "iCaptureSlotsSec", 0));
+                        if (const char* dump = ini.GetValue("Test", "sDumpAll", nullptr); dump && *dump) {
+                            g_dumpAllName = dump;
+                        }
                         source = source.empty() ? "file" : source + "+file";
                     }
                 }
@@ -357,6 +364,29 @@ namespace Huginn::TestHarness
         }
     }
 
+    namespace
+    {
+        // A plain file name only: no folder, nothing outside the log folder.
+        void DumpAllIfAsked()
+        {
+            if (g_dumpAllName.empty()) return;
+            const auto dir = SKSE::log::log_directory();
+            const bool plain = g_dumpAllName.find_first_of("/\\:") == std::string::npos && g_dumpAllName != "." &&
+                               g_dumpAllName != "..";
+            if (!dir || !plain) {
+                logger::error("[HuginnTest] dump all skipped: bad file name '{}' or no log folder"sv, g_dumpAllName);
+                return;
+            }
+            std::string summary;
+            // After the save has loaded: the catalog was built when the main
+            // menu opened (after the keyword distributors), and its worker has
+            // had the whole load to finish; wait for it if not.
+            const bool ok = Effect::WriteDumpAll(*dir / g_dumpAllName, summary, std::chrono::seconds(120));
+            if (ok) logger::info("[HuginnTest] dump all: {}"sv, summary);
+            else logger::error("[HuginnTest] dump all failed: {}"sv, summary);
+        }
+    }
+
     void EndPhase(Phase phase, bool gameLoaded)
     {
         const auto phaseName = phase == Phase::Menu ? "menu"sv : "load"sv;
@@ -374,6 +404,9 @@ namespace Huginn::TestHarness
         }
         if (phase == Phase::Menu) {
             if (g_saveName.empty()) {
+                if (!g_dumpAllName.empty()) {
+                    logger::error("[HuginnTest] sDumpAll needs a save (sSaveName): the dump runs after the load"sv);
+                }
                 Finish({});
             } else {
                 ArmAutoLoad();
@@ -385,6 +418,7 @@ namespace Huginn::TestHarness
             // auto-load fired): its suites are tallied, the run goes on.
             return;
         }
+        if (gameLoaded) DumpAllIfAsked();
         if (gameLoaded && g_captureSlotsSec > 0) {
             // Slot snapshots for the golden test (SlotCapture.cpp): play a
             // scripted session while every allocation is recorded, then end.

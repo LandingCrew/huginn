@@ -58,6 +58,46 @@ it reads the CSVs through `HUGINN_REPO_ROOT`); the slot class cap's arithmetic
 (`core/SlotClassCapMath.h`, the pattern
 port, checked bit for bit against the loop it replaced) and `core/RingBuffer.h`.
 
+**The effect extractor (R2, 0.23.12).** `core/EffectRules`, `core/EffectMapper`,
+`core/MiniRegex`, `core/CrossFeatures.h`:
+
+| Test | What it pins |
+|---|---|
+| `EffectColumnsTests.cpp` | `core/EffectColumns.h` equals `docs/architecture/9-data/effects.csv` (ids, order, levels, families); every rule pattern compiles |
+| `EffectFixtureTests.cpp` | rows sampled from three `hg dump all` CSVs (`tests/core/fixtures/effects_{vanilla,simonrim,lorerim}.csv`): each effect row's column, each item's scope and its effect columns |
+| `MiniRegexTests.cpp` | the regex subset; and `fixtures/regex_oracle.csv`: every rule pattern against Python's `re` on real names, descriptions and keyword lists (match, span, group 1) |
+| `EffectMapperTests.cpp` | values, percentiles, sentinels, the hidden-row whitelist, payloads, scope, item features, cross-features, the deviations from the reference extractor |
+
+The fixtures' expectations were written by the Python reference extractor
+that measured doc 9's coverage (adapted to the effects.csv names and to the
+deviations listed in `core/EffectRules.h`, each flagged in `expectNote`), not
+by the C++. Changing a rule table means regenerating `regex_oracle.csv` (the
+test fails until then: it checks every pattern is covered); changing a
+mapping means the fixture expectations must be re-derived the same way and
+the change listed in `EffectRules.h`. The generators are in `tools/effects/`
+(`make_fixtures.py`, `make_regex_oracle.py`; the reference extractor in
+`tools/effects/reference/`; `compare_mgef.py` compares C++ and reference on
+every MGEF of a dump); run them with `python -I`. They need the dumps, which
+are user data and not checked in; re-running them on R2's dumps reproduces
+the checked-in fixtures byte for byte.
+
+**Coverage on a whole load order: `huginn_effect_report`** (a host tool built
+with the tests, not run by ctest: it needs a dump, which is user data):
+
+```sh
+cmake --build build --config Release --target huginn_effect_report
+build/tests/Release/huginn_effect_report.exe <Huginn_All.csv> --min-coverage 99 --diff-out diff.csv
+```
+
+It prints coverage (visible effect rows mapped, helper rows and wrappers with
+nothing to read not counted) twice -- companion carrier rows left out, and
+counted as unmapped (`--carriers-out` lists every carrier for audit) -- the
+regex step-budget hits, coverage by route and kind, the top unmapped effects, the
+coverage diff (in-scope items that have a slot class today and no description
+in cap(i); the class comes from the dump's `slotClass` column, or `--classes`
+for an older dump), and on a 0.23.12 dump a check that the in-game catalog
+equals what the host mapper makes of the same rows (exit 1 if not).
+
 ---
 
 ## 1. How Huginn's in-game tests run
@@ -153,6 +193,8 @@ Turn it on with either:
   sSaveName=HuginnTest      ; no .ess; empty = main-menu suites only
   iExpiresUnix=1791500000   ; optional
   iLoadTimeoutSec=300       ; optional
+  sDumpAll=Huginn_All_x.csv ; optional (0.23.12): `hg dump all` to this file
+                            ; in the log folder after the save's suites (needs a save)
   ```
 - or `HUGINN_TEST_MODE=1` (and `HUGINN_TEST_SAVE=<name>`) in the game's
   environment. MO2 hands a shortcut to an already-running MO2, which launches
@@ -172,7 +214,14 @@ python -I tools/ingame/run_tests.py --save HuginnTest   # a named save (no .ess)
 python -I tools/ingame/run_tests.py --list simonrim     # the simonrim instance's "Simonrim Essentials" profile
 python -I tools/ingame/run_tests.py --list lorerim      # LoreRim-5, profile Ultra, executable LoreRim
 python -I tools/ingame/run_tests.py --no-save --dry-run # check, print the MO2 command, launch nothing
+python -I tools/ingame/run_tests.py --dump-all Huginn_All_vanilla.csv   # also write hg dump all (0.23.12+)
 ```
+
+`--dump-all NAME` (a plain file name) makes Huginn write `hg dump all` into the
+SKSE log folder after the save's suites (so after the keyword distributors and
+the catalog's build); the runner prints the
+`[EffectCatalog]` and `dump all` lines. Use a name of its own: the log folder
+may be shared by several lists, and `Huginn_All.csv` is the player's own dump.
 
 Before it writes or launches anything it refuses (exit 2) unless:
 
