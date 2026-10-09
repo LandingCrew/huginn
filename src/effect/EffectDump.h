@@ -3,7 +3,7 @@
 // =============================================================================
 // EFFECT DUMP -- `hg dump all`, the catalog view (Debug builds)
 // =============================================================================
-// One row per item x effect, as before 0.23.10 (every old column, same order,
+// One row per item x effect, as before 0.23.12 (every old column, same order,
 // so the doc 9 analysis scripts keep working), then the dump gaps of doc 9 and
 // the catalog's view of each row and item:
 //

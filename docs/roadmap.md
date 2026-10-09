@@ -123,7 +123,7 @@ including the ratio tests R7 must update:
 
 ### R2. Effect extractor
 
-Map Phase 1. Describe every item as cap(i) from game data. Done in 0.23.10
+Map Phase 1. Describe every item as cap(i) from game data. Done in 0.23.12
 (`r2-effect-extractor`) except the two armour items, which change candidates
 and accept% and so ship as their own small PR.
 - [x] `src/effect/`: a reader (game forms → plain records, kDataLoaded) and a

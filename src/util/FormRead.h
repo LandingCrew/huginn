@@ -3,7 +3,7 @@
 // =============================================================================
 // FORM READING HELPERS -- small read-only views of game forms, shared
 // =============================================================================
-// Moved out of ConsoleCommands.cpp (R2, 0.23.10) so the effect reader
+// Moved out of ConsoleCommands.cpp (R2, 0.23.12) so the effect reader
 // (src/effect/) and the dumps read forms the same way:
 //   AvName      -- an actor value's enum name ("Health", "OneHandedSkillAdvance")
 //   KeywordList -- a form's keyword editor IDs, ';'-joined

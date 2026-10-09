@@ -33,7 +33,7 @@ Each phase lists what it builds and what it may prune. A phase only prunes what 
 - **`hg dump all` becomes a view of the catalog** and absorbs the eight dump gaps in doc 9. Check coverage against `9-data/effects.csv`.
 - Prunes nothing yet.
 
-**As built (R2, 0.23.10), where it differs from the plan above:**
+**As built (R2, 0.23.12), where it differs from the plan above:**
 - The rules live in `src/core/` (`EffectRules`, `EffectMapper`, `EffectColumns.h` generated from effects.csv, and `MiniRegex`: std::regex has no lookbehind and is slow in Debug) and are ported from the Python reference extractor that measured doc 9's coverage (`tools/effects/reference/`), not from the classifiers; `SpellClassifier`/`ItemClassifier`/`WeaponClassifier` code was not reused. The game side (`src/effect/`) only reads forms.
 - The per-load-order override (layer 2) is checked **first**, before the keyword table, so an entry can correct a keyword misroute; it is an optional `Huginn_EffectOverrides.ini` (none ships yet).
 - The catalog reads the forms in the first main-thread task after kDataLoaded, not in Huginn's kDataLoaded handler: SKSE hands kDataLoaded to plugins in turn, and keyword distributors (KID, SPID) that run after Huginn add keywords the rules read (LoreRim's `DBWR_Silver*`). The mapping runs on a worker thread (seconds in Debug on LoreRim).

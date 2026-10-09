@@ -58,7 +58,7 @@ it reads the CSVs through `HUGINN_REPO_ROOT`); the slot class cap's arithmetic
 (`core/SlotClassCapMath.h`, the pattern
 port, checked bit for bit against the loop it replaced) and `core/RingBuffer.h`.
 
-**The effect extractor (R2, 0.23.10).** `core/EffectRules`, `core/EffectMapper`,
+**The effect extractor (R2, 0.23.12).** `core/EffectRules`, `core/EffectMapper`,
 `core/MiniRegex`, `core/CrossFeatures.h`:
 
 | Test | What it pins |
@@ -93,7 +93,7 @@ It prints coverage (visible effect rows mapped, helper rows and wrappers with
 nothing to read not counted), by route and kind, the top unmapped effects, the
 coverage diff (in-scope items that have a slot class today and no description
 in cap(i); the class comes from the dump's `slotClass` column, or `--classes`
-for an older dump), and on a 0.23.10 dump a check that the in-game catalog
+for an older dump), and on a 0.23.12 dump a check that the in-game catalog
 equals what the host mapper makes of the same rows (exit 1 if not).
 
 ---
@@ -191,7 +191,7 @@ Turn it on with either:
   sSaveName=HuginnTest      ; no .ess; empty = main-menu suites only
   iExpiresUnix=1791500000   ; optional
   iLoadTimeoutSec=300       ; optional
-  sDumpAll=Huginn_All_x.csv ; optional (0.23.10): `hg dump all` to this file
+  sDumpAll=Huginn_All_x.csv ; optional (0.23.12): `hg dump all` to this file
                             ; in the log folder after the save's suites (needs a save)
   ```
 - or `HUGINN_TEST_MODE=1` (and `HUGINN_TEST_SAVE=<name>`) in the game's
@@ -212,7 +212,7 @@ python -I tools/ingame/run_tests.py --save HuginnTest   # a named save (no .ess)
 python -I tools/ingame/run_tests.py --list simonrim     # the simonrim instance's "Simonrim Essentials" profile
 python -I tools/ingame/run_tests.py --list lorerim      # LoreRim-5, profile Ultra, executable LoreRim
 python -I tools/ingame/run_tests.py --no-save --dry-run # check, print the MO2 command, launch nothing
-python -I tools/ingame/run_tests.py --dump-all Huginn_All_vanilla.csv   # also write hg dump all (0.23.10+)
+python -I tools/ingame/run_tests.py --dump-all Huginn_All_vanilla.csv   # also write hg dump all (0.23.12+)
 ```
 
 `--dump-all NAME` (a plain file name) makes Huginn write `hg dump all` into the

@@ -455,7 +455,7 @@ def check_executable(ml: ModList) -> None:
 
 def check_deployed_dll(ml: ModList, need_dump: bool = False) -> None:
     """The DLL the list will load carries the test harness (and, for
-    --dump-all, the test-mode dump of 0.23.10)."""
+    --dump-all, the test-mode dump of 0.23.12)."""
     dll = ml.root / "overwrite" / "SKSE" / "Plugins" / "Huginn.dll"
     if not dll.is_file():
         raise Refused(f"no {dll}: deploy the Debug Huginn.dll there first "
@@ -470,7 +470,7 @@ def check_deployed_dll(ml: ModList, need_dump: bool = False) -> None:
                       "Release build or older than 0.23.9, and a run would only time out. "
                       "Deploy a Debug build of 0.23.9 or later")
     if need_dump and b"sDumpAll" not in data:
-        raise Refused("--dump-all needs a Debug Huginn.dll of 0.23.10 or later (no sDumpAll in the deployed one)")
+        raise Refused("--dump-all needs a Debug Huginn.dll of 0.23.12 or later (no sDumpAll in the deployed one)")
 
 
 def check_mo2(ml: ModList, multiple: bool) -> list[str]:
@@ -607,7 +607,7 @@ def main() -> int:
                     help="launch even when ANOTHER instance's MO2 is running (MO2's unsupported --multiple)")
     ap.add_argument("--dump-all", metavar="NAME",
                     help="after the save loads, Huginn writes `hg dump all` to NAME (a plain file "
-                         "name) in the SKSE log folder (0.23.10+)")
+                         "name) in the SKSE log folder (0.23.12+)")
     ap.add_argument("--dry-run", action="store_true", help="check everything, print the command, launch nothing")
     ap.add_argument("--capture-slots", type=int, default=0, metavar="SEC",
                     help="after the load suites, play SEC seconds of scripted input while Huginn records every "

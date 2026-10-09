@@ -1360,7 +1360,7 @@ namespace Huginn::Console
    }
 
    // `hg dump all` -- every item-like form in the LOAD ORDER in ONE schema, a
-   // row per item x effect, and since 0.23.10 the effect catalog's view of it
+   // row per item x effect, and since 0.23.12 the effect catalog's view of it
    // (R2): each row's effect column, each item's cap(i), today's slot class,
    // and the doc 9 dump gaps. The writer and the column list live in
    // effect/EffectDump.*; tests/tools/EffectReport.cpp re-maps a dump on the

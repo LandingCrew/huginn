@@ -3,7 +3,7 @@
 // =============================================================================
 // The host side of R2's done-criteria (docs/roadmap.md): coverage of the
 // mapper on a whole load order, the coverage diff against today's slot
-// classes, and -- on a 0.23.10 dump -- a check that the in-game catalog equals
+// classes, and -- on a 0.23.12 dump -- a check that the in-game catalog equals
 // what the host mapper makes of the same rows.
 //
 //   huginn_effect_report <Huginn_All.csv> [options]

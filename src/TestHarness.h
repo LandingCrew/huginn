@@ -29,7 +29,7 @@
 //       iCaptureSlotsSec=<seconds>         ; optional (env HUGINN_CAPTURE_SLOTS):
 //                                          ; after the load suites, record slot
 //                                          ; snapshots that long (SlotSnapshot.h)
-//       sDumpAll=<file name>               ; optional (0.23.10): after the save loads
+//       sDumpAll=<file name>               ; optional (0.23.12): after the save loads
 //                                          ; and its suites ran, write `hg dump all`
 //                                          ; there (a plain name, in the SKSE log
 //                                          ; folder); needs sSaveName

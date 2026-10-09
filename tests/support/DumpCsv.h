@@ -4,13 +4,13 @@
 // DUMP CSV -> EFFECT RECORDS (host only: tests and tools, never the plugin)
 // =============================================================================
 // Reads an `hg dump all` CSV (any version: 0.23.6 without winningPlugin, the
-// 0.23.7 one with taughtByTome and effectDescription, or 0.23.10's catalog
+// 0.23.7 one with taughtByTome and effectDescription, or 0.23.12's catalog
 // view with the dump-gap columns) into the plain records the effect mapper
 // takes. A dump is untrusted data: every field is parsed, nothing is
 // evaluated; a malformed number reads as 0.
 //
 // Row layout: one row per item x effect; an item with no effects has one row
-// with the effect block empty. 0.23.10 adds payload rows (`payloadOf` = the
+// with the effect block empty. 0.23.12 adds payload rows (`payloadOf` = the
 // effectIndex of the Cloak/hazard row they belong to): they become that
 // effect's payload, not the item's own effects.
 // =============================================================================
@@ -106,7 +106,7 @@ namespace Huginn::Test
     }
 
     /// One parsed dump: the records plus the in-game view's columns, when the
-    /// dump has them (0.23.10).
+    /// dump has them (0.23.12).
     struct Dump
     {
         std::vector<Core::Effect::ItemRecord> items;
@@ -114,7 +114,7 @@ namespace Huginn::Test
         std::vector<std::string> header;
         bool hasTome = false;
         bool hasDescription = false;
-        bool hasPayload = false;  // 0.23.10 catalog view
+        bool hasPayload = false;  // 0.23.12 catalog view
         // Per item (index-aligned with items): the in-game cap ("col=value;...")
         // and scope flag, as the game wrote them.
         std::vector<std::string> gameCap;
