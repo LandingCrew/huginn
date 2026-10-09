@@ -332,25 +332,69 @@ TEST_CASE("effect mapper: presence columns -- P x D, a script effect with no mag
     CHECK(CapOf(r, 5, Col::survival_thirst) == 1.0f);
 }
 
-TEST_CASE("effect mapper: a zero magnitude through the engine's data grades at the bottom, not as presence")
+TEST_CASE("effect mapper: a zero magnitude through the engine's data -- the description's number, its column, or a carrier")
 {
     World w;
     const auto heal = w.Add(Mgef(kArchValueModifier, "Health", "Restore Health"));
     const auto scripted = w.Add(Mgef(kArchScript, "", "Restore Health"));
-    auto& dud = w.Item(Kind::Potion, "Unknown Potion");
-    World::Fx(dud, heal, 0);
+    const auto unknown = w.Add(Mgef(kArchValueModifier, "Health", "Unknown Effect"));
+    auto hide = Mgef(kArchPeakValueModifier, "DamageResist", "Dragonhide");
+    hide.description = "Caster ignores <80>% of all physical damage for <dur> seconds.";
+    const auto dragonhide = w.Add(hide);
+    const auto oak = w.Add(Mgef(kArchPeakValueModifier, "DamageResist", "Oakflesh"));
+    auto kill = Mgef(kArchValueModifier, "Destruction", "Instant Kill");
+    const auto instant = w.Add(kill);
+    auto& dud = w.Item(Kind::Potion, "Unknown Potion");  // "Unknown Effect" on Health 0, no text: a carrier
+    World::Fx(dud, unknown, 0);
     auto& small = w.Item(Kind::Potion, "Small");
     World::Fx(small, heal, 25);
     auto& big = w.Item(Kind::Potion, "Ultimate");
     World::Fx(big, heal, 200);
     auto& script = w.Item(Kind::Potion, "Scripted");
     World::Fx(script, scripted, 0);
+    auto& hideSpell = w.Item(Kind::Spell, "Dragonhide");
+    World::Fx(hideSpell, dragonhide, 0, 30);
+    auto& oakSpell = w.Item(Kind::Spell, "Oakflesh");
+    World::Fx(oakSpell, oak, 40, 30);
+    auto& razor = w.Item(Kind::Scroll, "Razor");
+    World::Fx(razor, instant, 0);
+    auto& named = w.Item(Kind::Potion, "Scripted Heal");  // "Restore Health" 0: the name agrees, presence
+    World::Fx(named, heal, 0);
     const auto r = w.Build();
-    CHECK(CapOf(r, 0, Col::restore_health) == doctest::Approx(1.0 / 3.0));  // 1/(N+1), N = 2 real heals
-    CHECK(CapOf(r, 0, Col::restore_health) < CapOf(r, 1, Col::restore_health));
+    CHECK(CapOf(r, 0, Col::restore_health) == 0.0f);  // dropped, not graded
+    CHECK(r.mappings[0].tally.carrier == 1);
+    CHECK(r.mappings[0].tally.counted == 0);
     CHECK(CapOf(r, 1, Col::restore_health) == doctest::Approx(0.5));
     CHECK(CapOf(r, 2, Col::restore_health) == doctest::Approx(1.0));
     CHECK(CapOf(r, 3, Col::restore_health) == 1.0f);  // the script carries the amount: presence
+    // Dragonhide grades on its stated 80, above Oakflesh's 40 at the same duration.
+    CHECK(CapOf(r, 4, Col::defense_armor) == doctest::Approx(1.0));
+    CHECK(CapOf(r, 5, Col::defense_armor) == doctest::Approx(0.5));
+    CHECK(r.mappings[6].inScope);
+    CHECK(CapOf(r, 6, Col::fortify_skill_destruction) == 0.0f);  // a carrier, not a skill fortify
+    CHECK(r.mappings[6].tally.carrier == 1);
+    CHECK(CapOf(r, 7, Col::restore_health) == 1.0f);
+    CHECK(DescriptionNumber("ignores <80>% of damage") == 80.0f);
+    CHECK(DescriptionNumber("Restores <mag> points for <dur> seconds") == 0.0f);
+    CHECK(DescriptionNumber("<2.5> times") == 2.5f);
+}
+
+TEST_CASE("effect mapper: a Light effect grades its light form's radius")
+{
+    World w;
+    auto magelight = Mgef(kArchLight, "", "Magelight");
+    magelight.lightRadius = 200;
+    auto candle = Mgef(kArchLight, "", "Candlelight");
+    candle.lightRadius = 600;
+    const auto a = w.Add(magelight);
+    const auto b = w.Add(candle);
+    auto& s1 = w.Item(Kind::Spell, "Magelight");
+    World::Fx(s1, a, 0, 60);
+    auto& s2 = w.Item(Kind::Spell, "Candlelight");
+    World::Fx(s2, b, 0, 60);
+    const auto r = w.Build();
+    CHECK(CapOf(r, 0, Col::vision_light) > 0.0f);
+    CHECK(CapOf(r, 0, Col::vision_light) < CapOf(r, 1, Col::vision_light));
 }
 
 TEST_CASE("effect mapper: tempering adds damage (the codebase's model), it does not multiply")
@@ -418,6 +462,30 @@ TEST_CASE("effect rules: verifier round 1 -- resist-damage names, wrappers by ke
     CHECK_FALSE(IsHelperName("Dispel Soul Gems"));
     CHECK(NameColumn("Dispel Soul Gems") == std::nullopt);
     CHECK(NameColumn("Dispel") == Col::cure_dispel);
+}
+
+TEST_CASE("effect rules: verifier round 2 -- soul gems, slowfall, the catch-all damage name, decreased resistance")
+{
+    auto dispel = Mgef(kArchScript, "", "Dispel Soul Gems");
+    dispel.description = "The caster sets free all souls currently captured in carried soul gems.";
+    CHECK(ColOf(dispel) == Col::_Count);
+    auto trap = Mgef(kArchScript, "", "Bind Soul");
+    trap.description = "If the target dies within <dur> seconds, it fills a soul gem.";
+    CHECK(ColOf(trap) == Col::soul_trap);
+    auto gemList = Mgef(kArchScript, "", "Seek");
+    gemList.description = "Points to the nearest soul gems or ingots.";
+    CHECK(ColOf(gemList) != Col::soul_trap);
+    auto acro = Mgef(kArchValueModifier, "SpeedMult", "Fortify Acrobatics");
+    acro.keywords = { "MAG_MagicEnchSlowfall" };
+    CHECK(ColOf(acro) == Col::movement_jump_fall);
+    auto aug = Mgef(kArchScript, "", "Augmented Frost");
+    aug.description = "Frost spells do 25% more damage.";
+    CHECK(ColOf(aug) != Col::damage_health_frost);
+    auto bolt = Mgef(kArchScript, "", "Frost Bolt");
+    CHECK(ColOf(bolt) == Col::damage_health_frost);  // no description: the name still says it
+    auto weaken = Mgef(kArchScript, "", "Weaken Poison Resistance", kFlagDetrimental);
+    weaken.description = "Target's poison resistance is decreased by <mag> percent for <dur> seconds.";
+    CHECK(ColOf(weaken) == Col::weakness_poison);
 }
 
 TEST_CASE("effect mapper: overshoot uses the total restored")

@@ -11,6 +11,7 @@
 //   effectPlugin                     the MGEF's defining plugin (override key)
 //   effectCost                       gap 4: the effect item's own cost
 //   effectSchool                     gap 1: MGEF associatedSkill
+//   effectLightRadius                a Light effect's light form radius (its strength)
 //   effectText                       gap 5: the description, <mag>/<dur>/<area> filled
 //   effectScripts                    gap 6: Papyrus scripts on the MGEF (from the plugin file)
 //   effectConditions                 gap 8: MGEF and effect-item conditions

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cstdint>
 #include <deque>
 #include <memory>
@@ -534,6 +535,7 @@ namespace Huginn::Core
 
             bool CompileRoot(const Node& root)
             {
+                if (!Validate(root)) return false;
                 impl_.programs.emplace_back();
                 if (!EmitAlternatives(0, root)) return false;
                 Emit(0, Inst{ Op::Match });
@@ -543,6 +545,41 @@ namespace Huginn::Core
         private:
             MiniRegex::Impl& impl_;
             std::string& error_;
+
+            /// Rules checked over the whole pattern before emitting, so a part
+            /// that emits nothing (inside {0}) is checked too: a repeated group
+            /// must not be able to match empty (Python iterates such loops
+            /// differently), and a lookbehind must be fixed-width.
+            bool Validate(const Node& n)
+            {
+                if (n.kind == Node::Kind::Repeat) {
+                    if (n.child->kind != Node::Kind::Atom && WidthOf(*n.child).min == 0) {
+                        error_ = "a repeated group can match empty (outside the subset)";
+                        return false;
+                    }
+                    return Validate(*n.child);
+                }
+                if (n.kind == Node::Kind::Group) {
+                    if (n.look == Node::Look::Behind || n.look == Node::Look::NegBehind) {
+                        Width w{ -1, 0 };
+                        for (const auto* alt : n.alts) {
+                            const Width a = WidthOfSeq(*alt);
+                            if (w.min < 0) w = a;
+                            else if (a.min != w.min || a.max != w.max) w.max = -2;
+                        }
+                        if (w.max < 0 || w.min != w.max) {
+                            error_ = "look-behind requires fixed-width pattern";
+                            return false;
+                        }
+                    }
+                    for (const auto* alt : n.alts) {
+                        for (const auto* c : *alt) {
+                            if (!Validate(*c)) return false;
+                        }
+                    }
+                }
+                return true;
+            }
 
             int Emit(std::size_t prog, Inst in)
             {
@@ -719,6 +756,10 @@ namespace Huginn::Core
                 const std::size_t n = t_.size();
 
                 for (;;) {
+                    if (++steps_ > kStepBudget) {
+                        exceeded_ = true;
+                        return false;
+                    }
                     bool ok = true;
                     const Inst& in = code[static_cast<std::size_t>(pc)];
                     switch (in.op) {
@@ -810,6 +851,7 @@ namespace Huginn::Core
                                 found = Run(static_cast<std::size_t>(in.x), pos - static_cast<std::size_t>(in.width), subSlots,
                                             subMarks, static_cast<std::ptrdiff_t>(pos), subEnd);
                             }
+                            if (exceeded_) return false;
                             if (found == negative) {
                                 ok = false;
                                 break;
@@ -886,6 +928,13 @@ namespace Huginn::Core
             std::string_view t_;
             // deques: a nested run may add a level without moving the outer ones
             std::deque<std::vector<Bt>> pool_;
+        public:
+            // A search that runs this many instructions gives up: no match, and
+            // MiniRegex::BudgetExceeded() counts it (the caller logs it).
+            static constexpr std::size_t kStepBudget = 4'000'000;
+            std::size_t steps_ = 0;
+            bool exceeded_ = false;
+        private:
             std::deque<std::pair<std::vector<std::ptrdiff_t>, std::vector<std::ptrdiff_t>>> scratch_;
             std::size_t depth_ = 0;
 
@@ -906,6 +955,13 @@ namespace Huginn::Core
     MiniRegex::~MiniRegex() = default;
     MiniRegex::MiniRegex(MiniRegex&&) noexcept = default;
     MiniRegex& MiniRegex::operator=(MiniRegex&&) noexcept = default;
+
+    namespace
+    {
+        std::atomic<std::size_t> g_budgetExceeded{ 0 };
+    }
+
+    std::size_t MiniRegex::BudgetExceeded() noexcept { return g_budgetExceeded.load(std::memory_order_relaxed); }
 
     bool MiniRegex::Valid() const noexcept { return impl_ != nullptr && error_.empty(); }
     std::size_t MiniRegex::GroupCount() const noexcept { return impl_ ? impl_->groups : 0; }
@@ -956,7 +1012,12 @@ namespace Huginn::Core
             std::fill(slots.begin(), slots.end(), -1);
             std::fill(marks.begin(), marks.end(), -1);
             std::size_t end = 0;
-            if (vm.Run(0, start, slots, marks, -1, end)) {
+            const bool hit = vm.Run(0, start, slots, marks, -1, end);
+            if (vm.exceeded_) {
+                g_budgetExceeded.fetch_add(1, std::memory_order_relaxed);
+                return false;
+            }
+            if (hit) {
                 if (match) {
                     match->whole.begin = static_cast<std::ptrdiff_t>(start);
                     match->whole.end = static_cast<std::ptrdiff_t>(end);

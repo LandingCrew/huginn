@@ -300,6 +300,7 @@ namespace Huginn::Test
             m.keywords = SplitList(Get(f, "effectKeywords"));
             m.description = Get(f, "effectDescription");
             m.school = Get(f, "effectSchool");
+            m.lightRadius = ParseInt(Get(f, "effectLightRadius"));
             m.payloadKnown = out.hasPayload;
             const auto index = static_cast<std::uint32_t>(out.effects.size());
             out.effects.push_back(std::move(m));

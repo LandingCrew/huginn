@@ -79,9 +79,14 @@ namespace Huginn::Core::Effect
     [[nodiscard]] std::string FormatCap(const Cap& cap);
 
     /// A tempered weapon's damage for grading against base forms: tempering
-    /// ADDS (ExtraHealth h gives +(h - 1) x 10 points; LoreRim's (1.2) is +2,
-    /// measured, src/weapon/WeaponData.h), it does not multiply. h <= 1 (or an
-    /// unfilled 0) is untempered.
+    /// ADDS, it does not multiply (src/weapon/WeaponData.h: LoreRim's (1.2) is
+    /// +2 points). The +(h - 1) x 10 rule is EXTRAPOLATED from that one
+    /// measurement at h = 1.2 (the vanilla smithing tiers fit it too, unmeasured
+    /// here); WeaponData::BestDamage still falls back to base x temper. The
+    /// game's displayed damage (PlayerCharacter::GetDamage, which the registry
+    /// reads) is not used: it adds the player's skill and perks, so it does not
+    /// compare with the base-form population. h <= 1 (or an unfilled 0) is
+    /// untempered.
     [[nodiscard]] constexpr float TemperedWeaponDamage(float baseDamage, float temper) noexcept
     {
         return temper > 1.0f ? baseDamage + (temper - 1.0f) * 10.0f : baseDamage;
@@ -91,6 +96,11 @@ namespace Huginn::Core::Effect
     /// column for anything magic; for a plain weapon or ammo its damage stat;
     /// for a light, being a light.
     [[nodiscard]] bool DescribesItem(const Cap& cap, Kind kind) noexcept;
+
+    /// The column's value rule from effects.csv's `how`: "Amount", "Level",
+    /// "P", "PD", "PG", "PGD", "PArea", "Hunger" or "Thirst" (graded ones grade
+    /// a magnitude). For the report tool and tests.
+    [[nodiscard]] std::string_view ValueRuleName(Col c);
 
     enum class School : std::uint8_t { None, Alteration, Conjuration, Destruction, Illusion, Restoration };
     [[nodiscard]] School SchoolFromName(std::string_view associatedSkill) noexcept;
@@ -114,6 +124,8 @@ namespace Huginn::Core::Effect
         int visible = 0;
         int helper = 0;           // visible helper rows (not counted)
         int wrapperUnknown = 0;   // visible wrappers with no payload and no description to read (not counted)
+        int carrier = 0;          // rows dropped as carriers: a graded engine effect with magnitude 0 and
+                                  // nothing in its description to say what it does (not counted)
         int counted = 0;
         int mapped = 0;
 
@@ -172,6 +184,18 @@ namespace Huginn::Core::Effect
 
     /// The class of every effect in the table (index-aligned).
     [[nodiscard]] std::vector<EffectClass> ClassifyAll(const EffectTable& effects, const OverrideTable* overrides);
+
+    /// For every data-route effect some item uses with magnitude 0 on a graded
+    /// column: read its description for a stated number and a column
+    /// (EffectClass::zeroMagnitude / zeroColumn / zeroNamed). MapItem then, in
+    /// order: grades the row on the number (Dragonhide's "ignores <80>%"); keeps
+    /// it as presence of the column its description names; keeps it as presence
+    /// of its own column when its name says the same family (a "Restore Health"
+    /// whose amount a script carries); or drops it as a carrier (a spider
+    /// scroll's "Restore Health 0", Wabbajack's, Mehrunes' Razor's "Instant
+    /// Kill" on Destruction, LoreRim's "Dispel Armor" on DamageResist).
+    void ResolveZeroMagnitudes(const std::vector<ItemRecord>& items, const EffectTable& effects,
+                               std::vector<EffectClass>& classes);
 
     /// Rule 1: a player-facing item Huginn describes.
     [[nodiscard]] bool InScope(const ItemRecord& item, const EffectTable& effects);

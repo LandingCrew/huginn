@@ -15,6 +15,8 @@
 //     --mgef-out <csv>          write every MGEF's column and route
 //     --caps-out <csv>          write every in-scope item's cap
 //     --unmapped-out <csv>      write the unmapped visible effects, by rows
+//     --zero-out <csv>          write every kept in-scope effect row whose column
+//                               grades a magnitude and whose magnitude is 0
 //   huginn_effect_report --patterns-out <file>
 //                             write the rule tables' patterns, one per line
 //
@@ -85,7 +87,7 @@ int main(int argc, char** argv)
     std::string path = argv[1];
     std::string name = path.substr(path.find_last_of("/\\") + 1);
     double minCoverage = -1.0;
-    std::string classesPath, diffOut, mgefOut, capsOut, unmappedOut;
+    std::string classesPath, diffOut, mgefOut, capsOut, unmappedOut, zeroOut;
     for (int i = 2; i < argc; ++i) {
         const std::string a = argv[i];
         auto next = [&]() -> std::string { return i + 1 < argc ? argv[++i] : std::string{}; };
@@ -96,6 +98,7 @@ int main(int argc, char** argv)
         else if (a == "--mgef-out") mgefOut = next();
         else if (a == "--caps-out") capsOut = next();
         else if (a == "--unmapped-out") unmappedOut = next();
+        else if (a == "--zero-out") zeroOut = next();
         else return Usage();
     }
 
@@ -146,8 +149,8 @@ int main(int argc, char** argv)
     std::printf("in scope: %zu items\n", inScope);
     const auto& t = r.tally;
     std::printf("effect rows: %d (visible %d, hidden %d, hidden kept %d)\n", t.rows, t.visible, t.hidden, t.hiddenKept);
-    std::printf("visible: helper %d, wrapper without payload %d, counted %d, mapped %d\n", t.helper, t.wrapperUnknown,
-                t.counted, t.mapped);
+    std::printf("visible: helper %d, wrapper without payload %d, zero-magnitude carriers %d, counted %d, mapped %d\n",
+                t.helper, t.wrapperUnknown, t.carrier, t.counted, t.mapped);
     std::printf("COVERAGE %.2f%% (%d of %d visible effect rows)\n", 100.0 * r.Coverage(), t.mapped, t.counted);
     std::printf("by route:");
     for (const auto& [k, v] : byRoute) std::printf(" %s=%d", k.c_str(), v);
@@ -274,6 +277,30 @@ int main(int argc, char** argv)
             const auto bar = k.find('|');
             out << v << ',' << k.substr(0, bar) << ',' << Quote(k.substr(bar + 1)) << '\n';
         }
+    }
+
+    if (!zeroOut.empty()) {
+        std::ofstream out(zeroOut, std::ios::binary);
+        out << "kind,formID,name,effectFormID,effectName,archetype,primaryAV,hidden,column,rule,route,value,description\n";
+        std::size_t n = 0;
+        for (std::size_t i = 0; i < r.mappings.size(); ++i) {
+            const auto& m = r.mappings[i];
+            if (!m.inScope) continue;
+            const auto& item = dump.items[i];
+            for (std::size_t j = 0; j < m.outcomes.size(); ++j) {
+                const auto& o = m.outcomes[j];
+                if (!o.kept || !o.cls.Mapped() || item.effects[j].magnitude != 0.0f) continue;
+                const auto rule = ValueRuleName(o.cls.col);
+                if (rule != "Amount" && rule != "Level" && rule != "PG" && rule != "PGD" && rule != "PArea") continue;
+                const auto& e = dump.effects[item.effects[j].effect];
+                out << KindName(item.kind) << ',' << Hex(item.formId) << ',' << Quote(item.name) << ',' << Hex(e.formId)
+                    << ',' << Quote(e.name) << ',' << e.archetype << ',' << e.primaryAV << ',' << (o.hidden ? 1 : 0) << ','
+                    << Name(o.cls.col) << ',' << rule << ',' << RouteName(o.cls.route) << ',' << Get(r.caps[i], o.cls.col)
+                    << ',' << Quote(e.description.substr(0, 160)) << '\n';
+                ++n;
+            }
+        }
+        std::printf("zero-magnitude graded rows: %zu (written to %s)\n", n, zeroOut.c_str());
     }
 
     if (minCoverage >= 0.0 && 100.0 * r.Coverage() < minCoverage) {

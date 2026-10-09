@@ -4,6 +4,7 @@
 
 #include <array>
 #include <cctype>
+#include <charconv>
 #include <initializer_list>
 #include <vector>
 
@@ -314,7 +315,7 @@ namespace Huginn::Core::Effect
                 { R"re(fortify potion duration)re", "meta_potion_duration" },
                 { R"re(magicka damage|damage magicka)re", "damage_magicka" },
                 { R"re(stamina damage|damage stamina)re", "damage_stamina" },
-                { R"re(disintegrat|damage health|pain|\bdamage\b|fireball|flame|frost|\bice\b|shock|lightning|thunder|storm|sun|holy|poison|bolt|blast|explos|meteor|spear|ray)re", "damage_health" },
+                { R"re(disintegrat|damage health|pain|\bdamage\b|fireball|flame|frost|\bice\b|shock|lightning|thunder|storm|sun|holy|poison|bolt|blast|explos|meteor|spear|ray)re", "damage_health*" },
             });
             return t;
         }
@@ -337,8 +338,9 @@ namespace Huginn::Core::Effect
         }
 
         /// Name-table lookup with the _X placeholders resolved; "" if none.
-        std::string NameSpec(std::string_view name)
+        std::string NameSpec(std::string_view name, bool* catchAll = nullptr)
         {
+            if (catchAll) *catchAll = false;
             const std::string ln = Lower(name);
             for (const auto& rule : NameTable()) {
                 MiniRegex::Match m;
@@ -358,6 +360,11 @@ namespace Huginn::Core::Effect
                     return sk ? std::string("fortify_skill_") + sk : std::string{};
                 }
                 if (rule.spec == "NONE") return {};
+                if (rule.spec == "damage_health*") {
+                    // The generic rule: any name with "damage", "frost", "bolt"...
+                    if (catchAll) *catchAll = true;
+                    return "damage_health";
+                }
                 return rule.spec;
             }
             return {};
@@ -380,7 +387,7 @@ namespace Huginn::Core::Effect
         const Table& DescTable()
         {
             static const Table t = Build({
-                { R"re(soul ?trap|soul gems?\b|trap(s|ped)? (its|the|their) soul)re", "soul_trap" },
+                { R"re(soul ?trap|fills? (a |the )?soul ?gems?|vulnerable to soul ?gems?|soul ?gems? on death|trap(s|ped)? (its|the|their) soul)re", "soul_trap" },
                 { R"re(teleport|portal|fast travel|transports? (you|the caster)|recall to|swaps? places|shifts? through (the )?shadows)re", "utility_teleport" },
                 { R"re(opening locks|opens? (a |the )?locks?\b|\bunlock)re", "utility_unlock" },
                 { R"re(time slows|slows? (down )?time|slow time)re", "utility_slow_time" },
@@ -425,7 +432,7 @@ namespace Huginn::Core::Effect
                 { R"re((reduc|lower)\w* (its |their |the target.s |enemy |target.s )?armor\b|armor (rating )?(is )?reduced)re", "weakness_armor" },
                 { R"re(armor rating|\bdefense\b|damage reduction|reduc\w* (all |incoming |physical )?damage taken|take(s)? (only )?(N% )?(half|less) (physical )?damage|half damage|invulner)re", "defense_armor" },
                 { R"re(magic resist\w*|resist\w* (to )?magic)re", "MAGRES" },
-                { R"re(weak(er|ness)? to (fire|frost|shock|poison)|(fire|frost|shock|poison) resist\w* (is |by )?(reduc|lower))re", "WEAK" },
+                { R"re(weak(er|ness)? to (fire|frost|shock|poison)|(fire|frost|shock|poison) resist\w* (is |by )?(reduc|lower|decreas))re", "WEAK" },
                 { R"re(resist (to )?(fire|frost|shock|poison)|(fire|frost|shock|poison) resist)re", "RES" },
                 { R"re(absorb\w*\b.{0,30}\b(health|magicka|stamina)|(health|magicka|stamina).{0,15}absorbed|steals? .{0,20}(health|magicka|stamina))re", "absorb_V" },
                 { R"re((regenerat\w*|regen)\b.{0,20}(health|magicka|stamina)|(health|magicka|stamina) regen)re", "regen_V" },
@@ -513,7 +520,7 @@ namespace Huginn::Core::Effect
             return s;
         }
 
-        std::string DescMatch(std::string_view t)
+        std::string DescMatch(std::string_view t, bool* none = nullptr)
         {
             static const MiniRegex neg(kPatNegation);
             for (const auto& rule : DescTable()) {
@@ -531,7 +538,10 @@ namespace Huginn::Core::Effect
                     }
                     return {};
                 };
-                if (spec == "NONE") return {};
+                if (spec == "NONE") {
+                    if (none) *none = true;
+                    return {};
+                }
                 if (spec == "DMG") {
                     const auto after = t.substr(static_cast<std::size_t>(m.whole.begin));
                     static const MiniRegex h(kPatHealthWord);
@@ -575,8 +585,9 @@ namespace Huginn::Core::Effect
         }
 
         /// (spec, skill-less) from the description; "" if none.
-        std::string DescSpec(std::string_view text)
+        std::string DescSpec(std::string_view text, bool* none = nullptr)
         {
+            if (none) *none = false;
             if (Strip(text).empty()) return {};
             const std::string t = NormaliseDescription(text);
             const std::string_view stripped = Strip(t);
@@ -590,8 +601,10 @@ namespace Huginn::Core::Effect
                     break;
                 }
             }
-            std::string spec = DescMatch(first);
-            if (spec.empty() && first != stripped) spec = DescMatch(t);
+            bool firstNone = false;
+            std::string spec = DescMatch(first, &firstNone);
+            if (spec.empty() && !firstNone && first != stripped) spec = DescMatch(t, none);
+            else if (none) *none = firstNone;
             return spec;
         }
 
@@ -672,6 +685,7 @@ namespace Huginn::Core::Effect
             std::string spec;
             Route route = Route::Unmapped;
             std::string element;
+            bool final = false;  // unmapped on purpose: skip the description route
         };
 
         Raw ClassifyRaw(const MagicEffectRecord& r, const std::string& kw)
@@ -708,7 +722,18 @@ namespace Huginn::Core::Effect
                     // "Modify Conjuration" tagged Fire).
                     return { spec, Route::Keyword, el };
                 }
-                std::string spec = NameSpec(r.name);
+                bool catchAll = false;
+                std::string spec = NameSpec(r.name, &catchAll);
+                // The generic damage name rule ("frost", "bolt", "damage" anywhere)
+                // yields to the description when there is one that says what the
+                // effect does: "Augmented Frost" is "Frost spells do 25% more
+                // damage" (spell power: no column), not frost damage.
+                if (catchAll) {
+                    bool none = false;
+                    const std::string ds = DescSpec(r.description, &none);
+                    if (none) return { {}, Route::Unmapped, {}, true };
+                    if (!ds.empty()) spec.clear();  // ClassifyColumns takes the description route
+                }
                 // effects.csv's damage columns need detrimental=1: a name saying
                 // "damage" on a beneficial effect, or "resist ... damage"
                 // (Simonrim's Adamant "Resist Magicka Damage"), is not damage.
@@ -816,6 +841,9 @@ namespace Huginn::Core::Effect
                 if (const char* c = CombatAv(av)) {
                     return { std::string(det ? "weaken_combat_" : "fortify_combat_") + c, Route::Data, {} };
                 }
+                // Simonrim's "Fortify Acrobatics" boots: SpeedMult carrying the
+                // Slowfall keyword ("jump twice as high") -- the keyword decides.
+                if (Contains(kw, "Slowfall")) return { "movement_jump_fall", Route::Data, {} };
                 if (av == "SpeedMult") return { det ? "control_slow" : "movement_speed", Route::Data, {} };
                 if (av == "CarryWeight" && det) return { "control_slow", Route::Data, {} };
                 static constexpr std::array<std::pair<std::string_view, const char*>, 14> kAv{ {
@@ -909,9 +937,12 @@ namespace Huginn::Core::Effect
             }
         }
         const std::string kw = JoinKeywords(r.keywords);
+        // Requiem's "Dispel Soul Gems" frees the souls in carried gems -- the
+        // opposite of soul trap; no column says it.
+        if (Lower(r.name).find("dispel soul gems") != std::string::npos) return out;
         Raw raw = ClassifyRaw(r, kw);
 
-        if (raw.route == Route::Unmapped) {
+        if (raw.route == Route::Unmapped && !raw.final) {
             std::string ds = DescSpec(r.description);
             if (!ds.empty()) {
                 if (r.detrimental) {
@@ -975,6 +1006,27 @@ namespace Huginn::Core::Effect
 
     bool IsHelperName(std::string_view name) { return HelperRe().Contains(Lower(name)); }
 
+    float DescriptionNumber(std::string_view d)
+    {
+        for (std::size_t i = d.find('<'); i != std::string_view::npos; i = d.find('<', i + 1)) {
+            const auto close = d.find('>', i + 1);
+            if (close == std::string_view::npos) break;
+            const auto tag = d.substr(i + 1, close - i - 1);
+            if (tag.empty() || tag.size() > 12) continue;
+            bool numeric = true;
+            int dots = 0;
+            for (const char c : tag) {
+                if (c == '.') ++dots;
+                else if (c < '0' || c > '9') numeric = false;
+            }
+            if (!numeric || dots > 1 || tag.front() == '.') continue;
+            float v = 0.0f;
+            const auto r = std::from_chars(tag.data(), tag.data() + tag.size(), v);
+            if (r.ec == std::errc{} && v > 0.0f) return v;
+        }
+        return 0.0f;
+    }
+
     bool IsBadItemName(std::string_view name)
     {
         static const MiniRegex bad(kPatBadItemName);
@@ -1028,7 +1080,7 @@ namespace Huginn::Core::Effect
         for (const Table* t : { &KwTable(), &NameTable(), &DescTable(), &StrongName() }) {
             for (const auto& rule : *t) {
                 const auto& s = rule.spec;
-                if (s.find('_') == std::string::npos || EndsWith(s, "_X") || EndsWith(s, "_V")) continue;
+                if (s.find('_') == std::string::npos || EndsWith(s, "_X") || EndsWith(s, "_V") || EndsWith(s, "*")) continue;
                 if (ToColumns(s, {}).col == Col::_Count) return "no column for spec " + s;
             }
         }

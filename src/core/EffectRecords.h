@@ -135,6 +135,7 @@ namespace Huginn::Core::Effect
         std::vector<std::string> keywords;  // editor IDs
         std::string description;     // the game's text, <mag>/<dur> unfilled
         std::string school;          // associatedSkill enum name, "" if none or unknown (dump gap 1)
+        int lightRadius = 0;         // a Light effect's light form radius (where its strength is); 0 if none/unknown
         // Cloak / SpawnHazard: the effects of the spell this effect carries
         // (dump gap 3). Empty when unknown (an old dump) or none.
         std::vector<EffectRow> payload;

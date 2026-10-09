@@ -26,6 +26,10 @@
 // FormID hex>" = <effects.csv column id>; checked before any other rule. None
 // ships yet.
 //
+// Built once: game data changed at runtime after that -- a Papyrus
+// AddKeywordToForm or SetNthEffectMagnitude after a save loads -- is not seen;
+// there is no rebuild. Keyword distributors (KID, SPID) finish before the build.
+//
 // Threads: the forms are read on the main thread (the task after kDataLoaded); the mapping
 // runs on a worker thread (seconds in a Debug build on LoreRim) and publishes
 // with Ready() (release/acquire). Before Ready() every accessor answers

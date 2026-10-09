@@ -76,6 +76,8 @@ namespace Huginn::Effect
             const char* desc = m->magicItemDescription.c_str();
             r.description = desc ? desc : "";
             r.school = std::string(Util::AvName(m->data.associatedSkill));
+            // A Light effect's strength is its light form's radius (P x G(radius)).
+            if (m->data.light) r.lightRadius = static_cast<int>(m->data.light->data.radius);
             r.payloadKnown = true;  // in game the link is always readable (or absent)
             idx = static_cast<std::uint32_t>(out.effects.size());
             out.effects.push_back(std::move(r));

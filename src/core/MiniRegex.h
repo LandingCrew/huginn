@@ -21,8 +21,9 @@
 //   `^` and `$` (end, or before a final '\n').
 // Anything else is a COMPILE ERROR rather than a silent difference: backrefs,
 // named groups, flags, possessive quantifiers, a repeated repeat (`a**`,
-// `x{2}{3}`), variable-width lookbehind, a NUL byte in the pattern, an escape
-// it does not know. The tables lower-case their input and are written in lower
+// `x{2}{3}`), variable-width lookbehind (anywhere, even inside `{0}`), a
+// repeated group that can match empty (`(?:|a)+`, `(\b)*`: Python iterates
+// those differently), a NUL byte in the pattern, an escape it does not know. The tables lower-case their input and are written in lower
 // case (keyword tables are matched as written).
 //
 // Engine: the pattern compiles to a small instruction list run by a
@@ -31,7 +32,13 @@
 // (only with how deeply lookarounds nest in the pattern). A quantified single
 // atom counts its run and backtracks by count; a lookbehind is tried at the one
 // start its fixed width allows; a search skips start bytes no match can begin
-// with.
+// with. A search has a step budget (4M instructions): past it, it answers "no
+// match" and BudgetExceeded() counts it, so a pathological pattern/text pair
+// cannot hang the catalog's worker.
+//
+// Speed: still slower than Python's sre on some nested quantifiers (e.g.
+// `.{0,40}.{0,40}.{0,40}z` on a long run of x, or `(a|b)*c` on 100k
+// characters, which the budget stops). No rule pattern has that shape.
 //
 // Pure: standard library only (src/core/README.md).
 // =============================================================================
@@ -86,6 +93,11 @@ namespace Huginn::Core
 
         /// Shorthand for Search(text) != false.
         [[nodiscard]] bool Contains(std::string_view text) const { return Search(text, nullptr); }
+
+        /// How many searches (process-wide, all patterns) gave up at the step
+        /// budget and answered "no match". Callers log it; 0 is the norm -- no
+        /// rule table pattern comes near it on real text.
+        [[nodiscard]] static std::size_t BudgetExceeded() noexcept;
 
         struct Impl;  // the compiled program (MiniRegex.cpp)
 

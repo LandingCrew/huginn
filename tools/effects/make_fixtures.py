@@ -28,12 +28,47 @@ cap.HELPER = re.compile(cap.HELPER.pattern.replace('^blank|', '^blank( effect)?$
     'dispel (cloak|size|jump|soul gems)', 'dispel (cloak|size|jump)'))
 _i = next(i for i, (pat, sp) in enumerate(cap.NAME_TABLE) if sp == 'cure_dispel')
 cap.NAME_TABLE.insert(_i, (r'dispel soul gems', None))
+# Deviations (verifier round 2): the description table's soul_trap rule no longer takes a
+# bare "soul gem"; "decreased" weakens like "reduced"; the NONE rule (spell power) is
+# made visible to the oracle as a sentinel (it maps to no column either way).
+import desc as _desc
+for _k, (_pat, _sp) in enumerate(_desc.DESC_TABLE):
+    if _sp == 'soul_trap':
+        _desc.DESC_TABLE[_k] = (_pat.replace(r'soul gems?\b|', r'fills? (a |the )?soul ?gems?|vulnerable to soul ?gems?|soul ?gems? on death|'), _sp)
+    elif _sp == 'WEAK':
+        _desc.DESC_TABLE[_k] = (_pat.replace('(reduc|lower)', '(reduc|lower|decreas)'), _sp)
+    elif _sp == 'NONE':
+        _desc.DESC_TABLE[_k] = (_pat, 'NONEHIT')
+assert any('vulnerable to soul' in pt for pt, sp in _desc.DESC_TABLE)
+assert any('decreas' in pt for pt, sp in _desc.DESC_TABLE if sp == 'WEAK')
+_CATCHALL = cap.NAME_TABLE[-3][0]  # the generic damage rule ("disintegrat|damage health|...")
+assert _CATCHALL.startswith('disintegrat'), _CATCHALL
+_VM = {'ValueModifier', 'PeakValueModifier', 'DualValueModifier', 'ValueAndParts', 'AccumulateMagnitude'}
+
+
+def script_like(r):
+    """The C++'s script-like test (Script archetype, or a value modifier on a reused AV)."""
+    a, av = r['arch'], r['primaryAV']
+    return a == 'Script' or ((a in _VM or a == 'Absorb') and cap.SUSPECT_AV.search(av or '-') and
+                             av not in ('Confidence', 'Aggression')) or (a in _VM and av == '')
+
+
+def desc_number(text):
+    """The first number a description states in a literal tag (<80>), or 0."""
+    for m in re.finditer(r'<([0-9][0-9.]*)>', text or ''):
+        try:
+            v = float(m.group(1))
+        except ValueError:
+            continue
+        if v > 0 and m.group(1).count('.') <= 1:
+            return v
+    return 0.0
 
 
 def desc_col(r):
     """The description route, as the C++ takes it for a row nothing else maps."""
     ds, _ = cap.desc_spec(r['effectDescription'])
-    if not ds:
+    if not ds or ds == 'NONEHIT':
         return ''
     if r['det']:
         for a, b in (('resist_', 'weakness_'), ('fortify_combat_', 'weaken_combat_'), ('defense_armor', 'weakness_armor')):
@@ -74,10 +109,30 @@ def to_col(spec, el):
 
 def oracle(r):
     """-> (column, note) for one effect row (reference + documented deviations)."""
-    spec, src, el, sk = cap.classify(r)
-    note = ''
     n = r['effectName'].lower()
     kw = r['effectKeywords']
+    # Deviation (round 2): Requiem's "Dispel Soul Gems" gets no column at all.
+    if 'dispel soul gems' in n:
+        return '', 'unmapped', 'dev:dispel-soul-gems'
+    # Deviation (round 2): a Slowfall keyword on SpeedMult is jump/fall.
+    if r['arch'] in _VM and r['primaryAV'] == 'SpeedMult' and not r['det'] and 'Slowfall' in kw:
+        return 'movement_jump_fall', 'data', 'dev:slowfall'
+    spec, src, el, sk = cap.classify(r)
+    if spec == 'NONEHIT':
+        spec, src = None, 'unmapped'
+    note = ''
+    # Deviation (round 2): on a script effect, the generic damage name rule yields to the
+    # description when it says something (NONE -> no column).
+    if src == 'name' and spec == 'damage_health' and script_like(r):
+        hit = next((sp for pt, sp in cap.NAME_TABLE if re.search(pt, n)), None)
+        if hit == 'damage_health' and re.search(_CATCHALL, n) and \
+                not any(re.search(pt, n) for pt, sp in cap.NAME_TABLE[:-3] if sp) and \
+                not re.search(r'magicka damage|damage magicka|stamina damage|damage stamina', n):
+            ds, _ = cap.desc_spec(r['effectDescription'])
+            if ds == 'NONEHIT':
+                return '', 'unmapped', 'dev:name-catchall-desc'
+            if ds:
+                return desc_col(r), 'desc', 'dev:name-catchall-desc'
     # deviation: scripted summons get no element (keyword route); data summons keep it
     if spec == 'summon_creature' and src == 'keyword':
         el = None
@@ -149,6 +204,12 @@ def famkey(c):
         return ''
     f = family_of_col.get(c, '')
     return f if f else c
+
+
+def name_col(name):
+    """The C++ NameColumn: the name table's column (element dropped)."""
+    ns = cap.name_spec(name)[0]
+    return to_col(ns, None) if ns else ''
 
 
 def keep_hidden(col, name):
@@ -421,8 +482,31 @@ def main():
             hydrated = any('hydrat' in str(r['effectName']).lower() for r in rows if r['effectFormID'])
             num = lambda v: float(v) if v not in ('', None) and not (isinstance(v, float) and math.isnan(v)) else 0.0
 
-            def kept_row(rr, cols_, visible, route):
-                kept_rows.append({'cols': cols_, 'mag': num(rr['magnitude']), 'dur': int(num(rr['duration'])),
+            def zero_case(rr, c_, src_):
+                """(kind, value) for a data-route graded row with magnitude 0: None,
+                ('number', N), ('describe', col) or ('carrier', None)."""
+                if src_ not in ('data', 'keyword') or script_like(rr) or not c_ or num(rr['magnitude']) != 0:
+                    return None
+                rule = rule_of(c_)
+                if rule == 'PArea':
+                    if num(rr['area']) > 0 or num(rr.get('effectLightRadius', 0)) > 0:
+                        return None
+                elif rule not in ('Amount', 'Level', 'PG', 'PGD'):
+                    return None
+                nmb = desc_number(rr['effectDescription'])
+                if nmb > 0:
+                    return ('number', nmb)
+                dc = desc_col(rr)
+                if dc:
+                    return ('describe', dc)
+                ns = name_col(rr['effectName'])
+                if ns and famkey(ns) == famkey(c_):
+                    return ('named', None)
+                return ('carrier', None)
+
+            def kept_row(rr, cols_, visible, route, mag=None):
+                kept_rows.append({'cols': cols_, 'mag': num(rr['magnitude']) if mag is None else mag,
+                                  'dur': int(num(rr['duration'])),
                                   'area': int(num(rr['area'])), 'delivery': str(rr['effectDelivery']),
                                   'visible': visible, 'route': route, 'name': str(rr['effectName']),
                                   'kws': str(rr['effectKeywords']), 'hydrated': hydrated})
@@ -444,24 +528,49 @@ def main():
                         for _, p in pls.iterrows():
                             pc, psrc, _ = orc[p['effectFormID']]
                             if pc and psrc != 'helper':
+                                pd_ = dict(p)
+                                z = zero_case(pd_, pc, psrc)
+                                proute = 'data' if (psrc in ('data', 'keyword') and not script_like(pd_)) else psrc
+                                if z and z[0] == 'carrier':
+                                    continue
+                                if z and z[0] == 'describe':
+                                    pc, proute = z[1], 'desc'
+                                if z and z[0] == 'named':
+                                    proute = 'name'
                                 item_cols.add(pc)
                                 if pc.startswith('summon_creature_'):
                                     item_cols.add('summon_creature')
-                                kept_row(dict(p), [pc] + (['summon_creature'] if pc.startswith('summon_creature_') else []),
-                                         True, psrc)
+                                kept_row(pd_, [pc] + (['summon_creature'] if pc.startswith('summon_creature_') else []),
+                                         True, proute, z[1] if z and z[0] == 'number' else None)
                     exp_rows.append((c, note))
                     continue
-                exp_rows.append((c, note))
                 if not c or src == 'helper':
+                    exp_rows.append((c, note))
                     continue
                 kept = (not r['hide']) or keep_hidden(c, r['effectName'])
+                z = zero_case(r, c, src) if kept else None
+                route = 'data' if (src in ('data', 'keyword') and not script_like(r)) else src
+                zmag = None
+                if z and z[0] == 'carrier':
+                    kept = False
+                    note = (note + ' ' if note else '') + 'zero:carrier'
+                elif z and z[0] == 'describe':
+                    c, route = z[1], 'desc'
+                    note = (note + ' ' if note else '') + 'zero:describe'
+                elif z and z[0] == 'number':
+                    zmag = z[1]
+                    note = (note + ' ' if note else '') + 'zero:number'
+                elif z and z[0] == 'named':
+                    route = 'name'
+                    note = (note + ' ' if note else '') + 'zero:named'
+                exp_rows.append((c, note))
                 if kept:
                     cols_ = [c]
                     if c.startswith('summon_creature_'):
                         cols_.append('summon_creature')
                     if c == 'fortify_skill_lockpicking' and r['primaryAV'] == 'PickPocketSkillAdvance':
                         cols_.append('fortify_skill_pickpocket')
-                    kept_row(r, cols_, not r['hide'], src)
+                    kept_row(r, cols_, not r['hide'], route, zmag)
                     item_cols.add(c)
                     if c.startswith('summon_creature_'):
                         item_cols.add('summon_creature')

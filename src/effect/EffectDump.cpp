@@ -231,7 +231,7 @@ namespace Huginn::Effect
                "effectIndex,effectFormID,effectName,archetype,primaryAV,secondaryAV,resistAV,"
                "effectDelivery,effectCasting,magnitude,duration,area,effectBaseCost,detrimental,hostile,effectFlags,"
                "effectKeywords,effectDescription,"
-               "ammoNonBolt,enchantCasting,effectPlugin,effectCost,effectSchool,effectText,effectScripts,"
+               "ammoNonBolt,enchantCasting,effectPlugin,effectCost,effectSchool,effectLightRadius,effectText,effectScripts,"
                "effectConditions,payloadOf,payloadSpell,effectColumn,effectRoute,effectKept,inScope,slotClass,cap\n";
 
         std::size_t rows = 0, inScope = 0, withClass = 0, undescribed = 0;
@@ -300,7 +300,7 @@ namespace Huginn::Effect
             struct Parts
             {
                 std::string oldCols;  // effectIndex..effectDescription (18), each with its comma
-                std::string newCols;  // effectPlugin..effectKept (11), each with its comma
+                std::string newCols;  // effectPlugin..effectKept (12), each with its comma
             };
             auto effectParts = [&](std::size_t index, const EffectRow& row, const RE::Effect* e, std::string_view payloadOf,
                                    std::string_view payloadSpell, const RowOutcome* outcome) {
@@ -319,7 +319,8 @@ namespace Huginn::Effect
                     CsvQuote(mg.name), mg.archetype, mg.primaryAV, mg.secondaryAV, mg.resistAV, mg.delivery,
                     mg.castingType, Num(row.magnitude), row.duration, row.area, Num(mg.baseCost), mg.detrimental ? 1 : 0,
                     mg.hostile ? 1 : 0, mg.flags, CsvQuote(Util::KeywordList(mgef)), CsvQuote(mg.description));
-                p.newCols = std::format("{},{},{},{},{},{},{},{},{},{},{},", CsvQuote(mg.plugin), Num(row.cost), mg.school,
+                p.newCols = std::format("{},{},{},{},{},{},{},{},{},{},{},{},", CsvQuote(mg.plugin), Num(row.cost), mg.school,
+                    mg.lightRadius > 0 ? std::to_string(mg.lightRadius) : std::string{},
                     CsvQuote(FillText(mg.description, row.magnitude, row.duration, row.area)),
                     CsvQuote(sc == scripts.end() ? std::string_view{} : std::string_view(sc->second)), CsvQuote(conds),
                     payloadOf, payloadSpell, Name(outcome ? outcome->cls.col : cls.col),
@@ -329,7 +330,7 @@ namespace Huginn::Effect
             };
 
             if (it.effects.empty()) {
-                out << prefix << std::string(18, ',') << itemTail << std::string(11, ',') << itemEnd() << '\n';
+                out << prefix << std::string(18, ',') << itemTail << std::string(12, ',') << itemEnd() << '\n';
                 ++rows;
                 continue;
             }

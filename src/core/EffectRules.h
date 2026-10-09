@@ -57,9 +57,18 @@
 //     by its resisted actor value (Simonrim's Whirlwind Cloak carries
 //     FrostResist): otherwise its payload, or failing that its description,
 //     decides (core/EffectMapper.cpp);
-//   - helper names no longer swallow "Blank Slate" (only a bare "Blank"), and
-//     Requiem's "Dispel Soul Gems" is neither a helper nor a dispel (unmapped
-//     by name).
+//   - helper names no longer swallow "Blank Slate" (only a bare "Blank");
+//   - Requiem's "Dispel Soul Gems" (frees the souls in carried gems) gets no
+//     column, and the soul_trap description pattern no longer takes a bare
+//     "soul gem" (only "fills a soul gem", "vulnerable to soul gems" ...);
+//   - the generic damage name rule (any "frost", "bolt", "damage" ...) on a
+//     script effect yields to its description when that says something:
+//     "Augmented Frost" is "Frost spells do 25% more damage", spell power, no
+//     column;
+//   - a keyword Slowfall on a SpeedMult row is jump/fall (Simonrim's "Fortify
+//     Acrobatics" boots), not speed;
+//   - "decreased" weakens a resistance like "reduced" ("Weaken Poison
+//     Resistance").
 //   Spec names with no column of their own fall back to their family column
 //   (weaken_combat_crit -> weaken_combat; Dragonrend -> shout; a detrimental
 //   warmth effect -> survival; Cure Addiction -> cure; weakness to disease ->
@@ -124,6 +133,13 @@ namespace Huginn::Core::Effect
         // carries no payload the mapper can read (doc 9's layer 4 applied to
         // a Cloak/hazard whose spell is missing or unknown).
         Col wrapperDescription = Col::_Count;
+        // A data-route effect used with magnitude 0 somewhere (ResolveZero-
+        // Magnitudes, core/EffectMapper.h): the first number its description
+        // states ("ignores <80>% of physical damage"), and the column its
+        // description names, either of which says what the zero hides.
+        float zeroMagnitude = 0.0f;
+        Col zeroColumn = Col::_Count;
+        bool zeroNamed = false;  // its name says the same family as its data column
 
         [[nodiscard]] bool Mapped() const noexcept { return col != Col::_Count; }
     };
@@ -172,6 +188,10 @@ namespace Huginn::Core::Effect
     /// the column a description suggests, or nullopt. `detrimental` flips a
     /// beneficial reading (resist -> weakness).
     [[nodiscard]] std::optional<Col> DescriptionColumn(std::string_view description, bool detrimental);
+
+    /// The first number a description states in a literal tag ("<80>",
+    /// "<2.5>"; not <mag>, <dur>, <area>), or 0.
+    [[nodiscard]] float DescriptionNumber(std::string_view description);
 
     /// Every pattern in the rule tables compiles (for a host test); the first
     /// failure's message otherwise.

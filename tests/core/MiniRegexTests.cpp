@@ -227,3 +227,18 @@ TEST_CASE("mini regex: agrees with Python re on the rule tables (oracle fixture)
     }
     MESSAGE("regex oracle: " << rows << " rows, " << matches << " matches, " << compiled.size() << " patterns");
 }
+
+TEST_CASE("mini regex: verifier round 2 -- empty-matchable loops and dead lookbehinds refuse; a step budget")
+{
+    for (const char* bad : { "(?:|a)+", "(a|)+b", "(\\b)*a", "(?:(?<=a+)x){0}y", "(a?)*" }) {
+        const MiniRegex re(bad);
+        CHECK_MESSAGE(!re.Valid(), bad);
+    }
+    CHECK(MiniRegex("(?:ab)+").Valid());
+    CHECK(MiniRegex("(?<=ab|cd)x").Valid());
+    const std::size_t before = MiniRegex::BudgetExceeded();
+    const MiniRegex slow("(a|b)*c");
+    const std::string text(200000, 'a');
+    CHECK_FALSE(slow.Contains(text));
+    CHECK(MiniRegex::BudgetExceeded() > before);
+}

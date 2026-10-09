@@ -2,6 +2,7 @@
 
 #include "EffectReader.h"
 #include "IniLoad.h"
+#include "core/MiniRegex.h"
 
 #include <chrono>
 #include <cmath>
@@ -70,7 +71,10 @@ namespace Huginn::Effect
     void EffectCatalog::ScheduleBuild()
     {
         if (auto* tasks = SKSE::GetTaskInterface()) {
-            tasks->AddTask([]() { GetSingleton().Build(); });
+            // Queued twice over: the first task re-queues the build, so it runs
+            // a frame later still -- margin for a distributor that finishes in
+            // a task of its own rather than inside its kDataLoaded handler.
+            tasks->AddTask([tasks]() { tasks->AddTask([]() { GetSingleton().Build(); }); });
             logger::info("[EffectCatalog] build queued for the first task after kDataLoaded"sv);
         }
         else {
@@ -121,12 +125,16 @@ namespace Huginn::Effect
                 buildMs_ = std::chrono::duration<double, std::milli>(t2 - t0).count();
                 const std::size_t effects = read->effects.size();
                 ready_.store(true, std::memory_order_release);
+                if (const auto hits = Core::MiniRegex::BudgetExceeded(); hits > 0) {
+                    logger::warn("[EffectCatalog] {} rule-pattern search(es) hit the regex step budget and were "
+                                 "read as no match"sv, hits);
+                }
 
                 logger::info("[EffectCatalog] {} of {} forms in scope, {} magic effects; coverage {:.2f}% ({} of {} "
-                             "visible effect rows mapped; {} helper, {} wrapper rows not counted); read {:.0f} ms "
+                             "visible effect rows mapped; {} helper, {} wrapper, {} carrier rows not counted); read {:.0f} ms "
                              "(main thread), map {:.0f} ms (worker)"sv,
                     entries_.size(), formsRead_, effects, 100.0 * Coverage(), tally_.mapped, tally_.counted,
-                    tally_.helper, tally_.wrapperUnknown, readMs,
+                    tally_.helper, tally_.wrapperUnknown, tally_.carrier, readMs,
                     std::chrono::duration<double, std::milli>(t2 - t1).count());
             }
             catch (const std::exception& e) {
@@ -188,7 +196,8 @@ namespace Huginn::Effect
         if (!reader.ReadForm(base, playerEnchantment, rr) || rr.items.empty()) return std::nullopt;
         auto& item = rr.items.front();
         item.damage = TemperedWeaponDamage(item.damage, temper);
-        const auto classes = ClassifyAll(rr.effects, &overrides_);
+        auto classes = ClassifyAll(rr.effects, &overrides_);
+        ResolveZeroMagnitudes(rr.items, rr.effects, classes);
         const ItemMapping m = MapItem(item, rr.effects, classes);
         return MakeEntry(m, Grade(m, pops_), pops_);
     }
