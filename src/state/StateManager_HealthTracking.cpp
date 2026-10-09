@@ -186,9 +186,7 @@ namespace Huginn::State
             case DamageType::Unknown:  n.dmgPhysical.Add(nowSec, damageAmount); break;
             default: break;
           }
-          return true;
         });
-        m_needDamageAdded = true;
       }
       }
       else if (!queuedHitEvents.empty()) {
@@ -432,9 +430,6 @@ namespace Huginn::State
       m_healthTracker.previousValue = currentHealth;
       m_healthTracker.previousRate = newState.damageRate;
       m_healthTracker.previousSecondaryRate = newState.healingRate;
-      // A hit counted in the R3 damage sums is a change for the outer gate
-      // even when this state's own comparison says not.
-      changed |= std::exchange(m_needDamageAdded, false);
       return changed;
       }
    }

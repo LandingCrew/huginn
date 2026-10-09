@@ -10,14 +10,15 @@
 // override.
 //
 // Logged only in R3: the rules keep scoring and nothing reads the vector but
-// the log, `hg needs` and the pipeline's skip gate (the signature below).
+// the log and `hg needs` (needs/NeedMonitor.h).
 //
-// The skip gate: Signature() quantises each need to 0.05 (21 levels), so a
-// continuous need re-runs the pipeline when it moves a step, not on every
-// float wobble (map Phase 2). TimeDriven() says whether the signature would
+// Signature() quantises each need to 0.05 (21 levels): the monitor logs a
+// line when it changes, and from R8 it joins the pipeline's skip gate (map
+// Phase 2), so a continuous need re-runs the pipeline when it moves a step,
+// not on every float wobble. TimeDriven() says whether the signature would
 // still change if no sensor moved at all -- a decaying damage sum, a combat
-// timer, a submerged timer -- so the pipeline keeps ticking until the vector
-// settles (PipelineCoordinator::NeedsForcedRun).
+// timer, a submerged timer -- which a gate needs to keep ticking until the
+// vector settles.
 //
 // Pure: standard library only (src/core/README.md).
 // =============================================================================

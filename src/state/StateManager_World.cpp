@@ -244,11 +244,9 @@ namespace Huginn::State
       }
       }
       const bool openDaylightNow = m_lastOpenDaylight;
-      const bool needChanged = UpdateNeedSensors([&](NeedSensorState& n) {
-      const bool c = n.openDaylight != openDaylightNow || n.merchant != merchant;
+      UpdateNeedSensors([&](NeedSensorState& n) {
       n.openDaylight = openDaylightNow;
       n.merchant = merchant;
-      return c;
       });
 
       // Stage 3b: Return change detection flag
@@ -267,7 +265,7 @@ namespace Huginn::State
         newState.timeOfDay, newState.isInterior, newState.lightLevel, rawLight, newState.isDark, newState.workstationType);
       }
 #endif
-      return changed || needChanged;
+      return changed;
    }
 
 } // namespace Huginn::State

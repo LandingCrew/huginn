@@ -273,9 +273,11 @@ namespace Huginn::State
       // Returns: true if state changed
       [[nodiscard]] bool PollPlayerPosition();
       // R3: the position poll's need sensors (encumbrance ratio, submerged
-      // timer, drop ahead). True when one moved enough to look again.
-      [[nodiscard]] bool PollNeedPosition(RE::PlayerCharacter* player, float encumbrance, bool underwater,
-                                          bool skipProbe);
+      // timer, drop ahead). They do not feed the poll's change flag: the need
+      // vector has its own cadence (needs/NeedMonitor.h) and must not move the
+      // pipeline's skip gates.
+      void PollNeedPosition(RE::PlayerCharacter* player, float encumbrance, bool underwater,
+                            bool airborne, bool swimming, bool mounted);
 
       // Target tracking polling (multi-target detection, vitals, distance)
       // Updates: TargetCollection (primary + targets map)
@@ -555,14 +557,13 @@ namespace Huginn::State
       // =============================================================================
       // NEED SENSORS (R3) -- poll-thread state behind NeedSensorState
       // =============================================================================
-      // Apply `fn` to m_needSensors under its lock; true when it reports a
-      // change worth a pipeline look (the poll ORs it into its own result, so
-      // the outer skip gate opens and the need signature is compared).
+      // Apply `fn` to m_needSensors under its lock. Nothing here reports a
+      // change to the poll: the need sensors never open a skip gate.
       template <class Fn>
-      bool UpdateNeedSensors(Fn&& fn)
+      void UpdateNeedSensors(Fn&& fn)
       {
          std::unique_lock lock(m_needMutex);
-         return fn(m_needSensors);
+         fn(m_needSensors);
       }
 
       // The multi-hot family reading per actor, stamped with the race it was
@@ -576,13 +577,13 @@ namespace Huginn::State
       [[nodiscard]] std::uint32_t GetCachedFamilies(RE::Actor* actor);
 
       Core::Needs::SoleHostileTtk m_soleHostileTtk;   // PollTargets only
-      int m_closestEnemyQ = -1;     // 16-unit steps, -1 none: outer-gate change only
-      int m_targetHealthQ = -1;     // 1% steps of the scoring target's bar
       bool m_wasUnderwaterForTimer = false;   // PollPlayerPosition only
       Core::Needs::Vec3 m_lastProbePos{};      // for the movement direction
       double m_lastProbeAt = -1.0;
-      int m_lastDropQ = -1;                    // 16-unit steps of drop_ahead
-      bool m_needDamageAdded = false;          // PollHealthTracking only
+      // Drop ahead off the main thread: one SKSE task in flight at a time
+      // measures there and stores the result (PollNeedPosition).
+      std::atomic<bool> m_probeTaskPending{ false };
+      int m_lastProbeReason = -1;              // for the transition-only log line
 
       // =============================================================================
       // RESOURCE TRACKING STATE (Persistent across polls)

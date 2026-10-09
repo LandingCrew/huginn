@@ -356,9 +356,16 @@ namespace Huginn::State
         }
 
         // R3: an over-time restore of a vital (not instant: duration > 0).
+        // Not a Fortify: those carry kRecover (the value goes back when the
+        // effect ends; vanilla Fortify Health/Magicka/Stamina are flags
+        // 0x00200802), and magnitude x duration of one is no pending restore
+        // (Sleeping Tree Sap read 4500). The regen-buff test below still lumps
+        // them in; it feeds scoring, so it is left as it was (frozen engine).
         if ((archetype == RE::EffectSetting::Archetype::kValueModifier ||
              archetype == RE::EffectSetting::Archetype::kPeakValueModifier) &&
-            !baseEffect->IsDetrimental() && magnitude > 0.0f && effect->duration > 0.0f) {
+            !baseEffect->IsDetrimental() &&
+            !baseEffect->data.flags.all(RE::EffectSetting::EffectSettingData::Flag::kRecover) &&
+            magnitude > 0.0f && effect->duration > 0.0f) {
           const float remaining = magnitude * std::max(effect->duration - effect->elapsedSeconds, 0.0f);
           if (primaryAV == RE::ActorValue::kHealth) {
             pendingHealth += remaining;
@@ -605,17 +612,11 @@ namespace Huginn::State
       }
     }
 
-    // R3: publish the pending restores; a change of a point or more is worth
-    // a pipeline look (the outer gate), smaller drift is the effect ticking.
-    const bool pendingChanged = UpdateNeedSensors([&](NeedSensorState& n) {
-      const auto moved = [](float a, float b) { return std::abs(a - b) >= 1.0f || ((a > 0.0f) != (b > 0.0f)); };
-      const bool c = moved(n.restoreHealthPending, pendingHealth) ||
-                     moved(n.restoreMagickaPending, pendingMagicka) ||
-                     moved(n.restoreStaminaPending, pendingStamina);
+    // R3: publish the pending restores (not part of this poll's change flag).
+    UpdateNeedSensors([&](NeedSensorState& n) {
       n.restoreHealthPending = pendingHealth;
       n.restoreMagickaPending = pendingMagicka;
       n.restoreStaminaPending = pendingStamina;
-      return c;
     });
 
     // Update effects and buffs with change detection
@@ -690,7 +691,7 @@ namespace Huginn::State
       }
 
       // Stage 3b: Return true if any state changed
-      return effectsChanged || buffsChanged || vampireChanged || werewolfChanged || pendingChanged;
+      return effectsChanged || buffsChanged || vampireChanged || werewolfChanged;
     }
   }
 

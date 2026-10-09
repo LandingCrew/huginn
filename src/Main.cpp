@@ -782,6 +782,16 @@ void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
     switch (a_msg->type) {
     case SKSE::MessagingInterface::kDataLoaded:
         OnDataLoaded();
+        // R3: which thread is which, once per launch (drop_ahead reads the
+        // physics world on the thread SKSE tasks run on).
+        logger::info("[Threads] SKSE messages on {:x}; plugin load on main-thread record: {}"sv,
+            std::hash<std::thread::id>{}(std::this_thread::get_id()),
+            State::DropAheadProbe::OnMainThread() ? "same" : "different");
+        if (auto* tasks = SKSE::GetTaskInterface()) {
+            tasks->AddTask([]() {
+                logger::info("[Threads] SKSE tasks on {:x}"sv, std::hash<std::thread::id>{}(std::this_thread::get_id()));
+            });
+        }
         break;
     case SKSE::MessagingInterface::kNewGame:
         logger::info("New game started"sv);
@@ -1013,8 +1023,9 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_s
     SKSE::Init(a_skse);
     InstallHooks();                // before the engine's threads exist; see above
     TestHarness::ReadTestMode();   // Debug only: the unattended-run flag
-    // R3: drop_ahead casts rays only on this thread (the main thread, which
-    // also runs the update loop through the input sink).
+    // R3: drop_ahead's direct path (the Debug suite) casts rays only on this
+    // thread; the update loop runs elsewhere and goes through an SKSE task
+    // (state/DropAheadProbe.h).
     State::DropAheadProbe::NoteMainThread();
 
     // Register cosave serialization (must be before any save/load events)

@@ -167,11 +167,9 @@ namespace Huginn::State
       }
       m_familyCache.clear();
       m_soleHostileTtk.Reset();
-      m_closestEnemyQ = -1;
-      m_targetHealthQ = -1;
       m_wasUnderwaterForTimer = false;
       m_lastProbeAt = -1.0;
-      m_lastDropQ = -1;
+      m_lastProbeReason = -1;
 
       m_lastUpdateChanged = true;  // Force pipeline to run on next update
    }

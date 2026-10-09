@@ -318,8 +318,6 @@ namespace Huginn::State
       bool followerBleedout = false;    // R3: a teammate down on one knee
       bool scoringArcher = false;
       float soleTtk = -1.0f;
-      int closestQ = -1;
-      int targetHealthQ = -1;
       const double nowSec = NeedClock::Now();
       {
       std::unique_lock lock(m_targetsMutex);
@@ -428,12 +426,16 @@ namespace Huginn::State
               closestHostile = actor;
             }
 
-            // R3: the union of the living combat hostiles (no line-of-sight
-            // logic, the user 2026-10-08), the crosshair one included.
-            hostileNeeds.families |= GetCachedFamilies(actor);
-            hostileNeeds.summoned |= IsSummon(actor);
-            if (actor->IsCasting(nullptr)) {
-              hostileNeeds.castBits |= CastElementBits(actor);
+            // R3: the union of the living COMBAT hostiles -- each in combat
+            // itself, not merely hostile and near (a sleeping draugr in the
+            // next room is not in the fight) -- with no line-of-sight logic
+            // (the user 2026-10-08). The crosshair one included.
+            if (actor->IsInCombat()) {
+              hostileNeeds.families |= GetCachedFamilies(actor);
+              hostileNeeds.summoned |= IsSummon(actor);
+              if (actor->IsCasting(nullptr)) {
+                hostileNeeds.castBits |= CastElementBits(actor);
+              }
             }
 
             // Skip building secondary state if this is the crosshair target
@@ -862,10 +864,6 @@ namespace Huginn::State
           if (auto* actor = GetActorByFormID(scoringTarget->actorFormID); actor && actor->Get3D()) {
             scoringArcher = HoldsRanged(actor);
           }
-          targetHealthQ = static_cast<int>(scoringTarget->vitals.health * 100.0f);
-        }
-        if (const auto closest = m_targets.GetClosestEnemy()) {
-          closestQ = static_cast<int>(std::sqrt(closest->distanceToPlayerSq) / 16.0f);
         }
         RE::FormID sole = 0;
         float soleHealth = -1.0f;
@@ -890,22 +888,10 @@ namespace Huginn::State
       // R3: publish the need readings. Families are HELD for the fight: the
       // union over every poll while the published combat flag is up, cleared
       // when it drops (a hostile dying mid-fight does not unset its family).
-      // A move of the closest hostile's distance (16 units) or the scoring
-      // target's bar (1%) is a change for the outer gate too: the digest only
-      // sees the distance bucket, and enemy_close/mid/far and target_health_low
-      // are continuous.
+      // Not part of `changed`: the need sensors never open a skip gate.
       const bool fighting = m_combatDebounce.Value();
-      changed |= closestQ != m_closestEnemyQ || targetHealthQ != m_targetHealthQ;
-      m_closestEnemyQ = closestQ;
-      m_targetHealthQ = targetHealthQ;
-      changed |= UpdateNeedSensors([&](NeedSensorState& n) {
-        const std::uint32_t families = fighting ? (n.families | hostileNeeds.families) : 0u;
-        bool c = families != n.families || hostileNeeds.summoned != n.hostileSummoned ||
-                 scoringArcher != n.targetArcher || followerBleedout != n.followerBleedout ||
-                 hostileNeeds.castBits != 0 ||
-                 (soleTtk < 0.0f) != (n.soleHostileTtk < 0.0f) ||
-                 std::abs(soleTtk - n.soleHostileTtk) >= 1.0f;
-        n.families = families;
+      UpdateNeedSensors([&](NeedSensorState& n) {
+        n.families = fighting ? (n.families | hostileNeeds.families) : 0u;
         n.hostileSummoned = hostileNeeds.summoned;
         n.targetArcher = scoringArcher;
         n.followerBleedout = followerBleedout;
@@ -913,7 +899,6 @@ namespace Huginn::State
         if (hostileNeeds.castBits & 1) n.castFireAt = nowSec;
         if (hostileNeeds.castBits & 2) n.castFrostAt = nowSec;
         if (hostileNeeds.castBits & 4) n.castShockAt = nowSec;
-        return c;
       });
 
       return changed;

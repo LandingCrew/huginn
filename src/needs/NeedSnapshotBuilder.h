@@ -7,11 +7,11 @@
 // (PlayerActorState, TargetCollection, WorldState, the trackers) and the R3
 // sensors (NeedSensorState); turns the sensors' steady-clock stamps into
 // seconds-ago at `nowSec`. The two lookups it makes itself (each hand's
-// spell school, the bench's craft skill) are form reads, main thread.
+// spell school, the bench's craft skill) are form reads on the caller's
+// thread (the update loop, the console, a Debug suite).
 //
-// LiveNeeds() builds one from the StateManager as it stands -- for `hg needs`
-// and the Debug suite; the pipeline builds its own in GatherState from the
-// tick's snapshots.
+// ReadLiveNeeds() builds one from the StateManager as it stands -- for the
+// need monitor (every update tick), `hg needs` and the Debug suite.
 // =============================================================================
 
 #include "core/NeedEvaluator.h"

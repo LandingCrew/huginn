@@ -613,7 +613,7 @@ def main() -> int:
                     help="after the load suites, play SEC seconds of scripted input while Huginn records every "
                          "slot allocation to Huginn_SlotSnapshots.txt in the log folder (Debug; R7 golden test)")
     ap.add_argument("--capture-needs", type=int, default=0, metavar="N",
-                    help="record up to N need snapshots (the pipeline's signature changes and the need suite's) "
+                    help="record up to N need snapshots (the need monitor's signature changes and the need suite's) "
                          "to Huginn_NeedSnapshots.txt in the log folder (Debug, 0.23.14+; R3 replay fixtures)")
     ap.add_argument("--dump-recs", type=int, default=0, metavar="SEC",
                     help="after the load suites wait SEC seconds, log a 40-row `hg recs` dump ([Recs] lines), "

@@ -10,7 +10,10 @@
 // measured to the water surface when water lies above the hit. The game side
 // (state/DropAheadProbe.cpp) only casts the rays (terrain and statics, not
 // actors) and reads the water height; the points, the direction and the drop
-// are computed here.
+// are computed here. Each probe's start is first checked reachable by a
+// horizontal pick at waist height from the previous point (the player for the
+// first); the first blocked one and every one beyond it are unknown, so rising
+// ground or a wall in front never reads as a cliff.
 //
 // Skyrim units: 1 m ~ 70 units. Heading: angle Z in radians, 0 = +Y (north),
 // increasing clockwise, so forward = (sin z, cos z).
@@ -40,14 +43,20 @@ namespace Huginn::Core::Needs
         float minMoveSpeed = 20.0f;  // units/s below which the facing is used
     };
 
-    /// One ray's result, as the game read it. `waterZ` is the water surface
-    /// at the probe's XY when `waterKnown`.
+    /// One probe's result, as the game read it. `known` is false when the
+    /// probe could not be read: its start point is not reachable from the
+    /// player at waist height (a wall or a door in front, rising ground that
+    /// buries the start), or the ray ran out of recasts through actors and
+    /// clutter. An unknown probe counts as nothing -- never as a drop. A known
+    /// probe with no `hit` is a real void under the start (a very big drop).
+    /// `waterZ` is the water surface at the probe's XY when `waterKnown`.
     struct ProbeHit
     {
         bool hit = false;
         float hitZ = 0.0f;
         bool waterKnown = false;
         float waterZ = 0.0f;
+        bool known = true;
     };
 
     /// Unit XY direction to probe along: the horizontal movement when the
@@ -100,18 +109,28 @@ namespace Huginn::Core::Needs
         const float startZ = feetZ + cfg.waistHeight;
         float surface = h.hit ? h.hitZ : startZ - cfg.rayLength;
         if (h.waterKnown && std::isfinite(h.waterZ) && h.waterZ > surface) {
-            surface = std::min(h.waterZ, startZ);
+            surface = h.waterZ;
         }
         const float drop = feetZ - surface;
         return std::isfinite(drop) ? std::max(drop, 0.0f) : 0.0f;
     }
 
-    /// drop_ahead: the largest drop over the probes.
+    /// drop_ahead: the largest drop over the known probes; -1 (not measured)
+    /// when no probe is known.
     template <std::size_t N>
     [[nodiscard]] float DropAhead(float feetZ, const std::array<ProbeHit, N>& hits, const DropProbeConfig& cfg) noexcept
     {
-        float drop = 0.0f;
-        for (const auto& h : hits) drop = std::max(drop, DropAtProbe(feetZ, h, cfg));
+        float drop = -1.0f;
+        for (const auto& h : hits) {
+            if (h.known) drop = std::max(drop, DropAtProbe(feetZ, h, cfg));
+        }
         return drop;
+    }
+
+    /// The waist-height point the reachability pick starts from: above the
+    /// feet, at the player.
+    [[nodiscard]] inline Vec3 ProbeOrigin(Vec3 feet, const DropProbeConfig& cfg) noexcept
+    {
+        return { feet.x, feet.y, feet.z + cfg.waistHeight };
     }
 }

@@ -328,14 +328,11 @@ namespace Huginn::State
         if (m_survivalColdNeedValue) coldRaw = m_survivalColdNeedValue->value;
         if (m_survivalExhaustionNeedValue) fatigueRaw = m_survivalExhaustionNeedValue->value;
       }
-      changed |= UpdateNeedSensors([&](NeedSensorState& n) {
-        // One point of 1000 is 0.001 of a need: report a move of 5 or more.
-        const auto moved = [](float a, float b) { return std::abs(a - b) >= 5.0f || ((a < 0.0f) != (b < 0.0f)); };
-        const bool c = moved(n.hungerRaw, hungerRaw) || moved(n.coldRaw, coldRaw) || moved(n.fatigueRaw, fatigueRaw);
+      // Not part of `changed`: the need sensors never open a skip gate.
+      UpdateNeedSensors([&](NeedSensorState& n) {
         n.hungerRaw = hungerRaw;
         n.coldRaw = coldRaw;
         n.fatigueRaw = fatigueRaw;
-        return c;
       });
       return changed;
       }

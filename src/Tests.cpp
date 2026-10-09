@@ -7306,17 +7306,21 @@ void RunNeedVectorTests()
    //    and, standing on the ground, at least the nearest probe hits.
    {
       if (!State::DropAheadProbe::OnMainThread()) fail("suites do not run on the noted main thread");
+      using State::DropAheadProbe::Status;
       const auto r = State::DropAheadProbe::Measure(player, {});
-      if (!r) {
-         fail("drop-ahead probe could not measure (no cell, world or 3D)");
+      if (r.status != Status::Measured && r.status != Status::AllUnknown) {
+         fail(fmt::format("drop-ahead probe could not measure: {}", State::DropAheadProbe::StatusName(r.status)));
       } else {
-         logger::info("[NeedTest] drop ahead {:.0f} | dir ({:.2f}, {:.2f}) | hits {}:{:.0f} {}:{:.0f} {}:{:.0f} | "
-                      "water {} {} {} | rejected {} | feet z {:.0f}"sv,
-            r->drop, r->dir.x, r->dir.y, r->hits[0].hit, r->hits[0].hitZ, r->hits[1].hit, r->hits[1].hitZ,
-            r->hits[2].hit, r->hits[2].hitZ, r->hits[0].waterKnown, r->hits[1].waterKnown, r->hits[2].waterKnown,
-            r->rejectedHits, player->GetPosition().z);
+         logger::info("[NeedTest] drop ahead {:.0f} ({}) | dir ({:.2f}, {:.2f}) | hits {}{}:{:.0f} {}{}:{:.0f} "
+                      "{}{}:{:.0f} | water {} {} {} | rejected {} unknown {} | feet z {:.0f}"sv,
+            r.drop, State::DropAheadProbe::StatusName(r.status), r.dir.x, r.dir.y,
+            r.hits[0].known ? "" : "?", r.hits[0].hit, r.hits[0].hitZ, r.hits[1].known ? "" : "?", r.hits[1].hit,
+            r.hits[1].hitZ, r.hits[2].known ? "" : "?", r.hits[2].hit, r.hits[2].hitZ, r.hits[0].waterKnown,
+            r.hits[1].waterKnown, r.hits[2].waterKnown, r.rejectedHits, r.unknownProbes, player->GetPosition().z);
          const bool grounded = !player->IsInMidair() && !player->AsActorState()->IsSwimming();
-         if (grounded && !r->hits[0].hit) fail("standing on the ground, the nearest drop-ahead ray hit nothing");
+         if (grounded && r.hits[0].known && !r.hits[0].hit) {
+            fail("standing on the ground, the nearest drop-ahead ray hit nothing");
+         }
       }
       // Evidence for the filter: which layers the LOS layer collides with.
       if (auto* filter = RE::bhkCollisionFilter::GetSingleton()) {

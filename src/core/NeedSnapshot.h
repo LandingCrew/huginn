@@ -3,8 +3,8 @@
 // =============================================================================
 // NEED SNAPSHOT -- every sensor reading the need vector is computed from
 // =============================================================================
-// A plain record: the game fills one per tick in GatherState
-// (needs/NeedSnapshotBuilder.cpp) and the need vector is a pure function of it
+// A plain record: the game fills one per update tick (needs/NeedMonitor.cpp,
+// through needs/NeedSnapshotBuilder.cpp) and the need vector is a pure function of it
 // (core/NeedEvaluator.h). The same record is written as text
 // (core/NeedSnapshotIO.h) by the Debug capture and read back by the host tests
 // (tests/core/fixtures/needs/), so a recorded game state replays to a vector

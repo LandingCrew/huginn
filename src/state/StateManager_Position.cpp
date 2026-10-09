@@ -223,57 +223,98 @@ namespace Huginn::State
         const double nowSec = NeedClock::Now();
         UpdateNeedSensors([&](NeedSensorState& n) {
           (newIsInCombat ? n.combatStartAt : n.combatEndAt) = nowSec;
-          return true;
         });
-        changed = true;
       }
 
       // R3 need sensors: encumbrance ratio, the submerged timer, drop ahead.
-      // Kept out of PlayerActorState (scoring input): see NeedSensorState.h.
-      changed |= PollNeedPosition(player, newEncumbrance, newIsUnderwater,
-          player->IsInMidair() || newIsSwimming || newIsMounted);
+      // Kept out of PlayerActorState (scoring input) and out of `changed`.
+      PollNeedPosition(player, newEncumbrance, newIsUnderwater, player->IsInMidair(), newIsSwimming,
+          newIsMounted);
 
       return changed;
       }
    }
 
-   bool StateManager::PollNeedPosition(RE::PlayerCharacter* player, float encumbrance, bool underwater,
-                                       bool skipProbe)
+   void StateManager::PollNeedPosition(RE::PlayerCharacter* player, float encumbrance, bool underwater,
+                                       bool airborne, bool swimming, bool mounted)
    {
       const double nowSec = NeedClock::Now();
-
-      // Drop ahead: a few rays, only on the ground. Airborne the feet are not
-      // on anything (the fall has its own need), swimming the surface is the
-      // water, and mounted the rays would start inside the horse.
-      float drop = -1.0f;
       const RE::NiPoint3 pos = player->GetPosition();
       const Core::Needs::Vec3 here{ pos.x, pos.y, pos.z };
-      if (!skipProbe) {
-        const float dt = m_lastProbeAt < 0.0 ? 0.0f : static_cast<float>(nowSec - m_lastProbeAt);
-        const auto velocity = Core::Needs::HorizontalVelocity(m_lastProbePos, here, dt);
-        if (auto r = DropAheadProbe::Measure(player, velocity)) {
-          drop = r->drop;
-        }
-      }
+      const float dt = m_lastProbeAt < 0.0 ? 0.0f : static_cast<float>(nowSec - m_lastProbeAt);
+      const auto velocity = Core::Needs::HorizontalVelocity(m_lastProbePos, here, dt);
       m_lastProbePos = here;
       m_lastProbeAt = nowSec;
 
-      const int dropQ = drop < 0.0f ? -1 : static_cast<int>(drop / 16.0f);
-      bool changed = dropQ != m_lastDropQ;
-      m_lastDropQ = dropQ;
-
-      changed |= UpdateNeedSensors([&](NeedSensorState& n) {
-        bool c = std::abs(n.encumbrance - encumbrance) >= 0.005f;
+      UpdateNeedSensors([&](NeedSensorState& n) {
         n.encumbrance = encumbrance;
-        n.dropAhead = drop;
         if (underwater != m_wasUnderwaterForTimer) {
           n.submergedAt = underwater ? nowSec : -1.0;
-          c = true;
         }
-        return c;
       });
       m_wasUnderwaterForTimer = underwater;
-      return changed;
+
+      // Drop ahead: rays only on the ground. Airborne the feet are on nothing
+      // (the fall has its own need), swimming the surface is the water, and
+      // mounted the player's Z is the saddle, not the horse's feet.
+      // Reason codes for the transition log: 0 measured here, 1 airborne,
+      // 2 swimming, 3 mounted, 4 marshalled to the main thread, 5 a task still
+      // in flight, 6 + Status for Measure's own failure.
+      int reason = 0;
+      if (airborne) reason = 1;
+      else if (swimming) reason = 2;
+      else if (mounted) reason = 3;
+
+      if (reason != 0) {
+        UpdateNeedSensors([](NeedSensorState& n) { n.dropAhead = -1.0f; });
+      } else if (DropAheadProbe::OnMainThread()) {
+        const auto r = DropAheadProbe::Measure(player, velocity);
+        if (r.status != DropAheadProbe::Status::Measured && r.status != DropAheadProbe::Status::AllUnknown) {
+          reason = 6 + static_cast<int>(r.status);
+        }
+        UpdateNeedSensors([&](NeedSensorState& n) { n.dropAhead = r.drop; });
+      } else if (!m_probeTaskPending.exchange(true)) {
+        // The update loop is not on the thread SKSEPlugin_Load ran on (it
+        // is an input-event sink on a game job thread). Hand the rays to an
+        // SKSE task, run at the game's own task point; the stored value is
+        // the last finished one (one frame old at the 10 Hz poll). Seen in
+        // game (0.23.14, verifier round 1): the tasks themselves run on six
+        // job threads, the update loop's among them -- so the guarantee is
+        // the task point plus the world's read lock, not a thread identity.
+        reason = 4;
+        if (auto* tasks = SKSE::GetTaskInterface()) {
+          tasks->AddTask([this, velocity]() {
+            const auto r = DropAheadProbe::MeasureInTask(RE::PlayerCharacter::GetSingleton(), velocity);
+            UpdateNeedSensors([&](NeedSensorState& n) { n.dropAhead = r.drop; });
+            // The task's own outcome, on a change only (one task in flight at
+            // a time, so the static is not shared).
+            static int s_lastStatus = -1;
+            if (static_cast<int>(r.status) != s_lastStatus) {
+              s_lastStatus = static_cast<int>(r.status);
+              logger::info("[DropAhead] task: {} (drop {:.0f}, unknown probes {}, rejected {}; thread {:x})"sv,
+                DropAheadProbe::StatusName(r.status), r.drop, r.unknownProbes, r.rejectedHits,
+                std::hash<std::thread::id>{}(std::this_thread::get_id()));
+            }
+            m_probeTaskPending.store(false);
+          });
+        } else {
+          m_probeTaskPending.store(false);
+        }
+      } else {
+        reason = 5;
+      }
+
+      // Transition only (5, a task still in flight, is the same state as 4).
+      const int logged = reason == 5 ? 4 : reason;
+      if (logged != m_lastProbeReason) {
+        static constexpr std::string_view kNames[] = { "measured on this thread", "skipped: airborne",
+          "skipped: swimming", "skipped: mounted", "marshalled to the main thread" };
+        const std::string why = logged < 5 ? std::string(kNames[logged])
+            : "failed: " + std::string(DropAheadProbe::StatusName(static_cast<DropAheadProbe::Status>(logged - 6)));
+        logger::info("[DropAhead] {} (thread {:x}; main thread: {})"sv, why,
+          std::hash<std::thread::id>{}(std::this_thread::get_id()), DropAheadProbe::OnMainThread() ? "yes" : "no");
+        m_lastProbeReason = logged;
+      }
    }
 
 } // namespace Huginn::State

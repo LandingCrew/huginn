@@ -11,7 +11,6 @@
 #include "context/ReasonHold.h"        // Context::ReasonHold (label stability, #62)
 #include "override/OverrideConditions.h"
 #include "slot/SlotAssignment.h"
-#include "core/NeedEvaluator.h"
 
 #include <atomic>
 #include <chrono>
@@ -71,16 +70,6 @@ namespace Huginn::Pipeline
         // ColdTier).
         uint8_t ambientSignature = 0;
 
-        // R3: the need vector, computed once here from the snapshots above and
-        // LOGGED ONLY -- nothing below scores on it. Its quantised signature
-        // (0.05 steps) joins the skip gate in CheckHashSkip; needTimeDriven
-        // says the vector would still move with no sensor change (a timer, a
-        // decaying damage sum), which keeps the outer gate ticking.
-        Core::Needs::NeedSnapshot needSnapshot{};
-        Core::Needs::NeedVector needVector{};
-        Core::Needs::NeedSignature needSignature{};
-        bool needTimeDriven = false;
-
         // Pipeline outputs (built by successive steps)
         std::vector<Scoring::ScoredCandidate> scoredCandidates;
         Override::OverrideCollection overrides;
@@ -128,10 +117,6 @@ namespace Huginn::Pipeline
             fallingActive = false;
             underwaterActive = false;
             workstationActive = false;
-            needSnapshot = {};
-            needVector = {};
-            needSignature = {};
-            needTimeDriven = false;
 
             scoredCandidates.clear();
             overrides.activeOverrides.clear();
@@ -201,14 +186,6 @@ namespace Huginn::Pipeline
                    m_reasonHold.IsHolding() || LearnerWeightsChanged();
         }
 
-        /// R3: the need vector is still moving with no sensor change (a combat
-        /// or submerged timer, a decaying damage sum) -- as of the last
-        /// GatherState. NOT a forced run: the outer gate lets the tick through
-        /// to GatherState, and CheckHashSkip runs the pipeline only when the
-        /// need signature actually changed. False once the vector settles, so
-        /// a quiet scene goes back to skipping at the outer gate.
-        [[nodiscard]] bool NeedsGatherTick() const noexcept { return m_needsTimeDriven; }
-
         /// Drop everything that describes the character being unloaded. The held
         /// context reason and the [Context] log baseline say nothing about the
         /// next character (#62); the hash/state baselines below are worse — a
@@ -235,8 +212,6 @@ namespace Huginn::Pipeline
             m_wasFalling = false;
             m_wasUnderwater = false;
             m_lastAmbientSignature = 0;
-            m_lastNeedSignature.reset();
-            m_needsTimeDriven = false;
         }
 
         /// Queue a one-shot full-detail recommendation dump (console `hg recs`).
@@ -262,10 +237,6 @@ namespace Huginn::Pipeline
         /// (folds into the skip decision).
         bool ResolveDisplayPage(PipelineContext& ctx);
         bool CheckHashSkip(PipelineContext& ctx, bool pageChanged);
-        /// R3: build the need snapshot and vector (end of GatherState).
-        void GatherNeeds(PipelineContext& ctx);
-        /// R3: the [Needs] log line, on a committed signature change.
-        void LogNeeds(const PipelineContext& ctx, bool signatureChanged);
 
         /// The fifth latch (see NeedsForcedRun): the learner was rewarded since
         /// the last committed run, so the ranking has moved even though no
@@ -319,12 +290,6 @@ namespace Huginn::Pipeline
         // latches above this is compared, not OR-ed in: CheckHashSkip runs
         // once whenever it changes, in either direction.
         uint8_t m_lastAmbientSignature = 0;
-
-        // R3: the need signature at the last committed run (empty before the
-        // first and after a load, so the first run always counts as a change),
-        // and whether the vector was still moving at the last GatherState.
-        std::optional<Core::Needs::NeedSignature> m_lastNeedSignature;
-        bool m_needsTimeDriven = false;
 
         // Holds the displayed reason so a momentary one stays readable.
         // Label-only: ScoreCandidates above it always sees the raw weights.
