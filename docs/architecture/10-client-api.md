@@ -347,7 +347,7 @@ Proposed contract:
 |---|---|---|---|
 | Huginn's tick | Whatever thread runs the loop (R8 decides) | Build the snapshot, publish it, drain the clients' report queues | Call any client function; wait on a client; hold a lock a client can take for longer than a pointer copy and a reference-count increment |
 | A client reading | Any thread it owns: its render thread, a worker | `LatestSeq`, `Acquire`, `Release`, `NowUs` | Keep more snapshots than its cap (below) |
-| A client reporting | Any thread | `ReportImpression`, `ReportAction` (a non-blocking enqueue into one ordered queue per client; when it is full the new report is refused with `HG_QUEUE_FULL` and counted, and nothing queued is lost) | Expect the report to be applied before the next tick |
+| A client reporting | Any thread | `ReportImpression`, `ReportAction` (a lock-brief enqueue into one ordered queue per client; when it is full the new report is refused with `HG_QUEUE_FULL` and counted, and nothing queued is lost) | Expect the report to be applied before the next tick |
 | A client equipping | Its own decision (section 3.9) | Equip through the game, or through `RequestUse` | Assume Huginn equips on the calling thread |
 
 - **Publish and acquire.** Each snapshot carries a reference count. Huginn
@@ -366,7 +366,7 @@ Proposed contract:
   short per-client lock, so a `Disconnect` racing the same client's `Acquire`
   waits for it, then releases everything the client holds; after `Disconnect`
   the client's pointers are invalid, `LatestSeq` returns 0 for its id, and
-  every call that returns `HgResult` answers `HG_UNKNOWN_CLIENT`.
+  every call made with that id answers `HG_UNKNOWN_CLIENT`.
 - **Notification.** In v1 the client polls `LatestSeq` once per frame. A
   callback is not proposed for v1, and SKSE's task queue (`AddTask`) is not a
   way to deliver one: those tasks run on game job threads in gameplay (seen by
@@ -677,16 +677,19 @@ What (a) does with the cost depends on its cause, which is open.
 Evidence (`db9466f` unless noted):
 - **Construction does not walk the inventory.** `AddItemByFormID` looks up the
   form (`wheelerAPI@db9466f:src/bin/API/WheelerAPI.cpp:594`), builds the item
-  (`:612`: uniqueID, an icon by weapon type and keyword, registration;
-  `WheelItemWeapon.cpp:41-87`), then takes the lock exclusively (`:619`). The
+  (`:612`: uniqueID and an icon by weapon type and keyword,
+  `WheelItemWeapon.cpp:41-87`; registration, `WheelItemMutable.h:38-43`),
+  then takes the lock exclusively (`:619`). The
   inventory is read at draw time, while a wheel is on screen
   (`Wheeler.cpp:235`, `WheelItemMutable.cpp:26`). The inventory-walk idea in
   the Wheeler-side note of 2026-10-09 (local, unpublished) was a hypothesis.
 - **Huginn's push does not write while a wheel is open** (closing counts as
-  open: `Wheeler.cpp:999`) or while the editor is up, and with no wheel shown
+  open: `Wheeler.cpp:999`), **except under an urgent override** (section 1.1):
+  then it auto-focuses the urgent wheel (`SetActiveWheelIndex`,
+  `WheelerBackend.cpp:57-58`) and goes on to the page writes in `WriteSlots`.
+  It never writes while the editor is up, and with no wheel shown
   `Wheeler::Update` holds the shared lock for microseconds (`:172`). Other
-  Huginn paths do write while a wheel may be open, none inside `WriteSlots`:
-  urgent auto-focus (`SetActiveWheelIndex`, `WheelerBackend.cpp:57-58`), the
+  Huginn paths, outside the push, write while a wheel may be open: the
   Empty post-activation policy (`ClearEntry` and the subtext, from the
   activation callback on Wheeler's thread, `WheelerClient.cpp:203-206`), and
   the page-cycle key (`SetActivePage`, `Main.cpp:761`, on the input-sink thread;
@@ -696,7 +699,8 @@ Evidence (`db9466f` unless noted):
   loading-screen thread on the save-load resume tick.
 - **The build is not known exactly.** The capture's `wheeler.log` names
   `Wheeler.cpp(509)` and `(627)`, which match `a58fcbc` and `5b0ee23`;
-  `db9466f` has them at 510 and 628. The DLLs built in the wheelerAPI tree
+  `db9466f` has them at 510 and 628. Its `WheelerAPI.cpp(629)` add line rules
+  out `693b8e0`, which has it at 612. The DLLs built in the wheelerAPI tree
   (16:36:56 with Tracy, 16:37:10 without) predate `db9466f`'s commit at
   16:37:21, and the Tracy one already contains `db9466f`'s
   `WheelItem::buildDescription` zone. So the capture ran `a58fcbc`, `5b0ee23`
