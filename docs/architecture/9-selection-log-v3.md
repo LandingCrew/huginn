@@ -232,9 +232,12 @@ rule for every menu.
 **Staleness.** Measured in game (vanilla+, 0.23.15, test mode): the update loop
 keeps ticking inside the inventory menu (57 ticks in 5.9 s, 9.6/s, every one
 with the game paused) and the pipeline keeps running (4–5 runs), so the page
-cache was 94–102 ms old when the menu closed. `fExternalEquipTimeWindow`'s
-500 ms therefore does not trip in an ordinary menu visit; it trips when the
-loop itself stops (a hitch, alt-tab). Either way the v3 log never drops a pick
+cache was 94–102 ms old when the menu closed; on LoreRim, 50 ticks in 5.5 s
+(9.1/s), 4 runs, 73 ms at the close. `fExternalEquipTimeWindow`'s 500 ms
+therefore does not trip in an ordinary menu visit; it trips when the loop
+itself stalls -- on LoreRim the cache was already 581 ms old at the moment the
+inventory opened (a pick at that instant would have been dropped by the old
+path), and by the picks 1.5 and 2.5 s later it was fresh again. Either way the v3 log never drops a pick
 for staleness: such a pick is written with `learned: 0, skip: "stale"` and the
 age of its context.
 
@@ -270,23 +273,33 @@ numbers.
 
 ## Volume and cost
 
-Measured with the test session (`run_tests.py --decision-session`, Debug):
+Measured with the test session (`run_tests.py --decision-session`, Debug,
+2026-10-09). The LoreRim save that ran was an early character (39 held items);
+the last column scales the measured ~57 bytes per row to a soak-sized LoreRim
+inventory: the October soak's v2 records held 107 scored candidates on average
+and 185 at most (after the floors), so ~250 rows per context is the estimate.
 
-| | vanilla+ (test character) | LoreRim |
-|---|---|---|
-| rows per context | 93 (66 eligible, 93 held) | VOLUME_LORERIM_ROWS |
-| a new context, caps already defined | 5.8 KB | VOLUME_LORERIM_CTX |
-| a decision sharing its context | ~430 B | ~430 B |
-| the first context of a segment (every cap defined) | 16 KB | VOLUME_LORERIM_FIRST |
-| head | 6.7 KB | 6.7 KB |
-| update tick (eligible rows' cross-features, episodes), mean / max | 89–123 µs / 1.7–3.2 ms (the max is an onset reading the inventory) | VOLUME_LORERIM_TICK |
+| | vanilla+ (test character) | LoreRim, measured (early character) | LoreRim, soak-sized (estimate) |
+|---|---|---|---|
+| rows per context | 93 (66 eligible, 93 held) | 42 (27 eligible, 39 held) | ~250 |
+| a new context, caps already defined | 5.8 KB | 3.4 KB | ~15 KB |
+| a decision sharing its context | ~430 B | ~425 B | ~430 B |
+| the first context of a segment (every cap defined) | 16 KB (93 caps) | 7.6 KB (38 caps) | ~40 KB |
+| head | 6.7 KB | 6.7 KB | 6.7 KB |
+| update tick (eligible rows' cross-features, episodes), mean / max | 89–123 µs / 1.7–3.2 ms | 84 µs / 5.9 ms | -- |
 
-Per hour of play: the October soak made about 45 selections an hour (412 page
+The tick's maximum is an onset or a press reading the inventory for the held
+rows (cached for a second); the mean is the per-tick cross-features. Both are
+Debug numbers.
+
+Per hour of play: the October soak made about 54 selections an hour (412 page
 picks plus 83 menu picks in 9.1 h); a menu visit adds one context however many
 picks it holds; unanswered episodes add some more, sharing contexts when they
-start together. At ~60 new contexts an hour that is **~0.35 MB/h on vanilla+**
-and **VOLUME_LORERIM_HOUR on LoreRim**; a 64 MiB file then holds
-VOLUME_LORERIM_FILE of LoreRim play.
+start together. At ~60 new contexts an hour that is **~0.4 MB/h on vanilla+**
+and **~1 MB/h on a soak-sized LoreRim inventory** (~2 MB/h at 120 contexts
+and 300 rows); a 64 MiB file then holds roughly 30–60 hours of LoreRim play.
+The rate of `nothing` records in real play is not known yet: R5's session will
+tell.
 
 What bounds it:
 - **Caps once per segment**, content-addressed: the 239-column vectors are

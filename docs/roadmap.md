@@ -231,9 +231,10 @@ Logging only: `Huginn_Selections_v3.jsonl` beside the unchanged v2 log.
       armour candidates stays in R8.)*
 - [x] Settle whether the update loop ticks inside menus. *(It does: 57 ticks
       in 5.9 s in the inventory menu, all with the game paused, and the
-      pipeline ran 4–5 times; the page cache was ~100 ms old at the close, so
-      the 500 ms `fExternalEquipTimeWindow` does not trip in an ordinary menu
-      visit. The v3 log never drops a pick for staleness: a stale pick is
+      pipeline ran 4–5 times; the page cache was ~100 ms old at the close
+      (LoreRim: 9.1/s, 73 ms), so the 500 ms `fExternalEquipTimeWindow` does
+      not trip in an ordinary menu visit -- only when the loop stalls (on
+      LoreRim the cache was 581 ms old as the menu opened). The v3 log never drops a pick for staleness: a stale pick is
       written with `learned: 0, skip: "stale"`; menu picks join the context
       taken when the menu opened, with its age.)*
 - [x] `tools/replay` reads v3; the schema is documented.
@@ -243,8 +244,10 @@ Logging only: `Huginn_Selections_v3.jsonl` beside the unchanged v2 log.
   `tools/replay/test_replay_v3.py` decodes it and round-trips its own; CTest
   `replay_v3_roundtrip`); an unattended session writes every outcome
   (`run_tests.py --decision-session`: key 3, wheel 1, menu 2, nothing 4 on
-  vanilla+; the wheel pick runs Huginn's own Wheeler handler, not Wheeler's
-  UI); no score changes (`hg recs 40` identical to the base build, pipeline
+  vanilla+, and key 3, wheel 1, menu 2, nothing 5 in one LoreRim run; the
+  wheel pick runs Huginn's own Wheeler handler, not Wheeler's UI); volume
+  ~0.4 MB/h on vanilla+, ~1 MB/h estimated for a soak-sized LoreRim
+  inventory (schema doc); no score changes (`hg recs 40` identical to the base build, pipeline
   11.69 allocations/s against 11.85).
 - [ ] **In game (you):** a 30-minute session whose log holds all four
   outcomes. Checklist in the PR.
