@@ -92,8 +92,9 @@ Top hot zones + analysis + finding mapping.
   that could be measured stretched their frames by +19.9 to +28.9 ms. Inferred:
   the main thread waits for the tick.
 - **Rises with no code change** between the builds (only zones were added):
-  fixed-cost zones rose 25–31% (`OnUpdate` 1.31, `PollWorldObjects` 1.31,
-  `Inventory::DeltaScan` 1.30); `Gather::Spells` rose 46%, but it scales with
+  most fixed-cost zones rose 25–31% (`OnUpdate` 1.31, `PollWorldObjects` 1.31,
+  `Inventory::DeltaScan` 1.30), though `PollTargets` fell (0.80) and
+  `PollPlayerMagicEffects` barely moved (1.05); `Gather::Spells` rose 46%, but it scales with
   the candidate count (28.1 against 24.3). Game state or a session-wide
   slowdown, not code.
 - **Threads:** 26,565 ticks on 6 job threads, 4,769 on the main thread, 1,494 on

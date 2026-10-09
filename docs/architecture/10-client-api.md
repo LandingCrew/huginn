@@ -52,7 +52,7 @@ scored list, the overrides, and the player and world state.
 
 | Backend | What its `Push` does | Thread of the call |
 |---|---|---|
-| `IntuitionBackend` (`src/display/IntuitionBackend.cpp:17`) | Hides itself while a Huginn wheel is open (unless `HideWhileWheelOpen` is off), diffs against the last push, and calls `IntuitionMenu::SetSlot` etc., which queue the GFx work with `AddUITask` (`src/ui/IntuitionMenu.cpp:233-246`) | The tick's thread; the GFx work runs later in the UI task |
+| `IntuitionBackend` (`src/display/IntuitionBackend.cpp:17`) | Hides itself while any Wheeler wheel is open, if Huginn has a recommendation wheel (`:23`; unless `HideWhileWheelOpen` is off), diffs against the last push, and calls `IntuitionMenu::SetSlot` etc., which queue the GFx work with `AddUITask` (`src/ui/IntuitionMenu.cpp:233-246`) | The tick's thread; the GFx work runs later in the UI task |
 | `WheelerBackend` (`src/display/WheelerBackend.cpp:32-316`) | Recovers lost wheels, skips while a wheel is open (`:82-85`; an urgent override bypasses this check only) or the editor is up (`:132-137`, no bypass), allocates every page the player is not viewing (`:179-188`), builds subtext labels, drops weapons and armour with no uniqueID (`:288-297`), and calls `WheelerClient::UpdateRecommendationsForPage` per page (`:314`), which ends in `WheelSync::UpdatePage` | The tick's thread, and every Wheeler API call on it |
 
 `IntuitionBackend` sends a confidence value per slot that the widget never reads
@@ -334,7 +334,7 @@ stable fields.
   ranking.
 - Overrides have no finite score (R7 made them +inf, never compared;
   [roadmap.md](../roadmap.md), R7), so an `urgent` item carries the flag and
-  share 0, and the shares are computed over the other items. Wildcards keep
+  share 0, and urgent items stay out of the denominator. Wildcards keep
   their low share; the `exploration` flag says why they are there.
 - The raw score can go in a debug-only field, marked unstable. After R9 a
   spread (σ) per item exists; a later minor version can add it.
@@ -365,7 +365,8 @@ Proposed contract:
   `HG_BAD_ARG`, is counted, and changes nothing. Each client's calls take a
   short per-client lock, so a `Disconnect` racing the same client's `Acquire`
   waits for it, then releases everything the client holds; after `Disconnect`
-  the client's pointers are invalid and its id answers `HG_UNKNOWN_CLIENT`.
+  the client's pointers are invalid, `LatestSeq` returns 0 for its id, and
+  every call that returns `HgResult` answers `HG_UNKNOWN_CLIENT`.
 - **Notification.** In v1 the client polls `LatestSeq` once per frame. A
   callback is not proposed for v1, and SKSE's task queue (`AddTask`) is not a
   way to deliver one: those tasks run on game job threads in gameplay (seen by
@@ -400,16 +401,17 @@ Reports from one client go through one ordered queue (section 3.6), so a pick
 is always processed after the impression it names. Huginn keeps each client's
 last 16 impressions by id, so the impression an action names is still there
 when a later one (the view hiding on close) has arrived. An action naming an
-id that is no longer kept is logged with no view.
+id that is not kept, or was refused with `HG_QUEUE_FULL`, is logged with no
+view. The tick drains a client's queue by swapping it for an empty one under
+the per-client lock, so a client is never blocked for longer than that swap.
 
 Why Huginn needs them:
 - **The choice set.** The R8 learner trains on the page the player saw (section
   2.3). An impression is that page.
-- **The R4 and R6 data.** The selection log v3's `shown` rows and its "nothing
-  pressed" episodes (the page at the need's onset) can be checked against what
-  was on screen. The R5 cheap test found key position alone gives 41% hit@1 on
-  the shown page ([roadmap.md](../roadmap.md), R5), so positions per client are
-  worth having for a position term.
+- **The R4 and R6 data.** `shown` rows and "nothing pressed" episodes can be
+  checked against what was on screen, and key position alone gave 41% hit@1 in
+  R5's cheap test ([roadmap.md](../roadmap.md), R5): positions per client feed
+  a position term.
 - **Attribution.** An action report replaces the relabel after Wheeler's
   callback and the timing guesses of `PlayerInputGate` for picks made through a
   client.
@@ -429,9 +431,9 @@ page, positions, age), and a new row flag `seen` (on screen per the impression
 in force). `shown` keeps what the code has always logged, the page Huginn
 allocated: `SelectionLogV3` sets the flag from `PipelineStateCache::TakeShown`
 (`SelectionLogV3.cpp:484`, `:567`), which holds the current page's assignments
-(`PipelineStateCache.h:176-182`). The schema's wording ("on the page the player
-saw") is corrected in this PR to say so; that is a clarification, not a
-meaning change. `out` keeps its four values, so `menu` and the menu cost κ that metric 1 is fitted to are
+(`PipelineStateCache.h:176-182`). The schema said "on the page the player saw"; this
+PR corrects its wording (the `shown` row, `pipe.page`, the intro, and a Known
+limits line), a clarification, not a meaning change. `out` keeps its four values, so `menu` and the menu cost κ that metric 1 is fitted to are
 unchanged: an own-wheel or vanilla-hotkey pick stays `out: menu` with its `via`.
 A new `out` value (a pick through a third-party client) or a change to `shown`'s
 meaning is a v4, and belongs with C5, when third-party clients exist.
@@ -560,7 +562,7 @@ typedef struct HgItem {
     uint8_t     hand;           /* which hands it fits; suggested hand reserved */
     uint8_t     reserved;
     uint32_t    count;
-    float       share;          /* 0..1 over this snapshot's non-urgent items */
+    float       share;          /* exp(score) / sum over the top 32 non-urgent items; 0 for urgent */
     float       debugScore;     /* HG_FEAT_DEBUG_SCORE only */
     const char* name;           /* UTF-8, owned by the snapshot */
     const char* reasonId;       /* needs.csv id, or "" */
@@ -670,46 +672,48 @@ from its activation path, including picks from the player's own wheels. Most of
 `src/wheeler/` goes: index re-resolution, the editor gate, the retry and defer
 caches.
 
-What (a) does with the cost depends on its cause, which is open. What the
-code shows (`db9466f`):
-- **Construction** does not walk the inventory. `AddItemByFormID` looks up the
-  form (`wheelerAPI@db9466f:src/bin/API/WheelerAPI.cpp:594`), builds the item
-  (`:612`), then takes the wheel lock exclusively (`:619`). For a weapon the
-  build is `CreateWheelItemMutable` (`WheelItemMutable.h:38-43`): the
-  constructor sets the uniqueID, picks an icon by weapon type and keyword
-  (`WheelItemWeapon.cpp:41-87`, `TextureManager.cpp:19-40`) and registers the
-  item. The inventory is read at **draw time**, while a wheel is on screen
-  (`Wheeler.cpp:235`, `WheelItemMutable.cpp:26`), on Wheeler's frame thread
-  under the shared lock. The inventory-walk explanation in the Wheeler-side
-  note of 2026-10-09 (local, unpublished) was a hypothesis.
-- **Draw contention** with Huginn's writes is possible only in narrow windows.
-  Huginn does not write while a wheel is open, and Wheeler counts a closing
-  wheel as open (`IsWheelerOpen` is `_state != KClosed`, `Wheeler.cpp:999`); it
-  does not write while the editor is up, even for an override (section 1.1);
-  with no wheel shown, `Wheeler::Update` takes the shared lock and returns at
-  once (`:172`). What is left: an urgent-override push while a wheel is open;
-  a wheel opening between Huginn's check and its writes; and other holders of
-  the lock, such as Wheeler's input and activation paths and `Clear`, which
-  take it exclusively (`Wheeler.cpp:311-877`).
-- **Draw contention cannot explain the largest spike.** The 31.5 ms first fill
-  ran on the save-load resume tick, on the loading-screen thread, when no wheel
-  can be drawn.
-- **Another candidate:** Wheeler was logging every API call at debug level
-  during the capture (the verification's note), and that logging is inside the
-  timed calls.
-- **The Wheeler build in the capture is not known.** `db9466f` was committed at
-  16:37:21, 54 s before the 16:38:15 launch, and the deployed `wheeler.dll` is
-  dated 17:46:04, after the capture. The API log line Wheeler wrote fits
-  `a58fcbc`, `5b0ee23` and `db9466f` alike. In the first two the weapon
-  constructor also builds the description through
-  `TESDescription::GetDescription` (`5b0ee23:WheelItemWeapon.cpp:102-107`),
-  which reads game data.
+What (a) does with the cost depends on its cause, which is open.
 
-A Wheeler Tracy capture (its client on port 8087) during C3, with the build
-recorded and API debug logging off, is what settles it. If the cost is lock
-contention or logging, (a) removes it from Huginn's tick; if it is
-construction, (a) moves it to Wheeler's frame thread, where Wheeler can pay it
-lazily (only changed entries, only when a wheel is about to show).
+Evidence (`db9466f` unless noted):
+- **Construction does not walk the inventory.** `AddItemByFormID` looks up the
+  form (`wheelerAPI@db9466f:src/bin/API/WheelerAPI.cpp:594`), builds the item
+  (`:612`: uniqueID, an icon by weapon type and keyword, registration;
+  `WheelItemWeapon.cpp:41-87`), then takes the lock exclusively (`:619`). The
+  inventory is read at draw time, while a wheel is on screen
+  (`Wheeler.cpp:235`, `WheelItemMutable.cpp:26`). The inventory-walk idea in
+  the Wheeler-side note of 2026-10-09 (local, unpublished) was a hypothesis.
+- **Huginn's push does not write while a wheel is open** (closing counts as
+  open: `Wheeler.cpp:999`) or while the editor is up, and with no wheel shown
+  `Wheeler::Update` holds the shared lock for microseconds (`:172`). Other
+  Huginn paths do write while a wheel may be open, none inside `WriteSlots`:
+  urgent auto-focus (`SetActiveWheelIndex`, `WheelerBackend.cpp:57-58`), the
+  Empty post-activation policy (`ClearEntry` and the subtext, from the
+  activation callback on Wheeler's thread, `WheelerClient.cpp:203-206`), and
+  the page-cycle key (`SetActivePage`, `Main.cpp:761`, on the input-sink thread;
+  `SetActiveWheelIndex` takes the lock exclusively,
+  `wheelerAPI@db9466f:WheelerAPI.cpp:489`, with no open-wheel check).
+- **The largest spike had no wheel to draw:** the 31.5 ms first fill ran on the
+  loading-screen thread on the save-load resume tick.
+- **The build is not known exactly.** The capture's `wheeler.log` names
+  `Wheeler.cpp(509)` and `(627)`, which match `a58fcbc` and `5b0ee23`;
+  `db9466f` has them at 510 and 628. The DLLs built in the wheelerAPI tree
+  (16:36:56 with Tracy, 16:37:10 without) predate `db9466f`'s commit at
+  16:37:21, and the Tracy one already contains `db9466f`'s
+  `WheelItem::buildDescription` zone. So the capture ran `a58fcbc`, `5b0ee23`
+  or an uncommitted state before `db9466f`, not `db9466f` as committed. In
+  `a58fcbc` and `5b0ee23` the weapon constructor also reads the description
+  (`TESDescription::GetDescription`, `5b0ee23:WheelItemWeapon.cpp:102-107`).
+
+Open candidates: the narrow lock windows above (an urgent push while a wheel is
+open, a wheel opening mid-push, other exclusive holders such as input,
+activation and `Clear`, `Wheeler.cpp:311-877`); the description read in
+construction; Wheeler's debug logging of every API call during the capture,
+which alone cannot explain why the same push cost 18.5 ms on wheel 0 and
+0.08 ms on wheel 1 (31.5 against 0.55 ms in the first fill). A C3 capture with
+Wheeler's Tracy client (port 8087), its build recorded and API debug logging
+off settles it. If the cost is contention or logging, (a) removes it from
+Huginn's tick; if it is construction, (a) moves it to Wheeler's frame, where it
+can be paid lazily.
 
 **Wheeler, path (b): an adapter client in Huginn.** Today's `WheelSync` moves
 behind the client API and runs on a Huginn-owned worker thread that polls the
@@ -769,17 +773,7 @@ Recommendation: (a). Use (b) only as a stopgap, and only after that check.
 
 ## Sources
 
-Code at `0f49bac`: `src/display/` (all), `src/wheeler/WheelerAPI.h`,
-`WheelerConnection.cpp`, `WheelerClient.cpp`, `WheelSync.cpp`;
-`src/pipeline/PipelineCoordinator.cpp`; `src/learning/EquipEvent.h`,
-`SelectionTracker.h`, `PlayerInputGate.h`, `ExternalEquipLearner.cpp`,
-`PipelineStateCache.h`, `SelectionLogV3.cpp`; `src/Main.cpp`;
-`src/input/EquipManager.cpp`, `InputHandler.cpp`; `src/ui/IntuitionMenu.*`;
-`src/slot/SlotSettings.h`, `SlotConfig.h`, `SlotAssignment.h`;
-`src/core/SlotScoreMath.h`, `NeedIds.h`; `src/UpdateLoop.cpp`. The wheelerAPI
-fork at `db9466f` (`perf/lazy-item-descriptions`): `src/bin/API/WheelerAPI.h`,
-`WheelerAPI.cpp`, `src/bin/Wheeler/Wheeler.cpp`, `WheelItems/WheelItemWeapon.cpp`,
-`WheelItemMutable.h`, `WheelItemMutable.cpp`, `src/bin/Rendering/TextureManager.*`.
-Not published: the 2026-10-09 LoreRim trace analysis and its verification
-(local, untracked; summarised in section 2.2) and the Wheeler-side push-spike
-note (an untracked file in the fork's working tree).
+Code at `0f49bac`, cited inline; the wheelerAPI fork at `db9466f`
+(`perf/lazy-item-descriptions`), cited inline. Not published: the 2026-10-09
+LoreRim trace analysis and its verification (local, untracked; section 2.2)
+and the Wheeler-side push-spike note (untracked in the fork's working tree).
