@@ -274,10 +274,10 @@ namespace Huginn::State
       // Returns: true if state changed
       [[nodiscard]] bool PollPlayerPosition();
       // R3: the position poll's need sensors (encumbrance ratio, submerged
-      // timer, and drop ahead's last reading from DropAheadProbe, which casts
-      // its rays on the main thread). They do not feed the poll's change flag:
-      // the need vector has its own cadence (needs/NeedMonitor.h) and must not
-      // move the pipeline's skip gates.
+      // timer, and the last reading of drop ahead and deep water ahead from
+      // DropAheadProbe, which casts its rays on the main thread). They do not
+      // feed the poll's change flag: the need vector has its own cadence
+      // (needs/NeedMonitor.h) and must not move the pipeline's skip gates.
       void PollNeedPosition(float encumbrance, bool underwater);
 
       // Target tracking polling (multi-target detection, vitals, distance)

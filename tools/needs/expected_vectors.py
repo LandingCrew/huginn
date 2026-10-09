@@ -87,7 +87,7 @@ FIELDS = {
     # Environment
     "light": ("f", 1.0), "openDaylight": ("b", 0), "underwater": ("b", 0),
     "submergedFor": ("f", 0.0), "swimming": ("b", 0), "fallDepth": ("f", 0.0),
-    "dropAhead": ("f", -1.0), "lock": ("b", 0), "workstation": ("i", 0),
+    "dropAhead": ("f", -1.0), "waterDepthAhead": ("f", -1.0), "lock": ("b", 0), "workstation": ("i", 0),
     "oreVein": ("b", 0), "merchant": ("b", 0),
     # Equipment
     "enchantedWeapon": ("b", 0), "weaponCharge": ("f", 1.0), "bow": ("b", 0),
@@ -297,6 +297,7 @@ FORMULAS = {
     "swimming": lambda s: float(s["swimming"]),
     "falling": lambda s: s["fallDepth"],
     "drop_ahead": lambda s: 0.0 if s["dropAhead"] < 0 else s["dropAhead"],
+    "deep_water_ahead": lambda s: 0.0 if s["waterDepthAhead"] < 0 else s["waterDepthAhead"],
     "lock_in_crosshair": lambda s: float(s["lock"]),
     "workstation_smithing": lambda s: 1.0 if s["workstation"] == 1 else 0.0,
     "workstation_enchanting": lambda s: 1.0 if s["workstation"] == 2 else 0.0,

@@ -140,7 +140,7 @@ movement_speed,specific,movement,AV SpeedMult det=0; name sprint/whirlwind/speed
 movement_jump_fall,specific,movement,"AV JumpingBonus; name feather fall / slow fall / levitate / jump / ""no falling damage"". P x D.",V:1 / S:3 / L:23,partly,falling; drop_ahead,Answers falling / drop_ahead. Mostly script-only.
 movement_water_walking,specific,movement,AV WaterWalking. P.,V:2 / S:29 / L:8,no,,
 utility_carry_weight,specific,utility,AV CarryWeight det=0. G(total).,V:86 / S:111 / L:220,no,encumbrance,
-utility_water_breathing,specific,utility,AV WaterBreathing. P x D.,V:26 / S:40 / L:38,no,underwater; swimming,
+utility_water_breathing,specific,utility,AV WaterBreathing. P x D.,V:26 / S:40 / L:38,no,underwater; swimming; deep_water_ahead,
 utility_telekinesis,specific,utility,archetype Telekinesis. P.,V:2 / S:2 / L:4,no,,
 utility_unlock,specific,utility,"archetype Open; name ""open lock|unlock"". P x G(magnitude = lock level).",V:0 / S:10 / L:9,yes,lock_in_crosshair,
 utility_slow_time,specific,utility,archetype SlowTime. P x D.,V:6 / S:5 / L:15,no,,

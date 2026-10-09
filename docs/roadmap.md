@@ -173,7 +173,7 @@ in. What was built: the [implementation map](architecture/9-implementation-map.m
       (union of hostiles in combat themselves; no line-of-sight logic, the
       user 2026-10-08), target summoned / casting / archer, restore pending,
       drop ahead. 87 of the 92 needs have a sensor; five are deferred (map
-      Phase 2).
+      Phase 2). (88 of 93 since 0.23.19 added `deep_water_ahead`, below.)
 - [x] Drop ahead (the user, 2026-10-08): a Havok ray cast straight down from
       2–3 points ahead of the player (`bhkWorld::PickObject`), not a guessed
       floor and not the terrain heightmap, which sees through rock meshes.
@@ -189,13 +189,39 @@ in. What was built: the [implementation map](architecture/9-implementation-map.m
       cell changes across two worldspaces ran clean.
 - [ ] **In game (you):** stand at cliff edges, on rock spires and bridges, and
       above deep water; `hg needs` shows `drop_ahead` high only at a real drop.
+- [x] Deep water ahead (0.23.19; the user: "rework the water detector like
+      the cliff/altitude detector"). `underwater` stays as it is (head below
+      the water height: it cannot predict, so a pre-dive Waterbreathing never
+      surfaced). The drop-ahead probe pass already read the water height at
+      each reached point, and its down ray passes through water to the bed,
+      so the depth there is the surface down to the hit (to the ray's bottom
+      with no hit). Two changes, `core/DropAhead.h` `MeasureAhead`: a landing
+      in water at least `kSafeLandingDepth` (128 units, one actor height)
+      deep is no drop -- Skyrim takes no fall damage in deep water, and a
+      cliff over the sea read as a lethal drop -- while shallower water is
+      still measured to its surface; and a new need, `deep_water_ahead` (P3,
+      Environment, logistic c 128 slope 0.05, answered by Waterbreathing),
+      the deepest water over the known probes, logged only like every R3
+      need. Same staleness and skips as `drop_ahead`; while swimming it reads
+      0 (swimming and underwater cover a player in the water). `hg needs`
+      prints it beside the drop; the `[DropAhead]` debug line prints each
+      probe's depth (`w<units>`). Host tests: a cliff into deep water, into a
+      shallow stream, onto rock, a lake shore on flat ground, unknown probes,
+      no hit over water.
+- [ ] **In game (you):** the safe-landing depth (128 units) is a guess -- the
+      game's threshold is not known -- and the deep-water need is untested in
+      game. With `hg needs`: a cliff over deep water reads `drop_ahead` 0 and
+      `deep_water_ahead` > 0; walking to a lake shore raises
+      `deep_water_ahead` before the player is in the water; a cliff onto a
+      shallow stream still reads a drop. If a jump into water the probe calls
+      deep does hurt, raise `kSafeLandingDepth`.
 - [x] Computed and logged on its own cadence (`needs/NeedMonitor`, every
       update tick, a `[Needs]` line per signature change, at most one a
       second). **Not** in the skip gate: moved to R8 (below).
 - [x] `hg needs` prints the live vector.
 - [x] Done when (agent): curve host tests pass; a replayed state snapshot gives
-  the expected vector (`tests/core/NeedFixtureTests.cpp`: 148 snapshots, 64
-  synthetic and 84 recorded in game with the hook build, against an oracle written apart from the
+  the expected vector (`tests/core/NeedFixtureTests.cpp`: 151 snapshots, 67
+  synthetic (64 before 0.23.19) and 84 recorded in game with the hook build, against an oracle written apart from the
   evaluator); pipeline runs per second and `hg recs 40` match the old build.
 - [ ] **In game (you):** a 20-minute session where `hg needs` shows fire,
   darkness, hunger and combat onset firing and expiring.
@@ -509,6 +535,7 @@ after R8.
 | A summon when pressed in melee | Enemy-distance (gaussian) need | R3 |
 | Damage over time on a boss | `boss_fight` need | Missing |
 | Feather Fall before the jump | `drop_ahead` need: a downward ray cast ahead (replaces "estimated altitude") | R3 |
+| Waterbreathing before the dive | `deep_water_ahead` need: the water depth under the same probes (`underwater` only fires once the head is under) | R3 (0.23.19); in-game check pending |
 | Soul Gem Fragment (LoreRim MISC item) | Find how LoreRim uses it first | Open |
 | Food at a cooking pot or spit (the R3 session: a spit read as a forge) | A `workstation_cooking` need (the bench kind exists: `core/BenchKind.h` reads it from the workbench keyword, 0.23.16) x food effect columns; smelter and tanning rack likewise if a column ever answers them | Sensor exists (`NeedSensorState::bench`); no need row |
 | Soups for the cold meter, apart from warming spells | Split `survival_warmth`: Restore Cold (Update.esm 01002EE5, a soup's; restores the cold meter, `cold`) from Fortify Warmth (01002EE6 / Variable09, warming spells, the Torch, soups; raises the warmth rating, `warmth_deficit`). Two mechanics, confirmed via LoreRim Discord (2026-10-09); one column today, so `cold` x `survival_warmth` also reaches a warming spell. A column change: fixtures regenerate from the dumps | Effect records tell them apart (MGEF, keyword `CCSM_RestoreCold`, name); the columns do not |

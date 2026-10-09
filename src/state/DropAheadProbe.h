@@ -69,11 +69,16 @@ namespace Huginn::State::DropAheadProbe
    };
    [[nodiscard]] std::string_view StatusName(Status s) noexcept;
 
+   /// Every skip (swimming included) stores drop and waterDepth -1, "not
+   /// measured": while swimming the player is already in the water, which the
+   /// swimming and underwater needs answer, so deep_water_ahead reads 0 there
+   /// rather than holding the reading from the shore.
    struct Reading
    {
       Status status = Status::NotLoaded;
-      float drop = -1.0f;   // -1 = not measured
-      double atSec = -1.0;  // NeedClock seconds of the reading; -1 = none yet
+      float drop = -1.0f;        // -1 = not measured
+      float waterDepth = -1.0f;  // the deepest water over the known probes, units; 0 none, -1 not measured (0.23.19)
+      double atSec = -1.0;       // NeedClock seconds of the reading; -1 = none yet
    };
 
    /// The last reading (thread-safe copy).

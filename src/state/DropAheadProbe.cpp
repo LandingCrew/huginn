@@ -98,10 +98,10 @@ namespace Huginn::State::DropAheadProbe
          }
       };
 
-      void Store(Status status, float drop, double atSec)
+      void Store(Status status, float drop, float waterDepth, double atSec)
       {
          std::lock_guard lock(g_mutex);
-         g_latest = { status, drop, atSec };
+         g_latest = { status, drop, waterDepth, atSec };
       }
 
       // The status line (0.23.16): debug, and at most one per
@@ -153,7 +153,7 @@ namespace Huginn::State::DropAheadProbe
          }
 
          auto skip = [&](Status s) {
-            Store(s, -1.0f, nowSec);
+            Store(s, -1.0f, -1.0f, nowSec);
             if (WantTransitionLog(s, nowSec)) LogTransition(s, nowSec, "");
          };
          if (auto* ui = RE::UI::GetSingleton()) {
@@ -163,7 +163,7 @@ namespace Huginn::State::DropAheadProbe
             if (ui->IsMenuOpen(RE::MainMenu::MENU_NAME)) {
                g_gameLoaded.store(false, std::memory_order_release);
                g_lastPosAt = -1.0;
-               Store(Status::NotLoaded, -1.0f, -1.0);  // no reading: nothing for a paused age to keep
+               Store(Status::NotLoaded, -1.0f, -1.0f, -1.0);  // no reading: nothing for a paused age to keep
                if (WantTransitionLog(Status::NotLoaded, nowSec)) LogTransition(Status::NotLoaded, nowSec, "");
                return;
             }
@@ -211,6 +211,8 @@ namespace Huginn::State::DropAheadProbe
          }
          // Water at each reached point: the cell's water at that XY (a placed
          // water object or the cell plane). Outside the lock: no physics read.
+         // The down ray does not stop at water (IsGroundLayer), so its hit is
+         // the bed and water above it gives the depth (core MeasureAhead).
          const auto starts = Core::Needs::ProbeStarts(feet, dir, cfg);
          int unknown = 0;
          for (std::size_t i = 0; i < hits.size(); ++i) {
@@ -225,16 +227,23 @@ namespace Huginn::State::DropAheadProbe
                hits[i].waterZ = waterZ;
             }
          }
-         const float drop = Core::Needs::DropAhead(feet.z, hits, cfg);
+         // One pass, two readings: the drop (water deep enough to land in is
+         // no drop) and the deepest water ahead (deep_water_ahead).
+         const auto ahead = Core::Needs::MeasureAhead(feet.z, hits, cfg);
+         const float drop = ahead.drop;
          const Status status = drop < 0.0f ? Status::AllUnknown : Status::Measured;
-         Store(status, drop, nowSec);
+         Store(status, drop, ahead.waterDepth, nowSec);
          if (status == Status::Measured) g_measuredCount.fetch_add(1, std::memory_order_relaxed);
          if (!WantTransitionLog(status, nowSec)) return;
-         LogTransition(status, nowSec, fmt::format(": drop {:.0f} | dir ({:.2f}, {:.2f}) | hits {}{}:{:.0f} {}{}:{:.0f} "
-                                           "{}{}:{:.0f} | unknown {} rejected {} | feet z {:.0f}",
-            drop, dir.x, dir.y, hits[0].known ? "" : "?", hits[0].hit, hits[0].hitZ, hits[1].known ? "" : "?",
-            hits[1].hit, hits[1].hitZ, hits[2].known ? "" : "?", hits[2].hit, hits[2].hitZ, unknown, cast.rejected,
-            feet.z));
+         // Each hit with its water depth ("w"), so a line shows why a drop was
+         // discounted: a depth at or past the safe landing depth is no drop.
+         auto water = [&](std::size_t i) { return Core::Needs::WaterDepthAtProbe(feet.z, hits[i], cfg); };
+         LogTransition(status, nowSec, fmt::format(": drop {:.0f} | deep water {:.0f} (safe landing >= {:.0f}) | dir "
+                                           "({:.2f}, {:.2f}) | hits {}{}:{:.0f} w{:.0f} {}{}:{:.0f} w{:.0f} "
+                                           "{}{}:{:.0f} w{:.0f} | unknown {} rejected {} | feet z {:.0f}",
+            drop, ahead.waterDepth, Core::Needs::kSafeLandingDepth, dir.x, dir.y, hits[0].known ? "" : "?",
+            hits[0].hit, hits[0].hitZ, water(0), hits[1].known ? "" : "?", hits[1].hit, hits[1].hitZ, water(1),
+            hits[2].known ? "" : "?", hits[2].hit, hits[2].hitZ, water(2), unknown, cast.rejected, feet.z));
       }
 
       void HookUpdate(RE::PlayerCharacter* a_this, float a_delta)
@@ -248,7 +257,7 @@ namespace Huginn::State::DropAheadProbe
             if (!s_logged.exchange(true)) {
                logger::error("[DropAhead] an exception in the probe was caught (logged once); drop ahead unmeasured"sv);
             }
-            Store(Status::NotLoaded, -1.0f, -1.0);
+            Store(Status::NotLoaded, -1.0f, -1.0f, -1.0);
          }
       }
    }
@@ -263,7 +272,7 @@ namespace Huginn::State::DropAheadProbe
    void SetGameLoaded(bool loaded) noexcept
    {
       g_gameLoaded.store(loaded, std::memory_order_release);
-      Store(Status::NotLoaded, -1.0f, -1.0);
+      Store(Status::NotLoaded, -1.0f, -1.0f, -1.0);
    }
 
    std::uint32_t MeasuredCount() noexcept { return g_measuredCount.load(std::memory_order_relaxed); }

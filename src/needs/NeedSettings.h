@@ -32,7 +32,7 @@ namespace Huginn::Needs
       void LoadFromIni(const CSimpleIniA& ini);
       void ResetToDefaults();
 
-      /// A copy (92 curves): what the pipeline evaluates with this tick.
+      /// A copy (93 curves): what the pipeline evaluates with this tick.
       [[nodiscard]] Core::Needs::CurveTable GetCurves() const;
 
    private:

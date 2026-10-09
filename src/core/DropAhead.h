@@ -6,8 +6,13 @@
 // needs.csv drop_ahead (decided with the user 2026-10-08): a Havok ray cast
 // straight down from 2-3 points ahead of the player (~1, 2.5 and 4 m along
 // the movement, else the facing), from waist height, ~4000 units long; drop =
-// feet Z - hit Z, the largest over the points; no hit = a very big drop;
-// measured to the water surface when water lies above the hit. The game side
+// feet Z - hit Z, the largest over the points; no hit = a very big drop.
+// Water (0.23.19): the down ray passes through water to the bed, so the depth
+// under a point is the water surface down to the hit (to the ray's bottom when
+// nothing was hit). A landing in water at least kSafeLandingDepth deep is no
+// drop -- Skyrim takes no fall damage there -- and shallower water is measured
+// to its surface. The same pass gives deep_water_ahead: the deepest water over
+// the known points (MeasureAhead). The game side
 // (state/DropAheadProbe.cpp) only casts the rays (terrain and statics, not
 // actors) and reads the water height; the points, the direction and the drop
 // are computed here, the probe sequence (ProbeAll) included, over an
@@ -116,11 +121,36 @@ namespace Huginn::Core::Needs
         return { start.x, start.y, start.z - cfg.rayLength };
     }
 
+    /// Water at least this deep is a safe landing: Skyrim takes no fall damage
+    /// when the player lands in deep enough water, however far the fall. The
+    /// game's own threshold is NOT known here. 128 units -- one actor height,
+    /// ~1.8 m, water over a standing player's head -- is meant to err deep: a
+    /// threshold too deep only leaves a cliff over shallower water reading as
+    /// a drop (as every cliff over water did before 0.23.19); one too shallow
+    /// would call a harmful landing safe. An in-game check (roadmap R3): a
+    /// cliff over deep water must read drop_ahead 0, one onto a shallow stream
+    /// a drop.
+    inline constexpr float kSafeLandingDepth = 128.0f;
+
+    /// The water depth under one probe: the surface down to the hit, or with
+    /// no hit down to the ray's bottom (the water is at least that deep). 0
+    /// when no water is known there or it lies below the hit (a pool under a
+    /// bridge deck). Never NaN.
+    [[nodiscard]] inline float WaterDepthAtProbe(float feetZ, const ProbeHit& h, const DropProbeConfig& cfg) noexcept
+    {
+        if (!h.waterKnown || !std::isfinite(h.waterZ)) return 0.0f;
+        const float bottom = h.hit ? h.hitZ : feetZ + cfg.waistHeight - cfg.rayLength;
+        const float depth = h.waterZ - bottom;
+        return std::isfinite(depth) ? std::max(depth, 0.0f) : 0.0f;
+    }
+
     /// The drop under one probe: feet Z down to the surface (the hit, or the
     /// water above it, or the ray's bottom when nothing was hit). Never
-    /// negative: ground ahead that rises is no drop.
+    /// negative: ground ahead that rises is no drop. A landing in water at
+    /// least kSafeLandingDepth deep is no drop at all.
     [[nodiscard]] inline float DropAtProbe(float feetZ, const ProbeHit& h, const DropProbeConfig& cfg) noexcept
     {
+        if (WaterDepthAtProbe(feetZ, h, cfg) >= kSafeLandingDepth) return 0.0f;
         const float startZ = feetZ + cfg.waistHeight;
         float surface = h.hit ? h.hitZ : startZ - cfg.rayLength;
         if (h.waterKnown && std::isfinite(h.waterZ) && h.waterZ > surface) {
@@ -130,16 +160,32 @@ namespace Huginn::Core::Needs
         return std::isfinite(drop) ? std::max(drop, 0.0f) : 0.0f;
     }
 
-    /// drop_ahead: the largest drop over the known probes; -1 (not measured)
-    /// when no probe is known.
+    /// What one probe pass reads. Both -1 (not measured) when no probe is
+    /// known; an unknown probe counts as nothing in either.
+    struct AheadReading
+    {
+        float drop = -1.0f;        // drop_ahead: the largest drop over the known probes, units
+        float waterDepth = -1.0f;  // deep_water_ahead: the deepest water over them, units; 0 = none
+    };
+
+    template <std::size_t N>
+    [[nodiscard]] AheadReading MeasureAhead(float feetZ, const std::array<ProbeHit, N>& hits,
+                                            const DropProbeConfig& cfg) noexcept
+    {
+        AheadReading r;
+        for (const auto& h : hits) {
+            if (!h.known) continue;
+            r.drop = std::max(r.drop, DropAtProbe(feetZ, h, cfg));
+            r.waterDepth = std::max(r.waterDepth, WaterDepthAtProbe(feetZ, h, cfg));
+        }
+        return r;
+    }
+
+    /// drop_ahead alone: MeasureAhead's drop.
     template <std::size_t N>
     [[nodiscard]] float DropAhead(float feetZ, const std::array<ProbeHit, N>& hits, const DropProbeConfig& cfg) noexcept
     {
-        float drop = -1.0f;
-        for (const auto& h : hits) {
-            if (h.known) drop = std::max(drop, DropAtProbe(feetZ, h, cfg));
-        }
-        return drop;
+        return MeasureAhead(feetZ, hits, cfg).drop;
     }
 
     /// The waist-height point the reachability pick starts from: above the

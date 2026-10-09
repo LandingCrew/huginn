@@ -226,7 +226,8 @@ namespace Huginn::State
         });
       }
 
-      // R3 need sensors: encumbrance ratio, the submerged timer, drop ahead.
+      // R3 need sensors: encumbrance ratio, the submerged timer, drop ahead
+      // and deep water ahead.
       // Kept out of PlayerActorState (scoring input) and out of `changed`.
       PollNeedPosition(newEncumbrance, newIsUnderwater);
 
@@ -237,22 +238,29 @@ namespace Huginn::State
    void StateManager::PollNeedPosition(float encumbrance, bool underwater)
    {
       const double nowSec = NeedClock::Now();
-      // drop_ahead: the last reading DropAheadProbe took on the main thread
-      // (PlayerCharacter::Update). The game does not call that hook while it
-      // is paused (the console, a menu) but this loop keeps polling, so the
-      // reading ages on UNPAUSED time only (Core::Needs::ReadingAge): it
-      // stands through a menu, and goes stale ("not measured") after
-      // kMaxAgeSec of unpaused time without a new one (the hook stopped).
-      // kPreLoadGame and the main menu clear the reading (DropAheadProbe).
+      // drop_ahead and deep_water_ahead: the last reading DropAheadProbe took
+      // on the main thread (PlayerCharacter::Update). The game does not call
+      // that hook while it is paused (the console, a menu) but this loop
+      // keeps polling, so the reading ages on UNPAUSED time only
+      // (Core::Needs::ReadingAge): it stands through a menu, and goes stale
+      // ("not measured") after kMaxAgeSec of unpaused time without a new one
+      // (the hook stopped). kPreLoadGame and the main menu clear the reading
+      // (DropAheadProbe).
       const auto reading = DropAheadProbe::Latest();
       auto* ui = RE::UI::GetSingleton();
       const bool paused = ui && ui->GameIsPaused();
       const double age = m_dropAge.Update(nowSec, reading.atSec, paused);
-      const float drop = (age >= 0.0 && age <= DropAheadProbe::kMaxAgeSec) ? reading.drop : -1.0f;
+      const bool fresh = age >= 0.0 && age <= DropAheadProbe::kMaxAgeSec;
+      const float drop = fresh ? reading.drop : -1.0f;
+      // deep_water_ahead (0.23.19): the same probe pass, the same staleness.
+      // -1 while swimming (the probe is skipped): reads 0, see Reading.
+      const float waterDepth = fresh ? reading.waterDepth : -1.0f;
       Huginn_PLOT("Needs drop_ahead (units, -1 unmeasured)", drop);
+      Huginn_PLOT("Needs deep_water_ahead (units, -1 unmeasured)", waterDepth);
       UpdateNeedSensors([&](NeedSensorState& n) {
         n.encumbrance = encumbrance;
         n.dropAhead = drop;
+        n.waterDepthAhead = waterDepth;
         n.dropAgeSec = age;
         if (underwater != m_wasUnderwaterForTimer) {
           n.submergedAt = underwater ? nowSec : -1.0;

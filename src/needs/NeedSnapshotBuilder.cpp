@@ -136,6 +136,7 @@ namespace Huginn::Needs
       s.swimming = p.isSwimming;
       s.fallDepth = p.fallDepth;
       s.dropAhead = n.dropAhead;
+      s.waterDepthAhead = n.waterDepthAhead;
       s.lock = src.world.isLookingAtLock;
       s.workstation = WorkstationOf(n);
       s.oreVein = src.world.isLookingAtOreVein;
