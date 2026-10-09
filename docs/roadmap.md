@@ -214,20 +214,29 @@ slot code"); detail in the map's "As built (R7)".
       is unchanged).
 - [x] Done when: a golden test feeds recorded pipeline snapshots through the
   old and new slot code and gets identical pages; the ratio tests are updated.
-  The old code's own pages, recorded in play on vanilla+ (3,443 snapshots,
-  300 checked in), replay bit for bit through the core with the old
-  arithmetic; the sign-safe arithmetic gives identical pages on all of them
-  and on 24k synthetic passes; 1,883 pages the new code recorded (150 checked
-  in) replay exactly through the core. `RunSlotClassCapTest`,
-  `RunSlotClassCapHoldTest` and `RunHomeKeyTest` derive their utilities in
-  score space.
-- Different by design: the full sort changes a page where the old fill
-  reached past the sorted top 10 (26 of 1,207 recorded play pages, 4 of 113 in
-  the checked-in fixture); exact ties
-  now keep generation order rather than the partial sort's. One
-  float-rounding boundary separates the two arithmetics (a challenger exactly
-  `float(1.5 × holder)`); no snapshot hit it.
-- For R8: `ScoredCandidate::operator<` still orders on utility (the same
+  The old code's own pages and events, recorded in play on vanilla+ under the
+  shipped [SlotLocker] settings and two variants plus a campaign (branch
+  `r7-capture-old`: 0.23.9 decisions, capture only; 2,559 snapshots, 400
+  checked in), replay bit for bit through the core with the old arithmetic;
+  the sign-safe arithmetic gives identical pages and events on all of them
+  and on 24k synthetic passes; 2,578 allocations the new code recorded (200
+  checked in) replay exactly. Five seeded mutants of the core (pull, Remembrance
+  to the job key, the hold's stale-generation guard, the refill after the
+  pull, the override fallback's event) all fail against the checked-in
+  fixtures. `RunSlotClassCapTest`, `RunSlotClassCapHoldTest` and
+  `RunHomeKeyTest` derive their utilities in score space.
+- Different by design: the full sort changes a page wherever the old fill
+  reached past the sorted top 10 (on recorded play lists: 22 of 1,094 pages
+  in a capture under the shipped settings only, 446 of 1,450 in the latest,
+  half of it under the job-key variants); exact
+  ties now keep generation order rather than the partial sort's. A
+  challenger exactly on the hold's margin now always holds (a tie band of
+  four float ulps, `kHoldTieEpsilon`): the old float comparison was decided
+  by rounding there, and the old potion tier step (1.5) equals the margin, so
+  adjacent potion tiers sit on it -- in a sweep the old code swapped 23 of 260
+  such pairs where the new one holds. The cap's scan at non-power-of-two
+  discounts and an underflowing discount have rounding boundaries of their
+  own; tests classify them. No recorded snapshot differs.- For R8: `ScoredCandidate::operator<` still orders on utility (the same
   order as the score under the bridge); it moves to the score with the scorer.
 
 ### R8. Cutover
