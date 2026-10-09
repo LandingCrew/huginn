@@ -211,7 +211,7 @@ namespace Huginn::Slot::Capture
                 s.wildcardsEnabled = true;
                 out.push_back(s);
             };
-            switch (which % 5) {
+            switch (which % 6) {
             case 0:   // the shipped shape: eight Regular keys
                 for (int i = 0; i < 8; ++i) add(SC::Regular, static_cast<int8_t>(7 - i), i == 0 ? OverrideFilter::Any : OverrideFilter::None);
                 break;
@@ -227,6 +227,11 @@ namespace Huginn::Slot::Capture
                 add(SC::SpellsAny, 4); add(SC::WeaponsMelee, 4); add(SC::Regular, 2, OverrideFilter::Any);
                 add(SC::Regular, 2); add(SC::BuffsAny, 1); add(SC::Utility, 1); add(SC::Regular, 0);
                 add(SC::AmmoAny, 0, OverrideFilter::Other);
+                break;
+            case 5:   // Regular keys first, job keys last: with a short list the Regular
+                      // keys take every match and the job keys stand empty -- the pull's case
+                for (int i = 0; i < 6; ++i) add(SC::Regular, 5, i == 0 ? OverrideFilter::Any : OverrideFilter::None);
+                add(SC::WeaponsAny, 0); add(SC::SpellsAny, 0); add(SC::PotionsAny, 0, OverrideFilter::HP); add(SC::FoodAny, 0);
                 break;
             default:  // many job keys that often stand empty, few Regular keys to pull from
                 add(SC::WeaponsAny, 6); add(SC::Regular, 1); add(SC::HealingAny, 5, OverrideFilter::HP);
@@ -249,13 +254,16 @@ namespace Huginn::Slot::Capture
             std::uniform_real_distribution<float> unit(0.0f, 1.0f);
             static constexpr float kRound[] = { 0.1f, 0.2f, 0.25f, 0.4f, 0.5f, 0.8f, 1.0f, 1.5f, 2.0f, 3.0f };
 
+            // Mostly most of the list; now and then only a handful, so short
+            // pages leave job keys empty and the pull has several to choose from.
+            const int keepPercent = d100(rng) < 25 ? 12 : 85;
             Scoring::ScoredCandidateList list;
             Scoring::ScoredCandidateList dropped;
             for (const auto& c : base) {
                 if (c.isRememberedOnly) continue;
                 auto copy = c;
                 copy.isWildcard = false;
-                (d100(rng) < 85 ? list : dropped).push_back(std::move(copy));
+                (d100(rng) < keepPercent ? list : dropped).push_back(std::move(copy));
             }
 
             const int mode = d100(rng) % 7;
