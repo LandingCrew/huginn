@@ -433,16 +433,17 @@ class V3FormatError(ValueError):
 
 
 def _raw_lines(path, stats):
-    """The file's lines as bytes. A truncated .gz (a copy taken mid-write, a
-    crash while compressing) ends the file where it breaks: counted in
-    stats["truncated"], never raised."""
+    """The file's lines as bytes. A truncated or corrupt .gz (a copy taken
+    mid-write, a crash while compressing, a flipped byte) ends the file where
+    it breaks: counted in stats["truncated"], never raised."""
     import gzip
+    import zlib
     opener = gzip.open if str(path).endswith(".gz") else open
     with opener(path, "rb") as f:
         while True:
             try:
                 line = f.readline()
-            except (EOFError, OSError, gzip.BadGzipFile):
+            except (EOFError, OSError, gzip.BadGzipFile, zlib.error):
                 stats["truncated"] = stats.get("truncated", 0) + 1
                 return
             if not line:
@@ -604,7 +605,7 @@ def summarize_v3(paths):
             rec = _decode_line(raw)
             if rec == "":
                 continue
-            t = rec.get("t") if rec else "(torn)"
+            t = str(rec.get("t")) if rec else "(torn)"
             sizes[t][0] += 1
             sizes[t][1] += len(raw)
     stats = {}

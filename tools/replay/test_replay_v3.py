@@ -346,6 +346,15 @@ class PythonRoundTrip(unittest.TestCase):
         self.assertEqual(stats["truncated"], 1)
         self.assertGreaterEqual(len(decs), 1)
 
+    def test_corrupt_gzip_never_raises(self):
+        # A flipped byte inside the deflate stream raises zlib.error, not
+        # EOFError: every position must end the file cleanly or decode.
+        packed = gzip.compress(GOLDEN.read_bytes())
+        for pos in range(10, len(packed) - 8):
+            data = bytearray(packed)
+            data[pos] ^= 0xFF
+            self._read_bytes(bytes(data), ".jsonl.gz")
+
     def test_torn_head_between_two_launches_skips_the_other_launch(self):
         lines, heads = self.golden_lines()
         seg2 = [l.replace(b'"launch":"20261009-120000"', b'"launch":"20261009-130000"') for l in lines[heads[1]:]]

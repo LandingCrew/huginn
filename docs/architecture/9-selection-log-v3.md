@@ -40,8 +40,12 @@ schema of that log, field by field.
 - The reader skips a line that is not JSON and counts it (`stats["bad_lines"]`);
   until the next head, records that need a cap or context the torn line may
   have defined are skipped and counted too (`stats["skipped"]`). A later head
-  resyncs. Without a torn line, a reference to an undefined id is a malformed
-  file and an error.
+  resyncs. A torn head is detected by a cap id being defined twice
+  (`stats["lost_heads"]`); until the next good head, decisions of another
+  launch than the head in force are skipped. A truncated or corrupt `.gz` ends
+  that file where it breaks (`stats["truncated"]`). None of this damage is
+  raised. Without damage, a reference to an undefined id is a malformed file
+  and an error.
 
 ## Versioning
 
@@ -126,7 +130,7 @@ same tick.
 | `pipe.ageMs` | int ms | how old that page was when the context was taken |
 | `race` | string or null | editor ID of the hostile primary target's race (alive, hostile), else null |
 | `wc.base`, `wc.max` | float | the wildcard odds in force (per-slot probability base and cap) |
-| `heldFull` | 0/1 | 1: the held rows were read in full. 0: taken inside the post-load window in which inventory extra data must not be read (`Util::IsExtraListStable`, the registries' gate): one plain row per base form, no unique IDs, no per-instance caps or stack charges, `equipped` from the hands and the nocked ammo only (armour reads unworn) |
+| `heldFull` | 0/1 | 1: the held rows were read in full. 0: taken while inventory extra data must not be read, from kPreLoadGame until the post-load window ends (`Util::IsExtraListStable`, the registries' gate, plus a v3-local load-in-progress flag): one plain row per base form, no unique IDs, no per-instance caps or stack charges, `equipped` from the hands and the nocked ammo only (armour reads unworn) |
 | `rows` | row[] | every item the player could choose (below) |
 
 ### Rows
