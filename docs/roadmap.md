@@ -405,6 +405,20 @@ perks, level -- stay out (CLAUDE.md, Forbidden Information).
 
 The transform cache and the 37 misread races: done in R0.
 
+**Fixed in v0.23.13 -- hook-install race (int3 on a load-screen job thread).**
+CommonLib-NG 3.7.0's `write_5branch` patches the call site before it writes
+the trampoline's jump, into a block `set_trampoline` filled with `0xCC`. The
+D3D11 Present hook and the Debug input hook went in at kDataLoaded, while
+load-screen job threads already ran `BSGraphics::Renderer::End` and
+`BSInputDeviceManager::Poll`; a thread hitting the patched call inside that
+window took `EXCEPTION_BREAKPOINT` in SKSE's branch pool (~1 in 13 Debug
+launches on simonrim). Both hooks are now installed in `SKSEPlugin_Load`
+(`InstallHooks` in `Main.cpp`), before the engine starts, from one
+`AllocTrampoline` sized for every hook; their bodies pass straight through
+until `ImGuiRenderer::IsInitialized()` (now an acquire/release atomic).
+`main` (frozen) still has the race: its D3D11 hook in every build and its
+input hook in Debug.
+
 ## Mod compatibility
 
 ### Default slot keys are the number row
