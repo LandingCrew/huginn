@@ -5,6 +5,9 @@
 #include "IniLoad.h"
 #include "slot/SlotSnapshot.h"
 #include "effect/EffectDump.h"
+#include "pipeline/PipelineCoordinator.h"
+#include "slot/SlotAllocator.h"
+#include "update/UpdateHandler.h"
 
 #include <spdlog/details/null_mutex.h>
 #include <spdlog/sinks/base_sink.h>
@@ -111,6 +114,7 @@ namespace Huginn::TestHarness
         int g_loadTimeoutSec = kDefaultLoadTimeoutSec;
         int g_captureSlotsSec = 0;   // iCaptureSlotsSec: slot snapshots after the load suites (R7)
         int g_captureNeeds = 0;      // iCaptureNeeds: need snapshots, at most this many (R3)
+        int g_dumpRecsAfterSec = 0;  // iDumpRecsAfterSec: a recs dump after the load suites, then end
         std::atomic<bool> g_loadRequested{ false };
         std::atomic<bool> g_loadArrived{ false };
         std::atomic<bool> g_finished{ false };
@@ -283,6 +287,7 @@ namespace Huginn::TestHarness
                             ini.GetLongValue("Test", "iLoadTimeoutSec", kDefaultLoadTimeoutSec));
                         g_captureSlotsSec = static_cast<int>(ini.GetLongValue("Test", "iCaptureSlotsSec", 0));
                         g_captureNeeds = static_cast<int>(ini.GetLongValue("Test", "iCaptureNeeds", 0));
+                        g_dumpRecsAfterSec = static_cast<int>(ini.GetLongValue("Test", "iDumpRecsAfterSec", 0));
                         if (const char* dump = ini.GetValue("Test", "sDumpAll", nullptr); dump && *dump) {
                             g_dumpAllName = dump;
                         }
@@ -431,6 +436,22 @@ namespace Huginn::TestHarness
             return;
         }
         if (gameLoaded) DumpAllIfAsked();
+        if (gameLoaded && g_dumpRecsAfterSec > 0 && g_captureSlotsSec <= 0) {
+            // A recommendation dump after N idle seconds (the `hg recs 40`
+            // path), then end: two builds on one save can be compared.
+            std::thread([]() {
+                std::this_thread::sleep_for(std::chrono::seconds(g_dumpRecsAfterSec));
+                SKSE::GetTaskInterface()->AddTask([]() {
+                    logger::info("[HuginnTest] dumping recommendations"sv);
+                    Pipeline::PipelineCoordinator::GetSingleton().RequestRecommendationDump(40);
+                    Slot::SlotAllocator::GetSingleton().MarkPageDirty();
+                    Update::UpdateHandler::GetSingleton()->ForceUpdate();
+                });
+                std::this_thread::sleep_for(std::chrono::seconds(3));
+                Finish({});
+            }).detach();
+            return;
+        }
         if (gameLoaded && g_captureSlotsSec > 0) {
             // Slot snapshots for the golden test (SlotCapture.cpp): play a
             // scripted session while every allocation is recorded, then end.

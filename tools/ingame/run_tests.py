@@ -615,6 +615,9 @@ def main() -> int:
     ap.add_argument("--capture-needs", type=int, default=0, metavar="N",
                     help="record up to N need snapshots (the pipeline's signature changes and the need suite's) "
                          "to Huginn_NeedSnapshots.txt in the log folder (Debug, 0.23.14+; R3 replay fixtures)")
+    ap.add_argument("--dump-recs", type=int, default=0, metavar="SEC",
+                    help="after the load suites wait SEC seconds, log a 40-row `hg recs` dump ([Recs] lines), "
+                         "then end (Debug, 0.23.14+): compares two builds' recommendations on one save")
     args = ap.parse_args()
     # The capture session runs after the suites: its seconds, plus the
     # campaign and the shutdown, come on top of --timeout.
@@ -661,6 +664,7 @@ def main() -> int:
         f"iLoadTimeoutSec={args.load_timeout}\n"
         + (f"iCaptureSlotsSec={args.capture_slots}\n" if args.capture_slots > 0 else "")
         + (f"iCaptureNeeds={args.capture_needs}\n" if args.capture_needs > 0 else "")
+        + (f"iDumpRecsAfterSec={args.dump_recs}\n" if args.dump_recs > 0 else "")
         + (f"sDumpAll={args.dump_all}\n" if args.dump_all else ""),
         encoding="utf-8")
 
