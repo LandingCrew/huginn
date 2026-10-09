@@ -131,7 +131,9 @@ and accept% and so ship as their own small PR.
       with the layered actor-value resolution and load-order percentiles.
       *(`effect/EffectReader`, `core/EffectRules` + `core/EffectMapper`,
       `core/MiniRegex` for the rule tables; the mapping runs on a worker
-      thread: 0.5 s Debug on vanilla+, ~3 s Debug on LoreRim.)*
+      thread. Measured live, Debug build: vanilla+ read 0.27 s + map 0.9 s,
+      Simonrim 0.55 s + 2.4 s, LoreRim 1.4 s + 7.3 s; Release on the host
+      tool maps LoreRim in 0.5 s.)*
 - [x] Shared helpers move from `ConsoleCommands.cpp` to `src/util/FormRead.h`.
 - [x] Static cap in a catalog; runtime cross-features (`overshoot_*`,
       `weapon_charge`, `stack_count`, `ammo_matches_launcher`,

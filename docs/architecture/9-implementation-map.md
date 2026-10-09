@@ -41,7 +41,8 @@ Each phase lists what it builds and what it may prune. A phase only prunes what 
 - Candidates do not carry a catalog index yet (it would change `CandidateTypes`, and R2 changes no scores); the catalog is keyed by FormID. Do it with R4.
 - The armour items (all carried armour a candidate; the `ExternalEquipListener` armour skip) are split into their own PR: they change candidates and accept%.
 - A Cloak/hazard is damage itself only by a MagicDamage* keyword; otherwise it maps through its payload spell, with no payload by its own description, and with neither it is left out of coverage like a helper.
-- A graded column with magnitude 0 grades at the bottom of the population when it comes through the engine's data (a carrier row), and is presence only on a script route.
+- A graded column with magnitude 0 is presence on a script route. Through the engine's data (route Data) the strength is somewhere else, so the row is graded on the number its description states (Dragonhide's "ignores <80>%"), else kept as presence of the column its description names, else as presence of its own column when its name agrees ("Restore Health"), else dropped as a carrier and not counted (spider scrolls' "Restore Health 0", Wabbajack, Instant Kill, LoreRim's Dispel Armor). A Light effect grades its associated light's radius.
+- The catalog is built once, after keyword distributors; game data changed at runtime after a save loads (a Papyrus AddKeywordToForm, SetNthEffectMagnitude, an effect a script adds) is not seen. The LoreRim gate found one such item: Waterskin.esp's "Waterskin (Full)" gains a "Restore Hunger Very Small" row after load.
 - Tempering adds (h - 1) x 10 damage (the registry's measured model), it does not multiply.
 
 ### Phase 2: describe situations (need vector)
