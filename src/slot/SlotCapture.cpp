@@ -40,8 +40,9 @@
 // of the session. This used to say "on the main thread, as every real
 // allocation does"; neither half holds. Real allocations run on the update
 // loop's thread, a game job thread in gameplay (UpdateLoop.cpp, THREADS above
-// OnUpdate: Tracy, 2026-10-09), and SKSE tasks appear to drain on job threads
-// in gameplay too (DropAheadProbe.h; inferred, not traced). Nothing Huginn
+// OnUpdate: Tracy, 2026-10-09), and SKSE tasks run on job threads in gameplay
+// too (seen by an earlier verifier round, 9-implementation-map.md:62; not in a
+// Tracy trace) and on the main thread at the main menu (traced). Nothing Huginn
 // controls orders a task against an update tick, so a real allocation may
 // interleave with the campaign; SlotAllocator's seating lock keeps each
 // allocation whole.
@@ -104,7 +105,7 @@ namespace Huginn::Slot::Capture
         std::atomic<bool> g_sessionActive{ false };
 
         // Vitals the session lowered, to put back. Touched only from the
-        // session's SKSE tasks (header: not the main thread in gameplay).
+        // session's SKSE tasks (header: job threads in gameplay).
         std::array<float, 3> g_lowered{};
 
         RE::ActorValue VitalOf(size_t i)
@@ -421,8 +422,8 @@ namespace Huginn::Slot::Capture
         }
 
         /// Run `fn` as an SKSE task and wait for it. Despite the name, not
-        /// the main thread in gameplay as far as the evidence goes: SKSE
-        /// tasks appear to drain on job threads there (header).
+        /// the main thread in gameplay: SKSE tasks ran on job threads there
+        /// in an earlier verifier round, not in a Tracy trace (header).
         template <class F>
         void OnMainThread(F fn)
         {

@@ -51,9 +51,9 @@ namespace Huginn::Learning::SelectionLogV3
 
         // Touched only from the session's SKSE tasks (Task, below), one at a time
         // and seconds apart. Not "the main thread", as this said: in gameplay
-        // SKSE tasks appear to drain on job threads (DropAheadProbe.h; inferred),
-        // in a pausing menu on the main thread (UpdateLoop.cpp, THREADS above
-        // OnUpdate).
+        // SKSE tasks run on job threads (seen by an earlier verifier round,
+        // 9-implementation-map.md:62; not in a Tracy trace), at the main menu
+        // on the main thread (traced; UpdateLoop.cpp, THREADS above OnUpdate).
         float g_healthLowered = 0.0f;
         std::atomic<bool> g_wheelAttempted{ false };   // set in a task, read by the session thread
 

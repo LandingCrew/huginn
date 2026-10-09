@@ -10,8 +10,11 @@
 // rules and the drop are core code; this file only talks to the engine.
 //
 // Where it runs (verifier rounds 1 and 2 on #188): NOT on the update loop. The
-// update loop is an input-event sink on a game job thread, and SKSE's task
-// queue is drained on job threads too, so neither is the main thread. The
+// update loop is an input-event sink: in gameplay it runs on game job threads,
+// in paused menus on the main thread (UpdateLoop.cpp, THREADS above
+// OnUpdate). SKSE's task queue follows the same pattern: job threads in
+// gameplay (seen in round 1, not in a Tracy trace), the main thread at the
+// main menu (traced). So in gameplay neither is the main thread. The
 // rays are cast from a hook on PlayerCharacter::Update (vtable index 0xAD),
 // which the game calls from its main update -- the same place prior art
 // casts camera rays from (SkyrimCameraDisocclusion, Hook.cpp, which also

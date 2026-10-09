@@ -182,7 +182,8 @@ in. What was built: the [implementation map](architecture/9-implementation-map.m
       ground, so walkable slopes stay known and a wall, a parapet or an
       invisible wall reads "not measured", never a cliff. Cast on the main
       thread from a `PlayerCharacter::Update` hook under the world's read lock
-      (in gameplay the update loop and SKSE tasks run on job threads). Proven
+      (in gameplay the update loop runs on job threads, traced; so do SKSE
+      tasks, seen by an earlier verifier round but not in a Tracy trace). Proven
       live with the hook build: every monitor snapshot of two scripted sessions reads a
       measured drop, every plain run must see one to pass, and six `coc`
       cell changes across two worldspaces ran clean.
@@ -274,12 +275,13 @@ it doubles as the fit data. Several hours, mixed combat and town. Meanwhile an
 agent runs the cheap test on today's log: one weight per slot class × logged
 `ctx`; if it does not beat context alone, flag it before R6.
 
-- **Cheap test verdict (2026-10-09): passes weakly.** The test doc 9 sets
-  (`9-context-as-learner-input.md:330`, which says "per need class"; run as
-  this section says, per slot class): one learned weight per slot class
-  times the logged per-candidate context weight, against context
-  alone (replay's B arm), on the v2 log (46 launches, 859 key/wheel picks),
-  held out by launch. hit@1 level (+1.1 to +1.5, CI includes 0), NLL −0.25
+- **Cheap test verdict (2026-10-09): passes weakly.** The test as doc 9
+  defines it (`9-context-as-learner-input.md:330`; its "need class" is the
+  slot class: the v2 log's `need` column IS the slot class,
+  `tools/replay/replay.py:356`): one learned weight per slot class times the
+  logged per-candidate context weight, against context alone (replay's B
+  arm), on the v2 log (46 launches; 859 key/wheel picks after the analysis's
+  filter, from 870 stamped records), held out by launch. hit@1 level (+1.1 to +1.5, CI includes 0), NLL −0.25
   (CI −0.30 to −0.20), hit@8 +4.0 to +4.3. A class × φ interaction on top
   beats context alone by +2 to +4 hit@1, depending on the folds. v3 (92
   picks, the same 4 launches as v2's last) is too small to say. A first run
@@ -295,7 +297,8 @@ agent runs the cheap test on today's log: one weight per slot class × logged
   - key position alone gets 41% hit@1 on the shown page, so consider a
     key-position term.
   The scripts (`r5-cheap-test/`, `r5-verify/`) lived in the session
-  scratchpad and are not in the repo; the method is reproducible from this
+  scratchpad and are not in the repo, and the filter from 870 records to 859
+  picks is not documented; the rest of the method is reproducible from this
   description.
 - **Newly learned spells were not on the HUD before their first menu pick**
   (LoreRim, 2026-10-09). Three spells were learned (SpellRegistry reconcile:
@@ -377,29 +380,44 @@ sensor from `PotionDiscriminator`'s timer; `ChoiceLearner`; scorer; cosave
 pruned symbol (console, selection log, `ReasonHold`, debug widget, `Tests.cpp`)
 changed in the same PR, and the shipped INI loses the dead keys.
 - [ ] **Decide: which thread runs the update loop** (2026-10-09, two Tracy
-      traces in `traces/202610/`, which is not checked in). `OnUpdate`
-      (driven by the InputEvent sink) runs on a pool of 6 rotating game job
-      threads in gameplay; on the main
-      thread in paused menus and the main menu (it does run while a pausing
-      menu is open: 5,501 main-thread ticks in hook gaps), plus ~3–4 ticks in
-      the ~0.3 s before many door loads; and once per load as a full tick
-      (`RunPipeline` and `Inventory::DeltaScan` included) on a loading-screen
-      thread, in 15 of 18 loads (14 of them door or fast-travel loads). It
-      never overlapped a main-thread zone (0 of 22,047 job ticks); job ticks
-      end a flat ~2 ms before the main thread's player update finishes, so
-      the main thread appears to wait for them (inferred: the hook zone opens
-      after the original update returns, so an overlap with the very start
-      of the update body is not excluded). Risk: the load-screen tick is the
-      one clearly concurrent case, though the traces show no overlap there
-      either. Options:
+      traces in `traces/202610/`, which is not checked in; the counts are
+      trace09's unless marked). `OnUpdate`, driven by the InputEvent sink,
+      runs:
+      - on a pool of 6 rotating game job threads in gameplay;
+      - on the main thread in paused menus and the main menu (it does run
+        while a pausing menu is open: 5,501 main-thread ticks in hook gaps),
+        plus ~3–4 ticks in the ~0.3 s before many door loads;
+      - on a loading-screen thread for every tick during a load, about 9 a
+        second through each load (the startup load before the main menu
+        included), concurrently with the main thread's load. Most return at
+        `IsWorldLoaded` (1,289 of 1,304; trace04 3,742 of 3,768), after
+        `UpdateHandler::ProcessEvent` has run `InputHandler::ProcessButton`
+        and `Update` and the `IsWorldLoaded` UI reads. In 15 of 18 game
+        loads (14 of them door or fast-travel loads) one of them is a full
+        tick, `RunPipeline` and `Inventory::DeltaScan` included (trace04: 26
+        full ticks, one load with two).
+      `ForceUpdate` (`hg refresh`, `hg recs`, the test harness) runs a tick
+      on its caller's thread; every path holds UpdateHandler's mutex, so no
+      two ticks overlap. No job tick overlapped a main-thread zone (0 of
+      22,047); job ticks end a flat ~2 ms before the main thread's player
+      update finishes, so the main thread appears to wait for them
+      (inferred: the hook zone opens after the original update returns, so
+      an overlap with the very start of the update body is not excluded).
+      Risk: loads are the clearly concurrent case. Every load-screen tick
+      runs beside the main thread's load: mostly the input handler and the
+      `IsWorldLoaded` UI reads, and once per load (usually) a full tick.
+      No race is shown there; the traces show timing, not data access.
+      Options:
       - (a) drive the loop from the `PlayerCharacter::Update` hook: the
         thread is guaranteed, but the hook does not fire while paused, and
-        ~590 ticks a minute run in menus today, so menu-time confirmation
+        ~594 ticks a minute run in menus today, so menu-time confirmation
         would change;
       - (b) hook `Main::Update`: the main thread in menus too, but needs an
         Address Library id;
       - (c) an SKSE task per tick: **not** a fix, since tasks also run on
-        job threads in gameplay.
+        job threads in gameplay (seen by an earlier verifier round,
+        `9-implementation-map.md:62`, not in a Tracy trace; at the main
+        menu a task ran on the main thread, traced: `EffectCatalog::Read`).
       Rejected for now, the cheap guard "skip ticks until the main thread has
       updated since the load". It must re-arm on door and fast-travel loads
       (no kPostLoadGame fires); the hook must record the update before its

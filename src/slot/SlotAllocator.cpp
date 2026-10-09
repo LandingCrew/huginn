@@ -445,9 +445,9 @@ namespace Huginn::Slot
             // the main thread in menus (UpdateLoop.cpp, THREADS above OnUpdate).
             // In Debug builds SlotCapture.cpp's campaign calls AllocateForTest
             // from an SKSE task, outside that mutex, while the update loop keeps
-            // ticking, and nothing orders the two (in gameplay an SKSE task
-            // appears to drain on a job thread too; see SlotCapture.cpp). So this
-            // lock is needed, not future-proofing. Tests.cpp's suites allocate
+            // ticking, and nothing orders the two (in gameplay SKSE tasks ran
+            // on job threads in an earlier verifier round, not in a Tracy
+            // trace; see SlotCapture.cpp). So this lock is needed, not future-proofing. Tests.cpp's suites allocate
             // from the SKSE message handler (TestHarness.cpp), not under that
             // mutex either. Free when uncontended.
             std::lock_guard<std::mutex> lock(m_seatingMutex);
