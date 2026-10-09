@@ -612,6 +612,12 @@ def main() -> int:
     ap.add_argument("--capture-slots", type=int, default=0, metavar="SEC",
                     help="after the load suites, play SEC seconds of scripted input while Huginn records every "
                          "slot allocation to Huginn_SlotSnapshots.txt in the log folder (Debug; R7 golden test)")
+    ap.add_argument("--capture-needs", type=int, default=0, metavar="N",
+                    help="record up to N need snapshots (the pipeline's signature changes and the need suite's) "
+                         "to Huginn_NeedSnapshots.txt in the log folder (Debug, 0.23.14+; R3 replay fixtures)")
+    ap.add_argument("--dump-recs", type=int, default=0, metavar="SEC",
+                    help="after the load suites wait SEC seconds, log a 40-row `hg recs` dump ([Recs] lines), "
+                         "then end (Debug, 0.23.14+): compares two builds' recommendations on one save")
     args = ap.parse_args()
     # The capture session runs after the suites: its seconds, plus the
     # campaign and the shutdown, come on top of --timeout.
@@ -657,6 +663,8 @@ def main() -> int:
         f"iExpiresUnix={expires}\n"
         f"iLoadTimeoutSec={args.load_timeout}\n"
         + (f"iCaptureSlotsSec={args.capture_slots}\n" if args.capture_slots > 0 else "")
+        + (f"iCaptureNeeds={args.capture_needs}\n" if args.capture_needs > 0 else "")
+        + (f"iDumpRecsAfterSec={args.dump_recs}\n" if args.dump_recs > 0 else "")
         + (f"sDumpAll={args.dump_all}\n" if args.dump_all else ""),
         encoding="utf-8")
 
@@ -747,6 +755,17 @@ def main() -> int:
             say(f"WARNING: no slot snapshot file at {snaps}")
             if verdict and verdict[0] == 0:
                 verdict = (1, "--capture-slots: no snapshot file")
+    if args.capture_needs > 0:
+        needs = args.log_dir / "Huginn_NeedSnapshots.txt"
+        fresh_needs = needs.is_file() and \
+            dt.datetime.fromtimestamp(needs.stat().st_mtime, dt.timezone.utc) >= launched_utc
+        if fresh_needs:
+            count = needs.read_text(encoding="utf-8", errors="replace").count("\nend\n")
+            say(f"need snapshots: {needs} ({count} snapshot(s))")
+        else:
+            say(f"WARNING: no need snapshot file from this launch at {needs}")
+            if verdict and verdict[0] == 0:
+                verdict = (1, "--capture-needs: no snapshot file from this launch")
     code, why = verdict or (1, "no verdict")
     say(("PASS: " if code == 0 else "FAIL: ") + why)
     return code
