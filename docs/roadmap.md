@@ -235,8 +235,9 @@ Logging only: `Huginn_Selections_v3.jsonl` beside the unchanged v2 log.
       (LoreRim: 9.1/s, 73 ms), so the 500 ms `fExternalEquipTimeWindow` does
       not trip in an ordinary menu visit -- only when the loop stalls (on
       LoreRim the cache was 581 ms old as the menu opened). The v3 log never drops a pick for staleness: a stale pick is
-      written with `learned: 0, skip: "stale"`; menu picks join the context
-      taken when the menu opened, with its age.)*
+      written with `learned: 0, skip: "stale"`; inventory and magic menu picks
+      join the context taken when the menu opened, with its age; favourites
+      menu picks join at the press.)*
 - [x] `tools/replay` reads v3; the schema is documented.
 - [x] Done when (agent): replay parses a synthetic v3 file round-trip
   (`tests/core/DecisionLogTests.cpp` pins the encoder to

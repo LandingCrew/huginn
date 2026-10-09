@@ -26,13 +26,22 @@ schema of that log, field by field.
   Games/Skyrim.INI/SKSE`), appended across launches, modlists and characters.
   Every launch starts a **segment** with a `head` line.
 - At 64 MiB the file is renamed `Huginn_Selections_v3-<launch>-<n>.jsonl` and
-  a new one starts (with its own head). Nothing is ever deleted.
+  a new one starts (with its own head). Nothing is ever deleted. If the rename
+  fails (the file held open elsewhere), the writer keeps appending to the
+  current file for the rest of the launch rather than retrying on every record.
+- A file that does not end in a newline (a record torn by a crash or a full
+  disk) is continued on a new line, so the torn record stays one bad line.
 - Test mode (`run_tests.py --decision-session`) writes
   `Huginn_Selections_v3_test.jsonl` instead, truncated at the first record of
   the launch, so scripted presses never reach the player's data (the v2 log
   skips test-mode presses for the same reason).
 - The reader takes `.jsonl` or `.jsonl.gz`: an old file can be gzipped by
   hand (JSON Lines of this kind compresses about tenfold).
+- The reader skips a line that is not JSON and counts it (`stats["bad_lines"]`);
+  until the next head, records that need a cap or context the torn line may
+  have defined are skipped and counted too (`stats["skipped"]`). A later head
+  resyncs. Without a torn line, a reference to an undefined id is a malformed
+  file and an error.
 
 ## Versioning
 
@@ -108,15 +117,16 @@ same tick.
 | `id` | int | unique within the launch |
 | `utc` | string | when taken, `YYYY-MM-DD HH:MM:SS.mmm` UTC |
 | `why` | string | `press`, `menu`, `onset` |
-| `menu` | string | the menu's name, for `why: "menu"` (`InventoryMenu`, `MagicMenu`, `FavoritesMenu`) |
+| `menu` | string | the menu's name, for `why: "menu"` (`InventoryMenu`, `MagicMenu`; the favourites menu takes none) |
 | `need` | [[i, v]] | the need vector: non-zero curve outputs, 0..1 (`needs/NeedMonitor`, R3) |
 | `in` | [[i, v]] | what went into each curve, in the units of `needs.csv`'s `r3_input` (fractions, seconds, units of distance...) |
-| `pipe.ok` | 0/1 | a pipeline run had been cached at all |
-| `pipe.page` | int | the page shown (-1 before any run) |
+| `pipe.ok` | 0/1 | a pipeline run of **this game session** had been cached. 0 before the first run after a load (or `hg reset all`): the cache then still holds the previous save's page and candidates, so neither is logged (no `shown` rows, no `eligible` rows) |
+| `pipe.page` | int | the page shown (-1 when `pipe.ok` is 0) |
 | `pipe.slots` | int | keys on that page |
 | `pipe.ageMs` | int ms | how old that page was when the context was taken |
 | `race` | string or null | editor ID of the hostile primary target's race (alive, hostile), else null |
 | `wc.base`, `wc.max` | float | the wildcard odds in force (per-slot probability base and cap) |
+| `heldFull` | 0/1 | 1: the held rows were read in full. 0: taken inside the post-load window in which inventory extra data must not be read (`Util::IsExtraListStable`, the registries' gate): one plain row per base form, no unique IDs, no per-instance caps or stack charges, `equipped` from the hands and the nocked ammo only (armour reads unworn) |
 | `rows` | row[] | every item the player could choose (below) |
 
 ### Rows
@@ -141,7 +151,7 @@ Each row is an array, in the order `head.row` names:
 | `eligible` | 1 | a candidate of the last pipeline run, **before** the old floors (`fMinimumContextWeight`, `fMinimumUtility`) dropped any: every item CandidateGenerator produced (after its hard filters: uncastable, on cooldown, equipped, buff already active) |
 | `scored` | 2 | ...that also passed the old floors (`util` is set) |
 | `held` | 4 | carried (inventory stacks the catalog describes) or a spell the player knows |
-| `equipped` | 8 | in a hand, worn, or the nocked ammo |
+| `equipped` | 8 | in a hand, worn, or the nocked ammo, when the context was taken (a press's context is taken after the press's own equip: see `dec.preEquipped`) |
 | `shown` | 16 | on the page the player saw; `slot` is its key |
 | `wildcard` | 32 | shown as a wildcard |
 | `override` | 64 | shown by an override |
@@ -149,8 +159,12 @@ Each row is an array, in the order `head.row` names:
 | `addedAtPick` | 256 | the chosen item, missing from its context; carried in `dec.add` |
 
 The **choice sets** of doc 9, read off the flags: the page A = rows with
-`shown`; the menu set H \ A = rows with `held`, without `shown` and without
-`equipped`. Every eligible item is a row whether or not it is held (spells the
+`shown`; the menu set H \ A = rows with `held`, without `shown` and not
+equipped, where "equipped" is the `equipped` flag for every row **except the
+chosen one, which uses `dec.preEquipped`**: a press's context is taken after
+its own equip (a key equips before its callback; an outside equip's event
+follows the equip), so the chosen row can carry `equipped` for the pick
+itself. Every eligible item is a row whether or not it is held (spells the
 player knows are held), and every held item the catalog describes is a row
 whether or not it is a candidate -- all carried armour included, so an armour
 menu pick has its alternatives (making all armour *candidates* is R8).
@@ -169,8 +183,10 @@ context is taken for the held rows:
 | `school_fortified` | 0/1 | a Fortify <school> of the item's school is active on the player |
 
 **Wildcard propensity** (`wp`): the probability of the roll that put this item
-on the page as a wildcard -- P(its slot rolled a wildcard) × 1/(the pool it was
-drawn from), given the earlier rolls of the same pass (`WildcardManager`). It
+on the page as a wildcard -- P(its slot rolled a wildcard) × (the entries of its
+FormID in the pool) / (the pool it was drawn from), given the earlier rolls of
+the same pass (`WildcardManager`). The pool holds one entry per candidate row,
+so two stacks of one weapon are two entries of one FormID. It
 does not include whether a roll happened at all (rolls wait for no wildcard
 being active and the refractory period). Only rows shown as wildcards carry it.
 
@@ -179,7 +195,7 @@ being active and the refractory period). Only rows shown as wildcards carry it.
 | Field | Type | Meaning |
 |---|---|---|
 | `v` | int | 3 |
-| `seq` | int | per launch, in queue order |
+| `seq` | int | per launch, in write order (the writer assigns it; a dropped record leaves no gap) |
 | `utc` | string | when the record was made: the confirmation for a pick; the end of the grace for nothing |
 | `launch`, `list` | string | as in the head |
 | `char` | string | 16 hex digits: the character (`g_activeCharacterID`) |
@@ -201,6 +217,7 @@ being active and the refractory period). Only rows shown as wildcards carry it.
 | `ctx` | int | the context it is joined to |
 | `ctxAgeMs` | int ms | press time minus the context's time (for nothing: record time minus the onset) |
 | `open` | int[] | needs with an open episode at the press (opportunity counting) |
+| `preEquipped` | 0/1 | the chosen item was equipped before the press: in a hand or the nocked ammo on the newest update tick at least 0.25 s before it. 0 for anything else (an equip event says armour was not worn) |
 | `ep` | object or null | nothing only: `need` (id), `i` (index), `durSec`, `peak` (the highest value inside the episode), `onset` (UTC) |
 
 ## Outcomes
@@ -209,7 +226,7 @@ being active and the refractory period). Only rows shown as wildcards carry it.
 |---|---|---|
 | `key` | a Huginn key's selection confirms (`SelectionTracker`) | the context taken at the press |
 | `wheel` | a pick on Huginn's own Wheeler wheel confirms | the context taken at the press |
-| `menu` | any other selection the player made confirms: the inventory, magic or favourites menu, a vanilla favourites hotkey, one of the player's own Wheeler wheels. Includes the picks the frozen learner drops (`learned: 0`): a stale cache, the learning toggle off, armour | for a pick from a selection menu (open, or closed within 2 s): the context taken **when the menu opened**; otherwise the context taken at the press |
+| `menu` | any other selection the player made confirms: the inventory, magic or favourites menu, a vanilla favourites hotkey, one of the player's own Wheeler wheels. Includes the picks the frozen learner drops (`learned: 0`): a stale cache, the learning toggle off, armour | for a pick from the inventory or magic menu (open, or closed within 2 s): the context taken **when the menu opened**; otherwise (the favourites menu included) the context taken at the press |
 | `nothing` | a need episode ends unanswered (below) | the context taken at the episode's onset |
 
 A selection confirms as before (`SelectionTracker`): a consumable when its count
@@ -226,8 +243,8 @@ the menu opened. Inside the inventory and magic menus the game is paused (the
 world does not move, the HUD and the page are hidden), so the situation then is
 the situation of the pick, apart from wall-clock decays; the picks of one visit
 share the context. `ctxAgeMs` says how long the player browsed. The favourites
-menu does not pause and the widget stays visible, but the same join keeps one
-rule for every menu.
+menu does not pause and the widget stays visible, so its picks join the context
+taken at the press, like a vanilla hotkey's (the default applied 2026-10-09).
 
 **Staleness.** Measured in game (vanilla+, 0.23.15, test mode): the update loop
 keeps ticking inside the inventory menu (57 ticks in 5.9 s, 9.6/s, every one
@@ -252,7 +269,7 @@ are in every head):
 | expiry | v_k < 0.25. The gap is hysteresis: a need wobbling about 0.5 is one episode |
 | length | an episode shorter than 1 s is dropped (no one can react to it) |
 | answer | a confirmed selection (any outcome) whose press lies in [onset, expiry + 0.5 s] answers the episode. The slack is for a press that itself ends the episode: an update tick can see the need gone before the press is stamped (seen in game: 2 ms) |
-| grace | an ended episode is judged 4 s after its expiry (the 3 s equip confirm, the slack and a few ticks), so a pick made inside it but confirmed later still answers it |
+| grace | an ended episode is judged 4 s after its expiry (the 3 s equip confirm, the slack and a few ticks), so a pick made inside it but confirmed later still answers it. It is judged on each update tick **after** the selections' confirmations: after a stall of the loop, a confirmation and the end of a grace can land on one tick, and the confirmation counts first |
 | nothing | an ended episode, ≥ 1 s long, unanswered when its grace runs out: one `nothing` record, joined to the context taken at the onset |
 | paused | episodes neither start nor end while the game is paused (a menu): the world is frozen, so a change then is a wall-clock decay or the player's own menu action, which a pick inside the still-open episode answers |
 
@@ -285,11 +302,18 @@ and 185 at most (after the floors), so ~250 rows per context is the estimate.
 | a decision sharing its context | ~430 B | ~425 B | ~430 B |
 | the first context of a segment (every cap defined) | 16 KB (93 caps) | 7.6 KB (38 caps) | ~40 KB |
 | head | 6.7 KB | 6.7 KB | 6.7 KB |
-| update tick (eligible rows' cross-features, episodes), mean / max | 89–123 µs / 1.7–3.2 ms | 84 µs / 5.9 ms | -- |
+| update tick (eligible rows' cross-features, episodes), mean / max | 89–123 µs / 1.4–3.2 ms | 84 µs / 5.9 ms | -- |
+| taking a context, mean / max (fix round) | 1.0–1.2 ms / 1.4–2.0 ms; 0.3–0.45 ms with the held set cached | -- | -- |
 
-The tick's maximum is an onset or a press reading the inventory for the held
-rows (cached for a second); the mean is the per-tick cross-features. Both are
-Debug numbers.
+The tick's maximum is an onset taking a context; most of a context is the held
+read (the inventory walk: ~0.9 ms of ~1.3 ms on vanilla+). All Debug numbers.
+To keep that off the moments that matter: a press always reads the held set
+(its state then); a menu open or an onset reuses it until the player's
+inventory or equipment changes (`TESContainerChangedEvent`, `TESEquipEvent`)
+or 5 s pass; the favourites menu builds no context; and the first full read
+after a load -- which maps every per-instance cap through the effect mapper --
+runs once on the first update tick the post-load window allows, not on the
+first press.
 
 Per hour of play: the October soak made about 54 selections an hour (412 page
 picks plus 83 menu picks in 9.1 h); a menu visit adds one context however many
@@ -317,9 +341,11 @@ What bounds it:
 
 - The chosen row is matched by FormID: a key press carries no stack id, so of
   two stacks of one weapon the shown one (key, wheel) or the first eligible
-  one (menu) is taken.
-- The held set is read at most once a second (a context taken within a second
-  of the last reuses it).
+  one (menu) is taken. Shown rows are matched by FormID and unique ID (the
+  page's assignment carries it), then by FormID alone.
+- The `equipped` flags of the rows other than the chosen one come from the
+  held read: for a press, the state just after its own equip; for a menu or an
+  onset, the last read (re-done on any inventory or equipment change).
 - `ctx.need` is the latest update tick's vector (the monitor runs every tick,
   ~100 ms); the page is the last pipeline run's (`pipe.ageMs`).
 - Game data changed by scripts after the catalog was built is not seen (the

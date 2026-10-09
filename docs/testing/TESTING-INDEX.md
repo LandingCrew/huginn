@@ -112,9 +112,9 @@ answered); schema: [9-selection-log-v3.md](../architecture/9-selection-log-v3.md
 
 | Test | What it pins |
 |---|---|
-| `DecisionLogTests.cpp` | the JSON helpers (escaping, numbers, FormIDs); caps and contexts defined once per segment, content-addressed; a synthetic session (key, menu with an added row, a co-pick sharing the context, nothing, wheel, a second segment) equals `fixtures/decisions/synthetic_v3.jsonl` byte for byte |
+| `DecisionLogTests.cpp` | the JSON helpers (escaping, numbers, FormIDs); caps and contexts defined once per segment, content-addressed; a synthetic session (key, menu with an added row, a co-pick sharing the context, nothing, wheel, a second segment) equals `fixtures/decisions/synthetic_v3.jsonl` byte for byte (with `heldFull` and `preEquipped`); the run gate that keeps a previous save's cached run out of a context after a load (two loads in one launch) |
 | `NeedEpisodesTests.cpp` | onset 0.5 / expiry 0.25 hysteresis, the 1 s minimum, a selection inside answers and one outside does not, the grace, the 0.5 s slack for a press that ended its episode, payloads, reset |
-| `tools/replay/test_replay_v3.py` (CTest `replay_v3_roundtrip`) | `replay.py`'s v3 reader decodes the golden file to the values the C++ test wrote, round-trips a session written by an encoder of its own (plain and gzip), refuses malformed files |
+| `tools/replay/test_replay_v3.py` (CTest `replay_v3_roundtrip`) | `replay.py`'s v3 reader decodes the golden file to the values the C++ test wrote, round-trips a session written by an encoder of its own (plain and gzip), refuses malformed files, skips a torn line (and what depended on it) and resyncs at the next head |
 
 After a deliberate format change: run the tests, copy
 `<build>/tests/synthetic_v3.actual.jsonl` over the fixture, update the Python
@@ -275,8 +275,14 @@ an off-page weapon (or potion) equipped from it (`menu`, the armour one
 `learned: 0`), the menu closed. It writes `Huginn_Selections_v3_test.jsonl`
 (never the player's `Huginn_Selections_v3.jsonl`), logs
 `[HuginnTest] decision session: key=.. wheel=.. menu=.. nothing=.. ...` with
-the sizes and the tick cost, and fails the run when a key, menu or nothing
-record (or a wheel record after a wheel pick) is missing. The menu sink's
+the sizes and the tick and context costs, and fails the run when a key, menu or
+nothing record (or a wheel record after a wheel pick) was not **written**, or
+the writer did not drain: the reason reaches the DONE line
+(`reason=decision-no-nothing`, `decision-flush-timeout`...), as a failed `coc`
+does. The runner then decodes the file with `tools/replay/replay.py` and fails
+on a torn line or a missing outcome on its own. (Proven by a local build that
+dropped every `nothing` record: `DONE result=FAIL ... reason=decision-no-nothing`,
+and the runner's own check on that file: `no nothing record in the v3 file`.) The menu sink's
 `[SelectionV3] InventoryMenu was open ... update tick(s) inside` line is the
 measurement of whether the update loop ticks in menus. Read the file with
 `python -I tools/replay/replay.py --v3 <file>`.
