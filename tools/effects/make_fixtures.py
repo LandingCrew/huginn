@@ -306,7 +306,7 @@ def row_quantity(col, kr, constant):
     elif rule == 'PGD':
         raw, graded, post = mag, True, dfac(d)
     elif rule == 'PArea':
-        raw, graded = max(float(kr['area']), mag), True
+        raw, graded = max(float(kr['area']), mag, float(kr.get('radius', 0))), True
     elif rule == 'Hunger':
         post = hunger_size(kr['name'], kr['kws'])
     elif rule == 'Thirst':
@@ -461,7 +461,7 @@ def main():
             'weaponType,twoHanded,damage,speed,reach,critDamage,armorSlots,armorRating,armorType,soulCapacity,soulContained,'
             'lightRadius,enchantment,enchantmentCharge,effectIndex,effectFormID,effectName,archetype,primaryAV,secondaryAV,'
             'resistAV,effectDelivery,effectCasting,magnitude,duration,area,effectBaseCost,effectCost,detrimental,hostile,'
-            'effectFlags,effectKeywords,effectDescription,ammoNonBolt,enchantCasting,effectPlugin,effectSchool,payloadOf').split(',')]
+            'effectFlags,effectKeywords,effectDescription,ammoNonBolt,enchantCasting,effectPlugin,effectSchool,effectLightRadius,payloadOf').split(',')]
         # effectCost after base.load is the renamed base cost: write it back under the dump's own name
         hdr = list(pd.read_csv(path, nrows=0).columns)
         # base.load renamed effectBaseCost to effectCost when the dump had no per-effect cost (0.23.7)
@@ -507,7 +507,8 @@ def main():
             def kept_row(rr, cols_, visible, route, mag=None):
                 kept_rows.append({'cols': cols_, 'mag': num(rr['magnitude']) if mag is None else mag,
                                   'dur': int(num(rr['duration'])),
-                                  'area': int(num(rr['area'])), 'delivery': str(rr['effectDelivery']),
+                                  'area': int(num(rr['area'])), 'radius': num(rr.get('effectLightRadius', 0)),
+                                  'delivery': str(rr['effectDelivery']),
                                   'visible': visible, 'route': route, 'name': str(rr['effectName']),
                                   'kws': str(rr['effectKeywords']), 'hydrated': hydrated})
             for r in rows:

@@ -77,7 +77,13 @@ namespace Huginn::Effect
             r.description = desc ? desc : "";
             r.school = std::string(Util::AvName(m->data.associatedSkill));
             // A Light effect's strength is its light form's radius (P x G(radius)).
-            if (m->data.light) r.lightRadius = static_cast<int>(m->data.light->data.radius);
+            // The light is the Light archetype's associated form; data.light is
+            // the "casting light" every effect may have (a Fireball's glow).
+            if (m->data.archetype == RE::EffectSetting::Archetype::kLight && m->data.associatedForm) {
+                if (const auto* l = m->data.associatedForm->As<RE::TESObjectLIGH>()) {
+                    r.lightRadius = static_cast<int>(l->data.radius);
+                }
+            }
             r.payloadKnown = true;  // in game the link is always readable (or absent)
             idx = static_cast<std::uint32_t>(out.effects.size());
             out.effects.push_back(std::move(r));
