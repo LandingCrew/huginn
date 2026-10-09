@@ -177,6 +177,27 @@ namespace Huginn::Slot
             return m_generation.load(std::memory_order_acquire);
         }
 
+#ifndef NDEBUG
+        /// Tests only (the slot capture, SlotCapture.cpp): set the [SlotLocker]
+        /// values the allocation reads, as an `hg reload` would, without the
+        /// INI. Main thread, like every allocation. Restore with the values
+        /// read before.
+        void ApplyAllocSettingsForTest(bool keepSlotPositions, bool holdSeatedItems, float challengerMargin,
+            bool fillJobKeysFromRegular, float classDiscount, uint32_t classFree, float homeKeyMemorySec,
+            bool returnToHomeKey, bool remembranceToJob) noexcept
+        {
+            m_keepSlotPositions.store(keepSlotPositions, std::memory_order_release);
+            m_holdSeatedItems.store(holdSeatedItems, std::memory_order_release);
+            m_challengerMargin.store(challengerMargin, std::memory_order_release);
+            m_fillJobKeysFromRegular.store(fillJobKeysFromRegular, std::memory_order_release);
+            m_classRepeatDiscount.store(classDiscount, std::memory_order_release);
+            m_classFreeSlots.store(classFree, std::memory_order_release);
+            m_homeKeyMemorySec.store(homeKeyMemorySec, std::memory_order_release);
+            m_returnToHomeKey.store(returnToHomeKey, std::memory_order_release);
+            m_remembranceToJobKey.store(remembranceToJob, std::memory_order_release);
+        }
+#endif
+
     private:
         SlotSettings() { ResetToDefaults(); }
 

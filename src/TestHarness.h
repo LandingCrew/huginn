@@ -26,6 +26,9 @@
 //       sSaveName=<save name, no .ess>     ; optional
 //       iExpiresUnix=<unix seconds>        ; optional; ignored once past
 //       iLoadTimeoutSec=300                ; optional
+//       iCaptureSlotsSec=<seconds>         ; optional (env HUGINN_CAPTURE_SLOTS):
+//                                          ; after the load suites, record slot
+//                                          ; snapshots that long (SlotSnapshot.h)
 //     Read once at plugin load and deleted, so it applies to one launch only.
 // In test mode, after the main-menu suites Huginn loads the named save (so the
 // after-load suites run), then logs

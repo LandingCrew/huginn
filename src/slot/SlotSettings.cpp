@@ -3,6 +3,7 @@
 #include <SimpleIni.h>
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <numeric>
 #include <set>
 #include "SlotClassifier.h"
@@ -192,8 +193,13 @@ namespace Huginn::Slot
         SKSE::log::info("[SlotSettings] Keep slot positions: {}"sv, keepPositions ? "on" : "off");
 
         const bool hold = ini.GetBoolValue("SlotLocker", "bHoldSeatedItems", true);
+        // A NaN passes std::clamp untouched (fChallengerMargin = nan): read as
+        // the default instead, here and for the other two below. std::isfinite
+        // sends +-inf to the default too: fChallengerMargin = inf used to clamp
+        // to 10 and now reads as 0.5.
+        auto finiteOr = [](double v, double fallback) { return std::isfinite(v) ? v : fallback; };
         const float margin = std::clamp(
-            static_cast<float>(ini.GetDoubleValue("SlotLocker", "fChallengerMargin", 0.5)), 0.0f, 10.0f);
+            static_cast<float>(finiteOr(ini.GetDoubleValue("SlotLocker", "fChallengerMargin", 0.5), 0.5)), 0.0f, 10.0f);
         m_holdSeatedItems.store(hold, std::memory_order_release);
         m_challengerMargin.store(margin, std::memory_order_release);
         SKSE::log::info("[SlotSettings] Hold seated items: {} (challenger margin {:.0f}%)"sv,
@@ -201,14 +207,14 @@ namespace Huginn::Slot
 
         const bool returnHome = ini.GetBoolValue("SlotLocker", "bReturnToHomeKey", true);
         const float homeMemorySec = std::clamp(
-            static_cast<float>(ini.GetDoubleValue("SlotLocker", "fHomeKeyMemorySec", 60.0)), 0.0f, 600.0f);
+            static_cast<float>(finiteOr(ini.GetDoubleValue("SlotLocker", "fHomeKeyMemorySec", 60.0), 60.0)), 0.0f, 600.0f);
         m_returnToHomeKey.store(returnHome, std::memory_order_release);
         m_homeKeyMemorySec.store(homeMemorySec, std::memory_order_release);
         SKSE::log::info("[SlotSettings] Home keys: {} (an item back within {:.0f}s takes its key back)"sv,
             returnHome && homeMemorySec > 0.0f ? "on" : "off", homeMemorySec);
 
         const float classDiscount = std::clamp(
-            static_cast<float>(ini.GetDoubleValue("SlotLocker", "fClassRepeatDiscount", 0.5)), 0.0f, 1.0f);
+            static_cast<float>(finiteOr(ini.GetDoubleValue("SlotLocker", "fClassRepeatDiscount", 0.5), 0.5)), 0.0f, 1.0f);
         const auto classFree = static_cast<uint32_t>(std::clamp(
             ini.GetLongValue("SlotLocker", "iClassFreeSlots", 3), 1L, static_cast<long>(MAX_SLOTS_PER_PAGE)));
         m_classRepeatDiscount.store(classDiscount, std::memory_order_release);

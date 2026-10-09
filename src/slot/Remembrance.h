@@ -114,6 +114,13 @@ namespace Huginn::Slot
         /// Forget everything (save load, `hg reset`, layout reload).
         void Reset();
 
+#ifndef NDEBUG
+        /// Tests only (the slot capture's campaign, SlotCapture.cpp): a hold
+        /// of `formID` on `slot` of `page`, as if a press had taken it off, or
+        /// none with formID 0. Long enough to outlast the test.
+        void SetHoldForTest(size_t page, size_t slot, RE::FormID formID);
+#endif
+
     private:
         Remembrance() = default;
 

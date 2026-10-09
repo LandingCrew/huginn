@@ -2,6 +2,8 @@
 #include "override/OverrideConditions.h"
 #include "SlotClassifier.h"
 #include <chrono>
+#include <cmath>
+#include <optional>
 #include <set>
 #include <span>
 #include <spdlog/spdlog.h>
@@ -240,17 +242,19 @@ namespace Huginn::Slot
                     shown.IsRemembered() || slot.shownRemembered);
 
                 // Challenger ratio, for the changes a margin would govern.
+                // On scores (any sign): the incumbent's is empty when it is
+                // no longer a candidate -- no score value stands for "gone".
                 auto ratio = Telemetry::ChallengerRatio::NotApplicable;
-                float incumbentUtility = -1.0f;  // < 0 = no longer a candidate
+                std::optional<Core::SlotScore> incumbentScore;
                 if (!scored.empty() &&
                     (cause == Telemetry::SlotChange::Expired || cause == Telemetry::SlotChange::Unheld)) {
                     for (const auto& sc : scored) {
                         if (sc.GetFormID() == slot.shownFormID && sc.GetUniqueID() == slot.shownUniqueID) {
-                            incumbentUtility = sc.utility;
+                            incumbentScore = sc.SlotScore();
                             break;
                         }
                     }
-                    ratio = Telemetry::BucketChallengerRatio(shown.utility, incumbentUtility);
+                    ratio = Telemetry::BucketChallengerRatio(shown.score, incumbentScore);
                 }
                 // Tenure: how long the item being replaced was on the slot.
                 float tenureSec = -1.0f;
@@ -264,13 +268,16 @@ namespace Huginn::Slot
                 if (ratio == Telemetry::ChallengerRatio::NotApplicable) {
                     spdlog::debug("[SlotChurn] Slot {}: '{}' -> '{}' ({})", i, from, to,
                         Telemetry::SlotChangeName(cause));
-                } else if (incumbentUtility < 0.0f) {
-                    spdlog::debug("[SlotChurn] Slot {}: '{}' -> '{}' ({}, u={:.3f}, incumbent gone)",
-                        i, from, to, Telemetry::SlotChangeName(cause), shown.utility);
+                } else if (!incumbentScore) {
+                    spdlog::debug("[SlotChurn] Slot {}: '{}' -> '{}' ({}, s={:+.3f}, incumbent gone)",
+                        i, from, to, Telemetry::SlotChangeName(cause), shown.score);
                 } else {
-                    spdlog::debug("[SlotChurn] Slot {}: '{}' -> '{}' ({}, u={:.3f} vs {:.3f}, x{:.2f})",
-                        i, from, to, Telemetry::SlotChangeName(cause), shown.utility, incumbentUtility,
-                        incumbentUtility > 0.0f ? shown.utility / incumbentUtility : 0.0f);
+                    // The difference is the log of the old ratio: exp() of it
+                    // is always positive, whatever the scores' signs.
+                    const double delta = shown.score - *incumbentScore;
+                    spdlog::debug("[SlotChurn] Slot {}: '{}' -> '{}' ({}, s={:+.3f} vs {:+.3f}, {:+.3f} = x{:.2f})",
+                        i, from, to, Telemetry::SlotChangeName(cause), shown.score, *incumbentScore, delta,
+                        std::exp(delta));
                 }
             }
             // The key's age restarts on what the player can SEE change -- a

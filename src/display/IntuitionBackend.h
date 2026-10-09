@@ -30,13 +30,14 @@ namespace Huginn::Display
             std::string detail;
             int visualState = 0;
 
-            /// Sent to the widget but NOT compared. It is `assignment.utility`, a
-            /// float that moves on essentially every scoring run, so including it
+            /// Sent to the widget but NOT compared. It is exp(assignment.score)
+            /// (the utility under R7's bridge, SlotUtils.h), a float that
+            /// moves on essentially every scoring run, so including it
             /// made the cache miss every time — measured 2026-08-22: Display::
             /// Intuition count stayed equal to ScoreCandidates count (188/188) and
             /// MTPC went UP, 84 -> 92.76 us, because the comparison work was added
             /// without ever paying off. It is safe to exclude because AS2's
-            /// applyItemContent (Intuition.as:707) takes the parameter and never
+            /// applyItemContent (Intuition.as:648) takes the parameter and never
             /// reads it — confidence drives nothing on screen.
             double confidence = 0.0;
 

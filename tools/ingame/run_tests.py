@@ -86,7 +86,7 @@ Does not deploy the DLL: put the Debug Huginn.dll in the list first.
 Usage:
     python -I tools/ingame/run_tests.py [--list vanilla+|simonrim|lorerim]
         [--save NAME | --save latest | --no-save] [--timeout 600]
-        [--allow-skips] [--multiple] [--dry-run]
+        [--allow-skips] [--multiple] [--dry-run] [--capture-slots SEC]
 
 A dedicated save is best: in game, open the console and type `save HuginnTest`
 (it lands in the profile's saves folder as HuginnTest.ess). Without --save the
@@ -603,7 +603,14 @@ def main() -> int:
     ap.add_argument("--multiple", action="store_true",
                     help="launch even when ANOTHER instance's MO2 is running (MO2's unsupported --multiple)")
     ap.add_argument("--dry-run", action="store_true", help="check everything, print the command, launch nothing")
+    ap.add_argument("--capture-slots", type=int, default=0, metavar="SEC",
+                    help="after the load suites, play SEC seconds of scripted input while Huginn records every "
+                         "slot allocation to Huginn_SlotSnapshots.txt in the log folder (Debug; R7 golden test)")
     args = ap.parse_args()
+    # The capture session runs after the suites: its seconds, plus the
+    # campaign and the shutdown, come on top of --timeout.
+    if args.capture_slots > 0:
+        args.timeout += args.capture_slots + 180
 
     ml = LISTS[args.list]
     mo2 = ml.root / MO2_EXE
@@ -637,7 +644,8 @@ def main() -> int:
         "bEnabled=1\n"
         f"sSaveName={save or ''}\n"
         f"iExpiresUnix={expires}\n"
-        f"iLoadTimeoutSec={args.load_timeout}\n",
+        f"iLoadTimeoutSec={args.load_timeout}\n"
+        + (f"iCaptureSlotsSec={args.capture_slots}\n" if args.capture_slots > 0 else ""),
         encoding="utf-8")
 
     deadline = time.monotonic() + args.timeout
@@ -708,6 +716,22 @@ def main() -> int:
             m = RE_RESULT.search(line)
             if m:
                 print(f"  RESULT {m.group(1)}: {m.group(2)}")
+    if args.capture_slots > 0:
+        snaps = args.log_dir / "Huginn_SlotSnapshots.txt"
+        # Only a file written by THIS launch counts (a stale one from an
+        # earlier run would pass for this one's).
+        fresh_snaps = snaps.is_file() and \
+            dt.datetime.fromtimestamp(snaps.stat().st_mtime, dt.timezone.utc) >= launched_utc
+        if fresh_snaps:
+            say(f"slot snapshots: {snaps} ({snaps.stat().st_size} bytes)")
+        elif snaps.is_file():
+            say(f"WARNING: {snaps} is older than this launch: no snapshots were written")
+            if verdict and verdict[0] == 0:
+                verdict = (1, "--capture-slots: no snapshot file from this launch")
+        else:
+            say(f"WARNING: no slot snapshot file at {snaps}")
+            if verdict and verdict[0] == 0:
+                verdict = (1, "--capture-slots: no snapshot file")
     code, why = verdict or (1, "no verdict")
     say(("PASS: " if code == 0 else "FAIL: ") + why)
     return code

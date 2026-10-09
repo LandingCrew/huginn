@@ -6,9 +6,11 @@
 // =============================================================================
 // SLOT CLASS CAP MATH (pure; host-tested in tests/core/SlotClassCapMathTests.cpp)
 // =============================================================================
-// The arithmetic behind Slot::SlotClassCap (src/slot/SlotClassCap.h), which
-// owns the counting and the candidate classification. Kept here, free of game types, so
-// it can be proven on the host. See src/core/README.md.
+// The class cap's arithmetic AS IT WAS until R7: a multiplier d^k on the
+// utility. The game now adds k ln d to a score instead (ClassCapTerm,
+// SlotScoreMath.h), which a negative score cannot turn into a promotion; this
+// multiplier stays as the old arithmetic the golden test replays
+// (tests/core/LegacySlotPolicy.h). See src/core/README.md.
 //
 // On a Regular key, the first `freePerClass` items of a slot class on the page
 // compete at full utility; each one past that pays x discount, x discount^2, ...

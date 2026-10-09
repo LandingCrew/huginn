@@ -130,8 +130,10 @@ namespace Huginn::Scoring
         // Performance
         // ---------------------------------------------------------------------
 
-        // Number of top candidates to fully sort (rest are partial sorted)
-        // Must be >= max slots per page (10) so all slots get correctly ranked fills
+        // How many top candidates count as ranked: the cold-start floor (fewer
+        // scored than this triggers it) and the ranks the selection log reports.
+        // The scorer sorts the WHOLE list since R7 (0.23.11); this no longer
+        // limits the sort.
         size_t topNCandidates = 10;
 
         // ---------------------------------------------------------------------

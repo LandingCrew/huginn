@@ -6516,20 +6516,25 @@ void RunFillJobKeysTest()
 // =============================================================================
 // Class cap: a soft cap per slot class on Regular keys (SlotClassCap.h)
 // =============================================================================
-// The arithmetic and the grouping, without a layout: the shipped INI decides
-// how many Regular keys a page has, so an allocation-level check would test
-// the INI. Three healing spells shown, a fourth at u 2.0 weighs 1.0 at x0.5
-// and loses to a damage spell at 1.1; a food that heals and a food that
-// fortifies are ONE class.
+// The arithmetic on scores (R7: k ln d added, not d^k multiplied), the
+// grouping, and one allocation through the real allocator on a made-up page
+// of Regular keys: with the free items of the healing class shown, a fourth
+// healing spell pays ln d and loses to a damage spell that beats it only
+// capped; a food that heals and a food that fortifies are ONE class.
 void RunSlotClassCapTest()
 {
 #ifndef NDEBUG
     using namespace Huginn::Slot;
     logger::info("Running class cap test..."sv);
 
-    auto spell = [](RE::FormID id, Spell::SpellType type, float utility) {
+    // Candidates keep a view of their name: every name set once, up front.
+    static std::array<std::string, 16> names;
+    for (size_t i = 0; i < names.size(); ++i) {
+        names[i] = "SlotClassCapProbe" + std::to_string(i);
+    }
+    auto spell = [](size_t i, Spell::SpellType type, float utility) {
         Candidate::SpellCandidate s{};
-        s.formID = id; s.name = "SlotClassCapProbe"; s.type = type;
+        s.formID = 0x0BADF200 + static_cast<RE::FormID>(i); s.name = names[i]; s.type = type;
         Scoring::ScoredCandidate sc{}; sc.candidate = s; sc.utility = utility;
         return sc;
     };
@@ -6545,31 +6550,62 @@ void RunSlotClassCapTest()
         if (!ok) { logger::error("TEST FAIL: class cap: {}"sv, what); passed = false; }
     };
 
-    SlotClassCap cap(0.5f, 3);
-    const auto heal4 = spell(0x0BADF204, Spell::SpellType::Healing, 2.0f);
-    const auto flames = spell(0x0BADF205, Spell::SpellType::Damage, 1.1f);
-    expect(cap.Factor(heal4) == 1.0f, "an empty page discounted a healing spell");
-    for (RE::FormID id = 0x0BADF201; id <= 0x0BADF203; ++id) {
-        expect(cap.Factor(heal4) == 1.0f, "a class under its 3 free items was discounted");
-        cap.Add(spell(id, Spell::SpellType::Healing, 3.0f));
+    // The arithmetic, at the shipped 3 free and x0.5.
+    expect(Core::ClassCapTerm(0.5f, 3, 0) == 0.0 && Core::ClassCapTerm(0.5f, 3, 2) == 0.0,
+        "a class under its 3 free items was discounted");
+    expect(Core::ClassCapTerm(0.5f, 3, 3) == std::log(0.5), "the 4th item of a class does not pay ln 0.5");
+    expect(Core::ClassCapTerm(0.5f, 3, 4) == 2.0 * std::log(0.5), "the 5th item of a class does not pay 2 ln 0.5");
+    expect(Core::ClassCapTerm(1.0f, 3, 6) == 0.0, "fClassRepeatDiscount = 1.0 still discounts");
+    {
+        const auto heal4 = spell(4, Spell::SpellType::Healing, 2.0f);
+        const auto flames = spell(5, Spell::SpellType::Damage, 1.1f);
+        expect(heal4.SlotScore() + Core::ClassCapTerm(0.5f, 3, 3) < flames.SlotScore(),
+            "the 4th healing spell (2.0 x0.5) still beats a damage spell at 1.1");
+        // The reason for R7: a negative score must go DOWN under the cap
+        // (x0.5 on a negative utility would have raised it).
+        expect(-2.0 + Core::ClassCapTerm(0.5f, 3, 3) < -2.0, "the cap raised a negative score");
     }
-    expect(cap.Factor(heal4) == 0.5f, "the 4th healing item is not at x0.5");
-    expect(cap.Factor(flames) == 1.0f, "a damage spell paid for the healing crowd");
-    expect(heal4.utility * cap.Factor(heal4) < flames.utility * cap.Factor(flames),
-        "the 4th healing spell (2.0 x0.5) still beats a damage spell at 1.1");
-    cap.Add(heal4);
-    expect(cap.Factor(heal4) == 0.25f, "the 5th item of a class is not at x0.25");
 
-    expect(SlotClassCap::ClassOf(food(0x0BADF206, Item::ItemType::HealthPotion)) == SlotClassification::FoodAny,
+    expect(SlotClassCap::ClassOf(food(0x0BADF2F6, Item::ItemType::HealthPotion)) == SlotClassification::FoodAny,
         "food that heals is not counted as food");
-    expect(SlotClassCap::ClassOf(food(0x0BADF207, Item::ItemType::BuffPotion)) == SlotClassification::FoodAny,
+    expect(SlotClassCap::ClassOf(food(0x0BADF2F7, Item::ItemType::BuffPotion)) == SlotClassification::FoodAny,
         "food that fortifies is not counted as food");
 
-    SlotClassCap off(1.0f, 3);
-    for (RE::FormID id = 0x0BADF201; id <= 0x0BADF206; ++id) {
-        off.Add(spell(id, Spell::SpellType::Healing, 3.0f));
+    // Through the allocator, on the live discount and free count: `free`
+    // healing spells fill their allowance, then one key is left for a fourth
+    // healing spell at 2.0 or a damage spell halfway (in score) between what
+    // the fourth weighs capped and uncapped.
+    const auto& settings = SlotSettings::GetSingleton();
+    const float discount = settings.ClassRepeatDiscount();
+    const uint32_t free = settings.ClassFreeSlots();
+    if (Core::ClassCapActive(discount) && free + 1 <= 9) {
+        std::vector<SlotConfig> configs(free + 1);
+        for (size_t i = 0; i < configs.size(); ++i) {
+            configs[i].classification = SlotClassification::Regular;
+            configs[i].priority = static_cast<int8_t>(configs.size() - i);
+            configs[i].skipEquipped = false;   // no player: nothing is equipped
+        }
+        Scoring::ScoredCandidateList list;
+        for (uint32_t k = 0; k < free; ++k) {
+            list.push_back(spell(6 + k, Spell::SpellType::Healing, 3.0f));
+        }
+        const float between = Core::DisplayUtility(
+            Core::BridgeScore(2.0f) + 0.5 * Core::ClassCapTerm(discount, free, free));
+        list.push_back(spell(4, Spell::SpellType::Healing, 2.0f));
+        list.push_back(spell(5, Spell::SpellType::Damage, between));
+
+        auto& allocator = SlotAllocator::GetSingleton();
+        allocator.Reset();
+        const auto page = allocator.AllocateForTest(0, 0xFFFF0003u, configs, list);
+        allocator.Reset();   // no probe seats left for the first real pass
+        auto shown = [&](RE::FormID id) {
+            return std::any_of(page.begin(), page.end(), [id](const SlotAssignment& a) { return !a.IsEmpty() && a.formID == id; });
+        };
+        expect(shown(0x0BADF205), "the damage spell that beats the capped 4th healing spell is not on the page");
+        expect(!shown(0x0BADF204), "the 4th healing spell took a key it wins only uncapped");
+    } else {
+        logger::info("  class cap test: allocation check skipped (cap off or free > 8 in this INI)"sv);
     }
-    expect(!off.Active() && off.Factor(heal4) == 1.0f, "fClassRepeatDiscount = 1.0 still discounts");
 
     if (passed) {
         logger::info("  class cap test PASSED"sv);
@@ -6632,10 +6668,14 @@ void RunSlotClassCapHoldTest()
         return sc;
     };
 
-    // Pass 2's slot-0 item sits halfway between what the axe needs to beat
-    // it capped and uncapped, and the other challenger ties it (no win).
+    // Pass 2's slot-0 item sits halfway (in score) between what the axe
+    // needs to beat it capped and uncapped -- s_axe + ln d / 2 - ln m -- and
+    // the other challenger ties it (no win). Scores, not ratios (R7): the
+    // hold asks s_challenger - s_holder > ln m.
     constexpr float kAxe = 0.325f;
-    const float weakened = kAxe * (1.0f + discount) / 2.0f / (1.0f + margin);
+    const float weakened = Core::DisplayUtility(Core::BridgeScore(kAxe) +
+        0.5 * Core::ClassCapTerm(discount, settings.ClassFreeSlots(), settings.ClassFreeSlots()) -
+        Core::LogHoldMargin(margin));
 
     using SpellType = Spell::SpellType;
     const Scoring::ScoredCandidateList first = {
@@ -6761,7 +6801,10 @@ void RunHomeKeyTest()
                F = spell(5, SpellType::Buff, 0.5f),    G = spell(6, SpellType::Debuff, 0.4f),
                H = weapon(7, 0.3f), N = weapon(8, 0.35f);
     // Back, A beats H by the margin but not N: the hold puts it on slot 7.
-    const float returned = (0.3f + 0.35f) / 2.0f * (1.0f + margin);
+    // Halfway between them in score, plus ln m (the hold is a difference of
+    // scores since R7, not a ratio of utilities).
+    const float returned = Core::DisplayUtility(
+        0.5 * (Core::BridgeScore(0.3f) + Core::BridgeScore(0.35f)) + Core::LogHoldMargin(margin));
     const Scoring::ScoredCandidateList pass1 = { spell(0, SpellType::Healing, 1.0f), B, C, D, E, F, G, H };
     const Scoring::ScoredCandidateList pass2 = { B, C, D, E, F, G, N, H };
     const Scoring::ScoredCandidateList pass3 = { B, C, D, E, F, G, spell(0, SpellType::Healing, returned), N, H };

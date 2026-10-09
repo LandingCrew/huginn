@@ -363,6 +363,9 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
         auto addHeld = [&](const std::vector<Candidate::CandidateVariant>& pool) {
             for (const auto& c : pool) {
                 if (Candidate::GetFormID(c) == id) {
+                    // No utility (0, display only): the flag makes its slot
+                    // score -inf (ScoredCandidate::SlotScore), below any
+                    // ranked row's whatever its sign.
                     Scoring::ScoredCandidate sc;
                     sc.candidate = c;
                     sc.isRememberedOnly = true;
@@ -539,9 +542,11 @@ void PipelineCoordinator::UpdateCaches(PipelineContext& ctx)
 {
     Huginn_ZONE_NAMED("Pipeline::UpdateCaches");
     // Cache pipeline state for external equip attribution.
-    // sortedPrefix = topNCandidates: only that prefix of scoredCandidates is in
-    // utility order (partial_sort); see PipelineStateCache::Update. Page comes
-    // from the tick snapshot so it matches ctx.assignments exactly.
+    // sortedPrefix = topNCandidates: ranks are reported for that prefix only.
+    // The whole list is in score order since R7 (UtilityScorer sorts it all),
+    // but attribution classifies past the prefix as a far miss, and that stays
+    // as it was; see PipelineStateCache::Update. Page comes from the tick
+    // snapshot so it matches ctx.assignments exactly.
     Learning::PipelineStateCache::GetSingleton().Update(
         ctx.scoredCandidates, ctx.assignments,
         ctx.displayPageIndex,
@@ -680,8 +685,10 @@ void PipelineCoordinator::LogRecommendations(PipelineContext& ctx)
             ctx.displayPageIndex, ctx.displayPageName);
         for (const auto& a : ctx.assignments) {
             if (a.IsEmpty() || a.formID == 0) continue;
-            logger::info("[Recs]   slot {}: {} ({:08X}) u={:.3f}{}"sv,
-                a.slotIndex, a.name, a.formID, a.utility,
+            // An override carries no utility, only the +inf "pinned" score.
+            logger::info("[Recs]   slot {}: {} ({:08X}) {}{}"sv,
+                a.slotIndex, a.name, a.formID,
+                a.IsOverride() ? std::string("override") : fmt::format("u={:.3f} s={:+.3f}", a.utility, a.score),
                 a.subtextLabel.empty() ? "" : fmt::format(" [{}]", a.subtextLabel));
         }
         return;  // The dump covers this tick; skip the periodic log

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "candidate/CandidateTypes.h"
+#include "core/SlotScoreMath.h"
 #include <cmath>
 #include <format>
 #include <vector>
@@ -95,6 +96,14 @@ namespace Huginn::Scoring
 
         [[nodiscard]] std::string_view GetName() const noexcept {
             return Candidate::GetName(candidate);
+        }
+
+        /// What the slot code ranks on (src/core/SlotScoreMath.h): a score of
+        /// any sign. THE BRIDGE until the new scorer (R8): ln(utility). A row
+        /// that was never ranked (isRememberedOnly) is -inf, below every real
+        /// score, instead of the 0 utility it carries for display.
+        [[nodiscard]] Core::SlotScore SlotScore() const noexcept {
+            return isRememberedOnly ? Core::kUnrankedScore : Core::BridgeScore(utility);
         }
 
         [[nodiscard]] float GetContextWeight() const noexcept {

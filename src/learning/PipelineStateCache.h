@@ -39,9 +39,10 @@ namespace Huginn::Learning
             return instance;
         }
 
-        // Sentinel rank for candidates beyond the sorted prefix: their true rank
-        // is unknown (partial_sort leaves the tail unordered), so attribution
-        // must treat them as far-miss (B-low), never near-miss. Consumers
+        // Sentinel rank for candidates beyond the reported prefix (iTopNCandidates).
+        // Until R7 their true rank was unknown (partial_sort left the tail
+        // unordered); the list is fully sorted now, but attribution still
+        // treats them as far-miss (B-low), never near-miss, as before. Consumers
         // compute overshoot = rank - displayedCount, which any real
         // displayedCount keeps far above FAR_MISS_SLOTS for this value.
         static constexpr size_t kUnrankedTail = std::numeric_limits<size_t>::max() / 2;
@@ -91,11 +92,11 @@ namespace Huginn::Learning
         };
 
         // Called from UpdateLoop after scoring + allocation.
-        // sortedPrefix: number of leading entries in `scored` that are actually
-        // in utility order (UtilityScorer uses partial_sort for top-N only; the
-        // tail is in unspecified order). Ranks beyond the prefix are stored as
-        // kUnrankedTail so attribution deterministically classifies them as
-        // far-miss instead of reading a meaningless tail index.
+        // sortedPrefix: number of leading entries in `scored` whose rank is
+        // reported. Until R7 UtilityScorer sorted only the top N (partial_sort)
+        // and the tail was in unspecified order; it sorts the whole list now,
+        // but ranks beyond the prefix are still stored as kUnrankedTail, so
+        // attribution classifies them as far-miss exactly as before.
         // NOTE: wildcard swaps run after sorting, so a prefix rank may hold a
         // wildcard-promoted item — intentional: attribution should see what was
         // actually surfaced, not the pre-wildcard utility order.

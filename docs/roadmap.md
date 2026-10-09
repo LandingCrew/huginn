@@ -198,14 +198,47 @@ Map Phase 4, in `tools/replay`.
 
 ### R7. Slot code handles any score sign
 
-Map Phase 5. Lands before the new scorer.
-- [ ] Bridge: score = ln(utility), σ = 0, m = 1.5, which reproduces today.
-- [ ] The slot class cap, ratio logs, the `-1` "gone" sentinel, `utility = 0` for
+Map Phase 5. Lands before the new scorer. Built in 0.23.11 ("R7: sign-safe
+slot code"); detail in the map's "As built (R7)".
+- [x] Bridge: score = ln(utility), σ = 0, m = 1.5, which reproduces today.
+      One function, `ScoredCandidate::SlotScore` (`Core::BridgeScore`); the
+      score is a double, so no two utilities collapse into one score.
+- [x] The slot class cap, ratio logs, the `-1` "gone" sentinel, `utility = 0` for
       remembered-only rows, `kOverrideUtility`, the widget bar, the
-      confidence payload: all made sign-safe.
-- [ ] Full sort instead of the top-10 partial sort.
-- Done when: a golden test feeds recorded pipeline snapshots through the old
-  and new slot code and gets identical pages; the ratio tests are updated.
+      confidence payload: all made sign-safe. The allocator's decisions moved
+      whole into `src/core/SlotAllocCore.h` (plain records, host-tested); the
+      cap is `+ k ln d`, the hold `s_c − s_i > ln m`, "gone" an empty
+      optional, unranked rows −inf, overrides +inf (never compared).
+- [x] Full sort instead of the top-10 partial sort (`std::stable_sort`; the
+      selection log still reports ranks for the top 10 only, so attribution
+      is unchanged).
+- [x] Done when: a golden test feeds recorded pipeline snapshots through the
+  old and new slot code and gets identical pages; the ratio tests are updated.
+  The old code's own pages and events, recorded in play on vanilla+ under the
+  shipped [SlotLocker] settings and two variants plus a campaign (branch
+  `r7-capture-old`: 0.23.9 decisions except b941d90's one clock reading per
+  allocation, capture only; 2,559 snapshots, 425 checked in), replay bit for bit through the core with the old arithmetic;
+  the sign-safe arithmetic gives identical pages and events on all of them
+  and on 24k synthetic passes; 2,578 allocations the new code recorded (230
+  checked in) replay exactly. Five seeded mutants of the core (pull, Remembrance
+  to the job key, the hold's stale-generation guard, the refill after the
+  pull, the override fallback's event) all fail against the checked-in
+  fixtures; a sixth (the pull taking a wildcard) fails a named test. `RunSlotClassCapTest`, `RunSlotClassCapHoldTest` and
+  `RunHomeKeyTest` derive their utilities in score space.
+- Different by design: the full sort changes a page wherever the old fill
+  reached past the sorted top 10 (on recorded play lists: 22 of 1,094 pages
+  in a capture under the shipped settings only, 446 of 1,450 in the latest,
+  half of it under the job-key variants); exact
+  ties now keep generation order rather than the partial sort's. A
+  challenger exactly on the hold's margin now always holds (a tie band of
+  2.5e-7, two to four float ulps, `kHoldTieEpsilon`; the user's decision,
+  2026-10-08): the old float comparison was decided
+  by rounding there, and the old potion tier step (1.5) equals the margin, so
+  adjacent potion tiers sit on it -- in a sweep the old code swapped 23 of 260
+  such pairs where the new one holds. The cap's scan at non-power-of-two
+  discounts and an underflowing discount have rounding boundaries of their
+  own; tests classify them. No recorded snapshot differs.- For R8: `ScoredCandidate::operator<` still orders on utility (the same
+  order as the score under the bridge); it moves to the score with the scorer.
 
 ### R8. Cutover
 

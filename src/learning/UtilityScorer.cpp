@@ -237,15 +237,19 @@ namespace Huginn::Scoring
             ApplyPotionTierPreference(scored);
         }
 
-        // Partial sort for top N (much faster than full sort for large lists)
-        size_t topN = std::min(m_config.topNCandidates, scored.size());
-        if (topN > 0) {
+        // The whole list in rank order (R7) -- until ApplyWildcards below
+        // swaps a wildcard up into a rank position. It used to be only the
+        // top N (partial_sort), and the slot code takes the FIRST match in
+        // list order for a job key or an uncapped Regular key: with full pages
+        // it reached into the unsorted tail and took whichever match came
+        // first there, not the best. Stable, so exact ties (same utility, same
+        // DPS) keep the order the candidates were generated in rather than a
+        // heap's. Cost, measured in the R7 review on 500 rows: about 42 us a
+        // pass, against about 2 us for the old top-10 partial sort -- noise
+        // beside the scoring itself, and the pipeline runs only on change.
+        if (!scored.empty()) {
             Huginn_ZONE_NAMED("Score::Sort");
-            if (scored.size() > topN) {
-                std::partial_sort(scored.begin(), scored.begin() + topN, scored.end());
-            } else {
-                std::sort(scored.begin(), scored.end());
-            }
+            std::stable_sort(scored.begin(), scored.end());
         }
 
         // Apply wildcards for exploration, keyed and sized against the page
@@ -524,7 +528,7 @@ namespace Huginn::Scoring
         // The multiplier is monotone non-increasing in rank, so rewriting
         // utilities cannot reorder favorites relative to each other — the ranks
         // derived above stay valid and no re-sort is needed here (the caller's
-        // partial_sort establishes the final combined order).
+        // full sort establishes the final combined order).
         const size_t total = m_favoriteRankScratch.size();
         for (size_t rank = 0; rank < total; ++rank) {
             auto& entry = scored[m_favoriteRankScratch[rank]];

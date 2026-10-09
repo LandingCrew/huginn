@@ -63,7 +63,11 @@ namespace Huginn::Slot
 
         const auto& candidate = *assignment.candidate;
         const std::string& name = assignment.name;
-        const float confidence = assignment.utility;
+        // The widget's "confidence" payload (AS2 takes it and never reads it,
+        // IntuitionBackend.h). From the score, so it is defined whatever the
+        // score's sign: exp(score), the utility under the R7 bridge; an
+        // override's +inf comes out as the largest float, not inf.
+        const float confidence = Core::DisplayUtility(assignment.score);
         const RE::FormID formID = assignment.formID;
 
         // Handle by assignment type first

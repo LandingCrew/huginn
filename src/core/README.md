@@ -84,7 +84,33 @@ configure, still building the old file list. Build a second time (or
 reconfigure first) before trusting the result.
 
 The pattern, ported first: `SlotClassCapMath.h` holds the arithmetic of the
-slot class cap; `Slot::SlotClassCap` (`src/slot/SlotClassCap.*`) keeps the
-counting and the classification and calls `Core::ClassCapFactor`. `SlotClassCapMathTests.cpp`
-includes a check that the port matches the old loop bit for bit, including
-past the denormal fixed point the product reaches for discounts above 0.5.
+slot class cap as it was (`Core::ClassCapFactor`, the d^k multiplier).
+`SlotClassCapMathTests.cpp` includes a check that the port matches the old loop
+bit for bit, including past the denormal fixed point the product reaches for
+discounts above 0.5. Since R7 the game no longer multiplies: the multiplier
+is the old arithmetic the golden test replays (below).
+
+The slot allocator (R7): `SlotAllocCore.h` is the whole decision of
+`Slot::SlotAllocator` over plain records -- overrides, Remembrance holds, the
+slot hold, the fill under the class cap, seating and home keys -- templated on
+the score arithmetic. The game runs `LogScorePolicy` (scores of any sign,
+`SlotScoreMath.h`); `SlotAllocator` builds the input (`src/slot/SlotSnapshot.*`),
+keeps the seating memory and turns the events into logs and telemetry.
+`SlotSnapshotIO.*` is the text record of one allocation. The tests:
+
+| File | What it proves |
+|------|----------------|
+| `SlotAllocGoldenTests.cpp` | the core with the OLD arithmetic (`LegacySlotPolicy.h`) replays what the old game code recorded in play -- pages, seating memory and events, under the shipped [SlotLocker] settings and varied ones -- bit for bit; the sign-safe arithmetic gives identical pages and events on those and on synthetic snapshots (which show only that the two arithmetics agree on a path, not that the path is right); what the new game code recorded replays exactly; recorded names are text |
+| `SlotAllocAdversarialTests.cpp` | named cases: ties, zeros, the cap's 2x tie, overrides, remembered-only rows, the sort, negative scores, the hold's tie band (a challenger on the margin holds), and the float-rounding boundaries where the arithmetics can still part (the cap's scan at any discount, underflow) |
+| `SlotScoreMathTests.cpp` | the bridge, the cap term, the margin, the sentinels, the churn buckets |
+| `SlotSnapshotIOTests.cpp` | the snapshot format round-trips |
+
+Recorded snapshots live in `tests/core/fixtures/slots/` (`*-old.txt` from the
+old code, `*-new.txt` from the new). The old code's were recorded by branch
+`r7-capture-old`: b941d90 with only the capture and an event recorder added.
+b941d90 is the 0.23.9 decision code except one change it made itself:
+ApplySeating and RecordSeating share one clock reading per allocation
+(unconditional, Release too) instead of each reading the clock. To record more: a Debug build deployed to
+simonrim, then `python -I tools/ingame/run_tests.py --capture-slots 160`, then
+`python -I tools/slots/trim_snapshots.py <log folder>/Huginn_SlotSnapshots.txt
+tests/core/fixtures/slots/<name>.txt --max 150`.
