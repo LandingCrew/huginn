@@ -472,11 +472,11 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
 }
 
 // =============================================================================
-// kDataLoaded handler — one-time engine/UI wiring (hooks, ImGui, input, update)
+// kDataLoaded handler — one-time engine/UI wiring (ImGui, input, update)
 // =============================================================================
 // Extracted from MessageHandler for readability. Guarded with a static flag so a
 // duplicate kDataLoaded dispatch (SKSE guarantees one, but modded messaging can
-// perturb it) can't re-install render/input hooks, leak the old g_stateEvaluator,
+// perturb it) can't re-initialise ImGui, leak the old g_stateEvaluator,
 // or double-register menus and update callbacks.
 static void OnDataLoaded()
 {
