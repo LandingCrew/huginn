@@ -12,8 +12,10 @@
 #include "effect/EffectCatalog.h"
 #include "needs/NeedMonitor.h"
 #include "state/StateManager.h"
+#include "util/ExtraListStability.h"
 #include "util/InventoryUtil.h"
 
+#include <array>
 #include <cmath>
 #include <condition_variable>
 #include <deque>
@@ -38,6 +40,10 @@ namespace Huginn::Learning::SelectionLogV3
         constexpr size_t kMaxQueued = 1024;
         constexpr double kHeldCacheSec = 1.0;
         constexpr size_t kInstanceCacheMax = 512;
+        // preEquipped: the equipped state from the newest tick at least this
+        // long before the press (a Huginn key's hand swap can wait a frame or
+        // two before its callback; an outside equip's event follows at once).
+        constexpr double kPreEquippedLeadSec = 0.25;
 
         double Sec(Clock::time_point t)
         {
@@ -82,11 +88,38 @@ namespace Huginn::Learning::SelectionLogV3
             std::shared_ptr<const Effect::CatalogEntry> instance;   // tempered / player-enchanted
         };
 
-        std::mutex g_heldMutex;
-        std::vector<HeldItem> g_held;
-        double g_heldAt = -1e300;
-        std::unordered_map<std::string, std::shared_ptr<const Effect::CatalogEntry>> g_instances;
+        struct HeldSet
+        {
+            std::vector<HeldItem> items;
+            bool full = false;   // extra data read (Util::IsExtraListStable at the read)
+        };
 
+        // What makes an instance differ from its base form.
+        struct InstanceKey
+        {
+            RE::FormID form = 0;
+            int32_t temperMilli = 1000;
+            RE::FormID enchantment = 0;
+            bool operator==(const InstanceKey&) const = default;
+        };
+        struct InstanceKeyHash
+        {
+            size_t operator()(const InstanceKey& k) const noexcept
+            {
+                return std::hash<uint64_t>{}((static_cast<uint64_t>(k.form) << 32) ^ k.enchantment ^
+                                             (static_cast<uint64_t>(static_cast<uint32_t>(k.temperMilli)) << 13));
+            }
+        };
+
+        std::mutex g_heldMutex;
+        std::shared_ptr<const HeldSet> g_held;
+        double g_heldAt = -1e300;
+        // Per-instance caps by what sets the stack apart. Cleared on every load
+        // (Reset): a player enchantment is a dynamic FF form, and its ID means
+        // another enchantment in another save.
+        std::unordered_map<InstanceKey, std::shared_ptr<const Effect::CatalogEntry>, InstanceKeyHash> g_instances;
+
+        // Call only when Util::IsExtraListStable(): reads the list's extra data.
         std::shared_ptr<const Effect::CatalogEntry> InstanceFor(const Effect::EffectCatalog& catalog,
                                                                 RE::TESBoundObject* obj, RE::ExtraDataList* xl)
         {
@@ -100,7 +133,7 @@ namespace Huginn::Learning::SelectionLogV3
             const auto* xe = xl->GetByType<RE::ExtraEnchantment>();
             const RE::FormID ench = xe && xe->enchantment ? xe->enchantment->GetFormID() : 0;
             if (std::fabs(temper - 1.0f) < 1e-4f && ench == 0) return nullptr;
-            const std::string key = std::format("{:08X}|{:.4f}|{:08X}", obj->GetFormID(), temper, ench);
+            const InstanceKey key{ obj->GetFormID(), static_cast<int32_t>(std::lround(temper * 1000.0f)), ench };
             if (const auto it = g_instances.find(key); it != g_instances.end()) return it->second;
             std::shared_ptr<const Effect::CatalogEntry> made;
             if (auto e = catalog.InstanceEntry(obj, xl)) made = std::make_shared<const Effect::CatalogEntry>(std::move(*e));
@@ -109,6 +142,8 @@ namespace Huginn::Learning::SelectionLogV3
             return made;
         }
 
+        // `xl` may be null (the base form's charge only); a non-null list only
+        // when Util::IsExtraListStable().
         void ReadCharge(RE::TESBoundObject* obj, const RE::ExtraDataList* xl, HeldItem& h)
         {
             float maxCharge = 0.0f;
@@ -125,9 +160,17 @@ namespace Huginn::Learning::SelectionLogV3
             }
         }
 
-        std::vector<HeldItem> ReadHeld()
+        // Inside the post-load window (Util::IsExtraListStable false) the
+        // engine is still finalizing inventory extra data and reading it can
+        // crash (the registries gate the same way). Then no extra list is
+        // touched: one plain row per base form, "equipped" from the hands and
+        // the nocked ammo only (armour reads unworn), no unique IDs, no
+        // per-instance caps or stack charges -- and the context says so
+        // (heldFull = 0). The next read after the window is a full one.
+        HeldSet ReadHeld(bool stable)
         {
-            std::vector<HeldItem> out;
+            HeldSet out;
+            out.full = stable;
             auto& catalog = Effect::EffectCatalog::GetSingleton();
             auto* player = RE::PlayerCharacter::GetSingleton();
             if (!player || !catalog.Ready()) return out;
@@ -136,6 +179,8 @@ namespace Huginn::Learning::SelectionLogV3
                 return catalog.Find(o.GetFormID()) != nullptr;
             });
             const auto* ammo = player->GetCurrentAmmo();
+            const auto* left = player->GetEquippedObject(true);
+            const auto* right = player->GetEquippedObject(false);
             for (auto& [obj, data] : inventory) {
                 auto& [count, entryData] = data;
                 if (!obj || count <= 0) continue;
@@ -145,7 +190,7 @@ namespace Huginn::Learning::SelectionLogV3
                                       obj->Is(RE::FormType::Light);
                 int32_t remaining = count;
                 HeldItem plain{ .form = obj->GetFormID(), .entry = entry };
-                if (entryData && entryData->extraLists) {
+                if (stable && entryData && entryData->extraLists) {
                     for (auto* xl : *entryData->extraLists) {
                         if (!xl) continue;
                         const bool worn = xl->HasType<RE::ExtraWorn>() || xl->HasType<RE::ExtraWornLeft>();
@@ -163,27 +208,25 @@ namespace Huginn::Learning::SelectionLogV3
                             continue;   // a list that does not set the stack apart: part of the plain row
                         }
                         remaining -= h.count;
-                        out.push_back(std::move(h));
+                        out.items.push_back(std::move(h));
                     }
                 }
                 if (remaining > 0) {
                     plain.count = remaining;
-                    plain.equipped = plain.equipped || obj == ammo;
+                    plain.equipped = plain.equipped || obj == ammo || (!stable && (obj == left || obj == right));
                     if (obj->Is(RE::FormType::Weapon)) ReadCharge(obj, nullptr, plain);
-                    out.push_back(plain);
+                    out.items.push_back(plain);
                 }
             }
 
             // Known spells (base and added), in hand = equipped.
             std::unordered_set<RE::FormID> seen;
-            const auto* left = player->GetEquippedObject(true);
-            const auto* right = player->GetEquippedObject(false);
             auto addSpell = [&](RE::SpellItem* spell) {
                 if (!spell || !seen.insert(spell->GetFormID()).second) return;
                 const auto* entry = catalog.Find(spell->GetFormID());
                 if (!entry) return;
-                out.push_back(HeldItem{ .form = spell->GetFormID(), .equipped = spell == left || spell == right,
-                                        .entry = entry });
+                out.items.push_back(HeldItem{ .form = spell->GetFormID(), .equipped = spell == left || spell == right,
+                                              .entry = entry });
             };
             if (auto* base = player->GetActorBase()) {
                 if (auto* list = base->GetSpellList(); list && list->spells) {
@@ -194,12 +237,20 @@ namespace Huginn::Learning::SelectionLogV3
             return out;
         }
 
-        std::vector<HeldItem> Held(double nowSec)
+        /// The held set, read at most once a second; a basic read (inside the
+        /// post-load window) is redone as soon as a full one is possible.
+        /// `readMs` is the time spent reading (0 for a cache hit).
+        std::shared_ptr<const HeldSet> Held(double nowSec, double& readMs)
         {
+            readMs = 0.0;
+            const bool stable = Util::IsExtraListStable();
             std::lock_guard lock(g_heldMutex);
-            if (nowSec - g_heldAt >= kHeldCacheSec || nowSec < g_heldAt) {
-                g_held = ReadHeld();
+            const bool upgrade = g_held && !g_held->full && stable;
+            if (!g_held || upgrade || nowSec - g_heldAt >= kHeldCacheSec || nowSec < g_heldAt) {
+                const auto t0 = Clock::now();
+                g_held = std::make_shared<const HeldSet>(ReadHeld(stable));
                 g_heldAt = nowSec;
+                readMs = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
             }
             return g_held;
         }
@@ -222,6 +273,10 @@ namespace Huginn::Learning::SelectionLogV3
 
         std::mutex g_tickMutex;
         TickState g_tick;
+        // A load arms the gate at the cache's generation: until the new
+        // session's first pipeline run, the cache still holds the previous
+        // save's candidates and page. Guarded by g_tickMutex.
+        RunGate g_runGate;
 
         Row EligibleToRow(const PipelineStateCache::EligibleRow& e, const Effect::CatalogEntry* entry,
                           const State::PlayerActorState& player)
@@ -247,6 +302,40 @@ namespace Huginn::Learning::SelectionLogV3
             return r;
         }
 
+        // The hands and the nocked ammo of the last few ticks, for preEquipped.
+        struct HandSnapshot
+        {
+            double tSec = -1e300;
+            RE::FormID left = 0, right = 0, ammo = 0;
+        };
+        std::mutex g_handMutex;
+        std::array<HandSnapshot, 8> g_hands{};
+        size_t g_handNext = 0;
+
+        void RecordHands(double nowSec)
+        {
+            auto* player = RE::PlayerCharacter::GetSingleton();
+            if (!player) return;
+            HandSnapshot h;
+            h.tSec = nowSec;
+            if (const auto* o = player->GetEquippedObject(true)) h.left = o->GetFormID();
+            if (const auto* o = player->GetEquippedObject(false)) h.right = o->GetFormID();
+            if (const auto* a = player->GetCurrentAmmo()) h.ammo = a->GetFormID();
+            std::lock_guard lock(g_handMutex);
+            g_hands[g_handNext] = h;
+            g_handNext = (g_handNext + 1) % g_hands.size();
+        }
+
+        bool WasEquippedBefore(RE::FormID form, double pressSec)
+        {
+            std::lock_guard lock(g_handMutex);
+            const HandSnapshot* best = nullptr;
+            for (const auto& h : g_hands) {
+                if (h.tSec <= pressSec - kPreEquippedLeadSec && (!best || h.tSec > best->tSec)) best = &h;
+            }
+            return best && form != 0 && (best->left == form || best->right == form || best->ammo == form);
+        }
+
         // =====================================================================
         // EPISODES
         // =====================================================================
@@ -254,14 +343,13 @@ namespace Huginn::Learning::SelectionLogV3
         Core::Needs::EpisodeTracker<std::shared_ptr<const DL::Context>> g_episodes;
 
         std::atomic<uint64_t> g_nextContext{ 0 };
-        std::atomic<uint64_t> g_nextSeq{ 0 };
 
         // =====================================================================
-        // THE MENU -- the context taken when a selection menu opened
+        // THE MENU -- the context taken when a pausing selection menu opened
         // =====================================================================
         struct MenuVisit
         {
-            std::shared_ptr<const DL::Context> ctx;
+            std::shared_ptr<const DL::Context> ctx;   // null for a menu that joins at the press (Favorites)
             std::string name;
             bool open = false;
             Clock::time_point openedAt{};
@@ -273,10 +361,16 @@ namespace Huginn::Learning::SelectionLogV3
         std::mutex g_menuMutex;
         MenuVisit g_menu;
 
-        bool IsMenuVia(std::string_view via)
+        /// A pick from a selection menu joins the context taken when it opened.
+        bool IsPausingMenuVia(std::string_view via)
         {
             return via.starts_with("inventory menu") || via.starts_with("favorites menu") ||
                    via.starts_with("magic menu") || via.starts_with("menu (just closed)");
+        }
+
+        bool JoinsAtOpen(const RE::BSFixedString& menuName)
+        {
+            return PlayerInputGate::IsSelectionMenu(menuName);
         }
 
         // =====================================================================
@@ -285,6 +379,7 @@ namespace Huginn::Learning::SelectionLogV3
         std::mutex g_statsMutex;
         Stats g_stats;
         double g_tickSumUs = 0.0;
+        double g_buildSumMs = 0.0;
 
         // =====================================================================
         // CONTEXTS
@@ -298,28 +393,44 @@ namespace Huginn::Learning::SelectionLogV3
             ctx->tSec = Sec(now);
             ctx->why = why;
             ctx->menu = std::move(menu);
+            std::vector<PipelineStateCache::EligibleRow> wildcardRows;   // eligible rows with a propensity
+            RunGate gate;
             {
                 std::lock_guard lock(g_tickMutex);
                 ctx->need = g_tick.need;
                 ctx->input = g_tick.input;
                 ctx->rows = g_tick.rows;
+                for (const auto& e : g_tick.eligible) {
+                    if (std::isfinite(e.wildcardPropensity)) wildcardRows.push_back(e);
+                }
+                gate = g_runGate;
             }
 
-            const auto page = PipelineStateCache::GetSingleton().TakeShown();
+            auto page = PipelineStateCache::GetSingleton().TakeShown();
+            // A page from before this session's first run is the previous
+            // save's: not logged (pipe.ok = 0, no shown rows).
+            if (!gate.IsCurrent(page.generation)) {
+                page.valid = false;
+                page.shown.clear();
+            }
             ctx->pipeValid = page.valid;
             ctx->page = page.valid ? static_cast<int>(page.page) : -1;
-            ctx->pageSlots = static_cast<int>(page.pageSlots);
-            ctx->pipeAgeMs = page.ageMs;
+            ctx->pageSlots = page.valid ? static_cast<int>(page.pageSlots) : 0;
+            ctx->pipeAgeMs = page.valid ? page.ageMs : 0.0f;
 
             const auto player = State::StateManager::GetSingleton().GetPlayerState();
             auto& catalog = Effect::EffectCatalog::GetSingleton();
 
             // Held items: flag the eligible rows, add the rest.
+            double heldMs = 0.0;
+            const auto held = Held(ctx->tSec, heldMs);
+            ctx->heldFull = held->full;
             std::unordered_map<uint64_t, size_t> index;
-            index.reserve(ctx->rows.size() * 2);
+            index.reserve((ctx->rows.size() + held->items.size()) * 2);
             auto key = [](RE::FormID f, uint16_t uid) { return (static_cast<uint64_t>(uid) << 32) | f; };
             for (size_t i = 0; i < ctx->rows.size(); ++i) index.try_emplace(key(ctx->rows[i].form, ctx->rows[i].uid), i);
-            for (const auto& h : Held(ctx->tSec)) {
+            ctx->rows.reserve(ctx->rows.size() + held->items.size());
+            for (const auto& h : held->items) {
                 const Effect::CatalogEntry& use = h.instance ? *h.instance : *h.entry;
                 Effect::StackInfo stack;
                 stack.count = h.count;
@@ -351,13 +462,17 @@ namespace Huginn::Learning::SelectionLogV3
             }
 
             // The page: mark what was shown. A propensity stays only on a row
-            // shown as a wildcard.
-            for (auto& r : ctx->rows) {
-                if (!(r.flags & Flag::Shown)) r.wildcardP = kNone;
-            }
+            // shown as a wildcard. A shown stack is matched by FormID and
+            // unique ID first, then by FormID alone (an assignment without one).
+            for (auto& r : ctx->rows) r.wildcardP = kNone;
             for (const auto& s : page.shown) {
                 Row* hit = nullptr;
+                if (const auto it = index.find(key(s.formID, s.uniqueID)); it != index.end() &&
+                                                                         !(ctx->rows[it->second].flags & Flag::Shown)) {
+                    hit = &ctx->rows[it->second];
+                }
                 for (auto& r : ctx->rows) {
+                    if (hit) break;
                     if (r.form == s.formID && !(r.flags & Flag::Shown)) {
                         hit = &r;
                         if (r.flags & Flag::Eligible) break;
@@ -366,6 +481,7 @@ namespace Huginn::Learning::SelectionLogV3
                 if (!hit) {
                     Row r;
                     r.form = s.formID;
+                    r.uid = s.uniqueID;
                     if (const auto* entry = catalog.Find(s.formID)) {
                         r.kind = static_cast<uint8_t>(entry->kind);
                         r.cap = &entry->cap;
@@ -382,17 +498,12 @@ namespace Huginn::Learning::SelectionLogV3
                 default: break;
                 }
             }
-            // The eligible snapshot carried every wildcard's propensity; keep it
-            // only where the page shows that wildcard.
-            {
-                std::lock_guard lock(g_tickMutex);
-                for (auto& r : ctx->rows) {
-                    if (!(r.flags & Flag::Wildcard)) continue;
-                    for (const auto& e : g_tick.eligible) {
-                        if (e.formID == r.form && e.uniqueID == r.uid) {
-                            r.wildcardP = e.wildcardPropensity;
-                            break;
-                        }
+            for (auto& r : ctx->rows) {
+                if (!(r.flags & Flag::Wildcard)) continue;
+                for (const auto& e : wildcardRows) {
+                    if (e.formID == r.form && e.uniqueID == r.uid) {
+                        r.wildcardP = e.wildcardPropensity;
+                        break;
                     }
                 }
             }
@@ -413,6 +524,19 @@ namespace Huginn::Learning::SelectionLogV3
                 ctx->wildcardBase = wc.GetBaseProbability();
                 ctx->wildcardMax = wc.GetMaxProbability();
             }
+
+            const double ms = std::chrono::duration<double, std::milli>(Clock::now() - now).count();
+            {
+                std::lock_guard lock(g_statsMutex);
+                ++g_stats.contextsBuilt;
+                g_buildSumMs += ms;
+                g_stats.buildMeanMs = g_buildSumMs / static_cast<double>(g_stats.contextsBuilt);
+                g_stats.buildMaxMs = std::max(g_stats.buildMaxMs, ms);
+                g_stats.heldReadMaxMs = std::max(g_stats.heldReadMaxMs, heldMs);
+                g_stats.heldReads += heldMs > 0.0 ? 1 : 0;
+            }
+            logger::debug("[SelectionV3] context {} ({}): {} rows in {:.2f} ms (held {}{:.2f} ms{})"sv, ctx->id, why,
+                ctx->rows.size(), ms, heldMs > 0.0 ? "read " : "cached ", heldMs, held->full ? "" : ", basic");
             return ctx;
         }
 
@@ -449,8 +573,7 @@ namespace Huginn::Learning::SelectionLogV3
 
         Decision MakeDecision(Outcome outcome, uint32_t gen)
         {
-            Decision d;
-            d.seq = ++g_nextSeq;
+            Decision d;   // seq: the writer's, in write order
             d.utc = NowUtc();
             d.launch = g_launchStamp;
             d.list = g_listName;
@@ -479,6 +602,11 @@ namespace Huginn::Learning::SelectionLogV3
                 {
                     std::lock_guard lock(m_mutex);
                     if (m_queue.size() >= kMaxQueued) {
+                        ++m_droppedSinceWarn;
+                        {
+                            std::lock_guard s(g_statsMutex);
+                            ++g_stats.dropped;
+                        }
                         if (!m_warnedFull) {
                             logger::warn("[SelectionV3] writer is {} records behind -- dropping records"sv, kMaxQueued);
                             m_warnedFull = true;
@@ -520,9 +648,32 @@ namespace Huginn::Learning::SelectionLogV3
                     {
                         std::lock_guard lock(m_mutex);
                         --m_pending;
+                        if (m_queue.empty()) {
+                            // Drained: say what was lost, and warn again next time.
+                            if (m_droppedSinceWarn > 0) {
+                                logger::warn("[SelectionV3] writer caught up; {} record(s) were dropped"sv,
+                                    m_droppedSinceWarn);
+                                m_droppedSinceWarn = 0;
+                            }
+                            m_warnedFull = false;
+                        }
                         if (m_pending == 0) m_idle.notify_all();
                     }
                 }
+            }
+
+            /// True when the file exists, is not empty and does not end in a
+            /// newline (a record torn by a crash or a full disk).
+            static bool EndsTorn(const std::filesystem::path& path)
+            {
+                std::ifstream in(path, std::ios::binary);
+                if (!in) return false;
+                in.seekg(0, std::ios::end);
+                if (in.tellg() <= 0) return false;
+                in.seekg(-1, std::ios::end);
+                char last = 0;
+                in.get(last);
+                return last != '\n';
             }
 
             bool Open()
@@ -534,7 +685,9 @@ namespace Huginn::Learning::SelectionLogV3
                 // Test mode starts the test file afresh once per launch; the
                 // player's file is appended across launches (each launch is a
                 // segment of its own: it starts with a head line).
-                const auto mode = std::ios::binary | ((test && !m_truncatedTest) ? std::ios::trunc : std::ios::app);
+                const bool truncate = test && !m_truncatedTest;
+                const bool torn = !truncate && EndsTorn(path);
+                const auto mode = std::ios::binary | (truncate ? std::ios::trunc : std::ios::app);
                 m_out.open(path, mode);
                 if (!m_out.is_open()) return false;
                 m_truncatedTest = m_truncatedTest || test;
@@ -543,6 +696,13 @@ namespace Huginn::Learning::SelectionLogV3
                 {
                     std::lock_guard lock(m_mutex);
                     m_path = path;
+                }
+                if (torn) {
+                    // Start on a line of our own; the reader skips the torn one.
+                    m_out << '\n';
+                    ++m_fileBytes;
+                    logger::warn("[SelectionV3] {} ended in a torn record; starting on a new line"sv,
+                        path.filename().string());
                 }
                 Head head;
                 head.launch = g_launchStamp;
@@ -558,6 +718,7 @@ namespace Huginn::Learning::SelectionLogV3
                 head.graceSec = p.graceSec;
                 head.answerSlackSec = p.answerSlackSec;
                 const std::string line = m_encoder.BeginSegment(head);
+                m_ctxSeen.clear();
                 m_out << line;
                 m_fileBytes += line.size();
                 logger::info("[SelectionV3] writing {} ({} bytes before this launch's segment)"sv, path.string(),
@@ -565,24 +726,38 @@ namespace Huginn::Learning::SelectionLogV3
                 return true;
             }
 
+            /// Rename the full file aside; the next record opens a new one. A
+            /// failed rename (the file held open elsewhere) keeps appending to
+            /// the current file and does not try again this launch -- rather
+            /// than reopening, re-heading and re-defining every cap and context
+            /// on every following record.
             void Rotate()
             {
-                m_out.close();
                 const auto path = Path();
                 std::error_code ec;
                 for (int n = 1; n < 1000; ++n) {
                     auto rotated = path;
                     rotated.replace_filename(std::format("Huginn_Selections_v3-{}-{}.jsonl", g_launchStamp, n));
                     if (std::filesystem::exists(rotated, ec)) continue;
+                    m_out.close();
                     std::filesystem::rename(path, rotated, ec);
-                    logger::info("[SelectionV3] {} reached {} MB: kept as {}{}"sv, path.filename().string(),
-                        kRotateBytes >> 20, rotated.filename().string(), ec ? " (rename failed: " + ec.message() + ")" : "");
-                    break;
+                    if (ec) {
+                        logger::warn("[SelectionV3] {} reached {} MB but could not be renamed ({}): appending to it "
+                                     "for the rest of this launch"sv,
+                            path.filename().string(), kRotateBytes >> 20, ec.message());
+                        m_rotationFailed = true;
+                        m_out.open(path, std::ios::binary | std::ios::app);   // same segment: tables stay valid
+                        return;
+                    }
+                    logger::info("[SelectionV3] {} reached {} MB: kept as {}"sv, path.filename().string(),
+                        kRotateBytes >> 20, rotated.filename().string());
+                    m_truncatedTest = false;   // a rotated test file starts afresh too
+                    return;
                 }
-                m_truncatedTest = false;   // a rotated test file starts afresh too
+                m_rotationFailed = true;   // a thousand rotated files this launch: stop rotating
             }
 
-            void Write(const Decision& d)
+            void Write(Decision d)
             {
                 if (!m_out.is_open() && !Open()) {
                     if (!m_warnedOpen) {
@@ -591,6 +766,7 @@ namespace Huginn::Learning::SelectionLogV3
                     }
                     return;
                 }
+                d.seq = ++m_seq;
                 const bool ctxNew = d.ctx && !m_ctxSeen.contains(d.ctx->id);
                 const size_t capsBefore = m_encoder.CapsDefined();
                 const std::string lines = m_encoder.Encode(d);
@@ -604,7 +780,6 @@ namespace Huginn::Learning::SelectionLogV3
                     }
                     m_out.close();
                     m_out.clear();
-                    m_ctxSeen.clear();
                     return;
                 }
                 m_fileBytes += lines.size();
@@ -612,6 +787,12 @@ namespace Huginn::Learning::SelectionLogV3
                 {
                     std::lock_guard lock(g_statsMutex);
                     ++g_stats.written;
+                    switch (d.outcome) {
+                    case Outcome::Key: ++g_stats.writtenKey; break;
+                    case Outcome::Wheel: ++g_stats.writtenWheel; break;
+                    case Outcome::Menu: ++g_stats.writtenMenu; break;
+                    case Outcome::Nothing: ++g_stats.writtenNothing; break;
+                    }
                     g_stats.bytes += lines.size();
                     g_stats.ctxWritten += ctxNew ? 1 : 0;
                     g_stats.capsWritten += capsNew;
@@ -619,10 +800,7 @@ namespace Huginn::Learning::SelectionLogV3
                 logger::debug("[SelectionV3] seq={} out={} rows={} bytes={} (context {}, {} new cap(s))"sv, d.seq,
                     OutcomeName(d.outcome), d.ctx ? d.ctx->rows.size() + d.added.size() : d.added.size(), lines.size(),
                     ctxNew ? "new" : "shared", capsNew);
-                if (m_fileBytes >= kRotateBytes) {
-                    Rotate();
-                    m_ctxSeen.clear();
-                }
+                if (m_fileBytes >= kRotateBytes && !m_rotationFailed) Rotate();
             }
 
             std::mutex m_mutex;
@@ -631,6 +809,7 @@ namespace Huginn::Learning::SelectionLogV3
             std::deque<Decision> m_queue;
             size_t m_pending = 0;
             bool m_warnedFull = false;
+            uint64_t m_droppedSinceWarn = 0;
             std::filesystem::path m_path;
 
             // Writer thread only.
@@ -638,7 +817,9 @@ namespace Huginn::Learning::SelectionLogV3
             std::ofstream m_out;
             std::uintmax_t m_fileBytes = 0;
             std::unordered_set<uint64_t> m_ctxSeen;   // for the debug line (the encoder decides)
+            uint64_t m_seq = 0;
             bool m_truncatedTest = false;
+            bool m_rotationFailed = false;
             bool m_warnedOpen = false;
             bool m_warnedWrite = false;
         };
@@ -699,6 +880,7 @@ namespace Huginn::Learning::SelectionLogV3
             d.ctx = p.capture.ctx;
             d.ctxAgeMs = p.capture.ageMs;
             d.open = p.capture.open;
+            d.preEquipped = p.capture.preEquipped;
             if (!d.ctx) d.ctx = BuildContext("press", {});
             ResolveChosen(d, false);
             logger::info("[SelectionV3] {:08X} '{}' via {}: kept in the v3 log only (the learner skips it: {})"sv,
@@ -746,7 +928,9 @@ namespace Huginn::Learning::SelectionLogV3
                 const auto now = Clock::now();
                 const std::string name(e->menuName.c_str());
                 if (e->opening) {
-                    auto ctx = BuildContext("menu", name);
+                    // Only the menus whose picks join the menu-open context
+                    // take one; the favourites menu's picks join at the press.
+                    auto ctx = JoinsAtOpen(e->menuName) ? BuildContext("menu", name) : nullptr;
                     std::lock_guard lock(g_menuMutex);
                     g_menu = MenuVisit{ .ctx = std::move(ctx), .name = name, .open = true, .openedAt = now,
                                         .startGeneration = PipelineStateCache::GetSingleton().Generation() };
@@ -769,6 +953,18 @@ namespace Huginn::Learning::SelectionLogV3
             }
         };
         MenuSink g_menuSink;
+
+        double g_tickFirstHalfUs = 0.0;   // update thread only: Tick's share of this tick
+
+        void RecordTickCost(Clock::time_point t0)
+        {
+            const double us = g_tickFirstHalfUs + std::chrono::duration<double, std::micro>(Clock::now() - t0).count();
+            g_tickFirstHalfUs = 0.0;
+            std::lock_guard lock(g_statsMutex);
+            g_tickSumUs += us;
+            g_stats.tickMeanUs = g_stats.ticks ? g_tickSumUs / static_cast<double>(g_stats.ticks) : 0.0;
+            g_stats.tickMaxUs = std::max(g_stats.tickMaxUs, us);
+        }
     }
 
     void Register()
@@ -791,9 +987,13 @@ namespace Huginn::Learning::SelectionLogV3
         {
             std::lock_guard lock(g_tickMutex);
             uint64_t generation = g_tick.cacheGeneration;
-            const bool newRun = PipelineStateCache::GetSingleton().TakeEligibleIfNewer(g_tick.cacheGeneration,
+            bool newRun = PipelineStateCache::GetSingleton().TakeEligibleIfNewer(g_tick.cacheGeneration,
                 g_tick.eligible, generation);
             g_tick.cacheGeneration = generation;
+            if (newRun && !g_runGate.IsCurrent(generation)) {
+                // The previous save's candidates, still cached after a load.
+                g_tick.eligible.clear();
+            }
             auto& catalog = Effect::EffectCatalog::GetSingleton();
             if (newRun || (!g_tick.entriesFromReadyCatalog && catalog.Ready())) {
                 g_tick.entries.clear();
@@ -814,6 +1014,7 @@ namespace Huginn::Learning::SelectionLogV3
             }
             rowCount = g_tick.rows.size();
         }
+        RecordHands(nowSec);
 
         // 2. The menu measurement.
         auto* ui = RE::UI::GetSingleton();
@@ -826,21 +1027,46 @@ namespace Huginn::Learning::SelectionLogV3
             }
         }
 
-        // 3. Episodes -- not while the game is paused: the world is frozen,
-        // so an onset or an expiry then is a wall-clock decay or the player's
-        // own menu action, which a pick inside the still-open episode answers.
+        // 3. Episode onsets and ends -- not while the game is paused: the
+        // world is frozen, so an onset or an expiry then is a wall-clock decay
+        // or the player's own menu action, which a pick inside the still-open
+        // episode answers. Ended episodes are judged in TickAfterSelections.
         if (live && !paused) {
             std::vector<size_t> onsets;
-            std::vector<Core::Needs::EpisodeTracker<std::shared_ptr<const DL::Context>>::Episode> unanswered;
             {
                 std::lock_guard lock(g_episodeMutex);
                 onsets = g_episodes.Tick(live->vector.value, nowSec);
-                unanswered = g_episodes.TakeUnanswered(nowSec);
             }
             if (!onsets.empty()) {
                 auto ctx = BuildContext("onset", {});
                 std::lock_guard lock(g_episodeMutex);
                 for (const size_t k : onsets) g_episodes.SetPayload(k, ctx);
+            }
+        }
+
+        {
+            std::lock_guard lock(g_statsMutex);
+            ++g_stats.ticks;
+            g_stats.tickRows = rowCount;
+        }
+        g_tickFirstHalfUs = std::chrono::duration<double, std::micro>(Clock::now() - t0).count();
+    }
+
+    void TickAfterSelections(Clock::time_point now)
+    {
+        const auto t0 = Clock::now();
+        const double nowSec = Sec(now);
+        auto* ui = RE::UI::GetSingleton();
+        const bool paused = ui && ui->GameIsPaused();
+
+        // Judged AFTER SelectionTracker::Update, so a selection that confirms on
+        // this same tick -- after a stall of the loop, a confirmation and the
+        // end of a grace can land together -- answers its episode first.
+        if (!paused) {
+            std::vector<Core::Needs::EpisodeTracker<std::shared_ptr<const DL::Context>>::Episode> unanswered;
+            {
+                std::lock_guard lock(g_episodeMutex);
+                unanswered = g_episodes.TakeUnanswered(nowSec);
             }
             for (auto& e : unanswered) {
                 if (!e.payload) continue;   // an onset whose context was never attached (not expected)
@@ -857,32 +1083,28 @@ namespace Huginn::Learning::SelectionLogV3
             }
         }
 
-        // 4. Picks kept in the v3 log only.
+        // Picks kept in the v3 log only (confirmed like SelectionTracker's).
         TickPicks(now);
 
-        const double us = std::chrono::duration<double, std::micro>(Clock::now() - t0).count();
-        std::lock_guard lock(g_statsMutex);
-        ++g_stats.ticks;
-        g_tickSumUs += us;
-        g_stats.tickMeanUs = g_tickSumUs / static_cast<double>(g_stats.ticks);
-        g_stats.tickMaxUs = std::max(g_stats.tickMaxUs, us);
-        g_stats.tickRows = rowCount;
         {
             std::lock_guard dl(g_episodeMutex);
+            std::lock_guard sl(g_statsMutex);
             g_stats.episodesDroppedShort = g_episodes.DroppedShort();
         }
+        RecordTickCost(t0);
     }
 
-    DecisionCapture CaptureForPress(EquipSource source, std::string_view via)
+    DecisionCapture CaptureForPress(RE::FormID formID, EquipSource source, std::string_view via)
     {
         const auto now = Clock::now();
         DecisionCapture cap;
         cap.pressSec = Sec(now);
+        cap.preEquipped = WasEquippedBefore(formID, cap.pressSec);
         {
             std::lock_guard lock(g_episodeMutex);
             for (const size_t k : g_episodes.OpenNeeds()) cap.open.push_back(static_cast<uint8_t>(k));
         }
-        if (source == EquipSource::External && IsMenuVia(via)) {
+        if (source == EquipSource::External && IsPausingMenuVia(via)) {
             std::lock_guard lock(g_menuMutex);
             const bool recent = g_menu.open ||
                 std::chrono::duration<float, std::milli>(now - g_menu.closedAt).count() <= Config::MENU_CLOSE_INPUT_WINDOW_MS;
@@ -915,6 +1137,7 @@ namespace Huginn::Learning::SelectionLogV3
         d.ctx = event.v3.ctx;
         d.ctxAgeMs = event.v3.ageMs;
         d.open = event.v3.open;
+        d.preEquipped = event.v3.preEquipped;
         if (!d.ctx) d.ctx = BuildContext("press", {});
         ResolveChosen(d, outcome != Outcome::Menu);
         AnswerEpisodes(event.v3.ctx ? event.v3.pressSec : Sec(selectedAt));
@@ -939,7 +1162,7 @@ namespace Huginn::Learning::SelectionLogV3
         p.consumable = form && (form->Is(RE::FormType::AlchemyItem) || form->Is(RE::FormType::SoulGem));
         const float windowMs = p.consumable ? Config::CONSUMPTION_HUGINN_WINDOW_MS : Config::SELECTION_CONFIRM_MS;
         p.deadline = p.at + std::chrono::duration_cast<Clock::duration>(std::chrono::duration<float, std::milli>(windowMs));
-        p.capture = CaptureForPress(EquipSource::External, via);
+        p.capture = CaptureForPress(formID, EquipSource::External, via);
         p.via = std::move(via);
         logger::debug("[SelectionV3] pending (v3 only, {}) {:08X} '{}' via {}"sv, p.skip, formID, FormName(formID), p.via);
         std::lock_guard lock(g_pickMutex);
@@ -989,12 +1212,20 @@ namespace Huginn::Learning::SelectionLogV3
         }
         {
             std::lock_guard lock(g_heldMutex);
-            g_held.clear();
+            g_held.reset();
             g_heldAt = -1e300;
+            g_instances.clear();   // dynamic enchantment IDs mean other things in another save
+        }
+        {
+            std::lock_guard lock(g_handMutex);
+            g_hands.fill(HandSnapshot{});
         }
         {
             std::lock_guard lock(g_tickMutex);
             g_tick = TickState{};
+            // Until this session's first pipeline run, the cache holds the
+            // previous save's candidates and page.
+            g_runGate.Reset(PipelineStateCache::GetSingleton().Generation());
         }
     }
 

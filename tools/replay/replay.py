@@ -419,7 +419,7 @@ def validate(recs):
 
 
 # --------------------------------------------------------------------------
-# Selection log v3 (R4): docs/architecture/selection-log-v3.md
+# Selection log v3 (R4): docs/architecture/9-selection-log-v3.md
 # --------------------------------------------------------------------------
 
 DEFAULT_LOG_V3 = os.path.expanduser(r"~/Documents/My Games/Skyrim.INI/SKSE/Huginn_Selections_v3.jsonl")
@@ -462,55 +462,88 @@ def _v3_row(raw, head, caps):
     }
 
 
-def iter_v3(paths):
+def iter_v3(paths, stats=None):
     """Yield every decision of the given v3 files, in file order, resolved:
     its context (need/input by name, the rows with cap(i) by column name and
     the cross-features by name), `rows` = the context's rows then the
     decision's added rows, and `chosen` = rows[row] (None for nothing).
-    Caps and contexts are per segment: a head line starts a new one."""
+    Caps and contexts are per segment: a head line starts a new one.
+
+    A line that is not JSON (a record torn by a crash or a full disk) is
+    skipped and counted in stats["bad_lines"]; until the next head, a cap or
+    context that line may have defined is missing, so records that need one
+    are skipped too (stats["skipped"]) instead of failing. Without a torn line,
+    a reference to an undefined id is a malformed file (V3FormatError)."""
+    if stats is None:
+        stats = {}
+    stats.setdefault("bad_lines", 0)
+    stats.setdefault("skipped", 0)
     for path in paths:
         head, caps, ctxs = None, {}, {}
+        damaged = False   # a torn line since the last head
         with _open_text(path) as f:
             for lineno, line in enumerate(f, 1):
                 line = line.strip()
                 if not line:
                     continue
-                rec = json.loads(line)
+                try:
+                    rec = json.loads(line)
+                    if not isinstance(rec, dict):
+                        raise ValueError("not an object")
+                except ValueError:
+                    stats["bad_lines"] += 1
+                    damaged = True
+                    continue
                 t = rec.get("t")
                 if t == "head":
                     if rec.get("v") != 3:
                         raise V3FormatError(f"{path}:{lineno}: version {rec.get('v')} is not 3")
-                    head, caps, ctxs = rec, {}, {}
+                    head, caps, ctxs, damaged = rec, {}, {}, False
                     continue
                 if head is None:
+                    if damaged:
+                        stats["skipped"] += 1
+                        continue
                     raise V3FormatError(f"{path}:{lineno}: a '{t}' record before any head")
-                if t == "cap":
-                    caps[rec["id"]] = _sparse(rec["c"], head["cols"])
-                elif t == "ctx":
-                    ctx = {k: v for k, v in rec.items() if k not in ("rows", "need", "in")}
-                    ctx["need"] = _sparse(rec["need"], head["needs"])
-                    ctx["input"] = _sparse(rec["in"], head["needs"])
-                    ctx["rows"] = [_v3_row(r, head, caps) for r in rec["rows"]]
-                    ctxs[rec["id"]] = ctx
-                elif t == "dec":
-                    if rec.get("v") != 3:
-                        raise V3FormatError(f"{path}:{lineno}: decision version {rec.get('v')}")
-                    ctx_id = rec.get("ctx")
-                    if ctx_id is not None and ctx_id not in ctxs:
-                        raise V3FormatError(f"{path}:{lineno}: context {ctx_id} used before it is defined")
-                    d = dict(rec)
-                    d["ctx"] = ctxs[ctx_id] if ctx_id is not None else None
-                    d["add"] = [_v3_row(r, head, caps) for r in rec["add"]]
-                    d["rows"] = (d["ctx"]["rows"] if d["ctx"] else []) + d["add"]
-                    d["chosen"] = d["rows"][rec["row"]] if rec["row"] >= 0 else None
-                    d["head"] = head
-                    yield d
-                else:
-                    raise V3FormatError(f"{path}:{lineno}: unknown record type {t!r}")
+                try:
+                    if t == "cap":
+                        caps[rec["id"]] = _sparse(rec["c"], head["cols"])
+                    elif t == "ctx":
+                        ctx = {k: v for k, v in rec.items() if k not in ("rows", "need", "in")}
+                        ctx["need"] = _sparse(rec["need"], head["needs"])
+                        ctx["input"] = _sparse(rec["in"], head["needs"])
+                        ctx["rows"] = [_v3_row(r, head, caps) for r in rec["rows"]]
+                        ctxs[rec["id"]] = ctx
+                    elif t == "dec":
+                        if rec.get("v") != 3:
+                            raise V3FormatError(f"{path}:{lineno}: decision version {rec.get('v')}")
+                        ctx_id = rec.get("ctx")
+                        if ctx_id is not None and ctx_id not in ctxs:
+                            raise V3FormatError(f"{path}:{lineno}: context {ctx_id} used before it is defined")
+                        d = dict(rec)
+                        d["ctx"] = ctxs[ctx_id] if ctx_id is not None else None
+                        d["add"] = [_v3_row(r, head, caps) for r in rec["add"]]
+                        d["rows"] = (d["ctx"]["rows"] if d["ctx"] else []) + d["add"]
+                        d["chosen"] = d["rows"][rec["row"]] if rec["row"] >= 0 else None
+                        d["head"] = head
+                        yield d
+                    else:
+                        raise V3FormatError(f"{path}:{lineno}: unknown record type {t!r}")
+                except V3FormatError:
+                    if not damaged:
+                        raise
+                    stats["skipped"] += 1   # it needed what the torn line defined
 
 
-def load_v3(paths):
-    return list(iter_v3(paths))
+def load_v3(paths, stats=None):
+    """All decisions (iter_v3); torn lines are reported on stderr."""
+    stats = {} if stats is None else stats
+    decs = list(iter_v3(paths, stats))
+    if stats.get("bad_lines") or stats.get("skipped"):
+        import sys
+        print(f"warning: {stats['bad_lines']} unreadable line(s) skipped, {stats['skipped']} record(s) "
+              "that depended on them skipped", file=sys.stderr)
+    return decs
 
 
 def summarize_v3(paths):
@@ -520,10 +553,14 @@ def summarize_v3(paths):
         with _open_text(path) as f:
             for line in f:
                 if line.strip():
-                    t = json.loads(line).get("t")
+                    try:
+                        t = json.loads(line).get("t")
+                    except (ValueError, AttributeError):
+                        t = "(torn)"
                     sizes[t][0] += 1
                     sizes[t][1] += len(line.encode("utf-8"))
-    decs = load_v3(paths)
+    stats = {}
+    decs = list(iter_v3(paths, stats))
     by_out = defaultdict(int)
     rows = []
     hits = defaultdict(lambda: [0, 0])
@@ -542,6 +579,9 @@ def summarize_v3(paths):
         h[1] += (c["form"], c["uid"]) in top
     total_bytes = sum(b for _, b in sizes.values())
     print(f"{len(decs)} decisions in {len(paths)} file(s), {total_bytes} bytes")
+    if stats["bad_lines"] or stats["skipped"]:
+        print(f"  {stats['bad_lines']} unreadable (torn) line(s) skipped; {stats['skipped']} record(s) that "
+              "needed them skipped")
     for t, (n, b) in sorted(sizes.items()):
         print(f"  {t:5} {n:6d} lines {b:10d} bytes ({b / max(1, n):.0f} per line)")
     print("  outcomes: " + ", ".join(f"{k}={v}" for k, v in sorted(by_out.items())))

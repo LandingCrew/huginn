@@ -114,7 +114,7 @@ namespace Huginn::Learning
         event.shown = PipelineStateCache::GetSingleton().TakeSnapshot();
         event.loadGeneration = g_loadGeneration.load(std::memory_order_relaxed);
         // R4: the selection log v3's context for this press (logging only).
-        event.v3 = SelectionLogV3::CaptureForPress(source, event.via);
+        event.v3 = SelectionLogV3::CaptureForPress(formID, source, event.via);
 
         const float windowMs = event.kind == SelectionKind::Consumable
             ? Config::CONSUMPTION_HUGINN_WINDOW_MS

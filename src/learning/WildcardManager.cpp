@@ -302,8 +302,12 @@ namespace Huginn::Scoring
                 if (wildcardID != 0) {
                     cache.slots[i].formID = wildcardID;
                     cache.slots[i].sourceType = topType;
+                    // The pool holds one entry per candidate row: two stacks of
+                    // one weapon are two entries of one FormID, and drawing
+                    // either shows the same wildcard.
+                    const auto copies = std::count(m_eligibleBuffer.begin(), m_eligibleBuffer.end(), wildcardID);
                     cache.slots[i].propensity = m_lastDrawPool > 0
-                        ? probability / static_cast<float>(m_lastDrawPool) : 0.0f;
+                        ? probability * static_cast<float>(copies) / static_cast<float>(m_lastDrawPool) : 0.0f;
                     usedFormIDs.push_back(wildcardID);
                     anyRolled = true;
                     ++rolled;

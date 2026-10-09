@@ -135,6 +135,11 @@ class GoldenFile(unittest.TestCase):
         self.assertIsNone(d["ctx"]["race"])
         self.assertEqual(d["ctx"]["rows"][0]["cap"], {"survival": 0.5, "survival_hunger": 0.5})
 
+    def test_held_detail_and_pre_press_equipped(self):
+        # The onset context was taken inside the post-load window (heldFull 0).
+        self.assertEqual([d["ctx"]["heldFull"] for d in self.decs[:5]], [1, 1, 1, 0, 1])
+        self.assertEqual([d["preEquipped"] for d in self.decs], [0, 0, 0, 0, 1, 0])
+
     def test_wheel_reuses_the_first_context(self):
         self.assertIs(self.decs[4]["ctx"], self.decs[0]["ctx"])
         self.assertEqual(self.decs[4]["chosen"]["form"], "00012FCD")
@@ -281,6 +286,26 @@ class PythonRoundTrip(unittest.TestCase):
         bad_v = text.replace('"v": 3', '"v": 4', 1)
         with self.assertRaises(replay.V3FormatError):
             self.roundtrip(bad_v)
+
+    def test_torn_line_is_skipped_and_the_next_head_resyncs(self):
+        head, seg1, seg2 = make_session()
+        lines = encode([(head, seg1), (head, seg2)]).splitlines()
+        # Tear segment 1's first context (ctx 10) in half: a crash mid-write,
+        # after which the writer started on a new line.
+        i = next(k for k, l in enumerate(lines) if '"t": "ctx", "id": 10' in l)
+        lines[i] = lines[i][: len(lines[i]) // 2]
+        # And a torn last line with no newline at all.
+        text = "\n".join(lines) + "\n" + '{"t": "dec", "v": 3, "se'
+        stats = {}
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / "torn.jsonl"
+            p.write_text(text, encoding="utf-8")
+            decs = list(replay.iter_v3([p], stats))
+        # seq 1 and 3 needed ctx 10 (skipped); seq 2 (its own context) and
+        # seq 4 (after the next head, which re-defines ctx 10) survive.
+        self.assertEqual([d["seq"] for d in decs], [2, 4])
+        self.assertEqual(stats, {"bad_lines": 2, "skipped": 2})
+        self.assertEqual(decs[1]["chosen"]["form"], "00012EB7")
 
     def test_summary_runs(self):
         import contextlib

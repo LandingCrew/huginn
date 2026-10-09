@@ -16,7 +16,7 @@
 //   nothing  a need episode ended with no selection (core/NeedEpisodes.h)
 //
 // The schema, field by field, with units and versioning:
-// docs/architecture/selection-log-v3.md. tools/replay/replay.py reads it.
+// docs/architecture/9-selection-log-v3.md. tools/replay/replay.py reads it.
 //
 // Four line types, one JSON object per line (JSON Lines):
 //   head  first line of every file segment: the version, the column, need,
@@ -133,13 +133,19 @@ namespace Huginn::Core::DecisionLog
         std::string race;           // the hostile primary target's race editor ID, if any
         float wildcardBase = 0.0f;  // the wildcard settings (base, max probability per slot)
         float wildcardMax = 0.0f;
+        /// The held rows were read in full: per-stack unique IDs, per-instance
+        /// caps, charges and worn armour. False inside the post-load window in
+        /// which inventory extra data must not be read (Util::IsExtraListStable):
+        /// then the held rows are one plain row per base form, "equipped" is
+        /// read from the hands and the nocked ammo only, and armour reads unworn.
+        bool heldFull = true;
         std::vector<Row> rows;
     };
 
     /// One decision.
     struct Decision
     {
-        std::uint64_t seq = 0;      // per launch, in write order
+        std::uint64_t seq = 0;      // per launch, in write order (the writer assigns it)
         std::string utc;            // when the record was made (confirmation; expiry + grace for nothing)
         std::string launch;         // UTC start of the game launch, "YYYYMMDD-HHMMSS"
         std::string list;           // modlist folder
@@ -163,6 +169,12 @@ namespace Huginn::Core::DecisionLog
         float ctxAgeMs = 0.0f;      // press time minus the context's time
         double pressSec = 0.0;      // steady seconds at the press (not written; the caller's)
         std::vector<std::uint8_t> open;  // needs with an open episode at the press
+        /// Was the chosen item equipped BEFORE the press? A press's context is
+        /// taken after its own equip, so the chosen row's Equipped flag can
+        /// show the pick itself; this is the state from the last update tick
+        /// before the press (hands and nocked ammo; 0 for anything else, which
+        /// an equip event shows was not worn).
+        bool preEquipped = false;
         // nothing only
         int need = -1;
         double durSec = 0.0;
@@ -191,6 +203,22 @@ namespace Huginn::Core::DecisionLog
     // --- The encoder ----------------------------------------------------------
     /// Turns records into lines for one file segment. Not thread-safe: the
     /// writer thread owns one.
+    /// Whether a pipeline run belongs to the current game session. A load
+    /// (or `hg reset all`) arms the gate at the cache's generation then: runs
+    /// up to it described the previous save, and a context must not log their
+    /// page or candidates as this session's.
+    struct RunGate
+    {
+        std::uint64_t resetAt = 0;
+        bool armed = false;
+        void Reset(std::uint64_t currentGeneration) noexcept
+        {
+            resetAt = currentGeneration;
+            armed = true;
+        }
+        [[nodiscard]] bool IsCurrent(std::uint64_t generation) const noexcept { return !armed || generation > resetAt; }
+    };
+
     class Encoder
     {
     public:

@@ -136,8 +136,8 @@ namespace Huginn::Scoring
 
         /// R4, logging only: the propensity of `formID`'s cached wildcard on
         /// `pageIndex` -- the probability of the roll that put it there, given
-        /// the earlier rolls of the same pass: P(the slot rolled) x 1/(the pool
-        /// it was drawn from). NaN when it is not a cached wildcard of that
+        /// the earlier rolls of the same pass: P(the slot rolled) x (entries of
+        /// that FormID in the pool) / (the pool it was drawn from). NaN when it is not a cached wildcard of that
         /// page. Read on the update thread (the pipeline), like the cache.
         [[nodiscard]] float GetWildcardPropensity(size_t pageIndex, RE::FormID formID) const;
 

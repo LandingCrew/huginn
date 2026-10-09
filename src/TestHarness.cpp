@@ -495,7 +495,8 @@ namespace Huginn::TestHarness
         if (gameLoaded && g_decisionSession && g_captureSlotsSec <= 0) {
             // R4: a scripted session that writes a selection log v3 record of
             // every outcome it can (learning/SelectionLogV3Session.cpp), then end.
-            Learning::SelectionLogV3::StartTestSession([]() { Finish({}); });
+            // A failure reason fails the DONE line, as a failed coc does.
+            Learning::SelectionLogV3::StartTestSession([](const char* fail) { Finish(fail ? fail : ""); });
             return;
         }
         if (gameLoaded && g_dumpRecsAfterSec > 0 && g_captureSlotsSec <= 0) {

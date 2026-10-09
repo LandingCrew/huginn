@@ -630,6 +630,8 @@ void OnUpdate(float deltaSeconds)
     // Main thread (the input sink drives this loop), so reading what the
     // player has equipped is safe here.
     Learning::SelectionTracker::GetSingleton().Update();
+    // R4: ended need episodes are judged after the confirmations above.
+    Learning::SelectionLogV3::TickAfterSelections(now);
     RunPipelineIfNeeded(deltaMs, player, now);
 
     // Soak telemetry: record whole-tick cost and emit the periodic heartbeat.

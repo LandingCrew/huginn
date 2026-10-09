@@ -69,6 +69,7 @@ namespace Huginn::Learning
             RE::FormID formID = 0;
             std::string name;
             Slot::AssignmentType type = Slot::AssignmentType::Normal;  // Override / Wildcard / Remembered flags
+            uint16_t uniqueID = 0;   // R4: the stack (weapons, armour), for the selection log v3
         };
 
         /// R4: one ELIGIBLE candidate of the run -- every item CandidateGenerator
@@ -176,7 +177,7 @@ namespace Huginn::Learning
             for (const auto& assignment : currentPageAssignments) {
                 if (!assignment.IsEmpty() && assignment.formID != 0) {
                     m_shown.push_back(ShownSlot{ assignment.slotIndex, assignment.formID,
-                        assignment.name, assignment.type });
+                        assignment.name, assignment.type, assignment.uniqueID });
                 }
             }
 

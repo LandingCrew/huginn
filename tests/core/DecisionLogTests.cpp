@@ -171,6 +171,7 @@ namespace
             o->page = 1;
             o->pageSlots = 4;
             o->pipeAgeMs = 1500.0f;
+            o->heldFull = false;   // taken inside the post-load window
             {
                 Row r;
                 r.form = 0x0003AD72;
@@ -268,6 +269,7 @@ namespace
             d5.confirmMs = 3000.0f;
             d5.ctx = press;
             d5.ctxAgeMs = 79000.0f;
+            d5.preEquipped = true;   // the spell was already in the other hand
             decisions.push_back(d5);
         }
 
@@ -316,6 +318,20 @@ TEST_CASE("decision log: JSON helpers")
     CHECK(s == "0");
     CHECK(FormHex(0x3EADE) == "0003EADE");
     CHECK(FormHex(0xFF000801) == "FF000801");
+}
+
+TEST_CASE("decision log: the run gate keeps a previous session's runs out")
+{
+    RunGate gate;
+    CHECK(gate.IsCurrent(0));   // never reset: every run counts
+    CHECK(gate.IsCurrent(7));
+    gate.Reset(7);              // a load while the cache holds run 7 of the old save
+    CHECK_FALSE(gate.IsCurrent(7));
+    CHECK_FALSE(gate.IsCurrent(3));
+    CHECK(gate.IsCurrent(8));   // the new session's first run
+    gate.Reset(8);              // a second load in the same launch
+    CHECK_FALSE(gate.IsCurrent(8));
+    CHECK(gate.IsCurrent(9));
 }
 
 TEST_CASE("decision log: caps and contexts are defined once per segment")

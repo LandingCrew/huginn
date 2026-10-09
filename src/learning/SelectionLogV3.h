@@ -7,7 +7,7 @@
 // decision with the need vector, every item the player could have chosen
 // (one row per item, sparse cap(i), the runtime cross-features), the page as
 // shown and an explicit outcome -- key, wheel, menu or nothing. Format:
-// core/DecisionLog.h; schema: docs/architecture/selection-log-v3.md.
+// core/DecisionLog.h; schema: docs/architecture/9-selection-log-v3.md.
 //
 // LOGGING ONLY. Nothing here is read by scoring, the candidates, the slots,
 // the frozen learner or the soak telemetry, and nothing here opens either
@@ -55,11 +55,19 @@ namespace Huginn::Learning::SelectionLogV3
     /// kDataLoaded: the menu sink (selection menus opening and closing).
     void Register();
 
-    /// The update loop, every tick (after the need monitor).
+    /// The update loop, every tick (after the need monitor, before
+    /// SelectionTracker::Update): this tick's rows and cross-features, episode
+    /// onsets and ends.
     void Tick(std::chrono::steady_clock::time_point now);
 
-    /// A press: the context it is joined to, the open episodes, the time.
-    [[nodiscard]] DecisionCapture CaptureForPress(EquipSource source, std::string_view via);
+    /// The update loop, every tick, AFTER SelectionTracker::Update: ended
+    /// episodes are judged here, so a selection that confirms on the same tick
+    /// answers its episode first; the v3-only picks confirm here.
+    void TickAfterSelections(std::chrono::steady_clock::time_point now);
+
+    /// A press of `formID`: the context it is joined to, the open episodes,
+    /// the time, and whether the item was equipped before the press.
+    [[nodiscard]] DecisionCapture CaptureForPress(RE::FormID formID, EquipSource source, std::string_view via);
 
     /// SelectionTracker confirmed `event` (the press was at `selectedAt`).
     void OnConfirmed(const EquipEvent& event, std::chrono::steady_clock::time_point selectedAt, std::string_view how);
@@ -86,6 +94,10 @@ namespace Huginn::Learning::SelectionLogV3
         uint64_t key = 0, wheel = 0, menu = 0, nothing = 0;   // records queued
         uint64_t unlearned = 0;                               // of which learned = 0
         uint64_t written = 0, bytes = 0;                      // by the writer
+        uint64_t writtenKey = 0, writtenWheel = 0, writtenMenu = 0, writtenNothing = 0;
+        uint64_t dropped = 0;                                 // queue full: never written
+        uint64_t contextsBuilt = 0, heldReads = 0;
+        double buildMeanMs = 0.0, buildMaxMs = 0.0, heldReadMaxMs = 0.0;
         uint64_t ctxWritten = 0, capsWritten = 0;
         uint64_t episodesDroppedShort = 0;
         uint64_t ticks = 0;
@@ -102,7 +114,8 @@ namespace Huginn::Learning::SelectionLogV3
     bool Flush(std::chrono::milliseconds timeout);
 
     /// Test mode (Debug; bDecisionSession): a scripted session that writes a
-    /// record of every outcome it can, then calls `done` on its own thread.
-    /// SelectionLogV3Session.cpp. In Release it calls `done` at once.
-    void StartTestSession(void (*done)());
+    /// record of every outcome it can, then calls `done` on its own thread
+    /// with an empty reason (pass) or why it failed. SelectionLogV3Session.cpp.
+    /// In Release it calls `done("")` at once.
+    void StartTestSession(void (*done)(const char* failReason));
 }

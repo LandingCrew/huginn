@@ -242,7 +242,7 @@ namespace Huginn::Learning::SelectionLogV3
         }
     }
 
-    void StartTestSession(void (*done)())
+    void StartTestSession(void (*done)(const char* failReason))
     {
         std::thread([done]() {
             const auto before = GetStats();
@@ -251,7 +251,7 @@ namespace Huginn::Learning::SelectionLogV3
             Task(&LowerHealth);
             std::this_thread::sleep_for(4s);
             Task(&RestoreHealth);
-            std::this_thread::sleep_for(6s);    // the 3.5 s grace, and a tick or two
+            std::this_thread::sleep_for(6s);    // the 4 s grace, and a tick or two
 
             Task(&ForceWildcards);
             std::this_thread::sleep_for(1s);
@@ -275,26 +275,34 @@ namespace Huginn::Learning::SelectionLogV3
             Task(&CloseInventory);
             std::this_thread::sleep_for(6s);    // confirmations after the close
 
-            Flush(std::chrono::seconds(10));
+            const bool flushed = Flush(std::chrono::seconds(10));
             const auto s = GetStats();
-            const uint64_t key = s.key - before.key, wheel = s.wheel - before.wheel, menu = s.menu - before.menu,
-                           nothing = s.nothing - before.nothing;
+            // What reached the file, not what was queued (a full queue drops).
+            const uint64_t key = s.writtenKey - before.writtenKey, wheel = s.writtenWheel - before.writtenWheel,
+                           menu = s.writtenMenu - before.writtenMenu, nothing = s.writtenNothing - before.writtenNothing;
             std::error_code ec;
             const auto path = FilePath();
             const auto size = path.empty() ? 0 : std::filesystem::file_size(path, ec);
-            logger::info("[HuginnTest] decision session: key={} wheel={} menu={} nothing={} (unlearned={}) records={} "
-                         "bytes={} contexts={} caps={} file={} ({} bytes); tick {:.1f} us mean, {:.1f} us max over {} "
-                         "tick(s), {} eligible row(s) last tick; {} short episode(s) dropped"sv,
-                key, wheel, menu, nothing, s.unlearned - before.unlearned, s.written - before.written,
-                s.bytes - before.bytes, s.ctxWritten - before.ctxWritten, s.capsWritten - before.capsWritten,
-                path.filename().string(), size, s.tickMeanUs, s.tickMaxUs, s.ticks, s.tickRows, s.episodesDroppedShort);
-            if (key == 0) logger::error("[HuginnTest] TEST FAIL: decision session wrote no key record"sv);
-            if (menu == 0) logger::error("[HuginnTest] TEST FAIL: decision session wrote no menu record"sv);
-            if (nothing == 0) logger::error("[HuginnTest] TEST FAIL: decision session wrote no nothing record"sv);
-            if (wheel == 0 && g_wheelAttempted.load()) {
-                logger::error("[HuginnTest] TEST FAIL: a wheel pick was made but no wheel record was written"sv);
-            }
-            done();
+            logger::info("[HuginnTest] decision session: key={} wheel={} menu={} nothing={} written (queued {}, dropped {}, "
+                         "unlearned={}) bytes={} contexts={} caps={} file={} ({} bytes); tick {:.1f} us mean, {:.1f} us "
+                         "max over {} tick(s), {} eligible row(s) last tick; context build {:.2f} ms mean, {:.2f} ms max "
+                         "over {} ({} held read(s), {:.2f} ms max); {} short episode(s) dropped"sv,
+                key, wheel, menu, nothing,
+                (s.key + s.wheel + s.menu + s.nothing) - (before.key + before.wheel + before.menu + before.nothing),
+                s.dropped - before.dropped, s.unlearned - before.unlearned, s.bytes - before.bytes,
+                s.ctxWritten - before.ctxWritten, s.capsWritten - before.capsWritten, path.filename().string(), size,
+                s.tickMeanUs, s.tickMaxUs, s.ticks, s.tickRows, s.buildMeanMs, s.buildMaxMs, s.contextsBuilt,
+                s.heldReads, s.heldReadMaxMs, s.episodesDroppedShort);
+            // A failure must reach the DONE line: this thread's error lines are
+            // not counted (no suite runs on it), so the reason goes to done().
+            const char* fail = "";
+            if (!flushed) fail = "decision-flush-timeout";
+            else if (key == 0) fail = "decision-no-key";
+            else if (menu == 0) fail = "decision-no-menu";
+            else if (nothing == 0) fail = "decision-no-nothing";
+            else if (wheel == 0 && g_wheelAttempted.load()) fail = "decision-no-wheel";
+            if (*fail) logger::error("[HuginnTest] TEST FAIL: decision session: {}"sv, fail);
+            done(fail);
         }).detach();
     }
 }
@@ -303,7 +311,7 @@ namespace Huginn::Learning::SelectionLogV3
 
 namespace Huginn::Learning::SelectionLogV3
 {
-    void StartTestSession(void (*done)()) { done(); }
+    void StartTestSession(void (*done)(const char*)) { done(""); }
 }
 
 #endif

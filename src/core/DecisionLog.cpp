@@ -331,7 +331,9 @@ namespace Huginn::Core::DecisionLog
                 AppendNum(ctxLine, c.wildcardBase);
                 ctxLine += R"(,"max":)";
                 AppendNum(ctxLine, c.wildcardMax);
-                ctxLine += R"(},"rows":[)";
+                ctxLine += R"(},"heldFull":)";
+                ctxLine += c.heldFull ? '1' : '0';
+                ctxLine += R"(,"rows":[)";
                 for (std::size_t i = 0; i < c.rows.size(); ++i) {
                     if (i) ctxLine += ',';
                     AppendRow(ctxLine, c.rows[i], defs);
@@ -405,7 +407,9 @@ namespace Huginn::Core::DecisionLog
             if (i) dec += ',';
             AppendInt(dec, d.open[i]);
         }
-        dec += R"(],"ep":)";
+        dec += R"(],"preEquipped":)";
+        dec += d.preEquipped ? '1' : '0';
+        dec += R"(,"ep":)";
         if (d.outcome == Outcome::Nothing && d.need >= 0 && static_cast<std::size_t>(d.need) < Needs::kNeedCount) {
             dec += R"({"need":)";
             dec += JsonString(Needs::kNeeds[static_cast<std::size_t>(d.need)].id);

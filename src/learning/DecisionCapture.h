@@ -25,5 +25,6 @@ namespace Huginn::Learning
         float ageMs = 0.0f;               // press time minus the context's time
         std::vector<std::uint8_t> open;   // needs with an open episode at the press
         double pressSec = 0.0;            // steady seconds at the press
+        bool preEquipped = false;         // the item was in a hand / nocked before the press
     };
 }

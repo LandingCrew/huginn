@@ -592,6 +592,35 @@ def remove_flag(path: Path) -> None:
             time.sleep(0.3)
 
 
+def check_decision_file(path: Path, wheel_expected: bool) -> str | None:
+    """Decode a selection log v3 file with tools/replay/replay.py and say what
+    is wrong with it for a decision session (None = fine): unreadable, torn
+    lines, or a missing key / menu / nothing record (wheel when a wheel pick
+    was made)."""
+    import importlib.util
+    sys.dont_write_bytecode = True
+    replay_py = Path(__file__).resolve().parent.parent / "replay" / "replay.py"
+    spec = importlib.util.spec_from_file_location("huginn_replay", replay_py)
+    replay = importlib.util.module_from_spec(spec)
+    sys.modules["huginn_replay"] = replay
+    spec.loader.exec_module(replay)
+    stats: dict = {}
+    try:
+        decs = list(replay.iter_v3([path], stats=stats))
+    except Exception as e:   # the reader refused the file
+        return f"the v3 file does not decode: {e}"
+    outcomes: dict[str, int] = {}
+    for d in decs:
+        outcomes[d["out"]] = outcomes.get(d["out"], 0) + 1
+    say("v3 file decoded: " + ", ".join(f"{k}={v}" for k, v in sorted(outcomes.items()))
+        + f"; bad lines {stats.get('bad_lines', 0)}, skipped decisions {stats.get('skipped', 0)}")
+    if stats.get("bad_lines", 0):
+        return f"{stats['bad_lines']} unreadable line(s) in the v3 file"
+    wanted = ["key", "menu", "nothing"] + (["wheel"] if wheel_expected else [])
+    missing = [o for o in wanted if not outcomes.get(o)]
+    return f"no {', '.join(missing)} record in the v3 file" if missing else None
+
+
 # --- main --------------------------------------------------------------------
 
 def main() -> int:
@@ -801,6 +830,12 @@ def main() -> int:
                     print("  " + line.split("]: ", 1)[-1])
         if fresh_v3:
             say(f"selection log v3 (test): {v3} ({v3.stat().st_size} bytes)")
+            # Read what was written (tools/replay's reader), not what Huginn
+            # says it queued: every outcome the session makes must be there.
+            problem = check_decision_file(v3, wheel_expected=fresh and any(
+                "Huginn's activation handler run" in l for l in lines))
+            if problem and verdict and verdict[0] == 0:
+                verdict = (1, "--decision-session: " + problem)
         else:
             say(f"WARNING: no selection log v3 test file from this launch at {v3}")
             if verdict and verdict[0] == 0:
