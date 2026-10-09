@@ -1,7 +1,7 @@
 #pragma once
 
 // =============================================================================
-// EFFECT MAPPER -- plain item records -> cap(i), the 239 effect columns
+// EFFECT MAPPER -- plain item records -> cap(i), the 243 effect columns
 // =============================================================================
 // Doc 9's extractor rules (effects.csv `how`), in three steps:
 //
@@ -41,6 +41,13 @@
 //     more are sentinels: clipped to 3600, and `long_lasting` set. A restore
 //     of 9999+ is a full restore: value 1, `full_restore` set.
 //   - Families are the max over their specifics.
+//   - Side effects (0.23.16): a harm row (damage, drain, weakness, control
+//     ...) on a food or potion is detrimental or hostile to the item's own
+//     user, so it sets self_harm_<vital> (a vital's damage or drain, graded
+//     as an Amount within its own population) or the family self_harm (any
+//     other harm), never the target-harm column (core/EffectRules.h,
+//     SelfHarmColumn). Such a row does not set `hostile` and is the primary
+//     row (delivery, timing) only when the item keeps nothing else.
 //
 // Coverage (doc 9's "Mapped" figure): over in-scope items, the share of
 // visible effect rows that map to a column, not counting helper rows (visual,

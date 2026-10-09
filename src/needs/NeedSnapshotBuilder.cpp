@@ -2,7 +2,8 @@
 
 #include "Globals.h"
 #include "NeedSettings.h"
-#include "context/ContextRuleEngine.h"  // CraftSkillForWorkstation
+#include "Profiling.h"
+#include "core/BenchKind.h"
 #include "state/StateManager.h"
 
 namespace Huginn::Needs
@@ -28,16 +29,13 @@ namespace Huginn::Needs
          }
       }
 
-      int WorkstationOf(const State::WorldState& world)
+      // The bench by its workbench keyword (StateManager::BenchKindOf), not
+      // the old engine's CraftSkillForWorkstation, which reads every
+      // create-object bench (forge, cooking pot and spit, smelter, tanning
+      // rack) as smithing and still feeds scoring that way (frozen).
+      int WorkstationOf(const State::NeedSensorState& n)
       {
-         if (!world.isLookingAtWorkstation) return 0;
-         using Core::Needs::Workstation;
-         switch (Context::CraftSkillForWorkstation(world.workstationType)) {
-         case Apparel::CraftSkill::Smithing: return static_cast<int>(Workstation::Smithing);
-         case Apparel::CraftSkill::Enchanting: return static_cast<int>(Workstation::Enchanting);
-         case Apparel::CraftSkill::Alchemy: return static_cast<int>(Workstation::Alchemy);
-         default: return 0;
-         }
+         return Core::Needs::NeedWorkstation(static_cast<Core::Needs::BenchKind>(n.bench));
       }
    }
 
@@ -139,7 +137,7 @@ namespace Huginn::Needs
       s.fallDepth = p.fallDepth;
       s.dropAhead = n.dropAhead;
       s.lock = src.world.isLookingAtLock;
-      s.workstation = WorkstationOf(src.world);
+      s.workstation = WorkstationOf(n);
       s.oreVein = src.world.isLookingAtOreVein;
       s.merchant = n.merchant;
 
@@ -166,6 +164,7 @@ namespace Huginn::Needs
 
    LiveNeeds ReadLiveNeeds()
    {
+      Huginn_ZONE_NAMED("Needs::ReadLiveNeeds");
       auto& sm = State::StateManager::GetSingleton();
       const auto player = sm.GetPlayerState();
       const auto targets = sm.GetTargets();
@@ -179,7 +178,10 @@ namespace Huginn::Needs
       LiveNeeds out;
       out.snapshot = BuildNeedSnapshot(NeedSources{ player, targets, world, health, magicka, stamina, sensors,
                                                     magickaHeld, staminaHeld, State::NeedClock::Now() });
-      out.vector = Core::Needs::EvaluateNeeds(out.snapshot, NeedSettings::GetSingleton().GetCurves());
+      {
+         Huginn_ZONE_NAMED("Needs::EvaluateNeeds");
+         out.vector = Core::Needs::EvaluateNeeds(out.snapshot, NeedSettings::GetSingleton().GetCurves());
+      }
       return out;
    }
 

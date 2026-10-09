@@ -127,7 +127,7 @@ Map Phase 1. Describe every item as cap(i) from game data. Done in 0.23.12
 (`r2-effect-extractor`) except the two armour items, which change candidates
 and accept% and so ship as their own small PR.
 - [x] `src/effect/`: a reader (game forms → plain records, kDataLoaded) and a
-      mapper in `src/core/` (records → the 239 columns of `9-data/effects.csv`),
+      mapper in `src/core/` (records → the 239 columns of `9-data/effects.csv`; 243 since 0.23.16),
       with the layered actor-value resolution and load-order percentiles.
       *(`effect/EffectReader`, `core/EffectRules` + `core/EffectMapper`,
       `core/MiniRegex` for the rule tables; the mapping runs on a worker
@@ -235,9 +235,13 @@ Logging only: `Huginn_Selections_v3.jsonl` beside the unchanged v2 log.
       (LoreRim: 9.1/s, 73 ms), so the 500 ms `fExternalEquipTimeWindow` does
       not trip in an ordinary menu visit -- only when the loop stalls (on
       LoreRim the cache was 581 ms old as the menu opened). The v3 log never drops a pick for staleness: a stale pick is
-      written with `learned: 0, skip: "stale"`; inventory and magic menu picks
-      join the context taken when the menu opened, with its age; favourites
-      menu picks join at the press.)*
+      written with `learned: 0, skip: "stale"`; inventory, magic and
+      favourites menu picks join the context taken when the menu opened, with
+      its age. 0.23.15 joined favourites picks at the press; 0.23.16 reverted
+      it: a favourites pick is a reach-in (the user, 2026-10-09), and on
+      LoreRim the favourites menu pauses the game -- 45 of 45 ticks paused,
+      10 pipeline runs in a 4.8 s visit -- so the press-time page is not the
+      one the player turned away from.)*
 - [x] `tools/replay` reads v3; the schema is documented.
 - [x] Done when (agent): replay parses a synthetic v3 file round-trip
   (`tests/core/DecisionLogTests.cpp` pins the encoder to
@@ -250,8 +254,18 @@ Logging only: `Huginn_Selections_v3.jsonl` beside the unchanged v2 log.
   ~0.4 MB/h on vanilla+, ~1 MB/h estimated for a soak-sized LoreRim
   inventory (schema doc); no score changes (`hg recs 40` identical to the base build, pipeline
   11.69 allocations/s against 11.85).
-- [ ] **In game (you):** a 30-minute session whose log holds all four
-  outcomes. Checklist in the PR.
+- [x] **In game (you):** a 30-minute session whose log holds all four
+  outcomes. Checklist in the PR. *(Passed 2026-10-09 on e8507df. LoreRim:
+  key 4, wheel 5 (the real Wheeler UI), menu 3 (2 armour, `learned: 0, skip:
+  "armour"`; 1 favourites), nothing 35, no damage. vanilla+, a die-and-reload:
+  load generation 2 at 10:54:38; the first context after it was basic
+  (`heldFull: 0`, taken before the first pipeline run), the held set warmed
+  0.54 s later, the generation-2 key and wheel records were normal (`pipe.ok:
+  1`, 8 shown); no errors, no damage. Reload tests go on vanilla+ or
+  Simonrim: LoreRim respawns the player at a tavern instead of letting them
+  die. The death in that run wrote two `nothing` records 3 s before the
+  reload (falling 1.0 s, loadout_restoration 28.7 s); since 0.23.16 a death
+  drops the open episodes and those in their grace, as a load does.)*
 
 ### R5. Data play (in game, you)
 
@@ -340,6 +354,19 @@ changed in the same PR, and the shipped INI loses the dead keys.
       pushes ~4.6/s in fights, and the soak denominators move. Here, where
       the scorer reads the needs, re-scoring on a need step is the point;
       measure the wildcard share and the Wheeler push rate when it lands.
+- [ ] **After the rework, measure slot churn against this baseline.** The
+      user, on the R3 build's LoreRim session (2026-10-09): "slot churn
+      definitely increased". Measured in that session: 4-6 slot changes a
+      minute outdoors, 40.7 a minute in combat; the October soak's median was
+      7.2 a minute, with a dungeon peak of 141 in 5 minutes. The drivers were
+      context flips (magicka tiers 69, distance bands 28, target type 12),
+      the magicka-food misread (Known bugs: LoreRim "Fortify Magicka" food
+      read as a restore, which made pies "Low MP" candidates -- the main
+      combat churn driver), and the 3 s lock expiring into x1.7-3 score
+      swings. R7's hold tie band was checked and is refuted as a cause. The
+      new scorer reads cap(i), where that food is `fortify_vital_magicka`
+      (0.23.16 fixture), and a continuous need replaces the tier flips; the
+      lock and the challenger rule are R9.
 
 ### R9. Bayesian challenger rule
 
@@ -393,6 +420,8 @@ after R8.
 | Damage over time on a boss | `boss_fight` need | Missing |
 | Feather Fall before the jump | `drop_ahead` need: a downward ray cast ahead (replaces "estimated altitude") | R3 |
 | Soul Gem Fragment (LoreRim MISC item) | Find how LoreRim uses it first | Open |
+| Food at a cooking pot or spit (the R3 session: a spit read as a forge) | A `workstation_cooking` need (the bench kind exists: `core/BenchKind.h` reads it from the workbench keyword, 0.23.16) x food effect columns; smelter and tanning rack likewise if a column ever answers them | Sensor exists (`NeedSensorState::bench`); no need row |
+| Resist Disease before a fight with disease carriers | A `disease_exposure` need (hostiles of a disease-carrying race in the fight: skeevers, wolves, bears, sabre cats, vampires -- a race table, as the target families) x `resist_disease`. 0.23.16 removed `diseased` x Resist Disease: resisting does not cure a disease already caught | Missing; no existing need covers it (`target_animal` also holds deer and horses) |
 
 ## Kept outside the rewrite
 
@@ -465,6 +494,29 @@ perks, level -- stay out (CLAUDE.md, Forbidden Information).
   R3 use `steady_clock`; fix the old ones when they become needs.
 
 The transform cache and the 37 misread races: done in R0.
+
+**Old engine, frozen (R8 replaces it; left as they are because old-engine
+scoring is frozen).** Found in the LoreRim R3 session (2026-10-09); the
+effect catalog and the need vector read each of them correctly since 0.23.16:
+- **LoreRim's "Fortify Magicka/Health" food reads as a restore.**
+  `ItemClassifier::ClassifyVitalEffect` (`ItemClassifier.cpp:1087-1106`)
+  knows only the vanilla `MagicAlch*` keywords; LoreRim's food carries
+  `REQ_PVM_Food_FortifyMagicka` / `_FortifyHealth` (Recover=1). Pies became
+  "Low MP" candidates, the main combat churn driver of that session (R8,
+  churn). cap(i) has them as `fortify_vital_magicka` (Apple Pie, Honey Nut
+  Treat: `EffectFixtureTests`).
+- **Resist Disease is offered while diseased.** The `resistDiseaseWeight`
+  rule (`ContextRuleEngine.cpp:200-203`, read for resist-disease and
+  cure-disease items at `ContextWeightForCandidate.cpp:198-208`) put Roasted
+  Leek and Cooked Potato on the page with the subtext "Diseased"
+  (`[Subtext] page 0 | 3=Diseased(Cooked Potato) 6=Diseased(Roasted Leek)`).
+  Resisting a disease does not cure one already caught; needs.csv no longer
+  pairs them (0.23.16).
+- **A cooking spit, pot, smelter or tanning rack reads as a forge.**
+  `CraftSkillForWorkstation` (`ContextRuleEngine.cpp:22-25`) maps every
+  create-object bench to Smithing, so `fortifySmithingWeight` still fires at a
+  spit. The need vector tells them apart by workbench keyword
+  (`core/BenchKind.h`).
 
 **Fixed in v0.23.13 -- hook-install race (int3 on a load-screen job thread).**
 CommonLib-NG 3.7.0's `write_5branch` patches the call site before it writes

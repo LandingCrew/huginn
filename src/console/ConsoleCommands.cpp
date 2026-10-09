@@ -6,6 +6,8 @@
 #include "learning/StateFeatures.h"
 #include "learning/PipelineStateCache.h"
 #include "state/StateManager.h"
+#include "state/DropAheadProbe.h"
+#include "Profiling.h"
 #include "core/ActorTypeClassifier.h"
 #include "candidate/CandidateGenerator.h"
 #include "override/OverrideManager.h"
@@ -229,6 +231,7 @@ namespace Huginn::Console
    // quiet scene too. To the console and the log.
    static void Cmd_Needs(std::string_view /*arg*/)
    {
+      Huginn_ZONE_NAMED("hg needs");
       const auto live = Needs::ReadLiveNeeds();
       const auto lines = Needs::FormatNeeds(live.vector);
       Print(std::format("Huginn needs ({} of {} non-zero; logged only, no score reads them):",
@@ -239,8 +242,16 @@ namespace Huginn::Console
          logger::info("[Console]   {}"sv, line);
       }
       const auto& s = live.snapshot;
-      const auto extra = std::format("  drop ahead {} | encumbrance {:.2f} | families 0x{:X} | combat {} ({}) | light {:.2f}{}",
-         s.dropAhead < 0.0f ? std::string("not measured") : std::format("{:.0f} units", s.dropAhead),
+      // The drop reading's age counts unpaused time only (the probe hook does
+      // not run while the game is paused, as it is with this console open).
+      const auto sensors = State::StateManager::GetSingleton().GetNeedSensors();
+      const auto probe = State::DropAheadProbe::Latest();
+      const std::string dropAge = sensors.dropAgeSec < 0.0
+                                      ? std::string("no reading")
+                                      : std::format("reading {:.2f}s old unpaused, {}", sensors.dropAgeSec,
+                                                    State::DropAheadProbe::StatusName(probe.status));
+      const auto extra = std::format("  drop ahead {} ({}) | encumbrance {:.2f} | families 0x{:X} | combat {} ({}) | light {:.2f}{}",
+         s.dropAhead < 0.0f ? std::string("not measured") : std::format("{:.0f} units", s.dropAhead), dropAge,
          s.encumbrance, s.families, s.inCombat ? "on" : "off",
          s.inCombat ? std::format("{:.1f}s in", s.combatStartAgo)
                     : (s.combatEndAgo >= Core::Needs::kNever ? std::string("never since load")
@@ -1396,6 +1407,7 @@ namespace Huginn::Console
    // 2026-10-07) -- they matter only at an alchemy lab.
    static void Cmd_DumpAll(std::string_view /*arg*/)
    {
+      Huginn_ZONE_NAMED("hg dump all");
       const auto logDir = SKSE::log::log_directory();
       if (!logDir) {
          Print("No SKSE log directory - cannot write the dump");

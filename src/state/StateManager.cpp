@@ -168,6 +168,7 @@ namespace Huginn::State
       m_familyCache.clear();
       m_soleHostileTtk.Reset();
       m_wasUnderwaterForTimer = false;
+      m_dropAge.Reset();
 
       m_lastUpdateChanged = true;  // Force pipeline to run on next update
    }

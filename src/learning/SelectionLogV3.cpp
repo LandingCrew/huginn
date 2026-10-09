@@ -3,6 +3,7 @@
 #include "Globals.h"
 #include "PipelineStateCache.h"
 #include "PlayerInputGate.h"
+#include "Profiling.h"
 #include "SelectionTracker.h"
 #include "TestHarness.h"
 #include "UtilityScorer.h"
@@ -299,7 +300,14 @@ namespace Huginn::Learning::SelectionLogV3
             if (!g_held || fresh || upgrade || dirty || nowSec - g_heldAt >= kHeldCacheSec || nowSec < g_heldAt) {
                 const auto t0 = Clock::now();
                 g_heldDirty.store(false, std::memory_order_relaxed);   // before the read: a change during it re-dirties
-                g_held = std::make_shared<const HeldSet>(ReadHeld(stable));
+                if (stable) {
+                    Huginn_ZONE_NAMED("SelectionV3::ReadHeld full");
+                    g_held = std::make_shared<const HeldSet>(ReadHeld(stable));
+                }
+                else {
+                    Huginn_ZONE_NAMED("SelectionV3::ReadHeld basic");
+                    g_held = std::make_shared<const HeldSet>(ReadHeld(stable));
+                }
                 g_heldAt = nowSec;
                 readMs = std::chrono::duration<double, std::milli>(Clock::now() - t0).count();
             }
@@ -406,7 +414,7 @@ namespace Huginn::Learning::SelectionLogV3
         // =====================================================================
         struct MenuVisit
         {
-            std::shared_ptr<const DL::Context> ctx;   // null for a menu that joins at the press (Favorites)
+            std::shared_ptr<const DL::Context> ctx;   // the context taken when the menu opened
             std::string name;
             bool open = false;
             Clock::time_point openedAt{};
@@ -418,20 +426,25 @@ namespace Huginn::Learning::SelectionLogV3
         std::mutex g_menuMutex;
         MenuVisit g_menu;
 
-        /// A pick from one of the menus that join the menu-open context: the
-        /// inventory and magic menus, which pause the game and hide the page.
-        /// The favourites menu does not pause and the widget stays visible, so
-        /// its picks join the context at the press (the defaults the
-        /// coordinator applied, 2026-10-09).
+        /// A pick from a selection menu -- inventory, magic AND favourites --
+        /// joins the context taken when the menu opened: the page the player
+        /// turned away from. 0.23.16 reverts R4's default B (1fac244), which
+        /// joined favourites picks at the press: "if we are reaching into the
+        /// favorites menu huginn has failed in some way" (the user, 2026-10-09),
+        /// so a favourites pick is a reach-in like the others; and on LoreRim
+        /// the favourites menu pauses the game ("FavoritesMenu was open 4830
+        /// ms: 45 update tick(s) inside (9.3/s, 45 with the game paused), 10
+        /// pipeline run(s)"), so the pipeline repages inside it and the
+        /// press-time page is not the one the player saw before reaching in.
         bool IsPausingMenuVia(std::string_view via)
         {
-            return via.starts_with("inventory menu") || via.starts_with("magic menu") ||
-                   via.starts_with("menu (just closed)");
+            return via.starts_with("inventory menu") || via.starts_with("favorites menu") ||
+                   via.starts_with("magic menu") || via.starts_with("menu (just closed)");
         }
 
         bool JoinsAtOpen(const RE::BSFixedString& menuName)
         {
-            return menuName == RE::InventoryMenu::MENU_NAME || menuName == RE::MagicMenu::MENU_NAME;
+            return PlayerInputGate::IsSelectionMenu(menuName);
         }
 
         // =====================================================================
@@ -447,6 +460,7 @@ namespace Huginn::Learning::SelectionLogV3
         // =====================================================================
         std::shared_ptr<const DL::Context> BuildContext(const char* why, std::string menu)
         {
+            Huginn_ZONE_NAMED("SelectionV3::BuildContext");
             const auto now = Clock::now();
             auto ctx = std::make_shared<DL::Context>();
             ctx->id = ++g_nextContext;
@@ -598,6 +612,7 @@ namespace Huginn::Learning::SelectionLogV3
             }
             logger::debug("[SelectionV3] context {} ({}): {} rows in {:.2f} ms (held {}{:.2f} ms{})"sv, ctx->id, why,
                 ctx->rows.size(), ms, heldMs > 0.0 ? "read " : "cached ", heldMs, held->full ? "" : ", basic");
+            Huginn_PLOT("SelectionV3 rows per context", static_cast<int64_t>(ctx->rows.size()));
             return ctx;
         }
 
@@ -676,6 +691,7 @@ namespace Huginn::Learning::SelectionLogV3
                     }
                     m_queue.push_back(std::move(d));
                     ++m_pending;
+                    Huginn_PLOT("SelectionV3 queue depth", static_cast<int64_t>(m_queue.size()));
                 }
                 m_cv.notify_one();
             }
@@ -693,7 +709,13 @@ namespace Huginn::Learning::SelectionLogV3
             }
 
         private:
-            Writer() { std::thread([this] { Run(); }).detach(); }
+            Writer()
+            {
+                std::thread([this] {
+                    Huginn_SET_THREAD("Huginn SelectionV3 writer");
+                    Run();
+                }).detach();
+            }
 
             void Run()
             {
@@ -704,6 +726,7 @@ namespace Huginn::Learning::SelectionLogV3
                         m_cv.wait(lock, [this] { return !m_queue.empty(); });
                         d = std::move(m_queue.front());
                         m_queue.pop_front();
+                        Huginn_PLOT("SelectionV3 queue depth", static_cast<int64_t>(m_queue.size()));
                     }
                     Write(d);
                     {
@@ -820,6 +843,7 @@ namespace Huginn::Learning::SelectionLogV3
 
             void Write(Decision d)
             {
+                Huginn_ZONE_NAMED("SelectionV3::Write");
                 if (!m_out.is_open() && !Open()) {
                     if (!m_warnedOpen) {
                         logger::error("[SelectionV3] cannot open the v3 log for append"sv);
@@ -832,8 +856,11 @@ namespace Huginn::Learning::SelectionLogV3
                 const size_t capsBefore = m_encoder.CapsDefined();
                 const std::string lines = m_encoder.Encode(d);
                 if (d.ctx) m_ctxSeen.insert(d.ctx->id);
-                m_out << lines;
-                m_out.flush();
+                {
+                    Huginn_ZONE_NAMED("SelectionV3::WriteFlush");
+                    m_out << lines;
+                    m_out.flush();
+                }
                 if (!m_out) {
                     if (!m_warnedWrite) {
                         logger::error("[SelectionV3] write failed -- reopening on the next record (one record lost)"sv);
@@ -990,8 +1017,8 @@ namespace Huginn::Learning::SelectionLogV3
                 const auto now = Clock::now();
                 const std::string name(e->menuName.c_str());
                 if (e->opening) {
-                    // Only the menus whose picks join the menu-open context
-                    // take one; the favourites menu's picks join at the press.
+                    // Every selection menu's picks join the menu-open context
+                    // (favourites included again in 0.23.16, JoinsAtOpen).
                     auto ctx = JoinsAtOpen(e->menuName) ? BuildContext("menu", name) : nullptr;
                     std::lock_guard lock(g_menuMutex);
                     g_menu = MenuVisit{ .ctx = std::move(ctx), .name = name, .open = true, .openedAt = now,
@@ -1017,6 +1044,7 @@ namespace Huginn::Learning::SelectionLogV3
         MenuSink g_menuSink;
 
         double g_tickFirstHalfUs = 0.0;   // update thread only: Tick's share of this tick
+        bool g_wasDead = false;           // update thread only: the death line once per death
 
         void RecordTickCost(Clock::time_point t0)
         {
@@ -1043,6 +1071,7 @@ namespace Huginn::Learning::SelectionLogV3
 
     void Tick(Clock::time_point now)
     {
+        Huginn_ZONE_NAMED("SelectionV3::Tick");
         const auto t0 = Clock::now();
         const double nowSec = Sec(now);
 
@@ -1083,6 +1112,7 @@ namespace Huginn::Learning::SelectionLogV3
         RecordHands(nowSec);
         if (!g_heldWarm.load(std::memory_order_relaxed) && ExtraListsReadable() &&
             Effect::EffectCatalog::GetSingleton().Ready()) {
+            Huginn_ZONE_NAMED("SelectionV3::WarmHeld");
             double ms = 0.0;
             const auto held = Held(nowSec, ms, false);
             g_heldWarm.store(true, std::memory_order_relaxed);
@@ -1100,11 +1130,32 @@ namespace Huginn::Learning::SelectionLogV3
             }
         }
 
+        // 3a. A death is not a decision (0.23.16): the open episodes and the
+        // ones still in their grace are dropped, as a load drops them, and none
+        // opens while the player is dead. Seen on vanilla+: a fatal fall wrote
+        // `nothing` for falling (1.0 s) and loadout_restoration (28.7 s) 3 s
+        // before the reload. Dropped rather than flagged: the reload that
+        // follows starts a new session, the fit would drop a flagged record
+        // anyway, and "nothing" keeps one meaning.
+        auto* playerNow = RE::PlayerCharacter::GetSingleton();
+        const bool dead = playerNow && playerNow->IsDead();
+        if (dead) {
+            std::size_t dropped = 0;
+            {
+                std::lock_guard lock(g_episodeMutex);
+                dropped = g_episodes.Abandon();
+            }
+            if (!g_wasDead) {
+                logger::debug("[SelectionV3] the player died: {} need episode(s) dropped, none recorded"sv, dropped);
+            }
+        }
+        g_wasDead = dead;
+
         // 3. Episode onsets and ends -- not while the game is paused: the
         // world is frozen, so an onset or an expiry then is a wall-clock decay
         // or the player's own menu action, which a pick inside the still-open
         // episode answers. Ended episodes are judged in TickAfterSelections.
-        if (live && !paused) {
+        if (live && !paused && !dead) {
             std::vector<size_t> onsets;
             {
                 std::lock_guard lock(g_episodeMutex);
@@ -1127,6 +1178,7 @@ namespace Huginn::Learning::SelectionLogV3
 
     void TickAfterSelections(Clock::time_point now)
     {
+        Huginn_ZONE_NAMED("SelectionV3::TickAfterSelections");
         const auto t0 = Clock::now();
         const double nowSec = Sec(now);
         auto* ui = RE::UI::GetSingleton();

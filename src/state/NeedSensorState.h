@@ -39,10 +39,12 @@ namespace Huginn::State
       double combatEndAt = -1.0;         // published in_combat went false
       double submergedAt = -1.0;         // head went under (-1 while not under)
       float dropAhead = -1.0f;           // units; -1 = not measured (airborne, swimming, no physics world)
+      double dropAgeSec = -1.0;          // the probe's last reading: its age in UNPAUSED seconds; -1 = none
 
       // PollWorldObjects
       bool openDaylight = false;
       bool merchant = false;             // crosshair actor offers services
+      std::uint8_t bench = 0;            // Core::Needs::BenchKind of the crosshair furniture (0.23.16)
 
       // PollPlayerMagicEffects: remaining magnitude x duration of over-time restores
       float restoreHealthPending = 0.0f;

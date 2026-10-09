@@ -67,7 +67,10 @@ namespace Huginn::Core::Effect
                 case Col::drain_skill: return Rule::Level;
                 default: break;
             }
-            if (StartsWith(n, "restore_") || StartsWith(n, "damage_") || StartsWith(n, "absorb_")) return Rule::Amount;
+            if (StartsWith(n, "restore_") || StartsWith(n, "damage_") || StartsWith(n, "absorb_") ||
+                StartsWith(n, "self_harm_")) {
+                return Rule::Amount;
+            }
             if (StartsWith(n, "fortify_vital_") || StartsWith(n, "regen_") || StartsWith(n, "drain_vital_") ||
                 StartsWith(n, "weaken_regen_") || StartsWith(n, "resist_") || StartsWith(n, "weakness_") ||
                 StartsWith(n, "fortify_skill_") || StartsWith(n, "fortify_combat_") || StartsWith(n, "weaken_combat_") ||
@@ -431,6 +434,19 @@ namespace Huginn::Core::Effect
             return Zero::Unresolved;
         }
 
+        /// The side-effect rule (core/EffectRules.h, SelfHarmColumn): a harm
+        /// column on a row that harms the item's user becomes its self_harm*
+        /// column; any other class is returned as it is.
+        EffectClass AsSelfHarm(const EffectClass& in)
+        {
+            const Col sh = SelfHarmColumn(in.col);
+            if (sh == Col::_Count) return in;
+            EffectClass d = in;
+            d.col = sh;
+            d.col2 = Col::_Count;
+            return d;
+        }
+
         KeptRow MakeRow(const EffectRow& row, const MagicEffectRecord& m, const EffectClass& cls, bool visible,
                         bool constantItem, float zeroFactor = kNeutralStrength, bool zeroStated = false);
 
@@ -442,7 +458,7 @@ namespace Huginn::Core::Effect
         /// strength unknown. An unknown strength on a graded column is
         /// kNeutralStrength, never the top.
         KeptRow ZeroRow(const EffectRow& row, const MagicEffectRecord& m, const EffectClass& in, Zero z, bool visible,
-                        bool constantItem, EffectClass* cls)
+                        bool constantItem, EffectClass* cls, bool harmsUser = false)
         {
             EffectClass d = in;
             if (z == Zero::Describe) {
@@ -453,6 +469,7 @@ namespace Huginn::Core::Effect
             else {
                 d.route = Route::Name;
             }
+            if (harmsUser) d = AsSelfHarm(d);
             EffectRow r2 = row;
             float factor = 0.0f;
             if (IsGraded(RuleOf(d.col))) {
@@ -480,7 +497,9 @@ namespace Huginn::Core::Effect
             k.col2 = cls.col2;
             k.visible = visible;
             k.cureByArchetype = cls.cureByArchetype;
-            k.hostile = m.hostile || (m.flags & kFlagHostile) != 0;
+            // A side effect's hostility is to the item's own user: it does not
+            // make the item act on others (the `hostile` modifier).
+            k.hostile = FamilyKey(cls.col) != Col::self_harm && (m.hostile || (m.flags & kFlagHostile) != 0);
             k.delivery = m.delivery;
             k.duration = row.duration;
             k.area = row.area;
@@ -570,6 +589,10 @@ namespace Huginn::Core::Effect
             const auto& cls = classes[row.effect];
             o.cls = cls;
             o.hidden = mg.HiddenInUI();
+            // A harm row on a food or potion is a side effect (self_harm*),
+            // decided after the row's keep and strength checks, which read
+            // the MGEF's own column.
+            const bool harmsUser = HarmsUser(it.kind, mg);
             if (cls.hydrated) hydrated = true;
 
             if (!o.hidden) {
@@ -640,10 +663,11 @@ namespace Huginn::Core::Effect
                             o.mapped = true;
                             o.kept = true;
                             if (z == Zero::Describe || z == Zero::Named) {
-                                m.rows.push_back(ZeroRow(row, mg, cls, z, true, m.constantItem, &o.cls));
+                                m.rows.push_back(ZeroRow(row, mg, cls, z, true, m.constantItem, &o.cls, harmsUser));
                             }
                             else {
-                                m.rows.push_back(MakeRow(row, mg, cls, true, m.constantItem));
+                                if (harmsUser) o.cls = AsSelfHarm(cls);
+                                m.rows.push_back(MakeRow(row, mg, o.cls, true, m.constantItem));
                             }
                         }
                     }
@@ -657,12 +681,13 @@ namespace Huginn::Core::Effect
                     if (z == Zero::Describe || z == Zero::Named) {
                         o.kept = true;
                         ++m.tally.hiddenKept;
-                        m.rows.push_back(ZeroRow(row, mg, cls, z, false, m.constantItem, &o.cls));
+                        m.rows.push_back(ZeroRow(row, mg, cls, z, false, m.constantItem, &o.cls, harmsUser));
                     }
                     else if (z == Zero::None) {
                         o.kept = true;
                         ++m.tally.hiddenKept;
-                        m.rows.push_back(MakeRow(row, mg, cls, false, m.constantItem));
+                        if (harmsUser) o.cls = AsSelfHarm(cls);
+                        m.rows.push_back(MakeRow(row, mg, o.cls, false, m.constantItem));
                     }
                 }
             }
@@ -887,19 +912,25 @@ namespace Huginn::Core::Effect
         /// keeping timing_over_time, Warming Aura its school). For the same
         /// reason it stays a candidate even where a known row sets its column
         /// (it only loses the column's VALUE to that row).
+        /// A side effect (self_harm*) is the primary row only when the item
+        /// keeps nothing else: it is not what the item is for.
         int PrimaryRow(const ItemMapping& m, const Populations& pops)
         {
             const Eligibility eligible(m);
             int best = -1;
             float bestV = -1.0f;
-            for (std::size_t i = 0; i < m.rows.size(); ++i) {
-                const auto& r = m.rows[i];
-                if (!eligible.Visible(r, r.col)) continue;
-                const float v = r.unknown ? r.post / kNeutralStrength : RowValue(r, r.col, pops);
-                if (v > bestV) {
-                    bestV = v;
-                    best = static_cast<int>(i);
+            for (const bool sideEffects : { false, true }) {
+                for (std::size_t i = 0; i < m.rows.size(); ++i) {
+                    const auto& r = m.rows[i];
+                    if ((FamilyKey(r.col) == Col::self_harm) != sideEffects) continue;
+                    if (!eligible.Visible(r, r.col)) continue;
+                    const float v = r.unknown ? r.post / kNeutralStrength : RowValue(r, r.col, pops);
+                    if (v > bestV) {
+                        bestV = v;
+                        best = static_cast<int>(i);
+                    }
                 }
+                if (best >= 0) break;
             }
             return best;
         }

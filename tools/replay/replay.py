@@ -432,6 +432,21 @@ class V3FormatError(ValueError):
     record before any head, a version this reader does not know)."""
 
 
+def _gzip_corrupt(path):
+    """Does the .gz fail to decompress whole (a bad CRC, a broken deflate
+    stream, a truncation)? A flipped byte can decode to text that parses as
+    JSON before the stream's check fails at its end, so such a file's records
+    cannot be trusted as a whole (0.23.16)."""
+    import gzip
+    import zlib
+    try:
+        with open(path, "rb") as f:
+            gzip.decompress(f.read())
+    except (EOFError, OSError, gzip.BadGzipFile, zlib.error):
+        return True
+    return False
+
+
 def _raw_lines(path, stats):
     """The file's lines as bytes. A truncated or corrupt .gz (a copy taken
     mid-write, a crash while compressing, a flipped byte) ends the file where
@@ -522,67 +537,77 @@ def iter_v3(paths, stats=None):
         head, caps, ctxs = None, {}, {}
         damaged = False   # damage since the last good head
         lost_head = False  # a lost head already counted for this damage
+        # A corrupt .gz: what decodes before the break may be garbage that
+        # parses (a record of an unknown type, a reference to nothing), so a
+        # format error in such a file is damage, counted, never raised.
+        corrupt = str(path).endswith(".gz") and _gzip_corrupt(path)
         for lineno, raw in enumerate(_raw_lines(path, stats), 1):
-            rec = _decode_line(raw)
-            if rec == "":
-                continue
-            if rec is None:
+            try:
+                rec = _decode_line(raw)
+                if rec == "":
+                    continue
+                if rec is None:
+                    stats["bad_lines"] += 1
+                    damaged, lost_head = True, False
+                    continue
+                t = rec.get("t")
+                if t == "head":
+                    if rec.get("v") != 3:
+                        raise V3FormatError(f"{path}:{lineno}: version {rec.get('v')} is not 3")
+                    if not all(k in rec for k in ("cols", "needs", "cross", "kinds", "src")):
+                        stats["bad_lines"] += 1   # a head that parses but lacks its lists
+                        damaged = True
+                        continue
+                    head, caps, ctxs, damaged, lost_head = rec, {}, {}, False, False
+                    continue
+                if head is None:
+                    if damaged:
+                        stats["skipped"] += 1
+                        continue
+                    raise V3FormatError(f"{path}:{lineno}: a '{t}' record before any head")
+                try:
+                    if t == "cap":
+                        if damaged and rec["id"] in caps and not lost_head:
+                            stats["lost_heads"] += 1   # a new segment behind a torn head
+                            lost_head = True
+                        caps[rec["id"]] = _sparse(rec["c"], head["cols"])
+                    elif t == "ctx":
+                        ctx = {k: v for k, v in rec.items() if k not in ("rows", "need", "in")}
+                        ctx["need"] = _sparse(rec["need"], head["needs"])
+                        ctx["input"] = _sparse(rec["in"], head["needs"])
+                        ctx["rows"] = [_v3_row(r, head, caps) for r in rec["rows"]]
+                        ctxs[rec["id"]] = ctx
+                    elif t == "dec":
+                        if rec.get("v") != 3:
+                            raise V3FormatError(f"{path}:{lineno}: decision version {rec.get('v')}")
+                        if damaged and rec.get("launch") != head.get("launch"):
+                            stats["skipped"] += 1   # decoded against another launch's head
+                            continue
+                        ctx_id = rec.get("ctx")
+                        if ctx_id is not None and ctx_id not in ctxs:
+                            raise V3FormatError(f"{path}:{lineno}: context {ctx_id} used before it is defined")
+                        d = dict(rec)
+                        d["ctx"] = ctxs[ctx_id] if ctx_id is not None else None
+                        d["add"] = [_v3_row(r, head, caps) for r in rec["add"]]
+                        d["rows"] = (d["ctx"]["rows"] if d["ctx"] else []) + d["add"]
+                        d["chosen"] = d["rows"][rec["row"]] if rec["row"] >= 0 else None
+                        d["head"] = head
+                        yield d
+                    else:
+                        raise V3FormatError(f"{path}:{lineno}: unknown record type {t!r}")
+                except V3FormatError:
+                    if not damaged:
+                        raise
+                    stats["skipped"] += 1   # it needed what the damage took
+                except (KeyError, TypeError, IndexError, ValueError):
+                    # Parses as JSON but is not a whole record of its type.
+                    stats["bad_lines"] += 1
+                    damaged = True
+            except V3FormatError:
+                if not corrupt:
+                    raise
                 stats["bad_lines"] += 1
                 damaged, lost_head = True, False
-                continue
-            t = rec.get("t")
-            if t == "head":
-                if rec.get("v") != 3:
-                    raise V3FormatError(f"{path}:{lineno}: version {rec.get('v')} is not 3")
-                if not all(k in rec for k in ("cols", "needs", "cross", "kinds", "src")):
-                    stats["bad_lines"] += 1   # a head that parses but lacks its lists
-                    damaged = True
-                    continue
-                head, caps, ctxs, damaged, lost_head = rec, {}, {}, False, False
-                continue
-            if head is None:
-                if damaged:
-                    stats["skipped"] += 1
-                    continue
-                raise V3FormatError(f"{path}:{lineno}: a '{t}' record before any head")
-            try:
-                if t == "cap":
-                    if damaged and rec["id"] in caps and not lost_head:
-                        stats["lost_heads"] += 1   # a new segment behind a torn head
-                        lost_head = True
-                    caps[rec["id"]] = _sparse(rec["c"], head["cols"])
-                elif t == "ctx":
-                    ctx = {k: v for k, v in rec.items() if k not in ("rows", "need", "in")}
-                    ctx["need"] = _sparse(rec["need"], head["needs"])
-                    ctx["input"] = _sparse(rec["in"], head["needs"])
-                    ctx["rows"] = [_v3_row(r, head, caps) for r in rec["rows"]]
-                    ctxs[rec["id"]] = ctx
-                elif t == "dec":
-                    if rec.get("v") != 3:
-                        raise V3FormatError(f"{path}:{lineno}: decision version {rec.get('v')}")
-                    if damaged and rec.get("launch") != head.get("launch"):
-                        stats["skipped"] += 1   # decoded against another launch's head
-                        continue
-                    ctx_id = rec.get("ctx")
-                    if ctx_id is not None and ctx_id not in ctxs:
-                        raise V3FormatError(f"{path}:{lineno}: context {ctx_id} used before it is defined")
-                    d = dict(rec)
-                    d["ctx"] = ctxs[ctx_id] if ctx_id is not None else None
-                    d["add"] = [_v3_row(r, head, caps) for r in rec["add"]]
-                    d["rows"] = (d["ctx"]["rows"] if d["ctx"] else []) + d["add"]
-                    d["chosen"] = d["rows"][rec["row"]] if rec["row"] >= 0 else None
-                    d["head"] = head
-                    yield d
-                else:
-                    raise V3FormatError(f"{path}:{lineno}: unknown record type {t!r}")
-            except V3FormatError:
-                if not damaged:
-                    raise
-                stats["skipped"] += 1   # it needed what the damage took
-            except (KeyError, TypeError, IndexError, ValueError):
-                # Parses as JSON but is not a whole record of its type.
-                stats["bad_lines"] += 1
-                damaged = True
 
 
 def load_v3(paths, stats=None):

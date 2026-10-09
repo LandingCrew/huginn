@@ -12,10 +12,12 @@
 // at 0.17 -> 4.6 pipeline runs/s in a melee fight and a 60% rise in wildcard
 // screen time while exploring -- not "logged only".)
 //
-// Logging: one [Needs] debug line when the 0.05-step signature changes, at
-// most one a second (a fight moves it several times a second; the line shows
-// the vector as it stands when written). The Debug capture records the same
-// snapshots.
+// Logging: one [Needs] debug line when the 0.05-step signature moves -- a need
+// turns on or off, or one moves kLogDeadbandLevels steps (0.25) from the line
+// last written (0.23.16: torchlight flickered darkness 0.90 <-> 0.68 for half
+// the session's lines) -- at most one a second (a fight moves it several
+// times a second; the line shows the vector as it stands when written). The
+// Debug capture records the same snapshots.
 // =============================================================================
 
 #include "NeedSnapshotBuilder.h"
@@ -42,6 +44,7 @@ namespace Huginn::Needs
       [[nodiscard]] std::optional<LiveNeeds> Latest() const;
 
       static constexpr std::chrono::milliseconds kLogInterval{ 1000 };
+      static constexpr int kLogDeadbandLevels = 5;  // 0.25: logging only
 
    private:
       NeedMonitor() = default;

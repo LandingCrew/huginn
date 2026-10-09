@@ -1,5 +1,8 @@
 #pragma once
 
+#include <mutex>
+#include <unordered_map>
+
 namespace Huginn::Util
 {
     // =============================================================================
@@ -240,8 +243,14 @@ namespace Huginn::Util
         // Deduped on the numbers, not fired per scan: this runs at 2 Hz and a
         // stable duplicate would otherwise be 2 lines a second. Delete this
         // block once the Iron Sword is understood.
+        //
+        // Process-wide (0.23.16): the scans run on rotating job threads, so a
+        // thread_local map re-logged the same signature once per thread (8
+        // identical lines in the LoreRim R3 session). One map, under a mutex;
+        // only the dedup is shared -- `results` (what callers see) is untouched.
         if (!duplicates.empty()) {
-            thread_local std::unordered_map<RE::FormID, uint64_t> s_lastSignature;
+            static std::mutex s_dedupMutex;
+            static std::unordered_map<RE::FormID, uint64_t> s_lastSignature;
             for (const auto& t : duplicates) {
                 if (!t.obj) continue;
                 const auto found = results.find(t.obj);
@@ -256,10 +265,13 @@ namespace Huginn::Util
                     (t.leveledSkip ? 0x8000000000000000ull : 0ull);
 
                 const RE::FormID formID = t.obj->GetFormID();
-                auto [slot, fresh] = s_lastSignature.try_emplace(formID, signature);
-                if (!fresh) {
-                    if (slot->second == signature) continue;  // unchanged, stay quiet
-                    slot->second = signature;
+                {
+                    std::lock_guard lock(s_dedupMutex);
+                    auto [slot, fresh] = s_lastSignature.try_emplace(formID, signature);
+                    if (!fresh) {
+                        if (slot->second == signature) continue;  // unchanged, stay quiet
+                        slot->second = signature;
+                    }
                 }
 
                 logger::warn("[Inventory] {} ({:08X}) appears {}x in the changes list: "

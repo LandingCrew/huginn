@@ -170,3 +170,30 @@ TEST_CASE("episodes: reset forgets open and closing episodes")
     CHECK(t.OpenNeeds().empty());
     CHECK(t.TakeUnanswered(100.0).empty());
 }
+
+TEST_CASE("episodes: a death drops the open ones and those in their grace, like a load (0.23.16)")
+{
+    EpisodeTracker<int> t;
+    constexpr std::size_t kFall = static_cast<std::size_t>(NeedId::falling);
+    t.Tick(With(kHunger, 0.9f), 0.0);  // open for 28 s
+    NeedArray both = With(kHunger, 0.9f);
+    both[kFall] = 1.0f;
+    t.Tick(both, 26.5);                 // a fall starts
+    t.Tick(With(kHunger, 0.9f), 28.0);  // ... and ends on impact: 1.5 s, now in its grace
+    REQUIRE(t.IsOpen(kHunger));
+    REQUIRE(t.ClosingCount() == 1);
+    const std::size_t droppedShort = t.DroppedShort();
+
+    CHECK(t.Abandon() == 2);  // the player died at 28.0
+    CHECK_FALSE(t.IsOpen(kHunger));
+    CHECK(t.ClosingCount() == 0);
+    CHECK(t.TakeUnanswered(40.0).empty());    // no "nothing" for either
+    CHECK(t.DroppedShort() == droppedShort);  // not a short episode, not a reset
+
+    // The tracker goes on: an episode after the death is one like any other.
+    t.Tick(With(kH, 0.9f), 50.0);
+    t.Tick(With(kH, 0.0f), 52.0);
+    const auto out = t.TakeUnanswered(56.0);
+    REQUIRE(out.size() == 1);
+    CHECK(out[0].need == kH);
+}

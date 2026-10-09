@@ -842,3 +842,92 @@ TEST_CASE("cross features")
     CHECK(SchoolFortified(static_cast<std::uint8_t>(School::Illusion), mask) == 0.0f);
     CHECK(SchoolFortified(0, 0xFF) == 0.0f);
 }
+
+// =============================================================================
+// 0.23.16: a consumable's side effect (core/EffectRules.h, SelfHarmColumn)
+// =============================================================================
+TEST_CASE("effect mapper: a harm row on a food or potion is a side effect, never a target-harm column")
+{
+    World w;
+    const auto weakStomach = w.Add(Mgef(kArchDualValueModifier, "Stamina", "Weak Stomach", kFlagDetrimental));
+    const auto nutrition = w.Add(Mgef(kArchValueModifier, "Stamina", "Nutrition"));
+    const auto damageHealth = w.Add(Mgef(kArchValueModifier, "Health", "Damage Health", kFlagDetrimental | kFlagHostile));
+    const auto maxMagicka =
+        w.Add(Mgef(kArchValueModifier, "Magicka", "Damage Maximum Magicka", kFlagDetrimental | kFlagHostile | kFlagRecover));
+    const auto paralysis = w.Add(Mgef(kArchParalysis, "Paralysis", "Paralysis", kFlagHostile | kFlagRecover));
+    const auto inebriation = w.Add(Mgef(kArchValueModifier, "StaminaRateMult", "Inebriation", kFlagDetrimental));
+    const auto fortifyMagicka = w.Add(Mgef(kArchValueModifier, "Magicka", "Fortify Magicka", kFlagRecover));
+    const auto resistFire = w.Add(Mgef(kArchValueModifier, "FireResist", "Resist Fire"));
+    const auto weakFire = w.Add(Mgef(kArchValueModifier, "FireResist", "Weakness to Fire", kFlagDetrimental | kFlagHostile));
+
+    auto& raw = w.Item(Kind::Food, "Raw Mammoth Snout");  // 0: LoreRim raw food
+    World::Fx(raw, weakStomach, 20);
+    World::Fx(raw, nutrition, 20);
+    auto& drawback = w.Item(Kind::Potion, "Remiel's Fire Resist Potion");  // 1: the drawback listed first
+    World::Fx(drawback, damageHealth, 25);
+    World::Fx(drawback, resistFire, 30, 120);
+    auto& skooma = w.Item(Kind::Potion, "Skooma");  // 2: nothing but side effects
+    World::Fx(skooma, maxMagicka, 100, 1800);
+    World::Fx(skooma, paralysis, 0, 180);
+    auto& ale = w.Item(Kind::Food, "Mead");  // 3
+    World::Fx(ale, inebriation, 60, 900);
+    auto& poison = w.Item(Kind::Poison, "Poison");  // 4: a poison's target is the enemy
+    World::Fx(poison, damageHealth, 25);
+    World::Fx(poison, weakStomach, 20);
+    World::Fx(poison, weakFire, 20, 30);
+    auto& pie = w.Item(Kind::Food, "Apple Pie");  // 5: LoreRim's Fortify Magicka food (Recover=1)
+    World::Fx(pie, fortifyMagicka, 20, 1800);
+    auto& spell = w.Item(Kind::Spell, "Stamina Damage Spell");  // 6: a spell's target is the enemy
+    World::Fx(spell, weakStomach, 20);
+    const auto r = w.Build();
+
+    // The MGEF's own column is unchanged: the rule is per item row.
+    CHECK(ClassifyEffect(w.effects[weakStomach], nullptr).col == Col::damage_stamina);
+
+    CHECK(r.mappings[0].outcomes[0].cls.col == Col::self_harm_stamina);
+    CHECK(CapOf(r, 0, Col::self_harm_stamina) == doctest::Approx(1.0));
+    CHECK(CapOf(r, 0, Col::self_harm) == doctest::Approx(1.0));
+    CHECK(CapOf(r, 0, Col::damage_stamina) == 0.0f);
+    CHECK(CapOf(r, 0, Col::damage) == 0.0f);
+    CHECK(CapOf(r, 0, Col::restore_stamina) > 0.0f);
+
+    CHECK(CapOf(r, 1, Col::self_harm_health) > 0.0f);
+    CHECK(CapOf(r, 1, Col::damage_health_magic) == 0.0f);
+    CHECK(CapOf(r, 1, Col::resist_fire) > 0.0f);
+    CHECK(CapOf(r, 1, Col::hostile) == 0.0f);          // its hostility is to the drinker
+    CHECK(CapOf(r, 1, Col::timing_over_time) == 1.0f);  // the primary row is the resist, not the drawback
+    CHECK(CapOf(r, 1, Col::timing_instant) == 0.0f);
+
+    CHECK(CapOf(r, 2, Col::self_harm_magicka) > 0.0f);  // a drain of the maximum, graded as an amount
+    CHECK(CapOf(r, 2, Col::drain_vital_magicka) == 0.0f);
+    CHECK(CapOf(r, 2, Col::control_paralysis) == 0.0f);  // hostile, not detrimental: still the drinker's
+    CHECK(CapOf(r, 2, Col::control) == 0.0f);
+    CHECK(CapOf(r, 2, Col::self_harm) == doctest::Approx(1.0));
+    CHECK(CapOf(r, 2, Col::hostile) == 0.0f);
+    CHECK(CapOf(r, 2, Col::delivery_self) == 1.0f);  // only side effects: one of them is still the primary row
+
+    CHECK(CapOf(r, 3, Col::self_harm) == doctest::Approx(1.0));
+    CHECK(CapOf(r, 3, Col::weaken_regen_stamina) == 0.0f);
+    CHECK(CapOf(r, 3, Col::weaken_regen) == 0.0f);
+
+    CHECK(CapOf(r, 4, Col::damage_health_magic) > 0.0f);
+    CHECK(CapOf(r, 4, Col::damage_stamina) > 0.0f);
+    CHECK(CapOf(r, 4, Col::weakness_fire) > 0.0f);
+    CHECK(CapOf(r, 4, Col::self_harm) == 0.0f);
+    CHECK(CapOf(r, 4, Col::hostile) == 1.0f);
+
+    CHECK(CapOf(r, 5, Col::fortify_vital_magicka) > 0.0f);
+    CHECK(CapOf(r, 5, Col::restore_magicka) == 0.0f);
+    CHECK(CapOf(r, 5, Col::self_harm) == 0.0f);
+
+    CHECK(CapOf(r, 6, Col::damage_stamina) > 0.0f);
+    CHECK(CapOf(r, 6, Col::self_harm) == 0.0f);
+
+    CHECK(SelfHarmColumn(Col::damage_health_fire) == Col::self_harm_health);
+    CHECK(SelfHarmColumn(Col::drain_vital_stamina) == Col::self_harm_stamina);
+    CHECK(SelfHarmColumn(Col::control_slow) == Col::self_harm);
+    CHECK(SelfHarmColumn(Col::drain_skill) == Col::self_harm);
+    CHECK(SelfHarmColumn(Col::survival_intoxication) == Col::_Count);  // already a side-effect column
+    CHECK(SelfHarmColumn(Col::restore_health) == Col::_Count);
+    CHECK(SelfHarmColumn(Col::resist_fire) == Col::_Count);
+}

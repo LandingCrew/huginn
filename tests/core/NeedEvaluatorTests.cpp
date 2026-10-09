@@ -56,7 +56,7 @@ TEST_CASE("rates are per max and per second; a zero max reads 0")
     CHECK(In(s, NeedId::fire_damage_rate) == doctest::Approx(0.2));
 }
 
-TEST_CASE("restore pending: remaining over the deficit, 0 with nothing pending, capped at 10")
+TEST_CASE("restore pending: remaining over the deficit, 0 with nothing pending or nothing missing, capped at 10")
 {
     NeedSnapshot s;
     s.maxHealth = 100.0f;
@@ -64,10 +64,25 @@ TEST_CASE("restore pending: remaining over the deficit, 0 with nothing pending, 
     CHECK(In(s, NeedId::restore_pending_health) == 0.0f);
     s.restoreHealthPending = 25.0f;
     CHECK(In(s, NeedId::restore_pending_health) == doctest::Approx(0.5));
-    s.health = 1.0f;  // nothing missing: covered, deficit floored at 1 point
+    s.health = 0.98f;  // 2 points missing: covered 12.5 times over, capped
     CHECK(In(s, NeedId::restore_pending_health) == 10.0f);
+    s.health = 0.75f;
+    s.restoreHealthPending = 25.0f;  // 25 missing, 25 pending: exactly covered
+    CHECK(In(s, NeedId::restore_pending_health) == doctest::Approx(1.0));
+    // 0.23.16: under one point missing there is nothing to cover -- 0, not
+    // "covered" (it read 1.00 at full health while a restore ticked).
+    s.health = 1.0f;
+    CHECK(In(s, NeedId::restore_pending_health) == 0.0f);
     s.health = 0.995f;
-    CHECK(In(s, NeedId::restore_pending_health) == 10.0f);
+    CHECK(In(s, NeedId::restore_pending_health) == 0.0f);
+    s.magicka = 1.0f;
+    s.maxMagicka = 200.0f;
+    s.restoreMagickaPending = 50.0f;
+    CHECK(In(s, NeedId::restore_pending_magicka) == 0.0f);
+    s.stamina = 1.0f;
+    s.maxStamina = 200.0f;
+    s.restoreStaminaPending = 50.0f;
+    CHECK(In(s, NeedId::restore_pending_stamina) == 0.0f);
 }
 
 TEST_CASE("enemy casting an element: a step while seen, decayed below one level by 2 s, NEVER reads 0")
@@ -255,6 +270,30 @@ TEST_CASE("signature: 0.05 steps, 21 levels")
     CHECK(Signature(EvaluateNeeds(a, kCurves).value) == Signature(EvaluateNeeds(b, kCurves).value));
     b.health = 0.40f;
     CHECK(Signature(EvaluateNeeds(a, kCurves).value) != Signature(EvaluateNeeds(b, kCurves).value));
+}
+
+TEST_CASE("signature deadband for the [Needs] log line: on/off always, else 5 steps from the last line (0.23.16)")
+{
+    NeedSignature logged{};
+    const auto dark = static_cast<std::size_t>(NeedId::darkness);
+    const auto hunger = static_cast<std::size_t>(NeedId::hunger);
+    logged[dark] = 18;  // darkness 0.90
+    NeedSignature now = logged;
+    CHECK_FALSE(SignatureMoved(logged, now, 5));
+    now[dark] = 14;  // 0.68 / 0.70: torchlight flicker, 4 steps
+    CHECK_FALSE(SignatureMoved(logged, now, 5));
+    now[dark] = 13;  // 5 steps
+    CHECK(SignatureMoved(logged, now, 5));
+    now = logged;
+    now[hunger] = 1;  // a need turning on is always a line
+    CHECK(SignatureMoved(logged, now, 5));
+    now = logged;
+    now[dark] = 0;  // and turning off
+    CHECK(SignatureMoved(logged, now, 5));
+    // Deadband 1 is the plain "the signature changed".
+    now = logged;
+    now[dark] = 17;
+    CHECK(SignatureMoved(logged, now, 1));
 }
 
 TEST_CASE("Advance moves the timers and decays the damage sums, nothing else")

@@ -226,6 +226,7 @@ namespace Huginn::Core::DecisionLog
         AppendSeconds(out, head.graceSec);
         out += R"(,"answerSlackSec":)";
         AppendSeconds(out, head.answerSlackSec);
+        if (head.deathDrops) out += R"(,"deathDrops":1)";
         out += "}}\n";
         return out;
     }

@@ -1012,6 +1012,45 @@ namespace Huginn::Core::Effect
     }
     }  // namespace
 
+    Col SelfHarmColumn(Col c) noexcept
+    {
+        switch (c) {
+            case Col::damage_health_fire:
+            case Col::damage_health_frost:
+            case Col::damage_health_shock:
+            case Col::damage_health_poison:
+            case Col::damage_health_magic:
+            case Col::damage_health_sun:
+            case Col::damage_health_physical:
+            case Col::damage_health_disease:
+            case Col::drain_vital_health: return Col::self_harm_health;
+            case Col::damage_magicka:
+            case Col::drain_vital_magicka: return Col::self_harm_magicka;
+            case Col::damage_stamina:
+            case Col::drain_vital_stamina: return Col::self_harm_stamina;
+            default: break;
+        }
+        if (c == Col::_Count) return Col::_Count;
+        switch (FamilyKey(c)) {
+            case Col::damage:
+            case Col::drain_vital:
+            case Col::absorb:
+            case Col::weaken_regen:
+            case Col::weakness:
+            case Col::weaken_combat:
+            case Col::control:
+            case Col::influence:
+            case Col::drain_skill: return Col::self_harm;
+            default: return Col::_Count;
+        }
+    }
+
+    bool HarmsUser(Kind kind, const MagicEffectRecord& m) noexcept
+    {
+        if (kind != Kind::Food && kind != Kind::Potion) return false;
+        return m.detrimental || m.hostile || (m.flags & (kFlagHostile | kFlagDetrimental)) != 0;
+    }
+
     std::optional<Col> NameColumn(std::string_view name)
     {
         const std::string spec = NameSpec(name);

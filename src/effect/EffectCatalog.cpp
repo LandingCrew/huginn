@@ -2,6 +2,7 @@
 
 #include "EffectReader.h"
 #include "IniLoad.h"
+#include "Profiling.h"
 #include "core/MiniRegex.h"
 
 #include <atomic>
@@ -143,6 +144,7 @@ namespace Huginn::Effect
         logger::info("[EffectCatalog] reading the load order"sv);
         std::shared_ptr<ReadResult> read;
         try {
+            Huginn_ZONE_NAMED("EffectCatalog::Read (main thread)");
             LoadOverrides();
             read = std::make_shared<ReadResult>(EffectReader{}.ReadLoadOrder());
         }
@@ -155,7 +157,9 @@ namespace Huginn::Effect
         const double readMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 
         std::thread([this, read, readMs, t0]() {
+            Huginn_SET_THREAD("Huginn effect catalog");
             try {
+                Huginn_ZONE_NAMED("EffectCatalog::Map (worker)");
                 const auto t1 = std::chrono::steady_clock::now();
                 // Plain records only from here: the RE pointers in `read` are not touched.
                 BuildResult result = BuildCaps(read->items, read->effects, &overrides_);

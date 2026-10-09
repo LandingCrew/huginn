@@ -45,6 +45,9 @@ namespace Huginn::State::DropAheadProbe
    [[nodiscard]] bool InstallPlayerUpdateHook();
 
    /// kPostLoadGame / kNewGame: start probing (the hook is inert before).
+   /// kPreLoadGame: stop. Either way the last reading is cleared: it belongs
+   /// to the session that is ending, and a reading that no longer ages while
+   /// the game is paused (a loading screen) must not carry into the next one.
    void SetGameLoaded(bool loaded) noexcept;
 
    enum class Status
@@ -73,8 +76,11 @@ namespace Huginn::State::DropAheadProbe
    /// The last reading (thread-safe copy).
    [[nodiscard]] Reading Latest() noexcept;
 
-   /// Readings older than this are not used by the sensor (the hook stopped:
-   /// a menu, a load).
+   /// Readings older than this are not used by the sensor. The age counts
+   /// unpaused time only (StateManager::PollNeedPosition, Core::Needs::
+   /// ReadingAge): the hook does not run while the game is paused, so a menu
+   /// or the console keeps the last reading; an unpaused second with no new
+   /// one (the hook stopped) makes it stale.
    inline constexpr double kMaxAgeSec = 1.0;
 
    /// How many readings were Measured (at least one probe known) since the

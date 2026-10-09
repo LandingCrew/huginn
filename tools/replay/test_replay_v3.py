@@ -58,12 +58,12 @@ class GoldenFile(unittest.TestCase):
     def test_head(self):
         h = self.decs[0]["head"]
         self.assertEqual(h["v"], 3)
-        self.assertEqual(len(h["cols"]), 239)
+        self.assertEqual(len(h["cols"]), 243)
         self.assertEqual(len(h["needs"]), 92)
         self.assertEqual(h["cross"][4], "stack_count")
         self.assertEqual(h["kinds"][7], "Armor")
         self.assertEqual(h["episode"], {"onset": 0.5, "expiry": 0.25, "minSec": 1.0, "graceSec": 4.0,
-                                        "answerSlackSec": 0.5})
+                                        "answerSlackSec": 0.5, "deathDrops": 1})
 
     def test_key_press(self):
         d = self.decs[0]

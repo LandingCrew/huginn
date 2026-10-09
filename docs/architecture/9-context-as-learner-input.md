@@ -240,8 +240,8 @@ Measured 2026-10-07 from `hg dump all` and `hg dump races` on vanilla+, Simonrim
   - a `bane_<family>` column for target-conditioned damage (Dragonbane, Dawnguard rune weapons, the silver perk, which today is a correlation multiplier). This needs MGEF or perk conditions in the dump.
   - Construct, monster and spectral have no obvious pairing. Poison immunity is a hidden number, so θ may learn it, but no hand rule encodes it.
 
-**Effects: 239 flat columns.**
-- **Breakdown:** 25 families, 133 specifics, 19 modifiers, 25 item features, 23 weapon stats and 14 armour stats. (242 before 2026-10-08, when the power and shout columns went with the decision to skip them.)
+**Effects: 243 flat columns.**
+- **Breakdown:** 26 families, 136 specifics, 19 modifiers, 25 item features, 23 weapon stats and 14 armour stats. (242 before 2026-10-08, when the power and shout columns went with the decision to skip them; 239 until 0.23.16 added `self_harm` and `self_harm_health/magicka/stamina`: a harm row on a food or potion is the drinker's side effect, not a target-harm column.)
 - **Flat, not factorised:** factorising (family + element axis + skill axis) saves only 11 columns. A linear score cannot express "resist AND fire" from two separate columns.
 - **Stable across lists:** about 175 effect columns on each list. LoreRim adds specifics inside existing families, not new kinds of effect.
 - **Coverage of visible effect rows:**
@@ -253,7 +253,7 @@ Measured 2026-10-07 from `hg dump all` and `hg dump races` on vanilla+, Simonrim
   | LoreRim, with the spell-tome filter and effect descriptions | 98.9% (script-only rows 88.5%) |
 
   What stays unmapped is one-off mechanics (White Phial, spell-copying, walls, curses).
-- **Pairs:** 92 needs × 239 columns. 266 pairs, about 1.2%, are obvious and start nonzero.
+- **Pairs:** 92 needs × 243 columns. 265 pairs, about 1.2%, are obvious and start nonzero (266 until 0.23.16 dropped diseased × resist_disease: resisting a disease does not cure one already caught).
 - **Reused actor values are resolved in layers.** Simonrim's OneHandedSkillAdvance means Burden; LoreRim's Fame carries Fear and fire damage. So `*SkillAdvance`, Fame, Infamy, Mood, Morality, `Variable##` and VoicePoints are never trusted alone. The layers, first match wins:
   1. Keyword table. Editor IDs are language-independent; this alone resolves 85–89%.
   2. Per-load-order override file, keyed by plugin and local FormID.

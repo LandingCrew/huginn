@@ -75,8 +75,8 @@ TEST_CASE("effect columns: counts per level and lookups")
             case Level::ArmourStat: ++arm; break;
         }
     }
-    CHECK(fam == 25);
-    CHECK(spec == 133);
+    CHECK(fam == 26);
+    CHECK(spec == 136);
     CHECK(mod == 19);
     CHECK(item == 25);
     CHECK(weap == 23);
@@ -88,6 +88,7 @@ TEST_CASE("effect columns: counts per level and lookups")
     CHECK(Name(Col::armour_cold) == "armour_cold");
     CHECK(FamilyOf(Col::damage_health_fire) == Col::damage);
     CHECK(FamilyOf(Col::drain_skill) == Col::_Count);
+    CHECK(FamilyOf(Col::self_harm_stamina) == Col::self_harm);
     CHECK(FamilyKey(Col::drain_skill) == Col::drain_skill);
     CHECK(IsEffect(Col::resist) == true);
     CHECK(IsEffect(Col::kind_potion) == false);
