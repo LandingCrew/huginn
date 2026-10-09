@@ -33,7 +33,8 @@ namespace Huginn::Core::Needs
     class DecayingSum
     {
     public:
-        explicit constexpr DecayingSum(float tauSec = kDamageDecayTauSec) noexcept :
+        constexpr DecayingSum() noexcept = default;
+        explicit constexpr DecayingSum(float tauSec) noexcept :
             m_tau(tauSec > 0.0f ? tauSec : kDamageDecayTauSec) {}
 
         void Add(double tSec, float amount) noexcept
@@ -59,7 +60,7 @@ namespace Huginn::Core::Needs
         }
 
     private:
-        float m_tau;
+        float m_tau = kDamageDecayTauSec;
         float m_value = 0.0f;
         double m_t = 0.0;
         bool m_started = false;

@@ -10,6 +10,7 @@
 #include "StateManager.h"
 #include "StateConstants.h"
 #include "../Profiling.h"
+#include "DropAheadProbe.h"
 
 namespace Huginn::State
 {
@@ -124,10 +125,12 @@ namespace Huginn::State
 
       // Overencumbered check (pattern from EnvironmentSensor.cpp)
       auto* actorValueOwner = player->AsActorValueOwner();
+      float newEncumbrance = 0.0f;  // R3: the ratio, not just the bool
       if (actorValueOwner) {
       float carryWeight = actorValueOwner->GetActorValue(RE::ActorValue::kCarryWeight);
       float inventoryWeight = player->GetWeightInContainer();
       newIsOverencumbered = (inventoryWeight > carryWeight);
+      newEncumbrance = Core::Needs::EncumbranceRatio(inventoryWeight, carryWeight);
       }
 
       // Sneaking check
@@ -216,10 +219,61 @@ namespace Huginn::State
             std::memory_order_release);
         m_isInCombat.store(newIsInCombat, std::memory_order_release);
         m_wasInCombat = newIsInCombat;
+        // R3: the combat timers, on the same published transition.
+        const double nowSec = NeedClock::Now();
+        UpdateNeedSensors([&](NeedSensorState& n) {
+          (newIsInCombat ? n.combatStartAt : n.combatEndAt) = nowSec;
+          return true;
+        });
+        changed = true;
       }
+
+      // R3 need sensors: encumbrance ratio, the submerged timer, drop ahead.
+      // Kept out of PlayerActorState (scoring input): see NeedSensorState.h.
+      changed |= PollNeedPosition(player, newEncumbrance, newIsUnderwater,
+          player->IsInMidair() || newIsSwimming || newIsMounted);
 
       return changed;
       }
+   }
+
+   bool StateManager::PollNeedPosition(RE::PlayerCharacter* player, float encumbrance, bool underwater,
+                                       bool skipProbe)
+   {
+      const double nowSec = NeedClock::Now();
+
+      // Drop ahead: a few rays, only on the ground. Airborne the feet are not
+      // on anything (the fall has its own need), swimming the surface is the
+      // water, and mounted the rays would start inside the horse.
+      float drop = -1.0f;
+      const RE::NiPoint3 pos = player->GetPosition();
+      const Core::Needs::Vec3 here{ pos.x, pos.y, pos.z };
+      if (!skipProbe) {
+        const float dt = m_lastProbeAt < 0.0 ? 0.0f : static_cast<float>(nowSec - m_lastProbeAt);
+        const auto velocity = Core::Needs::HorizontalVelocity(m_lastProbePos, here, dt);
+        if (auto r = DropAheadProbe::Measure(player, velocity)) {
+          drop = r->drop;
+        }
+      }
+      m_lastProbePos = here;
+      m_lastProbeAt = nowSec;
+
+      const int dropQ = drop < 0.0f ? -1 : static_cast<int>(drop / 16.0f);
+      bool changed = dropQ != m_lastDropQ;
+      m_lastDropQ = dropQ;
+
+      changed |= UpdateNeedSensors([&](NeedSensorState& n) {
+        bool c = std::abs(n.encumbrance - encumbrance) >= 0.005f;
+        n.encumbrance = encumbrance;
+        n.dropAhead = drop;
+        if (underwater != m_wasUnderwaterForTimer) {
+          n.submergedAt = underwater ? nowSec : -1.0;
+          c = true;
+        }
+        return c;
+      });
+      m_wasUnderwaterForTimer = underwater;
+      return changed;
    }
 
 } // namespace Huginn::State

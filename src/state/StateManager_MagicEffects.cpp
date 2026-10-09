@@ -115,6 +115,13 @@ namespace Huginn::State
 
     auto* activeEffects = magicTarget->GetActiveEffectList();
 
+    // R3 restore_pending_*: magnitude x remaining duration of the restores
+    // still running (over-time potions, soups, Requiem/LoreRim heals). Read in
+    // this same walk; kept in NeedSensorState, not in the scoring buffs.
+    float pendingHealth = 0.0f;
+    float pendingMagicka = 0.0f;
+    float pendingStamina = 0.0f;
+
     // Single iteration over active effects (pattern from EffectsSensor.cpp)
     if (activeEffects) {
       for (auto* effect : *activeEffects) {
@@ -345,6 +352,20 @@ namespace Huginn::State
 #ifdef _DEBUG
             logger::trace("[StateManager] --> Detected FORTIFY ILLUSION (LORERIM, mag: {})", magnitude);
 #endif
+          }
+        }
+
+        // R3: an over-time restore of a vital (not instant: duration > 0).
+        if ((archetype == RE::EffectSetting::Archetype::kValueModifier ||
+             archetype == RE::EffectSetting::Archetype::kPeakValueModifier) &&
+            !baseEffect->IsDetrimental() && magnitude > 0.0f && effect->duration > 0.0f) {
+          const float remaining = magnitude * std::max(effect->duration - effect->elapsedSeconds, 0.0f);
+          if (primaryAV == RE::ActorValue::kHealth) {
+            pendingHealth += remaining;
+          } else if (primaryAV == RE::ActorValue::kMagicka) {
+            pendingMagicka += remaining;
+          } else if (primaryAV == RE::ActorValue::kStamina) {
+            pendingStamina += remaining;
           }
         }
 
@@ -584,6 +605,19 @@ namespace Huginn::State
       }
     }
 
+    // R3: publish the pending restores; a change of a point or more is worth
+    // a pipeline look (the outer gate), smaller drift is the effect ticking.
+    const bool pendingChanged = UpdateNeedSensors([&](NeedSensorState& n) {
+      const auto moved = [](float a, float b) { return std::abs(a - b) >= 1.0f || ((a > 0.0f) != (b > 0.0f)); };
+      const bool c = moved(n.restoreHealthPending, pendingHealth) ||
+                     moved(n.restoreMagickaPending, pendingMagicka) ||
+                     moved(n.restoreStaminaPending, pendingStamina);
+      n.restoreHealthPending = pendingHealth;
+      n.restoreMagickaPending = pendingMagicka;
+      n.restoreStaminaPending = pendingStamina;
+      return c;
+    });
+
     // Update effects and buffs with change detection
     {
       std::unique_lock lock(m_playerMutex);
@@ -656,7 +690,7 @@ namespace Huginn::State
       }
 
       // Stage 3b: Return true if any state changed
-      return effectsChanged || buffsChanged || vampireChanged || werewolfChanged;
+      return effectsChanged || buffsChanged || vampireChanged || werewolfChanged || pendingChanged;
     }
   }
 

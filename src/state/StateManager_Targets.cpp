@@ -19,9 +19,89 @@
 #include "StateConstants.h"
 #include "StateEvaluator.h"  // v0.6.11: For ClassifyActor
 #include "../Profiling.h"
+#include "core/TargetFamilies.h"
 
 namespace Huginn::State
 {
+   namespace
+   {
+      // R3 enemy_casting_<element>: the element of the spell an actor is
+      // casting RIGHT NOW (its glow is on screen) -- never its spell list.
+      // Bits: 1 fire, 2 frost, 4 shock, read off the casting spell's
+      // harmful effects' resist actor value, the engine's own element.
+      std::uint8_t CastElementBits(RE::Actor* actor)
+      {
+         std::uint8_t bits = 0;
+         for (auto source : { RE::MagicSystem::CastingSource::kLeftHand, RE::MagicSystem::CastingSource::kRightHand,
+                              RE::MagicSystem::CastingSource::kOther }) {
+            auto* caster = actor->GetMagicCaster(source);
+            if (!caster || caster->state.get() == RE::MagicCaster::State::kNone) continue;
+            auto* spell = caster->currentSpell;
+            if (!spell) continue;
+            for (const auto* effect : spell->effects) {
+               const auto* mgef = effect ? effect->baseEffect : nullptr;
+               if (!mgef || !mgef->IsDetrimental()) continue;
+               switch (mgef->data.resistVariable) {
+               case RE::ActorValue::kResistFire: bits |= 1; break;
+               case RE::ActorValue::kResistFrost: bits |= 2; break;
+               case RE::ActorValue::kResistShock: bits |= 4; break;
+               default: break;
+               }
+            }
+         }
+         return bits;
+      }
+
+      // R3 target_archer: a bow or crossbow in either hand (equipped weapons
+      // are on the perception line's allowed list).
+      bool HoldsRanged(RE::Actor* actor)
+      {
+         for (bool left : { false, true }) {
+            const auto* obj = actor->GetEquippedObject(left);
+            const auto* weap = obj ? obj->As<RE::TESObjectWEAP>() : nullptr;
+            if (weap && (weap->IsBow() || weap->IsCrossbow())) return true;
+         }
+         return false;
+      }
+
+      // R3 target_summoned: a conjured creature (summon shader, a cast before it).
+      bool IsSummon(RE::Actor* actor) { return actor->IsCommandedActor() || actor->IsSummoned(); }
+
+      // Per poll, the readings of the living combat hostiles.
+      struct HostileNeeds
+      {
+         std::uint32_t families = 0;
+         bool summoned = false;
+         std::uint8_t castBits = 0;
+      };
+   }
+
+   std::uint32_t StateManager::GetCachedFamilies(RE::Actor* actor)
+   {
+      const RE::FormID formID = actor->GetFormID();
+      const auto* race = actor->GetRace();
+      const RE::FormID raceID = race ? race->GetFormID() : 0;
+      if (auto it = m_familyCache.find(formID); it != m_familyCache.end() && it->second.raceID == raceID) {
+         return it->second.mask;
+      }
+      std::uint32_t mask = 0;
+      if (race) {
+         const auto* base = actor->GetActorBase();
+         const char* edid = race->GetFormEditorID();
+         const char* name = race->GetFullName();
+         mask = Core::Needs::ClassifyFamilies(
+            edid ? std::string_view{ edid } : std::string_view{},
+            name ? std::string_view{ name } : std::string_view{},
+            race->data.flags.all(RE::RACE_DATA::Flag::kFlies),
+            [&](std::string_view kw) { return race->HasKeywordString(kw); },
+            [&](std::string_view kw) { return base && base->HasKeywordString(kw); });
+      }
+      if (m_familyCache.size() >= kActorTypeCacheMax && !m_familyCache.contains(formID)) {
+         m_familyCache.clear();
+      }
+      m_familyCache[formID] = { raceID, mask };
+      return mask;
+   }
    // =============================================================================
    // TARGET MANAGEMENT HELPERS
    // =============================================================================
@@ -234,6 +314,13 @@ namespace Huginn::State
       // MAIN LOCK SECTION — update targets collection
       // =========================================================================
       bool changed = false;
+      HostileNeeds hostileNeeds;        // R3: this poll's living combat hostiles
+      bool followerBleedout = false;    // R3: a teammate down on one knee
+      bool scoringArcher = false;
+      float soleTtk = -1.0f;
+      int closestQ = -1;
+      int targetHealthQ = -1;
+      const double nowSec = NeedClock::Now();
       {
       std::unique_lock lock(m_targetsMutex);
 
@@ -339,6 +426,14 @@ namespace Huginn::State
             if (distSq < closestHostileDistSq) {
               closestHostileDistSq = distSq;
               closestHostile = actor;
+            }
+
+            // R3: the union of the living combat hostiles (no line-of-sight
+            // logic, the user 2026-10-08), the crosshair one included.
+            hostileNeeds.families |= GetCachedFamilies(actor);
+            hostileNeeds.summoned |= IsSummon(actor);
+            if (actor->IsCasting(nullptr)) {
+              hostileNeeds.castBits |= CastElementBits(actor);
             }
 
             // Skip building secondary state if this is the crosshair target
@@ -616,6 +711,14 @@ namespace Huginn::State
             }
             m_processedAllies.insert(allyFormID);
 
+            // R3 ally_injured, the visible step: a teammate down on one knee.
+            // (The continuous health reading needs a HUD mod's ally bars.)
+            if (isTeammate) {
+              if (const auto* allyState = ally->AsActorState(); allyState && allyState->IsBleedingOut()) {
+                followerBleedout = true;
+              }
+            }
+
             if (allyFormID == primaryFormID) {
               return false;
             }
@@ -745,11 +848,73 @@ namespace Huginn::State
         }
       }
 
+      // R3: what the needs read off the scoring target (the crosshair's
+      // living hostile, else the closest one -- ScoringTargetType's pick) and
+      // off the only hostile, if there is exactly one.
+      {
+        std::optional<TargetActorState> scoringTarget;
+        if (m_targets.primary.has_value() && m_targets.primary->isHostile && !m_targets.primary->isDead) {
+          scoringTarget = m_targets.primary;
+        } else {
+          scoringTarget = m_targets.GetClosestEnemy();
+        }
+        if (scoringTarget) {
+          if (auto* actor = GetActorByFormID(scoringTarget->actorFormID); actor && actor->Get3D()) {
+            scoringArcher = HoldsRanged(actor);
+          }
+          targetHealthQ = static_cast<int>(scoringTarget->vitals.health * 100.0f);
+        }
+        if (const auto closest = m_targets.GetClosestEnemy()) {
+          closestQ = static_cast<int>(std::sqrt(closest->distanceToPlayerSq) / 16.0f);
+        }
+        RE::FormID sole = 0;
+        float soleHealth = -1.0f;
+        if (m_targets.cachedEnemyCount == 1) {
+          for (const auto& t : m_targets.targets) {
+            if (t.isHostile && !t.isDead) {
+              sole = t.actorFormID;
+              soleHealth = t.vitals.health;
+              break;
+            }
+          }
+        }
+        soleTtk = m_soleHostileTtk.Update(sole, soleHealth, nowSec);
+      }
+
       // Change detection: compare lightweight digest against previous
       TargetDigest digest = ComputeTargetDigest();
       changed = !(digest == m_prevTargetDigest);
       m_prevTargetDigest = digest;
       }
+
+      // R3: publish the need readings. Families are HELD for the fight: the
+      // union over every poll while the published combat flag is up, cleared
+      // when it drops (a hostile dying mid-fight does not unset its family).
+      // A move of the closest hostile's distance (16 units) or the scoring
+      // target's bar (1%) is a change for the outer gate too: the digest only
+      // sees the distance bucket, and enemy_close/mid/far and target_health_low
+      // are continuous.
+      const bool fighting = m_combatDebounce.Value();
+      changed |= closestQ != m_closestEnemyQ || targetHealthQ != m_targetHealthQ;
+      m_closestEnemyQ = closestQ;
+      m_targetHealthQ = targetHealthQ;
+      changed |= UpdateNeedSensors([&](NeedSensorState& n) {
+        const std::uint32_t families = fighting ? (n.families | hostileNeeds.families) : 0u;
+        bool c = families != n.families || hostileNeeds.summoned != n.hostileSummoned ||
+                 scoringArcher != n.targetArcher || followerBleedout != n.followerBleedout ||
+                 hostileNeeds.castBits != 0 ||
+                 (soleTtk < 0.0f) != (n.soleHostileTtk < 0.0f) ||
+                 std::abs(soleTtk - n.soleHostileTtk) >= 1.0f;
+        n.families = families;
+        n.hostileSummoned = hostileNeeds.summoned;
+        n.targetArcher = scoringArcher;
+        n.followerBleedout = followerBleedout;
+        n.soleHostileTtk = soleTtk;
+        if (hostileNeeds.castBits & 1) n.castFireAt = nowSec;
+        if (hostileNeeds.castBits & 2) n.castFrostAt = nowSec;
+        if (hostileNeeds.castBits & 4) n.castShockAt = nowSec;
+        return c;
+      });
 
       return changed;
    }
