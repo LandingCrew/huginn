@@ -628,8 +628,10 @@ namespace Huginn::Item
       // the only reliable handle on them: no keyword, and no editor ID
       // without po3 Tweaks. Hunger 0x2EE1-0x2EE4 (VerySmall..Large), Restore
       // Cold 0x2EE5, Fortify Warmth 0x2EE6 -- the same lookups Survival Mode
-      // Improved makes. Only the twelve "Hot ..." soups carry the last two;
-      // a plain Vegetable Soup does not warm (UESP, Survival Mode Items).
+      // Improved makes. Only the "Hot ..." dishes carry the last two -- 16 on
+      // vanilla: Survival Mode's 12 and the Fishing creation's 4 (a stew, a
+      // chowder, two bisques); a plain Vegetable Soup does not warm (UESP,
+      // Survival Mode Items).
       if (IsSurvivalHungerEffect(effect->baseEffect)) {
         data.tags |= ItemTag::SatisfiesHunger;
       }

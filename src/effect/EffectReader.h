@@ -19,7 +19,13 @@
 // per-effect cost, and for a Cloak or SpawnHazard the effects of the spell it
 // carries (associatedForm, or the hazard's spell), one level deep.
 //
-// Main thread only (kDataLoaded, the console): plain form reads, no writes.
+// Plain form reads, no writes. Not main-thread only: ReadLoadOrder runs on
+// the main thread (the catalog build, a task queued when the main menu opens,
+// traced; kNewGame / kPostLoadGame if it never opened; kDataLoaded only with
+// no UI) and from the console (`hg dump all`); ReadForm also runs on the
+// update loop's thread, for a per-instance cap (EffectCatalog::InstanceEntry
+// from SelectionLogV3's held set) -- a game job thread in gameplay
+// (UpdateLoop.cpp, THREADS above OnUpdate) -- and from the console (`hg cap`).
 // =============================================================================
 
 #include "core/EffectRecords.h"

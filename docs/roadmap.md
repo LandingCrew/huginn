@@ -307,7 +307,7 @@ agent runs the cheap test on today's log: one weight per slot class × logged
   `tools/replay/replay.py:356`): one learned weight per slot class times the
   logged per-candidate context weight, against context alone (replay's B
   arm), on the v2 log (46 launches; 859 key/wheel picks after the analysis's
-  filter, from 870 stamped records), held out by launch. hit@1 level (+1.1 to +1.5, CI includes 0), NLL −0.25
+  filter, from 869 stamped records), held out by launch. hit@1 level (+1.1 to +1.5, CI includes 0), NLL −0.25
   (CI −0.30 to −0.20), hit@8 +4.0 to +4.3. A class × φ interaction on top
   beats context alone by +2 to +4 hit@1, depending on the folds. v3 (92
   picks, the same 4 launches as v2's last) is too small to say. A first run
@@ -323,7 +323,7 @@ agent runs the cheap test on today's log: one weight per slot class × logged
   - key position alone gets 41% hit@1 on the shown page, so consider a
     key-position term.
   The scripts (`r5-cheap-test/`, `r5-verify/`) lived in the session
-  scratchpad and are not in the repo, and the filter from 870 records to 859
+  scratchpad and are not in the repo, and the filter from 869 records to 859
   picks is not documented; the rest of the method is reproducible from this
   description.
 - **Newly learned spells were not on the HUD before their first menu pick**
@@ -406,8 +406,8 @@ sensor from `PotionDiscriminator`'s timer; `ChoiceLearner`; scorer; cosave
 pruned symbol (console, selection log, `ReasonHold`, debug widget, `Tests.cpp`)
 changed in the same PR, and the shipped INI loses the dead keys.
 - [ ] **Decide: which thread runs the update loop** (2026-10-09, two Tracy
-      traces in `traces/202610/`, which is not checked in; the counts are
-      trace09's unless marked). `OnUpdate`, driven by the InputEvent sink,
+      traces in `traces/202610/`, which is not checked in; the counts and
+      times are trace09's unless marked). `OnUpdate`, driven by the InputEvent sink,
       runs:
       - on a pool of 6 rotating game job threads in gameplay;
       - on the main thread in paused menus and the main menu (it does run
@@ -419,12 +419,18 @@ changed in the same PR, and the shipped INI loses the dead keys.
         `IsWorldLoaded` (1,289 of 1,304; trace04 3,742 of 3,768), after
         `UpdateHandler::ProcessEvent` has run `InputHandler::ProcessButton`
         and `Update` and the `IsWorldLoaded` UI reads. In 15 of 18 game
-        loads (14 of them door or fast-travel loads) one of them is a full
-        tick, `RunPipeline` and `Inventory::DeltaScan` included (trace04: 26
-        full ticks, one load with two).
+        loads (about 12 of them door or fast-travel loads, plus 2 likely
+        LoreRim defeat teleports at 12:31:33 and 12:57:02, each right after
+        `health_deficit` 0.99 in combat) one of them is a full tick,
+        `RunPipeline` and `Inventory::DeltaScan` included (trace04: 26 full
+        ticks, one load with two).
       `ForceUpdate` (`hg refresh`, `hg recs`, the test harness) runs a tick
       on its caller's thread; every path holds UpdateHandler's mutex, so no
-      two ticks overlap. No job tick overlapped a main-thread zone (0 of
+      two ticks overlap. One poll does not: the Debug-only
+      `StateManager::ForceUpdate` at kPostLoadGame / kNewGame
+      (`Main.cpp:399-400`, `InitializeGameSystems`) polls every sensor on
+      the main thread outside UpdateHandler's `m_mutex`.
+      No job tick overlapped a main-thread zone (0 of
       22,047); job ticks end a flat ~2 ms before the main thread's player
       update finishes, so the main thread appears to wait for them
       (inferred: the hook zone opens after the original update returns, so

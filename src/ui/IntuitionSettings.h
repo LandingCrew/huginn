@@ -142,9 +142,13 @@ namespace Huginn::UI
         /// Same reasoning as IsReadOnly: not on IntuitionConfig. It changes WHEN
         /// the widget is shown, not how it renders, so it never flows through
         /// ReapplySettings — the two visibility gates read it directly.
-        /// Read from Wheeler's callback thread (Main.cpp's setWidgetVisible),
-        /// written from the update thread by LoadFromIni on hg reload / dMenu
-        /// apply — hence atomic, unlike readOnly which is main-thread only.
+        /// Read from Wheeler's callback thread (Main.cpp's setWidgetVisible)
+        /// without a lock, written by LoadFromIni at load and on hg reload /
+        /// dMenu apply — the reload on its caller's thread (the console, or
+        /// whichever thread dMenu's callback arrives on) under UpdateHandler's
+        /// mutex, not on the update loop's tick — hence atomic. readOnly is
+        /// read and written only on those load and reload paths, never from a
+        /// callback, so it stays a plain bool.
         [[nodiscard]] bool  HideWhileWheelOpen() const noexcept
         {
             return hideWhileWheelOpen.load(std::memory_order_acquire);

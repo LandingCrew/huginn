@@ -98,9 +98,13 @@ namespace Huginn::Learning
         LearningConfig m_config;
 
         // Injected live queries — see SetEnvironment. Read unsynchronized from
-        // the equip path, like m_config above: both writers are main-thread
-        // (Main.cpp at init, SettingsReloader on hot-reload, which replaces
-        // m_config only and leaves m_env intact).
+        // the equip path, like m_config above. The writers: Main.cpp at load
+        // (the main thread), and SettingsReloader on hot-reload, which
+        // replaces m_config only and leaves m_env intact. The reload is not
+        // pinned to the main thread: it runs on its caller's thread (the
+        // console, or whichever thread dMenu's callback arrives on;
+        // SettingsReloader.h) under UpdateHandler's mutex, which the equip
+        // path does not take.
         Environment m_env;
 
         // Slot-relative thresholds: how many ranks past the display cutoff

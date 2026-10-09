@@ -117,9 +117,10 @@ namespace Huginn::Input
       /// Only slots 0-9 — the keys that actually equip — are suppressed.
       ///
       /// Atomic rather than mutex-guarded: it is one bool read once per matched
-      /// key press on the input thread, written from the game thread on load and
-      /// on every settings reload. It shares no invariant with m_keyCodes, so it
-      /// does not need to be consistent with them.
+      /// key press by the input sink (whichever thread runs it), written on
+      /// load (the main thread) and on every settings reload (the reload's
+      /// caller). It shares no invariant with m_keyCodes, so it does not need
+      /// to be consistent with them.
       void SetReadOnly(bool readOnly) noexcept { m_readOnly.store(readOnly, std::memory_order_relaxed); }
       [[nodiscard]] bool IsReadOnly() const noexcept { return m_readOnly.load(std::memory_order_relaxed); }
 
@@ -147,8 +148,11 @@ namespace Huginn::Input
       void HandleCycleKey(int index, RE::ButtonEvent* button);
 
       /// Perform a pending press-state reset (requested by SetKeyCodes).
-      /// Must only run on the game thread (ProcessButton/Update) — the state
-      /// arrays are game-thread-only and unlocked on the hot path.
+      /// Must only run from ProcessButton/Update, i.e. from UpdateHandler's
+      /// InputEvent sink — the state arrays are touched only there and are
+      /// unlocked on the hot path. That is no single thread: a rotating game
+      /// job thread in gameplay, the main thread in menus, a loading-screen
+      /// thread during a load (UpdateLoop.cpp, THREADS above OnUpdate).
       void ConsumePendingStateReset();
 
       /// Callbacks
@@ -200,9 +204,10 @@ namespace Huginn::Input
       std::atomic<bool> m_loggedConfig = false;
 
       /// Set by SetKeyCodes (any thread) to request a press-state reset;
-      /// consumed on the game thread before the state arrays are touched.
-      /// SetKeyCodes must not clear the arrays itself — it can run from the
-      /// dMenu reload context while the game thread is mid-ProcessButton.
+      /// consumed by the input sink (ProcessButton/Update, whichever thread
+      /// runs it) before the state arrays are touched. SetKeyCodes must not
+      /// clear the arrays itself — it can run from the dMenu reload context
+      /// while the sink is mid-ProcessButton.
       std::atomic<bool> m_pendingStateReset = false;
 
       /// Read-only mode. See SetReadOnly.

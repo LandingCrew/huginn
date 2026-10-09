@@ -539,9 +539,9 @@ static bool IsWorldLoaded(RE::PlayerCharacter* player)
 }
 
 // THREADS (Tracy traces trace09-10-2026 and trace04-10-2026, read 2026-10-09;
-// the menu and load counts below are trace09's unless marked; the decision
-// is roadmap R8, "Which thread runs the update loop"). Two callers, both under
-// UpdateHandler's m_mutex, so no two ticks overlap:
+// every count and time below is trace09's unless marked "trace04"; the
+// decision is roadmap R8, "Which thread runs the update loop"). Two callers,
+// both under UpdateHandler's m_mutex, so no two ticks overlap:
 //   - UpdateHandler's InputEvent sink (ProcessEvent -> DoUpdate), the usual
 //     driver;
 //   - UpdateHandler::ForceUpdate -> DoUpdate, on the caller's thread: `hg
@@ -558,10 +558,11 @@ static bool IsWorldLoaded(RE::PlayerCharacter* player)
 //     included, concurrently with the main thread's load. Most do little:
 //     UpdateHandler::ProcessEvent runs InputHandler's ProcessButton and
 //     Update, then this returns at IsWorldLoaded after its UI reads (1,289
-//     of 1,304 ticks; trace04: 3,742 of 3,768). In 15 of 18 game loads (14 of
-//     them door or fast-travel loads) one of them is a full tick,
-//     RunPipeline and Inventory::DeltaScan included (trace04: 26 full
-//     ticks, one load with two).
+//     of 1,304 ticks; trace04: 3,742 of 3,768). In 15 of 18 game loads
+//     (about 12 of them door or fast-travel loads, plus 2 likely LoreRim
+//     defeat teleports) one of them is a full tick, RunPipeline and
+//     Inventory::DeltaScan included (trace04: 26 full ticks, one load with
+//     two).
 // No job tick overlapped a main-thread zone (0 of 22,047). Job ticks end a
 // flat ~2 ms before the main thread's player update finishes, whatever their
 // length, so the main thread appears to wait for them; that is inferred, not

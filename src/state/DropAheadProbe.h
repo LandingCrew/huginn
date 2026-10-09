@@ -12,9 +12,11 @@
 // Where it runs (verifier rounds 1 and 2 on #188): NOT on the update loop. The
 // update loop is an input-event sink: in gameplay it runs on game job threads,
 // in paused menus on the main thread (UpdateLoop.cpp, THREADS above
-// OnUpdate). SKSE's task queue follows the same pattern: job threads in
-// gameplay (seen in round 1, not in a Tracy trace), the main thread at the
-// main menu (traced). So in gameplay neither is the main thread. The
+// OnUpdate). SKSE's tasks appear to do the same, on less evidence: at the
+// main menu a task ran on the main thread (traced); in gameplay the task
+// version of this probe ran on job threads, observed once, in verifier round
+// 1, and never traced. So in gameplay the update loop is off the main thread
+// (traced), and SKSE tasks were too in the one round that looked. The
 // rays are cast from a hook on PlayerCharacter::Update (vtable index 0xAD),
 // which the game calls from its main update -- the same place prior art
 // casts camera rays from (SkyrimCameraDisocclusion, Hook.cpp, which also

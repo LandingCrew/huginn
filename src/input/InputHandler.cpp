@@ -48,9 +48,10 @@ namespace Huginn::Input
 
       // Request an input-state reset to prevent stale press/hold from misfiring
       // after rebind (e.g. old key held → rebind → new key sees ghost state).
-      // Deferred to the game thread: the state arrays are mutated lock-free by
-      // ProcessButton/Update, and this setter can run from the dMenu reload
-      // context — resetting them here would be a cross-thread data race.
+      // Deferred to the input sink (ProcessButton/Update, on whichever thread
+      // runs it): the state arrays are mutated lock-free there, and this
+      // setter can run from the dMenu reload context — resetting them here
+      // would be a cross-thread data race.
       m_pendingStateReset.store(true, std::memory_order_release);
       m_loggedConfig = false;
 
