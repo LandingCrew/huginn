@@ -613,9 +613,11 @@ def check_decision_file(path: Path, wheel_expected: bool) -> str | None:
     for d in decs:
         outcomes[d["out"]] = outcomes.get(d["out"], 0) + 1
     say("v3 file decoded: " + ", ".join(f"{k}={v}" for k, v in sorted(outcomes.items()))
-        + f"; bad lines {stats.get('bad_lines', 0)}, skipped decisions {stats.get('skipped', 0)}")
-    if stats.get("bad_lines", 0):
-        return f"{stats['bad_lines']} unreadable line(s) in the v3 file"
+        + f"; bad lines {stats.get('bad_lines', 0)}, skipped {stats.get('skipped', 0)}, "
+          f"lost heads {stats.get('lost_heads', 0)}, truncated {stats.get('truncated', 0)}")
+    damage = {k: stats.get(k, 0) for k in ("bad_lines", "skipped", "lost_heads", "truncated")}
+    if any(damage.values()):
+        return "a damaged v3 file: " + ", ".join(f"{k}={v}" for k, v in damage.items())
     wanted = ["key", "menu", "nothing"] + (["wheel"] if wheel_expected else [])
     missing = [o for o in wanted if not outcomes.get(o)]
     return f"no {', '.join(missing)} record in the v3 file" if missing else None

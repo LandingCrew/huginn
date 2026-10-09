@@ -85,6 +85,13 @@ namespace Huginn::Learning::SelectionLogV3
     /// pick of it is the same selection and is dropped.
     void OnTrackerSelect(RE::FormID formID);
 
+    /// kPreLoadGame: inventory extra data may not be read until OnLoadFinished
+    /// (the held rows are read without it, `heldFull: 0`).
+    void OnLoadStarting();
+    /// kPostLoadGame / kNewGame, after the game systems are initialized (the
+    /// post-load window, Util::IsExtraListStable, has been stamped by then).
+    void OnLoadFinished();
+
     /// A game load (or `hg reset all`): episodes, pending picks, the menu's
     /// context and the cached held set are forgotten.
     void Reset();

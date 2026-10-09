@@ -92,6 +92,22 @@ namespace Huginn::Learning::SelectionLogV3
             std::shared_ptr<const Effect::CatalogEntry> instance;   // tempered / player-enchanted
         };
 
+        // Set from kPreLoadGame until the load's systems are initialized (which
+        // stamps the post-load window first). Util::IsExtraListStable measures
+        // from the last kPostLoadGame stamp, so on its own it reads "stable"
+        // while a load is under way -- the window in which a player equip event
+        // could reach CaptureForPress. Local to the v3 log on purpose: the
+        // registries share that util, and gating them through the load is a
+        // change to the old engine.
+        std::atomic<bool> g_loadInProgress{ false };
+
+        /// May inventory extra data be read now? Not during a load, nor in the
+        /// window after it (Util::IsExtraListStable).
+        bool ExtraListsReadable()
+        {
+            return !g_loadInProgress.load(std::memory_order_acquire) && Util::IsExtraListStable();
+        }
+
         struct HeldSet
         {
             std::vector<HeldItem> items;
@@ -123,7 +139,7 @@ namespace Huginn::Learning::SelectionLogV3
         // another enchantment in another save.
         std::unordered_map<InstanceKey, std::shared_ptr<const Effect::CatalogEntry>, InstanceKeyHash> g_instances;
 
-        // Call only when Util::IsExtraListStable(): reads the list's extra data.
+        // Call only when ExtraListsReadable(): reads the list's extra data.
         std::shared_ptr<const Effect::CatalogEntry> InstanceFor(const Effect::EffectCatalog& catalog,
                                                                 RE::TESBoundObject* obj, RE::ExtraDataList* xl)
         {
@@ -147,7 +163,7 @@ namespace Huginn::Learning::SelectionLogV3
         }
 
         // `xl` may be null (the base form's charge only); a non-null list only
-        // when Util::IsExtraListStable().
+        // when ExtraListsReadable().
         void ReadCharge(RE::TESBoundObject* obj, const RE::ExtraDataList* xl, HeldItem& h)
         {
             float maxCharge = 0.0f;
@@ -276,7 +292,7 @@ namespace Huginn::Learning::SelectionLogV3
         std::shared_ptr<const HeldSet> Held(double nowSec, double& readMs, bool fresh)
         {
             readMs = 0.0;
-            const bool stable = Util::IsExtraListStable();
+            const bool stable = ExtraListsReadable();
             std::lock_guard lock(g_heldMutex);
             const bool upgrade = g_held && !g_held->full && stable;
             const bool dirty = g_heldDirty.load(std::memory_order_relaxed);
@@ -825,6 +841,7 @@ namespace Huginn::Learning::SelectionLogV3
                     }
                     m_out.close();
                     m_out.clear();
+                    --m_seq;   // the record never reached the file: its number is reused, no gap
                     return;
                 }
                 m_fileBytes += lines.size();
@@ -1064,7 +1081,7 @@ namespace Huginn::Learning::SelectionLogV3
             rowCount = g_tick.rows.size();
         }
         RecordHands(nowSec);
-        if (!g_heldWarm.load(std::memory_order_relaxed) && Util::IsExtraListStable() &&
+        if (!g_heldWarm.load(std::memory_order_relaxed) && ExtraListsReadable() &&
             Effect::EffectCatalog::GetSingleton().Ready()) {
             double ms = 0.0;
             const auto held = Held(nowSec, ms, false);
@@ -1115,9 +1132,16 @@ namespace Huginn::Learning::SelectionLogV3
         auto* ui = RE::UI::GetSingleton();
         const bool paused = ui && ui->GameIsPaused();
 
-        // Judged AFTER SelectionTracker::Update, so a selection that confirms on
-        // this same tick -- after a stall of the loop, a confirmation and the
-        // end of a grace can land together -- answers its episode first.
+        // 1. Every confirmation of this tick first: SelectionTracker's ran in
+        // its Update just before this call; the v3-only picks (armour, stale,
+        // learning off) confirm here. A confirmation answers the episodes its
+        // press lies in, so it must land before they are judged.
+        TickPicks(now);
+
+        // 2. Then the ended episodes are judged. After a stall of the loop (a
+        // hitch, a load door) a confirmation and the end of a grace can land on
+        // one tick; judged in this order, the confirmation counts
+        // (NeedEpisodesTests: "a confirmation on the grace-end tick").
         if (!paused) {
             std::vector<Core::Needs::EpisodeTracker<std::shared_ptr<const DL::Context>>::Episode> unanswered;
             {
@@ -1138,9 +1162,6 @@ namespace Huginn::Learning::SelectionLogV3
                 Queue(std::move(d));
             }
         }
-
-        // Picks kept in the v3 log only (confirmed like SelectionTracker's).
-        TickPicks(now);
 
         {
             std::lock_guard dl(g_episodeMutex);
@@ -1250,6 +1271,16 @@ namespace Huginn::Learning::SelectionLogV3
     {
         std::lock_guard lock(g_pickMutex);
         std::erase_if(g_picks, [formID](const PendingPick& p) { return p.form == formID; });
+    }
+
+    void OnLoadStarting()
+    {
+        g_loadInProgress.store(true, std::memory_order_release);
+    }
+
+    void OnLoadFinished()
+    {
+        g_loadInProgress.store(false, std::memory_order_release);
     }
 
     void Reset()

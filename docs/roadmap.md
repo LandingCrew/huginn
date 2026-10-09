@@ -216,7 +216,7 @@ Logging only: `Huginn_Selections_v3.jsonl` beside the unchanged v2 log.
       per item, wildcard propensity. *(Caps content-addressed and written
       once per file segment; contexts shared by the picks of one menu visit
       and by episodes that start together; propensity = P(slot rolled) ×
-      1/pool, recorded at the roll.)*
+      copies/pool, recorded at the roll.)*
 - [x] "Nothing pressed": one record per need episode that expires with no
       press, with the page at the onset (the user, 2026-10-08). *(Episode:
       onset at 0.5, expiry below 0.25, at least 1 s, answered by a confirmed

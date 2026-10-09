@@ -432,11 +432,38 @@ class V3FormatError(ValueError):
     record before any head, a version this reader does not know)."""
 
 
-def _open_text(path):
-    if str(path).endswith(".gz"):
-        import gzip
-        return gzip.open(path, "rt", encoding="utf-8", errors="strict")
-    return open(path, encoding="utf-8", errors="strict")
+def _raw_lines(path, stats):
+    """The file's lines as bytes. A truncated .gz (a copy taken mid-write, a
+    crash while compressing) ends the file where it breaks: counted in
+    stats["truncated"], never raised."""
+    import gzip
+    opener = gzip.open if str(path).endswith(".gz") else open
+    with opener(path, "rb") as f:
+        while True:
+            try:
+                line = f.readline()
+            except (EOFError, OSError, gzip.BadGzipFile):
+                stats["truncated"] = stats.get("truncated", 0) + 1
+                return
+            if not line:
+                return
+            yield line
+
+
+def _decode_line(raw):
+    """One line as a JSON object, or None when it is not one (torn mid-record,
+    torn inside a multi-byte character, NUL padding left by a crash)."""
+    try:
+        text = raw.decode("utf-8").strip()
+    except UnicodeDecodeError:
+        return None
+    if not text:
+        return ""
+    try:
+        rec = json.loads(text)
+    except ValueError:
+        return None
+    return rec if isinstance(rec, dict) else None
 
 
 def _sparse(pairs, names):
@@ -469,96 +496,117 @@ def iter_v3(paths, stats=None):
     decision's added rows, and `chosen` = rows[row] (None for nothing).
     Caps and contexts are per segment: a head line starts a new one.
 
-    A line that is not JSON (a record torn by a crash or a full disk) is
-    skipped and counted in stats["bad_lines"]; until the next head, a cap or
-    context that line may have defined is missing, so records that need one
-    are skipped too (stats["skipped"]) instead of failing. Without a torn line,
-    a reference to an undefined id is a malformed file (V3FormatError)."""
+    Damage is skipped and counted, never raised (a crash or a full disk can
+    tear the last record a launch wrote; the writer starts on a new line):
+      stats["bad_lines"]   lines that are not a JSON object (torn mid-record,
+                           torn inside a UTF-8 character, NUL padding) or
+                           records that lack their fields;
+      stats["skipped"]     records after damage that needed a cap or context
+                           the damage may have taken, or that belong to
+                           another launch than the head in force (a torn head
+                           between two launches);
+      stats["lost_heads"]  after damage, a cap id defined a second time: a
+                           new segment began behind a torn head. Its records
+                           are decoded against the last good head when they
+                           are of its launch (a segment of the same launch has
+                           the same head), and skipped otherwise;
+      stats["truncated"]   .gz files that end mid-stream (read up to there).
+    Without damage, a reference to an undefined id is a malformed file
+    (V3FormatError), as is a version other than 3."""
     if stats is None:
         stats = {}
-    stats.setdefault("bad_lines", 0)
-    stats.setdefault("skipped", 0)
+    for key in ("bad_lines", "skipped", "lost_heads", "truncated"):
+        stats.setdefault(key, 0)
     for path in paths:
         head, caps, ctxs = None, {}, {}
-        damaged = False   # a torn line since the last head
-        with _open_text(path) as f:
-            for lineno, line in enumerate(f, 1):
-                line = line.strip()
-                if not line:
-                    continue
-                try:
-                    rec = json.loads(line)
-                    if not isinstance(rec, dict):
-                        raise ValueError("not an object")
-                except ValueError:
-                    stats["bad_lines"] += 1
+        damaged = False   # damage since the last good head
+        lost_head = False  # a lost head already counted for this damage
+        for lineno, raw in enumerate(_raw_lines(path, stats), 1):
+            rec = _decode_line(raw)
+            if rec == "":
+                continue
+            if rec is None:
+                stats["bad_lines"] += 1
+                damaged, lost_head = True, False
+                continue
+            t = rec.get("t")
+            if t == "head":
+                if rec.get("v") != 3:
+                    raise V3FormatError(f"{path}:{lineno}: version {rec.get('v')} is not 3")
+                if not all(k in rec for k in ("cols", "needs", "cross", "kinds", "src")):
+                    stats["bad_lines"] += 1   # a head that parses but lacks its lists
                     damaged = True
                     continue
-                t = rec.get("t")
-                if t == "head":
-                    if rec.get("v") != 3:
-                        raise V3FormatError(f"{path}:{lineno}: version {rec.get('v')} is not 3")
-                    head, caps, ctxs, damaged = rec, {}, {}, False
+                head, caps, ctxs, damaged, lost_head = rec, {}, {}, False, False
+                continue
+            if head is None:
+                if damaged:
+                    stats["skipped"] += 1
                     continue
-                if head is None:
-                    if damaged:
-                        stats["skipped"] += 1
+                raise V3FormatError(f"{path}:{lineno}: a '{t}' record before any head")
+            try:
+                if t == "cap":
+                    if damaged and rec["id"] in caps and not lost_head:
+                        stats["lost_heads"] += 1   # a new segment behind a torn head
+                        lost_head = True
+                    caps[rec["id"]] = _sparse(rec["c"], head["cols"])
+                elif t == "ctx":
+                    ctx = {k: v for k, v in rec.items() if k not in ("rows", "need", "in")}
+                    ctx["need"] = _sparse(rec["need"], head["needs"])
+                    ctx["input"] = _sparse(rec["in"], head["needs"])
+                    ctx["rows"] = [_v3_row(r, head, caps) for r in rec["rows"]]
+                    ctxs[rec["id"]] = ctx
+                elif t == "dec":
+                    if rec.get("v") != 3:
+                        raise V3FormatError(f"{path}:{lineno}: decision version {rec.get('v')}")
+                    if damaged and rec.get("launch") != head.get("launch"):
+                        stats["skipped"] += 1   # decoded against another launch's head
                         continue
-                    raise V3FormatError(f"{path}:{lineno}: a '{t}' record before any head")
-                try:
-                    if t == "cap":
-                        caps[rec["id"]] = _sparse(rec["c"], head["cols"])
-                    elif t == "ctx":
-                        ctx = {k: v for k, v in rec.items() if k not in ("rows", "need", "in")}
-                        ctx["need"] = _sparse(rec["need"], head["needs"])
-                        ctx["input"] = _sparse(rec["in"], head["needs"])
-                        ctx["rows"] = [_v3_row(r, head, caps) for r in rec["rows"]]
-                        ctxs[rec["id"]] = ctx
-                    elif t == "dec":
-                        if rec.get("v") != 3:
-                            raise V3FormatError(f"{path}:{lineno}: decision version {rec.get('v')}")
-                        ctx_id = rec.get("ctx")
-                        if ctx_id is not None and ctx_id not in ctxs:
-                            raise V3FormatError(f"{path}:{lineno}: context {ctx_id} used before it is defined")
-                        d = dict(rec)
-                        d["ctx"] = ctxs[ctx_id] if ctx_id is not None else None
-                        d["add"] = [_v3_row(r, head, caps) for r in rec["add"]]
-                        d["rows"] = (d["ctx"]["rows"] if d["ctx"] else []) + d["add"]
-                        d["chosen"] = d["rows"][rec["row"]] if rec["row"] >= 0 else None
-                        d["head"] = head
-                        yield d
-                    else:
-                        raise V3FormatError(f"{path}:{lineno}: unknown record type {t!r}")
-                except V3FormatError:
-                    if not damaged:
-                        raise
-                    stats["skipped"] += 1   # it needed what the torn line defined
+                    ctx_id = rec.get("ctx")
+                    if ctx_id is not None and ctx_id not in ctxs:
+                        raise V3FormatError(f"{path}:{lineno}: context {ctx_id} used before it is defined")
+                    d = dict(rec)
+                    d["ctx"] = ctxs[ctx_id] if ctx_id is not None else None
+                    d["add"] = [_v3_row(r, head, caps) for r in rec["add"]]
+                    d["rows"] = (d["ctx"]["rows"] if d["ctx"] else []) + d["add"]
+                    d["chosen"] = d["rows"][rec["row"]] if rec["row"] >= 0 else None
+                    d["head"] = head
+                    yield d
+                else:
+                    raise V3FormatError(f"{path}:{lineno}: unknown record type {t!r}")
+            except V3FormatError:
+                if not damaged:
+                    raise
+                stats["skipped"] += 1   # it needed what the damage took
+            except (KeyError, TypeError, IndexError, ValueError):
+                # Parses as JSON but is not a whole record of its type.
+                stats["bad_lines"] += 1
+                damaged = True
 
 
 def load_v3(paths, stats=None):
     """All decisions (iter_v3); torn lines are reported on stderr."""
     stats = {} if stats is None else stats
     decs = list(iter_v3(paths, stats))
-    if stats.get("bad_lines") or stats.get("skipped"):
+    if any(stats.get(k) for k in ("bad_lines", "skipped", "lost_heads", "truncated")):
         import sys
-        print(f"warning: {stats['bad_lines']} unreadable line(s) skipped, {stats['skipped']} record(s) "
-              "that depended on them skipped", file=sys.stderr)
+        print(f"warning: {stats['bad_lines']} unreadable line(s), {stats['skipped']} record(s) skipped, "
+              f"{stats['lost_heads']} lost head(s), {stats['truncated']} truncated file(s)", file=sys.stderr)
     return decs
 
 
 def summarize_v3(paths):
     """Counts, sizes and a plain-ranking smoke number for a v3 log."""
     sizes = defaultdict(lambda: [0, 0])   # record type -> [count, bytes]
+    size_stats = {}
     for path in paths:
-        with _open_text(path) as f:
-            for line in f:
-                if line.strip():
-                    try:
-                        t = json.loads(line).get("t")
-                    except (ValueError, AttributeError):
-                        t = "(torn)"
-                    sizes[t][0] += 1
-                    sizes[t][1] += len(line.encode("utf-8"))
+        for raw in _raw_lines(path, size_stats):
+            rec = _decode_line(raw)
+            if rec == "":
+                continue
+            t = rec.get("t") if rec else "(torn)"
+            sizes[t][0] += 1
+            sizes[t][1] += len(raw)
     stats = {}
     decs = list(iter_v3(paths, stats))
     by_out = defaultdict(int)
@@ -579,9 +627,9 @@ def summarize_v3(paths):
         h[1] += (c["form"], c["uid"]) in top
     total_bytes = sum(b for _, b in sizes.values())
     print(f"{len(decs)} decisions in {len(paths)} file(s), {total_bytes} bytes")
-    if stats["bad_lines"] or stats["skipped"]:
-        print(f"  {stats['bad_lines']} unreadable (torn) line(s) skipped; {stats['skipped']} record(s) that "
-              "needed them skipped")
+    if any(stats[k] for k in ("bad_lines", "skipped", "lost_heads", "truncated")):
+        print(f"  damage: {stats['bad_lines']} unreadable line(s), {stats['skipped']} record(s) skipped, "
+              f"{stats['lost_heads']} lost head(s), {stats['truncated']} truncated file(s)")
     for t, (n, b) in sorted(sizes.items()):
         print(f"  {t:5} {n:6d} lines {b:10d} bytes ({b / max(1, n):.0f} per line)")
     print("  outcomes: " + ", ".join(f"{k}={v}" for k, v in sorted(by_out.items())))

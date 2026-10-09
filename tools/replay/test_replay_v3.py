@@ -219,7 +219,7 @@ def make_session():
              "wc": {"base": 0, "max": 0}, "rows": []}
 
     def dec(seq, out, ctx, chosen_row=-1, form=None, add=(), **kw):
-        base = {"seq": seq, "utc": f"2026-10-09 15:01:{seq:02d}.000", "launch": "20261009-150000",
+        base = {"seq": seq, "utc": f"2026-10-09 15:01:{seq:02d}.000", "launch": "20261009-120000",
                 "list": "py", "char": "0000000000000001", "gen": 2, "out": out, "form": form,
                 "name": None, "row": chosen_row, "src": "", "via": "", "case": "", "how": "",
                 "kind": "", "confirmMs": 0, "repeat": 0, "learned": 1, "skip": "", "ctxAgeMs": 0,
@@ -304,8 +304,85 @@ class PythonRoundTrip(unittest.TestCase):
         # seq 1 and 3 needed ctx 10 (skipped); seq 2 (its own context) and
         # seq 4 (after the next head, which re-defines ctx 10) survive.
         self.assertEqual([d["seq"] for d in decs], [2, 4])
-        self.assertEqual(stats, {"bad_lines": 2, "skipped": 2})
+        self.assertEqual(stats, {"bad_lines": 2, "skipped": 2, "lost_heads": 0, "truncated": 0})
         self.assertEqual(decs[1]["chosen"]["form"], "00012EB7")
+
+    # --- damage the second verifier probed (scratchpad r4b/torn_probe.py) -----
+
+    def _read_bytes(self, data, suffix=".jsonl"):
+        """Decode raw file bytes (already gzipped for a .gz suffix)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            p = Path(tmp) / ("d" + suffix)
+            p.write_bytes(data)
+            stats = {}
+            decs = list(replay.iter_v3([p], stats))
+            # The summary and load_v3 must not raise on the same file either.
+            import contextlib
+            import io
+            with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                replay.summarize_v3([p])
+                replay.load_v3([p])
+            return decs, stats
+
+    def golden_lines(self):
+        data = GOLDEN.read_bytes().replace(b"\r\n", b"\n")
+        lines = data.split(b"\n")[:-1]
+        heads = [i for i, l in enumerate(lines) if l.startswith(b'{"t":"head"')]
+        return lines, heads
+
+    def test_line_torn_inside_a_utf8_character(self):
+        lines, heads = self.golden_lines()
+        dec0 = next(i for i, l in enumerate(lines) if l.startswith(b'{"t":"dec"'))
+        d = lines[dec0].replace(b'"name":"Potion of Healing"', '"name":"Épée of Healing"'.encode("utf-8"))
+        cut = d.index("É".encode("utf-8")) + 1   # between the two bytes of É
+        data = b"\n".join(lines[:dec0] + [d[:cut]] + lines[heads[1]:]) + b"\n"
+        decs, stats = self._read_bytes(data)
+        self.assertEqual(stats["bad_lines"], 1)
+        self.assertEqual([x["seq"] for x in decs], [6])   # the next segment resyncs
+
+    def test_truncated_gzip_ends_the_file_cleanly(self):
+        data = gzip.compress(GOLDEN.read_bytes())[:-40]
+        decs, stats = self._read_bytes(data, ".jsonl.gz")
+        self.assertEqual(stats["truncated"], 1)
+        self.assertGreaterEqual(len(decs), 1)
+
+    def test_torn_head_between_two_launches_skips_the_other_launch(self):
+        lines, heads = self.golden_lines()
+        seg2 = [l.replace(b'"launch":"20261009-120000"', b'"launch":"20261009-130000"') for l in lines[heads[1]:]]
+        torn = seg2[0][:50]
+        data = b"\n".join(lines[:heads[1]] + [torn] + seg2[1:]) + b"\n"
+        decs, stats = self._read_bytes(data)
+        # Segment 2's decision is of another launch than the head in force: not
+        # joined to it.
+        self.assertEqual([x["seq"] for x in decs], [1, 2, 3, 4, 5])
+        self.assertEqual(stats["bad_lines"], 1)
+        self.assertEqual(stats["lost_heads"], 1)
+        self.assertEqual(stats["skipped"], 1)
+
+    def test_torn_head_within_a_launch_is_reported(self):
+        lines, heads = self.golden_lines()
+        data = b"\n".join(lines[:heads[1]] + [lines[heads[1]][:50]] + lines[heads[1] + 1:]) + b"\n"
+        decs, stats = self._read_bytes(data)
+        # Same launch, same head: decoded, and the lost head is counted.
+        self.assertEqual(len(decs), 6)
+        self.assertEqual((stats["bad_lines"], stats["lost_heads"]), (1, 1))
+
+    def test_record_that_parses_but_is_incomplete(self):
+        lines, heads = self.golden_lines()
+        dec0 = next(i for i, l in enumerate(lines) if l.startswith(b'{"t":"dec"'))
+        data = b"\n".join(lines[:dec0] + [b'{"t":"dec","v":3}'] + lines[dec0 + 1:]) + b"\n"
+        decs, stats = self._read_bytes(data)
+        self.assertEqual(stats["bad_lines"], 1)
+        self.assertEqual(len(decs), 5)
+
+    def test_nul_padding_and_crlf(self):
+        lines, heads = self.golden_lines()
+        whole = b"\n".join(lines) + b"\n"
+        decs, stats = self._read_bytes(whole + b"\x00" * 64 + b"\n" + b"\n".join(lines[heads[1]:]) + b"\n")
+        self.assertEqual(stats["bad_lines"], 1)
+        self.assertEqual(len(decs), 7)
+        decs, stats = self._read_bytes(whole.replace(b"\n", b"\r\n"))
+        self.assertEqual((len(decs), stats["bad_lines"]), (6, 0))
 
     def test_summary_runs(self):
         import contextlib

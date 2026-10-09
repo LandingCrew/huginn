@@ -169,6 +169,14 @@ player knows are held), and every held item the catalog describes is a row
 whether or not it is a candidate -- all carried armour included, so an armour
 menu pick has its alternatives (making all armour *candidates* is R8).
 
+**H \ A in a `heldFull: 0` context.** Without the extra data, a held weapon or
+armour piece is one plain row with `uid` 0, while the same stack can also be an
+`eligible` row carrying its `uid` (the candidate knows it). They are one item.
+So in such a context, for weapons and armour, take a held row with `uid` 0 and
+an eligible row of the same FormID as one item: it is held, and it is shown or
+equipped if either row says so. Count it once in H \ A. In a `heldFull: 1`
+context every stack has its own row and nothing needs merging.
+
 **Runtime cross-features** (`effects.csv` item features; the math is
 `core/CrossFeatures.h`, the inputs `effect/CrossFeatures.cpp`), computed every
 update tick for the eligible rows over the live player state, and when a
@@ -195,7 +203,7 @@ being active and the refractory period). Only rows shown as wildcards carry it.
 | Field | Type | Meaning |
 |---|---|---|
 | `v` | int | 3 |
-| `seq` | int | per launch, in write order (the writer assigns it; a dropped record leaves no gap) |
+| `seq` | int | per launch, in write order. The writer assigns it as it writes, so a record dropped from a full queue takes no number, and a record whose write the stream reports failed gives its number back to the next one: no gaps. (A failed write that still reached the disk leaves a torn line, which the reader skips, or in the rarest case a record whose `seq` repeats in the next one.) |
 | `utc` | string | when the record was made: the confirmation for a pick; the end of the grace for nothing |
 | `launch`, `list` | string | as in the head |
 | `char` | string | 16 hex digits: the character (`g_activeCharacterID`) |
@@ -217,7 +225,7 @@ being active and the refractory period). Only rows shown as wildcards carry it.
 | `ctx` | int | the context it is joined to |
 | `ctxAgeMs` | int ms | press time minus the context's time (for nothing: record time minus the onset) |
 | `open` | int[] | needs with an open episode at the press (opportunity counting) |
-| `preEquipped` | 0/1 | the chosen item was equipped before the press: in a hand or the nocked ammo on the newest update tick at least 0.25 s before it. 0 for anything else (an equip event says armour was not worn) |
+| `preEquipped` | 0/1 | the chosen item was equipped before the press: in a hand or the nocked ammo on the newest update tick at least 0.25 s before it. 0 for anything else (an equip event says armour was not worn), **and 0 when no tick is that old** -- in the first 0.25 s after a load, when the snapshots were just cleared, it means "not known", not "not equipped" |
 | `ep` | object or null | nothing only: `need` (id), `i` (index), `durSec`, `peak` (the highest value inside the episode), `onset` (UTC) |
 
 ## Outcomes

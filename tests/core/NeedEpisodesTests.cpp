@@ -112,6 +112,31 @@ TEST_CASE("episodes: a press that itself ended the episode answers it (the slack
     CHECK(t.TakeUnanswered(80.0).size() == 1);
 }
 
+TEST_CASE("episodes: a confirmation on the grace-end tick counts only when delivered first")
+{
+    // The ordering contract SelectionLogV3::TickAfterSelections keeps: after a
+    // stall of the loop, the tick that ends an episode's grace can also be the
+    // tick a pick made inside the episode confirms (SelectionTracker::Update,
+    // or the v3-only picks' TickPicks). OnSelection must run before
+    // TakeUnanswered on that tick.
+    const double end = 4.0;
+    const double graceEnd = end + EpisodeParams{}.graceSec + 0.6;   // a 0.6 s stall
+    {
+        EpisodeTracker<int> t;   // the order kept: confirmations, then judgement
+        t.Tick(With(kH, 1.0f), 0.0);
+        t.Tick(With(kH, 0.0f), end);
+        t.OnSelection(3.9);
+        CHECK(t.TakeUnanswered(graceEnd).empty());
+    }
+    {
+        EpisodeTracker<int> t;   // the wrong order gives a false "nothing"
+        t.Tick(With(kH, 1.0f), 0.0);
+        t.Tick(With(kH, 0.0f), end);
+        CHECK(t.TakeUnanswered(graceEnd).size() == 1);
+        t.OnSelection(3.9);
+    }
+}
+
 TEST_CASE("episodes: needs are independent and carry their payload")
 {
     EpisodeTracker<int> t;
