@@ -159,8 +159,8 @@ and accept% and so ship as their own small PR.
 ### R3. Need vector, logged only
 
 Map Phase 2. The rules keep scoring; the vector is computed and logged beside
-them. Built in PR `r3-need-vector` (0.23.14), waiting for the second agent's
-check; what was built is in the [implementation map](architecture/9-implementation-map.md#phase-2-describe-situations-need-vector).
+them. Built in PR #188 (`r3-need-vector`, 0.23.14); verifier round 1 fixes
+in. What was built: the [implementation map](architecture/9-implementation-map.md#phase-2-describe-situations-need-vector).
 - [x] `NeedId`/`NeedVector` from `9-data/needs.csv` (new columns `curve_kind`,
       `curve_p1`, `curve_p2`, `r3_input`; `tools/needs/make_need_ids.py`
       generates `core/NeedIds.h`, a host test fails on drift);
@@ -168,24 +168,29 @@ check; what was built is in the [implementation map](architecture/9-implementati
       hot-reloadable).
 - [x] Sensors: encumbrance ratio, per-element decaying damage rate, combat and
       submerged timers on `steady_clock`, the held multi-hot target families
-      (union of combat hostiles; no line-of-sight logic, the user 2026-10-08),
-      target summoned / casting / archer, restore pending, drop ahead. 87 of
-      the 92 needs have a sensor; five are deferred (map Phase 2).
+      (union of hostiles in combat themselves; no line-of-sight logic, the
+      user 2026-10-08), target summoned / casting / archer, restore pending,
+      drop ahead. 87 of the 92 needs have a sensor; five are deferred (map
+      Phase 2).
 - [x] Drop ahead (the user, 2026-10-08): a Havok ray cast straight down from
       2–3 points ahead of the player (`bhkWorld::PickObject`), not a guessed
       floor and not the terrain heightmap, which sees through rock meshes.
-      Method in `9-data/needs.csv` (`drop_ahead`). Costs a few rays per
-      position poll; works in interiors (ruins) too. Physics-world read lock
-      taken; main thread only (`state/DropAheadProbe`).
+      Method in `9-data/needs.csv` (`drop_ahead`); each point first checked
+      reachable at waist height, so rising ground or a wall reads "not
+      measured", never a cliff. Physics-world read lock taken; the update
+      loop is not on the main thread, so the rays run in an SKSE task. Proven
+      live: every monitor snapshot of a scripted session reads a measured
+      drop (`tests/core/fixtures/needs/captured_vanilla.txt`).
 - [ ] **In game (you):** stand at cliff edges, on rock spires and bridges, and
       above deep water; `hg needs` shows `drop_ahead` high only at a real drop.
-- [x] Computed once in `GatherState`; a quantised need signature joins the
-      skip gate.
+- [x] Computed and logged on its own cadence (`needs/NeedMonitor`, every
+      update tick, a `[Needs]` line per signature change, at most one a
+      second). **Not** in the skip gate: moved to R8 (below).
 - [x] `hg needs` prints the live vector.
 - [x] Done when (agent): curve host tests pass; a replayed state snapshot gives
-  the expected vector (`tests/core/NeedFixtureTests.cpp`: 123 snapshots, 63
-  synthetic and 60 recorded in game, against an oracle written apart from the
-  evaluator).
+  the expected vector (`tests/core/NeedFixtureTests.cpp`: 147 snapshots, 64
+  synthetic and 83 recorded in game, against an oracle written apart from the
+  evaluator); pipeline runs per second and `hg recs 40` match the old build.
 - [ ] **In game (you):** a 20-minute session where `hg needs` shows fire,
   darkness, hunger and combat onset firing and expiring.
 
@@ -287,6 +292,16 @@ changed in the same PR, and the shipped INI loses the dead keys.
   term, the scorer reproduces R6's replay numbers on the logged data.
   **In game (you):** a session on the R6 bootstrap; cures, potions and gear
   rechecked (the old "cures reach the page" checks move here).
+- [ ] The need signature joins the pipeline skip gate (moved from R3 by its
+      verifier, round 1 on #188): a quantised (0.05) need signature, so
+      continuous needs re-score; it then replaces `ambientSignature` and the
+      elemental window. Not in R3 because it is not "logged only": modelled
+      at 0.17 -> 4.6 pipeline runs/s in a melee fight and 0.01 -> 0.44 on a
+      quiet dungeon walk, a wildcard on screen ~20% -> ~32% of quiet
+      exploration (a roll happens on each run with none showing), Wheeler
+      pushes ~4.6/s in fights, and the soak denominators move. Here, where
+      the scorer reads the needs, re-scoring on a need step is the point;
+      measure the wildcard share and the Wheeler push rate when it lands.
 
 ### R9. Bayesian challenger rule
 
