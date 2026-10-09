@@ -344,6 +344,12 @@ namespace Huginn::Learning::SelectionLogV3
 
         std::atomic<uint64_t> g_nextContext{ 0 };
 
+        // The held set (and with it every per-instance cap, which runs the
+        // effect mapper) is read once on the first update tick after a load at
+        // which extra lists may be read, so that cost lands there and not on
+        // the first press, menu or onset. Reset() re-arms it.
+        std::atomic<bool> g_heldWarm{ false };
+
         // =====================================================================
         // THE MENU -- the context taken when a pausing selection menu opened
         // =====================================================================
@@ -1019,6 +1025,13 @@ namespace Huginn::Learning::SelectionLogV3
             rowCount = g_tick.rows.size();
         }
         RecordHands(nowSec);
+        if (!g_heldWarm.load(std::memory_order_relaxed) && Util::IsExtraListStable() &&
+            Effect::EffectCatalog::GetSingleton().Ready()) {
+            double ms = 0.0;
+            const auto held = Held(nowSec, ms);
+            g_heldWarm.store(true, std::memory_order_relaxed);
+            logger::debug("[SelectionV3] held set warmed after the load: {} item(s) in {:.2f} ms"sv, held->items.size(), ms);
+        }
 
         // 2. The menu measurement.
         auto* ui = RE::UI::GetSingleton();
@@ -1220,6 +1233,7 @@ namespace Huginn::Learning::SelectionLogV3
             g_heldAt = -1e300;
             g_instances.clear();   // dynamic enchantment IDs mean other things in another save
         }
+        g_heldWarm.store(false, std::memory_order_relaxed);
         {
             std::lock_guard lock(g_handMutex);
             g_hands.fill(HandSnapshot{});
