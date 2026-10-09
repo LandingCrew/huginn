@@ -217,10 +217,13 @@ slot code"); detail in the map's "As built (R7)".
   The old code's own pages, recorded in play on vanilla+ (3,443 snapshots,
   300 checked in), replay bit for bit through the core with the old
   arithmetic; the sign-safe arithmetic gives identical pages on all of them
-  and on 24k synthetic passes. `RunSlotClassCapTest`, `RunSlotClassCapHoldTest`
-  and `RunHomeKeyTest` derive their utilities in score space.
+  and on 24k synthetic passes; 1,883 pages the new code recorded (150 checked
+  in) replay exactly through the core. `RunSlotClassCapTest`,
+  `RunSlotClassCapHoldTest` and `RunHomeKeyTest` derive their utilities in
+  score space.
 - Different by design: the full sort changes a page where the old fill
-  reached past the sorted top 10 (4 of 113 recorded play pages); exact ties
+  reached past the sorted top 10 (26 of 1,207 recorded play pages, 4 of 113 in
+  the checked-in fixture); exact ties
   now keep generation order rather than the partial sort's. One
   float-rounding boundary separates the two arithmetics (a challenger exactly
   `float(1.5 × holder)`); no snapshot hit it.
