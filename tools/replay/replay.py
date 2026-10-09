@@ -410,15 +410,157 @@ def validate(recs):
           f"(0-8 scale; reloads of unsaved sessions and time decay make it drift)")
 
 
+# --------------------------------------------------------------------------
+# Selection log v3 (R4): docs/architecture/selection-log-v3.md
+# --------------------------------------------------------------------------
+
+DEFAULT_LOG_V3 = os.path.expanduser(r"~/Documents/My Games/Skyrim.INI/SKSE/Huginn_Selections_v3.jsonl")
+V3_FLAGS = {"eligible": 1, "scored": 2, "held": 4, "equipped": 8, "shown": 16, "wildcard": 32,
+            "override": 64, "remembered": 128, "addedAtPick": 256}
+
+
+class V3FormatError(ValueError):
+    """A v3 file that breaks the schema (an id used before it is defined, a
+    record before any head, a version this reader does not know)."""
+
+
+def _open_text(path):
+    if str(path).endswith(".gz"):
+        import gzip
+        return gzip.open(path, "rt", encoding="utf-8", errors="strict")
+    return open(path, encoding="utf-8", errors="strict")
+
+
+def _sparse(pairs, names):
+    return {names[i]: v for i, v in pairs}
+
+
+def _v3_row(raw, head, caps):
+    form, uid, kind, src, cap, flags, slot, util, x, wp = raw
+    if cap != -1 and cap not in caps:
+        raise V3FormatError(f"cap {cap} used before it is defined")
+    return {
+        "form": form,
+        "uid": uid,
+        "kind": None if kind is None else head["kinds"][kind],
+        "src": None if src is None else head["src"][src],
+        "cap_id": cap,
+        "cap": dict(caps[cap]) if cap != -1 else None,
+        "flags": flags,
+        "slot": slot,
+        "util": util,
+        "x": _sparse(x, head["cross"]),
+        "wp": wp,
+    }
+
+
+def iter_v3(paths):
+    """Yield every decision of the given v3 files, in file order, resolved:
+    its context (need/input by name, the rows with cap(i) by column name and
+    the cross-features by name), `rows` = the context's rows then the
+    decision's added rows, and `chosen` = rows[row] (None for nothing).
+    Caps and contexts are per segment: a head line starts a new one."""
+    for path in paths:
+        head, caps, ctxs = None, {}, {}
+        with _open_text(path) as f:
+            for lineno, line in enumerate(f, 1):
+                line = line.strip()
+                if not line:
+                    continue
+                rec = json.loads(line)
+                t = rec.get("t")
+                if t == "head":
+                    if rec.get("v") != 3:
+                        raise V3FormatError(f"{path}:{lineno}: version {rec.get('v')} is not 3")
+                    head, caps, ctxs = rec, {}, {}
+                    continue
+                if head is None:
+                    raise V3FormatError(f"{path}:{lineno}: a '{t}' record before any head")
+                if t == "cap":
+                    caps[rec["id"]] = _sparse(rec["c"], head["cols"])
+                elif t == "ctx":
+                    ctx = {k: v for k, v in rec.items() if k not in ("rows", "need", "in")}
+                    ctx["need"] = _sparse(rec["need"], head["needs"])
+                    ctx["input"] = _sparse(rec["in"], head["needs"])
+                    ctx["rows"] = [_v3_row(r, head, caps) for r in rec["rows"]]
+                    ctxs[rec["id"]] = ctx
+                elif t == "dec":
+                    if rec.get("v") != 3:
+                        raise V3FormatError(f"{path}:{lineno}: decision version {rec.get('v')}")
+                    ctx_id = rec.get("ctx")
+                    if ctx_id is not None and ctx_id not in ctxs:
+                        raise V3FormatError(f"{path}:{lineno}: context {ctx_id} used before it is defined")
+                    d = dict(rec)
+                    d["ctx"] = ctxs[ctx_id] if ctx_id is not None else None
+                    d["add"] = [_v3_row(r, head, caps) for r in rec["add"]]
+                    d["rows"] = (d["ctx"]["rows"] if d["ctx"] else []) + d["add"]
+                    d["chosen"] = d["rows"][rec["row"]] if rec["row"] >= 0 else None
+                    d["head"] = head
+                    yield d
+                else:
+                    raise V3FormatError(f"{path}:{lineno}: unknown record type {t!r}")
+
+
+def load_v3(paths):
+    return list(iter_v3(paths))
+
+
+def summarize_v3(paths):
+    """Counts, sizes and a plain-ranking smoke number for a v3 log."""
+    sizes = defaultdict(lambda: [0, 0])   # record type -> [count, bytes]
+    for path in paths:
+        with _open_text(path) as f:
+            for line in f:
+                if line.strip():
+                    t = json.loads(line).get("t")
+                    sizes[t][0] += 1
+                    sizes[t][1] += len(line.encode("utf-8"))
+    decs = load_v3(paths)
+    by_out = defaultdict(int)
+    rows = []
+    hits = defaultdict(lambda: [0, 0])
+    for d in decs:
+        by_out[d["out"]] += 1
+        rows.append(len(d["rows"]))
+        c = d["chosen"]
+        if c is None:
+            continue
+        # The old engine's ranking (logged util) over the eligible rows: is
+        # the chosen item in the top 8? A smoke number, not the fit.
+        ranked = sorted((r for r in d["rows"] if r["util"] is not None), key=lambda r: -r["util"])
+        top = {(r["form"], r["uid"]) for r in ranked[:PAGE]}
+        h = hits[d["out"]]
+        h[0] += 1
+        h[1] += (c["form"], c["uid"]) in top
+    total_bytes = sum(b for _, b in sizes.values())
+    print(f"{len(decs)} decisions in {len(paths)} file(s), {total_bytes} bytes")
+    for t, (n, b) in sorted(sizes.items()):
+        print(f"  {t:5} {n:6d} lines {b:10d} bytes ({b / max(1, n):.0f} per line)")
+    print("  outcomes: " + ", ".join(f"{k}={v}" for k, v in sorted(by_out.items())))
+    if rows:
+        print(f"  rows per decision: mean {sum(rows) / len(rows):.1f}, max {max(rows)}")
+    if decs:
+        print(f"  bytes per decision (all lines): {total_bytes / len(decs):.0f}")
+    for out, (n, h) in sorted(hits.items()):
+        print(f"  {out}: chosen in the logged-util top {PAGE}: {h} of {n}")
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("log", nargs="?", default=DEFAULT_LOG)
+    ap.add_argument("log", nargs="?", default=None)
+    ap.add_argument("--v3", nargs="*", metavar="FILE",
+                    help="read selection log v3 file(s) (.jsonl or .jsonl.gz; default "
+                         "Huginn_Selections_v3.jsonl) and print a summary")
     ap.add_argument("--char", default="3F3E2A8817962D59")
     ap.add_argument("--from-launch", default="20261003-013602", help="first launch of the run (UTC stamp)")
     ap.add_argument("--to-launch", default="20261004-235959",
                     help="last launch to include (UTC stamp); the default ends the soak run, before 0.23.0")
     args = ap.parse_args()
 
+    if args.v3 is not None:
+        summarize_v3(args.v3 or [args.log or DEFAULT_LOG_V3])
+        return
+    args.log = args.log or DEFAULT_LOG
     recs = load(args.log, args.char, args.from_launch, args.to_launch)
     print(f"{len(recs)} selections from {args.log}")
     validate(recs)
