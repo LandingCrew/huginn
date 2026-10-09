@@ -361,16 +361,20 @@ namespace Huginn::Learning::SelectionLogV3
         std::mutex g_menuMutex;
         MenuVisit g_menu;
 
-        /// A pick from a selection menu joins the context taken when it opened.
+        /// A pick from one of the menus that join the menu-open context: the
+        /// inventory and magic menus, which pause the game and hide the page.
+        /// The favourites menu does not pause and the widget stays visible, so
+        /// its picks join the context at the press (the defaults the
+        /// coordinator applied, 2026-10-09).
         bool IsPausingMenuVia(std::string_view via)
         {
-            return via.starts_with("inventory menu") || via.starts_with("favorites menu") ||
-                   via.starts_with("magic menu") || via.starts_with("menu (just closed)");
+            return via.starts_with("inventory menu") || via.starts_with("magic menu") ||
+                   via.starts_with("menu (just closed)");
         }
 
         bool JoinsAtOpen(const RE::BSFixedString& menuName)
         {
-            return PlayerInputGate::IsSelectionMenu(menuName);
+            return menuName == RE::InventoryMenu::MENU_NAME || menuName == RE::MagicMenu::MENU_NAME;
         }
 
         // =====================================================================
