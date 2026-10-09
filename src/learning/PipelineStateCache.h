@@ -39,9 +39,10 @@ namespace Huginn::Learning
             return instance;
         }
 
-        // Sentinel rank for candidates beyond the sorted prefix: their true rank
-        // is unknown (partial_sort leaves the tail unordered), so attribution
-        // must treat them as far-miss (B-low), never near-miss. Consumers
+        // Sentinel rank for candidates beyond the reported prefix (iTopNCandidates).
+        // Until R7 their true rank was unknown (partial_sort left the tail
+        // unordered); the list is fully sorted now, but attribution still
+        // treats them as far-miss (B-low), never near-miss, as before. Consumers
         // compute overshoot = rank - displayedCount, which any real
         // displayedCount keeps far above FAR_MISS_SLOTS for this value.
         static constexpr size_t kUnrankedTail = std::numeric_limits<size_t>::max() / 2;

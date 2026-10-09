@@ -49,7 +49,7 @@ namespace Huginn::Scoring
     // The scorer:
     //   1. Takes raw candidates from CandidateGenerator
     //   2. Computes utility for each candidate
-    //   3. Partial-sorts to get top N efficiently
+    //   3. Sorts the whole list (stable; R7 -- the slot fill reads past the top N)
     //   4. Applies wildcards for exploration
     //   5. Returns ranked ScoredCandidateList
     // =============================================================================

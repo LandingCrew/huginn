@@ -349,7 +349,8 @@ namespace Huginn::Slot
         const Scoring::ScoredCandidateList& candidates,
         const Override::OverrideCollection& overrides,
         const State::PlayerActorState& player,
-        [[maybe_unused]] const State::WorldState& world) const
+        [[maybe_unused]] const State::WorldState& world,
+        bool forTest) const
     {
         namespace SA = Core::SlotAlloc;
 
@@ -438,8 +439,11 @@ namespace Huginn::Slot
 
         SA::Output out;
         {
-            // Read, decided on and written back under one lock: allocation runs
-            // on the update thread and on Wheeler's for the other pages.
+            // Read, decided on and written back under one lock. Every caller runs
+            // on the main thread today (the pipeline under UpdateHandler's mutex,
+            // Wheeler's pages in the same pass, the Debug test allocations); the
+            // lock keeps the memory whole if that ever changes, at no cost
+            // uncontended.
             std::lock_guard<std::mutex> lock(m_seatingMutex);
             in.generationMatches = m_seatingGeneration == configGeneration;
             if (in.memoryAvailable) {
@@ -500,7 +504,7 @@ namespace Huginn::Slot
             assignments.back().seatMoved = s.seatMoved;
         }
 
-        ReportEvents(pageIndex, slotConfigs, candidates, overrides, overrideIndex, out.events);
+        ReportEvents(pageIndex, slotConfigs, candidates, overrides, overrideIndex, out.events, forTest);
 
 #ifndef NDEBUG
         // [Seating]: the seat map when it CHANGES -- a steady map is the
@@ -582,7 +586,8 @@ namespace Huginn::Slot
         const Scoring::ScoredCandidateList& candidates,
         const Override::OverrideCollection& overrides,
         const std::vector<size_t>& overrideIndex,
-        const std::vector<Core::SlotAlloc::Event>& events) const
+        const std::vector<Core::SlotAlloc::Event>& events,
+        bool forTest) const
     {
         namespace SA = Core::SlotAlloc;
         auto overrideOf = [&](uint32_t o) -> const Override::OverrideResult& {
@@ -650,8 +655,12 @@ namespace Huginn::Slot
                 break;
             }
             case SA::EventKind::OverridesInactive:
-                // Truly inactive, not just unplaced on this page.
-                ResetOverrideLogs(pageIndex);
+                // Truly inactive, not just unplaced on this page. Not for a test
+                // allocation: its made-up overrides say nothing about the real
+                // pages' log state.
+                if (!forTest) {
+                    ResetOverrideLogs(pageIndex);
+                }
                 break;
             case SA::EventKind::HoldNotCandidate: {
                 // Not a candidate at all -- a shield, a torch, an unaffordable
@@ -742,7 +751,8 @@ namespace Huginn::Slot
     {
         const State::PlayerActorState noPlayer{};
         const State::WorldState noWorld{};
-        return AllocateSlotsInternal(pageIndex, generation, slotConfigs, candidates, overrides, noPlayer, noWorld);
+        return AllocateSlotsInternal(pageIndex, generation, slotConfigs, candidates, overrides, noPlayer, noWorld,
+            /*forTest=*/true);
     }
 
     uint32_t SlotAllocator::CurrentGenerationForTest() const

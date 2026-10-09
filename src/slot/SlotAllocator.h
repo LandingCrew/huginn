@@ -304,7 +304,8 @@ namespace Huginn::Slot
             const Scoring::ScoredCandidateList& candidates,
             const Override::OverrideCollection& overrides,
             const State::PlayerActorState& player,
-            const State::WorldState& world) const;
+            const State::WorldState& world,
+            bool forTest = false) const;
 
         /// True if any slot on ANY configured page accepts this override
         /// category. Overrides are global; a page without an accepting slot is
@@ -370,7 +371,8 @@ namespace Huginn::Slot
             const Scoring::ScoredCandidateList& candidates,
             const Override::OverrideCollection& overrides,
             const std::vector<size_t>& overrideIndex,
-            const std::vector<Core::SlotAlloc::Event>& events) const;
+            const std::vector<Core::SlotAlloc::Event>& events,
+            bool forTest) const;
     };
 
 }  // namespace Huginn::Slot

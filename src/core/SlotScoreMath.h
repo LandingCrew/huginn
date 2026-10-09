@@ -94,11 +94,20 @@ namespace Huginn::Core
 
     /// ln m for the slot hold's margin m = 1 + margin. The float sum is the
     /// one the old code multiplied by, so the bridge keeps its rounding.
+    /// Outside the INI's range (SlotSettings clamps it to [0, 10] and reads a
+    /// NaN as the default): NaN gives +inf -- nothing beats the holder, as
+    /// every comparison against u * NaN was false -- and m <= 0 gives -inf, so
+    /// any ranked challenger wins, as u_c > u_i * m did for positive
+    /// utilities (the old code also let a zero-utility challenger win against
+    /// m < 0; under a log score there is no such case to keep).
     [[nodiscard]] inline double LogHoldMargin(float margin) noexcept
     {
+        if (margin != margin) {
+            return std::numeric_limits<double>::infinity();
+        }
         const float m = 1.0f + margin;
         if (!(m > 0.0f)) {
-            return -std::numeric_limits<double>::infinity();   // any challenger wins, as u > u * m<=0 did for u > 0
+            return -std::numeric_limits<double>::infinity();
         }
         return std::log(static_cast<double>(m));
     }

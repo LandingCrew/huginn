@@ -190,6 +190,85 @@ TEST_CASE("slot adversarial: the one place the arithmetics part: c == float(1.5 
     MESSAGE("boundary: holder ", h, ", challenger ", c, " = float(1.5 * holder)");
 }
 
+TEST_CASE("slot adversarial: rounding boundaries exist for any discount and margin, and are classified")
+{
+    // The c == float(1.5 h) case above is the shipped settings' instance of
+    // a general fact: wherever the old code compared rounded float products
+    // (u * d^k under the cap, u * m in the hold) and the two sides met within
+    // the rounding, the old answer is the rounding's and the new one the
+    // exact comparison's. Three more, one of each kind; IsRoundingBoundary
+    // must recognise each.
+    using Huginn::Core::BridgeScore;
+    std::vector<Disagreement> log;
+
+    // (a) The hold at margin 0.1: a challenger equal to float(1.1 * holder)
+    // where that product rounded up.
+    {
+        SA::Settings s;
+        s.challengerMargin = 0.1f;
+        const auto dual = DualPolicy::From(s, &log);
+        bool found = false;
+        for (float h = 0.5f; h < 1.0f && !found; h = std::nextafter(h, 2.0f)) {
+            const float c = h * 1.1f;
+            if (static_cast<double>(c) > static_cast<double>(1.1f) * static_cast<double>(h) * (1.0 + 1e-9)) {
+                const auto before = log.size();
+                CHECK_FALSE(dual.Exceeds({ c, BridgeScore(c) }, { h, BridgeScore(h) }));   // the old answer
+                REQUIRE(log.size() == before + 1);
+                CHECK(IsRoundingBoundary(log.back()));
+                found = true;
+            }
+        }
+        CHECK(found);
+    }
+    // (b) The cap's scan at discount 0.7: an uncapped item exactly equal to
+    // float(0.7 * u) of a capped one, where that product rounded up.
+    {
+        SA::Settings s;
+        s.classDiscount = 0.7f;
+        const auto dual = DualPolicy::From(s, &log);
+        const auto cap = dual.CapFor(s.classFree);   // one step: x0.7, + ln 0.7
+        bool found = false;
+        for (float u = 0.5f; u < 1.0f && !found; u = std::nextafter(u, 2.0f)) {
+            const float p = u * 0.7f;
+            if (static_cast<double>(p) > static_cast<double>(u) * static_cast<double>(0.7f) * (1.0 + 1e-9)) {
+                const auto capped = dual.Apply({ u, BridgeScore(u) }, cap);
+                const auto before = log.size();
+                CHECK_FALSE(dual.Greater({ p, BridgeScore(p) }, capped));   // a tie in float
+                REQUIRE(log.size() == before + 1);
+                CHECK(IsRoundingBoundary(log.back()));
+                found = true;
+            }
+        }
+        CHECK(found);
+    }
+    // (c) Underflow: at discount 1e-30 two steps of the old factor are 0 in
+    // float, so every capped item read 0 and tied; the logs still order them.
+    {
+        SA::Settings s;
+        s.classDiscount = 1e-30f;
+        s.classFree = 0;
+        const auto dual = DualPolicy::From(s, &log);
+        const auto cap = dual.CapFor(1);   // two steps
+        CHECK(cap.f == 0.0f);
+        const auto a = dual.Apply({ 2.0f, BridgeScore(2.0f) }, cap);
+        const auto b = dual.Apply({ 1.0f, BridgeScore(1.0f) }, cap);
+        const auto before = log.size();
+        CHECK_FALSE(dual.Greater(a, b));   // old: 0 > 0
+        REQUIRE(log.size() == before + 1);
+        CHECK(IsRoundingBoundary(log.back()));
+    }
+    // A NaN margin (the INI now reads it as the default; the core agrees with
+    // the old arithmetic anyway): nothing beats the holder.
+    {
+        SA::Settings s;
+        s.challengerMargin = std::numeric_limits<float>::quiet_NaN();
+        const auto dual = DualPolicy::From(s, &log);
+        const auto before = log.size();
+        CHECK_FALSE(dual.Exceeds({ 9.0f, BridgeScore(9.0f) }, { 0.1f, BridgeScore(0.1f) }));
+        CHECK(log.size() == before);
+    }
+}
+
 TEST_CASE("slot adversarial: negative scores (past the bridge) rank the way their sign says")
 {
     // Beyond R7's bridge: what the new scorer will hand over. The cap must
