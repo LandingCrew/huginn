@@ -465,8 +465,9 @@ changed in the same PR, and the shipped INI loses the dead keys.
       (`UpdateLoop.cpp`, THREADS above `OnUpdate`; 0.23.18). Whichever
       option is chosen, the client API proposal
       ([architecture/10-client-api.md](architecture/10-client-api.md),
-      section 3.6) would end the tick at a snapshot publish, so no display
-      push runs on the loop's thread.
+      section 3.6) would, once its steps C2 and C3 are done, take the display
+      pushes off the loop's thread; the work after the push
+      (`LogRecommendations`, the Debug widgets) stays on it.
 - Done when: a grep over `src/` and `tools/` for every pruned symbol finds
   nothing outside the new code (docs follow in R11); Debug and Release build
   clean; host tests cover the update (Var_p precision, step = variance,
@@ -549,7 +550,8 @@ unless it blocks play.
 
 Recommended timing: C1–C4 after R8 and before R12's soak, so the baseline soak
 runs on the final display path and R8's learner gets its choice set from what
-was on screen; C5 after R12.
+was on screen; C5 after R12. That enlarges what R12's soak gates: the new
+display path and log fields become part of the baseline.
 
 ---
 
@@ -760,8 +762,12 @@ is the modifier latched at key-down or sampled throughout?
 ## Performance
 
 A budget list, not a work list: a felt stutter is the trigger. Latest capture
-(0.22.14, Debug): `Inventory::DeltaScan` 7.32 s, `PollPlayerMagicEffects`
-3.72 s, `PollTargets` 2.66 s, `Display::Wheeler` 2.49 s. Method:
+(2026-10-09, 0.23.18, Debug, 48.5 min of play; self totals on the job threads,
+from the capture's analysis): `PollPlayerMagicEffects` 5.29 s, `PollTargets`
+3.39 s, `Inventory::DeltaScan` 2.35 s, `OnUpdate` 1.61 s,
+`Pipeline::AllocateAndLock` 1.58 s; `Display::Wheeler` 0.59 s self now that its
+children have zones (`Wheeler::AllocateOtherPage` 0.97 s, `WheelSync::WriteSlots`
+0.33 s). Method:
 [profiling/tracy-traces.md](profiling/tracy-traces.md).
 - `Inventory::DeltaScan`: gate on `TESContainerChangedEvent` with a slow
   safety timer; compare counts in place.
@@ -774,13 +780,14 @@ A budget list, not a work list: a felt stutter is the trigger. Latest capture
   after a load had a median of 4.3 ms, against 1.0 ms later; 15 of the 18
   pushes over 5 ms were re-seats. All 7 pushes over 16.6 ms came within
   100 s of the load, and 3 of them were not re-seats (a wheel close, and two
-  with no re-seat). Wheeler-side report:
-  `wheelerAPI/docs/reports/2026-10-09-huginn-push-spikes-after-load.md`.
+  with no re-seat). Wheeler-side report: a local, unpublished note in the wheelerAPI working
+  tree (`docs/reports/2026-10-09-huginn-push-spikes-after-load.md`).
   0.23.17 splits the cost with zones: `Wheeler::AllocateOtherPage`,
   `WheelSync::UpdatePage` (its `UnchangedCheck` and `WriteSlots`),
   `WheelSync::RecoverInvalidatedWheels`, `WheelSync::DetectVanishedWheels`.
   The next capture (0.23.18) put the slow pushes inside `WriteSlots`, no longer
-  tied to the load, each stretching its frame by 20–29 ms; the structural fix
+  tied to the load; the 6 that could be measured stretched their frames by
+  20–29 ms. The structural fix
   proposed is to take display pushes off the tick
   ([architecture/10-client-api.md](architecture/10-client-api.md), section 2.2).
 
