@@ -17,28 +17,40 @@
 //   - health, magicka and stamina dropped to 12% for a few seconds, so the
 //     critical-vital overrides fire with the save's real potions, then
 //     restored;
-//   - the pipeline forced to re-run between steps (MarkPageDirty).
+//   - the pipeline forced to re-run between steps (MarkPageDirty);
+//   - the [SlotLocker] settings: the shipped ones for the first half, then
+//     two variants (seating off with job keys filled from Regular keys and
+//     Remembrance to the job key; a non-default cap and margin with short
+//     home-key memory), so the paths the shipped settings never take are
+//     recorded too.
 //
-// Then a PERTURBATION CAMPAIGN on page 9 (no layout uses it, so no real page's
-// seating is touched): the real candidate lists seen in the session (their
-// real slot classes, names, dedup keys), re-scored and re-ordered at random --
-// ties, zeros, 2x and 1.5x relations, small nudges, wildcards, remembered-only
-// rows, overrides -- on the real layouts and on made-up ones, a few passes per
-// sequence so the slot hold, seating and home keys act on what the previous
-// pass left. Each pass goes through SlotAllocator::AllocateForTest, which the
-// capture hook records like any other allocation (tag "campaign").
+// Then a PERTURBATION CAMPAIGN on page 9 (no layout uses it): the real
+// candidate lists seen in the session -- deep copies, names included, taken on
+// the main thread when the allocation saw them -- re-scored and re-ordered at
+// random (ties, zeros, 2x and 1.5x relations, small nudges, wildcards,
+// remembered-only rows, overrides, Remembrance holds), on the real layouts
+// and on made-up ones with job keys, under the settings variants, a few
+// passes per sequence so the slot hold, seating and home keys act on what
+// the previous pass left; now and then a pass under another layout
+// generation, so stale seating memory is met. It runs ON THE MAIN THREAD, in
+// one task, as every real allocation does. Each pass goes through
+// SlotAllocator::AllocateForTest, which the capture hook records (tag
+// "campaign").
 //
-// Nothing here runs outside test mode, and nothing is saved: the harness ends
-// the process when it is done.
+// Nothing here runs outside test mode, the selection log skips the scripted
+// presses (SessionActive), and nothing is saved: the harness ends the process.
 // =============================================================================
 
 #ifndef NDEBUG
 
+#include "Remembrance.h"
 #include "SlotAllocator.h"
 #include "SlotSettings.h"
 #include "input/EquipHand.h"
 #include "input/EquipManager.h"
 #include <atomic>
+#include <deque>
+#include <future>
 #include <mutex>
 #include <random>
 #include <thread>
@@ -48,19 +60,41 @@ namespace Huginn::Slot::Capture
     namespace
     {
         constexpr size_t kCampaignPage = MAX_PAGES - 1;
-        constexpr int kSequences = 160;
+        constexpr int kSequences = 220;
 
+        /// A candidate list owned outright: the registries' names are views
+        /// that a rebuild (an item used up, an equip) frees, so the names are
+        /// copied into `names` and the candidates point there.
         struct RealList
         {
             Scoring::ScoredCandidateList list;
             std::vector<SlotConfig> layout;
+            std::shared_ptr<std::deque<std::string>> names;
         };
+
+        RealList OwnedCopy(const Scoring::ScoredCandidateList& candidates, const std::vector<SlotConfig>& layout)
+        {
+            RealList r;
+            r.layout = layout;
+            r.names = std::make_shared<std::deque<std::string>>();
+            r.list.reserve(candidates.size());
+            for (const auto& c : candidates) {
+                auto copy = c;
+                auto& base = Candidate::GetBase(copy.candidate);
+                r.names->emplace_back(base.name);
+                base.name = r.names->back();   // a deque never moves its elements
+                r.list.push_back(std::move(copy));
+            }
+            return r;
+        }
+
         std::mutex g_listMutex;
         std::array<RealList, MAX_PAGES> g_real;
         std::vector<RealList> g_history;   // a few distinct lists over the session
         std::atomic<bool> g_sessionStarted{ false };
+        std::atomic<bool> g_sessionActive{ false };
 
-        // Vitals the session lowered, to put back.
+        // Vitals the session lowered, to put back. Main thread only.
         std::array<float, 3> g_lowered{};
 
         RE::ActorValue VitalOf(size_t i)
@@ -104,6 +138,42 @@ namespace Huginn::Slot::Capture
             SKSE::log::info("[SlotCapture] pressed slot {} ({})", slot, ok ? "equipped" : "nothing to equip");
         }
 
+        // --- [SlotLocker] settings variants --------------------------------
+        void Apply(const Core::SlotAlloc::Settings& s)
+        {
+            SlotSettings::GetSingleton().ApplyAllocSettingsForTest(s.keepSlotPositions, s.holdSeatedItems,
+                s.challengerMargin, s.fillJobKeysFromRegular, s.classDiscount, s.classFree, s.homeKeyMemorySec,
+                s.returnToHomeKey, s.remembranceToJob);
+        }
+
+        /// 0 = as loaded; 1 = seating off, job keys filled from Regular keys,
+        /// Remembrance to the job key, cap x0.7 with 2 free, margin 0.25;
+        /// 2 = seating and the hold on, job keys and Remembrance to the job
+        /// key, cap x0.3 with 2 free, margin 0.1, home keys for 5 s; 3 = no
+        /// hold, no home keys, no cap.
+        Core::SlotAlloc::Settings Variant(int which, const Core::SlotAlloc::Settings& shipped)
+        {
+            auto s = shipped;
+            switch (which) {
+            case 1:
+                s.keepSlotPositions = false; s.fillJobKeysFromRegular = true; s.remembranceToJob = true;
+                s.classDiscount = 0.7f; s.classFree = 2; s.challengerMargin = 0.25f;
+                break;
+            case 2:
+                s.keepSlotPositions = true; s.holdSeatedItems = true; s.fillJobKeysFromRegular = true;
+                s.remembranceToJob = true; s.classDiscount = 0.3f; s.classFree = 2; s.challengerMargin = 0.1f;
+                s.homeKeyMemorySec = 5.0f; s.returnToHomeKey = true;
+                break;
+            case 3:
+                s.keepSlotPositions = true; s.holdSeatedItems = false; s.returnToHomeKey = false;
+                s.classDiscount = 1.0f;
+                break;
+            default:
+                break;
+            }
+            return s;
+        }
+
         // One scripted step, on the main thread.
         void PlayStep(size_t step, uint32_t r)
         {
@@ -141,7 +211,7 @@ namespace Huginn::Slot::Capture
                 s.wildcardsEnabled = true;
                 out.push_back(s);
             };
-            switch (which % 4) {
+            switch (which % 5) {
             case 0:   // the shipped shape: eight Regular keys
                 for (int i = 0; i < 8; ++i) add(SC::Regular, static_cast<int8_t>(7 - i), i == 0 ? OverrideFilter::Any : OverrideFilter::None);
                 break;
@@ -153,16 +223,22 @@ namespace Huginn::Slot::Capture
             case 2:   // equal priorities: slot order decides
                 for (int i = 0; i < 6; ++i) add(SC::Regular, 0, i % 2 ? OverrideFilter::Any : OverrideFilter::None);
                 break;
-            default:  // a mixed page
+            case 3:   // a mixed page
                 add(SC::SpellsAny, 4); add(SC::WeaponsMelee, 4); add(SC::Regular, 2, OverrideFilter::Any);
                 add(SC::Regular, 2); add(SC::BuffsAny, 1); add(SC::Utility, 1); add(SC::Regular, 0);
                 add(SC::AmmoAny, 0, OverrideFilter::Other);
+                break;
+            default:  // many job keys that often stand empty, few Regular keys to pull from
+                add(SC::WeaponsAny, 6); add(SC::Regular, 1); add(SC::HealingAny, 5, OverrideFilter::HP);
+                add(SC::Regular, 0); add(SC::SpellsAny, 4); add(SC::PotionsAny, 3, OverrideFilter::Any);
+                add(SC::Regular, 0); add(SC::ScrollsAny, 2);
                 break;
             }
             std::uniform_int_distribution<int> d100(0, 99);
             for (auto& s : out) {
                 if (d100(rng) < 15) s.wildcardsEnabled = !s.wildcardsEnabled;
                 if (d100(rng) < 15) s.skipEquipped = !s.skipEquipped;
+                if (d100(rng) < 10) s.remembrance = false;
             }
             return out;
         }
@@ -200,7 +276,7 @@ namespace Huginn::Slot::Capture
                 }
             }
 
-            // The scorer's order: sorted, or only the top 10 sorted.
+            // The scorer's order: sorted, or (the old scorer) only the top 10.
             const int order = d100(rng) % 3;
             if (order == 0 || list.size() <= 10) {
                 std::stable_sort(list.begin(), list.end());
@@ -225,7 +301,7 @@ namespace Huginn::Slot::Capture
             }
 
             // Remembered-only rows, at the end, as PipelineCoordinator adds them.
-            if (!dropped.empty() && d100(rng) < 25) {
+            if (!dropped.empty() && d100(rng) < 30) {
                 auto r = dropped[static_cast<size_t>(d100(rng)) % dropped.size()];
                 r.utility = 0.0f;
                 r.isRememberedOnly = true;
@@ -243,7 +319,7 @@ namespace Huginn::Slot::Capture
             }
             using OC = Override::OverrideCondition;
             using Cat = Override::OverrideCategory;
-            const int n = 1 + d100(rng) % 2;
+            const int n = 1 + d100(rng) % 3;
             for (int k = 0; k < n; ++k) {
                 const auto& pick = base[static_cast<size_t>(d100(rng)) % base.size()];
                 Override::OverrideResult r;
@@ -262,6 +338,22 @@ namespace Huginn::Slot::Capture
             return out;
         }
 
+        /// Remembrance holds on the campaign page: forms of the list (some of
+        /// them dropped from this pass's candidates), or none.
+        void MakeHolds(const Scoring::ScoredCandidateList& base, size_t slotCount, std::mt19937& rng)
+        {
+            auto& remembrance = Remembrance::GetSingleton();
+            std::uniform_int_distribution<int> d100(0, 99);
+            for (size_t j = 0; j < MAX_SLOTS_PER_PAGE; ++j) {
+                RE::FormID id = 0;
+                if (j < slotCount && !base.empty() && d100(rng) < 18) {
+                    id = base[static_cast<size_t>(d100(rng)) % base.size()].GetFormID();
+                }
+                remembrance.SetHoldForTest(kCampaignPage, j, id);
+            }
+        }
+
+        // Main thread, one task: no real allocation runs in between.
         void RunCampaign()
         {
             std::vector<RealList> lists;
@@ -278,6 +370,7 @@ namespace Huginn::Slot::Capture
             }
             auto& allocator = SlotAllocator::GetSingleton();
             const uint32_t generation = allocator.CurrentGenerationForTest();
+            const auto shipped = ReadAllocSettings();
             std::mt19937 rng(0x52370001u);
             const size_t before = Count();
             SetThreadTag("campaign");
@@ -285,17 +378,45 @@ namespace Huginn::Slot::Capture
                 const auto& base = lists[static_cast<size_t>(rng()) % lists.size()];
                 const bool realLayout = (rng() % 3) == 0 && !base.layout.empty();
                 const auto layout = realLayout ? base.layout : MadeUpLayout(rng(), rng);
+                Apply(Variant(static_cast<int>(rng() % 4), shipped));
+                // Now and then a pass under another layout generation: the
+                // seating memory is stale for it (every page starts over).
+                const int stalePass = (rng() % 4) == 0 ? static_cast<int>(rng() % 3) : -1;
                 const int passes = 2 + static_cast<int>(rng() % 3);
                 for (int p = 0; p < passes; ++p) {
                     const auto list = Mutate(base.list, rng);
                     const auto overrides = MakeOverrides(base.list, rng);
-                    (void)allocator.AllocateForTest(kCampaignPage, generation, layout, list, overrides);
+                    MakeHolds(base.list, layout.size(), rng);
+                    const uint32_t gen = p == stalePass ? generation ^ 0x40000000u : generation;
+                    (void)allocator.AllocateForTest(kCampaignPage, gen, layout, list, overrides);
                 }
             }
+            for (size_t j = 0; j < MAX_SLOTS_PER_PAGE; ++j) {
+                Remembrance::GetSingleton().SetHoldForTest(kCampaignPage, j, 0);
+            }
+            Apply(shipped);
             SetThreadTag(nullptr);
             SKSE::log::info("[SlotCapture] campaign: {} snapshot(s) from {} list(s)", Count() - before, lists.size());
         }
+
+        /// Run `fn` on the main thread and wait for it.
+        template <class F>
+        void OnMainThread(F fn)
+        {
+            auto done = std::make_shared<std::promise<void>>();
+            auto fut = done->get_future();
+            SKSE::GetTaskInterface()->AddTask([fn, done]() {
+                fn();
+                done->set_value();
+            });
+            fut.wait();
+        }
     }  // namespace
+
+    bool SessionActive() noexcept
+    {
+        return g_sessionActive.load(std::memory_order_relaxed);
+    }
 
     void NoteRealList(size_t pageIndex, const Scoring::ScoredCandidateList& candidates,
         const std::vector<SlotConfig>& slotConfigs)
@@ -303,15 +424,17 @@ namespace Huginn::Slot::Capture
         if (!Enabled() || pageIndex >= MAX_PAGES || pageIndex == kCampaignPage || candidates.empty()) {
             return;
         }
+        // Copied here, on the thread the allocation runs on, while the
+        // registry strings the names view are alive.
+        RealList owned = OwnedCopy(candidates, slotConfigs);
         std::lock_guard lock(g_listMutex);
         auto& slot = g_real[pageIndex];
         // Keep an earlier list too when this one differs in size: the session's
         // presses and drinks change the inventory, and the campaign wants both.
-        if (!slot.list.empty() && slot.list.size() != candidates.size() && g_history.size() < 6) {
-            g_history.push_back(slot);
+        if (!slot.list.empty() && slot.list.size() != owned.list.size() && g_history.size() < 6) {
+            g_history.push_back(std::move(slot));
         }
-        slot.list = candidates;
-        slot.layout = slotConfigs;
+        slot = std::move(owned);
     }
 
     void StartSession(int seconds, void (*done)())
@@ -319,28 +442,53 @@ namespace Huginn::Slot::Capture
         if (g_sessionStarted.exchange(true)) {
             return;
         }
-        SetEnabled(true);
+        if (!SetEnabled(true)) {
+            SKSE::log::error("[SlotCapture] capture could not start; no session");
+            if (done) done();
+            return;
+        }
+        g_sessionActive = true;
         std::thread([seconds, done]() {
             using namespace std::chrono_literals;
             SKSE::log::info("[SlotCapture] session: {}s of scripted play, then the campaign", seconds);
             std::this_thread::sleep_for(3s);   // let the first passes after the load settle
-            const auto end = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
+            Core::SlotAlloc::Settings shipped;
+            OnMainThread([&shipped]() { shipped = ReadAllocSettings(); });
+
+            // Half the time under the shipped settings, a quarter each under
+            // variants 1 and 2.
+            const auto start = std::chrono::steady_clock::now();
+            const auto total = std::chrono::seconds(seconds);
             std::mt19937 rng(0x52370002u);
             size_t step = 0;
-            while (std::chrono::steady_clock::now() < end) {
+            int variant = 0;
+            while (std::chrono::steady_clock::now() - start < total) {
+                const auto elapsed = std::chrono::steady_clock::now() - start;
+                const int want = elapsed < total / 2 ? 0 : elapsed < total * 3 / 4 ? 1 : 2;
+                if (want != variant) {
+                    variant = want;
+                    const auto s = Variant(variant, shipped);
+                    SKSE::GetTaskInterface()->AddTask([s, variant]() {
+                        Apply(s);
+                        SlotAllocator::GetSingleton().MarkPageDirty();
+                        SKSE::log::info("[SlotCapture] [SlotLocker] settings variant {}", variant);
+                    });
+                }
                 const uint32_t r = rng();
                 const size_t s = step++;
                 SKSE::GetTaskInterface()->AddTask([s, r]() { PlayStep(s, r); });
                 std::this_thread::sleep_for(1500ms);
             }
-            SKSE::GetTaskInterface()->AddTask([]() {
+            OnMainThread([&shipped]() {
                 for (size_t i = 0; i < 3; ++i) RestoreVital(i);
+                Apply(shipped);
             });
             std::this_thread::sleep_for(1s);
             const size_t real = Count();
-            RunCampaign();
+            OnMainThread([]() { RunCampaign(); });
             SKSE::log::info("[SlotCapture] session done: {} snapshot(s) ({} from play)", Count(), real);
             SetEnabled(false);
+            g_sessionActive = false;
             if (done) {
                 done();
             }

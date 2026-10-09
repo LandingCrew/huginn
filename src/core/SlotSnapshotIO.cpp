@@ -185,6 +185,39 @@ namespace Huginn::Core::SlotAlloc
         return page;
     }
 
+    std::vector<PageEvent> EventsOf(const Input& in, const Output& out)
+    {
+        auto key = [&](std::uint32_t src, bool isOverride) -> std::uint64_t {
+            return isOverride ? in.overrides[src].dedupKey : in.candidates[src].dedupKey;
+        };
+        std::vector<PageEvent> events;
+        events.reserve(out.events.size());
+        for (const auto& e : out.events) {
+            PageEvent p;
+            switch (e.kind) {
+            case EventKind::OverrideMarked:   p = { "OVM", { in.overrides[e.a].formID, e.b } }; break;
+            case EventKind::OverridePlaced:   p = { "OVP", { in.overrides[e.a].formID, e.b } }; break;
+            case EventKind::OverrideFallback: p = { "OVF", { in.overrides[e.a].formID, e.b } }; break;
+            case EventKind::OverrideUnplaced: p = { "OVU", { in.overrides[e.a].formID, e.b } }; break;
+            case EventKind::OverridesInactive: p = { "OVI", {} }; break;
+            case EventKind::HoldNotCandidate: p = { "HNC", { e.a, e.b } }; break;
+            case EventKind::HoldShown:        p = { "HSH", { e.a, e.b, e.c } }; break;
+            case EventKind::NoCandidate:      p = { "NOC", { e.a } }; break;
+            case EventKind::HoldGaveWay:
+                p = { "HGW", { e.a, key(e.b, false), key(e.c, false), e.capped ? 1u : 0u } };
+                break;
+            case EventKind::PulledToJobKey:   p = { "PUL", { e.a, e.b, key(e.c, false) } }; break;
+            case EventKind::Returner:
+                p = { "RET", { e.key, e.b, e.c, static_cast<std::uint64_t>(e.why),
+                                 e.d != kNone ? key(e.d, e.y != 0.0) : 0, e.d != kNone ? e.e : kNone },
+                    e.f };
+                break;
+            }
+            events.push_back(std::move(p));
+        }
+        return events;
+    }
+
     void SetResult(Snapshot& snap, const Output& out)
     {
         snap.hasResult = true;
@@ -193,6 +226,8 @@ namespace Huginn::Core::SlotAlloc
         snap.generationAfter = out.generationMatches;
         snap.clearedAllPages = out.clearedAllPages;
         snap.keptOff = KeptOff(snap.in, out);
+        snap.hasEvents = true;
+        snap.events = EventsOf(snap.in, out);
     }
 
     std::string EscapeName(std::string_view name)
@@ -282,6 +317,14 @@ namespace Huginn::Core::SlotAlloc
             out += "KEPT";
             for (const auto id : snap.keptOff) out += std::format(" {:x}", id);
             out += '\n';
+            if (snap.hasEvents) {
+                out += "EVENTS\n";
+                for (const auto& e : snap.events) {
+                    out += std::format("EV {} {}", e.code, Num(e.f));
+                    for (const auto v : e.v) out += std::format(" {:x}", v);
+                    out += '\n';
+                }
+            }
         }
         out += "END\n";
         return defs + out;
@@ -442,6 +485,15 @@ namespace Huginn::Core::SlotAlloc
                 if (!ReadDepLine(tk, cur.memoryAfter)) return fail("bad ODEP");
             } else if (tag == "KEPT") {
                 while (!tk.Done() && tk.ok) cur.keptOff.push_back(tk.Int<std::uint32_t>(16));
+            } else if (tag == "EVENTS") {
+                cur.hasEvents = true;
+            } else if (tag == "EV") {
+                PageEvent e;
+                e.code = std::string(tk.Next());
+                e.f = tk.Real<float>();
+                while (!tk.Done() && tk.ok) e.v.push_back(tk.Int<std::uint64_t>(16));
+                if (e.code.size() != 3) return fail("bad EV code");
+                cur.events.push_back(std::move(e));
             } else if (tag == "END") {
                 out.push_back(std::move(cur));
                 cur = Snapshot{};

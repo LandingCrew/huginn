@@ -82,7 +82,12 @@ namespace Huginn::Slot
         [[nodiscard]] bool Enabled() noexcept;
 
         /// Start or stop writing snapshots. Starting truncates the file.
-        void SetEnabled(bool on);
+        /// False when capture could not start (no log folder, file not writable).
+        bool SetEnabled(bool on);
+
+        /// A capture session is playing (test mode): its scripted presses are
+        /// not the player's, so the selection log leaves them out.
+        [[nodiscard]] bool SessionActive() noexcept;
 
         /// Append one snapshot (thread-safe). No-op when not capturing.
         void Write(const Core::SlotAlloc::Snapshot& snap);
@@ -100,8 +105,10 @@ namespace Huginn::Slot
             const std::vector<SlotConfig>& slotConfigs);
 
         /// Test mode: play a scripted session for `seconds` while capturing
-        /// (slot presses, page flips, vitals dropped into the override range),
-        /// then run the perturbation campaign, then call `done` (any thread).
+        /// (slot presses, page flips, vitals dropped into the override range,
+        /// under the shipped [SlotLocker] settings and two variants), then run
+        /// the perturbation campaign on the main thread, then call `done`
+        /// (any thread). Calls `done` at once if capture cannot start.
         void StartSession(int seconds, void (*done)());
     }
 }  // namespace Huginn::Slot
