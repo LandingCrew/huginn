@@ -39,8 +39,8 @@ TEST_CASE("episodes: onset at 0.5, expiry below 0.25, hysteresis between")
     CHECK_FALSE(t.IsOpen(kH));
     CHECK(t.ClosingCount() == 1);
     // Judged only after the grace.
-    CHECK(t.TakeUnanswered(8.0).empty());
-    const auto out = t.TakeUnanswered(8.5);
+    CHECK(t.TakeUnanswered(8.9).empty());
+    const auto out = t.TakeUnanswered(9.0);
     REQUIRE(out.size() == 1);
     CHECK(out[0].need == kH);
     CHECK(out[0].onsetSec == doctest::Approx(1.0));
@@ -86,8 +86,30 @@ TEST_CASE("episodes: a pick made inside but confirmed after the end still answer
 
     t.Tick(With(kH, 1.0f), 20.0);
     t.Tick(With(kH, 0.0f), 24.0);
-    t.OnSelection(24.5);           // made after the end: does not answer
+    t.OnSelection(24.6);           // made more than the slack after the end: does not answer
     CHECK(t.TakeUnanswered(30.0).size() == 1);
+}
+
+TEST_CASE("episodes: a press that itself ended the episode answers it (the slack)")
+{
+    // In game a key's equip landed, and an update tick saw loadout_archery
+    // end, 2 ms before the selection was stamped.
+    EpisodeTracker<int> t;
+    t.Tick(With(kH, 1.0f), 0.0);
+    t.Tick(With(kH, 0.0f), 10.000);
+    t.OnSelection(10.002);
+    CHECK(t.TakeUnanswered(20.0).empty());
+
+    t.Tick(With(kH, 1.0f), 30.0);
+    t.Tick(With(kH, 0.0f), 40.0);
+    t.OnSelection(40.0 + t.Params().answerSlackSec);   // the edge counts
+    CHECK(t.TakeUnanswered(50.0).empty());
+
+    // An episode the press itself STARTED is not answered by it.
+    t.OnSelection(59.95);
+    t.Tick(With(kH, 1.0f), 60.0);
+    t.Tick(With(kH, 0.0f), 70.0);
+    CHECK(t.TakeUnanswered(80.0).size() == 1);
 }
 
 TEST_CASE("episodes: needs are independent and carry their payload")

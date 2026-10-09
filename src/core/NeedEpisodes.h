@@ -23,11 +23,16 @@
 //           react to it, and flicker would flood the log.
 //   answer  a CONFIRMED selection (key, wheel or menu; the outcome record of
 //           which already carries the need vector) whose press time lies in
-//           [onset, expiry] answers the episode. The confirmation may arrive
-//           after the expiry (a potion confirms when its count drops, gear
-//           when it is still worn 3 s later), so an ended episode waits
-//           kGraceSec (3.5 s, the longest confirm window plus 0.5 s) before
-//           it is judged.
+//           [onset, expiry + kAnswerSlackSec] answers the episode. The slack
+//           (0.5 s, five update ticks) is for a press that itself ends the
+//           episode: the equip lands, and an update tick can see the need
+//           gone, before the press is stamped (measured in game: a key's
+//           scroll ended loadout_archery 2 ms before its selection was
+//           taken; Wheeler equips ~6 ms before its callback). The
+//           confirmation may arrive after the expiry (a potion confirms when
+//           its count drops, gear when it is still worn 3 s later), so an
+//           ended episode waits kGraceSec (4 s: the longest confirm window,
+//           3 s, plus the slack and a few ticks) before it is judged.
 //   nothing an episode that ends, lasted kMinSec or more and is unanswered
 //           when its grace runs out produces one record.
 //
@@ -64,7 +69,8 @@ namespace Huginn::Core::Needs
         float onset = 0.5f;
         float expiry = 0.25f;
         double minSec = 1.0;
-        double graceSec = 3.5;
+        double graceSec = 4.0;
+        double answerSlackSec = 0.5;
     };
 
     template <class Payload>
@@ -122,14 +128,14 @@ namespace Huginn::Core::Needs
 
         /// A confirmed selection the player made at `pressSec`: it answers
         /// every open episode that began at or before it, and every ended one
-        /// whose [onset, end] holds it.
+        /// whose [onset, end + answerSlackSec] holds it.
         void OnSelection(double pressSec)
         {
             for (auto& slot : open_) {
                 if (slot && slot->onsetSec <= pressSec) slot->answered = true;
             }
             for (auto& e : closing_) {
-                if (e.onsetSec <= pressSec && pressSec <= e.endSec) e.answered = true;
+                if (e.onsetSec <= pressSec && pressSec <= e.endSec + params_.answerSlackSec) e.answered = true;
             }
         }
 

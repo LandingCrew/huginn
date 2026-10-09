@@ -62,7 +62,8 @@ class GoldenFile(unittest.TestCase):
         self.assertEqual(len(h["needs"]), 92)
         self.assertEqual(h["cross"][4], "stack_count")
         self.assertEqual(h["kinds"][7], "Armor")
-        self.assertEqual(h["episode"], {"onset": 0.5, "expiry": 0.25, "minSec": 1.0, "graceSec": 3.5})
+        self.assertEqual(h["episode"], {"onset": 0.5, "expiry": 0.25, "minSec": 1.0, "graceSec": 4.0,
+                                        "answerSlackSec": 0.5})
 
     def test_key_press(self):
         d = self.decs[0]

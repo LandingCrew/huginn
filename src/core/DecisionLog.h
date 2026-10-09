@@ -177,7 +177,7 @@ namespace Huginn::Core::DecisionLog
         std::string build;                        // "0.23.15 (sha)"
         std::vector<std::string> sourceNames;     // the old engine's source types, by index
         float onset = 0.5f, expiry = 0.25f;       // the episode thresholds in force
-        double minSec = 1.0, graceSec = 3.5;
+        double minSec = 1.0, graceSec = 4.0, answerSlackSec = 0.5;
     };
 
     // --- JSON helpers ---------------------------------------------------------

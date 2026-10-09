@@ -556,6 +556,7 @@ namespace Huginn::Learning::SelectionLogV3
                 head.expiry = p.expiry;
                 head.minSec = p.minSec;
                 head.graceSec = p.graceSec;
+                head.answerSlackSec = p.answerSlackSec;
                 const std::string line = m_encoder.BeginSegment(head);
                 m_out << line;
                 m_fileBytes += line.size();
