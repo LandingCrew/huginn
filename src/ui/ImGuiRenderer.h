@@ -3,6 +3,8 @@
 #include <d3d11.h>
 #include <dxgi.h>
 
+#include <atomic>
+
 namespace Huginn::UI
 {
     class ImGuiRenderer
@@ -16,7 +18,12 @@ namespace Huginn::UI
         void BeginFrame();
         void EndFrame();
 
-        bool IsInitialized() const { return m_initialized; }
+        /// Read from the render thread (PresentHook) and the input thread
+        /// (DebugInputHook), which are hooked from SKSEPlugin_Load, long before
+        /// Initialize() runs at kDataLoaded. Acquire pairs with the release
+        /// store at the end of Initialize(), so a reader that sees true also
+        /// sees the ImGui context and backends it set up.
+        bool IsInitialized() const { return m_initialized.load(std::memory_order_acquire); }
 
     private:
         ImGuiRenderer() = default;
@@ -44,7 +51,7 @@ namespace Huginn::UI
         ID3D11RenderTargetView* m_savedRTV = nullptr;
         ID3D11DepthStencilView* m_savedDSV = nullptr;
 
-        bool m_initialized = false;
+        std::atomic<bool> m_initialized{ false };
         bool m_inputEnabled = true;  // Enable input by default in debug builds
     };
 }

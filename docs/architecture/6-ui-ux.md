@@ -1029,6 +1029,13 @@ offset, calls the original, then runs `ImGuiRenderer::BeginFrame()`, draws, and
 ends the frame. The `WelcomeBanner` (a centred fade-in/out banner) draws first,
 then the three debug widgets.
 
+Both code hooks (Present, and the Debug input hook) are installed in
+`SKSEPlugin_Load` (`InstallHooks` in `Main.cpp`), before the engine runs
+either call site, from one `AllocTrampoline`; ImGui itself comes up at
+kDataLoaded, and until `ImGuiRenderer::IsInitialized()` both hooks only call
+the original. Installing them at kDataLoaded raced load-screen job threads
+(see roadmap, Known bugs, v0.23.13).
+
 | Widget | Shows |
 |---|---|
 | `StateManagerDebugWidget` | Player state, world state, target tracking |

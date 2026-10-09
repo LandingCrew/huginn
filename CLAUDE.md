@@ -58,7 +58,7 @@ See [docs/README.md](docs/README.md) for full system design.
 | `src/override/` | Override system (urgent potion surfacing) |
 | `src/persist/` | Learner weight serialization (cosave) |
 | `src/settings/` | SettingsReloader (dMenu hot-reload) |
-| `src/effect/` | Effect extractor (R2): EffectReader (forms -> records), EffectCatalog (cap(i) per item, built at kDataLoaded; not read for scoring yet), `hg dump all` |
+| `src/effect/` | Effect extractor (R2): EffectReader (forms -> records), EffectCatalog (cap(i) per item, built when the main menu first opens; not read for scoring yet), `hg dump all` |
 | `src/core/` | Pure, host-tested code (`huginn_core_tests`): the effect mapper (EffectColumns, EffectRecords, EffectRules, EffectMapper, CrossFeatures), MiniRegex, ActorTypeClassifier, TargetType, RingBuffer, SlotClassCapMath |
 
 ## Configuration
@@ -105,8 +105,8 @@ Registered as `Huginn` with short alias `hg` (in-game `~` console):
 ## SKSE Entry Points
 
 In `Main.cpp`:
-- `SKSEPlugin_Load` — Registers messaging listener
-- `kDataLoaded` — D3D hook, ImGui, StateEvaluator, IntuitionMenu, console commands
+- `SKSEPlugin_Load` — Registers messaging listener; installs the code hooks (`InstallHooks`: D3D11 Present, and the Debug input hook) before any game thread runs them
+- `kDataLoaded` — ImGui, StateEvaluator, IntuitionMenu, console commands
 - `kPostLoadGame`/`kNewGame` — Registries, FeatureBanditLearner, shows IntuitionMenu
 
 ## Forbidden Information (Cheating Prevention)

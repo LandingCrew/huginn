@@ -18,8 +18,15 @@ namespace Huginn::UI
         D3D11Hook::_originalPresent(a1);
 
         // Then render our ImGui overlay
+        // The hook goes in at SKSEPlugin_Load, long before kDataLoaded brings
+        // up ImGui: until then this is a pure pass-through.
         auto& renderer = ImGuiRenderer::GetSingleton();
         if (renderer.IsInitialized()) {
+            static std::atomic<bool> s_firstFrameLogged{ false };
+            if (!s_firstFrameLogged.exchange(true, std::memory_order_relaxed)) {
+                logger::info("[D3D11Hook] First ImGui overlay frame"sv);
+            }
+
             renderer.BeginFrame();
 
 #ifdef _DEBUG
@@ -48,8 +55,9 @@ namespace Huginn::UI
         // Hook the D3D11 Present call
         // REL::ID 75461 (SE) / 77246 (AE) is BSGraphics::Renderer::End which calls Present
         // The Present call is at offset 0x9
-
-        SKSE::AllocTrampoline(14);
+        //
+        // Called from SKSEPlugin_Load (InstallHooks), which allocates the
+        // trampoline for every hook in one block before the engine runs.
 
         REL::Relocation<std::uintptr_t> presentTarget{ RELOCATION_ID(75461, 77246) };
         auto& trampoline = SKSE::GetTrampoline();

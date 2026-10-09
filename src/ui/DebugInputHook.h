@@ -22,7 +22,9 @@ namespace Huginn::UI
     class DebugInputHook
     {
     public:
-        /// Install the dispatch hook. Call once at kDataLoaded, after D3D11Hook.
+        /// Install the dispatch hook. Call once from SKSEPlugin_Load (InstallHooks,
+        /// which allocates the trampoline). The hook passes input through untouched
+        /// until ImGuiRenderer::IsInitialized().
         static bool Install();
 
         /// Whether the user has toggled interaction mode (Home key).

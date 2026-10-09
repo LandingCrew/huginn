@@ -472,11 +472,11 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
 }
 
 // =============================================================================
-// kDataLoaded handler — one-time engine/UI wiring (hooks, ImGui, input, update)
+// kDataLoaded handler — one-time engine/UI wiring (ImGui, input, update)
 // =============================================================================
 // Extracted from MessageHandler for readability. Guarded with a static flag so a
 // duplicate kDataLoaded dispatch (SKSE guarantees one, but modded messaging can
-// perturb it) can't re-install render/input hooks, leak the old g_stateEvaluator,
+// perturb it) can't re-initialise ImGui, leak the old g_stateEvaluator,
 // or double-register menus and update callbacks.
 static void OnDataLoaded()
 {
@@ -495,21 +495,9 @@ static void OnDataLoaded()
     // Register console commands (replaces unused command table entry)
     Huginn::Console::Register();
 
-    // Install D3D11 render hook for ImGui
-    if (UI::D3D11Hook::Install()) {
-        logger::info("D3D11 render hook installed"sv);
-    } else {
-        logger::error("Failed to install D3D11 render hook"sv);
-    }
-
-#ifdef _DEBUG
-    // Install input dispatch hook for interactive debug widgets (Home key toggle)
-    if (UI::DebugInputHook::Install()) {
-        logger::info("Debug input hook installed (Home key to toggle interaction)"sv);
-    } else {
-        logger::error("Failed to install debug input hook"sv);
-    }
-#endif
+    // The D3D11 render hook and the Debug input hook are installed in
+    // SKSEPlugin_Load (InstallHooks), not here -- see the comment there. Their
+    // bodies do nothing until the Initialize() below marks ImGui ready.
 
     // Initialize ImGui renderer
     if (UI::ImGuiRenderer::GetSingleton().Initialize()) {
@@ -952,6 +940,54 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Query(const SKSE::QueryInterface* a
     return true;
 }
 
+// =============================================================================
+// Code hooks -- installed at SKSEPlugin_Load, before the game's threads run
+// =============================================================================
+// CommonLib-NG 3.7.0's Trampoline::write_5branch patches the call site
+// (REL::safe_write) BEFORE it writes the trampoline's FF 25 jump + target, and
+// set_trampoline fills a fresh block with 0xCC. A thread that executes the
+// patched call inside that window lands on int3 (EXCEPTION_BREAKPOINT in the
+// SKSE branch pool). These hooks used to go in at kDataLoaded, while load-screen
+// job threads were already running BSGraphics::Renderer::End and
+// BSInputDeviceManager::Poll -- ~1 crash in 13 Debug launches. At
+// SKSEPlugin_Load the engine has not started (no renderer, no job threads), so
+// nothing can execute either call site while it is being patched.
+//
+// One allocation sized for every hook: each write_call<5> takes 14 bytes
+// (FF 25 + disp32 + abs64). A second AllocTrampoline would replace the first
+// block, and the alandtse CommonLib fork only allocates on the first call.
+//
+// The hook bodies must tolerate running before kDataLoaded: PresentHook and
+// DebugInputHook::DispatchHook both pass straight through to the original until
+// ImGuiRenderer::IsInitialized() (an acquire load of a flag Initialize() sets
+// last, with release).
+static void InstallHooks()
+{
+    constexpr std::size_t kBranchBytes = 14;
+#ifdef _DEBUG
+    constexpr std::size_t kHookCount = 2;  // Present + input dispatch
+#else
+    constexpr std::size_t kHookCount = 1;  // Present
+#endif
+    SKSE::AllocTrampoline(kHookCount * kBranchBytes);
+
+    // Install D3D11 render hook for ImGui
+    if (UI::D3D11Hook::Install()) {
+        logger::info("D3D11 render hook installed"sv);
+    } else {
+        logger::error("Failed to install D3D11 render hook"sv);
+    }
+
+#ifdef _DEBUG
+    // Install input dispatch hook for interactive debug widgets (Home key toggle)
+    if (UI::DebugInputHook::Install()) {
+        logger::info("Debug input hook installed (Home key to toggle interaction)"sv);
+    } else {
+        logger::error("Failed to install debug input hook"sv);
+    }
+#endif
+}
+
 extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_skse)
 {
     start = std::chrono::high_resolution_clock::now();
@@ -969,6 +1005,7 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_s
 #endif
 
     SKSE::Init(a_skse);
+    InstallHooks();                // before the engine's threads exist; see above
     TestHarness::ReadTestMode();   // Debug only: the unattended-run flag
 
     // Register cosave serialization (must be before any save/load events)
