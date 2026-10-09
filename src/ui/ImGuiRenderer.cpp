@@ -65,7 +65,9 @@ namespace Huginn::UI
 
         SetupImGuiStyle();
 
-        m_initialized = true;
+        // Last, with release: the Present and input hooks start using ImGui
+        // the moment they observe this (see IsInitialized()).
+        m_initialized.store(true, std::memory_order_release);
         logger::info("[ImGuiRenderer] Initialized successfully (input hook: {})"sv,
                      s_originalWndProc != nullptr ? "active" : "failed");
         return true;

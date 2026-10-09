@@ -4,6 +4,7 @@
 
 #include <dinput.h>   // DIK_* scan codes
 #include "ImGuiCommon.h"
+#include "ImGuiRenderer.h"
 
 namespace Huginn::UI
 {
@@ -230,6 +231,20 @@ namespace Huginn::UI
     {
         static RE::InputEvent* const dummy[] = { nullptr };
 
+        // The hook goes in at SKSEPlugin_Load; ImGui comes up at kDataLoaded.
+        // Until then there is no ImGui context (ImGui::GetIO() would fault)
+        // and no overlay to interact with, so pass everything through
+        // untouched -- no translation, no Home toggle, no input blocking.
+        if (!ImGuiRenderer::GetSingleton().IsInitialized()) {
+            _originalDispatch(a_dispatcher, a_events);
+            return;
+        }
+
+        static std::atomic<bool> s_firstDispatchLogged{ false };
+        if (!s_firstDispatchLogged.exchange(true, std::memory_order_relaxed)) {
+            logger::info("[DebugInputHook] First input dispatch with ImGui ready"sv);
+        }
+
         if (a_events) {
             // Walk the event linked list
             for (auto* event = *a_events; event; event = event->next) {
@@ -271,7 +286,9 @@ namespace Huginn::UI
         // Hook BSInputDeviceManager::DispatchEvents
         // RELOCATION_ID(67315, 68617) = BSInputDeviceManager::Poll
         // Offset 0x7B (SE) / 0x7B (AE) = the call to BSTEventSource::Notify
-        SKSE::AllocTrampoline(14);
+        //
+        // Called from SKSEPlugin_Load (InstallHooks), which allocates the
+        // trampoline for every hook in one block before the engine runs.
 
         REL::Relocation<std::uintptr_t> target{ RELOCATION_ID(67315, 68617) };
         auto& trampoline = SKSE::GetTrampoline();
