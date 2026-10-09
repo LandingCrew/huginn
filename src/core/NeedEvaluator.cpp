@@ -85,7 +85,7 @@ namespace Huginn::Core::Needs
                 case N::enemy_count: return static_cast<float>(s.enemyCount) / 6.0f;
                 case N::enemy_close: return Distance(s);
                 case N::enemy_mid: return Distance(s);
-                case N::enemy_far: return Distance(s);
+                case N::enemy_far: return s.closestEnemy < 0.0f ? 0.0f : s.closestEnemy;   // no hostile: 0, not far
                 case N::surrounded: return static_cast<float>(s.enemiesNear256) / 3.0f;
                 case N::enemy_casting: return B(s.anyCasting);
                 case N::target_caster: return B(s.targetCaster);

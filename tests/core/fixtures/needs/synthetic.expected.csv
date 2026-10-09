@@ -35,7 +35,7 @@ default,combat_onset,1000000.0,0.0
 default,enemy_count,0.0,0.0
 default,enemy_close,4096.0,1.0674878334332898e-33
 default,enemy_mid,4096.0,4.472740153758267e-67
-default,enemy_far,4096.0,0.9999999999999643
+default,enemy_far,0.0,4.5397868702434395e-05
 default,surrounded,0.0,0.0
 default,enemy_casting,0.0,0.0
 default,target_caster,0.0,0.0
@@ -127,7 +127,7 @@ vitals_low,combat_onset,1000000.0,0.0
 vitals_low,enemy_count,0.0,0.0
 vitals_low,enemy_close,4096.0,1.0674878334332898e-33
 vitals_low,enemy_mid,4096.0,4.472740153758267e-67
-vitals_low,enemy_far,4096.0,0.9999999999999643
+vitals_low,enemy_far,0.0,4.5397868702434395e-05
 vitals_low,surrounded,0.0,0.0
 vitals_low,enemy_casting,0.0,0.0
 vitals_low,target_caster,0.0,0.0
@@ -219,7 +219,7 @@ vitals_centre,combat_onset,1000000.0,0.0
 vitals_centre,enemy_count,0.0,0.0
 vitals_centre,enemy_close,4096.0,1.0674878334332898e-33
 vitals_centre,enemy_mid,4096.0,4.472740153758267e-67
-vitals_centre,enemy_far,4096.0,0.9999999999999643
+vitals_centre,enemy_far,0.0,4.5397868702434395e-05
 vitals_centre,surrounded,0.0,0.0
 vitals_centre,enemy_casting,0.0,0.0
 vitals_centre,target_caster,0.0,0.0
@@ -311,7 +311,7 @@ vitals_falling_burn,combat_onset,1000000.0,0.0
 vitals_falling_burn,enemy_count,0.0,0.0
 vitals_falling_burn,enemy_close,4096.0,1.0674878334332898e-33
 vitals_falling_burn,enemy_mid,4096.0,4.472740153758267e-67
-vitals_falling_burn,enemy_far,4096.0,0.9999999999999643
+vitals_falling_burn,enemy_far,0.0,4.5397868702434395e-05
 vitals_falling_burn,surrounded,0.0,0.0
 vitals_falling_burn,enemy_casting,0.0,0.0
 vitals_falling_burn,target_caster,0.0,0.0
@@ -403,7 +403,7 @@ vitals_rates_centre,combat_onset,1000000.0,0.0
 vitals_rates_centre,enemy_count,0.0,0.0
 vitals_rates_centre,enemy_close,4096.0,1.0674878334332898e-33
 vitals_rates_centre,enemy_mid,4096.0,4.472740153758267e-67
-vitals_rates_centre,enemy_far,4096.0,0.9999999999999643
+vitals_rates_centre,enemy_far,0.0,4.5397868702434395e-05
 vitals_rates_centre,surrounded,0.0,0.0
 vitals_rates_centre,enemy_casting,0.0,0.0
 vitals_rates_centre,target_caster,0.0,0.0
@@ -495,7 +495,7 @@ vitals_rates_negative,combat_onset,1000000.0,0.0
 vitals_rates_negative,enemy_count,0.0,0.0
 vitals_rates_negative,enemy_close,4096.0,1.0674878334332898e-33
 vitals_rates_negative,enemy_mid,4096.0,4.472740153758267e-67
-vitals_rates_negative,enemy_far,4096.0,0.9999999999999643
+vitals_rates_negative,enemy_far,0.0,4.5397868702434395e-05
 vitals_rates_negative,surrounded,0.0,0.0
 vitals_rates_negative,enemy_casting,0.0,0.0
 vitals_rates_negative,target_caster,0.0,0.0
@@ -587,7 +587,7 @@ max_zero,combat_onset,1000000.0,0.0
 max_zero,enemy_count,0.0,0.0
 max_zero,enemy_close,4096.0,1.0674878334332898e-33
 max_zero,enemy_mid,4096.0,4.472740153758267e-67
-max_zero,enemy_far,4096.0,0.9999999999999643
+max_zero,enemy_far,0.0,4.5397868702434395e-05
 max_zero,surrounded,0.0,0.0
 max_zero,enemy_casting,0.0,0.0
 max_zero,target_caster,0.0,0.0
@@ -679,7 +679,7 @@ restore_pending_covering,combat_onset,1000000.0,0.0
 restore_pending_covering,enemy_count,0.0,0.0
 restore_pending_covering,enemy_close,4096.0,1.0674878334332898e-33
 restore_pending_covering,enemy_mid,4096.0,4.472740153758267e-67
-restore_pending_covering,enemy_far,4096.0,0.9999999999999643
+restore_pending_covering,enemy_far,0.0,4.5397868702434395e-05
 restore_pending_covering,surrounded,0.0,0.0
 restore_pending_covering,enemy_casting,0.0,0.0
 restore_pending_covering,target_caster,0.0,0.0
@@ -771,7 +771,7 @@ restore_pending_centre,combat_onset,1000000.0,0.0
 restore_pending_centre,enemy_count,0.0,0.0
 restore_pending_centre,enemy_close,4096.0,1.0674878334332898e-33
 restore_pending_centre,enemy_mid,4096.0,4.472740153758267e-67
-restore_pending_centre,enemy_far,4096.0,0.9999999999999643
+restore_pending_centre,enemy_far,0.0,4.5397868702434395e-05
 restore_pending_centre,surrounded,0.0,0.0
 restore_pending_centre,enemy_casting,0.0,0.0
 restore_pending_centre,target_caster,0.0,0.0
@@ -863,7 +863,7 @@ restore_pending_zero_deficit,combat_onset,1000000.0,0.0
 restore_pending_zero_deficit,enemy_count,0.0,0.0
 restore_pending_zero_deficit,enemy_close,4096.0,1.0674878334332898e-33
 restore_pending_zero_deficit,enemy_mid,4096.0,4.472740153758267e-67
-restore_pending_zero_deficit,enemy_far,4096.0,0.9999999999999643
+restore_pending_zero_deficit,enemy_far,0.0,4.5397868702434395e-05
 restore_pending_zero_deficit,surrounded,0.0,0.0
 restore_pending_zero_deficit,enemy_casting,0.0,0.0
 restore_pending_zero_deficit,target_caster,0.0,0.0
@@ -955,7 +955,7 @@ elemental_damage,combat_onset,1000000.0,0.0
 elemental_damage,enemy_count,0.0,0.0
 elemental_damage,enemy_close,4096.0,1.0674878334332898e-33
 elemental_damage,enemy_mid,4096.0,4.472740153758267e-67
-elemental_damage,enemy_far,4096.0,0.9999999999999643
+elemental_damage,enemy_far,0.0,4.5397868702434395e-05
 elemental_damage,surrounded,0.0,0.0
 elemental_damage,enemy_casting,0.0,0.0
 elemental_damage,target_caster,0.0,0.0
@@ -1047,7 +1047,7 @@ elemental_centre,combat_onset,1000000.0,0.0
 elemental_centre,enemy_count,0.0,0.0
 elemental_centre,enemy_close,4096.0,1.0674878334332898e-33
 elemental_centre,enemy_mid,4096.0,4.472740153758267e-67
-elemental_centre,enemy_far,4096.0,0.9999999999999643
+elemental_centre,enemy_far,0.0,4.5397868702434395e-05
 elemental_centre,surrounded,0.0,0.0
 elemental_centre,enemy_casting,0.0,0.0
 elemental_centre,target_caster,0.0,0.0
@@ -1231,7 +1231,7 @@ cast_edges,combat_onset,1000000.0,0.0
 cast_edges,enemy_count,0.0,0.0
 cast_edges,enemy_close,4096.0,1.0674878334332898e-33
 cast_edges,enemy_mid,4096.0,4.472740153758267e-67
-cast_edges,enemy_far,4096.0,0.9999999999999643
+cast_edges,enemy_far,0.0,4.5397868702434395e-05
 cast_edges,surrounded,0.0,0.0
 cast_edges,enemy_casting,0.0,0.0
 cast_edges,target_caster,0.0,0.0
@@ -1323,7 +1323,7 @@ cast_negative,combat_onset,1000000.0,0.0
 cast_negative,enemy_count,0.0,0.0
 cast_negative,enemy_close,4096.0,1.0674878334332898e-33
 cast_negative,enemy_mid,4096.0,4.472740153758267e-67
-cast_negative,enemy_far,4096.0,0.9999999999999643
+cast_negative,enemy_far,0.0,4.5397868702434395e-05
 cast_negative,surrounded,0.0,0.0
 cast_negative,enemy_casting,0.0,0.0
 cast_negative,target_caster,0.0,0.0
@@ -1415,7 +1415,7 @@ status_flags,combat_onset,1000000.0,0.0
 status_flags,enemy_count,0.0,0.0
 status_flags,enemy_close,4096.0,1.0674878334332898e-33
 status_flags,enemy_mid,4096.0,4.472740153758267e-67
-status_flags,enemy_far,4096.0,0.9999999999999643
+status_flags,enemy_far,0.0,4.5397868702434395e-05
 status_flags,surrounded,0.0,0.0
 status_flags,enemy_casting,0.0,0.0
 status_flags,target_caster,0.0,0.0
@@ -1507,7 +1507,7 @@ encumbrance_centre,combat_onset,1000000.0,0.0
 encumbrance_centre,enemy_count,0.0,0.0
 encumbrance_centre,enemy_close,4096.0,1.0674878334332898e-33
 encumbrance_centre,enemy_mid,4096.0,4.472740153758267e-67
-encumbrance_centre,enemy_far,4096.0,0.9999999999999643
+encumbrance_centre,enemy_far,0.0,4.5397868702434395e-05
 encumbrance_centre,surrounded,0.0,0.0
 encumbrance_centre,enemy_casting,0.0,0.0
 encumbrance_centre,target_caster,0.0,0.0
@@ -1599,7 +1599,7 @@ vampire_day,combat_onset,1000000.0,0.0
 vampire_day,enemy_count,0.0,0.0
 vampire_day,enemy_close,4096.0,1.0674878334332898e-33
 vampire_day,enemy_mid,4096.0,4.472740153758267e-67
-vampire_day,enemy_far,4096.0,0.9999999999999643
+vampire_day,enemy_far,0.0,4.5397868702434395e-05
 vampire_day,surrounded,0.0,0.0
 vampire_day,enemy_casting,0.0,0.0
 vampire_day,target_caster,0.0,0.0
@@ -1691,7 +1691,7 @@ vampire_stage2_day,combat_onset,1000000.0,0.0
 vampire_stage2_day,enemy_count,0.0,0.0
 vampire_stage2_day,enemy_close,4096.0,1.0674878334332898e-33
 vampire_stage2_day,enemy_mid,4096.0,4.472740153758267e-67
-vampire_stage2_day,enemy_far,4096.0,0.9999999999999643
+vampire_stage2_day,enemy_far,0.0,4.5397868702434395e-05
 vampire_stage2_day,surrounded,0.0,0.0
 vampire_stage2_day,enemy_casting,0.0,0.0
 vampire_stage2_day,target_caster,0.0,0.0
@@ -1783,7 +1783,7 @@ vampire_stage4_night,combat_onset,1000000.0,0.0
 vampire_stage4_night,enemy_count,0.0,0.0
 vampire_stage4_night,enemy_close,4096.0,1.0674878334332898e-33
 vampire_stage4_night,enemy_mid,4096.0,4.472740153758267e-67
-vampire_stage4_night,enemy_far,4096.0,0.9999999999999643
+vampire_stage4_night,enemy_far,0.0,4.5397868702434395e-05
 vampire_stage4_night,surrounded,0.0,0.0
 vampire_stage4_night,enemy_casting,0.0,0.0
 vampire_stage4_night,target_caster,0.0,0.0
@@ -1875,7 +1875,7 @@ darkness_centre,combat_onset,1000000.0,0.0
 darkness_centre,enemy_count,0.0,0.0
 darkness_centre,enemy_close,4096.0,1.0674878334332898e-33
 darkness_centre,enemy_mid,4096.0,4.472740153758267e-67
-darkness_centre,enemy_far,4096.0,0.9999999999999643
+darkness_centre,enemy_far,0.0,4.5397868702434395e-05
 darkness_centre,surrounded,0.0,0.0
 darkness_centre,enemy_casting,0.0,0.0
 darkness_centre,target_caster,0.0,0.0
@@ -1967,7 +1967,7 @@ survival_raw,combat_onset,1000000.0,0.0
 survival_raw,enemy_count,0.0,0.0
 survival_raw,enemy_close,4096.0,1.0674878334332898e-33
 survival_raw,enemy_mid,4096.0,4.472740153758267e-67
-survival_raw,enemy_far,4096.0,0.9999999999999643
+survival_raw,enemy_far,0.0,4.5397868702434395e-05
 survival_raw,surrounded,0.0,0.0
 survival_raw,enemy_casting,0.0,0.0
 survival_raw,target_caster,0.0,0.0
@@ -2059,7 +2059,7 @@ survival_stage,combat_onset,1000000.0,0.0
 survival_stage,enemy_count,0.0,0.0
 survival_stage,enemy_close,4096.0,1.0674878334332898e-33
 survival_stage,enemy_mid,4096.0,4.472740153758267e-67
-survival_stage,enemy_far,4096.0,0.9999999999999643
+survival_stage,enemy_far,0.0,4.5397868702434395e-05
 survival_stage,surrounded,0.0,0.0
 survival_stage,enemy_casting,0.0,0.0
 survival_stage,target_caster,0.0,0.0
@@ -2151,7 +2151,7 @@ survival_off_high,combat_onset,1000000.0,0.0
 survival_off_high,enemy_count,0.0,0.0
 survival_off_high,enemy_close,4096.0,1.0674878334332898e-33
 survival_off_high,enemy_mid,4096.0,4.472740153758267e-67
-survival_off_high,enemy_far,4096.0,0.9999999999999643
+survival_off_high,enemy_far,0.0,4.5397868702434395e-05
 survival_off_high,surrounded,0.0,0.0
 survival_off_high,enemy_casting,0.0,0.0
 survival_off_high,target_caster,0.0,0.0
@@ -2243,7 +2243,7 @@ survival_negative_fatigue,combat_onset,1000000.0,0.0
 survival_negative_fatigue,enemy_count,0.0,0.0
 survival_negative_fatigue,enemy_close,4096.0,1.0674878334332898e-33
 survival_negative_fatigue,enemy_mid,4096.0,4.472740153758267e-67
-survival_negative_fatigue,enemy_far,4096.0,0.9999999999999643
+survival_negative_fatigue,enemy_far,0.0,4.5397868702434395e-05
 survival_negative_fatigue,surrounded,0.0,0.0
 survival_negative_fatigue,enemy_casting,0.0,0.0
 survival_negative_fatigue,target_caster,0.0,0.0
@@ -2335,7 +2335,7 @@ survival_raw_edges,combat_onset,1000000.0,0.0
 survival_raw_edges,enemy_count,0.0,0.0
 survival_raw_edges,enemy_close,4096.0,1.0674878334332898e-33
 survival_raw_edges,enemy_mid,4096.0,4.472740153758267e-67
-survival_raw_edges,enemy_far,4096.0,0.9999999999999643
+survival_raw_edges,enemy_far,0.0,4.5397868702434395e-05
 survival_raw_edges,surrounded,0.0,0.0
 survival_raw_edges,enemy_casting,0.0,0.0
 survival_raw_edges,target_caster,0.0,0.0
@@ -2979,7 +2979,7 @@ boss_ttk_centre,combat_onset,1000000.0,0.0
 boss_ttk_centre,enemy_count,0.16666666666666666,0.3382908331057725
 boss_ttk_centre,enemy_close,4096.0,1.0674878334332898e-33
 boss_ttk_centre,enemy_mid,4096.0,4.472740153758267e-67
-boss_ttk_centre,enemy_far,4096.0,0.9999999999999643
+boss_ttk_centre,enemy_far,0.0,4.5397868702434395e-05
 boss_ttk_centre,surrounded,0.0,0.0
 boss_ttk_centre,enemy_casting,0.0,0.0
 boss_ttk_centre,target_caster,0.0,0.0
@@ -3071,7 +3071,7 @@ boss_two_enemies,combat_onset,1000000.0,0.0
 boss_two_enemies,enemy_count,0.3333333333333333,0.5474112289381663
 boss_two_enemies,enemy_close,4096.0,1.0674878334332898e-33
 boss_two_enemies,enemy_mid,4096.0,4.472740153758267e-67
-boss_two_enemies,enemy_far,4096.0,0.9999999999999643
+boss_two_enemies,enemy_far,0.0,4.5397868702434395e-05
 boss_two_enemies,surrounded,0.0,0.0
 boss_two_enemies,enemy_casting,0.0,0.0
 boss_two_enemies,target_caster,0.0,0.0
@@ -3163,7 +3163,7 @@ boss_ttk_zero,combat_onset,1000000.0,0.0
 boss_ttk_zero,enemy_count,0.16666666666666666,0.3382908331057725
 boss_ttk_zero,enemy_close,4096.0,1.0674878334332898e-33
 boss_ttk_zero,enemy_mid,4096.0,4.472740153758267e-67
-boss_ttk_zero,enemy_far,4096.0,0.9999999999999643
+boss_ttk_zero,enemy_far,0.0,4.5397868702434395e-05
 boss_ttk_zero,surrounded,0.0,0.0
 boss_ttk_zero,enemy_casting,0.0,0.0
 boss_ttk_zero,target_caster,0.0,0.0
@@ -3347,7 +3347,7 @@ families_low,combat_onset,1000000.0,0.0
 families_low,enemy_count,0.6666666666666666,0.8183783001996189
 families_low,enemy_close,4096.0,1.0674878334332898e-33
 families_low,enemy_mid,4096.0,4.472740153758267e-67
-families_low,enemy_far,4096.0,0.9999999999999643
+families_low,enemy_far,0.0,4.5397868702434395e-05
 families_low,surrounded,0.0,0.0
 families_low,enemy_casting,0.0,0.0
 families_low,target_caster,0.0,0.0
@@ -3439,7 +3439,7 @@ families_high,combat_onset,1000000.0,0.0
 families_high,enemy_count,0.6666666666666666,0.8183783001996189
 families_high,enemy_close,4096.0,1.0674878334332898e-33
 families_high,enemy_mid,4096.0,4.472740153758267e-67
-families_high,enemy_far,4096.0,0.9999999999999643
+families_high,enemy_far,0.0,4.5397868702434395e-05
 families_high,surrounded,0.0,0.0
 families_high,enemy_casting,0.0,0.0
 families_high,target_caster,0.0,0.0
@@ -3531,7 +3531,7 @@ families_bit31,combat_onset,1000000.0,0.0
 families_bit31,enemy_count,0.0,0.0
 families_bit31,enemy_close,4096.0,1.0674878334332898e-33
 families_bit31,enemy_mid,4096.0,4.472740153758267e-67
-families_bit31,enemy_far,4096.0,0.9999999999999643
+families_bit31,enemy_far,0.0,4.5397868702434395e-05
 families_bit31,surrounded,0.0,0.0
 families_bit31,enemy_casting,0.0,0.0
 families_bit31,target_caster,0.0,0.0
@@ -3623,7 +3623,7 @@ ally_bleedout,combat_onset,1000000.0,0.0
 ally_bleedout,enemy_count,0.0,0.0
 ally_bleedout,enemy_close,4096.0,1.0674878334332898e-33
 ally_bleedout,enemy_mid,4096.0,4.472740153758267e-67
-ally_bleedout,enemy_far,4096.0,0.9999999999999643
+ally_bleedout,enemy_far,0.0,4.5397868702434395e-05
 ally_bleedout,surrounded,0.0,0.0
 ally_bleedout,enemy_casting,0.0,0.0
 ally_bleedout,target_caster,0.0,0.0
@@ -3715,7 +3715,7 @@ underwater_deep,combat_onset,1000000.0,0.0
 underwater_deep,enemy_count,0.0,0.0
 underwater_deep,enemy_close,4096.0,1.0674878334332898e-33
 underwater_deep,enemy_mid,4096.0,4.472740153758267e-67
-underwater_deep,enemy_far,4096.0,0.9999999999999643
+underwater_deep,enemy_far,0.0,4.5397868702434395e-05
 underwater_deep,surrounded,0.0,0.0
 underwater_deep,enemy_casting,0.0,0.0
 underwater_deep,target_caster,0.0,0.0
@@ -3807,7 +3807,7 @@ underwater_centre,combat_onset,1000000.0,0.0
 underwater_centre,enemy_count,0.0,0.0
 underwater_centre,enemy_close,4096.0,1.0674878334332898e-33
 underwater_centre,enemy_mid,4096.0,4.472740153758267e-67
-underwater_centre,enemy_far,4096.0,0.9999999999999643
+underwater_centre,enemy_far,0.0,4.5397868702434395e-05
 underwater_centre,surrounded,0.0,0.0
 underwater_centre,enemy_casting,0.0,0.0
 underwater_centre,target_caster,0.0,0.0
@@ -3899,7 +3899,7 @@ underwater_false_submerged,combat_onset,1000000.0,0.0
 underwater_false_submerged,enemy_count,0.0,0.0
 underwater_false_submerged,enemy_close,4096.0,1.0674878334332898e-33
 underwater_false_submerged,enemy_mid,4096.0,4.472740153758267e-67
-underwater_false_submerged,enemy_far,4096.0,0.9999999999999643
+underwater_false_submerged,enemy_far,0.0,4.5397868702434395e-05
 underwater_false_submerged,surrounded,0.0,0.0
 underwater_false_submerged,enemy_casting,0.0,0.0
 underwater_false_submerged,target_caster,0.0,0.0
@@ -3991,7 +3991,7 @@ falling_deep,combat_onset,1000000.0,0.0
 falling_deep,enemy_count,0.0,0.0
 falling_deep,enemy_close,4096.0,1.0674878334332898e-33
 falling_deep,enemy_mid,4096.0,4.472740153758267e-67
-falling_deep,enemy_far,4096.0,0.9999999999999643
+falling_deep,enemy_far,0.0,4.5397868702434395e-05
 falling_deep,surrounded,0.0,0.0
 falling_deep,enemy_casting,0.0,0.0
 falling_deep,target_caster,0.0,0.0
@@ -4083,7 +4083,7 @@ falling_low_edge,combat_onset,1000000.0,0.0
 falling_low_edge,enemy_count,0.0,0.0
 falling_low_edge,enemy_close,4096.0,1.0674878334332898e-33
 falling_low_edge,enemy_mid,4096.0,4.472740153758267e-67
-falling_low_edge,enemy_far,4096.0,0.9999999999999643
+falling_low_edge,enemy_far,0.0,4.5397868702434395e-05
 falling_low_edge,surrounded,0.0,0.0
 falling_low_edge,enemy_casting,0.0,0.0
 falling_low_edge,target_caster,0.0,0.0
@@ -4175,7 +4175,7 @@ falling_mid,combat_onset,1000000.0,0.0
 falling_mid,enemy_count,0.0,0.0
 falling_mid,enemy_close,4096.0,1.0674878334332898e-33
 falling_mid,enemy_mid,4096.0,4.472740153758267e-67
-falling_mid,enemy_far,4096.0,0.9999999999999643
+falling_mid,enemy_far,0.0,4.5397868702434395e-05
 falling_mid,surrounded,0.0,0.0
 falling_mid,enemy_casting,0.0,0.0
 falling_mid,target_caster,0.0,0.0
@@ -4267,7 +4267,7 @@ falling_top_edge,combat_onset,1000000.0,0.0
 falling_top_edge,enemy_count,0.0,0.0
 falling_top_edge,enemy_close,4096.0,1.0674878334332898e-33
 falling_top_edge,enemy_mid,4096.0,4.472740153758267e-67
-falling_top_edge,enemy_far,4096.0,0.9999999999999643
+falling_top_edge,enemy_far,0.0,4.5397868702434395e-05
 falling_top_edge,surrounded,0.0,0.0
 falling_top_edge,enemy_casting,0.0,0.0
 falling_top_edge,target_caster,0.0,0.0
@@ -4359,7 +4359,7 @@ crosshair_smithing,combat_onset,1000000.0,0.0
 crosshair_smithing,enemy_count,0.0,0.0
 crosshair_smithing,enemy_close,4096.0,1.0674878334332898e-33
 crosshair_smithing,enemy_mid,4096.0,4.472740153758267e-67
-crosshair_smithing,enemy_far,4096.0,0.9999999999999643
+crosshair_smithing,enemy_far,0.0,4.5397868702434395e-05
 crosshair_smithing,surrounded,0.0,0.0
 crosshair_smithing,enemy_casting,0.0,0.0
 crosshair_smithing,target_caster,0.0,0.0
@@ -4451,7 +4451,7 @@ crosshair_enchanting,combat_onset,1000000.0,0.0
 crosshair_enchanting,enemy_count,0.0,0.0
 crosshair_enchanting,enemy_close,4096.0,1.0674878334332898e-33
 crosshair_enchanting,enemy_mid,4096.0,4.472740153758267e-67
-crosshair_enchanting,enemy_far,4096.0,0.9999999999999643
+crosshair_enchanting,enemy_far,0.0,4.5397868702434395e-05
 crosshair_enchanting,surrounded,0.0,0.0
 crosshair_enchanting,enemy_casting,0.0,0.0
 crosshair_enchanting,target_caster,0.0,0.0
@@ -4543,7 +4543,7 @@ crosshair_alchemy,combat_onset,1000000.0,0.0
 crosshair_alchemy,enemy_count,0.0,0.0
 crosshair_alchemy,enemy_close,4096.0,1.0674878334332898e-33
 crosshair_alchemy,enemy_mid,4096.0,4.472740153758267e-67
-crosshair_alchemy,enemy_far,4096.0,0.9999999999999643
+crosshair_alchemy,enemy_far,0.0,4.5397868702434395e-05
 crosshair_alchemy,surrounded,0.0,0.0
 crosshair_alchemy,enemy_casting,0.0,0.0
 crosshair_alchemy,target_caster,0.0,0.0
@@ -4635,7 +4635,7 @@ crosshair_workstation4,combat_onset,1000000.0,0.0
 crosshair_workstation4,enemy_count,0.0,0.0
 crosshair_workstation4,enemy_close,4096.0,1.0674878334332898e-33
 crosshair_workstation4,enemy_mid,4096.0,4.472740153758267e-67
-crosshair_workstation4,enemy_far,4096.0,0.9999999999999643
+crosshair_workstation4,enemy_far,0.0,4.5397868702434395e-05
 crosshair_workstation4,surrounded,0.0,0.0
 crosshair_workstation4,enemy_casting,0.0,0.0
 crosshair_workstation4,target_caster,0.0,0.0
@@ -4727,7 +4727,7 @@ enchanted_bow,combat_onset,1000000.0,0.0
 enchanted_bow,enemy_count,0.0,0.0
 enchanted_bow,enemy_close,4096.0,1.0674878334332898e-33
 enchanted_bow,enemy_mid,4096.0,4.472740153758267e-67
-enchanted_bow,enemy_far,4096.0,0.9999999999999643
+enchanted_bow,enemy_far,0.0,4.5397868702434395e-05
 enchanted_bow,surrounded,0.0,0.0
 enchanted_bow,enemy_casting,0.0,0.0
 enchanted_bow,target_caster,0.0,0.0
@@ -4819,7 +4819,7 @@ crossbow_bolts,combat_onset,1000000.0,0.0
 crossbow_bolts,enemy_count,0.0,0.0
 crossbow_bolts,enemy_close,4096.0,1.0674878334332898e-33
 crossbow_bolts,enemy_mid,4096.0,4.472740153758267e-67
-crossbow_bolts,enemy_far,4096.0,0.9999999999999643
+crossbow_bolts,enemy_far,0.0,4.5397868702434395e-05
 crossbow_bolts,surrounded,0.0,0.0
 crossbow_bolts,enemy_casting,0.0,0.0
 crossbow_bolts,target_caster,0.0,0.0
@@ -4911,7 +4911,7 @@ bow_ammo_overfull,combat_onset,1000000.0,0.0
 bow_ammo_overfull,enemy_count,0.0,0.0
 bow_ammo_overfull,enemy_close,4096.0,1.0674878334332898e-33
 bow_ammo_overfull,enemy_mid,4096.0,4.472740153758267e-67
-bow_ammo_overfull,enemy_far,4096.0,0.9999999999999643
+bow_ammo_overfull,enemy_far,0.0,4.5397868702434395e-05
 bow_ammo_overfull,surrounded,0.0,0.0
 bow_ammo_overfull,enemy_casting,0.0,0.0
 bow_ammo_overfull,target_caster,0.0,0.0
@@ -5003,7 +5003,7 @@ bow_ammo_centre,combat_onset,1000000.0,0.0
 bow_ammo_centre,enemy_count,0.0,0.0
 bow_ammo_centre,enemy_close,4096.0,1.0674878334332898e-33
 bow_ammo_centre,enemy_mid,4096.0,4.472740153758267e-67
-bow_ammo_centre,enemy_far,4096.0,0.9999999999999643
+bow_ammo_centre,enemy_far,0.0,4.5397868702434395e-05
 bow_ammo_centre,surrounded,0.0,0.0
 bow_ammo_centre,enemy_casting,0.0,0.0
 bow_ammo_centre,target_caster,0.0,0.0
@@ -5095,7 +5095,7 @@ loadout_everything,combat_onset,1000000.0,0.0
 loadout_everything,enemy_count,0.0,0.0
 loadout_everything,enemy_close,4096.0,1.0674878334332898e-33
 loadout_everything,enemy_mid,4096.0,4.472740153758267e-67
-loadout_everything,enemy_far,4096.0,0.9999999999999643
+loadout_everything,enemy_far,0.0,4.5397868702434395e-05
 loadout_everything,surrounded,0.0,0.0
 loadout_everything,enemy_casting,0.0,0.0
 loadout_everything,target_caster,0.0,0.0
@@ -5187,7 +5187,7 @@ shield_only,combat_onset,1000000.0,0.0
 shield_only,enemy_count,0.0,0.0
 shield_only,enemy_close,4096.0,1.0674878334332898e-33
 shield_only,enemy_mid,4096.0,4.472740153758267e-67
-shield_only,enemy_far,4096.0,0.9999999999999643
+shield_only,enemy_far,0.0,4.5397868702434395e-05
 shield_only,surrounded,0.0,0.0
 shield_only,enemy_casting,0.0,0.0
 shield_only,target_caster,0.0,0.0
@@ -5279,7 +5279,7 @@ spell_only,combat_onset,1000000.0,0.0
 spell_only,enemy_count,0.0,0.0
 spell_only,enemy_close,4096.0,1.0674878334332898e-33
 spell_only,enemy_mid,4096.0,4.472740153758267e-67
-spell_only,enemy_far,4096.0,0.9999999999999643
+spell_only,enemy_far,0.0,4.5397868702434395e-05
 spell_only,surrounded,0.0,0.0
 spell_only,enemy_casting,0.0,0.0
 spell_only,target_caster,0.0,0.0
@@ -5371,7 +5371,7 @@ downtime_centre,combat_onset,1000000.0,0.0
 downtime_centre,enemy_count,0.0,0.0
 downtime_centre,enemy_close,4096.0,1.0674878334332898e-33
 downtime_centre,enemy_mid,4096.0,4.472740153758267e-67
-downtime_centre,enemy_far,4096.0,0.9999999999999643
+downtime_centre,enemy_far,0.0,4.5397868702434395e-05
 downtime_centre,surrounded,0.0,0.0
 downtime_centre,enemy_casting,0.0,0.0
 downtime_centre,target_caster,0.0,0.0
@@ -5463,7 +5463,7 @@ combat_just_ended,combat_onset,1000000.0,0.0
 combat_just_ended,enemy_count,0.0,0.0
 combat_just_ended,enemy_close,4096.0,1.0674878334332898e-33
 combat_just_ended,enemy_mid,4096.0,4.472740153758267e-67
-combat_just_ended,enemy_far,4096.0,0.9999999999999643
+combat_just_ended,enemy_far,0.0,4.5397868702434395e-05
 combat_just_ended,surrounded,0.0,0.0
 combat_just_ended,enemy_casting,0.0,0.0
 combat_just_ended,target_caster,0.0,0.0
@@ -5555,7 +5555,7 @@ combat_ended_5s,combat_onset,1000000.0,0.0
 combat_ended_5s,enemy_count,0.0,0.0
 combat_ended_5s,enemy_close,4096.0,1.0674878334332898e-33
 combat_ended_5s,enemy_mid,4096.0,4.472740153758267e-67
-combat_ended_5s,enemy_far,4096.0,0.9999999999999643
+combat_ended_5s,enemy_far,0.0,4.5397868702434395e-05
 combat_ended_5s,surrounded,0.0,0.0
 combat_ended_5s,enemy_casting,0.0,0.0
 combat_ended_5s,target_caster,0.0,0.0
@@ -5739,7 +5739,7 @@ in_combat_timers_never,combat_onset,1000000.0,0.0
 in_combat_timers_never,enemy_count,0.0,0.0
 in_combat_timers_never,enemy_close,4096.0,1.0674878334332898e-33
 in_combat_timers_never,enemy_mid,4096.0,4.472740153758267e-67
-in_combat_timers_never,enemy_far,4096.0,0.9999999999999643
+in_combat_timers_never,enemy_far,0.0,4.5397868702434395e-05
 in_combat_timers_never,surrounded,0.0,0.0
 in_combat_timers_never,enemy_casting,0.0,0.0
 in_combat_timers_never,target_caster,0.0,0.0
@@ -5831,7 +5831,7 @@ enemy_casting_frost_shock_now,combat_onset,1000000.0,0.0
 enemy_casting_frost_shock_now,enemy_count,0.3333333333333333,0.5474112289381663
 enemy_casting_frost_shock_now,enemy_close,4096.0,1.0674878334332898e-33
 enemy_casting_frost_shock_now,enemy_mid,4096.0,4.472740153758267e-67
-enemy_casting_frost_shock_now,enemy_far,4096.0,0.9999999999999643
+enemy_casting_frost_shock_now,enemy_far,0.0,4.5397868702434395e-05
 enemy_casting_frost_shock_now,surrounded,0.0,0.0
 enemy_casting_frost_shock_now,enemy_casting,1.0,1.0
 enemy_casting_frost_shock_now,target_caster,0.0,0.0

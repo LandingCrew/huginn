@@ -256,8 +256,7 @@ are in every head):
 | nothing | an ended episode, ≥ 1 s long, unanswered when its grace runs out: one `nothing` record, joined to the context taken at the onset |
 | paused | episodes neither start nor end while the game is paused (a menu): the world is frozen, so a change then is a wall-clock decay or the player's own menu action, which a pick inside the still-open episode answers |
 
-Every need takes part, the always-on ones too (`loadout_*`, `downtime`,
-`enemy_far` -- which reads 1 with no enemy at all, R3's distance default): they
+Every need takes part, the always-on ones too (`loadout_*`, `downtime`): they
 rarely end unanswered, since a weapon swap that ends a loadout episode is a
 selection, and the fit can drop any need it does not want -- the record names
 it. Several needs that start on one tick share one onset context. A press does

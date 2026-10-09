@@ -127,11 +127,17 @@ TEST_CASE("combat timers: onset only in combat, ended-recent only out of it, dow
     CHECK(In(s, NeedId::downtime) == 0.0f);
 }
 
-TEST_CASE("distance bands: no hostile reads far")
+TEST_CASE("distance bands: no hostile is neither close nor far")
 {
     NeedSnapshot s;
     CHECK(In(s, NeedId::enemy_close) == 4096.0f);
+    // enemy_far reads 0 with no hostile (it read 1 before 0.23.15, an always-on
+    // episode through every stretch of exploring).
+    CHECK(In(s, NeedId::enemy_far) == 0.0f);
+    CHECK(Val(s, NeedId::enemy_far) < 1e-3f);
+    s.closestEnemy = 3000.0f;
     CHECK(Val(s, NeedId::enemy_far) > 0.999f);
+    s.closestEnemy = -1.0f;
     CHECK(Val(s, NeedId::enemy_close) < 1e-6f);
     s.closestEnemy = 600.0f;
     CHECK(Val(s, NeedId::enemy_mid) == 1.0f);
