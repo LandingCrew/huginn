@@ -1,44 +1,19 @@
 #include "MiniRegex.h"
 
+#include <algorithm>
+#include <array>
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <vector>
+
 namespace Huginn::Core
 {
-    // =========================================================================
-    // The parsed pattern
-    // =========================================================================
-    struct MiniRegex::Node
-    {
-        enum class Kind : std::uint8_t
-        {
-            Char, Any, Class,                    // single-byte atoms
-            WordBoundary, NotWordBoundary, Begin, End,  // zero-width assertions
-            Group, Repeat
-        };
-        enum class Look : std::uint8_t { None, Ahead, NegAhead, Behind, NegBehind };
-
-        Kind kind = Kind::Char;
-        unsigned char ch = 0;
-        std::array<std::uint64_t, 4> set{};  // Class: bit per byte value
-
-        // Group
-        std::vector<Seq*> alts;
-        int capture = -1;  // 0-based capture index, -1 if not capturing
-        Look look = Look::None;
-
-        // Repeat
-        Node* child = nullptr;
-        Seq* single = nullptr;  // {child}, for matching a non-atom child
-        int min = 0;
-        int max = -1;  // -1 = unbounded
-        bool greedy = true;
-
-        [[nodiscard]] bool IsAtom() const noexcept
-        {
-            return kind == Kind::Char || kind == Kind::Any || kind == Kind::Class;
-        }
-    };
-
     namespace
     {
+        // =====================================================================
+        // Byte sets
+        // =====================================================================
         using Set = std::array<std::uint64_t, 4>;
 
         void Add(Set& s, unsigned char c) noexcept { s[c >> 6] |= (std::uint64_t{ 1 } << (c & 63)); }
@@ -82,6 +57,19 @@ namespace Huginn::Core
             for (const char c : std::string_view(" \t\n\r\f\v")) Add(s, static_cast<unsigned char>(c));
             return s;
         }
+        [[nodiscard]] Set AnySet() noexcept
+        {
+            Set s{};
+            Invert(s);
+            s['\n' >> 6] &= ~(std::uint64_t{ 1 } << ('\n' & 63));
+            return s;
+        }
+        [[nodiscard]] Set OneByte(unsigned char c) noexcept
+        {
+            Set s{};
+            Add(s, c);
+            return s;
+        }
 
         /// The class escape's set (\w \d \s and their negations); false if `e`
         /// is not one.
@@ -98,8 +86,8 @@ namespace Huginn::Core
             }
         }
 
-        /// A literal escape (\. \( \- ... \n \t). False for a letter or digit
-        /// with no meaning here, so a typo is an error rather than a literal.
+        /// A literal escape (\. \( \- ... \n \t \r). False for any other letter
+        /// or digit, so a typo or a backreference is an error, not a literal.
         [[nodiscard]] bool LiteralEscape(char e, unsigned char& out) noexcept
         {
             if (e == 'n') { out = '\n'; return true; }
@@ -110,561 +98,785 @@ namespace Huginn::Core
             out = u;
             return true;
         }
-    }
 
-    // =========================================================================
-    // Parser
-    // =========================================================================
-    class MiniRegexParser
-    {
-    public:
-        MiniRegexParser(MiniRegex& re, std::string_view p) : re_(re), p_(p) {}
+        // =====================================================================
+        // The parsed pattern (compile time only)
+        // =====================================================================
+        struct Node;
+        using Seq = std::vector<Node*>;
 
-        bool Parse()
+        struct Node
         {
-            auto* root = NewNode(MiniRegex::Node::Kind::Group);
-            if (!ParseAlternatives(*root)) return false;
-            if (i_ != p_.size()) return Fail("unbalanced ')'");
-            re_.root_ = root;
-            return true;
-        }
+            enum class Kind : std::uint8_t { Atom, WordBoundary, NotWordBoundary, Begin, End, Group, Repeat };
+            enum class Look : std::uint8_t { None, Ahead, NegAhead, Behind, NegBehind };
 
-    private:
-        using Node = MiniRegex::Node;
-        using Kind = Node::Kind;
+            Kind kind = Kind::Atom;
+            Set set{};                 // Atom
+            std::vector<Seq*> alts;    // Group
+            int capture = -1;
+            Look look = Look::None;
+            Node* child = nullptr;     // Repeat
+            int min = 0;
+            int max = -1;              // -1 = unbounded
+            bool greedy = true;
+        };
 
-        MiniRegex& re_;
-        std::string_view p_;
-        std::size_t i_ = 0;
-
-        bool Fail(const char* why)
+        struct Arena
         {
-            if (re_.error_.empty()) {
-                re_.error_ = std::string(why) + " at " + std::to_string(i_) + " in /" + std::string(p_) + "/";
+            std::vector<std::unique_ptr<Node>> nodes;
+            std::vector<std::unique_ptr<Seq>> seqs;
+            Node* NewNode(Node::Kind k)
+            {
+                nodes.push_back(std::make_unique<Node>());
+                nodes.back()->kind = k;
+                return nodes.back().get();
             }
-            return false;
-        }
+            Seq* NewSeq()
+            {
+                seqs.push_back(std::make_unique<Seq>());
+                return seqs.back().get();
+            }
+        };
 
-        Node* NewNode(Kind k)
+        // =====================================================================
+        // Parser (Python's sre_parse rules for the supported subset)
+        // =====================================================================
+        class Parser
         {
-            re_.nodes_.push_back(std::make_unique<Node>());
-            auto* n = re_.nodes_.back().get();
-            n->kind = k;
-            return n;
-        }
-        MiniRegex::Seq* NewSeq()
-        {
-            re_.seqs_.push_back(std::make_unique<MiniRegex::Seq>());
-            return re_.seqs_.back().get();
-        }
+        public:
+            Parser(Arena& a, std::string_view p, std::string& error) : a_(a), p_(p), error_(error) {}
 
-        [[nodiscard]] bool AtEnd() const noexcept { return i_ >= p_.size(); }
-        [[nodiscard]] char Peek(std::size_t ahead = 0) const noexcept
-        {
-            return i_ + ahead < p_.size() ? p_[i_ + ahead] : '\0';
-        }
-
-        // alternatives := seq ('|' seq)*  -- into group.alts
-        bool ParseAlternatives(Node& group)
-        {
-            for (;;) {
-                auto* seq = NewSeq();
-                if (!ParseSequence(*seq)) return false;
-                group.alts.push_back(seq);
-                if (!AtEnd() && Peek() == '|') {
-                    ++i_;
-                    continue;
+            Node* Parse(std::size_t& groups)
+            {
+                if (p_.find('\0') != std::string_view::npos) {
+                    Fail("NUL byte in pattern");
+                    return nullptr;
                 }
-                return true;
-            }
-        }
-
-        bool ParseSequence(MiniRegex::Seq& seq)
-        {
-            while (!AtEnd() && Peek() != '|' && Peek() != ')') {
-                Node* atom = nullptr;
-                if (!ParseAtom(atom)) return false;
-                if (!ParseQuantifier(atom)) return false;
-                seq.push_back(atom);
-            }
-            return true;
-        }
-
-        bool ParseAtom(Node*& out)
-        {
-            const char c = Peek();
-            if (c == '(') return ParseGroup(out);
-            if (c == '[') return ParseClass(out);
-            if (c == '.') {
-                ++i_;
-                out = NewNode(Kind::Any);
-                return true;
-            }
-            if (c == '^') {
-                ++i_;
-                out = NewNode(Kind::Begin);
-                return true;
-            }
-            if (c == '$') {
-                ++i_;
-                out = NewNode(Kind::End);
-                return true;
-            }
-            if (c == '*' || c == '+' || c == '?') return Fail("nothing to repeat");
-            if (c == '\\') {
-                ++i_;
-                if (AtEnd()) return Fail("trailing backslash");
-                const char e = p_[i_++];
-                if (e == 'b') { out = NewNode(Kind::WordBoundary); return true; }
-                if (e == 'B') { out = NewNode(Kind::NotWordBoundary); return true; }
-                Set s{};
-                if (ClassEscape(e, s)) {
-                    out = NewNode(Kind::Class);
-                    out->set = s;
-                    return true;
+                auto* root = a_.NewNode(Node::Kind::Group);
+                if (!ParseAlternatives(*root)) return nullptr;
+                if (i_ != p_.size()) {
+                    Fail("unbalanced ')'");
+                    return nullptr;
                 }
-                unsigned char lit = 0;
-                if (!LiteralEscape(e, lit)) return Fail("unsupported escape");
-                out = NewNode(Kind::Char);
-                out->ch = lit;
-                return true;
+                groups = groups_;
+                return root;
             }
-            ++i_;
-            out = NewNode(Kind::Char);
-            out->ch = static_cast<unsigned char>(c);
-            return true;
-        }
 
-        bool ParseGroup(Node*& out)
-        {
-            ++i_;  // '('
-            auto* g = NewNode(Kind::Group);
-            if (Peek() == '?') {
-                const char a = Peek(1);
-                const char b = Peek(2);
-                if (a == ':') { i_ += 2; }
-                else if (a == '=') { i_ += 2; g->look = Node::Look::Ahead; }
-                else if (a == '!') { i_ += 2; g->look = Node::Look::NegAhead; }
-                else if (a == '<' && b == '=') { i_ += 3; g->look = Node::Look::Behind; }
-                else if (a == '<' && b == '!') { i_ += 3; g->look = Node::Look::NegBehind; }
-                else return Fail("unsupported group");
-            }
-            else {
-                g->capture = static_cast<int>(re_.groupCount_++);
-            }
-            if (!ParseAlternatives(*g)) return false;
-            if (AtEnd() || Peek() != ')') return Fail("missing ')'");
-            ++i_;
-            out = g;
-            return true;
-        }
+        private:
+            Arena& a_;
+            std::string_view p_;
+            std::string& error_;
+            std::size_t i_ = 0;
+            std::size_t groups_ = 0;
 
-        bool ParseClass(Node*& out)
-        {
-            ++i_;  // '['
-            Set s{};
-            bool negate = false;
-            if (Peek() == '^') {
-                negate = true;
-                ++i_;
+            bool Fail(const char* why)
+            {
+                if (error_.empty()) {
+                    error_ = std::string(why) + " at " + std::to_string(i_) + " in /" + std::string(p_) + "/";
+                }
+                return false;
             }
-            bool first = true;
-            while (!AtEnd() && (Peek() != ']' || first)) {
-                first = false;
-                unsigned char lo = 0;
-                char c = p_[i_++];
-                if (c == '\\') {
-                    if (AtEnd()) return Fail("trailing backslash in class");
-                    const char e = p_[i_++];
-                    Set es{};
-                    if (ClassEscape(e, es)) {
-                        Merge(s, es);
+
+            [[nodiscard]] bool AtEnd() const noexcept { return i_ >= p_.size(); }
+            [[nodiscard]] char Peek(std::size_t ahead = 0) const noexcept
+            {
+                return i_ + ahead < p_.size() ? p_[i_ + ahead] : '\0';
+            }
+            [[nodiscard]] bool IsDigitAt(std::size_t at) const noexcept
+            {
+                return at < p_.size() && p_[at] >= '0' && p_[at] <= '9';
+            }
+
+            bool ParseAlternatives(Node& group)
+            {
+                for (;;) {
+                    auto* seq = a_.NewSeq();
+                    if (!ParseSequence(*seq)) return false;
+                    group.alts.push_back(seq);
+                    if (!AtEnd() && Peek() == '|') {
+                        ++i_;
                         continue;
                     }
-                    if (!LiteralEscape(e, lo)) return Fail("unsupported escape in class");
-                }
-                else {
-                    lo = static_cast<unsigned char>(c);
-                }
-                if (Peek() == '-' && Peek(1) != ']' && Peek(1) != '\0') {
-                    ++i_;
-                    unsigned char hi = 0;
-                    char h = p_[i_++];
-                    if (h == '\\') {
-                        if (AtEnd()) return Fail("trailing backslash in class");
-                        if (!LiteralEscape(p_[i_++], hi)) return Fail("bad range end");
-                    }
-                    else {
-                        hi = static_cast<unsigned char>(h);
-                    }
-                    if (hi < lo) return Fail("bad range");
-                    AddRange(s, lo, hi);
-                }
-                else {
-                    Add(s, lo);
+                    return true;
                 }
             }
-            if (AtEnd()) return Fail("missing ']'");
-            ++i_;  // ']'
-            if (negate) Invert(s);
-            out = NewNode(Kind::Class);
-            out->set = s;
-            return true;
-        }
 
-        bool ParseNumber(int& out)
-        {
-            if (AtEnd() || Peek() < '0' || Peek() > '9') return false;
-            int v = 0;
-            while (!AtEnd() && Peek() >= '0' && Peek() <= '9') {
-                v = v * 10 + (Peek() - '0');
-                if (v > 100000) return false;
-                ++i_;
-            }
-            out = v;
-            return true;
-        }
-
-        bool ParseQuantifier(Node*& atom)
-        {
-            if (AtEnd()) return true;
-            int mn = 0;
-            int mx = -1;
-            const char c = Peek();
-            if (c == '*') { ++i_; mn = 0; mx = -1; }
-            else if (c == '+') { ++i_; mn = 1; mx = -1; }
-            else if (c == '?') { ++i_; mn = 0; mx = 1; }
-            else if (c == '{') {
-                // {n}, {n,}, {n,m}; anything else is a literal '{' (as in Python)
-                const std::size_t save = i_;
-                ++i_;
-                int a = 0;
-                if (!ParseNumber(a)) { i_ = save; return true; }
-                int b = a;
-                if (Peek() == ',') {
-                    ++i_;
-                    if (Peek() == '}') b = -1;
-                    else if (!ParseNumber(b)) { i_ = save; return true; }
+            bool ParseSequence(Seq& seq)
+            {
+                while (!AtEnd() && Peek() != '|' && Peek() != ')') {
+                    Node* atom = nullptr;
+                    if (!ParseAtom(atom)) return false;
+                    if (!ParseQuantifier(atom)) return false;
+                    seq.push_back(atom);
                 }
-                if (Peek() != '}') { i_ = save; return true; }
-                ++i_;
-                if (b >= 0 && b < a) return Fail("bad repeat bounds");
-                mn = a;
-                mx = b;
-            }
-            else {
                 return true;
             }
-            const auto k = atom->kind;
-            if (k == Kind::Begin || k == Kind::End || k == Kind::WordBoundary || k == Kind::NotWordBoundary ||
-                (k == Kind::Group && atom->look != Node::Look::None)) {
-                return Fail("cannot repeat an assertion");
+
+            /// At a '{': does a Python brace quantifier follow? Fills bounds.
+            /// "{}" and anything unclosed are literals; "{,}" is {0,inf}.
+            bool BraceQuantifier(std::size_t at, int& mn, int& mx, std::size_t& endAt)
+            {
+                if (at >= p_.size() || p_[at] != '{') return false;
+                std::size_t j = at + 1;
+                if (j < p_.size() && p_[j] == '}') return false;
+                std::string lo, hi;
+                while (IsDigitAt(j)) lo += p_[j++];
+                bool comma = false;
+                if (j < p_.size() && p_[j] == ',') {
+                    comma = true;
+                    ++j;
+                    while (IsDigitAt(j)) hi += p_[j++];
+                }
+                if (j >= p_.size() || p_[j] != '}') return false;
+                if (!comma) hi = lo;
+                if (lo.size() > 6 || hi.size() > 6) return false;
+                mn = lo.empty() ? 0 : std::stoi(lo);
+                mx = hi.empty() ? -1 : std::stoi(hi);
+                endAt = j + 1;
+                return true;
             }
-            auto* r = NewNode(Kind::Repeat);
-            r->child = atom;
-            r->min = mn;
-            r->max = mx;
-            if (Peek() == '?') {
+
+            bool ParseAtom(Node*& out)
+            {
+                const char c = Peek();
+                if (c == '(') return ParseGroup(out);
+                if (c == '[') return ParseClass(out);
+                if (c == '*' || c == '+' || c == '?') return Fail("nothing to repeat");
+                {
+                    int mn = 0, mx = 0;
+                    std::size_t endAt = 0;
+                    if (c == '{' && BraceQuantifier(i_, mn, mx, endAt)) return Fail("nothing to repeat");
+                }
+                if (c == '.') {
+                    ++i_;
+                    out = a_.NewNode(Node::Kind::Atom);
+                    out->set = AnySet();
+                    return true;
+                }
+                if (c == '^') {
+                    ++i_;
+                    out = a_.NewNode(Node::Kind::Begin);
+                    return true;
+                }
+                if (c == '$') {
+                    ++i_;
+                    out = a_.NewNode(Node::Kind::End);
+                    return true;
+                }
+                if (c == '\\') {
+                    ++i_;
+                    if (AtEnd()) return Fail("trailing backslash");
+                    const char e = p_[i_++];
+                    if (e == 'b') { out = a_.NewNode(Node::Kind::WordBoundary); return true; }
+                    if (e == 'B') { out = a_.NewNode(Node::Kind::NotWordBoundary); return true; }
+                    Set s{};
+                    if (ClassEscape(e, s)) {
+                        out = a_.NewNode(Node::Kind::Atom);
+                        out->set = s;
+                        return true;
+                    }
+                    unsigned char lit = 0;
+                    if (!LiteralEscape(e, lit)) return Fail("unsupported escape");
+                    out = a_.NewNode(Node::Kind::Atom);
+                    out->set = OneByte(lit);
+                    return true;
+                }
                 ++i_;
-                r->greedy = false;
+                out = a_.NewNode(Node::Kind::Atom);
+                out->set = OneByte(static_cast<unsigned char>(c));
+                return true;
             }
-            // A second quantifier ("a**", possessive "a*+") is outside the subset.
-            if (Peek() == '*' || Peek() == '+' || Peek() == '?') return Fail("multiple repeat");
-            r->single = NewSeq();
-            r->single->push_back(atom);
-            atom = r;
-            return true;
+
+            bool ParseGroup(Node*& out)
+            {
+                ++i_;  // '('
+                auto* g = a_.NewNode(Node::Kind::Group);
+                if (Peek() == '?') {
+                    const char a = Peek(1);
+                    const char b = Peek(2);
+                    if (a == ':') { i_ += 2; }
+                    else if (a == '=') { i_ += 2; g->look = Node::Look::Ahead; }
+                    else if (a == '!') { i_ += 2; g->look = Node::Look::NegAhead; }
+                    else if (a == '<' && b == '=') { i_ += 3; g->look = Node::Look::Behind; }
+                    else if (a == '<' && b == '!') { i_ += 3; g->look = Node::Look::NegBehind; }
+                    else return Fail("unsupported group");
+                }
+                else {
+                    g->capture = static_cast<int>(groups_++);
+                }
+                if (!ParseAlternatives(*g)) return false;
+                if (AtEnd() || Peek() != ')') return Fail("missing ')'");
+                ++i_;
+                out = g;
+                return true;
+            }
+
+            bool ParseClass(Node*& out)
+            {
+                ++i_;  // '['
+                Set s{};
+                bool negate = false;
+                if (Peek() == '^') {
+                    negate = true;
+                    ++i_;
+                }
+                bool first = true;
+                while (!AtEnd() && (Peek() != ']' || first)) {
+                    first = false;
+                    unsigned char lo = 0;
+                    const char c = p_[i_++];
+                    if (c == '\\') {
+                        if (AtEnd()) return Fail("trailing backslash in class");
+                        const char e = p_[i_++];
+                        Set es{};
+                        if (ClassEscape(e, es)) {
+                            Merge(s, es);
+                            continue;
+                        }
+                        if (!LiteralEscape(e, lo)) return Fail("unsupported escape in class");
+                    }
+                    else {
+                        lo = static_cast<unsigned char>(c);
+                    }
+                    if (Peek() == '-' && i_ + 1 < p_.size() && p_[i_ + 1] != ']') {
+                        ++i_;
+                        unsigned char hi = 0;
+                        const char h = p_[i_++];
+                        if (h == '\\') {
+                            if (AtEnd()) return Fail("trailing backslash in class");
+                            if (!LiteralEscape(p_[i_++], hi)) return Fail("bad range end");
+                        }
+                        else {
+                            hi = static_cast<unsigned char>(h);
+                        }
+                        if (hi < lo) return Fail("bad range");
+                        AddRange(s, lo, hi);
+                    }
+                    else {
+                        Add(s, lo);
+                    }
+                }
+                if (AtEnd()) return Fail("missing ']'");
+                ++i_;  // ']'
+                if (negate) Invert(s);
+                out = a_.NewNode(Node::Kind::Atom);
+                out->set = s;
+                return true;
+            }
+
+            bool ParseQuantifier(Node*& atom)
+            {
+                if (AtEnd()) return true;
+                int mn = 0;
+                int mx = -1;
+                const char c = Peek();
+                if (c == '*') { ++i_; mn = 0; mx = -1; }
+                else if (c == '+') { ++i_; mn = 1; mx = -1; }
+                else if (c == '?') { ++i_; mn = 0; mx = 1; }
+                else if (c == '{') {
+                    std::size_t endAt = 0;
+                    if (!BraceQuantifier(i_, mn, mx, endAt)) return true;  // a literal '{'
+                    i_ = endAt;
+                    if (mx >= 0 && mx < mn) return Fail("min repeat greater than max repeat");
+                }
+                else {
+                    return true;
+                }
+                const auto k = atom->kind;
+                if (k == Node::Kind::Begin || k == Node::Kind::End || k == Node::Kind::WordBoundary ||
+                    k == Node::Kind::NotWordBoundary || (k == Node::Kind::Group && atom->look != Node::Look::None)) {
+                    return Fail("nothing to repeat");
+                }
+                auto* r = a_.NewNode(Node::Kind::Repeat);
+                r->child = atom;
+                r->min = mn;
+                r->max = mx;
+                if (Peek() == '?') {
+                    ++i_;
+                    r->greedy = false;
+                }
+                // A second quantifier (`a**`, `x{2}{3}`, possessive `a*+`) is an error,
+                // as in Python (which reads `*+` as possessive: outside the subset).
+                int m2 = 0, x2 = 0;
+                std::size_t e2 = 0;
+                if (Peek() == '*' || Peek() == '+' || Peek() == '?' || (Peek() == '{' && BraceQuantifier(i_, m2, x2, e2))) {
+                    return Fail("multiple repeat");
+                }
+                atom = r;
+                return true;
+            }
+        };
+
+        // =====================================================================
+        // Analysis: width (lookbehind) and first bytes (search prefilter)
+        // =====================================================================
+        struct Width
+        {
+            long long min = 0;
+            long long max = 0;  // -1 = unbounded
+        };
+
+        Width WidthOf(const Node& n);
+        Width WidthOfSeq(const Seq& s)
+        {
+            Width w;
+            for (const auto* n : s) {
+                const Width c = WidthOf(*n);
+                w.min += c.min;
+                w.max = (w.max < 0 || c.max < 0) ? -1 : w.max + c.max;
+            }
+            return w;
         }
-    };
+        Width WidthOf(const Node& n)
+        {
+            switch (n.kind) {
+                case Node::Kind::Atom: return { 1, 1 };
+                case Node::Kind::Group: {
+                    if (n.look != Node::Look::None) return { 0, 0 };
+                    Width w{ -1, 0 };
+                    for (const auto* alt : n.alts) {
+                        const Width a = WidthOfSeq(*alt);
+                        w.min = w.min < 0 ? a.min : std::min(w.min, a.min);
+                        w.max = (w.max < 0 || a.max < 0) ? -1 : std::max(w.max, a.max);
+                    }
+                    if (w.min < 0) w.min = 0;
+                    return w;
+                }
+                case Node::Kind::Repeat: {
+                    const Width c = WidthOf(*n.child);
+                    Width w;
+                    w.min = c.min * n.min;
+                    w.max = (c.max < 0 || n.max < 0) ? -1 : c.max * n.max;
+                    return w;
+                }
+                default: return { 0, 0 };
+            }
+        }
 
-    // =========================================================================
-    // Search prefilter: which bytes can start a match
-    // =========================================================================
-    namespace
-    {
-        using RNode = MiniRegex::Node;
-        bool FirstOfNode(const RNode& n, Set& first);
-
-        /// Adds to `first` the bytes a non-empty match of s[from..] can start
-        /// with; true if s[from..] can match the empty string. Zero-width
-        /// assertions are transparent (they never add a byte).
-        bool FirstOfSeq(const MiniRegex::Seq& s, Set& first)
+        bool FirstOfNode(const Node& n, Set& first);
+        /// Adds the bytes a non-empty match of `s` can start with; true if `s`
+        /// can match the empty string. Zero-width assertions are transparent.
+        bool FirstOfSeq(const Seq& s, Set& first)
         {
             for (const auto* n : s) {
                 if (!FirstOfNode(*n, first)) return false;
             }
             return true;
         }
-
-        bool FirstOfNode(const RNode& n, Set& first)
+        bool FirstOfNode(const Node& n, Set& first)
         {
             switch (n.kind) {
-                case RNode::Kind::Char: Add(first, n.ch); return false;
-                case RNode::Kind::Any: {
-                    Set all{};
-                    Invert(all);
-                    Merge(first, all);
-                    return false;
-                }
-                case RNode::Kind::Class: Merge(first, n.set); return false;
-                case RNode::Kind::WordBoundary:
-                case RNode::Kind::NotWordBoundary:
-                case RNode::Kind::Begin:
-                case RNode::Kind::End: return true;
-                case RNode::Kind::Group: {
-                    if (n.look != RNode::Look::None) return true;
+                case Node::Kind::Atom: Merge(first, n.set); return false;
+                case Node::Kind::Group: {
+                    if (n.look != Node::Look::None) return true;
                     bool empty = false;
                     for (const auto* alt : n.alts) {
                         if (FirstOfSeq(*alt, first)) empty = true;
                     }
                     return empty;
                 }
-                case RNode::Kind::Repeat: return FirstOfNode(*n.child, first) || n.min == 0;
+                case Node::Kind::Repeat: return FirstOfNode(*n.child, first) || n.min == 0;
+                default: return true;
             }
-            return true;
-        }
-    }
-
-    // =========================================================================
-    // Matcher: continuation-passing backtracking
-    // =========================================================================
-    class MiniRegexMatcher
-    {
-    public:
-        using Node = MiniRegex::Node;
-        using Kind = Node::Kind;
-        using Seq = MiniRegex::Seq;
-
-        MiniRegexMatcher(const MiniRegex& re, std::string_view text) : re_(re), t_(text)
-        {
-            caps_.assign(re.groupCount_, MiniRegex::Span{});
         }
 
-        bool SearchAll(MiniRegex::Match* match)
+        // =====================================================================
+        // Program
+        // =====================================================================
+        enum class Op : std::uint8_t
         {
-            const std::size_t last = re_.anchored_ ? 0 : t_.size();
-            for (std::size_t start = 0; start <= last; ++start) {
-                if (!re_.canBeEmpty_ &&
-                    (start >= t_.size() || !Has(re_.first_, static_cast<unsigned char>(t_[start])))) {
-                    continue;
-                }
-                for (auto& c : caps_) c = MiniRegex::Span{};
-                Cont accept{};
-                accept.kind = ContKind::Accept;
-                if (MatchGroupAlternatives(*re_.root_, start, &accept)) {
-                    if (match) {
-                        match->whole.begin = static_cast<std::ptrdiff_t>(start);
-                        match->whole.end = static_cast<std::ptrdiff_t>(end_);
-                        match->groups = caps_;
-                    }
-                    return true;
-                }
-            }
-            return false;
-        }
-
-    private:
-        enum class ContKind : std::uint8_t { Seq, Close, Rep, Accept, AcceptAt, AcceptAny };
-
-        struct Cont
-        {
-            ContKind kind = ContKind::Accept;
-            const Seq* seq = nullptr;  // Seq
-            std::size_t idx = 0;
-            int group = -1;            // Close
-            std::size_t groupBegin = 0;
-            const Node* rep = nullptr; // Rep
-            int count = 0;
-            std::size_t pos = 0;       // Rep: where this iteration began; AcceptAt: the required end
-            const Cont* next = nullptr;
+            Atom,      // one byte in `set`
+            AtomRep,   // a run of `set`, min..max, greedy or lazy
+            Split,     // try x, then y
+            Jmp,       // go to x
+            Save,      // slot x = position
+            Mark,      // loop register x = position
+            Progress,  // fail if position == loop register x (an empty iteration)
+            Bol, Eol, WordB, NotWordB,
+            Look,      // run program x as lookaround `look` (width for behind)
+            Match
         };
 
-        const MiniRegex& re_;
-        std::string_view t_;
-        std::vector<MiniRegex::Span> caps_;
-        std::size_t end_ = 0;
-
-        [[nodiscard]] bool Atom(const Node& n, std::size_t pos) const noexcept
+        struct Inst
         {
-            if (pos >= t_.size()) return false;
-            const auto c = static_cast<unsigned char>(t_[pos]);
-            switch (n.kind) {
-                case Kind::Char: return c == n.ch;
-                case Kind::Any: return c != '\n';
-                case Kind::Class: return Has(n.set, c);
-                default: return false;
+            Op op = Op::Match;
+            Set set{};
+            int x = 0;
+            int y = 0;
+            int min = 0;
+            int max = -1;
+            bool greedy = true;
+            Node::Look look = Node::Look::None;
+            int width = 0;
+        };
+
+        using Program = std::vector<Inst>;
+    }
+
+    struct MiniRegex::Impl
+    {
+        std::vector<Program> programs;  // [0] the pattern; the rest lookaround bodies
+        std::size_t groups = 0;
+        int marks = 0;
+        Set first{};
+        bool canBeEmpty = true;
+        bool anchored = false;
+    };
+
+    namespace
+    {
+        class Compiler
+        {
+        public:
+            Compiler(MiniRegex::Impl& impl, std::string& error) : impl_(impl), error_(error) {}
+
+            bool CompileRoot(const Node& root)
+            {
+                impl_.programs.emplace_back();
+                if (!EmitAlternatives(0, root)) return false;
+                Emit(0, Inst{ Op::Match });
+                return true;
             }
-        }
 
-        [[nodiscard]] bool AtBoundary(std::size_t pos) const noexcept
-        {
-            const bool before = pos > 0 && IsWordByte(static_cast<unsigned char>(t_[pos - 1]));
-            const bool after = pos < t_.size() && IsWordByte(static_cast<unsigned char>(t_[pos]));
-            return before != after;
-        }
+        private:
+            MiniRegex::Impl& impl_;
+            std::string& error_;
 
-        bool Run(const Cont* k, std::size_t pos)
-        {
-            switch (k->kind) {
-                case ContKind::Accept:
-                    end_ = pos;
+            int Emit(std::size_t prog, Inst in)
+            {
+                impl_.programs[prog].push_back(in);
+                return static_cast<int>(impl_.programs[prog].size() - 1);
+            }
+            int Here(std::size_t prog) const { return static_cast<int>(impl_.programs[prog].size()); }
+            Inst& At(std::size_t prog, int pc) { return impl_.programs[prog][static_cast<std::size_t>(pc)]; }
+
+            bool EmitSeq(std::size_t prog, const Seq& s)
+            {
+                for (const auto* n : s) {
+                    if (!EmitNode(prog, *n)) return false;
+                }
+                return true;
+            }
+
+            bool EmitAlternatives(std::size_t prog, const Node& g)
+            {
+                std::vector<int> jumps;
+                for (std::size_t k = 0; k < g.alts.size(); ++k) {
+                    const bool last = k + 1 == g.alts.size();
+                    int split = -1;
+                    if (!last) split = Emit(prog, Inst{ Op::Split });
+                    if (split >= 0) At(prog, split).x = Here(prog);
+                    if (!EmitSeq(prog, *g.alts[k])) return false;
+                    if (!last) {
+                        jumps.push_back(Emit(prog, Inst{ Op::Jmp }));
+                        At(prog, split).y = Here(prog);
+                    }
+                }
+                for (const int j : jumps) At(prog, j).x = Here(prog);
+                return true;
+            }
+
+            bool EmitNode(std::size_t prog, const Node& n)
+            {
+                switch (n.kind) {
+                    case Node::Kind::Atom: {
+                        Inst in{ Op::Atom };
+                        in.set = n.set;
+                        Emit(prog, in);
+                        return true;
+                    }
+                    case Node::Kind::Begin: Emit(prog, Inst{ Op::Bol }); return true;
+                    case Node::Kind::End: Emit(prog, Inst{ Op::Eol }); return true;
+                    case Node::Kind::WordBoundary: Emit(prog, Inst{ Op::WordB }); return true;
+                    case Node::Kind::NotWordBoundary: Emit(prog, Inst{ Op::NotWordB }); return true;
+                    case Node::Kind::Group: {
+                        if (n.look != Node::Look::None) {
+                            Inst in{ Op::Look };
+                            in.look = n.look;
+                            if (n.look == Node::Look::Behind || n.look == Node::Look::NegBehind) {
+                                Width w{ -1, 0 };
+                                for (const auto* alt : n.alts) {
+                                    const Width a = WidthOfSeq(*alt);
+                                    if (w.min < 0) w = a;
+                                    else if (a.min != w.min || a.max != w.max) w.max = -2;
+                                }
+                                if (w.max < 0 || w.min != w.max) {
+                                    error_ = "look-behind requires fixed-width pattern";
+                                    return false;
+                                }
+                                in.width = static_cast<int>(w.min);
+                            }
+                            const std::size_t sub = impl_.programs.size();
+                            impl_.programs.emplace_back();
+                            in.x = static_cast<int>(sub);
+                            if (!EmitAlternatives(sub, n)) return false;
+                            Emit(sub, Inst{ Op::Match });
+                            Emit(prog, in);
+                            return true;
+                        }
+                        if (n.capture >= 0) {
+                            Inst s{ Op::Save };
+                            s.x = 2 * n.capture;
+                            Emit(prog, s);
+                        }
+                        if (!EmitAlternatives(prog, n)) return false;
+                        if (n.capture >= 0) {
+                            Inst s{ Op::Save };
+                            s.x = 2 * n.capture + 1;
+                            Emit(prog, s);
+                        }
+                        return true;
+                    }
+                    case Node::Kind::Repeat: return EmitRepeat(prog, n);
+                }
+                return false;
+            }
+
+            bool EmitRepeat(std::size_t prog, const Node& r)
+            {
+                const Node& c = *r.child;
+                if (c.kind == Node::Kind::Atom) {
+                    Inst in{ Op::AtomRep };
+                    in.set = c.set;
+                    in.min = r.min;
+                    in.max = r.max;
+                    in.greedy = r.greedy;
+                    Emit(prog, in);
                     return true;
-                case ContKind::AcceptAny:
-                    return true;
-                case ContKind::AcceptAt:
-                    return pos == k->pos;
-                case ContKind::Seq:
-                    return MatchSeq(*k->seq, k->idx, pos, k->next);
-                case ContKind::Close: {
-                    auto& cap = caps_[static_cast<std::size_t>(k->group)];
-                    const auto saved = cap;
-                    cap.begin = static_cast<std::ptrdiff_t>(k->groupBegin);
-                    cap.end = static_cast<std::ptrdiff_t>(pos);
-                    if (Run(k->next, pos)) return true;
-                    cap = saved;
+                }
+                if (r.min > 1000 || r.max > 1000) {
+                    error_ = "repeat count too large for a group";
                     return false;
                 }
-                case ContKind::Rep: {
-                    // An iteration that matched nothing ends the loop (as in Python).
-                    if (pos == k->pos) return Run(k->next, pos);
-                    return RepeatGeneral(*k->rep, k->count, pos, k->next);
+                for (int i = 0; i < r.min; ++i) {
+                    if (!EmitNode(prog, c)) return false;
                 }
-            }
-            return false;
-        }
-
-        bool MatchGroupAlternatives(const Node& g, std::size_t pos, const Cont* k)
-        {
-            for (const auto* alt : g.alts) {
-                if (MatchSeq(*alt, 0, pos, k)) return true;
-            }
-            return false;
-        }
-
-        bool Look(const Node& g, std::size_t pos)
-        {
-            const auto savedCaps = caps_;
-            bool found = false;
-            if (g.look == Node::Look::Ahead || g.look == Node::Look::NegAhead) {
-                Cont any{};
-                any.kind = ContKind::AcceptAny;
-                found = MatchGroupAlternatives(g, pos, &any);
-            }
-            else {
-                Cont at{};
-                at.kind = ContKind::AcceptAt;
-                at.pos = pos;
-                for (std::size_t j = pos + 1; j-- > 0 && !found;) {
-                    found = MatchGroupAlternatives(g, j, &at);
+                if (r.max < 0) {
+                    // L1: Split L2, L3; L2: Mark; child; Progress; Jmp L1; L3:
+                    const int reg = impl_.marks++;
+                    const int split = Emit(prog, Inst{ Op::Split });
+                    const int body = Here(prog);
+                    Inst mark{ Op::Mark };
+                    mark.x = reg;
+                    Emit(prog, mark);
+                    if (!EmitNode(prog, c)) return false;
+                    Inst progress{ Op::Progress };
+                    progress.x = reg;
+                    Emit(prog, progress);
+                    Inst jmp{ Op::Jmp };
+                    jmp.x = split;
+                    Emit(prog, jmp);
+                    const int out = Here(prog);
+                    At(prog, split).x = r.greedy ? body : out;
+                    At(prog, split).y = r.greedy ? out : body;
+                    return true;
                 }
+                // Up to (max - min) optional copies; giving one up skips the rest.
+                std::vector<int> splits;
+                for (int i = r.min; i < r.max; ++i) {
+                    splits.push_back(Emit(prog, Inst{ Op::Split }));
+                    if (!EmitNode(prog, c)) return false;
+                }
+                const int out = Here(prog);
+                for (std::size_t k = 0; k < splits.size(); ++k) {
+                    const int body = splits[k] + 1;
+                    At(prog, splits[k]).x = r.greedy ? body : out;
+                    At(prog, splits[k]).y = r.greedy ? out : body;
+                }
+                return true;
             }
-            const bool negative = g.look == Node::Look::NegAhead || g.look == Node::Look::NegBehind;
-            if (!found || negative) caps_ = savedCaps;  // a failed or negative look binds nothing
-            return found != negative;
-        }
+        };
 
-        bool MatchSeq(const Seq& s, std::size_t idx, std::size_t pos, const Cont* k)
+        // =====================================================================
+        // The VM: backtracking over an explicit stack
+        // =====================================================================
+        class Vm
         {
-            while (idx < s.size()) {
-                const Node& n = *s[idx];
-                switch (n.kind) {
-                    case Kind::Char:
-                    case Kind::Any:
-                    case Kind::Class:
-                        if (!Atom(n, pos)) return false;
-                        ++pos;
-                        ++idx;
-                        continue;
-                    case Kind::WordBoundary:
-                        if (!AtBoundary(pos)) return false;
-                        ++idx;
-                        continue;
-                    case Kind::NotWordBoundary:
-                        if (AtBoundary(pos)) return false;
-                        ++idx;
-                        continue;
-                    case Kind::Begin:
-                        if (pos != 0) return false;
-                        ++idx;
-                        continue;
-                    case Kind::End:
-                        if (pos != t_.size()) return false;
-                        ++idx;
-                        continue;
-                    case Kind::Group: {
-                        if (n.look != Node::Look::None) {
-                            if (!Look(n, pos)) return false;
-                            ++idx;
-                            continue;
+        public:
+            Vm(const MiniRegex::Impl& impl, std::string_view text) : impl_(impl), t_(text) {}
+
+            /// Run program `prog` from `start`. `requiredEnd` >= 0 forces where
+            /// the match ends (lookbehind). On success `end` is the end.
+            bool Run(std::size_t prog, std::size_t start, std::vector<std::ptrdiff_t>& slots,
+                     std::vector<std::ptrdiff_t>& marks, std::ptrdiff_t requiredEnd, std::size_t& end) const
+            {
+                const Program& code = impl_.programs[prog];
+                struct Bt
+                {
+                    enum class K : std::uint8_t { Branch, UndoSlot, UndoMark, Rep } k;
+                    int pc;
+                    std::size_t pos;
+                    int idx;
+                    std::ptrdiff_t old;
+                };
+                std::vector<Bt> stack;
+                int pc = 0;
+                std::size_t pos = start;
+                const std::size_t n = t_.size();
+
+                for (;;) {
+                    bool ok = true;
+                    const Inst& in = code[static_cast<std::size_t>(pc)];
+                    switch (in.op) {
+                        case Op::Atom:
+                            if (pos < n && Has(in.set, static_cast<unsigned char>(t_[pos]))) {
+                                ++pos;
+                                ++pc;
+                            }
+                            else {
+                                ok = false;
+                            }
+                            break;
+                        case Op::AtomRep: {
+                            std::size_t c = 0;
+                            const std::size_t cap = in.max < 0 ? n - pos : std::min<std::size_t>(n - pos, static_cast<std::size_t>(in.max));
+                            while (c < cap && Has(in.set, static_cast<unsigned char>(t_[pos + c]))) ++c;
+                            const auto mn = static_cast<std::size_t>(in.min);
+                            if (c < mn) {
+                                ok = false;
+                                break;
+                            }
+                            // Rep frame: idx = the count to try next, old = the longest run.
+                            if (in.greedy) {
+                                if (c > mn) stack.push_back({ Bt::K::Rep, pc, pos, static_cast<int>(c - 1), static_cast<std::ptrdiff_t>(c) });
+                                pos += c;
+                            }
+                            else {
+                                if (c > mn) stack.push_back({ Bt::K::Rep, pc, pos, static_cast<int>(mn + 1), static_cast<std::ptrdiff_t>(c) });
+                                pos += mn;
+                            }
+                            ++pc;
+                            break;
                         }
-                        Cont after{};
-                        after.kind = ContKind::Seq;
-                        after.seq = &s;
-                        after.idx = idx + 1;
-                        after.next = k;
-                        if (n.capture < 0) return MatchGroupAlternatives(n, pos, &after);
-                        Cont close{};
-                        close.kind = ContKind::Close;
-                        close.group = n.capture;
-                        close.groupBegin = pos;
-                        close.next = &after;
-                        return MatchGroupAlternatives(n, pos, &close);
+                        case Op::Split:
+                            stack.push_back({ Bt::K::Branch, in.y, pos, 0, 0 });
+                            pc = in.x;
+                            break;
+                        case Op::Jmp: pc = in.x; break;
+                        case Op::Save: {
+                            auto& s = slots[static_cast<std::size_t>(in.x)];
+                            stack.push_back({ Bt::K::UndoSlot, 0, 0, in.x, s });
+                            s = static_cast<std::ptrdiff_t>(pos);
+                            ++pc;
+                            break;
+                        }
+                        case Op::Mark: {
+                            auto& m = marks[static_cast<std::size_t>(in.x)];
+                            stack.push_back({ Bt::K::UndoMark, 0, 0, in.x, m });
+                            m = static_cast<std::ptrdiff_t>(pos);
+                            ++pc;
+                            break;
+                        }
+                        case Op::Progress:
+                            // An iteration that matched nothing ends the loop (the
+                            // Split before it already offered the exit here).
+                            if (marks[static_cast<std::size_t>(in.x)] == static_cast<std::ptrdiff_t>(pos)) ok = false;
+                            else ++pc;
+                            break;
+                        case Op::Bol:
+                            if (pos == 0) ++pc;
+                            else ok = false;
+                            break;
+                        case Op::Eol:
+                            if (pos == n || (pos + 1 == n && t_[pos] == '\n')) ++pc;
+                            else ok = false;
+                            break;
+                        case Op::WordB:
+                            if (AtBoundary(pos)) ++pc;
+                            else ok = false;
+                            break;
+                        case Op::NotWordB:
+                            if (n > 0 && !AtBoundary(pos)) ++pc;
+                            else ok = false;
+                            break;
+                        case Op::Look: {
+                            const bool behind = in.look == Node::Look::Behind || in.look == Node::Look::NegBehind;
+                            const bool negative = in.look == Node::Look::NegAhead || in.look == Node::Look::NegBehind;
+                            std::vector<std::ptrdiff_t> subSlots = slots;
+                            std::vector<std::ptrdiff_t> subMarks = marks;
+                            bool found = false;
+                            std::size_t subEnd = 0;
+                            if (!behind) {
+                                found = Run(static_cast<std::size_t>(in.x), pos, subSlots, subMarks, -1, subEnd);
+                            }
+                            else if (pos >= static_cast<std::size_t>(in.width)) {
+                                found = Run(static_cast<std::size_t>(in.x), pos - static_cast<std::size_t>(in.width), subSlots,
+                                            subMarks, static_cast<std::ptrdiff_t>(pos), subEnd);
+                            }
+                            if (found == negative) {
+                                ok = false;
+                                break;
+                            }
+                            if (!negative) {
+                                // A positive look keeps the groups it set (as in Python),
+                                // undone on backtracking like any other write.
+                                for (std::size_t i = 0; i < slots.size(); ++i) {
+                                    if (subSlots[i] != slots[i]) {
+                                        stack.push_back({ Bt::K::UndoSlot, 0, 0, static_cast<int>(i), slots[i] });
+                                        slots[i] = subSlots[i];
+                                    }
+                                }
+                            }
+                            ++pc;
+                            break;
+                        }
+                        case Op::Match:
+                            if (requiredEnd >= 0 && static_cast<std::ptrdiff_t>(pos) != requiredEnd) {
+                                ok = false;
+                                break;
+                            }
+                            end = pos;
+                            return true;
                     }
-                    case Kind::Repeat: {
-                        Cont after{};
-                        after.kind = ContKind::Seq;
-                        after.seq = &s;
-                        after.idx = idx + 1;
-                        after.next = k;
-                        return Repeat(n, pos, &after);
-                    }
-                }
-                return false;
-            }
-            return Run(k, pos);
-        }
+                    if (ok) continue;
 
-        bool Repeat(const Node& r, std::size_t pos, const Cont* k)
-        {
-            if (r.child->IsAtom()) {
-                // Count the run first, then try the continuation at each length:
-                // one stack frame per try, not one per character.
-                std::size_t c = 0;
-                while ((r.max < 0 || c < static_cast<std::size_t>(r.max)) && Atom(*r.child, pos + c)) ++c;
-                if (c < static_cast<std::size_t>(r.min)) return false;
-                if (r.greedy) {
-                    for (std::size_t cc = c + 1; cc-- > static_cast<std::size_t>(r.min);) {
-                        if (Run(k, pos + cc)) return true;
+                    // Backtrack.
+                    bool resumed = false;
+                    while (!stack.empty() && !resumed) {
+                        const Bt b = stack.back();
+                        stack.pop_back();
+                        switch (b.k) {
+                            case Bt::K::UndoSlot: slots[static_cast<std::size_t>(b.idx)] = b.old; break;
+                            case Bt::K::UndoMark: marks[static_cast<std::size_t>(b.idx)] = b.old; break;
+                            case Bt::K::Branch:
+                                pc = b.pc;
+                                pos = b.pos;
+                                resumed = true;
+                                break;
+                            case Bt::K::Rep: {
+                                const Inst& r = code[static_cast<std::size_t>(b.pc)];
+                                const auto count = static_cast<std::size_t>(b.idx);
+                                const auto longest = static_cast<std::size_t>(b.old);
+                                const auto mn = static_cast<std::size_t>(r.min);
+                                if (r.greedy) {
+                                    if (count > mn) stack.push_back({ Bt::K::Rep, b.pc, b.pos, static_cast<int>(count - 1), b.old });
+                                }
+                                else if (count < longest) {
+                                    stack.push_back({ Bt::K::Rep, b.pc, b.pos, static_cast<int>(count + 1), b.old });
+                                }
+                                pos = b.pos + count;
+                                pc = b.pc + 1;
+                                resumed = true;
+                                break;
+                            }
+                        }
                     }
+                    if (!resumed) return false;
                 }
-                else {
-                    for (std::size_t cc = static_cast<std::size_t>(r.min); cc <= c; ++cc) {
-                        if (Run(k, pos + cc)) return true;
-                    }
-                }
-                return false;
             }
-            return RepeatGeneral(r, 0, pos, k);
-        }
 
-        bool RepeatGeneral(const Node& r, int count, std::size_t pos, const Cont* k)
-        {
-            const bool canMore = r.max < 0 || count < r.max;
-            const bool enough = count >= r.min;
-            Cont again{};
-            again.kind = ContKind::Rep;
-            again.rep = &r;
-            again.count = count + 1;
-            again.pos = pos;
-            again.next = k;
-            if (r.greedy) {
-                if (canMore && MatchSeq(*r.single, 0, pos, &again)) return true;
-                return enough && Run(k, pos);
+        private:
+            const MiniRegex::Impl& impl_;
+            std::string_view t_;
+
+            [[nodiscard]] bool AtBoundary(std::size_t pos) const noexcept
+            {
+                const bool before = pos > 0 && IsWordByte(static_cast<unsigned char>(t_[pos - 1]));
+                const bool after = pos < t_.size() && IsWordByte(static_cast<unsigned char>(t_[pos]));
+                return before != after;
             }
-            if (enough && Run(k, pos)) return true;
-            return canMore && MatchSeq(*r.single, 0, pos, &again);
-        }
-    };
+        };
+    }
 
     // =========================================================================
     // MiniRegex
@@ -675,46 +887,77 @@ namespace Huginn::Core
     MiniRegex::MiniRegex(MiniRegex&&) noexcept = default;
     MiniRegex& MiniRegex::operator=(MiniRegex&&) noexcept = default;
 
+    bool MiniRegex::Valid() const noexcept { return impl_ != nullptr && error_.empty(); }
+    std::size_t MiniRegex::GroupCount() const noexcept { return impl_ ? impl_->groups : 0; }
+
     bool MiniRegex::Compile(std::string_view pattern)
     {
         pattern_.assign(pattern);
         error_.clear();
-        nodes_.clear();
-        seqs_.clear();
-        root_ = nullptr;
-        groupCount_ = 0;
-        MiniRegexParser parser(*this, pattern_);
-        if (!parser.Parse()) {
-            root_ = nullptr;
+        impl_.reset();
+        Arena arena;
+        std::size_t groups = 0;
+        Parser parser(arena, pattern_, error_);
+        const Node* root = parser.Parse(groups);
+        if (!root) {
             if (error_.empty()) error_ = "invalid pattern";
             return false;
         }
-        first_ = {};
-        canBeEmpty_ = FirstOfNode(*root_, first_);
-        anchored_ = !root_->alts.empty();
-        for (const auto* alt : root_->alts) {
-            if (alt->empty() || (*alt)[0]->kind != Node::Kind::Begin) anchored_ = false;
+        auto impl = std::make_unique<Impl>();
+        impl->groups = groups;
+        Compiler compiler(*impl, error_);
+        if (!compiler.CompileRoot(*root)) {
+            if (error_.empty()) error_ = "invalid pattern";
+            error_ += " in /" + pattern_ + "/";
+            return false;
         }
+        impl->canBeEmpty = FirstOfNode(*root, impl->first);
+        impl->anchored = !root->alts.empty();
+        for (const auto* alt : root->alts) {
+            if (alt->empty() || (*alt)[0]->kind != Node::Kind::Begin) impl->anchored = false;
+        }
+        impl_ = std::move(impl);
         return true;
     }
 
     bool MiniRegex::Search(std::string_view text, Match* match) const
     {
         if (!Valid()) return false;
-        MiniRegexMatcher m(*this, text);
-        return m.SearchAll(match);
+        const Impl& impl = *impl_;
+        Vm vm(impl, text);
+        std::vector<std::ptrdiff_t> slots(impl.groups * 2, -1);
+        std::vector<std::ptrdiff_t> marks(static_cast<std::size_t>(impl.marks), -1);
+        const std::size_t last = impl.anchored ? 0 : text.size();
+        for (std::size_t start = 0; start <= last; ++start) {
+            if (!impl.canBeEmpty &&
+                (start >= text.size() || !Has(impl.first, static_cast<unsigned char>(text[start])))) {
+                continue;
+            }
+            std::fill(slots.begin(), slots.end(), -1);
+            std::fill(marks.begin(), marks.end(), -1);
+            std::size_t end = 0;
+            if (vm.Run(0, start, slots, marks, -1, end)) {
+                if (match) {
+                    match->whole.begin = static_cast<std::ptrdiff_t>(start);
+                    match->whole.end = static_cast<std::ptrdiff_t>(end);
+                    match->groups.assign(impl.groups, Span{});
+                    for (std::size_t g = 0; g < impl.groups; ++g) {
+                        match->groups[g].begin = slots[2 * g];
+                        match->groups[g].end = slots[2 * g + 1];
+                    }
+                }
+                return true;
+            }
+        }
+        return false;
     }
 
     std::string_view MiniRegex::Match::Group(std::string_view text, std::size_t n) const
     {
-        if (n == 0) {
-            return whole.Matched() ? text.substr(static_cast<std::size_t>(whole.begin),
-                                                 static_cast<std::size_t>(whole.end - whole.begin))
-                                   : std::string_view{};
-        }
-        if (n > groups.size()) return {};
-        const auto& g = groups[n - 1];
-        if (!g.Matched()) return {};
-        return text.substr(static_cast<std::size_t>(g.begin), static_cast<std::size_t>(g.end - g.begin));
+        const Span* s = nullptr;
+        if (n == 0) s = &whole;
+        else if (n <= groups.size()) s = &groups[n - 1];
+        if (!s || !s->Matched()) return {};
+        return text.substr(static_cast<std::size_t>(s->begin), static_cast<std::size_t>(s->end - s->begin));
     }
 }

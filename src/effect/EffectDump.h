@@ -27,6 +27,7 @@
 // on the host and checks them against effectColumn and cap.
 // =============================================================================
 
+#include <chrono>
 #include <filesystem>
 #include <string>
 
@@ -34,5 +35,8 @@ namespace Huginn::Effect
 {
     /// Write the dump to `path`. False (with `summary` saying why) on failure;
     /// `summary` is the one-line result either way.
-    bool WriteDumpAll(const std::filesystem::path& path, std::string& summary);
+    /// `wait` is how long to wait for the catalog's worker (0 = not at all:
+    /// the console says "not ready" instead of blocking the main thread).
+    bool WriteDumpAll(const std::filesystem::path& path, std::string& summary,
+                      std::chrono::milliseconds wait = std::chrono::milliseconds(0));
 }

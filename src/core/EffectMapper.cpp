@@ -190,15 +190,10 @@ namespace Huginn::Core::Effect
         float RowValue(const KeptRow& r, Col c, const Populations& pops)
         {
             if (r.fullRestore) return 1.0f;
+            // A zero magnitude through the engine's data: below every real value.
+            if (r.graded && !(r.raw > 0.0f)) return 1.0f / static_cast<float>(pops.Size(c, 0) + 1);
             if (r.graded) return pops.Percentile(c, 0, r.raw) * r.post;
             return r.post;
-        }
-
-        bool BadName(std::string_view name)
-        {
-            static const MiniRegex bad(
-                R"re(\b(dummy|test|testing|donotuse|do not use|unused|placeholder|deleted)\b|^zz|donotuse|takeme)re");
-            return bad.Contains(Lower(name));
         }
 
         // Group ids for grouped populations.
@@ -291,7 +286,7 @@ namespace Huginn::Core::Effect
 
     bool InScope(const ItemRecord& it, const EffectTable& effects)
     {
-        if (BadName(it.name)) return false;
+        if (IsBadItemName(it.name)) return false;
         switch (it.kind) {
             case Kind::Spell: {
                 if (it.spellType != kSpellTypeSpell) return false;
@@ -392,10 +387,15 @@ namespace Huginn::Core::Effect
                 case Rule::Hunger: k.post = HungerSize(m); break;
                 case Rule::Thirst: k.post = 0.5f; break;
             }
-            // A graded column with no magnitude (a script effect) is presence.
+            // A graded column with no magnitude. Through the engine's own data
+            // (route Data: an archetype on a real actor value) a zero is a zero --
+            // a carrier row (LoreRim's Dispel Armor on DamageResist) or a dud --
+            // and grades at the bottom of the population (1/N; zeros are not in
+            // it). Through a script route (keyword, name, description, override)
+            // the script carries the amount and the record says 0: presence.
             if (k.graded && !(k.raw > 0.0f) && !k.fullRestore) {
-                k.graded = false;
                 k.raw = 0.0f;
+                if (cls.route != Route::Data) k.graded = false;
             }
             return k;
         }
@@ -496,14 +496,17 @@ namespace Huginn::Core::Effect
             }
         }
 
-        // Restore amounts (absolute) for the overshoot cross-feature.
+        // Restore amounts (absolute) for the overshoot cross-feature: the item's
+        // TOTAL per vital (effects.csv), summed over the rows that count for the
+        // column (visible ones when there are any, so Simonrim's hidden perk
+        // variants are not added on top).
         {
             const Eligibility eligible(m);
             for (const auto& r : m.rows) {
                 const int v = VitalIndex(r.col);
                 if (v < 0 || !eligible(r, r.col)) continue;
                 if (r.fullRestore) m.fullRestore[static_cast<std::size_t>(v)] = true;
-                else m.restoreAmount[static_cast<std::size_t>(v)] = std::max(m.restoreAmount[static_cast<std::size_t>(v)], r.raw);
+                else m.restoreAmount[static_cast<std::size_t>(v)] += r.raw;
             }
         }
 
@@ -690,6 +693,11 @@ namespace Huginn::Core::Effect
 
     School PrimarySchool(const ItemMapping& m, const Populations& pops)
     {
+        // effects.csv: school_* (and so school_fortified) is for magic items --
+        // spells, scrolls, staves -- not enchanted weapons, armour or potions.
+        const bool magic = m.kind == Kind::Spell || m.kind == Kind::Scroll ||
+                           (m.kind == Kind::Weapon && Get(m.fixed, Col::kind_staff) > 0.0f);
+        if (!magic) return School::None;
         const int p = PrimaryRow(m, pops);
         return p >= 0 ? m.rows[static_cast<std::size_t>(p)].school : School::None;
     }

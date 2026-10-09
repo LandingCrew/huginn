@@ -67,6 +67,17 @@ namespace Huginn::Effect
         logger::info("[EffectCatalog] {} effect override(s) loaded, {} ignored"sv, overrides_.Size(), bad);
     }
 
+    void EffectCatalog::ScheduleBuild()
+    {
+        if (auto* tasks = SKSE::GetTaskInterface()) {
+            tasks->AddTask([]() { GetSingleton().Build(); });
+            logger::info("[EffectCatalog] build queued for the first task after kDataLoaded"sv);
+        }
+        else {
+            Build();
+        }
+    }
+
     void EffectCatalog::Build()
     {
         if (built_) return;
@@ -75,38 +86,57 @@ namespace Huginn::Effect
 
         // Forms are read here, on the calling (main) thread. The mapping is
         // pure code over plain records, so it runs on a worker: in a Debug
-        // build it takes seconds on LoreRim, which kDataLoaded should not wait
-        // for. Nothing reads the catalog before Ready().
-        LoadOverrides();
-        auto read = std::make_shared<ReadResult>(EffectReader{}.ReadLoadOrder());
+        // build it takes seconds on LoreRim, which the main thread should not
+        // wait for. Nothing reads the catalog before Ready().
+        logger::info("[EffectCatalog] reading the load order"sv);
+        std::shared_ptr<ReadResult> read;
+        try {
+            LoadOverrides();
+            read = std::make_shared<ReadResult>(EffectReader{}.ReadLoadOrder());
+        }
+        catch (const std::exception& e) {
+            failed_.store(true, std::memory_order_release);
+            logger::error("[EffectCatalog] reading the load order failed: {}; the catalog stays empty"sv, e.what());
+            return;
+        }
         formsRead_ = read->items.size();
         const double readMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
 
         std::thread([this, read, readMs, t0]() {
-            const auto t1 = std::chrono::steady_clock::now();
-            // Plain records only from here: the RE pointers in `read` are not touched.
-            BuildResult result = BuildCaps(read->items, read->effects, &overrides_);
-            for (std::size_t i = 0; i < result.mappings.size(); ++i) {
-                const auto& m = result.mappings[i];
-                if (!m.inScope) continue;
-                entries_.emplace(m.formId, MakeEntry(m, std::move(result.caps[i]), result.pops));
-            }
-            for (std::size_t i = 0; i < read->effects.size(); ++i) {
-                classes_.emplace(read->effects[i].formId, result.classes[i]);
-            }
-            pops_ = std::move(result.pops);
-            tally_ = result.tally;
-            const auto t2 = std::chrono::steady_clock::now();
-            buildMs_ = std::chrono::duration<double, std::milli>(t2 - t0).count();
-            const std::size_t effects = read->effects.size();
-            ready_.store(true, std::memory_order_release);
+            try {
+                const auto t1 = std::chrono::steady_clock::now();
+                // Plain records only from here: the RE pointers in `read` are not touched.
+                BuildResult result = BuildCaps(read->items, read->effects, &overrides_);
+                for (std::size_t i = 0; i < result.mappings.size(); ++i) {
+                    const auto& m = result.mappings[i];
+                    if (!m.inScope) continue;
+                    entries_.emplace(m.formId, MakeEntry(m, std::move(result.caps[i]), result.pops));
+                }
+                for (std::size_t i = 0; i < read->effects.size(); ++i) {
+                    classes_.emplace(read->effects[i].formId, result.classes[i]);
+                }
+                pops_ = std::move(result.pops);
+                tally_ = result.tally;
+                const auto t2 = std::chrono::steady_clock::now();
+                buildMs_ = std::chrono::duration<double, std::milli>(t2 - t0).count();
+                const std::size_t effects = read->effects.size();
+                ready_.store(true, std::memory_order_release);
 
-            logger::info("[EffectCatalog] {} of {} forms in scope, {} magic effects; coverage {:.2f}% ({} of {} "
-                         "visible effect rows mapped; {} helper, {} wrapper rows not counted); read {:.0f} ms "
-                         "(main thread), map {:.0f} ms (worker)"sv,
-                entries_.size(), formsRead_, effects, 100.0 * Coverage(), tally_.mapped, tally_.counted,
-                tally_.helper, tally_.wrapperUnknown, readMs,
-                std::chrono::duration<double, std::milli>(t2 - t1).count());
+                logger::info("[EffectCatalog] {} of {} forms in scope, {} magic effects; coverage {:.2f}% ({} of {} "
+                             "visible effect rows mapped; {} helper, {} wrapper rows not counted); read {:.0f} ms "
+                             "(main thread), map {:.0f} ms (worker)"sv,
+                    entries_.size(), formsRead_, effects, 100.0 * Coverage(), tally_.mapped, tally_.counted,
+                    tally_.helper, tally_.wrapperUnknown, readMs,
+                    std::chrono::duration<double, std::milli>(t2 - t1).count());
+            }
+            catch (const std::exception& e) {
+                failed_.store(true, std::memory_order_release);
+                logger::error("[EffectCatalog] mapping failed: {}; the catalog stays empty"sv, e.what());
+            }
+            catch (...) {
+                failed_.store(true, std::memory_order_release);
+                logger::error("[EffectCatalog] mapping failed (unknown exception); the catalog stays empty"sv);
+            }
         }).detach();
     }
 
@@ -114,7 +144,7 @@ namespace Huginn::Effect
     {
         const auto until = std::chrono::steady_clock::now() + timeout;
         while (!Ready()) {
-            if (std::chrono::steady_clock::now() >= until) return false;
+            if (Failed() || std::chrono::steady_clock::now() >= until) return false;
             std::this_thread::sleep_for(std::chrono::milliseconds(50));
         }
         return true;
@@ -143,7 +173,8 @@ namespace Huginn::Effect
 
         // Tempering: ExtraHealth is the stack's quality multiplier, 1.0 when
         // untempered; a present-but-zero reading means unfilled, i.e. 1.0 (see
-        // WeaponRegistry). Weapons only: damage x temper, the registry's model.
+        // WeaponRegistry). Weapons only. Tempering adds damage (Core::Effect::
+        // TemperedWeaponDamage; WeaponData.h measured LoreRim at +2 for 1.2).
         float temper = 1.0f;
         if (isWeapon) {
             if (const auto* h = extra->GetByType<RE::ExtraHealth>(); h && h->health > 0.0f) temper = h->health;
@@ -156,7 +187,7 @@ namespace Huginn::Effect
         ReadResult rr;
         if (!reader.ReadForm(base, playerEnchantment, rr) || rr.items.empty()) return std::nullopt;
         auto& item = rr.items.front();
-        item.damage *= temper;
+        item.damage = TemperedWeaponDamage(item.damage, temper);
         const auto classes = ClassifyAll(rr.effects, &overrides_);
         const ItemMapping m = MapItem(item, rr.effects, classes);
         return MakeEntry(m, Grade(m, pops_), pops_);

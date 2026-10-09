@@ -46,6 +46,21 @@ namespace Huginn::Effect
             }
         }
 
+        /// Parameters held by value in the condition (not a pointer).
+        bool IsIntegerParam(RE::SCRIPT_PARAM_TYPE t)
+        {
+            using T = RE::SCRIPT_PARAM_TYPE;
+            switch (t) {
+                case T::kInt: case T::kAxis: case T::kAnimGroup: case T::kSex: case T::kStage: case T::kCrimeType:
+                case T::kFormType: case T::kMiscStat: case T::kAlignment: case T::kCritStage: case T::kAlias:
+                case T::kRelationshipRank: case T::kCastingSource: case T::kWardState: case T::kFurnitureAnimType:
+                case T::kFurnitureEntryType: case T::kSkillAction:
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
         std::string FormLabel(const RE::TESForm* f)
         {
             if (!f) return "none";
@@ -76,8 +91,13 @@ namespace Huginn::Effect
                     else if (type == RE::SCRIPT_PARAM_TYPE::kActorValue) {
                         params += Util::AvName(static_cast<RE::ActorValue>(reinterpret_cast<std::uintptr_t>(p)));
                     }
-                    else {
+                    else if (IsIntegerParam(type)) {
                         params += std::to_string(static_cast<std::int32_t>(reinterpret_cast<std::uintptr_t>(p)));
+                    }
+                    else {
+                        // Strings (a script variable's name) and the rest: the
+                        // value is a pointer, so print the type, not an address.
+                        params += std::format("<type {}>", static_cast<std::uint32_t>(type));
                     }
                 }
                 const char* subject = d.object.get() == RE::CONDITIONITEMOBJECT::kTarget ? "T." : "";
@@ -165,14 +185,16 @@ namespace Huginn::Effect
             }
         };
 
-        std::string Num(float v) { return std::format("{}", v); }
+        // The old columns keep the old dump's {:g}.
+        std::string Num(float v) { return std::format("{:g}", v); }
     }
 
-    bool WriteDumpAll(const std::filesystem::path& path, std::string& summary)
+    bool WriteDumpAll(const std::filesystem::path& path, std::string& summary, std::chrono::milliseconds wait)
     {
         auto& catalog = EffectCatalog::GetSingleton();
-        if (!catalog.WaitUntilReady(std::chrono::seconds(60))) {
-            summary = "The effect catalog is not built (yet); try again";
+        if (!(catalog.Ready() || (wait.count() > 0 && catalog.WaitUntilReady(wait)))) {
+            summary = catalog.Failed() ? "The effect catalog failed to build (see the log)"
+                                       : "The effect catalog is not ready yet; try again in a few seconds";
             return false;
         }
         std::ofstream out(path, std::ios::trunc | std::ios::binary);
@@ -313,7 +335,7 @@ namespace Huginn::Effect
             }
             for (std::size_t j = 0; j < it.effects.size(); ++j) {
                 const auto& row = it.effects[j];
-                const Parts p = effectParts(j, row, read.effectItems[i][j], "", "", &m.outcomes[j]);
+                const Parts p = effectParts(row.index, row, read.effectItems[i][j], "", "", &m.outcomes[j]);
                 out << prefix << p.oldCols << itemTail << p.newCols << itemEnd() << '\n';
                 ++rows;
                 // Gap 3: the payload of a Cloak/hazard, as rows under its wrapper.
@@ -321,7 +343,8 @@ namespace Huginn::Effect
                 const auto* spell = read.payloadSpells[row.effect];
                 const std::string spellId = spell ? std::format("{:08X}", spell->GetFormID()) : std::string{};
                 for (std::size_t k = 0; k < payload.size(); ++k) {
-                    const Parts pp = effectParts(k, payload[k], read.payloadItems[row.effect][k], std::to_string(j),
+                    const Parts pp = effectParts(payload[k].index, payload[k], read.payloadItems[row.effect][k],
+                                                 std::to_string(row.index),
                                                  spellId, nullptr);
                     out << prefix << pp.oldCols << itemTail << pp.newCols << ",," << '\n';
                     ++rows;

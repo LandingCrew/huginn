@@ -192,7 +192,7 @@ Turn it on with either:
   iExpiresUnix=1791500000   ; optional
   iLoadTimeoutSec=300       ; optional
   sDumpAll=Huginn_All_x.csv ; optional (0.23.10): `hg dump all` to this file
-                            ; in the log folder after the main-menu suites
+                            ; in the log folder after the save's suites (needs a save)
   ```
 - or `HUGINN_TEST_MODE=1` (and `HUGINN_TEST_SAVE=<name>`) in the game's
   environment. MO2 hands a shortcut to an already-running MO2, which launches
@@ -216,7 +216,8 @@ python -I tools/ingame/run_tests.py --dump-all Huginn_All_vanilla.csv   # also w
 ```
 
 `--dump-all NAME` (a plain file name) makes Huginn write `hg dump all` into the
-SKSE log folder after the main-menu suites; the runner prints the
+SKSE log folder after the save's suites (so after the keyword distributors and
+the catalog's build); the runner prints the
 `[EffectCatalog]` and `dump all` lines. Use a name of its own: the log folder
 may be shared by several lists, and `Huginn_All.csv` is the player's own dump.
 

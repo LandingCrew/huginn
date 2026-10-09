@@ -78,6 +78,15 @@ namespace Huginn::Core::Effect
     /// console's form. Game and host print through this, so caps compare as text.
     [[nodiscard]] std::string FormatCap(const Cap& cap);
 
+    /// A tempered weapon's damage for grading against base forms: tempering
+    /// ADDS (ExtraHealth h gives +(h - 1) x 10 points; LoreRim's (1.2) is +2,
+    /// measured, src/weapon/WeaponData.h), it does not multiply. h <= 1 (or an
+    /// unfilled 0) is untempered.
+    [[nodiscard]] constexpr float TemperedWeaponDamage(float baseDamage, float temper) noexcept
+    {
+        return temper > 1.0f ? baseDamage + (temper - 1.0f) * 10.0f : baseDamage;
+    }
+
     /// The coverage diff's test: does cap(i) say what the item does? An effect
     /// column for anything magic; for a plain weapon or ammo its damage stat;
     /// for a light, being a light.

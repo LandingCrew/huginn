@@ -113,6 +113,7 @@ namespace Huginn::Core::Effect
         std::uint32_t duration = 0;  // seconds
         std::uint32_t area = 0;      // feet
         float cost = 0.0f;           // the effect item's own cost (dump gap 4); 0 if unknown
+        std::uint32_t index = 0;     // position in the form's effect list (the dump's effectIndex)
     };
 
     /// One magic effect (MGEF) -- what is the same wherever it is used.

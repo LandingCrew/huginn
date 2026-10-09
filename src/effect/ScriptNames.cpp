@@ -20,7 +20,6 @@ namespace Huginn::Effect
         }
 
         constexpr std::uint32_t kCompressed = 0x00040000;
-        constexpr std::uint32_t kLightFile = 0x00000200;
 
 #pragma pack(push, 1)
         struct RecordHeader
@@ -166,6 +165,9 @@ namespace Huginn::Effect
                     done += static_cast<std::uint32_t>(sizeof(r));
                     const bool isGroup = r.type == Tag("GRUP");
                     const std::uint32_t dataSize = isGroup ? r.size - static_cast<std::uint32_t>(sizeof(r)) : r.size;
+                    // A corrupt size must not become a huge allocation or a walk
+                    // past the group.
+                    if ((isGroup && r.size < sizeof(r)) || dataSize > (1u << 24) || done + dataSize > body) return false;
                     const auto it = isGroup ? wanted.end() : wanted.find(r.formID);
                     if (it == wanted.end() || (r.flags & kCompressed)) {
                         in.seekg(dataSize, std::ios::cur);
@@ -233,7 +235,6 @@ namespace Huginn::Effect
             if (ScanPlugin(file, ids, out, stats)) ++stats.filesRead;
             else ++stats.filesFailed;
         }
-        (void)kLightFile;
         if (statsOut) *statsOut = stats;
         return out;
     }

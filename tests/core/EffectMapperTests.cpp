@@ -174,7 +174,9 @@ TEST_CASE("effect rules: helpers, wrappers, description route, overrides")
 
     auto cloak = Mgef(kArchCloak, "", "Flame Cloak");
     CHECK(ClassifyEffect(cloak, nullptr).route == Route::Wrapper);
-    cloak.resistAV = "FireResist";  // a cloak naming its element is damage itself
+    cloak.resistAV = "FireResist";  // a resisted actor value alone: still a wrapper
+    CHECK(ClassifyEffect(cloak, nullptr).route == Route::Wrapper);
+    cloak.keywords = { "MagicDamageFire" };  // a damage keyword: damage itself
     CHECK(ColOf(cloak) == Col::damage_health_fire);
 
     auto script = Mgef(kArchScript, "", "Mystic Thing");
@@ -328,6 +330,106 @@ TEST_CASE("effect mapper: presence columns -- P x D, a script effect with no mag
     CHECK(CapOf(r, 3, Col::survival_hunger) == 0.25f);
     CHECK(CapOf(r, 4, Col::survival_thirst) == 0.5f);
     CHECK(CapOf(r, 5, Col::survival_thirst) == 1.0f);
+}
+
+TEST_CASE("effect mapper: a zero magnitude through the engine's data grades at the bottom, not as presence")
+{
+    World w;
+    const auto heal = w.Add(Mgef(kArchValueModifier, "Health", "Restore Health"));
+    const auto scripted = w.Add(Mgef(kArchScript, "", "Restore Health"));
+    auto& dud = w.Item(Kind::Potion, "Unknown Potion");
+    World::Fx(dud, heal, 0);
+    auto& small = w.Item(Kind::Potion, "Small");
+    World::Fx(small, heal, 25);
+    auto& big = w.Item(Kind::Potion, "Ultimate");
+    World::Fx(big, heal, 200);
+    auto& script = w.Item(Kind::Potion, "Scripted");
+    World::Fx(script, scripted, 0);
+    const auto r = w.Build();
+    CHECK(CapOf(r, 0, Col::restore_health) == doctest::Approx(1.0 / 3.0));  // 1/(N+1), N = 2 real heals
+    CHECK(CapOf(r, 0, Col::restore_health) < CapOf(r, 1, Col::restore_health));
+    CHECK(CapOf(r, 1, Col::restore_health) == doctest::Approx(0.5));
+    CHECK(CapOf(r, 2, Col::restore_health) == doctest::Approx(1.0));
+    CHECK(CapOf(r, 3, Col::restore_health) == 1.0f);  // the script carries the amount: presence
+}
+
+TEST_CASE("effect mapper: tempering adds damage (the codebase's model), it does not multiply")
+{
+    CHECK(TemperedWeaponDamage(20.0f, 1.6f) == doctest::Approx(26.0));
+    CHECK(TemperedWeaponDamage(20.0f, 1.2f) == doctest::Approx(22.0));  // LoreRim measured +2 for 1.2
+    CHECK(TemperedWeaponDamage(20.0f, 1.0f) == 20.0f);
+    CHECK(TemperedWeaponDamage(20.0f, 0.0f) == 20.0f);  // an unfilled ExtraHealth is untempered
+    World w;
+    for (float d : { 20.0f, 25.0f, 30.0f }) {
+        auto& s = w.Item(Kind::Weapon, "Sword");
+        s.weaponType = 1;
+        s.damage = d;
+        s.speed = 1.0f;
+    }
+    const auto r = w.Build();
+    ItemRecord tempered = w.items[0];
+    tempered.damage = TemperedWeaponDamage(tempered.damage, 1.6f);
+    const auto classes = ClassifyAll(w.effects, nullptr);
+    const Cap cap = Grade(MapItem(tempered, w.effects, classes), r.pops);
+    CHECK(Get(cap, Col::weapon_damage) == doctest::Approx(2.0 / 3.0));  // 26: above 25, below 30
+}
+
+TEST_CASE("effect mapper: a school only for spells, scrolls and staves")
+{
+    World w;
+    auto fireM = Mgef(kArchValueModifier, "Health", "Fire Damage", kFlagDetrimental);
+    fireM.resistAV = "FireResist";
+    fireM.school = "Destruction";
+    const auto fire = w.Add(fireM);
+    auto& spell = w.Item(Kind::Spell, "Firebolt");
+    World::Fx(spell, fire, 25);
+    auto& sword = w.Item(Kind::Weapon, "Sword of Burning");
+    sword.weaponType = 1;
+    sword.damage = 8;
+    sword.enchanted = true;
+    World::Fx(sword, fire, 10);
+    auto& staff = w.Item(Kind::Weapon, "Staff of Firebolts");
+    staff.weaponType = kWeaponStaff;
+    staff.enchanted = true;
+    World::Fx(staff, fire, 25);
+    const auto r = w.Build();
+    CHECK(PrimarySchool(r.mappings[0], r.pops) == School::Destruction);
+    CHECK(PrimarySchool(r.mappings[1], r.pops) == School::None);
+    CHECK(PrimarySchool(r.mappings[2], r.pops) == School::Destruction);
+    CHECK(CapOf(r, 0, Col::school_destruction) == 1.0f);
+    CHECK(CapOf(r, 1, Col::school_destruction) == 0.0f);
+    CHECK(CapOf(r, 2, Col::school_destruction) == 1.0f);
+}
+
+TEST_CASE("effect rules: verifier round 1 -- resist-damage names, wrappers by keyword only, helper names")
+{
+    auto resist = Mgef(kArchValueModifier, "Variable05", "Resist Magicka Damage");
+    CHECK(ColOf(resist) == Col::_Count);  // not damage_magicka: beneficial, and "resist"
+    auto scriptDamage = Mgef(kArchScript, "", "Damage Magicka");
+    CHECK(ColOf(scriptDamage) == Col::damage_magicka);  // a script effect keeps its name
+    auto whirl = Mgef(kArchCloak, "", "Whirlwind Cloak");
+    whirl.resistAV = "FrostResist";
+    CHECK(ClassifyEffect(whirl, nullptr).route == Route::Wrapper);
+    auto flame = Mgef(kArchCloak, "", "Flame Cloak");
+    flame.keywords = { "MagicDamageFire" };
+    CHECK(ColOf(flame) == Col::damage_health_fire);
+    CHECK_FALSE(IsHelperName("Blank Slate"));
+    CHECK(IsHelperName("Blank"));
+    CHECK_FALSE(IsHelperName("Dispel Soul Gems"));
+    CHECK(NameColumn("Dispel Soul Gems") == std::nullopt);
+    CHECK(NameColumn("Dispel") == Col::cure_dispel);
+}
+
+TEST_CASE("effect mapper: overshoot uses the total restored")
+{
+    World w;
+    const auto heal = w.Add(Mgef(kArchValueModifier, "Health", "Restore Health"));
+    const auto regenRow = w.Add(Mgef(kArchValueModifier, "Health", "Restore Health over time"));
+    auto& p = w.Item(Kind::Potion, "Two-part");
+    World::Fx(p, heal, 20);
+    World::Fx(p, regenRow, 5, 10);  // 50 more over 10 s
+    const auto r = w.Build();
+    CHECK(r.mappings[0].restoreAmount[0] == doctest::Approx(70.0));
 }
 
 TEST_CASE("effect mapper: wrappers -- payload, own description, nothing to read")

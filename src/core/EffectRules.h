@@ -151,6 +151,9 @@ namespace Huginn::Core::Effect
     /// The helper-name check (dummy, visual, cooldown, "perk impact" ...).
     [[nodiscard]] bool IsHelperName(std::string_view name);
 
+    /// Scope rule 1's name filter: test, dummy, unused, "zz..." items.
+    [[nodiscard]] bool IsBadItemName(std::string_view name);
+
     /// The description route alone (normalised inside), for tests and dumps:
     /// the column a description suggests, or nullopt. `detrimental` flips a
     /// beneficial reading (resist -> weakness).

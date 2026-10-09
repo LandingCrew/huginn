@@ -606,7 +606,7 @@ def main() -> int:
     ap.add_argument("--multiple", action="store_true",
                     help="launch even when ANOTHER instance's MO2 is running (MO2's unsupported --multiple)")
     ap.add_argument("--dump-all", metavar="NAME",
-                    help="after the main-menu suites, Huginn writes `hg dump all` to NAME (a plain file "
+                    help="after the save loads, Huginn writes `hg dump all` to NAME (a plain file "
                          "name) in the SKSE log folder (0.23.10+)")
     ap.add_argument("--dry-run", action="store_true", help="check everything, print the command, launch nothing")
     ap.add_argument("--capture-slots", type=int, default=0, metavar="SEC",
@@ -620,6 +620,8 @@ def main() -> int:
     if args.dump_all is not None and (not args.dump_all or any(c in args.dump_all for c in "/\\:")
                                       or args.dump_all in (".", "..")):
         raise Refused("--dump-all takes a plain file name, e.g. Huginn_All_vanilla.csv")
+    if args.dump_all and args.no_save:
+        raise Refused("--dump-all needs a save: Huginn writes the dump after the load")
 
     ml = LISTS[args.list]
     mo2 = ml.root / MO2_EXE

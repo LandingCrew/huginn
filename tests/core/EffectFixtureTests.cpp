@@ -10,6 +10,8 @@
 //   expectColumn   per effect row: the column the MGEF maps to ("" = none)
 //   expectInScope  per item (first row): in the catalog's scope
 //   expectEffects  per item (first row): every family/specific column cap(i) sets
+//   expectValues   per item (first row): those columns' values, graded by the
+//                  generator over the fixture's own in-scope items
 
 #include "DumpCsv.h"
 #include "core/EffectMapper.h"
@@ -17,6 +19,7 @@
 #include <doctest/doctest.h>
 
 #include <algorithm>
+#include <cmath>
 #include <ostream>
 #include <set>
 #include <string>
@@ -27,14 +30,14 @@ namespace
 {
     struct FixtureResult
     {
-        int items = 0, inScope = 0, rows = 0, rowMismatch = 0, itemMismatch = 0, scopeMismatch = 0;
+        int items = 0, inScope = 0, rows = 0, rowMismatch = 0, itemMismatch = 0, scopeMismatch = 0, values = 0, valueMismatch = 0;
     };
 
     FixtureResult RunFixture(const std::string& list)
     {
         Huginn::Test::Dump dump;
         Huginn::Test::DumpReader reader;
-        reader.extraColumns = { "expectColumn", "expectNote", "expectInScope", "expectEffects" };
+        reader.extraColumns = { "expectColumn", "expectNote", "expectInScope", "expectEffects", "expectValues" };
         std::string err;
         const std::string path = std::string(HUGINN_REPO_ROOT) + "/tests/core/fixtures/effects_" + list + ".csv";
         REQUIRE_MESSAGE(reader.Load(path, dump, &err), err);
@@ -77,6 +80,21 @@ namespace
             for (const auto& c : want) w += c + ";";
             CHECK_MESSAGE(got == want, "effect columns got [" << g << "] want [" << w << "]");
 
+            // The values: the generator grades the fixture's own population by
+            // a second implementation of the documented rules.
+            for (const auto& kv : Huginn::Test::SplitList(dump.itemExtra[i][4])) {
+                const auto eq = kv.find('=');
+                REQUIRE(eq != std::string::npos);
+                const auto col = FromName(kv.substr(0, eq));
+                REQUIRE(col.has_value());
+                const float want = std::stof(kv.substr(eq + 1));
+                const float have = Get(r.caps[i], *col);
+                ++fr.values;
+                const bool same = std::fabs(have - want) <= 1e-4f + 1e-4f * std::fabs(want);
+                if (!same) ++fr.valueMismatch;
+                CHECK_MESSAGE(same, kv.substr(0, eq) << " got " << have << " want " << want);
+            }
+
             // Every in-scope item carries exactly one kind column, and every
             // value is in a sane range.
             int kinds = 0;
@@ -88,8 +106,8 @@ namespace
             CHECK(kinds == 1);
         }
         MESSAGE(list << ": " << fr.items << " items (" << fr.inScope << " in scope), " << fr.rows
-                     << " effect rows; mismatches: rows " << fr.rowMismatch << ", items " << fr.itemMismatch
-                     << ", scope " << fr.scopeMismatch);
+                     << " effect rows, " << fr.values << " effect values; mismatches: rows " << fr.rowMismatch
+                     << ", items " << fr.itemMismatch << ", scope " << fr.scopeMismatch << ", values " << fr.valueMismatch);
         return fr;
     }
 }

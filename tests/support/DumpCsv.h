@@ -177,6 +177,7 @@ namespace Huginn::Test
                 row.magnitude = ParseFloat(Get(f, "magnitude"));
                 row.duration = ParseU32(Get(f, "duration"));
                 row.area = ParseU32(Get(f, "area"));
+                row.index = static_cast<std::uint32_t>(ParseInt(Get(f, "effectIndex")));
                 // Before 0.23.7 `effectCost` was the MGEF's base cost; the per-effect
                 // cost exists only next to `effectBaseCost`.
                 if (Has("effectBaseCost")) row.cost = ParseFloat(Get(f, "effectCost"));

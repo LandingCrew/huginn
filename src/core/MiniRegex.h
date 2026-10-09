@@ -6,34 +6,37 @@
 // The effect mapper (core/EffectRules.cpp) classifies a magic effect by its
 // keywords, its English name and its description through ordered pattern
 // tables, ported from the Python reference extractor that measured coverage
-// (doc 9, "Needs and effects, enumerated"). std::regex is not used: it has no
-// lookbehind, and MSVC's implementation is slow in Debug builds (which the
-// user plays) and recurses once per character, which can overflow the stack
-// on a long description.
+// (doc 9, "Needs and effects, enumerated"; tools/effects/reference/).
+// std::regex is not used: it has no lookbehind, and MSVC's implementation is
+// slow in Debug builds (which the user plays) and recurses once per character,
+// which can overflow the stack on a long description.
 //
-// Supported (a subset of Python's `re`, enough for the tables):
-//   literals; `.`; classes `[a-z]`, `[^...]`; escapes \b \B \w \W \d \D \s \S
-//   and escaped punctuation; groups `(...)` (capturing), `(?:...)`;
-//   lookaround `(?=...)`, `(?!...)`, `(?<=...)`, `(?<!...)`; alternation `|`;
-//   quantifiers `?`, `*`, `+`, `{n}`, `{n,}`, `{n,m}`, each greedy or lazy
-//   (a trailing `?`); anchors `^` and `$`.
-// Not supported: backreferences, named groups, flags, Unicode classes. The
-// engine is case-sensitive and byte-based: the tables lower-case their input
-// and are written in lower case (keyword tables are matched as written).
+// Semantics: Python's `re` on BYTES (ASCII classes), which is what the tables
+// were checked against (tests/core/fixtures/regex_oracle.csv). Supported:
+//   literals; `.` (not '\n'); classes `[a-z]`, `[^...]`; escapes \b \B \w \W
+//   \d \D \s \S \n \t \r and escaped punctuation; groups `(...)` (capturing),
+//   `(?:...)`; lookaround `(?=...)`, `(?!...)`, `(?<=...)`, `(?<!...)`
+//   (lookbehind fixed-width, as in Python); alternation `|`; quantifiers `?`,
+//   `*`, `+`, `{n}`, `{n,}`, `{,m}`, `{n,m}`, `{,}`, greedy or lazy; anchors
+//   `^` and `$` (end, or before a final '\n').
+// Anything else is a COMPILE ERROR rather than a silent difference: backrefs,
+// named groups, flags, possessive quantifiers, a repeated repeat (`a**`,
+// `x{2}{3}`), variable-width lookbehind, a NUL byte in the pattern, an escape
+// it does not know. The tables lower-case their input and are written in lower
+// case (keyword tables are matched as written).
 //
-// \w is [A-Za-z0-9_]. A word boundary \b is between a word and a non-word
-// byte (or the text's edge), as in Python's ASCII mode.
-//
-// Backtracking depth is bounded by the pattern's nesting, not the text's
-// length: a run of single atoms is matched in a loop, and a quantified single
-// atom counts its matches first and then tries the continuation at each count.
+// Engine: the pattern compiles to a small instruction list run by a
+// backtracking VM with an explicit, heap-allocated backtrack stack, so the C++
+// stack depth does not grow with the text or with how often a group repeats
+// (only with how deeply lookarounds nest in the pattern). A quantified single
+// atom counts its run and backtracks by count; a lookbehind is tried at the one
+// start its fixed width allows; a search skips start bytes no match can begin
+// with.
 //
 // Pure: standard library only (src/core/README.md).
 // =============================================================================
 
-#include <array>
 #include <cstddef>
-#include <cstdint>
 #include <memory>
 #include <string>
 #include <string_view>
@@ -56,7 +59,8 @@ namespace Huginn::Core
             Span whole;
             std::vector<Span> groups;  // capture groups 1..n at index 0..n-1
 
-            /// Text of capture group `n` (1-based), or "" if it did not take part.
+            /// Text of capture group `n` (1-based; 0 = the whole match), or ""
+            /// if it did not take part.
             [[nodiscard]] std::string_view Group(std::string_view text, std::size_t n) const;
         };
 
@@ -71,10 +75,10 @@ namespace Huginn::Core
         /// Compile; false (and Error() says why) on a pattern outside the subset.
         bool Compile(std::string_view pattern);
 
-        [[nodiscard]] bool Valid() const noexcept { return root_ != nullptr && error_.empty(); }
+        [[nodiscard]] bool Valid() const noexcept;
         [[nodiscard]] const std::string& Error() const noexcept { return error_; }
         [[nodiscard]] const std::string& Pattern() const noexcept { return pattern_; }
-        [[nodiscard]] std::size_t GroupCount() const noexcept { return groupCount_; }
+        [[nodiscard]] std::size_t GroupCount() const noexcept;
 
         /// Leftmost match anywhere in `text` (Python re.search). False on an
         /// invalid pattern.
@@ -83,23 +87,11 @@ namespace Huginn::Core
         /// Shorthand for Search(text) != false.
         [[nodiscard]] bool Contains(std::string_view text) const { return Search(text, nullptr); }
 
-        struct Node;  // the parsed pattern (MiniRegex.cpp)
-        using Seq = std::vector<Node*>;
+        struct Impl;  // the compiled program (MiniRegex.cpp)
 
     private:
         std::string pattern_;
         std::string error_;
-        std::vector<std::unique_ptr<Node>> nodes_;
-        std::vector<std::unique_ptr<Seq>> seqs_;
-        Node* root_ = nullptr;  // a capture-less group holding the alternatives
-        std::size_t groupCount_ = 0;
-        // Search prefilter: the bytes a match can start with (when it cannot be
-        // empty), and whether every alternative is anchored at ^.
-        std::array<std::uint64_t, 4> first_{};
-        bool canBeEmpty_ = true;
-        bool anchored_ = false;
-
-        friend class MiniRegexParser;
-        friend class MiniRegexMatcher;
+        std::unique_ptr<Impl> impl_;
     };
 }

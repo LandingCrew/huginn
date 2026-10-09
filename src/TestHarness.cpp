@@ -378,7 +378,10 @@ namespace Huginn::TestHarness
                 return;
             }
             std::string summary;
-            const bool ok = Effect::WriteDumpAll(*dir / g_dumpAllName, summary);
+            // After the save has loaded: the catalog was built in the first task
+            // after kDataLoaded (after the keyword distributors), and its worker
+            // has had the whole load to finish; wait for it if not.
+            const bool ok = Effect::WriteDumpAll(*dir / g_dumpAllName, summary, std::chrono::seconds(120));
             if (ok) logger::info("[HuginnTest] dump all: {}"sv, summary);
             else logger::error("[HuginnTest] dump all failed: {}"sv, summary);
         }
@@ -400,8 +403,10 @@ namespace Huginn::TestHarness
             return;
         }
         if (phase == Phase::Menu) {
-            DumpAllIfAsked();
             if (g_saveName.empty()) {
+                if (!g_dumpAllName.empty()) {
+                    logger::error("[HuginnTest] sDumpAll needs a save (sSaveName): the dump runs after the load"sv);
+                }
                 Finish({});
             } else {
                 ArmAutoLoad();
@@ -413,6 +418,7 @@ namespace Huginn::TestHarness
             // auto-load fired): its suites are tallied, the run goes on.
             return;
         }
+        if (gameLoaded) DumpAllIfAsked();
         if (gameLoaded && g_captureSlotsSec > 0) {
             // Slot snapshots for the golden test (SlotCapture.cpp): play a
             // scripted session while every allocation is recorded, then end.

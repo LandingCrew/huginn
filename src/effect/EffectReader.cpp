@@ -103,7 +103,9 @@ namespace Huginn::Effect
         }
         if (!spell) return idx;
         out.payloadSpells[idx] = spell;
+        std::uint32_t position = 0;
         for (const auto* e : spell->effects) {
+            const std::uint32_t at = position++;
             if (!e || !e->baseEffect) continue;
             const std::uint32_t pi = EffectIndex(e->baseEffect, out, false);
             EffectRow row;
@@ -112,6 +114,7 @@ namespace Huginn::Effect
             row.duration = e->effectItem.duration;
             row.area = e->effectItem.area;
             row.cost = e->cost;
+            row.index = at;
             out.effects[idx].payload.push_back(row);
             out.payloadItems[idx].push_back(e);
         }
@@ -121,7 +124,9 @@ namespace Huginn::Effect
     void EffectReader::AppendEffects(const RE::BSTArray<RE::Effect*>& effects, ItemRecord& item,
                                      std::vector<const RE::Effect*>& items, ReadResult& out)
     {
+        std::uint32_t position = 0;
         for (const auto* e : effects) {
+            const std::uint32_t at = position++;  // the old dump counted array positions
             if (!e || !e->baseEffect) continue;
             EffectRow row;
             row.effect = EffectIndex(e->baseEffect, out, true);
@@ -129,6 +134,7 @@ namespace Huginn::Effect
             row.duration = e->effectItem.duration;
             row.area = e->effectItem.area;
             row.cost = e->cost;
+            row.index = at;
             item.effects.push_back(row);
             items.push_back(e);
         }

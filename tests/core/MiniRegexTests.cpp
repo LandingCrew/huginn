@@ -9,6 +9,7 @@
 
 #include <doctest/doctest.h>
 
+#include <chrono>
 #include <fstream>
 #include <map>
 #include <ostream>
@@ -120,17 +121,65 @@ TEST_CASE("mini regex: lookahead and lookbehind")
 
 TEST_CASE("mini regex: invalid patterns are reported, not thrown")
 {
-    for (const char* bad : { "(", "a)", "[abc", "*a", "a**", "\\q", "(?P<n>x)", "a{3,2}", "\\" }) {
+    for (const char* bad : { "(", "a)", "[abc", "*a", "a**", "\\q", "(?P<n>x)", "a{3,2}", "\\", "x{2}{3}", "a*+",
+                             "{2}", "\\1", "(?<=a+)b", "(?<=ab|c)d", "\\b*" }) {
         MiniRegex re;
         CHECK_FALSE(re.Compile(bad));
         CHECK_FALSE(re.Valid());
         CHECK_FALSE(re.Error().empty());
         CHECK_FALSE(re.Search("anything"));
     }
+    MiniRegex nul;
+    CHECK_FALSE(nul.Compile(std::string_view("a\0b", 3)));  // a NUL byte is rejected
+}
+
+TEST_CASE("mini regex: Python's edge rules -- $, \\B, braces, lookahead groups")
+{
+    CHECK(Find("a$", "a\n") == "a");             // $ also before a final newline
+    CHECK(Find("a$", "a\nb") == "<none>");
+    CHECK_FALSE(MiniRegex(R"(\B)").Contains(""));  // \B never matches an empty text (Python 3.13)
+    CHECK(MiniRegex(R"(\B)").Contains("ab"));
+    CHECK(Find("a{,3}", "aaaaa") == "aaa");     // {,m} is {0,m}
+    CHECK(Find("a{,}", "aaaa") == "aaaa");      // {,} is {0,inf}
+    CHECK(Find("a{}", "a{}") == "a{}");         // {} is a literal
+    CHECK(Find("a{x}", "a{x}") == "a{x}");
+    // A positive lookahead keeps its group.
+    const std::string t = "foobar";
+    MiniRegex la("(?=(foo))f");
+    MiniRegex::Match m;
+    REQUIRE(la.Search(t, &m));
+    CHECK(m.Group(t, 1) == "foo");
+    // ...and a failed path does not leave a stale one behind.
+    MiniRegex stale("(?:(?=(a))b|c)");
+    REQUIRE(stale.Search("ac", &m));
+    CHECK_FALSE(m.groups[0].Matched());
 }
 
 TEST_CASE("mini regex: long input does not blow the stack")
 {
+    // Group repetition is iterative (an explicit backtrack stack): these
+    // overflowed the old recursive matcher in Debug at ~1,000 characters.
+    const std::string ab(20000, 'a');
+    std::string abab;
+    for (int i = 0; i < 10000; ++i) abab += "ab";
+    std::string words;
+    for (int i = 0; i < 4000; ++i) words += "word ";
+    CHECK(Find("(?:ab)*$", abab).size() == abab.size());
+    CHECK(Find("(?:a)*$", ab).size() == ab.size());
+    CHECK(MiniRegex("(a|b)+c").Contains(abab + "c"));
+    CHECK_FALSE(MiniRegex("(a|b)+c").Contains(abab));
+    CHECK(MiniRegex(R"((?:\w+ )*x)").Contains(words + "x"));
+    // A lookbehind is tried at the one start its fixed width allows: the DMG
+    // rule on 40 KB of text stays fast.
+    std::string prose;
+    while (prose.size() < 40000) prose += "the target takes more damage over time and deals no ";
+    const auto t0 = std::chrono::steady_clock::now();
+    const MiniRegex dmg(R"(\b(deal|deals|dealing|does|inflicts?|inflicting)\b.{0,40}(?<!more )(?<!less )(?<!extra )(?<!additional )(?<!double )damage(?! taken))");
+    REQUIRE(dmg.Valid());
+    (void)dmg.Contains(prose);
+    const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+    CHECK(ms < 2000.0);
+
     // One stack frame per quantifier try, not per character.
     const std::string longText(200000, 'a');
     CHECK(Find("a*b", longText + "b").size() == longText.size() + 1);

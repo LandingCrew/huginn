@@ -19,6 +19,24 @@ cap.DESC_ON = True
 cap.NAME_TABLE[1] = (r'^fortify (health|magicka|stamina)\b', 'fortify_vital_X')
 # Deviation: the misspelt "Regneration" (Simonrim) reads as regen, as in the C++.
 cap.NAME_TABLE[0] = (r'fortify (health|magicka|stamina) rege?nerat|rege?nerat|fortify heal rate', 'regen_X')
+# Deviation (verifier round 1, N3): helper names no longer swallow "Blank Slate" or
+# Requiem's "Dispel Soul Gems"; the latter is not a dispel either (unmapped by name).
+cap.HELPER = re.compile(cap.HELPER.pattern.replace('^blank|', '^blank( effect)?$|').replace(
+    'dispel (cloak|size|jump|soul gems)', 'dispel (cloak|size|jump)'))
+_i = next(i for i, (pat, sp) in enumerate(cap.NAME_TABLE) if sp == 'cure_dispel')
+cap.NAME_TABLE.insert(_i, (r'dispel soul gems', None))
+
+
+def desc_col(r):
+    """The description route, as the C++ takes it for a row nothing else maps."""
+    ds, _ = cap.desc_spec(r['effectDescription'])
+    if not ds:
+        return ''
+    if r['det']:
+        for a, b in (('resist_', 'weakness_'), ('fortify_combat_', 'weaken_combat_'), ('defense_armor', 'weakness_armor')):
+            if ds.startswith(a):
+                ds = b + ds[len(a):]
+    return to_col(ds, cap.desc_element(r['effectDescription']) if ds.startswith('damage') else None)
 
 repo = sys.argv[1]
 cols = [r for r in csv.DictReader(open(repo + '/docs/architecture/9-data/effects.csv', encoding='utf-8'))]
@@ -61,6 +79,14 @@ def oracle(r):
     if spec == 'summon_creature' and src == 'keyword':
         el = None
     c = to_col(spec, el)
+    # Deviation (N6): a Cloak/hazard is damage only by a MagicDamage keyword, not by
+    # its resisted actor value alone; otherwise it is a wrapper (payload / description).
+    if r['arch'] in ('Cloak', 'SpawnHazard') and src == 'data' and 'MagicDamage' not in kw:
+        return '', 'wrapper', 'dev:wrapper-not-resist'
+    # Deviation (S5): a "damage" name needs detrimental=1 (script effects exempt) and
+    # no "resist" ("Resist Magicka Damage"); else the description route decides.
+    if src == 'name' and c.startswith('damage') and (re.search(r'\bresist', n) or (not r['det'] and r['arch'] != 'Script')):
+        return desc_col(r), 'desc', 'dev:name-damage-needs-detrimental'
     if src == 'name' and spec == 'utility_slow_time' and 'ethereal' in n:
         c, note = 'defense_ethereal', 'dev:ethereal'
     if re.search(r'[a-z] polymorph|shapeshift: ', n) and src in ('name', 'unmapped', 'desc'):
@@ -137,6 +163,160 @@ def keep_hidden(col, name):
         if nf and nf != fk and not ({nf, fk} <= {'damage', 'absorb'}):
             return False
     return True
+
+
+# =============================================================================
+# Expected VALUES (verifier round 1, S1): a second implementation of the value
+# rules written down in src/core/EffectMapper.h and effects.csv's `how` column,
+# over the fixture's own in-scope items (the C++ test grades the same population).
+# =============================================================================
+import math
+
+AMOUNT = ('restore_', 'damage_', 'absorb_')
+LEVEL = ('fortify_vital_', 'regen_', 'drain_vital_', 'weaken_regen_', 'resist_', 'weakness_', 'fortify_skill_',
+         'fortify_combat_', 'weaken_combat_', 'defense_')
+SPECIAL = {
+    'defense_ethereal': 'PD', 'control_paralysis': 'PD', 'control_stagger': 'PG', 'control_slow': 'PGD',
+    'control_disarm': 'P', 'control_grab': 'P', 'control_silence': 'PD', 'control_sleep': 'PD', 'control_blind': 'PD',
+    'summon_reanimate': 'PG', 'vision_light': 'PArea', 'vision_detect_life': 'PArea', 'vision_night_eye': 'PD',
+    'vision_clairvoyance': 'P', 'movement_speed': 'Level', 'movement_jump_fall': 'PD', 'movement_water_walking': 'P',
+    'utility_carry_weight': 'Level', 'utility_water_breathing': 'PD', 'utility_telekinesis': 'P', 'utility_unlock': 'PG',
+    'utility_slow_time': 'PD', 'utility_teleport': 'P', 'utility_transmute': 'P', 'utility_size': 'P',
+    'shout_recovery': 'Level', 'soul_trap': 'PD', 'survival_hunger': 'Hunger', 'survival_thirst': 'Thirst',
+    'survival_warmth': 'Level', 'survival_fatigue': 'P', 'survival_intoxication': 'P', 'meta_potion_duration': 'Level',
+    'drain_skill': 'Level'}
+
+
+def rule_of(c):
+    if c in fams:
+        return 'P'
+    if c in SPECIAL:
+        return SPECIAL[c]
+    if c.startswith(AMOUNT):
+        return 'Amount'
+    if c.startswith(LEVEL):
+        return 'Level'
+    if c.startswith('influence_'):
+        return 'PGD'
+    if c.startswith(('summon_', 'stealth_')):
+        return 'PD'
+    return 'P'
+
+
+def clip_dur(d):
+    return 3600.0 if d >= 86400 else min(float(d), 3600.0)
+
+
+def dfac(d):
+    return 1.0 if d == 0 else math.log1p(clip_dur(d)) / math.log1p(3600.0)
+
+
+def hunger_size(name, kws):
+    for k in kws.split(';'):
+        if k.startswith('CCSM_RestoreHunger'):
+            return {'Tiny': 0.25, 'Small': 0.5, 'Medium': 0.75, 'Large': 1.0}.get(k[18:], None) or 0.5
+    n = name.lower()
+    if 'very small' in n or 'tiny' in n:
+        return 0.25
+    for w, v in (('small', 0.5), ('medium', 0.75), ('large', 1.0)):
+        if w in n:
+            return v
+    return 0.5
+
+
+def row_quantity(col, kr, constant):
+    """-> (raw, post, graded, full) for one kept row and one of its columns."""
+    mag = abs(kr['mag'])
+    d = kr['dur']
+    rule = rule_of(col)
+    raw, post, graded, full = 0.0, 1.0, False, False
+    if rule == 'Amount':
+        raw, graded = mag * max(clip_dur(d), 1.0), True
+        full = col in ('restore_health', 'restore_magicka', 'restore_stamina') and kr['mag'] >= 9999
+    elif rule == 'Level':
+        raw, graded = (mag if (constant or d == 0) else mag * clip_dur(d) / 3600.0), True
+    elif rule == 'PD':
+        post = dfac(d)
+    elif rule == 'PG':
+        raw, graded = mag, True
+    elif rule == 'PGD':
+        raw, graded, post = mag, True, dfac(d)
+    elif rule == 'PArea':
+        raw, graded = max(float(kr['area']), mag), True
+    elif rule == 'Hunger':
+        post = hunger_size(kr['name'], kr['kws'])
+    elif rule == 'Thirst':
+        post = 1.0 if kr['hydrated'] else 0.5
+    if graded and not raw > 0 and not full:
+        raw = 0.0
+        if kr['route'] != 'data':
+            graded = False
+    return raw, post, graded, full
+
+
+def expected_values(items):
+    """items: list of dicts {scope, constant, rows: [kept row dicts]} -> list of {col: value}."""
+    def eligible_cols(it):
+        vis = set()
+        for kr in it['rows']:
+            if kr['visible']:
+                vis.update(kr['cols'])
+        out = []
+        for kr in it['rows']:
+            for c in kr['cols']:
+                if kr['visible'] or c not in vis:
+                    out.append((kr, c))
+        return out
+
+    pops = collections.defaultdict(list)
+    for it in items:
+        if not it['scope']:
+            continue
+        best = {}
+        for kr, c in eligible_cols(it):
+            raw, post, graded, full = row_quantity(c, kr, it['constant'])
+            if graded and not full and raw > 0:
+                best[c] = max(best.get(c, 0.0), raw)
+        for c, v in best.items():
+            pops[c].append(v)
+    for v in pops.values():
+        v.sort()
+
+    import bisect
+
+    def pct(c, x):
+        v = pops.get(c, [])
+        if not v:
+            return 1.0
+        return max(bisect.bisect_right(v, x), 1) / len(v)
+
+    results = []
+    for it in items:
+        vals = {}
+        if it['scope']:
+            heals_others = False
+            for kr, c in eligible_cols(it):
+                raw, post, graded, full = row_quantity(c, kr, it['constant'])
+                if full:
+                    v = 1.0
+                elif graded and not raw > 0:
+                    v = 1.0 / (len(pops.get(c, [])) + 1)
+                elif graded:
+                    v = pct(c, raw) * post
+                else:
+                    v = post
+                vals[c] = max(vals.get(c, 0.0), v)
+            for kr in it['rows']:
+                if 'restore_health' in kr['cols'] and (kr['delivery'] != '0' or kr['area'] > 0):
+                    heals_others = True
+            if heals_others and vals.get('restore_health', 0) > 0:
+                vals['restore_health_other'] = vals['restore_health']
+            for c, v in list(vals.items()):
+                f = family_of_col.get(c)
+                if f:
+                    vals[f] = max(vals.get(f, 0.0), v)
+        results.append({c: v for c, v in vals.items() if v > 0})
+    return results
 
 
 def main():
@@ -224,6 +404,8 @@ def main():
         has_base = 'effectBaseCost' in hdr and 'effectCost' not in hdr
         rows_out = []
         stats = collections.Counter()
+        value_items = []
+        first_row_index = []
         for key in pick:
             g = groups[key]
             item = g.iloc[0]
@@ -232,6 +414,15 @@ def main():
             # expected per row, and the item's effect columns
             item_cols = set()
             exp_rows = []
+            kept_rows = []
+            hydrated = any('hydrat' in str(r['effectName']).lower() for r in rows if r['effectFormID'])
+            num = lambda v: float(v) if v not in ('', None) and not (isinstance(v, float) and math.isnan(v)) else 0.0
+
+            def kept_row(rr, cols_, visible, route):
+                kept_rows.append({'cols': cols_, 'mag': num(rr['magnitude']), 'dur': int(num(rr['duration'])),
+                                  'area': int(num(rr['area'])), 'delivery': str(rr['effectDelivery']),
+                                  'visible': visible, 'route': route, 'name': str(rr['effectName']),
+                                  'kws': str(rr['effectKeywords']), 'hydrated': hydrated})
             for r in rows:
                 fid = r['effectFormID']
                 if not fid:
@@ -245,6 +436,7 @@ def main():
                         if wc:
                             c, note = wc, 'dev:wrapper-description'
                             item_cols.add(wc)
+                            kept_row(r, [wc], True, 'desc')
                     elif not r['hide']:
                         for _, p in pls.iterrows():
                             pc, psrc, _ = orc[p['effectFormID']]
@@ -252,6 +444,8 @@ def main():
                                 item_cols.add(pc)
                                 if pc.startswith('summon_creature_'):
                                     item_cols.add('summon_creature')
+                                kept_row(dict(p), [pc] + (['summon_creature'] if pc.startswith('summon_creature_') else []),
+                                         True, psrc)
                     exp_rows.append((c, note))
                     continue
                 exp_rows.append((c, note))
@@ -259,6 +453,12 @@ def main():
                     continue
                 kept = (not r['hide']) or keep_hidden(c, r['effectName'])
                 if kept:
+                    cols_ = [c]
+                    if c.startswith('summon_creature_'):
+                        cols_.append('summon_creature')
+                    if c == 'fortify_skill_lockpicking' and r['primaryAV'] == 'PickPocketSkillAdvance':
+                        cols_.append('fortify_skill_pickpocket')
+                    kept_row(r, cols_, not r['hide'], src)
                     item_cols.add(c)
                     if c.startswith('summon_creature_'):
                         item_cols.add('summon_creature')
@@ -272,6 +472,10 @@ def main():
                     full.add(family_of_col[c])
             stats['items'] += 1
             stats['inScope'] += scope
+            ench_cast = str(item.get('enchantCasting', ''))
+            constant = item['kind'] == 'Armor' or str(item['castingType']) == '0' or ench_cast == '0'
+            value_items.append({'scope': scope, 'constant': constant, 'rows': kept_rows})
+            first_row_index.append(len(rows_out))
             for i, r in enumerate(rows):
                 o = {c: ('' if pd.isna(r.get(c, '')) else r.get(c, '')) for c in keep_cols}
                 if has_base:
@@ -291,8 +495,10 @@ def main():
                         o['effectBaseCost'] = p['effectCost']
                     o.update(expectColumn=orc[p['effectFormID']][0], expectNote='payload', expectInScope='', expectEffects='')
                     rows_out.append(o)
+        for vals, at in zip(expected_values(value_items), first_row_index):
+            rows_out[at]['expectValues'] = ';'.join(f'{c}={v:.6g}' for c, v in sorted(vals.items()))
         header = [c for c in keep_cols if not (has_base and c == 'effectCost')] + (['effectBaseCost'] if has_base else []) + \
-            ['expectColumn', 'expectNote', 'expectInScope', 'expectEffects']
+            ['expectColumn', 'expectNote', 'expectInScope', 'expectEffects', 'expectValues']
         if not has_base:
             header = [h for h in header]
         # payload rows must follow their wrapper row: reorder per item

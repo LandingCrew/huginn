@@ -3,7 +3,8 @@
 // =============================================================================
 // EFFECT CATALOG -- cap(i) for every item in the load order (R2)
 // =============================================================================
-// Built once at kDataLoaded: EffectReader reads the load order into plain
+// Built once, in the first main-thread task after kDataLoaded (so after the
+// keyword distributors): EffectReader reads the load order into plain
 // records, Core::Effect::BuildCaps maps and grades them (percentiles need the
 // whole load order, not the player's inventory), and the catalog keeps the
 // static cap of every in-scope item, keyed by FormID.
@@ -25,7 +26,7 @@
 // FormID hex>" = <effects.csv column id>; checked before any other rule. None
 // ships yet.
 //
-// Threads: the forms are read on the main thread at kDataLoaded; the mapping
+// Threads: the forms are read on the main thread (the task after kDataLoaded); the mapping
 // runs on a worker thread (seconds in a Debug build on LoreRim) and publishes
 // with Ready() (release/acquire). Before Ready() every accessor answers
 // "nothing"; after it the catalog is immutable, so readers need no lock.
@@ -61,6 +62,14 @@ namespace Huginn::Effect
         /// thread). Once; later calls are ignored. Ready() turns true when the
         /// worker is done.
         void Build();
+
+        /// Queue Build() as a main-thread task (from kDataLoaded): it then runs
+        /// after every plugin's kDataLoaded handler, keyword distributors
+        /// included. Falls back to building now if there is no task interface.
+        void ScheduleBuild();
+
+        /// The worker failed (an exception); the catalog stays not ready.
+        [[nodiscard]] bool Failed() const noexcept { return failed_.load(std::memory_order_acquire); }
 
         [[nodiscard]] bool Ready() const noexcept { return ready_.load(std::memory_order_acquire); }
 
@@ -102,6 +111,7 @@ namespace Huginn::Effect
         std::size_t formsRead_ = 0;
         double buildMs_ = 0.0;
         std::atomic<bool> ready_{ false };
+        std::atomic<bool> failed_{ false };
         bool built_ = false;
     };
 }

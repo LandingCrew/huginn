@@ -12,6 +12,23 @@ namespace Huginn::Core::Effect
     namespace
     {
         // =====================================================================
+        // One-off patterns (also listed by RulePatterns() for the regex oracle)
+        // =====================================================================
+        constexpr const char* kPatSuspectAv =
+            R"re(SkillAdvance$|^(Fame|Infamy|Mood|Morality|Variable\d\d|VoicePoints|Energy|Assistance|Blindness|Confidence|Aggression)$)re";
+        constexpr const char* kPatVitalWord = R"re(health|magicka|stamina|heal)re";
+        constexpr const char* kPatNegation = R"re(\b(reduc|lower|weaken|decreas)\w*)re";
+        constexpr const char* kPatHealthWord = R"re(\bhealth\b)re";
+        constexpr const char* kPatMagickaWord = R"re(\bmagicka\b)re";
+        constexpr const char* kPatStaminaWord = R"re(\bstamina\b)re";
+        constexpr const char* kPatWeakerDamage = R"re((reduc|lower|weaken)\w* .{0,30}damage)re";
+        constexpr const char* kPatSurvivalKeyword = R"re(Hunger|Warmth|CCSM)re";
+        constexpr const char* kPatRallyCarried = R"re(silence|paraly|command|bend will|calm|banish|frenzy|fear)re";
+        constexpr const char* kPatBadItemName =
+            R"re(\b(dummy|test|testing|donotuse|do not use|unused|placeholder|deleted)\b|^zz|donotuse|takeme)re";
+        constexpr const char* kPatResistWord = R"re(\bresist)re";
+
+        // =====================================================================
         // Small helpers
         // =====================================================================
         bool StartsWith(std::string_view s, std::string_view p) noexcept { return s.substr(0, p.size()) == p; }
@@ -115,8 +132,7 @@ namespace Huginn::Core::Effect
         /// Actor values mods reuse: never trusted on their own.
         bool SuspectAv(std::string_view av)
         {
-            static const MiniRegex re(
-                R"re(SkillAdvance$|^(Fame|Infamy|Mood|Morality|Variable\d\d|VoicePoints|Energy|Assistance|Blindness|Confidence|Aggression)$)re");
+            static const MiniRegex re(kPatSuspectAv);
             return re.Contains(av.empty() ? std::string_view("-") : av);
         }
 
@@ -243,6 +259,7 @@ namespace Huginn::Core::Effect
                 { R"re(cure disease|cure vampirism|beastblood)re", "cure_disease" },
                 { R"re(cure poison)re", "cure_poison" },
                 { R"re(cure injur)re", "cure_injury" },
+                { R"re(dispel soul gems)re", "NONE" },
                 { R"re(\bdispel\b)re", "cure_dispel" },
                 { R"re(restore health|heal(ing)?\b|regain .*health)re", "restore_health" },
                 { R"re(restore magicka)re", "restore_magicka" },
@@ -327,7 +344,7 @@ namespace Huginn::Core::Effect
                 MiniRegex::Match m;
                 if (!rule.re.Search(ln, &m)) continue;
                 if (rule.spec == "regen_X") {
-                    static const MiniRegex vit(R"re(health|magicka|stamina|heal)re");
+                    static const MiniRegex vit(kPatVitalWord);
                     MiniRegex::Match vm;
                     if (vit.Search(ln, &vm)) {
                         const auto w = vm.Group(ln, 0);
@@ -340,6 +357,7 @@ namespace Huginn::Core::Effect
                     const char* sk = SkillWord(m.Group(ln, 1));
                     return sk ? std::string("fortify_skill_") + sk : std::string{};
                 }
+                if (rule.spec == "NONE") return {};
                 return rule.spec;
             }
             return {};
@@ -349,10 +367,10 @@ namespace Huginn::Core::Effect
         {
             static const MiniRegex re(
                 R"re(dummy|corrector|visual|\bfx\b|screen ?shake|cooldown|script ai|fake script|empty cloak|^ai$|)re"
-                R"re(^blank|null effect|^mad|not user facing|\(hidden\)|description|display effect|priority|placeholder|)re"
+                R"re(^blank( effect)?$|null effect|^mad|not user facing|\(hidden\)|description|display effect|priority|placeholder|)re"
                 R"re(perk bonus|perk impact|invisible \d|^$|stagger push|stagger area|sound fx|light toggle|marker|tracker|)re"
                 R"re(count(er)?\b|playing music|play (lute|flute|drum)|staff enchantment|master of the mind|)re"
-                R"re(dispel (cloak|size|jump|soul gems)|dispel effect|\w dispel$)re");
+                R"re(dispel (cloak|size|jump)|dispel effect|\w dispel$)re");
             return re;
         }
 
@@ -497,7 +515,7 @@ namespace Huginn::Core::Effect
 
         std::string DescMatch(std::string_view t)
         {
-            static const MiniRegex neg(R"re(\b(reduc|lower|weaken|decreas)\w*)re");
+            static const MiniRegex neg(kPatNegation);
             for (const auto& rule : DescTable()) {
                 MiniRegex::Match m;
                 if (!rule.re.Search(t, &m)) continue;
@@ -516,9 +534,9 @@ namespace Huginn::Core::Effect
                 if (spec == "NONE") return {};
                 if (spec == "DMG") {
                     const auto after = t.substr(static_cast<std::size_t>(m.whole.begin));
-                    static const MiniRegex h(R"re(\bhealth\b)re");
-                    static const MiniRegex mg(R"re(\bmagicka\b)re");
-                    static const MiniRegex st(R"re(\bstamina\b)re");
+                    static const MiniRegex h(kPatHealthWord);
+                    static const MiniRegex mg(kPatMagickaWord);
+                    static const MiniRegex st(kPatStaminaWord);
                     if (h.Contains(after)) return "damage_health";
                     if (mg.Contains(after)) return "damage_magicka";
                     if (st.Contains(after)) return "damage_stamina";
@@ -536,7 +554,7 @@ namespace Huginn::Core::Effect
                 }
                 if (spec == "SPEED") return isNeg ? "weaken_combat_weapon_speed" : "fortify_combat_weapon_speed";
                 if (spec == "ATKDMG") {
-                    static const MiniRegex weak(R"re((reduc|lower|weaken)\w* .{0,30}damage)re");
+                    static const MiniRegex weak(kPatWeakerDamage);
                     return weak.Contains(t) ? "weaken_combat_attack_damage" : "fortify_combat_attack_damage";
                 }
                 if (spec == "SKILL") {
@@ -671,7 +689,7 @@ namespace Huginn::Core::Effect
             if (scriptLike) {
                 const bool helperName = HelperRe().Contains(ln);
                 if (a == kArchScript && helperName) return { {}, Route::Helper, {} };
-                static const MiniRegex survivalKw(R"re(Hunger|Warmth|CCSM)re");
+                static const MiniRegex survivalKw(kPatSurvivalKeyword);
                 if (helperName && !survivalKw.Contains(kw)) return { {}, Route::Helper, {} };
                 if (av == "Variable09" && Contains(ln, "warmth")) return { "survival_warmth", Route::Keyword, {} };
                 // Simonrim: Fortify Potion Duration rides on AlchemySkillAdvance
@@ -690,7 +708,16 @@ namespace Huginn::Core::Effect
                     // "Modify Conjuration" tagged Fire).
                     return { spec, Route::Keyword, el };
                 }
-                const std::string spec = NameSpec(r.name);
+                std::string spec = NameSpec(r.name);
+                // effects.csv's damage columns need detrimental=1: a name saying
+                // "damage" on a beneficial effect, or "resist ... damage"
+                // (Simonrim's Adamant "Resist Magicka Damage"), is not damage.
+                // Script effects are exempt from the flag: their scripts deal the
+                // damage and the flag is often unset.
+                if (StartsWith(spec, "damage")) {
+                    static const MiniRegex resist(kPatResistWord);
+                    if (resist.Contains(ln) || (!det && a != kArchScript)) spec.clear();
+                }
                 if (!spec.empty()) {
                     std::string el;
                     if (StartsWith(spec, "damage")) el = Element(r, kw, true);
@@ -753,7 +780,7 @@ namespace Huginn::Core::Effect
                 return { spec, Route::Data, {} };
             }
             if (a == kArchRally) {
-                static const MiniRegex carried(R"re(silence|paraly|command|bend will|calm|banish|frenzy|fear)re");
+                static const MiniRegex carried(kPatRallyCarried);
                 if (carried.Contains(ln)) {
                     const std::string spec = NameSpec(r.name);
                     if (!spec.empty()) return { spec, Route::Name, {} };
@@ -761,9 +788,11 @@ namespace Huginn::Core::Effect
                 return { "influence_rally", Route::Data, {} };
             }
             if (a == kArchCloak || a == kArchSpawnHazard) {
-                if (Res(r.resistAV) || Contains(kw, "MagicDamage")) {
-                    return { "damage_health", Route::Data, Element(r, kw, false) };
-                }
+                // A damage keyword on the wrapper says what it does. A resisted
+                // actor value alone does not (the reference read it as damage:
+                // Simonrim's Whirlwind Cloak, a speed cloak, carries FrostResist);
+                // the payload, or failing that the description, decides.
+                if (Contains(kw, "MagicDamage")) return { "damage_health", Route::Data, Element(r, kw, false) };
                 return { {}, Route::Wrapper, {} };
             }
             if (a == kArchAbsorb) {
@@ -944,6 +973,12 @@ namespace Huginn::Core::Effect
 
     bool IsHelperName(std::string_view name) { return HelperRe().Contains(Lower(name)); }
 
+    bool IsBadItemName(std::string_view name)
+    {
+        static const MiniRegex bad(kPatBadItemName);
+        return bad.Contains(Lower(name));
+    }
+
     std::optional<Col> DescriptionColumn(std::string_view description, bool detrimental)
     {
         std::string ds = DescSpec(description);
@@ -968,6 +1003,10 @@ namespace Huginn::Core::Effect
             for (const auto& rule : *t) out.push_back(rule.re.Pattern());
         }
         out.push_back(HelperRe().Pattern());
+        for (const char* p : { kPatSuspectAv, kPatVitalWord, kPatNegation, kPatHealthWord, kPatMagickaWord, kPatStaminaWord,
+                               kPatWeakerDamage, kPatSurvivalKeyword, kPatRallyCarried, kPatBadItemName, kPatResistWord }) {
+            out.emplace_back(p);
+        }
         return out;
     }
 
