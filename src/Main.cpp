@@ -783,6 +783,9 @@ void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
     case SKSE::MessagingInterface::kDataLoaded:
         OnDataLoaded();
         break;
+    case SKSE::MessagingInterface::kPreLoadGame:
+        State::DropAheadProbe::SetGameLoaded(false);  // R3: off through the load
+        break;
     case SKSE::MessagingInterface::kNewGame:
         logger::info("New game started"sv);
         Effect::EffectCatalog::GetSingleton().Build();  // no-op once built at the main menu

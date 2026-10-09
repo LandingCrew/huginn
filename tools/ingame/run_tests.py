@@ -622,6 +622,10 @@ def main() -> int:
                     help="after the load suites, coc to each ';'-separated cell 12 s apart, then end "
                          "(Debug, 0.23.14+): crosses loads like a door or fast travel")
     args = ap.parse_args()
+    if args.coc and args.capture_slots > 0:
+        raise Refused("--coc and --capture-slots cannot run together (each ends the run its own way)")
+    if args.coc and args.no_save:
+        raise Refused("--coc needs a save: the cells are crossed after the load")
     if args.coc:
         args.timeout += 15 * (args.coc.count(";") + 1) + 120
     # The capture session runs after the suites: its seconds, plus the

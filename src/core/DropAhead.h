@@ -89,6 +89,17 @@ namespace Huginn::Core::Needs
         return { (current.x - previous.x) / dtSec, (current.y - previous.y) / dtSec, 0.0f };
     }
 
+    /// A move no walk, sprint or horse makes between two probes (100 ms apart):
+    /// a coc, a load door, fast travel. The heading then comes from the
+    /// facing, not from the jump.
+    inline constexpr float kTeleportDistance = 500.0f;
+
+    [[nodiscard]] inline bool IsTeleport(Vec3 previous, Vec3 current) noexcept
+    {
+        const float d = std::hypot(current.x - previous.x, current.y - previous.y, current.z - previous.z);
+        return !(d <= kTeleportDistance);  // NaN counts as a jump
+    }
+
     /// Ray start points: `distances` ahead of the feet along `dir`, at waist height.
     [[nodiscard]] inline std::array<Vec3, 3> ProbeStarts(Vec3 feet, Dir2 dir, const DropProbeConfig& cfg) noexcept
     {
@@ -157,53 +168,82 @@ namespace Huginn::Core::Needs
 
     /// cast(Vec3 from, Vec3 unitDir, float length, RayKind) -> RayResult.
     ///
-    /// For each probe point in turn: two horizontal picks to it from the
+    /// For each probe point in turn, two horizontal picks to it from the
     /// previous point (the player for the first), at waist and at knee height
-    /// -- the knee pick catches a parapet or a low wall under the waist with a
-    /// void behind it. Either blocked: this point and every one beyond it are
-    /// unknown (rising ground that buries the point, a wall, a door, a fence).
-    /// Otherwise a ray straight down from the point at waist height: a hit is
-    /// the surface, no hit a real void, Exhausted makes this one point
-    /// unknown. Water is not read here (the game adds it after).
+    /// above the PREVIOUS point's ground (the player's feet for the first,
+    /// then each reached point's down-ray hit), so the picks climb a walkable
+    /// slope with it:
+    ///   - the waist pick blocked: a wall, a door, a fence, a slope too steep
+    ///     to call walkable (rise > waist over the spacing) -- this point and
+    ///     every one beyond it are unknown;
+    ///   - the knee pick blocked: a parapet or low wall under the waist, or
+    ///     ground rising past the knee. The down ray from waist height at the
+    ///     point tells them apart: ground there at or above the knee height is
+    ///     rising ground (the point is known, the surface is that ground);
+    ///     lower ground or a void behind means an obstacle between (unknown,
+    ///     and every point beyond it).
+    /// Then a ray straight down from the point at waist height above the
+    /// previous ground: a hit is the surface, no hit a real void, Exhausted
+    /// (out of recasts) makes this one point unknown. Water is not read here
+    /// (the game adds it after).
+    ///
+    /// Known limit: an obstacle open between the knee and the waist (a railing
+    /// with a gap there) is not seen, so a void behind it reads as a cliff.
     template <class Cast>
     [[nodiscard]] std::array<ProbeHit, 3> ProbeAll(Vec3 feet, Dir2 dir, const DropProbeConfig& cfg, Cast&& cast)
     {
         std::array<ProbeHit, 3> hits{};
         const auto starts = ProbeStarts(feet, dir, cfg);
         Vec3 previous = feet;  // XY of the last reached point
+        float groundZ = feet.z;  // the ground under it
         bool blocked = false;
+        const Vec3 kDown{ 0.0f, 0.0f, -1.0f };
+
+        auto horizontal = [&](Vec3 to, float height) {
+            const Vec3 from{ previous.x, previous.y, groundZ + height };
+            const float dx = to.x - from.x;
+            const float dy = to.y - from.y;
+            const float length = std::hypot(dx, dy);
+            if (!(length > 0.0f)) return true;
+            const Vec3 unit{ dx / length, dy / length, 0.0f };
+            return cast(from, unit, length, RayKind::Horizontal).outcome == RayResult::Outcome::Clear;
+        };
+
         for (std::size_t i = 0; i < starts.size(); ++i) {
             auto& h = hits[i];
-            if (!blocked) {
-                for (const float height : { cfg.waistHeight, cfg.kneeHeight }) {
-                    const Vec3 from{ previous.x, previous.y, feet.z + height };
-                    const float dx = starts[i].x - from.x;
-                    const float dy = starts[i].y - from.y;
-                    const float length = std::hypot(dx, dy);
-                    if (!(length > 0.0f)) continue;
-                    const Vec3 unit{ dx / length, dy / length, 0.0f };
-                    if (cast(from, unit, length, RayKind::Horizontal).outcome != RayResult::Outcome::Clear) {
-                        blocked = true;
-                        break;
-                    }
-                }
-            }
             if (blocked) {
                 h.known = false;
                 continue;
             }
-            previous = starts[i];
-            const RayResult down = cast(starts[i], Vec3{ 0.0f, 0.0f, -1.0f }, cfg.rayLength, RayKind::Down);
+            const Vec3 start{ starts[i].x, starts[i].y, groundZ + cfg.waistHeight };
+            if (!horizontal(start, cfg.waistHeight)) {
+                blocked = true;
+                h.known = false;
+                continue;
+            }
+            const bool kneeClear = horizontal(start, cfg.kneeHeight);
+            const RayResult down = cast(start, kDown, cfg.rayLength, RayKind::Down);
+            const bool risingGround = down.outcome == RayResult::Outcome::Hit &&
+                                      start.z - down.distance >= groundZ + cfg.kneeHeight;
+            if (!kneeClear && !risingGround) {
+                blocked = true;
+                h.known = false;
+                continue;
+            }
             switch (down.outcome) {
                 case RayResult::Outcome::Hit:
                     h.hit = true;
-                    h.hitZ = starts[i].z - down.distance;
+                    h.hitZ = start.z - down.distance;
+                    previous = start;
+                    groundZ = h.hitZ;
                     break;
                 case RayResult::Outcome::Clear:
                     h.hit = false;
+                    previous = start;  // a void: the next pick still goes from here, at this height
                     break;
                 case RayResult::Outcome::Exhausted:
                     h.known = false;
+                    previous = start;
                     break;
             }
         }

@@ -176,12 +176,14 @@ in. What was built: the [implementation map](architecture/9-implementation-map.m
       2–3 points ahead of the player (`bhkWorld::PickObject`), not a guessed
       floor and not the terrain heightmap, which sees through rock meshes.
       Method in `9-data/needs.csv` (`drop_ahead`); each point first reached by
-      horizontal picks at waist and knee height (any hit blocks), so rising
-      ground, a wall, a parapet or an invisible wall reads "not measured",
-      never a cliff. Cast on the main thread from a `PlayerCharacter::Update`
-      hook under the world's read lock (the update loop and SKSE tasks run on
-      job threads). Proven live: every monitor snapshot of a scripted session
-      reads a measured drop, and five `coc` cell changes ran clean.
+      horizontal picks at waist and knee height above the previous point's
+      ground, so walkable slopes stay known and a wall, a parapet or an
+      invisible wall reads "not measured", never a cliff. Cast on the main
+      thread from a `PlayerCharacter::Update` hook under the world's read lock
+      (the update loop and SKSE tasks run on job threads). Proven live with the
+      hook build: every monitor snapshot of two scripted sessions reads a
+      measured drop, every plain run must see one to pass, and six `coc`
+      cell changes across two worldspaces ran clean.
 - [ ] **In game (you):** stand at cliff edges, on rock spires and bridges, and
       above deep water; `hg needs` shows `drop_ahead` high only at a real drop.
 - [x] Computed and logged on its own cadence (`needs/NeedMonitor`, every
@@ -189,8 +191,8 @@ in. What was built: the [implementation map](architecture/9-implementation-map.m
       second). **Not** in the skip gate: moved to R8 (below).
 - [x] `hg needs` prints the live vector.
 - [x] Done when (agent): curve host tests pass; a replayed state snapshot gives
-  the expected vector (`tests/core/NeedFixtureTests.cpp`: 147 snapshots, 64
-  synthetic and 83 recorded in game, against an oracle written apart from the
+  the expected vector (`tests/core/NeedFixtureTests.cpp`: 148 snapshots, 64
+  synthetic and 84 recorded in game with the hook build, against an oracle written apart from the
   evaluator); pipeline runs per second and `hg recs 40` match the old build.
 - [ ] **In game (you):** a 20-minute session where `hg needs` shows fire,
   darkness, hunger and combat onset firing and expiring.

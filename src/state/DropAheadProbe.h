@@ -22,12 +22,20 @@
 // physics world is held by an NiPointer and read under
 // bhkWorld::worldLock (BSReadLockGuard) for the casts.
 //
+// On and off: on at kPostLoadGame / kNewGame, off at kPreLoadGame and when
+// the main menu opens (quit to the main menu leaves the player singleton
+// alive). A position jump past 500 units between two probes is a teleport
+// (coc, a load door, fast travel): the heading then comes from the facing.
+// Anything the probe throws is caught (logged once); the game's own update
+// has already run, first.
+//
 // The sensor (StateManager::PollNeedPosition) reads the last reading.
 // =============================================================================
 
 #include "core/DropAhead.h"
 
 #include <array>
+#include <cstdint>
 #include <string_view>
 
 namespace Huginn::State::DropAheadProbe
@@ -68,6 +76,10 @@ namespace Huginn::State::DropAheadProbe
    /// Readings older than this are not used by the sensor (the hook stopped:
    /// a menu, a load).
    inline constexpr double kMaxAgeSec = 1.0;
+
+   /// How many readings were Measured (at least one probe known) since the
+   /// plugin loaded. The test harness requires one before a run may pass.
+   [[nodiscard]] std::uint32_t MeasuredCount() noexcept;
 
    /// The collision layers a DOWN ray counts as ground: terrain and statics
    /// (static, anim static, transparent, trees, props, terrain, ground). The

@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <functional>
 #include <cmath>
 #include <numbers>
 #include <ostream>
@@ -125,7 +126,7 @@ namespace
     // down ray runs out of recasts (a crowd). Rays go along +Y or straight down.
     struct World
     {
-        float (*ground)(float y) = nullptr;
+        std::function<float(float)> ground;
         struct Wall { float y; float top; };
         std::vector<Wall> walls;
         float crowdY = -1.0f;
@@ -231,16 +232,46 @@ TEST_CASE("probe sequence: an invisible wall at the edge blocks (any hit counts)
     CHECK(DropAhead(kFeet.z, hits, cfg) == 0.0f);
 }
 
-TEST_CASE("probe sequence: uphill blocks the points the slope buries; stairs down read small")
+TEST_CASE("probe sequence: a walkable slope uphill stays known at every angle up to 30 degrees")
 {
     const DropProbeConfig cfg;
-    World up;
-    up.ground = Uphill10;
-    const auto u = ProbeAll(kFeet, kNorth, cfg, up);
-    CHECK(u[0].known);         // 12.6 units up at 70: under the knee
-    CHECK_FALSE(u[1].known);   // the slope crosses knee height before 175
-    CHECK_FALSE(u[2].known);
-    CHECK(DropAhead(kFeet.z, u, cfg) == 0.0f);
+    for (const float degrees : { 5.0f, 10.0f, 15.0f, 20.0f, 30.0f }) {
+        INFO("slope " << degrees << " degrees");
+        const float t = std::tan(degrees * std::numbers::pi_v<float> / 180.0f);
+        World up;
+        up.ground = [t](float y) { return 1000.0f + t * std::max(y, 0.0f); };
+        const auto u = ProbeAll(kFeet, kNorth, cfg, up);
+        CHECK(u[0].known);
+        CHECK(u[1].known);
+        CHECK(u[2].known);
+        CHECK(u[2].hitZ == doctest::Approx(1000.0 + t * 280.0).epsilon(1e-4));
+        CHECK(DropAhead(kFeet.z, u, cfg) == 0.0f);
+    }
+    // Steeper than the waist over the spacing (64 over 70 units, ~42 degrees):
+    // not walkable, the first point already unknown.
+    World cliffFace;
+    cliffFace.ground = [](float y) { return 1000.0f + std::max(y, 0.0f); };  // 45 degrees
+    CHECK(DropAhead(kFeet.z, ProbeAll(kFeet, kNorth, cfg, cliffFace), cfg) == -1.0f);
+    CHECK(Uphill10(70.0f) > 1000.0f);
+}
+
+TEST_CASE("probe sequence: a 6-degree rise to a crest, then a cliff at 250, reads the cliff")
+{
+    const DropProbeConfig cfg;
+    const float t = std::tan(6.0f * std::numbers::pi_v<float> / 180.0f);
+    World w;
+    w.ground = [t](float y) { return y < 250.0f ? 1000.0f + t * std::max(y, 0.0f) : std::nanf(""); };
+    const auto hits = ProbeAll(kFeet, kNorth, cfg, w);
+    CHECK(hits[0].known);
+    CHECK(hits[1].known);
+    CHECK(hits[2].known);
+    CHECK_FALSE(hits[2].hit);  // the void past the crest
+    CHECK(DropAhead(kFeet.z, hits, cfg) > 3000.0f);
+}
+
+TEST_CASE("probe sequence: stairs down read small")
+{
+    const DropProbeConfig cfg;
     World down;
     down.ground = Downstairs;
     const float drop = DropAhead(kFeet.z, ProbeAll(kFeet, kNorth, cfg, down), cfg);
@@ -258,6 +289,30 @@ TEST_CASE("probe sequence: a down ray out of recasts makes only that point unkno
     CHECK_FALSE(hits[1].known);
     CHECK(hits[2].known);   // reachability went on past the crowd
     CHECK(hits[2].hit);
+}
+
+TEST_CASE("probe sequence: a step up past the knee is ground, not a parapet")
+{
+    const DropProbeConfig cfg;
+    // A 40-unit ledge up at y = 100, flat beyond: the knee pick hits its face,
+    // the down ray at the point finds ground above the knee -> rising ground.
+    World w;
+    w.ground = [](float y) { return y < 100.0f ? 1000.0f : 1040.0f; };
+    const auto hits = ProbeAll(kFeet, kNorth, cfg, w);
+    CHECK(hits[0].known);
+    CHECK(hits[1].known);
+    CHECK(hits[1].hitZ == doctest::Approx(1040.0));
+    CHECK(hits[2].known);
+    CHECK(DropAhead(kFeet.z, hits, cfg) == 0.0f);
+}
+
+TEST_CASE("teleport: a jump past 500 units is not movement")
+{
+    CHECK_FALSE(IsTeleport({ 0.0f, 0.0f, 0.0f }, { 80.0f, 0.0f, 0.0f }));     // a sprint, 100 ms
+    CHECK_FALSE(IsTeleport({ 0.0f, 0.0f, 0.0f }, { 300.0f, 300.0f, 0.0f }));  // a fast horse, a long frame
+    CHECK(IsTeleport({ 0.0f, 0.0f, 0.0f }, { 3000.0f, 0.0f, 0.0f }));         // a coc
+    CHECK(IsTeleport({ 0.0f, 0.0f, 0.0f }, { 0.0f, 0.0f, -9000.0f }));        // a load door down
+    CHECK(IsTeleport({ 0.0f, 0.0f, 0.0f }, { std::nanf(""), 0.0f, 0.0f }));
 }
 
 TEST_CASE("drop ahead: the movement threshold is 20 units/s")

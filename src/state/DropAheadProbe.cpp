@@ -13,6 +13,7 @@ namespace Huginn::State::DropAheadProbe
    namespace
    {
       std::atomic<bool> g_gameLoaded{ false };
+      std::atomic<std::uint32_t> g_measuredCount{ 0 };
 
       std::mutex g_mutex;
       Reading g_latest;
@@ -131,9 +132,19 @@ namespace Huginn::State::DropAheadProbe
             Store(s, -1.0f, nowSec);
             LogTransition(s, "");
          };
-         if (auto* ui = RE::UI::GetSingleton(); ui && ui->IsMenuOpen(RE::LoadingMenu::MENU_NAME)) {
-            g_lastPosAt = -1.0;  // a load: the next position is no movement
-            return skip(Status::Loading);
+         if (auto* ui = RE::UI::GetSingleton()) {
+            // Quit to the main menu: the player singleton outlives the world
+            // (CLAUDE.md memory: player teardown is not a null pointer). Off
+            // until the next kPostLoadGame / kNewGame turns it back on.
+            if (ui->IsMenuOpen(RE::MainMenu::MENU_NAME)) {
+               g_gameLoaded.store(false, std::memory_order_release);
+               g_lastPosAt = -1.0;
+               return skip(Status::NotLoaded);
+            }
+            if (ui->IsMenuOpen(RE::LoadingMenu::MENU_NAME)) {
+               g_lastPosAt = -1.0;  // a load: the next position is no movement
+               return skip(Status::Loading);
+            }
          }
          if (!player->Get3D()) return skip(Status::No3D);
          auto* cell = player->GetParentCell();
@@ -144,7 +155,14 @@ namespace Huginn::State::DropAheadProbe
 
          const RE::NiPoint3 pos = player->GetPosition();
          const Core::Needs::Vec3 feet{ pos.x, pos.y, pos.z };
-         const float dt = g_lastPosAt < 0.0 ? 0.0f : static_cast<float>(nowSec - g_lastPosAt);
+         // A teleport (coc, a load door, fast travel) is no heading: the old
+         // to new position would aim the probes anywhere. Use the facing.
+         float dt = g_lastPosAt < 0.0 ? 0.0f : static_cast<float>(nowSec - g_lastPosAt);
+         if (dt > 0.0f && Core::Needs::IsTeleport(g_lastPos, feet)) {
+            logger::debug("[DropAhead] a {:.0f}-unit jump: a teleport, heading from the facing"sv,
+               std::hypot(feet.x - g_lastPos.x, feet.y - g_lastPos.y, feet.z - g_lastPos.z));
+            dt = 0.0f;
+         }
          const auto velocity = Core::Needs::HorizontalVelocity(g_lastPos, feet, dt);
          g_lastPos = feet;
          g_lastPosAt = nowSec;
@@ -183,6 +201,7 @@ namespace Huginn::State::DropAheadProbe
          const float drop = Core::Needs::DropAhead(feet.z, hits, cfg);
          const Status status = drop < 0.0f ? Status::AllUnknown : Status::Measured;
          Store(status, drop, nowSec);
+         if (status == Status::Measured) g_measuredCount.fetch_add(1, std::memory_order_relaxed);
          if (static_cast<int>(status) == g_lastLoggedStatus) return;
          LogTransition(status, fmt::format(": drop {:.0f} | dir ({:.2f}, {:.2f}) | hits {}{}:{:.0f} {}{}:{:.0f} "
                                            "{}{}:{:.0f} | unknown {} rejected {} | feet z {:.0f}",
@@ -194,7 +213,16 @@ namespace Huginn::State::DropAheadProbe
       void HookUpdate(RE::PlayerCharacter* a_this, float a_delta)
       {
          g_originalUpdate(a_this, a_delta);
-         OnPlayerUpdate(a_this);
+         // Nothing of ours may unwind into the game's frames.
+         try {
+            OnPlayerUpdate(a_this);
+         } catch (...) {
+            static std::atomic<bool> s_logged{ false };
+            if (!s_logged.exchange(true)) {
+               logger::error("[DropAhead] an exception in the probe was caught (logged once); drop ahead unmeasured"sv);
+            }
+            Store(Status::NotLoaded, -1.0f, -1.0);
+         }
       }
    }
 
@@ -206,6 +234,8 @@ namespace Huginn::State::DropAheadProbe
    }
 
    void SetGameLoaded(bool loaded) noexcept { g_gameLoaded.store(loaded, std::memory_order_release); }
+
+   std::uint32_t MeasuredCount() noexcept { return g_measuredCount.load(std::memory_order_relaxed); }
 
    Reading Latest() noexcept
    {

@@ -90,7 +90,7 @@ the checked-in fixtures byte for byte.
 | `NeedIdsTests.cpp` | `core/NeedIds.h` equals `needs.csv` (ids, order, group, priority, default curve, deferred flag); every need has an input |
 | `ResponseCurveTests.cpp` | each curve kind against hand-worked values; [0,1] for any input; parse/format round trip; bad INI values refused |
 | `NeedEvaluatorTests.cpp` | named cases for the `r3_input` formulas (gates, NEVER, families, ammo by launcher...), the 0.05 signature, `Advance`, `TimeDriven`, the text record |
-| `NeedSensorTests.cpp` | drop-ahead geometry (points, direction, the 20 units/s threshold, cliff, slope, no hit, bridge over water, wading; unknown probes: uphill, a wall, stairs, a crowd); the probe sequence (`ProbeAll`) over a scripted world: the picks it casts, a cliff, a parapet blocked at the knee, an invisible wall, uphill, stairs, a crowd, the decaying sum, the time-to-kill estimate |
+| `NeedSensorTests.cpp` | drop-ahead geometry (points, direction, the 20 units/s threshold, cliff, slope, no hit, bridge over water, wading; unknown probes: uphill, a wall, stairs, a crowd); the probe sequence (`ProbeAll`) over a scripted world: the picks it casts, a cliff, a parapet blocked at the knee, an invisible wall, walkable slopes of 5-30 degrees, a crest then a cliff, a step up, stairs, a crowd; the teleport test, the decaying sum, the time-to-kill estimate |
 | `TargetFamiliesTests.cpp` | the multi-hot family reading on all 539 `race_map.csv` rows (family \| also) and named cases |
 | `NeedFixtureTests.cpp` | every snapshot in `tests/core/fixtures/needs/*.txt` gives the vector in its `.expected.csv` |
 
@@ -98,7 +98,7 @@ The fixtures' expectations come from `tools/needs/expected_vectors.py`, an
 oracle written from `needs.csv`, `NeedSnapshot.h` and the curve formulas by an
 agent that did not see the evaluator; regenerate an expectation only with it.
 `synthetic.txt` (64 snapshots) makes every need with a sensor fire;
-`captured_vanilla.txt` (83, every one with a measured `dropAhead`) was recorded in game with
+`captured_vanilla.txt` (84: the monitor's with a measured `dropAhead`, the suite's two -1 as the hook starts after the suites) was recorded in game with
 `run_tests.py --capture-needs 400 --capture-slots 90` (Debug, test mode;
 `Huginn_NeedSnapshots.txt` in the log folder). After editing the csv's curve
 or input columns: `python -I tools/needs/make_need_ids.py` (header),
@@ -241,7 +241,10 @@ python -I tools/ingame/run_tests.py --no-save --dry-run # check, print the MO2 c
 python -I tools/ingame/run_tests.py --dump-all Huginn_All_vanilla.csv   # also write hg dump all (0.23.12+)
 python -I tools/ingame/run_tests.py --capture-needs 400 --capture-slots 90  # record need snapshots (0.23.14+)
 python -I tools/ingame/run_tests.py --dump-recs 8      # `hg recs 40` after 8 idle s, then end (0.23.14+)
-python -I tools/ingame/run_tests.py --coc "RiverwoodSleepingGiantInn;Riverwood"  # cross cells, then end (0.23.14+)
+python -I tools/ingame/run_tests.py --coc "RiverwoodSleepingGiantInn;Riverwood"  # cross cells, then end (0.23.14+;
+                                                      # a coc that fails fails the run; not with --capture-slots)
+# Every test-mode run that loads a save (0.23.14+) fails unless the drop-ahead probe took a measured reading
+# (DropAheadProbe::MeasuredCount); a plain run waits up to 10 s for one.
 ```
 
 `--dump-all NAME` (a plain file name) makes Huginn write `hg dump all` into the
