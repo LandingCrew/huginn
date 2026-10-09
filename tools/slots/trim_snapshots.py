@@ -8,7 +8,7 @@ so the fixture holds each distinct situation once.
 
     python -I tools/slots/trim_snapshots.py CAPTURE.txt OUT.txt [--max N]
 
---max N then keeps at most N per tag (play, campaign), evenly spaced, so a
+--max N then keeps at most N per tag (play, campaign), evenly spaced, plus snapshot with a job-key pull or an override marked in place, so a
 fixture stays small enough to check in. The item dictionary (ITEM lines) is
 kept whole, ahead of the blocks.
 
@@ -72,10 +72,15 @@ def main() -> int:
         kept.append("\n".join(b) + "\n")
     if args.max:
         # Evenly spaced within each tag (play and campaign kept apart).
+        # Rare paths are kept whole, outside the quota: a job-key pull (PUL)
+        # or an override marking an item in place (OVM) shows up in a few
+        # snapshots of thousands, and even spacing dropped most of them.
+        rare = [k for k in kept if "\nEV PUL " in k or "\nEV OVM " in k]
+        common = [k for k in kept if not ("\nEV PUL " in k or "\nEV OVM " in k)]
         by_tag: dict[str, list[str]] = {}
-        for k in kept:
+        for k in common:
             by_tag.setdefault(k.split(" ", 2)[1], []).append(k)
-        kept = []
+        kept = list(rare)
         for group in by_tag.values():
             if len(group) > args.max:
                 step = len(group) / args.max

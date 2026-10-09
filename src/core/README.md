@@ -107,8 +107,10 @@ keeps the seating memory and turns the events into logs and telemetry.
 
 Recorded snapshots live in `tests/core/fixtures/slots/` (`*-old.txt` from the
 old code, `*-new.txt` from the new). The old code's were recorded by branch
-`r7-capture-old`: the 0.23.9 decision code (b941d90) with only the capture and
-an event recorder added. To record more: a Debug build deployed to
+`r7-capture-old`: b941d90 with only the capture and an event recorder added.
+b941d90 is the 0.23.9 decision code except one change it made itself:
+ApplySeating and RecordSeating share one clock reading per allocation
+(unconditional, Release too) instead of each reading the clock. To record more: a Debug build deployed to
 simonrim, then `python -I tools/ingame/run_tests.py --capture-slots 160`, then
 `python -I tools/slots/trim_snapshots.py <log folder>/Huginn_SlotSnapshots.txt
 tests/core/fixtures/slots/<name>.txt --max 150`.

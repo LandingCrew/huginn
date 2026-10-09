@@ -216,14 +216,14 @@ slot code"); detail in the map's "As built (R7)".
   old and new slot code and gets identical pages; the ratio tests are updated.
   The old code's own pages and events, recorded in play on vanilla+ under the
   shipped [SlotLocker] settings and two variants plus a campaign (branch
-  `r7-capture-old`: 0.23.9 decisions, capture only; 2,559 snapshots, 400
-  checked in), replay bit for bit through the core with the old arithmetic;
+  `r7-capture-old`: 0.23.9 decisions except b941d90's one clock reading per
+  allocation, capture only; 2,559 snapshots, 425 checked in), replay bit for bit through the core with the old arithmetic;
   the sign-safe arithmetic gives identical pages and events on all of them
-  and on 24k synthetic passes; 2,578 allocations the new code recorded (200
+  and on 24k synthetic passes; 2,578 allocations the new code recorded (230
   checked in) replay exactly. Five seeded mutants of the core (pull, Remembrance
   to the job key, the hold's stale-generation guard, the refill after the
   pull, the override fallback's event) all fail against the checked-in
-  fixtures. `RunSlotClassCapTest`, `RunSlotClassCapHoldTest` and
+  fixtures; a sixth (the pull taking a wildcard) fails a named test. `RunSlotClassCapTest`, `RunSlotClassCapHoldTest` and
   `RunHomeKeyTest` derive their utilities in score space.
 - Different by design: the full sort changes a page wherever the old fill
   reached past the sorted top 10 (on recorded play lists: 22 of 1,094 pages
@@ -231,7 +231,8 @@ slot code"); detail in the map's "As built (R7)".
   half of it under the job-key variants); exact
   ties now keep generation order rather than the partial sort's. A
   challenger exactly on the hold's margin now always holds (a tie band of
-  four float ulps, `kHoldTieEpsilon`): the old float comparison was decided
+  2.5e-7, two to four float ulps, `kHoldTieEpsilon`; the user's decision,
+  2026-10-08): the old float comparison was decided
   by rounding there, and the old potion tier step (1.5) equals the margin, so
   adjacent potion tiers sit on it -- in a sweep the old code swapped 23 of 260
   such pairs where the new one holds. The cap's scan at non-power-of-two

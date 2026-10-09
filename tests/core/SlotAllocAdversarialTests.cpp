@@ -144,6 +144,34 @@ TEST_CASE("slot adversarial: a remembered-only row is shown only by its hold, an
     CHECK(SA::PageOf(in, out2)[1].key == ranked.dedupKey);
 }
 
+TEST_CASE("slot adversarial: the job-key pull never takes a wildcard off a Regular key")
+{
+    // A wildcard keeps its position semantics (WildcardManager put it in a
+    // rank position): the pull moves only ordinary picks. The job key's only
+    // match is a wildcard standing on the Regular key, so the job key stays
+    // empty -- with seating on and with seating off (pass 2b).
+    for (const bool keep : { true, false }) {
+        auto wild = Cand(1, 0.9f, 0, 1u << 3);
+        wild.isWildcard = true;
+        auto in = Page({ Job(3, 0), Regular(1) }, { wild, Cand(2, 0.5f) });
+        in.settings.fillJobKeysFromRegular = true;
+        in.settings.keepSlotPositions = keep;
+        const auto out = Allocate(in);
+        const auto page = SA::PageOf(in, out);
+        CHECK_MESSAGE(page[0].kind == SA::Kind::Empty, "keep=", keep);
+        CHECK_MESSAGE(page[1].kind == SA::Kind::Wildcard, "keep=", keep);
+        CHECK(page[1].formID == 1u);
+        CHECK(std::none_of(out.events.begin(), out.events.end(),
+            [](const SA::Event& e) { return e.kind == SA::EventKind::PulledToJobKey; }));
+        CHECK(DiffOutputs(in, Allocate(in, LegacySlotPolicy::From(in.settings)), out).empty());
+    }
+    // The same page with an ordinary pick there: it is pulled.
+    auto in = Page({ Job(3, 0), Regular(1) }, { Cand(1, 0.9f, 0, 1u << 3), Cand(2, 0.5f) });
+    in.settings.fillJobKeysFromRegular = true;
+    const auto page = SA::PageOf(in, Allocate(in));
+    CHECK(page[0].formID == 1u);
+}
+
 TEST_CASE("slot adversarial: past the sorted prefix the fill takes list order, so the scorer must sort")
 {
     // Twelve items; the job slot's only matches sit at 10 and 11, the worse

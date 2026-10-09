@@ -194,7 +194,9 @@ namespace Huginn::Slot
 
         const bool hold = ini.GetBoolValue("SlotLocker", "bHoldSeatedItems", true);
         // A NaN passes std::clamp untouched (fChallengerMargin = nan): read as
-        // the default instead, here and for the other two below.
+        // the default instead, here and for the other two below. std::isfinite
+        // sends +-inf to the default too: fChallengerMargin = inf used to clamp
+        // to 10 and now reads as 0.5.
         auto finiteOr = [](double v, double fallback) { return std::isfinite(v) ? v : fallback; };
         const float margin = std::clamp(
             static_cast<float>(finiteOr(ini.GetDoubleValue("SlotLocker", "fChallengerMargin", 0.5), 0.5)), 0.0f, 10.0f);

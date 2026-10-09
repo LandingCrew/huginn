@@ -60,14 +60,21 @@ namespace Huginn::Core
     inline constexpr double kScoreTieEpsilon = 1e-12;
 
     /// The slot hold's tie band: a challenger has to clear the margin by more than
-    /// float noise, about four float ulps of a utility (2.5e-7 in log space), or
-    /// the holder holds. Not a tuning knob: under the bridge the old engine's
+    /// float noise -- 2.5e-7 in log space, two to four float ulps of a utility
+    /// depending on where it sits in its binade -- or the holder holds. Measured
+    /// (R7 review): a challenger 3 float steps above float(1.5 h) still held in
+    /// about 48% of cases, 4 steps above in about 10%, 5 or more never. Why this
+    /// size: with a non-power-of-two discount the old cap products carry noise of
+    /// up to ~1.4e-7 in log space, and the band has to sit above it. It can drop
+    /// to kScoreTieEpsilon at R8, when scores stop being float utilities and the
+    /// tier preference is gone. Not a tuning knob: under the bridge the old engine's
     /// potion tier preference divides a family's next tier by exactly 1.5
     /// (POTION_TIER_STEP), the same 1.5 as the hold's margin, so adjacent tiers sit
     /// ON the margin and only the rounding of u / 1.5 * 1.5 decided the old
     /// comparison (a recorded play snapshot hit it: Potion of Plentiful Magicka at
     /// 0.207614 against Minor at 0.13840933). With the band both arithmetics hold
-    /// there. It is far below any real difference a learned score will make.
+    /// there (the user's decision, 2026-10-08: exact tier ties always hold). It is
+    /// far below any real difference a learned score will make.
     inline constexpr double kHoldTieEpsilon = 2.5e-7;
 
     /// THE BRIDGE: the old engine's utility as a score. ln(u) for u > 0; -inf
