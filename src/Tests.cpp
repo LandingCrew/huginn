@@ -7302,26 +7302,14 @@ void RunNeedVectorTests()
       if (std::abs(got - want) > 1e-6f) fail(fmt::format("health_deficit {} != curve(1 - {}) = {}", got, health, want));
    }
 
-   // 3. Drop ahead: the rays reach the physics world on this (main) thread
-   //    and, standing on the ground, at least the nearest probe hits.
+   // 3. Drop ahead: the rays are cast on the main thread from the
+   //    PlayerCharacter::Update hook, which starts once the load is done
+   //    (after these suites), so the suite only reports the probe's state; the
+   //    live readings are in the [DropAhead] lines and the captured snapshots.
    {
-      if (!State::DropAheadProbe::OnMainThread()) fail("suites do not run on the noted main thread");
-      using State::DropAheadProbe::Status;
-      const auto r = State::DropAheadProbe::Measure(player, {});
-      if (r.status != Status::Measured && r.status != Status::AllUnknown) {
-         fail(fmt::format("drop-ahead probe could not measure: {}", State::DropAheadProbe::StatusName(r.status)));
-      } else {
-         logger::info("[NeedTest] drop ahead {:.0f} ({}) | dir ({:.2f}, {:.2f}) | hits {}{}:{:.0f} {}{}:{:.0f} "
-                      "{}{}:{:.0f} | water {} {} {} | rejected {} unknown {} | feet z {:.0f}"sv,
-            r.drop, State::DropAheadProbe::StatusName(r.status), r.dir.x, r.dir.y,
-            r.hits[0].known ? "" : "?", r.hits[0].hit, r.hits[0].hitZ, r.hits[1].known ? "" : "?", r.hits[1].hit,
-            r.hits[1].hitZ, r.hits[2].known ? "" : "?", r.hits[2].hit, r.hits[2].hitZ, r.hits[0].waterKnown,
-            r.hits[1].waterKnown, r.hits[2].waterKnown, r.rejectedHits, r.unknownProbes, player->GetPosition().z);
-         const bool grounded = !player->IsInMidair() && !player->AsActorState()->IsSwimming();
-         if (grounded && r.hits[0].known && !r.hits[0].hit) {
-            fail("standing on the ground, the nearest drop-ahead ray hit nothing");
-         }
-      }
+      const auto reading = State::DropAheadProbe::Latest();
+      logger::info("[NeedTest] drop ahead probe: {} (drop {:.0f})"sv,
+         State::DropAheadProbe::StatusName(reading.status), reading.drop);
       // Evidence for the filter: which layers the LOS layer collides with.
       if (auto* filter = RE::bhkCollisionFilter::GetSingleton()) {
          const auto bits = filter->layerBitfields[static_cast<int>(RE::COL_LAYER::kLOS)];

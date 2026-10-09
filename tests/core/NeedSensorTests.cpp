@@ -6,10 +6,12 @@
 
 #include <doctest/doctest.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <numbers>
 #include <ostream>
+#include <vector>
 
 using namespace Huginn::Core::Needs;
 
@@ -114,6 +116,148 @@ TEST_CASE("drop ahead: an unknown probe is nothing, never a cliff")
     std::array<ProbeHit, 3> ignored{ { { true, 1000.0f }, unknownVoid, unknownVoid } };
     CHECK(DropAhead(feet, ignored, cfg) == 0.0f);
     CHECK(ProbeOrigin({ 1.0f, 2.0f, 3.0f }, cfg).z == doctest::Approx(67.0));
+}
+
+namespace
+{
+    // A scripted world along +Y for ProbeAll: ground height per Y (NaN = a
+    // void), walls standing on the ground up to a top Z, and a Y where the
+    // down ray runs out of recasts (a crowd). Rays go along +Y or straight down.
+    struct World
+    {
+        float (*ground)(float y) = nullptr;
+        struct Wall { float y; float top; };
+        std::vector<Wall> walls;
+        float crowdY = -1.0f;
+        struct Call { RayKind kind; float z; float length; };
+        std::vector<Call> calls;
+
+        RayResult operator()(Vec3 from, Vec3 dir, float length, RayKind kind)
+        {
+            calls.push_back({ kind, from.z, length });
+            if (kind == RayKind::Down) {
+                REQUIRE(dir.z == -1.0f);
+                if (crowdY >= 0.0f && std::abs(from.y - crowdY) < 1.0f) return { RayResult::Outcome::Exhausted, 0.0f };
+                const float g = ground(from.y);
+                if (std::isnan(g) || from.z - g > length) return { RayResult::Outcome::Clear, 0.0f };
+                return { RayResult::Outcome::Hit, from.z - g };
+            }
+            REQUIRE(dir.y == doctest::Approx(1.0));
+            float best = -1.0f;
+            for (const auto& w : walls) {
+                const float d = w.y - from.y;
+                if (d > 0.0f && d <= length && from.z <= w.top && (best < 0.0f || d < best)) best = d;
+            }
+            for (float d = 1.0f; d <= length; d += 1.0f) {  // the ground rising into the ray
+                const float g = ground(from.y + d);
+                if (!std::isnan(g) && g >= from.z) {
+                    if (best < 0.0f || d < best) best = d;
+                    break;
+                }
+            }
+            return best < 0.0f ? RayResult{ RayResult::Outcome::Clear, 0.0f } : RayResult{ RayResult::Outcome::Hit, best };
+        }
+    };
+
+    constexpr Vec3 kFeet{ 0.0f, 0.0f, 1000.0f };
+    constexpr Dir2 kNorth{ 0.0f, 1.0f };
+    float Flat(float) { return 1000.0f; }
+    float EdgeAt150(float y) { return y < 150.0f ? 1000.0f : std::nanf(""); }
+    float EdgeAt120(float y) { return y < 120.0f ? 1000.0f : std::nanf(""); }
+    float VoidAhead(float y) { return y < 40.0f ? 1000.0f : std::nanf(""); }
+    float Uphill10(float y) { return 1000.0f + 0.18f * std::max(y, 0.0f); }  // ~10 degrees
+    float Downstairs(float y) { return 1000.0f - 8.0f * std::floor(std::max(y, 0.0f) / 35.0f); }
+}
+
+TEST_CASE("probe sequence: the picks it casts, flat ground")
+{
+    const DropProbeConfig cfg;
+    World w;
+    w.ground = Flat;
+    const auto hits = ProbeAll(kFeet, kNorth, cfg, w);
+    CHECK(DropAhead(kFeet.z, hits, cfg) == 0.0f);
+    REQUIRE(w.calls.size() == 9);  // per probe: waist pick, knee pick, down ray
+    CHECK(w.calls[0].kind == RayKind::Horizontal);
+    CHECK(w.calls[0].z == doctest::Approx(1064.0));
+    CHECK(w.calls[0].length == doctest::Approx(70.0));
+    CHECK(w.calls[1].z == doctest::Approx(1024.0));
+    CHECK(w.calls[2].kind == RayKind::Down);
+    CHECK(w.calls[2].z == doctest::Approx(1064.0));
+    CHECK(w.calls[2].length == doctest::Approx(4000.0));
+    CHECK(w.calls[3].length == doctest::Approx(105.0));  // from the previous point
+    CHECK(w.calls[6].length == doctest::Approx(105.0));
+}
+
+TEST_CASE("probe sequence: a cliff reads as a drop; a void with no hit is a big one")
+{
+    const DropProbeConfig cfg;
+    World w;
+    w.ground = EdgeAt150;
+    const auto hits = ProbeAll(kFeet, kNorth, cfg, w);
+    CHECK(hits[0].known);
+    CHECK(hits[1].known);
+    CHECK_FALSE(hits[1].hit);
+    CHECK(DropAhead(kFeet.z, hits, cfg) == doctest::Approx(4000.0 - 64.0));
+}
+
+TEST_CASE("probe sequence: a parapet under the waist blocks at the knee")
+{
+    const DropProbeConfig cfg;
+    // A 40-unit wall at the edge, void behind: the waist pick passes over it.
+    World w;
+    w.ground = EdgeAt120;
+    w.walls = { { 120.0f, 1040.0f } };
+    const auto hits = ProbeAll(kFeet, kNorth, cfg, w);
+    CHECK(hits[0].known);          // before the parapet
+    CHECK_FALSE(hits[1].known);    // the first point past it
+    CHECK_FALSE(hits[2].known);    // and all beyond
+    CHECK(DropAhead(kFeet.z, hits, cfg) == 0.0f);
+    // Right in front of the player: nothing is known at all.
+    World close;
+    close.ground = VoidAhead;
+    close.walls = { { 40.0f, 1040.0f } };
+    CHECK(DropAhead(kFeet.z, ProbeAll(kFeet, kNorth, cfg, close), cfg) == -1.0f);
+}
+
+TEST_CASE("probe sequence: an invisible wall at the edge blocks (any hit counts)")
+{
+    const DropProbeConfig cfg;
+    World w;
+    w.ground = EdgeAt150;
+    w.walls = { { 150.0f, 5000.0f } };
+    const auto hits = ProbeAll(kFeet, kNorth, cfg, w);
+    CHECK(hits[0].known);
+    CHECK_FALSE(hits[1].known);
+    CHECK(DropAhead(kFeet.z, hits, cfg) == 0.0f);
+}
+
+TEST_CASE("probe sequence: uphill blocks the points the slope buries; stairs down read small")
+{
+    const DropProbeConfig cfg;
+    World up;
+    up.ground = Uphill10;
+    const auto u = ProbeAll(kFeet, kNorth, cfg, up);
+    CHECK(u[0].known);         // 12.6 units up at 70: under the knee
+    CHECK_FALSE(u[1].known);   // the slope crosses knee height before 175
+    CHECK_FALSE(u[2].known);
+    CHECK(DropAhead(kFeet.z, u, cfg) == 0.0f);
+    World down;
+    down.ground = Downstairs;
+    const float drop = DropAhead(kFeet.z, ProbeAll(kFeet, kNorth, cfg, down), cfg);
+    CHECK(drop == doctest::Approx(64.0));  // 8 steps of 8 units by 280
+}
+
+TEST_CASE("probe sequence: a down ray out of recasts makes only that point unknown")
+{
+    const DropProbeConfig cfg;
+    World w;
+    w.ground = Flat;
+    w.crowdY = 175.0f;
+    const auto hits = ProbeAll(kFeet, kNorth, cfg, w);
+    CHECK(hits[0].known);
+    CHECK_FALSE(hits[1].known);
+    CHECK(hits[2].known);   // reachability went on past the crowd
+    CHECK(hits[2].hit);
 }
 
 TEST_CASE("drop ahead: the movement threshold is 20 units/s")

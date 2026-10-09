@@ -10,10 +10,12 @@
 // measured to the water surface when water lies above the hit. The game side
 // (state/DropAheadProbe.cpp) only casts the rays (terrain and statics, not
 // actors) and reads the water height; the points, the direction and the drop
-// are computed here. Each probe's start is first checked reachable by a
-// horizontal pick at waist height from the previous point (the player for the
-// first); the first blocked one and every one beyond it are unknown, so rising
-// ground or a wall in front never reads as a cliff.
+// are computed here, the probe sequence (ProbeAll) included, over an
+// injected ray cast. Each probe's start is first checked reachable by two
+// horizontal picks, at waist and at knee height, from the previous point (the
+// player for the first); a hit of any kind blocks, and the first blocked
+// point and every one beyond it are unknown, so rising ground, a wall, a
+// parapet or an invisible wall at an edge never reads as a cliff.
 //
 // Skyrim units: 1 m ~ 70 units. Heading: angle Z in radians, 0 = +Y (north),
 // increasing clockwise, so forward = (sin z, cos z).
@@ -24,6 +26,7 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
+#include <initializer_list>
 #include <cstddef>
 
 namespace Huginn::Core::Needs
@@ -39,6 +42,7 @@ namespace Huginn::Core::Needs
     {
         std::array<float, 3> distances{ 70.0f, 175.0f, 280.0f };  // ~1, 2.5, 4 m ahead
         float waistHeight = 64.0f;   // above the feet; half a 128-unit actor
+        float kneeHeight = 24.0f;    // the second reachability pick: a parapet under the waist
         float rayLength = 4000.0f;
         float minMoveSpeed = 20.0f;  // units/s below which the facing is used
     };
@@ -132,5 +136,77 @@ namespace Huginn::Core::Needs
     [[nodiscard]] inline Vec3 ProbeOrigin(Vec3 feet, const DropProbeConfig& cfg) noexcept
     {
         return { feet.x, feet.y, feet.z + cfg.waistHeight };
+    }
+
+    // ------------------------------------------------------------------------
+    // The probe sequence, over an injected ray cast (the game casts Havok
+    // rays; the host tests a scripted world).
+    // ------------------------------------------------------------------------
+
+    /// Horizontal: a reachability pick -- ANY hit blocks, whatever it is (an
+    /// invisible wall or a collision box at a cliff edge too). Down: the
+    /// surface ray -- the caster casts through actors and clutter and reports
+    /// the first ground hit, or Exhausted when it ran out of recasts.
+    enum class RayKind { Horizontal, Down };
+
+    struct RayResult
+    {
+        enum class Outcome { Clear, Hit, Exhausted } outcome = Outcome::Clear;
+        float distance = 0.0f;  // along the ray, to the hit
+    };
+
+    /// cast(Vec3 from, Vec3 unitDir, float length, RayKind) -> RayResult.
+    ///
+    /// For each probe point in turn: two horizontal picks to it from the
+    /// previous point (the player for the first), at waist and at knee height
+    /// -- the knee pick catches a parapet or a low wall under the waist with a
+    /// void behind it. Either blocked: this point and every one beyond it are
+    /// unknown (rising ground that buries the point, a wall, a door, a fence).
+    /// Otherwise a ray straight down from the point at waist height: a hit is
+    /// the surface, no hit a real void, Exhausted makes this one point
+    /// unknown. Water is not read here (the game adds it after).
+    template <class Cast>
+    [[nodiscard]] std::array<ProbeHit, 3> ProbeAll(Vec3 feet, Dir2 dir, const DropProbeConfig& cfg, Cast&& cast)
+    {
+        std::array<ProbeHit, 3> hits{};
+        const auto starts = ProbeStarts(feet, dir, cfg);
+        Vec3 previous = feet;  // XY of the last reached point
+        bool blocked = false;
+        for (std::size_t i = 0; i < starts.size(); ++i) {
+            auto& h = hits[i];
+            if (!blocked) {
+                for (const float height : { cfg.waistHeight, cfg.kneeHeight }) {
+                    const Vec3 from{ previous.x, previous.y, feet.z + height };
+                    const float dx = starts[i].x - from.x;
+                    const float dy = starts[i].y - from.y;
+                    const float length = std::hypot(dx, dy);
+                    if (!(length > 0.0f)) continue;
+                    const Vec3 unit{ dx / length, dy / length, 0.0f };
+                    if (cast(from, unit, length, RayKind::Horizontal).outcome != RayResult::Outcome::Clear) {
+                        blocked = true;
+                        break;
+                    }
+                }
+            }
+            if (blocked) {
+                h.known = false;
+                continue;
+            }
+            previous = starts[i];
+            const RayResult down = cast(starts[i], Vec3{ 0.0f, 0.0f, -1.0f }, cfg.rayLength, RayKind::Down);
+            switch (down.outcome) {
+                case RayResult::Outcome::Hit:
+                    h.hit = true;
+                    h.hitZ = starts[i].z - down.distance;
+                    break;
+                case RayResult::Outcome::Clear:
+                    h.hit = false;
+                    break;
+                case RayResult::Outcome::Exhausted:
+                    h.known = false;
+                    break;
+            }
+        }
+        return hits;
     }
 }

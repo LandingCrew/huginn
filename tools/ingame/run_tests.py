@@ -618,7 +618,12 @@ def main() -> int:
     ap.add_argument("--dump-recs", type=int, default=0, metavar="SEC",
                     help="after the load suites wait SEC seconds, log a 40-row `hg recs` dump ([Recs] lines), "
                          "then end (Debug, 0.23.14+): compares two builds' recommendations on one save")
+    ap.add_argument("--coc", metavar="CELLS",
+                    help="after the load suites, coc to each ';'-separated cell 12 s apart, then end "
+                         "(Debug, 0.23.14+): crosses loads like a door or fast travel")
     args = ap.parse_args()
+    if args.coc:
+        args.timeout += 15 * (args.coc.count(";") + 1) + 120
     # The capture session runs after the suites: its seconds, plus the
     # campaign and the shutdown, come on top of --timeout.
     if args.capture_slots > 0:
@@ -665,6 +670,7 @@ def main() -> int:
         + (f"iCaptureSlotsSec={args.capture_slots}\n" if args.capture_slots > 0 else "")
         + (f"iCaptureNeeds={args.capture_needs}\n" if args.capture_needs > 0 else "")
         + (f"iDumpRecsAfterSec={args.dump_recs}\n" if args.dump_recs > 0 else "")
+        + (f"sCocCells={args.coc}\n" if args.coc else "")
         + (f"sDumpAll={args.dump_all}\n" if args.dump_all else ""),
         encoding="utf-8")
 

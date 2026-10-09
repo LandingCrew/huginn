@@ -782,21 +782,12 @@ void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
     switch (a_msg->type) {
     case SKSE::MessagingInterface::kDataLoaded:
         OnDataLoaded();
-        // R3: which thread is which, once per launch (drop_ahead reads the
-        // physics world on the thread SKSE tasks run on).
-        logger::info("[Threads] SKSE messages on {:x}; plugin load on main-thread record: {}"sv,
-            std::hash<std::thread::id>{}(std::this_thread::get_id()),
-            State::DropAheadProbe::OnMainThread() ? "same" : "different");
-        if (auto* tasks = SKSE::GetTaskInterface()) {
-            tasks->AddTask([]() {
-                logger::info("[Threads] SKSE tasks on {:x}"sv, std::hash<std::thread::id>{}(std::this_thread::get_id()));
-            });
-        }
         break;
     case SKSE::MessagingInterface::kNewGame:
         logger::info("New game started"sv);
         Effect::EffectCatalog::GetSingleton().Build();  // no-op once built at the main menu
         InitializeGameSystems(/*isNewGame=*/true);
+        State::DropAheadProbe::SetGameLoaded(true);  // R3: the probe hook may cast now
         break;
     case SKSE::MessagingInterface::kPostLoadGame:
     {
@@ -807,6 +798,7 @@ void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
         TestHarness::OnGameLoaded();
         logger::info("Game loaded{}"sv, loaded ? ""sv : " -- FAILED (learner left as it was)"sv);
         InitializeGameSystems(/*isNewGame=*/false, loaded);
+        if (loaded) State::DropAheadProbe::SetGameLoaded(true);  // R3: the probe hook may cast now
         break;
     }
     default:
@@ -994,6 +986,14 @@ static void InstallHooks()
         logger::error("Failed to install D3D11 render hook"sv);
     }
 
+    // R3: drop_ahead casts its rays from PlayerCharacter::Update, on the
+    // main thread (a vtable hook, no trampoline). Inert until a game loads.
+    if (State::DropAheadProbe::InstallPlayerUpdateHook()) {
+        logger::info("PlayerCharacter::Update hook installed (drop ahead)"sv);
+    } else {
+        logger::error("Failed to install the PlayerCharacter::Update hook (drop ahead stays unmeasured)"sv);
+    }
+
 #ifdef _DEBUG
     // Install input dispatch hook for interactive debug widgets (Home key toggle)
     if (UI::DebugInputHook::Install()) {
@@ -1023,10 +1023,6 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_s
     SKSE::Init(a_skse);
     InstallHooks();                // before the engine's threads exist; see above
     TestHarness::ReadTestMode();   // Debug only: the unattended-run flag
-    // R3: drop_ahead's direct path (the Debug suite) casts rays only on this
-    // thread; the update loop runs elsewhere and goes through an SKSE task
-    // (state/DropAheadProbe.h).
-    State::DropAheadProbe::NoteMainThread();
 
     // Register cosave serialization (must be before any save/load events)
     Persist::RegisterSerialization();

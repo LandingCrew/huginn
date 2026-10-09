@@ -273,11 +273,11 @@ namespace Huginn::State
       // Returns: true if state changed
       [[nodiscard]] bool PollPlayerPosition();
       // R3: the position poll's need sensors (encumbrance ratio, submerged
-      // timer, drop ahead). They do not feed the poll's change flag: the need
-      // vector has its own cadence (needs/NeedMonitor.h) and must not move the
-      // pipeline's skip gates.
-      void PollNeedPosition(RE::PlayerCharacter* player, float encumbrance, bool underwater,
-                            bool airborne, bool swimming, bool mounted);
+      // timer, and drop ahead's last reading from DropAheadProbe, which casts
+      // its rays on the main thread). They do not feed the poll's change flag:
+      // the need vector has its own cadence (needs/NeedMonitor.h) and must not
+      // move the pipeline's skip gates.
+      void PollNeedPosition(float encumbrance, bool underwater);
 
       // Target tracking polling (multi-target detection, vitals, distance)
       // Updates: TargetCollection (primary + targets map)
@@ -578,12 +578,6 @@ namespace Huginn::State
 
       Core::Needs::SoleHostileTtk m_soleHostileTtk;   // PollTargets only
       bool m_wasUnderwaterForTimer = false;   // PollPlayerPosition only
-      Core::Needs::Vec3 m_lastProbePos{};      // for the movement direction
-      double m_lastProbeAt = -1.0;
-      // Drop ahead off the main thread: one SKSE task in flight at a time
-      // measures there and stores the result (PollNeedPosition).
-      std::atomic<bool> m_probeTaskPending{ false };
-      int m_lastProbeReason = -1;              // for the transition-only log line
 
       // =============================================================================
       // RESOURCE TRACKING STATE (Persistent across polls)

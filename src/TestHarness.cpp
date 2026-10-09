@@ -115,6 +115,7 @@ namespace Huginn::TestHarness
         int g_captureSlotsSec = 0;   // iCaptureSlotsSec: slot snapshots after the load suites (R7)
         int g_captureNeeds = 0;      // iCaptureNeeds: need snapshots, at most this many (R3)
         int g_dumpRecsAfterSec = 0;  // iDumpRecsAfterSec: a recs dump after the load suites, then end
+        std::string g_cocCells;      // sCocCells: "a;b": after the load suites, coc to each in turn, then end (R3)
         std::atomic<bool> g_loadRequested{ false };
         std::atomic<bool> g_loadArrived{ false };
         std::atomic<bool> g_finished{ false };
@@ -288,6 +289,9 @@ namespace Huginn::TestHarness
                         g_captureSlotsSec = static_cast<int>(ini.GetLongValue("Test", "iCaptureSlotsSec", 0));
                         g_captureNeeds = static_cast<int>(ini.GetLongValue("Test", "iCaptureNeeds", 0));
                         g_dumpRecsAfterSec = static_cast<int>(ini.GetLongValue("Test", "iDumpRecsAfterSec", 0));
+                        if (const char* coc = ini.GetValue("Test", "sCocCells", nullptr); coc && *coc) {
+                            g_cocCells = coc;
+                        }
                         if (const char* dump = ini.GetValue("Test", "sDumpAll", nullptr); dump && *dump) {
                             g_dumpAllName = dump;
                         }
@@ -436,6 +440,32 @@ namespace Huginn::TestHarness
             return;
         }
         if (gameLoaded) DumpAllIfAsked();
+        if (gameLoaded && !g_cocCells.empty() && g_captureSlotsSec <= 0) {
+            // Cross cells the way a load door or fast travel does (`coc`,
+            // PlayerCharacter::CenterOnCell, in an SKSE task as the save load
+            // above is), 12 s apart, so code that reads the world mid-load is
+            // exercised; then end. R3's drop-ahead probe must log its loading
+            // skip and measure again after each.
+            std::thread([]() {
+                std::vector<std::string> cells;
+                for (size_t start = 0; start <= g_cocCells.size();) {
+                    const size_t end = std::min(g_cocCells.find(';', start), g_cocCells.size());
+                    if (end > start) cells.emplace_back(g_cocCells.substr(start, end - start));
+                    start = end + 1;
+                }
+                for (const auto& cell : cells) {
+                    std::this_thread::sleep_for(std::chrono::seconds(12));
+                    SKSE::GetTaskInterface()->AddTask([cell]() {
+                        auto* player = RE::PlayerCharacter::GetSingleton();
+                        const bool ok = player && player->CenterOnCell(cell.c_str());
+                        logger::info("[HuginnTest] coc {}: {}"sv, cell, ok ? "moving" : "FAILED (no such cell?)");
+                    });
+                }
+                std::this_thread::sleep_for(std::chrono::seconds(12));
+                Finish({});
+            }).detach();
+            return;
+        }
         if (gameLoaded && g_dumpRecsAfterSec > 0 && g_captureSlotsSec <= 0) {
             // A recommendation dump after N idle seconds (the `hg recs 40`
             // path), then end: two builds on one save can be compared.

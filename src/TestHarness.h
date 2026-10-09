@@ -34,6 +34,8 @@
 //                                          ; (needs/NeedCapture.h)
 //       iDumpRecsAfterSec=<seconds>        ; optional (0.23.14): after the load suites wait,
 //                                          ; log a 40-row `hg recs` dump, then end
+//       sCocCells=<cell;cell>              ; optional (0.23.14): after the load suites,
+//                                          ; coc to each cell 12 s apart, then end
 //       sDumpAll=<file name>               ; optional (0.23.12): after the save loads
 //                                          ; and its suites ran, write `hg dump all`
 //                                          ; there (a plain name, in the SKSE log

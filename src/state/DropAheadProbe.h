@@ -3,26 +3,26 @@
 // =============================================================================
 // DROP AHEAD PROBE (R3) -- the game half of the drop_ahead sensor
 // =============================================================================
-// Casts the rays core/DropAhead.h lays out, through the cell's Havok world
-// (bhkWorld::PickObject): for each of three points ahead of the player, a
-// horizontal pick at waist height from the previous point checks the point is
-// reachable (rising ground or a wall makes it, and every point beyond it,
-// unknown), then a ray straight down finds the surface; the water height at
-// the point is read too. The geometry and the drop are core code; this file
-// only talks to the engine.
+// Casts the rays core/DropAhead.h lays out (Core::Needs::ProbeAll: two
+// horizontal reachability picks, then a ray down, for each of three points
+// ahead of the player) through the cell's Havok world, bhkWorld::PickObject,
+// and reads the water height at each point. The geometry, the reachability
+// rules and the drop are core code; this file only talks to the engine.
 //
-// Threading: the physics world is read under its own read lock
-// (bhkWorld::worldLock, a BSReadWriteLock: readers nest, a writer waits for
-// zero readers, so taking it around PickObject is safe whether or not the
-// engine also takes it inside), and only at a point the game sanctions:
-// Measure() on the thread SKSEPlugin_Load ran on (the Debug suite, from an
-// SKSE message), MeasureInTask() inside an SKSE task. The update loop runs on
-// neither (it is an input-event sink on a game job thread; verifier round 1
-// on #188 found every live reading was "not measured" because of it), so
-// StateManager hands the rays to an SKSE task and uses the last result. In
-// game the tasks ran on six different job threads, the update loop's one
-// among them: thread identity is not the guarantee, the task point and the
-// read lock are.
+// Where it runs (verifier rounds 1 and 2 on #188): NOT on the update loop. The
+// update loop is an input-event sink on a game job thread, and SKSE's task
+// queue is drained on job threads too, so neither is the main thread. The
+// rays are cast from a hook on PlayerCharacter::Update (vtable index 0xAD),
+// which the game calls from its main update -- the same place prior art
+// casts camera rays from (SkyrimCameraDisocclusion, Hook.cpp, which also
+// takes the world's read lock around PickObject). Throttled to the 100 ms
+// poll cadence. Skipped, with the reason kept, while a LoadingMenu is open,
+// before a game is loaded, without player 3D, a parent cell, an attached
+// cell or a physics world, and while airborne, swimming or mounted. The
+// physics world is held by an NiPointer and read under
+// bhkWorld::worldLock (BSReadLockGuard) for the casts.
+//
+// The sensor (StateManager::PollNeedPosition) reads the last reading.
 // =============================================================================
 
 #include "core/DropAhead.h"
@@ -32,48 +32,46 @@
 
 namespace Huginn::State::DropAheadProbe
 {
-   /// Remember the calling thread as the main thread (SKSEPlugin_Load).
-   void NoteMainThread() noexcept;
+   /// Install the PlayerCharacter::Update hook (SKSEPlugin_Load). Inert until
+   /// SetGameLoaded(true).
+   [[nodiscard]] bool InstallPlayerUpdateHook();
 
-   /// True on the thread NoteMainThread recorded.
-   [[nodiscard]] bool OnMainThread() noexcept;
+   /// kPostLoadGame / kNewGame: start probing (the hook is inert before).
+   void SetGameLoaded(bool loaded) noexcept;
 
    enum class Status
    {
-      Measured,       // at least one probe known (drop may still be 0)
-      AllUnknown,     // every probe blocked or exhausted: drop -1
-      NotMainThread,
+      Measured,       // at least one probe known (the drop may be 0)
+      AllUnknown,     // every probe blocked or out of recasts: drop -1
+      NotLoaded,      // no game loaded yet
+      Loading,        // a LoadingMenu is open
       No3D,
       NoCell,
+      CellDetached,
       NoWorld,
+      Airborne,
+      Swimming,
+      Mounted,
    };
    [[nodiscard]] std::string_view StatusName(Status s) noexcept;
 
-   struct Result
+   struct Reading
    {
-      Status status = Status::No3D;
-      float drop = -1.0f;  // core::DropAhead over the known probes; -1 = not measured
-      std::array<Core::Needs::ProbeHit, 3> hits{};
-      Core::Needs::Dir2 dir{};
-      int rejectedHits = 0;  // hits on layers that are not ground (actors, clutter), cast through
-      int unknownProbes = 0;
+      Status status = Status::NotLoaded;
+      float drop = -1.0f;   // -1 = not measured
+      double atSec = -1.0;  // NeedClock seconds of the reading; -1 = none yet
    };
 
-   /// One measurement for the player, on the thread NoteMainThread recorded
-   /// (else NotMainThread). `velocity` is the player's horizontal velocity
-   /// (units/s). The SKSE message handlers (the Debug suite) run there.
-   [[nodiscard]] Result Measure(RE::PlayerCharacter* player, Core::Needs::Vec3 velocity,
-      const Core::Needs::DropProbeConfig& cfg = {});
+   /// The last reading (thread-safe copy).
+   [[nodiscard]] Reading Latest() noexcept;
 
-   /// The same, for a body run by SKSE's task interface (AddTask), which runs
-   /// tasks at the game's own task point between frames -- SKSE's "main
-   /// thread" for game access -- whatever thread id that turns out to be.
-   /// The caller guarantees it is such a task.
-   [[nodiscard]] Result MeasureInTask(RE::PlayerCharacter* player, Core::Needs::Vec3 velocity,
-      const Core::Needs::DropProbeConfig& cfg = {});
+   /// Readings older than this are not used by the sensor (the hook stopped:
+   /// a menu, a load).
+   inline constexpr double kMaxAgeSec = 1.0;
 
-   /// The collision layers a ray counts as ground or wall: terrain and
-   /// statics (static, anim static, transparent, trees, props, terrain,
-   /// ground). Not actors, clutter, water, triggers or invisible walls.
+   /// The collision layers a DOWN ray counts as ground: terrain and statics
+   /// (static, anim static, transparent, trees, props, terrain, ground). The
+   /// down ray casts on through anything else (actors, clutter). The
+   /// horizontal reachability picks count any hit at all.
    [[nodiscard]] bool IsGroundLayer(RE::COL_LAYER layer) noexcept;
 }
