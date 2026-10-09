@@ -53,9 +53,12 @@ Top hot zones + analysis + finding mapping.
 
 ## 2026-10-09 (16:38) — `fe570c1` (v0.23.18) — LoreRim, Wheeler push zones
 
-- Session: launch 16:38:15, save load 16:41:47, capture end 17:42:12; zones
-  span 62 min, about **48.5 min of unpaused play** (sum of gaps under 1 s
-  between job-thread ticks). Tracy version not recorded.
+- Session: launch 16:38:15, save load 16:41:47 (A), capture end 17:42:12;
+  zones span 62 min, about **48.5 min of unpaused play** (A; sum of gaps under
+  1 s between job-thread ticks). Tracy version not recorded.
+- Save: LoreRim character; inventory scale not recorded (candidates averaged
+  28.1 a run, learner items 53.5).
+- Frame sampled: main-thread frame p50 17.55 ms (A); CPU not recorded.
 - Notes: **DEBUG + TRACY (relative only)**, Self only, job threads (Tracy 5–10).
   Only Huginn's client was connected; Wheeler's zones are not in the file.
 - Source: the capture's analysis and an independent verification of it, both
@@ -80,16 +83,19 @@ Top hot zones + analysis + finding mapping.
 - **Wheeler pushes:** 2,711 in all; 18 over 5 ms and 7 over 16.6 ms (inclusive).
   In the 7, `WriteSlots` is 95.3–97.8% of the push. All 7 wrote page 0 while it
   was the current page; every write of 18 ms or more added a weapon instance
-  (uniqueID not 0), and the same item went onto the other wheel in the same push
-  in ~0.1 ms. Over 16.6 ms at +0 s and +3 s after the load, then +315 to +883 s;
+  (uniqueID not 0); in 2 of them (16:47:03, 16:56:31) the same item went onto
+  the other wheel in the same push in ~0.1 ms. Over 16.6 ms at +0 s and +3 s after the load, then +315 to +883 s;
   nothing over 5 ms after +1154 s. 302 of the 2,711 pushes wrote anything (A).
 - **Frames:** 0 of 26,565 job ticks overlap a main-thread zone (a ±50 ms random
   shift gives 1,454–1,494); the next main-thread player update starts p50
   1.99 ms after a job tick ends, whatever its length. The 6 pushes over 16.6 ms
   that could be measured stretched their frames by +19.9 to +28.9 ms. Inferred:
   the main thread waits for the tick.
-- **Rises of 25–46%** in fixed-cost zones with no code change between the builds
-  (only zones were added): game state or a session-wide slowdown, not code.
+- **Rises with no code change** between the builds (only zones were added):
+  fixed-cost zones rose 25–31% (`OnUpdate` 1.31, `PollWorldObjects` 1.31,
+  `Inventory::DeltaScan` 1.30); `Gather::Spells` rose 46%, but it scales with
+  the candidate count (28.1 against 24.3). Game state or a session-wide
+  slowdown, not code.
 - **Threads:** 26,565 ticks on 6 job threads, 4,769 on the main thread, 1,494 on
   a loading-screen thread; no two ticks overlap. The drop-ahead probe runs on the
   main thread only (hook mean 26 µs incl, A).

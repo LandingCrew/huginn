@@ -161,7 +161,7 @@ Each row is an array, in the order `head.row` names:
 | `scored` | 2 | ...that also passed the old floors (`util` is set) |
 | `held` | 4 | carried (inventory stacks the catalog describes) or a spell the player knows |
 | `equipped` | 8 | in a hand, worn, or the nocked ammo, when the context was taken (a press's context is taken after the press's own equip: see `dec.preEquipped`) |
-| `shown` | 16 | on the page the player saw; `slot` is its key |
+| `shown` | 16 | on the page Huginn allocated for display in its last run (`PipelineStateCache::TakeShown`), whether or not the widget or wheel was on screen; `slot` is its key |
 | `wildcard` | 32 | shown as a wildcard |
 | `override` | 64 | shown by an override |
 | `remembered` | 128 | shown by a Remembrance hold |
