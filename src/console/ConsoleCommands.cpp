@@ -40,6 +40,7 @@
 #include "wheeler/WheelerClient.h"
 #include "settings/SettingsReloader.h"
 #include "pipeline/PipelineCoordinator.h"
+#include "needs/NeedSnapshotBuilder.h"
 
 #include <algorithm>
 #include <cctype>
@@ -220,6 +221,33 @@ namespace Huginn::Console
 
       auto msg = std::format("Top {} recommendations dumped to Huginn log", n);
       Print(msg.c_str());
+   }
+
+   // R3: the live need vector -- every need whose 0.05-step level is not 0,
+   // its value and the sensor reading that went into its curve. Read from the
+   // state as it stands now (not the last pipeline run), so it is current in a
+   // quiet scene too. To the console and the log.
+   static void Cmd_Needs(std::string_view /*arg*/)
+   {
+      const auto live = Needs::ReadLiveNeeds();
+      const auto lines = Needs::FormatNeeds(live.vector);
+      Print(std::format("Huginn needs ({} of {} non-zero; logged only, no score reads them):",
+         lines.size(), Core::Needs::kNeedCount).c_str());
+      logger::info("[Console] hg needs: {} non-zero"sv, lines.size());
+      for (const auto& line : lines) {
+         Print(("  " + line).c_str());
+         logger::info("[Console]   {}"sv, line);
+      }
+      const auto& s = live.snapshot;
+      const auto extra = std::format("  drop ahead {} | encumbrance {:.2f} | families 0x{:X} | combat {} ({}) | light {:.2f}{}",
+         s.dropAhead < 0.0f ? std::string("not measured") : std::format("{:.0f} units", s.dropAhead),
+         s.encumbrance, s.families, s.inCombat ? "on" : "off",
+         s.inCombat ? std::format("{:.1f}s in", s.combatStartAgo)
+                    : (s.combatEndAgo >= Core::Needs::kNever ? std::string("never since load")
+                                                             : std::format("ended {:.1f}s ago", s.combatEndAgo)),
+         s.light, s.openDaylight ? " (open daylight)" : "");
+      Print(extra.c_str());
+      logger::info("[Console] {}"sv, extra);
    }
 
    static void Cmd_Unlock(std::string_view /*arg*/)
@@ -1575,6 +1603,7 @@ namespace Huginn::Console
    static const CommandEntry kCommands[] = {
       { "refresh",       "Force immediate recommendation update",       false, Cmd_Refresh },
       { "recs",          "Dump top-N recommendation breakdown to log",  true,  Cmd_Recs },
+      { "needs",         "Print the live need vector (non-zero needs)", false, Cmd_Needs },
       { "unlock",        "Clear all slot locks",                        false, Cmd_Unlock },
       { "status",        "Show system status",                          false, Cmd_Status },
       { "weights",       "Show learner weight vector for FormID",          true,  Cmd_Weights },

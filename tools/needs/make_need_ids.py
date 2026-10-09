@@ -144,8 +144,9 @@ def make_ini(rows):
             w(f"; -- {group}")
         p1 = r["curve_p1"]
         p2 = r["curve_p2"]
-        note = "   ; deferred: no sensor yet" if deferred(r) else ""
-        w(f"{r['id']} = {r['curve_kind']} {p1} {p2}{note}")
+        if deferred(r):
+            w(f"; {r['id']}: deferred, no sensor yet (reads input 0)")
+        w(f"{r['id']} = {r['curve_kind']} {p1} {p2}")
     return "\n".join(out) + "\n"
 
 

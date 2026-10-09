@@ -62,6 +62,8 @@
 #include "learning/SelectionTracker.h"
 #include "learning/PlayerInputGate.h"
 #include "learning/EquipSubscribers.h"
+#include "needs/NeedSettings.h"
+#include "state/DropAheadProbe.h"
 
 using namespace Huginn;
 
@@ -317,6 +319,9 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
     if (haveMainIni) State::ContextWeightSettings::GetSingleton().LoadFromIni(mainIni);
     g_utilityScorer->SetContextWeightConfig(State::ContextWeightSettings::GetSingleton().BuildConfig());
 
+    // ── 6a. NeedSettings (R3: the [Needs] response curves; logged only) ─
+    if (haveMainIni) Needs::NeedSettings::GetSingleton().LoadFromIni(mainIni);
+
     // ── 6b. LearningSettings ────────────────────────────────────────────
     if (haveMainIni) Learning::LearningSettings::GetSingleton().LoadFromIni(mainIni);
     Learning::ExternalEquipLearner::GetSingleton().SetConfig(
@@ -464,6 +469,7 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
         HUGINN_RUN_SUITE(RunSlotClassCapHoldTest);        // ...through the slot hold
         HUGINN_RUN_SUITE(RunHomeKeyTest);                 // [SlotLocker] home keys
         HUGINN_RUN_SUITE(RunBuffElementResistTest);       // THROWAWAY (0.20.63): buff element != resist
+        HUGINN_RUN_SUITE(RunNeedVectorTests);             // R3: the need vector on the live game
         logger::info("Debug build ready. Console command functions available for hotkey integration"sv);
         // One RESULT line for the batch; in test mode this ends the run.
         TestHarness::EndPhase(TestHarness::Phase::Load, loadSucceeded);
@@ -1007,6 +1013,9 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_s
     SKSE::Init(a_skse);
     InstallHooks();                // before the engine's threads exist; see above
     TestHarness::ReadTestMode();   // Debug only: the unattended-run flag
+    // R3: drop_ahead casts rays only on this thread (the main thread, which
+    // also runs the update loop through the input sink).
+    State::DropAheadProbe::NoteMainThread();
 
     // Register cosave serialization (must be before any save/load events)
     Persist::RegisterSerialization();

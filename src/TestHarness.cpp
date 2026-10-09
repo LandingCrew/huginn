@@ -110,6 +110,7 @@ namespace Huginn::TestHarness
         std::string g_dumpAllName;
         int g_loadTimeoutSec = kDefaultLoadTimeoutSec;
         int g_captureSlotsSec = 0;   // iCaptureSlotsSec: slot snapshots after the load suites (R7)
+        int g_captureNeeds = 0;      // iCaptureNeeds: need snapshots, at most this many (R3)
         std::atomic<bool> g_loadRequested{ false };
         std::atomic<bool> g_loadArrived{ false };
         std::atomic<bool> g_finished{ false };
@@ -249,6 +250,7 @@ namespace Huginn::TestHarness
             g_active = true;
             g_saveName = ReadEnv("HUGINN_TEST_SAVE");
             g_captureSlotsSec = std::atoi(ReadEnv("HUGINN_CAPTURE_SLOTS").c_str());
+            g_captureNeeds = std::atoi(ReadEnv("HUGINN_CAPTURE_NEEDS").c_str());
             source = "environment";
         }
 
@@ -280,6 +282,7 @@ namespace Huginn::TestHarness
                         g_loadTimeoutSec = static_cast<int>(
                             ini.GetLongValue("Test", "iLoadTimeoutSec", kDefaultLoadTimeoutSec));
                         g_captureSlotsSec = static_cast<int>(ini.GetLongValue("Test", "iCaptureSlotsSec", 0));
+                        g_captureNeeds = static_cast<int>(ini.GetLongValue("Test", "iCaptureNeeds", 0));
                         if (const char* dump = ini.GetValue("Test", "sDumpAll", nullptr); dump && *dump) {
                             g_dumpAllName = dump;
                         }
@@ -298,12 +301,21 @@ namespace Huginn::TestHarness
                 logger::info("[HuginnTest] after the load suites: {}s of slot capture (Huginn_SlotSnapshots.txt)"sv,
                     g_captureSlotsSec);
             }
+            if (g_captureNeeds > 0) {
+                logger::info("[HuginnTest] need capture: up to {} snapshot(s) (Huginn_NeedSnapshots.txt)"sv,
+                    g_captureNeeds);
+            }
         }
     }
 
     bool Active() noexcept
     {
         return g_active;
+    }
+
+    int NeedCaptureLimit() noexcept
+    {
+        return g_captureNeeds;
     }
 
     void OnGameLoaded() noexcept
@@ -436,6 +448,7 @@ namespace Huginn::TestHarness
     std::shared_ptr<spdlog::sinks::sink> MakeCountingSink() { return nullptr; }
     void ReadTestMode() {}
     bool Active() noexcept { return false; }
+    int NeedCaptureLimit() noexcept { return 0; }
     void OnGameLoaded() noexcept {}
     void MarkSkipped(std::string_view) {}
     void RunSuite(const char*, void (*)()) {}

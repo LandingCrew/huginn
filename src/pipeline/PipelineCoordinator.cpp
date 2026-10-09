@@ -21,6 +21,9 @@
 #include "display/ExplanationLabel.h"  // ReasonLabel for the [Context] transition log
 #include "display/WheelerBackend.h"
 #include "display/IntuitionBackend.h"
+#include "needs/NeedCapture.h"
+#include "needs/NeedSettings.h"
+#include "needs/NeedSnapshotBuilder.h"
 
 #ifdef _DEBUG
 #include "ui/UtilityScorerDebugWidget.h"
@@ -209,6 +212,45 @@ void PipelineCoordinator::GatherState(PipelineContext& ctx)
         (Context::ColdTier(ctx.playerState) << 3));
 
     ctx.currentMagicka = ctx.actorValue->GetActorValue(RE::ActorValue::kMagicka);
+
+    GatherNeeds(ctx);
+}
+
+// -----------------------------------------------------------------------------
+// GatherNeeds -- R3: the need vector, computed once per gathered tick
+// -----------------------------------------------------------------------------
+// A pure function (core/NeedEvaluator.h) of the snapshots GatherState just
+// took, plus the R3 sensors and the scorer's held magicka/stamina (read only).
+// Logged only: nothing that scores, allocates or displays reads it.
+
+void PipelineCoordinator::GatherNeeds(PipelineContext& ctx)
+{
+    Huginn_ZONE_NAMED("Pipeline::GatherNeeds");
+    auto& stateManager = State::StateManager::GetSingleton();
+    const auto magicka = stateManager.GetMagickaTracking();
+    const auto stamina = stateManager.GetStaminaTracking();
+    const auto sensors = stateManager.GetNeedSensors();
+    const float magickaHeld = g_utilityScorer ? g_utilityScorer->HeldMagicka(ctx.playerState.vitals.magicka)
+                                              : ctx.playerState.vitals.magicka;
+    const float staminaHeld = g_utilityScorer ? g_utilityScorer->HeldStamina(ctx.playerState.vitals.stamina)
+                                              : ctx.playerState.vitals.stamina;
+    ctx.needSnapshot = Needs::BuildNeedSnapshot(Needs::NeedSources{
+        ctx.playerState, ctx.targets, ctx.worldState, ctx.healthTracking, magicka, stamina, sensors,
+        magickaHeld, staminaHeld, State::NeedClock::Seconds(ctx.now) });
+    const auto curves = Needs::NeedSettings::GetSingleton().GetCurves();
+    ctx.needVector = Core::Needs::EvaluateNeeds(ctx.needSnapshot, curves);
+    ctx.needSignature = Core::Needs::Signature(ctx.needVector.value);
+    ctx.needTimeDriven = Core::Needs::TimeDriven(ctx.needSnapshot, curves);
+    m_needsTimeDriven = ctx.needTimeDriven;
+}
+
+void PipelineCoordinator::LogNeeds(const PipelineContext& ctx, bool signatureChanged)
+{
+    if (!signatureChanged) return;
+    // Debug: the vector moves several times a second in a fight. One line per
+    // signature change, the non-zero levels only (CLAUDE.md: transitions).
+    logger::debug("[Needs] {}"sv, Needs::NeedsLine(ctx.needVector));
+    Needs::Capture::Record(ctx.needSnapshot, "pipeline");
 }
 
 // -----------------------------------------------------------------------------
@@ -235,8 +277,13 @@ bool PipelineCoordinator::CheckHashSkip(PipelineContext& ctx, bool pageChanged)
     // hunger or cold stage crossed, a warming effect starting or ending.
     const bool ambientChanged = ctx.ambientSignature != m_lastAmbientSignature;
 
+    // R3: a need moved a 0.05 step (map Phase 2: "so continuous needs
+    // re-score"). The scores themselves are unchanged functions of the state;
+    // this only lets the pipeline run when the state it scores has moved.
+    const bool needChanged = !m_lastNeedSignature || ctx.needSignature != *m_lastNeedSignature;
+
     if (ctx.stateHash == m_lastPipelineHash && !pageChanged &&
-        !unhashedStateActive && !ambientChanged && !NeedsForcedRun()) {
+        !unhashedStateActive && !ambientChanged && !needChanged && !NeedsForcedRun()) {
         // Keep cache timestamp fresh so external equip events aren't rejected as stale
         Learning::PipelineStateCache::GetSingleton().RefreshTimestamp();
         return true;  // Skip
@@ -246,6 +293,8 @@ bool PipelineCoordinator::CheckHashSkip(PipelineContext& ctx, bool pageChanged)
     m_wasFalling = ctx.fallingActive;
     m_wasUnderwater = ctx.underwaterActive;
     m_lastAmbientSignature = ctx.ambientSignature;
+    m_lastNeedSignature = ctx.needSignature;
+    LogNeeds(ctx, needChanged);
 
     // Commit point for the learner latch: everything below this line scores and
     // publishes, so whatever reward set the flag is about to reach the widget.
