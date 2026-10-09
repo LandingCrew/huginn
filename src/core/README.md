@@ -100,13 +100,15 @@ keeps the seating memory and turns the events into logs and telemetry.
 
 | File | What it proves |
 |------|----------------|
-| `SlotAllocGoldenTests.cpp` | the core with the OLD arithmetic (`LegacySlotPolicy.h`) replays pages the old game code recorded in play, bit for bit; the sign-safe arithmetic gives identical pages on those and on synthetic snapshots; pages the new game code recorded replay exactly |
-| `SlotAllocAdversarialTests.cpp` | named cases: ties, zeros, the cap's 2x tie, overrides, remembered-only rows, the sort, negative scores, and the one float-rounding boundary where the two arithmetics part |
+| `SlotAllocGoldenTests.cpp` | the core with the OLD arithmetic (`LegacySlotPolicy.h`) replays what the old game code recorded in play -- pages, seating memory and events, under the shipped [SlotLocker] settings and varied ones -- bit for bit; the sign-safe arithmetic gives identical pages and events on those and on synthetic snapshots (which show only that the two arithmetics agree on a path, not that the path is right); what the new game code recorded replays exactly; recorded names are text |
+| `SlotAllocAdversarialTests.cpp` | named cases: ties, zeros, the cap's 2x tie, overrides, remembered-only rows, the sort, negative scores, the hold's tie band (a challenger on the margin holds), and the float-rounding boundaries where the arithmetics can still part (the cap's scan at any discount, underflow) |
 | `SlotScoreMathTests.cpp` | the bridge, the cap term, the margin, the sentinels, the churn buckets |
 | `SlotSnapshotIOTests.cpp` | the snapshot format round-trips |
 
 Recorded snapshots live in `tests/core/fixtures/slots/` (`*-old.txt` from the
-old code, `*-new.txt` from the new). To record more: a Debug build deployed to
-simonrim, then `python -I tools/ingame/run_tests.py --capture-slots 120`, then
+old code, `*-new.txt` from the new). The old code's were recorded by branch
+`r7-capture-old`: the 0.23.9 decision code (b941d90) with only the capture and
+an event recorder added. To record more: a Debug build deployed to
+simonrim, then `python -I tools/ingame/run_tests.py --capture-slots 160`, then
 `python -I tools/slots/trim_snapshots.py <log folder>/Huginn_SlotSnapshots.txt
 tests/core/fixtures/slots/<name>.txt --max 150`.

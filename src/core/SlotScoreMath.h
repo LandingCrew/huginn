@@ -59,6 +59,17 @@ namespace Huginn::Core
     /// log space. Anything between the two works; this is far from both.
     inline constexpr double kScoreTieEpsilon = 1e-12;
 
+    /// The slot hold's tie band: a challenger has to clear the margin by more than
+    /// float noise, about four float ulps of a utility (2.5e-7 in log space), or
+    /// the holder holds. Not a tuning knob: under the bridge the old engine's
+    /// potion tier preference divides a family's next tier by exactly 1.5
+    /// (POTION_TIER_STEP), the same 1.5 as the hold's margin, so adjacent tiers sit
+    /// ON the margin and only the rounding of u / 1.5 * 1.5 decided the old
+    /// comparison (a recorded play snapshot hit it: Potion of Plentiful Magicka at
+    /// 0.207614 against Minor at 0.13840933). With the band both arithmetics hold
+    /// there. It is far below any real difference a learned score will make.
+    inline constexpr double kHoldTieEpsilon = 2.5e-7;
+
     /// THE BRIDGE: the old engine's utility as a score. ln(u) for u > 0; -inf
     /// for u <= 0 and for NaN (no ranked row has either: utilities are >= the
     /// INI's fMinimumUtility, which is clamped to >= 0).
@@ -116,7 +127,7 @@ namespace Huginn::Core
     /// The ratio u_c > u_i * m of the old code, as a difference.
     [[nodiscard]] inline bool ScoreExceedsByMargin(SlotScore challenger, SlotScore holder, double logMargin) noexcept
     {
-        return challenger > holder + logMargin + kScoreTieEpsilon;
+        return challenger > holder + logMargin + kHoldTieEpsilon;
     }
 
     /// The class cap as an additive term on the score: 0 while the item's

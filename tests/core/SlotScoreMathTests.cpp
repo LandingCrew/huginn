@@ -110,7 +110,12 @@ TEST_CASE("slot score: the hold's margin as a difference")
     CHECK(lnM == std::log(1.5));
     // Bridge: exactly the ratio test where the ratio is exact.
     CHECK_FALSE(ScoreExceedsByMargin(BridgeScore(1.5f), BridgeScore(1.0f), lnM));   // 1.5 > 1.0 * 1.5 is false
-    CHECK(ScoreExceedsByMargin(BridgeScore(1.5000002f), BridgeScore(1.0f), lnM));
+    CHECK(ScoreExceedsByMargin(BridgeScore(1.5001f), BridgeScore(1.0f), lnM));
+    // Inside the tie band (kHoldTieEpsilon): one ulp over the margin holds.
+    CHECK_FALSE(ScoreExceedsByMargin(BridgeScore(1.5000002f), BridgeScore(1.0f), lnM));
+    // The recorded potion tiers (tier step 1.5 = the margin): the old code held.
+    CHECK_FALSE(ScoreExceedsByMargin(BridgeScore(0.207614f), BridgeScore(0.13840933f), lnM));
+    CHECK_FALSE(0.207614f > 0.13840933f * (1.0f + 0.5f));
     CHECK_FALSE(ScoreExceedsByMargin(BridgeScore(3.0f), BridgeScore(2.0f), lnM));   // a tie the logs compute ~1e-16 apart
     // Negative scores: the difference is what counts, not the ratio.
     CHECK(ScoreExceedsByMargin(-1.5, -2.0, lnM));          // 0.5 > ln 1.5

@@ -300,7 +300,10 @@ TEST_CASE("slot golden: old and new arithmetic agree on synthetic snapshots (shi
         " differing, ", acc.withDisagreement, " with a comparison answered differently; coverage:", acc.cov.Report());
     CHECK(acc.unexplained == 0);
     CHECK(acc.differing == 0);
-    // Every path the allocator has was taken somewhere in the set.
+    // Each listed path was taken somewhere in the synthetic set. Synthetic
+    // snapshots only show that the two arithmetics agree on a path; whether
+    // the path is RIGHT rests on the recorded old-code snapshots (pages and
+    // events, shipped and varied settings) and the in-game suites.
     for (const char* path : { "override marked in place", "override placed", "override fallback", "override unplaced",
              "hold item not a candidate", "Remembrance hold shown", "slot with no candidate",
              "slot hold: holder gave way", "slot hold: gave way under the cap", "job key pulled from Regular",

@@ -161,64 +161,65 @@ TEST_CASE("slot adversarial: past the sorted prefix the fill takes list order, s
     CHECK(Both(in) == std::vector<std::uint32_t>{ 12 });   // the full sort's: the better match
 }
 
-TEST_CASE("slot adversarial: the one place the arithmetics part: c == float(1.5 * h)")
+TEST_CASE("slot adversarial: a challenger ON the hold's margin holds, in both arithmetics")
 {
-    // The old hold asked u_c > u_i * 1.5f in float. Where that product rounds
-    // UP, a challenger equal to it is, in exact arithmetic, above 1.5 u_i --
-    // the new difference test swaps where the old one held. Measure zero in
-    // play (the challenger's utility must equal the rounded product to the
-    // bit); none of the recorded or synthetic snapshots hit it.
-    float h = 0.0f, c = 0.0f;
-    for (float x = 0.5f; x < 1.0f; x = std::nextafter(x, 2.0f)) {
-        const float p = x * 1.5f;
-        if (static_cast<double>(p) > 1.5 * static_cast<double>(x)) {
-            h = x;
-            c = p;
-            break;
-        }
-    }
-    REQUIRE(h > 0.0f);
+    // The old hold asked u_c > u_i * 1.5f in float, so a challenger exactly on
+    // the margin was decided by rounding. Not measure zero: the old potion
+    // tier preference divides a family's next tier by POTION_TIER_STEP = 1.5,
+    // the hold's own 1.5, and a recorded play snapshot had Potion of
+    // Plentiful Magicka (0.207614) against Minor (0.13840933 = 0.207614 / 1.5)
+    // on exactly that boundary. The new test has a tie band of about four
+    // float ulps (kHoldTieEpsilon): on the margin, the holder holds.
+    using Huginn::Core::BridgeScore;
     const auto legacy = LegacySlotPolicy::From(SA::Settings{});
     const auto fresh = LogScorePolicy::From(SA::Settings{});
-    CHECK_FALSE(legacy.Exceeds(c, h));
-    CHECK(fresh.Exceeds(Huginn::Core::BridgeScore(c), Huginn::Core::BridgeScore(h)));
+    CHECK_FALSE(legacy.Exceeds(0.207614f, 0.13840933f));
+    CHECK_FALSE(fresh.Exceeds(BridgeScore(0.207614f), BridgeScore(0.13840933f)));
+
+    // Every challenger exactly float(1.5 * h), wherever that product rounds:
+    // the old code holds (c > c is false), and so does the new.
     std::vector<Disagreement> log;
     const auto dual = DualPolicy::From(SA::Settings{}, &log);
-    (void)dual.Exceeds({ c, Huginn::Core::BridgeScore(c) }, { h, Huginn::Core::BridgeScore(h) });
-    REQUIRE(log.size() == 1);
-    CHECK(IsRoundingBoundary(log[0]));
-    MESSAGE("boundary: holder ", h, ", challenger ", c, " = float(1.5 * holder)");
+    int checked = 0;
+    for (float h = 0.5f; h < 0.5005f; h = std::nextafter(h, 2.0f)) {
+        const float c = h * 1.5f;
+        CHECK_FALSE(dual.Exceeds({ c, BridgeScore(c) }, { h, BridgeScore(h) }));
+        ++checked;
+    }
+    CHECK(log.empty());
+    // A potion family's tiers, top / 1.5 / 1.5 ..., as the scorer builds them.
+    for (float top = 0.1f; top < 3.0f; top *= 1.013f) {
+        const float next = top / 1.5f;
+        (void)dual.Exceeds({ top, BridgeScore(top) }, { next, BridgeScore(next) });
+        ++checked;
+    }
+    MESSAGE("on-the-margin pairs checked: ", checked, ", answered differently: ", log.size());
+    for (const auto& d : log) CHECK(IsRoundingBoundary(d));
 }
 
 TEST_CASE("slot adversarial: rounding boundaries exist for any discount and margin, and are classified")
 {
-    // The c == float(1.5 h) case above is the shipped settings' instance of
-    // a general fact: wherever the old code compared rounded float products
-    // (u * d^k under the cap, u * m in the hold) and the two sides met within
-    // the rounding, the old answer is the rounding's and the new one the
-    // exact comparison's. Three more, one of each kind; IsRoundingBoundary
-    // must recognise each.
+    // Wherever the old code compared rounded float products (u * d^k under
+    // the cap, u * m in the hold) and the two sides met within the rounding,
+    // the old answer is the rounding's and the new one the exact
+    // comparison's -- for any discount and margin, not only the shipped ones.
+    // The hold's tie band absorbs the hold's (above); the cap's scan has none,
+    // and underflow is its own case. IsRoundingBoundary must recognise each.
     using Huginn::Core::BridgeScore;
     std::vector<Disagreement> log;
 
-    // (a) The hold at margin 0.1: a challenger equal to float(1.1 * holder)
-    // where that product rounded up.
-    {
+    // (a) The hold at margin 0.1 and 1.0: at the boundary both hold (the band).
+    for (const float margin : { 0.1f, 1.0f }) {
         SA::Settings s;
-        s.challengerMargin = 0.1f;
+        s.challengerMargin = margin;
         const auto dual = DualPolicy::From(s, &log);
-        bool found = false;
-        for (float h = 0.5f; h < 1.0f && !found; h = std::nextafter(h, 2.0f)) {
-            const float c = h * 1.1f;
-            if (static_cast<double>(c) > static_cast<double>(1.1f) * static_cast<double>(h) * (1.0 + 1e-9)) {
-                const auto before = log.size();
-                CHECK_FALSE(dual.Exceeds({ c, BridgeScore(c) }, { h, BridgeScore(h) }));   // the old answer
-                REQUIRE(log.size() == before + 1);
-                CHECK(IsRoundingBoundary(log.back()));
-                found = true;
-            }
+        const float m = 1.0f + margin;
+        const auto before = log.size();
+        for (float h = 0.5f; h < 0.5005f; h = std::nextafter(h, 2.0f)) {
+            const float c = h * m;
+            CHECK_FALSE(dual.Exceeds({ c, BridgeScore(c) }, { h, BridgeScore(h) }));
         }
-        CHECK(found);
+        CHECK(log.size() == before);
     }
     // (b) The cap's scan at discount 0.7: an uncapped item exactly equal to
     // float(0.7 * u) of a capped one, where that product rounded up.
