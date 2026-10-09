@@ -9,6 +9,7 @@
 #include "slot/SlotAllocator.h"
 #include "update/UpdateHandler.h"
 #include "state/DropAheadProbe.h"
+#include "learning/SelectionLogV3.h"
 
 #include <spdlog/details/null_mutex.h>
 #include <spdlog/sinks/base_sink.h>
@@ -117,6 +118,7 @@ namespace Huginn::TestHarness
         int g_captureNeeds = 0;      // iCaptureNeeds: need snapshots, at most this many (R3)
         int g_dumpRecsAfterSec = 0;  // iDumpRecsAfterSec: a recs dump after the load suites, then end
         std::string g_cocCells;      // sCocCells: "a;b": after the load suites, coc to each in turn, then end (R3)
+        bool g_decisionSession = false;  // bDecisionSession: after the load suites, the v3 log session (R4)
         std::atomic<bool> g_loadRequested{ false };
         std::atomic<bool> g_loadArrived{ false };
         std::atomic<bool> g_finished{ false };
@@ -302,6 +304,7 @@ namespace Huginn::TestHarness
                         g_captureSlotsSec = static_cast<int>(ini.GetLongValue("Test", "iCaptureSlotsSec", 0));
                         g_captureNeeds = static_cast<int>(ini.GetLongValue("Test", "iCaptureNeeds", 0));
                         g_dumpRecsAfterSec = static_cast<int>(ini.GetLongValue("Test", "iDumpRecsAfterSec", 0));
+                        g_decisionSession = ini.GetBoolValue("Test", "bDecisionSession", false);
                         if (const char* coc = ini.GetValue("Test", "sCocCells", nullptr); coc && *coc) {
                             g_cocCells = coc;
                         }
@@ -487,6 +490,12 @@ namespace Huginn::TestHarness
                 std::this_thread::sleep_for(std::chrono::seconds(12));
                 Finish(g_cocFailed.load() ? "coc-failed"sv : std::string_view{});
             }).detach();
+            return;
+        }
+        if (gameLoaded && g_decisionSession && g_captureSlotsSec <= 0) {
+            // R4: a scripted session that writes a selection log v3 record of
+            // every outcome it can (learning/SelectionLogV3Session.cpp), then end.
+            Learning::SelectionLogV3::StartTestSession([]() { Finish({}); });
             return;
         }
         if (gameLoaded && g_dumpRecsAfterSec > 0 && g_captureSlotsSec <= 0) {

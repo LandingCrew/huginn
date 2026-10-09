@@ -121,6 +121,7 @@ namespace Huginn::Core::DecisionLog
     {
         std::uint64_t id = 0;       // unique within the launch
         std::string utc;            // "YYYY-MM-DD HH:MM:SS.mmm" when taken
+        double tSec = 0.0;          // steady seconds when taken (the caller's clock; not written)
         std::string why;            // "press", "menu" (a selection menu opened), "onset"
         std::string menu;           // the menu's name for why = "menu"
         Needs::NeedArray need{};    // the need vector (curve outputs, 0..1)

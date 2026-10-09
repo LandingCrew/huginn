@@ -13,6 +13,7 @@
 #include "learning/PipelineStateCache.h"
 #include "learning/InventoryExitTracker.h"
 #include "learning/SelectionTracker.h"
+#include "learning/SelectionLogV3.h"
 #include "learning/FeatureBanditLearner.h"
 #include "util/ScopedTimer.h"
 #include "util/InventoryUtil.h"
@@ -81,7 +82,8 @@ static void HandleConsumption(RE::FormID formID, std::string_view name)
         candidateGen.StartCooldown(formID, sourceType);
     }
 
-    if (!Learning::SelectionTracker::GetSingleton().OnConsumed(formID)) {
+    if (!Learning::SelectionTracker::GetSingleton().OnConsumed(formID) &&
+        !Learning::SelectionLogV3::OnConsumed(formID)) {   // R4: a pick the v3 log keeps on its own
         logger::debug("[Learning] Consumed with no selection behind it, teaches nothing: {} ({:08X})",
             name, formID);
     }
@@ -614,6 +616,11 @@ void OnUpdate(float deltaSeconds)
     // R3: the need vector, every tick, logged only. Reads the state the polls
     // just wrote; touches neither skip gate (NeedMonitor.h).
     Needs::NeedMonitor::GetSingleton().Tick(now);
+
+    // R4: the selection log v3 -- this tick's cross-features for the eligible
+    // candidates, the need episodes ("nothing pressed"). Logging only: it
+    // reads the needs and the last pipeline run, and opens no gate.
+    Learning::SelectionLogV3::Tick(now);
 
     // Confirm or drop pending player selections whose window has run out.
     // AFTER the inventory scan, deliberately: this loop does not run while a

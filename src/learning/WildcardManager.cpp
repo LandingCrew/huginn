@@ -158,6 +158,19 @@ namespace Huginn::Scoring
         return count;
     }
 
+    float WildcardManager::GetWildcardPropensity(size_t pageIndex, RE::FormID formID) const
+    {
+        if (pageIndex >= MAX_WILDCARD_PAGES || formID == 0) {
+            return std::numeric_limits<float>::quiet_NaN();
+        }
+        for (const auto& slot : m_pages[pageIndex].slots) {
+            if (slot.formID == formID) {
+                return slot.propensity;
+            }
+        }
+        return std::numeric_limits<float>::quiet_NaN();
+    }
+
     void WildcardManager::Reset()
     {
         const auto now = std::chrono::steady_clock::now();
@@ -289,6 +302,8 @@ namespace Huginn::Scoring
                 if (wildcardID != 0) {
                     cache.slots[i].formID = wildcardID;
                     cache.slots[i].sourceType = topType;
+                    cache.slots[i].propensity = m_lastDrawPool > 0
+                        ? probability / static_cast<float>(m_lastDrawPool) : 0.0f;
                     usedFormIDs.push_back(wildcardID);
                     anyRolled = true;
                     ++rolled;
@@ -400,6 +415,7 @@ namespace Huginn::Scoring
             m_eligibleBuffer.push_back(formID);
         }
 
+        m_lastDrawPool = m_eligibleBuffer.size();
         if (m_eligibleBuffer.empty()) {
             return 0;
         }

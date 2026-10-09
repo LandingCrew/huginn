@@ -52,6 +52,11 @@ namespace Huginn::Learning
         // Called by ExternalEquipListener and SpellRegistry on external equip
         void OnExternalEquip(RE::FormID formID, const char* formType);
 
+        /// R4: an armour equip Huginn did not make. Recorded in the selection
+        /// log v3 only (when player input is behind it); the learner and the
+        /// soak telemetry never see it. See ExternalEquipListener.
+        void OnArmourEquip(RE::FormID formID);
+
         /// Replace the stored config snapshot (e.g., after INI hot-reload).
         void SetConfig(const LearningConfig& config) { m_config = config; }
 

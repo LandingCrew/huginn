@@ -71,6 +71,35 @@ namespace Huginn::Learning
             Slot::AssignmentType type = Slot::AssignmentType::Normal;  // Override / Wildcard / Remembered flags
         };
 
+        /// R4: one ELIGIBLE candidate of the run -- every item CandidateGenerator
+        /// produced, before the scorer's floors (fMinimumContextWeight,
+        /// fMinimumUtility) dropped any. One row per item: a weapon stack is
+        /// its own row (formID + uniqueID). Copied out of the run for the
+        /// selection log v3 (learning/SelectionLogV3); nothing scores from it.
+        struct EligibleRow
+        {
+            RE::FormID formID = 0;
+            uint16_t uniqueID = 0;
+            Candidate::SourceType sourceType{};
+            int32_t count = 0;                  // inventory count (consumables, ammo, scrolls, torches), else 0
+            float chargeFraction = 0.0f;        // weapons/staves: current / max enchantment charge
+            bool enchanted = false;             // weapons/staves with an enchantment (charge applies)
+            float utility = std::numeric_limits<float>::quiet_NaN();     // when it passed the floors
+            float wildcardPropensity = std::numeric_limits<float>::quiet_NaN();  // when it is a wildcard
+        };
+
+        /// R4: the page as shown, without the scored list (cheap; the selection
+        /// log v3 takes one per logged context).
+        struct ShownPage
+        {
+            bool valid = false;
+            size_t page = 0;
+            size_t pageSlots = 0;
+            float ageMs = 0.0f;
+            uint64_t generation = 0;
+            std::vector<ShownSlot> shown;
+        };
+
         /// Everything the selection log needs, read under one lock so the scored
         /// list and the page come from the same pipeline run.
         struct Snapshot
@@ -100,11 +129,15 @@ namespace Huginn::Learning
         // NOTE: wildcard swaps run after sorting, so a prefix rank may hold a
         // wildcard-promoted item — intentional: attribution should see what was
         // actually surfaced, not the pre-wildcard utility order.
+        // R4: `eligible` (moved in) and `pageSlots` are kept for the selection
+        // log v3 only; attribution and the v2 log read none of it.
         void Update(
             const Scoring::ScoredCandidateList& scored,
             const Slot::SlotAssignments& currentPageAssignments,
             size_t currentPage,
-            size_t sortedPrefix)
+            size_t sortedPrefix,
+            std::vector<EligibleRow> eligible = {},
+            size_t pageSlots = 0)
         {
             std::unique_lock lock(m_mutex);
 
@@ -112,6 +145,9 @@ namespace Huginn::Learning
             m_currentPage = currentPage;
             m_sortedPrefix = std::min(sortedPrefix, scored.size());
             m_valid = true;
+            m_eligible = std::move(eligible);
+            m_pageSlots = pageSlots;
+            ++m_generation;
 
             m_scores.clear();
             m_scores.reserve(scored.size());
@@ -207,6 +243,38 @@ namespace Huginn::Learning
             return snap;
         }
 
+        /// R4: the run counter (one per Update; 0 before the first).
+        [[nodiscard]] uint64_t Generation() const
+        {
+            std::shared_lock lock(m_mutex);
+            return m_generation;
+        }
+
+        /// R4: the eligible rows of the last run, if it is newer than
+        /// `haveGeneration` (else nothing is copied and false is returned).
+        bool TakeEligibleIfNewer(uint64_t haveGeneration, std::vector<EligibleRow>& out, uint64_t& generation) const
+        {
+            std::shared_lock lock(m_mutex);
+            if (m_generation == haveGeneration) return false;
+            out = m_eligible;
+            generation = m_generation;
+            return true;
+        }
+
+        /// R4: the page as shown by the last run, and how old it is.
+        [[nodiscard]] ShownPage TakeShown() const
+        {
+            ShownPage page;
+            page.ageMs = AgeMs();
+            std::shared_lock lock(m_mutex);
+            page.valid = m_valid;
+            page.page = m_currentPage;
+            page.pageSlots = m_pageSlots;
+            page.generation = m_generation;
+            page.shown = m_shown;
+            return page;
+        }
+
         [[nodiscard]] size_t GetCandidateCount() const
         {
             std::shared_lock lock(m_mutex);
@@ -251,6 +319,10 @@ namespace Huginn::Learning
         std::unordered_map<RE::FormID, size_t> m_index;     // FormID -> m_scores index
         std::vector<ShownSlot> m_shown;                     // Current page, slot order
         size_t m_currentPage = 0;
+        // R4 (selection log v3 only)
+        std::vector<EligibleRow> m_eligible;
+        size_t m_pageSlots = 0;
+        uint64_t m_generation = 0;
     };
 
 }  // namespace Huginn::Learning

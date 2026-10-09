@@ -81,6 +81,16 @@ namespace Huginn::Wheeler
             return WheelerConnection::GetSingleton().IsInEditMode();
         }
 
+#ifndef NDEBUG
+        /// Test mode only (R4's decision session): run Huginn's own handler for
+        /// a Wheeler activation, as Wheeler's callback would after its equip.
+        /// Wheeler's UI is not driven; the item must already be equipped.
+        static void SimulateItemActivatedForTest(int32_t wheelIndex, int32_t entryIndex, uint32_t formID)
+        {
+            OnItemActivated(wheelIndex, entryIndex, 0, formID, true);
+        }
+#endif
+
         // Log API info
         void LogAPIInfo();
 

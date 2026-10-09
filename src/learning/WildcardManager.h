@@ -134,6 +134,13 @@ namespace Huginn::Scoring
         [[nodiscard]] RE::FormID GetWildcardForSlot(size_t pageIndex, size_t slotIndex) const;
         [[nodiscard]] size_t GetActiveWildcardCount(size_t pageIndex) const;
 
+        /// R4, logging only: the propensity of `formID`'s cached wildcard on
+        /// `pageIndex` -- the probability of the roll that put it there, given
+        /// the earlier rolls of the same pass: P(the slot rolled) x 1/(the pool
+        /// it was drawn from). NaN when it is not a cached wildcard of that
+        /// page. Read on the update thread (the pipeline), like the cache.
+        [[nodiscard]] float GetWildcardPropensity(size_t pageIndex, RE::FormID formID) const;
+
 
         // Reset wildcards on every page (e.g., on save load)
         void Reset();
@@ -147,6 +154,7 @@ namespace Huginn::Scoring
         struct WildcardSlot {
             RE::FormID formID = 0;
             Candidate::SourceType sourceType = Candidate::SourceType::Spell;
+            float propensity = 0.0f;   // R4: logged only (GetWildcardPropensity)
         };
 
         // One page's wildcard state: the entries, the page shape they were
@@ -209,6 +217,9 @@ namespace Huginn::Scoring
 
         // Reusable buffer for candidate selection (avoids heap allocation in hot path)
         mutable std::vector<RE::FormID> m_eligibleBuffer;
+        // R4: the size of the pool the last SelectRandomCandidate drew from,
+        // for the propensity. Written beside the draw; changes no draw.
+        size_t m_lastDrawPool = 0;
 
         // Reusable per-call scratch (update thread only; cleared at each use):
         // FormIDs assigned this roll, and swap tracking across the ranked list

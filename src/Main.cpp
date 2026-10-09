@@ -51,6 +51,7 @@
 #include "learning/ExternalEquipListener.h"
 #include "apparel/ApparelWornListener.h"
 #include "learning/ExternalEquipLearner.h"
+#include "learning/SelectionLogV3.h"
 #include "context/ContextWeightSettings.h"
 #include "context/ContextWeightConfig.h"
 #include "settings/SettingsReloader.h"
@@ -707,6 +708,9 @@ static void OnDataLoaded()
 
     // Register HUD visibility manager (auto-hide widget in menus)
     UI::HudVisibilityManager::Register();
+
+    // R4: the selection log v3's menu sink (the context a menu pick joins to)
+    Learning::SelectionLogV3::Register();
 
     // Setup input callbacks for equip actions
     {

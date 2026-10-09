@@ -7,6 +7,7 @@
 #include "slot/SlotAllocator.h"
 #include "slot/Remembrance.h"
 #include "learning/SelectionTracker.h"
+#include "learning/SelectionLogV3.h"
 #include "pipeline/PipelineCoordinator.h"
 
 #include <algorithm>
@@ -117,6 +118,8 @@ void ResetPipelineSubsystems() {
 
     // A selection pending across a load belongs to the abandoned session.
     Learning::SelectionTracker::GetSingleton().Clear();
+    // R4: the v3 log's episodes, pending picks and menu context likewise.
+    Learning::SelectionLogV3::Reset();
 
     Pipeline::PipelineCoordinator::GetSingleton().ResetCrossSaveState();
 

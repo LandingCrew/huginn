@@ -453,7 +453,7 @@ def check_executable(ml: ModList) -> None:
                       f"{ml.root / 'ModOrganizer.ini'} (have: {titles})")
 
 
-def check_deployed_dll(ml: ModList, need_dump: bool = False) -> None:
+def check_deployed_dll(ml: ModList, need_dump: bool = False, need_session: bool = False) -> None:
     """The DLL the list will load carries the test harness (and, for
     --dump-all, the test-mode dump of 0.23.12)."""
     dll = ml.root / "overwrite" / "SKSE" / "Plugins" / "Huginn.dll"
@@ -471,6 +471,9 @@ def check_deployed_dll(ml: ModList, need_dump: bool = False) -> None:
                       "Deploy a Debug build of 0.23.9 or later")
     if need_dump and b"sDumpAll" not in data:
         raise Refused("--dump-all needs a Debug Huginn.dll of 0.23.12 or later (no sDumpAll in the deployed one)")
+    if need_session and b"bDecisionSession" not in data:
+        raise Refused("--decision-session needs a Debug Huginn.dll of 0.23.15 or later "
+                      "(no bDecisionSession in the deployed one)")
 
 
 def check_mo2(ml: ModList, multiple: bool) -> list[str]:
@@ -618,6 +621,10 @@ def main() -> int:
     ap.add_argument("--dump-recs", type=int, default=0, metavar="SEC",
                     help="after the load suites wait SEC seconds, log a 40-row `hg recs` dump ([Recs] lines), "
                          "then end (Debug, 0.23.14+): compares two builds' recommendations on one save")
+    ap.add_argument("--decision-session", action="store_true",
+                    help="after the load suites, Huginn plays a scripted session that writes a selection log v3 "
+                         "record of every outcome it can (key, wheel, menu, nothing) to "
+                         "Huginn_Selections_v3_test.jsonl in the log folder, then ends (Debug, 0.23.15+)")
     ap.add_argument("--coc", metavar="CELLS",
                     help="after the load suites, coc to each ';'-separated cell 12 s apart, then end "
                          "(Debug, 0.23.14+): crosses loads like a door or fast travel")
@@ -628,6 +635,13 @@ def main() -> int:
         raise Refused("--coc needs a save: the cells are crossed after the load")
     if args.coc:
         args.timeout += 15 * (args.coc.count(";") + 1) + 120
+    if args.decision_session and args.no_save:
+        raise Refused("--decision-session needs a save: the session runs after the load")
+    if args.decision_session and (args.coc or args.capture_slots > 0 or args.dump_recs > 0):
+        raise Refused("--decision-session cannot run with --coc, --capture-slots or --dump-recs "
+                      "(each ends the run its own way)")
+    if args.decision_session:
+        args.timeout += 120
     # The capture session runs after the suites: its seconds, plus the
     # campaign and the shutdown, come on top of --timeout.
     if args.capture_slots > 0:
@@ -643,7 +657,7 @@ def main() -> int:
     if not mo2.is_file():
         raise Refused(f"{mo2} not found")
     check_executable(ml)
-    check_deployed_dll(ml, need_dump=args.dump_all is not None)
+    check_deployed_dll(ml, need_dump=args.dump_all is not None, need_session=args.decision_session)
     save = resolve_save(ml, "" if args.no_save else args.save)
 
     running = game_pids()
@@ -675,6 +689,7 @@ def main() -> int:
         + (f"iCaptureNeeds={args.capture_needs}\n" if args.capture_needs > 0 else "")
         + (f"iDumpRecsAfterSec={args.dump_recs}\n" if args.dump_recs > 0 else "")
         + (f"sCocCells={args.coc}\n" if args.coc else "")
+        + ("bDecisionSession=1\n" if args.decision_session else "")
         + (f"sDumpAll={args.dump_all}\n" if args.dump_all else ""),
         encoding="utf-8")
 
@@ -776,6 +791,20 @@ def main() -> int:
             say(f"WARNING: no need snapshot file from this launch at {needs}")
             if verdict and verdict[0] == 0:
                 verdict = (1, "--capture-needs: no snapshot file from this launch")
+    if args.decision_session:
+        v3 = args.log_dir / "Huginn_Selections_v3_test.jsonl"
+        fresh_v3 = v3.is_file() and \
+            dt.datetime.fromtimestamp(v3.stat().st_mtime, dt.timezone.utc) >= launched_utc
+        if fresh:
+            for line in lines:
+                if "[HuginnTest] decision session" in line or ("[SelectionV3]" in line and "was open" in line):
+                    print("  " + line.split("]: ", 1)[-1])
+        if fresh_v3:
+            say(f"selection log v3 (test): {v3} ({v3.stat().st_size} bytes)")
+        else:
+            say(f"WARNING: no selection log v3 test file from this launch at {v3}")
+            if verdict and verdict[0] == 0:
+                verdict = (1, "--decision-session: no v3 test file from this launch")
     code, why = verdict or (1, "no verdict")
     say(("PASS: " if code == 0 else "FAIL: ") + why)
     return code
