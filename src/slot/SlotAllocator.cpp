@@ -439,11 +439,17 @@ namespace Huginn::Slot
 
         SA::Output out;
         {
-            // Read, decided on and written back under one lock. Every caller runs
-            // on the main thread today (the pipeline under UpdateHandler's mutex,
-            // Wheeler's pages in the same pass, the Debug test allocations); the
-            // lock keeps the memory whole if that ever changes, at no cost
-            // uncontended.
+            // Read, decided on and written back under one lock. The pipeline
+            // (and Wheeler's pages in the same pass) runs under UpdateHandler's
+            // mutex on the update loop's thread: a game job thread in gameplay,
+            // the main thread in menus (UpdateLoop.cpp, THREADS above OnUpdate).
+            // In Debug builds SlotCapture.cpp's campaign calls AllocateForTest
+            // from an SKSE task, outside that mutex, while the update loop keeps
+            // ticking, and nothing orders the two (in gameplay an SKSE task
+            // appears to drain on a job thread too; see SlotCapture.cpp). So this
+            // lock is needed, not future-proofing. Tests.cpp's suites allocate
+            // from the SKSE message handler (TestHarness.cpp), not under that
+            // mutex either. Free when uncontended.
             std::lock_guard<std::mutex> lock(m_seatingMutex);
             in.generationMatches = m_seatingGeneration == configGeneration;
             if (in.memoryAvailable) {

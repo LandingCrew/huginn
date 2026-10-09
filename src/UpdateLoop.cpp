@@ -538,6 +538,24 @@ static bool IsWorldLoaded(RE::PlayerCharacter* player)
     return player->Get3D() != nullptr;
 }
 
+// THREADS (two Tracy traces, 2026-10-09; the decision is roadmap R8, "Which
+// thread runs the update loop"). UpdateHandler's InputEvent sink calls this,
+// under its mutex, so two ticks never overlap. Which thread a tick runs on:
+//   - in gameplay, one of a pool of six rotating game job threads;
+//   - in paused menus and the main menu, the main thread. The loop DOES run
+//     while a pausing menu is open (5,501 main-thread ticks in the traces'
+//     hook gaps), and a few ticks run on the main thread in the ~0.3 s
+//     before many door loads;
+//   - once per load (15 of 18 traced loads, 14 of them door or fast-travel
+//     loads), one full tick, RunPipeline and Inventory::DeltaScan included,
+//     on a loading-screen thread.
+// No job tick overlapped a main-thread zone (0 of 22,047). Job ticks end a
+// flat ~2 ms before the main thread's player update finishes, whatever their
+// length, so the main thread appears to wait for them; that is inferred, not
+// proven (the hook's zone opens after the original update returns, so an
+// overlap with the very start of the update body is not excluded). SKSE
+// tasks appear to follow the same main-in-menus / job-in-gameplay pattern
+// (DropAheadProbe.h); not traced.
 void OnUpdate(float deltaSeconds)
 {
     if (g_updateSystemFailed.load(std::memory_order_acquire)) {
@@ -623,12 +641,14 @@ void OnUpdate(float deltaSeconds)
     Learning::SelectionLogV3::Tick(now);
 
     // Confirm or drop pending player selections whose window has run out.
-    // AFTER the inventory scan, deliberately: this loop does not run while a
-    // menu or a wheel pauses the game (the "Clamped deltaSeconds" lines), so on
-    // the first tick back a consumable's deadline and its count drop arrive
-    // together -- the scan must confirm it before the deadline can expire it.
-    // Main thread (the input sink drives this loop), so reading what the
-    // player has equipped is safe here.
+    // AFTER the inventory scan, deliberately: the loop can go a second or more
+    // without a tick (the "Clamped deltaSeconds" lines), so on the first tick
+    // back a consumable's deadline and its count drop can arrive together --
+    // the scan must confirm it before the deadline can expire it. (It does
+    // run while a pausing menu is open: see THREADS above OnUpdate.)
+    // Reading what the player has equipped happens on the tick's thread: a
+    // job thread in gameplay, the main thread in menus; no job tick was seen
+    // overlapping the main thread (THREADS above OnUpdate).
     Learning::SelectionTracker::GetSingleton().Update();
     // R4: ended need episodes are judged after the confirmations above.
     Learning::SelectionLogV3::TickAfterSelections(now);

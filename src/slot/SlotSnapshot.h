@@ -107,7 +107,8 @@ namespace Huginn::Slot
         /// Test mode: play a scripted session for `seconds` while capturing
         /// (slot presses, page flips, vitals dropped into the override range,
         /// under the shipped [SlotLocker] settings and two variants), then run
-        /// the perturbation campaign on the main thread, then call `done`
+        /// the perturbation campaign in one SKSE task (its thread:
+        /// SlotCapture.cpp's header), then call `done`
         /// (any thread). Calls `done` at once if capture cannot start.
         void StartSession(int seconds, void (*done)());
     }

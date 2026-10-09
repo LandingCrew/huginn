@@ -26,16 +26,25 @@
 //
 // Then a PERTURBATION CAMPAIGN on page 9 (no layout uses it): the real
 // candidate lists seen in the session -- deep copies, names included, taken on
-// the main thread when the allocation saw them -- re-scored and re-ordered at
+// the allocation's own thread when it saw them -- re-scored and re-ordered at
 // random (ties, zeros, 2x and 1.5x relations, small nudges, wildcards,
 // remembered-only rows, overrides, Remembrance holds), on the real layouts
 // and on made-up ones with job keys, under the settings variants, a few
 // passes per sequence so the slot hold, seating and home keys act on what
 // the previous pass left; now and then a pass under another layout
-// generation, so stale seating memory is met. It runs ON THE MAIN THREAD, in
-// one task, as every real allocation does. Each pass goes through
+// generation, so stale seating memory is met. Each pass goes through
 // SlotAllocator::AllocateForTest, which the capture hook records (tag
 // "campaign").
+//
+// Threads. The campaign runs in one SKSE task, and so does each scripted step
+// of the session. This used to say "on the main thread, as every real
+// allocation does"; neither half holds. Real allocations run on the update
+// loop's thread, a game job thread in gameplay (UpdateLoop.cpp, THREADS above
+// OnUpdate: Tracy, 2026-10-09), and SKSE tasks appear to drain on job threads
+// in gameplay too (DropAheadProbe.h; inferred, not traced). Nothing Huginn
+// controls orders a task against an update tick, so a real allocation may
+// interleave with the campaign; SlotAllocator's seating lock keeps each
+// allocation whole.
 //
 // Nothing here runs outside test mode, the selection log skips the scripted
 // presses (SessionActive), and nothing is saved: the harness ends the process.
@@ -94,7 +103,8 @@ namespace Huginn::Slot::Capture
         std::atomic<bool> g_sessionStarted{ false };
         std::atomic<bool> g_sessionActive{ false };
 
-        // Vitals the session lowered, to put back. Main thread only.
+        // Vitals the session lowered, to put back. Touched only from the
+        // session's SKSE tasks (header: not the main thread in gameplay).
         std::array<float, 3> g_lowered{};
 
         RE::ActorValue VitalOf(size_t i)
@@ -174,7 +184,7 @@ namespace Huginn::Slot::Capture
             return s;
         }
 
-        // One scripted step, on the main thread.
+        // One scripted step, in an SKSE task (header: its thread).
         void PlayStep(size_t step, uint32_t r)
         {
             auto& allocator = SlotAllocator::GetSingleton();
@@ -361,7 +371,10 @@ namespace Huginn::Slot::Capture
             }
         }
 
-        // Main thread, one task: no real allocation runs in between.
+        // One SKSE task. That no real allocation runs in between is NOT
+        // established: nothing orders this task against an update tick
+        // (header), and the campaign's settings variants (Apply) are the
+        // live [SlotLocker] values while it runs.
         void RunCampaign()
         {
             std::vector<RealList> lists;
@@ -407,7 +420,9 @@ namespace Huginn::Slot::Capture
             SKSE::log::info("[SlotCapture] campaign: {} snapshot(s) from {} list(s)", Count() - before, lists.size());
         }
 
-        /// Run `fn` on the main thread and wait for it.
+        /// Run `fn` as an SKSE task and wait for it. Despite the name, not
+        /// the main thread in gameplay as far as the evidence goes: SKSE
+        /// tasks appear to drain on job threads there (header).
         template <class F>
         void OnMainThread(F fn)
         {

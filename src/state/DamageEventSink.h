@@ -26,7 +26,9 @@ namespace Huginn::State
    // - PollHealthTracking merges queued events with detected health changes
    //
    // THREAD SAFETY:
-   // - TESHitEvent fires on game thread (same as Update loop)
+   // - TESHitEvent fires on a game thread, not necessarily the update loop's
+   //   (that one is a job thread in gameplay: UpdateLoop.cpp, THREADS above
+   //   OnUpdate); the hit event's thread was not traced
    // - Queue uses mutex for safe access between event handler and poll method
    // - DrainQueue() returns a copy to minimize lock duration
    // =============================================================================

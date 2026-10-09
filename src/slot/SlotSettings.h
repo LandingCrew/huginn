@@ -180,8 +180,10 @@ namespace Huginn::Slot
 #ifndef NDEBUG
         /// Tests only (the slot capture, SlotCapture.cpp): set the [SlotLocker]
         /// values the allocation reads, as an `hg reload` would, without the
-        /// INI. Main thread, like every allocation. Restore with the values
-        /// read before.
+        /// INI. Called from SlotCapture's SKSE tasks, not the update loop's
+        /// thread; each value is its own atomic, so a real allocation running
+        /// meanwhile may read a mix of old and new values (test mode only).
+        /// Restore with the values read before.
         void ApplyAllocSettingsForTest(bool keepSlotPositions, bool holdSeatedItems, float challengerMargin,
             bool fillJobKeysFromRegular, float classDiscount, uint32_t classFree, float homeKeyMemorySec,
             bool returnToHomeKey, bool remembranceToJob) noexcept

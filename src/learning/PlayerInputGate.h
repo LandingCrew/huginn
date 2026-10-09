@@ -31,8 +31,10 @@ namespace Huginn::Learning
     // The console is deliberately not on the list.
     //
     // Thread: the notes come from the input sink and the Wheeler callback,
-    // the query from TESEquipEvent sinks -- all game-thread, but the state
-    // is atomic / locked anyway, as it is cheap.
+    // the query from TESEquipEvent sinks -- game threads (the input sink:
+    // job threads in gameplay, the main thread in menus; UpdateLoop.cpp,
+    // THREADS above OnUpdate), not one thread, so the state is atomic /
+    // locked.
     // =========================================================================
     class PlayerInputGate
     {
