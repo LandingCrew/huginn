@@ -1265,8 +1265,10 @@ namespace Huginn::Wheeler
                                const std::vector<uint16_t>& uniqueIDs,
                                const std::vector<std::string>& subtexts)
     {
-        // Tracy (2026-10-09 LoreRim capture): Display::Wheeler showed 5-31 ms of
-        // self time on page re-seats after a load. These zones split that cost:
+        // Tracy (2026-10-09 LoreRim capture): in the first ~3 min after a load,
+        // Display::Wheeler's re-seat pushes had a median of 4.3 ms (1.0 ms
+        // later), and all 7 pushes over 16.6 ms came within 100 s of the load
+        // (3 of them not re-seats). These zones split that cost:
         // the lock wait and the pre-flight checks stay in this zone's self time,
         // the compare is UnchangedCheck, the slot writes are WriteSlots. A call
         // with an UnchangedCheck child and no WriteSlots child took the early-out

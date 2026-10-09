@@ -10,7 +10,9 @@
 //     frost damage only), not warming spells or warm apparel (they raise the
 //     warmth rating, warmth_deficit). Confirmed via LoreRim Discord, the user,
 //     2026-10-09 (0.23.17).
-//   * warmth_deficit never pairs with Resist Frost either.
+//   * warmth_deficit (the warmth rating) is answered by warm apparel, warming
+//     spells and warm food -- soups do both: Restore Cold for cold, Fortify
+//     Warmth (01002EE6) for warmth_deficit -- and never by Resist Frost.
 //   * diseased x resist_disease is not a pair (removed 0.23.16): resisting a
 //     disease does not cure one already caught.
 //   * every need id in effects.csv is a need of needs.csv, and the count doc 9
@@ -133,7 +135,7 @@ TEST_CASE("obvious pairs: cold is answered by soups, never by Resist Frost or wa
     }
 }
 
-TEST_CASE("obvious pairs: warmth_deficit is answered by warm apparel and warming spells, never by Resist Frost")
+TEST_CASE("obvious pairs: warmth_deficit is answered by warm apparel, warming spells and warm food, never by Resist Frost")
 {
     const auto effects = ReadTable("effects.csv");
     const auto needs = ReadTable("needs.csv");
@@ -147,6 +149,7 @@ TEST_CASE("obvious pairs: warmth_deficit is answered by warm apparel and warming
     CHECK_FALSE(ContainsNoCase(answers, "resist frost"));
     CHECK(ContainsNoCase(answers, "apparel"));
     CHECK(ContainsNoCase(answers, "warming spell"));
+    CHECK(ContainsNoCase(answers, "warm food"));  // a soup's Fortify Warmth
 }
 
 TEST_CASE("obvious pairs: diseased is answered by Cure Disease, never by Resist Disease")

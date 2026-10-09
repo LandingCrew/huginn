@@ -274,10 +274,16 @@ it doubles as the fit data. Several hours, mixed combat and town. Meanwhile an
 agent runs the cheap test on today's log: one weight per slot class × logged
 `ctx`; if it does not beat context alone, flag it before R6.
 
-- **New spells start out needing a menu pick** (2026-10-09): Ice Spike was
-  not a candidate at its first magic-menu pick, then came into rotation. The
-  user accepts this for now; new-item discovery is R10's job (wildcards by
-  uncertainty).
+- **Newly learned spells reached the page only after a first menu pick**
+  (LoreRim, 2026-10-09). Three spells were learned (SpellRegistry reconcile:
+  +1 spell at 12:44:19, 12:45:00 and 12:46:06; the adds log no names). Ice
+  Spike (0002B96C) was already a candidate -- rolled as a wildcard at
+  12:48:18.708, and WildcardManager draws only from the ranked candidates --
+  but was not seated on the shown page. Its magic-menu pick at 12:51:25 was
+  case A (not a candidate at that moment), and its context weight read
+  ctx=0.00 for DamageMagic at 12:52:15. So candidacy depended on context
+  (ctx=0.00 outside the right one), not a cold-start block. The user accepts
+  this for now; discovery belongs to R10 (wildcards by uncertainty).
 
 ### R6. Offline fit: go / no-go
 
@@ -527,7 +533,11 @@ effect catalog and the need vector read each of them correctly since 0.23.16:
   (2026-10-09). `PlayerInputGate::Explain` (`PlayerInputGate.h:91-94`)
   answers "menu (just closed)" for any equip within 2 s of an Inventory,
   Favorites or Magic menu closing (`MENU_CLOSE_INPUT_WINDOW_MS`), and
-  `ExternalEquipLearner` gives it a +1 reward as the player's pick. Seen at
+  `ExternalEquipLearner` opens a pending selection for it
+  (`ExternalEquipLearner.cpp:80`); when that selection confirms,
+  `SelectionLog` logs it with a +1 reward (`SelectionLog.cpp:162`) and
+  `BanditSubscriber` (`EquipSubscribers.h`) trains the learner on it as the
+  player's pick. Seen at
   12:44:39 with LoreRim's transient "Arcane Anchor" spell-learning spell
   (37076FA6), which a mod equips after a spell tome is read. Its SpellRegistry
   add/remove churn is expected (the user ruled it not a bug); only the reward
@@ -603,9 +613,11 @@ A budget list, not a work list: a felt stutter is the trigger. Latest capture
 - The rewrite adds per-tick work (need vector, cross-features, σ): measure it
   in R8 before optimising anything else.
 - **Wheeler push stalls after a load** (2026-10-09 LoreRim Tracy capture,
-  0.23.16 Debug): `Display::Wheeler` took 5–31 ms on page re-seats in the
-  first ~3 min after a load (median 4.3 ms there vs 1.0 ms later); all 7
-  pushes over 16.6 ms came within 100 s of the load. Wheeler-side report:
+  0.23.16 Debug): re-seat pushes of `Display::Wheeler` in the first ~3 min
+  after a load had a median of 4.3 ms, against 1.0 ms later; 15 of the 18
+  pushes over 5 ms were re-seats. All 7 pushes over 16.6 ms came within
+  100 s of the load, and 3 of them were not re-seats (a wheel close, and two
+  with no re-seat). Wheeler-side report:
   `wheelerAPI/docs/reports/2026-10-09-huginn-push-spikes-after-load.md`.
   0.23.17 splits the cost with zones: `Wheeler::AllocateOtherPage`,
   `WheelSync::UpdatePage` (its `UnchangedCheck` and `WriteSlots`),

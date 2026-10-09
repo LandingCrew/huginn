@@ -59,6 +59,16 @@ it reads the CSVs through `HUGINN_REPO_ROOT`); the slot class cap's arithmetic
 (`core/SlotClassCapMath.h`, the pattern
 port, checked bit for bit against the loop it replaced) and `core/RingBuffer.h`.
 
+| Test | What it pins |
+|---|---|
+| `RingBufferTests.cpp` | `core/RingBuffer.h`: starts empty, insertion order until full, overwrites the oldest, `pop_front`, `clear` |
+| `SlotClassCapMathTests.cpp` | `core/SlotClassCapMath.h`: the free allowance, one more discount per item, a discount of 1 or more (and NaN) turns the cap off, a negative one clamps to a hard cap, bit for bit against the loop it replaced, the early stop |
+| `SlotScoreMathTests.cpp` | `core/SlotScoreMath.h` (R7, sign-safe slot scores): the bridge ln(utility) and its inverse, the class cap as ln of the old factor (it lowers a negative score), the hold's margin as a difference, tie epsilon, sentinels, churn buckets |
+| `SlotSnapshotIOTests.cpp` | `core/SlotSnapshotIO.h`, the slot snapshot text format: names survive escaping, read-back equality, the item dictionary across snapshots, malformed text refused with a line number |
+| `SlotAllocGoldenTests.cpp` | R7 golden: `core/SlotAllocCore.h` with the old arithmetic reproduces the recorded `fixtures/slots/*-old.txt` pages; the new game code's `*-new.txt` pages replay; old and new arithmetic give identical pages on recorded and synthetic snapshots, differing only at float-rounding boundaries; the full sort characterised |
+| `SlotAllocAdversarialTests.cpp` | R7 named cases under both arithmetics: ties keep list order, zero/denormal utilities rank last, the class cap with a tie, overrides and pinned vitals, remembered-only rows, the job-key pull, past the sorted prefix, a challenger on the hold's margin, rounding boundaries, negative scores |
+| `SignatureDedupTests.cpp` | `core/SignatureDedup.h` (0.23.16), the inventory duplicate warning's dedup: once per (key, signature), again when the signature changes; 8 threads released together on a latch, each inserting 4000 keys of its own while all hit one shared key: the shared key warns once and no key is lost (0.23.17). With the lock removed it crashes (heap corruption / SIGSEGV), so it relies on the CTest TIMEOUT (`tests/CMakeLists.txt`) if a run ever hangs instead |
+
 **The effect extractor (R2, 0.23.12).** `core/EffectRules`, `core/EffectMapper`,
 `core/MiniRegex`, `core/CrossFeatures.h`:
 
@@ -94,7 +104,7 @@ the checked-in fixtures byte for byte.
 | `NeedSensorTests.cpp` | drop-ahead geometry (points, direction, the 20 units/s threshold, cliff, slope, no hit, bridge over water, wading; unknown probes: uphill, a wall, stairs, a crowd); the probe sequence (`ProbeAll`) over a scripted world: the picks it casts, a cliff, a parapet blocked at the knee, an invisible wall, walkable slopes of 5-30 degrees, a crest then a cliff, a step up, stairs, a crowd; the teleport test, the decaying sum, the time-to-kill estimate; the drop reading's unpaused age (0.23.16); the bench kind by workbench keyword (0.23.16) |
 | `TargetFamiliesTests.cpp` | the multi-hot family reading on all 539 `race_map.csv` rows (family \| also) and named cases |
 | `NeedFixtureTests.cpp` | every snapshot in `tests/core/fixtures/needs/*.txt` gives the vector in its `.expected.csv` |
-| `ObviousPairsTests.cpp` | the obvious need x effect pairs (`effects.csv` `obvious_needs`, `needs.csv` `obvious_effects`): `cold` pairs with soups only (`survival_warmth`), never with Resist Frost, warm apparel or warming spells, and `warmth_deficit` never with Resist Frost (0.23.17); `diseased` never with Resist Disease (0.23.16); every pair names a need; doc 9's count (263) |
+| `ObviousPairsTests.cpp` | the obvious need x effect pairs (`effects.csv` `obvious_needs`, `needs.csv` `obvious_effects`): `cold` pairs with soups only (`survival_warmth`), never with Resist Frost, warm apparel or warming spells, and `warmth_deficit` answered by warm apparel, warming spells and warm food, never by Resist Frost (0.23.17); `diseased` never with Resist Disease (0.23.16); every pair names a need; doc 9's count (263) |
 
 The fixtures' expectations come from `tools/needs/expected_vectors.py`, an
 oracle written from `needs.csv`, `NeedSnapshot.h` and the curve formulas by an
