@@ -883,9 +883,11 @@ namespace Huginn::Core::Effect
     {
         EffectClass out = ClassifyColumns(r, overrides);
         const std::string ln = Lower(r.name);
-        out.helperName = HelperRe().Contains(ln);
         out.hydrated = ln.find("hydrat") != std::string::npos;
-        if (r.HiddenInUI()) {
+        // Only the hidden-row checks read these, and they are the costly part
+        // of a classification (the helper pattern cannot skip start bytes).
+        if (r.HiddenInUI() && out.Mapped()) {
+            out.helperName = HelperRe().Contains(ln);
             if (const auto n = NameColumn(r.name)) out.nameFamily = FamilyKey(*n);
         }
         if (out.route == Route::Wrapper) {

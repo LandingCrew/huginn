@@ -656,7 +656,7 @@ def main() -> int:
         f"sSaveName={save or ''}\n"
         f"iExpiresUnix={expires}\n"
         f"iLoadTimeoutSec={args.load_timeout}\n"
-        + (f"iCaptureSlotsSec={args.capture_slots}\n" if args.capture_slots > 0 else ""),
+        + (f"iCaptureSlotsSec={args.capture_slots}\n" if args.capture_slots > 0 else "")
         + (f"sDumpAll={args.dump_all}\n" if args.dump_all else ""),
         encoding="utf-8")
 

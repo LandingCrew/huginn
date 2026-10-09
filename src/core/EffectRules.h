@@ -116,7 +116,7 @@ namespace Huginn::Core::Effect
         bool cureByArchetype = false;  // a cure through an engine Cure* archetype (cure_instant)
         // Per-MGEF facts the item mapper needs for every row, computed once
         // (ClassifyEffect): the helper-name check and the name table's family
-        // (hidden effects only: the name-agreement check), and a "Hydrated" name.
+        // (hidden, mapped effects only: the hidden-row checks), and a "Hydrated" name.
         bool helperName = false;
         Col nameFamily = Col::_Count;
         bool hydrated = false;

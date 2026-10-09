@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <deque>
 #include <memory>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace Huginn::Core
@@ -698,18 +700,20 @@ namespace Huginn::Core
             /// Run program `prog` from `start`. `requiredEnd` >= 0 forces where
             /// the match ends (lookbehind). On success `end` is the end.
             bool Run(std::size_t prog, std::size_t start, std::vector<std::ptrdiff_t>& slots,
-                     std::vector<std::ptrdiff_t>& marks, std::ptrdiff_t requiredEnd, std::size_t& end) const
+                     std::vector<std::ptrdiff_t>& marks, std::ptrdiff_t requiredEnd, std::size_t& end)
             {
-                const Program& code = impl_.programs[prog];
-                struct Bt
+                // One backtrack stack per lookaround depth, reused across runs
+                // and start positions (no allocation per call once warm).
+                const std::size_t depth = depth_++;
+                struct DepthGuard
                 {
-                    enum class K : std::uint8_t { Branch, UndoSlot, UndoMark, Rep } k;
-                    int pc;
-                    std::size_t pos;
-                    int idx;
-                    std::ptrdiff_t old;
-                };
-                std::vector<Bt> stack;
+                    std::size_t& d;
+                    ~DepthGuard() { --d; }
+                } guard{ depth_ };
+                if (pool_.size() <= depth) pool_.emplace_back();
+                auto& stack = pool_[depth];
+                stack.clear();
+                const Program& code = impl_.programs[prog];
                 int pc = 0;
                 std::size_t pos = start;
                 const std::size_t n = t_.size();
@@ -792,8 +796,11 @@ namespace Huginn::Core
                         case Op::Look: {
                             const bool behind = in.look == Node::Look::Behind || in.look == Node::Look::NegBehind;
                             const bool negative = in.look == Node::Look::NegAhead || in.look == Node::Look::NegBehind;
-                            std::vector<std::ptrdiff_t> subSlots = slots;
-                            std::vector<std::ptrdiff_t> subMarks = marks;
+                            if (scratch_.size() <= depth) scratch_.emplace_back();
+                            auto& subSlots = scratch_[depth].first;
+                            auto& subMarks = scratch_[depth].second;
+                            subSlots = slots;
+                            subMarks = marks;
                             bool found = false;
                             std::size_t subEnd = 0;
                             if (!behind) {
@@ -866,8 +873,21 @@ namespace Huginn::Core
             }
 
         private:
+            struct Bt
+            {
+                enum class K : std::uint8_t { Branch, UndoSlot, UndoMark, Rep } k;
+                int pc;
+                std::size_t pos;
+                int idx;
+                std::ptrdiff_t old;
+            };
+
             const MiniRegex::Impl& impl_;
             std::string_view t_;
+            // deques: a nested run may add a level without moving the outer ones
+            std::deque<std::vector<Bt>> pool_;
+            std::deque<std::pair<std::vector<std::ptrdiff_t>, std::vector<std::ptrdiff_t>>> scratch_;
+            std::size_t depth_ = 0;
 
             [[nodiscard]] bool AtBoundary(std::size_t pos) const noexcept
             {
