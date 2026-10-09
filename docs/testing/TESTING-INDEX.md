@@ -90,7 +90,9 @@ build/tests/Release/huginn_effect_report.exe <Huginn_All.csv> --min-coverage 99 
 ```
 
 It prints coverage (visible effect rows mapped, helper rows and wrappers with
-nothing to read not counted), by route and kind, the top unmapped effects, the
+nothing to read not counted) twice -- companion carrier rows left out, and
+counted as unmapped (`--carriers-out` lists every carrier for audit) -- the
+regex step-budget hits, coverage by route and kind, the top unmapped effects, the
 coverage diff (in-scope items that have a slot class today and no description
 in cap(i); the class comes from the dump's `slotClass` column, or `--classes`
 for an older dump), and on a 0.23.12 dump a check that the in-game catalog

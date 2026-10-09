@@ -134,7 +134,7 @@ namespace Huginn::Core::Effect
         bool SuspectAv(std::string_view av)
         {
             static const MiniRegex re(kPatSuspectAv);
-            return re.Contains(av.empty() ? std::string_view("-") : av);
+            return re.ContainsOrBudget(av.empty() ? std::string_view("-") : av);
         }
 
         // =====================================================================
@@ -390,7 +390,7 @@ namespace Huginn::Core::Effect
                 { R"re(soul ?trap|fills? (a |the )?soul ?gems?|vulnerable to soul ?gems?|soul ?gems? on death|trap(s|ped)? (its|the|their) soul)re", "soul_trap" },
                 { R"re(teleport|portal|fast travel|transports? (you|the caster)|recall to|swaps? places|shifts? through (the )?shadows)re", "utility_teleport" },
                 { R"re(opening locks|opens? (a |the )?locks?\b|\bunlock)re", "utility_unlock" },
-                { R"re(time slows|slows? (down )?time|slow time)re", "utility_slow_time" },
+                { R"re(time slows|slows? (down )?time|slow time|world (around you )?(seems to )?slow)re", "utility_slow_time" },
                 { R"re(carry(ing)? (weight|capacity))re", "utility_carry_weight" },
                 { R"re(breathe? underwater|water ?breathing)re", "utility_water_breathing" },
                 { R"re(walk on water|water ?walking)re", "movement_water_walking" },
@@ -399,6 +399,9 @@ namespace Huginn::Core::Effect
                 { R"re(cures? (all )?(diseases?|vampirism))re", "cure_disease" },
                 { R"re(cures? (all )?poison)re", "cure_poison" },
                 { R"re(^dispels?\b|removes? (all )?(magic(al)?|spell) effects|dispels? (all )?(cloak|armor|magic))re", "cure_dispel" },
+                { R"re((tosses|spawns|throws|drops) (a|an) .{0,40}spider)re", "summon_creature" },
+                { R"re(temporary damage)re", "drain_vital_health" },
+                { R"re(imbues? .{0,30}weapons? with)re", "damage_health" },
                 { R"re(\b(deal|deals|dealing|does|inflicts?|inflicting)\b.{0,40}(?<!more )(?<!less )(?<!extra )(?<!additional )(?<!double )damage(?! taken)|\bdamage to (the target.s )?(health|magicka|stamina))re", "DMG" },
                 { R"re(paraly|immobili[sz]|in place\b|frozen solid|suspended in|petrif)re", "control_paralysis" },
                 { R"re(disarm)re", "control_disarm" },
@@ -408,10 +411,11 @@ namespace Huginn::Core::Effect
                 { R"re(\bflee|\bfear|terrif|cower)re", "influence_fear" },
                 { R"re(\bcalm|pacif|(will not|won.t|cannot|stop) (fight|attack)|stop and resume)re", "influence_calm" },
                 { R"re(frenz|attack (anything|anyone|each other|their allies)|fight each other|turn on their)re", "influence_frenzy" },
+                { R"re(summon (a|an) (?!(physical )?wall))re", "summon_creature" },
                 { R"re(bends? the will|\bcommand\b|control (an?|the|target)\b|enslave|thrall|\bobey|fight for you)re", "influence_command" },
                 { R"re(courage|\brally)re", "influence_rally" },
                 { R"re(banish)re", "influence_banish" },
-                { R"re(stagger|knock(s|ing|ed)? (them |enemies |targets |all targets )?(down|back)|knockdown|knockback|send(s|ing)? .{0,20}flying|launch(es)? (enemies|targets|them)|push(es|ing)? (away|back)|lose (its|their) balance)re", "control_stagger" },
+                { R"re(stagger|knock(s|ing|ed)? (them |enemies |targets |all targets )?(down|back)|knockdown|knockback|send(s|ing)? .{0,20}flying|launch(es)? (enemies|targets|them)|push(es|ing)? (away|back)|lose (its|their) balance|flung (away|back))re", "control_stagger" },
                 { R"re(\bslow(s|ed|ing)?\b(?! time)|movement speed (is )?reduc|reduc\w* (its |their |the target.s )?movement speed|hinder)re", "control_slow" },
                 { R"re(invisib|unseen|become(s)? (hidden|unseen)|cannot detect sneaking)re", "stealth_invisibility" },
                 { R"re(movement noise|quieter|muffl|silent(ly)? (move|step)|\blures?\b|distract)re", "stealth_muffle" },
@@ -425,28 +429,31 @@ namespace Huginn::Core::Effect
                 { R"re((move|moving|run|running|sprint\w*)\b.{0,25}faster|movement speed (is )?increas|increases? movement speed|\bdash\b|haste)re", "movement_speed" },
                 { R"re(telekine)re", "utility_telekinesis" },
                 { R"re(reanimat|raises? (a |the |up to N )?(dead|corpse|zombie)|brings? a dead)re", "summon_reanimate" },
-                { R"re(summon(?! a (physical )?wall)|conjur|manifest|illusions? of|\bclone\b|bound (weapon|sword|bow|dagger|axe|quiver|armor)|magic quiver|binds? a (daedric|bound)|ghost to attack)re", "summon_creature" },
+                { R"re(bound (weapon|sword|bow|dagger|axe|quiver|armor|shield)|magic quiver|binds? (a|an) (daedric|bound|quiver|shield|\w+-shaped))re", "summon_bound_weapon" },
+                { R"re(summon(?! a (physical )?wall)|conjur|manifest|illusions? of|\bclone\b|ghost to attack)re", "summon_creature" },
                 { R"re(absorb (N% of )?(hostile )?spells|spell absorption|absorb N% of the magicka from incoming)re", "defense_spell_absorb" },
                 { R"re(reflect)re", "defense_reflect" },
                 { R"re(\bwards?\b)re", "defense_ward" },
-                { R"re((reduc|lower)\w* (its |their |the target.s |enemy |target.s )?armor\b|armor (rating )?(is )?reduced)re", "weakness_armor" },
-                { R"re(armor rating|\bdefense\b|damage reduction|reduc\w* (all |incoming |physical )?damage taken|take(s)? (only )?(N% )?(half|less) (physical )?damage|half damage|invulner)re", "defense_armor" },
+                { R"re((reduc|lower)\w* (its |their |the target.s |enemy |target.s )?armor\b|armor (rating )?(is )?reduced|^take(s)? (double|twice the|N% more|more) damage)re", "weakness_armor" },
+                { R"re((avoid|resist|reduc\w*|ignore\w*) (all )?damage from (ranged|arrows|projectiles)|ranged (attacks?|weapons?) (deal|do) (N% )?less)re", "defense_resist_ranged" },
+                { R"re(armor rating|\bdefense\b|damage reduction|reduc\w* (all |incoming |physical )?damage taken|take(s)? (only )?(N% )?(half|less) (physical )?damage|half damage|invulner|ignores? N% of (all )?(physical )?damage|chance to (take no|avoid) damage)re", "defense_armor" },
                 { R"re(magic resist\w*|resist\w* (to )?magic)re", "MAGRES" },
                 { R"re(weak(er|ness)? to (fire|frost|shock|poison)|(fire|frost|shock|poison) resist\w* (is |by )?(reduc|lower|decreas))re", "WEAK" },
                 { R"re(resist (to )?(fire|frost|shock|poison)|(fire|frost|shock|poison) resist)re", "RES" },
+                { R"re(healing (effects )?(are |is )?(reduced|halved)|reduc\w* (all )?healing)re", "NONE" },
                 { R"re(absorb\w*\b.{0,30}\b(health|magicka|stamina)|(health|magicka|stamina).{0,15}absorbed|steals? .{0,20}(health|magicka|stamina))re", "absorb_V" },
                 { R"re((regenerat\w*|regen)\b.{0,20}(health|magicka|stamina)|(health|magicka|stamina) regen)re", "regen_V" },
                 { R"re(\b(restor\w*|replenish\w*|regain\w*|heal|heals|healed|healing)\b.{0,40}(health|magicka|stamina)|\bheals? (you|the caster|N|by)|\bheal(s|ing)?\b)re", "restore_V" },
                 { R"re((increase\w*|fortif\w*) (your )?(maximum )?(health|magicka|stamina)|(health|magicka|stamina) (is )?increased)re", "fortify_vital_V" },
                 { R"re(critical (hit )?(chance|damage))re", "fortify_combat_crit" },
-                { R"re(power attack\w* (stamina )?cost)re", "fortify_combat_power_attack" },
+                { R"re(power attack\w* (stamina )?cost|power attacks? (will )?(deal|do))re", "fortify_combat_power_attack" },
                 { R"re(armor penetration)re", "fortify_combat_armor_penetration" },
                 { R"re((attack|swing)\w*\b.{0,20}(faster|twice as fast)|attack speed|weapon speed)re", "SPEED" },
                 { R"re(prices? (are|is) (N% )?better|buying and selling)re", "fortify_skill_speech" },
+                { R"re(\bspells? (do|deal|are) (N% )?(more|stronger|less)|spell ?power|spells? (are|is) N% (stronger|more powerful))re", "NONE" },
                 { R"re(\b(one-handed|two-handed|archery|marksman|block(?:ing)?|smithing|heavy armor|light armor|pickpocket(?:ing)?|lockpick(?:ing)?|alchemy|speech|alteration|conjuration|destruction|illusion|restoration|enchanting) (spells )?(cost|are|is|do|deal))re", "SKILL" },
                 { R"re((damage|drain)\w*\b.{0,40}\bmagicka\b(?!.{0,40}health)|magicka damage)re", "damage_magicka" },
                 { R"re((damage|drain)\w*\b.{0,40}\bstamina\b(?!.{0,40}health)|stamina damage)re", "damage_stamina" },
-                { R"re(\bspells? (do|deal|are) (N% )?(more|stronger|less)|spell ?power|spells? (are|is) N% (stronger|more powerful))re", "NONE" },
                 { R"re((more|extra|increased|additional|double) (attack |melee |physical |weapon )?damage|attack damage|damage (done )?(is )?increased|increases? damage)re", "ATKDMG" },
                 { R"re(\b(deal|deals|dealing|does|do|inflicts?|causing|cause)\b.{0,40}damage|damage (to|per second|each|equal)|\bN damage\b|\bkills?\b|destroys? (all|living)|burn(s|ing)? (those|the target|enemies)|comets?|slash wave|skewer|bleed)re", "damage_health" },
             });
@@ -527,7 +534,7 @@ namespace Huginn::Core::Effect
                 MiniRegex::Match m;
                 if (!rule.re.Search(t, &m)) continue;
                 const auto& spec = rule.spec;
-                const bool isNeg = neg.Contains(t);
+                const bool isNeg = neg.ContainsOrBudget(t);
                 auto firstGroupIn = [&](std::initializer_list<std::string_view> set) -> std::string {
                     for (std::size_t g = 1; g <= m.groups.size(); ++g) {
                         const auto v = m.Group(t, g);
@@ -701,7 +708,7 @@ namespace Huginn::Core::Effect
                                     ((vm || a == kArchAbsorb) && SuspectAv(av) && av != "Confidence" && av != "Aggression") ||
                                     (vm && av.empty());
             if (scriptLike) {
-                const bool helperName = HelperRe().Contains(ln);
+                const bool helperName = HelperRe().ContainsOrBudget(ln);
                 if (a == kArchScript && helperName) return { {}, Route::Helper, {} };
                 static const MiniRegex survivalKw(kPatSurvivalKeyword);
                 if (helperName && !survivalKw.Contains(kw)) return { {}, Route::Helper, {} };
@@ -765,7 +772,11 @@ namespace Huginn::Core::Effect
                 case kArchConcussion: simple = "control_stagger"; break;
                 case kArchDisarm: simple = "control_disarm"; break;
                 case kArchGrabActor: simple = "control_grab"; break;
-                case kArchLight: simple = "vision_light"; break;
+                case kArchLight:
+                    // Requiem's "Darkness" is a Light effect with a dark light.
+                    if (ln.find("dark") != std::string::npos) return { {}, Route::Unmapped, {}, true };
+                    simple = "vision_light";
+                    break;
                 case kArchNightEye: simple = "vision_night_eye"; break;
                 case kArchDetectLife: simple = "vision_detect_life"; break;
                 case kArchGuide: simple = "vision_clairvoyance"; break;
@@ -843,7 +854,7 @@ namespace Huginn::Core::Effect
                 }
                 // Simonrim's "Fortify Acrobatics" boots: SpeedMult carrying the
                 // Slowfall keyword ("jump twice as high") -- the keyword decides.
-                if (Contains(kw, "Slowfall")) return { "movement_jump_fall", Route::Data, {} };
+                if (av == "SpeedMult" && !det && Contains(kw, "Slowfall")) return { "movement_jump_fall", Route::Data, {} };
                 if (av == "SpeedMult") return { det ? "control_slow" : "movement_speed", Route::Data, {} };
                 if (av == "CarryWeight" && det) return { "control_slow", Route::Data, {} };
                 static constexpr std::array<std::pair<std::string_view, const char*>, 14> kAv{ {
@@ -915,7 +926,7 @@ namespace Huginn::Core::Effect
         // Only the hidden-row checks read these, and they are the costly part
         // of a classification (the helper pattern cannot skip start bytes).
         if (r.HiddenInUI() && out.Mapped()) {
-            out.helperName = HelperRe().Contains(ln);
+            out.helperName = HelperRe().ContainsOrBudget(ln);
             if (const auto n = NameColumn(r.name)) out.nameFamily = FamilyKey(*n);
         }
         if (out.route == Route::Wrapper) {
@@ -1004,9 +1015,16 @@ namespace Huginn::Core::Effect
         return cols.col;
     }
 
-    bool IsHelperName(std::string_view name) { return HelperRe().Contains(Lower(name)); }
+    bool IsHelperName(std::string_view name) { return HelperRe().ContainsOrBudget(Lower(name)); }
 
-    float DescriptionNumber(std::string_view d)
+    bool DescriptionSaysNone(std::string_view description)
+    {
+        bool none = false;
+        (void)DescSpec(description, &none);
+        return none;
+    }
+
+    DescNumber DescriptionNumber(std::string_view d)
     {
         for (std::size_t i = d.find('<'); i != std::string_view::npos; i = d.find('<', i + 1)) {
             const auto close = d.find('>', i + 1);
@@ -1022,15 +1040,20 @@ namespace Huginn::Core::Effect
             if (!numeric || dots > 1 || tag.front() == '.') continue;
             float v = 0.0f;
             const auto r = std::from_chars(tag.data(), tag.data() + tag.size(), v);
-            if (r.ec == std::errc{} && v > 0.0f) return v;
+            if (r.ec == std::errc{} && v > 0.0f) {
+                auto rest = d.substr(close + 1);
+                while (!rest.empty() && rest.front() == ' ') rest.remove_prefix(1);
+                const bool pct = StartsWith(rest, "%") || StartsWith(Lower(rest.substr(0, 7)), "percent");
+                return { v, pct };
+            }
         }
-        return 0.0f;
+        return {};
     }
 
     bool IsBadItemName(std::string_view name)
     {
         static const MiniRegex bad(kPatBadItemName);
-        return bad.Contains(Lower(name));
+        return bad.ContainsOrBudget(Lower(name));
     }
 
     std::optional<Col> DescriptionColumn(std::string_view description, bool detrimental)

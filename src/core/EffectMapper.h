@@ -32,7 +32,10 @@
 //     and the magnitude for constant ones; presence columns are 1, times
 //     D(duration) = log1p(min(d,3600))/log1p(3600) where effects.csv says
 //     "P x D", times a graded magnitude where it says "P x G". A graded column
-//     with no magnitude (script effects) is presence, 1. Durations of a day or
+//     with no magnitude (script effects) is presence, 1; through the
+//     engine's own data an unknown strength is resolved per ResolveZero-
+//     Magnitudes below (a stated percentage is its own value, an unknown one
+//     kNeutralStrength = 0.5, never the top). Durations of a day or
 //     more are sentinels: clipped to 3600, and `long_lasting` set. A restore
 //     of 9999+ is a full restore: value 1, `full_restore` set.
 //   - Families are the max over their specifics.
@@ -114,6 +117,7 @@ namespace Huginn::Core::Effect
         bool kept = false;     // contributes to cap(i)
         bool counted = false;  // in the coverage denominator
         bool mapped = false;   // counted and set a column (directly or through its payload)
+        bool carrier = false;  // a companion row with nothing in it: not kept, not counted
     };
 
     struct RowTally
@@ -124,8 +128,8 @@ namespace Huginn::Core::Effect
         int visible = 0;
         int helper = 0;           // visible helper rows (not counted)
         int wrapperUnknown = 0;   // visible wrappers with no payload and no description to read (not counted)
-        int carrier = 0;          // rows dropped as carriers: a graded engine effect with magnitude 0 and
-                                  // nothing in its description to say what it does (not counted)
+        int carrier = 0;          // visible companion rows dropped as carriers (not counted): an engine
+                                  // effect of unknown strength, no description, beside a kept row
         int counted = 0;
         int mapped = 0;
 
@@ -185,15 +189,26 @@ namespace Huginn::Core::Effect
     /// The class of every effect in the table (index-aligned).
     [[nodiscard]] std::vector<EffectClass> ClassifyAll(const EffectTable& effects, const OverrideTable* overrides);
 
-    /// For every data-route effect some item uses with magnitude 0 on a graded
-    /// column: read its description for a stated number and a column
-    /// (EffectClass::zeroMagnitude / zeroColumn / zeroNamed). MapItem then, in
-    /// order: grades the row on the number (Dragonhide's "ignores <80>%"); keeps
-    /// it as presence of the column its description names; keeps it as presence
-    /// of its own column when its name says the same family (a "Restore Health"
-    /// whose amount a script carries); or drops it as a carrier (a spider
-    /// scroll's "Restore Health 0", Wabbajack's, Mehrunes' Razor's "Instant
-    /// Kill" on Destruction, LoreRim's "Dispel Armor" on DamageResist).
+    /// A graded column with an unknown strength, neither the top nor the
+    /// bottom of its population: the median's percentile, by definition 0.5.
+    inline constexpr float kNeutralStrength = 0.5f;
+
+    /// For every data-route effect some item uses with its strength unknown
+    /// (magnitude 0 on a graded column; a Light with no light radius): read
+    /// what its description and name say (EffectClass::zero*). MapItem then,
+    /// in order:
+    ///   1. the description hits a no-column rule ("Restoration spells are 25%
+    ///      more powerful"): counted, unmapped;
+    ///   2. the description names a column: kept under it. A plain stated
+    ///      number is the magnitude; a percentage ("ignores <80>% of physical
+    ///      damage") is the value p/100 itself, outside the population; no
+    ///      number is kNeutralStrength;
+    ///   3. the name says the row's own family ("Restore Health" whose amount a
+    ///      script carries): kept, kNeutralStrength;
+    ///   4. a visible row with no description next to a row the item keeps is
+    ///      a carrier (Requiem's "Dispel Armor"): dropped and not counted;
+    ///   5. anything else is counted as unmapped (Mehrunes' Razor's "Instant
+    ///      Kill", Soul Gem Evocation, Wabbajack).
     void ResolveZeroMagnitudes(const std::vector<ItemRecord>& items, const EffectTable& effects,
                                std::vector<EffectClass>& classes);
 

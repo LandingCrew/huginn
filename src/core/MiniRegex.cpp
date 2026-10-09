@@ -996,8 +996,17 @@ namespace Huginn::Core
         return true;
     }
 
-    bool MiniRegex::Search(std::string_view text, Match* match) const
+    bool MiniRegex::Search(std::string_view text, Match* match) const { return SearchImpl(text, match, nullptr); }
+
+    bool MiniRegex::ContainsOrBudget(std::string_view text) const
     {
+        bool budget = false;
+        return SearchImpl(text, nullptr, &budget) || budget;
+    }
+
+    bool MiniRegex::SearchImpl(std::string_view text, Match* match, bool* budget) const
+    {
+        if (budget) *budget = false;
         if (!Valid()) return false;
         const Impl& impl = *impl_;
         Vm vm(impl, text);
@@ -1015,6 +1024,7 @@ namespace Huginn::Core
             const bool hit = vm.Run(0, start, slots, marks, -1, end);
             if (vm.exceeded_) {
                 g_budgetExceeded.fetch_add(1, std::memory_order_relaxed);
+                if (budget) *budget = true;
                 return false;
             }
             if (hit) {

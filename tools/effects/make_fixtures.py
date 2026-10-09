@@ -6,10 +6,11 @@ deviations (EffectRules.h), which are applied here as explicit oracle rules and
 listed per row in `expectNote`. The C++ output is NOT used to make expectations.
 
 usage: python -I tools/effects/make_fixtures.py <repo> vanilla=<dump> simonrim=<dump> lorerim=<dump>
-R2's inputs: vanilla = Huginn_All_vanilla_r2.csv, the vanilla+ profile's test-mode dump of
-2026-10-08 18:21 (0.23.10 at 3e0d2a8, the first catalog-view dump); simonrim = the Simonrim
-Essentials Huginn_All.csv of 2026-10-07 (0.23.6 schema); lorerim = LoreRim's Huginn_All.csv of
-2026-10-07 22:33 (0.23.7 schema). Dumps are user data, not in the repo.
+R2's inputs (0.23.12 test-mode dumps, all with the catalog view and effectLightRadius):
+vanilla = Huginn_All_vanilla_r4.csv (vanilla+ profile, 2026-10-08 23:51); simonrim =
+Huginn_All_simonrim_r4.csv (Simonrim Essentials, 2026-10-08 23:52); lorerim =
+Huginn_All_lorerim_r2.csv (LoreRim-5 Ultra, the R2 gate run of 2026-10-09 00:05). Dumps are user
+data, not in the repo.
 """
 import sys, csv, re, random, collections
 import os
@@ -39,6 +40,41 @@ for _k, (_pat, _sp) in enumerate(_desc.DESC_TABLE):
         _desc.DESC_TABLE[_k] = (_pat.replace('(reduc|lower)', '(reduc|lower|decreas)'), _sp)
     elif _sp == 'NONE':
         _desc.DESC_TABLE[_k] = (_pat, 'NONEHIT')
+
+
+def _idx(spec, contains=''):
+    return next(k for k, (pt, sp) in enumerate(_desc.DESC_TABLE) if sp == spec and contains in pt)
+
+
+def _set(spec, pat, contains=''):
+    k = _idx(spec, contains)
+    _desc.DESC_TABLE[k] = (pat, spec)
+
+
+# Deviations (verifier round 3): the description table as the C++ has it (EffectRules.h).
+_set('utility_slow_time', r'time slows|slows? (down )?time|slow time|world (around you )?(seems to )?slow')
+_k = _idx('DMG')
+_desc.DESC_TABLE[_k:_k] = [(r'(tosses|spawns|throws|drops) (a|an) .{0,40}spider', 'summon_creature'),
+                          (r'temporary damage', 'drain_vital_health'),
+                          (r'imbues? .{0,30}weapons? with', 'damage_health')]
+_k = _idx('summon_creature', 'conjur')
+_desc.DESC_TABLE[_k:_k + 1] = [(r'bound (weapon|sword|bow|dagger|axe|quiver|armor|shield)|magic quiver|binds? (a|an) (daedric|bound|quiver|shield|\w+-shaped)', 'summon_bound_weapon'),
+                              (r'summon(?! a (physical )?wall)|conjur|manifest|illusions? of|\bclone\b|ghost to attack', 'summon_creature')]
+_k = _idx('influence_command')
+_desc.DESC_TABLE.insert(_k, (r'summon (a|an) (?!(physical )?wall)', 'summon_creature'))
+_k = _idx('control_stagger')
+_desc.DESC_TABLE[_k] = (_desc.DESC_TABLE[_k][0] + '|flung (away|back)', 'control_stagger')
+_k = _idx('weakness_armor')
+_desc.DESC_TABLE[_k] = (_desc.DESC_TABLE[_k][0] + '|^take(s)? (double|twice the|N% more|more) damage', 'weakness_armor')
+_desc.DESC_TABLE.insert(_k + 1, (r'(avoid|resist|reduc\w*|ignore\w*) (all )?damage from (ranged|arrows|projectiles)|ranged (attacks?|weapons?) (deal|do) (N% )?less', 'defense_resist_ranged'))
+_k = _idx('defense_armor', 'armor rating')
+_desc.DESC_TABLE[_k] = (_desc.DESC_TABLE[_k][0] + '|ignores? N% of (all )?(physical )?damage|chance to (take no|avoid) damage', 'defense_armor')
+_k = _idx('absorb_V')
+_desc.DESC_TABLE.insert(_k, (r'healing (effects )?(are |is )?(reduced|halved)|reduc\w* (all )?healing', 'NONEHIT'))
+_set('fortify_combat_power_attack', r'power attack\w* (stamina )?cost|power attacks? (will )?(deal|do)')
+_k = _idx('NONEHIT', 'spell ?power')
+_none = _desc.DESC_TABLE.pop(_k)
+_desc.DESC_TABLE.insert(_idx('fortify_skill_speech') + 1, _none)
 assert any('vulnerable to soul' in pt for pt, sp in _desc.DESC_TABLE)
 assert any('decreas' in pt for pt, sp in _desc.DESC_TABLE if sp == 'WEAK')
 _CATCHALL = cap.NAME_TABLE[-3][0]  # the generic damage rule ("disintegrat|damage health|...")
@@ -54,15 +90,20 @@ def script_like(r):
 
 
 def desc_number(text):
-    """The first number a description states in a literal tag (<80>), or 0."""
-    for m in re.finditer(r'<([0-9][0-9.]*)>', text or ''):
+    """(value, percent): the first number a description states in a literal tag (<80>),
+    and whether "%" or "percent" follows it; (0, False) if none."""
+    for m in re.finditer(r'<([0-9][0-9.]*)>( *(%|percent))?', text or '', re.I):
         try:
             v = float(m.group(1))
         except ValueError:
             continue
         if v > 0 and m.group(1).count('.') <= 1:
-            return v
-    return 0.0
+            return v, bool(m.group(2))
+    return 0.0, False
+
+
+def desc_none(text):
+    return cap.desc_spec(text)[0] == 'NONEHIT'
 
 
 def desc_col(r):
@@ -77,6 +118,26 @@ def desc_col(r):
     return to_col(ds, cap.desc_element(r['effectDescription']) if ds.startswith('damage') else None)
 
 repo = sys.argv[1]
+
+
+def check_desc_table():
+    """The mirrored description table must equal EffectRules.cpp's DescTable, rule for rule
+    (the C++ writes NONE where the oracle writes NONEHIT)."""
+    src = open(repo + '/src/core/EffectRules.cpp', encoding='utf-8').read()
+    block = src[src.index('const Table& DescTable()'):src.index('const Table& DescElement()')]
+    cpp = [(m.group(1), m.group(2)) for m in re.finditer(r'\{ R"re\((.*?)\)re", "([A-Za-z_]+)" \}', block)]
+    py = [(pt, 'NONE' if sp == 'NONEHIT' else sp) for pt, sp in _desc.DESC_TABLE]
+    if cpp != py:
+        for k in range(max(len(cpp), len(py))):
+            a = cpp[k] if k < len(cpp) else None
+            b = py[k] if k < len(py) else None
+            if a != b:
+                print('description table differs at rule', k, '\n  C++   ', a, '\n  oracle', b)
+                break
+        sys.exit('the oracle description table is not the C++ one')
+
+
+check_desc_table()
 cols = [r for r in csv.DictReader(open(repo + '/docs/architecture/9-data/effects.csv', encoding='utf-8'))]
 colset = {r['id'] for r in cols}
 fams = [r['id'] for r in cols if r['level'] == 'family']
@@ -111,6 +172,9 @@ def oracle(r):
     """-> (column, note) for one effect row (reference + documented deviations)."""
     n = r['effectName'].lower()
     kw = r['effectKeywords']
+    # Deviation (round 3): a Light effect that makes darkness is not light.
+    if r['arch'] == 'Light' and 'dark' in n:
+        return '', 'unmapped', 'dev:darkness'
     # Deviation (round 2): Requiem's "Dispel Soul Gems" gets no column at all.
     if 'dispel soul gems' in n:
         return '', 'unmapped', 'dev:dispel-soul-gems'
@@ -306,7 +370,11 @@ def row_quantity(col, kr, constant):
     elif rule == 'PGD':
         raw, graded, post = mag, True, dfac(d)
     elif rule == 'PArea':
-        raw, graded = max(float(kr['area']), mag, float(kr.get('radius', 0))), True
+        if kr.get('light'):
+            raw = float(kr.get('radius', 0)) if float(kr.get('radius', 0)) > 0 else mag
+        else:
+            raw = max(float(kr['area']), mag)
+        graded = True
     elif rule == 'Hunger':
         post = hunger_size(kr['name'], kr['kws'])
     elif rule == 'Thirst':
@@ -315,6 +383,9 @@ def row_quantity(col, kr, constant):
         raw = 0.0
         if kr['route'] != 'data':
             graded = False
+    if kr.get('factor'):
+        # an unknown strength (0.5) or a stated percentage (p/100): not graded
+        raw, graded, post = 0.0, False, post * kr['factor']
     return raw, post, graded, full
 
 
@@ -383,6 +454,14 @@ def expected_values(items):
     return results
 
 
+FORCE = set("""
+8D005E70 8D00633C 872819C4 000240D2 9215EFE9 04020960 040206DB 040206D9 FE762842 FE079842 5A008402
+000CDB70 000E0CD6 87410740 8748263E 66032C8B 6603682F 89000A0D 301B7EF9 FE6448DE FE6448DF A8061994
+A8061EFB 040275B7 FE715828 673727C3 8D005FD0 2804F8FC 8702F1C2 00028532 00027EB6 0009B2B2 00043323
+00043324 220A23DE FE350801 0401CAB0 04027490
+""".split())
+
+
 def main():
     random.seed(20261008)
     out_dir = repo + '/tests/core/fixtures/'
@@ -448,6 +527,13 @@ def main():
                 if key not in seen:
                     seen.add(key)
                     pick.append(key)
+        # The items the verifier named in rounds 2-3 (unknown strengths, descriptions that
+        # decide, the catch-all damage name), in every list that has them.
+        for key in groups:
+            fx = key[1] if isinstance(key[1], str) else '%08X' % int(key[1])
+            if fx.upper() in FORCE and key not in seen:
+                seen.add(key)
+                pick.append(key)
         # plain gear and misc kinds, and some out of scope
         for kind, n in (('Weapon', 12), ('Armor', 12), ('Ammo', 6), ('SoulGem', 4), ('Light', 3)):
             ks = [k for k in groups if k[0] == kind and k not in seen]
@@ -479,33 +565,56 @@ def main():
             item_cols = set()
             exp_rows = []
             kept_rows = []
+            pending = []            # visible rows of unknown strength nothing reads: (index, no description)
+            kept_visible = [False]  # does the item keep any visible row?
             hydrated = any('hydrat' in str(r['effectName']).lower() for r in rows if r['effectFormID'])
             num = lambda v: float(v) if v not in ('', None) and not (isinstance(v, float) and math.isnan(v)) else 0.0
 
             def zero_case(rr, c_, src_):
-                """(kind, value) for a data-route graded row with magnitude 0: None,
-                ('number', N), ('describe', col) or ('carrier', None)."""
-                if src_ not in ('data', 'keyword') or script_like(rr) or not c_ or num(rr['magnitude']) != 0:
+                """The C++'s ZeroCase for a data-route row of unknown strength: None (strength
+                known), ('unmapped',), ('describe', col, number, percent), ('named',) or
+                ('unresolved', desc_empty)."""
+                if src_ not in ('data', 'keyword') or script_like(rr) or not c_:
                     return None
                 rule = rule_of(c_)
+                light = str(rr['archetype']) in ('12', 'Light')
                 if rule == 'PArea':
-                    if num(rr['area']) > 0 or num(rr.get('effectLightRadius', 0)) > 0:
-                        return None
-                elif rule not in ('Amount', 'Level', 'PG', 'PGD'):
+                    known = num(rr.get('effectLightRadius', 0)) > 0 if light else (num(rr['area']) > 0 or num(rr['magnitude']) != 0)
+                elif rule in ('Amount', 'Level', 'PG', 'PGD'):
+                    known = num(rr['magnitude']) != 0
+                else:
+                    known = True
+                if known:
                     return None
-                nmb = desc_number(rr['effectDescription'])
-                if nmb > 0:
-                    return ('number', nmb)
+                text = rr['effectDescription'] if isinstance(rr['effectDescription'], str) else ''
+                if desc_none(text):
+                    return ('unmapped',)
                 dc = desc_col(rr)
                 if dc:
-                    return ('describe', dc)
+                    v, pct = desc_number(text)
+                    return ('describe', dc, v, pct)
                 ns = name_col(rr['effectName'])
                 if ns and famkey(ns) == famkey(c_):
-                    return ('named', None)
-                return ('carrier', None)
+                    return ('named',)
+                return ('unresolved', not text.strip())
 
-            def kept_row(rr, cols_, visible, route, mag=None):
+            def zero_kept(rr, z, c_):
+                """(column, route, magnitude override or None, factor or None) of a describe/named zero."""
+                col = z[1] if z[0] == 'describe' else c_
+                route = 'desc' if z[0] == 'describe' else 'name'
+                mag, factor = None, None
+                if rule_of(col) in ('Amount', 'Level', 'PG', 'PGD', 'PArea'):
+                    if z[0] == 'describe' and z[2] > 0 and not z[3]:
+                        mag = z[2]
+                    elif z[0] == 'describe' and z[2] > 0:
+                        factor = min(z[2] / 100.0, 1.0)
+                    else:
+                        factor = 0.5
+                return col, route, mag, factor
+
+            def kept_row(rr, cols_, visible, route, mag=None, factor=None):
                 kept_rows.append({'cols': cols_, 'mag': num(rr['magnitude']) if mag is None else mag,
+                                  'factor': factor, 'light': str(rr['archetype']) in ('12', 'Light'),
                                   'dur': int(num(rr['duration'])),
                                   'area': int(num(rr['area'])), 'radius': num(rr.get('effectLightRadius', 0)),
                                   'delivery': str(rr['effectDelivery']),
@@ -525,6 +634,7 @@ def main():
                             c, note = wc, 'dev:wrapper-description'
                             item_cols.add(wc)
                             kept_row(r, [wc], True, 'desc')
+                            kept_visible[0] = True
                     elif not r['hide']:
                         for _, p in pls.iterrows():
                             pc, psrc, _ = orc[p['effectFormID']]
@@ -532,17 +642,17 @@ def main():
                                 pd_ = dict(p)
                                 z = zero_case(pd_, pc, psrc)
                                 proute = 'data' if (psrc in ('data', 'keyword') and not script_like(pd_)) else psrc
-                                if z and z[0] == 'carrier':
+                                if z and z[0] in ('unmapped', 'unresolved'):
                                     continue
-                                if z and z[0] == 'describe':
-                                    pc, proute = z[1], 'desc'
-                                if z and z[0] == 'named':
-                                    proute = 'name'
+                                pmag, pfac = None, None
+                                if z:
+                                    pc, proute, pmag, pfac = zero_kept(pd_, z, pc)
                                 item_cols.add(pc)
                                 if pc.startswith('summon_creature_'):
                                     item_cols.add('summon_creature')
                                 kept_row(pd_, [pc] + (['summon_creature'] if pc.startswith('summon_creature_') else []),
-                                         True, proute, z[1] if z and z[0] == 'number' else None)
+                                         True, proute, pmag, pfac)
+                                kept_visible[0] = True
                     exp_rows.append((c, note))
                     continue
                 if not c or src == 'helper':
@@ -551,19 +661,20 @@ def main():
                 kept = (not r['hide']) or keep_hidden(c, r['effectName'])
                 z = zero_case(r, c, src) if kept else None
                 route = 'data' if (src in ('data', 'keyword') and not script_like(r)) else src
-                zmag = None
-                if z and z[0] == 'carrier':
+                zmag, zfac = None, None
+                if z and z[0] == 'unmapped':
                     kept = False
-                    note = (note + ' ' if note else '') + 'zero:carrier'
-                elif z and z[0] == 'describe':
-                    c, route = z[1], 'desc'
-                    note = (note + ' ' if note else '') + 'zero:describe'
-                elif z and z[0] == 'number':
-                    zmag = z[1]
-                    note = (note + ' ' if note else '') + 'zero:number'
-                elif z and z[0] == 'named':
-                    route = 'name'
-                    note = (note + ' ' if note else '') + 'zero:named'
+                    if not r['hide']:
+                        c = ''
+                    note = (note + ' ' if note else '') + 'zero:unmapped'
+                elif z and z[0] == 'unresolved':
+                    kept = False
+                    if not r['hide']:
+                        pending.append((len(exp_rows), z[1]))
+                    note = (note + ' ' if note else '') + ('zero:hidden-dropped' if r['hide'] else 'zero:unresolved')
+                elif z:
+                    note = (note + ' ' if note else '') + 'zero:' + z[0] + ('-pct' if z[0] == 'describe' and z[3] and z[2] > 0 else '')
+                    c, route, zmag, zfac = zero_kept(r, z, c)
                 exp_rows.append((c, note))
                 if kept:
                     cols_ = [c]
@@ -571,7 +682,9 @@ def main():
                         cols_.append('summon_creature')
                     if c == 'fortify_skill_lockpicking' and r['primaryAV'] == 'PickPocketSkillAdvance':
                         cols_.append('fortify_skill_pickpocket')
-                    kept_row(r, cols_, not r['hide'], route, zmag)
+                    kept_row(r, cols_, not r['hide'], route, zmag, zfac)
+                    if not r['hide']:
+                        kept_visible[0] = True
                     item_cols.add(c)
                     if c.startswith('summon_creature_'):
                         item_cols.add('summon_creature')
@@ -579,6 +692,14 @@ def main():
                         item_cols.add('fortify_skill_pickpocket')
                     if c == 'restore_health' and (r['effectDelivery'] != '0' or (r['area'] not in ('', '0'))):
                         item_cols.add('restore_health_other')
+            # Deviation (round 3): a carrier only as a companion -- no description, next to a
+            # visible row the item keeps; otherwise counted as unmapped.
+            for idx, empty in pending:
+                c0, note0 = exp_rows[idx]
+                if kept_visible[0] and empty:
+                    exp_rows[idx] = (c0, note0.replace('zero:unresolved', 'zero:carrier'))
+                else:
+                    exp_rows[idx] = ('', note0.replace('zero:unresolved', 'zero:unmapped'))
             full = set(item_cols)
             for c in item_cols:
                 if family_of_col.get(c):

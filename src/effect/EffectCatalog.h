@@ -3,8 +3,8 @@
 // =============================================================================
 // EFFECT CATALOG -- cap(i) for every item in the load order (R2)
 // =============================================================================
-// Built once, in the first main-thread task after kDataLoaded (so after the
-// keyword distributors): EffectReader reads the load order into plain
+// Built once, when the main menu first opens (so after every kDataLoaded
+// handler, the keyword distributors' included): EffectReader reads the load order into plain
 // records, Core::Effect::BuildCaps maps and grades them (percentiles need the
 // whole load order, not the player's inventory), and the catalog keeps the
 // static cap of every in-scope item, keyed by FormID.
@@ -30,7 +30,7 @@
 // AddKeywordToForm or SetNthEffectMagnitude after a save loads -- is not seen;
 // there is no rebuild. Keyword distributors (KID, SPID) finish before the build.
 //
-// Threads: the forms are read on the main thread (the task after kDataLoaded); the mapping
+// Threads: the forms are read on the main thread (a task queued at the main menu); the mapping
 // runs on a worker thread (seconds in a Debug build on LoreRim) and publishes
 // with Ready() (release/acquire). Before Ready() every accessor answers
 // "nothing"; after it the catalog is immutable, so readers need no lock.
@@ -67,9 +67,11 @@ namespace Huginn::Effect
         /// worker is done.
         void Build();
 
-        /// Queue Build() as a main-thread task (from kDataLoaded): it then runs
-        /// after every plugin's kDataLoaded handler, keyword distributors
-        /// included. Falls back to building now if there is no task interface.
+        /// From kDataLoaded: build when the main menu first opens (a main-thread
+        /// task then), which is after every plugin's kDataLoaded handler and
+        /// the tasks they queued, keyword distributors included. kNewGame /
+        /// kPostLoadGame call Build() too, for a setup that skips the main menu
+        /// (a no-op once built). With no UI singleton it builds now.
         void ScheduleBuild();
 
         /// The worker failed (an exception); the catalog stays not ready.

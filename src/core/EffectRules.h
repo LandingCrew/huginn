@@ -69,6 +69,22 @@
 //     Acrobatics" boots), not speed;
 //   - "decreased" weakens a resistance like "reduced" ("Weaken Poison
 //     Resistance").
+//   Verifier round 3:
+//   - the description table gained rules: spider scrolls ("tosses/spawns a
+//     ... spider") are summon_creature; "temporary damage" is drain_vital;
+//     "imbue ... weapon with" is elemental damage (Channel Element), not
+//     damage_magicka; "power attack ... deal" is fortify_combat_power_attack;
+//     "the world seems to slow" is utility_slow_time; "summon a/an" beats
+//     "fight for you" (Seht's Brilliance); bound weapons, armour and quivers
+//     are summon_bound_weapon, no longer summon_creature; "flung away" is
+//     stagger; a leading "take double/more damage" is weakness_armor;
+//     "chance to avoid damage from ranged" is defense_resist_ranged, "ignores
+//     N% of physical damage" / "chance to take no / avoid damage" is
+//     defense_armor; "healing effects are reduced" maps to no column;
+//   - the spell-power rule (no column) now precedes the skill rule:
+//     "Restoration spells are 25% more powerful" is not fortify_skill;
+//   - a Light effect whose name says "dark" (Requiem's Darkness) is no light;
+//   - the Slowfall keyword decides only on a beneficial SpeedMult row.
 //   Spec names with no column of their own fall back to their family column
 //   (weaken_combat_crit -> weaken_combat; Dragonrend -> shout; a detrimental
 //   warmth effect -> survival; Cure Addiction -> cure; weakness to disease ->
@@ -133,13 +149,15 @@ namespace Huginn::Core::Effect
         // carries no payload the mapper can read (doc 9's layer 4 applied to
         // a Cloak/hazard whose spell is missing or unknown).
         Col wrapperDescription = Col::_Count;
-        // A data-route effect used with magnitude 0 somewhere (ResolveZero-
-        // Magnitudes, core/EffectMapper.h): the first number its description
-        // states ("ignores <80>% of physical damage"), and the column its
-        // description names, either of which says what the zero hides.
-        float zeroMagnitude = 0.0f;
-        Col zeroColumn = Col::_Count;
-        bool zeroNamed = false;  // its name says the same family as its data column
+        // A data-route effect some item uses with its strength unknown (a
+        // magnitude of 0; a Light with no light radius): what its description
+        // and name say instead (ResolveZeroMagnitudes, core/EffectMapper.h).
+        bool zeroNone = false;         // the description hits a no-column rule (spell power ...)
+        Col zeroColumn = Col::_Count;  // the column the description names
+        float zeroNumber = 0.0f;       // the first number it states in a tag (<80>)
+        bool zeroPercent = false;      // ... and that number is a percentage (<80>%)
+        bool zeroNamed = false;        // its name says the same family as its data column
+        bool zeroDescEmpty = false;    // it has no description at all
 
         [[nodiscard]] bool Mapped() const noexcept { return col != Col::_Count; }
     };
@@ -189,9 +207,19 @@ namespace Huginn::Core::Effect
     /// beneficial reading (resist -> weakness).
     [[nodiscard]] std::optional<Col> DescriptionColumn(std::string_view description, bool detrimental);
 
+    /// Does the description hit a rule that maps to no column (spell power,
+    /// "healing effects are reduced")?
+    [[nodiscard]] bool DescriptionSaysNone(std::string_view description);
+
     /// The first number a description states in a literal tag ("<80>",
-    /// "<2.5>"; not <mag>, <dur>, <area>), or 0.
-    [[nodiscard]] float DescriptionNumber(std::string_view description);
+    /// "<2.5>"; not <mag>, <dur>, <area>), or 0; `percent` says whether a "%"
+    /// or "percent" follows it.
+    struct DescNumber
+    {
+        float value = 0.0f;
+        bool percent = false;
+    };
+    [[nodiscard]] DescNumber DescriptionNumber(std::string_view description);
 
     /// Every pattern in the rule tables compiles (for a host test); the first
     /// failure's message otherwise.

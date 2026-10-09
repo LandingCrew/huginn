@@ -17,6 +17,9 @@
 //     --unmapped-out <csv>      write the unmapped visible effects, by rows
 //     --zero-out <csv>          write every kept in-scope effect row whose column
 //                               grades a magnitude and whose magnitude is 0
+//     --carriers-out <csv>      write every visible row dropped as a carrier (a
+//                               companion with no description beside a kept row),
+//                               with the item's kept columns, for audit
 //   huginn_effect_report --patterns-out <file>
 //                             write the rule tables' patterns, one per line
 //
@@ -26,6 +29,7 @@
 
 #include "DumpCsv.h"
 #include "core/EffectMapper.h"
+#include "core/MiniRegex.h"
 
 #include <algorithm>
 #include <chrono>
@@ -87,7 +91,7 @@ int main(int argc, char** argv)
     std::string path = argv[1];
     std::string name = path.substr(path.find_last_of("/\\") + 1);
     double minCoverage = -1.0;
-    std::string classesPath, diffOut, mgefOut, capsOut, unmappedOut, zeroOut;
+    std::string classesPath, diffOut, mgefOut, capsOut, unmappedOut, zeroOut, carriersOut;
     for (int i = 2; i < argc; ++i) {
         const std::string a = argv[i];
         auto next = [&]() -> std::string { return i + 1 < argc ? argv[++i] : std::string{}; };
@@ -99,6 +103,7 @@ int main(int argc, char** argv)
         else if (a == "--caps-out") capsOut = next();
         else if (a == "--unmapped-out") unmappedOut = next();
         else if (a == "--zero-out") zeroOut = next();
+        else if (a == "--carriers-out") carriersOut = next();
         else return Usage();
     }
 
@@ -149,9 +154,14 @@ int main(int argc, char** argv)
     std::printf("in scope: %zu items\n", inScope);
     const auto& t = r.tally;
     std::printf("effect rows: %d (visible %d, hidden %d, hidden kept %d)\n", t.rows, t.visible, t.hidden, t.hiddenKept);
-    std::printf("visible: helper %d, wrapper without payload %d, zero-magnitude carriers %d, counted %d, mapped %d\n",
+    std::printf("visible: helper %d, wrapper without payload %d, companion carriers %d, counted %d, mapped %d\n",
                 t.helper, t.wrapperUnknown, t.carrier, t.counted, t.mapped);
-    std::printf("COVERAGE %.2f%% (%d of %d visible effect rows)\n", 100.0 * r.Coverage(), t.mapped, t.counted);
+    std::printf("COVERAGE %.3f%% (%d of %d visible effect rows; carriers not counted)\n", 100.0 * r.Coverage(), t.mapped,
+                t.counted);
+    std::printf("coverage with carriers counted as unmapped: %.3f%% (%d of %d)\n",
+                t.counted + t.carrier > 0 ? 100.0 * t.mapped / (t.counted + t.carrier) : 100.0, t.mapped,
+                t.counted + t.carrier);
+    std::printf("regex step-budget hits: %zu\n", Huginn::Core::MiniRegex::BudgetExceeded());
     std::printf("by route:");
     for (const auto& [k, v] : byRoute) std::printf(" %s=%d", k.c_str(), v);
     std::printf("\nby kind:");
@@ -301,6 +311,31 @@ int main(int argc, char** argv)
             }
         }
         std::printf("zero-magnitude graded rows: %zu (written to %s)\n", n, zeroOut.c_str());
+    }
+
+    if (!carriersOut.empty()) {
+        std::ofstream out(carriersOut, std::ios::binary);
+        out << "kind,formID,name,effectIndex,effectFormID,effectName,archetype,primaryAV,dataColumn,itemColumns\n";
+        std::size_t n = 0;
+        for (std::size_t i = 0; i < r.mappings.size(); ++i) {
+            const auto& m = r.mappings[i];
+            if (!m.inScope) continue;
+            const auto& item = dump.items[i];
+            for (std::size_t j = 0; j < m.outcomes.size(); ++j) {
+                const auto& o = m.outcomes[j];
+                if (!o.carrier) continue;
+                const auto& e = dump.effects[item.effects[j].effect];
+                std::string kept;
+                for (const auto& k : m.outcomes) {
+                    if (k.kept && !k.hidden && k.cls.Mapped()) kept += std::string(Name(k.cls.col)) + ";";
+                }
+                out << KindName(item.kind) << ',' << Hex(item.formId) << ',' << Quote(item.name) << ',' << j << ','
+                    << Hex(e.formId) << ',' << Quote(e.name) << ',' << e.archetype << ',' << e.primaryAV << ','
+                    << Name(o.cls.col) << ',' << Quote(kept) << '\n';
+                ++n;
+            }
+        }
+        std::printf("carrier rows: %zu (written to %s)\n", n, carriersOut.c_str());
     }
 
     if (minCoverage >= 0.0 && 100.0 * r.Coverage() < minCoverage) {

@@ -791,10 +791,12 @@ void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
         break;
     case SKSE::MessagingInterface::kNewGame:
         logger::info("New game started"sv);
+        Effect::EffectCatalog::GetSingleton().Build();  // no-op once built at the main menu
         InitializeGameSystems(/*isNewGame=*/true);
         break;
     case SKSE::MessagingInterface::kPostLoadGame:
     {
+        Effect::EffectCatalog::GetSingleton().Build();  // no-op once built at the main menu
         // SKSE passes the load's success as the data pointer itself (non-null
         // = loaded). A failed load must not reset the learner's character.
         const bool loaded = a_msg->data != nullptr;

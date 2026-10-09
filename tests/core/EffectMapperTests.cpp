@@ -190,7 +190,8 @@ TEST_CASE("effect rules: helpers, wrappers, description route, overrides")
     // Spell power has no column: the reference stops there...
     CHECK(DescriptionColumn("Spells do 25% more damage.", false) == std::nullopt);
     // ...unless a school is named first (the reference's order: SKILL before NONE).
-    CHECK(DescriptionColumn("Destruction spells are 25% stronger.", false) == Col::fortify_skill_destruction);
+    CHECK(DescriptionColumn("Destruction spells are 25% stronger.", false) == std::nullopt);  // spell power (round 3)
+    CHECK(DescriptionColumn("Destruction spells cost 25% less.", false) == Col::fortify_skill_destruction);
 
     OverrideTable ov;
     ov.Add("Test.ESP", 0x000ABC, Col::utility_teleport);
@@ -332,7 +333,7 @@ TEST_CASE("effect mapper: presence columns -- P x D, a script effect with no mag
     CHECK(CapOf(r, 5, Col::survival_thirst) == 1.0f);
 }
 
-TEST_CASE("effect mapper: a zero magnitude through the engine's data -- the description's number, its column, or a carrier")
+TEST_CASE("effect mapper: an unknown strength through the engine's data -- no-column text, described column, name, companion, unmapped")
 {
     World w;
     const auto heal = w.Add(Mgef(kArchValueModifier, "Health", "Restore Health"));
@@ -342,9 +343,21 @@ TEST_CASE("effect mapper: a zero magnitude through the engine's data -- the desc
     hide.description = "Caster ignores <80>% of all physical damage for <dur> seconds.";
     const auto dragonhide = w.Add(hide);
     const auto oak = w.Add(Mgef(kArchPeakValueModifier, "DamageResist", "Oakflesh"));
-    auto kill = Mgef(kArchValueModifier, "Destruction", "Instant Kill");
-    const auto instant = w.Add(kill);
-    auto& dud = w.Item(Kind::Potion, "Unknown Potion");  // "Unknown Effect" on Health 0, no text: a carrier
+    const auto instant = w.Add(Mgef(kArchValueModifier, "Destruction", "Instant Kill"));
+    auto crusader = Mgef(kArchValueModifier, "Health", "Gauntlets of the Crusader");
+    crusader.description = "Restoration spells are <25>% more powerful.";
+    const auto crus = w.Add(crusader);
+    auto dispel = Mgef(kArchValueModifier, "DamageResist", "Dispel Armor", kFlagDetrimental);
+    const auto dis = w.Add(dispel);
+    const auto fire = w.Add(Mgef(kArchValueModifier, "Health", "Fire Damage", kFlagDetrimental));
+    auto bound = Mgef(kArchPeakValueModifier, "DamageResist", "Bound Shield");
+    bound.description = "The caster binds an shield-shaped daedra for <dur> seconds.";
+    const auto shield = w.Add(bound);
+    auto ranged = Mgef(kArchPeakValueModifier, "DamageResist", "Sanctuary (Improved)");
+    ranged.description = "If improved, the recipient gets another separate <20>% chance to avoid damage from ranged weapons.";
+    const auto sanct = w.Add(ranged);
+
+    auto& dud = w.Item(Kind::Potion, "Unknown Potion");  // nothing beside it: counted, unmapped
     World::Fx(dud, unknown, 0);
     auto& small = w.Item(Kind::Potion, "Small");
     World::Fx(small, heal, 25);
@@ -358,25 +371,49 @@ TEST_CASE("effect mapper: a zero magnitude through the engine's data -- the desc
     World::Fx(oakSpell, oak, 40, 30);
     auto& razor = w.Item(Kind::Scroll, "Razor");
     World::Fx(razor, instant, 0);
-    auto& named = w.Item(Kind::Potion, "Scripted Heal");  // "Restore Health" 0: the name agrees, presence
+    auto& named = w.Item(Kind::Potion, "Scripted Heal");  // "Restore Health" 0: the name agrees
     World::Fx(named, heal, 0);
+    auto& gauntlets = w.Item(Kind::Scroll, "Crusader");
+    World::Fx(gauntlets, crus, 0);
+    auto& sword = w.Item(Kind::Scroll, "Fire and Dispel");  // a companion beside a kept row
+    World::Fx(sword, fire, 10);
+    World::Fx(sword, dis, 0);
+    auto& boundSpell = w.Item(Kind::Spell, "Bound Shield");
+    World::Fx(boundSpell, shield, 0, 60);
+    auto& blur = w.Item(Kind::Spell, "Blur");
+    World::Fx(blur, sanct, 0, 60);
     const auto r = w.Build();
-    CHECK(CapOf(r, 0, Col::restore_health) == 0.0f);  // dropped, not graded
-    CHECK(r.mappings[0].tally.carrier == 1);
-    CHECK(r.mappings[0].tally.counted == 0);
+
+    CHECK(CapOf(r, 0, Col::restore_health) == 0.0f);
+    CHECK(r.mappings[0].tally.carrier == 0);
+    CHECK(r.mappings[0].tally.counted == 1);  // counted, unmapped
+    CHECK(r.mappings[0].tally.mapped == 0);
     CHECK(CapOf(r, 1, Col::restore_health) == doctest::Approx(0.5));
     CHECK(CapOf(r, 2, Col::restore_health) == doctest::Approx(1.0));
     CHECK(CapOf(r, 3, Col::restore_health) == 1.0f);  // the script carries the amount: presence
-    // Dragonhide grades on its stated 80, above Oakflesh's 40 at the same duration.
-    CHECK(CapOf(r, 4, Col::defense_armor) == doctest::Approx(1.0));
-    CHECK(CapOf(r, 5, Col::defense_armor) == doctest::Approx(0.5));
+    // A stated percentage is the value itself, outside the population: Dragonhide 0.8.
+    CHECK(CapOf(r, 4, Col::defense_armor) == doctest::Approx(0.8));
+    CHECK(CapOf(r, 5, Col::defense_armor) == doctest::Approx(1.0));  // Oakflesh alone in the population
     CHECK(r.mappings[6].inScope);
-    CHECK(CapOf(r, 6, Col::fortify_skill_destruction) == 0.0f);  // a carrier, not a skill fortify
-    CHECK(r.mappings[6].tally.carrier == 1);
-    CHECK(CapOf(r, 7, Col::restore_health) == 1.0f);
-    CHECK(DescriptionNumber("ignores <80>% of damage") == 80.0f);
-    CHECK(DescriptionNumber("Restores <mag> points for <dur> seconds") == 0.0f);
-    CHECK(DescriptionNumber("<2.5> times") == 2.5f);
+    CHECK(CapOf(r, 6, Col::fortify_skill_destruction) == 0.0f);  // not a skill fortify
+    CHECK(r.mappings[6].tally.counted == 1);
+    CHECK(r.mappings[6].tally.mapped == 0);
+    CHECK(CapOf(r, 7, Col::restore_health) == doctest::Approx(kNeutralStrength));  // unknown: neutral, not the top
+    CHECK(CapOf(r, 8, Col::restore_health) == 0.0f);  // spell power: no column
+    CHECK(r.mappings[8].tally.counted == 1);
+    CHECK(r.mappings[8].tally.mapped == 0);
+    CHECK(r.mappings[9].tally.carrier == 1);  // Dispel Armor beside Fire Damage
+    CHECK(r.mappings[9].outcomes[1].carrier);
+    CHECK(r.mappings[9].tally.counted == 1);
+    CHECK(CapOf(r, 10, Col::summon_bound_weapon) > 0.0f);
+    CHECK(CapOf(r, 10, Col::defense_armor) == 0.0f);
+    CHECK(CapOf(r, 11, Col::defense_resist_ranged) == doctest::Approx(0.2));
+    CHECK(DescriptionNumber("ignores <80>% of damage").value == 80.0f);
+    CHECK(DescriptionNumber("ignores <80>% of damage").percent);
+    CHECK(DescriptionNumber("decreased by <5> percent").percent);
+    CHECK(DescriptionNumber("Restores <mag> points for <dur> seconds").value == 0.0f);
+    CHECK(DescriptionNumber("<2.5> times").value == 2.5f);
+    CHECK_FALSE(DescriptionNumber("<2.5> times").percent);
 }
 
 TEST_CASE("effect mapper: a Light effect grades its light form's radius")
@@ -395,6 +432,25 @@ TEST_CASE("effect mapper: a Light effect grades its light form's radius")
     const auto r = w.Build();
     CHECK(CapOf(r, 0, Col::vision_light) > 0.0f);
     CHECK(CapOf(r, 0, Col::vision_light) < CapOf(r, 1, Col::vision_light));
+
+    World w2;
+    const auto lantern = w2.Add(Mgef(kArchLight, "", "Backpack & Lantern"));  // no light radius read
+    auto dark = Mgef(kArchLight, "", "Darkness");
+    dark.lightRadius = 426;
+    const auto shroud = w2.Add(dark);
+    auto lit = Mgef(kArchLight, "", "Light");
+    lit.lightRadius = 450;
+    const auto light = w2.Add(lit);
+    auto& pack = w2.Item(Kind::Spell, "Backpack");
+    World::Fx(pack, lantern, 5, 60);
+    auto& sh = w2.Item(Kind::Spell, "Shroud of Darkness");
+    World::Fx(sh, shroud, 0, 60);
+    auto& ml = w2.Item(Kind::Spell, "Magelight");
+    World::Fx(ml, light, 5, 60);
+    const auto r2 = w2.Build();
+    CHECK(CapOf(r2, 0, Col::vision_light) == doctest::Approx(kNeutralStrength));  // unknown radius: neutral
+    CHECK(CapOf(r2, 1, Col::vision_light) == 0.0f);
+    CHECK(ColOf(dark) == Col::_Count);
 }
 
 TEST_CASE("effect mapper: tempering adds damage (the codebase's model), it does not multiply")
@@ -462,6 +518,47 @@ TEST_CASE("effect rules: verifier round 1 -- resist-damage names, wrappers by ke
     CHECK_FALSE(IsHelperName("Dispel Soul Gems"));
     CHECK(NameColumn("Dispel Soul Gems") == std::nullopt);
     CHECK(NameColumn("Dispel") == Col::cure_dispel);
+}
+
+TEST_CASE("effect rules: verifier round 3 -- the catch-all damage name's new columns, slowfall, summons, spell power")
+{
+    auto seed = Mgef(kArchScript, "", "Seed of Unholy Blood", kFlagDetrimental);
+    seed.description = "Most healing effects are reduced by <75>% for <dur> seconds.";
+    CHECK(ColOf(seed) == Col::_Count);  // not restore_health
+    auto pain = Mgef(kArchScript, "", "Pain of Adoration");
+    pain.description = "Take double damage.";
+    CHECK(ColOf(pain) == Col::weakness_armor);
+    auto channel = Mgef(kArchScript, "", "Channel Element: Frost");
+    channel.description = "Allows the user to imbue their weapon with frost damage, at the cost of magicka, for <dur> seconds.";
+    CHECK(ColOf(channel) == Col::damage_health_frost);
+    auto ready = Mgef(kArchScript, "", "Thundering Blow Ready");
+    ready.description = "Your next one-handed power attack will deal <100>% more damage and cost no Stamina.";
+    CHECK(ColOf(ready) == Col::fortify_combat_power_attack);
+    auto instinct = Mgef(kArchScript, "", "Frostmoon Instinct");
+    instinct.description = "When you enter Beast Form, the world around you seems to slow for <60> seconds.";
+    CHECK(ColOf(instinct) == Col::utility_slow_time);
+    auto seht = Mgef(kArchScript, "", "Seht's Brilliance");
+    seht.description = "Using a filled soul gem or dynamo core, permanently summon a Dwarven automaton to fight for you (Max 1).";
+    CHECK(ColOf(seht) == Col::summon_creature);
+    // Slowfall only on a beneficial SpeedMult row, as the oracle has it.
+    auto slow = Mgef(kArchValueModifier, "SpeedMult", "Slowing Curse", kFlagDetrimental);
+    slow.keywords = { "MAG_MagicEnchSlowfall" };
+    CHECK(ColOf(slow) == Col::control_slow);
+    auto acro = Mgef(kArchValueModifier, "CarryWeight", "Feather");
+    acro.keywords = { "MAG_MagicEnchSlowfall" };
+    CHECK(ColOf(acro) == Col::utility_carry_weight);
+    CHECK(DescriptionColumn("Restoration spells are 25% more powerful.", false) == std::nullopt);
+    CHECK(DescriptionColumn("Tosses a Jumping Frost spider on the ground that will explode.", false) == Col::summon_creature);
+    CHECK(DescriptionColumn("Targets hit with this spell have a chance to be flung away.", false) == Col::control_stagger);
+    CHECK(DescriptionColumn("The caster binds a quiver of spectral arrows for 60 seconds.", false) == Col::summon_bound_weapon);
+    // Regressions the before/after diff caught while writing these rules:
+    CHECK(DescriptionColumn("While in Beast Form, your attacks do 50% more damage, but you also take 50% more damage.", false) ==
+          Col::fortify_combat_attack_damage);                                     // "take more" only leading
+    CHECK(DescriptionColumn("Take 100% more damage from silver weapons.", true) == Col::weakness_armor);
+    CHECK(DescriptionColumn("Summon a wall of stone for 10 seconds.", false) != Col::summon_creature);
+    CHECK(DescriptionColumn("Bind a chosen effect to the spell in your left hand.", false) != Col::summon_bound_weapon);
+    CHECK(DescriptionColumn("Creates dragon fire. Effective on undead, and also banishes summoned creatures.", false) !=
+          Col::summon_creature);
 }
 
 TEST_CASE("effect rules: verifier round 2 -- soul gems, slowfall, the catch-all damage name, decreased resistance")

@@ -94,6 +94,15 @@ namespace Huginn::Core
         /// Shorthand for Search(text) != false.
         [[nodiscard]] bool Contains(std::string_view text) const { return Search(text, nullptr); }
 
+        /// For a veto pattern (negation, helper names, bad item names, the name
+        /// veto): true on a match OR when the search hit the step budget, so a
+        /// search that gave up vetoes rather than letting a mapping through.
+        [[nodiscard]] bool ContainsOrBudget(std::string_view text) const;
+
+    private:
+        bool SearchImpl(std::string_view text, Match* match, bool* budget) const;
+
+    public:
         /// How many searches (process-wide, all patterns) gave up at the step
         /// budget and answered "no match". Callers log it; 0 is the norm -- no
         /// rule table pattern comes near it on real text.

@@ -291,19 +291,47 @@ namespace Huginn::Core::Effect
         return out;
     }
 
+    namespace
+    {
+        bool IsGraded(Rule r) noexcept
+        {
+            return r == Rule::Amount || r == Rule::Level || r == Rule::PG || r == Rule::PGD || r == Rule::PArea;
+        }
+
+        /// A graded column whose strength the record does not hold: a magnitude
+        /// of 0, or a Light with no light radius (its magnitude is not its
+        /// strength), or an area column with neither area nor magnitude.
+        bool UnknownStrength(const EffectRow& row, const MagicEffectRecord& m, Rule rule) noexcept
+        {
+            if (rule == Rule::PArea) {
+                return m.archetype == kArchLight ? m.lightRadius <= 0 : (row.area == 0 && row.magnitude == 0.0f);
+            }
+            return IsGraded(rule) && row.magnitude == 0.0f;
+        }
+    }
+
     void ResolveZeroMagnitudes(const std::vector<ItemRecord>& items, const EffectTable& effects,
                                std::vector<EffectClass>& classes)
     {
         std::vector<bool> done(effects.size(), false);
         auto visit = [&](const EffectRow& row) {
-            if (row.effect >= effects.size() || done[row.effect] || row.magnitude != 0.0f) return;
+            if (row.effect >= effects.size() || done[row.effect]) return;
             auto& cls = classes[row.effect];
             if (cls.route != Route::Data || !cls.Mapped()) return;
-            done[row.effect] = true;
             const auto& m = effects[row.effect];
-            cls.zeroMagnitude = DescriptionNumber(m.description);
+            if (!UnknownStrength(row, m, RuleOf(cls.col))) return;
+            done[row.effect] = true;
+            cls.zeroNone = DescriptionSaysNone(m.description);
             if (const auto d = DescriptionColumn(m.description, m.detrimental)) cls.zeroColumn = *d;
-            if (const auto n = NameColumn(m.name)) cls.zeroNamed = FamilyKey(*n) == FamilyKey(cls.col);
+            const auto n = DescriptionNumber(m.description);
+            cls.zeroNumber = n.value;
+            cls.zeroPercent = n.percent;
+            if (const auto nc = NameColumn(m.name)) cls.zeroNamed = FamilyKey(*nc) == FamilyKey(cls.col);
+            bool empty = true;
+            for (const char c : m.description) {
+                if (c != ' ' && c != '\t' && c != '\r' && c != '\n') empty = false;
+            }
+            cls.zeroDescEmpty = empty;
         };
         for (const auto& it : items) {
             for (const auto& row : it.effects) {
@@ -374,40 +402,58 @@ namespace Huginn::Core::Effect
             return dmgAbs(a) && dmgAbs(b);
         }
 
-        enum class Zero : std::uint8_t { None, Number, Describe, Named, Carrier };
+        enum class Zero : std::uint8_t { None, Unmapped, Describe, Named, Unresolved };
 
-        /// A graded engine effect whose magnitude is 0: what to do with it.
+        /// A data-route row whose strength is unknown: what to do with it
+        /// (core/EffectMapper.h, ResolveZeroMagnitudes). Unresolved rows are
+        /// settled per item: a carrier next to a kept row, else unmapped.
         Zero ZeroCase(const EffectRow& row, const MagicEffectRecord& m, const EffectClass& cls)
         {
-            if (cls.route != Route::Data || row.magnitude != 0.0f || !cls.Mapped()) return Zero::None;
-            const Rule rule = RuleOf(cls.col);
-            if (rule == Rule::PArea) {
-                if (row.area > 0 || m.lightRadius > 0) return Zero::None;
-            }
-            else if (rule != Rule::Amount && rule != Rule::Level && rule != Rule::PG && rule != Rule::PGD) {
-                return Zero::None;
-            }
-            if (cls.zeroMagnitude > 0.0f) return Zero::Number;
+            if (cls.route != Route::Data || !cls.Mapped()) return Zero::None;
+            if (!UnknownStrength(row, m, RuleOf(cls.col))) return Zero::None;
+            if (cls.zeroNone) return Zero::Unmapped;
             if (cls.zeroColumn != Col::_Count) return Zero::Describe;
             if (cls.zeroNamed) return Zero::Named;
-            return Zero::Carrier;
+            return Zero::Unresolved;
         }
 
-        /// The class a zero row is kept under: Describe, its description's
-        /// column; Named, its own column as presence (the strength is carried
-        /// elsewhere, by a script or a perk, as on a script route).
-        EffectClass ZeroClass(const EffectClass& cls, Zero z)
+        KeptRow MakeRow(const EffectRow& row, const MagicEffectRecord& m, const EffectClass& cls, bool visible,
+                        bool constantItem);
+
+        /// The kept row of a Describe / Named zero (its class goes to *cls).
+        /// Describe: the column the description names; its stated number is
+        /// the magnitude when plain, a value of p/100 when a percentage (kept
+        /// out of the population: percentages and points never share one), and
+        /// with no number the strength is unknown. Named: the row's own column,
+        /// strength unknown. An unknown strength on a graded column is
+        /// kNeutralStrength, never the top.
+        KeptRow ZeroRow(const EffectRow& row, const MagicEffectRecord& m, const EffectClass& in, Zero z, bool visible,
+                        bool constantItem, EffectClass* cls)
         {
-            EffectClass d = cls;
+            EffectClass d = in;
             if (z == Zero::Describe) {
-                d.col = cls.zeroColumn;
+                d.col = in.zeroColumn;
                 d.col2 = Col::_Count;
                 d.route = Route::Description;
             }
-            else if (z == Zero::Named) {
+            else {
                 d.route = Route::Name;
             }
-            return d;
+            EffectRow r2 = row;
+            float factor = 0.0f;
+            if (IsGraded(RuleOf(d.col))) {
+                if (z == Zero::Describe && in.zeroNumber > 0.0f && !in.zeroPercent) r2.magnitude = in.zeroNumber;
+                else if (z == Zero::Describe && in.zeroNumber > 0.0f) factor = std::min(in.zeroNumber / 100.0f, 1.0f);
+                else factor = kNeutralStrength;
+            }
+            KeptRow k = MakeRow(r2, m, d, visible, constantItem);
+            if (factor > 0.0f) {
+                k.graded = false;
+                k.raw = 0.0f;
+                k.post *= factor;
+            }
+            if (cls) *cls = d;
+            return k;
         }
 
         KeptRow MakeRow(const EffectRow& row, const MagicEffectRecord& m, const EffectClass& cls, bool visible,
@@ -448,9 +494,12 @@ namespace Huginn::Core::Effect
                     k.post = DurationFactor(row.duration);
                     break;
                 case Rule::PArea:
-                    // "P x G(area or radius)": a Light effect's radius lives in its
-                    // light form, not in the magnitude.
-                    k.raw = std::max({ static_cast<float>(row.area), mag, static_cast<float>(m.lightRadius) });
+                    // "P x G(area or radius)": a Light effect's strength is its
+                    // light's radius (a stated number stands in when it has
+                    // none); anything else grades its area or magnitude.
+                    k.raw = m.archetype == kArchLight
+                                ? (m.lightRadius > 0 ? static_cast<float>(m.lightRadius) : mag)
+                                : std::max(static_cast<float>(row.area), mag);
                     k.graded = true;
                     break;
                 case Rule::Hunger: k.post = HungerSize(m); break;
@@ -459,10 +508,10 @@ namespace Huginn::Core::Effect
             // A graded column with no magnitude. Through a script route (keyword,
             // name, description, override) the script carries the amount and the
             // record says 0: presence. Through the engine's own data (route
-            // Data) a magnitude of 0 was settled before this (ZeroCase: the
-            // description's number, its column, or a dropped carrier row); what
-            // still grades 0 here (a timed Level row with duration 0) grades at
-            // the bottom of the population (1/(N+1); zeros are not in it).
+            // Data) an unknown strength was settled before this (ZeroCase /
+            // ZeroRow); what still grades 0 here (a timed Level row with
+            // duration 0) grades at the bottom of the population (1/(N+1);
+            // zeros are not in it).
             if (k.graded && !(k.raw > 0.0f) && !k.fullRestore) {
                 k.raw = 0.0f;
                 if (cls.route != Route::Data) k.graded = false;
@@ -482,6 +531,12 @@ namespace Huginn::Core::Effect
         bool hydrated = false;
         bool aura = false;
         bool hazard = false;
+        struct Pending
+        {
+            std::size_t index;
+            bool descEmpty;
+        };
+        std::vector<Pending> unresolved;
         for (const auto& row : it.effects) {
             RowOutcome o;
             ++m.tally.rows;
@@ -514,10 +569,13 @@ namespace Huginn::Core::Effect
                             if (!pc.Mapped() || pc.route == Route::Helper) continue;
                             const auto& pm = effects[p.effect];
                             const Zero z = ZeroCase(p, pm, pc);
-                            if (z == Zero::Carrier) continue;
-                            EffectRow p2 = p;
-                            if (z == Zero::Number) p2.magnitude = pc.zeroMagnitude;
-                            m.rows.push_back(MakeRow(p2, pm, ZeroClass(pc, z), true, m.constantItem));
+                            if (z == Zero::Unmapped || z == Zero::Unresolved) continue;  // nothing to say about it
+                            if (z == Zero::Describe || z == Zero::Named) {
+                                m.rows.push_back(ZeroRow(p, pm, pc, z, true, m.constantItem, nullptr));
+                            }
+                            else {
+                                m.rows.push_back(MakeRow(p, pm, pc, true, m.constantItem));
+                            }
                             o.mapped = true;
                             o.kept = true;
                         }
@@ -544,22 +602,23 @@ namespace Huginn::Core::Effect
                 }
                 else {
                     const Zero z = ZeroCase(row, mg, cls);
-                    if (z == Zero::Carrier) {
-                        ++m.tally.carrier;  // not counted: an engine row with nothing in it
+                    if (z == Zero::Unresolved) {
+                        // Settled below, once the item's other rows are known.
+                        unresolved.push_back({ m.outcomes.size(), cls.zeroDescEmpty });
+                    }
+                    else if (z == Zero::Unmapped) {
+                        o.counted = true;  // the description says no column applies
+                        o.cls.col = Col::_Count;
+                        o.cls.col2 = Col::_Count;
+                        o.cls.route = Route::Unmapped;
                     }
                     else {
                         o.counted = true;
                         if (cls.Mapped()) {
                             o.mapped = true;
                             o.kept = true;
-                            if (z == Zero::Number) {
-                                EffectRow r2 = row;
-                                r2.magnitude = cls.zeroMagnitude;
-                                m.rows.push_back(MakeRow(r2, mg, cls, true, m.constantItem));
-                            }
-                            else if (z == Zero::Describe || z == Zero::Named) {
-                                o.cls = ZeroClass(cls, z);
-                                m.rows.push_back(MakeRow(row, mg, o.cls, true, m.constantItem));
+                            if (z == Zero::Describe || z == Zero::Named) {
+                                m.rows.push_back(ZeroRow(row, mg, cls, z, true, m.constantItem, &o.cls));
                             }
                             else {
                                 m.rows.push_back(MakeRow(row, mg, cls, true, m.constantItem));
@@ -573,19 +632,48 @@ namespace Huginn::Core::Effect
                 if (cls.Mapped() && cls.route != Route::Helper && HiddenWhitelisted(cls.col) &&
                     !cls.helperName && NameAgrees(cls, cls.col)) {
                     const Zero z = ZeroCase(row, mg, cls);
-                    if (z != Zero::Carrier) {
+                    if (z == Zero::Describe || z == Zero::Named) {
                         o.kept = true;
                         ++m.tally.hiddenKept;
-                        EffectRow r2 = row;
-                        if (z == Zero::Number) r2.magnitude = cls.zeroMagnitude;
-                        if (z == Zero::Describe || z == Zero::Named) o.cls = ZeroClass(cls, z);
-                        m.rows.push_back(MakeRow(r2, mg, o.cls, false, m.constantItem));
+                        m.rows.push_back(ZeroRow(row, mg, cls, z, false, m.constantItem, &o.cls));
+                    }
+                    else if (z == Zero::None) {
+                        o.kept = true;
+                        ++m.tally.hiddenKept;
+                        m.rows.push_back(MakeRow(row, mg, cls, false, m.constantItem));
                     }
                 }
             }
             if (o.counted) ++m.tally.counted;
             if (o.mapped) ++m.tally.mapped;
             m.outcomes.push_back(o);
+        }
+
+        // Visible rows whose strength is unknown and that nothing reads: a
+        // CARRIER (not counted) only when it is provably a companion -- no
+        // description, next to a visible row the item keeps (Requiem's
+        // "Dispel Armor" on a weapon enchantment, Earthquake's zero row
+        // beside "Earthquake Damage", the Mystic/Dread variants beside a kept
+        // "Bound Armor"). Anything else is counted as unmapped.
+        if (!unresolved.empty()) {
+            bool keptVisible = false;
+            for (const auto& o : m.outcomes) {
+                if (o.kept && !o.hidden) keptVisible = true;
+            }
+            for (const auto& u : unresolved) {
+                auto& o = m.outcomes[u.index];
+                if (keptVisible && u.descEmpty) {
+                    o.carrier = true;
+                    ++m.tally.carrier;
+                }
+                else {
+                    o.counted = true;
+                    o.cls.col = Col::_Count;
+                    o.cls.col2 = Col::_Count;
+                    o.cls.route = Route::Unmapped;
+                    ++m.tally.counted;
+                }
+            }
         }
 
         if (hydrated) {

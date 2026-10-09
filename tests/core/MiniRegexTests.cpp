@@ -241,4 +241,7 @@ TEST_CASE("mini regex: verifier round 2 -- empty-matchable loops and dead lookbe
     const std::string text(200000, 'a');
     CHECK_FALSE(slow.Contains(text));
     CHECK(MiniRegex::BudgetExceeded() > before);
+    CHECK(slow.ContainsOrBudget(text));  // a veto pattern that gave up vetoes
+    CHECK_FALSE(slow.ContainsOrBudget("abab"));
+    CHECK(slow.ContainsOrBudget("ababc"));
 }

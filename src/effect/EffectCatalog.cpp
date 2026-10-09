@@ -4,6 +4,7 @@
 #include "IniLoad.h"
 #include "core/MiniRegex.h"
 
+#include <atomic>
 #include <chrono>
 #include <cmath>
 #include <memory>
@@ -14,6 +15,52 @@ namespace Huginn::Effect
     namespace
     {
         using namespace Core::Effect;
+
+        /// Builds the catalog the first time the main menu opens: after every
+        /// plugin's kDataLoaded handler and the tasks they queued, so keyword
+        /// distributors (KID, SPID) have finished. Stays registered; fires once.
+        class MainMenuBuild final : public RE::BSTEventSink<RE::MenuOpenCloseEvent>
+        {
+        public:
+            RE::BSEventNotifyControl ProcessEvent(const RE::MenuOpenCloseEvent* a_event,
+                                                  RE::BSTEventSource<RE::MenuOpenCloseEvent>*) override
+            {
+                if (a_event && a_event->opening && a_event->menuName == RE::MainMenu::MENU_NAME) Fire();
+                return RE::BSEventNotifyControl::kContinue;
+            }
+
+            void Fire()
+            {
+                if (fired_.exchange(true)) return;
+                logger::info("[EffectCatalog] main menu opened: building"sv);
+                if (auto* tasks = SKSE::GetTaskInterface()) {
+                    tasks->AddTask([]() { EffectCatalog::GetSingleton().Build(); });
+                }
+                else {
+                    EffectCatalog::GetSingleton().Build();
+                }
+            }
+
+        private:
+            std::atomic<bool> fired_{ false };
+        };
+
+        MainMenuBuild g_mainMenuBuild;
+
+        void LogBudgetHits(std::string_view where)
+        {
+            static std::atomic<std::size_t> logged{ 0 };
+            const auto hits = Core::MiniRegex::BudgetExceeded();
+            auto seen = logged.load();
+            while (hits > seen) {
+                if (logged.compare_exchange_weak(seen, hits)) {
+                    logger::warn("[EffectCatalog] {} rule-pattern search(es) hit the regex step budget ({} in all, "
+                                 "last in {}); a veto pattern read it as a veto, any other as no match"sv,
+                                 hits - seen, hits, where);
+                    break;
+                }
+            }
+        }
 
         CatalogEntry MakeEntry(const ItemMapping& m, Cap cap, const Populations& pops)
         {
@@ -70,16 +117,17 @@ namespace Huginn::Effect
 
     void EffectCatalog::ScheduleBuild()
     {
-        if (auto* tasks = SKSE::GetTaskInterface()) {
-            // Queued twice over: the first task re-queues the build, so it runs
-            // a frame later still -- margin for a distributor that finishes in
-            // a task of its own rather than inside its kDataLoaded handler.
-            tasks->AddTask([tasks]() { tasks->AddTask([]() { GetSingleton().Build(); }); });
-            logger::info("[EffectCatalog] build queued for the first task after kDataLoaded"sv);
-        }
-        else {
+        // Not a task queued from kDataLoaded: SKSE may run tasks queued during
+        // its task pass in the same pass, so "a frame later" is not a promise.
+        // The main menu opening is: it comes after every kDataLoaded handler.
+        auto* ui = RE::UI::GetSingleton();
+        if (!ui) {
             Build();
+            return;
         }
+        ui->AddEventSink<RE::MenuOpenCloseEvent>(&g_mainMenuBuild);
+        logger::info("[EffectCatalog] build waits for the main menu to open"sv);
+        if (ui->IsMenuOpen(RE::MainMenu::MENU_NAME)) g_mainMenuBuild.Fire();
     }
 
     void EffectCatalog::Build()
@@ -125,10 +173,7 @@ namespace Huginn::Effect
                 buildMs_ = std::chrono::duration<double, std::milli>(t2 - t0).count();
                 const std::size_t effects = read->effects.size();
                 ready_.store(true, std::memory_order_release);
-                if (const auto hits = Core::MiniRegex::BudgetExceeded(); hits > 0) {
-                    logger::warn("[EffectCatalog] {} rule-pattern search(es) hit the regex step budget and were "
-                                 "read as no match"sv, hits);
-                }
+                LogBudgetHits("the build"sv);
 
                 logger::info("[EffectCatalog] {} of {} forms in scope, {} magic effects; coverage {:.2f}% ({} of {} "
                              "visible effect rows mapped; {} helper, {} wrapper, {} carrier rows not counted); read {:.0f} ms "
@@ -199,6 +244,7 @@ namespace Huginn::Effect
         auto classes = ClassifyAll(rr.effects, &overrides_);
         ResolveZeroMagnitudes(rr.items, rr.effects, classes);
         const ItemMapping m = MapItem(item, rr.effects, classes);
+        LogBudgetHits("a per-instance entry"sv);
         return MakeEntry(m, Grade(m, pops_), pops_);
     }
 }
