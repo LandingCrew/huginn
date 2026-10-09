@@ -211,6 +211,10 @@ namespace Huginn::Learning::SelectionLogV3
         {
             uint64_t cacheGeneration = UINT64_MAX;
             std::vector<PipelineStateCache::EligibleRow> eligible;
+            // The catalog entry of each eligible row, looked up once per run
+            // (nullptr: not in the catalog); redone once the catalog is ready.
+            std::vector<const Effect::CatalogEntry*> entries;
+            bool entriesFromReadyCatalog = false;
             std::vector<Row> rows;
             Core::Needs::NeedArray need{};
             Core::Needs::NeedArray input{};
@@ -219,7 +223,8 @@ namespace Huginn::Learning::SelectionLogV3
         std::mutex g_tickMutex;
         TickState g_tick;
 
-        Row EligibleToRow(const PipelineStateCache::EligibleRow& e, const State::PlayerActorState& player)
+        Row EligibleToRow(const PipelineStateCache::EligibleRow& e, const Effect::CatalogEntry* entry,
+                          const State::PlayerActorState& player)
         {
             Row r;
             r.form = e.formID;
@@ -228,7 +233,7 @@ namespace Huginn::Learning::SelectionLogV3
             r.flags = Flag::Eligible | (std::isfinite(e.utility) ? Flag::Scored : 0);
             r.util = e.utility;
             r.wildcardP = e.wildcardPropensity;
-            if (const auto* entry = Effect::EffectCatalog::GetSingleton().Find(e.formID)) {
+            if (entry) {
                 r.kind = static_cast<uint8_t>(entry->kind);
                 r.cap = &entry->cap;
                 Effect::StackInfo stack;
@@ -785,15 +790,27 @@ namespace Huginn::Learning::SelectionLogV3
         {
             std::lock_guard lock(g_tickMutex);
             uint64_t generation = g_tick.cacheGeneration;
-            PipelineStateCache::GetSingleton().TakeEligibleIfNewer(g_tick.cacheGeneration, g_tick.eligible, generation);
+            const bool newRun = PipelineStateCache::GetSingleton().TakeEligibleIfNewer(g_tick.cacheGeneration,
+                g_tick.eligible, generation);
             g_tick.cacheGeneration = generation;
+            auto& catalog = Effect::EffectCatalog::GetSingleton();
+            if (newRun || (!g_tick.entriesFromReadyCatalog && catalog.Ready())) {
+                g_tick.entries.clear();
+                g_tick.entries.reserve(g_tick.eligible.size());
+                for (const auto& e : g_tick.eligible) g_tick.entries.push_back(catalog.Find(e.formID));
+                g_tick.entriesFromReadyCatalog = catalog.Ready();
+            }
             if (live) {
                 g_tick.need = live->vector.value;
                 g_tick.input = live->vector.input;
             }
+            // Every tick: the cross-features follow the live vitals, buffs and
+            // launcher whether or not the pipeline ran.
             g_tick.rows.clear();
             g_tick.rows.reserve(g_tick.eligible.size());
-            for (const auto& e : g_tick.eligible) g_tick.rows.push_back(EligibleToRow(e, player));
+            for (size_t i = 0; i < g_tick.eligible.size(); ++i) {
+                g_tick.rows.push_back(EligibleToRow(g_tick.eligible[i], g_tick.entries[i], player));
+            }
             rowCount = g_tick.rows.size();
         }
 

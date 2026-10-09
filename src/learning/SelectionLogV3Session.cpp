@@ -27,7 +27,9 @@
 
 #ifndef NDEBUG
 
+#include "Globals.h"
 #include "PipelineStateCache.h"
+#include "UtilityScorer.h"
 #include "input/EquipHand.h"
 #include "input/EquipManager.h"
 #include "slot/SlotAllocator.h"
@@ -116,6 +118,9 @@ namespace Huginn::Learning::SelectionLogV3
             if (!player || !equip) return;
             const auto shown = PipelineStateCache::GetSingleton().TakeShown();
             for (const auto& s : shown.shown) {
+                // A Remembrance hold put back is the player's undo, not a pick
+                // (WheelerClient withdraws it); an override is not the ranking's.
+                if (s.type == Slot::AssignmentType::Remembered || s.type == Slot::AssignmentType::Override) continue;
                 auto* form = RE::TESForm::LookupByID(s.formID);
                 if (!form || player->GetEquippedObject(false) == form || player->GetEquippedObject(true) == form) continue;
                 if (auto* weapon = form->As<RE::TESObjectWEAP>(); weapon && !weapon->IsBow() && !weapon->IsCrossbow()) {
@@ -134,6 +139,34 @@ namespace Huginn::Learning::SelectionLogV3
                 return;
             }
             logger::info("[DecisionSession] no weapon or spell on page {} to pick from the wheel"sv, page);
+        }
+
+        // Wildcards on every eligible slot, so the logged pages carry wildcard
+        // rows and their propensities (the shipped odds show one ~20% of the
+        // time). Test mode only; nothing is saved.
+        float g_wcBase = 0.0f, g_wcMax = 0.0f, g_wcRefractory = 0.0f;   // main thread only
+
+        void ForceWildcards()
+        {
+            if (!g_utilityScorer) return;
+            auto& wc = g_utilityScorer->GetWildcardManager();
+            g_wcBase = wc.GetBaseProbability();
+            g_wcMax = wc.GetMaxProbability();
+            g_wcRefractory = wc.GetRefractoryPeriod();
+            wc.SetBaseProbability(1.0f);
+            wc.SetMaxProbability(1.0f);
+            wc.SetRefractoryPeriod(0.0f);
+            Slot::SlotAllocator::GetSingleton().MarkPageDirty();
+            logger::info("[DecisionSession] wildcards forced on (probability 1, no refractory)"sv);
+        }
+
+        void RestoreWildcards()
+        {
+            if (!g_utilityScorer) return;
+            auto& wc = g_utilityScorer->GetWildcardManager();
+            wc.SetBaseProbability(g_wcBase);
+            wc.SetMaxProbability(g_wcMax);
+            wc.SetRefractoryPeriod(g_wcRefractory);
         }
 
         void OpenInventory()
@@ -220,6 +253,8 @@ namespace Huginn::Learning::SelectionLogV3
             Task(&RestoreHealth);
             std::this_thread::sleep_for(6s);    // the 3.5 s grace, and a tick or two
 
+            Task(&ForceWildcards);
+            std::this_thread::sleep_for(1s);
             Task([]() { PressSlot(0); });
             std::this_thread::sleep_for(4s);
             Task([]() { PressSlot(1); });
@@ -229,6 +264,7 @@ namespace Huginn::Learning::SelectionLogV3
 
             Task(&WheelPick);
             std::this_thread::sleep_for(5s);
+            Task(&RestoreWildcards);
 
             Task(&OpenInventory);
             std::this_thread::sleep_for(2s);
