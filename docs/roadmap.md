@@ -159,27 +159,35 @@ and accept% and so ship as their own small PR.
 ### R3. Need vector, logged only
 
 Map Phase 2. The rules keep scoring; the vector is computed and logged beside
-them.
-- [ ] `NeedId`/`NeedVector` from `9-data/needs.csv`; `ResponseCurve` in
-      `src/core/`; a `[Needs]` INI section for curve parameters.
-- [ ] Sensors: encumbrance ratio, per-element decaying damage rate, combat and
+them. Built in PR `r3-need-vector` (0.23.14), waiting for the second agent's
+check; what was built is in the [implementation map](architecture/9-implementation-map.md#phase-2-describe-situations-need-vector).
+- [x] `NeedId`/`NeedVector` from `9-data/needs.csv` (new columns `curve_kind`,
+      `curve_p1`, `curve_p2`, `r3_input`; `tools/needs/make_need_ids.py`
+      generates `core/NeedIds.h`, a host test fails on drift);
+      `core/ResponseCurve.h`; a `[Needs]` INI section (one key per need,
+      hot-reloadable).
+- [x] Sensors: encumbrance ratio, per-element decaying damage rate, combat and
       submerged timers on `steady_clock`, the held multi-hot target families
       (union of combat hostiles; no line-of-sight logic, the user 2026-10-08),
-      target summoned / casting / archer, restore pending, drop ahead.
-- [ ] Drop ahead (the user, 2026-10-08): a Havok ray cast straight down from
+      target summoned / casting / archer, restore pending, drop ahead. 87 of
+      the 92 needs have a sensor; five are deferred (map Phase 2).
+- [x] Drop ahead (the user, 2026-10-08): a Havok ray cast straight down from
       2–3 points ahead of the player (`bhkWorld::PickObject`), not a guessed
       floor and not the terrain heightmap, which sees through rock meshes.
       Method in `9-data/needs.csv` (`drop_ahead`). Costs a few rays per
-      position poll; works in interiors (ruins) too. Check the physics-world
-      read lock and the main thread. **In game (you):** stand at cliff edges,
-      on rock spires and bridges, and above deep water; `hg needs` shows
-      `drop_ahead` high only at a real drop.
-- [ ] Computed once in `GatherState`; a quantised need signature joins the
+      position poll; works in interiors (ruins) too. Physics-world read lock
+      taken; main thread only (`state/DropAheadProbe`).
+- [ ] **In game (you):** stand at cliff edges, on rock spires and bridges, and
+      above deep water; `hg needs` shows `drop_ahead` high only at a real drop.
+- [x] Computed once in `GatherState`; a quantised need signature joins the
       skip gate.
-- [ ] `hg needs` prints the live vector.
-- Done when: curve host tests pass; a replayed state snapshot gives the
-  expected vector. **In game:** a 20-minute session where `hg needs` shows
-  fire, darkness, hunger and combat onset firing and expiring.
+- [x] `hg needs` prints the live vector.
+- [x] Done when (agent): curve host tests pass; a replayed state snapshot gives
+  the expected vector (`tests/core/NeedFixtureTests.cpp`: 123 snapshots, 63
+  synthetic and 60 recorded in game, against an oracle written apart from the
+  evaluator).
+- [ ] **In game (you):** a 20-minute session where `hg needs` shows fire,
+  darkness, hunger and combat onset firing and expiring.
 
 ### R4. Selection log v3
 

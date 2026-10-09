@@ -81,6 +81,30 @@ every MGEF of a dump); run them with `python -I`. They need the dumps, which
 are user data and not checked in; re-running them on R2's dumps reproduces
 the checked-in fixtures byte for byte.
 
+**The need vector (R3, 0.23.14).** `core/ResponseCurve.h`, `core/NeedIds.h`
+(generated from `needs.csv`), `core/NeedSnapshot*`, `core/NeedEvaluator.*`,
+`core/NeedSensorMath.h`, `core/DropAhead.h`, `core/TargetFamilies.h`:
+
+| Test | What it pins |
+|---|---|
+| `NeedIdsTests.cpp` | `core/NeedIds.h` equals `needs.csv` (ids, order, group, priority, default curve, deferred flag); every need has an input |
+| `ResponseCurveTests.cpp` | each curve kind against hand-worked values; [0,1] for any input; parse/format round trip; bad INI values refused |
+| `NeedEvaluatorTests.cpp` | named cases for the `r3_input` formulas (gates, NEVER, families, ammo by launcher...), the 0.05 signature, `Advance`, `TimeDriven`, the text record |
+| `NeedSensorTests.cpp` | drop-ahead geometry (points, direction, cliff, slope, no hit, bridge over water, wading), the decaying sum, the time-to-kill estimate |
+| `TargetFamiliesTests.cpp` | the multi-hot family reading on all 539 `race_map.csv` rows (family \| also) and named cases |
+| `NeedFixtureTests.cpp` | every snapshot in `tests/core/fixtures/needs/*.txt` gives the vector in its `.expected.csv` |
+
+The fixtures' expectations come from `tools/needs/expected_vectors.py`, an
+oracle written from `needs.csv`, `NeedSnapshot.h` and the curve formulas by an
+agent that did not see the evaluator; regenerate an expectation only with it.
+`synthetic.txt` (63 snapshots) makes every need with a sensor fire;
+`captured_vanilla.txt` (60) was recorded in game with
+`run_tests.py --capture-needs 400 --capture-slots 90` (Debug, test mode;
+`Huginn_NeedSnapshots.txt` in the log folder). After editing the csv's curve
+or input columns: `python -I tools/needs/make_need_ids.py` (header),
+`--ini` (paste into `configs/Huginn.ini`; `--check` verifies both), then the
+oracle on every fixture.
+
 **Coverage on a whole load order: `huginn_effect_report`** (a host tool built
 with the tests, not run by ctest: it needs a dump, which is user data):
 
@@ -131,7 +155,7 @@ Then launch Skyrim. Two trigger points:
 | When | What runs | Where |
 |---|---|---|
 | **`kDataLoaded`** (main menu, once per process) | `RunUnitTests()` | `src/Main.cpp:682` |
-| **`kPostLoadGame`** — loading a save, **not** a new game | the 18 after-load suites | `InitializeGameSystems()`, `src/Main.cpp:448–465` |
+| **`kPostLoadGame`** — loading a save, **not** a new game | the 19 after-load suites | `InitializeGameSystems()`, `src/Main.cpp` (the `HUGINN_RUN_SUITE` list) |
 
 The second group is gated on `!isNewGame` because it needs real form data
 (spells, items, weapons) in the player's inventory. Starting a new game runs
@@ -215,6 +239,8 @@ python -I tools/ingame/run_tests.py --list simonrim     # the simonrim instance'
 python -I tools/ingame/run_tests.py --list lorerim      # LoreRim-5, profile Ultra, executable LoreRim
 python -I tools/ingame/run_tests.py --no-save --dry-run # check, print the MO2 command, launch nothing
 python -I tools/ingame/run_tests.py --dump-all Huginn_All_vanilla.csv   # also write hg dump all (0.23.12+)
+python -I tools/ingame/run_tests.py --capture-needs 400 --capture-slots 90  # record need snapshots (0.23.14+)
+python -I tools/ingame/run_tests.py --dump-recs 8      # `hg recs 40` after 8 idle s, then end (0.23.14+)
 ```
 
 `--dump-all NAME` (a plain file name) makes Huginn write `hg dump all` into the
@@ -325,7 +351,7 @@ asserts bounds, not randomness.
 
 ### 2.2 Runs at `kPostLoadGame` (needs a loaded save)
 
-The 18 suites, in run order:
+The 19 suites, in run order:
 
 | Suite | What it covers |
 |---|---|
@@ -347,6 +373,7 @@ The 18 suites, in run order:
 | `RunSlotClassCapHoldTest()` | The class cap through the slot hold; skipped unless seating, the hold and the cap at 3 free are on |
 | `RunHomeKeyTest()` | Home keys: a returner takes its key back; skipped unless seating, the hold and home keys are on |
 | `RunBuffElementResistTest()` | A buff element is not a resist (throwaway) |
+| `RunNeedVectorTests()` | R3: the live need vector (values in [0,1], logged as `hg needs` prints it), `health_deficit` against the player's health, the drop-ahead rays on the main thread hitting ground under the nearest probe, the LOS layer's collision set, the encumbrance ratio, and (test mode only, so SKIPPED in an ordinary session) a 30% hit landing in a damage sum that then decays |
 
 **`RunRegressionTests()`** carries numbered `TC-*` cases (numbering has gaps —
 TC-04, 06, 08, 09 and 13 are not present). Terminal marker:
