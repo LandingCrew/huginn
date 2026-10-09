@@ -33,6 +33,15 @@ Each phase lists what it builds and what it may prune. A phase only prunes what 
 - **`hg dump all` becomes a view of the catalog** and absorbs the eight dump gaps in doc 9. Check coverage against `9-data/effects.csv`.
 - Prunes nothing yet.
 
+**As built (R2, 0.23.10), where it differs from the plan above:**
+- The rules live in `src/core/` (`EffectRules`, `EffectMapper`, `EffectColumns.h` generated from effects.csv, and `MiniRegex`: std::regex has no lookbehind and is slow in Debug) and are ported from the Python reference extractor that measured doc 9's coverage (`tools/effects/reference/`), not from the classifiers; `SpellClassifier`/`ItemClassifier`/`WeaponClassifier` code was not reused. The game side (`src/effect/`) only reads forms.
+- The per-load-order override (layer 2) is checked **first**, before the keyword table, so an entry can correct a keyword misroute; it is an optional `Huginn_EffectOverrides.ini` (none ships yet).
+- The catalog maps on a worker thread (seconds in Debug on LoreRim); forms are read on the main thread at kDataLoaded.
+- The cross-features are `src/core/CrossFeatures.h` + `src/effect/CrossFeatures.*` (not `src/learning/`), wired only as far as `hg cap`: nothing computes them per tick while nothing reads them. R4 is the first per-tick reader.
+- Candidates do not carry a catalog index yet (it would change `CandidateTypes`, and R2 changes no scores); the catalog is keyed by FormID. Do it with R4.
+- The armour items (all carried armour a candidate; the `ExternalEquipListener` armour skip) are split into their own PR: they change candidates and accept%.
+- A Cloak/hazard maps through its payload spell; with no payload it maps by its own description, and with neither it is left out of coverage like a helper.
+
 ### Phase 2: describe situations (need vector)
 
 - **New:** `NeedId`/`NeedVector` generated from `needs.csv`; `ResponseCurve` (linear, quadratic, logistic, logit, gaussian, step); a `[Needs]` INI section for curve parameters.
