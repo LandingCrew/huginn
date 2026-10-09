@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <array>
 #include <functional>
+#include <limits>
 #include <cmath>
 #include <numbers>
 #include <ostream>
@@ -223,6 +224,99 @@ TEST_CASE("drop ahead and deep water ahead: deep water is a safe landing, shallo
 
     // DropAhead is MeasureAhead's drop.
     CHECK(DropAhead(feet, stream, cfg) == MeasureAhead(feet, stream, cfg).drop);
+}
+
+TEST_CASE("drop ahead and deep water ahead: mixed probes, water at the hit, infinities, the no-water sentinel")
+{
+    // 0.23.19 fix round.
+    const DropProbeConfig cfg;
+    const float feet = 1000.0f;
+    const ProbeHit ground{ true, 1000.0f };
+    constexpr float kInf = std::numeric_limits<float>::infinity();
+
+    // Flat ground, then deep water, then a rock cliff: the rock's drop wins
+    // (the water point is no drop) and the deep water is still reported.
+    std::array<ProbeHit, 3> mixed{ { ground, { true, 0.0f, true, 300.0f }, { true, 150.0f } } };
+    auto r = MeasureAhead(feet, mixed, cfg);
+    CHECK(r.drop == doctest::Approx(850.0));
+    CHECK(r.waterDepth == doctest::Approx(300.0));
+
+    // Water exactly at the hit: depth 0, the drop as before (to the hit).
+    std::array<ProbeHit, 3> atHit{ { ground, { true, 200.0f, true, 200.0f }, ground } };
+    r = MeasureAhead(feet, atHit, cfg);
+    CHECK(r.waterDepth == 0.0f);
+    CHECK(r.drop == doctest::Approx(800.0));
+
+    // An infinite water height is no water: the drop is to the hit.
+    for (const float wz : { kInf, -kInf }) {
+        INFO("water " << wz);
+        std::array<ProbeHit, 3> infWater{ { ground, { true, 200.0f, true, wz }, ground } };
+        r = MeasureAhead(feet, infWater, cfg);
+        CHECK(r.waterDepth == 0.0f);
+        CHECK(r.drop == doctest::Approx(800.0));
+    }
+    // An infinite hit never makes a drop or a depth; water over a -inf hit
+    // is measured to its surface (the depth is not finite, so not deep).
+    std::array<ProbeHit, 3> infHigh{ { ground, { true, kInf, true, 500.0f }, ground } };
+    r = MeasureAhead(feet, infHigh, cfg);
+    CHECK(r.drop == 0.0f);
+    CHECK(r.waterDepth == 0.0f);
+    std::array<ProbeHit, 3> infLow{ { ground, { true, -kInf, true, 500.0f }, ground } };
+    r = MeasureAhead(feet, infLow, cfg);
+    CHECK(r.drop == doctest::Approx(500.0));
+    CHECK(r.waterDepth == 0.0f);
+    std::array<ProbeHit, 3> infLowDry{ { ground, { true, -kInf }, ground } };
+    CHECK(DropAhead(feet, infLowDry, cfg) == 0.0f);
+
+    // The heights the game uses for "no water" are not water: the XCLW
+    // "use the worldspace default" sentinel (>= 2147483600), -FLT_MAX, NaN,
+    // anything at or past 1e6 from the origin.
+    CHECK_FALSE(IsUsableWaterHeight(2147483648.0f));
+    CHECK_FALSE(IsUsableWaterHeight(2147483600.0f));
+    CHECK_FALSE(IsUsableWaterHeight(-std::numeric_limits<float>::max()));
+    CHECK_FALSE(IsUsableWaterHeight(std::nanf("")));
+    CHECK_FALSE(IsUsableWaterHeight(kMaxWaterHeightAbs));
+    CHECK_FALSE(IsUsableWaterHeight(-kMaxWaterHeightAbs));
+    CHECK(IsUsableWaterHeight(0.0f));
+    CHECK(IsUsableWaterHeight(-14000.0f));
+    CHECK(IsUsableWaterHeight(99999.0f));
+    // A sentinel over a cliff: no water, so a real drop and no depth (read
+    // as water, it would have zeroed the cliff).
+    std::array<ProbeHit, 3> sentinel{ { ground, { true, 0.0f, true, 2147483648.0f }, ground } };
+    r = MeasureAhead(feet, sentinel, cfg);
+    CHECK(r.drop == doctest::Approx(1000.0));
+    CHECK(r.waterDepth == 0.0f);
+    std::array<ProbeHit, 3> sentinelVoid{ { ground, { false, 0.0f, true, 2147483648.0f }, ground } };
+    r = MeasureAhead(feet, sentinelVoid, cfg);
+    CHECK(r.drop == doctest::Approx(4000.0 - 64.0));
+    CHECK(r.waterDepth == 0.0f);
+}
+
+TEST_CASE("drop ahead and deep water ahead: a no-hit probe's bottom follows the ray's real start")
+{
+    // ProbeAll casts each point from waist height above the PREVIOUS
+    // point's ground. A point cast from 500 (ground 436 before it) has its
+    // bottom at 500 - 4000 = -3500, not at feet + 64 - 4000 = -2936.
+    const DropProbeConfig cfg;
+    const float feet = 1000.0f;
+    const ProbeHit ground{ true, 1000.0f };
+    ProbeHit low{ false, 0.0f };
+    low.startZ = 500.0f;
+    CHECK(RayStartZ(feet, low, cfg) == doctest::Approx(500.0));
+    CHECK(RayBottomZ(feet, low, cfg) == doctest::Approx(-3500.0));
+    std::array<ProbeHit, 3> voidLow{ { ground, low, ground } };
+    CHECK(DropAhead(feet, voidLow, cfg) == doctest::Approx(4500.0));
+    // Water 500 over that bottom: deep, no drop. Measured from feet + 64 it
+    // would have been 0 deep and a 4000-unit drop.
+    ProbeHit lowWet = low;
+    lowWet.waterKnown = true;
+    lowWet.waterZ = -3000.0f;
+    std::array<ProbeHit, 3> wetLow{ { ground, lowWet, ground } };
+    auto r = MeasureAhead(feet, wetLow, cfg);
+    CHECK(r.waterDepth == doctest::Approx(500.0));
+    CHECK(r.drop == 0.0f);
+    // No startZ: feet + waist, the first point's start.
+    CHECK(RayStartZ(feet, ProbeHit{}, cfg) == doctest::Approx(1064.0));
 }
 
 namespace
@@ -549,4 +643,23 @@ TEST_CASE("drop reading age: an unpaused stop of the hook still goes stale; a lo
     // The reading is withdrawn (kPreLoadGame clears it): not measured, and a later one starts fresh.
     CHECK(age.Update(131.0, -1.0, false) == doctest::Approx(-1.0));
     CHECK(age.Update(132.0, 131.9, false) == doctest::Approx(0.1));
+}
+
+TEST_CASE("probe sequence: each point records the Z its down ray was cast from")
+{
+    const DropProbeConfig cfg;
+    // Through ProbeAll: a 40-unit step down to 960 at the first point, then
+    // a void. The second ray starts at 960 + 64 = 1024, its bottom -2976.
+    World w;
+    w.ground = [](float y) { return y < 40.0f ? 1000.0f : (y < 100.0f ? 960.0f : std::nanf("")); };
+    const auto hits = ProbeAll(kFeet, kNorth, cfg, w);
+    REQUIRE(hits[0].known);
+    REQUIRE(hits[1].known);
+    CHECK(hits[0].hitZ == doctest::Approx(960.0));
+    REQUIRE(hits[0].startZ.has_value());
+    CHECK(*hits[0].startZ == doctest::Approx(1064.0));
+    CHECK_FALSE(hits[1].hit);
+    REQUIRE(hits[1].startZ.has_value());
+    CHECK(*hits[1].startZ == doctest::Approx(1024.0));
+    CHECK(DropAhead(kFeet.z, hits, cfg) == doctest::Approx(1000.0 - (1024.0 - 4000.0)));
 }

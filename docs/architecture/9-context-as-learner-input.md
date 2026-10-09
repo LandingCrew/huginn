@@ -216,7 +216,7 @@ Weights stop being hand-tuned, but sensors stay hand-written and become the main
 Measured 2026-10-07 from `hg dump all` and `hg dump races` on vanilla+, Simonrim Essentials and LoreRim, plus a survey of the code and roadmap. The tables are in [9-data/](9-data/): `needs.csv`, `effects.csv`, `target_types.csv`, `race_map.csv`.
 
 **Needs: 93** (92 until 0.23.19 added `deep_water_ahead`, new).
-- **Status:** 31 exist today, 11 exist but are on/off only, 27 are partly there and 13 are new.
+- **Status** (needs.csv's `status` column, counted 0.23.19): 25 exist today, 11 exist but are on/off only, 33 are partly there and 24 are new. (The first count, 31 / 11 / 27 / 13, predates later rows and re-statusing.)
 - **Sources:** every one of today's 41 `[ContextWeights]` keys maps to a need, or is explained as not being one (the baselines that only clear `fMinimumUtility`, and the dead keys on the roadmap's cleanup chore).
 - **Perception rule:** applied. Target level is read today (`StateManager_Targets.cpp:404,499,667`) but used nowhere; it stays unused.
 - **Mod-dependent needs** switch on only when their system is detected: thirst, the SMI/CC survival meters, TrueHUD's enemy magicka and stamina, and LoreRim's healing block.

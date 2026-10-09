@@ -33,6 +33,7 @@
 #include <cmath>
 #include <initializer_list>
 #include <cstddef>
+#include <optional>
 
 namespace Huginn::Core::Needs
 {
@@ -59,6 +60,11 @@ namespace Huginn::Core::Needs
     /// clutter. An unknown probe counts as nothing -- never as a drop. A known
     /// probe with no `hit` is a real void under the start (a very big drop).
     /// `waterZ` is the water surface at the probe's XY when `waterKnown`.
+    /// `startZ` is the Z the down ray was really cast from: ProbeAll casts
+    /// each point from waist height above the PREVIOUS point's ground, not
+    /// the player's, so the ray's bottom (a no-hit probe's surface) follows
+    /// it. Empty means feet + waist, the first point's start (and what a
+    /// hand-made hit in a test means).
     struct ProbeHit
     {
         bool hit = false;
@@ -66,6 +72,7 @@ namespace Huginn::Core::Needs
         bool waterKnown = false;
         float waterZ = 0.0f;
         bool known = true;
+        std::optional<float> startZ;
     };
 
     /// Unit XY direction to probe along: the horizontal movement when the
@@ -132,14 +139,45 @@ namespace Huginn::Core::Needs
     /// a drop.
     inline constexpr float kSafeLandingDepth = 128.0f;
 
+    /// A water height the game can report that is no water: a cell's XCLW
+    /// "use the worldspace default" sentinel (>= 2147483600, CommonLib
+    /// TESObjectCELL::GetExteriorWaterHeight) and the -infinity / -FLT_MAX of
+    /// a cell without water. No real surface is anywhere near 1e6 units from
+    /// the origin (a whole worldspace spans a few hundred thousand), so any
+    /// height that is not finite or is that far out is not water.
+    inline constexpr float kMaxWaterHeightAbs = 1.0e6f;
+
+    [[nodiscard]] inline bool IsUsableWaterHeight(float z) noexcept
+    {
+        return std::isfinite(z) && std::fabs(z) < kMaxWaterHeightAbs;
+    }
+
+    /// The Z the probe's down ray was cast from (see ProbeHit::startZ), and
+    /// its bottom: the surface of a probe with no hit.
+    [[nodiscard]] inline float RayStartZ(float feetZ, const ProbeHit& h, const DropProbeConfig& cfg) noexcept
+    {
+        return (h.startZ && std::isfinite(*h.startZ)) ? *h.startZ : feetZ + cfg.waistHeight;
+    }
+
+    [[nodiscard]] inline float RayBottomZ(float feetZ, const ProbeHit& h, const DropProbeConfig& cfg) noexcept
+    {
+        return RayStartZ(feetZ, h, cfg) - cfg.rayLength;
+    }
+
+    /// Water at the probe that counts: known and a usable height.
+    [[nodiscard]] inline bool HasWater(const ProbeHit& h) noexcept
+    {
+        return h.waterKnown && IsUsableWaterHeight(h.waterZ);
+    }
+
     /// The water depth under one probe: the surface down to the hit, or with
     /// no hit down to the ray's bottom (the water is at least that deep). 0
-    /// when no water is known there or it lies below the hit (a pool under a
-    /// bridge deck). Never NaN.
+    /// when no usable water is known there or it lies at or below the hit (a
+    /// pool under a bridge deck). Never NaN.
     [[nodiscard]] inline float WaterDepthAtProbe(float feetZ, const ProbeHit& h, const DropProbeConfig& cfg) noexcept
     {
-        if (!h.waterKnown || !std::isfinite(h.waterZ)) return 0.0f;
-        const float bottom = h.hit ? h.hitZ : feetZ + cfg.waistHeight - cfg.rayLength;
+        if (!HasWater(h)) return 0.0f;
+        const float bottom = h.hit ? h.hitZ : RayBottomZ(feetZ, h, cfg);
         const float depth = h.waterZ - bottom;
         return std::isfinite(depth) ? std::max(depth, 0.0f) : 0.0f;
     }
@@ -151,9 +189,8 @@ namespace Huginn::Core::Needs
     [[nodiscard]] inline float DropAtProbe(float feetZ, const ProbeHit& h, const DropProbeConfig& cfg) noexcept
     {
         if (WaterDepthAtProbe(feetZ, h, cfg) >= kSafeLandingDepth) return 0.0f;
-        const float startZ = feetZ + cfg.waistHeight;
-        float surface = h.hit ? h.hitZ : startZ - cfg.rayLength;
-        if (h.waterKnown && std::isfinite(h.waterZ) && h.waterZ > surface) {
+        float surface = h.hit ? h.hitZ : RayBottomZ(feetZ, h, cfg);
+        if (HasWater(h) && h.waterZ > surface) {
             surface = h.waterZ;
         }
         const float drop = feetZ - surface;
@@ -231,7 +268,7 @@ namespace Huginn::Core::Needs
     /// Then a ray straight down from the point at waist height above the
     /// previous ground: a hit is the surface, no hit a real void, Exhausted
     /// (out of recasts) makes this one point unknown. Water is not read here
-    /// (the game adds it after).
+    /// (the game adds it after, at each point's XY and recorded startZ).
     ///
     /// Known limit: an obstacle open between the knee and the waist (a railing
     /// with a gap there) is not seen, so a void behind it reads as a cliff.
@@ -269,6 +306,7 @@ namespace Huginn::Core::Needs
             }
             const bool kneeClear = horizontal(start, cfg.kneeHeight);
             const RayResult down = cast(start, kDown, cfg.rayLength, RayKind::Down);
+            h.startZ = start.z;  // the real start: the ray's bottom and the water read follow it
             const bool risingGround = down.outcome == RayResult::Outcome::Hit &&
                                       start.z - down.distance >= groundZ + cfg.kneeHeight;
             if (!kneeClear && !risingGround) {

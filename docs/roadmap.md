@@ -205,9 +205,13 @@ in. What was built: the [implementation map](architecture/9-implementation-map.m
       need. Same staleness and skips as `drop_ahead`; while swimming it reads
       0 (swimming and underwater cover a player in the water). `hg needs`
       prints it beside the drop; the `[DropAhead]` debug line prints each
-      probe's depth (`w<units>`). Host tests: a cliff into deep water, into a
-      shallow stream, onto rock, a lake shore on flat ground, unknown probes,
-      no hit over water.
+      probe's hit, raw water height and depth (`[hit Z water Z depth N]`),
+      and how many points read water from a neighbouring or an unknown cell.
+      Water is read from the cell each point lies in (fix round). Host
+      tests: a cliff into deep water, into a shallow stream, onto rock, a
+      lake shore on flat ground, unknown probes, no hit over water; mixed
+      points, water at the hit, infinities, the no-water sentinel, a no-hit
+      bottom from a ray cast off lower ground.
 - [ ] **In game (you):** the safe-landing depth (128 units) is a guess -- the
       game's threshold is not known -- and the deep-water need is untested in
       game. With `hg needs`: a cliff over deep water reads `drop_ahead` 0 and
