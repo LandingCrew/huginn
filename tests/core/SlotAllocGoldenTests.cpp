@@ -108,6 +108,51 @@ TEST_CASE("slot golden: recorded snapshots are present and parse")
     CHECK(old > 0);
 }
 
+TEST_CASE("slot golden: recorded names are text (no freed registry strings captured)")
+{
+    // Round 1 found campaign snapshots whose names were read from freed
+    // registry strings (=%CD%CD..., a NUL in 'Pretty Soul Gem'). The capture
+    // now deep-copies names on the allocating thread; this keeps it honest.
+    auto isText = [](const std::string& s) {
+        std::size_t i = 0;
+        while (i < s.size()) {
+            // Printable, and valid UTF-8.
+            const auto c = static_cast<unsigned char>(s[i]);
+            if (c < 0x20 || c == 0x7F) return false;
+            if (c < 0x80) {
+                ++i;
+                continue;
+            }
+            const std::size_t n = (c & 0xE0) == 0xC0 ? 1 : (c & 0xF0) == 0xE0 ? 2 : (c & 0xF8) == 0xF0 ? 3 : 0;
+            if (n == 0 || c < 0xC2 || i + n >= s.size()) return false;
+            for (std::size_t k = 1; k <= n; ++k) {
+                if ((static_cast<unsigned char>(s[i + k]) & 0xC0) != 0x80) return false;
+            }
+            i += n + 1;
+        }
+        return true;
+    };
+    std::string error;
+    const auto files = LoadSlotFixtures(&error);
+    REQUIRE(error.empty());
+    std::size_t names = 0;
+    for (const auto& f : files) {
+        for (std::size_t i = 0; i < f.snaps.size(); ++i) {
+            const auto& snap = f.snaps[i];
+            for (const auto& c : snap.in.candidates) {
+                CHECK_MESSAGE(isText(c.name), f.name, " #", i, ": candidate ", c.formID, " name ", SA::EscapeName(c.name));
+                CHECK_MESSAGE(!c.name.empty(), f.name, " #", i, ": candidate ", c.formID, " has no name");
+                ++names;
+            }
+            for (const auto& o : snap.in.overrides) {
+                CHECK_MESSAGE(isText(o.name), f.name, " #", i, ": override ", o.formID, " name ", SA::EscapeName(o.name));
+                ++names;
+            }
+        }
+    }
+    MESSAGE("recorded names checked: ", names);
+}
+
 TEST_CASE("slot golden: the core with the old arithmetic reproduces the old game code")
 {
     std::string error;

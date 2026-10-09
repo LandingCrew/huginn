@@ -90,6 +90,26 @@ namespace Huginn::Test
         if (out.generationMatches != rec.generationAfter) why += "generation ";
         if (out.clearedAllPages != rec.clearedAllPages) why += "clearedAll ";
         if (SA::KeptOff(in, out) != rec.keptOff) why += "keptOff ";
+        if (rec.hasEvents) {
+            const auto events = SA::EventsOf(in, out);
+            if (events != rec.events) {
+                why += std::format("events ({} recorded, {} from the core", rec.events.size(), events.size());
+                for (std::size_t i = 0; i < std::max(events.size(), rec.events.size()); ++i) {
+                    const bool same = i < events.size() && i < rec.events.size() && events[i] == rec.events[i];
+                    if (!same) {
+                        auto show = [](const std::vector<SA::PageEvent>& v, std::size_t k) {
+                            if (k >= v.size()) return std::string("-");
+                            std::string s = v[k].code;
+                            for (const auto x : v[k].v) s += std::format(" {:x}", x);
+                            return s;
+                        };
+                        why += std::format("; first difference #{}: recorded {} vs core {}", i, show(rec.events, i), show(events, i));
+                        break;
+                    }
+                }
+                why += ") ";
+            }
+        }
         return why;
     }
 
