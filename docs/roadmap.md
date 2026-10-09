@@ -462,7 +462,11 @@ changed in the same PR, and the shipped INI loses the dead keys.
       `WarmHeld` 6.6 ms) onto the first gameplay frame; and a pausing on-load
       message box would suppress menu ticks. Not done now: the old engine is
       frozen and no race is shown. The code comments say what runs where
-      (`UpdateLoop.cpp`, THREADS above `OnUpdate`; 0.23.18).
+      (`UpdateLoop.cpp`, THREADS above `OnUpdate`; 0.23.18). Whichever
+      option is chosen, the client API proposal
+      ([architecture/10-client-api.md](architecture/10-client-api.md),
+      section 3.6) would end the tick at a snapshot publish, so no display
+      push runs on the loop's thread.
 - Done when: a grep over `src/` and `tools/` for every pruned symbol finds
   nothing outside the new code (docs follow in R11); Debug and Release build
   clean; host tests cover the update (Var_p precision, step = variance,
@@ -520,6 +524,32 @@ delete the classifiers and per-type dumps; rewrite `CLAUDE.md`,
 
 A multi-hour soak on the rewrite as the new baseline; merge `engine-rewrite`
 to `main`; release notes say old learned weights are discarded.
+
+---
+
+## Next: the client API (proposal)
+
+Huginn as a recommendation server: a UI connects, says what it can show and do,
+reads an immutable snapshot on its own thread, and reports what it showed and
+what the player picked. Huginn never calls into a UI from its tick. Design,
+evidence and open questions:
+[architecture/10-client-api.md](architecture/10-client-api.md) (2026-10-09;
+nothing decided). Not part of the rewrite, so, as for
+[Kept outside the rewrite](#kept-outside-the-rewrite), nothing starts before R8
+unless it blocks play.
+
+| # | Step | Gate |
+|---|---|---|
+| C0 | Answer the open questions (doc 10, section 5) | **You decide** |
+| C1 | In-process snapshot; both display backends read it (still on the tick) | Agent |
+| C2 | The Intuition widget as the first client: reads in `AdvanceMovie`, reports impressions | Agent |
+| C3 | Wheeler off the tick: a native client in wheelerAPI (recommended) or an adapter | Agent, then **in game (you)**: a LoreRim Tracy session |
+| C4 | Client ids, impressions and action reports into the selection log v3 and the learner | Agent |
+| C5 | The export (`HuginnRequestAPI`), header, a guide for mod authors, a test client | Agent |
+
+Recommended timing: C1–C4 after R8 and before R12's soak, so the baseline soak
+runs on the final display path and R8's learner gets its choice set from what
+was on screen; C5 after R12.
 
 ---
 
@@ -749,6 +779,10 @@ A budget list, not a work list: a felt stutter is the trigger. Latest capture
   0.23.17 splits the cost with zones: `Wheeler::AllocateOtherPage`,
   `WheelSync::UpdatePage` (its `UnchangedCheck` and `WriteSlots`),
   `WheelSync::RecoverInvalidatedWheels`, `WheelSync::DetectVanishedWheels`.
+  The next capture (0.23.18) put the slow pushes inside `WriteSlots`, no longer
+  tied to the load, each stretching its frame by 20–29 ms; the structural fix
+  proposed is to take display pushes off the tick
+  ([architecture/10-client-api.md](architecture/10-client-api.md), section 2.2).
 
 ---
 
