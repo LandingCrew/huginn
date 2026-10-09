@@ -12,9 +12,11 @@
 // Where it runs (verifier rounds 1 and 2 on #188): NOT on the update loop. The
 // update loop is an input-event sink: in gameplay it runs on game job threads,
 // in paused menus on the main thread (UpdateLoop.cpp, THREADS above
-// OnUpdate). SKSE's task queue follows the same pattern: job threads in
-// gameplay (seen in round 1, not in a Tracy trace), the main thread at the
-// main menu (traced). So in gameplay neither is the main thread. The
+// OnUpdate). SKSE's tasks appear to do the same, on less evidence: at the
+// main menu a task ran on the main thread (traced); in gameplay the task
+// version of this probe ran on job threads, observed once, in verifier round
+// 1, and never traced. So in gameplay the update loop is off the main thread
+// (traced), and SKSE tasks were too in the one round that looked. The
 // rays are cast from a hook on PlayerCharacter::Update (vtable index 0xAD),
 // which the game calls from its main update -- the same place prior art
 // casts camera rays from (SkyrimCameraDisocclusion, Hook.cpp, which also
@@ -69,11 +71,16 @@ namespace Huginn::State::DropAheadProbe
    };
    [[nodiscard]] std::string_view StatusName(Status s) noexcept;
 
+   /// Every skip (swimming included) stores drop and waterDepth -1, "not
+   /// measured": while swimming the player is already in the water, which the
+   /// swimming and underwater needs answer, so deep_water_ahead reads 0 there
+   /// rather than holding the reading from the shore.
    struct Reading
    {
       Status status = Status::NotLoaded;
-      float drop = -1.0f;   // -1 = not measured
-      double atSec = -1.0;  // NeedClock seconds of the reading; -1 = none yet
+      float drop = -1.0f;        // -1 = not measured
+      float waterDepth = -1.0f;  // the deepest water over the known probes, units; 0 none, -1 not measured (0.23.19)
+      double atSec = -1.0;       // NeedClock seconds of the reading; -1 = none yet
    };
 
    /// The last reading (thread-safe copy).

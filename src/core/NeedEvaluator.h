@@ -3,7 +3,7 @@
 // =============================================================================
 // NEED EVALUATOR -- NeedSnapshot to the need vector
 // =============================================================================
-// need_k = curve_k(input_k(snapshot)), for the 92 needs of needs.csv. The
+// need_k = curve_k(input_k(snapshot)), for the 93 needs of needs.csv. The
 // input of each need is the csv's r3_input column, written out in
 // NeedInputs (NeedEvaluator.cpp, one case per need, in csv order); the curve
 // is the csv's default (curve_kind, curve_p1, curve_p2) or the [Needs] INI

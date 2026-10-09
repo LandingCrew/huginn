@@ -215,8 +215,8 @@ Weights stop being hand-tuned, but sensors stay hand-written and become the main
 
 Measured 2026-10-07 from `hg dump all` and `hg dump races` on vanilla+, Simonrim Essentials and LoreRim, plus a survey of the code and roadmap. The tables are in [9-data/](9-data/): `needs.csv`, `effects.csv`, `target_types.csv`, `race_map.csv`.
 
-**Needs: 92.**
-- **Status:** 31 exist today, 11 exist but are on/off only, 27 are partly there and 13 are new.
+**Needs: 93** (92 until 0.23.19 added `deep_water_ahead`, new).
+- **Status** (needs.csv's `status` column, counted 0.23.19): 25 exist today, 11 exist but are on/off only, 33 are partly there and 24 are new. (The first count, 31 / 11 / 27 / 13, predates later rows and re-statusing.)
 - **Sources:** every one of today's 41 `[ContextWeights]` keys maps to a need, or is explained as not being one (the baselines that only clear `fMinimumUtility`, and the dead keys on the roadmap's cleanup chore).
 - **Perception rule:** applied. Target level is read today (`StateManager_Targets.cpp:404,499,667`) but used nowhere; it stays unused.
 - **Mod-dependent needs** switch on only when their system is detected: thirst, the SMI/CC survival meters, TrueHUD's enemy magicka and stamina, and LoreRim's healing block.
@@ -253,7 +253,7 @@ Measured 2026-10-07 from `hg dump all` and `hg dump races` on vanilla+, Simonrim
   | LoreRim, with the spell-tome filter and effect descriptions | 98.9% (script-only rows 88.5%) |
 
   What stays unmapped is one-off mechanics (White Phial, spell-copying, walls, curses).
-- **Pairs:** 92 needs × 243 columns. 263 pairs, about 1.2%, are obvious and start nonzero (266 until 0.23.16 dropped diseased × resist_disease: resisting a disease does not cure one already caught; 265 until 0.23.17 dropped cold × resist_frost and cold × armour_warm: the Survival cold meter is restored by soups (Restore Cold), while warm apparel, warming spells and warm food (a soup's Fortify Warmth) raise the warmth rating, `warmth_deficit`, and Resist Frost lowers frost damage only; confirmed via LoreRim Discord, 2026-10-09). `tests/core/ObviousPairsTests.cpp` pins the count and these removals.
+- **Pairs:** 93 needs × 243 columns. 264 pairs, about 1.2%, are obvious and start nonzero (263 until 0.23.19 added deep_water_ahead × utility_water_breathing, Waterbreathing before a dive; 266 until 0.23.16 dropped diseased × resist_disease: resisting a disease does not cure one already caught; 265 until 0.23.17 dropped cold × resist_frost and cold × armour_warm: the Survival cold meter is restored by soups (Restore Cold), while warm apparel, warming spells and warm food (a soup's Fortify Warmth) raise the warmth rating, `warmth_deficit`, and Resist Frost lowers frost damage only; confirmed via LoreRim Discord, 2026-10-09). `tests/core/ObviousPairsTests.cpp` pins the count and these removals.
 - **Reused actor values are resolved in layers.** Simonrim's OneHandedSkillAdvance means Burden; LoreRim's Fame carries Fear and fire damage. So `*SkillAdvance`, Fame, Infamy, Mood, Morality, `Variable##` and VoicePoints are never trusted alone. The layers, first match wins:
   1. Keyword table. Editor IDs are language-independent; this alone resolves 85–89%.
   2. Per-load-order override file, keyed by plugin and local FormID.

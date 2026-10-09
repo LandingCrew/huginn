@@ -69,7 +69,7 @@ TEST_CASE("need ids match needs.csv, in order, with their default curves")
 
 TEST_CASE("need ids: count, uniqueness, the deferred five")
 {
-    CHECK(kNeedCount == 92);
+    CHECK(kNeedCount == 93);  // 92 until 0.23.19 added deep_water_ahead
     std::set<std::string_view> ids;
     std::set<std::string_view> deferred;
     for (const auto& n : kNeeds) {
@@ -80,6 +80,10 @@ TEST_CASE("need ids: count, uniqueness, the deferred five")
     CHECK(deferred == std::set<std::string_view>{ "healing_blocked", "thirst", "target_magicka_low",
                                                   "target_stamina_low", "sneak_detected" });
     CHECK(Name(NeedId::drop_ahead) == "drop_ahead");
+    CHECK(Name(NeedId::deep_water_ahead) == "deep_water_ahead");
+    CHECK(Index(NeedId::deep_water_ahead) == Index(NeedId::drop_ahead) + 1);
+    CHECK(Info(NeedId::deep_water_ahead).group == "Environment");
+    CHECK_FALSE(Info(NeedId::deep_water_ahead).deferred);
     CHECK(FromName("no_such_need") == std::nullopt);
 }
 

@@ -125,6 +125,7 @@ namespace Huginn::Core::Needs
                 case N::swimming: return B(s.swimming);
                 case N::falling: return s.fallDepth;
                 case N::drop_ahead: return s.dropAhead < 0.0f ? 0.0f : s.dropAhead;
+                case N::deep_water_ahead: return s.waterDepthAhead < 0.0f ? 0.0f : s.waterDepthAhead;
                 case N::lock_in_crosshair: return B(s.lock);
                 case N::workstation_smithing: return B(s.workstation == static_cast<int>(Workstation::Smithing));
                 case N::workstation_enchanting: return B(s.workstation == static_cast<int>(Workstation::Enchanting));

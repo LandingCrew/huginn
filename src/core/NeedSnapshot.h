@@ -127,6 +127,7 @@ namespace Huginn::Core::Needs
         bool swimming = false;
         float fallDepth = 0.0f;       // units below the take-off point
         float dropAhead = -1.0f;      // units from the feet down to the surface ahead, -1 not measured
+        float waterDepthAhead = -1.0f;  // deepest water under the drop probes, units; 0 none, -1 not measured
         bool lock = false;            // crosshair on a locked object
         int workstation = 0;          // Workstation
         bool oreVein = false;
@@ -192,8 +193,8 @@ namespace Huginn::Core::Needs
         HUGINN_NEED_FIELD(followerPresent), HUGINN_NEED_FIELD(followerBleedout),
         HUGINN_NEED_FIELD(light), HUGINN_NEED_FIELD(openDaylight), HUGINN_NEED_FIELD(underwater),
         HUGINN_NEED_FIELD(submergedFor), HUGINN_NEED_FIELD(swimming), HUGINN_NEED_FIELD(fallDepth),
-        HUGINN_NEED_FIELD(dropAhead), HUGINN_NEED_FIELD(lock), HUGINN_NEED_FIELD(workstation),
-        HUGINN_NEED_FIELD(oreVein), HUGINN_NEED_FIELD(merchant),
+        HUGINN_NEED_FIELD(dropAhead), HUGINN_NEED_FIELD(waterDepthAhead), HUGINN_NEED_FIELD(lock),
+        HUGINN_NEED_FIELD(workstation), HUGINN_NEED_FIELD(oreVein), HUGINN_NEED_FIELD(merchant),
         HUGINN_NEED_FIELD(enchantedWeapon), HUGINN_NEED_FIELD(weaponCharge), HUGINN_NEED_FIELD(bow),
         HUGINN_NEED_FIELD(crossbow), HUGINN_NEED_FIELD(arrows), HUGINN_NEED_FIELD(bolts),
         HUGINN_NEED_FIELD(melee), HUGINN_NEED_FIELD(spell), HUGINN_NEED_FIELD(staff), HUGINN_NEED_FIELD(shield),

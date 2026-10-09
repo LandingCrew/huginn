@@ -15,6 +15,8 @@
 //     Warmth (01002EE6) for warmth_deficit -- and never by Resist Frost.
 //   * diseased x resist_disease is not a pair (removed 0.23.16): resisting a
 //     disease does not cure one already caught.
+//   * deep_water_ahead (0.23.19) is answered by Waterbreathing
+//     (utility_water_breathing), as underwater and swimming are.
 //   * every need id in effects.csv is a need of needs.csv, and the count doc 9
 //     quotes.
 //
@@ -174,8 +176,19 @@ TEST_CASE("obvious pairs: every pair names a need, and doc 9's count")
             ++pairs;
         }
     }
-    // docs/architecture/9-context-as-learner-input.md, "Pairs": 263 since
-    // 0.23.17 dropped cold x resist_frost and cold x armour_warm (265 before;
+    // docs/architecture/9-context-as-learner-input.md, "Pairs": 264 since
+    // 0.23.19 added deep_water_ahead x utility_water_breathing (263 since
+    // 0.23.17 dropped cold x resist_frost and cold x armour_warm; 265 before;
     // 266 before 0.23.16).
-    CHECK(pairs == 263);
+    CHECK(pairs == 264);
+}
+
+TEST_CASE("obvious pairs: deep water ahead is answered by Waterbreathing")
+{
+    const auto effects = ReadTable("effects.csv");
+    const auto needs = ReadTable("needs.csv");
+    REQUIRE(needs.contains("deep_water_ahead"));
+    CHECK(ColumnsFor(effects, "deep_water_ahead") == std::set<std::string>{ "utility_water_breathing" });
+    CHECK(ColumnsFor(effects, "underwater").contains("utility_water_breathing"));
+    CHECK(ContainsNoCase(needs.at("deep_water_ahead").at("obvious_effects"), "waterbreathing"));
 }

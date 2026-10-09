@@ -421,6 +421,24 @@ fallDepth 600
 dropAhead -1
 end
 
+# deep_water_ahead (0.23.19): deep water ahead of a lake shore (300 units,
+# ~1), the 128 centre (0.5, flat: dropAhead 0), a wading stream (40, ~0.01).
+# Not measured (-1) reads 0: every block above leaves it at its default.
+snapshot water_ahead_deep
+waterDepthAhead 300
+dropAhead 0
+end
+
+snapshot water_ahead_centre
+waterDepthAhead 128
+dropAhead 0
+end
+
+snapshot water_ahead_stream
+waterDepthAhead 40
+dropAhead 0
+end
+
 # Crosshair: lock, smithing bench, ore vein, merchant.
 snapshot crosshair_smithing
 lock 1

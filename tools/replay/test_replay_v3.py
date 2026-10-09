@@ -59,7 +59,7 @@ class GoldenFile(unittest.TestCase):
         h = self.decs[0]["head"]
         self.assertEqual(h["v"], 3)
         self.assertEqual(len(h["cols"]), 243)
-        self.assertEqual(len(h["needs"]), 92)
+        self.assertEqual(len(h["needs"]), 93)
         self.assertEqual(h["cross"][4], "stack_count")
         self.assertEqual(h["kinds"][7], "Armor")
         self.assertEqual(h["episode"], {"onset": 0.5, "expiry": 0.25, "minSec": 1.0, "graceSec": 4.0,

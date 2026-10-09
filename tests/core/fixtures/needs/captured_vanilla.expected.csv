@@ -67,6 +67,7 @@ suite_start_001,underwater,0.0,0.0066928509242848554
 suite_start_001,swimming,0.0,0.0
 suite_start_001,falling,0.0,0.0
 suite_start_001,drop_ahead,0.0,0.0024726231566347743
+suite_start_001,deep_water_ahead,0.0,0.0016588010801744215
 suite_start_001,lock_in_crosshair,0.0,0.0
 suite_start_001,workstation_smithing,0.0,0.0
 suite_start_001,workstation_enchanting,0.0,0.0
@@ -159,6 +160,7 @@ suite_hurt_002,underwater,0.0,0.0066928509242848554
 suite_hurt_002,swimming,0.0,0.0
 suite_hurt_002,falling,0.0,0.0
 suite_hurt_002,drop_ahead,0.0,0.0024726231566347743
+suite_hurt_002,deep_water_ahead,0.0,0.0016588010801744215
 suite_hurt_002,lock_in_crosshair,0.0,0.0
 suite_hurt_002,workstation_smithing,0.0,0.0
 suite_hurt_002,workstation_enchanting,0.0,0.0
@@ -251,6 +253,7 @@ monitor_003,underwater,0.0,0.0066928509242848554
 monitor_003,swimming,0.0,0.0
 monitor_003,falling,0.0,0.0
 monitor_003,drop_ahead,17.917343139648438,0.0029563870882974366
+monitor_003,deep_water_ahead,0.0,0.0016588010801744215
 monitor_003,lock_in_crosshair,0.0,0.0
 monitor_003,workstation_smithing,0.0,0.0
 monitor_003,workstation_enchanting,0.0,0.0
@@ -343,6 +346,7 @@ monitor_004,underwater,0.0,0.0066928509242848554
 monitor_004,swimming,0.0,0.0
 monitor_004,falling,0.0,0.0
 monitor_004,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_004,deep_water_ahead,0.0,0.0016588010801744215
 monitor_004,lock_in_crosshair,0.0,0.0
 monitor_004,workstation_smithing,0.0,0.0
 monitor_004,workstation_enchanting,0.0,0.0
@@ -435,6 +439,7 @@ monitor_005,underwater,0.0,0.0066928509242848554
 monitor_005,swimming,0.0,0.0
 monitor_005,falling,0.0,0.0
 monitor_005,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_005,deep_water_ahead,0.0,0.0016588010801744215
 monitor_005,lock_in_crosshair,0.0,0.0
 monitor_005,workstation_smithing,0.0,0.0
 monitor_005,workstation_enchanting,0.0,0.0
@@ -527,6 +532,7 @@ monitor_006,underwater,0.0,0.0066928509242848554
 monitor_006,swimming,0.0,0.0
 monitor_006,falling,0.0,0.0
 monitor_006,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_006,deep_water_ahead,0.0,0.0016588010801744215
 monitor_006,lock_in_crosshair,0.0,0.0
 monitor_006,workstation_smithing,0.0,0.0
 monitor_006,workstation_enchanting,0.0,0.0
@@ -619,6 +625,7 @@ monitor_007,underwater,0.0,0.0066928509242848554
 monitor_007,swimming,0.0,0.0
 monitor_007,falling,0.0,0.0
 monitor_007,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_007,deep_water_ahead,0.0,0.0016588010801744215
 monitor_007,lock_in_crosshair,0.0,0.0
 monitor_007,workstation_smithing,0.0,0.0
 monitor_007,workstation_enchanting,0.0,0.0
@@ -711,6 +718,7 @@ monitor_008,underwater,0.0,0.0066928509242848554
 monitor_008,swimming,0.0,0.0
 monitor_008,falling,0.0,0.0
 monitor_008,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_008,deep_water_ahead,0.0,0.0016588010801744215
 monitor_008,lock_in_crosshair,0.0,0.0
 monitor_008,workstation_smithing,0.0,0.0
 monitor_008,workstation_enchanting,0.0,0.0
@@ -803,6 +811,7 @@ monitor_009,underwater,0.0,0.0066928509242848554
 monitor_009,swimming,0.0,0.0
 monitor_009,falling,0.0,0.0
 monitor_009,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_009,deep_water_ahead,0.0,0.0016588010801744215
 monitor_009,lock_in_crosshair,0.0,0.0
 monitor_009,workstation_smithing,0.0,0.0
 monitor_009,workstation_enchanting,0.0,0.0
@@ -895,6 +904,7 @@ monitor_010,underwater,0.0,0.0066928509242848554
 monitor_010,swimming,0.0,0.0
 monitor_010,falling,0.0,0.0
 monitor_010,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_010,deep_water_ahead,0.0,0.0016588010801744215
 monitor_010,lock_in_crosshair,0.0,0.0
 monitor_010,workstation_smithing,0.0,0.0
 monitor_010,workstation_enchanting,0.0,0.0
@@ -987,6 +997,7 @@ monitor_011,underwater,0.0,0.0066928509242848554
 monitor_011,swimming,0.0,0.0
 monitor_011,falling,0.0,0.0
 monitor_011,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_011,deep_water_ahead,0.0,0.0016588010801744215
 monitor_011,lock_in_crosshair,0.0,0.0
 monitor_011,workstation_smithing,0.0,0.0
 monitor_011,workstation_enchanting,0.0,0.0
@@ -1079,6 +1090,7 @@ monitor_012,underwater,0.0,0.0066928509242848554
 monitor_012,swimming,0.0,0.0
 monitor_012,falling,0.0,0.0
 monitor_012,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_012,deep_water_ahead,0.0,0.0016588010801744215
 monitor_012,lock_in_crosshair,0.0,0.0
 monitor_012,workstation_smithing,0.0,0.0
 monitor_012,workstation_enchanting,0.0,0.0
@@ -1171,6 +1183,7 @@ monitor_013,underwater,0.0,0.0066928509242848554
 monitor_013,swimming,0.0,0.0
 monitor_013,falling,0.0,0.0
 monitor_013,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_013,deep_water_ahead,0.0,0.0016588010801744215
 monitor_013,lock_in_crosshair,0.0,0.0
 monitor_013,workstation_smithing,0.0,0.0
 monitor_013,workstation_enchanting,0.0,0.0
@@ -1263,6 +1276,7 @@ monitor_014,underwater,0.0,0.0066928509242848554
 monitor_014,swimming,0.0,0.0
 monitor_014,falling,0.0,0.0
 monitor_014,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_014,deep_water_ahead,0.0,0.0016588010801744215
 monitor_014,lock_in_crosshair,0.0,0.0
 monitor_014,workstation_smithing,0.0,0.0
 monitor_014,workstation_enchanting,0.0,0.0
@@ -1355,6 +1369,7 @@ monitor_015,underwater,0.0,0.0066928509242848554
 monitor_015,swimming,0.0,0.0
 monitor_015,falling,0.0,0.0
 monitor_015,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_015,deep_water_ahead,0.0,0.0016588010801744215
 monitor_015,lock_in_crosshair,0.0,0.0
 monitor_015,workstation_smithing,0.0,0.0
 monitor_015,workstation_enchanting,0.0,0.0
@@ -1447,6 +1462,7 @@ monitor_016,underwater,0.0,0.0066928509242848554
 monitor_016,swimming,0.0,0.0
 monitor_016,falling,0.0,0.0
 monitor_016,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_016,deep_water_ahead,0.0,0.0016588010801744215
 monitor_016,lock_in_crosshair,0.0,0.0
 monitor_016,workstation_smithing,0.0,0.0
 monitor_016,workstation_enchanting,0.0,0.0
@@ -1539,6 +1555,7 @@ monitor_017,underwater,0.0,0.0066928509242848554
 monitor_017,swimming,0.0,0.0
 monitor_017,falling,0.0,0.0
 monitor_017,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_017,deep_water_ahead,0.0,0.0016588010801744215
 monitor_017,lock_in_crosshair,0.0,0.0
 monitor_017,workstation_smithing,0.0,0.0
 monitor_017,workstation_enchanting,0.0,0.0
@@ -1631,6 +1648,7 @@ monitor_018,underwater,0.0,0.0066928509242848554
 monitor_018,swimming,0.0,0.0
 monitor_018,falling,0.0,0.0
 monitor_018,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_018,deep_water_ahead,0.0,0.0016588010801744215
 monitor_018,lock_in_crosshair,0.0,0.0
 monitor_018,workstation_smithing,0.0,0.0
 monitor_018,workstation_enchanting,0.0,0.0
@@ -1723,6 +1741,7 @@ monitor_019,underwater,0.0,0.0066928509242848554
 monitor_019,swimming,0.0,0.0
 monitor_019,falling,0.0,0.0
 monitor_019,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_019,deep_water_ahead,0.0,0.0016588010801744215
 monitor_019,lock_in_crosshair,0.0,0.0
 monitor_019,workstation_smithing,0.0,0.0
 monitor_019,workstation_enchanting,0.0,0.0
@@ -1815,6 +1834,7 @@ monitor_020,underwater,0.0,0.0066928509242848554
 monitor_020,swimming,0.0,0.0
 monitor_020,falling,0.0,0.0
 monitor_020,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_020,deep_water_ahead,0.0,0.0016588010801744215
 monitor_020,lock_in_crosshair,0.0,0.0
 monitor_020,workstation_smithing,0.0,0.0
 monitor_020,workstation_enchanting,0.0,0.0
@@ -1907,6 +1927,7 @@ monitor_021,underwater,0.0,0.0066928509242848554
 monitor_021,swimming,0.0,0.0
 monitor_021,falling,0.0,0.0
 monitor_021,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_021,deep_water_ahead,0.0,0.0016588010801744215
 monitor_021,lock_in_crosshair,0.0,0.0
 monitor_021,workstation_smithing,0.0,0.0
 monitor_021,workstation_enchanting,0.0,0.0
@@ -1999,6 +2020,7 @@ monitor_022,underwater,0.0,0.0066928509242848554
 monitor_022,swimming,0.0,0.0
 monitor_022,falling,0.0,0.0
 monitor_022,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_022,deep_water_ahead,0.0,0.0016588010801744215
 monitor_022,lock_in_crosshair,0.0,0.0
 monitor_022,workstation_smithing,0.0,0.0
 monitor_022,workstation_enchanting,0.0,0.0
@@ -2091,6 +2113,7 @@ monitor_023,underwater,0.0,0.0066928509242848554
 monitor_023,swimming,0.0,0.0
 monitor_023,falling,0.0,0.0
 monitor_023,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_023,deep_water_ahead,0.0,0.0016588010801744215
 monitor_023,lock_in_crosshair,0.0,0.0
 monitor_023,workstation_smithing,0.0,0.0
 monitor_023,workstation_enchanting,0.0,0.0
@@ -2183,6 +2206,7 @@ monitor_024,underwater,0.0,0.0066928509242848554
 monitor_024,swimming,0.0,0.0
 monitor_024,falling,0.0,0.0
 monitor_024,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_024,deep_water_ahead,0.0,0.0016588010801744215
 monitor_024,lock_in_crosshair,0.0,0.0
 monitor_024,workstation_smithing,0.0,0.0
 monitor_024,workstation_enchanting,0.0,0.0
@@ -2275,6 +2299,7 @@ monitor_025,underwater,0.0,0.0066928509242848554
 monitor_025,swimming,0.0,0.0
 monitor_025,falling,0.0,0.0
 monitor_025,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_025,deep_water_ahead,0.0,0.0016588010801744215
 monitor_025,lock_in_crosshair,0.0,0.0
 monitor_025,workstation_smithing,0.0,0.0
 monitor_025,workstation_enchanting,0.0,0.0
@@ -2367,6 +2392,7 @@ monitor_026,underwater,0.0,0.0066928509242848554
 monitor_026,swimming,0.0,0.0
 monitor_026,falling,0.0,0.0
 monitor_026,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_026,deep_water_ahead,0.0,0.0016588010801744215
 monitor_026,lock_in_crosshair,0.0,0.0
 monitor_026,workstation_smithing,0.0,0.0
 monitor_026,workstation_enchanting,0.0,0.0
@@ -2459,6 +2485,7 @@ monitor_027,underwater,0.0,0.0066928509242848554
 monitor_027,swimming,0.0,0.0
 monitor_027,falling,0.0,0.0
 monitor_027,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_027,deep_water_ahead,0.0,0.0016588010801744215
 monitor_027,lock_in_crosshair,0.0,0.0
 monitor_027,workstation_smithing,0.0,0.0
 monitor_027,workstation_enchanting,0.0,0.0
@@ -2551,6 +2578,7 @@ monitor_028,underwater,0.0,0.0066928509242848554
 monitor_028,swimming,0.0,0.0
 monitor_028,falling,0.0,0.0
 monitor_028,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_028,deep_water_ahead,0.0,0.0016588010801744215
 monitor_028,lock_in_crosshair,0.0,0.0
 monitor_028,workstation_smithing,0.0,0.0
 monitor_028,workstation_enchanting,0.0,0.0
@@ -2643,6 +2671,7 @@ monitor_029,underwater,0.0,0.0066928509242848554
 monitor_029,swimming,0.0,0.0
 monitor_029,falling,0.0,0.0
 monitor_029,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_029,deep_water_ahead,0.0,0.0016588010801744215
 monitor_029,lock_in_crosshair,0.0,0.0
 monitor_029,workstation_smithing,0.0,0.0
 monitor_029,workstation_enchanting,0.0,0.0
@@ -2735,6 +2764,7 @@ monitor_030,underwater,0.0,0.0066928509242848554
 monitor_030,swimming,0.0,0.0
 monitor_030,falling,0.0,0.0
 monitor_030,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_030,deep_water_ahead,0.0,0.0016588010801744215
 monitor_030,lock_in_crosshair,0.0,0.0
 monitor_030,workstation_smithing,0.0,0.0
 monitor_030,workstation_enchanting,0.0,0.0
@@ -2827,6 +2857,7 @@ monitor_031,underwater,0.0,0.0066928509242848554
 monitor_031,swimming,0.0,0.0
 monitor_031,falling,0.0,0.0
 monitor_031,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_031,deep_water_ahead,0.0,0.0016588010801744215
 monitor_031,lock_in_crosshair,0.0,0.0
 monitor_031,workstation_smithing,0.0,0.0
 monitor_031,workstation_enchanting,0.0,0.0
@@ -2919,6 +2950,7 @@ monitor_032,underwater,0.0,0.0066928509242848554
 monitor_032,swimming,0.0,0.0
 monitor_032,falling,0.0,0.0
 monitor_032,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_032,deep_water_ahead,0.0,0.0016588010801744215
 monitor_032,lock_in_crosshair,0.0,0.0
 monitor_032,workstation_smithing,0.0,0.0
 monitor_032,workstation_enchanting,0.0,0.0
@@ -3011,6 +3043,7 @@ monitor_033,underwater,0.0,0.0066928509242848554
 monitor_033,swimming,0.0,0.0
 monitor_033,falling,0.0,0.0
 monitor_033,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_033,deep_water_ahead,0.0,0.0016588010801744215
 monitor_033,lock_in_crosshair,0.0,0.0
 monitor_033,workstation_smithing,0.0,0.0
 monitor_033,workstation_enchanting,0.0,0.0
@@ -3103,6 +3136,7 @@ monitor_034,underwater,0.0,0.0066928509242848554
 monitor_034,swimming,0.0,0.0
 monitor_034,falling,0.0,0.0
 monitor_034,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_034,deep_water_ahead,0.0,0.0016588010801744215
 monitor_034,lock_in_crosshair,0.0,0.0
 monitor_034,workstation_smithing,0.0,0.0
 monitor_034,workstation_enchanting,0.0,0.0
@@ -3195,6 +3229,7 @@ monitor_035,underwater,0.0,0.0066928509242848554
 monitor_035,swimming,0.0,0.0
 monitor_035,falling,0.0,0.0
 monitor_035,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_035,deep_water_ahead,0.0,0.0016588010801744215
 monitor_035,lock_in_crosshair,0.0,0.0
 monitor_035,workstation_smithing,0.0,0.0
 monitor_035,workstation_enchanting,0.0,0.0
@@ -3287,6 +3322,7 @@ monitor_036,underwater,0.0,0.0066928509242848554
 monitor_036,swimming,0.0,0.0
 monitor_036,falling,0.0,0.0
 monitor_036,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_036,deep_water_ahead,0.0,0.0016588010801744215
 monitor_036,lock_in_crosshair,0.0,0.0
 monitor_036,workstation_smithing,0.0,0.0
 monitor_036,workstation_enchanting,0.0,0.0
@@ -3379,6 +3415,7 @@ monitor_037,underwater,0.0,0.0066928509242848554
 monitor_037,swimming,0.0,0.0
 monitor_037,falling,0.0,0.0
 monitor_037,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_037,deep_water_ahead,0.0,0.0016588010801744215
 monitor_037,lock_in_crosshair,0.0,0.0
 monitor_037,workstation_smithing,0.0,0.0
 monitor_037,workstation_enchanting,0.0,0.0
@@ -3471,6 +3508,7 @@ monitor_038,underwater,0.0,0.0066928509242848554
 monitor_038,swimming,0.0,0.0
 monitor_038,falling,0.0,0.0
 monitor_038,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_038,deep_water_ahead,0.0,0.0016588010801744215
 monitor_038,lock_in_crosshair,0.0,0.0
 monitor_038,workstation_smithing,0.0,0.0
 monitor_038,workstation_enchanting,0.0,0.0
@@ -3563,6 +3601,7 @@ monitor_039,underwater,0.0,0.0066928509242848554
 monitor_039,swimming,0.0,0.0
 monitor_039,falling,0.0,0.0
 monitor_039,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_039,deep_water_ahead,0.0,0.0016588010801744215
 monitor_039,lock_in_crosshair,0.0,0.0
 monitor_039,workstation_smithing,0.0,0.0
 monitor_039,workstation_enchanting,0.0,0.0
@@ -3655,6 +3694,7 @@ monitor_040,underwater,0.0,0.0066928509242848554
 monitor_040,swimming,0.0,0.0
 monitor_040,falling,0.0,0.0
 monitor_040,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_040,deep_water_ahead,0.0,0.0016588010801744215
 monitor_040,lock_in_crosshair,0.0,0.0
 monitor_040,workstation_smithing,0.0,0.0
 monitor_040,workstation_enchanting,0.0,0.0
@@ -3747,6 +3787,7 @@ monitor_041,underwater,0.0,0.0066928509242848554
 monitor_041,swimming,0.0,0.0
 monitor_041,falling,0.0,0.0
 monitor_041,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_041,deep_water_ahead,0.0,0.0016588010801744215
 monitor_041,lock_in_crosshair,0.0,0.0
 monitor_041,workstation_smithing,0.0,0.0
 monitor_041,workstation_enchanting,0.0,0.0
@@ -3839,6 +3880,7 @@ monitor_042,underwater,0.0,0.0066928509242848554
 monitor_042,swimming,0.0,0.0
 monitor_042,falling,0.0,0.0
 monitor_042,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_042,deep_water_ahead,0.0,0.0016588010801744215
 monitor_042,lock_in_crosshair,0.0,0.0
 monitor_042,workstation_smithing,0.0,0.0
 monitor_042,workstation_enchanting,0.0,0.0
@@ -3931,6 +3973,7 @@ monitor_043,underwater,0.0,0.0066928509242848554
 monitor_043,swimming,0.0,0.0
 monitor_043,falling,0.0,0.0
 monitor_043,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_043,deep_water_ahead,0.0,0.0016588010801744215
 monitor_043,lock_in_crosshair,0.0,0.0
 monitor_043,workstation_smithing,0.0,0.0
 monitor_043,workstation_enchanting,0.0,0.0
@@ -4023,6 +4066,7 @@ monitor_044,underwater,0.0,0.0066928509242848554
 monitor_044,swimming,0.0,0.0
 monitor_044,falling,0.0,0.0
 monitor_044,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_044,deep_water_ahead,0.0,0.0016588010801744215
 monitor_044,lock_in_crosshair,0.0,0.0
 monitor_044,workstation_smithing,0.0,0.0
 monitor_044,workstation_enchanting,0.0,0.0
@@ -4115,6 +4159,7 @@ monitor_045,underwater,0.0,0.0066928509242848554
 monitor_045,swimming,0.0,0.0
 monitor_045,falling,0.0,0.0
 monitor_045,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_045,deep_water_ahead,0.0,0.0016588010801744215
 monitor_045,lock_in_crosshair,0.0,0.0
 monitor_045,workstation_smithing,0.0,0.0
 monitor_045,workstation_enchanting,0.0,0.0
@@ -4207,6 +4252,7 @@ monitor_046,underwater,0.0,0.0066928509242848554
 monitor_046,swimming,0.0,0.0
 monitor_046,falling,0.0,0.0
 monitor_046,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_046,deep_water_ahead,0.0,0.0016588010801744215
 monitor_046,lock_in_crosshair,0.0,0.0
 monitor_046,workstation_smithing,0.0,0.0
 monitor_046,workstation_enchanting,0.0,0.0
@@ -4299,6 +4345,7 @@ monitor_047,underwater,0.0,0.0066928509242848554
 monitor_047,swimming,0.0,0.0
 monitor_047,falling,0.0,0.0
 monitor_047,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_047,deep_water_ahead,0.0,0.0016588010801744215
 monitor_047,lock_in_crosshair,0.0,0.0
 monitor_047,workstation_smithing,0.0,0.0
 monitor_047,workstation_enchanting,0.0,0.0
@@ -4391,6 +4438,7 @@ monitor_048,underwater,0.0,0.0066928509242848554
 monitor_048,swimming,0.0,0.0
 monitor_048,falling,0.0,0.0
 monitor_048,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_048,deep_water_ahead,0.0,0.0016588010801744215
 monitor_048,lock_in_crosshair,0.0,0.0
 monitor_048,workstation_smithing,0.0,0.0
 monitor_048,workstation_enchanting,0.0,0.0
@@ -4483,6 +4531,7 @@ monitor_049,underwater,0.0,0.0066928509242848554
 monitor_049,swimming,0.0,0.0
 monitor_049,falling,0.0,0.0
 monitor_049,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_049,deep_water_ahead,0.0,0.0016588010801744215
 monitor_049,lock_in_crosshair,0.0,0.0
 monitor_049,workstation_smithing,0.0,0.0
 monitor_049,workstation_enchanting,0.0,0.0
@@ -4575,6 +4624,7 @@ monitor_050,underwater,0.0,0.0066928509242848554
 monitor_050,swimming,0.0,0.0
 monitor_050,falling,0.0,0.0
 monitor_050,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_050,deep_water_ahead,0.0,0.0016588010801744215
 monitor_050,lock_in_crosshair,0.0,0.0
 monitor_050,workstation_smithing,0.0,0.0
 monitor_050,workstation_enchanting,0.0,0.0
@@ -4667,6 +4717,7 @@ monitor_051,underwater,0.0,0.0066928509242848554
 monitor_051,swimming,0.0,0.0
 monitor_051,falling,0.0,0.0
 monitor_051,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_051,deep_water_ahead,0.0,0.0016588010801744215
 monitor_051,lock_in_crosshair,0.0,0.0
 monitor_051,workstation_smithing,0.0,0.0
 monitor_051,workstation_enchanting,0.0,0.0
@@ -4759,6 +4810,7 @@ monitor_052,underwater,0.0,0.0066928509242848554
 monitor_052,swimming,0.0,0.0
 monitor_052,falling,0.0,0.0
 monitor_052,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_052,deep_water_ahead,0.0,0.0016588010801744215
 monitor_052,lock_in_crosshair,0.0,0.0
 monitor_052,workstation_smithing,0.0,0.0
 monitor_052,workstation_enchanting,0.0,0.0
@@ -4851,6 +4903,7 @@ monitor_053,underwater,0.0,0.0066928509242848554
 monitor_053,swimming,0.0,0.0
 monitor_053,falling,0.0,0.0
 monitor_053,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_053,deep_water_ahead,0.0,0.0016588010801744215
 monitor_053,lock_in_crosshair,0.0,0.0
 monitor_053,workstation_smithing,0.0,0.0
 monitor_053,workstation_enchanting,0.0,0.0
@@ -4943,6 +4996,7 @@ monitor_054,underwater,0.0,0.0066928509242848554
 monitor_054,swimming,0.0,0.0
 monitor_054,falling,0.0,0.0
 monitor_054,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_054,deep_water_ahead,0.0,0.0016588010801744215
 monitor_054,lock_in_crosshair,0.0,0.0
 monitor_054,workstation_smithing,0.0,0.0
 monitor_054,workstation_enchanting,0.0,0.0
@@ -5035,6 +5089,7 @@ monitor_055,underwater,0.0,0.0066928509242848554
 monitor_055,swimming,0.0,0.0
 monitor_055,falling,0.0,0.0
 monitor_055,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_055,deep_water_ahead,0.0,0.0016588010801744215
 monitor_055,lock_in_crosshair,0.0,0.0
 monitor_055,workstation_smithing,0.0,0.0
 monitor_055,workstation_enchanting,0.0,0.0
@@ -5127,6 +5182,7 @@ monitor_056,underwater,0.0,0.0066928509242848554
 monitor_056,swimming,0.0,0.0
 monitor_056,falling,0.0,0.0
 monitor_056,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_056,deep_water_ahead,0.0,0.0016588010801744215
 monitor_056,lock_in_crosshair,0.0,0.0
 monitor_056,workstation_smithing,0.0,0.0
 monitor_056,workstation_enchanting,0.0,0.0
@@ -5219,6 +5275,7 @@ monitor_057,underwater,0.0,0.0066928509242848554
 monitor_057,swimming,0.0,0.0
 monitor_057,falling,0.0,0.0
 monitor_057,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_057,deep_water_ahead,0.0,0.0016588010801744215
 monitor_057,lock_in_crosshair,0.0,0.0
 monitor_057,workstation_smithing,0.0,0.0
 monitor_057,workstation_enchanting,0.0,0.0
@@ -5311,6 +5368,7 @@ monitor_058,underwater,0.0,0.0066928509242848554
 monitor_058,swimming,0.0,0.0
 monitor_058,falling,0.0,0.0
 monitor_058,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_058,deep_water_ahead,0.0,0.0016588010801744215
 monitor_058,lock_in_crosshair,0.0,0.0
 monitor_058,workstation_smithing,0.0,0.0
 monitor_058,workstation_enchanting,0.0,0.0
@@ -5403,6 +5461,7 @@ monitor_059,underwater,0.0,0.0066928509242848554
 monitor_059,swimming,0.0,0.0
 monitor_059,falling,0.0,0.0
 monitor_059,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_059,deep_water_ahead,0.0,0.0016588010801744215
 monitor_059,lock_in_crosshair,0.0,0.0
 monitor_059,workstation_smithing,0.0,0.0
 monitor_059,workstation_enchanting,0.0,0.0
@@ -5495,6 +5554,7 @@ monitor_060,underwater,0.0,0.0066928509242848554
 monitor_060,swimming,0.0,0.0
 monitor_060,falling,0.0,0.0
 monitor_060,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_060,deep_water_ahead,0.0,0.0016588010801744215
 monitor_060,lock_in_crosshair,0.0,0.0
 monitor_060,workstation_smithing,0.0,0.0
 monitor_060,workstation_enchanting,0.0,0.0
@@ -5587,6 +5647,7 @@ monitor_061,underwater,0.0,0.0066928509242848554
 monitor_061,swimming,0.0,0.0
 monitor_061,falling,0.0,0.0
 monitor_061,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_061,deep_water_ahead,0.0,0.0016588010801744215
 monitor_061,lock_in_crosshair,0.0,0.0
 monitor_061,workstation_smithing,0.0,0.0
 monitor_061,workstation_enchanting,0.0,0.0
@@ -5679,6 +5740,7 @@ monitor_062,underwater,0.0,0.0066928509242848554
 monitor_062,swimming,0.0,0.0
 monitor_062,falling,0.0,0.0
 monitor_062,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_062,deep_water_ahead,0.0,0.0016588010801744215
 monitor_062,lock_in_crosshair,0.0,0.0
 monitor_062,workstation_smithing,0.0,0.0
 monitor_062,workstation_enchanting,0.0,0.0
@@ -5771,6 +5833,7 @@ monitor_063,underwater,0.0,0.0066928509242848554
 monitor_063,swimming,0.0,0.0
 monitor_063,falling,0.0,0.0
 monitor_063,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_063,deep_water_ahead,0.0,0.0016588010801744215
 monitor_063,lock_in_crosshair,0.0,0.0
 monitor_063,workstation_smithing,0.0,0.0
 monitor_063,workstation_enchanting,0.0,0.0
@@ -5863,6 +5926,7 @@ monitor_064,underwater,0.0,0.0066928509242848554
 monitor_064,swimming,0.0,0.0
 monitor_064,falling,0.0,0.0
 monitor_064,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_064,deep_water_ahead,0.0,0.0016588010801744215
 monitor_064,lock_in_crosshair,0.0,0.0
 monitor_064,workstation_smithing,0.0,0.0
 monitor_064,workstation_enchanting,0.0,0.0
@@ -5955,6 +6019,7 @@ monitor_065,underwater,0.0,0.0066928509242848554
 monitor_065,swimming,0.0,0.0
 monitor_065,falling,0.0,0.0
 monitor_065,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_065,deep_water_ahead,0.0,0.0016588010801744215
 monitor_065,lock_in_crosshair,0.0,0.0
 monitor_065,workstation_smithing,0.0,0.0
 monitor_065,workstation_enchanting,0.0,0.0
@@ -6047,6 +6112,7 @@ monitor_066,underwater,0.0,0.0066928509242848554
 monitor_066,swimming,0.0,0.0
 monitor_066,falling,0.0,0.0
 monitor_066,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_066,deep_water_ahead,0.0,0.0016588010801744215
 monitor_066,lock_in_crosshair,0.0,0.0
 monitor_066,workstation_smithing,0.0,0.0
 monitor_066,workstation_enchanting,0.0,0.0
@@ -6139,6 +6205,7 @@ monitor_067,underwater,0.0,0.0066928509242848554
 monitor_067,swimming,0.0,0.0
 monitor_067,falling,0.0,0.0
 monitor_067,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_067,deep_water_ahead,0.0,0.0016588010801744215
 monitor_067,lock_in_crosshair,0.0,0.0
 monitor_067,workstation_smithing,0.0,0.0
 monitor_067,workstation_enchanting,0.0,0.0
@@ -6231,6 +6298,7 @@ monitor_068,underwater,0.0,0.0066928509242848554
 monitor_068,swimming,0.0,0.0
 monitor_068,falling,0.0,0.0
 monitor_068,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_068,deep_water_ahead,0.0,0.0016588010801744215
 monitor_068,lock_in_crosshair,0.0,0.0
 monitor_068,workstation_smithing,0.0,0.0
 monitor_068,workstation_enchanting,0.0,0.0
@@ -6323,6 +6391,7 @@ monitor_069,underwater,0.0,0.0066928509242848554
 monitor_069,swimming,0.0,0.0
 monitor_069,falling,0.0,0.0
 monitor_069,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_069,deep_water_ahead,0.0,0.0016588010801744215
 monitor_069,lock_in_crosshair,0.0,0.0
 monitor_069,workstation_smithing,0.0,0.0
 monitor_069,workstation_enchanting,0.0,0.0
@@ -6415,6 +6484,7 @@ monitor_070,underwater,0.0,0.0066928509242848554
 monitor_070,swimming,0.0,0.0
 monitor_070,falling,0.0,0.0
 monitor_070,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_070,deep_water_ahead,0.0,0.0016588010801744215
 monitor_070,lock_in_crosshair,0.0,0.0
 monitor_070,workstation_smithing,0.0,0.0
 monitor_070,workstation_enchanting,0.0,0.0
@@ -6507,6 +6577,7 @@ monitor_071,underwater,0.0,0.0066928509242848554
 monitor_071,swimming,0.0,0.0
 monitor_071,falling,0.0,0.0
 monitor_071,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_071,deep_water_ahead,0.0,0.0016588010801744215
 monitor_071,lock_in_crosshair,0.0,0.0
 monitor_071,workstation_smithing,0.0,0.0
 monitor_071,workstation_enchanting,0.0,0.0
@@ -6599,6 +6670,7 @@ monitor_072,underwater,0.0,0.0066928509242848554
 monitor_072,swimming,0.0,0.0
 monitor_072,falling,0.0,0.0
 monitor_072,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_072,deep_water_ahead,0.0,0.0016588010801744215
 monitor_072,lock_in_crosshair,0.0,0.0
 monitor_072,workstation_smithing,0.0,0.0
 monitor_072,workstation_enchanting,0.0,0.0
@@ -6691,6 +6763,7 @@ monitor_073,underwater,0.0,0.0066928509242848554
 monitor_073,swimming,0.0,0.0
 monitor_073,falling,0.0,0.0
 monitor_073,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_073,deep_water_ahead,0.0,0.0016588010801744215
 monitor_073,lock_in_crosshair,0.0,0.0
 monitor_073,workstation_smithing,0.0,0.0
 monitor_073,workstation_enchanting,0.0,0.0
@@ -6783,6 +6856,7 @@ monitor_074,underwater,0.0,0.0066928509242848554
 monitor_074,swimming,0.0,0.0
 monitor_074,falling,0.0,0.0
 monitor_074,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_074,deep_water_ahead,0.0,0.0016588010801744215
 monitor_074,lock_in_crosshair,0.0,0.0
 monitor_074,workstation_smithing,0.0,0.0
 monitor_074,workstation_enchanting,0.0,0.0
@@ -6875,6 +6949,7 @@ monitor_075,underwater,0.0,0.0066928509242848554
 monitor_075,swimming,0.0,0.0
 monitor_075,falling,0.0,0.0
 monitor_075,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_075,deep_water_ahead,0.0,0.0016588010801744215
 monitor_075,lock_in_crosshair,0.0,0.0
 monitor_075,workstation_smithing,0.0,0.0
 monitor_075,workstation_enchanting,0.0,0.0
@@ -6967,6 +7042,7 @@ monitor_076,underwater,0.0,0.0066928509242848554
 monitor_076,swimming,0.0,0.0
 monitor_076,falling,0.0,0.0
 monitor_076,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_076,deep_water_ahead,0.0,0.0016588010801744215
 monitor_076,lock_in_crosshair,0.0,0.0
 monitor_076,workstation_smithing,0.0,0.0
 monitor_076,workstation_enchanting,0.0,0.0
@@ -7059,6 +7135,7 @@ monitor_077,underwater,0.0,0.0066928509242848554
 monitor_077,swimming,0.0,0.0
 monitor_077,falling,0.0,0.0
 monitor_077,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_077,deep_water_ahead,0.0,0.0016588010801744215
 monitor_077,lock_in_crosshair,0.0,0.0
 monitor_077,workstation_smithing,0.0,0.0
 monitor_077,workstation_enchanting,0.0,0.0
@@ -7151,6 +7228,7 @@ monitor_078,underwater,0.0,0.0066928509242848554
 monitor_078,swimming,0.0,0.0
 monitor_078,falling,0.0,0.0
 monitor_078,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_078,deep_water_ahead,0.0,0.0016588010801744215
 monitor_078,lock_in_crosshair,0.0,0.0
 monitor_078,workstation_smithing,0.0,0.0
 monitor_078,workstation_enchanting,0.0,0.0
@@ -7243,6 +7321,7 @@ monitor_079,underwater,0.0,0.0066928509242848554
 monitor_079,swimming,0.0,0.0
 monitor_079,falling,0.0,0.0
 monitor_079,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_079,deep_water_ahead,0.0,0.0016588010801744215
 monitor_079,lock_in_crosshair,0.0,0.0
 monitor_079,workstation_smithing,0.0,0.0
 monitor_079,workstation_enchanting,0.0,0.0
@@ -7335,6 +7414,7 @@ monitor_080,underwater,0.0,0.0066928509242848554
 monitor_080,swimming,0.0,0.0
 monitor_080,falling,0.0,0.0
 monitor_080,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_080,deep_water_ahead,0.0,0.0016588010801744215
 monitor_080,lock_in_crosshair,0.0,0.0
 monitor_080,workstation_smithing,0.0,0.0
 monitor_080,workstation_enchanting,0.0,0.0
@@ -7427,6 +7507,7 @@ monitor_081,underwater,0.0,0.0066928509242848554
 monitor_081,swimming,0.0,0.0
 monitor_081,falling,0.0,0.0
 monitor_081,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_081,deep_water_ahead,0.0,0.0016588010801744215
 monitor_081,lock_in_crosshair,0.0,0.0
 monitor_081,workstation_smithing,0.0,0.0
 monitor_081,workstation_enchanting,0.0,0.0
@@ -7519,6 +7600,7 @@ monitor_082,underwater,0.0,0.0066928509242848554
 monitor_082,swimming,0.0,0.0
 monitor_082,falling,0.0,0.0
 monitor_082,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_082,deep_water_ahead,0.0,0.0016588010801744215
 monitor_082,lock_in_crosshair,0.0,0.0
 monitor_082,workstation_smithing,0.0,0.0
 monitor_082,workstation_enchanting,0.0,0.0
@@ -7611,6 +7693,7 @@ monitor_083,underwater,0.0,0.0066928509242848554
 monitor_083,swimming,0.0,0.0
 monitor_083,falling,0.0,0.0
 monitor_083,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_083,deep_water_ahead,0.0,0.0016588010801744215
 monitor_083,lock_in_crosshair,0.0,0.0
 monitor_083,workstation_smithing,0.0,0.0
 monitor_083,workstation_enchanting,0.0,0.0
@@ -7703,6 +7786,7 @@ monitor_084,underwater,0.0,0.0066928509242848554
 monitor_084,swimming,0.0,0.0
 monitor_084,falling,0.0,0.0
 monitor_084,drop_ahead,13.132965087890625,0.0028186619541390873
+monitor_084,deep_water_ahead,0.0,0.0016588010801744215
 monitor_084,lock_in_crosshair,0.0,0.0
 monitor_084,workstation_smithing,0.0,0.0
 monitor_084,workstation_enchanting,0.0,0.0

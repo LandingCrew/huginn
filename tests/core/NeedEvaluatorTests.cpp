@@ -189,7 +189,7 @@ TEST_CASE("families and schools are bit reads")
     CHECK(Val(s, NeedId::loadout_destruction) == 0.0f);
 }
 
-TEST_CASE("environment: darkness off in open daylight, underwater by breath, drop ahead unmeasured reads 0")
+TEST_CASE("environment: darkness off in open daylight, underwater by breath, drop ahead and deep water ahead unmeasured read 0")
 {
     NeedSnapshot s;
     s.light = 0.1f;
@@ -206,6 +206,19 @@ TEST_CASE("environment: darkness off in open daylight, underwater by breath, dro
     CHECK(Val(s, NeedId::drop_ahead) > 0.9f);
     s.dropAhead = 40.0f;
     CHECK(Val(s, NeedId::drop_ahead) < 0.01f);
+    // deep_water_ahead (0.23.19): not measured (-1) reads 0; logistic on the
+    // depth around one actor height (128): a stream ~0, a lake shore ~1.
+    CHECK(s.waterDepthAhead == -1.0f);
+    CHECK(In(s, NeedId::deep_water_ahead) == 0.0f);
+    CHECK(Val(s, NeedId::deep_water_ahead) < 0.01f);
+    s.waterDepthAhead = 40.0f;
+    CHECK(In(s, NeedId::deep_water_ahead) == doctest::Approx(40.0));
+    CHECK(Val(s, NeedId::deep_water_ahead) < 0.02f);
+    s.waterDepthAhead = 128.0f;
+    CHECK(Val(s, NeedId::deep_water_ahead) == doctest::Approx(0.5));
+    s.waterDepthAhead = 300.0f;
+    CHECK(Val(s, NeedId::deep_water_ahead) > 0.99f);
+    CHECK(Val(s, NeedId::drop_ahead) < 0.01f);  // the two read apart
     s.vampireStage = 3;
     CHECK(Val(s, NeedId::vampire_sun_exposure) == 1.0f);
     s.openDaylight = false;
@@ -375,6 +388,7 @@ TEST_CASE("snapshot text: every field round-trips; errors are reported")
     s.closestEnemy = -1.0f;
     s.combatEndAgo = kNever;
     s.dropAhead = 1234.5678f;
+    s.waterDepthAhead = 345.25f;
     const std::string text = "# header\n" + WriteSnapshot("one", s) + "\n" + WriteSnapshot("two", NeedSnapshot{});
     std::string err;
     const auto back = ReadSnapshots(text, err);
@@ -406,5 +420,5 @@ TEST_CASE("field table: unique names, every name readable")
     std::set<std::string_view> names;
     for (const auto& f : kFields) names.insert(f.name);
     CHECK(names.size() == kFields.size());
-    CHECK(kFields.size() == 82);
+    CHECK(kFields.size() == 83);  // 82 until 0.23.19 added waterDepthAhead
 }

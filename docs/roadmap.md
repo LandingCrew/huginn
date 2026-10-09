@@ -173,7 +173,7 @@ in. What was built: the [implementation map](architecture/9-implementation-map.m
       (union of hostiles in combat themselves; no line-of-sight logic, the
       user 2026-10-08), target summoned / casting / archer, restore pending,
       drop ahead. 87 of the 92 needs have a sensor; five are deferred (map
-      Phase 2).
+      Phase 2). (88 of 93 since 0.23.19 added `deep_water_ahead`, below.)
 - [x] Drop ahead (the user, 2026-10-08): a Havok ray cast straight down from
       2–3 points ahead of the player (`bhkWorld::PickObject`), not a guessed
       floor and not the terrain heightmap, which sees through rock meshes.
@@ -189,13 +189,43 @@ in. What was built: the [implementation map](architecture/9-implementation-map.m
       cell changes across two worldspaces ran clean.
 - [ ] **In game (you):** stand at cliff edges, on rock spires and bridges, and
       above deep water; `hg needs` shows `drop_ahead` high only at a real drop.
+- [x] Deep water ahead (0.23.19; the user: "rework the water detector like
+      the cliff/altitude detector"). `underwater` stays as it is (head below
+      the water height: it cannot predict, so a pre-dive Waterbreathing never
+      surfaced). The drop-ahead probe pass already read the water height at
+      each reached point, and its down ray passes through water to the bed,
+      so the depth there is the surface down to the hit (to the ray's bottom
+      with no hit). Two changes, `core/DropAhead.h` `MeasureAhead`: a landing
+      in water at least `kSafeLandingDepth` (128 units, one actor height)
+      deep is no drop -- Skyrim takes no fall damage in deep water, and a
+      cliff over the sea read as a lethal drop -- while shallower water is
+      still measured to its surface; and a new need, `deep_water_ahead` (P3,
+      Environment, logistic c 128 slope 0.05, answered by Waterbreathing),
+      the deepest water over the known probes, logged only like every R3
+      need. Same staleness and skips as `drop_ahead`; while swimming it reads
+      0 (swimming and underwater cover a player in the water). `hg needs`
+      prints it beside the drop; the `[DropAhead]` debug line prints each
+      probe's hit, raw water height and depth (`[hit Z water Z depth N]`),
+      and how many points read water from a neighbouring or an unknown cell.
+      Water is read from the cell each point lies in (fix round). Host
+      tests: a cliff into deep water, into a shallow stream, onto rock, a
+      lake shore on flat ground, unknown probes, no hit over water; mixed
+      points, water at the hit, infinities, the no-water sentinel, a no-hit
+      bottom from a ray cast off lower ground.
+- [ ] **In game (you):** the safe-landing depth (128 units) is a guess -- the
+      game's threshold is not known -- and the deep-water need is untested in
+      game. With `hg needs`: a cliff over deep water reads `drop_ahead` 0 and
+      `deep_water_ahead` > 0; walking to a lake shore raises
+      `deep_water_ahead` before the player is in the water; a cliff onto a
+      shallow stream still reads a drop. If a jump into water the probe calls
+      deep does hurt, raise `kSafeLandingDepth`.
 - [x] Computed and logged on its own cadence (`needs/NeedMonitor`, every
       update tick, a `[Needs]` line per signature change, at most one a
       second). **Not** in the skip gate: moved to R8 (below).
 - [x] `hg needs` prints the live vector.
 - [x] Done when (agent): curve host tests pass; a replayed state snapshot gives
-  the expected vector (`tests/core/NeedFixtureTests.cpp`: 148 snapshots, 64
-  synthetic and 84 recorded in game with the hook build, against an oracle written apart from the
+  the expected vector (`tests/core/NeedFixtureTests.cpp`: 151 snapshots, 67
+  synthetic (64 before 0.23.19) and 84 recorded in game with the hook build, against an oracle written apart from the
   evaluator); pipeline runs per second and `hg recs 40` match the old build.
 - [ ] **In game (you):** a 20-minute session where `hg needs` shows fire,
   darkness, hunger and combat onset firing and expiring.
@@ -281,7 +311,7 @@ agent runs the cheap test on today's log: one weight per slot class × logged
   `tools/replay/replay.py:356`): one learned weight per slot class times the
   logged per-candidate context weight, against context alone (replay's B
   arm), on the v2 log (46 launches; 859 key/wheel picks after the analysis's
-  filter, from 870 stamped records), held out by launch. hit@1 level (+1.1 to +1.5, CI includes 0), NLL −0.25
+  filter, from 869 stamped records), held out by launch. hit@1 level (+1.1 to +1.5, CI includes 0), NLL −0.25
   (CI −0.30 to −0.20), hit@8 +4.0 to +4.3. A class × φ interaction on top
   beats context alone by +2 to +4 hit@1, depending on the folds. v3 (92
   picks, the same 4 launches as v2's last) is too small to say. A first run
@@ -297,7 +327,7 @@ agent runs the cheap test on today's log: one weight per slot class × logged
   - key position alone gets 41% hit@1 on the shown page, so consider a
     key-position term.
   The scripts (`r5-cheap-test/`, `r5-verify/`) lived in the session
-  scratchpad and are not in the repo, and the filter from 870 records to 859
+  scratchpad and are not in the repo, and the filter from 869 records to 859
   picks is not documented; the rest of the method is reproducible from this
   description.
 - **Newly learned spells were not on the HUD before their first menu pick**
@@ -380,8 +410,8 @@ sensor from `PotionDiscriminator`'s timer; `ChoiceLearner`; scorer; cosave
 pruned symbol (console, selection log, `ReasonHold`, debug widget, `Tests.cpp`)
 changed in the same PR, and the shipped INI loses the dead keys.
 - [ ] **Decide: which thread runs the update loop** (2026-10-09, two Tracy
-      traces in `traces/202610/`, which is not checked in; the counts are
-      trace09's unless marked). `OnUpdate`, driven by the InputEvent sink,
+      traces in `traces/202610/`, which is not checked in; the counts and
+      times are trace09's unless marked). `OnUpdate`, driven by the InputEvent sink,
       runs:
       - on a pool of 6 rotating game job threads in gameplay;
       - on the main thread in paused menus and the main menu (it does run
@@ -393,12 +423,18 @@ changed in the same PR, and the shipped INI loses the dead keys.
         `IsWorldLoaded` (1,289 of 1,304; trace04 3,742 of 3,768), after
         `UpdateHandler::ProcessEvent` has run `InputHandler::ProcessButton`
         and `Update` and the `IsWorldLoaded` UI reads. In 15 of 18 game
-        loads (14 of them door or fast-travel loads) one of them is a full
-        tick, `RunPipeline` and `Inventory::DeltaScan` included (trace04: 26
-        full ticks, one load with two).
+        loads (about 12 of them door or fast-travel loads, plus 2 likely
+        LoreRim defeat teleports at 12:31:33 and 12:57:02, each right after
+        `health_deficit` 0.99 in combat) one of them is a full tick,
+        `RunPipeline` and `Inventory::DeltaScan` included (trace04: 26 full
+        ticks, one load with two).
       `ForceUpdate` (`hg refresh`, `hg recs`, the test harness) runs a tick
       on its caller's thread; every path holds UpdateHandler's mutex, so no
-      two ticks overlap. No job tick overlapped a main-thread zone (0 of
+      two ticks overlap. One poll does not: the Debug-only
+      `StateManager::ForceUpdate` at kPostLoadGame / kNewGame
+      (`Main.cpp:399-400`, `InitializeGameSystems`) polls every sensor on
+      the main thread outside UpdateHandler's `m_mutex`.
+      No job tick overlapped a main-thread zone (0 of
       22,047); job ticks end a flat ~2 ms before the main thread's player
       update finishes, so the main thread appears to wait for them
       (inferred: the hook zone opens after the original update returns, so
@@ -509,6 +545,7 @@ after R8.
 | A summon when pressed in melee | Enemy-distance (gaussian) need | R3 |
 | Damage over time on a boss | `boss_fight` need | Missing |
 | Feather Fall before the jump | `drop_ahead` need: a downward ray cast ahead (replaces "estimated altitude") | R3 |
+| Waterbreathing before the dive | `deep_water_ahead` need: the water depth under the same probes (`underwater` only fires once the head is under) | R3 (0.23.19); in-game check pending |
 | Soul Gem Fragment (LoreRim MISC item) | Find how LoreRim uses it first | Open |
 | Food at a cooking pot or spit (the R3 session: a spit read as a forge) | A `workstation_cooking` need (the bench kind exists: `core/BenchKind.h` reads it from the workbench keyword, 0.23.16) x food effect columns; smelter and tanning rack likewise if a column ever answers them | Sensor exists (`NeedSensorState::bench`); no need row |
 | Soups for the cold meter, apart from warming spells | Split `survival_warmth`: Restore Cold (Update.esm 01002EE5, a soup's; restores the cold meter, `cold`) from Fortify Warmth (01002EE6 / Variable09, warming spells, the Torch, soups; raises the warmth rating, `warmth_deficit`). Two mechanics, confirmed via LoreRim Discord (2026-10-09); one column today, so `cold` x `survival_warmth` also reaches a warming spell. A column change: fixtures regenerate from the dumps | Effect records tell them apart (MGEF, keyword `CCSM_RestoreCold`, name); the columns do not |

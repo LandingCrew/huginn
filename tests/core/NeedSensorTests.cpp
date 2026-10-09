@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <array>
 #include <functional>
+#include <limits>
 #include <cmath>
 #include <numbers>
 #include <ostream>
@@ -68,9 +69,13 @@ TEST_CASE("drop ahead: feet Z minus the surface, the largest over the probes")
     // No hit at all: the bottom of the ray, a very big drop.
     std::array<ProbeHit, 3> void3{ { { true, 1000.0f }, {}, {} } };
     CHECK(DropAhead(feet, void3, cfg) == doctest::Approx(4000.0 - 64.0));
-    // Deep water below a bridge: measured to the surface, not the river bed.
-    std::array<ProbeHit, 3> bridge{ { { true, 1000.0f }, { true, -500.0f, true, 600.0f }, { true, -500.0f, true, 600.0f } } };
+    // Shallow water below a bridge (100 deep): measured to the surface, not
+    // the river bed.
+    std::array<ProbeHit, 3> bridge{ { { true, 1000.0f }, { true, 500.0f, true, 600.0f }, { true, 500.0f, true, 600.0f } } };
     CHECK(DropAhead(feet, bridge, cfg) == doctest::Approx(400.0));
+    // Deep water below it (1100 deep): a safe landing, no drop (0.23.19).
+    std::array<ProbeHit, 3> deepBridge{ { { true, 1000.0f }, { true, -500.0f, true, 600.0f }, { true, -500.0f, true, 600.0f } } };
+    CHECK(DropAhead(feet, deepBridge, cfg) == 0.0f);
     // Water below the hit (a pool under a ledge already counted) changes nothing.
     std::array<ProbeHit, 3> dry{ { { true, 700.0f, true, 100.0f }, {}, {} } };
     dry[1] = { true, 1000.0f };
@@ -79,9 +84,11 @@ TEST_CASE("drop ahead: feet Z minus the surface, the largest over the probes")
     // Standing in water up to the waist: the surface is above the feet, no drop.
     std::array<ProbeHit, 3> wading{ { { true, 950.0f, true, 1050.0f }, { true, 950.0f, true, 1050.0f }, { true, 950.0f, true, 1050.0f } } };
     CHECK(DropAhead(feet, wading, cfg) == 0.0f);
-    // Water over the ray's bottom with no hit (open sea from a cliff).
+    // Water over the ray's bottom with no hit (open sea from a cliff): at
+    // least 2936 deep, a safe landing (0.23.19; it read a 1000-unit drop to
+    // the surface before).
     std::array<ProbeHit, 3> sea{ { { true, 1000.0f }, { false, 0.0f, true, 0.0f }, { false, 0.0f, true, 0.0f } } };
-    CHECK(DropAhead(feet, sea, cfg) == doctest::Approx(1000.0));
+    CHECK(DropAhead(feet, sea, cfg) == 0.0f);
     // A NaN reading never makes a drop.
     std::array<ProbeHit, 3> bad{ { { true, std::nanf("") }, { true, 1000.0f }, { true, 1000.0f } } };
     CHECK(DropAhead(feet, bad, cfg) == 0.0f);
@@ -119,6 +126,197 @@ TEST_CASE("drop ahead: an unknown probe is nothing, never a cliff")
     std::array<ProbeHit, 3> ignored{ { { true, 1000.0f }, unknownVoid, unknownVoid } };
     CHECK(DropAhead(feet, ignored, cfg) == 0.0f);
     CHECK(ProbeOrigin({ 1.0f, 2.0f, 3.0f }, cfg).z == doctest::Approx(67.0));
+}
+
+TEST_CASE("drop ahead and deep water ahead: deep water is a safe landing, shallow water a drop to its surface")
+{
+    // 0.23.19: the down ray passes through water to the bed; the depth is
+    // the surface down to the hit. Landing in water at least
+    // kSafeLandingDepth deep is no drop (Skyrim takes no fall damage there),
+    // and the same pass reads the deepest water ahead (deep_water_ahead).
+    const DropProbeConfig cfg;
+    const float feet = 1000.0f;
+    const ProbeHit ground{ true, 1000.0f };
+    ProbeHit unknown;
+    unknown.known = false;
+
+    // A cliff into deep water: the bed 1000 below the feet, the sea 300 deep
+    // over it. No drop; the deep-water output reads the depth.
+    std::array<ProbeHit, 3> deepSea{ { ground, { true, 0.0f, true, 300.0f }, { true, 0.0f, true, 300.0f } } };
+    auto r = MeasureAhead(feet, deepSea, cfg);
+    CHECK(r.drop == 0.0f);
+    CHECK(r.waterDepth == doctest::Approx(300.0));
+
+    // A cliff into shallow water (a stream 60 deep): a drop, as before,
+    // measured to the surface (1000 - 260), not to the bed.
+    std::array<ProbeHit, 3> stream{ { ground, { true, 200.0f, true, 260.0f }, { true, 200.0f, true, 260.0f } } };
+    r = MeasureAhead(feet, stream, cfg);
+    CHECK(r.drop == doctest::Approx(740.0));
+    CHECK(r.waterDepth == doctest::Approx(60.0));
+
+    // A cliff onto dry ground: unchanged, and no water.
+    std::array<ProbeHit, 3> rock{ { { true, 998.0f }, { true, 200.0f }, { true, 150.0f } } };
+    r = MeasureAhead(feet, rock, cfg);
+    CHECK(r.drop == doctest::Approx(850.0));
+    CHECK(r.waterDepth == 0.0f);
+    // Water known but below the hit (a pool under a ledge): no depth either.
+    std::array<ProbeHit, 3> dryLedge{ { ground, { true, 200.0f, true, 100.0f }, ground } };
+    r = MeasureAhead(feet, dryLedge, cfg);
+    CHECK(r.drop == doctest::Approx(800.0));
+    CHECK(r.waterDepth == 0.0f);
+
+    // Walking to a lake shore on flat ground: the surface level with the
+    // feet, the bed falling away ahead (10, 150, 300 deep). No drop; the
+    // deep-water output reads the deepest point, before the player is in
+    // the water.
+    std::array<ProbeHit, 3> shore{ { { true, 990.0f, true, 1000.0f }, { true, 850.0f, true, 1000.0f },
+                                     { true, 700.0f, true, 1000.0f } } };
+    r = MeasureAhead(feet, shore, cfg);
+    CHECK(r.drop == 0.0f);
+    CHECK(r.waterDepth == doctest::Approx(300.0));
+
+    // Unknown probes count as nothing in either output, whatever their
+    // fields say.
+    ProbeHit unknownDeep{ true, 0.0f, true, 900.0f };
+    unknownDeep.known = false;
+    std::array<ProbeHit, 3> blocked{ { ground, unknownDeep, unknown } };
+    r = MeasureAhead(feet, blocked, cfg);
+    CHECK(r.drop == 0.0f);
+    CHECK(r.waterDepth == 0.0f);
+    std::array<ProbeHit, 3> none{ { unknown, unknownDeep, unknown } };
+    r = MeasureAhead(feet, none, cfg);
+    CHECK(r.drop == -1.0f);
+    CHECK(r.waterDepth == -1.0f);
+
+    // No hit, water known: the depth is at least the surface down to the
+    // ray's bottom (start 1064 - 4000 = -2936). Over the bottom by 2936:
+    // deep, no drop. Over it by only 36: shallow, the drop to its surface.
+    std::array<ProbeHit, 3> openSea{ { ground, { false, 0.0f, true, 0.0f }, ground } };
+    r = MeasureAhead(feet, openSea, cfg);
+    CHECK(r.drop == 0.0f);
+    CHECK(r.waterDepth == doctest::Approx(2936.0));
+    std::array<ProbeHit, 3> puddleInVoid{ { ground, { false, 0.0f, true, -2900.0f }, ground } };
+    r = MeasureAhead(feet, puddleInVoid, cfg);
+    CHECK(r.drop == doctest::Approx(3900.0));
+    CHECK(r.waterDepth == doctest::Approx(36.0));
+    // No hit and no water: a void, the bottom of the ray, as before.
+    std::array<ProbeHit, 3> voidAhead{ { ground, { false, 0.0f }, ground } };
+    r = MeasureAhead(feet, voidAhead, cfg);
+    CHECK(r.drop == doctest::Approx(4000.0 - 64.0));
+    CHECK(r.waterDepth == 0.0f);
+
+    // The edge: exactly kSafeLandingDepth deep is safe; a unit shallower is
+    // a drop to the surface.
+    std::array<ProbeHit, 3> atEdge{ { ground, { true, 0.0f, true, kSafeLandingDepth }, ground } };
+    CHECK(DropAhead(feet, atEdge, cfg) == 0.0f);
+    std::array<ProbeHit, 3> underEdge{ { ground, { true, 0.0f, true, kSafeLandingDepth - 1.0f }, ground } };
+    CHECK(DropAhead(feet, underEdge, cfg) == doctest::Approx(1000.0 - (kSafeLandingDepth - 1.0)));
+
+    // A NaN water height or hit never makes a depth (nor a NaN).
+    std::array<ProbeHit, 3> nanWater{ { ground, { true, 0.0f, true, std::nanf("") }, ground } };
+    r = MeasureAhead(feet, nanWater, cfg);
+    CHECK(r.drop == doctest::Approx(1000.0));
+    CHECK(r.waterDepth == 0.0f);
+    std::array<ProbeHit, 3> nanHit{ { ground, { true, std::nanf(""), true, 500.0f }, ground } };
+    r = MeasureAhead(feet, nanHit, cfg);
+    CHECK(r.drop == 0.0f);
+    CHECK(r.waterDepth == 0.0f);
+
+    // DropAhead is MeasureAhead's drop.
+    CHECK(DropAhead(feet, stream, cfg) == MeasureAhead(feet, stream, cfg).drop);
+}
+
+TEST_CASE("drop ahead and deep water ahead: mixed probes, water at the hit, infinities, the no-water sentinel")
+{
+    // 0.23.19 fix round.
+    const DropProbeConfig cfg;
+    const float feet = 1000.0f;
+    const ProbeHit ground{ true, 1000.0f };
+    constexpr float kInf = std::numeric_limits<float>::infinity();
+
+    // Flat ground, then deep water, then a rock cliff: the rock's drop wins
+    // (the water point is no drop) and the deep water is still reported.
+    std::array<ProbeHit, 3> mixed{ { ground, { true, 0.0f, true, 300.0f }, { true, 150.0f } } };
+    auto r = MeasureAhead(feet, mixed, cfg);
+    CHECK(r.drop == doctest::Approx(850.0));
+    CHECK(r.waterDepth == doctest::Approx(300.0));
+
+    // Water exactly at the hit: depth 0, the drop as before (to the hit).
+    std::array<ProbeHit, 3> atHit{ { ground, { true, 200.0f, true, 200.0f }, ground } };
+    r = MeasureAhead(feet, atHit, cfg);
+    CHECK(r.waterDepth == 0.0f);
+    CHECK(r.drop == doctest::Approx(800.0));
+
+    // An infinite water height is no water: the drop is to the hit.
+    for (const float wz : { kInf, -kInf }) {
+        INFO("water " << wz);
+        std::array<ProbeHit, 3> infWater{ { ground, { true, 200.0f, true, wz }, ground } };
+        r = MeasureAhead(feet, infWater, cfg);
+        CHECK(r.waterDepth == 0.0f);
+        CHECK(r.drop == doctest::Approx(800.0));
+    }
+    // An infinite hit never makes a drop or a depth; water over a -inf hit
+    // is measured to its surface (the depth is not finite, so not deep).
+    std::array<ProbeHit, 3> infHigh{ { ground, { true, kInf, true, 500.0f }, ground } };
+    r = MeasureAhead(feet, infHigh, cfg);
+    CHECK(r.drop == 0.0f);
+    CHECK(r.waterDepth == 0.0f);
+    std::array<ProbeHit, 3> infLow{ { ground, { true, -kInf, true, 500.0f }, ground } };
+    r = MeasureAhead(feet, infLow, cfg);
+    CHECK(r.drop == doctest::Approx(500.0));
+    CHECK(r.waterDepth == 0.0f);
+    std::array<ProbeHit, 3> infLowDry{ { ground, { true, -kInf }, ground } };
+    CHECK(DropAhead(feet, infLowDry, cfg) == 0.0f);
+
+    // The heights the game uses for "no water" are not water: the XCLW
+    // "use the worldspace default" sentinel (>= 2147483600), -FLT_MAX, NaN,
+    // anything at or past 1e6 from the origin.
+    CHECK_FALSE(IsUsableWaterHeight(2147483648.0f));
+    CHECK_FALSE(IsUsableWaterHeight(2147483600.0f));
+    CHECK_FALSE(IsUsableWaterHeight(-std::numeric_limits<float>::max()));
+    CHECK_FALSE(IsUsableWaterHeight(std::nanf("")));
+    CHECK_FALSE(IsUsableWaterHeight(kMaxWaterHeightAbs));
+    CHECK_FALSE(IsUsableWaterHeight(-kMaxWaterHeightAbs));
+    CHECK(IsUsableWaterHeight(0.0f));
+    CHECK(IsUsableWaterHeight(-14000.0f));
+    CHECK(IsUsableWaterHeight(99999.0f));
+    // A sentinel over a cliff: no water, so a real drop and no depth (read
+    // as water, it would have zeroed the cliff).
+    std::array<ProbeHit, 3> sentinel{ { ground, { true, 0.0f, true, 2147483648.0f }, ground } };
+    r = MeasureAhead(feet, sentinel, cfg);
+    CHECK(r.drop == doctest::Approx(1000.0));
+    CHECK(r.waterDepth == 0.0f);
+    std::array<ProbeHit, 3> sentinelVoid{ { ground, { false, 0.0f, true, 2147483648.0f }, ground } };
+    r = MeasureAhead(feet, sentinelVoid, cfg);
+    CHECK(r.drop == doctest::Approx(4000.0 - 64.0));
+    CHECK(r.waterDepth == 0.0f);
+}
+
+TEST_CASE("drop ahead and deep water ahead: a no-hit probe's bottom follows the ray's real start")
+{
+    // ProbeAll casts each point from waist height above the PREVIOUS
+    // point's ground. A point cast from 500 (ground 436 before it) has its
+    // bottom at 500 - 4000 = -3500, not at feet + 64 - 4000 = -2936.
+    const DropProbeConfig cfg;
+    const float feet = 1000.0f;
+    const ProbeHit ground{ true, 1000.0f };
+    ProbeHit low{ false, 0.0f };
+    low.startZ = 500.0f;
+    CHECK(RayStartZ(feet, low, cfg) == doctest::Approx(500.0));
+    CHECK(RayBottomZ(feet, low, cfg) == doctest::Approx(-3500.0));
+    std::array<ProbeHit, 3> voidLow{ { ground, low, ground } };
+    CHECK(DropAhead(feet, voidLow, cfg) == doctest::Approx(4500.0));
+    // Water 500 over that bottom: deep, no drop. Measured from feet + 64 it
+    // would have been 0 deep and a 4000-unit drop.
+    ProbeHit lowWet = low;
+    lowWet.waterKnown = true;
+    lowWet.waterZ = -3000.0f;
+    std::array<ProbeHit, 3> wetLow{ { ground, lowWet, ground } };
+    auto r = MeasureAhead(feet, wetLow, cfg);
+    CHECK(r.waterDepth == doctest::Approx(500.0));
+    CHECK(r.drop == 0.0f);
+    // No startZ: feet + waist, the first point's start.
+    CHECK(RayStartZ(feet, ProbeHit{}, cfg) == doctest::Approx(1064.0));
 }
 
 namespace
@@ -445,4 +643,23 @@ TEST_CASE("drop reading age: an unpaused stop of the hook still goes stale; a lo
     // The reading is withdrawn (kPreLoadGame clears it): not measured, and a later one starts fresh.
     CHECK(age.Update(131.0, -1.0, false) == doctest::Approx(-1.0));
     CHECK(age.Update(132.0, 131.9, false) == doctest::Approx(0.1));
+}
+
+TEST_CASE("probe sequence: each point records the Z its down ray was cast from")
+{
+    const DropProbeConfig cfg;
+    // Through ProbeAll: a 40-unit step down to 960 at the first point, then
+    // a void. The second ray starts at 960 + 64 = 1024, its bottom -2976.
+    World w;
+    w.ground = [](float y) { return y < 40.0f ? 1000.0f : (y < 100.0f ? 960.0f : std::nanf("")); };
+    const auto hits = ProbeAll(kFeet, kNorth, cfg, w);
+    REQUIRE(hits[0].known);
+    REQUIRE(hits[1].known);
+    CHECK(hits[0].hitZ == doctest::Approx(960.0));
+    REQUIRE(hits[0].startZ.has_value());
+    CHECK(*hits[0].startZ == doctest::Approx(1064.0));
+    CHECK_FALSE(hits[1].hit);
+    REQUIRE(hits[1].startZ.has_value());
+    CHECK(*hits[1].startZ == doctest::Approx(1024.0));
+    CHECK(DropAhead(kFeet.z, hits, cfg) == doctest::Approx(1000.0 - (1024.0 - 4000.0)));
 }

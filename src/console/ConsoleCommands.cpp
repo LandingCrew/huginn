@@ -250,8 +250,15 @@ namespace Huginn::Console
                                       ? std::string("no reading")
                                       : std::format("reading {:.2f}s old unpaused, {}", sensors.dropAgeSec,
                                                     State::DropAheadProbe::StatusName(probe.status));
-      const auto extra = std::format("  drop ahead {} ({}) | encumbrance {:.2f} | families 0x{:X} | combat {} ({}) | light {:.2f}{}",
-         s.dropAhead < 0.0f ? std::string("not measured") : std::format("{:.0f} units", s.dropAhead), dropAge,
+      // Deep water ahead comes from the same probe pass (0.23.19): the
+      // deepest water under the probes; a landing at least the safe depth
+      // deep is no drop.
+      const auto extra = std::format("  drop ahead {}, deep water ahead {} ({}) | encumbrance {:.2f} | families 0x{:X} | combat {} ({}) | light {:.2f}{}",
+         s.dropAhead < 0.0f ? std::string("not measured") : std::format("{:.0f} units", s.dropAhead),
+         s.waterDepthAhead < 0.0f ? std::string("not measured")
+                                  : std::format("{:.0f} units (safe landing >= {:.0f})", s.waterDepthAhead,
+                                                Core::Needs::kSafeLandingDepth),
+         dropAge,
          s.encumbrance, s.families, s.inCombat ? "on" : "off",
          s.inCombat ? std::format("{:.1f}s in", s.combatStartAgo)
                     : (s.combatEndAgo >= Core::Needs::kNever ? std::string("never since load")

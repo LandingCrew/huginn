@@ -39,6 +39,7 @@ namespace Huginn::State
       double combatEndAt = -1.0;         // published in_combat went false
       double submergedAt = -1.0;         // head went under (-1 while not under)
       float dropAhead = -1.0f;           // units; -1 = not measured (airborne, swimming, no physics world)
+      float waterDepthAhead = -1.0f;     // the same probe pass: deepest water ahead, units; 0 none, -1 as dropAhead
       double dropAgeSec = -1.0;          // the probe's last reading: its age in UNPAUSED seconds; -1 = none
 
       // PollWorldObjects
