@@ -557,9 +557,9 @@ max_zero,stamina_deficit,0.0,0.0066928509242848554
 max_zero,health_falling,0.0,0.01098694263059318
 max_zero,magicka_burn,0.0,0.0066928509242848554
 max_zero,stamina_burn,0.0,0.0066928509242848554
-max_zero,restore_pending_health,5.0,1.0
-max_zero,restore_pending_magicka,0.4000000059604645,0.002472623303650189
-max_zero,restore_pending_stamina,10.0,1.0
+max_zero,restore_pending_health,0.0,4.5397868702434395e-05
+max_zero,restore_pending_magicka,0.0,4.5397868702434395e-05
+max_zero,restore_pending_stamina,0.0,4.5397868702434395e-05
 max_zero,fire_damage_rate,0.0,0.01098694263059318
 max_zero,frost_damage_rate,0.0,0.01098694263059318
 max_zero,shock_damage_rate,0.0,0.01098694263059318
@@ -833,9 +833,9 @@ restore_pending_zero_deficit,stamina_deficit,0.0,0.0066928509242848554
 restore_pending_zero_deficit,health_falling,0.0,0.01098694263059318
 restore_pending_zero_deficit,magicka_burn,0.0,0.0066928509242848554
 restore_pending_zero_deficit,stamina_burn,0.0,0.0066928509242848554
-restore_pending_zero_deficit,restore_pending_health,10.0,1.0
-restore_pending_zero_deficit,restore_pending_magicka,0.5,0.0066928509242848554
-restore_pending_zero_deficit,restore_pending_stamina,10.0,1.0
+restore_pending_zero_deficit,restore_pending_health,0.0,4.5397868702434395e-05
+restore_pending_zero_deficit,restore_pending_magicka,0.0,4.5397868702434395e-05
+restore_pending_zero_deficit,restore_pending_stamina,0.0,4.5397868702434395e-05
 restore_pending_zero_deficit,fire_damage_rate,0.0,0.01098694263059318
 restore_pending_zero_deficit,frost_damage_rate,0.0,0.01098694263059318
 restore_pending_zero_deficit,shock_damage_rate,0.0,0.01098694263059318

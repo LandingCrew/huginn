@@ -172,6 +172,23 @@ namespace Huginn::Core::Needs
         /// Episodes dropped for being shorter than minSec, since the last Reset.
         [[nodiscard]] std::size_t DroppedShort() const noexcept { return dropped_; }
 
+        /// The player died (0.23.16): drop every open episode and every ended
+        /// one still in its grace, as a load does, and say how many. A death
+        /// is not a decision: an episode cut short by it ("falling" into the
+        /// ground, a loadout the corpse no longer holds) is not "nothing
+        /// pressed", and the reload that follows starts a new session anyway.
+        /// The short-episode count is kept (unlike Reset).
+        std::size_t Abandon()
+        {
+            std::size_t n = closing_.size();
+            for (auto& slot : open_) {
+                if (slot) ++n;
+                slot.reset();
+            }
+            closing_.clear();
+            return n;
+        }
+
         /// Forget everything (a game load): nothing open, nothing pending.
         void Reset()
         {

@@ -65,9 +65,9 @@ port, checked bit for bit against the loop it replaced) and `core/RingBuffer.h`.
 | Test | What it pins |
 |---|---|
 | `EffectColumnsTests.cpp` | `core/EffectColumns.h` equals `docs/architecture/9-data/effects.csv` (ids, order, levels, families); every rule pattern compiles |
-| `EffectFixtureTests.cpp` | rows sampled from three `hg dump all` CSVs (`tests/core/fixtures/effects_{vanilla,simonrim,lorerim}.csv`): each effect row's column, each item's scope and its effect columns |
+| `EffectFixtureTests.cpp` | rows sampled from three `hg dump all` CSVs (`tests/core/fixtures/effects_{vanilla,simonrim,lorerim}.csv`): each effect row's column, each item's scope and its effect columns; named LoreRim food (0.23.16): raw vs roasted Mammoth Snout (hunger size, cooked riders, Weak Stomach as `self_harm_stamina`), Apple Pie and Honey Nut Treat (`fortify_vital_magicka`, not a restore), Strange Meat |
 | `MiniRegexTests.cpp` | the regex subset; and `fixtures/regex_oracle.csv`: every rule pattern against Python's `re` on real names, descriptions and keyword lists (match, span, group 1) |
-| `EffectMapperTests.cpp` | values, percentiles, sentinels, the hidden-row whitelist, payloads, scope, item features, cross-features, the deviations from the reference extractor |
+| `EffectMapperTests.cpp` | values, percentiles, sentinels, the hidden-row whitelist, payloads, scope, item features, cross-features, the deviations from the reference extractor; the side-effect rule (0.23.16: harm rows on food and potions to `self_harm*`, poisons and spells untouched, `hostile` and the primary row) |
 
 The fixtures' expectations were written by the Python reference extractor
 that measured doc 9's coverage (adapted to the effects.csv names and to the
@@ -91,7 +91,7 @@ the checked-in fixtures byte for byte.
 | `NeedIdsTests.cpp` | `core/NeedIds.h` equals `needs.csv` (ids, order, group, priority, default curve, deferred flag); every need has an input |
 | `ResponseCurveTests.cpp` | each curve kind against hand-worked values; [0,1] for any input; parse/format round trip; bad INI values refused |
 | `NeedEvaluatorTests.cpp` | named cases for the `r3_input` formulas (gates, NEVER, families, ammo by launcher...), the 0.05 signature, `Advance`, `TimeDriven`, the text record |
-| `NeedSensorTests.cpp` | drop-ahead geometry (points, direction, the 20 units/s threshold, cliff, slope, no hit, bridge over water, wading; unknown probes: uphill, a wall, stairs, a crowd); the probe sequence (`ProbeAll`) over a scripted world: the picks it casts, a cliff, a parapet blocked at the knee, an invisible wall, walkable slopes of 5-30 degrees, a crest then a cliff, a step up, stairs, a crowd; the teleport test, the decaying sum, the time-to-kill estimate |
+| `NeedSensorTests.cpp` | drop-ahead geometry (points, direction, the 20 units/s threshold, cliff, slope, no hit, bridge over water, wading; unknown probes: uphill, a wall, stairs, a crowd); the probe sequence (`ProbeAll`) over a scripted world: the picks it casts, a cliff, a parapet blocked at the knee, an invisible wall, walkable slopes of 5-30 degrees, a crest then a cliff, a step up, stairs, a crowd; the teleport test, the decaying sum, the time-to-kill estimate; the drop reading's unpaused age (0.23.16); the bench kind by workbench keyword (0.23.16) |
 | `TargetFamiliesTests.cpp` | the multi-hot family reading on all 539 `race_map.csv` rows (family \| also) and named cases |
 | `NeedFixtureTests.cpp` | every snapshot in `tests/core/fixtures/needs/*.txt` gives the vector in its `.expected.csv` |
 

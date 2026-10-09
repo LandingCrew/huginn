@@ -193,10 +193,12 @@ def per_max(num, den):
 
 
 def pending_ratio(pending, frac, maxv):
-    """'0 if pending <= 0; else min(pending / max((1 - frac) * max, 1), 10)'."""
-    if pending <= 0:
+    """'0 if pending <= 0 or (1 - frac) * max < 1; else min(pending / ((1 - frac) * max), 10)'
+    (0.23.16: under one point missing there is nothing to cover)."""
+    deficit = (1.0 - frac) * maxv
+    if pending <= 0 or not deficit >= 1.0:
         return 0.0
-    return min(pending / max((1.0 - frac) * maxv, 1.0), 10.0)
+    return min(pending / deficit, 10.0)
 
 
 def survival_meter(s, raw, stage):

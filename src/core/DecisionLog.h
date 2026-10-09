@@ -190,6 +190,10 @@ namespace Huginn::Core::DecisionLog
         std::vector<std::string> sourceNames;     // the old engine's source types, by index
         float onset = 0.5f, expiry = 0.25f;       // the episode thresholds in force
         double minSec = 1.0, graceSec = 4.0, answerSlackSec = 0.5;
+        // 0.23.16: a death drops the open episodes and those in their grace
+        // (EpisodeTracker::Abandon). Written as "deathDrops":1; a head without
+        // it (0.23.15) recorded `nothing` for episodes a death cut short.
+        bool deathDrops = true;
     };
 
     // --- JSON helpers ---------------------------------------------------------

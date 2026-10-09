@@ -1,13 +1,13 @@
 #pragma once
 
 // =============================================================================
-// EFFECT COLUMNS -- the 239 columns of cap(i), in the order of effects.csv
+// EFFECT COLUMNS -- the 243 columns of cap(i), in the order of effects.csv
 // =============================================================================
 // GENERATED from docs/architecture/9-data/effects.csv (id, level, family);
 // tests/core/EffectColumnsTests.cpp fails if the two drift apart. Each enum
 // name is the CSV id, so a column reads the same in code, dumps and docs.
 //
-// Levels: 25 families (max over their specifics), 133 specifics, 19
+// Levels: 26 families (max over their specifics), 136 specifics, 19
 // modifiers, 25 item features, 23 weapon stats, 14 armour stats. Two
 // specifics have no family column: drain_skill and soul_trap.
 //
@@ -49,6 +49,7 @@ namespace Huginn::Core::Effect
         survival,
         transform,
         meta,
+        self_harm,
         restore_health,
         restore_magicka,
         restore_stamina,
@@ -182,6 +183,9 @@ namespace Huginn::Core::Effect
         transform_vampire_lord,
         meta_xp_gain,
         meta_potion_duration,
+        self_harm_health,
+        self_harm_magicka,
+        self_harm_stamina,
         delivery_self,
         delivery_touch,
         delivery_aimed,
@@ -267,7 +271,7 @@ namespace Huginn::Core::Effect
     };
 
     inline constexpr std::size_t kColumnCount = static_cast<std::size_t>(Col::_Count);
-    static_assert(kColumnCount == 239, "effects.csv has 239 columns");
+    static_assert(kColumnCount == 243, "effects.csv has 243 columns");
 
     enum class Level : std::uint8_t { Family, Specific, Modifier, ItemFeature, WeaponStat, ArmourStat };
 
@@ -304,6 +308,7 @@ namespace Huginn::Core::Effect
         { "survival", Level::Family, Col::_Count },
         { "transform", Level::Family, Col::_Count },
         { "meta", Level::Family, Col::_Count },
+        { "self_harm", Level::Family, Col::_Count },
         { "restore_health", Level::Specific, Col::restore },
         { "restore_magicka", Level::Specific, Col::restore },
         { "restore_stamina", Level::Specific, Col::restore },
@@ -437,6 +442,9 @@ namespace Huginn::Core::Effect
         { "transform_vampire_lord", Level::Specific, Col::transform },
         { "meta_xp_gain", Level::Specific, Col::meta },
         { "meta_potion_duration", Level::Specific, Col::meta },
+        { "self_harm_health", Level::Specific, Col::self_harm },
+        { "self_harm_magicka", Level::Specific, Col::self_harm },
+        { "self_harm_stamina", Level::Specific, Col::self_harm },
         { "delivery_self", Level::Modifier, Col::_Count },
         { "delivery_touch", Level::Modifier, Col::_Count },
         { "delivery_aimed", Level::Modifier, Col::_Count },

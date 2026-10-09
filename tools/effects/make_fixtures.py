@@ -299,6 +299,29 @@ def keep_hidden(col, name):
     return True
 
 
+# Deviation (0.23.16): a harm row on a food or potion is a side effect. The reference
+# extractor has no item-level rule; this one is written from effects.csv's self_harm rows.
+HARM_FAMILIES = {'damage', 'drain_vital', 'absorb', 'weaken_regen', 'weakness', 'weaken_combat', 'control',
+                 'influence', 'drain_skill'}
+
+
+def harms_user(kind, r):
+    """A food or potion row that is detrimental or hostile: its target is whoever uses the item."""
+    if kind not in ('Food', 'Potion'):
+        return False
+    return bool(r['det']) or str(r['hostile']) == '1' or (int(r['fl']) & 0x5) != 0
+
+
+def self_harm_col(c):
+    """self_harm_<vital> for a vital's damage or drain, self_harm for any other harm column, '' otherwise."""
+    if not c:
+        return ''
+    for v in ('health', 'magicka', 'stamina'):
+        if c == 'drain_vital_' + v or c == 'damage_' + v or (v == 'health' and c.startswith('damage_health_')):
+            return 'self_harm_' + v
+    return 'self_harm' if famkey(c) in HARM_FAMILIES else ''
+
+
 # =============================================================================
 # Expected VALUES (verifier round 1, S1): a second implementation of the value
 # rules written down in src/core/EffectMapper.h and effects.csv's `how` column,
@@ -306,7 +329,7 @@ def keep_hidden(col, name):
 # =============================================================================
 import math
 
-AMOUNT = ('restore_', 'damage_', 'absorb_')
+AMOUNT = ('restore_', 'damage_', 'absorb_', 'self_harm_')
 LEVEL = ('fortify_vital_', 'regen_', 'drain_vital_', 'weaken_regen_', 'resist_', 'weakness_', 'fortify_skill_',
          'fortify_combat_', 'weaken_combat_', 'defense_')
 SPECIAL = {
@@ -474,7 +497,10 @@ FORCE = set("""
 000CDB70 000E0CD6 87410740 8748263E 66032C8B 6603682F 89000A0D 301B7EF9 FE6448DE FE6448DF A8061994
 A8061EFB 040275B7 FE715828 673727C3 8D005FD0 2804F8FC 8702F1C2 00028532 00027EB6 0009B2B2 00043323
 00043324 220A23DE FE350801 0401CAB0 04027490 FE00C804 8D005E71 8D0061D5 6601A0A4
+000669A4 000722BB 00064B43 00064B38
 """.split())
+# 0.23.16: the last line is raw vs roasted Mammoth Snout, Apple Pie and Honey Nut Treat (hunger
+# size, cooked riders, LoreRim's Fortify Magicka food), named by the R3 session review.
 
 
 def main():
@@ -692,6 +718,9 @@ def main():
                 elif z:
                     note = (note + ' ' if note else '') + 'zero:' + z[0] + ('-pct' if z[0] == 'describe' and z[3] and z[2] > 0 else '')
                     c, route, zmag, zfac = zero_kept(r, z, c)
+                if kept and harms_user(key[0], r) and self_harm_col(c):
+                    c = self_harm_col(c)
+                    note = (note + ' ' if note else '') + 'dev:self-harm'
                 exp_rows.append((c, note))
                 if kept:
                     cols_ = [c]

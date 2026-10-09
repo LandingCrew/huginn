@@ -1,6 +1,7 @@
 #include "DropAheadProbe.h"
 
 #include "NeedSensorState.h"  // NeedClock
+#include "Profiling.h"
 
 #include <atomic>
 #include <chrono>
@@ -103,15 +104,38 @@ namespace Huginn::State::DropAheadProbe
          g_latest = { status, drop, atSec };
       }
 
-      void LogTransition(Status status, std::string_view detail)
+      // The status line (0.23.16): debug, and at most one per
+      // kTransitionLogGapSec. Walking along an edge flips measured <-> every
+      // probe unknown several times a second: 376 info lines in 18 minutes of
+      // the LoreRim R3 session. A line says how many changes it stands for.
+      constexpr double kTransitionLogGapSec = 5.0;
+      double g_lastTransitionLogAt = -1.0e9;
+      int g_lastSeenStatus = -1;
+      std::uint32_t g_changesSinceLog = 0;
+
+      bool WantTransitionLog(Status status, double nowSec)
       {
-         if (static_cast<int>(status) == g_lastLoggedStatus) return;
+         if (static_cast<int>(status) != g_lastSeenStatus) {
+            g_lastSeenStatus = static_cast<int>(status);
+            ++g_changesSinceLog;
+         }
+         if (static_cast<int>(status) == g_lastLoggedStatus) return false;
+         return nowSec - g_lastTransitionLogAt >= kTransitionLogGapSec;
+      }
+
+      void LogTransition(Status status, double nowSec, std::string_view detail)
+      {
          g_lastLoggedStatus = static_cast<int>(status);
-         logger::info("[DropAhead] {}{}"sv, StatusName(status), detail);
+         g_lastTransitionLogAt = nowSec;
+         logger::debug("[DropAhead] {}{}{}"sv, StatusName(status), detail,
+            g_changesSinceLog > 1 ? fmt::format(" ({} status changes since the last line)", g_changesSinceLog)
+                                  : std::string());
+         g_changesSinceLog = 0;
       }
 
       void OnPlayerUpdate(RE::PlayerCharacter* player)
       {
+         Huginn_ZONE_NAMED("DropAhead::PlayerUpdateHook");
          if (!g_gameLoaded.load(std::memory_order_acquire) || !player) return;
          const auto now = std::chrono::steady_clock::now();
          if (now - g_lastProbe < kInterval) return;
@@ -130,7 +154,7 @@ namespace Huginn::State::DropAheadProbe
 
          auto skip = [&](Status s) {
             Store(s, -1.0f, nowSec);
-            LogTransition(s, "");
+            if (WantTransitionLog(s, nowSec)) LogTransition(s, nowSec, "");
          };
          if (auto* ui = RE::UI::GetSingleton()) {
             // Quit to the main menu: the player singleton outlives the world
@@ -139,7 +163,9 @@ namespace Huginn::State::DropAheadProbe
             if (ui->IsMenuOpen(RE::MainMenu::MENU_NAME)) {
                g_gameLoaded.store(false, std::memory_order_release);
                g_lastPosAt = -1.0;
-               return skip(Status::NotLoaded);
+               Store(Status::NotLoaded, -1.0f, -1.0);  // no reading: nothing for a paused age to keep
+               if (WantTransitionLog(Status::NotLoaded, nowSec)) LogTransition(Status::NotLoaded, nowSec, "");
+               return;
             }
             if (ui->IsMenuOpen(RE::LoadingMenu::MENU_NAME)) {
                g_lastPosAt = -1.0;  // a load: the next position is no movement
@@ -179,6 +205,7 @@ namespace Huginn::State::DropAheadProbe
          HavokCast cast{ world.get(), RayFilter(player) };
          std::array<Core::Needs::ProbeHit, 3> hits{};
          {
+            Huginn_ZONE_NAMED("DropAhead::ProbeAll (ray casts)");
             RE::BSReadLockGuard lock(world->worldLock);
             hits = Core::Needs::ProbeAll(feet, dir, cfg, cast);
          }
@@ -202,8 +229,8 @@ namespace Huginn::State::DropAheadProbe
          const Status status = drop < 0.0f ? Status::AllUnknown : Status::Measured;
          Store(status, drop, nowSec);
          if (status == Status::Measured) g_measuredCount.fetch_add(1, std::memory_order_relaxed);
-         if (static_cast<int>(status) == g_lastLoggedStatus) return;
-         LogTransition(status, fmt::format(": drop {:.0f} | dir ({:.2f}, {:.2f}) | hits {}{}:{:.0f} {}{}:{:.0f} "
+         if (!WantTransitionLog(status, nowSec)) return;
+         LogTransition(status, nowSec, fmt::format(": drop {:.0f} | dir ({:.2f}, {:.2f}) | hits {}{}:{:.0f} {}{}:{:.0f} "
                                            "{}{}:{:.0f} | unknown {} rejected {} | feet z {:.0f}",
             drop, dir.x, dir.y, hits[0].known ? "" : "?", hits[0].hit, hits[0].hitZ, hits[1].known ? "" : "?",
             hits[1].hit, hits[1].hitZ, hits[2].known ? "" : "?", hits[2].hit, hits[2].hitZ, unknown, cast.rejected,
@@ -233,7 +260,11 @@ namespace Huginn::State::DropAheadProbe
       return g_originalUpdate.address() != 0;
    }
 
-   void SetGameLoaded(bool loaded) noexcept { g_gameLoaded.store(loaded, std::memory_order_release); }
+   void SetGameLoaded(bool loaded) noexcept
+   {
+      g_gameLoaded.store(loaded, std::memory_order_release);
+      Store(Status::NotLoaded, -1.0f, -1.0);
+   }
 
    std::uint32_t MeasuredCount() noexcept { return g_measuredCount.load(std::memory_order_relaxed); }
 

@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
 #include <limits>
 
 namespace Huginn::Core::Needs
@@ -12,12 +13,16 @@ namespace Huginn::Core::Needs
 
         float PerMax(float amount, float max) noexcept { return max > 0.0f ? amount / max : 0.0f; }
 
-        // Remaining over-time restore against the points missing.
+        // Remaining over-time restore against the points missing. Under one
+        // point missing there is nothing to cover: 0, not "covered" (0.23.16;
+        // it read 1.00 at full health with any restore ticking, the old
+        // deficit floor of 1 point turning every pending restore into 10).
         float Pending(float pending, float fraction, float max) noexcept
         {
             if (!(pending > 0.0f)) return 0.0f;
             const float deficit = (1.0f - fraction) * max;
-            return std::min(pending / std::max(deficit, 1.0f), 10.0f);
+            if (!(deficit >= 1.0f)) return 0.0f;
+            return std::min(pending / deficit, 10.0f);
         }
 
         float Survival(const NeedSnapshot& s, float raw, int stage) noexcept
@@ -190,6 +195,15 @@ namespace Huginn::Core::Needs
         NeedSignature sig{};
         for (std::size_t i = 0; i < kNeedCount; ++i) sig[i] = SignatureLevel(values[i]);
         return sig;
+    }
+
+    bool SignatureMoved(const NeedSignature& logged, const NeedSignature& now, int levels) noexcept
+    {
+        for (std::size_t i = 0; i < kNeedCount; ++i) {
+            if ((logged[i] == 0) != (now[i] == 0)) return true;
+            if (std::abs(static_cast<int>(now[i]) - static_cast<int>(logged[i])) >= levels) return true;
+        }
+        return false;
     }
 
     NeedSnapshot Advance(const NeedSnapshot& s, float dtSec) noexcept

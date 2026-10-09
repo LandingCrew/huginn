@@ -58,6 +58,14 @@ namespace Huginn::Core::Needs
     [[nodiscard]] std::uint8_t SignatureLevel(float v) noexcept;
     [[nodiscard]] NeedSignature Signature(const NeedArray& values) noexcept;
 
+    /// The [Needs] log line's deadband (0.23.16; logging only, the future skip
+    /// gate keeps the plain signature): `now` is worth a line against the last
+    /// LOGGED signature when a need turned on or off (level 0 <-> not 0) or
+    /// moved at least `levels` steps from its logged level. Torchlight swung
+    /// darkness 0.90 <-> 0.68 (4 steps) for half the lines of the LoreRim R3
+    /// session.
+    [[nodiscard]] bool SignatureMoved(const NeedSignature& logged, const NeedSignature& now, int levels) noexcept;
+
     /// The snapshot `dt` seconds later with no sensor change: the seconds-ago
     /// timers and the submerged timer advance, the damage sums decay with
     /// kDamageDecayTauSec. Nothing else moves by itself.

@@ -11,6 +11,7 @@
 #include "DamageEventSink.h"         // For instant damage classification (v0.6.8)
 #include "NeedSensorState.h"         // R3: readings only the need vector uses
 #include "core/DropAhead.h"
+#include "core/BenchKind.h"
 #include <array>
 #include <atomic>
 #include <shared_mutex>
@@ -319,6 +320,7 @@ namespace Huginn::State
 
       // Detect workstation target and update state
       void DetectWorkstationTarget(RE::TESObjectREFR* crosshairRef, WorldState& state) noexcept;
+      [[nodiscard]] Core::Needs::BenchKind BenchKindOf(RE::TESObjectREFR* crosshairRef);
 
       // =============================================================================
       // TARGET MANAGEMENT HELPERS (Private)
@@ -351,6 +353,7 @@ namespace Huginn::State
       // Poll thread only (PollWorldObjects), so no lock. Reset on save load.
       DarknessGate m_darkGate;
       bool m_lastOpenDaylight = false;   // for the transition-only "[World] open daylight" line
+      std::uint8_t m_lastBench = 0;      // PollWorldObjects: for the transition-only "[World] bench" line
       // Light below which it counts as dark ([ContextWeights] fDarkLightLevel,
       // pushed in by ContextWeightSettings). Leaving takes this + DARK_EXIT_GAP.
       std::atomic<float> m_darkLightLevel{ LightLevel::DARK_THRESHOLD };
@@ -578,6 +581,7 @@ namespace Huginn::State
 
       Core::Needs::SoleHostileTtk m_soleHostileTtk;   // PollTargets only
       bool m_wasUnderwaterForTimer = false;   // PollPlayerPosition only
+      Core::Needs::ReadingAge m_dropAge;      // PollPlayerPosition only: the drop reading's unpaused age
 
       // =============================================================================
       // RESOURCE TRACKING STATE (Persistent across polls)

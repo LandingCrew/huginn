@@ -238,15 +238,22 @@ namespace Huginn::State
    {
       const double nowSec = NeedClock::Now();
       // drop_ahead: the last reading DropAheadProbe took on the main thread
-      // (PlayerCharacter::Update); a stale one (the hook stopped: a menu, a
-      // load) reads "not measured".
+      // (PlayerCharacter::Update). The game does not call that hook while it
+      // is paused (the console, a menu) but this loop keeps polling, so the
+      // reading ages on UNPAUSED time only (Core::Needs::ReadingAge): it
+      // stands through a menu, and goes stale ("not measured") after
+      // kMaxAgeSec of unpaused time without a new one (the hook stopped).
+      // kPreLoadGame and the main menu clear the reading (DropAheadProbe).
       const auto reading = DropAheadProbe::Latest();
-      const float drop = (reading.atSec >= 0.0 && nowSec - reading.atSec <= DropAheadProbe::kMaxAgeSec)
-                             ? reading.drop
-                             : -1.0f;
+      auto* ui = RE::UI::GetSingleton();
+      const bool paused = ui && ui->GameIsPaused();
+      const double age = m_dropAge.Update(nowSec, reading.atSec, paused);
+      const float drop = (age >= 0.0 && age <= DropAheadProbe::kMaxAgeSec) ? reading.drop : -1.0f;
+      Huginn_PLOT("Needs drop_ahead (units, -1 unmeasured)", drop);
       UpdateNeedSensors([&](NeedSensorState& n) {
         n.encumbrance = encumbrance;
         n.dropAhead = drop;
+        n.dropAgeSec = age;
         if (underwater != m_wasUnderwaterForTimer) {
           n.submergedAt = underwater ? nowSec : -1.0;
         }

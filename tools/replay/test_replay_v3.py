@@ -58,12 +58,12 @@ class GoldenFile(unittest.TestCase):
     def test_head(self):
         h = self.decs[0]["head"]
         self.assertEqual(h["v"], 3)
-        self.assertEqual(len(h["cols"]), 239)
+        self.assertEqual(len(h["cols"]), 243)
         self.assertEqual(len(h["needs"]), 92)
         self.assertEqual(h["cross"][4], "stack_count")
         self.assertEqual(h["kinds"][7], "Armor")
         self.assertEqual(h["episode"], {"onset": 0.5, "expiry": 0.25, "minSec": 1.0, "graceSec": 4.0,
-                                        "answerSlackSec": 0.5})
+                                        "answerSlackSec": 0.5, "deathDrops": 1})
 
     def test_key_press(self):
         d = self.decs[0]
@@ -345,6 +345,16 @@ class PythonRoundTrip(unittest.TestCase):
         decs, stats = self._read_bytes(data, ".jsonl.gz")
         self.assertEqual(stats["truncated"], 1)
         self.assertGreaterEqual(len(decs), 1)
+
+    def test_intact_gzip_stays_strict(self):
+        # Only a .gz that fails to decompress whole is read leniently: an
+        # intact one holding a malformed record still raises, like a .jsonl.
+        lines, heads = self.golden_lines()
+        bad = b"\n".join(lines[:heads[1]] + [b'{"t":"ced","id":0}'] + lines[heads[1]:]) + b"\n"
+        with self.assertRaises(replay.V3FormatError):
+            self._read_bytes(gzip.compress(bad), ".jsonl.gz")
+        with self.assertRaises(replay.V3FormatError):
+            self._read_bytes(bad)
 
     def test_corrupt_gzip_never_raises(self):
         # A flipped byte inside the deflate stream raises zlib.error, not

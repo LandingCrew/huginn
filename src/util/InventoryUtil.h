@@ -1,5 +1,7 @@
 #pragma once
 
+#include "core/SignatureDedup.h"
+
 namespace Huginn::Util
 {
     // =============================================================================
@@ -135,6 +137,17 @@ namespace Huginn::Util
     // `filter` must be a side-effect-free predicate: it may be invoked on entries
     // that are ultimately skipped (e.g. leveled base-container duplicates), so its
     // result must depend only on the object, not on call count or order.
+    /// The inventory duplicate warning's dedup (below): one per process. A
+    /// non-template inline function's function-local static is a single
+    /// object in the whole program; statics inside the template
+    /// GetInventorySafe<Filter> would be one per call site's filter lambda.
+    /// True when the caller should log (a new form, or a changed signature).
+    inline bool ShouldWarnDuplicate(RE::FormID formID, std::uint64_t signature)
+    {
+        static Core::SignatureDedup s_dedup;
+        return s_dedup.ShouldWarn(formID, signature);
+    }
+
     template <typename Filter>
     inline InventoryItemMap GetInventorySafe(RE::TESObjectREFR* ref, Filter&& filter)
     {
@@ -240,8 +253,14 @@ namespace Huginn::Util
         // Deduped on the numbers, not fired per scan: this runs at 2 Hz and a
         // stable duplicate would otherwise be 2 lines a second. Delete this
         // block once the Iron Sword is understood.
+        //
+        // Process-wide (0.23.16): the scans run on rotating job threads, so a
+        // thread_local map re-logged the same signature once per thread (8
+        // identical lines in the LoreRim R3 session). One dedup for the whole
+        // process, under a mutex (ShouldWarnDuplicate, above: outside this
+        // template, so every call site shares it); only the dedup is shared --
+        // `results` (what callers see) is untouched.
         if (!duplicates.empty()) {
-            thread_local std::unordered_map<RE::FormID, uint64_t> s_lastSignature;
             for (const auto& t : duplicates) {
                 if (!t.obj) continue;
                 const auto found = results.find(t.obj);
@@ -256,11 +275,7 @@ namespace Huginn::Util
                     (t.leveledSkip ? 0x8000000000000000ull : 0ull);
 
                 const RE::FormID formID = t.obj->GetFormID();
-                auto [slot, fresh] = s_lastSignature.try_emplace(formID, signature);
-                if (!fresh) {
-                    if (slot->second == signature) continue;  // unchanged, stay quiet
-                    slot->second = signature;
-                }
+                if (!ShouldWarnDuplicate(formID, signature)) continue;  // unchanged, stay quiet
 
                 logger::warn("[Inventory] {} ({:08X}) appears {}x in the changes list: "
                     "first={} ignored={} extraLists={} base={}{} -> callers see {}",

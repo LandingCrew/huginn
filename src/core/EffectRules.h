@@ -94,6 +94,12 @@
 //     detrimental effect and no column on a beneficial one, where it is the
 //     wearer's drawback (Pain of Adoration's mask; effects.csv's weakness
 //     columns need detrimental=1).
+//   0.23.16 (the LoreRim R3 session):
+//   - a harm row on a food or potion (detrimental or hostile: the drinker is
+//     its target) is a side effect, self_harm_<vital> or self_harm, not a
+//     target-harm column (SelfHarmColumn below; applied per item row in
+//     MapItem, so ClassifyEffect still returns the MGEF's own column). The
+//     reference has no such rule; make_fixtures.py applies it to the oracle.
 //   Spec names with no column of their own fall back to their family column
 //   (weaken_combat_crit -> weaken_combat; Dragonrend -> shout; a detrimental
 //   warmth effect -> survival; Cure Addiction -> cure; weakness to disease ->
@@ -200,6 +206,31 @@ namespace Huginn::Core::Effect
 
     /// The column of one magic effect. `overrides` may be null.
     [[nodiscard]] EffectClass ClassifyEffect(const MagicEffectRecord& effect, const OverrideTable* overrides = nullptr);
+
+    /// A consumable's side effect (effects.csv `self_harm`, `self_harm_*`;
+    /// 0.23.16). The effect columns of harm -- damage, drain_vital,
+    /// weaken_regen, weakness, weaken_combat, control, influence, absorb,
+    /// drain_skill -- mean harm to a TARGET on a weapon, spell or poison. On a
+    /// food or potion the drinker is the target, so such a row would credit
+    /// the item with what a learned weight pays a poison for (LoreRim's raw
+    /// food: "Weak Stomach", a detrimental Stamina damage, read as
+    /// damage_stamina). This is the one rule that looks at the item, not only
+    /// the MGEF, so it is applied per item row (core/EffectMapper.cpp MapItem),
+    /// after ClassifyEffect, and ClassifyEffect's column stays the MGEF's own.
+    ///
+    /// SelfHarmColumn: the side-effect column for a harm column -- the vital's
+    /// self_harm_<vital> for a vital's damage or drain (damage_health_*,
+    /// damage_magicka, damage_stamina, drain_vital_*), the family self_harm for
+    /// any other harm column; Col::_Count for a column that is not harm
+    /// (restore, resist, survival ... and survival_intoxication, which is
+    /// already a side-effect column).
+    [[nodiscard]] Col SelfHarmColumn(Col harmColumn) noexcept;
+
+    /// Does this effect row harm whoever uses the item? A food or potion (the
+    /// engine applies their effects to the user; a poison goes on a weapon and
+    /// is never caught) whose effect is detrimental or hostile. Every such row
+    /// in the three dumps has effectDelivery Self.
+    [[nodiscard]] bool HarmsUser(Kind kind, const MagicEffectRecord& effect) noexcept;
 
     /// The name table alone (lower-cased inside): the column an effect's name
     /// alone suggests, if any. Used by the hidden-row name-agreement check.

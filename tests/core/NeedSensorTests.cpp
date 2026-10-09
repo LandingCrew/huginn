@@ -1,6 +1,7 @@
 // core/DropAhead.h and core/NeedSensorMath.h: the arithmetic the R3 sensors
 // run on the game side (state/DropAheadProbe.cpp, StateManager polls).
 
+#include "core/BenchKind.h"
 #include "core/DropAhead.h"
 #include "core/NeedSensorMath.h"
 
@@ -12,6 +13,7 @@
 #include <cmath>
 #include <numbers>
 #include <ostream>
+#include <string_view>
 #include <vector>
 
 using namespace Huginn::Core::Needs;
@@ -371,4 +373,76 @@ TEST_CASE("seconds since and encumbrance")
     CHECK(EncumbranceRatio(285.0f, 300.0f) == doctest::Approx(0.95));
     CHECK(EncumbranceRatio(10.0f, 0.0f) == 0.0f);
     CHECK(EncumbranceRatio(-1.0f, 300.0f) == 0.0f);
+}
+
+TEST_CASE("bench kind: the workbench keyword tells a forge from a cooking spit (0.23.16)")
+{
+    using V = std::vector<std::string_view>;
+    // Create-object benches: the engine's type is the same for all of them.
+    CHECK(ClassifyBench(kBenchCreateObject, V{ "CraftingSmithingForge" }) == BenchKind::Smithing);
+    CHECK(ClassifyBench(kBenchCreateObject, V{ "CraftingSmithingSkyforge" }) == BenchKind::Smithing);
+    CHECK(ClassifyBench(kBenchCreateObject, V{ "CraftingCookpot" }) == BenchKind::Cooking);
+    CHECK(ClassifyBench(kBenchCreateObject, V{ "isCookingSpit", "CraftingCookpot" }) == BenchKind::Cooking);
+    CHECK(ClassifyBench(kBenchCreateObject, V{ "BYOHCraftingOven" }) == BenchKind::Cooking);
+    CHECK(ClassifyBench(kBenchCreateObject, V{ "CraftingSmelter" }) == BenchKind::Smelting);
+    CHECK(ClassifyBench(kBenchCreateObject, V{ "CraftingTanningRack" }) == BenchKind::Tanning);
+    CHECK(ClassifyBench(kBenchCreateObject, V{ "FurnitureSpecial", "SomeModStation" }) == BenchKind::Other);
+    CHECK(ClassifyBench(kBenchCreateObject, V{}) == BenchKind::Other);
+    CHECK(ClassifyBench(kBenchCreateObject, V{ "craftingsmithingforge" }) == BenchKind::Smithing);  // case
+    // A forge that also carries a cooking keyword is a forge.
+    CHECK(ClassifyBench(kBenchCreateObject, V{ "CraftingCookpot", "CraftingSmithingForge" }) == BenchKind::Smithing);
+    // The other bench types say it on their own, whatever the keywords.
+    CHECK(ClassifyBench(kBenchSmithingWeapon, V{ "CraftingSmithingSharpeningWheel" }) == BenchKind::Smithing);
+    CHECK(ClassifyBench(kBenchSmithingArmor, V{}) == BenchKind::Smithing);
+    CHECK(ClassifyBench(kBenchEnchanting, V{ "CraftingCookpot" }) == BenchKind::Enchanting);
+    CHECK(ClassifyBench(kBenchAlchemyExperiment, V{}) == BenchKind::Alchemy);
+    CHECK(ClassifyBench(kBenchNone, V{ "CraftingSmithingForge" }) == BenchKind::None);
+
+    // Only the three craft needs exist: cooking, smelting, tanning set none.
+    CHECK(NeedWorkstation(BenchKind::Smithing) == static_cast<int>(Workstation::Smithing));
+    CHECK(NeedWorkstation(BenchKind::Enchanting) == static_cast<int>(Workstation::Enchanting));
+    CHECK(NeedWorkstation(BenchKind::Alchemy) == static_cast<int>(Workstation::Alchemy));
+    for (const auto k : { BenchKind::None, BenchKind::Cooking, BenchKind::Smelting, BenchKind::Tanning, BenchKind::Other }) {
+        CHECK(NeedWorkstation(k) == static_cast<int>(Workstation::None));
+    }
+}
+
+TEST_CASE("drop reading age: paused time does not age it, unpaused time does (0.23.16)")
+{
+    ReadingAge age;
+    CHECK(age.Update(10.0, -1.0, false) == doctest::Approx(-1.0));  // no reading yet
+
+    // A reading at 10.0, seen at 10.05; the game runs.
+    CHECK(age.Update(10.05, 10.0, false) == doctest::Approx(0.05));
+    CHECK(age.Update(10.15, 10.0, false) == doctest::Approx(0.15));
+
+    // The console opens: the hook stops, the loop polls on for 60 s. The age stays.
+    double t = 10.15;
+    for (int i = 0; i < 600; ++i) {
+        t += 0.1;
+        CHECK(age.Update(t, 10.0, true) == doctest::Approx(0.15));
+    }
+    CHECK(age.Age() <= 1.0);  // still a usable reading (kMaxAgeSec 1)
+
+    // The game resumes; the hook replaces the reading within 100 ms.
+    CHECK(age.Update(t + 0.1, 10.0, false) == doctest::Approx(0.25));
+    CHECK(age.Update(t + 0.15, t + 0.12, false) == doctest::Approx(0.03));
+}
+
+TEST_CASE("drop reading age: an unpaused stop of the hook still goes stale; a long poll gap counts at most 0.5 s")
+{
+    ReadingAge age;
+    age.Update(0.0, 0.0, false);
+    double t = 0.0;
+    for (int i = 0; i < 12; ++i) age.Update(t += 0.1, 0.0, false);  // 1.2 s unpaused, no new reading
+    CHECK(age.Age() > 1.0);
+
+    // The loop did not poll through a 30 s pause: the first poll after it adds at most 0.5 s.
+    age.Reset();
+    age.Update(100.0, 100.0, false);
+    CHECK(age.Update(130.0, 100.0, false) == doctest::Approx(ReadingAge::kMaxPollStepSec));
+
+    // The reading is withdrawn (kPreLoadGame clears it): not measured, and a later one starts fresh.
+    CHECK(age.Update(131.0, -1.0, false) == doctest::Approx(-1.0));
+    CHECK(age.Update(132.0, 131.9, false) == doctest::Approx(0.1));
 }

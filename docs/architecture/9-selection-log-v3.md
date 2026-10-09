@@ -45,7 +45,12 @@ schema of that log, field by field.
   launch than the head in force are skipped. A truncated or corrupt `.gz` ends
   that file where it breaks (`stats["truncated"]`). None of this damage is
   raised. Without damage, a reference to an undefined id is a malformed file
-  and an error.
+  and an error -- except in a `.gz` that fails to decompress whole: there the
+  reader cannot tell where the corruption starts (a flipped byte can decode
+  to lines that parse, up to the CRC check at the stream's end), so every
+  format error of that file is counted as a bad line instead (0.23.16). Its
+  good records still decode; a plain `.jsonl` and an intact `.gz` stay
+  strict.
 
 ## Versioning
 
@@ -88,14 +93,14 @@ contexts per segment and clears both at a head.
 | `launch` | string | UTC start of the game launch, `YYYYMMDD-HHMMSS` |
 | `list` | string | modlist folder (`LoreRim-5`, `simonrim-essentails`...) |
 | `build` | string | `"<version> (<git sha>)"` |
-| `cols` | string[239] | effect columns of `9-data/effects.csv`, in order (`cap.c` indexes it) |
+| `cols` | string[243] | effect columns of `9-data/effects.csv`, in order (`cap.c` indexes it) |
 | `needs` | string[92] | needs of `9-data/needs.csv`, in order (`ctx.need`, `ctx.in`, `dec.open`, `dec.ep.i` index it) |
 | `cross` | string[7] | the runtime cross-features, in order (`row.x` indexes it) |
 | `kinds` | string[10] | catalog kinds: `Spell Scroll Potion Poison Food Weapon Ammo Armor SoulGem Light` (`row.kind`) |
 | `src` | string[10] | the old engine's candidate source types (`row.src`) |
 | `row` | string[10] | the row columns, in order (below) |
 | `flags` | object | row flag bits by name |
-| `episode` | object | the episode definition in force: `onset`, `expiry`, `minSec`, `graceSec`, `answerSlackSec` |
+| `episode` | object | the episode definition in force: `onset`, `expiry`, `minSec`, `graceSec`, `answerSlackSec`, and `deathDrops: 1` (0.23.16: a death drops the open episodes and those in their grace; absent = 0.23.15, where a death could leave `nothing` records) |
 
 ### `cap`
 
@@ -121,7 +126,7 @@ same tick.
 | `id` | int | unique within the launch |
 | `utc` | string | when taken, `YYYY-MM-DD HH:MM:SS.mmm` UTC |
 | `why` | string | `press`, `menu`, `onset` |
-| `menu` | string | the menu's name, for `why: "menu"` (`InventoryMenu`, `MagicMenu`; the favourites menu takes none) |
+| `menu` | string | the menu's name, for `why: "menu"` (`InventoryMenu`, `MagicMenu`, `FavoritesMenu`) |
 | `need` | [[i, v]] | the need vector: non-zero curve outputs, 0..1 (`needs/NeedMonitor`, R3) |
 | `in` | [[i, v]] | what went into each curve, in the units of `needs.csv`'s `r3_input` (fractions, seconds, units of distance...) |
 | `pipe.ok` | 0/1 | a pipeline run of **this game session** had been cached. 0 before the first run after a load (or `hg reset all`): the cache then still holds the previous save's page and candidates, so neither is logged (no `shown` rows, no `eligible` rows) |
@@ -255,8 +260,15 @@ the menu opened. Inside the inventory and magic menus the game is paused (the
 world does not move, the HUD and the page are hidden), so the situation then is
 the situation of the pick, apart from wall-clock decays; the picks of one visit
 share the context. `ctxAgeMs` says how long the player browsed. The favourites
-menu does not pause and the widget stays visible, so its picks join the context
-taken at the press, like a vanilla hotkey's (the default applied 2026-10-09).
+menu joins the same way (0.23.16). 0.23.15 joined its picks at the press, on
+the belief that it does not pause and leaves the widget in view; reverted
+because a favourites pick is a reach-in like any menu pick ("if we are
+reaching into the favorites menu huginn has failed in some way", the user,
+2026-10-09), and because on LoreRim it pauses the game ("FavoritesMenu was
+open 4830 ms: 45 update tick(s) inside (9.3/s, 45 with the game paused), 10
+pipeline run(s)"): the pipeline repages inside it, so the page at the press is
+not the page the player turned away from. Logs written by 0.23.15 have
+favourites picks with `why: "press"` contexts; same v3 format.
 
 **Staleness.** Measured in game (vanilla+, 0.23.15, test mode): the update loop
 keeps ticking inside the inventory menu (57 ticks in 5.9 s, 9.6/s, every one
@@ -284,6 +296,7 @@ are in every head):
 | grace | an ended episode is judged 4 s after its expiry (the 3 s equip confirm, the slack and a few ticks), so a pick made inside it but confirmed later still answers it. It is judged on each update tick **after** the selections' confirmations: after a stall of the loop, a confirmation and the end of a grace can land on one tick, and the confirmation counts first |
 | nothing | an ended episode, ≥ 1 s long, unanswered when its grace runs out: one `nothing` record, joined to the context taken at the onset |
 | paused | episodes neither start nor end while the game is paused (a menu): the world is frozen, so a change then is a wall-clock decay or the player's own menu action, which a pick inside the still-open episode answers |
+| death | (0.23.16) when the player dies, every open episode and every ended one still in its grace is dropped, as at a load, and none opens while the player is dead: a death is not a decision. Earlier logs can hold `nothing` records cut short by a death a few seconds before a reload |
 
 Every need takes part, the always-on ones too (`loadout_*`, `downtime`): they
 rarely end unanswered, since a weapon swap that ends a loadout episode is a
@@ -322,7 +335,7 @@ read (the inventory walk: ~0.9 ms of ~1.3 ms on vanilla+). All Debug numbers.
 To keep that off the moments that matter: a press always reads the held set
 (its state then); a menu open or an onset reuses it until the player's
 inventory or equipment changes (`TESContainerChangedEvent`, `TESEquipEvent`)
-or 5 s pass; the favourites menu builds no context; and the first full read
+or 5 s pass; and the first full read
 after a load -- which maps every per-instance cap through the effect mapper --
 runs once on the first update tick the post-load window allows, not on the
 first press.
@@ -337,7 +350,7 @@ The rate of `nothing` records in real play is not known yet: R5's session will
 tell.
 
 What bounds it:
-- **Caps once per segment**, content-addressed: the 239-column vectors are
+- **Caps once per segment**, content-addressed: the 243-column vectors are
   written once and referenced by id (the first context of a segment carries
   them all).
 - **Sparse everything**: caps, needs, inputs and cross-features list their

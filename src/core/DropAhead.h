@@ -249,4 +249,58 @@ namespace Huginn::Core::Needs
         }
         return hits;
     }
+    // =========================================================================
+    // The age of the last reading, in UNPAUSED seconds (0.23.16)
+    // =========================================================================
+    // The rays are cast from the PlayerCharacter::Update hook, which the game
+    // does not call while it is paused (the console, the inventory ...), while
+    // the update loop keeps polling. Aged on the wall clock, every reading was
+    // "not measured" one second into any menu. Aged here, a paused poll adds
+    // nothing, so the last reading stands until the game runs again and the
+    // hook replaces it; an unpaused second without a new reading (the hook
+    // stopped: a load, a skip it did not store) still makes it stale.
+    //
+    // A gap between two polls counts at most kMaxPollStepSec of unpaused time:
+    // a loop that did not poll through a pause must not age the reading by the
+    // whole pause when it resumes.
+    class ReadingAge
+    {
+    public:
+        static constexpr double kMaxPollStepSec = 0.5;
+
+        /// One poll at `nowSec`. `readingAtSec` is the reading's stamp (-1:
+        /// none); `paused` whether the game is paused at this poll. Returns the
+        /// reading's age in unpaused seconds, or -1 with no reading.
+        double Update(double nowSec, double readingAtSec, bool paused) noexcept
+        {
+            if (readingAtSec < 0.0) {
+                Reset();
+                return -1.0;
+            }
+            if (readingAtSec != readingAt_) {
+                // A new reading: the hook took it while the game ran.
+                readingAt_ = readingAtSec;
+                age_ = std::max(0.0, nowSec - readingAtSec);
+            }
+            else if (lastNow_ >= 0.0 && !paused) {
+                age_ += std::clamp(nowSec - lastNow_, 0.0, kMaxPollStepSec);
+            }
+            lastNow_ = nowSec;
+            return age_;
+        }
+
+        void Reset() noexcept
+        {
+            readingAt_ = -1.0;
+            lastNow_ = -1.0;
+            age_ = -1.0;
+        }
+
+        [[nodiscard]] double Age() const noexcept { return age_; }
+
+    private:
+        double readingAt_ = -1.0;
+        double lastNow_ = -1.0;
+        double age_ = -1.0;
+    };
 }
