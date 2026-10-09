@@ -10,6 +10,24 @@
 
 namespace Huginn::Slot
 {
+#ifndef NDEBUG
+    // Old-code event recorder for slot captures (R7 verifier round 1, the
+    // r7-capture-old branch only): the events the core emits, in its
+    // recordable form (Core::SlotAlloc::PageEvent), at the same points of
+    // this, the 0.23.9 decision code. Recording only; no decision reads it.
+    namespace
+    {
+        thread_local std::vector<Core::SlotAlloc::PageEvent>* t_events = nullptr;
+        void Rec(const char* code, std::initializer_list<uint64_t> v, float f = 0.0f)
+        {
+            if (t_events) t_events->push_back({ code, std::vector<uint64_t>(v), f });
+        }
+    }
+#define HUGINN_REC(...) Rec(__VA_ARGS__)
+#else
+#define HUGINN_REC(...) ((void)0)
+#endif
+
     // Utility stamped on override slot assignments. The magnitude is cosmetic:
     // consumers identify overrides via AssignmentType::Override, never by
     // comparing utility — this value only makes them read as clearly
@@ -379,6 +397,8 @@ namespace Huginn::Slot
                 }
             }
             Capture::NoteRealList(pageIndex, candidates, slotConfigs);
+            capture->hasEvents = true;
+            t_events = &capture->events;
         }
 #endif
 
@@ -494,6 +514,7 @@ namespace Huginn::Slot
                         assignedFormIDs.insert(formID);
                         assignedNames.insert(Candidate::GetName(*override.candidate));
                         overrideAssignedThisFrame = true;
+                        HUGINN_REC("OVM", { formID, home });
 
                         if (const char* why = NoteOverridePlaced(pageIndex, override.condition, formID, home)) {
                             SKSE::log::info("[SlotAllocator] Override '{}' → Page {} Slot {} (marks the slot already showing it)",
@@ -522,6 +543,7 @@ namespace Huginn::Slot
                         assignedFormIDs.insert(formID);
                         assignedNames.insert(Candidate::GetName(*override.candidate));
                         overrideAssignedThisFrame = true;
+                        HUGINN_REC("OVP", { formID, priorityIdx });
 
                         // Only log if override changed (different formID or slot,
                         // or re-placed after a displacement)
@@ -570,6 +592,7 @@ namespace Huginn::Slot
                     assignedNames.insert(Candidate::GetName(*override.candidate));
                     overrideAssignedThisFrame = true;
                     placed = true;
+                    HUGINN_REC("OVF", { formID, priorityIdx });
 
                     // Only log if override changed (different formID or slot,
                     // or re-placed after a displacement)
@@ -583,6 +606,7 @@ namespace Huginn::Slot
                 }
 
                 if (!placed) {
+                    HUGINN_REC("OVU", { formID, sawAcceptingSlot ? 1u : 0u });
                     const bool unstamped = BypassDedup(override.condition);
                     if (sawAcceptingSlot) {
                         // All accepting slots on THIS page are occupied (typically
@@ -619,6 +643,7 @@ namespace Huginn::Slot
         // on this particular page). With multi-page support, Page 1 may have no
         // override-eligible slots, but the override is still active on Page 0.
         if (!overrides.HasActiveOverride()) {
+            HUGINN_REC("OVI", {});
             ResetOverrideLogs(pageIndex);
         }
 
@@ -656,6 +681,7 @@ namespace Huginn::Slot
                     }
                 }
                 if (!found) {
+                    HUGINN_REC("HNC", { j, entry.formID });
                     // Not a candidate at all -- a shield, a torch, an
                     // unaffordable spell. Logged once per item.
                     thread_local RE::FormID s_lastMissing = 0;
@@ -693,6 +719,7 @@ namespace Huginn::Slot
                 // On a key whose class it does not fit -- the pressed key under
                 // Pressed, or Job with no key that fits -- it shows briefly.
                 remembrance.NoteShownSlot(pageIndex, j, target, !fits(target));
+                HUGINN_REC("HSH", { j, target, fits(target) ? 0u : 1u });
                 Scoring::ScoredCandidate sc = *found;
                 sc.isWildcard = false;
                 assignments[target] = SlotAssignment::FromCandidate(
@@ -738,6 +765,7 @@ namespace Huginn::Slot
                 /*skipWildcards=*/false, &classCap);
 
             if (!bestCandidate) {
+                HUGINN_REC("NOC", { priorityIdx });
                 // Rate-limit "no candidate found" logs per classification type
                 std::lock_guard<std::mutex> logLock(m_logMutex);
                 if (m_loggedMissingClassifications.find(config.classification) == m_loggedMissingClassifications.end()) {
@@ -872,6 +900,7 @@ namespace Huginn::Slot
         }
 
 #ifndef NDEBUG
+        t_events = nullptr;
         if (capture) {
             capture->hasResult = true;
             capture->page = PageOf(assignments);
@@ -1220,6 +1249,9 @@ namespace Huginn::Slot
             const float challengerScore = challenger ? challenger->utility * challengerCap : 0.0f;
 
             if (challenger && challengerScore > itemScore * factor) {
+                HUGINN_REC("HGW", { j, Candidate::GetBase(item->candidate).GetDeduplicationKey(),
+                    Candidate::GetBase(challenger->candidate).GetDeduplicationKey(),
+                    (itemCap < 1.0f || challengerCap < 1.0f) ? 1u : 0u });
                 classCap.Add(*challenger);
                 if (itemCap < 1.0f || challengerCap < 1.0f) {
                     SKSE::log::debug("[Hold] Page {} slot {}: '{}' gives way to '{}' (u={:.3f} vs {:.3f}; "
@@ -1558,6 +1590,16 @@ namespace Huginn::Slot
                 if (keyOf(assignments[i]) == ret.key) { now = i; break; }
             }
             if (now == SIZE_MAX) continue;
+#ifndef NDEBUG
+            {
+                uint64_t dKey = 0;
+                uint64_t dSlot = 0xFFFFFFFFu;
+                for (size_t i = 0; ret.displaced != 0 && i < slotCount; ++i) {
+                    if (keyOf(assignments[i]) == ret.displaced) { dKey = ret.displaced; dSlot = i; break; }
+                }
+                HUGINN_REC("RET", { ret.key, ret.home, now, static_cast<uint64_t>(ret.why), dKey, dSlot }, ret.awaySec);
+            }
+#endif
             const bool home = now == ret.home;
             using Outcome = Telemetry::SoakMetrics::ReturnOutcome;
             if (pageIndex == GetCurrentPage()) {
@@ -1785,6 +1827,8 @@ namespace Huginn::Slot
             }
             if (from == SIZE_MAX) continue;
 
+            HUGINN_REC("PUL", { i, from, assignments[from].candidate
+                ? Candidate::GetBase(assignments[from].candidate->candidate).GetDeduplicationKey() : 0 });
             SKSE::log::debug("[SlotAllocator] Slot {} ({}) was empty: took '{}' from Regular slot {}",
                 i, SlotClassificationToString(slotConfigs[i].classification), assignments[from].name, from);
             assignments[i] = std::move(assignments[from]);
