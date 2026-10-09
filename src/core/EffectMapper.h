@@ -32,10 +32,12 @@
 //     and the magnitude for constant ones; presence columns are 1, times
 //     D(duration) = log1p(min(d,3600))/log1p(3600) where effects.csv says
 //     "P x D", times a graded magnitude where it says "P x G". A graded column
-//     with no magnitude (script effects) is presence, 1; through the
-//     engine's own data an unknown strength is resolved per ResolveZero-
-//     Magnitudes below (a stated percentage is its own value, an unknown one
-//     kNeutralStrength = 0.5, never the top). Durations of a day or
+//     with no magnitude has an unknown strength: through a script route
+//     (keyword, name, description, override) it is kNeutralStrength = 0.5
+//     (times D where the rule has one), never the top; through the engine's
+//     own data it is resolved per ResolveZeroMagnitudes below (a stated
+//     percentage is its own value, an unknown one 0.5). Presence-only (P,
+//     PD) columns stay 1 (x D). Durations of a day or
 //     more are sentinels: clipped to 3600, and `long_lasting` set. A restore
 //     of 9999+ is a full restore: value 1, `full_restore` set.
 //   - Families are the max over their specifics.

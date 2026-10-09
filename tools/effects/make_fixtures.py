@@ -382,9 +382,11 @@ def row_quantity(col, kr, constant):
     if graded and not raw > 0 and not full:
         raw = 0.0
         if kr['route'] != 'data':
+            # unknown strength (round 4: script routes too): 0.5, or a stated percentage
             graded = False
-    if kr.get('factor'):
-        # an unknown strength (0.5) or a stated percentage (p/100): not graded
+            post = post * (kr.get('factor') or 0.5)
+    if kr.get('factor') and graded:
+        # a magnitude that is not the strength (a Light with no radius): the factor
         raw, graded, post = 0.0, False, post * kr['factor']
     return raw, post, graded, full
 

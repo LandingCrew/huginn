@@ -418,7 +418,7 @@ namespace Huginn::Core::Effect
         }
 
         KeptRow MakeRow(const EffectRow& row, const MagicEffectRecord& m, const EffectClass& cls, bool visible,
-                        bool constantItem);
+                        bool constantItem, float zeroFactor = kNeutralStrength);
 
         /// The kept row of a Describe / Named zero (its class goes to *cls).
         /// Describe: the column the description names; its stated number is
@@ -446,8 +446,8 @@ namespace Huginn::Core::Effect
                 else if (z == Zero::Describe && in.zeroNumber > 0.0f) factor = std::min(in.zeroNumber / 100.0f, 1.0f);
                 else factor = kNeutralStrength;
             }
-            KeptRow k = MakeRow(r2, m, d, visible, constantItem);
-            if (factor > 0.0f) {
+            KeptRow k = MakeRow(r2, m, d, visible, constantItem, factor > 0.0f ? factor : kNeutralStrength);
+            if (factor > 0.0f && k.graded) {  // a magnitude that is not the strength (a Light with no radius)
                 k.graded = false;
                 k.raw = 0.0f;
                 k.post *= factor;
@@ -457,7 +457,7 @@ namespace Huginn::Core::Effect
         }
 
         KeptRow MakeRow(const EffectRow& row, const MagicEffectRecord& m, const EffectClass& cls, bool visible,
-                        bool constantItem)
+                        bool constantItem, float zeroFactor)
         {
             KeptRow k;
             k.col = cls.col;
@@ -507,14 +507,19 @@ namespace Huginn::Core::Effect
             }
             // A graded column with no magnitude. Through a script route (keyword,
             // name, description, override) the script carries the amount and the
-            // record says 0: presence. Through the engine's own data (route
-            // Data) an unknown strength was settled before this (ZeroCase /
-            // ZeroRow); what still grades 0 here (a timed Level row with
-            // duration 0) grades at the bottom of the population (1/(N+1);
-            // zeros are not in it).
+            // record says 0: the strength is unknown, so the value is
+            // `zeroFactor` -- kNeutralStrength, or a stated percentage p/100 --
+            // never the top. Through the engine's own data (route Data) an
+            // unknown strength was settled before this (ZeroCase / ZeroRow);
+            // what still grades 0 here (a timed Level row with duration 0)
+            // grades at the bottom of the population (1/(N+1); zeros are not
+            // in it).
             if (k.graded && !(k.raw > 0.0f) && !k.fullRestore) {
                 k.raw = 0.0f;
-                if (cls.route != Route::Data) k.graded = false;
+                if (cls.route != Route::Data) {
+                    k.graded = false;
+                    k.post *= zeroFactor;
+                }
             }
             return k;
         }

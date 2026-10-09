@@ -296,7 +296,7 @@ TEST_CASE("effect mapper: sentinels -- full restore and permanent durations")
     CHECK(CapOf(r, 1, Col::long_lasting) == 0.0f);
 }
 
-TEST_CASE("effect mapper: presence columns -- P x D, a script effect with no magnitude, hunger, thirst")
+TEST_CASE("effect mapper: presence columns -- P x D, a script effect with no magnitude (neutral), hunger, thirst")
 {
     World w;
     const auto para = w.Add(Mgef(kArchParalysis, "", "Paralysis", kFlagDetrimental | kFlagHostile));
@@ -326,7 +326,7 @@ TEST_CASE("effect mapper: presence columns -- P x D, a script effect with no mag
     const auto r = w.Build();
     CHECK(CapOf(r, 0, Col::control_paralysis) == doctest::Approx(std::log1p(10.0) / std::log1p(3600.0)));
     CHECK(CapOf(r, 0, Col::hostile) == 1.0f);
-    CHECK(CapOf(r, 1, Col::fortify_combat_armor_penetration) == 1.0f);
+    CHECK(CapOf(r, 1, Col::fortify_combat_armor_penetration) == doctest::Approx(kNeutralStrength));  // graded column, unknown strength
     CHECK(CapOf(r, 2, Col::survival_hunger) == 1.0f);
     CHECK(CapOf(r, 3, Col::survival_hunger) == 0.25f);
     CHECK(CapOf(r, 4, Col::survival_thirst) == 0.5f);
@@ -390,7 +390,7 @@ TEST_CASE("effect mapper: an unknown strength through the engine's data -- no-co
     CHECK(r.mappings[0].tally.mapped == 0);
     CHECK(CapOf(r, 1, Col::restore_health) == doctest::Approx(0.5));
     CHECK(CapOf(r, 2, Col::restore_health) == doctest::Approx(1.0));
-    CHECK(CapOf(r, 3, Col::restore_health) == 1.0f);  // the script carries the amount: presence
+    CHECK(CapOf(r, 3, Col::restore_health) == doctest::Approx(kNeutralStrength));  // script-carried amount: unknown, neutral
     // A stated percentage is the value itself, outside the population: Dragonhide 0.8.
     CHECK(CapOf(r, 4, Col::defense_armor) == doctest::Approx(0.8));
     CHECK(CapOf(r, 5, Col::defense_armor) == doctest::Approx(1.0));  // Oakflesh alone in the population
