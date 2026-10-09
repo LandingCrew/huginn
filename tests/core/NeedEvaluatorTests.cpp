@@ -70,16 +70,16 @@ TEST_CASE("restore pending: remaining over the deficit, 0 with nothing pending, 
     CHECK(In(s, NeedId::restore_pending_health) == 10.0f);
 }
 
-TEST_CASE("enemy casting an element: 1 while seen, gone 2 s later, NEVER reads 0")
+TEST_CASE("enemy casting an element: a step while seen, decayed below one level by 2 s, NEVER reads 0")
 {
     NeedSnapshot s;
     CHECK(Val(s, NeedId::enemy_casting_fire) == 0.0f);
     s.castFireAgo = 0.0f;
     CHECK(Val(s, NeedId::enemy_casting_fire) == 1.0f);
-    s.castFireAgo = 1.0f;
-    CHECK(Val(s, NeedId::enemy_casting_fire) == doctest::Approx(0.5));
-    s.castFireAgo = 2.5f;
-    CHECK(Val(s, NeedId::enemy_casting_fire) == 0.0f);
+    s.castFireAgo = 1.0f;  // decay tau 0.5 s: e^-2 = 0.135335
+    CHECK(Val(s, NeedId::enemy_casting_fire) == doctest::Approx(0.135335).epsilon(1e-5));
+    s.castFireAgo = 2.0f;
+    CHECK(SignatureLevel(Val(s, NeedId::enemy_casting_fire)) == 0);
 }
 
 TEST_CASE("survival: off gates everything; the CC meter beats the stage; stages clamp")
@@ -257,6 +257,13 @@ TEST_CASE("Advance moves the timers and decays the damage sums, nothing else")
     s.inCombat = true;
     s.combatStartAgo = 1.0f;
     s.castFrostAgo = 0.5f;
+    s.castFireAgo = 0.25f;
+    s.castShockAgo = 0.75f;
+    s.combatEndAgo = 9.0f;
+    s.dmgFire = 3.0f;
+    s.dmgFrost = 6.0f;
+    s.dmgMagic = 9.0f;
+    s.dmgPhysical = 12.0f;
     s.underwater = true;
     s.submergedFor = 2.0f;
     s.dmgShock = 30.0f;
@@ -267,7 +274,18 @@ TEST_CASE("Advance moves the timers and decays the damage sums, nothing else")
     CHECK(a.submergedFor == doctest::Approx(5.0));
     CHECK(a.dmgShock == doctest::Approx(30.0 * std::exp(-1.0)).epsilon(1e-5));
     CHECK(a.health == 0.4f);
-    CHECK(a.castFireAgo >= kNever);
+    // Every timer and every sum moves (one forgotten would be a need that
+    // never settles, or settles too early).
+    CHECK(a.castFireAgo == doctest::Approx(3.25));
+    CHECK(a.castShockAgo == doctest::Approx(3.75));
+    CHECK(a.combatEndAgo == doctest::Approx(12.0));
+    const double k = std::exp(-1.0);
+    CHECK(a.dmgFire == doctest::Approx(3.0 * k).epsilon(1e-5));
+    CHECK(a.dmgFrost == doctest::Approx(6.0 * k).epsilon(1e-5));
+    CHECK(a.dmgMagic == doctest::Approx(9.0 * k).epsilon(1e-5));
+    CHECK(a.dmgPhysical == doctest::Approx(12.0 * k).epsilon(1e-5));
+    NeedSnapshot never;
+    CHECK(Advance(never, 5.0f).castFireAgo >= kNever);
     NeedSnapshot dry = s;
     dry.underwater = false;
     CHECK(Advance(dry, 3.0f).submergedFor == 2.0f);

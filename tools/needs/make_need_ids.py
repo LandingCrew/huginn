@@ -162,6 +162,13 @@ def ini_block_in_file():
 
 
 def main(argv):
+    if any(a in ("-h", "--help") for a in argv):
+        print(__doc__.strip())
+        return 0
+    unknown = [a for a in argv if a not in ("--ini", "--check")]
+    if unknown or len(argv) > 1:
+        print(f"unknown or extra argument(s): {' '.join(argv)}\n\n{__doc__.strip()}", file=sys.stderr)
+        return 2
     rows = read_rows()
     header = make_header(rows)
     ini = make_ini(rows)

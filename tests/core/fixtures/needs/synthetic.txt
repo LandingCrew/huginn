@@ -532,3 +532,13 @@ snapshot in_combat_timers_never
 inCombat 1
 combatEndAgo 5
 end
+
+# Added in verifier round 1 (the enemy_casting_* curve became a step with a
+# 0.5 s decay): frost and shock seen casting right now / 0.2 s ago.
+snapshot enemy_casting_frost_shock_now
+inCombat 1
+enemyCount 2
+anyCasting 1
+castFrostAgo 0
+castShockAgo 0.2
+end

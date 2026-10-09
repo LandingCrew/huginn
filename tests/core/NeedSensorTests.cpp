@@ -80,6 +80,52 @@ TEST_CASE("drop ahead: feet Z minus the surface, the largest over the probes")
     // A NaN reading never makes a drop.
     std::array<ProbeHit, 3> bad{ { { true, std::nanf("") }, { true, 1000.0f }, { true, 1000.0f } } };
     CHECK(DropAhead(feet, bad, cfg) == 0.0f);
+    // Water above the probe's start (the start is under water): no drop.
+    std::array<ProbeHit, 3> drowned{ { { false, 0.0f, true, 2000.0f }, { true, 1000.0f }, { true, 1000.0f } } };
+    CHECK(DropAhead(feet, drowned, cfg) == 0.0f);
+}
+
+TEST_CASE("drop ahead: an unknown probe is nothing, never a cliff")
+{
+    const DropProbeConfig cfg;
+    const float feet = 1000.0f;
+    ProbeHit unknown;
+    unknown.known = false;
+    // Uphill: the ground rises past waist height before the 2nd and 3rd
+    // points, so the reachability pick blocks them; the 1st reads flat.
+    std::array<ProbeHit, 3> uphill{ { { true, 1010.0f }, unknown, unknown } };
+    CHECK(DropAhead(feet, uphill, cfg) == 0.0f);
+    // A wall or a door right in front: nothing known at all -> not measured.
+    std::array<ProbeHit, 3> wall{ { unknown, unknown, unknown } };
+    CHECK(DropAhead(feet, wall, cfg) == -1.0f);
+    // Stairs going down: a few steps, a small drop.
+    std::array<ProbeHit, 3> stairs{ { { true, 984.0f }, { true, 960.0f }, { true, 936.0f } } };
+    CHECK(DropAhead(feet, stairs, cfg) == doctest::Approx(64.0));
+    // Stairs going up past the waist: the far points blocked, the near one a step up.
+    std::array<ProbeHit, 3> upstairs{ { { true, 1016.0f }, unknown, unknown } };
+    CHECK(DropAhead(feet, upstairs, cfg) == 0.0f);
+    // A probe that ran out of recasts (a crowd) is unknown; the others count.
+    std::array<ProbeHit, 3> crowd{ { { true, 1000.0f }, unknown, { true, 400.0f } } };
+    CHECK(DropAhead(feet, crowd, cfg) == doctest::Approx(600.0));
+    // An unknown probe's fields are ignored even when they would read a void.
+    ProbeHit unknownVoid;
+    unknownVoid.known = false;
+    unknownVoid.hit = false;
+    std::array<ProbeHit, 3> ignored{ { { true, 1000.0f }, unknownVoid, unknownVoid } };
+    CHECK(DropAhead(feet, ignored, cfg) == 0.0f);
+    CHECK(ProbeOrigin({ 1.0f, 2.0f, 3.0f }, cfg).z == doctest::Approx(67.0));
+}
+
+TEST_CASE("drop ahead: the movement threshold is 20 units/s")
+{
+    const DropProbeConfig cfg;
+    CHECK(cfg.minMoveSpeed == 20.0f);
+    // 25 units/s east, facing north: just over the threshold, the movement wins.
+    auto dir = ProbeDirection({ 25.0f, 0.0f, 0.0f }, 0.0f, cfg.minMoveSpeed);
+    CHECK(dir.x == doctest::Approx(1.0));
+    // 19 units/s: the facing.
+    dir = ProbeDirection({ 19.0f, 0.0f, 0.0f }, 0.0f, cfg.minMoveSpeed);
+    CHECK(dir.y == doctest::Approx(1.0));
 }
 
 TEST_CASE("decaying sum: tau 3 s, adds on top of what is left")
