@@ -532,9 +532,9 @@ static void OnDataLoaded()
     // Effect catalog (R2): cap(i) for every item in the load order. Not read
     // here: SKSE hands kDataLoaded to each plugin in turn, and distributors
     // that run after Huginn (KID, SPID) add keywords the catalog reads. The
-    // build is queued as a main-thread task, which runs once every plugin's
-    // kDataLoaded handler has returned; it reads the forms there and maps them
-    // on a worker thread. Nothing reads it for scoring yet.
+    // build waits for the main menu to open (after every plugin's kDataLoaded
+    // handler and the tasks they queued), reads the forms then on the main
+    // thread and maps them on a worker thread. Nothing reads it for scoring yet.
     Effect::EffectCatalog::GetSingleton().ScheduleBuild();
 
     // Initialize StateEvaluator

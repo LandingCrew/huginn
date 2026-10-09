@@ -378,9 +378,9 @@ namespace Huginn::TestHarness
                 return;
             }
             std::string summary;
-            // After the save has loaded: the catalog was built in the first task
-            // after kDataLoaded (after the keyword distributors), and its worker
-            // has had the whole load to finish; wait for it if not.
+            // After the save has loaded: the catalog was built when the main
+            // menu opened (after the keyword distributors), and its worker has
+            // had the whole load to finish; wait for it if not.
             const bool ok = Effect::WriteDumpAll(*dir / g_dumpAllName, summary, std::chrono::seconds(120));
             if (ok) logger::info("[HuginnTest] dump all: {}"sv, summary);
             else logger::error("[HuginnTest] dump all failed: {}"sv, summary);

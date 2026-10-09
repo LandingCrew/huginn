@@ -429,18 +429,21 @@ namespace Huginn::Core::Effect
                 { R"re((move|moving|run|running|sprint\w*)\b.{0,25}faster|movement speed (is )?increas|increases? movement speed|\bdash\b|haste)re", "movement_speed" },
                 { R"re(telekine)re", "utility_telekinesis" },
                 { R"re(reanimat|raises? (a |the |up to N )?(dead|corpse|zombie)|brings? a dead)re", "summon_reanimate" },
-                { R"re(bound (weapon|sword|bow|dagger|axe|quiver|armor|shield)|magic quiver|binds? (a|an) (daedric|bound|quiver|shield|\w+-shaped))re", "summon_bound_weapon" },
+                { R"re(\binfuse bound|binds? .{0,40}to a summoned)re", "NONE" },
+                { R"re(bound (weapon|sword|bow|dagger|axe|quiver|armor|shield)|magic quiver|binds? (a|an) (daedric|bound|quiver|shield|(sword|bow|dagger|axe|mace|shield|arrow|bolt|quiver)\w*-shaped))re", "summon_bound_weapon" },
                 { R"re(summon(?! a (physical )?wall)|conjur|manifest|illusions? of|\bclone\b|ghost to attack)re", "summon_creature" },
                 { R"re(absorb (N% of )?(hostile )?spells|spell absorption|absorb N% of the magicka from incoming)re", "defense_spell_absorb" },
                 { R"re(reflect)re", "defense_reflect" },
                 { R"re(\bwards?\b)re", "defense_ward" },
-                { R"re((reduc|lower)\w* (its |their |the target.s |enemy |target.s )?armor\b|armor (rating )?(is )?reduced|^take(s)? (double|twice the|N% more|more) damage)re", "weakness_armor" },
+                { R"re((reduc|lower)\w* (its |their |the target.s |enemy |target.s )?armor\b|armor (rating )?(is )?reduced)re", "weakness_armor" },
+                { R"re(^take(s)? (double|twice the|N% more|more) damage)re", "TAKEMORE" },
                 { R"re((avoid|resist|reduc\w*|ignore\w*) (all )?damage from (ranged|arrows|projectiles)|ranged (attacks?|weapons?) (deal|do) (N% )?less)re", "defense_resist_ranged" },
                 { R"re(armor rating|\bdefense\b|damage reduction|reduc\w* (all |incoming |physical )?damage taken|take(s)? (only )?(N% )?(half|less) (physical )?damage|half damage|invulner|ignores? N% of (all )?(physical )?damage|chance to (take no|avoid) damage)re", "defense_armor" },
                 { R"re(magic resist\w*|resist\w* (to )?magic)re", "MAGRES" },
                 { R"re(weak(er|ness)? to (fire|frost|shock|poison)|(fire|frost|shock|poison) resist\w* (is |by )?(reduc|lower|decreas))re", "WEAK" },
                 { R"re(resist (to )?(fire|frost|shock|poison)|(fire|frost|shock|poison) resist)re", "RES" },
                 { R"re(healing (effects )?(are |is )?(reduced|halved)|reduc\w* (all )?healing)re", "NONE" },
+                { R"re(reduction of N points to (health|stamina|magicka))re", "drain_vital_V" },
                 { R"re(absorb\w*\b.{0,30}\b(health|magicka|stamina)|(health|magicka|stamina).{0,15}absorbed|steals? .{0,20}(health|magicka|stamina))re", "absorb_V" },
                 { R"re((regenerat\w*|regen)\b.{0,20}(health|magicka|stamina)|(health|magicka|stamina) regen)re", "regen_V" },
                 { R"re(\b(restor\w*|replenish\w*|regain\w*|heal|heals|healed|healing)\b.{0,40}(health|magicka|stamina)|\bheals? (you|the caster|N|by)|\bheal(s|ing)?\b)re", "restore_V" },
@@ -963,8 +966,12 @@ namespace Huginn::Core::Effect
                         if (StartsWith(ds, a)) ds = std::string(b) + ds.substr(a.size());
                     }
                 }
+                // "Take double damage": on a detrimental effect a weakness
+                // applied (weakness_armor needs detrimental=1); on a beneficial
+                // one the wearer's own drawback (Pain of Adoration's mask): no column.
+                if (ds == "TAKEMORE") ds = r.detrimental ? "weakness_armor" : "";
                 raw.spec = ds;
-                raw.route = Route::Description;
+                raw.route = ds.empty() ? Route::Unmapped : Route::Description;
                 raw.element = StartsWith(ds, "damage") ? DescElementOf(r.description) : std::string{};
             }
         }
@@ -1066,6 +1073,10 @@ namespace Huginn::Core::Effect
                                         { "defense_armor", "weakness_armor" } }) {
                 if (StartsWith(ds, a)) ds = std::string(b) + ds.substr(a.size());
             }
+        }
+        if (ds == "TAKEMORE") {
+            if (!detrimental) return std::nullopt;  // the wearer's drawback (see ClassifyColumns)
+            ds = "weakness_armor";
         }
         const auto cols = ToColumns(ds, StartsWith(ds, "damage") ? DescElementOf(description) : std::string{});
         if (cols.col == Col::_Count) return std::nullopt;

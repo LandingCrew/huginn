@@ -170,9 +170,12 @@ namespace Huginn::Core::Effect
         /// Is this kept row the one that counts for column `c` of its item?
         /// A visible row always is; a hidden row only when no visible row of
         /// the item sets `c` (Simonrim repeats rows hidden at perk magnitudes).
+        /// ... and a row of unknown strength only when no row that counts for
+        /// `c` has a known strength.
         struct Eligibility
         {
             std::array<bool, kColumnCount> visibleHas{};
+            std::array<bool, kColumnCount> knownHas{};
             explicit Eligibility(const ItemMapping& m)
             {
                 for (const auto& r : m.rows) {
@@ -180,8 +183,19 @@ namespace Huginn::Core::Effect
                     if (r.col != Col::_Count) visibleHas[Index(r.col)] = true;
                     if (r.col2 != Col::_Count) visibleHas[Index(r.col2)] = true;
                 }
+                for (const auto& r : m.rows) {
+                    if (r.unknown) continue;
+                    for (const Col c : { r.col, r.col2 }) {
+                        if (c != Col::_Count && (r.visible || !visibleHas[Index(c)])) knownHas[Index(c)] = true;
+                    }
+                }
             }
             [[nodiscard]] bool operator()(const KeptRow& r, Col c) const noexcept
+            {
+                return Visible(r, c) && (!r.unknown || !knownHas[Index(c)]);
+            }
+            /// The visibility test alone (the primary row's candidates).
+            [[nodiscard]] bool Visible(const KeptRow& r, Col c) const noexcept
             {
                 return c != Col::_Count && (r.visible || !visibleHas[Index(c)]);
             }
@@ -418,7 +432,7 @@ namespace Huginn::Core::Effect
         }
 
         KeptRow MakeRow(const EffectRow& row, const MagicEffectRecord& m, const EffectClass& cls, bool visible,
-                        bool constantItem, float zeroFactor = kNeutralStrength);
+                        bool constantItem, float zeroFactor = kNeutralStrength, bool zeroStated = false);
 
         /// The kept row of a Describe / Named zero (its class goes to *cls).
         /// Describe: the column the description names; its stated number is
@@ -446,18 +460,20 @@ namespace Huginn::Core::Effect
                 else if (z == Zero::Describe && in.zeroNumber > 0.0f) factor = std::min(in.zeroNumber / 100.0f, 1.0f);
                 else factor = kNeutralStrength;
             }
-            KeptRow k = MakeRow(r2, m, d, visible, constantItem, factor > 0.0f ? factor : kNeutralStrength);
+            const bool stated = z == Zero::Describe && in.zeroNumber > 0.0f;  // a percentage, when factor is set
+            KeptRow k = MakeRow(r2, m, d, visible, constantItem, factor > 0.0f ? factor : kNeutralStrength, stated);
             if (factor > 0.0f && k.graded) {  // a magnitude that is not the strength (a Light with no radius)
                 k.graded = false;
                 k.raw = 0.0f;
                 k.post *= factor;
+                k.unknown = !stated;
             }
             if (cls) *cls = d;
             return k;
         }
 
         KeptRow MakeRow(const EffectRow& row, const MagicEffectRecord& m, const EffectClass& cls, bool visible,
-                        bool constantItem, float zeroFactor)
+                        bool constantItem, float zeroFactor, bool zeroStated)
         {
             KeptRow k;
             k.col = cls.col;
@@ -519,6 +535,7 @@ namespace Huginn::Core::Effect
                 if (cls.route != Route::Data) {
                     k.graded = false;
                     k.post *= zeroFactor;
+                    k.unknown = !zeroStated;
                 }
             }
             return k;
@@ -862,8 +879,14 @@ namespace Huginn::Core::Effect
     // =========================================================================
     namespace
     {
-        /// Index of the primary kept row (largest graded value; first on a tie),
-        /// or -1.
+        /// Index of the primary kept row (largest value; first on a tie), or -1.
+        /// A row of unknown strength ranks at its presence value (before the
+        /// kNeutralStrength factor): the neutral value says "strength unknown"
+        /// for its column, not "a minor effect", so it must not hand the
+        /// item's delivery, timing and school to a lesser row (LoreRim's Calm
+        /// keeping timing_over_time, Warming Aura its school). For the same
+        /// reason it stays a candidate even where a known row sets its column
+        /// (it only loses the column's VALUE to that row).
         int PrimaryRow(const ItemMapping& m, const Populations& pops)
         {
             const Eligibility eligible(m);
@@ -871,8 +894,8 @@ namespace Huginn::Core::Effect
             float bestV = -1.0f;
             for (std::size_t i = 0; i < m.rows.size(); ++i) {
                 const auto& r = m.rows[i];
-                if (!eligible(r, r.col)) continue;
-                const float v = RowValue(r, r.col, pops);
+                if (!eligible.Visible(r, r.col)) continue;
+                const float v = r.unknown ? r.post / kNeutralStrength : RowValue(r, r.col, pops);
                 if (v > bestV) {
                     bestV = v;
                     best = static_cast<int>(i);

@@ -85,6 +85,15 @@
 //     "Restoration spells are 25% more powerful" is not fortify_skill;
 //   - a Light effect whose name says "dark" (Requiem's Darkness) is no light;
 //   - the Slowfall keyword decides only on a beneficial SpeedMult row.
+//   Round 4 follow-ups:
+//   - "a reduction of N points to Health ..." is drain_vital (Lord's Mail,
+//     Cursed); "infuse bound ..." and "binds ... to a summoned" map to no
+//     column; "binds a/an X-shaped" is a bound weapon only for a weapon,
+//     shield or ammo shape (Bound Armor reads as armor rating);
+//   - a leading "take double / more damage" is weakness_armor on a
+//     detrimental effect and no column on a beneficial one, where it is the
+//     wearer's drawback (Pain of Adoration's mask; effects.csv's weakness
+//     columns need detrimental=1).
 //   Spec names with no column of their own fall back to their family column
 //   (weaken_combat_crit -> weaken_combat; Dragonrend -> shout; a detrimental
 //   warmth effect -> survival; Cure Addiction -> cure; weakness to disease ->

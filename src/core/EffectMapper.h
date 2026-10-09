@@ -149,6 +149,7 @@ namespace Huginn::Core::Effect
         bool fullRestore = false;
         bool visible = true;
         bool cureByArchetype = false;
+        bool unknown = false;   // strength unknown (kNeutralStrength): yields to a known row on the column
         bool hostile = false;
         int delivery = 0;
         std::uint32_t duration = 0;  // as recorded (sentinels included)
@@ -193,6 +194,11 @@ namespace Huginn::Core::Effect
 
     /// A graded column with an unknown strength, neither the top nor the
     /// bottom of its population: the median's percentile, by definition 0.5.
+    /// Such a row counts for its column only when the item has no row of
+    /// known strength there (a "Restore Health" of unknown amount does not lift
+    /// a known weaker heal); for the item's primary row (delivery, timing,
+    /// school) it ranks at its presence value, so the neutral factor does not
+    /// hand those to a lesser row.
     inline constexpr float kNeutralStrength = 0.5f;
 
     /// For every data-route effect some item uses with its strength unknown
@@ -203,8 +209,11 @@ namespace Huginn::Core::Effect
     ///      more powerful"): counted, unmapped;
     ///   2. the description names a column: kept under it. A plain stated
     ///      number is the magnitude; a percentage ("ignores <80>% of physical
-    ///      damage") is the value p/100 itself, outside the population; no
-    ///      number is kNeutralStrength;
+    ///      damage") is the value p/100 itself, outside the population -- an
+    ///      APPROXIMATION: on a percent-native column (resist_*) p/100 is
+    ///      close to its scale, on a points column such as defense_armor it
+    ///      only ranks the effect (Dragonhide's 80% at 0.8), it is not a
+    ///      percentile of the points; no number is kNeutralStrength;
     ///   3. the name says the row's own family ("Restore Health" whose amount a
     ///      script carries): kept, kNeutralStrength;
     ///   4. a visible row with no description next to a row the item keeps is

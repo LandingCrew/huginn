@@ -58,19 +58,21 @@ _desc.DESC_TABLE[_k:_k] = [(r'(tosses|spawns|throws|drops) (a|an) .{0,40}spider'
                           (r'temporary damage', 'drain_vital_health'),
                           (r'imbues? .{0,30}weapons? with', 'damage_health')]
 _k = _idx('summon_creature', 'conjur')
-_desc.DESC_TABLE[_k:_k + 1] = [(r'bound (weapon|sword|bow|dagger|axe|quiver|armor|shield)|magic quiver|binds? (a|an) (daedric|bound|quiver|shield|\w+-shaped)', 'summon_bound_weapon'),
+_desc.DESC_TABLE[_k:_k + 1] = [(r'\binfuse bound|binds? .{0,40}to a summoned', 'NONEHIT'),
+                              (r'bound (weapon|sword|bow|dagger|axe|quiver|armor|shield)|magic quiver|binds? (a|an) (daedric|bound|quiver|shield|(sword|bow|dagger|axe|mace|shield|arrow|bolt|quiver)\w*-shaped)', 'summon_bound_weapon'),
                               (r'summon(?! a (physical )?wall)|conjur|manifest|illusions? of|\bclone\b|ghost to attack', 'summon_creature')]
 _k = _idx('influence_command')
 _desc.DESC_TABLE.insert(_k, (r'summon (a|an) (?!(physical )?wall)', 'summon_creature'))
 _k = _idx('control_stagger')
 _desc.DESC_TABLE[_k] = (_desc.DESC_TABLE[_k][0] + '|flung (away|back)', 'control_stagger')
 _k = _idx('weakness_armor')
-_desc.DESC_TABLE[_k] = (_desc.DESC_TABLE[_k][0] + '|^take(s)? (double|twice the|N% more|more) damage', 'weakness_armor')
-_desc.DESC_TABLE.insert(_k + 1, (r'(avoid|resist|reduc\w*|ignore\w*) (all )?damage from (ranged|arrows|projectiles)|ranged (attacks?|weapons?) (deal|do) (N% )?less', 'defense_resist_ranged'))
+_desc.DESC_TABLE.insert(_k + 1, (r'^take(s)? (double|twice the|N% more|more) damage', 'TAKEMORE'))
+_desc.DESC_TABLE.insert(_k + 2, (r'(avoid|resist|reduc\w*|ignore\w*) (all )?damage from (ranged|arrows|projectiles)|ranged (attacks?|weapons?) (deal|do) (N% )?less', 'defense_resist_ranged'))
 _k = _idx('defense_armor', 'armor rating')
 _desc.DESC_TABLE[_k] = (_desc.DESC_TABLE[_k][0] + '|ignores? N% of (all )?(physical )?damage|chance to (take no|avoid) damage', 'defense_armor')
 _k = _idx('absorb_V')
 _desc.DESC_TABLE.insert(_k, (r'healing (effects )?(are |is )?(reduced|halved)|reduc\w* (all )?healing', 'NONEHIT'))
+_desc.DESC_TABLE.insert(_k + 1, (r'reduction of N points to (health|stamina|magicka)', 'drain_vital_V'))
 _set('fortify_combat_power_attack', r'power attack\w* (stamina )?cost|power attacks? (will )?(deal|do)')
 _k = _idx('NONEHIT', 'spell ?power')
 _none = _desc.DESC_TABLE.pop(_k)
@@ -111,6 +113,8 @@ def desc_col(r):
     ds, _ = cap.desc_spec(r['effectDescription'])
     if not ds or ds == 'NONEHIT':
         return ''
+    if ds == 'TAKEMORE':  # Deviation (round 4): "take double damage" -- a drawback unless detrimental
+        return 'weakness_armor' if r['det'] else ''
     if r['det']:
         for a, b in (('resist_', 'weakness_'), ('fortify_combat_', 'weaken_combat_'), ('defense_armor', 'weakness_armor')):
             if ds.startswith(a):
@@ -221,6 +225,8 @@ def oracle(r):
             for a, b in (('resist_', 'weakness_'), ('fortify_combat_', 'weaken_combat_'), ('defense_armor', 'weakness_armor')):
                 if ds.startswith(a):
                     ds = b + ds[len(a):]
+        if ds == 'TAKEMORE':
+            ds = 'weakness_armor' if r['det'] else None
         c = to_col(ds, cap.desc_element(r['effectDescription']) if ds and ds.startswith('damage') else None) if ds else ''
         note = 'dev:polymorph-name-dropped'
     if spec == 'transform_werewolf' and src == 'name' and re.search(r'vampire form', n):
@@ -379,15 +385,19 @@ def row_quantity(col, kr, constant):
         post = hunger_size(kr['name'], kr['kws'])
     elif rule == 'Thirst':
         post = 1.0 if kr['hydrated'] else 0.5
+    unknown = False
     if graded and not raw > 0 and not full:
         raw = 0.0
         if kr['route'] != 'data':
             # unknown strength (round 4: script routes too): 0.5, or a stated percentage
             graded = False
             post = post * (kr.get('factor') or 0.5)
+            unknown = not kr.get('stated')
     if kr.get('factor') and graded:
         # a magnitude that is not the strength (a Light with no radius): the factor
         raw, graded, post = 0.0, False, post * kr['factor']
+        unknown = not kr.get('stated')
+    kr.setdefault('_unknown', {})[col] = unknown
     return raw, post, graded, full
 
 
@@ -398,12 +408,15 @@ def expected_values(items):
         for kr in it['rows']:
             if kr['visible']:
                 vis.update(kr['cols'])
-        out = []
+        cand = []
         for kr in it['rows']:
             for c in kr['cols']:
                 if kr['visible'] or c not in vis:
-                    out.append((kr, c))
-        return out
+                    row_quantity(c, kr, it['constant'])  # sets kr['_unknown'][c]
+                    cand.append((kr, c))
+        # round 4: a row of unknown strength counts only where no known row does
+        known = {c for kr, c in cand if not kr['_unknown'][c]}
+        return [(kr, c) for kr, c in cand if not kr['_unknown'][c] or c not in known]
 
     pops = collections.defaultdict(list)
     for it in items:
@@ -460,7 +473,7 @@ FORCE = set("""
 8D005E70 8D00633C 872819C4 000240D2 9215EFE9 04020960 040206DB 040206D9 FE762842 FE079842 5A008402
 000CDB70 000E0CD6 87410740 8748263E 66032C8B 6603682F 89000A0D 301B7EF9 FE6448DE FE6448DF A8061994
 A8061EFB 040275B7 FE715828 673727C3 8D005FD0 2804F8FC 8702F1C2 00028532 00027EB6 0009B2B2 00043323
-00043324 220A23DE FE350801 0401CAB0 04027490
+00043324 220A23DE FE350801 0401CAB0 04027490 FE00C804 8D005E71 8D0061D5 6601A0A4
 """.split())
 
 
@@ -490,6 +503,8 @@ def main():
             ds, _ = cap.desc_spec(desc_of.get(fid, ''))
             if not ds:
                 return ''
+            if ds == 'TAKEMORE':
+                return 'weakness_armor' if det_of.get(fid) else ''
             if det_of.get(fid):
                 for a, b in (('resist_', 'weakness_'), ('fortify_combat_', 'weaken_combat_'), ('defense_armor', 'weakness_armor')):
                     if ds.startswith(a):
@@ -614,9 +629,9 @@ def main():
                         factor = 0.5
                 return col, route, mag, factor
 
-            def kept_row(rr, cols_, visible, route, mag=None, factor=None):
+            def kept_row(rr, cols_, visible, route, mag=None, factor=None, stated=False):
                 kept_rows.append({'cols': cols_, 'mag': num(rr['magnitude']) if mag is None else mag,
-                                  'factor': factor, 'light': str(rr['archetype']) in ('12', 'Light'),
+                                  'factor': factor, 'stated': stated, 'light': str(rr['archetype']) in ('12', 'Light'),
                                   'dur': int(num(rr['duration'])),
                                   'area': int(num(rr['area'])), 'radius': num(rr.get('effectLightRadius', 0)),
                                   'delivery': str(rr['effectDelivery']),
@@ -653,7 +668,7 @@ def main():
                                 if pc.startswith('summon_creature_'):
                                     item_cols.add('summon_creature')
                                 kept_row(pd_, [pc] + (['summon_creature'] if pc.startswith('summon_creature_') else []),
-                                         True, proute, pmag, pfac)
+                                         True, proute, pmag, pfac, bool(z and z[0] == 'describe' and z[2] > 0))
                                 kept_visible[0] = True
                     exp_rows.append((c, note))
                     continue
@@ -684,7 +699,7 @@ def main():
                         cols_.append('summon_creature')
                     if c == 'fortify_skill_lockpicking' and r['primaryAV'] == 'PickPocketSkillAdvance':
                         cols_.append('fortify_skill_pickpocket')
-                    kept_row(r, cols_, not r['hide'], route, zmag, zfac)
+                    kept_row(r, cols_, not r['hide'], route, zmag, zfac, bool(z and z[0] == 'describe' and z[2] > 0))
                     if not r['hide']:
                         kept_visible[0] = True
                     item_cols.add(c)

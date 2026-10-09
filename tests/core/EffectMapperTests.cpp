@@ -520,6 +520,58 @@ TEST_CASE("effect rules: verifier round 1 -- resist-damage names, wrappers by ke
     CHECK(NameColumn("Dispel") == Col::cure_dispel);
 }
 
+TEST_CASE("effect mapper: round 4 follow-ups -- drain by description, bound shapes, unknown rows yield, the primary row")
+{
+    CHECK(DescriptionColumn("Wearer suffers a reduction of <50> points to Health, Stamina, and Magicka.", true) ==
+          Col::drain_vital_health);
+    CHECK(DescriptionColumn("The caster binds an armor-shaped daedra for 60 seconds, which improves armor rating and "
+                            "grants resistance to ranged attacks.", false) == Col::defense_armor);
+    CHECK(DescriptionColumn("The caster binds an shield-shaped daedra for 60 seconds.", false) == Col::summon_bound_weapon);
+    CHECK(DescriptionColumn("Infuse bound weapons and armors with additional effects of your choice.", false) == std::nullopt);
+    CHECK(DescriptionColumn("Binds a Daedric Crescent to a summoned Dremora or humanoid for 60 seconds.", false) == std::nullopt);
+
+    World w;
+    auto lord = Mgef(kArchValueModifier, "Health", "Lord's Mail (Cursed)", kFlagDetrimental);
+    lord.description = "Wearer suffers a reduction of <50> points to Health, Stamina, and Magicka.";
+    const auto cursed = w.Add(lord);
+    const auto drain = w.Add(Mgef(kArchValueModifier, "Health", "Drain Health", kFlagDetrimental | kFlagRecover));
+    auto& mail = w.Item(Kind::Armour, "Lord's Mail (Cursed)");
+    World::Fx(mail, cursed, 0);
+    auto& other = w.Item(Kind::Armour, "Drain Ring");
+    World::Fx(other, drain, 25);
+    // A known weak heal and an unknown one on the same potion: the known one counts.
+    const auto heal = w.Add(Mgef(kArchValueModifier, "Health", "Restore Health"));
+    const auto scripted = w.Add(Mgef(kArchScript, "", "Restore Health"));
+    auto& flask = w.Item(Kind::Potion, "Healing Flask");
+    World::Fx(flask, heal, 5);
+    World::Fx(flask, scripted, 0);
+    auto& big = w.Item(Kind::Potion, "Big");
+    World::Fx(big, heal, 200);
+    auto& mid = w.Item(Kind::Potion, "Mid");
+    World::Fx(mid, heal, 100);
+    // The primary row: an unknown-strength main effect keeps the item's timing.
+    auto calmM = Mgef(kArchScript, "", "Calm");
+    calmM.keywords = { "MagicInfluenceCalm" };
+    const auto calm = w.Add(calmM);
+    const auto calmPerk = w.Add(Mgef(kArchScript, "", "Calm (Improved)"));
+    auto& spell = w.Item(Kind::Spell, "Calm");
+    World::Fx(spell, calm, 0, 30);
+    World::Fx(spell, calmPerk, 7.5f, 0);
+    const auto pacifyM = w.Add(Mgef(kArchCalm, "Aggression", "Pacify"));
+    for (const float mag : { 50.0f, 100.0f }) {
+        auto& p = w.Item(Kind::Spell, "Pacify");
+        World::Fx(p, pacifyM, mag, 0);
+    }
+    const auto r = w.Build();
+    CHECK(CapOf(r, 0, Col::drain_vital_health) > 0.0f);
+    CHECK(CapOf(r, 2, Col::restore_health) < CapOf(r, 3, Col::restore_health));
+    CHECK(CapOf(r, 2, Col::restore_health) < kNeutralStrength);  // not lifted to 0.5 by the unknown row
+    // The perk row (7.5, the population's bottom third) is not the main effect;
+    // the unknown-strength Calm row ranks at its presence (x D(30)) and keeps it.
+    CHECK(CapOf(r, 5, Col::timing_over_time) == 1.0f);
+    CHECK(CapOf(r, 5, Col::timing_instant) == 0.0f);
+}
+
 TEST_CASE("effect rules: verifier round 3 -- the catch-all damage name's new columns, slowfall, summons, spell power")
 {
     auto seed = Mgef(kArchScript, "", "Seed of Unholy Blood", kFlagDetrimental);
@@ -527,7 +579,10 @@ TEST_CASE("effect rules: verifier round 3 -- the catch-all damage name's new col
     CHECK(ColOf(seed) == Col::_Count);  // not restore_health
     auto pain = Mgef(kArchScript, "", "Pain of Adoration");
     pain.description = "Take double damage.";
-    CHECK(ColOf(pain) == Col::weakness_armor);
+    CHECK(ColOf(pain) == Col::_Count);  // round 4: a worn mask's drawback, not a weakness applied
+    auto silver = Mgef(kArchScript, "", "Weakness to Silver", kFlagDetrimental);
+    silver.description = "Take <100>% more damage from silver weapons.";
+    CHECK(ColOf(silver) == Col::weakness_armor);
     auto channel = Mgef(kArchScript, "", "Channel Element: Frost");
     channel.description = "Allows the user to imbue their weapon with frost damage, at the cost of magicka, for <dur> seconds.";
     CHECK(ColOf(channel) == Col::damage_health_frost);
