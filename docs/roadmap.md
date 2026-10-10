@@ -516,8 +516,9 @@ pruned symbol (console, selection log, `ReasonHold`, debug widget, `Tests.cpp`)
 changed in the same PR, and the shipped INI loses the dead keys.
 - [ ] Before the cutover, between R6 and R8 (doc 11, steps 3-4): log a
       `covered(i)` cross-feature on held rows, a `filtered_by` reason on rows
-      the active-buff filters drop (a shadow estimate of its weight, menu
-      alternatives only), and the summon count and limit; the summon
+      the active-buff filters drop (for a shadow estimate of its weight:
+      choice sets by `shown`, a zero-centred prior), and the summon count and
+      limit; the summon
       filter counts against the limit (the Twin Souls bug).
 - [ ] **Decide: which thread runs the update loop** (2026-10-09, two Tracy
       traces in `traces/202610/`, which is not checked in; the counts and

@@ -118,7 +118,7 @@ previous pick's context. That is the feedback loop to watch (section 4.4).
 
 | Case | Sensor | Filter | Problem |
 |---|---|---|---|
-| Summon | `hasActiveSummon`: any living actor whose commanding actor is the player (`StateManager_MagicEffects.cpp:537-560`; the archetype test is skipped on purpose, `:510-514`) | every `SpellType::Summon` dropped (`CandidateFilters.cpp:71`); context rule only in combat with none up (`ContextRuleEngine.cpp:365`) | A bool, not a count, and no limit: under Twin Souls (2) the second summon is hidden. Reanimated thralls count as summons. Of 90 summon picks (89 spells, 1 scroll), 3 were made in a context where no summon spell row was `eligible`, i.e. the filter hid every summon. In 2 more, the chosen summon was not eligible while other summons were, so something other than this filter dropped it. |
+| Summon | `hasActiveSummon`: any living actor whose commanding actor is the player (`StateManager_MagicEffects.cpp:537-560`; the archetype test is skipped on purpose, `:510-514`) | every `SpellType::Summon` dropped (`CandidateFilters.cpp:71`); context rule only in combat with none up (`ContextRuleEngine.cpp:365`) | A bool, not a count, and no limit: under Twin Souls (2) the second summon is hidden. Reanimated thralls count as summons. Of 90 summon picks (89 spells, 1 scroll), **1** was made with every summon hidden: the 01:02:25 menu Wraith. The definition: no summon row of any kind (spell or scroll) was eligible or shown, the chosen row included. Counting only "the chosen row is not eligible" gives 5. Of the other 4, 2 are key presses of shown summons that lost eligibility to their own equip (section 5, caveat), and 2 are menu picks of the Skeletal Hero made while other summons were eligible, so the summon filter was not what dropped it. |
 | Armour spell | `hasArmorBuff`: any ValueModifier on DamageResist (`StateManager_MagicEffects.cpp:397-404`) | `SpellTag::Armor` dropped (`CandidateFilters.cpp:69`) | Any armour-rating buff counts, a potion included. No strength comparison, so Oakflesh up still hides Stoneflesh. |
 | Cloak | `hasCloakActive` and `activeCloakType` (`StateManager_MagicEffects.cpp:495-507`) | **none**. Only the debug widget reads it (`StateManagerDebugWidget.cpp:416`) | Cloak spells are not redundant-filtered at all. |
 | Invisibility, Muffle, warming (spells); Waterbreathing, Invisibility (items) | flags in `ActorBuffs` (`PlayerActorState.h:197-208`) | spells `CandidateFilters.cpp:64-75`; items `:111-116` (Waterbreathing is item-only, `:112`) | Hand-listed per tag. |
@@ -127,10 +127,14 @@ previous pick's context. That is the feedback loop to watch (section 4.4).
 These filters run before the v3 log's `eligible` flag is set
 (`9-selection-log-v3.md`, flag `eligible`). A covered item is still logged, as
 a `held` row with `eligible` = 0, but nothing says why. "Buff already active"
-looks the same as unaffordable, on cooldown or equipped. It is never on the
-page, so the fit sees it only as a menu alternative, with no reason attached.
-The fit cannot learn redundancy from that, and it does not need to while the
-filters stand.
+looks the same as unaffordable, on cooldown or equipped. A filtered row can
+still be on the page. A Remembrance hold seats an item that is no longer a
+candidate, and its own press can equip the chosen item (below). Across the
+3,195 logged contexts, 318 shown rows are not eligible. 225 of them are
+Remembrance holds, and 107 of those are unequipped summon rows. So which choice
+set a row belongs to is read from `shown`, never from eligibility. The fit cannot
+learn redundancy from rows with no reason attached, and it does not need to
+while the filters stand.
 
 ### 2.2 What the rewrite has
 
@@ -192,28 +196,41 @@ land in the same column space. Then:
   Filtered items are never candidates, so while the filters stand the learner
   sees almost no summon or armour item in a covered state, and θ_covered gets
   no evidence. A **shadow evaluation** gets around this, within limits:
-  - **Filtered rows enter menu choices only.** They were never on the page,
-    and in doc 9's model a key pick chooses only from the page. So a filtered
-    row joins only the menu alternatives (H \ A, at cost κ). If it were put
-    into key choices, θ_covered would absorb "never shown", turn negative by
-    construction, and the gate would pass automatically. The page is already
-    logged (`shown`, `slot`), so this needs no new field.
+  - **The `shown` flag assigns the choice set, not the filter.** In doc 9's
+    model a key pick chooses only from the page.
+    - A filtered row with `shown` (a Remembrance hold, mostly) is on the page
+      and can be picked by key. At 15:21:57 a summon seated that way was
+      pressed. It belongs to the key choice set like any shown row.
+    - A filtered row without `shown` joins only the menu alternatives
+      (H \ A, at cost κ).
+    - If unshown filtered rows were put into key choices, θ_covered would
+      absorb "never shown", turn negative by construction, and the gate would
+      pass automatically.
+    - The page is already logged (`shown`, `slot`), so this needs no new
+      field.
   - **What it needs logged:** `covered(i)` for every held row (the step-3
     cross-feature), and a reason on rows the filters drop, `filtered_by`
     (`summon`, `armor`, `invisibility`, `resist`...). The reason keeps
     "covered" apart from unaffordable, on cooldown and equipped, which also
     leave `eligible` = 0.
   - **Fit the replacement term jointly with θ_covered** (the summon grade
-    difference above). Otherwise summon picks made while every summon was
-    hidden (a replacement, or Twin Souls; 3 so far) pull θ_covered toward
-    zero, when what they show is an upgrade or a second slot.
+    difference above). Otherwise summon picks made with summons covered (a
+    replacement, or a second slot under Twin Souls) pull θ_covered toward
+    zero, when what they show is an upgrade or a second slot. Only one such
+    pick is in the log so far (section 2.1).
   - **The evidence is thin.** There are 94 menu picks in total, and only the
     few made with something covered speak to θ_covered. If after R8's data
     play the estimate's interval still includes zero, **keep the filters** as
     they are, with the summon fix. The alternative, removing them on the
     negative starting θ alone, rests on no evidence: your call (open
     question 8).
-  - The filters go once the estimate is confidently negative.
+  - **The interval must come from the evidence, not the prior.** Doc 9 starts
+    obvious pairs at a nonzero value (`9-context-as-learner-input.md:355`), so
+    a posterior for θ_covered could be confidently negative with no evidence
+    at all. The shadow estimate therefore uses a zero-centred prior, or a
+    likelihood-only interval (profile likelihood or bootstrap over launches).
+    The negative start applies to the live learner only.
+  - The filters go once that evidence-only estimate is confidently negative.
   - One exception: fix the summon filter's count and limit as soon as the
     sensor exists, because it is a bug today.
 
@@ -374,6 +391,15 @@ The risk: Huginn shows B after A, the player presses B because it is there, and
 4. Casts. A spell pick is an equip, not a cast. For this question the equip is
    the decision, so this is fine *(guess: casts would mostly add noise)*.
 
+**Caveat for R6: eligibility after the pick's own press.** A press's context
+is taken after its own equip (`9-selection-log-v3.md`, `dec.preEquipped`). The
+equipped filter then drops the chosen spell, so the chosen row can read
+`eligible` = 0 for a reason the pick itself caused. Examples: 01:19:33 and
+15:21:57, both key presses of shown summons (flags 28, `preEquipped` 0,
+`ctxAgeMs` 0). Any analysis keyed on eligibility must treat the chosen row's
+`eligible` as unknown, as the schema already does for `equipped` through
+`dec.preEquipped`. It must also assign choice sets by `shown`.
+
 **Volume.** R6 needs about 450–1,200 key or wheel picks to see a +2 to +4 hit@1
 gain (roadmap R5 notes). The log now holds 470 key or wheel picks, 143 of them
 from the last launch alone. Sequence pairs come from the same
@@ -393,7 +419,7 @@ per-pair count)*. An item-level matrix would need an order of magnitude more
 | 3 | Sensors, logged only: the summon count and limit, `covered(i)` from the active-effect walk through the effect mapper, written as a v3 cross-feature on every held row, and a `filtered_by` reason on the rows the active-buff filters drop | between R6 and R8 (an R3-style PR) | Agent, then a short session in game |
 | 4 | The summon filter counts against the limit (the Twin Souls bug) | with step 3 | Agent |
 | 5 | θ_covered (negative start) and, if step 2 passes, the live `recent_*` needs in the scorer; the active-buff filters stay as a fallback | R8 | Agent, then **in game (you)** |
-| 6 | Shadow evaluation: estimate θ_covered offline, jointly with the summon replacement term, with the `filtered_by` rows from step 3 as **menu alternatives only** (never key choices: they were not on the page). Retire the active-buff filters once that estimate is confidently negative; if the evidence stays too thin, keep them (open question 8) | R11 (Phase 10 "filters from cap") | Agent; replay |
+| 6 | Shadow evaluation: estimate θ_covered offline, jointly with the summon replacement term. Choice sets come from `shown`: a shown `filtered_by` row is a key alternative, an unshown one a menu alternative only. Use a **zero-centred prior or a likelihood-only interval**, so the nonzero starting value cannot pass the gate by itself. Retire the active-buff filters once that estimate is confidently negative; if the evidence stays too thin, keep them (open question 8) | R11 (Phase 10 "filters from cap") | Agent; replay |
 
 Steps 1–2 need no game code and no new play. Steps 3–4 are the only work before
 R8.
