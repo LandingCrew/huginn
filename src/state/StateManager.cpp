@@ -156,6 +156,9 @@ namespace Huginn::State
       m_fallTracker.Reset();
       m_wasFalling = false;
       m_peakFallDepth = 0.0f;
+      m_hpGrounded = -1.0f;
+      m_fallHpBefore = -1.0f;
+      m_pendingLanding = {};
 
       // --- Elemental window flag (stale true would hold the outer gate open) ---
       m_elementalWindowActive.store(false, std::memory_order_relaxed);
