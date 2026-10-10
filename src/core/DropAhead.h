@@ -141,7 +141,8 @@ namespace Huginn::Core::Needs
 
     /// A water height the game can report that is no water: a cell's XCLW
     /// "use the worldspace default" sentinel (>= 2147483600, CommonLib
-    /// TESObjectCELL::GetExteriorWaterHeight) and the -infinity / -FLT_MAX of
+    /// TESObjectCELL::GetExteriorWaterHeight; ResolveWaterHeight below swaps
+    /// it for the worldspace default first) and the -infinity / -FLT_MAX of
     /// a cell without water. No real surface is anywhere near 1e6 units from
     /// the origin (a whole worldspace spans a few hundred thousand), so any
     /// height that is not finite or is that far out is not water.
@@ -150,6 +151,45 @@ namespace Huginn::Core::Needs
     [[nodiscard]] inline bool IsUsableWaterHeight(float z) noexcept
     {
         return std::isfinite(z) && std::fabs(z) < kMaxWaterHeightAbs;
+    }
+
+    /// XCLW's "use the worldspace default water" value. CommonLib v3.7.0
+    /// src/RE/T/TESObjectCELL.cpp:95 takes a cell's height as its own only
+    /// when `waterHeight < 2147483600.0f`, and otherwise falls back to the
+    /// worldspace default; this is the same threshold. (CommonLib's test,
+    /// `!(z < threshold)`, would also send a NaN to the default; here a NaN
+    /// is no sentinel and stays unknown.)
+    inline constexpr float kDefaultWaterSentinel = 2147483600.0f;
+
+    [[nodiscard]] inline bool IsDefaultWaterSentinel(float z) noexcept
+    {
+        return z >= kDefaultWaterSentinel;
+    }
+
+    /// One probe point's water, decided from what the game returned.
+    struct WaterHeightRead
+    {
+        bool known = false;        // a usable surface height
+        float z = 0.0f;            // the surface, when known
+        bool fromDefault = false;  // the raw read was the sentinel; z is the resolved default
+    };
+
+    /// `raw`: the height the cell's GetWaterHeight returned (it returned
+    /// true). `resolvedDefault`: the cell's resolved default water (the game
+    /// side's TESObjectCELL::GetExteriorWaterHeight), asked only when `raw`
+    /// is the sentinel; nullopt when there is nothing to ask (an interior).
+    /// A sentinel resolves to the default when that is a usable height and is
+    /// unknown otherwise -- never the sentinel's own huge number, and never
+    /// the -FLT_MAX GetExteriorWaterHeight returns for "no water". Any other
+    /// raw height is used as is when usable, unknown when not.
+    [[nodiscard]] inline WaterHeightRead ResolveWaterHeight(float raw, std::optional<float> resolvedDefault) noexcept
+    {
+        if (IsDefaultWaterSentinel(raw)) {
+            if (resolvedDefault && IsUsableWaterHeight(*resolvedDefault)) return { true, *resolvedDefault, true };
+            return {};
+        }
+        if (IsUsableWaterHeight(raw)) return { true, raw, false };
+        return {};
     }
 
     /// The Z the probe's down ray was cast from (see ProbeHit::startZ), and

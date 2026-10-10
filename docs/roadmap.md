@@ -207,7 +207,9 @@ in. What was built: the [implementation map](architecture/9-implementation-map.m
       prints it beside the drop; the `[DropAhead]` debug line prints each
       probe's hit, raw water height and depth (`[hit Z water Z depth N]`),
       and how many points read water from a neighbouring or an unknown cell.
-      Water is read from the cell each point lies in (fix round). Host
+      Water is read from the cell each point lies in (fix round); since
+      0.23.21 a cell reporting the XCLW "use the worldspace default" sentinel
+      reads the worldspace default water (the sea, many lakes), else unknown. Host
       tests: a cliff into deep water, into a shallow stream, onto rock, a
       lake shore on flat ground, unknown probes, no hit over water; mixed
       points, water at the hit, infinities, the no-water sentinel, a no-hit
