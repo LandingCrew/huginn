@@ -228,9 +228,9 @@ land in the same column space. Then:
     replacement, or a second slot under Twin Souls) pull θ_covered toward
     zero, when what they show is an upgrade or a second slot. **Up to 3**
     such picks are in the log. The definition: no summon row other than the
-    chosen one was eligible in the press context, which is what the summon
-    filter leaves when a summon is up. The press contexts are 01:02:22,
-    01:19:30.053 and 15:21:54.504. Section 2.1's count of 1 is a stricter
+    chosen one was eligible in the pick's context, which is what the summon
+    filter leaves when a summon is up. The contexts are 01:02:22 (a menu
+    context), 01:19:30.053 and 15:21:54.504 (press contexts). Section 2.1's count of 1 is a stricter
     definition (nothing eligible or shown).
   - **The evidence is thin.** There are 94 menu picks in total, and only the
     few made with something covered speak to θ_covered. If after R8's data
@@ -409,12 +409,23 @@ The risk: Huginn shows B after A, the player presses B because it is there, and
 
 - **`equipped` vs `eligible`.** For `equipped` the schema supplies
   `dec.preEquipped`, which is unknown only in the first 0.25 s after a load.
-  `eligible` has no such pre-press field: it is whatever the last pipeline run
-  said.
-- **Both flags come from one cache update.** The `eligible` flags and the page
-  come from the same `PipelineStateCache::Update` (`PipelineStateCache.h:135-182`;
-  rows marked in `SelectionLogV3.cpp:347` and `:546-573`), so a context's page
-  and eligibility are not skewed against each other.
+  `eligible` has no such pre-press field. It is the eligible set as of the
+  last `SelectionLogV3::Tick`, which can be one pipeline run behind the page
+  (next bullet).
+- **The page can be one run newer than the eligibility.**
+  - `PipelineStateCache::Update` writes both together
+    (`PipelineStateCache.h:135-182`).
+  - A context reads them at different times. `eligible` comes from `g_tick`,
+    a copy taken in `SelectionLogV3::Tick` (`SelectionLogV3.cpp:1085-1087`,
+    called at `UpdateLoop.cpp:656`).
+  - The page is read when the context is taken (`TakeShown`,
+    `SelectionLogV3.cpp:484`), and the pipeline runs after Tick
+    (`UpdateLoop.cpp:670`).
+  - So a press or menu context can show a page one run newer than its
+    eligibility flags. Onset contexts are built inside Tick and cannot be
+    skewed.
+  - The finding below still holds: the onset context at 15:21:54.525 also
+    shows the Wraith shown and not eligible (flags 28, slot 0).
 - **Two key presses of shown, ineligible summons.** In the press contexts at
   01:19:30.053 and 15:21:54.504, the pressed summon was shown and not
   eligible, with no `remembered`, `override` or `wildcard` bit (flags 28,
@@ -424,11 +435,25 @@ The risk: Huginn shows B after A, the player presses B because it is there, and
   about 3 s later, read 01:19:33 and 15:21:57.
 - **Not the press's own equip.** The Wraith was already ineligible and
   unequipped in the context at 15:21:40.867, before its press.
-- **Unexplained.** Why the slot code kept an ineligible item seated as an
-  ordinary slot, with no hold bit, is not explained here *(guess: the seated
-  item's hold or lock kept it after it left the candidates)*.
-- **What an analysis keyed on eligibility must do:** treat the chosen row's
-  `eligible` as unknown, and assign choice sets by `shown`.
+- **How an ineligible item stays shown: a slot lock.**
+  - The allocator places only real candidates as Normal. Items present only
+    for a hold go in as Remembered (`SlotAllocCore.h:446,788,840`;
+    `SlotAllocator.cpp:499-508`).
+  - So the only route is `SlotLocker` restoring a locked assignment
+    unchanged, its type included (`SlotLocker.cpp:175-182`).
+  - A locked hold would keep its `remembered` bit (`SelectionLogV3.cpp:572`),
+    so this was a lock, not a hold.
+  - The Wraith was therefore a candidate within the lock window before that
+    page's run: 3 s by default (`fLockDurationMs`, `configs/Huginn.ini:890`),
+    or 10 s for a Wheeler activation lock (`SlotLocker.cpp:352-366`).
+  - No logged context between 15:21:40.867 and 15:21:54.504 lets us check
+    which.
+- **What an analysis keyed on eligibility must do:**
+  - Treat the chosen row's `eligible` as unknown.
+  - Expect a press or menu context's eligibility to lag its page by up to one
+    pipeline run (onset contexts do not).
+  - Assign choice sets by `shown`, knowing that the key choice set then
+    includes lock-held items: shown, but possibly no longer candidates.
 
 **Volume.** R6 needs about 450–1,200 key or wheel picks to see a +2 to +4 hit@1
 gain (roadmap R5 notes). The log now holds 470 key or wheel picks, 143 of them
