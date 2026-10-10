@@ -454,6 +454,11 @@ Map Phase 4, in `tools/replay`.
 - [ ] Report on held-out play: key hit rate against **76%** (arm A*, the plain
       ranking replay can reproduce; 81% was the live page with holds), and
       menu-pick hits against **7 of 83**.
+- [ ] Sequences and redundancy, offline part (proposal,
+      [architecture/11-sequences-and-redundancy.md](architecture/11-sequences-and-redundancy.md),
+      steps 1-2): compare pairs on presence plus a strength term with the
+      current grading (Feather's carry-weight grade is 0.0046), and test
+      `recent_<family>` features, on held-out picks.
 - **You decide:** go to R8, or stop and rethink. θ from this fit is the
   bootstrap for R8.
 
@@ -509,6 +514,12 @@ sensor from `PotionDiscriminator`'s timer; `ChoiceLearner`; scorer; cosave
 `THTA`/`BIAS`; then the prune list in the map, with every consumer of a
 pruned symbol (console, selection log, `ReasonHold`, debug widget, `Tests.cpp`)
 changed in the same PR, and the shipped INI loses the dead keys.
+- [ ] Before the cutover, between R6 and R8 (doc 11, steps 3-4): log a
+      `covered(i)` cross-feature on held rows, a `filtered_by` reason on rows
+      the active-buff filters drop (for a shadow estimate of its weight:
+      choice sets by `shown`, a zero-centred prior), and the summon count and
+      limit; the summon
+      filter counts against the limit (the Twin Souls bug).
 - [ ] **Decide: which thread runs the update loop** (2026-10-09, two Tracy
       traces in `traces/202610/`, which is not checked in; the counts and
       times are trace09's unless marked). `OnUpdate`, driven by the InputEvent sink,
