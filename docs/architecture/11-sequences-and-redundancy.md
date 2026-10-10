@@ -118,7 +118,7 @@ previous pick's context. That is the feedback loop to watch (section 4.4).
 
 | Case | Sensor | Filter | Problem |
 |---|---|---|---|
-| Summon | `hasActiveSummon`: any living actor whose commanding actor is the player (`StateManager_MagicEffects.cpp:537-560`; the archetype test is skipped on purpose, `:510-514`) | every `SpellType::Summon` dropped (`CandidateFilters.cpp:71`); context rule only in combat with none up (`ContextRuleEngine.cpp:365`) | A bool, not a count, and no limit: under Twin Souls (2) the second summon is hidden. Reanimated thralls count as summons. Of 90 summon picks (89 spells, 1 scroll), **1** was made with every summon hidden: the 01:02:25 menu Wraith. The definition: no summon row of any kind (spell or scroll) was eligible or shown, the chosen row included. Counting only "the chosen row is not eligible" gives 5. Of the other 4, 2 are key presses of shown summons that lost eligibility to their own equip (section 5, caveat), and 2 are menu picks of the Skeletal Hero made while other summons were eligible, so the summon filter was not what dropped it. |
+| Summon | `hasActiveSummon`: any living actor whose commanding actor is the player (`StateManager_MagicEffects.cpp:537-560`; the archetype test is skipped on purpose, `:510-514`) | every `SpellType::Summon` dropped (`CandidateFilters.cpp:71`); context rule only in combat with none up (`ContextRuleEngine.cpp:365`) | A bool, not a count, and no limit: under Twin Souls (2) the second summon is hidden. Reanimated thralls count as summons. Of 90 summon picks (89 spells, 1 scroll), **1** was made with every summon hidden: the menu Wraith (decision 01:02:25, menu context 01:02:22). The definition: no summon row of any kind (spell or scroll) was eligible or shown, the chosen row included. Counting only "the chosen row is not eligible" gives 5. Of the other 4, 2 are key presses of summons that were shown although ineligible, with every other summon ineligible too (section 5, caveat), and 2 are menu picks of the Skeletal Hero made while other summons were eligible, so the summon filter was not what dropped it. |
 | Armour spell | `hasArmorBuff`: any ValueModifier on DamageResist (`StateManager_MagicEffects.cpp:397-404`) | `SpellTag::Armor` dropped (`CandidateFilters.cpp:69`) | Any armour-rating buff counts, a potion included. No strength comparison, so Oakflesh up still hides Stoneflesh. |
 | Cloak | `hasCloakActive` and `activeCloakType` (`StateManager_MagicEffects.cpp:495-507`) | **none**. Only the debug widget reads it (`StateManagerDebugWidget.cpp:416`) | Cloak spells are not redundant-filtered at all. |
 | Invisibility, Muffle, warming (spells); Waterbreathing, Invisibility (items) | flags in `ActorBuffs` (`PlayerActorState.h:197-208`) | spells `CandidateFilters.cpp:64-75`; items `:111-116` (Waterbreathing is item-only, `:112`) | Hand-listed per tag. |
@@ -129,10 +129,17 @@ These filters run before the v3 log's `eligible` flag is set
 a `held` row with `eligible` = 0, but nothing says why. "Buff already active"
 looks the same as unaffordable, on cooldown or equipped. A filtered row can
 still be on the page. A Remembrance hold seats an item that is no longer a
-candidate, and its own press can equip the chosen item (below). Across the
-3,195 logged contexts, 318 shown rows are not eligible. 225 of them are
-Remembrance holds, and 107 of those are unequipped summon rows. So which choice
-set a row belongs to is read from `shown`, never from eligibility. The fit cannot
+candidate, and some rows are shown and ineligible with no hold, override or
+wildcard bit at all (section 5, caveat).
+- **Press and menu contexts (570),** the ones that matter for choice sets: 39
+  shown rows are not eligible, 25 of them Remembrance holds, 9 of those
+  unequipped summon rows.
+- **All 3,195 contexts** (2,625 of them episode onsets): 318, 225 and 107.
+  These are row counts, and a held item counts once per context. They come
+  from only 66 distinct launch × item pairs.
+
+So which choice set a row belongs to is read from `shown`, never from
+eligibility. The fit cannot
 learn redundancy from rows with no reason attached, and it does not need to
 while the filters stand.
 
@@ -198,9 +205,12 @@ land in the same column space. Then:
   no evidence. A **shadow evaluation** gets around this, within limits:
   - **The `shown` flag assigns the choice set, not the filter.** In doc 9's
     model a key pick chooses only from the page.
-    - A filtered row with `shown` (a Remembrance hold, mostly) is on the page
-      and can be picked by key. At 15:21:57 a summon seated that way was
-      pressed. It belongs to the key choice set like any shown row.
+    - A filtered row with `shown` is on the page and can be picked by key, so
+      it belongs to the key choice set like any shown row. Mostly these are
+      Remembrance holds, though no Remembrance-held row is the chosen row of
+      any of the 470 key or wheel picks. Shown, ineligible rows with no
+      `remembered` bit were pressed: the Wraith in the press context at
+      15:21:54.504 (flags 28) and the Spirit Wolf at 01:19:30.053.
     - A filtered row without `shown` joins only the menu alternatives
       (H \ A, at cost κ).
     - If unshown filtered rows were put into key choices, θ_covered would
@@ -216,8 +226,12 @@ land in the same column space. Then:
   - **Fit the replacement term jointly with θ_covered** (the summon grade
     difference above). Otherwise summon picks made with summons covered (a
     replacement, or a second slot under Twin Souls) pull θ_covered toward
-    zero, when what they show is an upgrade or a second slot. Only one such
-    pick is in the log so far (section 2.1).
+    zero, when what they show is an upgrade or a second slot. **Up to 3**
+    such picks are in the log. The definition: no summon row other than the
+    chosen one was eligible in the press context, which is what the summon
+    filter leaves when a summon is up. The press contexts are 01:02:22,
+    01:19:30.053 and 15:21:54.504. Section 2.1's count of 1 is a stricter
+    definition (nothing eligible or shown).
   - **The evidence is thin.** There are 94 menu picks in total, and only the
     few made with something covered speak to θ_covered. If after R8's data
     play the estimate's interval still includes zero, **keep the filters** as
@@ -391,14 +405,30 @@ The risk: Huginn shows B after A, the player presses B because it is there, and
 4. Casts. A spell pick is an equip, not a cast. For this question the equip is
    the decision, so this is fine *(guess: casts would mostly add noise)*.
 
-**Caveat for R6: eligibility after the pick's own press.** A press's context
-is taken after its own equip (`9-selection-log-v3.md`, `dec.preEquipped`). The
-equipped filter then drops the chosen spell, so the chosen row can read
-`eligible` = 0 for a reason the pick itself caused. Examples: 01:19:33 and
-15:21:57, both key presses of shown summons (flags 28, `preEquipped` 0,
-`ctxAgeMs` 0). Any analysis keyed on eligibility must treat the chosen row's
-`eligible` as unknown, as the schema already does for `equipped` through
-`dec.preEquipped`. It must also assign choice sets by `shown`.
+**Caveat for R6: the chosen row's eligibility has no pre-press value.**
+
+- **`equipped` vs `eligible`.** For `equipped` the schema supplies
+  `dec.preEquipped`, which is unknown only in the first 0.25 s after a load.
+  `eligible` has no such pre-press field: it is whatever the last pipeline run
+  said.
+- **Both flags come from one cache update.** The `eligible` flags and the page
+  come from the same `PipelineStateCache::Update` (`PipelineStateCache.h:135-182`;
+  rows marked in `SelectionLogV3.cpp:347` and `:546-573`), so a context's page
+  and eligibility are not skewed against each other.
+- **Two key presses of shown, ineligible summons.** In the press contexts at
+  01:19:30.053 and 15:21:54.504, the pressed summon was shown and not
+  eligible, with no `remembered`, `override` or `wildcard` bit (flags 28,
+  `preEquipped` 0, `ctxAgeMs` 0). Every other summon row was ineligible and
+  unequipped too, which fits the summon filter with a summon already up.
+  These are context times; the decision records, stamped at the confirmation
+  about 3 s later, read 01:19:33 and 15:21:57.
+- **Not the press's own equip.** The Wraith was already ineligible and
+  unequipped in the context at 15:21:40.867, before its press.
+- **Unexplained.** Why the slot code kept an ineligible item seated as an
+  ordinary slot, with no hold bit, is not explained here *(guess: the seated
+  item's hold or lock kept it after it left the candidates)*.
+- **What an analysis keyed on eligibility must do:** treat the chosen row's
+  `eligible` as unknown, and assign choice sets by `shown`.
 
 **Volume.** R6 needs about 450–1,200 key or wheel picks to see a +2 to +4 hit@1
 gain (roadmap R5 notes). The log now holds 470 key or wheel picks, 143 of them
