@@ -118,7 +118,7 @@ previous pick's context. That is the feedback loop to watch (section 4.4).
 
 | Case | Sensor | Filter | Problem |
 |---|---|---|---|
-| Summon | `hasActiveSummon`: any living actor whose commanding actor is the player (`StateManager_MagicEffects.cpp:537-560`; the archetype test is skipped on purpose, `:510-514`) | every `SpellType::Summon` dropped (`CandidateFilters.cpp:71`); context rule only in combat with none up (`ContextRuleEngine.cpp:365`) | A bool, not a count, and no limit: under Twin Souls (2) the second summon is hidden. Reanimated thralls count as summons. Of 90 summon picks (89 spells, 1 scroll), **1** was made with every summon hidden: the menu Wraith (decision 01:02:25, menu context 01:02:22). The definition: no summon row of any kind (spell or scroll) was eligible or shown, the chosen row included. Counting only "the chosen row is not eligible" gives 5. Of the other 4, 2 are key presses of summons that were shown although ineligible, with every other summon ineligible too (section 5, caveat), and 2 are menu picks of the Skeletal Hero made while other summons were eligible, so the summon filter was not what dropped it. |
+| Summon | `hasActiveSummon`: any living actor whose commanding actor is the player (`StateManager_MagicEffects.cpp:537-560`; the archetype test is skipped on purpose, `:510-514`) | every `SpellType::Summon` dropped (`CandidateFilters.cpp:71`); context rule only in combat with none up (`ContextRuleEngine.cpp:365`) | A bool, not a count, and no limit: under Twin Souls (2) the second summon is hidden. Reanimated thralls count as summons. Of 90 summon picks (89 spells, 1 scroll), **1** was made with every summon hidden: the menu Wraith (menu context 01:02:19.741, pick at about 01:02:22.6, decision record 01:02:25). The definition: no summon row of any kind (spell or scroll) was eligible or shown, the chosen row included. Counting only "the chosen row is not eligible" gives 5. Of the other 4, 2 are key presses of summons that were shown although ineligible, with every other summon ineligible too (section 5, caveat), and 2 are menu picks of the Skeletal Hero made while other summons were eligible, so the summon filter was not what dropped it. |
 | Armour spell | `hasArmorBuff`: any ValueModifier on DamageResist (`StateManager_MagicEffects.cpp:397-404`) | `SpellTag::Armor` dropped (`CandidateFilters.cpp:69`) | Any armour-rating buff counts, a potion included. No strength comparison, so Oakflesh up still hides Stoneflesh. |
 | Cloak | `hasCloakActive` and `activeCloakType` (`StateManager_MagicEffects.cpp:495-507`) | **none**. Only the debug widget reads it (`StateManagerDebugWidget.cpp:416`) | Cloak spells are not redundant-filtered at all. |
 | Invisibility, Muffle, warming (spells); Waterbreathing, Invisibility (items) | flags in `ActorBuffs` (`PlayerActorState.h:197-208`) | spells `CandidateFilters.cpp:64-75`; items `:111-116` (Waterbreathing is item-only, `:112`) | Hand-listed per tag. |
@@ -229,8 +229,9 @@ land in the same column space. Then:
     zero, when what they show is an upgrade or a second slot. **Up to 3**
     such picks are in the log. The definition: no summon row other than the
     chosen one was eligible in the pick's context, which is what the summon
-    filter leaves when a summon is up. The contexts are 01:02:22 (a menu
-    context), 01:19:30.053 and 15:21:54.504 (press contexts). Section 2.1's count of 1 is a stricter
+    filter leaves when a summon is up. The contexts are 01:02:19.741 (a menu
+    context; pick at 01:02:22), 01:19:30.053 and 15:21:54.504 (press
+    contexts). Section 2.1's count of 1 is a stricter
     definition (nothing eligible or shown).
   - **The evidence is thin.** There are 94 menu picks in total, and only the
     few made with something covered speak to θ_covered. If after R8's data
