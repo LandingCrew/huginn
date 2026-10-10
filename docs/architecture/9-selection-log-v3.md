@@ -7,7 +7,7 @@ telemetry reads it. The v2 log (`Huginn_Selections.jsonl`) is written as before.
 The offline fit (R6, [implementation map Phase 4](9-implementation-map.md#phase-4-fit-offline-toolsreplay))
 and later the new learner (R8) need, for every decision the player made: the
 situation (the need vector), every item they could have chosen with what it
-does (sparse cap(i) and the runtime cross-features), the page they saw, and an
+does (sparse cap(i) and the runtime cross-features), the page Huginn allocated for display (`shown`, below), and an
 explicit outcome among doc 9's three -- a key press from the page, a pick from
 the held items off the page at a menu cost κ, or nothing
 ([doc 9](9-context-as-learner-input.md), theory page P11). This file is the
@@ -130,7 +130,7 @@ same tick.
 | `need` | [[i, v]] | the need vector: non-zero curve outputs, 0..1 (`needs/NeedMonitor`, R3) |
 | `in` | [[i, v]] | what went into each curve, in the units of `needs.csv`'s `r3_input` (fractions, seconds, units of distance...) |
 | `pipe.ok` | 0/1 | a pipeline run of **this game session** had been cached. 0 before the first run after a load (or `hg reset all`): the cache then still holds the previous save's page and candidates, so neither is logged (no `shown` rows, no `eligible` rows) |
-| `pipe.page` | int | the page shown (-1 when `pipe.ok` is 0) |
+| `pipe.page` | int | the page Huginn allocated for display, as for `shown` below (-1 when `pipe.ok` is 0) |
 | `pipe.slots` | int | keys on that page |
 | `pipe.ageMs` | int ms | how old that page was when the context was taken |
 | `race` | string or null | editor ID of the hostile primary target's race (alive, hostile), else null |
@@ -161,7 +161,7 @@ Each row is an array, in the order `head.row` names:
 | `scored` | 2 | ...that also passed the old floors (`util` is set) |
 | `held` | 4 | carried (inventory stacks the catalog describes) or a spell the player knows |
 | `equipped` | 8 | in a hand, worn, or the nocked ammo, when the context was taken (a press's context is taken after the press's own equip: see `dec.preEquipped`) |
-| `shown` | 16 | on the page the player saw; `slot` is its key |
+| `shown` | 16 | on the page Huginn allocated for display in its last run (`PipelineStateCache::TakeShown`), whether or not the widget or wheel was on screen; `slot` is its key |
 | `wildcard` | 32 | shown as a wildcard |
 | `override` | 64 | shown by an override |
 | `remembered` | 128 | shown by a Remembrance hold |
@@ -371,6 +371,8 @@ What bounds it:
 - The `equipped` flags of the rows other than the chosen one come from the
   held read: for a press, the state just after its own equip; for a menu or an
   onset, the last read (re-done on any inventory or equipment change).
+- `shown` is not evidence that the page was on screen: it is the page Huginn
+  allocated, logged the same whether the widget was hidden or the wheel closed.
 - `ctx.need` is the latest update tick's vector (the monitor runs every tick,
   ~100 ms); the page is the last pipeline run's (`pipe.ageMs`).
 - Game data changed by scripts after the catalog was built is not seen (the

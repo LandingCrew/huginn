@@ -51,6 +51,57 @@ Top hot zones + analysis + finding mapping.
 
 ---
 
+## 2026-10-09 (16:38) — `fe570c1` (v0.23.18) — LoreRim, Wheeler push zones
+
+- Session: launch 16:38:15, save load 16:41:47 (A), capture end 17:42:12;
+  zones span 62 min, about **48.5 min of unpaused play** (A; sum of gaps under
+  1 s between job-thread ticks). Tracy version not recorded.
+- Save: LoreRim character; inventory scale not recorded (candidates averaged
+  28.1 a run, learner items 53.5).
+- Frame sampled: main-thread frame p50 17.55 ms (A); CPU not recorded.
+- Notes: **DEBUG + TRACY (relative only)**, Self only, job threads (Tracy 5–10).
+  Only Huginn's client was connected; Wheeler's zones are not in the file.
+- Source: the capture's analysis and an independent verification of it, both
+  local and untracked next to the `.tracy` file. Numbers marked (A) are from
+  the analysis only; unmarked ones the verification reproduced or confirmed.
+- Baseline: the capture before it (`4b73965`, v0.23.16, same day, ~40.8 min of
+  play, A): also 18 Wheeler pushes over 5 ms and 7 over 16.6 ms (confirmed), 17
+  of the 18 within 156 s of the load (A).
+
+| Zone | MTPC | Count | Total | Note |
+|---|---|---|---|---|
+| `SelectionV3::ReadHeld full` | 1.25 ms | 182 | 0.23 s | (A) |
+| `WheelSync::WriteSlots` | 787 µs (p50 172 µs, max 18.83 ms) | 422 | 0.33 s | (A); new zone |
+| `Pipeline::AllocateAndLock` | 599 µs | 2,631 | 1.58 s | (A) |
+| `Inventory::DeltaScan` | 441 µs | 5,316 | 2.35 s | ratio 1.30 against v0.23.16 confirmed |
+| `Wheeler::AllocateOtherPage` | 371 µs | 2,628 | 0.97 s | (A); new zone |
+| `Display::Wheeler` | 223 µs (max 0.41 ms) | 2,631 | 0.59 s | max confirmed; children now zoned |
+| `PollPlayerMagicEffects` | 199 µs | 26,565 | 5.29 s | (A) |
+| `PollTargets` | 128 µs | 26,565 | 3.39 s | (A) |
+| `OnUpdate` (own) | 61 µs | 26,565 | 1.61 s | 46 → 61 µs confirmed |
+
+- **Wheeler pushes:** 2,711 in all; 18 over 5 ms and 7 over 16.6 ms (inclusive).
+  In the 7, `WriteSlots` is 95.3–97.8% of the push. All 7 wrote page 0 while it
+  was the current page; every write of 18 ms or more added a weapon instance
+  (uniqueID not 0); in 2 of them (16:47:03, 16:56:31) the same item went onto
+  the other wheel in the same push in ~0.1 ms. Over 16.6 ms at +0 s and +3 s after the load, then +315 to +883 s;
+  nothing over 5 ms after +1154 s. 302 of the 2,711 pushes wrote anything (A).
+- **Frames:** 0 of 26,565 job ticks overlap a main-thread zone (a ±50 ms random
+  shift gives 1,454–1,494); the next main-thread player update starts p50
+  1.99 ms after a job tick ends, whatever its length. The 6 pushes over 16.6 ms
+  that could be measured stretched their frames by +19.9 to +28.9 ms. Inferred:
+  the main thread waits for the tick.
+- **Rises with no code change** between the builds (only zones were added):
+  most fixed-cost zones rose 25–31% (`OnUpdate` 1.31, `PollWorldObjects` 1.31,
+  `Inventory::DeltaScan` 1.30), though `PollTargets` fell (0.80) and
+  `PollPlayerMagicEffects` barely moved (1.05); `Gather::Spells` rose 46%, but it scales with
+  the candidate count (28.1 against 24.3). Game state or a session-wide
+  slowdown, not code.
+- **Threads:** 26,565 ticks on 6 job threads, 4,769 on the main thread, 1,494 on
+  a loading-screen thread; no two ticks overlap. The drop-ahead probe runs on the
+  main thread only (hook mean 26 µs incl, A).
+- Design follow-up: [architecture/10-client-api.md](../architecture/10-client-api.md).
+
 ## 2026-10-04 (11:55) — `be4e452` (v0.22.14) — LoreRim, after the spell-cost cache
 
 - Session: SkyrimSE.exe @ 2026-10-04 11:55:38, Tracy 0.14.1, 221,768 frames,

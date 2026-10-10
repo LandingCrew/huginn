@@ -265,6 +265,7 @@ For detailed documentation on specific subsystems, see [docs/architecture/](arch
 | [7-dmenu-integration.md](architecture/7-dmenu-integration.md) | dMenu integration and two-INI architecture |
 | [8-future-work.md](architecture/8-future-work.md) | Deferred ideas: temporal prediction, urgency multipliers, HMM combat states |
 | [9-context-as-learner-input.md](architecture/9-context-as-learner-input.md) | Proposal: context as the learner's input (shared need × effect weights, response curves) |
+| [10-client-api.md](architecture/10-client-api.md) | Proposal: Huginn as a recommendation server; UIs connect, read a snapshot on their own thread, and report what they showed and what was picked |
 
 And the reference material in [docs/reference/](reference/), plus the console
 command reference now on the wiki:
