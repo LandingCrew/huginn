@@ -221,6 +221,39 @@ in. What was built: the [implementation map](architecture/9-implementation-map.m
       `deep_water_ahead` before the player is in the water; a cliff onto a
       shallow stream still reads a drop. If a jump into water the probe calls
       deep does hurt, raise `kSafeLandingDepth`.
+- [x] The LoreRim session of 2026-10-10 (0.23.21, ~155 max health; 0.23.22
+      acts on it):
+      - **The sea jump: safe; the probe was wrong, fixed.** At 12:08:40 the
+        probe on a cliff over the sea read `drop 3936 | deep water 0` with
+        `[hit void water -14000 depth 0]` at feet -8526: no ground within the
+        4000-unit ray, whose bottom (-12462) lay above the sea, so the depth
+        read 0 and the void a drop. The player jumped (a 5471 fall), landed
+        swimming, no health deficit. The water read was right (-14000, the
+        player's own water while swimming). 0.23.22 lengthens the down ray to
+        16000 (`DropProbeConfig::rayLength`: water is seen from cliffs up to
+        15808 over it); a host test replays that cliff.
+      - **Fall damage and the drop_ahead refit (data-derived).** 36 falls
+        (`[Falling] end -- peak depth N` and the `[Needs]` lines in the 3 s
+        after): none under 329 units hurt; 7 of 13 between 329 and 444 did a
+        little (peak `health_falling` 0.07-0.58); every one from 493 hurt
+        (493 0.82, 536 0.99, 613 and 686 1.00, taking 47% and 76% of health).
+        The old curve (logistic c 600 slope 0.01) read 500 as 0.27.
+        `tools/needs/fit_drop_curve.py` (least squares of the logistic to the
+        peak `health_falling`, 32 falls; a slide at 12:08:36, the sea landing
+        and two falls already losing health left out) fits centre 466, slope
+        0.029 (bootstrap centre 445-485; the slope is loose), now the
+        `needs.csv` default: 330 0.02, 400 0.13, 490 0.67, 600 0.98. A curve
+        fitted from logs, not a hand-tuned one; it holds for LoreRim at ~155
+        health (fall damage scales with the modlist's settings and max
+        health), so refit with the script from another setup's log.
+      - **OPEN: false water by a pond.** At 11:23-11:24 six jumps from a bank
+        at feet -3005 read water at -3008 ahead (`deep water` up to 332), yet
+        the player landed at feet -3242 and -3372 -- 234 and 364 under that
+        "surface" -- without swimming or going under (no `Water:` transition
+        until 11:38), and 3 of the 6 landings did minor fall damage. That
+        water was likely not there; one hypothesis is a placed water plane's
+        height reported outside its extent. Not fixed; the user is asked
+        where it was.
 - [x] Computed and logged on its own cadence (`needs/NeedMonitor`, every
       update tick, a `[Needs]` line per signature change, at most one a
       second). **Not** in the skip gate: moved to R8 (below).

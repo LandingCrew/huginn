@@ -206,6 +206,16 @@ TEST_CASE("environment: darkness off in open daylight, underwater by breath, dro
     CHECK(Val(s, NeedId::drop_ahead) > 0.9f);
     s.dropAhead = 40.0f;
     CHECK(Val(s, NeedId::drop_ahead) < 0.01f);
+    // The curve fitted to LoreRim fall damage (0.23.22, tools/needs/
+    // fit_drop_curve.py): half at 466; no fall under 329 hurt, every one
+    // from 493 did.
+    s.dropAhead = 466.0f;
+    CHECK(Val(s, NeedId::drop_ahead) == doctest::Approx(0.5));
+    s.dropAhead = 320.0f;
+    CHECK(Val(s, NeedId::drop_ahead) < 0.05f);
+    s.dropAhead = 600.0f;
+    CHECK(Val(s, NeedId::drop_ahead) > 0.95f);
+    s.dropAhead = 40.0f;
     // deep_water_ahead (0.23.19): not measured (-1) reads 0; logistic on the
     // depth around one actor height (128): a stream ~0, a lake shore ~1.
     CHECK(s.waterDepthAhead == -1.0f);

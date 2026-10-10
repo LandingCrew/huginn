@@ -203,7 +203,7 @@ namespace Huginn::Core::Needs
         { "underwater", "Environment", { CurveKind::Logistic, 0.5f, 10.0f }, 1, false },
         { "swimming", "Environment", { CurveKind::Step, 0.5f, 0.0f }, 3, false },
         { "falling", "Environment", { CurveKind::Linear, 200.0f, 600.0f }, 1, false },
-        { "drop_ahead", "Environment", { CurveKind::Logistic, 600.0f, 0.01f }, 3, false },
+        { "drop_ahead", "Environment", { CurveKind::Logistic, 466.0f, 0.029f }, 3, false },
         { "deep_water_ahead", "Environment", { CurveKind::Logistic, 128.0f, 0.05f }, 3, false },
         { "lock_in_crosshair", "Environment", { CurveKind::Step, 0.5f, 0.0f }, 1, false },
         { "workstation_smithing", "Environment", { CurveKind::Step, 0.5f, 0.0f }, 1, false },
