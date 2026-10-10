@@ -243,15 +243,19 @@ namespace Huginn::State::DropAheadProbe
          // read and the ray agree; for a water plane the Z does not matter.
          // Outside the lock: no physics read. The down ray does not stop at
          // water (IsGroundLayer), so its hit is the bed and water above it
-         // gives the depth (core MeasureAhead). A height the game uses for
-         // "no water" (the XCLW default sentinel, -infinity) is not water
-         // (Core::Needs::IsUsableWaterHeight).
+         // gives the depth (core MeasureAhead). The XCLW "use the worldspace
+         // default" sentinel is resolved to that default (0.23.21: the sea and
+         // many lakes rely on it); a height the game uses for "no water"
+         // (-infinity, a sentinel with no usable default) is not water
+         // (Core::Needs::ResolveWaterHeight).
          const auto starts = Core::Needs::ProbeStarts(feet, dir, cfg);
          int unknown = 0;
          int neighbourCells = 0;
          int unknownCells = 0;
          constexpr float kNoRead = std::numeric_limits<float>::quiet_NaN();
          std::array<float, 3> rawWater{ kNoRead, kNoRead, kNoRead };  // what the game returned, for the log
+         std::array<float, 3> defaultWater{ kNoRead, kNoRead, kNoRead };  // the resolved default, when asked
+         std::array<bool, 3> askedDefault{};
          for (std::size_t i = 0; i < hits.size(); ++i) {
             if (!hits[i].known) {
                ++unknown;
@@ -268,10 +272,27 @@ namespace Huginn::State::DropAheadProbe
             float waterZ = 0.0f;
             if (waterCell->GetWaterHeight(at, waterZ)) {
                rawWater[i] = waterZ;
-               if (Core::Needs::IsUsableWaterHeight(waterZ)) {
-                  hits[i].waterKnown = true;
-                  hits[i].waterZ = waterZ;
+               // The sentinel (XCLW "use the worldspace default") in place of
+               // a height: resolve it. CommonLib v3.7.0
+               // src/RE/T/TESObjectCELL.cpp:88-100 GetExteriorWaterHeight
+               // (field reads in CommonLib, no relocated engine call) returns -FLT_MAX
+               // (NI_INFINITY = FLT_MAX, include/RE/N/NiMath.h:5) for a cell
+               // without the kHasWater flag or an interior; the cell's own
+               // XCLW when below 2147483600; else the worldspace's
+               // GetDefaultWaterHeight (src/RE/T/TESWorldSpace.cpp:17-24: the
+               // DNAM default water of the worldspace, or of its parent while
+               // it uses the parent's land data), or -FLT_MAX with no
+               // worldspace. -FLT_MAX, and a default that is itself no
+               // height, end as water unknown (Core::Needs::ResolveWaterHeight).
+               std::optional<float> resolvedDefault;
+               if (Core::Needs::IsDefaultWaterSentinel(waterZ) && waterCell->IsExteriorCell()) {
+                  resolvedDefault = waterCell->GetExteriorWaterHeight();
+                  defaultWater[i] = *resolvedDefault;
+                  askedDefault[i] = true;
                }
+               const auto water = Core::Needs::ResolveWaterHeight(waterZ, resolvedDefault);
+               hits[i].waterKnown = water.known;
+               hits[i].waterZ = water.known ? water.z : 0.0f;
             }
          }
          // One pass, two readings: the drop (water deep enough to land in is
@@ -283,14 +304,26 @@ namespace Huginn::State::DropAheadProbe
          if (status == Status::Measured) g_measuredCount.fetch_add(1, std::memory_order_relaxed);
          if (!WantTransitionLog(status, nowSec)) return;
          // Per probe: the hit Z (or "void"), the RAW water height the game
-         // returned ("-" when none; a rejected sentinel shows here as the huge
-         // number it is) and the depth that came of it, so a line shows both
-         // why a drop was discounted and whether the water reading was false.
+         // returned ("-" when none; the sentinel shows here as the huge
+         // number it is, followed by "(default <z>)" with the resolved
+         // default, "(default none <z>)" when that was no usable height, or
+         // "(default not asked)" in an interior) and the depth that came of
+         // it, so a line shows why a drop was discounted, whether the water
+         // reading was false, and which path the water took.
          auto probe = [&](std::size_t i) -> std::string {
             const auto& h = hits[i];
             if (!h.known) return "?";
             const std::string hit = h.hit ? fmt::format("{:.0f}", h.hitZ) : std::string("void");
-            const std::string water = std::isnan(rawWater[i]) ? std::string("-") : fmt::format("{:.0f}", rawWater[i]);
+            std::string water = std::isnan(rawWater[i]) ? std::string("-") : fmt::format("{:.0f}", rawWater[i]);
+            if (!std::isnan(rawWater[i]) && Core::Needs::IsDefaultWaterSentinel(rawWater[i])) {
+               if (!askedDefault[i]) {
+                  water += " (default not asked)";
+               } else if (Core::Needs::IsUsableWaterHeight(defaultWater[i])) {
+                  water += fmt::format(" (default {:.0f})", defaultWater[i]);
+               } else {
+                  water += fmt::format(" (default none {:g})", defaultWater[i]);
+               }
+            }
             return fmt::format("hit {} water {} depth {:.0f}", hit, water,
                                Core::Needs::WaterDepthAtProbe(feet.z, h, cfg));
          };

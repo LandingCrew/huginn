@@ -292,6 +292,82 @@ TEST_CASE("drop ahead and deep water ahead: mixed probes, water at the hit, infi
     CHECK(r.waterDepth == 0.0f);
 }
 
+TEST_CASE("water read: the XCLW default sentinel resolves to the worldspace default water")
+{
+    // CommonLib's threshold (TESObjectCELL.cpp:95): below 2147483600 is the
+    // cell's own height; at or above it, "use the worldspace default".
+    CHECK(IsDefaultWaterSentinel(2147483600.0f));
+    CHECK(IsDefaultWaterSentinel(2147483648.0f));
+    CHECK(IsDefaultWaterSentinel(std::numeric_limits<float>::max()));
+    CHECK_FALSE(IsDefaultWaterSentinel(2147483500.0f));  // the next float down: 2147483520
+    CHECK_FALSE(IsDefaultWaterSentinel(0.0f));
+    CHECK_FALSE(IsDefaultWaterSentinel(-std::numeric_limits<float>::max()));
+    CHECK_FALSE(IsDefaultWaterSentinel(std::nanf("")));
+
+    // Sentinel with a usable default: the default is the water.
+    auto w = ResolveWaterHeight(2147483648.0f, -14000.0f);
+    CHECK(w.known);
+    CHECK(w.fromDefault);
+    CHECK(w.z == -14000.0f);
+    w = ResolveWaterHeight(2147483600.0f, 0.0f);  // the sea at z 0
+    CHECK(w.known);
+    CHECK(w.fromDefault);
+    CHECK(w.z == 0.0f);
+
+    // Sentinel with no default (an interior: nothing asked), or a default
+    // that is no height (-FLT_MAX for a cell without water or worldspace,
+    // the sentinel again, NaN, past 1e6): unknown, never a bogus height.
+    for (std::optional<float> none : { std::optional<float>{}, std::optional<float>{ -std::numeric_limits<float>::max() },
+                                       std::optional<float>{ -std::numeric_limits<float>::infinity() },
+                                       std::optional<float>{ 2147483648.0f }, std::optional<float>{ std::nanf("") },
+                                       std::optional<float>{ kMaxWaterHeightAbs } }) {
+        w = ResolveWaterHeight(2147483648.0f, none);
+        CHECK_FALSE(w.known);
+        CHECK_FALSE(w.fromDefault);
+    }
+
+    // A normal height: used as is; a default offered alongside is ignored.
+    w = ResolveWaterHeight(-200.0f, std::nullopt);
+    CHECK(w.known);
+    CHECK_FALSE(w.fromDefault);
+    CHECK(w.z == -200.0f);
+    w = ResolveWaterHeight(-200.0f, 5000.0f);
+    CHECK(w.known);
+    CHECK_FALSE(w.fromDefault);
+    CHECK(w.z == -200.0f);
+
+    // Non-finite or huge raw heights (not the sentinel): unknown, with or
+    // without a default to ask.
+    for (float bad : { std::nanf(""), std::numeric_limits<float>::infinity() * -1.0f,
+                       -std::numeric_limits<float>::max(), kMaxWaterHeightAbs, -kMaxWaterHeightAbs, 2.0e9f }) {
+        CHECK_FALSE(ResolveWaterHeight(bad, std::nullopt).known);
+        CHECK_FALSE(ResolveWaterHeight(bad, 0.0f).known);
+    }
+
+    // End to end: a cliff over the sea. The cell reports the sentinel, the
+    // worldspace default is the surface; deep water under the drop is a safe
+    // landing, so drop 0 and the depth reads.
+    const DropProbeConfig cfg;
+    const float feet = 1000.0f;
+    const ProbeHit ground{ true, 1000.0f };
+    w = ResolveWaterHeight(2147483648.0f, 0.0f);
+    ProbeHit sea{ true, -500.0f };
+    sea.waterKnown = w.known;
+    sea.waterZ = w.z;
+    std::array<ProbeHit, 3> cliff{ { ground, sea, ground } };
+    auto r = MeasureAhead(feet, cliff, cfg);
+    CHECK(r.drop == 0.0f);
+    CHECK(r.waterDepth == doctest::Approx(500.0));
+    // The same cliff with no default to resolve: a real drop, no depth.
+    w = ResolveWaterHeight(2147483648.0f, std::nullopt);
+    sea.waterKnown = w.known;
+    sea.waterZ = w.z;
+    cliff = { { ground, sea, ground } };
+    r = MeasureAhead(feet, cliff, cfg);
+    CHECK(r.drop == doctest::Approx(1500.0));
+    CHECK(r.waterDepth == 0.0f);
+}
+
 TEST_CASE("drop ahead and deep water ahead: a no-hit probe's bottom follows the ray's real start")
 {
     // ProbeAll casts each point from waist height above the PREVIOUS
