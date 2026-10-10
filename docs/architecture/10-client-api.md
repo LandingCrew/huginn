@@ -77,9 +77,10 @@ callbacks as running on the render/input thread
 that returns a versioned interface is the common pattern for SKSE plugin APIs.
 
 How Huginn writes a page into Wheeler (`WheelSync::UpdatePage`,
-`src/wheeler/WheelSync.cpp:1262`): it takes `m_pageDataMutex`, checks the wheel
-with `IsManagedWheel`, `IsWheelEmpty` and `GetEntryCount`, compares the page
-with its cache and returns if nothing changed, and otherwise, inside the
+`src/wheeler/WheelSync.cpp:1262`): it takes `m_pageDataMutex`, compares the
+page with its cache and returns if nothing changed (`WheelSync::UnchangedCheck`,
+`:1317`); otherwise it checks the wheel with `IsManagedWheel`, `IsWheelEmpty`
+and `GetEntryCount` (`:1328-1382`), then, inside the
 `WheelSync::WriteSlots` zone (`:1388`), for each changed slot calls
 `RemoveItem` or `ClearEntry`, `AddItemByFormID(wheel, entry, formID, uniqueID)`
 (`:1616`) and `SetManagedWheelEntrySubtext` (`:1740`). Weapons and armour need a
