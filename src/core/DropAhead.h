@@ -5,8 +5,9 @@
 // =============================================================================
 // needs.csv drop_ahead (decided with the user 2026-10-08): a Havok ray cast
 // straight down from 2-3 points ahead of the player (~1, 2.5 and 4 m along
-// the movement, else the facing), from waist height, ~4000 units long; drop =
-// feet Z - hit Z, the largest over the points; no hit = a very big drop.
+// the movement, else the facing), from waist height, 16000 units long (0.23.22;
+// was 4000, see DropProbeConfig::rayLength); drop = feet Z - hit Z, the
+// largest over the points; no hit = a very big drop.
 // Water (0.23.19): the down ray passes through water to the bed, so the depth
 // under a point is the water surface down to the hit (to the ray's bottom when
 // nothing was hit). A landing in water at least kSafeLandingDepth deep is no
@@ -49,7 +50,26 @@ namespace Huginn::Core::Needs
         std::array<float, 3> distances{ 70.0f, 175.0f, 280.0f };  // ~1, 2.5, 4 m ahead
         float waistHeight = 64.0f;   // above the feet; half a 128-unit actor
         float kneeHeight = 24.0f;    // the second reachability pick: a parapet under the waist
-        float rayLength = 4000.0f;
+        // The down ray (0.23.22: 16000, was 4000). Its job past the ~700
+        // units where drop_ahead saturates is only to reach the landing, so
+        // a cliff over water reads as water. On 2026-10-10 (LoreRim) a cliff
+        // stood 5474 over the sea (feet -8526, the sea at -14000): the
+        // 4000-unit ray ended at -12462, above the water, and the landing
+        // read as a void, a 3936 drop with no water; the player jumped and
+        // landed in the sea unhurt. From waist height a 16000 ray reaches
+        // 15936 under the feet, so water at least kSafeLandingDepth over the
+        // ray's bottom is seen from any cliff up to 15808 over it (~225 m),
+        // 2.9 times that cliff. A cliff higher still reads a void, a 15936
+        // drop (drop_ahead 1, as any drop past ~700 does): the cost of a
+        // ray too short is only a water landing read as a cliff. Water known
+        // below the ray's bottom with no hit is water of unknown depth under
+        // a void, and stays depth 0 and the void's drop (WaterDepthAtProbe,
+        // DropAtProbe). Whether the length costs time is not measured: the
+        // Tracy trace that put one ProbeAll (every pick) at ~74 us was taken
+        // with the 4000 ray. A ray that hits ground near its top is expected
+        // to cost about the same at any length, one over a void or deep
+        // water to cast farther; a new trace would tell.
+        float rayLength = 16000.0f;
         float minMoveSpeed = 20.0f;  // units/s below which the facing is used
     };
 

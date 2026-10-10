@@ -17,6 +17,9 @@ namespace Huginn::State::DropAheadProbe
    {
       std::atomic<bool> g_gameLoaded{ false };
       std::atomic<std::uint32_t> g_measuredCount{ 0 };
+      // Set by the hook on the first XCLW "use the default" sentinel it reads,
+      // cleared by SetGameLoaded(true): one log line per game load (0.23.22).
+      std::atomic<bool> g_loggedFirstSentinel{ false };
 
       std::mutex g_mutex;
       Reading g_latest;
@@ -290,6 +293,18 @@ namespace Huginn::State::DropAheadProbe
                   defaultWater[i] = *resolvedDefault;
                   askedDefault[i] = true;
                }
+               // The status line that marks a resolved default is rate-limited
+               // (one per 5 s, on a status change), so the first sentinel of
+               // each game load gets its own line: whether the engine hands
+               // the sentinel back at all is open (implementation map, Known
+               // limits). One line per load: a transition, not a tick.
+               if (Core::Needs::IsDefaultWaterSentinel(waterZ) &&
+                   !g_loggedFirstSentinel.exchange(true, std::memory_order_relaxed)) {
+                  logger::debug("[DropAhead] first water-default sentinel this game load: raw {:.0f} -> {}"sv, waterZ,
+                     resolvedDefault ? fmt::format("cell or worldspace default {:g}{}", *resolvedDefault,
+                                           Core::Needs::IsUsableWaterHeight(*resolvedDefault) ? "" : " (no usable height: water unknown)")
+                                     : std::string("not asked (an interior: water unknown)"));
+               }
                const auto water = Core::Needs::ResolveWaterHeight(waterZ, resolvedDefault);
                hits[i].waterKnown = water.known;
                hits[i].waterZ = water.known ? water.z : 0.0f;
@@ -306,7 +321,9 @@ namespace Huginn::State::DropAheadProbe
          // Per probe: the hit Z (or "void"), the RAW water height the game
          // returned ("-" when none; the sentinel shows here as the huge
          // number it is, followed by "(default <z>)" with the resolved
-         // default, "(default none <z>)" when that was no usable height, or
+         // default -- the cell's own XCLW or the worldspace default, as
+         // GetExteriorWaterHeight returns either -- "(default none <z>)"
+         // when that was no usable height, or
          // "(default not asked)" in an interior) and the depth that came of
          // it, so a line shows why a drop was discounted, whether the water
          // reading was false, and which path the water took.
@@ -359,6 +376,7 @@ namespace Huginn::State::DropAheadProbe
 
    void SetGameLoaded(bool loaded) noexcept
    {
+      if (loaded) g_loggedFirstSentinel.store(false, std::memory_order_relaxed);
       g_gameLoaded.store(loaded, std::memory_order_release);
       Store(Status::NotLoaded, -1.0f, -1.0f, -1.0);
    }

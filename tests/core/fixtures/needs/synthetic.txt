@@ -404,10 +404,10 @@ fallDepth 700
 dropAhead 1000
 end
 
-# Ramp bottom edge (200 -> 0) and drop_ahead at its 600 centre.
+# Ramp bottom edge (200 -> 0) and drop_ahead at its 466 centre (fitted, 0.23.22).
 snapshot falling_low_edge
 fallDepth 200
-dropAhead 600
+dropAhead 466
 end
 
 # Ramp middle (400 -> 0.5) and ramp top exactly; dropAhead 0 (measured, flat).
