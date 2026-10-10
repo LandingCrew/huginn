@@ -20,19 +20,25 @@ spells".
 
 ## Summary
 
-- **Most of the combo comes from the situation, not from the order.** In the
-  log, the staff (a two-handed warhammer, not a magic staff) is picked in
-  combat at a median magicka deficit of 0.75, against 0.26 to 0.43 for the
-  spells. Summons, Oakflesh and Ice Spike come early in a fight. So "summon,
-  then buff, then damage, then staff" is largely "summon not up yet", then
-  "summon up", then "magicka spent". That is need × effect, which R6 already
-  fits, plus one thing the design lacks: **what is already active on the
-  player**.
+- **The log is consistent with a combo driven by the situation, but cannot yet
+  separate it from order.** The "staff" is Staff of Wandering Stars, very
+  likely a quarterstaff typed as a warhammer: an attack that costs no magicka.
+  In combat it is picked at a median magicka deficit of 0.70, against 0.26 to
+  0.43 for the spells. Summons, Oakflesh and damage spells come early in a
+  fight. So "summon, then buff, then damage, then staff" may be largely "summon
+  not up yet", then "summon up", then "magicka spent". That is need × effect,
+  which R6 already fits, plus one thing the design lacks: **what is already
+  active on the player**. Two cautions. The magicka deficit is produced by the
+  casts before it, so pooled per-role medians cannot tell order from
+  situation. And Circle of Strength does not fit the stated order (median
+  64 s into the fight, after the quarterstaff's 45 s). The test is a held-out
+  comparison in R6: the fit's lift with and without recency features
+  (section 4.1).
 - **Redundancy is the bigger gap, and it is already half built, as hard
   filters in the old engine.** One summon of any kind hides every summon spell,
   with no summon limit (so Twin Souls is ignored). Any armour-rating buff hides
-  every armour spell. Cloaks are detected but nothing reads that. The need and
-  effect tables have nothing that reads active effects, apart from
+  every armour spell. Cloaks are detected but nothing reads that. In the need
+  and effect tables, the only entries that read the player's own buffs are
   `restore_pending_*` and `school_fortified`.
   **Proposed:** one cross-feature, `covered(i)`: how much of item i's effect is
   already running on the player, summons counted against the player's own
@@ -56,36 +62,50 @@ spells".
 ## 1. What the log shows
 
 The data is `Huginn_Selections_v3.jsonl` as of 2026-10-10 16:42: 11 launches,
-nearly all LoreRim. It holds 470 key or wheel picks and 94 menu picks (repeats
-dropped), and 2,969 `nothing` records. It was read with `tools/replay/replay.py`
-`iter_v3`. The analysis scripts are in the session scratchpad, not the repo.
+one LoreRim character apart from 7 Simonrim records. It holds 470 key or wheel
+picks and 94 menu picks with the 18 repeats dropped, and 2,971 `nothing`
+records. The last launch (`20261010-184609`) alone added 185 picks (97 key, 46
+wheel, 42 menu) plus 8 repeats. The log was read with
+`tools/replay/replay.py` `iter_v3`. The analysis scripts are in the session
+scratchpad, not the repo.
 
 **Picks come in bursts.** The median gap between one pick and the next in the
 same load is 15 s (p25 6 s, p75 40 s). Of 552 gaps, 106 are under 5 s, 205
 under 10 s and 318 under 20 s, so about 50 pairs an hour fall within 20 s.
 
 **Item pairs are too sparse to learn.** There are 227 distinct item pairs within
-20 s, and 185 of them occur once. The top pairs all end on the staff: Conjure
-Spirit Wolf → Staff 8, Absorb Health → Staff 7, Circle of Strength → Staff 6,
-Staff → Ice Spike 6. By effect family the counts concentrate: summon spell →
-weapon 24, absorb → weapon 13, restore → summon 9, defense → summon 6, summon →
-damage 5.
+20 s, and 185 of them occur once. The top pairs mostly involve the
+quarterstaff (Staff of Wandering Stars): Conjure Spirit Wolf → quarterstaff 8,
+Absorb Health → quarterstaff 7, Circle of Strength → quarterstaff 6,
+quarterstaff → Ice Spike 6. By effect family the counts concentrate: summon
+spell → weapon 24, absorb → weapon 13, restore → summon 9, defense → summon 6,
+summon → damage 5. "Weapon" here is mostly the quarterstaff.
 
-**The situation explains much of the order.** These are picks made in combat,
-by role:
+**The situation is consistent with much of the order.** These are picks made
+in combat, by role:
 
 | Role | Picks | Seconds into the fight (median) | Magicka deficit (median) |
 |---|---|---|---|
 | Armour spell (Oakflesh) | 13 | 23 | 0.42 |
 | Damage spell (Ice Spike, Sparks) | 34 | 31 | 0.26 |
 | Summon | 54 | 33 | 0.32 |
+| Staff of Wandering Stars (quarterstaff) | 74 | 45 | **0.70** |
 | Absorb (Circle of Strength, Absorb Health) | 29 | 64 | 0.43 |
-| Staff of Wandering Stars (warhammer) | 89 | 59 | **0.75** |
+| Staff of Sparks (a magic staff) | 10 | 90 | 0.92 |
 
-Of the 58 runs of combat picks, 16 open with a summon, 13 with a damage spell
-and 12 with the weapon. `magicka_deficit` already lists "staff / weapon (attack
-that costs no magicka)" as an obvious answer (`9-data/needs.csv:3`). The last
-step of the combo is that pair.
+Of the 58 runs of combat picks (gaps under 60 s), 16 open with a summon, 13 with
+a damage spell and 11 with the quarterstaff. `magicka_deficit` already lists
+"staff / weapon (attack that costs no magicka)" as an obvious answer
+(`9-data/needs.csv:3`), and the last step of the combo may be that pair.
+
+**What this cannot show.** The deficit at a quarterstaff pick is produced by
+the casts before it. So "magicka spent → quarterstaff" and "after the spells →
+quarterstaff" predict the same medians. The absorb spells also break the
+stated order: Circle of Strength comes 64 s into a fight at the median, after
+the quarterstaff. Either it is used later in fights than the user remembers, or
+the combo is one fight-opening pattern among several. Only a held-out
+comparison can separate order from situation: the R6 fit with and without the
+`recent_*` features (section 4.1), scored on held-out picks.
 
 **The page already leads a little.** In 174 of the 278 key or wheel picks made
 within 20 s of a previous pick, the item was already on the page in the
@@ -97,10 +117,10 @@ previous pick's context. That is the feedback loop to watch (section 4.4).
 
 | Case | Sensor | Filter | Problem |
 |---|---|---|---|
-| Summon | `hasActiveSummon`: any living actor whose commanding actor is the player (`StateManager_MagicEffects.cpp:535-558`; the archetype test is skipped on purpose, `:510-514`) | every `SpellType::Summon` dropped (`CandidateFilters.cpp:71`); context rule only in combat with none up (`ContextRuleEngine.cpp:365`) | A bool, not a count, and no limit: under Twin Souls (2) the second summon is hidden. Reanimated thralls count as summons. 5 of the 90 summon picks in the log were made while the filter hid every summon. |
+| Summon | `hasActiveSummon`: any living actor whose commanding actor is the player (`StateManager_MagicEffects.cpp:537-560`; the archetype test is skipped on purpose, `:510-514`) | every `SpellType::Summon` dropped (`CandidateFilters.cpp:71`); context rule only in combat with none up (`ContextRuleEngine.cpp:365`) | A bool, not a count, and no limit: under Twin Souls (2) the second summon is hidden. Reanimated thralls count as summons. Of 90 summon picks (89 spells, 1 scroll), 5 were made while the filter hid every summon. |
 | Armour spell | `hasArmorBuff`: any ValueModifier on DamageResist (`StateManager_MagicEffects.cpp:397-404`) | `SpellTag::Armor` dropped (`CandidateFilters.cpp:69`) | Any armour-rating buff counts, a potion included. No strength comparison, so Oakflesh up still hides Stoneflesh. |
 | Cloak | `hasCloakActive` and `activeCloakType` (`StateManager_MagicEffects.cpp:495-507`) | **none**. Only the debug widget reads it (`StateManagerDebugWidget.cpp:416`) | Cloak spells are not redundant-filtered at all. |
-| Invisibility, Muffle, Waterbreathing, warming | flags in `ActorBuffs` (`PlayerActorState.h:197-208`) | `CandidateFilters.cpp:64-75`, items `:108-116` | Hand-listed per tag. |
+| Invisibility, Muffle, warming (spells); Waterbreathing, Invisibility (items) | flags in `ActorBuffs` (`PlayerActorState.h:197-208`) | spells `CandidateFilters.cpp:64-75`; items `:111-116` (Waterbreathing is item-only, `:112`) | Hand-listed per tag. |
 | Resists | player resistances | `IsResistSpellRedundant` / `IsResistPotionRedundant` (`CandidateFilters.cpp:79,109`) | Rule thresholds. |
 
 These filters run before the v3 log's `eligible` flag (`9-selection-log-v3.md`,
@@ -110,11 +130,13 @@ to while the filters stand.
 
 ### 2.2 What the rewrite has
 
-- **Needs (93):** none says "a buff of kind X is up". The one active-effect
-  need is `restore_pending_*` (`needs.csv:8-10`), which reads the remaining
-  Restore magnitude in the active-effect walk (`StateManager_MagicEffects.cpp:121,371,617`)
-  and pairs with a **negative** starting θ on Restore. That is exactly the
-  pattern redundancy needs, built for one family.
+- **Needs (93):** none says "a buff of kind X is up". Several needs read the
+  active-effect walk: `regen_suppressed` (`needs.csv:24`), the disease and
+  poison flags, and `restore_pending_*` (`needs.csv:8-10`). Only the last reads
+  the player's own buffs: the remaining Restore magnitude
+  (`StateManager_MagicEffects.cpp:121,371,617`), paired with a **negative**
+  starting θ on Restore. That is exactly the pattern redundancy needs, built
+  for one family.
 - **Effects (243):** cap(i) describes the item, never the player. The one
   runtime cross-feature that reads the player's active effects is
   `school_fortified` (`effects.csv:202`; `effect/CrossFeatures.cpp:44`).
@@ -137,22 +159,40 @@ land in the same column space. Then:
 - `active_j` is the strongest active effect of column j (graded as cap is), and
   `left_j` its remaining-duration fraction, so a buff about to run out reads
   low and a refresh becomes possible.
-- **Summons** use a count: `active_summon = living summons / limit`. The limit
-  is 1 plus the perk entry point `kModCommandedActorLimit`
-  (`CommonLibSSE-NG include/RE/B/BGSEntryPoint.h:81`). Count the player's
-  `MiddleHighProcessData::commandedActors` (`include/RE/M/MiddleHighProcessData.h:147`)
-  instead of scanning ProcessLists. With Twin Souls and one summon up, summons
-  read 0.5, not hidden. Thralls versus summons: open question 3.
+- **Summons** use a count: `active_summon = living summons / limit`.
+  - **The limit:** start at `float limit = 1.0f` and call
+    `BGSEntryPoint::HandleEntryPoint(kModCommandedActorLimit, player, &limit)`
+    (`CommonLibSSE-NG include/RE/B/BGSEntryPoint.h:81` for the entry point,
+    `:112` for the call). The perks decide the arithmetic: an entry point can
+    set or multiply the value as well as add to it, so do not assume 1 + n.
+  - **The count:** walk the player's
+    `MiddleHighProcessData::commandedActors`
+    (`include/RE/M/MiddleHighProcessData.h:147`) instead of scanning
+    ProcessLists. Check each entry: the handle resolves, the actor is alive,
+    and it came from a summon or reanimate effect, not a Command spell's
+    target. This drops stale handles and commanded enemies.
+  - With Twin Souls and one summon up, summons read 0.5 instead of being
+    hidden. Thralls versus summons: open question 3.
 - **One shared weight, θ_covered**, negative from the start (an obvious pair,
   like `restore_pending`), learned like the rest. "Hero up → no wolf" is then
-  `covered(wolf) = 1`. Whether "wolf up → hero is an upgrade" is learnable
-  depends on the strength term: with wolf below hero, `active/cap` < 1.
+  `covered(wolf) = 1`.
+- **Limit: a count cannot express replacement.** At the limit, every summon
+  reads covered, including the hero that would replace a wolf. The `active/cap`
+  ratio above applies to effect strength, not to a summon count, so "the hero
+  replaces the wolf" needs its own term (open question 2): for example, the
+  candidate's summon grade minus the weakest active summon's.
 - **Perception:** the Active Effects menu and the summon at the player's side
   are on screen, and the player chose the perk. Inside the Core Principle.
-- **The hard filters stay until R8's learner shows θ_covered holds the page.**
-  Then they become this feature's bootstrap. One exception: fix the summon
-  filter's count and limit as soon as the sensor exists, because it is a bug
-  today.
+- **The hard filters stay until θ_covered can be estimated without them.**
+  Filtered items are never candidates, so while the filters stand the learner
+  sees almost no summon or armour item in a covered state, and θ_covered gets
+  no evidence. A **shadow evaluation** breaks this. Log the filtered candidates
+  with their `covered(i)`, as rows marked `filtered` beside the `eligible`
+  ones, or rebuild them offline from the held rows. Then estimate θ_covered
+  with the filtered rows put back in the choice set: the player's picks show
+  whether covered items would have lost anyway. The filters go once that
+  estimate is confidently negative. One exception: fix the summon filter's
+  count and limit as soon as the sensor exists, because it is a bug today.
 
 Same-effect buffs that do not stack (Oakflesh and Stoneflesh) fall out of the
 same column. Different columns that stack (armour plus a cloak) do not cover
@@ -180,7 +220,7 @@ each other.
   (`EffectMapper.cpp:898`) or a zero magnitude, which grades at 1/(N+1)
   (`:211`). Carry weight is a Level column, graded as magnitude ×
   duration / 3600 for timed effects and as the full magnitude for constant ones
-  (`EffectMapper.cpp:513-516`). A short self-cast spell therefore ranks below
+  (`EffectMapper.cpp:514-516`). A short self-cast spell therefore ranks below
   every enchanted ring and potion *(guess: Feather's record holds a modest
   magnitude for well under an hour, or none; confirm with `hg cap 8D005B42`)*.
   With need 0.9 the pair contributes 0.9 × 0.0046 × θ, which is nothing.
@@ -193,8 +233,14 @@ each other.
   the fit can test it on today's data. The alternative, grading within kind
   (spells against spells; `Populations` already takes a group,
   `EffectMapper.h:250`), is an R2 change that regenerates fixtures.
-- **Feather limits itself:** once cast, carry weight rises, the ratio falls and
-  the need drops. It needs no covered term.
+- **Compare before switching.** Presence plus strength changes every pair in
+  the model, and the evidence for it is one Feather case and a few
+  low-graded spells. R6 should fit both gradings, the current one and presence
+  plus strength, and switch only if the new one wins on held-out picks.
+- **Feather probably limits itself** *(guess)*: once cast, carry weight rises,
+  the ratio falls and the need drops. That holds only if one cast brings the
+  load below about 0.95. If it does not, the need stays high while Feather is
+  active, and Feather needs the covered term like any buff.
 
 ## 4. Positive sequences
 
@@ -202,8 +248,14 @@ each other.
 
 | Option | Signal | Fits as | Verdict |
 |---|---|---|---|
-| A. State only | needs (combat onset, magicka), `covered(i)` | what R6 fits, plus section 2.3 | **First.** Section 1 says it explains most of the combo, and it adapts to new spells for free |
+| A. State only | needs (combat onset, magicka), `covered(i)` | what R6 fits, plus section 2.3 | **First.** Section 1 is consistent with it explaining much of the combo, and it adapts to new spells for free |
 | B. Recency need | `recent_<family>` = presence of family f in the **last pick's** cap × decay(seconds since) | new needs in the dense block, θ starting at 0 | **Second, if R6 shows lift over A** |
+
+**The deciding test** (R6): fit A, then A plus B, on the same launches; score
+both on held-out launches. Report key-pick hit@1 and log-likelihood, menu
+picks, and the picks whose item was not on the page at the previous pick. B
+goes into R8 only if it adds lift there. This is also the only test that can
+separate order from situation (section 1).
 | C. Item transition matrix | P(next item ∣ last item), fitted offline | a per-item-pair term | Rejected: sparse (185 of 227 pairs seen once), and it does not survive a new spell list |
 | D. "Just cast X" scorer bonus | hand rule | scorer term | Rejected: a hand-tuned shim, which the debt stance rules out |
 
@@ -272,7 +324,8 @@ The risk: Huginn shows B after A, the player presses B because it is there, and
    pick were not on the page at it), that pick teaches (`recent_A`, new
    family) at cost κ. This is how a new go-to replaces the old one.
 4. **Judge on the picks the page did not steer:** menu picks and the "B not
-   shown at A" subset (84 key picks and 36 menu picks so far), not the overall
+   shown at A" subset (104 key or wheel picks, 84 of them key, and 36 menu
+   picks so far), not the overall
    hit rate. This is doc 9's 23-point lesson.
 
 ## 5. Data
@@ -297,8 +350,8 @@ The risk: Huginn shows B after A, the player presses B because it is there, and
    the decision, so this is fine *(guess: casts would mostly add noise)*.
 
 **Volume.** R6 needs about 450–1,200 key or wheel picks to see a +2 to +4 hit@1
-gain (roadmap R5 notes). The log now holds 470 key or wheel picks (the user's
-~335 count is presumably the mage play alone). Sequence pairs come from the same
+gain (roadmap R5 notes). The log now holds 470 key or wheel picks, 143 of them
+from the last launch alone. Sequence pairs come from the same
 picks: about 50 within-20 s pairs an hour, 318 so far. The 10 commonest role
 pairs cover 91 of them. To estimate ~10–20 live family pairs at ~10–20
 observations each takes about 300–600 in-window pairs, so 6–12 hours of play.
@@ -312,10 +365,10 @@ per-pair count)*. An item-level matrix would need an order of magnitude more
 |---|---|---|---|
 | 1 | In the fit, test the pair term on presence plus a separate strength term (section 3). It fixes Feather and every under-graded spell | R6 | Agent; replay |
 | 2 | In the fit, add offline `recent_<family>` features from consecutive decisions; report the lift over the plain fit on held-out key picks, menu picks and the "not shown at A" subset | R6 | Agent; **you decide** whether B goes into R8 |
-| 3 | Sensors, logged only: the summon count and limit, `covered(i)` from the active-effect walk through the effect mapper, written as a v3 cross-feature | between R6 and R8 (an R3-style PR) | Agent, then a short session in game |
+| 3 | Sensors, logged only: the summon count and limit, `covered(i)` from the active-effect walk through the effect mapper, written as a v3 cross-feature, **including for the candidates the active-buff filters drop** (rows marked `filtered`) | between R6 and R8 (an R3-style PR) | Agent, then a short session in game |
 | 4 | The summon filter counts against the limit (the Twin Souls bug) | with step 3 | Agent |
 | 5 | θ_covered (negative start) and, if step 2 passes, the live `recent_*` needs in the scorer; the active-buff filters stay as a fallback | R8 | Agent, then **in game (you)** |
-| 6 | Retire the active-buff filters once θ_covered keeps covered items off the page in the R8 session | R11 (Phase 10 "filters from cap") | Agent |
+| 6 | Shadow evaluation: estimate θ_covered offline with the `filtered` rows from step 3 put back in the choice set; retire the active-buff filters once that estimate is confidently negative and a page replayed without them keeps covered items off | R11 (Phase 10 "filters from cap") | Agent; replay |
 
 Steps 1–2 need no game code and no new play. Steps 3–4 are the only work before
 R8.
@@ -326,14 +379,17 @@ R8.
    real want, say 90%? If so, fit the curve from your carry-weight picks
    (recommended), or does the shipped c 0.95 stand?
 2. **Summon upgrades:** with the wolf up and one summon allowed, should Huginn
-   ever offer the Skeletal Hero as a replacement? (Learnable if covered compares
-   strength; otherwise summons are simply covered.)
+   ever offer the Skeletal Hero as a replacement? A count against the limit
+   cannot express this: at the limit every summon reads covered. It would need
+   a separate replacement term (section 2.3).
 3. **Thralls:** does a reanimated corpse or a Dead Thrall use up the summon
    limit for your purposes? The old sensor counts it.
 4. **Refresh:** should a buff with a few seconds left read as uncovered (the
    remaining-duration factor), or is a refresh always a menu action for you?
 5. **Grading:** presence plus a strength term in R6 (no code), or grading
-   spells within spells in R2 (fixtures regenerate)?
+   spells within spells in R2 (fixtures regenerate)? Either way it changes every
+   pair on thin evidence (one Feather case), so R6 should compare it with the
+   current grading on held-out picks before switching.
 6. **Sequences into R8 only on R6 evidence**, or build `recent_*` regardless,
    at θ = 0 so it is harmless?
 7. **Window:** is 5–30 s the right horizon for "just cast", or do some of your
