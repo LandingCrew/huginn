@@ -102,6 +102,7 @@ the checked-in fixtures byte for byte.
 | `ResponseCurveTests.cpp` | each curve kind against hand-worked values; [0,1] for any input; parse/format round trip; bad INI values refused |
 | `NeedEvaluatorTests.cpp` | named cases for the `r3_input` formulas (gates, NEVER, families, ammo by launcher...), the 0.05 signature, `Advance`, `TimeDriven`, the text record |
 | `NeedSensorTests.cpp` | drop-ahead geometry (points, direction, the 20 units/s threshold, cliff, slope, no hit, bridge over water, wading; unknown probes: uphill, a wall, stairs, a crowd); water (0.23.19): deep water a safe landing and shallow water a drop to its surface, the deepest water ahead (`MeasureAhead`: a cliff into the sea, a stream, a lake shore, no hit over water, water only below the ray's bottom, unknown probes, the `kSafeLandingDepth` edge); the 16000-unit down ray (0.23.22) and the LoreRim sea cliff of 2026-10-10 it now reaches (the 4000 ray read a 3936 void there); the probe sequence (`ProbeAll`) over a scripted world: the picks it casts, a cliff, a parapet blocked at the knee, an invisible wall, walkable slopes of 5-30 degrees, a crest then a cliff, a step up, stairs, a crowd; the teleport test, the decaying sum, the time-to-kill estimate; the drop reading's unpaused age (0.23.16); the bench kind by workbench keyword (0.23.16) |
+| `WaterSelfCheckTests.cpp` | the drop-ahead probe's water self-check (0.23.23, `core/WaterSelfCheck.h`): a plane more than 150 units over the feet of a dry, grounded player contradicts the engine (the false water of 2026-10-10 11:23: 234 and 364), swimming / under water / airborne / mounted / no water never do; the 0.5 s hold (fires once; a break, another plane, a gap over 0.5 s restart it; a slow frame does not); the per-load blacklist (cell + height within 4 units, Known / Full, removal after a swim proves a plane real); the swim check against the engine's water (the 13:51 cave pool, -1040 both) |
 | `TargetFamiliesTests.cpp` | the multi-hot family reading on all 539 `race_map.csv` rows (family \| also) and named cases |
 | `NeedFixtureTests.cpp` | every snapshot in `tests/core/fixtures/needs/*.txt` gives the vector in its `.expected.csv` |
 | `ObviousPairsTests.cpp` | the obvious need x effect pairs (`effects.csv` `obvious_needs`, `needs.csv` `obvious_effects`): `cold` pairs with soups only (`survival_warmth`), never with Resist Frost, warm apparel or warming spells, and `warmth_deficit` answered by warm apparel, warming spells and warm food, never by Resist Frost (0.23.17); `diseased` never with Resist Disease (0.23.16); `deep_water_ahead` answered by Waterbreathing (0.23.19); every pair names a need; doc 9's count (264) |
@@ -117,9 +118,12 @@ or input columns: `python -I tools/needs/make_need_ids.py` (header),
 `--ini` (paste into `configs/Huginn.ini`; `--check` verifies both), then the
 oracle on every fixture. `drop_ahead`'s curve is fitted from a log, not set by
 hand: `python -I tools/needs/fit_drop_curve.py <_Huginn_Debug.log> [--exclude
-HH:MM:SS] [--bootstrap N]` pairs each fall with the damage after it and prints
-the table and the fit (0.23.22: centre 466, slope 0.029 from the LoreRim
-session of 2026-10-10 with `--exclude 12:08:36`).
+HH:MM:SS or "YYYY-MM-DD HH:MM:SS"] [--bootstrap N]` pairs each fall with the
+damage after it (the measured `[Falling] landed` hp loss when logged, 0.23.23,
+else the peak `health_falling`), leaves out falls near combat or healing, and
+prints the table and the fit, with a WARNING when the optimum is on the grid's
+edge (0.23.22: centre 466, slope 0.029 from the LoreRim session of 2026-10-10
+with `--exclude 12:08:36`; the 0.23.23 script gives 465 / 0.028 there).
 
 **The selection log v3 (R4, 0.23.15).** `core/DecisionLog.*` (the records and
 their text form), `core/NeedEpisodes.h` (when a need episode starts, ends and is

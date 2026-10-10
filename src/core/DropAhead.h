@@ -56,7 +56,9 @@ namespace Huginn::Core::Needs
         // stood 5474 over the sea (feet -8526, the sea at -14000): the
         // 4000-unit ray ended at -12462, above the water, and the landing
         // read as a void, a 3936 drop with no water; the player jumped and
-        // landed in the sea unhurt. From waist height a 16000 ray reaches
+        // landed in the sea unhurt at hp resolution (health_falling 0.13 and
+        // physical_damage_rate 0.04 appear 1.5 s after; hp read 100.0%).
+        // From waist height a 16000 ray reaches
         // 15936 under the feet, so water at least kSafeLandingDepth over the
         // ray's bottom is seen from any cliff up to 15808 over it (~225 m),
         // 2.9 times that cliff. A cliff higher still reads a void, a 15936
@@ -69,6 +71,12 @@ namespace Huginn::Core::Needs
         // with the 4000 ray. A ray that hits ground near its top is expected
         // to cost about the same at any length, one over a void or deep
         // water to cast farther; a new trace would tell.
+        // The length's other side: a collision void (a hole or seam in the
+        // ground mesh, no hit) over a cell that reports a water plane up to
+        // ~15800 under the feet (kSafeLandingDepth over the ray's bottom)
+        // reads as deep water, and so as no drop (drop 0). Rare: 1 of the
+        // 249 probe lines of 2026-10-10 had a void over a known water plane,
+        // and that one was the real sea.
         float rayLength = 16000.0f;
         float minMoveSpeed = 20.0f;  // units/s below which the facing is used
     };

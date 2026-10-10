@@ -14,6 +14,31 @@
 
 namespace Huginn::State
 {
+   namespace
+   {
+      // The [Falling] landed read: this long after the end line (0.23.23).
+      constexpr double kLandedReadDelaySec = 1.0;
+
+      // Health as a fraction of its effective max, as PollPlayerVitals
+      // computes it (current / (current - damage modifier)), so it reads the
+      // same as the [Context] lines' hp=. -1 when it cannot be read.
+      float HealthFraction(RE::PlayerCharacter* player)
+      {
+         auto* av = player->AsActorValueOwner();
+         if (!av) return -1.0f;
+         const float current = av->GetActorValue(RE::ActorValue::kHealth);
+         const float damage = player->GetActorValueModifier(RE::ACTOR_VALUE_MODIFIER::kDamage, RE::ActorValue::kHealth);
+         const float max = current - damage;
+         if (!std::isfinite(current) || !std::isfinite(max) || max <= 0.0f) return -1.0f;
+         return std::clamp(current / max, 0.0f, 1.0f);
+      }
+
+      std::string HpText(float fraction)
+      {
+         return fraction < 0.0f ? std::string("?") : fmt::format("{:.1f}%", fraction * 100.0f);
+      }
+   }
+
    bool StateManager::PollPlayerPosition()
    {
       Huginn_ZONE_NAMED("PollPlayerPosition");
@@ -105,22 +130,44 @@ namespace Huginn::State
       // there is no way to tell a fall that never reached the ramp's upper half
       // from one that did and failed to report — see the 0.18.17 session, where
       // a fall deep enough to deal damage produced no Falling reason at all.
+      //
+      // Health (0.23.23): the end line carries the health before the fall
+      // (the last grounded poll's) and at the landing poll; the damage may
+      // land a frame later than that poll (2026-10-10 13:51:16: the end line
+      // at .662, the first hp=64.9% at .664), so a `[Falling] landed` line
+      // reads it again kLandedReadDelaySec after the end (or at the next
+      // fall's start, if sooner). tools/needs/fit_drop_curve.py fits to that
+      // measured loss when the line is there.
+      const float hpNow = HealthFraction(player);
+      const double fallNowSec = NeedClock::Now();
+      if (m_pendingLanding.pending &&
+          (fallNowSec - m_pendingLanding.endAt >= kLandedReadDelaySec || (newIsFalling && !m_wasFalling))) {
+      logger::debug("[Falling] landed — peak depth {:.0f} | hp {} -> {} ({:.1f} s after the end)"sv,
+          m_pendingLanding.peakDepth, HpText(m_pendingLanding.hpBefore), HpText(hpNow),
+          fallNowSec - m_pendingLanding.endAt);
+      m_pendingLanding.pending = false;
+      }
       m_peakFallDepth = std::max(m_peakFallDepth, newFallDepth);
       if (newIsFalling != m_wasFalling) {
       if (newIsFalling) {
+        m_fallHpBefore = m_hpGrounded;
         logger::debug("[Falling] start at depth {:.0f} (gate {:.0f})"sv,
             newFallDepth, PhysicsConstants::FALL_DEPTH_MIN);
       } else {
-        logger::debug("[Falling] end — peak depth {:.0f} (reason needs {:.0f}, full at {:.0f})"sv,
+        logger::debug("[Falling] end — peak depth {:.0f} (reason needs {:.0f}, full at {:.0f}) | hp {} -> {}"sv,
             m_peakFallDepth,
             PhysicsConstants::FALL_DEPTH_MIN +
                 0.5f * (PhysicsConstants::FALL_DEPTH_HIGH - PhysicsConstants::FALL_DEPTH_MIN),
-            PhysicsConstants::FALL_DEPTH_HIGH);
+            PhysicsConstants::FALL_DEPTH_HIGH, HpText(m_fallHpBefore), HpText(hpNow));
+        m_pendingLanding = { true, fallNowSec, m_fallHpBefore, m_peakFallDepth };
       }
       m_wasFalling = newIsFalling;
       }
       if (newFallDepth == 0.0f) {
       m_peakFallDepth = 0.0f;
+      }
+      if (!airborne) {
+      m_hpGrounded = hpNow;
       }
 
       // Overencumbered check (pattern from EnvironmentSensor.cpp)

@@ -228,15 +228,18 @@ in. What was built: the [implementation map](architecture/9-implementation-map.m
         `[hit void water -14000 depth 0]` at feet -8526: no ground within the
         4000-unit ray, whose bottom (-12462) lay above the sea, so the depth
         read 0 and the void a drop. The player jumped (a 5471 fall), landed
-        swimming, no health deficit. The water read was right (-14000, the
+        swimming, unhurt at hp resolution (`health_falling` 0.13 and
+        `physical_damage_rate` 0.04 appear 1.5 s after; hp read 100.0%). The
+        water read was right (-14000, the
         player's own water while swimming). 0.23.22 lengthens the down ray to
         16000 (`DropProbeConfig::rayLength`: water is seen from cliffs up to
         15808 over it); a host test replays that cliff.
       - **Fall damage and the drop_ahead refit (data-derived).** 36 falls
         (`[Falling] end -- peak depth N` and the `[Needs]` lines in the 3 s
         after): none under 329 units hurt; 7 of 13 between 329 and 444 did a
-        little (peak `health_falling` 0.07-0.58); every one from 493 hurt
-        (493 0.82, 536 0.99, 613 and 686 1.00, taking 47% and 76% of health).
+        little (peak `health_falling` 0.07-0.58); every fitted one from 493
+        hurt (493 0.82, 536 0.99, 613 and 686 1.00, taking 47% and 76% of
+        health).
         The old curve (logistic c 600 slope 0.01) read 500 as 0.27.
         `tools/needs/fit_drop_curve.py` (least squares of the logistic to the
         peak `health_falling`, 32 falls; a slide at 12:08:36, the sea landing
@@ -246,14 +249,54 @@ in. What was built: the [implementation map](architecture/9-implementation-map.m
         fitted from logs, not a hand-tuned one; it holds for LoreRim at ~155
         health (fall damage scales with the modlist's settings and max
         health), so refit with the script from another setup's log.
+        0.23.23 hardens the script (PR #196's verifier: on the 2026-10-09 log
+        it had silently fitted centre 791 slope 0.005, the grid's edge,
+        crediting combat damage to a fall and reading falls during healing as
+        harmless): a fall with `in_combat=` or `restore_pending_health=` in a
+        `[Needs]` line within 3 s of its end, or the `[Context]` hp rising
+        across that window, is left out; the damage window stops at the next
+        `[Falling] start`; an optimum on the grid's edge prints a WARNING;
+        `--exclude` takes a full date-time. Refit: the 2026-10-09 log keeps 2
+        of its 12 falls, too few to fit (it now says so); the 2026-10-10 log
+        (`--exclude 12:08:36`) keeps 28 (four more out for combat, 686 among
+        them) and fits centre 465, slope 0.028 (bootstrap centre 440-490, 37
+        of 200 resamples on the slope's edge) -- within a unit of the
+        shipped 466 / 0.029, which stays. From 0.23.23 the `[Falling] end`
+        line carries the health before the take-off and at the landing poll,
+        and a `[Falling] landed` line ~1 s later the health after the
+        damage; the script fits to that measured loss when it is there.
       - **OPEN: false water by a pond.** At 11:23-11:24 six jumps from a bank
-        at feet -3005 read water at -3008 ahead (`deep water` up to 332), yet
-        the player landed at feet -3242 and -3372 -- 234 and 364 under that
-        "surface" -- without swimming or going under (no `Water:` transition
-        until 11:38), and 3 of the 6 landings did minor fall damage. That
-        water was likely not there; one hypothesis is a placed water plane's
-        height reported outside its extent. Not fixed; the user is asked
-        where it was.
+        at feet -3005 read water at -3008 ahead; from the bank the probe read
+        it shallow (`deep water` 28 and 91). The deep readings were taken
+        standing at the bottom: 194 at feet -3242 and 332 at feet -3372 --
+        234 and 364 under that "surface" -- yet the player was never swimming
+        or under (no `Water:` transition until 11:38), and 3 of the 6 landings
+        did minor fall damage. The false water also suppressed a drop: 3
+        instead of ~94 on one line from the bank (the -3099 bed ahead, read
+        to the water at -3008). That water was likely not there; one
+        hypothesis is a placed water plane's height reported outside its
+        extent. Not reproducible on demand, so 0.23.23 makes a recurrence
+        self-documenting and stops trusting the plane: each probe also reads
+        the water at the player's own XY, and a surface more than 150 units
+        over the feet (`core/WaterSelfCheck.h` `kFalseWaterDepth`: the logs
+        put swimming at feet 83-100 under) while the engine has the player on
+        the ground, not swimming and the head not under its water, held 0.5
+        s, logs one info line, `[DropAhead] false water: cell ... plane z ...
+        is N above the feet at (x, y, z) but the player is not in water`, and
+        the probe treats water from that cell at that height (+-4) as unknown
+        until the next load (`(false: ignored)` on the status line).
+        Swimming, the probe's water at the player is checked against the
+        engine's own water for the player (debug, once per load each: a
+        match, a MISMATCH). Stays open until a recurrence is logged.
+      - **The pond tour (13:14 launch, 0.23.22).** The Eastmarch Imperial
+        Camp pond read water -14000 (sea level) with 2-28 deep at the edge;
+        no jump. An exterior grotto at 13:51:05 read the bank at -2810, water
+        -3400 and the bed 29-64 under it (shallow), so drop 590; the player
+        fell 639 and lost 35% of health (100 -> 64.9%), as shallow water
+        should. Inside the cave (an interior) the probe's water, -1040,
+        matched the player's own swimming water, -1040, exactly. The 11:23
+        false-water spot was not revisited (a different exterior, water
+        -3008).
 - [x] Computed and logged on its own cadence (`needs/NeedMonitor`, every
       update tick, a `[Needs]` line per signature change, at most one a
       second). **Not** in the skip gate: moved to R8 (below).
@@ -510,6 +553,20 @@ changed in the same PR, and the shipped INI loses the dead keys.
   term, the scorer reproduces R6's replay numbers on the logged data.
   **In game (you):** a session on the R6 bootstrap; cures, potions and gear
   rechecked (the old "cures reach the page" checks move here).
+- [ ] **In game (you): a cure reaches the page while poisoned.** Accept when,
+      while `poisoned` is on and a cure-poison item is held, the new engine
+      shows it on the displayed page within one tick and keeps it for the
+      episode, alongside health items. The case (LoreRim, 2026-10-10, launch
+      13:14, 0.23.22): `poison=true` and `poisoned=1.00` from 14:03:48 to
+      14:06:44, 2 Potion of Cure Poison held, yet the old engine seated it on
+      no page while the CriticalHealth override (14:03:51-14:06:18.8) and
+      health and food items held the slots; it appeared at 14:06:18.8, as
+      CriticalHealth deactivated, and gave way at 14:06:29 to the Staff
+      swap-back while still poisoned (`[Hold] Page 0 slot 1: 'Potion of
+      Cure Poison' gives way to 'Staff of Wandering Stars'`). The old engine
+      is frozen; not fixed there. It also labelled Potato Soup `Poisoned`:
+      on LoreRim that soup carries Resist Poison (`[PopulateItemTags]`), no
+      cure, so the new effect data should rank it as prevention, not a cure.
 - [ ] The need signature joins the pipeline skip gate (moved from R3 by its
       verifier, round 1 on #188): a quantised (0.05) need signature, so
       continuous needs re-score; it then replaces `ambientSignature` and the

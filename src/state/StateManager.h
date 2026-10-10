@@ -441,6 +441,19 @@ namespace Huginn::State
       FallTracker m_fallTracker;
       bool m_wasFalling = false;      // Previous tick's gate state, for the transition log only
       float m_peakFallDepth = 0.0f;   // Deepest point of the current fall, for the same log
+      // Health around a fall, for the [Falling] end / landed lines (0.23.23):
+      // the fraction at the last grounded poll (-1 unknown), the fraction
+      // before the current fall (taken from it at the start crossing), and
+      // the landing read a second after the end. Same writer as above.
+      float m_hpGrounded = -1.0f;
+      float m_fallHpBefore = -1.0f;
+      struct PendingLanding
+      {
+         bool pending = false;
+         double endAt = 0.0;     // NeedClock seconds of the end line
+         float hpBefore = -1.0f;
+         float peakDepth = 0.0f;
+      } m_pendingLanding;
 
       // =============================================================================
       // TARGET CHANGE DETECTION (Lightweight digest for pipeline skip optimization)
