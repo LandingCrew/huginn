@@ -31,7 +31,7 @@ spells".
   active on the player**. Two cautions. The magicka deficit is produced by the
   casts before it, so pooled per-role medians cannot tell order from
   situation. And Circle of Strength does not fit the stated order (median
-  64 s into the fight, after the quarterstaff's 45 s). The test is a held-out
+  57 s into the fight over 8 picks, after the quarterstaff's 45 s). The test is a held-out
   comparison in R6: the fit's lift with and without recency features
   (section 4.1).
 - **Redundancy is the bigger gap, and it is already half built, as hard
@@ -101,8 +101,9 @@ a damage spell and 11 with the quarterstaff. `magicka_deficit` already lists
 **What this cannot show.** The deficit at a quarterstaff pick is produced by
 the casts before it. So "magicka spent → quarterstaff" and "after the spells →
 quarterstaff" predict the same medians. The absorb spells also break the
-stated order: Circle of Strength comes 64 s into a fight at the median, after
-the quarterstaff. Either it is used later in fights than the user remembers, or
+stated order: Circle of Strength alone comes 57 s into a fight at the median
+(8 picks in combat; the absorb group's 64 s includes Absorb Health), after the
+quarterstaff's 45 s. Either it is used later in fights than the user remembers, or
 the combo is one fight-opening pattern among several. Only a held-out
 comparison can separate order from situation: the R6 fit with and without the
 `recent_*` features (section 4.1), scored on held-out picks.
@@ -117,16 +118,19 @@ previous pick's context. That is the feedback loop to watch (section 4.4).
 
 | Case | Sensor | Filter | Problem |
 |---|---|---|---|
-| Summon | `hasActiveSummon`: any living actor whose commanding actor is the player (`StateManager_MagicEffects.cpp:537-560`; the archetype test is skipped on purpose, `:510-514`) | every `SpellType::Summon` dropped (`CandidateFilters.cpp:71`); context rule only in combat with none up (`ContextRuleEngine.cpp:365`) | A bool, not a count, and no limit: under Twin Souls (2) the second summon is hidden. Reanimated thralls count as summons. Of 90 summon picks (89 spells, 1 scroll), 5 were made while the filter hid every summon. |
+| Summon | `hasActiveSummon`: any living actor whose commanding actor is the player (`StateManager_MagicEffects.cpp:537-560`; the archetype test is skipped on purpose, `:510-514`) | every `SpellType::Summon` dropped (`CandidateFilters.cpp:71`); context rule only in combat with none up (`ContextRuleEngine.cpp:365`) | A bool, not a count, and no limit: under Twin Souls (2) the second summon is hidden. Reanimated thralls count as summons. Of 90 summon picks (89 spells, 1 scroll), 3 were made in a context where no summon spell row was `eligible`, i.e. the filter hid every summon. In 2 more, the chosen summon was not eligible while other summons were, so something other than this filter dropped it. |
 | Armour spell | `hasArmorBuff`: any ValueModifier on DamageResist (`StateManager_MagicEffects.cpp:397-404`) | `SpellTag::Armor` dropped (`CandidateFilters.cpp:69`) | Any armour-rating buff counts, a potion included. No strength comparison, so Oakflesh up still hides Stoneflesh. |
 | Cloak | `hasCloakActive` and `activeCloakType` (`StateManager_MagicEffects.cpp:495-507`) | **none**. Only the debug widget reads it (`StateManagerDebugWidget.cpp:416`) | Cloak spells are not redundant-filtered at all. |
 | Invisibility, Muffle, warming (spells); Waterbreathing, Invisibility (items) | flags in `ActorBuffs` (`PlayerActorState.h:197-208`) | spells `CandidateFilters.cpp:64-75`; items `:111-116` (Waterbreathing is item-only, `:112`) | Hand-listed per tag. |
 | Resists | player resistances | `IsResistSpellRedundant` / `IsResistPotionRedundant` (`CandidateFilters.cpp:79,109`) | Rule thresholds. |
 
-These filters run before the v3 log's `eligible` flag (`9-selection-log-v3.md`,
-flag `eligible`). So in the fit data a covered item is simply missing from the
-choice set. The fit cannot learn redundancy from that data, and it does not need
-to while the filters stand.
+These filters run before the v3 log's `eligible` flag is set
+(`9-selection-log-v3.md`, flag `eligible`). A covered item is still logged, as
+a `held` row with `eligible` = 0, but nothing says why. "Buff already active"
+looks the same as unaffordable, on cooldown or equipped. It is never on the
+page, so the fit sees it only as a menu alternative, with no reason attached.
+The fit cannot learn redundancy from that, and it does not need to while the
+filters stand.
 
 ### 2.2 What the rewrite has
 
@@ -162,8 +166,9 @@ land in the same column space. Then:
 - **Summons** use a count: `active_summon = living summons / limit`.
   - **The limit:** start at `float limit = 1.0f` and call
     `BGSEntryPoint::HandleEntryPoint(kModCommandedActorLimit, player, &limit)`
-    (`CommonLibSSE-NG include/RE/B/BGSEntryPoint.h:81` for the entry point,
-    `:112` for the call). The perks decide the arithmetic: an entry point can
+    (`CommonLibSSE-NG include/RE/B/BGSEntryPoint.h:81` for the entry point;
+    the `static void HandleEntryPoint(ENTRY_POINT, Actor*, Args...)`
+    declaration is `:112`, under its `template <class... Args>` on `:111`). The perks decide the arithmetic: an entry point can
     set or multiply the value as well as add to it, so do not assume 1 + n.
   - **The count:** walk the player's
     `MiddleHighProcessData::commandedActors`
@@ -186,13 +191,31 @@ land in the same column space. Then:
 - **The hard filters stay until θ_covered can be estimated without them.**
   Filtered items are never candidates, so while the filters stand the learner
   sees almost no summon or armour item in a covered state, and θ_covered gets
-  no evidence. A **shadow evaluation** breaks this. Log the filtered candidates
-  with their `covered(i)`, as rows marked `filtered` beside the `eligible`
-  ones, or rebuild them offline from the held rows. Then estimate θ_covered
-  with the filtered rows put back in the choice set: the player's picks show
-  whether covered items would have lost anyway. The filters go once that
-  estimate is confidently negative. One exception: fix the summon filter's
-  count and limit as soon as the sensor exists, because it is a bug today.
+  no evidence. A **shadow evaluation** gets around this, within limits:
+  - **Filtered rows enter menu choices only.** They were never on the page,
+    and in doc 9's model a key pick chooses only from the page. So a filtered
+    row joins only the menu alternatives (H \ A, at cost κ). If it were put
+    into key choices, θ_covered would absorb "never shown", turn negative by
+    construction, and the gate would pass automatically. The page is already
+    logged (`shown`, `slot`), so this needs no new field.
+  - **What it needs logged:** `covered(i)` for every held row (the step-3
+    cross-feature), and a reason on rows the filters drop, `filtered_by`
+    (`summon`, `armor`, `invisibility`, `resist`...). The reason keeps
+    "covered" apart from unaffordable, on cooldown and equipped, which also
+    leave `eligible` = 0.
+  - **Fit the replacement term jointly with θ_covered** (the summon grade
+    difference above). Otherwise summon picks made while every summon was
+    hidden (a replacement, or Twin Souls; 3 so far) pull θ_covered toward
+    zero, when what they show is an upgrade or a second slot.
+  - **The evidence is thin.** There are 94 menu picks in total, and only the
+    few made with something covered speak to θ_covered. If after R8's data
+    play the estimate's interval still includes zero, **keep the filters** as
+    they are, with the summon fix. The alternative, removing them on the
+    negative starting θ alone, rests on no evidence: your call (open
+    question 8).
+  - The filters go once the estimate is confidently negative.
+  - One exception: fix the summon filter's count and limit as soon as the
+    sensor exists, because it is a bug today.
 
 Same-effect buffs that do not stack (Oakflesh and Stoneflesh) fall out of the
 same column. Different columns that stack (armour plus a cloak) do not cover
@@ -250,14 +273,14 @@ each other.
 |---|---|---|---|
 | A. State only | needs (combat onset, magicka), `covered(i)` | what R6 fits, plus section 2.3 | **First.** Section 1 is consistent with it explaining much of the combo, and it adapts to new spells for free |
 | B. Recency need | `recent_<family>` = presence of family f in the **last pick's** cap × decay(seconds since) | new needs in the dense block, θ starting at 0 | **Second, if R6 shows lift over A** |
+| C. Item transition matrix | P(next item ∣ last item), fitted offline | a per-item-pair term | Rejected: sparse (185 of 227 pairs seen once), and it does not survive a new spell list |
+| D. "Just cast X" scorer bonus | hand rule | scorer term | Rejected: a hand-tuned shim, which the debt stance rules out |
 
-**The deciding test** (R6): fit A, then A plus B, on the same launches; score
-both on held-out launches. Report key-pick hit@1 and log-likelihood, menu
+**The deciding test** (R6): fit A, then A plus B, on the same launches, and
+score both on held-out launches. Report key-pick hit@1 and log-likelihood, menu
 picks, and the picks whose item was not on the page at the previous pick. B
 goes into R8 only if it adds lift there. This is also the only test that can
 separate order from situation (section 1).
-| C. Item transition matrix | P(next item ∣ last item), fitted offline | a per-item-pair term | Rejected: sparse (185 of 227 pairs seen once), and it does not survive a new spell list |
-| D. "Just cast X" scorer bonus | hand rule | scorer term | Rejected: a hand-tuned shim, which the debt stance rules out |
 
 ### 4.2 B in detail
 
@@ -340,9 +363,11 @@ The risk: Huginn shows B after A, the player presses B because it is there, and
 
 **Missing:**
 
-1. Active effects and summons: no need or cross-feature, and covered items are
-   absent rather than marked. Add `covered` as a cross-feature at the end of
-   `cross` (a v3-compatible addition), and a `summon_room` input.
+1. Active effects and summons: no need or cross-feature. Covered items are
+   logged as `held` rows with `eligible` = 0, but with no reason. Add `covered`
+   as a cross-feature at the end of `cross` (a v3-compatible addition), a
+   `summon_room` input, and a `filtered_by` reason on rows the active-buff
+   filters drop (section 2.3).
 2. The summon limit (the perk entry point) and the summon count.
 3. A recency need on the live tick. The fit can derive it offline; R8 needs it
    live.
@@ -365,10 +390,10 @@ per-pair count)*. An item-level matrix would need an order of magnitude more
 |---|---|---|---|
 | 1 | In the fit, test the pair term on presence plus a separate strength term (section 3). It fixes Feather and every under-graded spell | R6 | Agent; replay |
 | 2 | In the fit, add offline `recent_<family>` features from consecutive decisions; report the lift over the plain fit on held-out key picks, menu picks and the "not shown at A" subset | R6 | Agent; **you decide** whether B goes into R8 |
-| 3 | Sensors, logged only: the summon count and limit, `covered(i)` from the active-effect walk through the effect mapper, written as a v3 cross-feature, **including for the candidates the active-buff filters drop** (rows marked `filtered`) | between R6 and R8 (an R3-style PR) | Agent, then a short session in game |
+| 3 | Sensors, logged only: the summon count and limit, `covered(i)` from the active-effect walk through the effect mapper, written as a v3 cross-feature on every held row, and a `filtered_by` reason on the rows the active-buff filters drop | between R6 and R8 (an R3-style PR) | Agent, then a short session in game |
 | 4 | The summon filter counts against the limit (the Twin Souls bug) | with step 3 | Agent |
 | 5 | θ_covered (negative start) and, if step 2 passes, the live `recent_*` needs in the scorer; the active-buff filters stay as a fallback | R8 | Agent, then **in game (you)** |
-| 6 | Shadow evaluation: estimate θ_covered offline with the `filtered` rows from step 3 put back in the choice set; retire the active-buff filters once that estimate is confidently negative and a page replayed without them keeps covered items off | R11 (Phase 10 "filters from cap") | Agent; replay |
+| 6 | Shadow evaluation: estimate θ_covered offline, jointly with the summon replacement term, with the `filtered_by` rows from step 3 as **menu alternatives only** (never key choices: they were not on the page). Retire the active-buff filters once that estimate is confidently negative; if the evidence stays too thin, keep them (open question 8) | R11 (Phase 10 "filters from cap") | Agent; replay |
 
 Steps 1–2 need no game code and no new play. Steps 3–4 are the only work before
 R8.
@@ -395,3 +420,7 @@ R8.
 7. **Window:** is 5–30 s the right horizon for "just cast", or do some of your
    combos span a whole fight (buff at the start, finisher at the end)? A whole
    fight is `combat_onset`'s job, not this need's.
+8. **Too little evidence to retire the filters:** if the shadow estimate of
+   θ_covered stays inconclusive (94 menu picks so far, few of them with
+   something covered), keep the active-buff filters (recommended), or drop
+   them and rely on the negative starting θ alone?
