@@ -297,6 +297,16 @@ in. What was built: the [implementation map](architecture/9-implementation-map.m
         matched the player's own swimming water, -1040, exactly. The 11:23
         false-water spot was not revisited (a different exterior, water
         -3008).
+- [x] 0.23.24 cleanup (PR #197's verifier): the false-water check is blind to
+      an exterior cell's own plane (`GetWaterHeight` falls back to it, so a
+      player under it reads under), now said in `core/WaterSelfCheck.h` and
+      the map's Known limits with the swim/blacklist ping-pong and the fixed
+      head height, and its symptom gets a debug line once per load
+      (`[StateManager] water blind spot`); a full blacklist logs once per
+      load; `fit_drop_curve.py` warns near the grid's edge, at rms ~0 and
+      under 5 damaging falls (the 13:14 launch's 446 / 0.079 now warns) and
+      takes combat from the `[Pipeline]` transitions (the morning refit is
+      unchanged, 465 / 0.028 from the same 28 falls; 466 / 0.029 stays).
 - [x] Computed and logged on its own cadence (`needs/NeedMonitor`, every
       update tick, a `[Needs]` line per signature change, at most one a
       second). **Not** in the skip gate: moved to R8 (below).

@@ -11,6 +11,7 @@
 #include "StateConstants.h"
 #include "../Profiling.h"
 #include "DropAheadProbe.h"
+#include "Globals.h"  // g_loadGeneration: the blind-spot line's per-load flag
 
 namespace Huginn::State
 {
@@ -209,6 +210,45 @@ namespace Huginn::State
            // Dragons have the kFlies flag in their race data
            newIsMountedOnDragon = race->data.flags.all(RE::RACE_DATA::Flag::kFlies);
         }
+      }
+      }
+
+      // The false-water self-check's blind spot (0.23.24, core/WaterSelfCheck.h):
+      // GetWaterHeight above falls back to the exterior cell's own plane, so
+      // a dry player under a false plane of that kind reads `underwater` and
+      // the drop-ahead probe's check skips it. Its symptom is visible here:
+      // under, not swimming, on the ground, the water more than 150 over the
+      // head, held 0.5 s on one plane. One debug line per game load; this
+      // thread's own state, the load seen through the atomic generation.
+      if (const auto gen = g_loadGeneration.load(std::memory_order_relaxed); gen != m_blindSpotLoadGen) {
+      m_blindSpotLoadGen = gen;
+      m_blindSpotLogged = false;
+      m_blindSpotHold.Reset();
+      }
+      if (!m_blindSpotLogged) {
+      Core::Needs::EngineWaterSample blind;
+      blind.underwater = newIsUnderwater;
+      blind.swimming = newIsSwimming;
+      blind.airborne = airborne;
+      blind.mounted = newIsMounted;
+      blind.headZ = currentZ + PhysicsConstants::HEAD_HEIGHT;
+      blind.waterZ = waterHeight;
+      auto* cell = player->GetParentCell();
+      const std::uint32_t cellId = cell ? cell->GetFormID() : 0;
+      const double blindNow = NeedClock::Now();
+      if (m_blindSpotHold.Update(blindNow, Core::Needs::UnderwaterButDry(blind), { cellId, waterHeight })) {
+        m_blindSpotLogged = true;
+        // Which water GetWaterHeight returned: relevantWaterHeight, or the
+        // cell plane it falls back to when that is -infinity.
+        const float relevant = player->loadedData ? player->loadedData->relevantWaterHeight : -RE::NI_INFINITY;
+        logger::debug("[StateManager] water blind spot: underwater, not swimming, on the ground, the water {:.0f} "
+                      "above the head for {:.1f} s (head z {:.0f}, water {:.0f} from {}, cell {:08X} {}): likely a "
+                      "false plane the drop-ahead false-water check cannot catch, since it is the engine's own water "
+                      "for the player (once per load)"sv,
+            waterHeight - blind.headZ, m_blindSpotHold.HeldSec(blindNow), blind.headZ, waterHeight,
+            relevant != -RE::NI_INFINITY ? fmt::format("relevantWaterHeight {:.0f}", relevant)
+                                         : std::string("the cell's plane (relevantWaterHeight none)"),
+            cellId, !cell ? "?" : (cell->IsInteriorCell() ? "interior" : "exterior"));
       }
       }
 

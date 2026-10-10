@@ -32,12 +32,20 @@ A fall is EXCLUDED from the fit when
     [fall end - 0.5 s, fall end + WINDOW_SEC] (deep water is a safe landing,
     which the probe handles itself: core kSafeLandingDepth), or
   * other damage or healing may be mixed in, anywhere in [fall end -
-    GUARD_SEC, fall end + GUARD_SEC]: a `[Needs]` line with `in_combat=`
-    (combat damage credited to the fall: 2026-10-09 20:57:58) or
+    GUARD_SEC, fall end + GUARD_SEC]: the player in combat there (combat
+    damage credited to the fall: 2026-10-09 20:57:58), a `[Needs]` line with
     `restore_pending_health=` (healing that hides the fall's loss: 20:59:33,
     21:01:21), or the `[Context]` hp rising across the window
     (healing by any other means: the last hp line of that window at least
-    HP_RISE_MIN over its first), or
+    HP_RISE_MIN over its first). Combat comes from the `[Pipeline] State
+    transition (hash=N) -- scoring | ... Combat:OutOfCombat->InCombat ...`
+    lines (pipeline/PipelineCoordinator.cpp LogStateTransition, the arrow
+    U+2192; the published, debounced combat flag; one line on every change,
+    so the state is known at any moment after the log's first State
+    transition line, OutOfCombat before its first Combat change: the logged
+    state starts value-initialised). Before that first line it falls back to
+    `in_combat=` in a `[Needs]` line of the window, which is deadbanded and
+    can miss a short fight. Or
   * health was already falling: the last `[Needs]` line before the fall's
     end (inside LOOKBACK_SEC) carries health_falling > 0, or
   * it is listed with --exclude: HH:MM:SS, or a full date-time
@@ -57,9 +65,14 @@ Fits, by grid search (std-lib only; centre 250-800 units, slope
      (with replacement, fixed seed, a coarser grid: centre step 5, slope
      step 0.001), printing the 10th / 50th / 90th percentiles of centre and
      slope and how many resamples ended on the grid's edge.
-An optimum on the edge of the grid is no fit -- the data did not pin the
-curve down (too few damaging falls, or damage that is not the fall's) -- and
-is reported with a WARNING.
+A fit the data does not pin down is reported with a WARNING (do not ship
+it), for any of:
+  * an optimum on, or within EDGE_STEPS grid steps of, the grid's edge;
+  * least squares rms under RMS_PERFECT: the damaging and harmless falls
+    separate perfectly, so any step between them fits and the slope only
+    runs to the grid's limit (2026-10-10 13:14 launch: 446 / 0.079, rms
+    0.000, from 3 damaging falls of 8);
+  * fewer than MIN_DAMAGING fitted falls with severity >= DAMAGE_MIN.
 
 Usage:
   python -I tools/needs/fit_drop_curve.py <log> [--exclude WHEN ...]
@@ -86,6 +99,10 @@ LOSS_SLOPE = 74.0   # 11% -> 0.95
 
 C_LO, C_HI = 250.0, 800.0
 K_LO, K_HI = 0.002, 0.08
+C_STEP, K_STEP = 1.0, 0.0005  # the full fits' grid
+EDGE_STEPS = 2       # an optimum this many grid steps from an edge, or closer, is not pinned down
+RMS_PERFECT = 0.01   # least squares rms under this: perfect separation
+MIN_DAMAGING = 5     # fewer fitted falls with severity >= DAMAGE_MIN than this: too few
 
 LINE = re.compile(r"^\[(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d+)\]\[[^\]]*\]\[\w\]: (.*)$")
 FALL_END = re.compile(r"\[Falling\] end \S+ peak depth (\d+)")
@@ -93,6 +110,8 @@ FALL_START = re.compile(r"\[Falling\] start at depth (\d+)")
 FALL_LANDED = re.compile(r"\[Falling\] landed \S+ peak depth (\d+) \| hp ([0-9.]+)% -> ([0-9.]+)%")
 NEED = re.compile(r"\b(health_falling|health_deficit)=([0-9.]+)")
 MIXED = re.compile(r"\b(in_combat|restore_pending_health)=")
+STATE_LINE = re.compile(r"\[Pipeline\] State transition \(hash=\d+\)")
+COMBAT_CHANGE = re.compile(r"\bCombat:(\w+)→(\w+)")
 HP = re.compile(r"\[Context\] .*\| hp=([0-9.]+)%")
 SWIM = re.compile(r"\] Water: .*swimming=true")
 
@@ -114,9 +133,43 @@ def loss_severity(loss):
     return logistic(loss, LOSS_CENTRE, LOSS_SLOPE)
 
 
+def combat_timeline(events):
+    """(time of the first State transition line or None, [(t, in_combat after)])."""
+    first = None
+    changes = []
+    for t, _, _, text in events:
+        if not STATE_LINE.search(text):
+            continue
+        if first is None:
+            first = t
+        m = COMBAT_CHANGE.search(text)
+        if m:
+            changes.append((t, m.group(2) == "InCombat"))
+    return first, changes
+
+
+def combat_in_window(timeline, lo, hi):
+    """In combat at any moment of [lo, hi] per the State transition lines:
+    True / False, or None when the window starts before the log's first one."""
+    first, changes = timeline
+    if first is None or lo < first:
+        return None
+    state = False  # the logged state starts value-initialised: OutOfCombat
+    for t, in_combat in changes:
+        if t <= lo:
+            state = in_combat
+            continue
+        if t > hi:
+            break
+        if in_combat:
+            return True
+    return state
+
+
 def falls(events):
     out = []
     start_at = None
+    timeline = combat_timeline(events)
     for i, (t, clock, stamp, text) in enumerate(events):
         if FALL_START.search(text):
             start_at = t
@@ -172,6 +225,12 @@ def falls(events):
                 fall["loss"] = max(before - after, 0.0) / 100.0
                 break
         # Mixed in: combat or pending healing in the guard window, or the hp rising.
+        # Combat from the [Pipeline] transitions when they cover the window,
+        # else from the [Needs] in_combat= lines.
+        combat = combat_in_window(timeline, t - GUARD_SEC, t + GUARD_SEC)
+        fall["combat_source"] = "[Needs]" if combat is None else "[Pipeline]"
+        if combat:
+            fall["mixed"] = "combat ([Pipeline])"
         hps = []
         for tg, _, _, tx in events:
             if tg < t - GUARD_SEC:
@@ -179,9 +238,11 @@ def falls(events):
             if tg > t + GUARD_SEC:
                 break
             if fall["mixed"] is None and "[Needs]" in tx:
-                mm = MIXED.search(tx)
-                if mm:
-                    fall["mixed"] = mm.group(1)
+                for mm in MIXED.finditer(tx):
+                    if mm.group(1) == "in_combat" and combat is not None:
+                        continue  # the transitions know combat here
+                    fall["mixed"] = mm.group(1) + (" ([Needs])" if mm.group(1) == "in_combat" else "")
+                    break
             h = HP.search(tx)
             if h:
                 hps.append(float(h.group(1)))
@@ -215,7 +276,14 @@ def on_edge(c, k):
     return math.isclose(c, C_LO) or math.isclose(c, C_HI) or math.isclose(k, K_LO) or math.isclose(k, K_HI)
 
 
-def fit_least_squares(points, c_step=1.0, k_step=0.0005):
+def near_edge(c, k, c_step=C_STEP, k_step=K_STEP):
+    """On the grid's edge or within EDGE_STEPS of its steps (a small epsilon for float grids)."""
+    eps = 1e-9
+    return (c - C_LO <= EDGE_STEPS * c_step + eps or C_HI - c <= EDGE_STEPS * c_step + eps
+            or k - K_LO <= EDGE_STEPS * k_step + eps or K_HI - k <= EDGE_STEPS * k_step + eps)
+
+
+def fit_least_squares(points, c_step=C_STEP, k_step=K_STEP):
     best = None
     for c in frange(C_LO, C_HI, c_step):
         for k in frange(K_LO, K_HI, k_step):
@@ -228,8 +296,8 @@ def fit_least_squares(points, c_step=1.0, k_step=0.0005):
 def fit_likelihood(points):
     best = None
     eps = 1e-9
-    for c in frange(C_LO, C_HI, 1.0):
-        for k in frange(K_LO, K_HI, 0.0005):
+    for c in frange(C_LO, C_HI, C_STEP):
+        for k in frange(K_LO, K_HI, K_STEP):
             nll = 0.0
             for x, y in points:
                 p = min(max(logistic(x, c, k), eps), 1.0 - eps)
@@ -239,15 +307,33 @@ def fit_likelihood(points):
     return best
 
 
-def edge_warning(what, c, k):
-    if not on_edge(c, k):
+def fit_warnings(c, k, rms=None, damaging=None):
+    """Why a fit is not pinned down by the falls (empty: no reason found)."""
+    why = []
+    if near_edge(c, k):
+        where = "on" if on_edge(c, k) else f"within {EDGE_STEPS} grid steps of"
+        why.append(f"the optimum is {where} the EDGE of the search grid (centre {C_LO:.0f}-{C_HI:.0f}, "
+                   f"step {C_STEP:g}; slope {K_LO}-{K_HI}, step {K_STEP:g})")
+    if rms is not None and rms < RMS_PERFECT:
+        why.append(f"rms {rms:.3f} (< {RMS_PERFECT}): the damaging and harmless falls separate perfectly, "
+                   "so any step between them fits and the slope is not measured")
+    if damaging is not None and damaging < MIN_DAMAGING:
+        why.append(f"only {damaging} fitted fall(s) did damage (severity >= {DAMAGE_MIN}; "
+                   f"at least {MIN_DAMAGING} wanted)")
+    return why
+
+
+def print_warning(what, c, k, why):
+    if not why:
         return
     print()
     print("!" * 78)
-    print(f"WARNING: the {what} optimum (centre {c:.0f}, slope {k:.4f}) is on the EDGE of the")
-    print(f"search grid (centre {C_LO:.0f}-{C_HI:.0f}, slope {K_LO}-{K_HI}): the falls do not pin the")
-    print("curve down. Do not ship it. Check the table: too few damaging falls, or")
-    print("damage that is not the fall's (combat, healing) left in the fit.")
+    print(f"WARNING: the {what} fit (centre {c:.0f}, slope {k:.4f}) is not pinned down by the")
+    print("falls. Do not ship it.")
+    for w in why:
+        print(f"  * {w}")
+    print("Check the table: too few damaging falls, or damage that is not the fall's")
+    print("(combat, healing) left in the fit.")
     print("!" * 78)
 
 
@@ -291,7 +377,9 @@ def main(argv):
 
     matched = set()
     measured = sum(1 for f in found if f["loss"] is not None)
-    print(f"{len(found)} falls in {path} ({measured} with a measured hp loss)")
+    from_pipeline = sum(1 for f in found if f["combat_source"] == "[Pipeline]")
+    print(f"{len(found)} falls in {path} ({measured} with a measured hp loss; combat known from the "
+          f"[Pipeline] transitions for {from_pipeline}, from [Needs] in_combat= for {len(found) - from_pipeline})")
     print(f"{'time':>8} {'depth':>6} {'dur s':>6} {'peak hf':>7} {'h def':>6} {'hp drop':>8} {'loss':>6} "
           f"{'target':>6}  use")
     points = []
@@ -325,15 +413,17 @@ def main(argv):
         return 1
 
     sse, c, k = fit_least_squares(points)
+    rms = math.sqrt(sse / len(points))
+    damaging = sum(1 for _, y in points if y >= DAMAGE_MIN)
     print()
-    print(f"least squares, logistic to the severity ({len(points)} falls): "
-          f"centre {c:.0f}, slope {k:.4f} (rms {math.sqrt(sse / len(points)):.3f})")
+    print(f"least squares, logistic to the severity ({len(points)} falls, {damaging} damaging): "
+          f"centre {c:.0f}, slope {k:.4f} (rms {rms:.3f})")
     binary = [(x, y >= DAMAGE_MIN) for x, y in points]
     nll, cb, kb = fit_likelihood(binary)
     print(f"max likelihood, P(severity >= {DAMAGE_MIN}): centre {cb:.0f}, slope {kb:.4f} "
           f"(neg log-lik {nll:.2f})")
-    edge_warning("least-squares", c, k)
-    edge_warning("max-likelihood", cb, kb)
+    print_warning("least-squares", c, k, fit_warnings(c, k, rms, damaging))
+    print_warning("max-likelihood", cb, kb, fit_warnings(cb, kb, None, damaging))
     print()
     print(f"{'drop':>6} {'severity fit':>12} {'P(damage)':>9}")
     for x in (200, 250, 300, 330, 350, 400, 450, 490, 500, 550, 600, 700, 800):

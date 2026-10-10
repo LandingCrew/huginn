@@ -23,9 +23,31 @@
 // it once and, until the next game load, treats water from that cell at that
 // height (within kWaterPlaneTolerance) as unknown (WaterPlaneBlacklist).
 //
+// THE BLIND SPOT (0.23.24, PR #197's verifier). "Head not under the engine's
+// water" is TESObjectREFR::GetWaterHeight, and that is not only the water the
+// player is in: CommonLib v3.7.0 src/RE/T/TESObjectREFR.cpp:496-508 returns
+// loadedData->relevantWaterHeight when it is not -infinity, and otherwise
+// parentCell->GetExteriorWaterHeight() (src/RE/T/TESObjectCELL.cpp:88-100:
+// -infinity for an interior or a cell without kHasWater, else the cell's
+// XCLW, else the worldspace default water). So in an exterior cell with the
+// has-water flag, while relevantWaterHeight is -infinity, a dry player
+// standing under the cell's OWN plane (its XCLW or the resolved worldspace
+// default) reads "head under", and the check below cannot fire: it is blind
+// to a false plane that is the exterior cell's own plane. It can catch a
+// plane the engine does not hand back as the player's water: a placed water
+// object, a height in a cell whose kHasWater flag is off, an interior plane
+// (GetExteriorWaterHeight is -infinity indoors). (Whether relevantWaterHeight
+// is ever finite for a player out of the water is not known; when it is, the
+// engine hands back that water instead of the cell plane.) The false plane of
+// 2026-10-10 11:23 was not the one the engine handed back: the head stood
+// 114 and 244 under it and the engine never had the player under. The blind
+// spot's own symptom -- the StateManager's `underwater` true, swimming false,
+// the water far over the head -- gets a debug line of its own
+// (UnderwaterButDry below, state/StateManager_Position.cpp).
+//
 // The opposite check is the reading's confirmation: swimming, the probe's
 // water at the player should be the engine's own water for the player
-// (TESObjectREFR::GetWaterHeight, relevantWaterHeight) within
+// (TESObjectREFR::GetWaterHeight: relevantWaterHeight, else the cell plane) within
 // kWaterPlaneTolerance. A swim in a blacklisted plane that matches the
 // engine's water proves the blacklist wrong; the plane is taken off it.
 //
@@ -99,6 +121,31 @@ namespace Huginn::Core::Needs
         return s.waterZ - s.feetZ > kFalseWaterDepth;
     }
 
+    /// The blind spot's symptom, as the StateManager sees it (0.23.24): the
+    /// engine's water for the player (TESObjectREFR::GetWaterHeight) more
+    /// than kFalseWaterDepth over the HEAD while the engine has the player
+    /// on the ground and not swimming. A player in real water that deep
+    /// swims, so the plane is very likely false; and since `underwater` is
+    /// decided on that plane, WaterContradictsPlayer cannot see it (it skips
+    /// a player who is under). Held kFalseWaterHoldSec on one plane
+    /// (FalseWaterHold), it is logged, not acted on.
+    struct EngineWaterSample
+    {
+        bool underwater = false;  // head under the engine's water for the player
+        bool swimming = false;    // the engine's swim flag
+        bool airborne = false;
+        bool mounted = false;
+        float headZ = 0.0f;       // feet + HEAD_HEIGHT, as `underwater` is decided
+        float waterZ = 0.0f;      // GetWaterHeight
+    };
+
+    [[nodiscard]] inline bool UnderwaterButDry(const EngineWaterSample& s) noexcept
+    {
+        if (!s.underwater || s.swimming || s.airborne || s.mounted) return false;
+        if (!IsUsableWaterHeight(s.waterZ) || !std::isfinite(s.headZ)) return false;
+        return s.waterZ - s.headZ > kFalseWaterDepth;
+    }
+
     /// A water plane: the cell it was read from (its form ID) and its height.
     struct WaterPlane
     {
@@ -158,18 +205,24 @@ namespace Huginn::Core::Needs
 
     /// The planes proven false this game load. Small and fixed: a load that
     /// finds more than kCapacity false planes has a problem a list will not
-    /// fix, and the log says so (Add returns Full).
+    /// fix, and the log says so once: Add returns Full the first time a plane
+    /// does not fit and FullAgain after that, until Clear (one line per load,
+    /// not one per 0.5 s hold; 0.23.24).
     class WaterPlaneBlacklist
     {
     public:
         static constexpr std::size_t kCapacity = 16;
 
-        enum class AddResult { Added, Known, Full };
+        enum class AddResult { Added, Known, Full, FullAgain };
 
         AddResult Add(WaterPlane p) noexcept
         {
             if (Matches(p.cell, p.z)) return AddResult::Known;
-            if (size_ >= kCapacity) return AddResult::Full;
+            if (size_ >= kCapacity) {
+                if (fullReported_) return AddResult::FullAgain;
+                fullReported_ = true;
+                return AddResult::Full;
+            }
             planes_[size_++] = p;
             return AddResult::Added;
         }
@@ -195,12 +248,17 @@ namespace Huginn::Core::Needs
             return false;
         }
 
-        void Clear() noexcept { size_ = 0; }
+        void Clear() noexcept
+        {
+            size_ = 0;
+            fullReported_ = false;
+        }
         [[nodiscard]] std::size_t Size() const noexcept { return size_; }
 
     private:
         std::array<WaterPlane, kCapacity> planes_{};
         std::size_t size_ = 0;
+        bool fullReported_ = false;
     };
 
     /// The swim check: swimming, the probe's water at the player against the

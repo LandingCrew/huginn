@@ -11,6 +11,7 @@
 #include "DamageEventSink.h"         // For instant damage classification (v0.6.8)
 #include "NeedSensorState.h"         // R3: readings only the need vector uses
 #include "core/DropAhead.h"
+#include "core/WaterSelfCheck.h"
 #include "core/BenchKind.h"
 #include <array>
 #include <atomic>
@@ -454,6 +455,14 @@ namespace Huginn::State
          float hpBefore = -1.0f;
          float peakDepth = 0.0f;
       } m_pendingLanding;
+      // The false-water self-check's blind spot, its own symptom (0.23.24,
+      // core/WaterSelfCheck.h UnderwaterButDry): one debug line per game
+      // load. Same writer as above; the load is seen through
+      // g_loadGeneration (an atomic) on this thread, never reset from
+      // another one.
+      Core::Needs::FalseWaterHold m_blindSpotHold;
+      std::uint32_t m_blindSpotLoadGen = 0;
+      bool m_blindSpotLogged = false;
 
       // =============================================================================
       // TARGET CHANGE DETECTION (Lightweight digest for pipeline skip optimization)

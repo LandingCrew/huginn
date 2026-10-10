@@ -169,6 +169,76 @@ TEST_CASE("false water: the blacklist is small and says when it is full")
     CHECK(list.Add({ 999u, 100.0f }) == WaterPlaneBlacklist::AddResult::Added);
 }
 
+TEST_CASE("false water: a full blacklist says so once per load, not once per hold")
+{
+    WaterPlaneBlacklist list;
+    for (std::uint32_t i = 0; i < WaterPlaneBlacklist::kCapacity; ++i) list.Add({ i, 100.0f });
+    CHECK(list.Add({ 900u, 100.0f }) == WaterPlaneBlacklist::AddResult::Full);
+    // The next holds, on that plane or another: quiet.
+    CHECK(list.Add({ 900u, 100.0f }) == WaterPlaneBlacklist::AddResult::FullAgain);
+    CHECK(list.Add({ 901u, -50.0f }) == WaterPlaneBlacklist::AddResult::FullAgain);
+    // A plane already on it is still Known, full or not.
+    CHECK(list.Add({ 5u, 100.0f }) == WaterPlaneBlacklist::AddResult::Known);
+    // A swim frees a place: the next plane goes on; full again stays quiet
+    // (it was said this load).
+    CHECK(list.Remove(5u, 100.0f));
+    CHECK(list.Add({ 900u, 100.0f }) == WaterPlaneBlacklist::AddResult::Added);
+    CHECK(list.Add({ 902u, 100.0f }) == WaterPlaneBlacklist::AddResult::FullAgain);
+    // The next load says it again.
+    list.Clear();
+    CHECK(list.Size() == 0);
+    for (std::uint32_t i = 0; i < WaterPlaneBlacklist::kCapacity; ++i) {
+        CHECK(list.Add({ i, 100.0f }) == WaterPlaneBlacklist::AddResult::Added);
+    }
+    CHECK(list.Add({ 900u, 100.0f }) == WaterPlaneBlacklist::AddResult::Full);
+}
+
+TEST_CASE("blind spot: under the engine's water, far over the head, and not swimming")
+{
+    // A dry player under an exterior cell's own (false) plane: GetWaterHeight
+    // hands back that plane, so `underwater` is true and the false-water
+    // check above skips the player.
+    EngineWaterSample s;
+    s.underwater = true;
+    s.headZ = -3252.0f;  // feet -3372 + 120
+    s.waterZ = -3008.0f; // 244 over the head
+    CHECK(UnderwaterButDry(s));
+    s.waterZ = s.headZ + 150.0f;  // not MORE than 150
+    CHECK_FALSE(UnderwaterButDry(s));
+    s.waterZ = s.headZ + 151.0f;
+    CHECK(UnderwaterButDry(s));
+
+    // Swimming, airborne, mounted, or not under: never the symptom.
+    EngineWaterSample swim = s;
+    swim.swimming = true;
+    CHECK_FALSE(UnderwaterButDry(swim));
+    EngineWaterSample air = s;
+    air.airborne = true;
+    CHECK_FALSE(UnderwaterButDry(air));
+    EngineWaterSample horse = s;
+    horse.mounted = true;
+    CHECK_FALSE(UnderwaterButDry(horse));
+    EngineWaterSample dry = s;
+    dry.underwater = false;
+    CHECK_FALSE(UnderwaterButDry(dry));
+
+    // Not a height: never.
+    EngineWaterSample none = s;
+    none.waterZ = -std::numeric_limits<float>::max();
+    CHECK_FALSE(UnderwaterButDry(none));
+    none.waterZ = std::numeric_limits<float>::quiet_NaN();
+    CHECK_FALSE(UnderwaterButDry(none));
+    EngineWaterSample nanHead = s;
+    nanHead.headZ = std::numeric_limits<float>::quiet_NaN();
+    CHECK_FALSE(UnderwaterButDry(nanHead));
+
+    // Diving under real water just after a jump: within 150 of the head, so
+    // a moment before the swim flag sets is not the symptom.
+    EngineWaterSample dive = s;
+    dive.waterZ = dive.headZ + 40.0f;
+    CHECK_FALSE(UnderwaterButDry(dive));
+}
+
 TEST_CASE("swim check: swimming, the probe's water at the player is the engine's water")
 {
     // 2026-10-10 13:51 (a cave pool): both read -1040.

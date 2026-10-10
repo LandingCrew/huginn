@@ -51,6 +51,15 @@ Top hot zones + analysis + finding mapping.
 
 ---
 
+## 2026-10-10 (14:11, trace-02) — `d5a71fb` (v0.23.22) — LoreRim smoke test, Release Wheeler
+
+- **No Wheeler spikes** with the `build-tracy` Release `wheeler.dll` (0 of 975 pushes over 5 ms, max 2.02 ms incl;
+  DEBUG + TRACY Huginn), but that is not the same binary as the spiky 10-09 sessions (a Tracy-enabled build from
+  another build tree), so the spikes are not explained, only absent from this one short session (18.9 min unpaused).
+- **Stalls** at 14:02:27–14:03:48 and 14:09:01–14:10:16 were concurrent agent builds and tests on the same machine
+  (verified against the build directory's file timestamps); the game crashed in the NVIDIA driver (`nvwgf2umx.dll`)
+  ~5 s after the tests ended, with no Huginn frame on the crashing thread (causation not established).
+
 ## 2026-10-09 (16:38) — `fe570c1` (v0.23.18) — LoreRim, Wheeler push zones
 
 - Session: launch 16:38:15, save load 16:41:47 (A), capture end 17:42:12;
