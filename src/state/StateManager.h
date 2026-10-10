@@ -15,6 +15,7 @@
 #include "core/BenchKind.h"
 #include <array>
 #include <atomic>
+#include <mutex>
 #include <shared_mutex>
 
 namespace Huginn::State
@@ -84,6 +85,7 @@ namespace Huginn::State
       // Stage 3b: Poll all sensors and return true if ANY state changed
       // Ignores timers - meant to be called when timer-based poll is due
       // Returns: true if any sensor detected a change, false if all unchanged
+      // Takes m_pollMutex, like Update, ForceUpdate and ResetTrackingState.
       [[nodiscard]] bool PollAll();
 
       // Stage 3c: Check if last Update() detected any state changes
@@ -378,6 +380,16 @@ namespace Huginn::State
       mutable std::shared_mutex m_targetsMutex;    // Protects TargetCollection
       mutable std::shared_mutex m_trackingMutex;   // Protects Health/Stamina/MagickaTrackingState
       mutable std::shared_mutex m_needMutex;       // Protects NeedSensorState (R3)
+      // Serialises the polls and the reset (0.23.26). The poll methods' own
+      // state (m_fallTracker, m_pendingLanding, the trackers, the blind-spot
+      // flags ...) is "single-writer", but there were two writers: the
+      // update tick (Update, on a job or loading-screen thread) and, on the
+      // main thread, ForceUpdate (Debug at every load, Main.cpp step 10, and
+      // the debug test commands) and ResetTrackingState (every load, `hg
+      // reset all`). `hg refresh` / `hg recs` were never a second writer:
+      // UpdateHandler::ForceUpdate runs the tick under UpdateHandler's own
+      // mutex. Taken outermost: the state mutexes above nest inside it.
+      std::mutex m_pollMutex;
 
       // =============================================================================
       // POLL TIMERS (11 float accumulators, one per poll)
@@ -458,7 +470,8 @@ namespace Huginn::State
       // The false-water self-check's blind spot, its own symptom (0.23.24,
       // core/WaterSelfCheck.h UnderwaterButDry): one debug line per game
       // load. Same writer as above; the load is seen through
-      // g_loadGeneration (an atomic) on this thread, never reset from
+      // ::g_loadGeneration (an atomic, bumped once per load by
+      // InitializeGameSystems) on the polling thread, never reset from
       // another one.
       Core::Needs::FalseWaterHold m_blindSpotHold;
       std::uint32_t m_blindSpotLoadGen = 0;
