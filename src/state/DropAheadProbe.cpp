@@ -248,6 +248,31 @@ namespace Huginn::State::DropAheadProbe
          // the parent cell's plane) and the head test, exactly as
          // StateManager::PollPlayerPosition decides `underwater`; read here,
          // on the main thread, rather than copied from the StateManager.
+         //
+         // The blind spot (core/WaterSelfCheck.h): GetWaterHeight falls back
+         // to parentCell->GetExteriorWaterHeight() when relevantWaterHeight
+         // is -infinity (CommonLib v3.7.0 src/RE/T/TESObjectREFR.cpp:496-508),
+         // so a dry player under the exterior cell's OWN plane (its XCLW or
+         // the worldspace default) reads `underwater` here and the
+         // contradiction below never fires for that plane. It still catches
+         // a placed water object, a height in a cell without kHasWater and an
+         // interior plane (GetExteriorWaterHeight is -infinity indoors). The
+         // StateManager logs the blind spot's own symptom (underwater, not
+         // swimming, the water far over the head) once per load.
+         //
+         // HEAD_HEIGHT is a fixed 120 (StateConstants.h), not scaled by race
+         // or GetScale(), the same as the StateManager's test, which this one
+         // must match, so it is left unscaled here. It errs safe: the test
+         // reads "under" once the engine's water is 120 over the feet, and a
+         // player read as under is skipped, so wherever the probe's plane is
+         // the engine's water no scale can make the check fire (the 150 of
+         // kFalseWaterDepth counts from the feet and is over 120). Scale
+         // matters only where the two differ (a placed water object the
+         // engine does not hand back): a ~1.5x-scale player swims with the
+         // feet ~135 under the surface (the logged 83-100 times 1.5), close
+         // to 150. A swim is skipped by the engine's swim flag either way;
+         // only a dry moment that deep held 0.5 s (wading out) could fire.
+         // Not measured with a scaled player.
          const float engineWater = player->GetWaterHeight();
          const bool engineWaterUsable = engineWater > PhysicsConstants::INVALID_WATER_HEIGHT_VALUE;
          const bool underwater = engineWaterUsable && feet.z + PhysicsConstants::HEAD_HEIGHT < engineWater;
@@ -293,14 +318,20 @@ namespace Huginn::State::DropAheadProbe
          if (!g_falseWaterHold.Update(nowSec, contradicts, { own.CellId(), own.water.z })) return;
          const double held = g_falseWaterHold.HeldSec(nowSec);
          const auto added = g_falseWater.Add({ own.CellId(), own.water.z });
-         if (added == Core::Needs::WaterPlaneBlacklist::AddResult::Known) return;
+         // Known: on the list already. FullAgain: the list is full and this
+         // load's line saying so is written (once per load, not per hold).
+         if (added == Core::Needs::WaterPlaneBlacklist::AddResult::Known ||
+             added == Core::Needs::WaterPlaneBlacklist::AddResult::FullAgain) {
+            return;
+         }
          logger::info("[DropAhead] false water: {} plane z {:.0f} is {:.0f} above the feet at ({:.0f}, {:.0f}, {:.0f}) "
                       "but the player is not in water (on the ground, not swimming, head not under the engine's water "
                       "for the player: {}; held {:.1f} s){}"sv,
             DescribeCell(own.cell), own.water.z, own.water.z - feet.z, feet.x, feet.y, feet.z, engineText, held,
             added == Core::Needs::WaterPlaneBlacklist::AddResult::Added
                ? std::string("; water from that cell at that height is unknown until the next load")
-               : fmt::format("; the blacklist is full ({} planes), so it stays trusted",
+               : fmt::format("; the blacklist is full ({} planes), so it stays trusted (said once: a false "
+                             "plane that does not fit is not logged again until the next load)",
                              Core::Needs::WaterPlaneBlacklist::kCapacity));
       }
 
