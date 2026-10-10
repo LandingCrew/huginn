@@ -75,6 +75,7 @@ namespace Huginn::State
    void StateManager::Update(float deltaMs)
    {
       Huginn_ZONE_NAMED("StateManager::Update");
+      std::lock_guard pollLock(m_pollMutex);
       bool changed = false;
       for (auto [timer, interval, poll] : GetPollTable()) {
          *timer += deltaMs;
@@ -88,6 +89,7 @@ namespace Huginn::State
 
    bool StateManager::PollAll()
    {
+      std::lock_guard pollLock(m_pollMutex);
       bool changed = false;
       for (auto [timer, interval, poll] : GetPollTable()) {
          changed |= (this->*poll)();
@@ -98,6 +100,7 @@ namespace Huginn::State
    void StateManager::ResetTrackingState()
    {
       logger::info("[StateManager] ResetTrackingState() - clearing accumulated state for save load"sv);
+      std::lock_guard pollLock(m_pollMutex);  // not mid-poll on the tick's thread
 
       // --- Health/Stamina/Magicka tracking state ---
       {
@@ -180,9 +183,12 @@ namespace Huginn::State
    {
       logger::info("[StateManager] ForceUpdate() called - polling all sensors"sv);
 
-      PollAll();
-
+      // PollAll's loop, under the one lock with the timer reset (PollAll
+      // takes m_pollMutex itself). Each poll, then its timer: the polls do
+      // not read the timers.
+      std::lock_guard pollLock(m_pollMutex);
       for (auto [timer, interval, poll] : GetPollTable()) {
+         (void)(this->*poll)();
          *timer = 0.0f;
       }
    }

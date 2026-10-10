@@ -43,7 +43,10 @@ A fall is EXCLUDED from the fit when
     U+2192; the published, debounced combat flag; one line on every change,
     so the state is known at any moment after the log's first State
     transition line, OutOfCombat before its first Combat change: the logged
-    state starts value-initialised). Before that first line it falls back to
+    state starts value-initialised, and starts so again at every game load,
+    the `Game load timestamp recorded` line: ResetCrossSaveState clears the
+    last logged state, so a fight a reload ended logs no Combat change).
+    Before that first line it falls back to
     `in_combat=` in a `[Needs]` line of the window, which is deadbanded and
     can miss a short fight. Or
   * health was already falling: the last `[Needs]` line before the fall's
@@ -112,6 +115,9 @@ NEED = re.compile(r"\b(health_falling|health_deficit)=([0-9.]+)")
 MIXED = re.compile(r"\b(in_combat|restore_pending_health)=")
 STATE_LINE = re.compile(r"\[Pipeline\] State transition \(hash=\d+\)")
 COMBAT_CHANGE = re.compile(r"\bCombat:(\w+)→(\w+)")
+# Main.cpp InitializeGameSystems, at every kNewGame / kPostLoadGame: the
+# logged combat state starts over (PipelineCoordinator::ResetCrossSaveState).
+GAME_LOAD = re.compile(r"Game load timestamp recorded \(")
 HP = re.compile(r"\[Context\] .*\| hp=([0-9.]+)%")
 SWIM = re.compile(r"\] Water: .*swimming=true")
 
@@ -134,10 +140,14 @@ def loss_severity(loss):
 
 
 def combat_timeline(events):
-    """(time of the first State transition line or None, [(t, in_combat after)])."""
+    """(time of the first State transition line or None, [(t, in_combat after)]).
+    A game load is a change to OutOfCombat: the logged state starts over there."""
     first = None
     changes = []
     for t, _, _, text in events:
+        if GAME_LOAD.search(text):
+            changes.append((t, False))
+            continue
         if not STATE_LINE.search(text):
             continue
         if first is None:

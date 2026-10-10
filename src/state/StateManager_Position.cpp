@@ -218,8 +218,15 @@ namespace Huginn::State
       // a dry player under a false plane of that kind reads `underwater` and
       // the drop-ahead probe's check skips it. Its symptom is visible here:
       // under, not swimming, on the ground, the water more than 150 over the
-      // head, held 0.5 s on one plane. One debug line per game load; this
-      // thread's own state, the load seen through the atomic generation.
+      // head, held 0.5 s on one plane. One debug line per game load: per
+      // ::g_loadGeneration (Globals.h), which InitializeGameSystems bumps
+      // once at every kNewGame / kPostLoadGame, a failed load included. Not
+      // DropAheadProbe's file-local counter of the same name, which
+      // SetGameLoaded bumps twice a load (kPreLoadGame, then loaded). The
+      // flag and hold are the polls' state, under m_pollMutex since 0.23.26:
+      // before, the Debug ForceUpdate at load could poll here on the main
+      // thread beside a tick, and both could pass !m_blindSpotLogged and
+      // write the line twice.
       if (const auto gen = g_loadGeneration.load(std::memory_order_relaxed); gen != m_blindSpotLoadGen) {
       m_blindSpotLoadGen = gen;
       m_blindSpotLogged = false;

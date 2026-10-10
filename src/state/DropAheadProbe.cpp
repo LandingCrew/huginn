@@ -159,8 +159,10 @@ namespace Huginn::State::DropAheadProbe
          [[nodiscard]] std::uint32_t CellId() const noexcept { return cell ? cell->GetFormID() : 0; }
       };
 
-      // The water of the cell the point lies in (CellForWater), at that XY (a
-      // placed water object or the cell plane). The XCLW "use the worldspace
+      // The water of the cell the point lies in (CellForWater), at that XY: a
+      // placed water object or the cell's water. Not one height per cell: one
+      // interior cell of trace-03 (2026-10-10) answered -4080, -2944, -1690
+      // and no water at different points. The XCLW "use the worldspace
       // default" sentinel is resolved to that default (0.23.21: the sea and
       // many lakes rely on it); a height the game uses for "no water"
       // (-infinity, a sentinel with no usable default) is not water
@@ -225,13 +227,17 @@ namespace Huginn::State::DropAheadProbe
 
       // The water self-check (0.23.23, core/WaterSelfCheck.h): the probe's
       // water read at the player's own XY, against what the engine says of
-      // the player. Run every probe, before the airborne / swimming /
-      // mounted skips. Cost, reasoned, not measured: on the ground, one more
+      // the player. Only the player's own position: it says nothing of the
+      // water at the probe points ahead, which can be another water object
+      // (core/WaterSelfCheck.h). Run every probe, before the airborne /
+      // swimming / mounted skips. Cost: on the ground, one more
       // TES::GetCell and TESObjectCELL::GetWaterHeight -- the same pair the
-      // probe already makes for each of up to three points -- every 100 ms,
-      // outside the physics lock; swimming, the same until both swim lines
-      // of this load are written (and while a blacklisted plane exists);
-      // airborne or mounted, nothing. Its own Tracy zone tells a trace.
+      // probe already makes for each of up to three points (~2 us or less in
+      // Debug, trace-03) -- every 100 ms, outside the physics lock; swimming,
+      // the same until both swim lines of this load are written (and while a
+      // blacklisted plane exists); airborne or mounted, nothing. Its Tracy
+      // zone read p50 49.5 us in the Debug build of trace-03, with the
+      // engine-water text formatted every probe; see engineText below.
       void SelfCheckWater(RE::PlayerCharacter* player, RE::TESObjectCELL* parent, const Core::Needs::Vec3& feet,
                           bool airborne, bool swimming, bool mounted, double nowSec)
       {
@@ -245,26 +251,27 @@ namespace Huginn::State::DropAheadProbe
          const auto origin = Core::Needs::ProbeOrigin(feet, Core::Needs::DropProbeConfig{});
          const auto own = ReadWater(parent, RE::NiPoint3{ origin.x, origin.y, origin.z });
          // The engine's own water for the player (relevantWaterHeight, else
-         // the parent cell's plane) and the head test, exactly as
+         // the exterior parent cell's own water) and the head test, exactly as
          // StateManager::PollPlayerPosition decides `underwater`; read here,
          // on the main thread, rather than copied from the StateManager.
          //
          // The blind spot (core/WaterSelfCheck.h): GetWaterHeight falls back
          // to parentCell->GetExteriorWaterHeight() when relevantWaterHeight
          // is -infinity (CommonLib v3.7.0 src/RE/T/TESObjectREFR.cpp:496-508),
-         // so a dry player under the exterior cell's OWN plane (its XCLW or
+         // so a dry player under the exterior cell's OWN water (its XCLW or
          // the worldspace default) reads `underwater` here and the
-         // contradiction below never fires for that plane. It still catches
-         // a placed water object, a height in a cell without kHasWater and an
-         // interior plane (GetExteriorWaterHeight is -infinity indoors). The
-         // StateManager logs the blind spot's own symptom (underwater, not
-         // swimming, the water far over the head) once per load.
+         // contradiction below never fires for that water. It still catches
+         // a placed water object the engine does not hand back, a height in a
+         // cell without kHasWater and any water indoors
+         // (GetExteriorWaterHeight is -infinity there). The StateManager logs
+         // the blind spot's own symptom (underwater, not swimming, the water
+         // far over the head) once per game load.
          //
          // HEAD_HEIGHT is a fixed 120 (StateConstants.h), not scaled by race
          // or GetScale(), the same as the StateManager's test, which this one
          // must match, so it is left unscaled here. It errs safe: the test
          // reads "under" once the engine's water is 120 over the feet, and a
-         // player read as under is skipped, so wherever the probe's plane is
+         // player read as under is skipped, so wherever the probe's water is
          // the engine's water no scale can make the check fire (the 150 of
          // kFalseWaterDepth counts from the feet and is over 120). Scale
          // matters only where the two differ (a placed water object the
@@ -276,8 +283,14 @@ namespace Huginn::State::DropAheadProbe
          const float engineWater = player->GetWaterHeight();
          const bool engineWaterUsable = engineWater > PhysicsConstants::INVALID_WATER_HEIGHT_VALUE;
          const bool underwater = engineWaterUsable && feet.z + PhysicsConstants::HEAD_HEIGHT < engineWater;
-         const std::string engineText =
-            engineWaterUsable ? fmt::format("{:.0f}", engineWater) : fmt::format("none ({:g})", engineWater);
+         // Formatted only for a line that is written (0.23.26): built on
+         // every probe, the format was the likely cause of the zone's p50
+         // ~50 us in the Debug build (trace-03, 2026-10-10: the engine reads
+         // here were ruled out; the format was not measured on its own).
+         // Dry indoors it is "none ({:g})" of -FLT_MAX.
+         const auto engineText = [&] {
+            return engineWaterUsable ? fmt::format("{:.0f}", engineWater) : fmt::format("none ({:g})", engineWater);
+         };
 
          if (swimming) {
             using Core::Needs::SwimWaterCheck;
@@ -288,19 +301,19 @@ namespace Huginn::State::DropAheadProbe
                 g_falseWater.Remove(own.CellId(), own.water.z)) {
                logger::info("[DropAhead] false water withdrawn: {} plane z {:.0f} is the water the player swims in "
                             "(the engine's water for the player {}); trusted again"sv,
-                  DescribeCell(own.cell), own.water.z, engineText);
+                  DescribeCell(own.cell), own.water.z, engineText());
             }
             const auto check = Core::Needs::CheckSwimWater(true, own.water.known, own.water.z, engineWater);
             if (check == SwimWaterCheck::Match && !g_swimMatchLogged) {
                g_swimMatchLogged = true;
                logger::debug("[DropAhead] water check: swimming at ({:.0f}, {:.0f}, {:.0f}), the probe's water at the "
                              "player {:.0f} ({}) matches the engine's {} (once per load)"sv,
-                  feet.x, feet.y, feet.z, own.water.z, DescribeCell(own.cell), engineText);
+                  feet.x, feet.y, feet.z, own.water.z, DescribeCell(own.cell), engineText());
             } else if (check == SwimWaterCheck::Mismatch && !g_swimMismatchLogged) {
                g_swimMismatchLogged = true;
                logger::debug("[DropAhead] water check MISMATCH: swimming at ({:.0f}, {:.0f}, {:.0f}), the probe's water "
                              "at the player {:.0f} ({}) differs from the engine's {} by {:.0f} (once per load)"sv,
-                  feet.x, feet.y, feet.z, own.water.z, DescribeCell(own.cell), engineText,
+                  feet.x, feet.y, feet.z, own.water.z, DescribeCell(own.cell), engineText(),
                   std::fabs(own.water.z - engineWater));
             }
             return;
@@ -327,7 +340,7 @@ namespace Huginn::State::DropAheadProbe
          logger::info("[DropAhead] false water: {} plane z {:.0f} is {:.0f} above the feet at ({:.0f}, {:.0f}, {:.0f}) "
                       "but the player is not in water (on the ground, not swimming, head not under the engine's water "
                       "for the player: {}; held {:.1f} s){}"sv,
-            DescribeCell(own.cell), own.water.z, own.water.z - feet.z, feet.x, feet.y, feet.z, engineText, held,
+            DescribeCell(own.cell), own.water.z, own.water.z - feet.z, feet.x, feet.y, feet.z, engineText(), held,
             added == Core::Needs::WaterPlaneBlacklist::AddResult::Added
                ? std::string("; water from that cell at that height is unknown until the next load")
                : fmt::format("; the blacklist is full ({} planes), so it stays trusted (said once: a false "
@@ -466,8 +479,8 @@ namespace Huginn::State::DropAheadProbe
          // Water at each reached point: the water of the cell the point lies in
          // (ReadWater), at that XY. Sampled at the ray's real start -- the
          // point's XY, which ProbeAll shares with ProbeStarts, and the Z it
-         // recorded -- so the read and the ray agree; for a water plane the Z
-         // does not matter. Outside the lock: no physics read. The down ray
+         // recorded -- so the read and the ray agree; for a flat water
+         // surface the Z does not matter. Outside the lock: no physics read. The down ray
          // does not stop at water (IsGroundLayer), so its hit is the bed and
          // water above it gives the depth (core MeasureAhead). Water on a
          // plane the self-check proved false this load is unknown (0.23.23).

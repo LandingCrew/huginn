@@ -4,7 +4,13 @@
 // WATER SELF-CHECK -- the drop-ahead probe tests its own water reading (0.23.23)
 // =============================================================================
 // The probe (state/DropAheadProbe.cpp) reads each point's water with the
-// cell's TESObjectCELL::GetWaterHeight. On 2026-10-10 (LoreRim, 11:23-11:24)
+// cell's TESObjectCELL::GetWaterHeight(pos): the water at that point, a placed
+// water object or the cell's water, not one cell-wide surface. In one
+// interior cell of trace-03 (2026-10-10, SnowPointDungeon) it answered -4080,
+// -2944, -1690 and "no water" at different points: placed water objects of
+// limited extent. "Plane" below is a water height read in one cell, the
+// (cell, height) pair the blacklist keys on; a cell can hold several.
+// On 2026-10-10 (LoreRim, 11:23-11:24)
 // it read a surface at -3008 at points where the player then stood with the
 // feet at -3242 and -3372 -- 234 and 364 units under that surface -- while the
 // player's own water state never changed (no `[StateManager] Water:` line:
@@ -23,6 +29,12 @@
 // it once and, until the next game load, treats water from that cell at that
 // height (within kWaterPlaneTolerance) as unknown (WaterPlaneBlacklist).
 //
+// Only the water at the player's own position is checked. A false reading
+// at a probe point ahead is caught once the player stands where it reads
+// the same (cell, height) -- then it is unknown at every point -- and not
+// before: with water objects bounded in XY, a good reading at the player
+// says nothing about the water 100-280 units ahead.
+//
 // THE BLIND SPOT (0.23.24, PR #197's verifier). "Head not under the engine's
 // water" is TESObjectREFR::GetWaterHeight, and that is not only the water the
 // player is in: CommonLib v3.7.0 src/RE/T/TESObjectREFR.cpp:496-508 returns
@@ -31,14 +43,16 @@
 // -infinity for an interior or a cell without kHasWater, else the cell's
 // XCLW, else the worldspace default water). So in an exterior cell with the
 // has-water flag, while relevantWaterHeight is -infinity, a dry player
-// standing under the cell's OWN plane (its XCLW or the resolved worldspace
-// default) reads "head under", and the check below cannot fire: it is blind
-// to a false plane that is the exterior cell's own plane. It can catch a
-// plane the engine does not hand back as the player's water: a placed water
-// object, a height in a cell whose kHasWater flag is off, an interior plane
-// (GetExteriorWaterHeight is -infinity indoors). (Whether relevantWaterHeight
-// is ever finite for a player out of the water is not known; when it is, the
-// engine hands back that water instead of the cell plane.) The false plane of
+// standing under the cell's OWN water (its XCLW or the resolved worldspace
+// default, which is cell-wide) reads "head under", and the check below
+// cannot fire: it is blind to a false reading that is the exterior cell's
+// own water. It can catch water the engine does not hand back as the
+// player's: a placed water object, a height in a cell whose kHasWater flag
+// is off, any water indoors (GetExteriorWaterHeight is -infinity there, and
+// what an interior answers is its placed water objects). (Whether
+// relevantWaterHeight is ever finite for a player out of the water is not
+// known; when it is, the engine hands back that water instead of the cell's,
+// and the check is blind to it too.) The false plane of
 // 2026-10-10 11:23 was not the one the engine handed back: the head stood
 // 114 and 244 under it and the engine never had the player under. The blind
 // spot's own symptom -- the StateManager's `underwater` true, swimming false,
@@ -47,7 +61,8 @@
 //
 // The opposite check is the reading's confirmation: swimming, the probe's
 // water at the player should be the engine's own water for the player
-// (TESObjectREFR::GetWaterHeight: relevantWaterHeight, else the cell plane) within
+// (TESObjectREFR::GetWaterHeight: relevantWaterHeight, else the exterior
+// cell's own water) within
 // kWaterPlaneTolerance. A swim in a blacklisted plane that matches the
 // engine's water proves the blacklist wrong; the plane is taken off it.
 //

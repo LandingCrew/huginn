@@ -15,7 +15,9 @@
 // to its surface. The same pass gives deep_water_ahead: the deepest water over
 // the known points (MeasureAhead). The game side
 // (state/DropAheadProbe.cpp) only casts the rays (terrain and statics, not
-// actors) and reads the water height; the points, the direction and the drop
+// actors) and reads the water at each point (TESObjectCELL::GetWaterHeight:
+// a placed water object or the cell's water, which can differ point to point
+// within one cell); the points, the direction and the drop
 // are computed here, the probe sequence (ProbeAll) included, over an
 // injected ray cast. Each probe's start is first checked reachable by two
 // horizontal picks, at waist and at knee height, from the previous point (the
@@ -72,10 +74,10 @@ namespace Huginn::Core::Needs
         // to cost about the same at any length, one over a void or deep
         // water to cast farther; a new trace would tell.
         // The length's other side: a collision void (a hole or seam in the
-        // ground mesh, no hit) over a cell that reports a water plane up to
+        // ground mesh, no hit) at a point where the cell reports water up to
         // ~15800 under the feet (kSafeLandingDepth over the ray's bottom)
         // reads as deep water, and so as no drop (drop 0). Rare: 1 of the
-        // 249 probe lines of 2026-10-10 had a void over a known water plane,
+        // 249 probe lines of 2026-10-10 had a void over known water,
         // and that one was the real sea.
         float rayLength = 16000.0f;
         float minMoveSpeed = 20.0f;  // units/s below which the facing is used

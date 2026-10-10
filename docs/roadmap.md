@@ -298,8 +298,8 @@ in. What was built: the [implementation map](architecture/9-implementation-map.m
         false-water spot was not revisited (a different exterior, water
         -3008).
 - [x] 0.23.24 cleanup (PR #197's verifier): the false-water check is blind to
-      an exterior cell's own plane (`GetWaterHeight` falls back to it, so a
-      player under it reads under), now said in `core/WaterSelfCheck.h` and
+      an exterior cell's own water, its XCLW or the worldspace default
+      (`GetWaterHeight` falls back to it, so a player under it reads under), now said in `core/WaterSelfCheck.h` and
       the map's Known limits with the swim/blacklist ping-pong and the fixed
       head height, and its symptom gets a debug line once per load
       (`[StateManager] water blind spot`); a full blacklist logs once per
@@ -307,6 +307,18 @@ in. What was built: the [implementation map](architecture/9-implementation-map.m
       under 5 damaging falls (the 13:14 launch's 446 / 0.079 now warns) and
       takes combat from the `[Pipeline]` transitions (the morning refit is
       unchanged, 465 / 0.028 from the same 28 falls; 466 / 0.029 stays).
+- [x] 0.23.26 cleanup (trace-03, PR #198's verifier): a cell's
+      `GetWaterHeight(pos)` is the water at that point -- a placed water
+      object or the cell's water -- not one plane per cell (one interior
+      cell read -4080, -2944, -1690 and none at different points); the
+      comments say so, and that the self-check tests only the water at the
+      player's own position, not at the probes ahead. The
+      `DropAhead::OwnWater` zone (p50 49.5 us in Debug) formats the engine's
+      water only for a line it writes (the likely cost, not measured; the
+      next trace tells). StateManager polls take a poll mutex: the Debug
+      `ForceUpdate` at load and the debug test commands ran every poll on
+      the main thread beside a tick. `fit_drop_curve.py` resets combat at
+      each game load (trace-03: the same 16 falls, 4 fitted).
 - [x] Computed and logged on its own cadence (`needs/NeedMonitor`, every
       update tick, a `[Needs]` line per signature change, at most one a
       second). **Not** in the skip gate: moved to R8 (below).
