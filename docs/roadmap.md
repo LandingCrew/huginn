@@ -454,6 +454,7 @@ Map Phase 4, in `tools/replay`.
 - [ ] Report on held-out play: key hit rate against **76%** (arm A*, the plain
       ranking replay can reproduce; 81% was the live page with holds), and
       menu-pick hits against **7 of 83**.
+- [ ] Sequences and redundancy (proposal, [architecture/11-sequences-and-redundancy.md](architecture/11-sequences-and-redundancy.md)): fit pairs on presence plus a strength term (Feather's carry-weight grade is 0.0046), test `recent_<family>` features offline, then a `covered(i)` cross-feature and a summon limit before R8.
 - **You decide:** go to R8, or stop and rethink. θ from this fit is the
   bootstrap for R8.
 
