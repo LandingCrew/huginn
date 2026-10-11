@@ -10,6 +10,8 @@
 #include "override/OverrideManager.h"
 #include "override/OverrideConfig.h"
 #include "core/BucketHysteresis.h"
+#include "core/CombatLock.h"
+#include "util/InventoryUtil.h"
 #include "slot/SlotAllocator.h"
 #include "slot/SlotLocker.h"
 #include "slot/SlotSettings.h"   // bucket hysteresis bands
@@ -603,7 +605,21 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
     }
     // A combat-locked key's item, checked against the game every run: a spell
     // or shout the player no longer knows, or an item now equipped / worn.
-    lockRun.probeItem = [player = ctx.player](RE::FormID formID, uint16_t /*uniqueID*/) {
+    // The worn stack's uniqueID in one hand (the list carrying ExtraWorn, else
+    // the first, as WeaponRegistry::RefreshCharges reads it); -1 if none.
+    const auto wornUid = [](RE::PlayerCharacter* p, bool leftHand) -> int {
+        RE::InventoryEntryData* entry = p->GetEquippedEntryData(leftHand);
+        if (!entry || !entry->extraLists) return -1;
+        RE::ExtraDataList* worn = nullptr;
+        for (auto* xl : *entry->extraLists) {
+            if (!xl) continue;
+            if (!worn) worn = xl;
+            if (xl->HasType<RE::ExtraWorn>() || xl->HasType<RE::ExtraWornLeft>()) { worn = xl; break; }
+        }
+        const auto* xid = worn ? worn->GetByType<RE::ExtraUniqueID>() : nullptr;
+        return xid ? static_cast<int>(xid->uniqueID) : -1;
+    };
+    lockRun.probeItem = [player = ctx.player, wornUid](RE::FormID formID, uint16_t uniqueID) {
         Slot::SlotLocker::RunContext::ItemState st;
         auto* form = RE::TESForm::LookupByID(formID);
         if (!form || !player) {
@@ -622,11 +638,36 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
             const auto* ammo = player->GetCurrentAmmo();
             st.equipped = ammo && ammo->GetFormID() == formID;
         } else if (form->Is(RE::FormType::Armor)) {
-            st.equipped = player->GetWornArmor(formID) != nullptr;
+            // A named stack: worn only if THAT stack carries ExtraWorn (a walk
+            // of the one inventory entry; armour keys are rare in combat).
+            if (uniqueID == 0) {
+                st.equipped = player->GetWornArmor(formID) != nullptr;
+            } else {
+                auto* bound = form->As<RE::TESBoundObject>();
+                const auto inv = Util::GetInventorySafe(player,
+                    [bound](RE::TESBoundObject& obj) { return std::addressof(obj) == bound; });
+                for (const auto& [obj, data] : inv) {
+                    const auto& entry = data.second;
+                    if (!entry || !entry->extraLists) continue;
+                    for (auto* xl : *entry->extraLists) {
+                        if (!xl) continue;
+                        const auto* xid = xl->GetByType<RE::ExtraUniqueID>();
+                        if (xid && xid->uniqueID == uniqueID &&
+                            (xl->HasType<RE::ExtraWorn>() || xl->HasType<RE::ExtraWornLeft>())) {
+                            st.equipped = true;
+                        }
+                    }
+                }
+            }
         } else if (form->Is(RE::FormType::Weapon) || form->Is(RE::FormType::Light) || form->Is(RE::FormType::Scroll)) {
-            const auto* left = player->GetEquippedObject(true);
-            const auto* right = player->GetEquippedObject(false);
-            st.equipped = (left && left->GetFormID() == formID) || (right && right->GetFormID() == formID);
+            for (const bool leftHand : { true, false }) {
+                const auto* obj = player->GetEquippedObject(leftHand);
+                const bool formMatches = obj && obj->GetFormID() == formID;
+                if (Core::EquippedInstanceMatches(formMatches, uniqueID,
+                        formMatches && uniqueID != 0 ? wornUid(player, leftHand) : -1)) {
+                    st.equipped = true;
+                }
+            }
         }
         return st;
     };

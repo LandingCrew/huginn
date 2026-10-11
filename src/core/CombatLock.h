@@ -132,6 +132,18 @@ namespace Huginn::Core
         return CombatLockItemRelease::None;
     }
 
+    /// Is the key's item the one equipped? `formMatches`: the equipped object
+    /// is this form. A key naming a stack (storedUid != 0) matches only that
+    /// stack's worn uniqueID: two identical daggers, one in hand, must not
+    /// release the key showing the other. wornUid < 0 = the worn stack has no
+    /// uniqueID or could not be read.
+    [[nodiscard]] constexpr bool EquippedInstanceMatches(bool formMatches, uint16_t storedUid, int wornUid) noexcept
+    {
+        if (!formMatches) return false;
+        if (storedUid == 0) return true;
+        return wornUid >= 0 && static_cast<uint16_t>(wornUid) == storedUid;
+    }
+
     /// The Wheeler lock-timer subtext. A frozen key has no timer to show, so it
     /// gets the prefix alone (the "locked" marker) rather than a countdown that
     /// never moves.

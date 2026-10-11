@@ -69,3 +69,18 @@ TEST_CASE("dedup: two pinned copies keep the first; empty rows are ignored")
     CHECK(v[2] == DedupClear::PinnedDuplicate);
     CHECK(v[3] == DedupClear::Keep);
 }
+
+TEST_CASE("dedup: between two pinned copies the override wins wherever it sits")
+{
+    auto remembered = Row("Potion of Restore Health", true, true, true);
+    auto overrideRow = Row("Potion of Restore Health", true, true, false);
+    overrideRow.isOverride = true;
+    // Remembrance first, override second: the override still stays.
+    const auto v = DedupDecide({ remembered, overrideRow });
+    CHECK(v[0] == DedupClear::PinnedDuplicate);
+    CHECK(v[1] == DedupClear::Keep);
+    // And the other order.
+    const auto w = DedupDecide({ overrideRow, remembered });
+    CHECK(w[0] == DedupClear::Keep);
+    CHECK(w[1] == DedupClear::PinnedDuplicate);
+}

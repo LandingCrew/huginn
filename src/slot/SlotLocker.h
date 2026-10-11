@@ -67,6 +67,11 @@ namespace Huginn::Slot
         // When the lock was taken: a frozen lock's timer does not run, so its
         // age (for fMinLockDurationMs) comes from here.
         std::chrono::steady_clock::time_point lockedAt{};
+        // Under a combat lock, set once the lock is fMinLockDurationMs old: the
+        // tick that crosses it forces one pipeline run, so a non-urgent
+        // override waiting on that minimum is placed then (nothing else wakes
+        // the pipeline for it; a frozen lock never expires).
+        bool minAgeWakeDone = false;
 
         // Sticky post-activation lock (LockSlotForActivation): a deliberate 10s
         // hold that OnItemUsed must not break when asked to respect it, so a

@@ -42,7 +42,6 @@ namespace Huginn::Display
         // auto-focus threshold both pulls focus to the Huginn wheel and lets the
         // push through even while the wheel is open -- for the override's own
         // entry only (0.23.37); the rest of an open wheel stays as it opened.
-        const auto* topOverride = ctx.overrides.GetTopOverride();
         const int autoFocusThreshold =
             Wheeler::WheelerSettings::GetSingleton().GetAutoFocusMinPriority();
         // The candidate check is not belt-and-braces. An override activates on
@@ -53,12 +52,22 @@ namespace Huginn::Display
         // Focus-stealing the wheel to show the player an empty answer while they
         // drown is worse than staying out of the way. Latent until #61 made
         // isUnderwater fire at all.
-        const bool hasUrgentOverride =
-            topOverride && topOverride->candidate &&
-            topOverride->priority >= autoFocusThreshold;
+        //
+        // Every override is considered, not just the top one: critical health
+        // with no potion (100, no item) over critical magicka with one (70)
+        // must still let the magicka potion through and focus the wheel
+        // (core::TopUrgent). Overrides without an item are kept out of the list.
+        std::vector<Core::UrgentOverride> urgentOverrides;
+        for (const auto& o : ctx.overrides.activeOverrides) {
+            if (o.candidate) {
+                urgentOverrides.push_back({ Candidate::GetFormID(*o.candidate), o.priority });
+            }
+        }
+        const auto topUrgent = Core::TopUrgent(urgentOverrides, autoFocusThreshold);
+        const bool hasUrgentOverride = topUrgent.has_value();
 
         if (hasUrgentOverride && wheelerClient.IsWheelOpen()) {
-            wheelerClient.TryUrgentAutoFocus(topOverride->priority);
+            wheelerClient.TryUrgentAutoFocus(urgentOverrides[*topUrgent].priority);
         }
 
         // #76: every page invalidated is indistinguishable from "wheels were
@@ -89,13 +98,7 @@ namespace Huginn::Display
             return;
         }
         // Every urgent override's item may be written into an open wheel
-        // (core/OpenWheelWrites.h), not only the top one's.
-        std::vector<Core::UrgentOverride> urgentOverrides;
-        for (const auto& o : ctx.overrides.activeOverrides) {
-            if (o.candidate) {
-                urgentOverrides.push_back({ Candidate::GetFormID(*o.candidate), o.priority });
-            }
-        }
+        // (core/OpenWheelWrites.h, urgentOverrides above), not only the top one's.
 
         // Don't push while the player is rearranging wheels. Every move in the
         // editor shifts our indices, and nothing corrects them until edit-mode

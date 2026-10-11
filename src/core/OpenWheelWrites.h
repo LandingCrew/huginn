@@ -18,6 +18,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -38,6 +39,22 @@ namespace Huginn::Core
         uint32_t formID = 0;
         int priority = 0;
     };
+
+    /// The override that gates and focuses an open wheel: the highest-priority
+    /// one at or above `threshold` that carries an item (formID != 0), or
+    /// nullopt. Not simply the top override: critical health with no potion
+    /// (priority 100, no item) on top of critical magicka with one (70) used to
+    /// fail the gate, so nothing reached the open wheel and nothing focused it.
+    inline std::optional<std::size_t> TopUrgent(const std::vector<UrgentOverride>& overrides, int threshold)
+    {
+        std::optional<std::size_t> best;
+        for (std::size_t i = 0; i < overrides.size(); ++i) {
+            const auto& o = overrides[i];
+            if (o.formID == 0 || o.priority < threshold) continue;
+            if (!best || o.priority > overrides[*best].priority) best = i;
+        }
+        return best;
+    }
 
     /// Which entries may be written into an open wheel: every entry that is an
     /// override's item (`isOverride`) whose override is urgent -- priority at

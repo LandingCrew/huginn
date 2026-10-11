@@ -12,7 +12,8 @@
 //      non-pinned copy: a frozen key holding a different form that shares the
 //      override's name used to win the "first seen" rule and hide the urgent
 //      potion for the whole fight (verifier, PR #207). Between two pinned
-//      copies the first is kept.
+//      copies an override beats a Remembrance item wherever they sit; two of
+//      one kind keep the first.
 //   2. A non-pinned copy of a pinned item's name is cleared, locked or not.
 //   3. A locked key that already showed the item last run (the incumbent)
 //      beats any other non-pinned copy, locked or not: the other copy is the
@@ -35,6 +36,7 @@ namespace Huginn::Core
         std::string_view name;   ///< display name (the dedup key)
         bool empty = true;
         bool pinned = false;     ///< override or Remembrance item
+        bool isOverride = false; ///< pinned by an override (beats a Remembrance copy)
         bool locked = false;     ///< the key's lock holds this run
         bool incumbent = false;  ///< locked, and showed this same item last run
     };
@@ -51,10 +53,11 @@ namespace Huginn::Core
 
     [[nodiscard]] inline std::vector<DedupClear> DedupDecide(const std::vector<DedupRow>& rows)
     {
-        std::set<std::string_view> pinnedNames, incumbentNames, lockedNames;
+        std::set<std::string_view> pinnedNames, overrideNames, incumbentNames, lockedNames;
         for (const auto& r : rows) {
             if (r.empty) continue;
             if (r.pinned) pinnedNames.insert(r.name);
+            if (r.pinned && r.isOverride) overrideNames.insert(r.name);
             if (r.locked) lockedNames.insert(r.name);
             if (r.incumbent && !r.pinned) incumbentNames.insert(r.name);
         }
@@ -64,6 +67,11 @@ namespace Huginn::Core
             const auto& r = rows[i];
             if (r.empty) continue;
             if (r.pinned) {
+                // An override wins a pinned tie wherever it sits.
+                if (!r.isOverride && overrideNames.contains(r.name)) {
+                    out[i] = DedupClear::PinnedDuplicate;
+                    continue;
+                }
                 if (!pinnedSeen.insert(r.name).second) {
                     out[i] = DedupClear::PinnedDuplicate;
                     continue;

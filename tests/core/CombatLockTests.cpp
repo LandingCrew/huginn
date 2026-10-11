@@ -197,3 +197,12 @@ TEST_CASE("combat lock: a frozen key shows no countdown in the lock-timer label"
     CHECK(LockTimerLabel("Locked", true, 3000.0f, true) == "Locked");
     CHECK(LockTimerLabel("Locked", false, 2400.0f, false) == "Locked");
 }
+
+TEST_CASE("combat lock: the equipped check matches the stack when the key names one")
+{
+    CHECK(EquippedInstanceMatches(true, 0, -1));        // no stack named: the form is enough
+    CHECK(EquippedInstanceMatches(true, 22, 22));       // this very dagger is in hand
+    CHECK_FALSE(EquippedInstanceMatches(true, 22, 7));  // its twin is in hand, not this one
+    CHECK_FALSE(EquippedInstanceMatches(true, 22, -1)); // worn stack unknown: do not release
+    CHECK_FALSE(EquippedInstanceMatches(false, 0, -1));
+}

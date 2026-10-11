@@ -3,6 +3,7 @@
 #include "SlotClassifier.h"
 #include "core/CombatLock.h"
 #include "core/DedupRules.h"
+#include "core/HeldRefresh.h"
 #include <chrono>
 #include <cmath>
 #include <optional>
@@ -31,6 +32,34 @@ namespace Huginn::Slot
         {
             if (stored.candidate) {
                 Candidate::GetBase(stored.candidate->candidate).name = {};
+            }
+        }
+
+        // A held key's fresh numbers (core/HeldRefresh.h): this run's scored
+        // row for the same form and stack, else -- for an override key -- the
+        // override's own candidate. Keeps the key's type, name and seat.
+        void RefreshHeld(SlotAssignment& held, const std::vector<Core::ItemKey>& keys,
+            std::span<const Scoring::ScoredCandidate> scored, const Override::OverrideCollection& overrides)
+        {
+            if (held.IsEmpty() || !held.candidate) {
+                return;
+            }
+            if (const auto i = Core::FindHeldRefresh(held.formID, held.uniqueID, keys); i && *i < scored.size()) {
+                held.candidate = scored[*i];
+                held.utility = scored[*i].utility;
+                if (!held.IsPinned()) {
+                    held.score = scored[*i].SlotScore();
+                }
+                return;
+            }
+            if (held.IsOverride()) {
+                for (const auto& ovr : overrides.activeOverrides) {
+                    if (ovr.candidate && Candidate::GetFormID(*ovr.candidate) == held.formID &&
+                        Candidate::GetUniqueID(*ovr.candidate) == held.uniqueID) {
+                        held.candidate->candidate = *ovr.candidate;
+                        return;
+                    }
+                }
             }
         }
 
@@ -79,7 +108,13 @@ namespace Huginn::Slot
 
         // Decay lock timers for all slots
         bool anyExpired = false;
+        const auto now = std::chrono::steady_clock::now();
         for (auto& slot : m_lockedSlots) {
+            if (slot.isLocked && slot.combatLock && !slot.minAgeWakeDone &&
+                std::chrono::duration<float, std::milli>(now - slot.lockedAt).count() >= m_config.minLockDurationMs) {
+                slot.minAgeWakeDone = true;
+                anyExpired = true;   // one run: a waiting override may take the key now
+            }
             if (slot.isLocked && !slot.frozen && slot.remainingMs > 0.0f) {
                 slot.remainingMs -= deltaMs;
 
@@ -175,6 +210,7 @@ namespace Huginn::Slot
         slot.combatLock = d.combat;
         slot.frozen = d.frozen;
         slot.lockedAt = std::chrono::steady_clock::now();
+        slot.minAgeWakeDone = false;
     }
 
     SlotAssignments SlotLocker::ApplyLocks(
@@ -185,6 +221,11 @@ namespace Huginn::Slot
     {
         std::lock_guard<std::mutex> lock(m_mutex);
         const auto lockSpec = Core::EffectiveLockDuration(m_inCombat, m_config.lockDurationMs, m_config.combatLockDurationMs);
+        std::vector<Core::ItemKey> scoredKeys;
+        scoredKeys.reserve(scored.size());
+        for (const auto& sc : scored) {
+            scoredKeys.push_back({ sc.GetFormID(), sc.GetUniqueID() });
+        }
 
         SlotAssignments result;
         std::array<Telemetry::SlotChangeEvent, MAX_SLOTS> changes{};
@@ -271,6 +312,20 @@ namespace Huginn::Slot
                 }
             }
         }
+        // A pinned destination shows the item only if its own lock lets go for
+        // it this run (a combat-locked key refuses a Remembrance hold for
+        // another key, or a non-urgent override before fMinLockDurationMs).
+        // Releasing the source toward one that holds left the item shown on
+        // no key at all.
+        for (size_t j = 0; j < n; ++j) {
+            const size_t i = dest[j];
+            if (i == SIZE_MAX || !newAssignments[i].IsPinned() || !m_lockedSlots[i].isLocked) continue;
+            const bool pressed = i < run.remembranceOnPressedKey.size() && run.remembranceOnPressedKey[i];
+            if (ShouldBreakLock(m_lockedSlots[i], newAssignments[i], overrides, pressed) == BreakReason::None &&
+                !SameItem(m_lockedSlots[i].assignment, newAssignments[i])) {
+                dest[j] = SIZE_MAX;
+            }
+        }
         for (bool changed = true; changed;) {
             changed = false;
             for (size_t j = 0; j < n; ++j) {
@@ -344,12 +399,18 @@ namespace Huginn::Slot
                     lockedSlot.frozen = false;
                     // Fall through to consider new assignment
                 } else {
-                    // Keep the locked assignment
+                    // Keep the locked ITEM, with this run's numbers: the stored
+                    // candidate carries the stack count, charge and ammo count
+                    // the widget shows, frozen at lock time (core/HeldRefresh.h).
+                    SlotAssignment held = lockedSlot.assignment;
+                    RefreshHeld(held, scoredKeys, scored, overrides);
+                    lockedSlot.assignment = held;
+                    TruncateCandidateViews(lockedSlot.assignment);
                     // Update FormID history for confirmed detection (locked path)
-                    lockedSlot.previousFormID = lockedSlot.assignment.formID;
-                    lockedSlot.hadContent = !lockedSlot.assignment.IsEmpty();
+                    lockedSlot.previousFormID = held.formID;
+                    lockedSlot.hadContent = !held.IsEmpty();
 
-                    result.push_back(lockedSlot.assignment);
+                    result.push_back(std::move(held));
                     continue;
                 }
             }
@@ -537,6 +598,7 @@ namespace Huginn::Slot
         slot.combatLock = false;
         slot.frozen = false;
         slot.lockedAt = std::chrono::steady_clock::now();
+        slot.minAgeWakeDone = false;
 
         spdlog::debug("[SlotLocker] Slot {} manually locked for {:.0f}ms", slotIndex, durationMs);
     }
@@ -557,6 +619,7 @@ namespace Huginn::Slot
         slot.combatLock = false;
         slot.frozen = false;
         slot.lockedAt = std::chrono::steady_clock::now();
+        slot.minAgeWakeDone = false;
 
         spdlog::info("[SlotLocker] Slot {} activation-locked for {:.0f}ms (Sticky policy)",
             slotIndex, ACTIVATION_LOCK_MS);
@@ -846,8 +909,6 @@ namespace Huginn::Slot
         // Safety overrides (health potions, drowning) should never be delayed
         // by anti-flicker timers — the player needs them immediately.
         if (m_config.overridesBreakLock && overridePriority >= m_config.immediateBreakPriority) {
-            spdlog::debug("[SlotLocker] Immediate lock break for override on this key (priority={})",
-                overridePriority);
             return BreakReason::Override;
         }
 
@@ -886,6 +947,7 @@ namespace Huginn::Slot
             if (rows[i].empty) continue;
             rows[i].name = a.name;
             rows[i].pinned = a.IsPinned();
+            rows[i].isOverride = a.IsOverride();
             rows[i].locked = slot.isLocked;
             rows[i].incumbent = slot.isLocked && !slot.shownEmpty &&
                 slot.shownFormID == a.formID && slot.shownUniqueID == a.uniqueID;

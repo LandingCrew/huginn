@@ -88,3 +88,17 @@ TEST_CASE("open wheel: every urgent override's entry is writable, not only the t
     const auto w2 = UrgentEntries({ 0x100 }, { false }, ovr, 50);
     CHECK(w2 == std::vector<bool>{ false });
 }
+
+TEST_CASE("open wheel: the gate is the best urgent override WITH an item, not the top one")
+{
+    // Critical health with no potion (no item) on top, critical magicka with one.
+    const std::vector<UrgentOverride> ovr{ { 0, 100 }, { 0x200, 70 }, { 0x300, 30 } };
+    const auto top = TopUrgent(ovr, 50);
+    REQUIRE(top.has_value());
+    CHECK(*top == 1);
+    CHECK_FALSE(TopUrgent({ { 0, 100 }, { 0x300, 30 } }, 50).has_value());
+    CHECK_FALSE(TopUrgent({}, 50).has_value());
+    const auto both = TopUrgent({ { 0x200, 70 }, { 0x100, 100 } }, 50);
+    REQUIRE(both.has_value());
+    CHECK(*both == 1);
+}

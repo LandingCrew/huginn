@@ -840,6 +840,21 @@ combat, every key showing an item that is not locked is locked; empty keys
 still fill. When combat ends, combat locks become normal locks with
 `fLockDurationMs` counted from then (`RemainingAfterCombat`). A frozen key
 shows the Wheeler lock-timer prefix without a countdown (`LockTimerLabel`).
+A held key -- combat or normal lock -- keeps its ITEM but takes this run's
+numbers: the stored candidate is refreshed from this run's scored row for the
+same form and stack (`core/HeldRefresh.h`; an override key falls back to the
+override's own candidate), so the stack count, staff charge and ammo count on
+the widget move as the player uses them. An item not scored this run (an
+unaffordable spell the freeze holds) keeps its stored data. The equipped check
+matches the stack when the key names one (`EquippedInstanceMatches`): the twin
+of an equipped dagger keeps its key. A combat lock forces one pipeline run when
+it turns `fMinLockDurationMs` old, so a non-urgent override waiting on that
+minimum is placed then. A seating or override move does not release the source
+key toward a pinned destination whose own lock will not let go this run (the
+item would be shown on no key). `fCombatNoEnemyReleaseSec` counts enemies within
+detection range (about 2048 units): a distant archer or a circling dragon thaws
+the keys, and they lock again when it returns. Changing
+`fCombatLockDurationMs` mid-fight affects locks taken after the change.
 
 Override evaluation no longer depends on lock expiries: the pipeline also wakes
 whenever a raw vital crosses an override's own activation or release threshold
@@ -850,7 +865,8 @@ pipeline only because something else (in combat, mostly a lock expiry) did.
 **Post-lock dedup** (`src/core/DedupRules.h`). An override or Remembrance item
 is never cleared for a non-pinned copy of its name (a frozen key on another
 form with the same display name used to win "first seen" and hide the potion
-all fight); a non-pinned copy of a pinned item's name goes; a locked key that
+all fight), and between two pinned copies an override beats a Remembrance item
+wherever it sits; a non-pinned copy of a pinned item's name goes; a locked key that
 already showed the item (the incumbent) beats a newcomer; an unlocked copy of a
 locked key's name goes; otherwise the first stays. The refilled slot is locked.
 
@@ -913,9 +929,11 @@ skip gate). The context weights and the learner's features read raw values.
 an urgent override is up (priority >= `iAutoFocusMinPriority`, 50: critical
 health 100, magicka 70, stamina 60). That bypass used to write every entry of
 every page into the open wheel; 15 of 45 wheel opens in the 2026-10-11 session
-had such an override. Now, while the wheel is open, only the entries of urgent
-overrides (`UrgentEntries`: every override at or above the threshold, not only
-the top one) are written, on every page; every other entry gets what the wheel
+had such an override. The gate and the auto-focus use the highest urgent
+override that carries an item (`TopUrgent`), so critical health with no potion
+over critical magicka with one still reaches the open wheel. While the wheel is
+open, only the entries of urgent overrides (`UrgentEntries`: every override at
+or above the threshold, not only the top one) are written, on every page; every other entry gets what the wheel
 already holds (`WheelSync::GetCachedPage`), so its diff writes nothing. The
 auto-focus is unchanged, and the close re-runs the pipeline, which writes the
 full page. One debug line per entry written while open:
