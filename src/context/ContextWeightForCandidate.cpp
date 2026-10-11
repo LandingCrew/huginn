@@ -221,9 +221,20 @@ namespace Huginn::Context
                 // pinned at baseRelevance (0.05) and can never clear
                 // fMinimumUtility (0.1), so they never surface and never learn.
                 // Type-based so untagged buffs (e.g. Fortify Jump) are covered.
+                //
+                // The combat boost is for BUFFS only. A resist potion's combat
+                // relevance comes from its element, through the resist arms
+                // above (0.8 while the player takes that damage); "in combat"
+                // alone said nothing about which element, and lifted every
+                // resist potion to 0.35 in every fight -- Resist Fire against
+                // archers and undead, 2026-10-10 20:54-21:00. Resist potions
+                // keep the always-on baseline, so they can still surface and
+                // learn.
                 if (c.type == Item::ItemType::BuffPotion ||
                     c.type == Item::ItemType::ResistPotion) {
                     maxWeight = std::max(maxWeight, weights.buffPotionWeight);
+                }
+                if (c.type == Item::ItemType::BuffPotion) {
                     maxWeight = std::max(maxWeight, weights.buffCombatWeight);
                 }
 

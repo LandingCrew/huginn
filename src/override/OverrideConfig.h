@@ -46,6 +46,7 @@ namespace Huginn::Override
         inline constexpr bool ENABLE_LOW_AMMO = true;
         inline constexpr bool ENABLE_CRITICAL_MAGICKA = true;
         inline constexpr bool ENABLE_CRITICAL_STAMINA = true;
+        inline constexpr bool ENABLE_POISONED = true;
 
         // Potion selection
         inline constexpr bool ALLOW_IMPURE_POTIONS = true;       // Fall back to potions with side effects (Skooma etc.)
@@ -137,6 +138,7 @@ namespace Huginn::Override
         bool enableLowAmmo = Defaults::ENABLE_LOW_AMMO;
         bool enableCriticalMagicka = Defaults::ENABLE_CRITICAL_MAGICKA;
         bool enableCriticalStamina = Defaults::ENABLE_CRITICAL_STAMINA;
+        bool enablePoisoned = Defaults::ENABLE_POISONED;
 
         // =========================================================================
         // POTION SELECTION
@@ -187,6 +189,7 @@ namespace Huginn::Override
         inline float CRITICAL_STAMINA_THRESHOLD() { return Settings::GetSingleton().criticalStaminaThreshold; }
         inline float CRITICAL_STAMINA_HYSTERESIS() { return Settings::GetSingleton().criticalStaminaHysteresis; }
         inline bool ENABLE_CRITICAL_STAMINA() { return Settings::GetSingleton().enableCriticalStamina; }
+        inline bool ENABLE_POISONED() { return Settings::GetSingleton().enablePoisoned; }
         inline bool ALLOW_IMPURE_POTIONS() { return Settings::GetSingleton().allowImpurePotions; }
         inline bool HEALTH_SPELL_FALLBACK() { return Settings::GetSingleton().healthSpellFallback; }
         inline bool MAGICKA_SPELL_FALLBACK() { return Settings::GetSingleton().magickaSpellFallback; }

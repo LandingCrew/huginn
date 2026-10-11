@@ -144,18 +144,28 @@ namespace Huginn::Scoring
 
     float CorrelationBooster::CalculateItemCorrelation(
         const State::PlayerActorState& player,
-        [[maybe_unused]] const State::TargetCollection& targets,
+        const State::TargetCollection& targets,
         const Candidate::ItemCandidate& item) const
     {
         float multiplier = 1.0f;  // Start at neutral
 
-        // Melee + no shield → Defensive potions get multiplier
+        // Melee + no shield → a resist potion for a threat the player can
+        // SEE gets a multiplier: the element they are taking damage from right
+        // now (effects.isOnFire/isFrozen/isShocked -- an active effect, or a hit
+        // inside the enrichment window, PipelineCoordinator::
+        // EnrichElementalDamage), or Resist Magic while a hostile is casting
+        // (the ward trigger). It used to boost EVERY resist potion whatever its
+        // element: Resist Fire sat on page 0 for six minutes against archers
+        // and undead, corr=1.75x on melee-without-shield alone (2026-10-10
+        // 20:54-21:00). Nothing in the old engine knows an enemy's element
+        // before it lands, so before the first hit there is no boost.
         if (player.hasMeleeEquipped && !player.hasShieldEquipped) {
-            // Resist potions become more valuable
-            if (Item::HasTag(item.tags, Item::ItemTag::ResistFire) ||
-                Item::HasTag(item.tags, Item::ItemTag::ResistFrost) ||
-                Item::HasTag(item.tags, Item::ItemTag::ResistShock) ||
-                Item::HasTag(item.tags, Item::ItemTag::ResistMagic)) {
+            const bool threatened =
+                (player.effects.isOnFire && Item::HasTag(item.tags, Item::ItemTag::ResistFire)) ||
+                (player.effects.isFrozen && Item::HasTag(item.tags, Item::ItemTag::ResistFrost)) ||
+                (player.effects.isShocked && Item::HasTag(item.tags, Item::ItemTag::ResistShock)) ||
+                (targets.cachedAnyCasting && Item::HasTag(item.tags, Item::ItemTag::ResistMagic));
+            if (threatened) {
                 multiplier *= (1.0f + m_config.meleeDefensiveBonus * 0.5f);  // ×1.75 with default 1.5
             }
         }

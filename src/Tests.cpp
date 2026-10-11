@@ -4444,7 +4444,49 @@ void RunUnitTests()
             }
         }
 
-        logger::info("TEST PASS: Dedup equivalence holds (IsFavorited, fortify parity)"sv);
+        // Melee + no shield boosts a resist potion only for the element the
+        // player is taking (or Resist Magic while a hostile casts) -- not every
+        // resist whatever its element (Resist Fire vs archers, 2026-10-10).
+        {
+            Scoring::ScorerConfig config{};
+            Scoring::CorrelationBooster booster(config);
+            const float boosted = 1.0f + config.meleeDefensiveBonus * 0.5f;
+
+            State::PlayerActorState player{};
+            player.hasMeleeEquipped = true;
+            player.hasShieldEquipped = false;
+            State::TargetCollection targets{};
+
+            Candidate::ItemCandidate fire{};
+            fire.type = Item::ItemType::ResistPotion;
+            fire.tags = Item::ItemTag::ResistFire;
+            Candidate::ItemCandidate magic{};
+            magic.type = Item::ItemType::ResistPotion;
+            magic.tags = Item::ItemTag::ResistMagic;
+
+            if (booster.CalculateBonus(player, targets, fire) != 1.0f ||
+                booster.CalculateBonus(player, targets, magic) != 1.0f) {
+                logger::error("TEST FAIL: resist potions boosted with no element threat");
+                return;
+            }
+            player.effects.isFrozen = true;   // frost damage: Resist Fire is still the wrong one
+            if (booster.CalculateBonus(player, targets, fire) != 1.0f) {
+                logger::error("TEST FAIL: Resist Fire boosted under frost damage");
+                return;
+            }
+            player.effects.isOnFire = true;
+            if (std::abs(booster.CalculateBonus(player, targets, fire) - boosted) > 0.001f) {
+                logger::error("TEST FAIL: Resist Fire not boosted under fire damage");
+                return;
+            }
+            targets.cachedAnyCasting = true;
+            if (std::abs(booster.CalculateBonus(player, targets, magic) - boosted) > 0.001f) {
+                logger::error("TEST FAIL: Resist Magic not boosted while a hostile casts");
+                return;
+            }
+        }
+
+        logger::info("TEST PASS: Dedup equivalence holds (IsFavorited, fortify parity, resist element)"sv);
     }
 
     // Test 16: memory with a useful life (roadmap Phase 3 #3a). On the play

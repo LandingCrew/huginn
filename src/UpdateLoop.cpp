@@ -368,7 +368,11 @@ static void MaintainRegistries(RE::PlayerCharacter* player,
             }
         } else {
             bool needsCharge = g_registryTimers.weaponCharge.IsDue(now, Config::WEAPON_REFRESH_INTERVAL_MS);
-            bool needsReconcile = g_registryTimers.weaponReconcile.IsDue(now, Config::WEAPON_RECONCILE_INTERVAL_MS);
+            // A weapon that just left the inventory (WeaponDepartureListener)
+            // reconciles now, not at the next 30 s tick.
+            const bool reconcileRequested = g_weaponRegistry->TakeReconcileRequest();
+            bool needsReconcile = reconcileRequested ||
+                g_registryTimers.weaponReconcile.IsDue(now, Config::WEAPON_RECONCILE_INTERVAL_MS);
             if (needsCharge || needsReconcile) {
                 Huginn_ZONE_NAMED("WeaponRegistry::Refresh");
                 auto equipped = [&] {
@@ -390,8 +394,9 @@ static void MaintainRegistries(RE::PlayerCharacter* player,
                     weaponSetChanged |= !departed.empty();
                 }
                 if (needsReconcile) {
-                    // 30 s: the pass that actually removes a dropped, sold or
-                    // stashed weapon. Its return value counts adds, removes and
+                    // 30 s, or at once on a departure request: the pass that
+                    // actually removes a dropped, sold or stashed weapon. Its
+                    // return value counts adds, removes and
                     // favorite changes — every one of which changes what belongs
                     // on the widget, and was until now discarded.
                     weaponSetChanged |=

@@ -145,6 +145,13 @@ namespace Huginn::Override
         [[nodiscard]] std::optional<OverrideResult> EvaluateCriticalStamina(
             const State::PlayerActorState& player);
 
+        /**
+         * @brief Check for an active poison with a cure in the inventory
+         * @return OverrideResult with the cure, or nullopt if not poisoned or no cure is owned
+         */
+        [[nodiscard]] std::optional<OverrideResult> EvaluatePoisoned(
+            const State::PlayerActorState& player);
+
         // =============================================================================
         // ITEM FINDERS
         // =============================================================================
@@ -188,6 +195,12 @@ namespace Huginn::Override
          * @return ItemCandidate for stamina potion, or nullopt if none available
          */
         [[nodiscard]] std::optional<Candidate::CandidateVariant> FindStaminaPotion() const;
+
+        /**
+         * @brief Find the Cure Poison item to offer (cheapest pure one; impure per bAllowImpurePotions)
+         * @return ItemCandidate for the cure, or nullopt if none is owned
+         */
+        [[nodiscard]] std::optional<Candidate::CandidateVariant> FindCurePoisonItem() const;
 
         // =============================================================================
         // HYSTERESIS HELPERS
