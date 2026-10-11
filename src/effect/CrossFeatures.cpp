@@ -45,4 +45,18 @@ namespace Huginn::Effect
         }
         return f;
     }
+
+    bool HasPerkId(const RE::Actor* actor, RE::FormID perk)
+    {
+        if (!actor || perk == 0) return false;
+        auto* form = RE::TESForm::LookupByID<RE::BGSPerk>(perk);
+        return form && actor->HasPerk(form);
+    }
+
+    Core::Effect::Cap PerkAdjustedCap(const CatalogEntry& item, const RE::Actor* actor)
+    {
+        if (item.perkRows.empty() || !actor) return item.cap;
+        return Core::Effect::WithPerks(item.cap, item.perkRows,
+                                       [actor](std::uint32_t id) { return HasPerkId(actor, id); });
+    }
 }

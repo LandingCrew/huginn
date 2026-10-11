@@ -55,6 +55,11 @@ namespace Huginn::Effect
         std::array<float, 3> restoreAmount{};
         std::array<bool, 3> fullRestore{};
         Core::Effect::School school = Core::Effect::School::None;
+        // 0.23.30: rows that fire only with a perk, graded, NOT in `cap`: the
+        // catalog is built at the main menu, before there is a player, so a
+        // perk the character has is added at runtime (CrossFeatures.h
+        // PerkAdjustedCap; `hg cap` prints them).
+        std::vector<Core::Effect::PerkValue> perkRows;
     };
 
     class EffectCatalog

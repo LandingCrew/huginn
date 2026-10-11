@@ -39,4 +39,20 @@ namespace Huginn::Effect
     /// The runtime columns of one item for the player's state right now.
     [[nodiscard]] RuntimeFeatures ComputeRuntimeFeatures(const CatalogEntry& item, const State::PlayerActorState& player,
                                                          const StackInfo& stack);
+
+    /// Does `actor` have the perk with this FormID? (A read of its perk list;
+    /// false for a FormID that is not a perk.)
+    [[nodiscard]] bool HasPerkId(const RE::Actor* actor, RE::FormID perk);
+
+    /// cap(i) with the item's perk rows the actor meets (0.23.30;
+    /// Core::Effect::WithPerks): the catalog's cap is the same for every
+    /// character, and a perk-gated row (Impact's stagger, Deep Freeze,
+    /// Respite, the "(Improved)" rows) counts only for one who has the perk.
+    /// Today `hg cap` calls it (on the main thread). The scorer (R8) is meant
+    /// to call it per candidate from the update loop: HasPerk is a read of
+    /// the player's perk list, which changes only through the level-up menu
+    /// or a script, so a stale read costs one tick; if that ever matters,
+    /// copy the perk set out on the main thread with the StateManager's
+    /// snapshot instead (CLAUDE.md, thread safety).
+    [[nodiscard]] Core::Effect::Cap PerkAdjustedCap(const CatalogEntry& item, const RE::Actor* actor);
 }

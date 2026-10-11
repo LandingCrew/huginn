@@ -14,11 +14,13 @@
 //   effectLightRadius                a Light-archetype effect's light (associated form) radius, its strength
 //   effectText                       gap 5: the description, <mag>/<dur>/<area> filled
 //   effectScripts                    gap 6: Papyrus scripts on the MGEF (from the plugin file)
-//   effectConditions                 gap 8: MGEF and effect-item conditions
+//   effectConditions                 gap 8: MGEF and effect-item conditions, mgef[...] item[...]
+//                                    (0.23.30: the reader's text, which the mapper reads; perks by FormID)
 //   payloadOf, payloadSpell          gap 3: a Cloak/hazard's carried spell, as extra
 //                                    rows under its wrapper (payloadOf = the wrapper's effectIndex)
 //   effectColumn, effectRoute,       the catalog: the row's column and how it was
-//   effectKept                       found, and whether it counts in cap(i)
+//   effectKept                       found, and whether it counts in cap(i): 1, 0, or (0.23.30)
+//                                    "perk" (beside cap(i), with a perk) / "bane" (a target-family row)
 //   inScope, slotClass, cap          per item, on its first row only: in the
 //                                    catalog's scope; today's slot class (the
 //                                    legacy classifiers + SlotClassifier); cap(i)

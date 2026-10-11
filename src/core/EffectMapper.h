@@ -40,6 +40,19 @@
 //     PD) columns stay 1 (x D). Durations of a day or
 //     more are sentinels: clipped to 3600, and `long_lasting` set. A restore
 //     of 9999+ is a full restore: value 1, `full_restore` set.
+//   - Conditions (0.23.30, core/EffectConditions.h): a row whose conditions
+//     need a perk of the player is kept beside cap(i), not in it
+//     (ItemMapping::perkRows, graded by GradePerkRows; WithPerks adds the ones
+//     a player meets); a GetRandomPercent proc grades its expected strength
+//     (the chance times its magnitude, or times its presence value); a row
+//     that fires only on a target family and lands on others is a bane row,
+//     dropped from cap(i) and the populations unless its column names its
+//     target (turn undead, banish, sun). Rows left out still give an item that
+//     keeps nothing else its delivery, timing, school, area and duration.
+//   - A Cloak's or hazard's payload is graded over the wrapper's duration
+//     (max of the two; 0.23.30).
+//   - Weapon stats grade within the OCF sub-type (OCF_WeapTypeQuarterstaff2H
+//     ...), the vanilla type the fallback below kMinSubtypeGroup (0.23.30).
 //   - Families are the max over their specifics.
 //   - Side effects (0.23.16): a harm row (damage, drain, weakness, control
 //     ...) on a food or potion is detrimental or hostile to the item's own
@@ -67,6 +80,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <map>
 #include <string>
 #include <string_view>
@@ -129,6 +143,14 @@ namespace Huginn::Core::Effect
         bool counted = false;  // in the coverage denominator
         bool mapped = false;   // counted and set a column (directly or through its payload)
         bool carrier = false;  // a companion row with nothing in it: not kept, not counted
+        // 0.23.30 (core/EffectConditions.h): the row's conditions keep it out
+        // of cap(i) -- `perk`: it fires only with a perk (carried in
+        // ItemMapping::perkRows); `bane`: only on a target family (dropped
+        // until the bane columns exist). `chance`: its GetRandomPercent share,
+        // already applied to its value.
+        bool perk = false;
+        bool bane = false;
+        float chance = 1.0f;
     };
 
     struct RowTally
@@ -175,6 +197,34 @@ namespace Huginn::Core::Effect
         bool ratioToMedian = false;  // value = raw / median(group), clipped [lo, hi]
         float lo = 0.0f;
         float hi = 0.0f;
+        // 0.23.30: a weapon sub-type's group (a quarterstaff among
+        // quarterstaffs) falls back to its vanilla type's when the sub-type
+        // has fewer than kMinSubtypeGroup members in the load order; the
+        // fallback population holds every weapon of the type.
+        std::uint32_t fallback = 0;
+        bool hasFallback = false;
+    };
+
+    /// The smallest weapon sub-type population graded on its own: under it a
+    /// percentile moves in steps of more than 5%, so the sub-type is graded
+    /// within its vanilla type instead (whose population holds it too).
+    inline constexpr std::size_t kMinSubtypeGroup = 20;
+
+    /// A kept row that fires only with a perk (core/EffectConditions.h):
+    /// carried beside cap(i), not in it, so the catalog -- built at the main
+    /// menu, before there is a player -- stays the same for every character.
+    struct PerkRow
+    {
+        KeptRow row;
+        std::vector<std::vector<std::uint32_t>> perks;  // every clause needs one of its perks
+    };
+
+    /// A perk row graded against the column's population (which it is not in).
+    struct PerkValue
+    {
+        std::vector<std::vector<std::uint32_t>> perks;
+        Col col = Col::_Count;
+        float v = 0.0f;
     };
 
     /// One item, mapped but not yet graded.
@@ -196,6 +246,12 @@ namespace Huginn::Core::Effect
         // per vital, and whether a row is a full-restore sentinel.
         std::array<float, 3> restoreAmount{};
         std::array<bool, 3> fullRestore{};
+        // 0.23.30: rows that fire only with a perk (beside cap(i), graded by
+        // GradePerkRows), and the perk and bane rows themselves, from which an
+        // item that keeps no row at all still takes its delivery, timing,
+        // school, area, duration and hostility.
+        std::vector<PerkRow> perkRows;
+        std::vector<KeptRow> factRows;
     };
 
     /// The class of every effect in the table (index-aligned).
@@ -269,6 +325,21 @@ namespace Huginn::Core::Effect
 
     /// The item's school (spells, scrolls, staves): its primary kept row's.
     [[nodiscard]] School PrimarySchool(const ItemMapping& m, const Populations& pops);
+
+    /// The item's perk rows, each column graded against the load order's
+    /// population for it (0.23.30).
+    [[nodiscard]] std::vector<PerkValue> GradePerkRows(const ItemMapping& m, const Populations& pops);
+
+    /// Does a player with these perks meet every clause (each needs one of
+    /// its perks; a perk printed without a FormID, 0, never matches)?
+    [[nodiscard]] bool PerksMet(const std::vector<std::vector<std::uint32_t>>& perks,
+                                const std::function<bool(std::uint32_t)>& hasPerk);
+
+    /// cap(i) with the perk rows the player meets: each raises its column (and
+    /// the column's family) to its value where that is higher. The runtime
+    /// half of the perk rows (effect/CrossFeatures.h PerkAdjustedCap).
+    [[nodiscard]] Cap WithPerks(const Cap& cap, const std::vector<PerkValue>& rows,
+                                const std::function<bool(std::uint32_t)>& hasPerk);
 
     struct BuildResult
     {

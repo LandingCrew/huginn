@@ -23,6 +23,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 #include <vector>
 
 namespace Huginn::Test
@@ -75,6 +76,30 @@ namespace Huginn::Test
             if (!part.empty()) out.emplace_back(part);
             if (end == std::string_view::npos) break;
             start = end + 1;
+        }
+        return out;
+    }
+
+    /// The dump's effectConditions field, "mgef[<list>] item[<list>]" (either
+    /// part optional; 0.23.26+), split into (MGEF list, effect-item list).
+    inline std::pair<std::string, std::string> SplitConditions(std::string_view s)
+    {
+        std::pair<std::string, std::string> out;
+        if (s.size() >= 6 && s.substr(0, 5) == "mgef[") {
+            const auto sep = s.find("] item[");
+            if (sep != std::string_view::npos) {
+                out.first = std::string(s.substr(5, sep - 5));
+                s.remove_prefix(sep + 2);
+            }
+            else {
+                const auto close = s.rfind(']');
+                out.first = std::string(s.substr(5, close == std::string_view::npos ? std::string_view::npos : close - 5));
+                return out;
+            }
+        }
+        if (s.size() >= 6 && s.substr(0, 5) == "item[") {
+            const auto close = s.rfind(']');
+            out.second = std::string(s.substr(5, close == std::string_view::npos ? std::string_view::npos : close - 5));
         }
         return out;
     }
@@ -181,6 +206,9 @@ namespace Huginn::Test
                 // Before 0.23.7 `effectCost` was the MGEF's base cost; the per-effect
                 // cost exists only next to `effectBaseCost`.
                 if (Has("effectBaseCost")) row.cost = ParseFloat(Get(f, "effectCost"));
+                // effectConditions: "mgef[...] item[...]" (either part optional).
+                // The MGEF part was taken when the MGEF was first seen (Effect).
+                row.conditions = SplitConditions(Get(f, "effectConditions")).second;
                 const std::string payloadOf = Get(f, "payloadOf");
                 if (!payloadOf.empty()) {
                     // A payload row: it belongs to its wrapper's MGEF. The dump
@@ -302,6 +330,7 @@ namespace Huginn::Test
             m.school = Get(f, "effectSchool");
             m.lightRadius = ParseInt(Get(f, "effectLightRadius"));
             m.payloadKnown = out.hasPayload;
+            m.conditions = SplitConditions(Get(f, "effectConditions")).first;
             const auto index = static_cast<std::uint32_t>(out.effects.size());
             out.effects.push_back(std::move(m));
             mgefIndex_[id] = index;

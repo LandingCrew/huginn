@@ -179,14 +179,15 @@ namespace Huginn::Core::Effect
         {
             std::array<bool, kColumnCount> visibleHas{};
             std::array<bool, kColumnCount> knownHas{};
-            explicit Eligibility(const ItemMapping& m)
+            explicit Eligibility(const ItemMapping& m) : Eligibility(m.rows) {}
+            explicit Eligibility(const std::vector<KeptRow>& rows)
             {
-                for (const auto& r : m.rows) {
+                for (const auto& r : rows) {
                     if (!r.visible) continue;
                     if (r.col != Col::_Count) visibleHas[Index(r.col)] = true;
                     if (r.col2 != Col::_Count) visibleHas[Index(r.col2)] = true;
                 }
-                for (const auto& r : m.rows) {
+                for (const auto& r : rows) {
                     if (r.unknown) continue;
                     for (const Col c : { r.col, r.col2 }) {
                         if (c != Col::_Count && (r.visible || !visibleHas[Index(c)])) knownHas[Index(c)] = true;
@@ -216,6 +217,56 @@ namespace Huginn::Core::Effect
         // Group ids for grouped populations.
         constexpr std::uint32_t kGroupArrow = 1;
         constexpr std::uint32_t kGroupBolt = 2;
+        // Weapon groups: a vanilla type is its column's index (< 243); a
+        // sub-type is kGroupSubtype | a hash of its name; a type's fallback
+        // population (every weapon of the type, sub-types included) is
+        // kGroupTypeAll | the type's index.
+        constexpr std::uint32_t kGroupSubtype = 0x80000000u;
+        constexpr std::uint32_t kGroupTypeAll = 0x40000000u;
+
+        /// A row's GetRandomPercent share (core/EffectConditions.h): its
+        /// expected strength. A graded row scales what is graded (so the
+        /// population sees the expected magnitude too), a presence row its value.
+        void ApplyChance(KeptRow& k, float chance) noexcept
+        {
+            if (!(chance < 1.0f)) return;
+            if (k.graded) k.raw *= chance;
+            else k.post *= chance;
+        }
+
+        /// The OCF sub-type keywords that differ from their vanilla weapon
+        /// type (OCF_WeapType<Name>1H/2H): a quarterstaff is typed Warhammer
+        /// (811 in the LoreRim dump) or Battleaxe (146), a halberd Battleaxe,
+        /// a pike or a two-handed spear Greatsword. The vanilla ones (Sword1H,
+        /// Greatsword2H ... Bow, Crossbow) and the movement classes (Pole*)
+        /// are not sub-types.
+        std::string_view WeaponSubtype(const std::vector<std::string>& keywords) noexcept
+        {
+            constexpr std::string_view kPrefix = "OCF_WeapType";
+            std::string_view best;
+            for (const auto& k : keywords) {
+                const std::string_view kv = k;
+                if (kv.substr(0, kPrefix.size()) != kPrefix) continue;
+                const std::string_view n = kv.substr(kPrefix.size());
+                if (n.empty() || n.substr(0, 4) == "Pole" || n.substr(0, 3) == "Bow" || n.substr(0, 8) == "Crossbow") continue;
+                if (n == "Sword1H" || n == "Dagger1H" || n == "WarAxe1H" || n == "Mace1H" || n == "Greatsword2H" ||
+                    n == "Battleaxe2H" || n == "Warhammer2H") {
+                    continue;
+                }
+                if (best.empty() || n < best) best = n;  // several: the first by name, so the choice is stable
+            }
+            return best;
+        }
+
+        std::uint32_t SubtypeGroup(std::string_view name) noexcept
+        {
+            std::uint32_t h = 2166136261u;  // FNV-1a
+            for (const char c : name) {
+                h ^= static_cast<unsigned char>(c);
+                h *= 16777619u;
+            }
+            return kGroupSubtype | (h & 0x3FFFFFFFu);
+        }
     }
 
     // =========================================================================
@@ -576,6 +627,37 @@ namespace Huginn::Core::Effect
             bool descEmpty;
         };
         std::vector<Pending> unresolved;
+
+        // 0.23.30: what a row's conditions say (core/EffectConditions.h): the
+        // MGEF's (classified once) and the effect item's, both of which must pass.
+        auto gateOf = [](const EffectRow& r, const MagicEffectRecord& mg, const EffectClass& cls) {
+            Gate g = cls.gate;
+            if (!r.conditions.empty()) MergeGate(g, ReadGate(r.conditions, SubjectIsUser(mg)));
+            return g;
+        };
+        // Where a mapped row goes: a bane (a target-family gate on a row that
+        // lands on others, on a column that does not already name its target)
+        // stays out of cap(i) until the bane columns exist (roadmap); a perk
+        // row goes beside it (perkRows); anything else into it. The chance
+        // scales the row in every case. True when the row is in cap(i).
+        auto place = [&m](KeptRow k, const Gate& g, const MagicEffectRecord& lands, RowOutcome& o) {
+            o.chance = g.chance;
+            ApplyChance(k, g.chance);
+            if (g.targetFamily && LandsOnOthers(lands) && !NamesItsTarget(k.col)) {
+                o.bane = true;
+                m.factRows.push_back(std::move(k));
+                return false;
+            }
+            if (g.PerkGated()) {
+                o.perk = true;
+                m.factRows.push_back(k);
+                m.perkRows.push_back(PerkRow{ std::move(k), g.perks });
+                return false;
+            }
+            m.rows.push_back(std::move(k));
+            return true;
+        };
+
         for (const auto& row : it.effects) {
             RowOutcome o;
             ++m.tally.rows;
@@ -617,6 +699,15 @@ namespace Huginn::Core::Effect
                         // stays a target-harm column and its hostility sets
                         // `hostile` even on a food or potion. No food or potion
                         // in the three dumps carries a wrapper today.
+                        //
+                        // 0.23.30: graded over the WRAPPER's duration. A cloak
+                        // re-applies its payload (typically 1 s) to whoever is
+                        // near for as long as it lasts, and a hazard for as long
+                        // as it stands, so "10 per second for 60 s" is 600, not
+                        // 10 (the dump audit: median wrapper 30 s, median payload
+                        // 1 s; 113 of 137 forms graded a tick of 1 s or less).
+                        // A payload longer than its wrapper keeps its own.
+                        const Gate wrapperGate = gateOf(row, mg, cls);
                         for (const auto& p : mg.payload) {
                             if (p.effect >= effects.size()) continue;
                             const auto& pc = classes[p.effect];
@@ -624,14 +715,19 @@ namespace Huginn::Core::Effect
                             const auto& pm = effects[p.effect];
                             const Zero z = ZeroCase(p, pm, pc);
                             if (z == Zero::Unmapped || z == Zero::Unresolved) continue;  // nothing to say about it
-                            if (z == Zero::Describe || z == Zero::Named) {
-                                m.rows.push_back(ZeroRow(p, pm, pc, z, true, m.constantItem, nullptr));
-                            }
-                            else {
-                                m.rows.push_back(MakeRow(p, pm, pc, true, m.constantItem));
-                            }
+                            EffectRow pr = p;
+                            pr.duration = std::max(p.duration, row.duration);
+                            KeptRow k = (z == Zero::Describe || z == Zero::Named)
+                                            ? ZeroRow(pr, pm, pc, z, true, m.constantItem, nullptr)
+                                            : MakeRow(pr, pm, pc, true, m.constantItem);
+                            Gate g = wrapperGate;
+                            MergeGate(g, gateOf(p, pm, pc));
+                            RowOutcome po;
+                            if (place(std::move(k), g, pm, po)) o.kept = true;
+                            o.perk = o.perk || po.perk;
+                            o.bane = o.bane || po.bane;
+                            o.chance = std::min(o.chance, po.chance);
                             o.mapped = true;
-                            o.kept = true;
                         }
                     }
                     else if (cls.wrapperDescription != Col::_Count) {
@@ -647,8 +743,7 @@ namespace Huginn::Core::Effect
                         o.cls = d;
                         o.counted = true;
                         o.mapped = true;
-                        o.kept = true;
-                        m.rows.push_back(MakeRow(row, mg, d, true, m.constantItem));
+                        o.kept = place(MakeRow(row, mg, d, true, m.constantItem), gateOf(row, mg, cls), mg, o);
                     }
                     else {
                         // A wrapper with nothing to read is not counted, like a
@@ -672,15 +767,16 @@ namespace Huginn::Core::Effect
                         o.counted = true;
                         if (cls.Mapped()) {
                             o.mapped = true;
-                            o.kept = true;
+                            KeptRow k;
                             if (z == Zero::Describe || z == Zero::Named) {
-                                m.rows.push_back(ZeroRow(row, mg, cls, z, true, m.constantItem, &o.cls, harmsUser));
+                                k = ZeroRow(row, mg, cls, z, true, m.constantItem, &o.cls, harmsUser);
                             }
                             else {
                                 if (harmsUser) o.cls = AsSelfHarm(cls);
-                                m.rows.push_back(MakeRow(row, mg, o.cls, true, m.constantItem));
+                                k = MakeRow(row, mg, o.cls, true, m.constantItem);
                             }
-                            if (harmsUser) m.rows.back().hostile = false;
+                            if (harmsUser) k.hostile = false;
+                            o.kept = place(std::move(k), gateOf(row, mg, cls), mg, o);
                         }
                     }
                 }
@@ -690,18 +786,18 @@ namespace Huginn::Core::Effect
                 if (cls.Mapped() && cls.route != Route::Helper && HiddenWhitelisted(cls.col) &&
                     !cls.helperName && NameAgrees(cls, cls.col)) {
                     const Zero z = ZeroCase(row, mg, cls);
-                    if (z == Zero::Describe || z == Zero::Named) {
-                        o.kept = true;
-                        ++m.tally.hiddenKept;
-                        m.rows.push_back(ZeroRow(row, mg, cls, z, false, m.constantItem, &o.cls, harmsUser));
-                        if (harmsUser) m.rows.back().hostile = false;
-                    }
-                    else if (z == Zero::None) {
-                        o.kept = true;
-                        ++m.tally.hiddenKept;
-                        if (harmsUser) o.cls = AsSelfHarm(cls);
-                        m.rows.push_back(MakeRow(row, mg, o.cls, false, m.constantItem));
-                        if (harmsUser) m.rows.back().hostile = false;
+                    if (z == Zero::Describe || z == Zero::Named || z == Zero::None) {
+                        KeptRow k;
+                        if (z == Zero::None) {
+                            if (harmsUser) o.cls = AsSelfHarm(cls);
+                            k = MakeRow(row, mg, o.cls, false, m.constantItem);
+                        }
+                        else {
+                            k = ZeroRow(row, mg, cls, z, false, m.constantItem, &o.cls, harmsUser);
+                        }
+                        if (harmsUser) k.hostile = false;
+                        o.kept = place(std::move(k), gateOf(row, mg, cls), mg, o);
+                        if (o.kept) ++m.tally.hiddenKept;
                     }
                 }
             }
@@ -798,11 +894,20 @@ namespace Huginn::Core::Effect
             const Col tc = WeaponTypeColumn(it);
             if (tc != Col::_Count) {
                 fix(tc, 1.0f);
-                const auto g = static_cast<std::uint32_t>(tc);
-                m.grouped.push_back({ Col::weapon_damage, g, it.damage, false, 0, 0 });
-                m.grouped.push_back({ Col::weapon_crit, g, it.critDamage, false, 0, 0 });
-                m.grouped.push_back({ Col::weapon_speed, g, it.speed, true, 0.5f, 2.0f });
-                m.grouped.push_back({ Col::weapon_reach, g, it.reach, true, 0.0f, 0.0f });
+                // 0.23.30: stats are graded within the OCF sub-type when there
+                // is one (a quarterstaff among quarterstaffs, not warhammers),
+                // with the vanilla type as the fallback population. No new
+                // column: weapon_type_* stays the vanilla type (what the game's
+                // animations and perks key on).
+                const auto typeGroup = static_cast<std::uint32_t>(tc);
+                const std::string_view sub = WeaponSubtype(it.keywords);
+                const std::uint32_t g = sub.empty() ? typeGroup : SubtypeGroup(sub);
+                const std::uint32_t all = kGroupTypeAll | typeGroup;
+                const bool fb = !sub.empty();
+                m.grouped.push_back({ Col::weapon_damage, g, it.damage, false, 0, 0, all, fb });
+                m.grouped.push_back({ Col::weapon_crit, g, it.critDamage, false, 0, 0, all, fb });
+                m.grouped.push_back({ Col::weapon_speed, g, it.speed, true, 0.5f, 2.0f, all, fb });
+                m.grouped.push_back({ Col::weapon_reach, g, it.reach, true, 0.0f, 0.0f, all, fb });
             }
             const bool ranged = it.weaponType == kWeaponBow || it.weaponType == kWeaponCrossbow;
             fix(ranged ? Col::weapon_ranged : Col::weapon_melee, 1.0f);
@@ -875,7 +980,10 @@ namespace Huginn::Core::Effect
     {
         if (!m.inScope) return;
         for (const auto& [c, v] : ColumnRaws(m)) pops_[Key(c, 0)].push_back(v);
-        for (const auto& g : m.grouped) pops_[Key(g.col, g.group)].push_back(g.raw);
+        for (const auto& g : m.grouped) {
+            pops_[Key(g.col, g.group)].push_back(g.raw);
+            if (g.fallback != 0) pops_[Key(g.col, g.fallback)].push_back(g.raw);
+        }
         if (m.kind == Kind::Spell && m.magickaCost > 0.0f) pops_[Key(Col::magicka_cost, 0)].push_back(m.magickaCost);
         if (m.consumable) pops_[Key(Col::gold_value, static_cast<std::uint32_t>(m.kind))].push_back(static_cast<float>(m.value));
         finalized_ = false;
@@ -928,14 +1036,14 @@ namespace Huginn::Core::Effect
         /// (it only loses the column's VALUE to that row).
         /// A side effect (self_harm*) is the primary row only when the item
         /// keeps nothing else: it is not what the item is for.
-        int PrimaryRow(const ItemMapping& m, const Populations& pops)
+        int PrimaryRow(const std::vector<KeptRow>& rows, const Populations& pops)
         {
-            const Eligibility eligible(m);
+            const Eligibility eligible(rows);
             int best = -1;
             float bestV = -1.0f;
             for (const bool sideEffects : { false, true }) {
-                for (std::size_t i = 0; i < m.rows.size(); ++i) {
-                    const auto& r = m.rows[i];
+                for (std::size_t i = 0; i < rows.size(); ++i) {
+                    const auto& r = rows[i];
                     if ((FamilyKey(r.col) == Col::self_harm) != sideEffects) continue;
                     if (!eligible.Visible(r, r.col)) continue;
                     const float v = r.unknown ? r.post / kNeutralStrength : RowValue(r, r.col, pops);
@@ -948,6 +1056,15 @@ namespace Huginn::Core::Effect
             }
             return best;
         }
+
+        /// The rows an item's delivery, timing, school, area, duration and
+        /// hostility come from: its kept rows, or -- when it keeps none, all
+        /// its rows firing only with a perk or on a target family (0.23.30) --
+        /// those rows: they still say how the item is cast.
+        const std::vector<KeptRow>& FactRows(const ItemMapping& m) noexcept
+        {
+            return m.rows.empty() ? m.factRows : m.rows;
+        }
     }
 
     School PrimarySchool(const ItemMapping& m, const Populations& pops)
@@ -957,8 +1074,9 @@ namespace Huginn::Core::Effect
         const bool magic = m.kind == Kind::Spell || m.kind == Kind::Scroll ||
                            (m.kind == Kind::Weapon && Get(m.fixed, Col::kind_staff) > 0.0f);
         if (!magic) return School::None;
-        const int p = PrimaryRow(m, pops);
-        return p >= 0 ? m.rows[static_cast<std::size_t>(p)].school : School::None;
+        const auto& facts = FactRows(m);
+        const int p = PrimaryRow(facts, pops);
+        return p >= 0 ? facts[static_cast<std::size_t>(p)].school : School::None;
     }
 
     Cap Grade(const ItemMapping& m, const Populations& pops)
@@ -986,9 +1104,12 @@ namespace Huginn::Core::Effect
                 if (!eligible(r, c)) continue;
                 put(c, RowValue(r, c, pops));
             }
-            anyHostile = anyHostile || r.hostile;
             anyFullRestore = anyFullRestore || r.fullRestore;
             if (FamilyKey(r.col) == Col::cure && r.cureByArchetype) anyCureArchetype = true;
+        }
+        const auto& facts = FactRows(m);
+        for (const auto& r : facts) {
+            anyHostile = anyHostile || r.hostile;
             maxArea = std::max(maxArea, r.area);
             maxDur = std::max(maxDur, r.duration);
             if (r.duration >= kDurationSentinel) longLasting = true;
@@ -1002,9 +1123,9 @@ namespace Huginn::Core::Effect
             if (fam != Col::_Count) val[Index(fam)] = std::max(val[Index(fam)], val[i]);
         }
 
-        const int primary = PrimaryRow(m, pops);
+        const int primary = PrimaryRow(facts, pops);
         if (primary >= 0) {
-            const auto& p = m.rows[static_cast<std::size_t>(primary)];
+            const auto& p = facts[static_cast<std::size_t>(primary)];
             switch (p.delivery) {
                 case kDeliverySelf: put(Col::delivery_self, 1.0f); break;
                 case kDeliveryTouch: put(Col::delivery_touch, 1.0f); break;
@@ -1028,19 +1149,23 @@ namespace Huginn::Core::Effect
                 }
             }
         }
-        if (!m.rows.empty()) {
+        if (!facts.empty()) {
             if (maxArea > 0) put(Col::area, std::min(1.0f, static_cast<float>(std::log1p(maxArea) / std::log1p(1000.0))));
             if (anyHostile) put(Col::hostile, 1.0f);
             if (maxDur > 0) put(Col::duration, DurationFactor(maxDur));
             if (longLasting) put(Col::long_lasting, 1.0f);
+        }
+        if (!m.rows.empty()) {
             if (anyFullRestore) put(Col::full_restore, 1.0f);
             if (val[Index(Col::cure)] > 0.0f && anyCureArchetype) put(Col::cure_instant, 1.0f);
         }
 
         for (const auto& f : m.fixed) put(f.col, f.v);
         for (const auto& g : m.grouped) {
+            // A sub-type too small to grade on its own: its vanilla type's population.
+            const std::uint32_t grp = (g.hasFallback && pops.Size(g.col, g.group) < kMinSubtypeGroup) ? g.fallback : g.group;
             if (g.ratioToMedian) {
-                const float med = pops.Median(g.col, g.group);
+                const float med = pops.Median(g.col, grp);
                 if (med > 0.0f && g.raw > 0.0f) {
                     float r = g.raw / med;
                     if (g.hi > 0.0f) r = std::clamp(r, g.lo, g.hi);
@@ -1048,7 +1173,7 @@ namespace Huginn::Core::Effect
                 }
             }
             else if (g.raw > 0.0f) {
-                put(g.col, pops.Percentile(g.col, g.group, g.raw));
+                put(g.col, pops.Percentile(g.col, grp, g.raw));
             }
         }
         if (m.kind == Kind::Spell && m.magickaCost > 0.0f) {
@@ -1064,6 +1189,51 @@ namespace Huginn::Core::Effect
             if (val[i] > 0.0f) cap.push_back(Value{ static_cast<Col>(i), val[i] });
         }
         return cap;
+    }
+
+    std::vector<PerkValue> GradePerkRows(const ItemMapping& m, const Populations& pops)
+    {
+        std::vector<PerkValue> out;
+        for (const auto& pr : m.perkRows) {
+            for (const Col c : { pr.row.col, pr.row.col2 }) {
+                if (c == Col::_Count) continue;
+                const float v = RowValue(pr.row, c, pops);
+                if (v > 0.0f) out.push_back(PerkValue{ pr.perks, c, v });
+            }
+        }
+        return out;
+    }
+
+    bool PerksMet(const std::vector<std::vector<std::uint32_t>>& perks, const std::function<bool(std::uint32_t)>& hasPerk)
+    {
+        for (const auto& clause : perks) {
+            const bool any = std::any_of(clause.begin(), clause.end(),
+                                         [&](std::uint32_t id) { return id != 0 && hasPerk && hasPerk(id); });
+            if (!any) return false;
+        }
+        return true;
+    }
+
+    Cap WithPerks(const Cap& cap, const std::vector<PerkValue>& rows, const std::function<bool(std::uint32_t)>& hasPerk)
+    {
+        if (rows.empty()) return cap;
+        std::array<float, kColumnCount> val{};
+        for (const auto& v : cap) val[Index(v.col)] = v.v;
+        bool changed = false;
+        for (const auto& r : rows) {
+            if (r.col == Col::_Count || !PerksMet(r.perks, hasPerk)) continue;
+            for (const Col c : { r.col, FamilyOf(r.col) }) {
+                if (c == Col::_Count || !(r.v > val[Index(c)])) continue;
+                val[Index(c)] = r.v;
+                changed = true;
+            }
+        }
+        if (!changed) return cap;
+        Cap out;
+        for (std::size_t i = 0; i < kColumnCount; ++i) {
+            if (val[i] > 0.0f) out.push_back(Value{ static_cast<Col>(i), val[i] });
+        }
+        return out;
     }
 
     BuildResult BuildCaps(const std::vector<ItemRecord>& items, const EffectTable& effects,

@@ -71,6 +71,7 @@ namespace Huginn::Effect
             e.restoreAmount = m.restoreAmount;
             e.fullRestore = m.fullRestore;
             e.school = PrimarySchool(m, pops);
+            e.perkRows = GradePerkRows(m, pops);
             return e;
         }
     }

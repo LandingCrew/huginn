@@ -328,6 +328,7 @@ FORMULAS = {
     "mounted": lambda s: float(s["mounted"]),
     "downtime": lambda s: s["combatEndAgo"] if (not s["inCombat"] and s["enemyCount"] == 0) else 0.0,
     "combat_ended_recent": lambda s: s["combatEndAgo"] if not s["inCombat"] else NEVER,
+    "combat_regen_ok": lambda s: 1.0 if (s["inCombat"] and not s["healthRegenSuppressed"]) else 0.0,
 }
 
 DEFERRED = {"healing_blocked", "target_magicka_low", "target_stamina_low", "sneak_detected"}

@@ -114,6 +114,10 @@ namespace Huginn::Core::Effect
         std::uint32_t area = 0;      // feet
         float cost = 0.0f;           // the effect item's own cost (dump gap 4); 0 if unknown
         std::uint32_t index = 0;     // position in the form's effect list (the dump's effectIndex)
+        // The effect item's own conditions, as `hg dump all` prints them inside
+        // item[...] ("T.HasPerk(000153D2)==1 AND GetRandomPercent()<25");
+        // "" for none. Read by core/EffectConditions.h (0.23.30).
+        std::string conditions;
     };
 
     /// One magic effect (MGEF) -- what is the same wherever it is used.
@@ -140,6 +144,9 @@ namespace Huginn::Core::Effect
         // (dump gap 3). Empty when unknown (an old dump) or none.
         std::vector<EffectRow> payload;
         bool payloadKnown = false;
+        // The MGEF's own conditions, as the dump prints them inside mgef[...];
+        // "" for none (or a dump before the conditions column).
+        std::string conditions;
 
         [[nodiscard]] bool HiddenInUI() const noexcept { return (flags & kFlagHideInUI) != 0; }
         [[nodiscard]] bool Recover() const noexcept { return (flags & kFlagRecover) != 0; }

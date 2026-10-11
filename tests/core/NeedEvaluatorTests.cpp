@@ -169,6 +169,18 @@ TEST_CASE("survival stage curves: the first penalty stage is on, the stage befor
     }
 }
 
+TEST_CASE("combat_regen_ok: in combat with health regenerating; off out of combat or with health regen suppressed")
+{
+    NeedSnapshot s;
+    CHECK(Val(s, NeedId::combat_regen_ok) == 0.0f);
+    s.inCombat = true;
+    CHECK(Val(s, NeedId::combat_regen_ok) == 1.0f);
+    s.regenSuppressed = true;  // another vital's regen debuff (Thirsty: stamina) leaves it on
+    CHECK(Val(s, NeedId::combat_regen_ok) == 1.0f);
+    s.healthRegenSuppressed = true;
+    CHECK(Val(s, NeedId::combat_regen_ok) == 0.0f);
+}
+
 TEST_CASE("combat timers: onset only in combat, ended-recent only out of it, downtime needs no hostile")
 {
     NeedSnapshot s;  // never fought since the load

@@ -24,93 +24,6 @@ namespace Huginn::Effect
         using namespace Core::Effect;
         using Util::CsvQuote;
 
-        // ---- gap 8: conditions ------------------------------------------------
-        bool IsFormParam(RE::SCRIPT_PARAM_TYPE t)
-        {
-            using T = RE::SCRIPT_PARAM_TYPE;
-            switch (t) {
-                case T::kInventoryObject: case T::kObjectRef: case T::kActor: case T::kSpellItem: case T::kCell:
-                case T::kMagicItem: case T::kSound: case T::kTopic: case T::kQuest: case T::kRace: case T::kClass:
-                case T::kFaction: case T::kGlobal: case T::kFurnitureOrFormList: case T::kObject: case T::kMapMarker:
-                case T::kActorBase: case T::kContainerRef: case T::kWorldOrList: case T::kPackage:
-                case T::kCombatStyle: case T::kMagicEffect: case T::kWeather: case T::kNPC: case T::kOwner:
-                case T::kShaderEffect: case T::kFormList: case T::kPerk: case T::kNote: case T::kImagespaceMod:
-                case T::kImagespace: case T::kVoiceType: case T::kEncounterZone: case T::kIdleForm: case T::kMessage:
-                case T::kInvObjectOrFormList: case T::kEquipType: case T::kObjectOrFormList: case T::kMusic:
-                case T::kKeyword: case T::kRefType: case T::kLocation: case T::kForm: case T::kShout:
-                case T::kWordOfPower: case T::kBGSScene: case T::kAssociationType: case T::kReferenceEffect:
-                case T::kKnowableForm:
-                    return true;
-                default:
-                    return false;
-            }
-        }
-
-        /// Parameters held by value in the condition (not a pointer).
-        bool IsIntegerParam(RE::SCRIPT_PARAM_TYPE t)
-        {
-            using T = RE::SCRIPT_PARAM_TYPE;
-            switch (t) {
-                case T::kInt: case T::kAxis: case T::kAnimGroup: case T::kSex: case T::kStage: case T::kCrimeType:
-                case T::kFormType: case T::kMiscStat: case T::kAlignment: case T::kCritStage: case T::kAlias:
-                case T::kRelationshipRank: case T::kCastingSource: case T::kWardState: case T::kFurnitureAnimType:
-                case T::kFurnitureEntryType: case T::kSkillAction:
-                    return true;
-                default:
-                    return false;
-            }
-        }
-
-        std::string FormLabel(const RE::TESForm* f)
-        {
-            if (!f) return "none";
-            const char* ed = f->GetFormEditorID();
-            if (ed && *ed) return ed;
-            return std::format("{:08X}", f->GetFormID());
-        }
-
-        std::string FormatConditions(const RE::TESCondition& cond)
-        {
-            static constexpr std::string_view kOps[] = { "==", "!=", ">", ">=", "<", "<=" };
-            std::string out;
-            const auto* commands = RE::SCRIPT_FUNCTION::GetFirstScriptCommand();
-            for (const auto* item = cond.head; item; item = item->next) {
-                const auto& d = item->data;
-                const auto fid = static_cast<std::uint32_t>(d.functionData.function.underlying());
-                const RE::SCRIPT_FUNCTION* fn = (commands && fid < RE::SCRIPT_FUNCTION::Commands::kScriptCommandsEnd)
-                                                    ? commands + fid
-                                                    : nullptr;
-                std::string params;
-                for (std::uint16_t k = 0; fn && k < fn->numParams && k < 2; ++k) {
-                    if (!params.empty()) params += ',';
-                    const auto type = fn->params ? fn->params[k].paramType.get() : RE::SCRIPT_PARAM_TYPE::kInt;
-                    const void* p = d.functionData.params[k];
-                    if (IsFormParam(type)) {
-                        params += FormLabel(static_cast<const RE::TESForm*>(p));
-                    }
-                    else if (type == RE::SCRIPT_PARAM_TYPE::kActorValue) {
-                        params += Util::AvName(static_cast<RE::ActorValue>(reinterpret_cast<std::uintptr_t>(p)));
-                    }
-                    else if (IsIntegerParam(type)) {
-                        params += std::to_string(static_cast<std::int32_t>(reinterpret_cast<std::uintptr_t>(p)));
-                    }
-                    else {
-                        // Strings (a script variable's name) and the rest: the
-                        // value is a pointer, so print the type, not an address.
-                        params += std::format("<type {}>", static_cast<std::uint32_t>(type));
-                    }
-                }
-                const char* subject = d.object.get() == RE::CONDITIONITEMOBJECT::kTarget ? "T." : "";
-                const auto op = static_cast<std::size_t>(d.flags.opCode);
-                const std::string value = d.flags.global ? FormLabel(d.comparisonValue.g)
-                                                         : std::format("{}", d.comparisonValue.f);
-                out += std::format("{}{}({}){}{}", subject, fn && fn->functionName ? fn->functionName : std::to_string(fid).c_str(),
-                    params, op < std::size(kOps) ? kOps[op] : "?", value);
-                if (item->next) out += d.flags.isOR ? " OR " : " AND ";
-            }
-            return out;
-        }
-
         // ---- gap 5: the description with its numbers ------------------------
         std::string FillText(std::string_view text, float mag, std::uint32_t dur, std::uint32_t area)
         {
@@ -302,16 +215,18 @@ namespace Huginn::Effect
                 std::string oldCols;  // effectIndex..effectDescription (18), each with its comma
                 std::string newCols;  // effectPlugin..effectKept (12), each with its comma
             };
-            auto effectParts = [&](std::size_t index, const EffectRow& row, const RE::Effect* e, std::string_view payloadOf,
+            auto effectParts = [&](std::size_t index, const EffectRow& row, const RE::Effect* /*item*/, std::string_view payloadOf,
                                    std::string_view payloadSpell, const RowOutcome* outcome) {
                 const auto& mg = read.effects[row.effect];
                 const auto& cls = classes[row.effect];
                 const auto* mgef = read.mgefs[row.effect];
+                // The reader's condition text (EffectReader FormatConditions),
+                // the same strings the mapper reads (core/EffectConditions.h).
                 std::string conds;
-                if (mgef && mgef->conditions.head) conds = "mgef[" + FormatConditions(mgef->conditions) + "]";
-                if (e && e->conditions.head) {
+                if (!mg.conditions.empty()) conds = "mgef[" + mg.conditions + "]";
+                if (!row.conditions.empty()) {
                     if (!conds.empty()) conds += ' ';
-                    conds += "item[" + FormatConditions(e->conditions) + "]";
+                    conds += "item[" + row.conditions + "]";
                 }
                 const auto sc = scripts.find(mg.formId);
                 Parts p;
@@ -326,7 +241,7 @@ namespace Huginn::Effect
                     payloadOf, payloadSpell, Name(outcome ? outcome->cls.col : cls.col),
                     outcome && outcome->carrier ? std::string_view("carrier")
                                                 : RouteName(outcome ? outcome->cls.route : cls.route),
-                    outcome ? (outcome->kept ? "1" : "0") : "");
+                    outcome ? (outcome->kept ? "1" : outcome->perk ? "perk" : outcome->bane ? "bane" : "0") : "");
                 return p;
             };
 

@@ -100,6 +100,27 @@
 //     target-harm column (SelfHarmColumn below; applied per item row in
 //     MapItem, so ClassifyEffect still returns the MGEF's own column). The
 //     reference has no such rule; make_fixtures.py applies it to the oracle.
+//   0.23.30 (the "tables" PR, from the 2026-10-10 LoreRim dump audit;
+//   make_fixtures.py mirrors each as a dev: note):
+//   - a script-like effect whose description hits a no-column rule is
+//     unmapped before any keyword or name ("recharge ... enchantments": the
+//     Varla Stone's MagicAlchRestoreMagicka at 1e9; spell power);
+//   - a family tag (Nox_KW_*, or a restore/damage/control/influence/stealth/
+//     fortify_vital keyword on a script-like effect) yields to a description
+//     naming another family unless the name agrees with the tag (Dispel
+//     Magic, Aura: Might, Aura: Thorns, Race Against Time, Consecrate Dead);
+//   - a "Turn Undead" name over a health carrier whose text deals damage is
+//     damage (8717D82B; its undead gate then makes it a bane row in MapItem);
+//   - an engine cure archetype whose text says "dispel" is cure_dispel
+//     (LoreRim's Potion of Dispel, archetype CureDisease);
+//   - a script effect on a corpse (GetDead()==1) tagged MagicSummon with no
+//     text is a helper (Requiem's reanimate ash pile, 000F52AB);
+//   - narrowed names: "mark" only as ^(clear )?mark (not Holy Fire Mark),
+//     "knock" not a knockup/knockback (a stagger now), "transmut" only the ore
+//     spell; descriptions: "unlock" needs a lock/door/chest/container,
+//     "reducing its physical damage" weakens, "immunity to stagger" resists
+//     stagger, "swim faster" is speed, "taking N% more damage" (and a hostile
+//     effect) is a weakness, "deal N% more attack damage" is not damage.
 //   Spec names with no column of their own fall back to their family column
 //   (weaken_combat_crit -> weaken_combat; Dragonrend -> shout; a detrimental
 //   warmth effect -> survival; Cure Addiction -> cure; weakness to disease ->
@@ -109,6 +130,7 @@
 // =============================================================================
 
 #include "core/EffectColumns.h"
+#include "core/EffectConditions.h"
 #include "core/EffectRecords.h"
 
 #include <cstdint>
@@ -173,9 +195,25 @@ namespace Huginn::Core::Effect
         bool zeroPercent = false;      // ... and that number is a percentage (<80>%)
         bool zeroNamed = false;        // its name says the same family as its data column
         bool zeroDescEmpty = false;    // it has no description at all
+        // What the MGEF's own conditions say about when it fires (perk, chance,
+        // target family: core/EffectConditions.h); an effect item's conditions
+        // are added per row (MapItem).
+        Gate gate;
 
         [[nodiscard]] bool Mapped() const noexcept { return col != Col::_Count; }
     };
+
+    /// The effect lands on its user: self-delivered, or a summon or bound
+    /// weapon (the summoner). An unprefixed HasPerk then tests the player.
+    [[nodiscard]] bool SubjectIsUser(const MagicEffectRecord& effect) noexcept;
+
+    /// The effect lands on others (not self-delivered): a target-family gate
+    /// on it is a bane.
+    [[nodiscard]] bool LandsOnOthers(const MagicEffectRecord& effect) noexcept;
+
+    /// Columns that already name their target, so a target-family gate on
+    /// them is what they mean, not a bane (turn undead, banish, sun damage).
+    [[nodiscard]] bool NamesItsTarget(Col c) noexcept;
 
     /// The family a column belongs to for the hidden-row checks: its family
     /// column, or itself for a family or a family-less specific.

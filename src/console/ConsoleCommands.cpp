@@ -1468,6 +1468,37 @@ namespace Huginn::Console
       if (!entry || !form) return;
 
       auto* player = RE::PlayerCharacter::GetSingleton();
+      // 0.23.30: rows that count only with a perk (beside cap(i), not in it),
+      // and whether the player has it; then the cap with the ones met.
+      if (!entry->perkRows.empty()) {
+         for (const auto& prow : entry->perkRows) {
+            std::string perks;
+            bool met = !prow.perks.empty();
+            for (const auto& clause : prow.perks) {
+               bool any = false;
+               std::string alts;
+               for (const auto perkId : clause) {
+                  const bool has = Effect::HasPerkId(player, perkId);
+                  any = any || has;
+                  const auto* perk = perkId ? RE::TESForm::LookupByID<RE::BGSPerk>(perkId) : nullptr;
+                  const char* pn = perk ? perk->GetName() : nullptr;
+                  alts += std::format("{}{:08X}{}{} ({})", alts.empty() ? "" : " or ", perkId, pn && *pn ? " " : "",
+                     pn ? pn : "", has ? "has" : "lacks");
+               }
+               met = met && any;
+               perks += (perks.empty() ? "" : " and ") + alts;
+            }
+            const auto msg = std::format("[cap]   perk row: {}={:.4g} needs {} -> {}", Core::Effect::Name(prow.col), prow.v,
+               perks, met ? "counts" : "does not count");
+            Print(msg.c_str());
+            logger::info("{}"sv, msg);
+         }
+         const auto adjusted = Effect::PerkAdjustedCap(*entry, player);
+         const auto msg = std::format("[cap]   with the player's perks: {}", Core::Effect::FormatCap(adjusted));
+         Print(msg.c_str());
+         logger::info("{}"sv, msg);
+      }
+
       auto* bound = form->As<RE::TESBoundObject>();
       if (!player || !bound) return;
       const auto state = State::StateManager::GetSingleton().GetPlayerState();

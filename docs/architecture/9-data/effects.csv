@@ -185,8 +185,8 @@ kind_scroll,item_feature,,form kind: Scroll. P (one-hot).,V:101 / S:285 / L:1173
 kind_staff,item_feature,,form kind: Weapon with weaponType Staff (8). P (one-hot).,V:87 / S:302 / L:2518,no,magicka_deficit,"Staves are 90-98% enchanted: their effect columns come from the enchantment, described as spells."
 kind_potion,item_feature,,form kind: Potion. P (one-hot).,V:211 / S:238 / L:315,no,,
 kind_poison,item_feature,,form kind: Poison (applied to a weapon). P (one-hot).,V:82 / S:97 / L:122,no,boss_fight; target_humanoid; loadout_one_handed,
-kind_food,item_feature,,form kind: Food. P (one-hot).,V:177 / S:235 / L:397,no,downtime,
-kind_weapon,item_feature,,form kind: Weapon except staff. P (one-hot).,V:3088 / S:6385 / L:10110,no,hands_empty,
+kind_food,item_feature,,form kind: Food. P (one-hot).,V:177 / S:235 / L:397,no,downtime; combat_regen_ok,"combat_regen_ok is a NEGATIVE starting pair (needs.csv: no eating in combat while health regenerates; off while healthRegenSuppressed; 0.23.30). On kind_food only, not restore_health or regen_health: the user, ""natural health regen on LoreRim is very slow; you usually have a potion, spell or food buff running"", so healing food still scores through health_deficit x restore_health."
+kind_weapon,item_feature,,form kind: Weapon except staff. P (one-hot).,V:3088 / S:6385 / L:10110,no,hands_empty; magicka_deficit,"magicka_deficit (0.23.30): needs.csv names ""staff / weapon (attack that costs no magicka)"". Caveat (the correlation verifier): the support is one item, the quarterstaff (57 of 62 picks), in a cast-then-weapon sequence, so the casts before the pick produce the deficit (doc 11); association confirmed, causality not."
 kind_ammo,item_feature,,form kind: Ammo. P (one-hot).,V:37 / S:38 / L:169,no,enemy_far; target_dragon; ammo_low; loadout_archery; mounted; target_giant,
 kind_armour,item_feature,,form kind: Armor. P (one-hot).,V:3317 / S:6094 / L:8577,no,,
 kind_soulgem,item_feature,,form kind: SoulGem. P (one-hot).,V:19 / S:19 / L:39,no,,

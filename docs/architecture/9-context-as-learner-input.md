@@ -253,7 +253,7 @@ Measured 2026-10-07 from `hg dump all` and `hg dump races` on vanilla+, Simonrim
   | LoreRim, with the spell-tome filter and effect descriptions | 98.9% (script-only rows 88.5%) |
 
   What stays unmapped is one-off mechanics (White Phial, spell-copying, walls, curses).
-- **Pairs:** 93 needs × 243 columns. 264 pairs, about 1.2%, are obvious and start nonzero (263 until 0.23.19 added deep_water_ahead × utility_water_breathing, Waterbreathing before a dive; 266 until 0.23.16 dropped diseased × resist_disease: resisting a disease does not cure one already caught; 265 until 0.23.17 dropped cold × resist_frost and cold × armour_warm: the Survival cold meter is restored by soups (Restore Cold), while warm apparel, warming spells and warm food (a soup's Fortify Warmth) raise the warmth rating, `warmth_deficit`, and Resist Frost lowers frost damage only; confirmed via LoreRim Discord, 2026-10-09). `tests/core/ObviousPairsTests.cpp` pins the count and these removals.
+- **Pairs:** 94 needs × 243 columns. 266 pairs, about 1.2%, are obvious and start nonzero (264 until 0.23.30 added magicka_deficit × kind_weapon and the negative combat_regen_ok × kind_food, "no eating in combat" unless health regeneration is suppressed; 263 until 0.23.19 added deep_water_ahead × utility_water_breathing, Waterbreathing before a dive; 266 until 0.23.16 dropped diseased × resist_disease: resisting a disease does not cure one already caught; 265 until 0.23.17 dropped cold × resist_frost and cold × armour_warm: the Survival cold meter is restored by soups (Restore Cold), while warm apparel, warming spells and warm food (a soup's Fortify Warmth) raise the warmth rating, `warmth_deficit`, and Resist Frost lowers frost damage only; confirmed via LoreRim Discord, 2026-10-09). `tests/core/ObviousPairsTests.cpp` pins the count and these removals.
 - **Reused actor values are resolved in layers.** Simonrim's OneHandedSkillAdvance means Burden; LoreRim's Fame carries Fear and fire damage. So `*SkillAdvance`, Fame, Infamy, Mood, Morality, `Variable##` and VoicePoints are never trusted alone. The layers, first match wins:
   1. Keyword table. Editor IDs are language-independent; this alone resolves 85–89%.
   2. Per-load-order override file, keyed by plugin and local FormID.
@@ -274,7 +274,7 @@ Measured 2026-10-07 from `hg dump all` and `hg dump races` on vanilla+, Simonrim
   - the dense block starts at zero everywhere, held there by shrinkage;
   - LoreRim's extra elements (arcane, entropic, shadow, blood) fold into magic until a need reads them;
   - override files ship for known lists, with a generator for any other;
-  - hidden perk-conditional effects (Impact stagger) are not used for now.
+  - perk-conditional effects (Impact stagger, Deep Freeze, Respite, the "(Improved)" rows), hidden or visible, are not in cap(i): since 0.23.30 they ride beside it with their perk FormIDs, and count only for a player with the perk (`core/EffectConditions.h`, `PerkAdjustedCap`).
 
 **Dump gaps**, to batch into one update when the real extractor is built:
 1. the effect's magic school (MGEF `associatedSkill`);

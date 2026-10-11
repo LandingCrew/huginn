@@ -77,6 +77,31 @@ _set('fortify_combat_power_attack', r'power attack\w* (stamina )?cost|power atta
 _k = _idx('NONEHIT', 'spell ?power')
 _none = _desc.DESC_TABLE.pop(_k)
 _desc.DESC_TABLE.insert(_idx('fortify_skill_speech') + 1, _none)
+# Deviations (0.23.30, the "tables" PR): narrowed and added description rules, as the C++.
+_set('utility_unlock', r'opening locks|opens? (a |the )?locks?\b|\bunlock\w*\b.{0,30}\b(locks?|doors?|chests?|containers?)\b')
+_set('cure_dispel', _desc.DESC_TABLE[_idx('cure_dispel')][0] + '|effects (are|is) dispelled')
+_desc.DESC_TABLE.insert(_idx('utility_size') + 1, (r'recharges? .{0,40}enchant', 'NONEHIT'))
+_k = _idx('DMG')
+_desc.DESC_TABLE[_k] = (_desc.DESC_TABLE[_k][0].replace(
+    '(?<!double )damage', '(?<!double )(?<!more attack )(?<!more physical )(?<!more melee )damage'), 'DMG')
+_k = _idx('control_stagger', 'flying')
+_desc.DESC_TABLE.insert(_k, (r'immun\w* to stagger|resist\w* (to )?stagger', 'defense_resist_stagger'))
+_k = _idx('movement_speed', 'faster')
+_desc.DESC_TABLE[_k] = (_desc.DESC_TABLE[_k][0].replace('(move|moving|run|running|sprint', '(move|moving|run|running|swim|swimming|sprint'), 'movement_speed')
+_set('TAKEMORE', r'^take(s)? (double|twice the|N% more|more) damage|\btaking (double|twice the|N% more|more) (physical )?damage')
+_k = _idx('ATKDMG')
+_desc.DESC_TABLE[_k] = (_desc.DESC_TABLE[_k][0] + r'|(reduc|lower)\w* (its |their |the target.s )?(physical|melee|weapon) damage', 'ATKDMG')
+# ... and narrowed name rules: "mark" only as Mark (and Recall), "knock" not a knockup, "transmut"
+# only the ore spell; a knockup / knockback name is a stagger.
+for _i, (_pt, _sp) in enumerate(cap.NAME_TABLE):
+    if _sp == 'utility_teleport':
+        cap.NAME_TABLE[_i] = (_pt.replace(r'mark\b', r'^(clear )?mark\b'), _sp)
+    elif _sp == 'utility_unlock':
+        cap.NAME_TABLE[_i] = (r'unlock|open lock|\bknock\b(?! ?(back|down|up|out))', _sp)
+    elif _sp == 'utility_transmute':
+        cap.NAME_TABLE[_i] = (r'^(master )?transmute( (mineral )?ore)?$', _sp)
+    elif _sp == 'control_stagger':
+        cap.NAME_TABLE[_i] = (_pt.replace('knockdown|', 'knock ?(up|back|down)|'), _sp)
 assert any('vulnerable to soul' in pt for pt, sp in _desc.DESC_TABLE)
 assert any('decreas' in pt for pt, sp in _desc.DESC_TABLE if sp == 'WEAK')
 _CATCHALL = cap.NAME_TABLE[-3][0]  # the generic damage rule ("disintegrat|damage health|...")
@@ -114,7 +139,7 @@ def desc_col(r):
     if not ds or ds == 'NONEHIT':
         return ''
     if ds == 'TAKEMORE':  # Deviation (round 4): "take double damage" -- a drawback unless detrimental
-        return 'weakness_armor' if r['det'] else ''
+        return 'weakness_armor' if (r['det'] or str(r.get('hostile', '0')) == '1') else ''  # 0.23.30: or hostile
     if r['det']:
         for a, b in (('resist_', 'weakness_'), ('fortify_combat_', 'weaken_combat_'), ('defense_armor', 'weakness_armor')):
             if ds.startswith(a):
@@ -189,6 +214,34 @@ def oracle(r):
     if spec == 'NONEHIT':
         spec, src = None, 'unmapped'
     note = ''
+    desc_text = r['effectDescription'] if isinstance(r['effectDescription'], str) else ''
+    # Deviation (0.23.30): on a script-like effect a description that says no column applies
+    # (spell power, "recharge the enchantments of your weapons") overrides a keyword or name.
+    if script_like(r) and src in ('keyword', 'name') and desc_none(desc_text):
+        return '', 'unmapped', 'dev:desc-none-veto'
+    # Deviation (0.23.30): a family tag (a Nox_KW_* keyword, or a restore / damage / control /
+    # influence / stealth / fortify_vital keyword on a script-like effect) yields to a description
+    # naming another family, unless the effect's name says the tag's family.
+    if src == 'keyword' and script_like(r) and desc_text.strip():
+        kwc = to_col(spec, el)
+        hit = next((p for p, sp in cap.KW_TABLE if re.search(p, r['effectKeywords'])), None)
+        hits = [k for k in r['effectKeywords'].split(';') if k and hit and re.search(hit, k)]
+        nox_only = bool(hits) and all(k.startswith('Nox_KW_') for k in hits)
+        fam = spec.split('_')[0] if not spec.startswith('fortify_vital') else 'fortify_vital'
+        if nox_only or fam in ('restore', 'damage', 'control', 'influence', 'stealth', 'fortify_vital'):
+            nc = name_col(r['effectName'])
+            if not (nc and kwc and famkey(nc) == famkey(kwc)):
+                dc = desc_col(r)
+                if dc and famkey(dc) != famkey(kwc):
+                    return dc, 'desc', 'dev:family-tag-desc'
+    # Deviation (0.23.30): a Turn Undead name over a health carrier whose text deals damage is damage.
+    if src == 'name' and spec == 'influence_turn_undead' and not script_like(r):
+        dc = desc_col(r)
+        if dc.startswith('damage'):
+            return dc, 'desc', 'dev:turn-undead-damage'
+    # Deviation (0.23.30): an engine cure archetype whose text says it dispels is a dispel.
+    if src == 'data' and spec and spec.startswith('cure') and spec != 'cure_dispel' and desc_col(r) == 'cure_dispel':
+        return 'cure_dispel', 'data', 'dev:cure-dispel'
     # Deviation (round 2): on a script effect, the generic damage name rule yields to the
     # description when it says something (NONE -> no column).
     if src == 'name' and spec == 'damage_health' and script_like(r):
@@ -506,9 +559,29 @@ A8061EFB 040275B7 FE715828 673727C3 8D005FD0 2804F8FC 8702F1C2 00028532 00027EB6
 def main():
     random.seed(20261008)
     out_dir = repo + '/tests/core/fixtures/'
-    for arg in sys.argv[2:]:
+    # --refresh (0.23.30): rewrite the expectations of the fixtures in place, from their own
+    # rows -- every item kept, none sampled -- for a rule change after the source dumps are
+    # gone. The expected values were always graded over the fixture's own items, so a refresh
+    # under an unchanged oracle reproduces the files.
+    refresh = '--refresh' in sys.argv[2:]
+    args = [a for a in sys.argv[2:] if a != '--refresh']
+    if refresh and not args:
+        args = [f'{lst}={out_dir}effects_{lst}.csv' for lst in ('vanilla', 'simonrim', 'lorerim')]
+    for arg in args:
         lst, path = arg.split('=', 1)
         base.DUMPS[lst] = path
+        if refresh:
+            # the fixture's columns are a subset of a dump's: fill the ones the loader reads
+            src = pd.read_csv(path, dtype=str, keep_default_na=False, encoding='utf-8')
+            missing = [c for c in base.NUM if c not in src.columns]
+            if missing:
+                import tempfile
+                for c in missing:
+                    src[c] = ''
+                tmp = tempfile.NamedTemporaryFile('w', suffix='.csv', delete=False, newline='', encoding='utf-8')
+                src.to_csv(tmp, index=False)
+                tmp.close()
+                base.DUMPS[lst] = tmp.name
         d = base.load(lst)
         if 'payloadOf' not in d.columns:
             d['payloadOf'] = ''
@@ -517,7 +590,7 @@ def main():
         direct = d[(d.payloadOf == '')]
         groups = {k: g for k, g in direct.groupby(['kind', 'formID'], sort=False)}
         # one oracle call per MGEF
-        KEY = ['effectFormID', 'effectName', 'arch', 'primaryAV', 'resistAV', 'det', 'recover', 'effectKeywords', 'effectDescription']
+        KEY = ['effectFormID', 'effectName', 'arch', 'primaryAV', 'resistAV', 'det', 'hostile', 'recover', 'effectKeywords', 'effectDescription']
         u = d[d.hasEff][KEY].drop_duplicates('effectFormID')
         orc = {}
         for _, r in u.iterrows():
@@ -583,6 +656,8 @@ def main():
             random.shuffle(ks)
             for k in ks[:n]:
                 seen.add(k); pick.append(k)
+        if refresh:
+            pick = list(groups)
         pick.sort(key=lambda k: groups[k].rowno.iloc[0])
 
         keep_cols = [c for c in d.columns if c in (
@@ -683,6 +758,8 @@ def main():
                             pc, psrc, _ = orc[p['effectFormID']]
                             if pc and psrc != 'helper':
                                 pd_ = dict(p)
+                                # 0.23.30: a payload is graded over its wrapper's duration
+                                pd_['duration'] = str(max(int(num(pd_['duration'])), int(num(r['duration']))))
                                 z = zero_case(pd_, pc, psrc)
                                 proute = 'data' if (psrc in ('data', 'keyword') and not script_like(pd_)) else psrc
                                 if z and z[0] in ('unmapped', 'unresolved'):
