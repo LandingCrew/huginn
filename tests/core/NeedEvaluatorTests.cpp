@@ -137,12 +137,13 @@ TEST_CASE("thirst: the DVSMP stage / 5, gated on survival, clamped; no meter")
     CHECK(In(s, NeedId::thirst) == doctest::Approx(0.2));
 }
 
-// 0.23.31: hunger's and thirst's curves come from the survival mods' stage
+// 0.23.31: hunger's and thirst's centre comes from the survival mods' stage
 // tables (needs.csv notes): stage 3 is the first with a regeneration penalty
 // in both (Hungry blocks health regen, Thirsty halves stamina regen), so it
-// must reach the episode onset (0.5) and stage 2 must not. Stages either side
-// of the centre read 0.25 / 0.75; the bonus stages (0 Well Fed / Quenched,
-// 1 Fed / Hydrated) stay under one signature step.
+// must reach the episode onset (0.5) and stage 2 must not. The slope is
+// chosen so stages either side of the centre read 0.25 / 0.75; the bonus
+// stages (0 Well Fed / Quenched, 1 Fed / Hydrated) stay under one signature
+// step.
 TEST_CASE("survival stage curves: the first penalty stage is on, the stage before it is not")
 {
     for (const NeedId id : { NeedId::hunger, NeedId::thirst }) {

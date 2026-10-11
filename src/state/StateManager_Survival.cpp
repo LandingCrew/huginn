@@ -95,10 +95,12 @@ namespace Huginn::State
       // Its DLL looks the six stage spells up by these FormIDs too
       // (DVSMP_Survival_Tweaks.md, "Stage spells are still looked up by FormID
       // (0x80F-0x814)"), and keeps exactly one on the player. The stage is
-      // read from which one is ACTIVE on the player (PollPlayerMagicEffects):
-      // its "Thirst - <stage>" effect is on the Active Effects page, and the
-      // spells' own conditions (not a vampire, not a lich) switch it off when
-      // thirst does not apply.
+      // read from which one is ACTIVE on the player (PollPlayerMagicEffects).
+      // Fair to read: the player sees the stage name (DVSMP's HUD message and
+      // the "Thirst - <stage>" entry on the Active Effects page; the
+      // regen-loss effects themselves are Hide-in-UI). The spells' own
+      // conditions (not a vampire, not a lich) switch it off when thirst does
+      // not apply.
       // =========================================================================
 
       constexpr std::string_view dvsmpPlugin = "DVSsurvivaltweaks.esp";
@@ -119,9 +121,17 @@ namespace Huginn::State
       logger::info("[StateManager] Thirst: no thirst system found (DVSMP not installed)"sv);
       }
 
-      // R3 regen_suppressed: where the survival need-stage abilities come from.
-      m_ccSurvivalFile = dataHandler->LookupModByName(survivalPlugin);
-      m_dvsmpFile = dataHandler->LookupModByName(dvsmpPlugin);
+      // R3 regen_suppressed: where the survival abilities come from. Only a
+      // LOADED file: one in the data folder but not in the load order keeps
+      // compile index 0xFF, and IsFormInMod would then match FF-prefixed
+      // (runtime) forms, or slot 0 of the light-file FE range.
+      const auto loaded = [](const RE::TESFile* f) -> const RE::TESFile* {
+      if (!f || f->GetCompileIndex() == 0xFF) return nullptr;
+      if (f->IsLight() && (f->GetCompileIndex() != 0xFE || f->GetSmallFileCompileIndex() > 0xFFF)) return nullptr;
+      return f;
+      };
+      m_ccSurvivalFile = loaded(dataHandler->LookupModByName(survivalPlugin));
+      m_dvsmpFile = loaded(dataHandler->LookupModByName(dvsmpPlugin));
       if (auto* lowerRegen = dataHandler->LookupForm<RE::SpellItem>(0x982, survivalPlugin)) {
       m_ccLowerRegenSpellID = lowerRegen->GetFormID();
       }

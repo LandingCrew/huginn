@@ -272,7 +272,7 @@ namespace Huginn::Console
          s.survival ? "on" : "off", s.hungerStage,
          sensors.thirstDetected ? std::format("stage {} (DVSMP)", s.thirstStage) : std::string("no thirst system"),
          s.regenSuppressed ? "yes" : "no", sensors.survivalRegen.Any() ? "yes" : "no",
-         s.healthRegenSuppressed ? "yes" : "no", sensors.survivalRegen.health ? "yes" : "no");
+         s.healthRegenSuppressed ? "yes" : "no", sensors.survivalRegen.healthBlocked ? "yes" : "no");
       Print(survival.c_str());
       logger::info("[Console] {}"sv, survival);
    }

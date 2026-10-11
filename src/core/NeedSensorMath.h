@@ -14,8 +14,9 @@
 //   EncumbranceRatio
 //   LowersRegen     regen_suppressed's test on one active effect on a
 //                   regeneration-rate actor value (0.23.31)
-//   RegenDebuffs    those effects per vital: regen_suppressed reads any,
-//                   the snapshot's healthRegenSuppressed health alone
+//   RegenDebuffs    those effects per vital: regen_suppressed reads any;
+//                   healthBlocked (a cut of kRegenBlockCut or more) feeds
+//                   the snapshot's healthRegenSuppressed
 //
 // Times are seconds on any monotonic clock (the caller passes steady_clock
 // seconds); nothing here reads a clock.
@@ -149,14 +150,22 @@ namespace Huginn::Core::Needs
         Stamina,
     };
 
+    /// A cut this large on a regeneration rate blocks it: HealRateMult is a
+    /// percentage (100 = normal), so -100 leaves nothing. LoreRim's Hungry
+    /// is exactly 100, Famished 200, Starving and Severely Dehydrated 400;
+    /// CC's Freezing Water is 100 while swimming and 25 while only wet.
+    inline constexpr float kRegenBlockCut = 100.0f;
+
     /// Regeneration debuffs per vital, from LowersRegen effects. Per vital
     /// because "no eating in combat" lifts only when HEALTH regen is blocked
     /// (the user: "should be disabled if hp regen is blocked due to thirst or
-    /// food"), while regen_suppressed counts any vital (Thirsty lowers
-    /// stamina regen, Tired magicka regen).
+    /// food"), while regen_suppressed counts any vital and any size of cut
+    /// (Thirsty lowers stamina regen, Tired magicka regen, Freezing Water
+    /// while wet health regen by 25%).
     struct RegenDebuffs
     {
-        bool health = false;
+        bool health = false;         // health regen lowered at all
+        bool healthBlocked = false;  // ... by kRegenBlockCut or more
         bool magicka = false;
         bool stamina = false;
 
@@ -165,7 +174,10 @@ namespace Huginn::Core::Needs
         {
             if (!LowersRegen(detrimental, magnitude)) return;
             switch (vital) {
-                case RegenVital::Health: health = true; break;
+                case RegenVital::Health:
+                    health = true;
+                    if (std::fabs(magnitude) >= kRegenBlockCut) healthBlocked = true;
+                    break;
                 case RegenVital::Magicka: magicka = true; break;
                 case RegenVital::Stamina: stamina = true; break;
                 case RegenVital::None: break;

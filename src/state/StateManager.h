@@ -602,10 +602,11 @@ namespace Huginn::State
       RE::TESGlobal* m_thirstMaxValue = nullptr;  // 0x802 Survival_ThirstMaxValue
       bool m_thirstInstalled = false;
 
-      // R3 regen_suppressed (0.23.31): the files the survival need-stage
-      // abilities come from (CC Survival's hunger / exhaustion / cold stages,
-      // DVSMP's thirst stages), and CC Survival's always-on "Lower
-      // Regeneration Rates" (local 0x982), which is no stage.
+      // R3 regen_suppressed (0.23.31): the files the survival abilities come
+      // from (CC Survival's hunger / exhaustion / cold stages, Freezing Water
+      // and Addled; DVSMP's thirst stages), null unless loaded, and CC
+      // Survival's always-on "Lower Regeneration Rates" (local 0x982), which
+      // is left out.
       const RE::TESFile* m_ccSurvivalFile = nullptr;
       const RE::TESFile* m_dvsmpFile = nullptr;
       RE::FormID m_ccLowerRegenSpellID = 0;

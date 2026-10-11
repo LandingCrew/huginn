@@ -123,13 +123,17 @@ namespace Huginn::State
     float pendingStamina = 0.0f;
 
     // R3 thirst and regen_suppressed (0.23.31): both come from survival
-    // need-stage ABILITIES, which the walk below otherwise skips. The forms
-    // they are matched against are cached with the survival globals.
+    // ABILITIES, which the walk below otherwise skips. The forms they are
+    // matched against are cached with the survival globals.
     CacheSurvivalGlobals();
     int thirstStage = 0;
     Core::Needs::RegenDebuffs survivalRegen;
     const char* survivalRegenSource = nullptr;  // the first such spell, for the log
-    const auto isSurvivalStageSpell = [this](const RE::MagicItem* s) {
+    // Any ability defined in CC Survival's esl or DVSMP's esp: the need
+    // stages, and two that are not stages but do lower regen -- Freezing
+    // Water (health regen -100 swimming, -25 wet) and Addled (magicka and
+    // stamina regen -30).
+    const auto isSurvivalSpell = [this](const RE::MagicItem* s) {
       const RE::FormID id = s->GetFormID();
       if (id == m_ccLowerRegenSpellID) return false;  // always on in CC Survival: no stage
       return (m_ccSurvivalFile && m_ccSurvivalFile->IsFormInMod(id)) ||
@@ -167,13 +171,17 @@ namespace Huginn::State
         // R3, ahead of the ability skip: the survival need stages are
         // abilities. An inactive effect (its conditions fail: thirst on a
         // vampire) was skipped above, so only a stage that applies counts.
-        // Thirst: which DVSMP stage ability is on. regen_suppressed: a stage
-        // ability that lowers a regeneration rate -- LoreRim's Hungry and
-        // worse put Health Regen Loss on HealRateMult (100/200/400), Tired
-        // and worse Reduced Magicka Regeneration, Thirsty and worse Stamina
-        // Regen Loss, Severely Dehydrated Health Regen Loss 400. Only stage
-        // abilities: a permanent one (the Atronach stone, Requiem's vampire
-        // stages, perks, traits) would pin the need on for good.
+        // Thirst: which DVSMP stage ability is on. regen_suppressed: a
+        // survival ability that lowers a regeneration rate -- LoreRim's
+        // Hungry and worse put Health Regen Loss on HealRateMult
+        // (100/200/400), Tired and worse Reduced Magicka Regeneration,
+        // Thirsty and worse Stamina Regen Loss, Severely Dehydrated Health
+        // Regen Loss 400; Freezing Water and Addled too. Fair to read: those
+        // regen-loss effects are Hide-in-UI, but the player sees the stage
+        // name (the HUD message and its Active Effects entry, "Hunger -
+        // Hungry") and their own regeneration stop on the vitals bars. Only
+        // survival abilities: a permanent one (the Atronach stone, Requiem's
+        // vampire stages, perks, traits) would pin the need on for good.
         if (spell && spell->GetSpellType() == RE::MagicSystem::SpellType::kAbility) {
           if (m_thirstInstalled) {
             for (std::size_t i = 0; i < m_thirstStageSpells.size(); ++i) {
@@ -183,7 +191,7 @@ namespace Huginn::State
             }
           }
           const auto vital = regenVitalOf(baseEffect->data.primaryAV);
-          if (vital != Core::Needs::RegenVital::None && isSurvivalStageSpell(spell)) {
+          if (vital != Core::Needs::RegenVital::None && isSurvivalSpell(spell)) {
             const bool before = survivalRegen.Any();
             survivalRegen.Add(vital, baseEffect->IsDetrimental(), effect->magnitude);
             if (!before && survivalRegen.Any()) survivalRegenSource = spell->GetName();
@@ -678,8 +686,8 @@ namespace Huginn::State
       m_lastThirstStage = thirstStage;
     }
     if (survivalRegen != m_lastSurvivalRegen) {
-      logger::info("[StateManager] Survival regen debuff: health={} magicka={} stamina={} ({})"sv,
-        survivalRegen.health, survivalRegen.magicka, survivalRegen.stamina,
+      logger::info("[StateManager] Survival regen debuff: health={} (blocked={}) magicka={} stamina={} ({})"sv,
+        survivalRegen.health, survivalRegen.healthBlocked, survivalRegen.magicka, survivalRegen.stamina,
         survivalRegenSource ? survivalRegenSource : "-");
       m_lastSurvivalRegen = survivalRegen;
     }

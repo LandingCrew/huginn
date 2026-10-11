@@ -53,9 +53,9 @@ namespace Huginn::State
       float restoreStaminaPending = 0.0f;
       // PollPlayerMagicEffects (0.23.31): the active DVSMP thirst stage, 0-5
       // (0 also when no thirst system is installed: thirstDetected says
-      // which), and a survival need-stage ability debuffing a regeneration
-      // rate, per vital (Hungry: Health Regen Loss on HealRateMult; Thirsty:
-      // Stamina Regen Loss). The old walk skips abilities, so
+      // which), and a survival ability debuffing a regeneration rate, per
+      // vital (Hungry: Health Regen Loss on HealRateMult; Thirsty: Stamina
+      // Regen Loss; also Freezing Water and Addled). The old walk skips abilities, so
       // PlayerActorState's regen flags never see these.
       int thirstStage = 0;
       bool thirstDetected = false;

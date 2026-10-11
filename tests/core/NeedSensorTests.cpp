@@ -835,16 +835,33 @@ TEST_CASE("regen debuffs per vital: health is its own signal, any vital is regen
     tired.Add(RegenVital::Magicka, true, 100.0f);
     CHECK(tired.Any());
     CHECK_FALSE(tired.health);
-    // Hungry: Health Regen Loss 100 on HealRateMult -- health.
+    // Hungry: Health Regen Loss 100 on HealRateMult -- health, blocked.
     RegenDebuffs hungry;
     hungry.Add(RegenVital::Health, true, 100.0f);
     CHECK(hungry.health);
+    CHECK(hungry.healthBlocked);
     CHECK(hungry.Any());
+    // Freezing Water while only wet: health regen -25%. Lowered, not
+    // blocked: regen_suppressed, not healthRegenSuppressed.
+    RegenDebuffs wet;
+    wet.Add(RegenVital::Health, true, 25.0f);
+    CHECK(wet.health);
+    CHECK_FALSE(wet.healthBlocked);
+    CHECK(wet.Any());
+    // Swimming in it: -100, blocked, whichever sign the magnitude carries.
+    RegenDebuffs swimming;
+    swimming.Add(RegenVital::Health, true, -100.0f);
+    CHECK(swimming.healthBlocked);
+    // A big cut on another vital never blocks health.
+    RegenDebuffs dehydrated;
+    dehydrated.Add(RegenVital::Stamina, true, 100.0f);
+    CHECK_FALSE(dehydrated.healthBlocked);
     // Severely Dehydrated: stamina 200 and health 400 -- both.
     RegenDebuffs severe;
     severe.Add(RegenVital::Stamina, true, 200.0f);
     severe.Add(RegenVital::Health, true, 400.0f);
     CHECK(severe.health);
+    CHECK(severe.healthBlocked);
     CHECK(severe.stamina);
     CHECK_FALSE(severe.magicka);
     // A placeholder, a buff, or no regen AV at all counts for nothing.

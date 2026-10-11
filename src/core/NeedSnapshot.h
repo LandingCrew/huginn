@@ -87,7 +87,7 @@ namespace Huginn::Core::Needs
         bool drainMagicka = false;
         bool drainStamina = false;
         bool regenSuppressed = false;       // any vital's regeneration lowered
-        bool healthRegenSuppressed = false; // health's alone ("no eating in combat" lifts on it)
+        bool healthRegenSuppressed = false; // health regen debuffed by a spell, potion or disease, or blocked by a survival ability ("no eating in combat" lifts on it)
         float encumbrance = 0.0f;     // inventory weight / carry weight
         int vampireStage = 0;         // 0 = not a vampire, 1-4
 

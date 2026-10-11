@@ -365,11 +365,14 @@ in. What was built: the [implementation map](architecture/9-implementation-map.m
       and hunger crossing 0.5 only at Famished). LoreRim's thirst is DVSMP
       Survival Tweaks (`DVSsurvivaltweaks.esp`): its DLL keeps one of six
       stage abilities on the player (0x80F-0x814); `thirst` reads the active
-      one / 5, like hunger's SMI stage. Both curves are `logistic 0.5 11`,
-      derived from the stage tables in `9-data/needs.csv` (hunger, thirst):
-      stage 3 is the first with a regeneration penalty in both mods, so it
-      reads 0.75 and stage 2 reads 0.25. `regen_suppressed` now also counts a
-      survival stage ability that lowers a regeneration rate: the old walk
+      one / 5, like hunger's SMI stage. Both curves are `logistic 0.5 11`:
+      the centre is derived from the stage tables in `9-data/needs.csv`
+      (hunger, thirst) -- stage 3 is the first with a regeneration penalty in
+      both mods -- and the slope chosen so stage 3 reads 0.75 and stage 2
+      0.25. `regen_suppressed` now also counts a survival ability that lowers
+      a regeneration rate (the stages, Freezing Water, Addled); the
+      snapshot's `healthRegenSuppressed` holds health regen blocked (a cut of
+      100+) or debuffed by a spell, potion or disease. The old walk
       skips abilities, so Hungry's Health Regen Loss (HealRateMult) never
       registered (selection log after trace 05: hunger stage 3 read it at 12%
       of contexts, no more than other stages). `hg needs` prints the stages.
