@@ -849,7 +849,11 @@ FindGathered`, through `RunContext::lookupItem`; data only: the potion just
 drunk is on cooldown and, at full health, filtered, and the scorer never sees
 it), else for an override key from the override's own candidate. This holds
 for every kind of held key: a normal lock, the combat freeze, the Sticky
-activation lock. So the stack
+activation lock. An override key takes the override's own current candidate
+first (only OverrideManager's candidates carry `overrideReason`, the "Low HP" /
+"Poisoned" label), and whatever the source the stored reason is kept when the
+new data has none. Under the combat lock a soul gem the gather no longer
+offers (a reusable gem emptied: its count does not change) counts as gone. So the stack
 count, staff charge and ammo count on the widget move as the player uses them.
 An item nobody gathered this run (gone -- the Gone path frees the key) keeps
 its stored data. The equipped check

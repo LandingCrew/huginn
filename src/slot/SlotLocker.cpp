@@ -48,6 +48,17 @@ namespace Huginn::Slot
             if (held.IsEmpty() || !held.candidate) {
                 return;
             }
+            const auto storedReason = Candidate::GetBase(held.candidate->candidate).overrideReason;
+            const Candidate::CandidateVariant* overrideCurrent = nullptr;
+            if (held.IsOverride()) {
+                for (const auto& ovr : overrides.activeOverrides) {
+                    if (ovr.candidate && Candidate::GetFormID(*ovr.candidate) == held.formID &&
+                        Candidate::GetUniqueID(*ovr.candidate) == held.uniqueID) {
+                        overrideCurrent = &*ovr.candidate;
+                        break;
+                    }
+                }
+            }
             std::optional<Candidate::CandidateVariant> current;
             if (run.lookupItem) {
                 current = run.lookupItem(held.formID, held.uniqueID);
@@ -57,8 +68,10 @@ namespace Huginn::Slot
                 currentKey = Core::ItemKey{ Candidate::GetFormID(*current), Candidate::GetUniqueID(*current), false };
             }
             const auto plan = Core::PlanHeldRefresh(held.formID, held.uniqueID, held.IsPinned(),
-                scoredKeys, currentKey);
-            if (plan.scoredIndex && *plan.scoredIndex < scored.size()) {
+                scoredKeys, currentKey, held.IsOverride(), overrideCurrent != nullptr);
+            if (plan.useOverride) {
+                held.candidate->candidate = *overrideCurrent;
+            } else if (plan.scoredIndex && *plan.scoredIndex < scored.size()) {
                 const auto& sc = scored[*plan.scoredIndex];
                 if (plan.refreshUtility) {
                     held.candidate = sc;
@@ -69,20 +82,14 @@ namespace Huginn::Slot
                 if (plan.refreshScore) {
                     held.score = sc.SlotScore();
                 }
-                return;
-            }
-            if (plan.useCurrent) {
+            } else if (plan.useCurrent) {
                 held.candidate->candidate = std::move(*current);
-                return;
             }
-            if (held.IsOverride()) {
-                for (const auto& ovr : overrides.activeOverrides) {
-                    if (ovr.candidate && Candidate::GetFormID(*ovr.candidate) == held.formID &&
-                        Candidate::GetUniqueID(*ovr.candidate) == held.uniqueID) {
-                        held.candidate->candidate = *ovr.candidate;
-                        return;
-                    }
-                }
+            // Only OverrideManager's candidates carry the reason; a held
+            // override refreshed from anything else must not lose its label.
+            auto& base = Candidate::GetBase(held.candidate->candidate);
+            if (plan.keepOverrideReason && base.overrideReason == Context::ContextReason::None) {
+                base.overrideReason = storedReason;
             }
         }
 

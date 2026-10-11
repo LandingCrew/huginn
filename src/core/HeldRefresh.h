@@ -24,6 +24,11 @@
 //     score the key had;
 //   - else keep everything: nothing fresher exists (the item is gone -- the
 //     Gone path frees the key -- or not gathered at all).
+// An OVERRIDE key is different: only OverrideManager's own candidate carries
+// the override's reason (CandidateBase::overrideReason, the "Low HP" / "Poisoned"
+// / "Underwater" label), and scored or gathered rows carry none. So an override
+// key takes the override's current candidate first, and whatever source is
+// used, the stored reason is kept if the new data has none (keepOverrideReason).
 //
 // Pure: standard library only, host-tested in tests/core/HeldRefreshTests.cpp.
 
@@ -66,18 +71,31 @@ namespace Huginn::Core
         /// Not scored: take the item data only from the current (pre-filter)
         /// lookup.
         bool useCurrent = false;
+        /// An override key: take the data from the override's own current
+        /// candidate (it carries the reason).
+        bool useOverride = false;
         bool refreshUtility = false;
         bool refreshScore = false;
+        /// Keep the stored override reason if the new data carries none.
+        bool keepOverrideReason = false;
 
-        [[nodiscard]] bool Any() const noexcept { return scoredIndex.has_value() || useCurrent; }
+        [[nodiscard]] bool Any() const noexcept { return scoredIndex.has_value() || useCurrent || useOverride; }
     };
 
     /// `current`: the key of what the pre-filter lookup returned for this item,
     /// if anything. Used only when it is exactly this item (form and stack).
+    /// `heldIsOverride`: the key shows an override's item. `overrideCurrent`:
+    /// an active override carries exactly this item right now.
     [[nodiscard]] inline HeldRefreshPlan PlanHeldRefresh(uint32_t formID, uint16_t uniqueID, bool heldPinned,
-        const std::vector<ItemKey>& scored, std::optional<ItemKey> current)
+        const std::vector<ItemKey>& scored, std::optional<ItemKey> current,
+        bool heldIsOverride = false, bool overrideCurrent = false)
     {
         HeldRefreshPlan plan;
+        plan.keepOverrideReason = heldIsOverride;
+        if (heldIsOverride && overrideCurrent && formID != 0) {
+            plan.useOverride = true;
+            return plan;
+        }
         if (const auto s = FindHeldRefresh(formID, uniqueID, scored)) {
             plan.scoredIndex = s;
             const bool ranked = !scored[*s].rememberedOnly;

@@ -634,6 +634,11 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
                           sel[RE::Actor::SlotTypes::kRightHand] == spell;
         } else if (form->Is(RE::FormType::Shout)) {
             st.gone = !player->HasShout(form->As<RE::TESShout>());
+        } else if (form->Is(RE::FormType::SoulGem)) {
+            // A reusable gem (Azura's Star) emptied keeps its count -- no
+            // inventory event says it left -- and the gather skips empty gems.
+            // Not gathered this run = nothing on the key a press can use.
+            st.gone = !Candidate::CandidateGenerator::GetSingleton().FindGathered(formID, uniqueID).has_value();
         } else if (form->Is(RE::FormType::Ammo)) {
             const auto* ammo = player->GetCurrentAmmo();
             st.equipped = ammo && ammo->GetFormID() == formID;

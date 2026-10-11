@@ -61,3 +61,22 @@ TEST_CASE("held refresh: a Remembrance-only scored row gives data, not its unran
     CHECK_FALSE(plan.refreshUtility);
     CHECK_FALSE(plan.refreshScore);
 }
+
+TEST_CASE("held refresh: an override key takes the override's own candidate and keeps its reason")
+{
+    // The magicka override key, held: the potion is also scored, but only the
+    // override's candidate carries "Low MP".
+    const std::vector<ItemKey> scored{ { 0x3EAE1, 0 } };
+    const auto plan = PlanHeldRefresh(0x3EAE1, 0, true, scored, ItemKey{ 0x3EAE1, 0 }, true, true);
+    CHECK(plan.useOverride);
+    CHECK_FALSE(plan.scoredIndex.has_value());
+    CHECK_FALSE(plan.useCurrent);
+    CHECK(plan.keepOverrideReason);
+    // The override no longer carries this item (it ended or moved on): the
+    // scored row refreshes the count, and the stored reason is kept.
+    const auto later = PlanHeldRefresh(0x3EAE1, 0, true, scored, ItemKey{ 0x3EAE1, 0 }, true, false);
+    CHECK(later.scoredIndex.has_value());
+    CHECK(later.keepOverrideReason);
+    // An ordinary key never keeps a reason it does not have.
+    CHECK_FALSE(PlanHeldRefresh(0x3EAE1, 0, false, scored, std::nullopt).keepOverrideReason);
+}

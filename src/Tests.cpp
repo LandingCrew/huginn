@@ -15,6 +15,7 @@
 #include "learning/ScoredCandidate.h"
 #include "learning/ScorerSettings.h"   // MINIMUM_UTILITY — the floor test 6i is about
 #include "candidate/CandidateGenerator.h"
+#include "update/UpdateHandler.h"   // RunExclusive: test 3a runs the generator under the tick mutex
 #include "persist/BanditSerializer.h"
 #include "learning/StateFeatures.h"
 #include "learning/FeatureBanditLearner.h"
@@ -6419,10 +6420,14 @@ void RunSlotLockerOverrideScopeTest()
     //     on this save: once as it is, once with health at 100% and the first
     //     gathered health potion on cooldown. The filtered output must lose
     //     that potion; FindGathered (what the locker reads) must still have it.
+    //     Run under UpdateHandler's tick mutex (RunExclusive): the generator's
+    //     buffers and spell-cost map are the update loop's, and a loading-
+    //     screen tick could otherwise run GenerateCandidates at the same time.
     auto& gen = Candidate::CandidateGenerator::GetSingleton();
     RE::FormID realPotion = 0;
     int32_t realCount = 0;
-    if (gen.IsInitialized()) {
+    auto* updateHandler = Update::UpdateHandler::GetSingleton();
+    if (gen.IsInitialized() && updateHandler) updateHandler->RunExclusive([&] {
         auto player = State::StateManager::GetSingleton().GetPlayerState();
         (void)gen.GenerateCandidates(player, 1000.0f, {}, nullptr);
         for (const auto& c : gen.LastGathered()) {
@@ -6441,7 +6446,8 @@ void RunSlotLockerOverrideScopeTest()
                 [&](const Candidate::CandidateVariant& c) { return Candidate::GetFormID(c) == realPotion; });
             const auto found = gen.FindGathered(realPotion, 0);
             if (stillOffered) {
-                logger::warn("  (3a: potion {:08X} was not filtered by cooldown + full health -- filter path not exercised)"sv, realPotion);
+                logger::error("TEST FAIL: potion {:08X} survived cooldown + full health -- the filter path this step exists for was not exercised"sv, realPotion);
+                passed = false;
             }
             if (!found) {
                 logger::error("TEST FAIL: FindGathered lost potion {:08X} to the cooldown / full-health filters"sv, realPotion);
@@ -6465,7 +6471,7 @@ void RunSlotLockerOverrideScopeTest()
             logger::info("  (3a skipped: no stack of 2+ health potions in this save)"sv);
         }
         gen.Reset();   // drop the test's cooldown; the load path resets it anyway
-    }
+    });
 
     // 3b. Frozen key, count 5 -> 4 with the potion in no scored list (the
     //     filters' result), lookup substituted by what the registry gathers.
