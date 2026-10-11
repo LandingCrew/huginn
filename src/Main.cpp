@@ -50,6 +50,7 @@
 #include "learning/LearningSettings.h"
 #include "learning/ExternalEquipListener.h"
 #include "apparel/ApparelWornListener.h"
+#include "weapon/WeaponDepartureListener.h"
 #include "learning/ExternalEquipLearner.h"
 #include "learning/SelectionLogV3.h"
 #include "context/ContextWeightSettings.h"
@@ -188,7 +189,11 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
             // Armour leaving the inventory: reconcile at once (a dropped worn ring).
             eventSource->GetEventSource<RE::TESContainerChangedEvent>()->AddEventSink(
                 &Apparel::ApparelWornListener::GetSingleton());
-            logger::info("SpellRegistry + ExternalEquipListener + ApparelWornListener registered for TESEquipEvent notifications"sv);
+            // A weapon leaving the inventory: reconcile at once (a disarmed staff).
+            eventSource->GetEventSource<RE::TESContainerChangedEvent>()->AddEventSink(
+                &Weapon::WeaponDepartureListener::GetSingleton());
+            logger::info("SpellRegistry + ExternalEquipListener + ApparelWornListener registered for TESEquipEvent; "
+                "ApparelWornListener + WeaponDepartureListener for TESContainerChangedEvent"sv);
         }
     }
 

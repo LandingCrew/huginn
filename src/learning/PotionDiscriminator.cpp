@@ -74,13 +74,20 @@ namespace Huginn::Scoring
         // Situation-Specific Adjustments
         // =====================================================================
 
-        // Multiple enemies → Resist potions more valuable
-        // (Taking damage from multiple sources)
+        // Multiple enemies → a resist for a threat the player can SEE is more
+        // valuable (taking damage from multiple sources). Gated like
+        // CorrelationBooster's melee/no-shield boost: the element they are
+        // taking now (effects flags include the hit-enrichment window), or
+        // Resist Magic while a hostile casts. It used to lift every resist
+        // tag -- foods with a resist rider included -- whatever the element.
         if (state.enemyCount >= State::EnemyCountBucket::Few) {
-            if (HasTag(item.tags, ItemTag::ResistFire) ||
-                HasTag(item.tags, ItemTag::ResistFrost) ||
-                HasTag(item.tags, ItemTag::ResistShock) ||
-                HasTag(item.tags, ItemTag::ResistMagic)) {
+            const bool threatened =
+                (player.effects.isOnFire && HasTag(item.tags, ItemTag::ResistFire)) ||
+                (player.effects.isFrozen && HasTag(item.tags, ItemTag::ResistFrost)) ||
+                (player.effects.isShocked && HasTag(item.tags, ItemTag::ResistShock)) ||
+                (state.anyCasting == State::CastingStatus::EnemyCasting &&
+                 HasTag(item.tags, ItemTag::ResistMagic));
+            if (threatened) {
                 multiplier *= PotionConstants::RESIST_MULTIPLE_ENEMIES_MULT;
             }
         }

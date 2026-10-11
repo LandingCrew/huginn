@@ -102,6 +102,19 @@ namespace Huginn::Weapon
       size_t ReconcileWeapons(const EquippedWeapons& equipped,
                               std::vector<DepartedStack>* departed = nullptr);
 
+      /// Ask for a reconcile on the next update tick, ahead of the 30 s timer:
+      /// a weapon left the player's inventory (WeaponDepartureListener) --
+      /// dropped, disarmed, sold, stored. The reconcile reports the departed
+      /// stack, which breaks its slot lock and forces a recompute, so the
+      /// widget stops showing a weapon the press would refuse (EquipManager's
+      /// "equip refused (stale recommendation)", 2026-10-10 20:58:15). Ammo
+      /// needs no request: RefreshCharges reports an emptied type at 2 Hz.
+      void RequestReconcile() noexcept { m_reconcileRequested.store(true, std::memory_order_relaxed); }
+      [[nodiscard]] bool TakeReconcileRequest() noexcept
+      {
+      return m_reconcileRequested.exchange(false, std::memory_order_relaxed);
+      }
+
       // =============================================================================
       // WEAPON ACCESSORS
       // =============================================================================
@@ -496,5 +509,8 @@ namespace Huginn::Weapon
 
       // Loading state flag (M3 v0.7.21: atomic for thread-safe access)
       std::atomic<bool> m_isLoading{false};
+
+      // Set from the game's event thread (RequestReconcile), taken on the update thread
+      std::atomic<bool> m_reconcileRequested{false};
    };
 }

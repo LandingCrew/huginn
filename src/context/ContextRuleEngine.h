@@ -118,7 +118,7 @@ namespace Huginn::Context
         // BUFF & RESIST POTIONS
         // =========================================================================
         float buffPotionWeight = 0.0f;      // Buff/resist potions (always-on baseline, mirrors weapon/spell)
-        float buffCombatWeight = 0.0f;      // Buff/resist potions in combat (pop before/during fights)
+        float buffCombatWeight = 0.0f;      // Buff potions in combat (pop before/during fights); resists go by element
 
         // =========================================================================
         // UTILITY / ALWAYS-AVAILABLE

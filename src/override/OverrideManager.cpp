@@ -115,6 +115,12 @@ namespace Huginn::Override
             }
         }
 
+        if (Config::ENABLE_POISONED()) {
+            if (auto override = EvaluatePoisoned(player)) {
+                result.activeOverrides.push_back(std::move(*override));
+            }
+        }
+
         // Sort by priority (highest first)
         result.SortByPriority();
 
@@ -369,6 +375,56 @@ namespace Huginn::Override
         return result;
     }
 
+    // A poison is running and the player carries a cure: offer the cure.
+    //
+    // Why an override and not a weight. The context rule gave the cure the
+    // SAME weight as every Resist Poison item (ContextRuleEngine
+    // resistPoisonWeight, read by ContextWeightForCandidate for both tags),
+    // scaled down by the player's poison resistance -- a discount that is
+    // right for a resist and wrong for a cure. On LoreRim half the larder
+    // carries a Resist Poison rider, so while poisoned the cure was one of
+    // four or five "Poisoned" items at ctx ~0.55, and the foods won on priors
+    // and learning (Carrot u=1.48, Leek 0.89 against the cure's 0.73,
+    // 2026-10-10 16:28). Once it did reach page 0 it held only by the slot
+    // hold's margin and was evicted by the favourite staff and by home-key
+    // returns (15:30:15, 15:31:08, 15:31:54). It took 71 s and 2 min 17 s to
+    // surface, and was never used; Roasted Leek took the "Poisoned" key and was
+    // eaten instead -- a resist, which does nothing for a poison already
+    // running. Any weight big enough to beat that would be a hand-tuned shim;
+    // "condition active -> the item that ends it" is what this system is for.
+    //
+    // Category Other: it goes to the slot that accepts Other (Page0.Slot6 in
+    // the shipped layout), or marks the cure where the page already shows it,
+    // and never touches the health key, so a critical heal keeps its slot.
+    // No cure owned: no override; the context rule still names the poison.
+    std::optional<OverrideResult> OverrideManager::EvaluatePoisoned(
+        const State::PlayerActorState& player)
+    {
+        const HysteresisConfig config{
+            0.0f,  // Not threshold-based
+            0.0f,
+            Config::MIN_OVERRIDE_DURATION_MS()
+        };
+
+        if (!CheckHysteresis("Poisoned", player.effects.isPoisoned, config)) {
+            return std::nullopt;
+        }
+
+        auto candidate = FindCurePoisonItem();
+        if (!candidate) {
+            return std::nullopt;
+        }
+
+        OverrideResult result;
+        result.priority = Priority::POISONED;
+        result.category = OverrideCategory::Other;
+        result.condition = OverrideCondition::Poisoned;
+        result.reason = "POISONED: Cure Poison";
+        result.candidate = std::move(candidate);
+
+        return result;
+    }
+
     // =============================================================================
     // ITEM FINDERS
     // =============================================================================
@@ -618,6 +674,49 @@ namespace Huginn::Override
         static PotionLogState s_spellLog;
         return FindRestoreSpell(Spell::SpellTag::RestoreMagicka, RE::ActorValue::kMagicka,
             "FindMagickaPotion"sv, Context::ContextReason::LowMagicka, s_spellLog, m_spellIncumbent[1]);
+    }
+
+    std::optional<Candidate::CandidateVariant> OverrideManager::FindCurePoisonItem() const
+    {
+        if (!m_itemRegistry) {
+            return std::nullopt;
+        }
+
+        // A cure is binary, so the cheapest one goes first (as
+        // GetBestCurePoisonPotion ranks them), pure before impure. A weapon
+        // poison never qualifies, whatever its tags say.
+        const Item::InventoryItem* pure = nullptr;
+        const Item::InventoryItem* any = nullptr;
+        m_itemRegistry->ForEachItem([&](const Item::InventoryItem& i) {
+            if (i.count <= 0 || i.data.type == Item::ItemType::Poison ||
+                !Item::HasTag(i.data.tags, Item::ItemTag::CurePoison)) {
+                return;
+            }
+            auto cheaper = [&](const Item::InventoryItem* best) {
+                return !best || i.data.value < best->data.value;
+            };
+            if (cheaper(any)) any = &i;
+            if (!i.data.HasHarmfulSideEffects() && cheaper(pure)) pure = &i;
+        });
+        const auto* best = pure ? pure : (Config::ALLOW_IMPURE_POTIONS() ? any : nullptr);
+
+        // Log the pick when it changes (this runs every pipeline pass while poisoned)
+        static RE::FormID s_lastLogged = 0;
+        const RE::FormID bestID = best ? best->data.formID : 0;
+        if (bestID != s_lastLogged) {
+            if (best) {
+                logger::info("[OverrideManager] FindCurePoisonItem: '{}' FormID={:08X} count={}"sv,
+                    best->data.name, best->data.formID, best->count);
+            }
+            s_lastLogged = bestID;
+        }
+        if (!best) {
+            return std::nullopt;
+        }
+
+        auto candidate = Candidate::ItemCandidate::FromInventoryItem(*best);
+        candidate.overrideReason = Context::ContextReason::Poisoned;
+        return candidate;
     }
 
     std::optional<Candidate::CandidateVariant> OverrideManager::FindWaterbreathingItem() const

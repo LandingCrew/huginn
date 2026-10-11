@@ -895,6 +895,7 @@ namespace Huginn::Slot
             { Override::Config::ENABLE_DROWNING(),         "Drowning",        OverrideCategory::Other },
             { Override::Config::ENABLE_WEAPON_CHARGE(),    "WeaponCharge",    OverrideCategory::Other },
             { Override::Config::ENABLE_LOW_AMMO(),         "LowAmmo",         OverrideCategory::Other },
+            { Override::Config::ENABLE_POISONED(),         "Poisoned",        OverrideCategory::Other },
         };
 
         std::string unplaceable;

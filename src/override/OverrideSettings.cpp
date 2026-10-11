@@ -77,6 +77,7 @@ namespace Huginn::Override
         enableCriticalHealth = readBool(section, "bEnableCriticalHealth", Defaults::ENABLE_CRITICAL_HEALTH);
         enableDrowning = readBool(section, "bEnableDrowning", Defaults::ENABLE_DROWNING);
         enableWeaponCharge = readBool(section, "bEnableWeaponCharge", Defaults::ENABLE_WEAPON_CHARGE);
+        enablePoisoned = readBool(section, "bEnablePoisoned", Defaults::ENABLE_POISONED);
 
         // Log loaded values
         logger::info("[OverrideSettings] Critical Health: threshold={:.0f}%, hysteresis={:.0f}%, enabled={}"sv,
@@ -90,6 +91,7 @@ namespace Huginn::Override
             enableWeaponCharge);
 
         logger::info("[OverrideSettings] Drowning: enabled={}"sv, enableDrowning);
+        logger::info("[OverrideSettings] Poisoned (cure): enabled={}"sv, enablePoisoned);
 
         logger::info("[OverrideSettings] Low Ammo: threshold={:.0f}, hysteresis={:.0f}, enabled={}"sv,
             lowAmmoThreshold, lowAmmoHysteresis, enableLowAmmo);
@@ -124,6 +126,7 @@ namespace Huginn::Override
         enableLowAmmo = Defaults::ENABLE_LOW_AMMO;
         enableCriticalMagicka = Defaults::ENABLE_CRITICAL_MAGICKA;
         enableCriticalStamina = Defaults::ENABLE_CRITICAL_STAMINA;
+        enablePoisoned = Defaults::ENABLE_POISONED;
         allowImpurePotions = Defaults::ALLOW_IMPURE_POTIONS;
 
         logger::info("[OverrideSettings] Reset to defaults"sv);

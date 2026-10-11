@@ -23,6 +23,12 @@ namespace Huginn::Override
         inline constexpr int CRITICAL_MAGICKA = 70;  // MP < 10% - magicka potion
         inline constexpr int CRITICAL_STAMINA = 60;  // SP < 10% - stamina potion
         inline constexpr int DROWNING = 50;          // Underwater without waterbreathing
+        // Poisoned with a cure in the bag. Below DROWNING so it does not trip
+        // Wheeler auto-focus at the shipped iAutoFocusMinPriority (50), and far
+        // below CRITICAL_HEALTH: it is category Other, so it never competes for
+        // the health key at all, and priority only orders it among the Other
+        // prompts (ahead of ammo and soul gems -- the poison is costing health).
+        inline constexpr int POISONED = 45;
         inline constexpr int LOW_AMMO = 40;          // Bow/crossbow equipped, ammo running low
         inline constexpr int WEAPON_EMPTY = 35;      // Enchanted weapon charge below fWeaponChargeThreshold
         // FALLING = 40 deferred (Slow Fall not in vanilla Skyrim)
@@ -40,7 +46,7 @@ namespace Huginn::Override
         HP,      // CriticalHealth
         MP,      // CriticalMagicka
         SP,      // CriticalStamina
-        Other    // Drowning, LowAmmo, WeaponCharge
+        Other    // Drowning, LowAmmo, WeaponCharge, Poisoned
     };
 
     // =============================================================================
@@ -63,6 +69,7 @@ namespace Huginn::Override
         Drowning,
         WeaponCharge,
         LowAmmo,
+        Poisoned,
         Count
     };
 
