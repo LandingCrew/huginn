@@ -402,6 +402,10 @@ namespace Huginn::Core::Effect
                 { R"re(^dispels?\b|removes? (all )?(magic(al)?|spell) effects|dispels? (all )?(cloak|armor|magic)|effects (are|is) dispelled)re", "cure_dispel" },
                 { R"re((tosses|spawns|throws|drops) (a|an) .{0,40}spider)re", "summon_creature" },
                 { R"re(temporary damage)re", "drain_vital_health" },
+                // 0.23.35: a vital reduced for a time is a drain, whatever the
+                // cause -- Apocalypse's Wyrd proc (66096A15) "Health reduced for
+                // <dur> seconds due to magical fear" read as fear.
+                { R"re(\b(health|magicka|stamina) (is |are )?(reduced|lowered|decreased) for N seconds)re", "drain_vital_V" },
                 { R"re(imbues? .{0,30}weapons? with)re", "damage_health" },
                 { R"re(\b(deal|deals|dealing|does|inflicts?|inflicting)\b.{0,40}(?<!more )(?<!less )(?<!extra )(?<!additional )(?<!double )(?<!more attack )(?<!more physical )(?<!more melee )damage(?! taken)|\bdamage to (the target.s )?(health|magicka|stamina))re", "DMG" },
                 { R"re(paraly|immobili[sz]|in place\b|frozen solid|suspended in|petrif)re", "control_paralysis" },
@@ -658,6 +662,23 @@ namespace Huginn::Core::Effect
             return true;
         }
 
+        /// The text says the effect deals damage: "damag" anywhere outside the
+        /// phrase "temporary damage", which the description table reads as a
+        /// drain (0.23.35).
+        bool MentionsDamage(std::string_view description)
+        {
+            static constexpr std::string_view kTemporary = "temporary damage";
+            const std::string low = Lower(description);
+            std::size_t from = 0;
+            for (;;) {
+                const auto at = low.find("damag", from);
+                if (at == std::string::npos) return false;
+                const bool temporary = at >= 10 && low.compare(at - 10, kTemporary.size(), kTemporary) == 0;
+                if (!temporary) return true;
+                from = at + 5;
+            }
+        }
+
         // =====================================================================
         // Spec string -> column
         // =====================================================================
@@ -812,7 +833,10 @@ namespace Huginn::Core::Effect
                         // Rift's portal "take <mag> shock damage", Penance
                         // Aura's "stagger and take ... damage" stay damage;
                         // Consecrate Dead ("restores ... Magicka") does not.
-                        const bool damageKept = FamilyKey(kc) == Col::damage && Lower(r.description).find("damag") != std::string::npos;
+                        // "Temporary damage" is not a mention (0.23.35): it is
+                        // the description table's drain ("temporary damage that
+                        // wears off", Wyrd 66096A14 / FE639812).
+                        const bool damageKept = FamilyKey(kc) == Col::damage && MentionsDamage(r.description);
                         if (familyTag && !nameAgrees && !damageKept && !BlankText(r.description)) {
                             const std::string ds = DescRoute(r);
                             const std::string del = StartsWith(ds, "damage") ? DescElementOf(r.description) : std::string{};

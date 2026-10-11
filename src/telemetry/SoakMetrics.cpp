@@ -74,7 +74,8 @@ namespace Huginn::Telemetry
         }
     }
 
-    void SoakMetrics::RecordPipelineRun(std::size_t candidateCount, std::size_t displayedCount,
+    void SoakMetrics::RecordPipelineRun([[maybe_unused]] std::size_t candidateCount,
+        [[maybe_unused]] std::size_t displayedCount,  // read only by Huginn_PLOT (Tracy builds)
         bool overrideActive)
     {
         m_recomputes.fetch_add(1, std::memory_order_relaxed);

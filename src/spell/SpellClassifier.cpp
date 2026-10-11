@@ -1199,8 +1199,8 @@ namespace Huginn::Spell
       // Formula: baseCost × (magnitude^1.1) × durationFactor × areaFactor
       float baseCost = effect->baseEffect->data.baseCost;
       float magnitude = effect->effectItem.magnitude;
-      float duration = effect->effectItem.duration;
-      float area = effect->effectItem.area;
+      float duration = static_cast<float>(effect->effectItem.duration);
+      float area = static_cast<float>(effect->effectItem.area);
 
       // Duration factor: 1 for instant, scales with duration otherwise
       float durationFactor = (duration > 0) ? (duration / 10.0f) : 1.0f;
@@ -1259,8 +1259,8 @@ namespace Huginn::Spell
       // getting nullptr for it.
       const float baseCost = effect->baseEffect->data.baseCost;
       const float magnitude = effect->effectItem.magnitude;
-      const float duration = effect->effectItem.duration;
-      const float area = effect->effectItem.area;
+      const float duration = static_cast<float>(effect->effectItem.duration);
+      const float area = static_cast<float>(effect->effectItem.area);
 
       const float durationFactor = (duration > 0) ? (duration / 10.0f) : 1.0f;
       const float areaFactor = (area > 0) ? (0.15f * area) : 1.0f;

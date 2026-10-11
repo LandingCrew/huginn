@@ -56,6 +56,8 @@ _set('utility_slow_time', r'time slows|slows? (down )?time|slow time|world (arou
 _k = _idx('DMG')
 _desc.DESC_TABLE[_k:_k] = [(r'(tosses|spawns|throws|drops) (a|an) .{0,40}spider', 'summon_creature'),
                           (r'temporary damage', 'drain_vital_health'),
+                          # 0.23.35: a vital reduced for a time is a drain (Wyrd 66096A15)
+                          (r'\b(health|magicka|stamina) (is |are )?(reduced|lowered|decreased) for N seconds', 'drain_vital_V'),
                           (r'imbues? .{0,30}weapons? with', 'damage_health')]
 _k = _idx('summon_creature', 'conjur')
 _desc.DESC_TABLE[_k:_k + 1] = [(r'\binfuse bound|binds? .{0,40}to a summoned', 'NONEHIT'),
@@ -230,7 +232,9 @@ def oracle(r):
         fam = spec.split('_')[0] if not spec.startswith('fortify_vital') else 'fortify_vital'
         if nox_only or fam in ('restore', 'damage', 'control', 'influence', 'stealth', 'fortify_vital'):
             nc = name_col(r['effectName'])
-            damage_kept = famkey(kwc) == 'damage' and 'damag' in desc_text.lower()  # a damage keyword keeps damage the text mentions
+            # a damage keyword keeps damage the text mentions; "temporary damage" is the
+            # description table's drain, not a mention (0.23.35, Wyrd 66096A14 / FE639812)
+            damage_kept = famkey(kwc) == 'damage' and 'damag' in desc_text.lower().replace('temporary damage', '')
             if not (nc and kwc and famkey(nc) == famkey(kwc)) and not damage_kept:
                 dc = desc_col(r)
                 if dc and famkey(dc) != famkey(kwc):

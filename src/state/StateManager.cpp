@@ -136,7 +136,8 @@ namespace Huginn::State
       m_notOreVeinCache.clear();
 
       // --- Drain any pending DamageEventSink events (prevent stale queued hits) ---
-      DamageEventSink::GetSingleton().DrainQueue();
+      // The drained events are discarded on purpose: they belong to the old save.
+      static_cast<void>(DamageEventSink::GetSingleton().DrainQueue());
 
       // --- Reset all poll timers (force immediate re-poll) ---
       for (auto [timer, interval, poll] : GetPollTable()) {

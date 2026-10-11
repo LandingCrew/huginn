@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 
 # Version can be overridden via -DPROJECT_VERSION=x.y.z
 if(NOT DEFINED PROJECT_VERSION)
-   set(PROJECT_VERSION "0.23.34")
+   set(PROJECT_VERSION "0.23.35")
 endif()
 
 project(
@@ -49,11 +49,18 @@ message(STATUS "Git commit: ${GIT_COMMIT_HASH}")
 
 list(APPEND CMAKE_MODULE_PATH "${PROJECT_SOURCE_DIR}/cmake")
 
+# /W4 on first-party targets (huginn_enable_warnings); third-party stays quiet.
+include(HuginnWarnings)
+
 # Tracy profiler (opt-in via -DHuginn_TRACY=ON)
 if(Huginn_TRACY)
    set(TRACY_ENABLE ON CACHE BOOL "" FORCE)
    set(TRACY_STATIC ON CACHE BOOL "" FORCE)
-   add_subdirectory(extern/tracy)
+   add_subdirectory(extern/tracy SYSTEM)
+   # Third-party: keep the /W0 the old global flags gave it.
+   if(MSVC)
+      target_compile_options(TracyClient PRIVATE /W0)
+   endif()
    message(STATUS "Tracy profiler: ENABLED")
 else()
    message(STATUS "Tracy profiler: disabled (use -DHuginn_TRACY=ON to enable)")

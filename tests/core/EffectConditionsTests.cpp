@@ -311,6 +311,29 @@ TEST_CASE("rules: misroutes fixed -- ash pile, family tags, cure dispel, recharg
     consecrate.keywords = { "REQ_SunDamage", "LoreBox_LorerimSon" };
     consecrate.description = "Energy from the sun cleanses and destroys dead bodies. Restores <mag> points of Magicka and Stamina.";
     CHECK(FamilyKey(ClassifyEffect(consecrate).col) == Col::restore);
+    // 0.23.35: "temporary damage" is not a mention of damage. Apocalypse's Wyrd
+    // (66096A14, and FE639812 "Wyrd - Area (Improved)") is a health drain that
+    // wears off, under a damage keyword.
+    auto wyrd = Mgef(kArchScript, "", "Wyrd");
+    wyrd.keywords = { "RitualSpellEffect", "WB_Illusion_Keyword", "WB_Illusion_Keyword_Damage", "Nox_KW_Illusion_Pain" };
+    wyrd.description = "The hand of fate chooses a random nearby target. It takes <20>% of its current Health for each nearby target as temporary damage that wears off after <dur> seconds. If improved, the area of the spell is increased by 50%.";
+    CHECK(ClassifyEffect(wyrd).col == Col::drain_vital_health);
+    // Wyrd's proc (66096A15): a health reduction for a time is a drain, not fear.
+    auto wyrdProc = Mgef(kArchScript, "", "Wyrd", kFlagDetrimental | kFlagHostile, kDeliveryAimed);
+    wyrdProc.keywords = { "WB_IsZeroMagicka", "WB_Illusion_Keyword", "WB_Illusion_Keyword_Damage", "Nox_KW_Illusion_Pain" };
+    wyrdProc.description = "Health reduced for <dur> seconds due to magical fear.";
+    CHECK(ClassifyEffect(wyrdProc).col == Col::drain_vital_health);
+    CHECK(DescriptionColumn("Health reduced for <dur> seconds due to magical fear.", true) == Col::drain_vital_health);
+    CHECK(DescriptionColumn("Magicka is reduced for 30 seconds.", true) == Col::drain_vital_magicka);
+    // ... while damage that is not temporary still keeps the keyword's damage.
+    auto penance = Mgef(kArchScript, "", "Penance Aura - Fanning");
+    penance.keywords = { "MagicCloak", "_BL_LightSpellKeyword", "REQ_NoDurationScaling", "Nox_KW_Destruction_Arcane" };
+    penance.description = "For <dur> seconds, nearby opponents stagger and take <mag> points Health, Stamina, and Magicka damage.";
+    CHECK(FamilyKey(ClassifyEffect(penance).col) == Col::damage);
+    auto nova = Mgef(kArchScript, "", "Nova Flare");
+    nova.keywords = { "_Sn_MagicDamageSonic", "REQ_NoDurationScaling", "Nox_KW_Alteration_Wind" };
+    nova.description = "A <mag> point fiery explosion centered on the caster. Does more damage to closer targets.";
+    CHECK(FamilyKey(ClassifyEffect(nova).col) == Col::damage);
     // LoreRim's Potion of Dispel: archetype CureDisease.
     auto pod = Mgef(kArchCureDisease, "", "Dispel");
     pod.description = "All temporary effects are dispelled.";

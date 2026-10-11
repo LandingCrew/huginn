@@ -509,7 +509,8 @@ static void RunPipelineIfNeeded(float deltaMs, RE::PlayerCharacter* player,
 
     if (g_utilityScorer && g_stateEvaluator && g_spellRegistry && !g_spellRegistry->IsLoading()) {
         if (pageChanged) {
-            Slot::SlotAllocator::GetSingleton().ConsumePageChanged();
+            // Clear the flag; pageChanged above already holds its value.
+            static_cast<void>(Slot::SlotAllocator::GetSingleton().ConsumePageChanged());
         }
         Pipeline::PipelineCoordinator::GetSingleton().RunPipeline(
             deltaMs, player, now, pageChanged);

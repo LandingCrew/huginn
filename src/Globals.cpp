@@ -19,7 +19,7 @@ using namespace Huginn;
 // GLOBAL INSTANCE DEFINITIONS
 // =============================================================================
 
-std::chrono::high_resolution_clock::time_point start;
+std::chrono::high_resolution_clock::time_point g_pluginLoadStart;
 
 // State evaluator instance
 std::unique_ptr<Huginn::State::StateEvaluator> g_stateEvaluator;

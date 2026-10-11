@@ -3060,7 +3060,7 @@ void RunUnitTests()
 
             struct Station {
                 std::string_view name;
-                int32_t type;
+                uint8_t type;  // WorldState::workstationType (BenchType)
                 Context::ContextReason reason;
                 std::string_view label;
                 Candidate::ItemCandidate potion;
@@ -3338,7 +3338,7 @@ void RunUnitTests()
 
             struct Station {
                 std::string_view name;
-                int32_t type;
+                uint8_t type;  // WorldState::workstationType (BenchType)
                 Apparel::CraftSkill skill;
                 float WM::* field;
             };
@@ -4048,12 +4048,12 @@ void RunUnitTests()
 
             auto weights = engine.EvaluateRules(player, targets, world);
 
-            Candidate::SpellCandidate healingSpell{};
-            healingSpell.tags = Spell::SpellTag::RestoreHealth;
-            healingSpell.name = "Heal Self";
+            Candidate::SpellCandidate healSelf{};
+            healSelf.tags = Spell::SpellTag::RestoreHealth;
+            healSelf.name = "Heal Self";
 
             float weight = weights.baseRelevanceWeight;
-            if (Spell::HasTag(healingSpell.tags, Spell::SpellTag::RestoreHealth)) {
+            if (Spell::HasTag(healSelf.tags, Spell::SpellTag::RestoreHealth)) {
                 weight = std::max(weight, weights.healingWeight);
             }
 
@@ -5024,10 +5024,10 @@ void RunUnitTests()
             // Every candidate type gets its own mapping in WeightForCandidate,
             // so each needs a positive case — an ItemCandidate-only suite would
             // miss a regression in the spell, scroll or ammo arm.
-            Candidate::SpellCandidate healingSpell{};
-            healingSpell.name = "Healing";
-            healingSpell.tags = Spell::SpellTag::RestoreHealth;
-            if (const auto label = labelFor(healingSpell, Context::ContextReason::LowHealth);
+            Candidate::SpellCandidate healingCase{};
+            healingCase.name = "Healing";
+            healingCase.tags = Spell::SpellTag::RestoreHealth;
+            if (const auto label = labelFor(healingCase, Context::ContextReason::LowHealth);
                 label != "Low HP") {
                 logger::error("TEST FAIL: LowHealth should label a healing spell, got '{}'", label);
                 return;
@@ -5043,15 +5043,15 @@ void RunUnitTests()
                 return;
             }
 
-            Candidate::AmmoCandidate arrows{};
-            arrows.name = "Steel Arrow";
-            if (const auto label = labelFor(arrows, Context::ContextReason::NeedsAmmo);
+            Candidate::AmmoCandidate steelArrows{};
+            steelArrows.name = "Steel Arrow";
+            if (const auto label = labelFor(steelArrows, Context::ContextReason::NeedsAmmo);
                 label != "Low Ammo") {
                 logger::error("TEST FAIL: NeedsAmmo should label ammo, got '{}'", label);
                 return;
             }
             // ...and the same arrows stay unlabelled under an unrelated reason.
-            if (const auto label = labelFor(arrows, Context::ContextReason::AtEnchanter);
+            if (const auto label = labelFor(steelArrows, Context::ContextReason::AtEnchanter);
                 !label.empty()) {
                 logger::error("TEST FAIL: AtEnchanter must not label ammo, got '{}'", label);
                 return;

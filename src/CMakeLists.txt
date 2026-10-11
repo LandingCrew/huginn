@@ -101,8 +101,16 @@ target_compile_definitions(
       "$<$<CONFIG:Debug>:_DEBUG>"
 )
 
+huginn_enable_warnings("${PROJECT_NAME}")
+
 if(NOT TARGET CommonLibSSE::CommonLibSSE)
-   add_subdirectory("$ENV{CommonLibSSEPath_NG}" CommonLibSSE EXCLUDE_FROM_ALL)
+   # SYSTEM: CommonLib's include directory reaches Huginn as /external:I, so its
+   # headers raise no warnings at our /W4 (cmake/HuginnWarnings.cmake).
+   add_subdirectory("$ENV{CommonLibSSEPath_NG}" CommonLibSSE EXCLUDE_FROM_ALL SYSTEM)
+   # Third-party: keep the /W0 the old global flags gave it.
+   if(MSVC)
+      target_compile_options(CommonLibSSE PRIVATE /W0)
+   endif()
 endif()
 
 find_package(imgui REQUIRED)
