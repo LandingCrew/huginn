@@ -461,7 +461,8 @@ Map Phase 4, in `tools/replay`.
       `recent_<family>` features (window up to 30 s), on held-out picks.
       Decided 2026-10-10: the grading switches, and `recent_*` reaches R8,
       only on held-out lift; the encumbrance curve is fitted from the
-      player's carry-weight picks.
+      player's carry-weight picks, starting from a documented prior on its
+      centre near 0.9 (the user's "nearing" answer).
 - **You decide:** go to R8, or stop and rethink. θ from this fit is the
   bootstrap for R8.
 
@@ -640,8 +641,8 @@ swap-back on fixed beliefs; churn buckets on Δ/σ_Δ. **In game:** churn per
 press in the heartbeat against the R8 session.
 - [ ] **Slot juggling is a tracked problem** (the user, 2026-10-10: "need
       watch the slot juggling"): the allocator moves items between slots too
-      often. An analysis of that night's session is pending, in local trace
-      notes (`traces/2026-10-10/trace-04-analysis.md`, not checked in). Its
+      often. An analysis of that night's session is being written, in local
+      trace notes (`traces/2026-10-10/trace-04-analysis.md`, not checked in). Its
       numbers join the churn baseline under R8, and this stage is judged
       against both.
 
@@ -720,7 +721,7 @@ after R8.
 | Soul Gem Fragment (LoreRim MISC item) | Find how LoreRim uses it first | Open |
 | Food at a cooking pot or spit (the R3 session: a spit read as a forge) | A `workstation_cooking` need (the bench kind exists: `core/BenchKind.h` reads it from the workbench keyword, 0.23.16) x food effect columns; smelter and tanning rack likewise if a column ever answers them | Sensor exists (`NeedSensorState::bench`); no need row |
 | Soups for the cold meter, apart from warming spells | Split `survival_warmth`: Restore Cold (Update.esm 01002EE5, a soup's; restores the cold meter, `cold`) from Fortify Warmth (01002EE6 / Variable09, warming spells, the Torch, soups; raises the warmth rating, `warmth_deficit`). Two mechanics, confirmed via LoreRim Discord (2026-10-09); one column today, so `cold` x `survival_warmth` also reaches a warming spell. A column change: fixtures regenerate from the dumps | Effect records tell them apart (MGEF, keyword `CCSM_RestoreCold`, name); the columns do not |
-| A resist before the hit (falmer, spiders: the user, 2026-10-10) | `threat_<element>` needs: the element damage the visible hostiles are expected to deal, learned per race from the damage this player took, × `resist_<element>`; plus the missing `poison_damage_rate` ([doc 11, section 8](architecture/11-sequences-and-redundancy.md)). Spiders are already an obvious pair (`target_arthropod` × `resist_poison`); falmer have no route | Missing: hits keep their element but not their attacker; poison is classified but not summed |
+| A resist before the hit (falmer, spiders: the user, 2026-10-10) | `threat_<element>` needs: the element damage the visible hostiles are expected to deal, learned per race from the damage this player took, × `resist_<element>`; plus the missing `poison_damage_rate` ([doc 11, section 8](architecture/11-sequences-and-redundancy.md)). Spiders are designed as an obvious pair (`target_arthropod` × `resist_poison`), but the R3 needs are logged only and not live until R8; today the old engine offers Resist Poison only once poisoned and reads spiders as Beast. Falmer have no route | Missing: hits keep their element but not their attacker; poison is classified but not summed |
 | Resist Disease before a fight with disease carriers | A `disease_exposure` need (hostiles of a disease-carrying race in the fight: skeevers, wolves, bears, sabre cats, vampires -- a race table, as the target families) x `resist_disease`. 0.23.16 removed `diseased` x Resist Disease: resisting does not cure a disease already caught | Missing; no existing need covers it (`target_animal` also holds deer and horses) |
 
 ## Kept outside the rewrite

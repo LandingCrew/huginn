@@ -66,8 +66,10 @@ spells".
   occur once. Decided: it reaches R8 only on R6 evidence, with a window of up
   to 30 s (decisions 6 and 7).
 - **Anticipation (section 8, proposal): a resist before the hit.** The spider
-  case is already an obvious pair (`target_arthropod` × `resist_poison`); the
-  falmer case has no route. Proposed: `threat_<element>` needs whose input is
+  case is designed as an obvious pair (`target_arthropod` × `resist_poison`),
+  but the R3 needs are logged only and nothing scores with them until R8.
+  The live engine reaches Resist Poison only once the player is poisoned, and
+  it reads spiders as Beast. The falmer case has no route at all. Proposed: `threat_<element>` needs whose input is
   the element damage the visible hostiles are expected to deal, learned per
   race from the damage this player has taken. One new sensor: who hit the
   player.
@@ -193,16 +195,32 @@ land in the same column space. Then:
   uncovered, a small bonus, with no hand constant.**
   - Read the remaining seconds, r = `duration` − `elapsedSeconds`, off the
     ActiveEffect (`CommonLibSSE-NG include/RE/A/ActiveEffect.h:108-109`).
-  - `left_j` is a logistic in r whose centre and slope are **fitted from this
-    player's refresh picks**: the remaining seconds at which they re-pick an
-    item whose effect is still up, against the time such items sat covered and
-    unpicked. This is the method of decision 1 and `drop_ahead`
+  - `left_j` is a logistic in r whose centre r₀ and slope are **fitted from
+    this player's refresh picks**: the remaining seconds at which they re-pick
+    an item whose effect is still up, against the time such items sat covered
+    and unpicked. This is the method of decision 1 and `drop_ahead`
     (`tools/needs/fit_drop_curve.py`).
-  - Until that fit has evidence, `left_j` = r / duration, which is derived from
-    the effect itself *(a choice: it errs early, giving a bonus mid-buff; the
-    fit corrects it)*.
-  - The bonus stays small by construction: only θ_covered · (1 − `left_j`)
-    changes, and θ_covered is learned.
+  - **The prior, labelled as one.** The fit starts from a prior on r₀ at
+    10 s, from the user's words ("a few seconds left"), with a slope of a few
+    seconds. It is a prior that data moves, not a derived value. Until refresh
+    picks exist, the curve is the prior, so `left_j` stays near 1 for most of
+    a buff and falls only in its last seconds. (The first draft's fallback,
+    r / duration, was dropped: halfway through a buff it removed half of
+    θ_covered, which is no small bonus.)
+  - **How big the bonus is.** The change is θ_covered · (1 − `left_j`). It is
+    small while r is above r₀ and approaches the full θ_covered as the buff
+    runs out, which is right: an expired buff covers nothing.
+  - **The active-buff filters would block it.** They drop an item whenever its
+    buff is active, whatever the time left, and decision 8 may keep them
+    indefinitely. So **each filter passes an item once its covering effect's
+    remaining time is under r₀**, the same point the scorer uses (prior or
+    fitted), and the item then competes with covered(i) < 1. The summon
+    filter does the same for recasting a summon about to expire. Cost: one
+    remaining-time condition per filter in `CandidateFilters`, which R8 edits
+    anyway; the step-3 sensor supplies r; and rows passed this way are logged
+    with their `covered` value, which also gives θ_covered some evidence. The
+    alternative, waiting for the filters to retire, could mean no refresh
+    ever.
   - Summons use the same factor, from their `SummonCreatureEffect`'s timer, so
     recasting a summon about to expire is a refresh.
   - Section 5 logs r with `covered(i)`, which is what the fit needs.
@@ -231,31 +249,52 @@ land in the same column space. Then:
 - **Upgrades at the limit (decision 2: greedy, always offer the best).** A
   count cannot express replacement: at the limit every summon reads covered,
   the hero that would replace a wolf included. So at the limit the count is
-  gated by a comparison, with n living summons:
+  gated by a smooth comparison, with n living summons and
+  Δ = ŝ(i) − ŝ(a_out):
 
   ```math
   \text{covered}_{\text{summon}}(i) =
   \begin{cases}
   n / \text{limit} & n < \text{limit} \\
-  0 & n \ge \text{limit},\ i \notin \text{active},\ \hat{s}(i) > \hat{s}(a_{\text{out}}) \\
-  1 & \text{otherwise}
+  1 - \sigma\!\left(\Delta / \sigma_\Delta\right) & n \ge \text{limit},\ i \text{ is not } a_{\text{out}}\text{'s source} \\
+  1 & n \ge \text{limit},\ i \text{ is } a_{\text{out}}\text{'s source (a refresh)}
   \end{cases}
   ```
 
-  (times `left_j`, as above). a_out is the summon a new cast would dismiss:
-  with one allowed, the active one; with more, the oldest, the one with the
-  largest `elapsedSeconds` *(guess: the engine dismisses the oldest, not the
-  weakest; confirm in game. If it is the weakest, a_out is the minimum of ŝ
-  over the active summons)*. A summon already up is never an upgrade over
-  itself; only its refresh factor applies.
+  (times `left_j`, as above).
+  - **a_out** is the summon a new cast would dismiss: with one allowed, the
+    active one; with more, the oldest, the one with the largest
+    `elapsedSeconds`. UESP documents that a new summon dismisses the oldest;
+    confirm on LoreRim, since a mod could change it.
+  - **Twin Souls.** The rule compares against a_out, not against "anything
+    active". So recasting the newer active spell still counts as an upgrade
+    when it would dismiss a weaker, older summon: with a hero (new) and a wolf
+    (old) up, a second hero beats the wolf. If i is a_out's own source,
+    recasting it replaces itself, which is the refresh case.
+  - **Smooth, not a step (slot stability).** A 0/1 gate would swing the full
+    |θ_covered| on every near-tie, and the need terms in ŝ move every tick. A
+    page that flips on near-ties is the slot juggling the user reported
+    (roadmap R9). σ_Δ is the standard deviation of the score difference under
+    the learner's posterior, the same quantity R9's challenger rule computes,
+    so a close call reads covered ≈ 0.5 and only a clear upgrade reads near 0.
+    No hand scale is involved. The R9 challenger margin then governs the
+    actual swap on the page.
+  - **The hard summon filter** is binary, so it takes a band instead: it lets
+    an upgrade through once Δ > σ_Δ and keeps letting it through until Δ < 0
+    *(z = 1 is a choice; it becomes R9's z when that exists)*.
+  - **In the shadow fit** the gate depends on the parameters being fitted
+    (ŝ contains θ and bᵢ). Because the gate is smooth, the likelihood stays
+    differentiable and the fit optimises through it. σ_Δ is held at the
+    previous iteration's posterior value, so the scale does not chase the
+    fit.
   - **"Best" is the model's own score, ŝ: the item's utility with the covered
     term left out** (bᵢ, the θ · need · cap terms, the rest). It is what
     Huginn would score that summon with nothing up, learned from this
     player's picks, so no hand weight ranks summons. cap(i) cannot do it: the
     summon columns grade presence × duration (`effects.csv:121-126`), not the
     creature's strength.
-  - **No new weight.** The gate only switches covered off for an upgrade, which
-    then competes on ŝ like any other item: greedy. A learned replacement term
+  - **No new weight.** The gate only lifts covered off an upgrade, which then
+    competes on ŝ like any other item: greedy. A learned replacement term
     (θ_rep × (ŝ(i) − ŝ(a_out))) was the alternative. It is dropped: the user
     asked for the best to be offered always, and the log holds at most 3
     picks to learn such a term from (the shadow evaluation below).
@@ -263,16 +302,18 @@ land in the same column space. Then:
     `SummonCreatureEffect` (`include/RE/S/SummonCreatureEffect.h:10`) holds
     the summoned actor (`commandedActor`, `:33`) and, like every active
     effect, the spell or scroll that cast it (`ActiveEffect::spell`,
-    `ActiveEffect.h:102`). ŝ(a) is that item's score. It is perceivable: the
+    `ActiveEffect.h:102`). For a summon staff, `spell` is the staff's
+    enchantment and the staff itself is `source` (`ActiveEffect.h:105`), so
+    the item is read from `source` when that is a weapon. ŝ(a) is that item's
+    score. It is perceivable: the
     Active Effects menu lists the summon under its spell's name, and the
     creature is at the player's side. The same walk gives the count, checked
     against `commandedActors`.
   - **No comparison possible:** if the source is not a candidate (a power, an
     item no longer held), that summon counts as covering *(a choice: it keeps
-    today's behaviour rather than offering every summon)*. A tie (the same
-    spell) is covered; recasting it is the refresh case.
-  - The hard summon filter, while it stands, applies the same gate from R8 on,
-    when ŝ exists. So decision 2 holds whether or not the filters retire.
+    today's behaviour rather than offering every summon)*.
+  - The hard summon filter, while it stands, applies the band above from R8
+    on, when ŝ exists. So decision 2 holds whether or not the filters retire.
 - **Perception:** the Active Effects menu and the summon at the player's side
   are on screen, and the player chose the perk. Inside the Core Principle.
 - **The hard filters stay until θ_covered can be estimated without them.**
@@ -347,12 +388,23 @@ each other.
   from falls (`needs.csv:69`, `tools/needs/fit_drop_curve.py`), or learn it
   through the logistic-basis option doc 9 gives for the vitals
   (`9-context-as-learner-input.md:149`). **Decided (decision 1): "nearing" is
-  a real want, and the curve is fitted, not moved by hand.** The five casts
-  sit at 0.986–1.029, so a single logistic fitted today lands near c 1.0. To
-  let "nearing" show once earlier casts appear, use the basis: a few
-  logistics, each its own need weighted by θ, with centres at quantiles of
-  the load ratio logged while a carry-weight item is held (derived, not
-  picked).
+  a real want, and the curve is fitted, not moved by hand.** Two problems
+  stand in the way of fitting it from picks alone:
+  - **Earlier casts cannot be observed today.** At 0.9 the pair term reads
+    0.08 × 0.0046 × θ, so Feather is never on the page there. The only routes
+    to a cast near 90% are a menu pick (at cost κ) or an R10 wildcard. The
+    five casts so far sit at 0.986–1.029, so a logistic fitted on them alone
+    lands near c 1.0.
+  - **A basis does not fix it.** Picks at the cap saturate every
+    lower-centre curve, so those curves are credited with positives and get
+    no negatives. That is why the basis option is not used here.
+  - **So the user's answer becomes a documented prior.** Fit a single logistic
+    with a prior on its centre c pulling toward about 0.9, the user's stated
+    want ("yes": nearing matters), recorded as their statement and not as a
+    derived value. Data moves it. With the grade fixed (decision 5), the
+    prior puts Feather on the page near 0.9, which makes earlier casts, or
+    the lack of them, observable. If the player keeps passing it over there,
+    the `nothing` outcomes push c back up.
 - **The blocker is the grade.** 0.0046 = 1/217: the bottom of the load order's
   carry-weight population, either its lowest value
   (`EffectMapper.cpp:898`) or a zero magnitude, which grades at 1/(N+1)
@@ -564,7 +616,7 @@ per-pair count)*. An item-level matrix would need an order of magnitude more
 | 2 | In the fit, add offline `recent_<family>` features (window up to 30 s) from consecutive decisions; report the lift over the plain fit on held-out key picks, menu picks and the "not shown at A" subset | R6 | Agent; B goes into R8 only on that lift (decision 6) |
 | 3 | Sensors, logged only: the summon count and limit (reanimated actors apart), each summon's source spell, `covered(i)` from the active-effect walk through the effect mapper with the remaining seconds r, written as a v3 cross-feature on every held row, and a `filtered_by` reason on the rows the active-buff filters drop | between R6 and R8 (an R3-style PR) | Agent, then a short session in game |
 | 4 | The summon filter counts against the limit (the Twin Souls bug) | with step 3 | Agent |
-| 5 | θ_covered (negative start) with the upgrade gate and the refresh factor and, if step 2 passes, the live `recent_*` needs in the scorer; the active-buff filters stay as a fallback, the summon filter with the same gate | R8 | Agent, then **in game (you)** |
+| 5 | θ_covered (negative start) with the smooth upgrade gate and the refresh factor and, if step 2 passes, the live `recent_*` needs in the scorer; the active-buff filters stay as a fallback, passing an item once its buff is under the refresh point, and the summon filter with the upgrade band | R8 | Agent, then **in game (you)** |
 | 6 | Shadow evaluation: estimate θ_covered offline, with covered computed through the upgrade gate. Choice sets come from `shown`: a shown `filtered_by` row is a key alternative, an unshown one a menu alternative only. Use a **zero-centred prior or a likelihood-only interval**, so the nonzero starting value cannot pass the gate by itself. Retire the active-buff filters once that estimate is confidently negative; if the evidence stays too thin, keep them (decision 8) | R11 (Phase 10 "filters from cap") | Agent; replay |
 | 7 | Anticipation (section 8): offline, a crude per-race threat from the v3 log; as sensors, logged only, the attacker's race on every hit and `poison_damage_rate`; the `threat_*` needs live only if the offline test shows lift | sensors with step 3; needs R8 or later | Agent |
 
@@ -578,24 +630,30 @@ quoted; each consequence is folded into the section named.
 
 1. **Feather threshold: "yes to both".** "Nearing encumbered" is a real want,
    and the curve is fitted from the player's carry-weight picks, not moved by
-   hand. Because the five casts so far sit at or past the limit, the fit uses
-   doc 9's logistic basis so a lower centre can gain weight from later, earlier
-   casts (section 3). Fit in R6, live in R8.
+   hand. The five casts so far sit at or past the limit, and Feather is never
+   shown at 0.9. So the fit starts from a documented prior on the centre
+   pulling toward about 0.9 (the user's answer), which data can move; the
+   logistic basis is not used, because picks at the cap saturate its
+   lower-centre curves (section 3). Fit in R6, live in R8.
 2. **Summon upgrades: "upgrades, always offer the best - greed policy".** At
    the limit, a summon whose score ŝ (its utility without the covered term)
-   beats that of the summon a cast would dismiss is not covered, so it is
-   offered as a replacement. "Best" is ŝ, learned, not a hand grade. The active summon's
-   spell comes from its `SummonCreatureEffect` in the player's active effects.
-   No new weight (section 2.3). The replacement term is now in scope: steps 3,
-   5 and 6.
+   beats ŝ of the summon a cast would dismiss (the oldest) reads uncovered,
+   through a smooth gate scaled by the score's own uncertainty, so it is
+   offered as a replacement. "Best" is ŝ, learned, not a hand grade. The
+   active summon's spell comes from its `SummonCreatureEffect` (or, for a
+   staff, its `source`) in the player's active effects. Replacement is in
+   scope as this gate; a learned replacement term was considered and dropped,
+   so there is no new weight (section 2.3; steps 3, 5 and 6).
 3. **Thralls: "let me test this".** Open, **user testing**. The sensor logs
    reanimated actors apart from summons, so either answer can be applied to
    play logged before it (section 2.3, section 5).
 4. **Refresh: "yes, should get a small bonus".** A buff with a few seconds left
    reads partly uncovered. The factor is a logistic in the remaining seconds,
-   fitted from the player's own refresh picks; until then it is the remaining
-   fraction of the effect's duration. Only θ_covered · (1 − `left_j`) changes,
-   so the bonus is small and learned (section 2.3).
+   fitted from the player's own refresh picks and starting from a labelled
+   prior at 10 s ("a few seconds"). The bonus is small until those last
+   seconds. While the active-buff filters stand, each one passes an item once
+   its buff's remaining time is under that point, so the decision holds even
+   if the filters never retire (section 2.3).
 5. **Grading: "your pick".** Decided as recommended: the pair term reads
    presence plus a separate strength term, in R6, no code. R6 fits it and the
    current grading and switches only if the new one wins on held-out picks.
@@ -635,7 +693,11 @@ likely. The perception line allows it: enemy type and race are HUD-visible.
 | Who hit the player | **not kept.** `TESHitEvent::cause` is read only to classify a hit by the attacker's equipped spell (`DamageEventSink.cpp:171-188`). The queued event holds time, amount and type (`:111`; `DamageEventSink.h:37-46`; `DamageEvent`, `StateTypes.h:76-93`), and physical hits are not queued at all (`DamageEventSink.cpp:91`) | |
 | Log | v3 records the primary hostile's race on each context (`9-selection-log-v3.md:136`; `DecisionLog.h:133`), beside the need vector (damage rates, `poisoned`) | |
 
-So the spider case is in the design already, as a hand-listed obvious pair.
+So the spider case is designed, as a hand-listed obvious pair, but is **not
+live**. The R3 needs are logged only (`needs.csv:53` has status `new`), and no
+score reads them until R8. Today the old engine reaches Resist Poison only
+reactively, through `isPoisoned` (`ContextRuleEngine.cpp:195-197`), and it
+classes spiders as Beast (`ActorTypeClassifier.h:130`).
 The falmer case has no route: "falmer bring poison" is game knowledge no table
 here holds *(guess: LoreRim falmer blades or arrows carry poison; unverified)*.
 Damage is sensed by element, not by attacker.
@@ -648,14 +710,21 @@ Damage is sensed by element, not by attacker.
   the units of the reactive need:
 
   ```math
-  \text{threat}_e = \frac{1}{\text{maxHealth}} \sum_{h \in \text{hostiles}} \hat{r}_e(\text{race}_h)
+  \text{threat}_e = \frac{\tau}{\text{maxHealth}} \sum_{h \in \text{hostiles}} \hat{r}_e(\text{race}_h)
   ```
 
   over the same union of living combat hostiles the families use. r̂_e(race)
   is the element-e HP per second this player has taken from hostiles of that
-  race, per second such a hostile was in the fight. threat_e is a forecast of
-  `<e>_damage_rate`, so it takes that need's curve unchanged (logistic c 0.15,
-  `needs.csv:11-13`). No new constant.
+  race, per second such a hostile was in the fight.
+  - **Why τ.** The reactive need does not read HP per second. It reads a
+    `DecayingSum`, Σ amount · e^(−Δt/τ) (`core/NeedSensorMath.h:30-53`), which
+    under a steady rate r settles at r · τ. Multiplying by the same τ
+    (`kDamageDecayTauSec` = 3 s, `core/NeedSnapshot.h:34`, an existing
+    constant) puts threat_e in the units of `<e>_damage_rate`'s input. Without
+    it, threat_e would read about 3× low against the curve.
+  - threat_e is then a forecast of `<e>_damage_rate`'s input, so it takes that
+    need's curve unchanged (logistic c 0.15, `needs.csv:11-13`). No new
+    constant.
 - **Learned, not a table.** Per race, shrunk toward its family, the family
   toward zero:
 
