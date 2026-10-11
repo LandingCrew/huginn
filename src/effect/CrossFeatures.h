@@ -48,11 +48,12 @@ namespace Huginn::Effect
     /// Core::Effect::WithPerks): the catalog's cap is the same for every
     /// character, and a perk-gated row (Impact's stagger, Deep Freeze,
     /// Respite, the "(Improved)" rows) counts only for one who has the perk.
-    /// Today `hg cap` calls it (on the main thread). The scorer (R8) is meant
-    /// to call it per candidate from the update loop: HasPerk is a read of
-    /// the player's perk list, which changes only through the level-up menu
-    /// or a script, so a stale read costs one tick; if that ever matters,
-    /// copy the perk set out on the main thread with the StateManager's
-    /// snapshot instead (CLAUDE.md, thread safety).
+    /// MAIN THREAD ONLY: it calls Actor::HasPerk, which walks the game's perk
+    /// array; from the update loop that is a data race with the main thread
+    /// adding a perk (level-up menu, a script), not merely a stale read. Today
+    /// only `hg cap` calls it, on the main thread. R8 must not call it from
+    /// the update loop: copy the player's perk FormIDs out with the
+    /// StateManager snapshot on the main thread and call
+    /// Core::Effect::WithPerks on that copy (CLAUDE.md, thread safety).
     [[nodiscard]] Core::Effect::Cap PerkAdjustedCap(const CatalogEntry& item, const RE::Actor* actor);
 }

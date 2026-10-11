@@ -234,6 +234,24 @@ TEST_CASE("mapper: a bane row leaves the generic column and its population")
     CHECK(CapOf(r, 0, Col::damage_health_shock) == doctest::Approx(0.5));
     CHECK(CapOf(r, 2, Col::influence_turn_undead) > 0.0f);
     CHECK_FALSE(r.mappings[2].outcomes[0].bane);
+    // Command Daedra names its target too (verifier of #205).
+    CHECK(NamesItsTarget(Col::influence_command));
+}
+
+TEST_CASE("mapper: a sub-type on two vanilla types grades within each (type, sub-type)")
+{
+    World w;
+    auto add = [&](int type, float dmg) {
+        auto& it = w.Item(Kind::Weapon, "Glaive");
+        it.weaponType = type;
+        it.damage = dmg;
+        it.keywords = { "OCF_WeapTypeGlaive2H" };
+    };
+    for (int i = 0; i < 20; ++i) add(5, 50.0f + static_cast<float>(i));   // greatswords 50..69
+    for (int i = 0; i < 20; ++i) add(6, 100.0f + static_cast<float>(i));  // battleaxes 100..119
+    const auto r = w.Build();
+    CHECK(CapOf(r, 19, Col::weapon_damage) == 1.0f);                      // best greatsword glaive
+    CHECK(CapOf(r, 20, Col::weapon_damage) == doctest::Approx(1.0 / 20));  // worst battleaxe glaive, not above all greatswords
 }
 
 TEST_CASE("rules: Turn Undead on a health carrier that deals damage is damage (and so a bane)")
@@ -283,6 +301,16 @@ TEST_CASE("rules: misroutes fixed -- ash pile, family tags, cure dispel, recharg
     thorns.keywords = { "MagicRestoreHealth", "TVR_Auras_Keyword_Aura_3" };
     thorns.description = "Caster and living or undead allies reflect <mag> fire and sun damage in melee.";
     CHECK(ClassifyEffect(thorns).col == Col::defense_reflect);
+    // A damage keyword keeps damage the text mentions (verifier of #205):
+    // Cyclonic Rift's portal deals shock damage; Consecrate Dead's text has none.
+    auto rift = Mgef(kArchScript, "", "Cyclonic Rift");
+    rift.keywords = { "MagicDamageShock", "WB_Destruction_Shock" };
+    rift.description = "Creates a storm portal for <dur> seconds. If two portals are active, those approaching either get warped across and take <mag> shock damage to Health and Magicka.";
+    CHECK(ClassifyEffect(rift).col == Col::damage_health_shock);
+    auto consecrate = Mgef(kArchScript, "", "Consecrate Dead");
+    consecrate.keywords = { "REQ_SunDamage", "LoreBox_LorerimSon" };
+    consecrate.description = "Energy from the sun cleanses and destroys dead bodies. Restores <mag> points of Magicka and Stamina.";
+    CHECK(FamilyKey(ClassifyEffect(consecrate).col) == Col::restore);
     // LoreRim's Potion of Dispel: archetype CureDisease.
     auto pod = Mgef(kArchCureDisease, "", "Dispel");
     pod.description = "All temporary effects are dispelled.";

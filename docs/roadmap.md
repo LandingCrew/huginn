@@ -157,7 +157,9 @@ and accept% and so ship as their own small PR.
       (Impact's stagger, Deep Freeze, Respite, the "(Improved)" rows) leave
       cap(i) and ride beside it with their perk FormIDs (`hg cap` shows them
       and whether the player has the perk; `PerkAdjustedCap` adds the ones
-      met, for R8); GetRandomPercent procs grade their expected strength;
+      met, on the main thread only -- R8 copies the player's perks out with
+      the StateManager snapshot); GetRandomPercent procs grade their expected
+      strength;
       target-family "bane" rows leave the generic columns (bane columns
       after R6, below). Misroutes fixed: Turn Undead damage, Nox family
       keywords, the ash-pile helper, the mark / transmute / knock names,
@@ -168,9 +170,8 @@ and accept% and so ship as their own small PR.
       combat", off while health regeneration is suppressed). Coverage on the
       LoreRim dump 98.97% (25,602 of 25,869). Left: Mind Vision, Thoughtsteal
       and Gather Shadows stay misrouted (their text says nothing the table
-      reads: an override-file job); the 223 unconditioned "(Improved)" rows
-      are counted (no condition in the dump; possibly the MGEF's perk field,
-      which the reader does not read).
+      reads: an override-file job); the 223 "(Improved)" rows with no
+      condition in the dump are counted as the item's own.
 - Done when: the mapper's host tests pass on rows taken from the three dumps;
   coverage on the LoreRim dump ≥ 98.9% and on vanilla+/simonrim ≥ 99%; a
   coverage-diff report lists items that have a slot class today and an empty
@@ -547,9 +548,16 @@ level 40** (the user, 2026-10-10: "keep playing until the character is level
       here: one column per target family (undead, daedra, construct, dragon
       ...), paired with the `target_<family>` needs, graded within its own
       population. A column count change (EffectColumns static_assert, the
-      golden log, the pair count). 72 in-scope forms have only bane rows today
-      and so no effect column (Command Daedra, Heal Undead, Dragonbane, Bow of
-      the Hunt); the bane columns describe them again.
+      golden log, the pair count). In-scope forms with only bane rows today
+      have no effect column (Dragonbane, Bow of the Hunt, Purify); the bane
+      columns describe them again. Command Daedra is exempt (its
+      influence_command names its target, as Banish does).
+- [ ] **Target-gated beneficial rows** (follow-up to the above, verifier of
+      #205): some bane-only forms are heals or buffs for an ally of a family
+      -- Heal Undead / Heal Daedra / Necromantic Healing, Arcane Mending,
+      Daedric Mind -- which a bane column (harm to a family) does not
+      describe. They need their own reading (an ally-family heal or buff),
+      after the bane columns.
 - **You decide:** go to R8, or stop and rethink. θ from this fit is the
   bootstrap for R8.
 

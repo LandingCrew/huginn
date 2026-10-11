@@ -230,7 +230,8 @@ def oracle(r):
         fam = spec.split('_')[0] if not spec.startswith('fortify_vital') else 'fortify_vital'
         if nox_only or fam in ('restore', 'damage', 'control', 'influence', 'stealth', 'fortify_vital'):
             nc = name_col(r['effectName'])
-            if not (nc and kwc and famkey(nc) == famkey(kwc)):
+            damage_kept = famkey(kwc) == 'damage' and 'damag' in desc_text.lower()  # a damage keyword keeps damage the text mentions
+            if not (nc and kwc and famkey(nc) == famkey(kwc)) and not damage_kept:
                 dc = desc_col(r)
                 if dc and famkey(dc) != famkey(kwc):
                     return dc, 'desc', 'dev:family-tag-desc'

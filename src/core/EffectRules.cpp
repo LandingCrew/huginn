@@ -807,7 +807,13 @@ namespace Huginn::Core::Effect
                         const Col kc = ToColumns(spec, el).col;
                         const auto nameCol = familyTag ? NameColumn(r.name) : std::nullopt;
                         const bool nameAgrees = nameCol && kc != Col::_Count && FamilyKey(*nameCol) == FamilyKey(kc);
-                        if (familyTag && !nameAgrees && !BlankText(r.description)) {
+                        // A damage keyword keeps its damage unless the text
+                        // never mentions damage (verifier, #205): Cyclonic
+                        // Rift's portal "take <mag> shock damage", Penance
+                        // Aura's "stagger and take ... damage" stay damage;
+                        // Consecrate Dead ("restores ... Magicka") does not.
+                        const bool damageKept = FamilyKey(kc) == Col::damage && Lower(r.description).find("damag") != std::string::npos;
+                        if (familyTag && !nameAgrees && !damageKept && !BlankText(r.description)) {
                             const std::string ds = DescRoute(r);
                             const std::string del = StartsWith(ds, "damage") ? DescElementOf(r.description) : std::string{};
                             const Col dc = ds.empty() ? Col::_Count : ToColumns(ds, del).col;
@@ -1017,7 +1023,10 @@ namespace Huginn::Core::Effect
 
     bool NamesItsTarget(Col c) noexcept
     {
-        return c == Col::influence_turn_undead || c == Col::influence_banish || c == Col::damage_health_sun;
+        // influence_command too (verifier, #205): Command Daedra (0006F953) is gated on
+        // daedra and that is what it is, as Banish is.
+        return c == Col::influence_turn_undead || c == Col::influence_banish || c == Col::damage_health_sun ||
+               c == Col::influence_command;
     }
 
     EffectClass ClassifyEffect(const MagicEffectRecord& r, const OverrideTable* overrides)

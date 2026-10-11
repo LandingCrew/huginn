@@ -258,9 +258,18 @@ namespace Huginn::Core::Effect
             return best;
         }
 
-        std::uint32_t SubtypeGroup(std::string_view name) noexcept
+        /// The group of a (vanilla type, sub-type) pair: a sub-type keyword
+        /// can sit on more than one vanilla type (Glaive2H on 33 greatswords
+        /// and 4 battleaxes, Katana1H on 417 swords, 2 greatswords and a
+        /// dagger), and each type has its own damage scale, so the pair is
+        /// the key.
+        std::uint32_t SubtypeGroup(std::string_view name, std::uint32_t typeGroup) noexcept
         {
-            std::uint32_t h = 2166136261u;  // FNV-1a
+            std::uint32_t h = 2166136261u;  // FNV-1a over the type, then the name
+            for (int i = 0; i < 4; ++i) {
+                h ^= (typeGroup >> (8 * i)) & 0xFFu;
+                h *= 16777619u;
+            }
             for (const char c : name) {
                 h ^= static_cast<unsigned char>(c);
                 h *= 16777619u;
@@ -901,7 +910,7 @@ namespace Huginn::Core::Effect
                 // animations and perks key on).
                 const auto typeGroup = static_cast<std::uint32_t>(tc);
                 const std::string_view sub = WeaponSubtype(it.keywords);
-                const std::uint32_t g = sub.empty() ? typeGroup : SubtypeGroup(sub);
+                const std::uint32_t g = sub.empty() ? typeGroup : SubtypeGroup(sub, typeGroup);
                 const std::uint32_t all = kGroupTypeAll | typeGroup;
                 const bool fb = !sub.empty();
                 m.grouped.push_back({ Col::weapon_damage, g, it.damage, false, 0, 0, all, fb });
