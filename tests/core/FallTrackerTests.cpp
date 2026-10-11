@@ -18,15 +18,21 @@ namespace
     constexpr float kMaxDelta = 1500.0f;  // a 100 ms poll at MAX_FALL_SPEED (15000 units/s)
     constexpr double kPoll = 0.1;         // seconds between polls
 
-    // Polls a Z profile at kPoll; the first sample grounded, the rest
-    // airborne. Returns each poll's depth.
-    std::vector<float> Fly(FallTracker& t, const std::vector<float>& zs, double start = 0.0)
+    // Polls a Z profile kPoll of game time apart; the first sample
+    // grounded, the rest airborne. Returns each poll's depth.
+    std::vector<float> Fly(FallTracker& t, const std::vector<float>& zs)
     {
         std::vector<float> out;
         for (size_t i = 0; i < zs.size(); ++i) {
-            out.push_back(t.Update(zs[i], /*airborne=*/i != 0, kMaxDelta, start + i * kPoll, false));
+            out.push_back(t.Update(zs[i], /*airborne=*/i != 0, kMaxDelta, i == 0 ? 0.0 : kPoll));
         }
         return out;
+    }
+
+    // Z of a free fall from rest at `top` after `sec` game seconds.
+    float FreeFallZ(float top, float g, double sec)
+    {
+        return top - 0.5f * g * static_cast<float>(sec * sec);
     }
 
     // A free fall from rest at take-off Z `top`, under gravity g, sampled
@@ -63,10 +69,10 @@ TEST_CASE("fall tracker: a jump returns to its take-off height and never reads a
 TEST_CASE("fall tracker: a drop off a ledge measures the descent below take-off; landing re-anchors")
 {
     FallTracker t;
-    CHECK(t.Update(1000.0f, false, kMaxDelta, 0.0, false) == 0.0f);
-    CHECK(t.Update(800.0f, true, kMaxDelta, 0.6, false) == doctest::Approx(200.0f));
-    CHECK(t.Update(300.0f, true, kMaxDelta, 1.1, false) == doctest::Approx(700.0f));
-    CHECK(t.Update(300.0f, false, kMaxDelta, 1.2, false) == 0.0f);
+    CHECK(t.Update(1000.0f, false, kMaxDelta, 0.0) == 0.0f);
+    CHECK(t.Update(800.0f, true, kMaxDelta, 0.5) == doctest::Approx(200.0f));
+    CHECK(t.Update(300.0f, true, kMaxDelta, 0.5) == doctest::Approx(700.0f));
+    CHECK(t.Update(300.0f, false, kMaxDelta, 0.1) == 0.0f);
 }
 
 TEST_CASE("fall tracker: a free fall reads its full depth, at the logged gravity and at the floor's")
@@ -125,12 +131,9 @@ TEST_CASE("fall tracker: a slide that ends at an edge measures the free fall fro
     CHECK(Max(depths) < 200.0f);
     // Off the edge: a free fall from the slide's last Z, from rest.
     const float edge = zs.back();
-    double now = 12 * kPoll;
     float last = 0.0f;
     for (int k = 1; k <= 10; ++k) {
-        now += kPoll;
-        const float sec = static_cast<float>(k * kPoll);
-        last = t.Update(edge - 0.5f * 950.0f * sec * sec, true, kMaxDelta, now, false);
+        last = t.Update(FreeFallZ(edge, 950.0f, k * kPoll), true, kMaxDelta, kPoll);
     }
     // 475 units of free fall below the edge, plus at most the slide's tail
     // since its last re-anchor.
@@ -138,50 +141,46 @@ TEST_CASE("fall tracker: a slide that ends at an edge measures the free fall fro
     CHECK(last < 475.0f + 200.0f);
 }
 
-TEST_CASE("fall tracker: a pausing menu mid-fall holds the depth (no descent time accrues)")
+TEST_CASE("fall tracker: a pausing menu mid-fall holds the depth (no game time passes)")
 {
     FallTracker t;
     const auto zs = FreeFall(3000.0f, 950.0f, 6);
     const auto depths = Fly(t, zs);
     const float held = depths.back();
     REQUIRE(held > 150.0f);
-    // Ten seconds of polls in a paused menu: Z frozen, still midair.
-    double now = 6 * kPoll;
+    // Ten seconds of polls in a paused menu: game time stands still (the
+    // game clock adds nothing), Z frozen, still midair.
     for (int k = 0; k < 100; ++k) {
-        now += kPoll;
-        CHECK(t.Update(zs.back(), true, kMaxDelta, now, true) == doctest::Approx(held));
+        CHECK(t.Update(zs.back(), true, kMaxDelta, 0.0) == doctest::Approx(held));
     }
-    // Unpaused, the fall resumes where it was: the first poll after the
-    // pause counts no time, then the next samples follow the free fall.
+    // Unpaused, the fall resumes where it was.
     for (int k = 7; k <= 10; ++k) {
-        now += kPoll;
-        const float sec = static_cast<float>(k * kPoll);
-        const float z = 3000.0f - 0.5f * 950.0f * sec * sec;
-        CHECK(t.Update(z, true, kMaxDelta, now, false) == doctest::Approx(3000.0f - z));
+        const float z = FreeFallZ(3000.0f, 950.0f, k * kPoll);
+        CHECK(t.Update(z, true, kMaxDelta, kPoll) == doctest::Approx(3000.0f - z));
     }
 }
 
 TEST_CASE("fall tracker: a relocation re-anchors instead of reading the world-space difference")
 {
     FallTracker t;
-    t.Update(20000.0f, false, kMaxDelta, 0.0, false);
-    CHECK(t.Update(100.0f, true, kMaxDelta, 0.1, false) == 0.0f);
+    (void)t.Update(20000.0f, false, kMaxDelta, 0.0);
+    CHECK(t.Update(100.0f, true, kMaxDelta, kPoll) == 0.0f);
     // ...and tracking resumes from the new anchor.
-    CHECK(t.Update(-200.0f, true, kMaxDelta, 0.2, false) == doctest::Approx(300.0f));
+    CHECK(t.Update(-200.0f, true, kMaxDelta, kPoll) == doctest::Approx(300.0f));
 }
 
 TEST_CASE("fall tracker: unanchored first poll and Reset() never measure against a stale origin")
 {
     {
         FallTracker t;
-        CHECK(t.Update(-5000.0f, true, kMaxDelta, 0.0, false) == 0.0f);
+        CHECK(t.Update(-5000.0f, true, kMaxDelta, 0.0) == 0.0f);
     }
     {
         FallTracker t;
-        t.Update(20000.0f, false, kMaxDelta, 0.0, false);
+        (void)t.Update(20000.0f, false, kMaxDelta, 0.0);
         t.Reset();
         CHECK_FALSE(t.IsAnchored());
-        CHECK(t.Update(100.0f, true, kMaxDelta, 0.1, false) == 0.0f);
+        CHECK(t.Update(100.0f, true, kMaxDelta, kPoll) == 0.0f);
     }
 }
 
@@ -202,4 +201,78 @@ TEST_CASE("free-fall bound: the logged falls of 2026-10-10 against it")
     CHECK(SlowerThanFreeFall(202.0f, 645.0f, 1.113f - 0.12f));
     // Rising (d1 < d0) for longer than the slack is never a free fall.
     CHECK(SlowerThanFreeFall(300.0f, 290.0f, 0.1f));
+}
+
+namespace
+{
+    // One poll's game time from frames at 60 fps under a global time
+    // multiplier, the update delta scaled the same way (GameFrameSec, as
+    // DropAheadProbe's hook sums it).
+    double PollGameSec(double timeMult, int frames = 6)
+    {
+        double sum = 0.0;
+        for (int f = 0; f < frames; ++f) sum += GameFrameSec(1.0 / 60.0, timeMult, timeMult / 60.0);
+        return sum;
+    }
+}
+
+TEST_CASE("game clock: one frame is the wall frame times the time multiplier, or the update delta if smaller")
+{
+    CHECK(GameFrameSec(0.016, 1.0, 0.016) == doctest::Approx(0.016));
+    CHECK(GameFrameSec(0.016, 0.2, 0.016) == doctest::Approx(0.0032));   // Wheeler slow time, delta unscaled
+    CHECK(GameFrameSec(0.016, 0.2, 0.0032) == doctest::Approx(0.0032));  // ...or scaled: the same
+    CHECK(GameFrameSec(0.300, 1.0, 0.050) == doctest::Approx(0.050));    // a hitch the game clamps
+    CHECK(GameFrameSec(0.0, 1.0, 0.016) == 0.0);                         // a second update in one frame
+    CHECK(GameFrameSec(5.0, 1.0, 5.0) == doctest::Approx(kFallMaxPollStepSec));
+    CHECK(GameFrameSec(-1.0, 1.0, 0.016) == 0.0);
+    CHECK(GameFrameSec(std::nan(""), 1.0, 0.016) == 0.0);
+}
+
+TEST_CASE("fall tracker: Wheeler's slow time (0.2) opened mid-fall keeps the full depth")
+{
+    // A 3000-unit fall at the logged gravity; the wheel opens 0.6 s in and
+    // stays open: the polls stay 0.1 s of wall time apart, the game (and
+    // the fall) runs at a fifth of that. The wall-clock tracker of the
+    // first 0.23.29 commit re-anchored this to ~0 within a few polls (PR
+    // #202's verifier).
+    constexpr float kTop = 3000.0f;
+    constexpr float kG = 954.0f;
+    FallTracker t;
+    double game = 0.0;
+    float depth = t.Update(kTop, false, kMaxDelta, 0.0);
+    for (int poll = 1; poll <= 60; ++poll) {
+        const double dt = PollGameSec(poll <= 6 ? 1.0 : 0.2);
+        game += dt;
+        const float z = FreeFallZ(kTop, kG, game);
+        depth = t.Update(z, true, kMaxDelta, dt);
+        CAPTURE(poll);
+        CHECK(depth == doctest::Approx(kTop - z));
+    }
+    CHECK(depth > 600.0f);  // ~1.9 s of game time: past the falling need's full point
+}
+
+TEST_CASE("fall tracker: a hitch does not re-anchor a fall")
+{
+    constexpr float kTop = 2000.0f;
+    constexpr float kG = 954.0f;
+    for (const bool clamped : { true, false }) {
+        CAPTURE(clamped);
+        FallTracker t;
+        double game = 0.0;
+        (void)t.Update(kTop, false, kMaxDelta, 0.0);
+        float depth = 0.0f;
+        for (int poll = 1; poll <= 10; ++poll) {
+            double dt = kPoll;
+            if (poll == 3) {
+                // A 0.3 s frame early in the fall: the game either clamps its
+                // delta (physics advances 0.05 s) or steps the whole 0.3 s.
+                dt = GameFrameSec(0.3, 1.0, clamped ? 0.05 : 0.3);
+            }
+            game += dt;
+            const float z = FreeFallZ(kTop, kG, game);
+            depth = t.Update(z, true, kMaxDelta, dt);
+            CHECK(depth == doctest::Approx(kTop - z));
+        }
+        CHECK(depth > 400.0f);
+    }
 }

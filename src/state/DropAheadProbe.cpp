@@ -3,6 +3,7 @@
 #include "NeedSensorState.h"  // NeedClock
 #include "Profiling.h"
 #include "StateConstants.h"  // PhysicsConstants: HEAD_HEIGHT, INVALID_WATER_HEIGHT_VALUE
+#include "core/FallTracker.h"  // GameFrameSec: the game clock
 #include "core/WaterSelfCheck.h"
 
 #include <atomic>
@@ -58,6 +59,28 @@ namespace Huginn::State::DropAheadProbe
 
       using Update_t = void(RE::PlayerCharacter*, float);
       REL::Relocation<Update_t> g_originalUpdate;
+
+      // The game clock (0.23.29, core/FallTracker.h GameFrameSec): game
+      // seconds summed per PlayerCharacter::Update. Written by the hook
+      // thread only, read by the polls.
+      std::atomic<double> g_gameSeconds{ 0.0 };
+      std::chrono::steady_clock::time_point g_lastFrame{};  // hook thread only
+
+      void AdvanceGameClock(float a_delta) noexcept
+      {
+         const auto now = std::chrono::steady_clock::now();
+         if (g_lastFrame.time_since_epoch().count() != 0) {
+            const double wall = std::chrono::duration<double>(now - g_lastFrame).count();
+            // The global time multiplier: the float Wheeler's SGTM writes
+            // (wheeler src/bin/Utilities/Utils.cpp: RELOCATION_ID(511883,
+            // 388443), the address BSTimer::GetCurrentGlobalTimeMult reads).
+            const double mult = RE::BSTimer::GetCurrentGlobalTimeMult();
+            const double step = Core::Needs::GameFrameSec(wall, mult, a_delta);
+            g_gameSeconds.store(g_gameSeconds.load(std::memory_order_relaxed) + step,
+                                std::memory_order_relaxed);
+         }
+         g_lastFrame = now;
+      }
 
       std::uint32_t RayFilter(RE::PlayerCharacter* player)
       {
@@ -551,6 +574,7 @@ namespace Huginn::State::DropAheadProbe
       void HookUpdate(RE::PlayerCharacter* a_this, float a_delta)
       {
          g_originalUpdate(a_this, a_delta);
+         AdvanceGameClock(a_delta);  // before the probe: it runs even when the probe skips
          // Nothing of ours may unwind into the game's frames.
          try {
             OnPlayerUpdate(a_this);
@@ -582,6 +606,8 @@ namespace Huginn::State::DropAheadProbe
    }
 
    std::uint32_t MeasuredCount() noexcept { return g_measuredCount.load(std::memory_order_relaxed); }
+
+   double GameSeconds() noexcept { return g_gameSeconds.load(std::memory_order_relaxed); }
 
    Reading Latest() noexcept
    {

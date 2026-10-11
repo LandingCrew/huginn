@@ -462,6 +462,12 @@ namespace Huginn::State
       // the landing read a second after the end. Same writer as above.
       float m_hpGrounded = -1.0f;
       float m_fallHpBefore = -1.0f;
+      // The descent clock (0.23.29): DropAheadProbe::GameSeconds at the last
+      // poll (-1 none: the next poll counts no time), and both clocks at the
+      // start line, for the end line's durations. Same writer as above.
+      double m_fallGameSecAt = -1.0;
+      double m_fallStartWallSec = 0.0;
+      double m_fallStartGameSec = 0.0;
       struct PendingLanding
       {
          bool pending = false;

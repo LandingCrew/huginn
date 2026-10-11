@@ -28,16 +28,26 @@ namespace Huginn::Core::Needs
     // down) only shortens that, so between two depth samples d0 < d1 of one
     // free fall at most
     //     FreeFallMaxSec(d0, d1) = sqrt(2 / g) * (sqrt(d1) - sqrt(d0))
-    // can pass. A descent slower than that (less kTimingSlackSec) is not a
+    // can pass. A descent slower than that (less kFallTimingSlackSec) is not a
     // free fall, and the tracker re-anchors where the player is: the depth
     // starts again from 0 and a slide never reaches the 200-unit gate.
     // tools/needs/fit_drop_curve.py rejects slides from the drop-curve fit
     // with the same bound.
     //
     // The bound is measured from the first poll of the descent (the first
-    // with depth > 0), so the time a jump spends rising does not count; time
-    // only accrues on unpaused polls, so an open menu mid-fall (the player
-    // reaching for Slow Fall) holds the depth instead of re-anchoring it.
+    // with depth > 0), so the time a jump spends rising does not count.
+    //
+    // GAME TIME, NOT WALL TIME. The descent's clock is the game's own: the
+    // caller passes the game seconds since the last poll (GameFrameSec,
+    // summed per frame on the game side), never the wall clock. Gravity acts
+    // in game time, and the game's time runs slow in exactly the moments the
+    // player reaches for Slow Fall: Wheeler opens its wheel at
+    // SlowTimeScale (LoreRim: 0.2), and the Slow Time shout, bow zoom and
+    // LoreRim's "time slows when detected" slow it too. On the wall clock a
+    // fall seen through an open wheel descends five times slower than any
+    // free fall and was re-anchored to 0 within a few polls (PR #202's
+    // verifier). A pausing menu stops game time, so it adds nothing and the
+    // depth holds; a hitch the game clamps adds only the clamped frame.
     //
     // Deliberately free of engine types and of StateManager. The take-off Z is
     // rolling state that outlives a single poll, and every interesting failure
@@ -63,6 +73,24 @@ namespace Huginn::Core::Needs
     /// poll for a while must not charge the whole gap to the fall). Same as
     /// core/DropAhead.h ReadingAge::kMaxPollStepSec.
     inline constexpr double kFallMaxPollStepSec = 0.5;
+
+    /// One frame's game time, for the descent clock: the smaller of the
+    /// wall-clock frame scaled by the game's global time multiplier (what
+    /// Wheeler's slow time writes) and the delta the game hands the player's
+    /// update (which the game clamps through a hitch). Either one alone
+    /// would do if it is what the physics steps on; the smaller is the safe
+    /// choice when one of them is not, since a shorter clock only lengthens
+    /// the time a free fall is allowed. A frame with no wall time behind it
+    /// (a second update in the same frame) counts nothing. Negative or
+    /// non-finite inputs count nothing; one frame counts at most
+    /// kFallMaxPollStepSec.
+    [[nodiscard]] inline double GameFrameSec(double wallFrameSec, double timeMult, double updateDeltaSec) noexcept
+    {
+        const double scaled = wallFrameSec * timeMult;
+        double step = std::min(scaled, updateDeltaSec);
+        if (!(step > 0.0)) return 0.0;  // also NaN
+        return std::min(step, kFallMaxPollStepSec);
+    }
 
     /// Longest time a free fall takes from depth d0 down to d1 below its
     /// take-off height (from rest there; faster with any downward speed).
@@ -93,21 +121,16 @@ namespace Huginn::Core::Needs
         ///                           one poll. A larger step is a relocation,
         ///                           not a fall — see Reset() for why that
         ///                           matters even mid-session.
-        /// @param nowSec             Steady-clock seconds of this poll.
-        /// @param paused             The game is paused at this poll (a menu,
-        ///                           the console): no descent time accrues.
+        /// @param gameDtSec          GAME seconds since the last poll (the
+        ///                           summed GameFrameSec): 0 through a pausing
+        ///                           menu, a fifth of the wall clock under
+        ///                           Wheeler's slow time. Never the wall clock.
         [[nodiscard]] float Update(float currentZ, bool airborne, float maxPlausibleDelta,
-                                   double nowSec, bool paused) noexcept
+                                   double gameDtSec) noexcept
         {
-            // Descent time since the last poll: none when paused now or at
-            // the last poll (the game ran for an unknown part of that gap,
-            // and counting none only lengthens the allowance).
-            double stepSec = 0.0;
-            if (m_lastNowSec >= 0.0 && !paused && !m_lastPaused) {
-                stepSec = std::clamp(nowSec - m_lastNowSec, 0.0, kFallMaxPollStepSec);
-            }
-            m_lastNowSec = nowSec;
-            m_lastPaused = paused;
+            // At most kFallMaxPollStepSec of descent per poll; NaN or
+            // negative counts nothing (the lenient direction).
+            const double stepSec = gameDtSec > 0.0 ? std::min(gameDtSec, kFallMaxPollStepSec) : 0.0;
 
             // A save load, a cell door or a fast travel moves the player
             // discontinuously, and the remembered take-off Z then describes a
@@ -176,11 +199,9 @@ namespace Huginn::Core::Needs
         float m_lastZ = 0.0f;
         bool m_anchored = false;
         // The current descent below the anchor: its first sample's depth and
-        // the unpaused seconds since that sample.
+        // the game seconds since that sample.
         bool m_descending = false;
         float m_descentStartDepth = 0.0f;
         double m_descentSec = 0.0;
-        double m_lastNowSec = -1.0;
-        bool m_lastPaused = false;
     };
 }

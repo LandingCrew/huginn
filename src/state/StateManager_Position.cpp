@@ -119,15 +119,18 @@ namespace Huginn::State
       //
       // Free falls only (0.23.29): a descent slower than gravity allows (a
       // slide, a slope, hops) re-anchors the take-off Z (core/FallTracker.h).
-      // Its clock is unpaused time: the loop polls through a pausing menu,
-      // and a player who opens one mid-fall must keep the depth.
+      // Its clock is GAME time (DropAheadProbe::GameSeconds), never the
+      // wall clock: Wheeler's wheel, the Slow Time shout and bow zoom slow
+      // the game -- and the fall -- exactly when the player reaches for Slow
+      // Fall, and a pausing menu stops it.
       const bool airborne = player->IsInMidair() && !newIsSwimming;
       const float maxPlausibleDelta =
           PhysicsConstants::MAX_FALL_SPEED * (m_playerPositionPollInterval / 1000.0f);
       const double fallNowSec = NeedClock::Now();
-      auto* fallUi = RE::UI::GetSingleton();
-      const bool fallPaused = fallUi && fallUi->GameIsPaused();
-      newFallDepth = m_fallTracker.Update(currentZ, airborne, maxPlausibleDelta, fallNowSec, fallPaused);
+      const double fallGameSec = DropAheadProbe::GameSeconds();
+      const double fallGameDt = m_fallGameSecAt >= 0.0 ? fallGameSec - m_fallGameSecAt : 0.0;
+      m_fallGameSecAt = fallGameSec;
+      newFallDepth = m_fallTracker.Update(currentZ, airborne, maxPlausibleDelta, fallGameDt);
       newIsFalling = newFallDepth >= PhysicsConstants::FALL_DEPTH_MIN;
 
       // Transition only — the gate is otherwise invisible in a log, which makes
@@ -159,14 +162,21 @@ namespace Huginn::State
       if (newIsFalling != m_wasFalling) {
       if (newIsFalling) {
         m_fallHpBefore = m_hpGrounded;
+        m_fallStartWallSec = fallNowSec;
+        m_fallStartGameSec = fallGameSec;
         logger::debug("[Falling] start at depth {:.0f} (gate {:.0f})"sv,
             newFallDepth, PhysicsConstants::FALL_DEPTH_MIN);
       } else {
-        logger::debug("[Falling] end — peak depth {:.0f} (reason needs {:.0f}, full at {:.0f}) | hp {} -> {}"sv,
+        // The time since the start line on both clocks (0.23.29): the fit
+        // script judges a slide on the game time, which a slow-time wheel
+        // or shout stretches the wall time away from.
+        logger::debug("[Falling] end — peak depth {:.0f} (reason needs {:.0f}, full at {:.0f}) | hp {} -> {} | "
+                      "{:.3f} s from the start, game time {:.3f} s"sv,
             m_peakFallDepth,
             PhysicsConstants::FALL_DEPTH_MIN +
                 0.5f * (PhysicsConstants::FALL_DEPTH_HIGH - PhysicsConstants::FALL_DEPTH_MIN),
-            PhysicsConstants::FALL_DEPTH_HIGH, HpText(m_fallHpBefore), HpText(hpNow));
+            PhysicsConstants::FALL_DEPTH_HIGH, HpText(m_fallHpBefore), HpText(hpNow),
+            fallNowSec - m_fallStartWallSec, fallGameSec - m_fallStartGameSec);
         m_pendingLanding = { true, fallNowSec, m_fallHpBefore, m_peakFallDepth };
       }
       m_wasFalling = newIsFalling;

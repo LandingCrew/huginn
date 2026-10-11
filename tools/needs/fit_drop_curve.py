@@ -91,7 +91,8 @@ sqrt(2 d / G), and any downward speed at take-off (a jump coming back down)
 only shortens that, so a free fall covers the gate depth d0 (the `[Falling]
 start at depth d0` line) to the peak d1 (the `[Falling] end` line) in at most
     t_ff = sqrt(2 / G) * (sqrt(d1) - sqrt(d0)).
-The logged duration (end line minus start line) exceeds the time between
+The logged duration (start line to end line; in game time where logged, see
+THE CLOCK) exceeds the time between
 those two depth samples by the poll that saw the landing (the end line is
 the first grounded poll, d1 the poll before), and each sample's Z may be up
 to a frame older than its line. A fall is a slide when
@@ -100,14 +101,27 @@ G is Havok's 9.8 m/s^2 at Skyrim's 69.99 units per metre: 686 units/s^2.
 The logged falls descend faster than that (the script prints their own
 gravity, the median over the long ones: about 950 in the 2026-10-10 logs; the
 5471-unit sea fall alone about 960), and a smaller G only lengthens t_ff, so
-the test errs toward keeping a fall. In those logs every fall the fit kept
-took at most 0.84 of its budget (t_ff + slack) and six took 1.06 to 3.77
-times it: 12:08:36 (645 units in 1.11 s), trace-04's 18:47:11 (549 in 1.51
-s, its depth growing 136 units in 1.07 s where a free fall adds ~1000), three
-harmless ones, and 11:32:35 (1.06: 202 -> 216 units in its first poll, where
-a free fall adds 60 or more, then a fall to 401; 3.4% of health), a ledge or
-a slope partway down. Its peak depth overstates the free fall, so leaving it
-out is right, but it is the closest call.
+the test errs toward keeping a fall.
+
+THE CLOCK. Gravity acts in game time, and the game slows its time: Wheeler
+while a wheel is open (SlowTimeScale; LoreRim 0.2), the Slow Time shout, bow
+zoom, LoreRim's "time slows when detected". The wall-clock duration of a fall
+seen in slow motion is up to five times its game time, so it reads as a
+slide. From 0.23.29 the end line logs the game time since the start line
+(`game time N s`), and the test judges that. On an older log, a fall with
+Wheeler open at any moment between its start and end lines (the
+`WheelStateChanged: ... isOpen=` lines) is not judged: it stays in the fit
+and the table marks it "unjudgeable". The other slow-time sources leave no
+line in an old log, so a slide verdict there is only as good as the
+assumption that none was active.
+
+In the 2026-10-10 logs every fall the fit kept took at most 0.84 of its
+budget (t_ff + slack), and five took 1.41 to 3.77 times it: 12:08:36 (645
+units in 1.11 s), trace-04's 18:47:11 (549 in 1.51 s, its depth growing 136
+units in 1.07 s where a free fall adds ~1000) and three harmless ones.
+11:32:35 (1.06 on the wall clock: 202 -> 401 units, 3.4% of health) began
+with Wheeler open (opened 11:32:32.3, closed 11:32:35.373, the fall .086 to
+.616): a real fall partly in slow motion, unjudgeable and kept.
 
 Usage:
   python -I tools/needs/fit_drop_curve.py <log> [<log> ...] [--exclude WHEN ...]
@@ -154,6 +168,11 @@ MIN_DAMAGING = 5     # fewer fitted falls with severity >= DAMAGE_MIN than this:
 LINE = re.compile(r"^\[(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d+)\]\[[^\]]*\]\[\w\]: (.*)$")
 FALL_END = re.compile(r"\[Falling\] end \S+ peak depth (\d+)")
 FALL_START = re.compile(r"\[Falling\] start at depth (\d+)")
+# 0.23.29: the end line's time since the start line, on the game clock too.
+FALL_GAME_SEC = re.compile(r"game time ([0-9.]+) s")
+# Wheeler slows the game (SlowTimeScale; LoreRim 0.2) while a wheel is open:
+# wheeler/WheelerClient.cpp's callback line.
+WHEEL_STATE = re.compile(r"WheelStateChanged: wheel=(\d+), isOpen=(true|false)")
 FALL_LANDED = re.compile(r"\[Falling\] landed \S+ peak depth (\d+) \| hp ([0-9.]+)% -> ([0-9.]+)%")
 NEED = re.compile(r"\b(health_falling|health_deficit)=([0-9.]+)")
 MIXED = re.compile(r"\b(in_combat|restore_pending_health)=")
@@ -227,18 +246,54 @@ def combat_in_window(timeline, lo, hi):
     return state
 
 
+def wheel_timeline(events):
+    """[(t, Wheeler open after)]: its slow time is on while it is. Wheeler is
+    one menu showing one wheel at a time, and it switches wheels while open
+    (the logs open on wheel=2 and close on wheel=0), so the state is the last
+    line's isOpen whatever its wheel. A game load closes it."""
+    changes = []
+    for t, _, _, text in events:
+        if GAME_LOAD.search(text):
+            changes.append((t, False))
+            continue
+        m = WHEEL_STATE.search(text)
+        if m:
+            changes.append((t, m.group(2) == "true"))
+    return changes
+
+
+def slow_time_in_window(changes, lo, hi):
+    """A wheel open (slow time) at any moment of [lo, hi]."""
+    state = False
+    for t, is_open in changes:
+        if t <= lo:
+            state = is_open
+            continue
+        if t > hi:
+            break
+        return True  # a change inside the window: slow time on one side of it
+    return state
+
+
 def free_fall_sec(d0, d1, g=G_UNITS):
     """Longest a free fall takes from depth d0 to d1 below the take-off (from rest)."""
     return math.sqrt(2.0 / g) * (math.sqrt(max(d1, 0)) - math.sqrt(max(d0, 0)))
 
 
+def judged_sec(fall):
+    """The duration the slide test judges: the game time when the end line
+    logs it (0.23.29), else the wall time between the lines."""
+    if fall["game_sec"] is not None:
+        return fall["game_sec"]
+    return fall["t"] - fall["start"]
+
+
 def slide_budget(fall):
-    """The logged duration over the longest a free fall could take (t_ff +
+    """The judged duration over the longest a free fall could take (t_ff +
     SLIDE_SLACK_SEC): over 1 is a slide. None without a start line."""
     if fall["start"] is None:
         return None
-    dur = fall["t"] - fall["start"]
-    return dur / (free_fall_sec(fall["start_depth"], fall["depth"]) + SLIDE_SLACK_SEC)
+    return judged_sec(fall) / (free_fall_sec(fall["start_depth"], fall["depth"]) + SLIDE_SLACK_SEC)
 
 
 def own_gravity(fall):
@@ -246,7 +301,9 @@ def own_gravity(fall):
     duration less the landing poll), or None for a short or unstarted one."""
     if fall["start"] is None or fall["depth"] - fall["start_depth"] < LONG_FALL_UNITS:
         return None
-    sec = fall["t"] - fall["start"] - POLL_MAX_SEC
+    if fall["slow_time"]:
+        return None
+    sec = judged_sec(fall) - POLL_MAX_SEC
     if sec <= 0:
         return None
     return 2.0 * (math.sqrt(fall["depth"]) - math.sqrt(fall["start_depth"])) ** 2 / sec ** 2
@@ -256,6 +313,7 @@ def falls(events):
     out = []
     start_at = None
     timeline = combat_timeline(events)
+    wheels = wheel_timeline(events)
     for i, (t, clock, stamp, text) in enumerate(events):
         ms = FALL_START.search(text)
         if ms:
@@ -269,6 +327,12 @@ def falls(events):
                 "start": start_at[0] if start_at else None, "start_depth": start_at[1] if start_at else None,
                 "hf": 0.0, "hd": 0.0, "hp_before": None, "hp_min": None, "water": False, "pre_hurt": False,
                 "mixed": None, "loss": None}
+        mg = FALL_GAME_SEC.search(text)
+        fall["game_sec"] = float(mg.group(1)) if mg and fall["start"] is not None else None
+        # Slow time inside the fall, on a log without the game time: the
+        # wall-clock duration says nothing about the descent.
+        fall["slow_time"] = (fall["game_sec"] is None and fall["start"] is not None
+                             and slow_time_in_window(wheels, fall["start"], t))
         fall["slide"] = slide_budget(fall)
         start_at = None
         # Backwards: the state just before the landing.
@@ -494,13 +558,18 @@ def main(argv):
         print(f"the falls' own gravity (from rest, gate to peak, the {len(gs)} falls of {LONG_FALL_UNITS}+ units): "
               f"median {gs[len(gs) // 2]:.0f} units/s^2; the slide test uses {G_UNITS:.0f} "
               f"(slack {SLIDE_SLACK_SEC:.3f} s)")
+    print("dur s: the judged duration, start line to end line (g: the game time the end line logs, "
+          "0.23.29; else the wall time); budget ?: a Wheeler wheel (slow time) was open inside the fall")
     print(f"{'time':>8} {'depth':>6} {'dur s':>6} {'budget':>6} {'peak hf':>7} {'h def':>6} {'hp drop':>8} "
           f"{'loss':>6} {'target':>6}  use")
     points = []
     slides = []
+    unjudged = []
     for f in sorted(found, key=lambda f: f["depth"]):
-        dur = f"{f['t'] - f['start']:.2f}" if f["start"] is not None else "-"
-        budget = "-" if f["slide"] is None else f"{f['slide']:.2f}"
+        dur = "-"
+        if f["start"] is not None:
+            dur = f"{judged_sec(f):.2f}" + ("g" if f["game_sec"] is not None else "")
+        budget = "-" if f["slide"] is None else f"{f['slide']:.2f}" + ("?" if f["slow_time"] else "")
         hp_drop = "-"
         if f["hp_before"] is not None and f["hp_min"] is not None:
             hp_drop = f"{max(f['hp_before'] - f['hp_min'], 0.0):.1f}%"
@@ -513,7 +582,7 @@ def main(argv):
             why = "excluded: landed in water"
         elif hit:
             why = "excluded: --exclude"
-        elif f["slide"] is not None and f["slide"] > 1.0:
+        elif f["slide"] is not None and f["slide"] > 1.0 and not f["slow_time"]:
             why = "excluded: slide, not a free fall"
             slides.append(f)
         elif f["mixed"]:
@@ -522,6 +591,10 @@ def main(argv):
             why = "excluded: health already falling"
         else:
             points.append((float(f["depth"]), target))
+        if f["slow_time"] and f["slide"] is not None and f["slide"] > 1.0:
+            unjudged.append(f)
+            why = (why or ("fit (measured loss)" if f["loss"] is not None else "fit")) + \
+                "; slide test unjudgeable (a wheel's slow time)"
         print(f"{f['clock']:>8} {f['depth']:>6} {dur:>6} {budget:>6} {f['hf']:>7.2f} {f['hd']:>6.2f} {hp_drop:>8} "
               f"{loss:>6} {target:>6.2f}  {why or ('fit (measured loss)' if f['loss'] is not None else 'fit')}")
     for kind, when in sorted(exclude - matched):
@@ -532,8 +605,16 @@ def main(argv):
               f"+ {SLIDE_SLACK_SEC:.3f} s); over 1 is slower than any free fall):")
         for f in sorted(slides, key=lambda f: f["t"]):
             ff = free_fall_sec(f["start_depth"], f["depth"])
-            print(f"  {f['stamp']}  {f['start_depth']} -> {f['depth']} units in {f['t'] - f['start']:.2f} s; "
+            clock = "game" if f["game_sec"] is not None else "wall"
+            print(f"  {f['stamp']}  {f['start_depth']} -> {f['depth']} units in {judged_sec(f):.2f} s ({clock}); "
                   f"a free fall takes at most {ff:.2f} + {SLIDE_SLACK_SEC:.2f} s (budget {f['slide']:.2f})")
+    if unjudged:
+        print()
+        print("slower than a free fall on the wall clock, but a Wheeler wheel (slow time) was open inside the "
+              "fall and the log has no game time: unjudgeable, not rejected:")
+        for f in sorted(unjudged, key=lambda f: f["t"]):
+            print(f"  {f['stamp']}  {f['start_depth']} -> {f['depth']} units in {judged_sec(f):.2f} s wall "
+                  f"(budget {f['slide']:.2f})")
 
     if len(points) < 4:
         print("too few falls to fit", file=sys.stderr)

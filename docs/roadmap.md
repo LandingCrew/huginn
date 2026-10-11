@@ -270,15 +270,25 @@ in. What was built: the [implementation map](architecture/9-implementation-map.m
         slides itself, a fall whose gate-to-peak descent was slower than a
         free fall from rest under Havok's 686 units/s^2 allows (plus one poll
         and two frames; the logged falls' own gravity is ~950), and reads
-        several logs at once. On the five logs of 2026-10-10, with no
-        `--exclude`, it rejects six (12:08:36, 18:47:11, 11:32:35 and three
-        harmless ones) and fits centre 467, slope 0.0285 (bootstrap centre
-        445-485): the curve stays. `FallTracker` (now core/FallTracker.h,
-        host-tested) applies the same bound: a descent slower than a free
-        fall re-anchors the take-off Z, so a slide no longer accumulates
-        depth. In-game check: a slide down a steep slope never shows the
-        Falling reason; a real cliff fall still does, also with a menu
-        opened mid-fall.
+        several logs at once. It judges game time, not wall time: Wheeler's
+        wheel (SlowTimeScale, LoreRim 0.2), the Slow Time shout and bow zoom
+        slow the game and the fall, so the end line logs the game time from
+        0.23.29, and on older logs a fall with a wheel open inside it is
+        kept, unjudged (11:32:35, a real fall that began with the wheel
+        open). On the five logs of 2026-10-10, with no `--exclude`, it
+        rejects five (12:08:36, 18:47:11 and three harmless ones) and fits
+        centre 467, slope 0.0295: the curve stays. `FallTracker` (now
+        core/FallTracker.h, host-tested) applies the same bound on a game
+        clock (DropAheadProbe's PlayerCharacter::Update hook sums each
+        frame's wall time times the global time multiplier Wheeler writes,
+        or the update's delta if smaller): a descent slower than a free fall
+        re-anchors the take-off Z, so a slide no longer accumulates depth,
+        while a fall seen through an open wheel keeps its depth. In-game
+        check: a slide down a steep slope never shows the Falling reason; a
+        real cliff fall still does, also with Wheeler opened mid-fall, and
+        its end line's game time is about a fifth of the wall time while the
+        wheel is open (and with the Slow Time shout, whose use of the same
+        multiplier is not verified).
       - **OPEN: false water by a pond.** At 11:23-11:24 six jumps from a bank
         at feet -3005 read water at -3008 ahead; from the bank the probe read
         it shallow (`deep water` 28 and 91). The deep readings were taken

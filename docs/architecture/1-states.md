@@ -365,8 +365,9 @@ Two v0.19.x corrections live here:
   `MAX_FALL_SPEED × pollInterval` per sample; swimming is excluded before the
   tracker sees it. Since 0.23.29 it counts free falls only: a descent slower than
   a free fall from rest under gravity (686 units/s²) allows, a slide or hops down a
-  slope, re-anchors it, so a slide no longer accumulates depth; its clock runs on
-  unpaused polls only. The anchor is single-writer in this poll and **must** be reset
+  slope, re-anchors it, so a slide no longer accumulates depth. Its clock is game
+  time (`DropAheadProbe::GameSeconds`), which stops in a pausing menu and runs slow
+  under Wheeler's wheel or the Slow Time shout, as the fall itself does. The anchor is single-writer in this poll and **must** be reset
   by `ResetTrackingState()` — the previous save's take-off Z describes a different
   world position.
 - **Underwater (#61).** The test now uses `GetWaterHeight()` (the height of the
