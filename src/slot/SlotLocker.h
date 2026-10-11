@@ -252,7 +252,9 @@ namespace Huginn::Slot
         /// just changed. Called when the Wheeler wheel closes: the widget is
         /// hidden while the wheel is open, so a key that changed then is first
         /// SEEN at the close -- and its lock, started when it changed, used to
-        /// run out under three seconds after the player first saw it.
+        /// run out under three seconds after the player first saw it. Also
+        /// holds off the combat upsert for max(fPressGraceMs, the press floor)
+        /// (core::WheelClosedRecently): the player is reaching for a key.
         void RestartLocks();
 
         /// Apply locking logic to raw assignments from SlotAllocator
@@ -398,6 +400,9 @@ namespace Huginn::Slot
         // recently left a key or that an upsert displaced this fight (never
         // challengers), and the page's last upsert. Guarded by m_mutex.
         Core::CombatUpsertMemory m_upsertMemory;
+        // When the Wheeler wheel last closed (RestartLocks): no upsert for
+        // max(fPressGraceMs, the press floor) after it. Epoch = not since reset.
+        std::chrono::steady_clock::time_point m_wheelClosedAt{};
 
         // =========================================================================
         // INTERNAL HELPERS

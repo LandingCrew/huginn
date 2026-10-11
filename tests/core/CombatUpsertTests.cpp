@@ -112,14 +112,23 @@ TEST_CASE("combat upsert: never an override, a Swap Back item or a key with a ho
     CHECK(DecideCombatUpsertGate(in) == CombatUpsertGate::RemembranceHold);
 }
 
-TEST_CASE("combat upsert: never a wildcard, never a key that changes this run anyway")
+TEST_CASE("combat upsert: never a wildcard")
 {
     auto in = OpenKey();
     in.shownWildcard = true;
     CHECK(DecideCombatUpsertGate(in) == CombatUpsertGate::Wildcard);
-    in = OpenKey();
-    in.changingThisRun = true;
-    CHECK(DecideCombatUpsertGate(in) == CombatUpsertGate::Changing);
+}
+
+TEST_CASE("combat upsert: none right after the Wheeler wheel closes")
+{
+    CHECK(WheelClosedRecently(0.0, 600.0));
+    CHECK(WheelClosedRecently(599.0, 600.0));
+    CHECK_FALSE(WheelClosedRecently(600.0, 600.0));
+    // fPressGraceMs = 0 (or under the floor): the press floor still holds.
+    CHECK(WheelClosedRecently(100.0, 0.0));
+    CHECK(WheelClosedRecently(kCombatUpsertPressFloorMs - 1.0, 0.0));
+    CHECK_FALSE(WheelClosedRecently(kCombatUpsertPressFloorMs, 0.0));
+    CHECK_FALSE(WheelClosedRecently(-1.0, 600.0));   // never closed
 }
 
 TEST_CASE("combat upsert: press grace -- pressed or changed less than fPressGraceMs ago")

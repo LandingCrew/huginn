@@ -26,7 +26,6 @@
 //   - the allocator wants for an override or Remembrance item this run (it is
 //     about to take the key: an upsert first would be two changes);
 //   - shows a wildcard (an exploration pick scores low by design);
-//   - changes this run anyway;
 //   - is inside press grace: changed less than fPressGraceMs ago, or pressed
 //     less than max(fPressGraceMs, the press floor) ago -- the floor covers
 //     the double-tap window and the hold threshold, so a pending tap or hold
@@ -41,8 +40,11 @@
 // displaced item could upsert the key it "belongs" on -- the home-key move the
 // combat lock defers to the end of the fight, back as two changes (verifier,
 // PR #208). And at most one upsert per page per run, kCombatUpsertPageSpacingMs
-// apart, and none in a run where any other key changes: one visible change
-// per run.
+// apart; none in a run where any key of the page changes (one visible change
+// per run -- the caller checks it before the per-key gate, which is why the
+// gate has no "changing" case); and none less than max(fPressGraceMs, the
+// press floor) after the Wheeler wheel closes (WheelClosedRecently): the
+// widget comes back then and the player reaches for a key.
 //
 // Pure: standard library only, host-tested in tests/core/CombatUpsertTests.cpp.
 
@@ -110,7 +112,6 @@ namespace Huginn::Core
         WantedPinned,     ///< the allocator wants an override or Remembrance item on this key
         RemembranceHold,  ///< an active Remembrance hold belongs to or is shown on this key
         Wildcard,         ///< the key shows a wildcard
-        Changing,         ///< the key changes this run anyway
         PressGrace,       ///< pressed or changed too recently
         Cooldown,         ///< upserted less than fCombatUpsertCooldownSec ago
     };
@@ -124,7 +125,6 @@ namespace Huginn::Core
         bool wantedPinned = false;     ///< this run's allocator pick for the key is an override / Remembrance item
         bool remembranceHold = false;  ///< an active hold belongs to or is shown on this key
         bool shownWildcard = false;
-        bool changingThisRun = false;  ///< this run's item is not what the key showed last run
         double graceMs = 0.0;          ///< fPressGraceMs; <= 0 = no grace on a change
         double pressFloorMs = kCombatUpsertPressFloorMs;  ///< a press holds the key at least this long
         double sincePressMs = -1.0;    ///< since the player last pressed the key; < 0 = never
@@ -142,7 +142,6 @@ namespace Huginn::Core
         if (in.wantedPinned) return CombatUpsertGate::WantedPinned;
         if (in.remembranceHold) return CombatUpsertGate::RemembranceHold;
         if (in.shownWildcard) return CombatUpsertGate::Wildcard;
-        if (in.changingThisRun) return CombatUpsertGate::Changing;
         const double pressMs = in.graceMs > in.pressFloorMs ? in.graceMs : in.pressFloorMs;
         if ((in.sincePressMs >= 0.0 && in.sincePressMs < pressMs) ||
             (in.graceMs > 0.0 && in.sinceShownMs >= 0.0 && in.sinceShownMs < in.graceMs)) {
@@ -152,6 +151,16 @@ namespace Huginn::Core
             return CombatUpsertGate::Cooldown;
         }
         return CombatUpsertGate::Open;
+    }
+
+    /// No upsert this soon after the Wheeler wheel closed: the widget is back
+    /// and the player reaches for a key, so a challenger that waited behind
+    /// the open wheel must not land in the first run after it. `sinceCloseMs`
+    /// < 0 = the wheel has not closed (since the last reset).
+    [[nodiscard]] constexpr bool WheelClosedRecently(double sinceCloseMs, double graceMs) noexcept
+    {
+        const double holdMs = graceMs > kCombatUpsertPressFloorMs ? graceMs : kCombatUpsertPressFloorMs;
+        return sinceCloseMs >= 0.0 && sinceCloseMs < holdMs;
     }
 
     struct CombatUpsertPick

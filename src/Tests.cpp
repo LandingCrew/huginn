@@ -6698,6 +6698,27 @@ void RunSlotLockerOverrideScopeTest()
             passed = false;
         }
         (void)locker.SetInCombat(false);
+
+        // 5j. Right after the Wheeler wheel closes (RestartLocks) no upsert
+        //     for max(fPressGraceMs, the 500 ms press floor): the widget is
+        //     back and the player reaches for a key.
+        locker.Reset();
+        (void)locker.SetInCombat(true);
+        locker.RestartLocks();
+        const auto t3 = std::chrono::steady_clock::now();
+        (void)locker.ApplyLocks(scoredPage({ { A, -1.0 } }), none, {}, at(t3, 0));
+        shown = locker.ApplyLocks(scoredPage({ { D, 1.0 } }), none, {}, at(t3, 200));
+        if (!shows(shown, 0, A)) {
+            logger::error("TEST FAIL: a combat upsert landed 0.2 s after the wheel closed"sv);
+            passed = false;
+        }
+        shown = locker.ApplyLocks(scoredPage({ { D, 1.0 } }), none, {}, at(t3, 700));
+        if (!shows(shown, 0, D)) {
+            logger::error("TEST FAIL: no combat upsert 0.7 s after the wheel closed (key0={:08X})"sv,
+                shown.empty() ? 0 : shown[0].formID);
+            passed = false;
+        }
+        (void)locker.SetInCombat(false);
         locker.SetConfig(testConfig);
     }
 
@@ -6764,6 +6785,15 @@ void RunSlotLockerOverrideScopeTest()
         locker.SettleAfterUndo(0, P, 1000.0f, 1500.0f);
         if (locker.GetLockSnapshot()[0].remainingMs < 2000.0f) {
             logger::error("TEST FAIL: a late report of the same undo restarted the settle ({:.0f}ms left)"sv,
+                locker.GetLockSnapshot()[0].remainingMs);
+            passed = false;
+        }
+        // A genuine second undo of the same item inside 1.5 s (a new hold
+        // taken and undone: Remembrance passes no repeat window for an undo
+        // that ended an active hold) settles again.
+        locker.SettleAfterUndo(0, P, 1000.0f, 0.0f);
+        if (locker.GetLockSnapshot()[0].remainingMs > 1000.0f) {
+            logger::error("TEST FAIL: a second genuine undo within 1.5 s did not settle ({:.0f}ms left)"sv,
                 locker.GetLockSnapshot()[0].remainingMs);
             passed = false;
         }

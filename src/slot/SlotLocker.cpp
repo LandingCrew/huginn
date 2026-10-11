@@ -259,6 +259,7 @@ namespace Huginn::Slot
     void SlotLocker::RestartLocks()
     {
         std::lock_guard<std::mutex> lock(m_mutex);
+        m_wheelClosedAt = std::chrono::steady_clock::now();
         const auto d = Core::EffectiveLockDuration(m_inCombat, m_config.lockDurationMs, m_config.combatLockDurationMs);
         for (auto& slot : m_lockedSlots) {
             if (!slot.isLocked || slot.frozen || slot.isActivationLock || slot.settling) continue;
@@ -876,11 +877,17 @@ namespace Huginn::Slot
             return t == std::chrono::steady_clock::time_point{} ? -1.0
                 : std::chrono::duration<double, std::milli>(now - t).count();
         };
+        // Nor right after the Wheeler wheel closes: the widget is back and the
+        // player reaches for a key (RestartLocks stamps the close).
+        if (Core::WheelClosedRecently(sinceMs(m_wheelClosedAt), run.pressGraceMs)) {
+            return;
+        }
         const size_t n = std::min(result.size(), MAX_SLOTS);
 
-        // One visible change per run: no upsert while any key changes this
-        // run (an override breaking its key, a Remembrance hold arriving, a
-        // refill). It also closes the same-run cascade: an item can only leave
+        // One visible change per run: no upsert while any key of the page
+        // changes this run (an override breaking its key, a Remembrance hold
+        // arriving, a refill) -- checked here for the whole page, so the
+        // per-key gate needs no "changing" case. It also closes the same-run cascade: an item can only leave
         // a key that changes, so the item an override just displaced is never
         // upserted onto another key in the run it left (verifier, PR #208).
         for (size_t i = 0; i < n; ++i) {
@@ -912,8 +919,6 @@ namespace Huginn::Slot
             g.wantedPinned = i < wanted.size() && wanted[i].IsPinned();
             g.remembranceHold = i < run.remembranceHoldOnKey.size() && run.remembranceHoldOnKey[i];
             g.shownWildcard = shown.IsWildcard();
-            g.changingThisRun = slot.shownEmpty || shown.formID != slot.shownFormID ||
-                                shown.uniqueID != slot.shownUniqueID;
             g.graceMs = run.pressGraceMs;
             g.pressFloorMs = std::max(static_cast<double>(slot.pressHoldMs), Core::kCombatUpsertPressFloorMs);
             g.sincePressMs = sinceMs(slot.lastPressAt);
@@ -1153,6 +1158,7 @@ namespace Huginn::Slot
         m_churnBaseline = true;
         m_inCombat = false;
         m_upsertMemory.Clear();
+        m_wheelClosedAt = {};
         spdlog::info("[SlotLocker] Reset complete");
     }
 

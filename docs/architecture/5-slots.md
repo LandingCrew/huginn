@@ -903,9 +903,10 @@ combat lock defers, as two changes in 0.1 s (verifier, #208). At most one
 upsert per page per run, and 3 s apart (`kCombatUpsertPageSpacingMs`): a
 context flip can put several keys past the barrier at once, and the spacing
 shows them one at a time, each past the press grace and the double-tap window.
-None in a run where any other key changes (one visible change per run); since
-an item only leaves a key that changes, that also stops an item an override
-displaced this run from upserting another key in the same run. The combat
+None in a run where any key of the page changes (one visible change per run;
+checked for the whole page before the per-key gates); since an item only leaves
+a key that changes, that also stops an item an override displaced this run from
+upserting another key in the same run. The combat
 lock's no-enemy release (`fCombatNoEnemyReleaseSec`) ends the fight for this
 too: the "displaced this fight" list is cleared, as at combat end. A page
 switch clears each key's upsert cooldown and press record.
@@ -913,15 +914,16 @@ Pairing is greedy on the margin (`PlanCombatUpserts`). Never on a key showing
 an override, a Remembrance item or a wildcard, that the allocator wants for an
 override or Remembrance item this run (a non-urgent override waiting out
 `fMinLockDurationMs`: an upsert first would be two changes and would restart
-the wait), with an active hold of its own, changing this run, changed less than
-`fPressGraceMs` ago, pressed less than max(`fPressGraceMs`, 500 ms) ago, or
-upserted less than `fCombatUpsertCooldownSec` ago; never while the Wheeler wheel
-is open. Presses are noted by `SlotLocker::NoteKeyPress` at hotkey down
+the wait), with an active hold of its own, changed less than `fPressGraceMs`
+ago, pressed less than max(`fPressGraceMs`, 500 ms) ago, or upserted less than
+`fCombatUpsertCooldownSec` ago; never while the Wheeler wheel is open, nor for
+max(`fPressGraceMs`, 500 ms) after it closes (`WheelClosedRecently`, stamped by
+`RestartLocks`): the widget is back and the player reaches for a key. Presses are noted by `SlotLocker::NoteKeyPress` at hotkey down
 (holding the key for the hold threshold + 100 ms), at key up (the double-tap
 window + 100 ms), so a pending hold or tap never acts on an upsert even with
 `fPressGraceMs = 0`; when the press acts; and on a Huginn-wheel activation.
-The 500 ms floor is the default of those two. The new item is combat-locked like any other. One info
-line each,
+The 500 ms floor is the default of those two. The new item is combat-locked
+like any other. One info line each,
 `[SlotLocker] Slot N combat upsert: 'Old' -> 'New' (s=+a vs -b, +d > 3.0 x ln m
 0.405)`, and the change counts as `upsert` in `[SlotChurn]` and the heartbeat.
 Replayed on the 2026-10-11 12:05-13:27 log (11 fights, 15.7 min in combat, 105
@@ -949,8 +951,10 @@ release let go of it, and kept it would show the undone item for 10 s); a key
 whose lock holds the item without showing it is unlocked; a second report of
 the same undo changes nothing, also after the settle ended, within
 Remembrance's 1.5 s match window (a late Wheeler callback), unless Sticky's
-activation lock now holds the undone item. The same rule out of combat: the change it saves
-is the same misclick hazard. The accepted cost, under every policy: the
+activation lock now holds the undone item. Only that late report uses the
+window: an undo that ends an active hold is always a new undo and settles,
+even 1.5 s after the last one. The same rule out of combat: the change it
+saves is the same misclick hazard. The accepted cost, under every policy: the
 just-equipped item stays up, unlabelled, for the full second instead of a stale
 pick.
 

@@ -77,9 +77,12 @@ namespace Huginn::Slot
             // not show the equipped item as "Swap Back" until the lock runs
             // out, nor follow the allocator through its first, stale fills:
             // it settles (the label goes on the next run; one change later).
-            SettleIfOnScreen(page, s, formID, kSettleMs, static_cast<float>(kMatchWindowMs));
+            // No repeat window: this undo ended an active hold, so an earlier
+            // settle for the same item (which cleared its own hold) was a
+            // different undo -- a second one inside 1.5 s settles again.
+            SettleIfOnScreen(page, s, formID, kSettleMs, 0.0f);
             if (shown != SIZE_MAX && shown != s) {
-                SettleIfOnScreen(page, shown, formID, kSettleMs, static_cast<float>(kMatchWindowMs));
+                SettleIfOnScreen(page, shown, formID, kSettleMs, 0.0f);
             }
             m_dirty = true;
             return true;
@@ -90,7 +93,9 @@ namespace Huginn::Slot
         if (ended.formID == formID && NowMs() - ended.endedAtMs <= kMatchWindowMs) {
             ended = {};
             // Update settled the key already (a no-op here); a key still
-            // showing the item settles now.
+            // showing the item settles now. The one call with a repeat window:
+            // this report can arrive after that settle filled and locked the
+            // key, and must not start it again.
             SettleIfOnScreen(page, slot, formID, kSettleMs, static_cast<float>(kMatchWindowMs));
             m_dirty = true;
             return true;
@@ -215,10 +220,11 @@ namespace Huginn::Slot
                     entry = {};
                     if (backInHand) {
                         // The undo's situation (a Wheeler undo lands here
-                        // before its callback): settle, as OnSlotActivated does.
-                        SettleIfOnScreen(page, slot, heldID, kSettleMs, static_cast<float>(kMatchWindowMs));
+                        // before its callback): settle, as OnSlotActivated does,
+                        // with no repeat window (an active hold just ended).
+                        SettleIfOnScreen(page, slot, heldID, kSettleMs, 0.0f);
                         if (shown != slot) {
-                            SettleIfOnScreen(page, shown, heldID, kSettleMs, static_cast<float>(kMatchWindowMs));
+                            SettleIfOnScreen(page, shown, heldID, kSettleMs, 0.0f);
                         }
                     } else {
                         ReleaseIfOnScreen(page, slot);
