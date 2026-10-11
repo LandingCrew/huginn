@@ -612,7 +612,7 @@ namespace Huginn::State
 
       // Transition-log memory, poll thread only (PollPlayerMagicEffects).
       int m_lastThirstStage = -1;
-      bool m_lastSurvivalRegen = false;
+      Core::Needs::RegenDebuffs m_lastSurvivalRegen;
 
       // Native warmth function (CC Survival engine function)
       using GetWarmthRating_t = float(RE::Actor*);

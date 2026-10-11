@@ -71,6 +71,7 @@ FIELDS = {
     # Status
     "poisoned": ("b", 0), "diseased": ("b", 0), "drainHealth": ("b", 0),
     "drainMagicka": ("b", 0), "drainStamina": ("b", 0), "regenSuppressed": ("b", 0),
+    "healthRegenSuppressed": ("b", 0),
     "encumbrance": ("f", 0.0), "vampireStage": ("i", 0),
     # Survival
     "survival": ("b", 0), "hungerStage": ("i", 0), "coldStage": ("i", 0),

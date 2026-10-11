@@ -127,7 +127,7 @@ namespace Huginn::State
     // they are matched against are cached with the survival globals.
     CacheSurvivalGlobals();
     int thirstStage = 0;
-    bool survivalRegenDebuff = false;
+    Core::Needs::RegenDebuffs survivalRegen;
     const char* survivalRegenSource = nullptr;  // the first such spell, for the log
     const auto isSurvivalStageSpell = [this](const RE::MagicItem* s) {
       const RE::FormID id = s->GetFormID();
@@ -135,10 +135,17 @@ namespace Huginn::State
       return (m_ccSurvivalFile && m_ccSurvivalFile->IsFormInMod(id)) ||
              (m_dvsmpFile && m_dvsmpFile->IsFormInMod(id));
     };
-    const auto isRegenAV = [](RE::ActorValue av) {
-      return av == RE::ActorValue::kHealRate || av == RE::ActorValue::kHealRateMult ||
-             av == RE::ActorValue::kMagickaRate || av == RE::ActorValue::kMagickaRateMult ||
-             av == RE::ActorValue::kStaminaRate || av == RE::ActorValue::kStaminaRateMult;
+    const auto regenVitalOf = [](RE::ActorValue av) {
+      using V = Core::Needs::RegenVital;
+      switch (av) {
+        case RE::ActorValue::kHealRate:
+        case RE::ActorValue::kHealRateMult: return V::Health;
+        case RE::ActorValue::kMagickaRate:
+        case RE::ActorValue::kMagickaRateMult: return V::Magicka;
+        case RE::ActorValue::kStaminaRate:
+        case RE::ActorValue::kStaminaRateMult: return V::Stamina;
+        default: return V::None;
+      }
     };
 
     // Single iteration over active effects (pattern from EffectsSensor.cpp)
@@ -175,11 +182,11 @@ namespace Huginn::State
               }
             }
           }
-          if (isRegenAV(baseEffect->data.primaryAV) &&
-              Core::Needs::LowersRegen(baseEffect->IsDetrimental(), effect->magnitude) &&
-              isSurvivalStageSpell(spell)) {
-            survivalRegenDebuff = true;
-            if (!survivalRegenSource) survivalRegenSource = spell->GetName();
+          const auto vital = regenVitalOf(baseEffect->data.primaryAV);
+          if (vital != Core::Needs::RegenVital::None && isSurvivalStageSpell(spell)) {
+            const bool before = survivalRegen.Any();
+            survivalRegen.Add(vital, baseEffect->IsDetrimental(), effect->magnitude);
+            if (!before && survivalRegen.Any()) survivalRegenSource = spell->GetName();
           }
         }
 
@@ -670,10 +677,11 @@ namespace Huginn::State
       }
       m_lastThirstStage = thirstStage;
     }
-    if (survivalRegenDebuff != m_lastSurvivalRegen) {
-      logger::info("[StateManager] Survival regen debuff: {} ({})"sv, survivalRegenDebuff ? "on" : "off",
+    if (survivalRegen != m_lastSurvivalRegen) {
+      logger::info("[StateManager] Survival regen debuff: health={} magicka={} stamina={} ({})"sv,
+        survivalRegen.health, survivalRegen.magicka, survivalRegen.stamina,
         survivalRegenSource ? survivalRegenSource : "-");
-      m_lastSurvivalRegen = survivalRegenDebuff;
+      m_lastSurvivalRegen = survivalRegen;
     }
 
     // R3: publish the pending restores, the thirst stage and the survival
@@ -684,7 +692,7 @@ namespace Huginn::State
       n.restoreStaminaPending = pendingStamina;
       n.thirstStage = thirstStage;
       n.thirstDetected = m_thirstInstalled;
-      n.survivalRegenDebuff = survivalRegenDebuff;
+      n.survivalRegen = survivalRegen;
     });
 
     // Update effects and buffs with change detection

@@ -822,3 +822,36 @@ TEST_CASE("regen_suppressed: an effect lowers a regeneration rate when detriment
     CHECK_FALSE(LowersRegen(true, std::numeric_limits<float>::quiet_NaN()));
     CHECK_FALSE(LowersRegen(true, std::numeric_limits<float>::infinity()));
 }
+
+TEST_CASE("regen debuffs per vital: health is its own signal, any vital is regen_suppressed")
+{
+    // LoreRim's Thirsty: Stamina Regen Loss 50 -- regen_suppressed, not health.
+    RegenDebuffs thirsty;
+    thirsty.Add(RegenVital::Stamina, true, 50.0f);
+    CHECK(thirsty.Any());
+    CHECK_FALSE(thirsty.health);
+    // Tired: Reduced Magicka Regeneration 100 -- the same.
+    RegenDebuffs tired;
+    tired.Add(RegenVital::Magicka, true, 100.0f);
+    CHECK(tired.Any());
+    CHECK_FALSE(tired.health);
+    // Hungry: Health Regen Loss 100 on HealRateMult -- health.
+    RegenDebuffs hungry;
+    hungry.Add(RegenVital::Health, true, 100.0f);
+    CHECK(hungry.health);
+    CHECK(hungry.Any());
+    // Severely Dehydrated: stamina 200 and health 400 -- both.
+    RegenDebuffs severe;
+    severe.Add(RegenVital::Stamina, true, 200.0f);
+    severe.Add(RegenVital::Health, true, 400.0f);
+    CHECK(severe.health);
+    CHECK(severe.stamina);
+    CHECK_FALSE(severe.magicka);
+    // A placeholder, a buff, or no regen AV at all counts for nothing.
+    RegenDebuffs none;
+    none.Add(RegenVital::Health, true, 0.0f);
+    none.Add(RegenVital::Health, false, 50.0f);
+    none.Add(RegenVital::None, true, 100.0f);
+    CHECK_FALSE(none.Any());
+    CHECK(none == RegenDebuffs{});
+}

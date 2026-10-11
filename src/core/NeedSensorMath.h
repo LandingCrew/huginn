@@ -14,6 +14,8 @@
 //   EncumbranceRatio
 //   LowersRegen     regen_suppressed's test on one active effect on a
 //                   regeneration-rate actor value (0.23.31)
+//   RegenDebuffs    those effects per vital: regen_suppressed reads any,
+//                   the snapshot's healthRegenSuppressed health alone
 //
 // Times are seconds on any monotonic clock (the caller passes steady_clock
 // seconds); nothing here reads a clock.
@@ -136,4 +138,42 @@ namespace Huginn::Core::Needs
         if (!std::isfinite(magnitude) || magnitude == 0.0f) return false;
         return detrimental || magnitude < 0.0f;
     }
+
+    /// The vital whose regeneration an actor value rates (HealRate and
+    /// HealRateMult: Health, and so on); the game side maps the AV.
+    enum class RegenVital : std::uint8_t
+    {
+        None,
+        Health,
+        Magicka,
+        Stamina,
+    };
+
+    /// Regeneration debuffs per vital, from LowersRegen effects. Per vital
+    /// because "no eating in combat" lifts only when HEALTH regen is blocked
+    /// (the user: "should be disabled if hp regen is blocked due to thirst or
+    /// food"), while regen_suppressed counts any vital (Thirsty lowers
+    /// stamina regen, Tired magicka regen).
+    struct RegenDebuffs
+    {
+        bool health = false;
+        bool magicka = false;
+        bool stamina = false;
+
+        /// Count one active effect on `vital`'s regeneration rate.
+        void Add(RegenVital vital, bool detrimental, float magnitude) noexcept
+        {
+            if (!LowersRegen(detrimental, magnitude)) return;
+            switch (vital) {
+                case RegenVital::Health: health = true; break;
+                case RegenVital::Magicka: magicka = true; break;
+                case RegenVital::Stamina: stamina = true; break;
+                case RegenVital::None: break;
+            }
+        }
+
+        [[nodiscard]] bool Any() const noexcept { return health || magicka || stamina; }
+
+        friend bool operator==(const RegenDebuffs&, const RegenDebuffs&) = default;
+    };
 }

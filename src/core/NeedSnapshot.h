@@ -86,7 +86,8 @@ namespace Huginn::Core::Needs
         bool drainHealth = false;
         bool drainMagicka = false;
         bool drainStamina = false;
-        bool regenSuppressed = false;
+        bool regenSuppressed = false;       // any vital's regeneration lowered
+        bool healthRegenSuppressed = false; // health's alone ("no eating in combat" lifts on it)
         float encumbrance = 0.0f;     // inventory weight / carry weight
         int vampireStage = 0;         // 0 = not a vampire, 1-4
 
@@ -182,6 +183,7 @@ namespace Huginn::Core::Needs
         HUGINN_NEED_FIELD(castFireAgo), HUGINN_NEED_FIELD(castFrostAgo), HUGINN_NEED_FIELD(castShockAgo),
         HUGINN_NEED_FIELD(poisoned), HUGINN_NEED_FIELD(diseased), HUGINN_NEED_FIELD(drainHealth),
         HUGINN_NEED_FIELD(drainMagicka), HUGINN_NEED_FIELD(drainStamina), HUGINN_NEED_FIELD(regenSuppressed),
+        HUGINN_NEED_FIELD(healthRegenSuppressed),
         HUGINN_NEED_FIELD(encumbrance), HUGINN_NEED_FIELD(vampireStage),
         HUGINN_NEED_FIELD(survival), HUGINN_NEED_FIELD(hungerStage), HUGINN_NEED_FIELD(coldStage),
         HUGINN_NEED_FIELD(fatigueStage), HUGINN_NEED_FIELD(thirstStage), HUGINN_NEED_FIELD(hungerRaw), HUGINN_NEED_FIELD(coldRaw),
