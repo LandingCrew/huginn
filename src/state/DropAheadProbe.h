@@ -97,6 +97,15 @@ namespace Huginn::State::DropAheadProbe
    /// plugin loaded. The test harness requires one before a run may pass.
    [[nodiscard]] std::uint32_t MeasuredCount() noexcept;
 
+   /// The game clock (0.23.29): game seconds summed per PlayerCharacter::
+   /// Update by the same hook, each frame core/FallTracker.h GameFrameSec
+   /// (the wall frame times the global time multiplier, or the update's own
+   /// delta if smaller). It stands still while the game is paused (the hook
+   /// does not run) and runs at a fifth of the wall clock under Wheeler's
+   /// slow time. Monotonic from plugin load; any thread. The fall tracker's
+   /// descent clock.
+   [[nodiscard]] double GameSeconds() noexcept;
+
    /// The collision layers a DOWN ray counts as ground: terrain and statics
    /// (static, anim static, transparent, trees, props, terrain, ground). The
    /// down ray casts on through anything else (actors, clutter). The

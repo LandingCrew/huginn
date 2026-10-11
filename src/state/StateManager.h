@@ -3,7 +3,7 @@
 #include "WorldState.h"
 #include "PlayerActorState.h"
 #include "TargetActorState.h"
-#include "FallTracker.h"
+#include "core/FallTracker.h"       // pure: take-off Z, free falls only (0.23.29)
 #include "BoolDebouncer.h"
 #include "DarknessGate.h"
 #include "StateTypes.h"              // For HealthTrackingState
@@ -383,9 +383,11 @@ namespace Huginn::State
       // Serialises the polls and the reset (0.23.26). The poll methods' own
       // state (m_fallTracker, m_pendingLanding, the trackers, the blind-spot
       // flags ...) is "single-writer", but there were two writers: the
-      // update tick (Update, on a job or loading-screen thread) and, on the
-      // main thread, ForceUpdate (Debug at every load, Main.cpp step 10, and
-      // the debug test commands) and ResetTrackingState (every load, `hg
+      // update tick (Update: on a game job thread in gameplay, on a
+      // loading-screen thread during a load, and on the main thread itself
+      // in paused menus and the main menu: THREADS above OnUpdate in
+      // UpdateLoop.cpp) and, on the main thread, ForceUpdate (Debug at every
+      // load, Main.cpp step 10, and the debug test commands) and ResetTrackingState (every load, `hg
       // reset all`). `hg refresh` / `hg recs` were never a second writer:
       // UpdateHandler::ForceUpdate runs the tick under UpdateHandler's own
       // mutex. Taken outermost: the state mutexes above nest inside it.
@@ -451,7 +453,7 @@ namespace Huginn::State
       // PollPlayerPosition, same as m_wasInCombat. MUST be reset in
       // ResetTrackingState — the previous save's take-off Z describes a
       // different world position entirely.
-      FallTracker m_fallTracker;
+      Core::Needs::FallTracker m_fallTracker;
       bool m_wasFalling = false;      // Previous tick's gate state, for the transition log only
       float m_peakFallDepth = 0.0f;   // Deepest point of the current fall, for the same log
       // Health around a fall, for the [Falling] end / landed lines (0.23.23):
@@ -460,6 +462,12 @@ namespace Huginn::State
       // the landing read a second after the end. Same writer as above.
       float m_hpGrounded = -1.0f;
       float m_fallHpBefore = -1.0f;
+      // The descent clock (0.23.29): DropAheadProbe::GameSeconds at the last
+      // poll (-1 none: the next poll counts no time), and both clocks at the
+      // start line, for the end line's durations. Same writer as above.
+      double m_fallGameSecAt = -1.0;
+      double m_fallStartWallSec = 0.0;
+      double m_fallStartGameSec = 0.0;
       struct PendingLanding
       {
          bool pending = false;

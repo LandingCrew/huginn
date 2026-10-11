@@ -157,6 +157,7 @@ namespace Huginn::State
       // possibly while the player is still airborne as the cell settles, which
       // is exactly when a stale anchor would report a thousand-unit fall.
       m_fallTracker.Reset();
+      m_fallGameSecAt = -1.0;
       m_wasFalling = false;
       m_peakFallDepth = 0.0f;
       m_hpGrounded = -1.0f;

@@ -116,10 +116,21 @@ namespace Huginn::State
       // Swimming is excluded before the tracker sees it: diving is airborne to
       // nobody, but a 400-unit descent underwater would otherwise read as a
       // fall if the engine ever reports midair while submerged.
+      //
+      // Free falls only (0.23.29): a descent slower than gravity allows (a
+      // slide, a slope, hops) re-anchors the take-off Z (core/FallTracker.h).
+      // Its clock is GAME time (DropAheadProbe::GameSeconds), never the
+      // wall clock: Wheeler's wheel, the Slow Time shout and bow zoom slow
+      // the game -- and the fall -- exactly when the player reaches for Slow
+      // Fall, and a pausing menu stops it.
       const bool airborne = player->IsInMidair() && !newIsSwimming;
       const float maxPlausibleDelta =
           PhysicsConstants::MAX_FALL_SPEED * (m_playerPositionPollInterval / 1000.0f);
-      newFallDepth = m_fallTracker.Update(currentZ, airborne, maxPlausibleDelta);
+      const double fallNowSec = NeedClock::Now();
+      const double fallGameSec = DropAheadProbe::GameSeconds();
+      const double fallGameDt = m_fallGameSecAt >= 0.0 ? fallGameSec - m_fallGameSecAt : 0.0;
+      m_fallGameSecAt = fallGameSec;
+      newFallDepth = m_fallTracker.Update(currentZ, airborne, maxPlausibleDelta, fallGameDt);
       newIsFalling = newFallDepth >= PhysicsConstants::FALL_DEPTH_MIN;
 
       // Transition only — the gate is otherwise invisible in a log, which makes
@@ -140,7 +151,6 @@ namespace Huginn::State
       // fall's start, if sooner). tools/needs/fit_drop_curve.py fits to that
       // measured loss when the line is there.
       const float hpNow = HealthFraction(player);
-      const double fallNowSec = NeedClock::Now();
       if (m_pendingLanding.pending &&
           (fallNowSec - m_pendingLanding.endAt >= kLandedReadDelaySec || (newIsFalling && !m_wasFalling))) {
       logger::debug("[Falling] landed — peak depth {:.0f} | hp {} -> {} ({:.1f} s after the end)"sv,
@@ -152,14 +162,21 @@ namespace Huginn::State
       if (newIsFalling != m_wasFalling) {
       if (newIsFalling) {
         m_fallHpBefore = m_hpGrounded;
+        m_fallStartWallSec = fallNowSec;
+        m_fallStartGameSec = fallGameSec;
         logger::debug("[Falling] start at depth {:.0f} (gate {:.0f})"sv,
             newFallDepth, PhysicsConstants::FALL_DEPTH_MIN);
       } else {
-        logger::debug("[Falling] end — peak depth {:.0f} (reason needs {:.0f}, full at {:.0f}) | hp {} -> {}"sv,
+        // The time since the start line on both clocks (0.23.29): the fit
+        // script judges a slide on the game time, which a slow-time wheel
+        // or shout stretches the wall time away from.
+        logger::debug("[Falling] end — peak depth {:.0f} (reason needs {:.0f}, full at {:.0f}) | hp {} -> {} | "
+                      "{:.3f} s from the start, game time {:.3f} s"sv,
             m_peakFallDepth,
             PhysicsConstants::FALL_DEPTH_MIN +
                 0.5f * (PhysicsConstants::FALL_DEPTH_HIGH - PhysicsConstants::FALL_DEPTH_MIN),
-            PhysicsConstants::FALL_DEPTH_HIGH, HpText(m_fallHpBefore), HpText(hpNow));
+            PhysicsConstants::FALL_DEPTH_HIGH, HpText(m_fallHpBefore), HpText(hpNow),
+            fallNowSec - m_fallStartWallSec, fallGameSec - m_fallStartGameSec);
         m_pendingLanding = { true, fallNowSec, m_fallHpBefore, m_peakFallDepth };
       }
       m_wasFalling = newIsFalling;
@@ -222,7 +239,10 @@ namespace Huginn::State
       // ::g_loadGeneration (Globals.h), which InitializeGameSystems bumps
       // once at every kNewGame / kPostLoadGame, a failed load included. Not
       // DropAheadProbe's file-local counter of the same name, which
-      // SetGameLoaded bumps twice a load (kPreLoadGame, then loaded). The
+      // SetGameLoaded bumps at each call: twice for a saved game that loads
+      // (kPreLoadGame, then kPostLoadGame), once for a load that fails (the
+      // kPreLoadGame call only) and once for a new game (kNewGame, which
+      // has no kPreLoadGame). The
       // flag and hold are the polls' state, under m_pollMutex since 0.23.26:
       // before, the Debug ForceUpdate at load could poll here on the main
       // thread beside a tick, and both could pass !m_blindSpotLogged and
