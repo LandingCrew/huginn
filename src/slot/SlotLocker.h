@@ -167,6 +167,12 @@ namespace Huginn::Slot
                 bool equipped = false;
             };
             std::function<ItemState(RE::FormID formID, uint16_t uniqueID)> probeItem;
+
+            /// This run's generator output -- every candidate, before the
+            /// scorer's floors. A held key refreshes its item data (count,
+            /// charge) from here when its item is not in the scored list
+            /// (core/HeldRefresh.h). Must outlive the ApplyLocks call.
+            std::span<const Candidate::CandidateVariant> generated;
         };
 
         // =========================================================================

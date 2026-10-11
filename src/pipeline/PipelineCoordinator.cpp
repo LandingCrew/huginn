@@ -407,6 +407,9 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
     }
 
     CaptureEligible(ctx, candidates);
+    // Kept for the locker's held-key refresh (AllocateAndLock). Nothing below
+    // reads `candidates` again.
+    ctx.generated = std::move(candidates);
 
     // Name the dominant reason once per tick, off the weights the ranking just
     // used — the display explanation can't disagree with the scoring (#10).
@@ -671,6 +674,7 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
         }
         return st;
     };
+    lockRun.generated = ctx.generated;
     ctx.assignments = slotLocker.ApplyLocks(ctx.rawAssignments, ctx.overrides, ctx.scoredCandidates, lockRun);
 
     // Compute visual state for each slot

@@ -107,6 +107,10 @@ namespace Huginn::Pipeline
         // the selection log v3. A read of what ScoreCandidates produced; nothing
         // downstream of scoring reads it.
         std::vector<Learning::PipelineStateCache::EligibleRow> eligible;
+        // This run's generator output (every candidate before the scorer's
+        // floors), kept for SlotLocker: a held key refreshes its count/charge
+        // from here when the scorer dropped its item (core/HeldRefresh.h).
+        std::vector<Candidate::CandidateVariant> generated;
 
         /// Reset all fields for reuse, preserving allocated container capacity.
         void Reset()
@@ -140,6 +144,7 @@ namespace Huginn::Pipeline
             displayWildcardSlots = 0;
             displayPageName.clear();
             eligible.clear();
+            generated.clear();
         }
     };
 

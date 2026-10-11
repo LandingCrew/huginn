@@ -6391,6 +6391,40 @@ void RunSlotLockerOverrideScopeTest()
         }
     }
 
+    // --- 3. a held key's count follows the item, even off the scored list ---
+    // The healing-potion case: one drunk, health back up, the scorer drops the
+    // potion -- the frozen key must show the generator's new count, not [5].
+    locker.Reset();
+    (void)locker.SetInCombat(true);
+    {
+        auto potion = [](int32_t count) {
+            Candidate::ItemCandidate item;
+            item.formID = P;
+            item.count = count;
+            return Candidate::CandidateVariant{ item };
+        };
+        SlotAssignments first = page({ P });
+        Scoring::ScoredCandidate sc;
+        sc.candidate = potion(5);
+        first[0].candidate = sc;
+        (void)locker.ApplyLocks(first, Override::OverrideCollection{});
+
+        const std::vector<Candidate::CandidateVariant> generated{ potion(4) };
+        SlotLocker::RunContext run;
+        run.generated = generated;
+        // The allocator has moved on (D on key 0); P is in no scored list.
+        const auto shown = locker.ApplyLocks(page({ D }), Override::OverrideCollection{}, {}, run);
+        const bool held = shows(shown, 0, P);
+        const auto* item = held && shown[0].candidate
+            ? Candidate::TryGetAs<Candidate::ItemCandidate>(shown[0].candidate->candidate) : nullptr;
+        if (!held || !item || item->count != 4) {
+            logger::error("TEST FAIL: the frozen potion key did not take the new count (held={}, count={})"sv,
+                held, item ? item->count : -1);
+            passed = false;
+        }
+    }
+    (void)locker.SetInCombat(false);
+
     locker.SetConfig(savedConfig);
     locker.Reset();
 
