@@ -92,6 +92,7 @@ suite_start_001,sneak_detected,0.0,0.0
 suite_start_001,mounted,0.0,0.0
 suite_start_001,downtime,1000000.0,1.0
 suite_start_001,combat_ended_recent,1000000.0,0.0
+suite_start_001,combat_regen_ok,0.0,0.0
 suite_hurt_002,health_deficit,0.47550660371780396,0.4390708137501907
 suite_hurt_002,magicka_deficit,0.2988373637199402,0.11798762267257734
 suite_hurt_002,stamina_deficit,0.0,0.0066928509242848554
@@ -185,6 +186,7 @@ suite_hurt_002,sneak_detected,0.0,0.0
 suite_hurt_002,mounted,0.0,0.0
 suite_hurt_002,downtime,1000000.0,1.0
 suite_hurt_002,combat_ended_recent,1000000.0,0.0
+suite_hurt_002,combat_regen_ok,0.0,0.0
 monitor_003,health_deficit,0.175506591796875,0.03750935124793295
 monitor_003,magicka_deficit,0.2988373637199402,0.11798762267257734
 monitor_003,stamina_deficit,0.0,0.0066928509242848554
@@ -278,6 +280,7 @@ monitor_003,sneak_detected,0.0,0.0
 monitor_003,mounted,0.0,0.0
 monitor_003,downtime,1000000.0,1.0
 monitor_003,combat_ended_recent,1000000.0,0.0
+monitor_003,combat_regen_ok,0.0,0.0
 monitor_004,health_deficit,0.175506591796875,0.03750935124793295
 monitor_004,magicka_deficit,0.2988373637199402,0.11798762267257734
 monitor_004,stamina_deficit,0.0,0.0066928509242848554
@@ -371,6 +374,7 @@ monitor_004,sneak_detected,0.0,0.0
 monitor_004,mounted,0.0,0.0
 monitor_004,downtime,1000000.0,1.0
 monitor_004,combat_ended_recent,1000000.0,0.0
+monitor_004,combat_regen_ok,0.0,0.0
 monitor_005,health_deficit,0.175506591796875,0.03750935124793295
 monitor_005,magicka_deficit,0.2988373637199402,0.11798762267257734
 monitor_005,stamina_deficit,0.0,0.0066928509242848554
@@ -464,6 +468,7 @@ monitor_005,sneak_detected,0.0,0.0
 monitor_005,mounted,0.0,0.0
 monitor_005,downtime,1000000.0,1.0
 monitor_005,combat_ended_recent,1000000.0,0.0
+monitor_005,combat_regen_ok,0.0,0.0
 monitor_006,health_deficit,0.175506591796875,0.03750935124793295
 monitor_006,magicka_deficit,0.2988373637199402,0.11798762267257734
 monitor_006,stamina_deficit,0.0,0.0066928509242848554
@@ -557,6 +562,7 @@ monitor_006,sneak_detected,0.0,0.0
 monitor_006,mounted,0.0,0.0
 monitor_006,downtime,1000000.0,1.0
 monitor_006,combat_ended_recent,1000000.0,0.0
+monitor_006,combat_regen_ok,0.0,0.0
 monitor_007,health_deficit,0.175506591796875,0.03750935124793295
 monitor_007,magicka_deficit,0.2988373637199402,0.11798762267257734
 monitor_007,stamina_deficit,0.0,0.0066928509242848554
@@ -650,6 +656,7 @@ monitor_007,sneak_detected,0.0,0.0
 monitor_007,mounted,0.0,0.0
 monitor_007,downtime,1000000.0,1.0
 monitor_007,combat_ended_recent,1000000.0,0.0
+monitor_007,combat_regen_ok,0.0,0.0
 monitor_008,health_deficit,0.8800000101327896,0.9781187312325378
 monitor_008,magicka_deficit,0.2988373637199402,0.11798762267257734
 monitor_008,stamina_deficit,0.0,0.0066928509242848554
@@ -743,6 +750,7 @@ monitor_008,sneak_detected,0.0,0.0
 monitor_008,mounted,0.0,0.0
 monitor_008,downtime,1000000.0,1.0
 monitor_008,combat_ended_recent,1000000.0,0.0
+monitor_008,combat_regen_ok,0.0,0.0
 monitor_009,health_deficit,0.8800000101327896,0.9781187312325378
 monitor_009,magicka_deficit,0.2988373637199402,0.11798762267257734
 monitor_009,stamina_deficit,0.0,0.0066928509242848554
@@ -836,6 +844,7 @@ monitor_009,sneak_detected,0.0,0.0
 monitor_009,mounted,0.0,0.0
 monitor_009,downtime,1000000.0,1.0
 monitor_009,combat_ended_recent,1000000.0,0.0
+monitor_009,combat_regen_ok,0.0,0.0
 monitor_010,health_deficit,0.175506591796875,0.03750935124793295
 monitor_010,magicka_deficit,0.7972151935100555,0.9513000692596967
 monitor_010,stamina_deficit,0.0,0.0066928509242848554
@@ -929,6 +938,7 @@ monitor_010,sneak_detected,0.0,0.0
 monitor_010,mounted,0.0,0.0
 monitor_010,downtime,1000000.0,1.0
 monitor_010,combat_ended_recent,1000000.0,0.0
+monitor_010,combat_regen_ok,0.0,0.0
 monitor_011,health_deficit,0.175506591796875,0.03750935124793295
 monitor_011,magicka_deficit,0.7972151935100555,0.9513000692596967
 monitor_011,stamina_deficit,0.0,0.0066928509242848554
@@ -1022,6 +1032,7 @@ monitor_011,sneak_detected,0.0,0.0
 monitor_011,mounted,0.0,0.0
 monitor_011,downtime,1000000.0,1.0
 monitor_011,combat_ended_recent,1000000.0,0.0
+monitor_011,combat_regen_ok,0.0,0.0
 monitor_012,health_deficit,0.175506591796875,0.03750935124793295
 monitor_012,magicka_deficit,0.7972151935100555,0.9513000692596967
 monitor_012,stamina_deficit,0.0,0.0066928509242848554
@@ -1115,6 +1126,7 @@ monitor_012,sneak_detected,0.0,0.0
 monitor_012,mounted,0.0,0.0
 monitor_012,downtime,1000000.0,1.0
 monitor_012,combat_ended_recent,1000000.0,0.0
+monitor_012,combat_regen_ok,0.0,0.0
 monitor_013,health_deficit,0.175506591796875,0.03750935124793295
 monitor_013,magicka_deficit,0.14809173345565796,0.028774120836022255
 monitor_013,stamina_deficit,0.8713575452566147,0.9761905548866845
@@ -1208,6 +1220,7 @@ monitor_013,sneak_detected,0.0,0.0
 monitor_013,mounted,0.0,0.0
 monitor_013,downtime,1000000.0,1.0
 monitor_013,combat_ended_recent,1000000.0,0.0
+monitor_013,combat_regen_ok,0.0,0.0
 monitor_014,health_deficit,0.175506591796875,0.03750935124793295
 monitor_014,magicka_deficit,0.14809173345565796,0.028774120836022255
 monitor_014,stamina_deficit,0.8713575452566147,0.9761905548866845
@@ -1301,6 +1314,7 @@ monitor_014,sneak_detected,0.0,0.0
 monitor_014,mounted,0.0,0.0
 monitor_014,downtime,1000000.0,1.0
 monitor_014,combat_ended_recent,1000000.0,0.0
+monitor_014,combat_regen_ok,0.0,0.0
 monitor_015,health_deficit,0.175506591796875,0.03750935124793295
 monitor_015,magicka_deficit,0.14809173345565796,0.028774120836022255
 monitor_015,stamina_deficit,0.8713575452566147,0.9761905548866845
@@ -1394,6 +1408,7 @@ monitor_015,sneak_detected,0.0,0.0
 monitor_015,mounted,0.0,0.0
 monitor_015,downtime,1000000.0,1.0
 monitor_015,combat_ended_recent,1000000.0,0.0
+monitor_015,combat_regen_ok,0.0,0.0
 monitor_016,health_deficit,0.175506591796875,0.03750935124793295
 monitor_016,magicka_deficit,0.14809173345565796,0.028774120836022255
 monitor_016,stamina_deficit,0.0,0.0066928509242848554
@@ -1487,6 +1502,7 @@ monitor_016,sneak_detected,0.0,0.0
 monitor_016,mounted,0.0,0.0
 monitor_016,downtime,1000000.0,1.0
 monitor_016,combat_ended_recent,1000000.0,0.0
+monitor_016,combat_regen_ok,0.0,0.0
 monitor_017,health_deficit,0.175506591796875,0.03750935124793295
 monitor_017,magicka_deficit,0.14809173345565796,0.028774120836022255
 monitor_017,stamina_deficit,0.0,0.0066928509242848554
@@ -1580,6 +1596,7 @@ monitor_017,sneak_detected,0.0,0.0
 monitor_017,mounted,0.0,0.0
 monitor_017,downtime,1000000.0,1.0
 monitor_017,combat_ended_recent,1000000.0,0.0
+monitor_017,combat_regen_ok,0.0,0.0
 monitor_018,health_deficit,0.175506591796875,0.03750935124793295
 monitor_018,magicka_deficit,0.14809173345565796,0.028774120836022255
 monitor_018,stamina_deficit,0.0,0.0066928509242848554
@@ -1673,6 +1690,7 @@ monitor_018,sneak_detected,0.0,0.0
 monitor_018,mounted,0.0,0.0
 monitor_018,downtime,1000000.0,1.0
 monitor_018,combat_ended_recent,1000000.0,0.0
+monitor_018,combat_regen_ok,0.0,0.0
 monitor_019,health_deficit,0.175506591796875,0.03750935124793295
 monitor_019,magicka_deficit,0.14809173345565796,0.028774120836022255
 monitor_019,stamina_deficit,0.0,0.0066928509242848554
@@ -1766,6 +1784,7 @@ monitor_019,sneak_detected,0.0,0.0
 monitor_019,mounted,0.0,0.0
 monitor_019,downtime,1000000.0,1.0
 monitor_019,combat_ended_recent,1000000.0,0.0
+monitor_019,combat_regen_ok,0.0,0.0
 monitor_020,health_deficit,0.8800000101327896,0.9781187312325378
 monitor_020,magicka_deficit,0.7972151935100555,0.9513000692596967
 monitor_020,stamina_deficit,0.0,0.0066928509242848554
@@ -1859,6 +1878,7 @@ monitor_020,sneak_detected,0.0,0.0
 monitor_020,mounted,0.0,0.0
 monitor_020,downtime,1000000.0,1.0
 monitor_020,combat_ended_recent,1000000.0,0.0
+monitor_020,combat_regen_ok,0.0,0.0
 monitor_021,health_deficit,0.175506591796875,0.03750935124793295
 monitor_021,magicka_deficit,0.020384132862091064,0.008193729161766122
 monitor_021,stamina_deficit,0.0,0.0066928509242848554
@@ -1952,6 +1972,7 @@ monitor_021,sneak_detected,0.0,0.0
 monitor_021,mounted,0.0,0.0
 monitor_021,downtime,1000000.0,1.0
 monitor_021,combat_ended_recent,1000000.0,0.0
+monitor_021,combat_regen_ok,0.0,0.0
 monitor_022,health_deficit,0.175506591796875,0.03750935124793295
 monitor_022,magicka_deficit,0.020384132862091064,0.008193729161766122
 monitor_022,stamina_deficit,0.0,0.0066928509242848554
@@ -2045,6 +2066,7 @@ monitor_022,sneak_detected,0.0,0.0
 monitor_022,mounted,0.0,0.0
 monitor_022,downtime,1000000.0,1.0
 monitor_022,combat_ended_recent,1000000.0,0.0
+monitor_022,combat_regen_ok,0.0,0.0
 monitor_023,health_deficit,0.175506591796875,0.03750935124793295
 monitor_023,magicka_deficit,0.020384132862091064,0.008193729161766122
 monitor_023,stamina_deficit,0.0,0.0066928509242848554
@@ -2138,6 +2160,7 @@ monitor_023,sneak_detected,0.0,0.0
 monitor_023,mounted,0.0,0.0
 monitor_023,downtime,1000000.0,1.0
 monitor_023,combat_ended_recent,1000000.0,0.0
+monitor_023,combat_regen_ok,0.0,0.0
 monitor_024,health_deficit,0.8800000101327896,0.9781187312325378
 monitor_024,magicka_deficit,0.020384132862091064,0.008193729161766122
 monitor_024,stamina_deficit,0.0,0.0066928509242848554
@@ -2231,6 +2254,7 @@ monitor_024,sneak_detected,0.0,0.0
 monitor_024,mounted,0.0,0.0
 monitor_024,downtime,1000000.0,1.0
 monitor_024,combat_ended_recent,1000000.0,0.0
+monitor_024,combat_regen_ok,0.0,0.0
 monitor_025,health_deficit,0.8800000101327896,0.9781187312325378
 monitor_025,magicka_deficit,0.020384132862091064,0.008193729161766122
 monitor_025,stamina_deficit,0.0,0.0066928509242848554
@@ -2324,6 +2348,7 @@ monitor_025,sneak_detected,0.0,0.0
 monitor_025,mounted,0.0,0.0
 monitor_025,downtime,1000000.0,1.0
 monitor_025,combat_ended_recent,1000000.0,0.0
+monitor_025,combat_regen_ok,0.0,0.0
 monitor_026,health_deficit,0.8800000101327896,0.9781187312325378
 monitor_026,magicka_deficit,0.020384132862091064,0.008193729161766122
 monitor_026,stamina_deficit,0.0,0.0066928509242848554
@@ -2417,6 +2442,7 @@ monitor_026,sneak_detected,0.0,0.0
 monitor_026,mounted,0.0,0.0
 monitor_026,downtime,1000000.0,1.0
 monitor_026,combat_ended_recent,1000000.0,0.0
+monitor_026,combat_regen_ok,0.0,0.0
 monitor_027,health_deficit,0.175506591796875,0.03750935124793295
 monitor_027,magicka_deficit,0.7972151935100555,0.9513000692596967
 monitor_027,stamina_deficit,0.0,0.0066928509242848554
@@ -2510,6 +2536,7 @@ monitor_027,sneak_detected,0.0,0.0
 monitor_027,mounted,0.0,0.0
 monitor_027,downtime,1000000.0,1.0
 monitor_027,combat_ended_recent,1000000.0,0.0
+monitor_027,combat_regen_ok,0.0,0.0
 monitor_028,health_deficit,0.175506591796875,0.03750935124793295
 monitor_028,magicka_deficit,0.7972151935100555,0.9513000692596967
 monitor_028,stamina_deficit,0.0,0.0066928509242848554
@@ -2603,6 +2630,7 @@ monitor_028,sneak_detected,0.0,0.0
 monitor_028,mounted,0.0,0.0
 monitor_028,downtime,1000000.0,1.0
 monitor_028,combat_ended_recent,1000000.0,0.0
+monitor_028,combat_regen_ok,0.0,0.0
 monitor_029,health_deficit,0.175506591796875,0.03750935124793295
 monitor_029,magicka_deficit,0.7972151935100555,0.9513000692596967
 monitor_029,stamina_deficit,0.0,0.0066928509242848554
@@ -2696,6 +2724,7 @@ monitor_029,sneak_detected,0.0,0.0
 monitor_029,mounted,0.0,0.0
 monitor_029,downtime,1000000.0,1.0
 monitor_029,combat_ended_recent,1000000.0,0.0
+monitor_029,combat_regen_ok,0.0,0.0
 monitor_030,health_deficit,0.175506591796875,0.03750935124793295
 monitor_030,magicka_deficit,0.0,0.0066928509242848554
 monitor_030,stamina_deficit,0.8713575452566147,0.9761905548866845
@@ -2789,6 +2818,7 @@ monitor_030,sneak_detected,0.0,0.0
 monitor_030,mounted,0.0,0.0
 monitor_030,downtime,1000000.0,1.0
 monitor_030,combat_ended_recent,1000000.0,0.0
+monitor_030,combat_regen_ok,0.0,0.0
 monitor_031,health_deficit,0.175506591796875,0.03750935124793295
 monitor_031,magicka_deficit,0.0,0.0066928509242848554
 monitor_031,stamina_deficit,0.8713575452566147,0.9761905548866845
@@ -2882,6 +2912,7 @@ monitor_031,sneak_detected,0.0,0.0
 monitor_031,mounted,0.0,0.0
 monitor_031,downtime,1000000.0,1.0
 monitor_031,combat_ended_recent,1000000.0,0.0
+monitor_031,combat_regen_ok,0.0,0.0
 monitor_032,health_deficit,0.175506591796875,0.03750935124793295
 monitor_032,magicka_deficit,0.0,0.0066928509242848554
 monitor_032,stamina_deficit,0.8713575452566147,0.9761905548866845
@@ -2975,6 +3006,7 @@ monitor_032,sneak_detected,0.0,0.0
 monitor_032,mounted,0.0,0.0
 monitor_032,downtime,1000000.0,1.0
 monitor_032,combat_ended_recent,1000000.0,0.0
+monitor_032,combat_regen_ok,0.0,0.0
 monitor_033,health_deficit,0.175506591796875,0.03750935124793295
 monitor_033,magicka_deficit,0.0,0.0066928509242848554
 monitor_033,stamina_deficit,0.0,0.0066928509242848554
@@ -3068,6 +3100,7 @@ monitor_033,sneak_detected,0.0,0.0
 monitor_033,mounted,0.0,0.0
 monitor_033,downtime,1000000.0,1.0
 monitor_033,combat_ended_recent,1000000.0,0.0
+monitor_033,combat_regen_ok,0.0,0.0
 monitor_034,health_deficit,0.175506591796875,0.03750935124793295
 monitor_034,magicka_deficit,0.0,0.0066928509242848554
 monitor_034,stamina_deficit,0.0,0.0066928509242848554
@@ -3161,6 +3194,7 @@ monitor_034,sneak_detected,0.0,0.0
 monitor_034,mounted,0.0,0.0
 monitor_034,downtime,1000000.0,1.0
 monitor_034,combat_ended_recent,1000000.0,0.0
+monitor_034,combat_regen_ok,0.0,0.0
 monitor_035,health_deficit,0.175506591796875,0.03750935124793295
 monitor_035,magicka_deficit,0.0,0.0066928509242848554
 monitor_035,stamina_deficit,0.0,0.0066928509242848554
@@ -3254,6 +3288,7 @@ monitor_035,sneak_detected,0.0,0.0
 monitor_035,mounted,0.0,0.0
 monitor_035,downtime,1000000.0,1.0
 monitor_035,combat_ended_recent,1000000.0,0.0
+monitor_035,combat_regen_ok,0.0,0.0
 monitor_036,health_deficit,0.8800000101327896,0.9781187312325378
 monitor_036,magicka_deficit,0.7932903319597244,0.9494492030657283
 monitor_036,stamina_deficit,0.0,0.0066928509242848554
@@ -3347,6 +3382,7 @@ monitor_036,sneak_detected,0.0,0.0
 monitor_036,mounted,0.0,0.0
 monitor_036,downtime,1000000.0,1.0
 monitor_036,combat_ended_recent,1000000.0,0.0
+monitor_036,combat_regen_ok,0.0,0.0
 monitor_037,health_deficit,0.175506591796875,0.03750935124793295
 monitor_037,magicka_deficit,0.0,0.0066928509242848554
 monitor_037,stamina_deficit,0.0,0.0066928509242848554
@@ -3440,6 +3476,7 @@ monitor_037,sneak_detected,0.0,0.0
 monitor_037,mounted,0.0,0.0
 monitor_037,downtime,1000000.0,1.0
 monitor_037,combat_ended_recent,1000000.0,0.0
+monitor_037,combat_regen_ok,0.0,0.0
 monitor_038,health_deficit,0.175506591796875,0.03750935124793295
 monitor_038,magicka_deficit,0.0,0.0066928509242848554
 monitor_038,stamina_deficit,0.0,0.0066928509242848554
@@ -3533,6 +3570,7 @@ monitor_038,sneak_detected,0.0,0.0
 monitor_038,mounted,0.0,0.0
 monitor_038,downtime,1000000.0,1.0
 monitor_038,combat_ended_recent,1000000.0,0.0
+monitor_038,combat_regen_ok,0.0,0.0
 monitor_039,health_deficit,0.175506591796875,0.03750935124793295
 monitor_039,magicka_deficit,0.0,0.0066928509242848554
 monitor_039,stamina_deficit,0.0,0.0066928509242848554
@@ -3626,6 +3664,7 @@ monitor_039,sneak_detected,0.0,0.0
 monitor_039,mounted,0.0,0.0
 monitor_039,downtime,1000000.0,1.0
 monitor_039,combat_ended_recent,1000000.0,0.0
+monitor_039,combat_regen_ok,0.0,0.0
 monitor_040,health_deficit,0.8800000101327896,0.9781187312325378
 monitor_040,magicka_deficit,0.0,0.0066928509242848554
 monitor_040,stamina_deficit,0.0,0.0066928509242848554
@@ -3719,6 +3758,7 @@ monitor_040,sneak_detected,0.0,0.0
 monitor_040,mounted,0.0,0.0
 monitor_040,downtime,1000000.0,1.0
 monitor_040,combat_ended_recent,1000000.0,0.0
+monitor_040,combat_regen_ok,0.0,0.0
 monitor_041,health_deficit,0.8800000101327896,0.9781187312325378
 monitor_041,magicka_deficit,0.0,0.0066928509242848554
 monitor_041,stamina_deficit,0.0,0.0066928509242848554
@@ -3812,6 +3852,7 @@ monitor_041,sneak_detected,0.0,0.0
 monitor_041,mounted,0.0,0.0
 monitor_041,downtime,1000000.0,1.0
 monitor_041,combat_ended_recent,1000000.0,0.0
+monitor_041,combat_regen_ok,0.0,0.0
 monitor_042,health_deficit,0.8800000101327896,0.9781187312325378
 monitor_042,magicka_deficit,0.0,0.0066928509242848554
 monitor_042,stamina_deficit,0.0,0.0066928509242848554
@@ -3905,6 +3946,7 @@ monitor_042,sneak_detected,0.0,0.0
 monitor_042,mounted,0.0,0.0
 monitor_042,downtime,1000000.0,1.0
 monitor_042,combat_ended_recent,1000000.0,0.0
+monitor_042,combat_regen_ok,0.0,0.0
 monitor_043,health_deficit,0.175506591796875,0.03750935124793295
 monitor_043,magicka_deficit,0.7932903319597244,0.9494492030657283
 monitor_043,stamina_deficit,0.0,0.0066928509242848554
@@ -3998,6 +4040,7 @@ monitor_043,sneak_detected,0.0,0.0
 monitor_043,mounted,0.0,0.0
 monitor_043,downtime,1000000.0,1.0
 monitor_043,combat_ended_recent,1000000.0,0.0
+monitor_043,combat_regen_ok,0.0,0.0
 monitor_044,health_deficit,0.175506591796875,0.03750935124793295
 monitor_044,magicka_deficit,0.7932903319597244,0.9494492030657283
 monitor_044,stamina_deficit,0.0,0.0066928509242848554
@@ -4091,6 +4134,7 @@ monitor_044,sneak_detected,0.0,0.0
 monitor_044,mounted,0.0,0.0
 monitor_044,downtime,1000000.0,1.0
 monitor_044,combat_ended_recent,1000000.0,0.0
+monitor_044,combat_regen_ok,0.0,0.0
 monitor_045,health_deficit,0.175506591796875,0.03750935124793295
 monitor_045,magicka_deficit,0.7932903319597244,0.9494492030657283
 monitor_045,stamina_deficit,0.0,0.0066928509242848554
@@ -4184,6 +4228,7 @@ monitor_045,sneak_detected,0.0,0.0
 monitor_045,mounted,0.0,0.0
 monitor_045,downtime,1000000.0,1.0
 monitor_045,combat_ended_recent,1000000.0,0.0
+monitor_045,combat_regen_ok,0.0,0.0
 monitor_046,health_deficit,0.175506591796875,0.03750935124793295
 monitor_046,magicka_deficit,0.0,0.0066928509242848554
 monitor_046,stamina_deficit,0.8701158314943314,0.9759002359737861
@@ -4277,6 +4322,7 @@ monitor_046,sneak_detected,0.0,0.0
 monitor_046,mounted,0.0,0.0
 monitor_046,downtime,1000000.0,1.0
 monitor_046,combat_ended_recent,1000000.0,0.0
+monitor_046,combat_regen_ok,0.0,0.0
 monitor_047,health_deficit,0.175506591796875,0.03750935124793295
 monitor_047,magicka_deficit,0.0,0.0066928509242848554
 monitor_047,stamina_deficit,0.8701158314943314,0.9759002359737861
@@ -4370,6 +4416,7 @@ monitor_047,sneak_detected,0.0,0.0
 monitor_047,mounted,0.0,0.0
 monitor_047,downtime,1000000.0,1.0
 monitor_047,combat_ended_recent,1000000.0,0.0
+monitor_047,combat_regen_ok,0.0,0.0
 monitor_048,health_deficit,0.175506591796875,0.03750935124793295
 monitor_048,magicka_deficit,0.0,0.0066928509242848554
 monitor_048,stamina_deficit,0.8701158314943314,0.9759002359737861
@@ -4463,6 +4510,7 @@ monitor_048,sneak_detected,0.0,0.0
 monitor_048,mounted,0.0,0.0
 monitor_048,downtime,1000000.0,1.0
 monitor_048,combat_ended_recent,1000000.0,0.0
+monitor_048,combat_regen_ok,0.0,0.0
 monitor_049,health_deficit,0.175506591796875,0.03750935124793295
 monitor_049,magicka_deficit,0.0,0.0066928509242848554
 monitor_049,stamina_deficit,0.0,0.0066928509242848554
@@ -4556,6 +4604,7 @@ monitor_049,sneak_detected,0.0,0.0
 monitor_049,mounted,0.0,0.0
 monitor_049,downtime,1000000.0,1.0
 monitor_049,combat_ended_recent,1000000.0,0.0
+monitor_049,combat_regen_ok,0.0,0.0
 monitor_050,health_deficit,0.175506591796875,0.03750935124793295
 monitor_050,magicka_deficit,0.0,0.0066928509242848554
 monitor_050,stamina_deficit,0.0,0.0066928509242848554
@@ -4649,6 +4698,7 @@ monitor_050,sneak_detected,0.0,0.0
 monitor_050,mounted,0.0,0.0
 monitor_050,downtime,1000000.0,1.0
 monitor_050,combat_ended_recent,1000000.0,0.0
+monitor_050,combat_regen_ok,0.0,0.0
 monitor_051,health_deficit,0.175506591796875,0.03750935124793295
 monitor_051,magicka_deficit,0.0,0.0066928509242848554
 monitor_051,stamina_deficit,0.0,0.0066928509242848554
@@ -4742,6 +4792,7 @@ monitor_051,sneak_detected,0.0,0.0
 monitor_051,mounted,0.0,0.0
 monitor_051,downtime,1000000.0,1.0
 monitor_051,combat_ended_recent,1000000.0,0.0
+monitor_051,combat_regen_ok,0.0,0.0
 monitor_052,health_deficit,0.8800000101327896,0.9781187312325378
 monitor_052,magicka_deficit,0.7932903319597244,0.9494492030657283
 monitor_052,stamina_deficit,0.0,0.0066928509242848554
@@ -4835,6 +4886,7 @@ monitor_052,sneak_detected,0.0,0.0
 monitor_052,mounted,0.0,0.0
 monitor_052,downtime,1000000.0,1.0
 monitor_052,combat_ended_recent,1000000.0,0.0
+monitor_052,combat_regen_ok,0.0,0.0
 monitor_053,health_deficit,0.175506591796875,0.03750935124793295
 monitor_053,magicka_deficit,0.0,0.0066928509242848554
 monitor_053,stamina_deficit,0.0,0.0066928509242848554
@@ -4928,6 +4980,7 @@ monitor_053,sneak_detected,0.0,0.0
 monitor_053,mounted,0.0,0.0
 monitor_053,downtime,1000000.0,1.0
 monitor_053,combat_ended_recent,1000000.0,0.0
+monitor_053,combat_regen_ok,0.0,0.0
 monitor_054,health_deficit,0.175506591796875,0.03750935124793295
 monitor_054,magicka_deficit,0.0,0.0066928509242848554
 monitor_054,stamina_deficit,0.0,0.0066928509242848554
@@ -5021,6 +5074,7 @@ monitor_054,sneak_detected,0.0,0.0
 monitor_054,mounted,0.0,0.0
 monitor_054,downtime,1000000.0,1.0
 monitor_054,combat_ended_recent,1000000.0,0.0
+monitor_054,combat_regen_ok,0.0,0.0
 monitor_055,health_deficit,0.175506591796875,0.03750935124793295
 monitor_055,magicka_deficit,0.0,0.0066928509242848554
 monitor_055,stamina_deficit,0.0,0.0066928509242848554
@@ -5114,6 +5168,7 @@ monitor_055,sneak_detected,0.0,0.0
 monitor_055,mounted,0.0,0.0
 monitor_055,downtime,1000000.0,1.0
 monitor_055,combat_ended_recent,1000000.0,0.0
+monitor_055,combat_regen_ok,0.0,0.0
 monitor_056,health_deficit,0.8800000101327896,0.9781187312325378
 monitor_056,magicka_deficit,0.0,0.0066928509242848554
 monitor_056,stamina_deficit,0.0,0.0066928509242848554
@@ -5207,6 +5262,7 @@ monitor_056,sneak_detected,0.0,0.0
 monitor_056,mounted,0.0,0.0
 monitor_056,downtime,1000000.0,1.0
 monitor_056,combat_ended_recent,1000000.0,0.0
+monitor_056,combat_regen_ok,0.0,0.0
 monitor_057,health_deficit,0.7646154016256332,0.9337735493331731
 monitor_057,magicka_deficit,0.0,0.0066928509242848554
 monitor_057,stamina_deficit,0.0,0.0066928509242848554
@@ -5300,6 +5356,7 @@ monitor_057,sneak_detected,0.0,0.0
 monitor_057,mounted,0.0,0.0
 monitor_057,downtime,1000000.0,1.0
 monitor_057,combat_ended_recent,1000000.0,0.0
+monitor_057,combat_regen_ok,0.0,0.0
 monitor_058,health_deficit,0.7646154016256332,0.9337735493331731
 monitor_058,magicka_deficit,0.0,0.0066928509242848554
 monitor_058,stamina_deficit,0.0,0.0066928509242848554
@@ -5393,6 +5450,7 @@ monitor_058,sneak_detected,0.0,0.0
 monitor_058,mounted,0.0,0.0
 monitor_058,downtime,1000000.0,1.0
 monitor_058,combat_ended_recent,1000000.0,0.0
+monitor_058,combat_regen_ok,0.0,0.0
 monitor_059,health_deficit,0.06012195348739624,0.012143055338376228
 monitor_059,magicka_deficit,0.7932903319597244,0.9494492030657283
 monitor_059,stamina_deficit,0.0,0.0066928509242848554
@@ -5486,6 +5544,7 @@ monitor_059,sneak_detected,0.0,0.0
 monitor_059,mounted,0.0,0.0
 monitor_059,downtime,1000000.0,1.0
 monitor_059,combat_ended_recent,1000000.0,0.0
+monitor_059,combat_regen_ok,0.0,0.0
 monitor_060,health_deficit,0.06012195348739624,0.012143055338376228
 monitor_060,magicka_deficit,0.7932903319597244,0.9494492030657283
 monitor_060,stamina_deficit,0.0,0.0066928509242848554
@@ -5579,6 +5638,7 @@ monitor_060,sneak_detected,0.0,0.0
 monitor_060,mounted,0.0,0.0
 monitor_060,downtime,1000000.0,1.0
 monitor_060,combat_ended_recent,1000000.0,0.0
+monitor_060,combat_regen_ok,0.0,0.0
 monitor_061,health_deficit,0.06012195348739624,0.012143055338376228
 monitor_061,magicka_deficit,0.7932903319597244,0.9494492030657283
 monitor_061,stamina_deficit,0.0,0.0066928509242848554
@@ -5672,6 +5732,7 @@ monitor_061,sneak_detected,0.0,0.0
 monitor_061,mounted,0.0,0.0
 monitor_061,downtime,1000000.0,1.0
 monitor_061,combat_ended_recent,1000000.0,0.0
+monitor_061,combat_regen_ok,0.0,0.0
 monitor_062,health_deficit,0.06012195348739624,0.012143055338376228
 monitor_062,magicka_deficit,0.0,0.0066928509242848554
 monitor_062,stamina_deficit,0.8701158314943314,0.9759002359737861
@@ -5765,6 +5826,7 @@ monitor_062,sneak_detected,0.0,0.0
 monitor_062,mounted,0.0,0.0
 monitor_062,downtime,1000000.0,1.0
 monitor_062,combat_ended_recent,1000000.0,0.0
+monitor_062,combat_regen_ok,0.0,0.0
 monitor_063,health_deficit,0.06012195348739624,0.012143055338376228
 monitor_063,magicka_deficit,0.0,0.0066928509242848554
 monitor_063,stamina_deficit,0.6819286048412323,0.8604804364554604
@@ -5858,6 +5920,7 @@ monitor_063,sneak_detected,0.0,0.0
 monitor_063,mounted,0.0,0.0
 monitor_063,downtime,1000000.0,1.0
 monitor_063,combat_ended_recent,1000000.0,0.0
+monitor_063,combat_regen_ok,0.0,0.0
 monitor_064,health_deficit,0.06012195348739624,0.012143055338376228
 monitor_064,magicka_deficit,0.0,0.0066928509242848554
 monitor_064,stamina_deficit,0.6819286048412323,0.8604804364554604
@@ -5951,6 +6014,7 @@ monitor_064,sneak_detected,0.0,0.0
 monitor_064,mounted,0.0,0.0
 monitor_064,downtime,1000000.0,1.0
 monitor_064,combat_ended_recent,1000000.0,0.0
+monitor_064,combat_regen_ok,0.0,0.0
 monitor_065,health_deficit,0.06012195348739624,0.012143055338376228
 monitor_065,magicka_deficit,0.0,0.0066928509242848554
 monitor_065,stamina_deficit,0.0,0.0066928509242848554
@@ -6044,6 +6108,7 @@ monitor_065,sneak_detected,0.0,0.0
 monitor_065,mounted,0.0,0.0
 monitor_065,downtime,1000000.0,1.0
 monitor_065,combat_ended_recent,1000000.0,0.0
+monitor_065,combat_regen_ok,0.0,0.0
 monitor_066,health_deficit,0.06012195348739624,0.012143055338376228
 monitor_066,magicka_deficit,0.0,0.0066928509242848554
 monitor_066,stamina_deficit,0.0,0.0066928509242848554
@@ -6137,6 +6202,7 @@ monitor_066,sneak_detected,0.0,0.0
 monitor_066,mounted,0.0,0.0
 monitor_066,downtime,1000000.0,1.0
 monitor_066,combat_ended_recent,1000000.0,0.0
+monitor_066,combat_regen_ok,0.0,0.0
 monitor_067,health_deficit,0.8800000101327896,0.9781187312325378
 monitor_067,magicka_deficit,0.7932903319597244,0.9494492030657283
 monitor_067,stamina_deficit,0.0,0.0066928509242848554
@@ -6230,6 +6296,7 @@ monitor_067,sneak_detected,0.0,0.0
 monitor_067,mounted,0.0,0.0
 monitor_067,downtime,1000000.0,1.0
 monitor_067,combat_ended_recent,1000000.0,0.0
+monitor_067,combat_regen_ok,0.0,0.0
 monitor_068,health_deficit,0.06012195348739624,0.012143055338376228
 monitor_068,magicka_deficit,0.0,0.0066928509242848554
 monitor_068,stamina_deficit,0.0,0.0066928509242848554
@@ -6323,6 +6390,7 @@ monitor_068,sneak_detected,0.0,0.0
 monitor_068,mounted,0.0,0.0
 monitor_068,downtime,1000000.0,1.0
 monitor_068,combat_ended_recent,1000000.0,0.0
+monitor_068,combat_regen_ok,0.0,0.0
 monitor_069,health_deficit,0.06012195348739624,0.012143055338376228
 monitor_069,magicka_deficit,0.0,0.0066928509242848554
 monitor_069,stamina_deficit,0.0,0.0066928509242848554
@@ -6416,6 +6484,7 @@ monitor_069,sneak_detected,0.0,0.0
 monitor_069,mounted,0.0,0.0
 monitor_069,downtime,1000000.0,1.0
 monitor_069,combat_ended_recent,1000000.0,0.0
+monitor_069,combat_regen_ok,0.0,0.0
 monitor_070,health_deficit,0.8800000101327896,0.9781187312325378
 monitor_070,magicka_deficit,0.0,0.0066928509242848554
 monitor_070,stamina_deficit,0.0,0.0066928509242848554
@@ -6509,6 +6578,7 @@ monitor_070,sneak_detected,0.0,0.0
 monitor_070,mounted,0.0,0.0
 monitor_070,downtime,1000000.0,1.0
 monitor_070,combat_ended_recent,1000000.0,0.0
+monitor_070,combat_regen_ok,0.0,0.0
 monitor_071,health_deficit,0.8800000101327896,0.9781187312325378
 monitor_071,magicka_deficit,0.0,0.0066928509242848554
 monitor_071,stamina_deficit,0.0,0.0066928509242848554
@@ -6602,6 +6672,7 @@ monitor_071,sneak_detected,0.0,0.0
 monitor_071,mounted,0.0,0.0
 monitor_071,downtime,1000000.0,1.0
 monitor_071,combat_ended_recent,1000000.0,0.0
+monitor_071,combat_regen_ok,0.0,0.0
 monitor_072,health_deficit,0.8800000101327896,0.9781187312325378
 monitor_072,magicka_deficit,0.0,0.0066928509242848554
 monitor_072,stamina_deficit,0.0,0.0066928509242848554
@@ -6695,6 +6766,7 @@ monitor_072,sneak_detected,0.0,0.0
 monitor_072,mounted,0.0,0.0
 monitor_072,downtime,1000000.0,1.0
 monitor_072,combat_ended_recent,1000000.0,0.0
+monitor_072,combat_regen_ok,0.0,0.0
 monitor_073,health_deficit,0.06012195348739624,0.012143055338376228
 monitor_073,magicka_deficit,0.7932903319597244,0.9494492030657283
 monitor_073,stamina_deficit,0.0,0.0066928509242848554
@@ -6788,6 +6860,7 @@ monitor_073,sneak_detected,0.0,0.0
 monitor_073,mounted,0.0,0.0
 monitor_073,downtime,1000000.0,1.0
 monitor_073,combat_ended_recent,1000000.0,0.0
+monitor_073,combat_regen_ok,0.0,0.0
 monitor_074,health_deficit,0.06012195348739624,0.012143055338376228
 monitor_074,magicka_deficit,0.7932903319597244,0.9494492030657283
 monitor_074,stamina_deficit,0.0,0.0066928509242848554
@@ -6881,6 +6954,7 @@ monitor_074,sneak_detected,0.0,0.0
 monitor_074,mounted,0.0,0.0
 monitor_074,downtime,1000000.0,1.0
 monitor_074,combat_ended_recent,1000000.0,0.0
+monitor_074,combat_regen_ok,0.0,0.0
 monitor_075,health_deficit,0.06012195348739624,0.012143055338376228
 monitor_075,magicka_deficit,0.7932903319597244,0.9494492030657283
 monitor_075,stamina_deficit,0.0,0.0066928509242848554
@@ -6974,6 +7048,7 @@ monitor_075,sneak_detected,0.0,0.0
 monitor_075,mounted,0.0,0.0
 monitor_075,downtime,1000000.0,1.0
 monitor_075,combat_ended_recent,1000000.0,0.0
+monitor_075,combat_regen_ok,0.0,0.0
 monitor_076,health_deficit,0.06012195348739624,0.012143055338376228
 monitor_076,magicka_deficit,0.0,0.0066928509242848554
 monitor_076,stamina_deficit,0.868849903345108,0.9756007022129468
@@ -7067,6 +7142,7 @@ monitor_076,sneak_detected,0.0,0.0
 monitor_076,mounted,0.0,0.0
 monitor_076,downtime,1000000.0,1.0
 monitor_076,combat_ended_recent,1000000.0,0.0
+monitor_076,combat_regen_ok,0.0,0.0
 monitor_077,health_deficit,0.06012195348739624,0.012143055338376228
 monitor_077,magicka_deficit,0.0,0.0066928509242848554
 monitor_077,stamina_deficit,0.868849903345108,0.9756007022129468
@@ -7160,6 +7236,7 @@ monitor_077,sneak_detected,0.0,0.0
 monitor_077,mounted,0.0,0.0
 monitor_077,downtime,1000000.0,1.0
 monitor_077,combat_ended_recent,1000000.0,0.0
+monitor_077,combat_regen_ok,0.0,0.0
 monitor_078,health_deficit,0.06012195348739624,0.012143055338376228
 monitor_078,magicka_deficit,0.0,0.0066928509242848554
 monitor_078,stamina_deficit,0.868849903345108,0.9756007022129468
@@ -7253,6 +7330,7 @@ monitor_078,sneak_detected,0.0,0.0
 monitor_078,mounted,0.0,0.0
 monitor_078,downtime,1000000.0,1.0
 monitor_078,combat_ended_recent,1000000.0,0.0
+monitor_078,combat_regen_ok,0.0,0.0
 monitor_079,health_deficit,0.06012195348739624,0.012143055338376228
 monitor_079,magicka_deficit,0.0,0.0066928509242848554
 monitor_079,stamina_deficit,0.0,0.0066928509242848554
@@ -7346,6 +7424,7 @@ monitor_079,sneak_detected,0.0,0.0
 monitor_079,mounted,0.0,0.0
 monitor_079,downtime,1000000.0,1.0
 monitor_079,combat_ended_recent,1000000.0,0.0
+monitor_079,combat_regen_ok,0.0,0.0
 monitor_080,health_deficit,0.06012195348739624,0.012143055338376228
 monitor_080,magicka_deficit,0.0,0.0066928509242848554
 monitor_080,stamina_deficit,0.0,0.0066928509242848554
@@ -7439,6 +7518,7 @@ monitor_080,sneak_detected,0.0,0.0
 monitor_080,mounted,0.0,0.0
 monitor_080,downtime,1000000.0,1.0
 monitor_080,combat_ended_recent,1000000.0,0.0
+monitor_080,combat_regen_ok,0.0,0.0
 monitor_081,health_deficit,0.06012195348739624,0.012143055338376228
 monitor_081,magicka_deficit,0.0,0.0066928509242848554
 monitor_081,stamina_deficit,0.0,0.0066928509242848554
@@ -7532,6 +7612,7 @@ monitor_081,sneak_detected,0.0,0.0
 monitor_081,mounted,0.0,0.0
 monitor_081,downtime,1000000.0,1.0
 monitor_081,combat_ended_recent,1000000.0,0.0
+monitor_081,combat_regen_ok,0.0,0.0
 monitor_082,health_deficit,0.8800000101327896,0.9781187312325378
 monitor_082,magicka_deficit,0.7932903319597244,0.9494492030657283
 monitor_082,stamina_deficit,0.0,0.0066928509242848554
@@ -7625,6 +7706,7 @@ monitor_082,sneak_detected,0.0,0.0
 monitor_082,mounted,0.0,0.0
 monitor_082,downtime,1000000.0,1.0
 monitor_082,combat_ended_recent,1000000.0,0.0
+monitor_082,combat_regen_ok,0.0,0.0
 monitor_083,health_deficit,0.06012195348739624,0.012143055338376228
 monitor_083,magicka_deficit,0.0,0.0066928509242848554
 monitor_083,stamina_deficit,0.0,0.0066928509242848554
@@ -7718,6 +7800,7 @@ monitor_083,sneak_detected,0.0,0.0
 monitor_083,mounted,0.0,0.0
 monitor_083,downtime,1000000.0,1.0
 monitor_083,combat_ended_recent,1000000.0,0.0
+monitor_083,combat_regen_ok,0.0,0.0
 monitor_084,health_deficit,0.06012195348739624,0.012143055338376228
 monitor_084,magicka_deficit,0.0,0.0066928509242848554
 monitor_084,stamina_deficit,0.0,0.0066928509242848554
@@ -7811,3 +7894,4 @@ monitor_084,sneak_detected,0.0,0.0
 monitor_084,mounted,0.0,0.0
 monitor_084,downtime,1000000.0,1.0
 monitor_084,combat_ended_recent,1000000.0,0.0
+monitor_084,combat_regen_ok,0.0,0.0

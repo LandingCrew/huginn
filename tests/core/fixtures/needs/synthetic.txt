@@ -580,3 +580,10 @@ anyCasting 1
 castFrostAgo 0
 castShockAgo 0.2
 end
+
+# 0.23.30: combat_regen_ok -- in combat, health regeneration suppressed (food is the answer again)
+snapshot combat_regen_blocked
+inCombat 1
+regenSuppressed 1
+healthRegenSuppressed 1
+end

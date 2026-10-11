@@ -207,7 +207,8 @@ land in the same column space. Then:
     about 5 s, the usual reading of "a few seconds left", with a slope of a
     few seconds. Those were the question's words (section 7, question 4); the
     user answered "yes, should get a small bonus". It is a prior that data
-    moves, not a derived value. Until refresh
+    moves, not a derived value, and its centre is the INI key `[Scoring]
+    fRefreshPriorSec = 5` once R8 builds it (decision 4). Until refresh
     picks exist, the curve is the prior, so `left_j` stays near 1 for most of
     a buff and falls only in its last seconds. (The first draft's fallback,
     r / duration, was dropped: halfway through a buff it removed half of
@@ -671,7 +672,11 @@ quoted; each consequence is folded into the section named.
    reads partly uncovered. The factor is a logistic in the remaining seconds,
    fitted from the player's own refresh picks and starting from a labelled
    prior at about 5 s (the question said "a few seconds left"; the answer was
-   "yes"). The bonus is small until those last seconds. While the active-buff filters stand, each one passes an item once
+   "yes"). The prior's centre becomes an INI setting when R8 implements it
+   (the user, 2026-10-10: "sure, ini setting?"): `[Scoring]
+   fRefreshPriorSec = 5`, the remaining seconds where the prior curve is at
+   its midpoint, hot-reloadable like the rest of `[Scoring]`; the fit moves
+   away from it as refresh picks arrive. The bonus is small until those last seconds. While the active-buff filters stand, each one passes an item once
    its buff's remaining time is under that point, so the decision holds even
    if the filters never retire (section 2.3).
 5. **Grading: "your pick".** Decided as recommended: the pair term reads

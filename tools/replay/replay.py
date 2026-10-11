@@ -648,7 +648,11 @@ def summarize_v3(paths):
     rows = []
     hits = defaultdict(lambda: [0, 0])
     for d in decs:
-        by_out[d["out"]] += 1
+        # .get: a lenient read of a corrupt .gz can decode a record whose key
+        # bytes were flipped yet still parse (seen when the golden file grew
+        # by one need, 0.23.34); the summary must not raise on it.
+        out = d.get("out", "?")
+        by_out[out] += 1
         rows.append(len(d["rows"]))
         c = d["chosen"]
         if c is None:
@@ -657,7 +661,7 @@ def summarize_v3(paths):
         # the chosen item in the top 8? A smoke number, not the fit.
         ranked = sorted((r for r in d["rows"] if r["util"] is not None), key=lambda r: -r["util"])
         top = {(r["form"], r["uid"]) for r in ranked[:PAGE]}
-        h = hits[d["out"]]
+        h = hits[out]
         h[0] += 1
         h[1] += (c["form"], c["uid"]) in top
     total_bytes = sum(b for _, b in sizes.values())

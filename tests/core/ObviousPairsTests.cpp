@@ -176,11 +176,29 @@ TEST_CASE("obvious pairs: every pair names a need, and doc 9's count")
             ++pairs;
         }
     }
-    // docs/architecture/9-context-as-learner-input.md, "Pairs": 264 since
-    // 0.23.19 added deep_water_ahead x utility_water_breathing (263 since
-    // 0.23.17 dropped cold x resist_frost and cold x armour_warm; 265 before;
-    // 266 before 0.23.16).
-    CHECK(pairs == 264);
+    // docs/architecture/9-context-as-learner-input.md, "Pairs": 266 since
+    // 0.23.30 added magicka_deficit x kind_weapon and combat_regen_ok x
+    // kind_food (a negative one); 264 since 0.23.19 added deep_water_ahead x
+    // utility_water_breathing (263 since 0.23.17 dropped cold x resist_frost
+    // and cold x armour_warm; 265 before; 266 before 0.23.16).
+    CHECK(pairs == 266);
+}
+
+TEST_CASE("obvious pairs: no eating in combat, unless health regeneration is blocked (0.23.30)")
+{
+    // The user: "should be disabled if hp regen is blocked due to thirst or
+    // food". A derived need paired with food, negative in its prose, and not
+    // downtime twice over (the correlation verifier: downtime's low side is
+    // the in-combat picks, the same fact).
+    const auto effects = ReadTable("effects.csv");
+    const auto needs = ReadTable("needs.csv");
+    REQUIRE(needs.contains("combat_regen_ok"));
+    CHECK(needs.at("combat_regen_ok").at("obvious_effects").find("(negative)") != std::string::npos);
+    CHECK(needs.at("combat_regen_ok").at("r3_input").find("healthRegenSuppressed") != std::string::npos);
+    const auto food = SplitIds(effects.at("kind_food").at("obvious_needs"));
+    CHECK(food.contains("combat_regen_ok"));
+    CHECK_FALSE(food.contains("in_combat"));
+    CHECK(SplitIds(effects.at("kind_weapon").at("obvious_needs")).contains("magicka_deficit"));
 }
 
 TEST_CASE("obvious pairs: deep water ahead is answered by Waterbreathing")

@@ -151,6 +151,27 @@ and accept% and so ship as their own small PR.
 - [x] `hg dump all` prints the catalog view and closes the eight dump gaps
       (doc 9, "Needs and effects, enumerated"). *(`effect/EffectDump`; gap 6
       reads the MGEF's VMAD from the winning plugin file, gap 7 is moot.)*
+- [x] **The tables PR (0.23.34, before R6; the user approved one)**, from
+      the 2026-10-10 whole-load-order audits of the LoreRim dump: the mapper
+      reads each row's conditions (`core/EffectConditions`). Perk-gated rows
+      (Impact's stagger, Deep Freeze, Respite, the "(Improved)" rows) leave
+      cap(i) and ride beside it with their perk FormIDs (`hg cap` shows them
+      and whether the player has the perk; `PerkAdjustedCap` adds the ones
+      met, on the main thread only -- R8 copies the player's perks out with
+      the StateManager snapshot); GetRandomPercent procs grade their expected
+      strength;
+      target-family "bane" rows leave the generic columns (bane columns
+      after R6, below). Misroutes fixed: Turn Undead damage, Nox family
+      keywords, the ash-pile helper, the mark / transmute / knock names,
+      Potion of Dispel, Varla Stone. Cloak and hazard payloads grade over
+      their wrapper's duration; weapon stats grade within their OCF sub-type
+      (quarterstaff among quarterstaffs). Pairs: magicka_deficit ×
+      kind_weapon; a negative combat_regen_ok × kind_food ("no eating in
+      combat", off while health regeneration is suppressed). Coverage on the
+      LoreRim dump 98.97% (25,602 of 25,869). Left: Mind Vision, Thoughtsteal
+      and Gather Shadows stay misrouted (their text says nothing the table
+      reads: an override-file job); the 223 "(Improved)" rows with no
+      condition in the dump are counted as the item's own.
 - Done when: the mapper's host tests pass on rows taken from the three dumps;
   coverage on the LoreRim dump ≥ 98.9% and on vanilla+/simonrim ≥ 99%; a
   coverage-diff report lists items that have a slot class today and an empty
@@ -501,7 +522,10 @@ agent runs the cheap test on today's log: one weight per slot class × logged
 
 ### R6. Offline fit: go / no-go
 
-Map Phase 4, in `tools/replay`.
+Map Phase 4, in `tools/replay`. **Starts after the user's character reaches
+level 40** (the user, 2026-10-10: "keep playing until the character is level
+40, might take a few days"): the fit needs the data play, and the tables PR
+(0.23.34, below) lands first.
 - [ ] Conditional logit with the three outcomes (key, menu at cost κ, nothing),
       u0 per need, sparse θ, small b, Plackett–Luce co-picks; split by launch.
 - [ ] Report on held-out play: key hit rate against **76%** (arm A*, the plain
@@ -516,6 +540,24 @@ Map Phase 4, in `tools/replay`.
       only on held-out lift; the encumbrance curve is fitted from the
       player's carry-weight picks, starting from a documented prior on its
       centre near 0.9 (the user's "nearing" answer).
+- [ ] **`bane_<family>` columns, after R6's first fit** (the user,
+      2026-10-10). Rows that fire only on a target family (Requiem's triple
+      shock damage to constructs 8719DC31 on 776 weapons, "deals 20 magic
+      damage to undead" 8717D82B on 589, Banish's damage to daedra 8719DC30,
+      Turn Undead's stagger) left the generic columns in 0.23.34 and wait
+      here: one column per target family (undead, daedra, construct, dragon
+      ...), paired with the `target_<family>` needs, graded within its own
+      population. A column count change (EffectColumns static_assert, the
+      golden log, the pair count). In-scope forms with only bane rows today
+      have no effect column (Dragonbane, Bow of the Hunt, Purify); the bane
+      columns describe them again. Command Daedra is exempt (its
+      influence_command names its target, as Banish does).
+- [ ] **Target-gated beneficial rows** (follow-up to the above, verifier of
+      #205): some bane-only forms are heals or buffs for an ally of a family
+      -- Heal Undead / Heal Daedra / Necromantic Healing, Arcane Mending,
+      Daedric Mind -- which a bane column (harm to a family) does not
+      describe. They need their own reading (an ally-family heal or buff),
+      after the bane columns.
 - **You decide:** go to R8, or stop and rethink. θ from this fit is the
   bootstrap for R8.
 

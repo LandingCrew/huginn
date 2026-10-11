@@ -156,6 +156,7 @@ namespace Huginn::Core::Needs
                 case N::mounted: return B(s.mounted);
                 case N::downtime: return (!s.inCombat && s.enemyCount == 0) ? s.combatEndAgo : 0.0f;
                 case N::combat_ended_recent: return !s.inCombat ? s.combatEndAgo : kNever;
+                case N::combat_regen_ok: return B(s.inCombat && !s.healthRegenSuppressed);
                 case N::_Count: break;
             }
             return std::numeric_limits<float>::quiet_NaN();  // a need with no case: the tests catch it

@@ -92,6 +92,7 @@ default,sneak_detected,0.0,0.0
 default,mounted,0.0,0.0
 default,downtime,1000000.0,1.0
 default,combat_ended_recent,1000000.0,0.0
+default,combat_regen_ok,0.0,0.0
 vitals_low,health_deficit,0.7999999970197678,0.9525741254760638
 vitals_low,magicka_deficit,0.8499999940395355,0.9706877675527112
 vitals_low,stamina_deficit,0.8999999985098839,0.9820137897747135
@@ -185,6 +186,7 @@ vitals_low,sneak_detected,0.0,0.0
 vitals_low,mounted,0.0,0.0
 vitals_low,downtime,1000000.0,1.0
 vitals_low,combat_ended_recent,1000000.0,0.0
+vitals_low,combat_regen_ok,0.0,0.0
 vitals_centre,health_deficit,0.5,0.5
 vitals_centre,magicka_deficit,0.5,0.5
 vitals_centre,stamina_deficit,0.5,0.5
@@ -278,6 +280,7 @@ vitals_centre,sneak_detected,0.0,0.0
 vitals_centre,mounted,0.0,0.0
 vitals_centre,downtime,1000000.0,1.0
 vitals_centre,combat_ended_recent,1000000.0,0.0
+vitals_centre,combat_regen_ok,0.0,0.0
 vitals_falling_burn,health_deficit,0.0,0.0066928509242848554
 vitals_falling_burn,magicka_deficit,0.0,0.0066928509242848554
 vitals_falling_burn,stamina_deficit,0.0,0.0066928509242848554
@@ -371,6 +374,7 @@ vitals_falling_burn,sneak_detected,0.0,0.0
 vitals_falling_burn,mounted,0.0,0.0
 vitals_falling_burn,downtime,1000000.0,1.0
 vitals_falling_burn,combat_ended_recent,1000000.0,0.0
+vitals_falling_burn,combat_regen_ok,0.0,0.0
 vitals_rates_centre,health_deficit,0.0,0.0066928509242848554
 vitals_rates_centre,magicka_deficit,0.0,0.0066928509242848554
 vitals_rates_centre,stamina_deficit,0.0,0.0066928509242848554
@@ -464,6 +468,7 @@ vitals_rates_centre,sneak_detected,0.0,0.0
 vitals_rates_centre,mounted,0.0,0.0
 vitals_rates_centre,downtime,1000000.0,1.0
 vitals_rates_centre,combat_ended_recent,1000000.0,0.0
+vitals_rates_centre,combat_regen_ok,0.0,0.0
 vitals_rates_negative,health_deficit,0.0,0.0066928509242848554
 vitals_rates_negative,magicka_deficit,0.0,0.0066928509242848554
 vitals_rates_negative,stamina_deficit,0.0,0.0066928509242848554
@@ -557,6 +562,7 @@ vitals_rates_negative,sneak_detected,0.0,0.0
 vitals_rates_negative,mounted,0.0,0.0
 vitals_rates_negative,downtime,1000000.0,1.0
 vitals_rates_negative,combat_ended_recent,1000000.0,0.0
+vitals_rates_negative,combat_regen_ok,0.0,0.0
 max_zero,health_deficit,0.5,0.5
 max_zero,magicka_deficit,0.0,0.0066928509242848554
 max_zero,stamina_deficit,0.0,0.0066928509242848554
@@ -650,6 +656,7 @@ max_zero,sneak_detected,0.0,0.0
 max_zero,mounted,0.0,0.0
 max_zero,downtime,1000000.0,1.0
 max_zero,combat_ended_recent,1000000.0,0.0
+max_zero,combat_regen_ok,0.0,0.0
 restore_pending_covering,health_deficit,0.3999999761581421,0.2689413744940599
 restore_pending_covering,magicka_deficit,0.7999999970197678,0.9525741254760638
 restore_pending_covering,stamina_deficit,0.0,0.0066928509242848554
@@ -743,6 +750,7 @@ restore_pending_covering,sneak_detected,0.0,0.0
 restore_pending_covering,mounted,0.0,0.0
 restore_pending_covering,downtime,1000000.0,1.0
 restore_pending_covering,combat_ended_recent,1000000.0,0.0
+restore_pending_covering,combat_regen_ok,0.0,0.0
 restore_pending_centre,health_deficit,0.5,0.5
 restore_pending_centre,magicka_deficit,0.0,0.0066928509242848554
 restore_pending_centre,stamina_deficit,0.0,0.0066928509242848554
@@ -836,6 +844,7 @@ restore_pending_centre,sneak_detected,0.0,0.0
 restore_pending_centre,mounted,0.0,0.0
 restore_pending_centre,downtime,1000000.0,1.0
 restore_pending_centre,combat_ended_recent,1000000.0,0.0
+restore_pending_centre,combat_regen_ok,0.0,0.0
 restore_pending_zero_deficit,health_deficit,0.0,0.0066928509242848554
 restore_pending_zero_deficit,magicka_deficit,0.0,0.0066928509242848554
 restore_pending_zero_deficit,stamina_deficit,0.0,0.0066928509242848554
@@ -929,6 +938,7 @@ restore_pending_zero_deficit,sneak_detected,0.0,0.0
 restore_pending_zero_deficit,mounted,0.0,0.0
 restore_pending_zero_deficit,downtime,1000000.0,1.0
 restore_pending_zero_deficit,combat_ended_recent,1000000.0,0.0
+restore_pending_zero_deficit,combat_regen_ok,0.0,0.0
 elemental_damage,health_deficit,0.0,0.0066928509242848554
 elemental_damage,magicka_deficit,0.0,0.0066928509242848554
 elemental_damage,stamina_deficit,0.0,0.0066928509242848554
@@ -1022,6 +1032,7 @@ elemental_damage,sneak_detected,0.0,0.0
 elemental_damage,mounted,0.0,0.0
 elemental_damage,downtime,1000000.0,1.0
 elemental_damage,combat_ended_recent,1000000.0,0.0
+elemental_damage,combat_regen_ok,0.0,0.0
 elemental_centre,health_deficit,0.0,0.0066928509242848554
 elemental_centre,magicka_deficit,0.0,0.0066928509242848554
 elemental_centre,stamina_deficit,0.0,0.0066928509242848554
@@ -1115,6 +1126,7 @@ elemental_centre,sneak_detected,0.0,0.0
 elemental_centre,mounted,0.0,0.0
 elemental_centre,downtime,1000000.0,1.0
 elemental_centre,combat_ended_recent,1000000.0,0.0
+elemental_centre,combat_regen_ok,0.0,0.0
 enemy_casting_now,health_deficit,0.0,0.0066928509242848554
 enemy_casting_now,magicka_deficit,0.0,0.0066928509242848554
 enemy_casting_now,stamina_deficit,0.0,0.0066928509242848554
@@ -1208,6 +1220,7 @@ enemy_casting_now,sneak_detected,0.0,0.0
 enemy_casting_now,mounted,0.0,0.0
 enemy_casting_now,downtime,0.0,0.0024726231566347743
 enemy_casting_now,combat_ended_recent,1000000.0,0.0
+enemy_casting_now,combat_regen_ok,1.0,1.0
 cast_edges,health_deficit,0.0,0.0066928509242848554
 cast_edges,magicka_deficit,0.0,0.0066928509242848554
 cast_edges,stamina_deficit,0.0,0.0066928509242848554
@@ -1301,6 +1314,7 @@ cast_edges,sneak_detected,0.0,0.0
 cast_edges,mounted,0.0,0.0
 cast_edges,downtime,1000000.0,1.0
 cast_edges,combat_ended_recent,1000000.0,0.0
+cast_edges,combat_regen_ok,0.0,0.0
 cast_negative,health_deficit,0.0,0.0066928509242848554
 cast_negative,magicka_deficit,0.0,0.0066928509242848554
 cast_negative,stamina_deficit,0.0,0.0066928509242848554
@@ -1394,6 +1408,7 @@ cast_negative,sneak_detected,0.0,0.0
 cast_negative,mounted,0.0,0.0
 cast_negative,downtime,1000000.0,1.0
 cast_negative,combat_ended_recent,1000000.0,0.0
+cast_negative,combat_regen_ok,0.0,0.0
 status_flags,health_deficit,0.0,0.0066928509242848554
 status_flags,magicka_deficit,0.0,0.0066928509242848554
 status_flags,stamina_deficit,0.0,0.0066928509242848554
@@ -1487,6 +1502,7 @@ status_flags,sneak_detected,0.0,0.0
 status_flags,mounted,0.0,0.0
 status_flags,downtime,1000000.0,1.0
 status_flags,combat_ended_recent,1000000.0,0.0
+status_flags,combat_regen_ok,0.0,0.0
 encumbrance_centre,health_deficit,0.0,0.0066928509242848554
 encumbrance_centre,magicka_deficit,0.0,0.0066928509242848554
 encumbrance_centre,stamina_deficit,0.0,0.0066928509242848554
@@ -1580,6 +1596,7 @@ encumbrance_centre,sneak_detected,0.0,0.0
 encumbrance_centre,mounted,0.0,0.0
 encumbrance_centre,downtime,1000000.0,1.0
 encumbrance_centre,combat_ended_recent,1000000.0,0.0
+encumbrance_centre,combat_regen_ok,0.0,0.0
 vampire_day,health_deficit,0.0,0.0066928509242848554
 vampire_day,magicka_deficit,0.0,0.0066928509242848554
 vampire_day,stamina_deficit,0.0,0.0066928509242848554
@@ -1673,6 +1690,7 @@ vampire_day,sneak_detected,0.0,0.0
 vampire_day,mounted,0.0,0.0
 vampire_day,downtime,1000000.0,1.0
 vampire_day,combat_ended_recent,1000000.0,0.0
+vampire_day,combat_regen_ok,0.0,0.0
 vampire_stage2_day,health_deficit,0.0,0.0066928509242848554
 vampire_stage2_day,magicka_deficit,0.0,0.0066928509242848554
 vampire_stage2_day,stamina_deficit,0.0,0.0066928509242848554
@@ -1766,6 +1784,7 @@ vampire_stage2_day,sneak_detected,0.0,0.0
 vampire_stage2_day,mounted,0.0,0.0
 vampire_stage2_day,downtime,1000000.0,1.0
 vampire_stage2_day,combat_ended_recent,1000000.0,0.0
+vampire_stage2_day,combat_regen_ok,0.0,0.0
 vampire_stage4_night,health_deficit,0.0,0.0066928509242848554
 vampire_stage4_night,magicka_deficit,0.0,0.0066928509242848554
 vampire_stage4_night,stamina_deficit,0.0,0.0066928509242848554
@@ -1859,6 +1878,7 @@ vampire_stage4_night,sneak_detected,0.0,0.0
 vampire_stage4_night,mounted,0.0,0.0
 vampire_stage4_night,downtime,1000000.0,1.0
 vampire_stage4_night,combat_ended_recent,1000000.0,0.0
+vampire_stage4_night,combat_regen_ok,0.0,0.0
 darkness_centre,health_deficit,0.0,0.0066928509242848554
 darkness_centre,magicka_deficit,0.0,0.0066928509242848554
 darkness_centre,stamina_deficit,0.0,0.0066928509242848554
@@ -1952,6 +1972,7 @@ darkness_centre,sneak_detected,0.0,0.0
 darkness_centre,mounted,0.0,0.0
 darkness_centre,downtime,1000000.0,1.0
 darkness_centre,combat_ended_recent,1000000.0,0.0
+darkness_centre,combat_regen_ok,0.0,0.0
 survival_raw,health_deficit,0.0,0.0066928509242848554
 survival_raw,magicka_deficit,0.0,0.0066928509242848554
 survival_raw,stamina_deficit,0.0,0.0066928509242848554
@@ -2045,6 +2066,7 @@ survival_raw,sneak_detected,0.0,0.0
 survival_raw,mounted,0.0,0.0
 survival_raw,downtime,1000000.0,1.0
 survival_raw,combat_ended_recent,1000000.0,0.0
+survival_raw,combat_regen_ok,0.0,0.0
 survival_stage,health_deficit,0.0,0.0066928509242848554
 survival_stage,magicka_deficit,0.0,0.0066928509242848554
 survival_stage,stamina_deficit,0.0,0.0066928509242848554
@@ -2138,6 +2160,7 @@ survival_stage,sneak_detected,0.0,0.0
 survival_stage,mounted,0.0,0.0
 survival_stage,downtime,1000000.0,1.0
 survival_stage,combat_ended_recent,1000000.0,0.0
+survival_stage,combat_regen_ok,0.0,0.0
 survival_penalty_edge,health_deficit,0.0,0.0066928509242848554
 survival_penalty_edge,magicka_deficit,0.0,0.0066928509242848554
 survival_penalty_edge,stamina_deficit,0.0,0.0066928509242848554
@@ -2231,6 +2254,7 @@ survival_penalty_edge,sneak_detected,0.0,0.0
 survival_penalty_edge,mounted,0.0,0.0
 survival_penalty_edge,downtime,1000000.0,1.0
 survival_penalty_edge,combat_ended_recent,1000000.0,0.0
+survival_penalty_edge,combat_regen_ok,0.0,0.0
 survival_thirst_first_penalty,health_deficit,0.0,0.0066928509242848554
 survival_thirst_first_penalty,magicka_deficit,0.0,0.0066928509242848554
 survival_thirst_first_penalty,stamina_deficit,0.0,0.0066928509242848554
@@ -2324,6 +2348,7 @@ survival_thirst_first_penalty,sneak_detected,0.0,0.0
 survival_thirst_first_penalty,mounted,0.0,0.0
 survival_thirst_first_penalty,downtime,1000000.0,1.0
 survival_thirst_first_penalty,combat_ended_recent,1000000.0,0.0
+survival_thirst_first_penalty,combat_regen_ok,0.0,0.0
 survival_off_high,health_deficit,0.0,0.0066928509242848554
 survival_off_high,magicka_deficit,0.0,0.0066928509242848554
 survival_off_high,stamina_deficit,0.0,0.0066928509242848554
@@ -2417,6 +2442,7 @@ survival_off_high,sneak_detected,0.0,0.0
 survival_off_high,mounted,0.0,0.0
 survival_off_high,downtime,1000000.0,1.0
 survival_off_high,combat_ended_recent,1000000.0,0.0
+survival_off_high,combat_regen_ok,0.0,0.0
 survival_negative_fatigue,health_deficit,0.0,0.0066928509242848554
 survival_negative_fatigue,magicka_deficit,0.0,0.0066928509242848554
 survival_negative_fatigue,stamina_deficit,0.0,0.0066928509242848554
@@ -2510,6 +2536,7 @@ survival_negative_fatigue,sneak_detected,0.0,0.0
 survival_negative_fatigue,mounted,0.0,0.0
 survival_negative_fatigue,downtime,1000000.0,1.0
 survival_negative_fatigue,combat_ended_recent,1000000.0,0.0
+survival_negative_fatigue,combat_regen_ok,0.0,0.0
 survival_raw_edges,health_deficit,0.0,0.0066928509242848554
 survival_raw_edges,magicka_deficit,0.0,0.0066928509242848554
 survival_raw_edges,stamina_deficit,0.0,0.0066928509242848554
@@ -2603,6 +2630,7 @@ survival_raw_edges,sneak_detected,0.0,0.0
 survival_raw_edges,mounted,0.0,0.0
 survival_raw_edges,downtime,1000000.0,1.0
 survival_raw_edges,combat_ended_recent,1000000.0,0.0
+survival_raw_edges,combat_regen_ok,0.0,0.0
 combat_onset_close,health_deficit,0.0,0.0066928509242848554
 combat_onset_close,magicka_deficit,0.0,0.0066928509242848554
 combat_onset_close,stamina_deficit,0.0,0.0066928509242848554
@@ -2696,6 +2724,7 @@ combat_onset_close,sneak_detected,0.0,0.0
 combat_onset_close,mounted,0.0,0.0
 combat_onset_close,downtime,0.0,0.0024726231566347743
 combat_onset_close,combat_ended_recent,1000000.0,0.0
+combat_onset_close,combat_regen_ok,1.0,1.0
 enemy_mid_range,health_deficit,0.0,0.0066928509242848554
 enemy_mid_range,magicka_deficit,0.0,0.0066928509242848554
 enemy_mid_range,stamina_deficit,0.0,0.0066928509242848554
@@ -2789,6 +2818,7 @@ enemy_mid_range,sneak_detected,0.0,0.0
 enemy_mid_range,mounted,0.0,0.0
 enemy_mid_range,downtime,0.0,0.0024726231566347743
 enemy_mid_range,combat_ended_recent,1000000.0,0.0
+enemy_mid_range,combat_regen_ok,1.0,1.0
 enemy_far_4096,health_deficit,0.0,0.0066928509242848554
 enemy_far_4096,magicka_deficit,0.0,0.0066928509242848554
 enemy_far_4096,stamina_deficit,0.0,0.0066928509242848554
@@ -2882,6 +2912,7 @@ enemy_far_4096,sneak_detected,0.0,0.0
 enemy_far_4096,mounted,0.0,0.0
 enemy_far_4096,downtime,0.0,0.0024726231566347743
 enemy_far_4096,combat_ended_recent,1000000.0,0.0
+enemy_far_4096,combat_regen_ok,1.0,1.0
 enemy_at_close_centre,health_deficit,0.0,0.0066928509242848554
 enemy_at_close_centre,magicka_deficit,0.0,0.0066928509242848554
 enemy_at_close_centre,stamina_deficit,0.0,0.0066928509242848554
@@ -2975,6 +3006,7 @@ enemy_at_close_centre,sneak_detected,0.0,0.0
 enemy_at_close_centre,mounted,0.0,0.0
 enemy_at_close_centre,downtime,0.0,0.0024726231566347743
 enemy_at_close_centre,combat_ended_recent,1000000.0,0.0
+enemy_at_close_centre,combat_regen_ok,1.0,1.0
 enemy_at_far_centre,health_deficit,0.0,0.0066928509242848554
 enemy_at_far_centre,magicka_deficit,0.0,0.0066928509242848554
 enemy_at_far_centre,stamina_deficit,0.0,0.0066928509242848554
@@ -3068,6 +3100,7 @@ enemy_at_far_centre,sneak_detected,0.0,0.0
 enemy_at_far_centre,mounted,0.0,0.0
 enemy_at_far_centre,downtime,0.0,0.0024726231566347743
 enemy_at_far_centre,combat_ended_recent,1000000.0,0.0
+enemy_at_far_centre,combat_regen_ok,1.0,1.0
 boss_fight,health_deficit,0.0,0.0066928509242848554
 boss_fight,magicka_deficit,0.0,0.0066928509242848554
 boss_fight,stamina_deficit,0.0,0.0066928509242848554
@@ -3161,6 +3194,7 @@ boss_fight,sneak_detected,0.0,0.0
 boss_fight,mounted,0.0,0.0
 boss_fight,downtime,0.0,0.0024726231566347743
 boss_fight,combat_ended_recent,1000000.0,0.0
+boss_fight,combat_regen_ok,1.0,1.0
 boss_ttk_centre,health_deficit,0.0,0.0066928509242848554
 boss_ttk_centre,magicka_deficit,0.0,0.0066928509242848554
 boss_ttk_centre,stamina_deficit,0.0,0.0066928509242848554
@@ -3254,6 +3288,7 @@ boss_ttk_centre,sneak_detected,0.0,0.0
 boss_ttk_centre,mounted,0.0,0.0
 boss_ttk_centre,downtime,0.0,0.0024726231566347743
 boss_ttk_centre,combat_ended_recent,1000000.0,0.0
+boss_ttk_centre,combat_regen_ok,1.0,1.0
 boss_two_enemies,health_deficit,0.0,0.0066928509242848554
 boss_two_enemies,magicka_deficit,0.0,0.0066928509242848554
 boss_two_enemies,stamina_deficit,0.0,0.0066928509242848554
@@ -3347,6 +3382,7 @@ boss_two_enemies,sneak_detected,0.0,0.0
 boss_two_enemies,mounted,0.0,0.0
 boss_two_enemies,downtime,0.0,0.0024726231566347743
 boss_two_enemies,combat_ended_recent,1000000.0,0.0
+boss_two_enemies,combat_regen_ok,1.0,1.0
 boss_ttk_zero,health_deficit,0.0,0.0066928509242848554
 boss_ttk_zero,magicka_deficit,0.0,0.0066928509242848554
 boss_ttk_zero,stamina_deficit,0.0,0.0066928509242848554
@@ -3440,6 +3476,7 @@ boss_ttk_zero,sneak_detected,0.0,0.0
 boss_ttk_zero,mounted,0.0,0.0
 boss_ttk_zero,downtime,0.0,0.0024726231566347743
 boss_ttk_zero,combat_ended_recent,50.0,0.035673993347252395
+boss_ttk_zero,combat_regen_ok,0.0,0.0
 target_archer_summon,health_deficit,0.0,0.0066928509242848554
 target_archer_summon,magicka_deficit,0.0,0.0066928509242848554
 target_archer_summon,stamina_deficit,0.0,0.0066928509242848554
@@ -3533,6 +3570,7 @@ target_archer_summon,sneak_detected,0.0,0.0
 target_archer_summon,mounted,0.0,0.0
 target_archer_summon,downtime,0.0,0.0024726231566347743
 target_archer_summon,combat_ended_recent,1000000.0,0.0
+target_archer_summon,combat_regen_ok,1.0,1.0
 families_low,health_deficit,0.0,0.0066928509242848554
 families_low,magicka_deficit,0.0,0.0066928509242848554
 families_low,stamina_deficit,0.0,0.0066928509242848554
@@ -3626,6 +3664,7 @@ families_low,sneak_detected,0.0,0.0
 families_low,mounted,0.0,0.0
 families_low,downtime,0.0,0.0024726231566347743
 families_low,combat_ended_recent,1000000.0,0.0
+families_low,combat_regen_ok,1.0,1.0
 families_high,health_deficit,0.0,0.0066928509242848554
 families_high,magicka_deficit,0.0,0.0066928509242848554
 families_high,stamina_deficit,0.0,0.0066928509242848554
@@ -3719,6 +3758,7 @@ families_high,sneak_detected,0.0,0.0
 families_high,mounted,0.0,0.0
 families_high,downtime,0.0,0.0024726231566347743
 families_high,combat_ended_recent,1000000.0,0.0
+families_high,combat_regen_ok,1.0,1.0
 families_bit31,health_deficit,0.0,0.0066928509242848554
 families_bit31,magicka_deficit,0.0,0.0066928509242848554
 families_bit31,stamina_deficit,0.0,0.0066928509242848554
@@ -3812,6 +3852,7 @@ families_bit31,sneak_detected,0.0,0.0
 families_bit31,mounted,0.0,0.0
 families_bit31,downtime,1000000.0,1.0
 families_bit31,combat_ended_recent,1000000.0,0.0
+families_bit31,combat_regen_ok,0.0,0.0
 ally_bleedout,health_deficit,0.0,0.0066928509242848554
 ally_bleedout,magicka_deficit,0.0,0.0066928509242848554
 ally_bleedout,stamina_deficit,0.0,0.0066928509242848554
@@ -3905,6 +3946,7 @@ ally_bleedout,sneak_detected,0.0,0.0
 ally_bleedout,mounted,0.0,0.0
 ally_bleedout,downtime,1000000.0,1.0
 ally_bleedout,combat_ended_recent,1000000.0,0.0
+ally_bleedout,combat_regen_ok,0.0,0.0
 underwater_deep,health_deficit,0.0,0.0066928509242848554
 underwater_deep,magicka_deficit,0.0,0.0066928509242848554
 underwater_deep,stamina_deficit,0.0,0.0066928509242848554
@@ -3998,6 +4040,7 @@ underwater_deep,sneak_detected,0.0,0.0
 underwater_deep,mounted,0.0,0.0
 underwater_deep,downtime,1000000.0,1.0
 underwater_deep,combat_ended_recent,1000000.0,0.0
+underwater_deep,combat_regen_ok,0.0,0.0
 underwater_centre,health_deficit,0.0,0.0066928509242848554
 underwater_centre,magicka_deficit,0.0,0.0066928509242848554
 underwater_centre,stamina_deficit,0.0,0.0066928509242848554
@@ -4091,6 +4134,7 @@ underwater_centre,sneak_detected,0.0,0.0
 underwater_centre,mounted,0.0,0.0
 underwater_centre,downtime,1000000.0,1.0
 underwater_centre,combat_ended_recent,1000000.0,0.0
+underwater_centre,combat_regen_ok,0.0,0.0
 underwater_false_submerged,health_deficit,0.0,0.0066928509242848554
 underwater_false_submerged,magicka_deficit,0.0,0.0066928509242848554
 underwater_false_submerged,stamina_deficit,0.0,0.0066928509242848554
@@ -4184,6 +4228,7 @@ underwater_false_submerged,sneak_detected,0.0,0.0
 underwater_false_submerged,mounted,0.0,0.0
 underwater_false_submerged,downtime,1000000.0,1.0
 underwater_false_submerged,combat_ended_recent,1000000.0,0.0
+underwater_false_submerged,combat_regen_ok,0.0,0.0
 falling_deep,health_deficit,0.0,0.0066928509242848554
 falling_deep,magicka_deficit,0.0,0.0066928509242848554
 falling_deep,stamina_deficit,0.0,0.0066928509242848554
@@ -4277,6 +4322,7 @@ falling_deep,sneak_detected,0.0,0.0
 falling_deep,mounted,0.0,0.0
 falling_deep,downtime,1000000.0,1.0
 falling_deep,combat_ended_recent,1000000.0,0.0
+falling_deep,combat_regen_ok,0.0,0.0
 falling_low_edge,health_deficit,0.0,0.0066928509242848554
 falling_low_edge,magicka_deficit,0.0,0.0066928509242848554
 falling_low_edge,stamina_deficit,0.0,0.0066928509242848554
@@ -4370,6 +4416,7 @@ falling_low_edge,sneak_detected,0.0,0.0
 falling_low_edge,mounted,0.0,0.0
 falling_low_edge,downtime,1000000.0,1.0
 falling_low_edge,combat_ended_recent,1000000.0,0.0
+falling_low_edge,combat_regen_ok,0.0,0.0
 falling_mid,health_deficit,0.0,0.0066928509242848554
 falling_mid,magicka_deficit,0.0,0.0066928509242848554
 falling_mid,stamina_deficit,0.0,0.0066928509242848554
@@ -4463,6 +4510,7 @@ falling_mid,sneak_detected,0.0,0.0
 falling_mid,mounted,0.0,0.0
 falling_mid,downtime,1000000.0,1.0
 falling_mid,combat_ended_recent,1000000.0,0.0
+falling_mid,combat_regen_ok,0.0,0.0
 falling_top_edge,health_deficit,0.0,0.0066928509242848554
 falling_top_edge,magicka_deficit,0.0,0.0066928509242848554
 falling_top_edge,stamina_deficit,0.0,0.0066928509242848554
@@ -4556,6 +4604,7 @@ falling_top_edge,sneak_detected,0.0,0.0
 falling_top_edge,mounted,0.0,0.0
 falling_top_edge,downtime,1000000.0,1.0
 falling_top_edge,combat_ended_recent,1000000.0,0.0
+falling_top_edge,combat_regen_ok,0.0,0.0
 water_ahead_deep,health_deficit,0.0,0.0066928509242848554
 water_ahead_deep,magicka_deficit,0.0,0.0066928509242848554
 water_ahead_deep,stamina_deficit,0.0,0.0066928509242848554
@@ -4649,6 +4698,7 @@ water_ahead_deep,sneak_detected,0.0,0.0
 water_ahead_deep,mounted,0.0,0.0
 water_ahead_deep,downtime,1000000.0,1.0
 water_ahead_deep,combat_ended_recent,1000000.0,0.0
+water_ahead_deep,combat_regen_ok,0.0,0.0
 water_ahead_centre,health_deficit,0.0,0.0066928509242848554
 water_ahead_centre,magicka_deficit,0.0,0.0066928509242848554
 water_ahead_centre,stamina_deficit,0.0,0.0066928509242848554
@@ -4742,6 +4792,7 @@ water_ahead_centre,sneak_detected,0.0,0.0
 water_ahead_centre,mounted,0.0,0.0
 water_ahead_centre,downtime,1000000.0,1.0
 water_ahead_centre,combat_ended_recent,1000000.0,0.0
+water_ahead_centre,combat_regen_ok,0.0,0.0
 water_ahead_stream,health_deficit,0.0,0.0066928509242848554
 water_ahead_stream,magicka_deficit,0.0,0.0066928509242848554
 water_ahead_stream,stamina_deficit,0.0,0.0066928509242848554
@@ -4835,6 +4886,7 @@ water_ahead_stream,sneak_detected,0.0,0.0
 water_ahead_stream,mounted,0.0,0.0
 water_ahead_stream,downtime,1000000.0,1.0
 water_ahead_stream,combat_ended_recent,1000000.0,0.0
+water_ahead_stream,combat_regen_ok,0.0,0.0
 crosshair_smithing,health_deficit,0.0,0.0066928509242848554
 crosshair_smithing,magicka_deficit,0.0,0.0066928509242848554
 crosshair_smithing,stamina_deficit,0.0,0.0066928509242848554
@@ -4928,6 +4980,7 @@ crosshair_smithing,sneak_detected,0.0,0.0
 crosshair_smithing,mounted,0.0,0.0
 crosshair_smithing,downtime,1000000.0,1.0
 crosshair_smithing,combat_ended_recent,1000000.0,0.0
+crosshair_smithing,combat_regen_ok,0.0,0.0
 crosshair_enchanting,health_deficit,0.0,0.0066928509242848554
 crosshair_enchanting,magicka_deficit,0.0,0.0066928509242848554
 crosshair_enchanting,stamina_deficit,0.0,0.0066928509242848554
@@ -5021,6 +5074,7 @@ crosshair_enchanting,sneak_detected,0.0,0.0
 crosshair_enchanting,mounted,0.0,0.0
 crosshair_enchanting,downtime,1000000.0,1.0
 crosshair_enchanting,combat_ended_recent,1000000.0,0.0
+crosshair_enchanting,combat_regen_ok,0.0,0.0
 crosshair_alchemy,health_deficit,0.0,0.0066928509242848554
 crosshair_alchemy,magicka_deficit,0.0,0.0066928509242848554
 crosshair_alchemy,stamina_deficit,0.0,0.0066928509242848554
@@ -5114,6 +5168,7 @@ crosshair_alchemy,sneak_detected,0.0,0.0
 crosshair_alchemy,mounted,0.0,0.0
 crosshair_alchemy,downtime,1000000.0,1.0
 crosshair_alchemy,combat_ended_recent,1000000.0,0.0
+crosshair_alchemy,combat_regen_ok,0.0,0.0
 crosshair_workstation4,health_deficit,0.0,0.0066928509242848554
 crosshair_workstation4,magicka_deficit,0.0,0.0066928509242848554
 crosshair_workstation4,stamina_deficit,0.0,0.0066928509242848554
@@ -5207,6 +5262,7 @@ crosshair_workstation4,sneak_detected,0.0,0.0
 crosshair_workstation4,mounted,0.0,0.0
 crosshair_workstation4,downtime,1000000.0,1.0
 crosshair_workstation4,combat_ended_recent,1000000.0,0.0
+crosshair_workstation4,combat_regen_ok,0.0,0.0
 enchanted_bow,health_deficit,0.0,0.0066928509242848554
 enchanted_bow,magicka_deficit,0.0,0.0066928509242848554
 enchanted_bow,stamina_deficit,0.0,0.0066928509242848554
@@ -5300,6 +5356,7 @@ enchanted_bow,sneak_detected,0.0,0.0
 enchanted_bow,mounted,0.0,0.0
 enchanted_bow,downtime,1000000.0,1.0
 enchanted_bow,combat_ended_recent,1000000.0,0.0
+enchanted_bow,combat_regen_ok,0.0,0.0
 crossbow_bolts,health_deficit,0.0,0.0066928509242848554
 crossbow_bolts,magicka_deficit,0.0,0.0066928509242848554
 crossbow_bolts,stamina_deficit,0.0,0.0066928509242848554
@@ -5393,6 +5450,7 @@ crossbow_bolts,sneak_detected,0.0,0.0
 crossbow_bolts,mounted,0.0,0.0
 crossbow_bolts,downtime,1000000.0,1.0
 crossbow_bolts,combat_ended_recent,1000000.0,0.0
+crossbow_bolts,combat_regen_ok,0.0,0.0
 bow_ammo_overfull,health_deficit,0.0,0.0066928509242848554
 bow_ammo_overfull,magicka_deficit,0.0,0.0066928509242848554
 bow_ammo_overfull,stamina_deficit,0.0,0.0066928509242848554
@@ -5486,6 +5544,7 @@ bow_ammo_overfull,sneak_detected,0.0,0.0
 bow_ammo_overfull,mounted,0.0,0.0
 bow_ammo_overfull,downtime,1000000.0,1.0
 bow_ammo_overfull,combat_ended_recent,1000000.0,0.0
+bow_ammo_overfull,combat_regen_ok,0.0,0.0
 bow_ammo_centre,health_deficit,0.0,0.0066928509242848554
 bow_ammo_centre,magicka_deficit,0.0,0.0066928509242848554
 bow_ammo_centre,stamina_deficit,0.0,0.0066928509242848554
@@ -5579,6 +5638,7 @@ bow_ammo_centre,sneak_detected,0.0,0.0
 bow_ammo_centre,mounted,0.0,0.0
 bow_ammo_centre,downtime,1000000.0,1.0
 bow_ammo_centre,combat_ended_recent,1000000.0,0.0
+bow_ammo_centre,combat_regen_ok,0.0,0.0
 loadout_everything,health_deficit,0.0,0.0066928509242848554
 loadout_everything,magicka_deficit,0.0,0.0066928509242848554
 loadout_everything,stamina_deficit,0.0,0.0066928509242848554
@@ -5672,6 +5732,7 @@ loadout_everything,sneak_detected,0.0,0.0
 loadout_everything,mounted,1.0,1.0
 loadout_everything,downtime,1000000.0,1.0
 loadout_everything,combat_ended_recent,1000000.0,0.0
+loadout_everything,combat_regen_ok,0.0,0.0
 shield_only,health_deficit,0.0,0.0066928509242848554
 shield_only,magicka_deficit,0.0,0.0066928509242848554
 shield_only,stamina_deficit,0.0,0.0066928509242848554
@@ -5765,6 +5826,7 @@ shield_only,sneak_detected,0.0,0.0
 shield_only,mounted,0.0,0.0
 shield_only,downtime,1000000.0,1.0
 shield_only,combat_ended_recent,1000000.0,0.0
+shield_only,combat_regen_ok,0.0,0.0
 spell_only,health_deficit,0.0,0.0066928509242848554
 spell_only,magicka_deficit,0.0,0.0066928509242848554
 spell_only,stamina_deficit,0.0,0.0066928509242848554
@@ -5858,6 +5920,7 @@ spell_only,sneak_detected,0.0,0.0
 spell_only,mounted,0.0,0.0
 spell_only,downtime,1000000.0,1.0
 spell_only,combat_ended_recent,1000000.0,0.0
+spell_only,combat_regen_ok,0.0,0.0
 downtime_centre,health_deficit,0.0,0.0066928509242848554
 downtime_centre,magicka_deficit,0.0,0.0066928509242848554
 downtime_centre,stamina_deficit,0.0,0.0066928509242848554
@@ -5951,6 +6014,7 @@ downtime_centre,sneak_detected,0.0,0.0
 downtime_centre,mounted,0.0,0.0
 downtime_centre,downtime,20.0,0.5
 downtime_centre,combat_ended_recent,20.0,0.26359713811572677
+downtime_centre,combat_regen_ok,0.0,0.0
 combat_just_ended,health_deficit,0.0,0.0066928509242848554
 combat_just_ended,magicka_deficit,0.0,0.0066928509242848554
 combat_just_ended,stamina_deficit,0.0,0.0066928509242848554
@@ -6044,6 +6108,7 @@ combat_just_ended,sneak_detected,0.0,0.0
 combat_just_ended,mounted,0.0,0.0
 combat_just_ended,downtime,0.0,0.0024726231566347743
 combat_just_ended,combat_ended_recent,0.0,1.0
+combat_just_ended,combat_regen_ok,0.0,0.0
 combat_ended_5s,health_deficit,0.0,0.0066928509242848554
 combat_ended_5s,magicka_deficit,0.0,0.0066928509242848554
 combat_ended_5s,stamina_deficit,0.0,0.0066928509242848554
@@ -6137,6 +6202,7 @@ combat_ended_5s,sneak_detected,0.0,0.0
 combat_ended_5s,mounted,0.0,0.0
 combat_ended_5s,downtime,5.0,0.01098694263059318
 combat_ended_5s,combat_ended_recent,5.0,0.7165313105737893
+combat_ended_5s,combat_regen_ok,0.0,0.0
 downtime_enemy_visible,health_deficit,0.0,0.0066928509242848554
 downtime_enemy_visible,magicka_deficit,0.0,0.0066928509242848554
 downtime_enemy_visible,stamina_deficit,0.0,0.0066928509242848554
@@ -6230,6 +6296,7 @@ downtime_enemy_visible,sneak_detected,0.0,0.0
 downtime_enemy_visible,mounted,0.0,0.0
 downtime_enemy_visible,downtime,0.0,0.0024726231566347743
 downtime_enemy_visible,combat_ended_recent,100.0,0.0012726338013398079
+downtime_enemy_visible,combat_regen_ok,0.0,0.0
 in_combat_timers_never,health_deficit,0.0,0.0066928509242848554
 in_combat_timers_never,magicka_deficit,0.0,0.0066928509242848554
 in_combat_timers_never,stamina_deficit,0.0,0.0066928509242848554
@@ -6323,6 +6390,7 @@ in_combat_timers_never,sneak_detected,0.0,0.0
 in_combat_timers_never,mounted,0.0,0.0
 in_combat_timers_never,downtime,0.0,0.0024726231566347743
 in_combat_timers_never,combat_ended_recent,1000000.0,0.0
+in_combat_timers_never,combat_regen_ok,1.0,1.0
 enemy_casting_frost_shock_now,health_deficit,0.0,0.0066928509242848554
 enemy_casting_frost_shock_now,magicka_deficit,0.0,0.0066928509242848554
 enemy_casting_frost_shock_now,stamina_deficit,0.0,0.0066928509242848554
@@ -6416,3 +6484,98 @@ enemy_casting_frost_shock_now,sneak_detected,0.0,0.0
 enemy_casting_frost_shock_now,mounted,0.0,0.0
 enemy_casting_frost_shock_now,downtime,0.0,0.0024726231566347743
 enemy_casting_frost_shock_now,combat_ended_recent,1000000.0,0.0
+enemy_casting_frost_shock_now,combat_regen_ok,1.0,1.0
+combat_regen_blocked,health_deficit,0.0,0.0066928509242848554
+combat_regen_blocked,magicka_deficit,0.0,0.0066928509242848554
+combat_regen_blocked,stamina_deficit,0.0,0.0066928509242848554
+combat_regen_blocked,health_falling,0.0,0.01098694263059318
+combat_regen_blocked,magicka_burn,0.0,0.0066928509242848554
+combat_regen_blocked,stamina_burn,0.0,0.0066928509242848554
+combat_regen_blocked,restore_pending_health,0.0,4.5397868702434395e-05
+combat_regen_blocked,restore_pending_magicka,0.0,4.5397868702434395e-05
+combat_regen_blocked,restore_pending_stamina,0.0,4.5397868702434395e-05
+combat_regen_blocked,fire_damage_rate,0.0,0.01098694263059318
+combat_regen_blocked,frost_damage_rate,0.0,0.01098694263059318
+combat_regen_blocked,shock_damage_rate,0.0,0.01098694263059318
+combat_regen_blocked,magic_damage_rate,0.0,0.01098694263059318
+combat_regen_blocked,physical_damage_rate,0.0,0.01098694263059318
+combat_regen_blocked,enemy_casting_fire,1000000.0,0.0
+combat_regen_blocked,enemy_casting_frost,1000000.0,0.0
+combat_regen_blocked,enemy_casting_shock,1000000.0,0.0
+combat_regen_blocked,poisoned,0.0,0.0
+combat_regen_blocked,diseased,0.0,0.0
+combat_regen_blocked,drain_health,0.0,0.0
+combat_regen_blocked,drain_magicka,0.0,0.0
+combat_regen_blocked,drain_stamina,0.0,0.0
+combat_regen_blocked,regen_suppressed,1.0,1.0
+combat_regen_blocked,healing_blocked,0.0,0.0
+combat_regen_blocked,encumbrance,0.0,3.1391327920480296e-17
+combat_regen_blocked,vampire_sun_exposure,0.0,0.0
+combat_regen_blocked,hunger,0.0,0.004070137715896128
+combat_regen_blocked,thirst,0.0,0.004070137715896128
+combat_regen_blocked,cold,0.0,0.0
+combat_regen_blocked,fatigue,0.0,0.0
+combat_regen_blocked,warmth_deficit,0.0,0.0
+combat_regen_blocked,in_combat,1.0,1.0
+combat_regen_blocked,combat_onset,1000000.0,0.0
+combat_regen_blocked,enemy_count,0.0,0.0
+combat_regen_blocked,enemy_close,4096.0,1.0674878334332898e-33
+combat_regen_blocked,enemy_mid,4096.0,4.472740153758267e-67
+combat_regen_blocked,enemy_far,0.0,4.5397868702434395e-05
+combat_regen_blocked,surrounded,0.0,0.0
+combat_regen_blocked,enemy_casting,0.0,0.0
+combat_regen_blocked,target_caster,0.0,0.0
+combat_regen_blocked,target_archer,0.0,0.0
+combat_regen_blocked,target_health_low,0.0,0.00012339457598623172
+combat_regen_blocked,boss_fight,0.0,0.0024726231566347743
+combat_regen_blocked,target_magicka_low,0.0,0.0009110511944006454
+combat_regen_blocked,target_stamina_low,0.0,0.0009110511944006454
+combat_regen_blocked,target_humanoid,0.0,0.0
+combat_regen_blocked,target_undead,0.0,0.0
+combat_regen_blocked,target_daedra,0.0,0.0
+combat_regen_blocked,target_dragon,0.0,0.0
+combat_regen_blocked,target_construct,0.0,0.0
+combat_regen_blocked,target_animal,0.0,0.0
+combat_regen_blocked,target_arthropod,0.0,0.0
+combat_regen_blocked,target_troll,0.0,0.0
+combat_regen_blocked,target_giant,0.0,0.0
+combat_regen_blocked,target_werebeast,0.0,0.0
+combat_regen_blocked,target_monster,0.0,0.0
+combat_regen_blocked,target_spectral,0.0,0.0
+combat_regen_blocked,target_element_fire,0.0,0.0
+combat_regen_blocked,target_element_frost,0.0,0.0
+combat_regen_blocked,target_element_shock,0.0,0.0
+combat_regen_blocked,target_summoned,0.0,0.0
+combat_regen_blocked,ally_injured,0.0,0.0066928509242848554
+combat_regen_blocked,follower_present,0.0,0.0
+combat_regen_blocked,darkness,0.0,5.829126566113865e-05
+combat_regen_blocked,underwater,0.0,0.0066928509242848554
+combat_regen_blocked,swimming,0.0,0.0
+combat_regen_blocked,falling,0.0,0.0
+combat_regen_blocked,drop_ahead,0.0,1.3518975607387154e-06
+combat_regen_blocked,deep_water_ahead,0.0,0.0016588010801744215
+combat_regen_blocked,lock_in_crosshair,0.0,0.0
+combat_regen_blocked,workstation_smithing,0.0,0.0
+combat_regen_blocked,workstation_enchanting,0.0,0.0
+combat_regen_blocked,workstation_alchemy,0.0,0.0
+combat_regen_blocked,ore_vein_in_crosshair,0.0,0.0
+combat_regen_blocked,merchant_in_crosshair,0.0,0.0
+combat_regen_blocked,weapon_charge_deficit,0.0,0.00012339457598623172
+combat_regen_blocked,ammo_low,0.0,0.0024726231566347743
+combat_regen_blocked,hands_empty,1.0,1.0
+combat_regen_blocked,loadout_one_handed,0.0,0.0
+combat_regen_blocked,loadout_two_handed,0.0,0.0
+combat_regen_blocked,loadout_archery,0.0,0.0
+combat_regen_blocked,loadout_staff,0.0,0.0
+combat_regen_blocked,loadout_shield,0.0,0.0
+combat_regen_blocked,loadout_destruction,0.0,0.0
+combat_regen_blocked,loadout_conjuration,0.0,0.0
+combat_regen_blocked,loadout_restoration,0.0,0.0
+combat_regen_blocked,loadout_alteration,0.0,0.0
+combat_regen_blocked,loadout_illusion,0.0,0.0
+combat_regen_blocked,sneaking,0.0,0.0
+combat_regen_blocked,sneak_detected,0.0,0.0
+combat_regen_blocked,mounted,0.0,0.0
+combat_regen_blocked,downtime,0.0,0.0024726231566347743
+combat_regen_blocked,combat_ended_recent,1000000.0,0.0
+combat_regen_blocked,combat_regen_ok,0.0,0.0

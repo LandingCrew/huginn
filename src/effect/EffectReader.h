@@ -56,6 +56,11 @@ namespace Huginn::Effect
         std::vector<bool> payloadFilled;
     };
 
+    /// One condition list (an MGEF's or an effect item's) as text, the form
+    /// `hg dump all` prints and core/EffectConditions.h reads (0.23.30: the
+    /// records carry it, so the mapper can gate perk, chance and bane rows).
+    [[nodiscard]] std::string FormatConditions(const RE::TESCondition& conditions);
+
     class EffectReader
     {
     public:

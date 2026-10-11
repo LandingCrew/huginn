@@ -20,6 +20,8 @@
 //     --carriers-out <csv>      write every visible row dropped as a carrier (a
 //                               companion with no description beside a kept row),
 //                               with the item's kept columns, for audit
+//     --gated-out <csv>         write every in-scope row its conditions gate (0.23.30):
+//                               perk rows, bane rows and GetRandomPercent-scaled rows
 //   huginn_effect_report --patterns-out <file>
 //                             write the rule tables' patterns, one per line
 //
@@ -91,7 +93,7 @@ int main(int argc, char** argv)
     std::string path = argv[1];
     std::string name = path.substr(path.find_last_of("/\\") + 1);
     double minCoverage = -1.0;
-    std::string classesPath, diffOut, mgefOut, capsOut, unmappedOut, zeroOut, carriersOut;
+    std::string classesPath, diffOut, mgefOut, capsOut, unmappedOut, zeroOut, carriersOut, gatedOut;
     for (int i = 2; i < argc; ++i) {
         const std::string a = argv[i];
         auto next = [&]() -> std::string { return i + 1 < argc ? argv[++i] : std::string{}; };
@@ -104,6 +106,7 @@ int main(int argc, char** argv)
         else if (a == "--unmapped-out") unmappedOut = next();
         else if (a == "--zero-out") zeroOut = next();
         else if (a == "--carriers-out") carriersOut = next();
+        else if (a == "--gated-out") gatedOut = next();
         else return Usage();
     }
 
@@ -336,6 +339,57 @@ int main(int argc, char** argv)
             }
         }
         std::printf("carrier rows: %zu (written to %s)\n", n, carriersOut.c_str());
+    }
+
+    // ---- conditions (0.23.30): perk rows, bane rows, random procs ----------
+    {
+        std::size_t perkRows = 0, baneRows = 0, chanceRows = 0, perkForms = 0, baneForms = 0, chanceForms = 0;
+        std::ofstream out;
+        if (!gatedOut.empty()) {
+            out.open(gatedOut, std::ios::binary);
+            out << "kind,formID,name,effectIndex,effectFormID,effectName,hidden,column,gate,chance,perks,perkValue,itemCap\n";
+        }
+        for (std::size_t i = 0; i < r.mappings.size(); ++i) {
+            const auto& m = r.mappings[i];
+            if (!m.inScope) continue;
+            const auto& item = dump.items[i];
+            bool anyPerk = false, anyBane = false, anyChance = false;
+            const auto perkValues = GradePerkRows(m, r.pops);
+            for (std::size_t j = 0; j < m.outcomes.size(); ++j) {
+                const auto& o = m.outcomes[j];
+                const bool chance = o.chance < 1.0f;
+                if (!o.perk && !o.bane && !chance) continue;
+                perkRows += o.perk;
+                baneRows += o.bane;
+                chanceRows += chance;
+                anyPerk = anyPerk || o.perk;
+                anyBane = anyBane || o.bane;
+                anyChance = anyChance || chance;
+                if (!out.is_open()) continue;
+                const auto& e = dump.effects[item.effects[j].effect];
+                std::string perks;
+                float pv = 0.0f;
+                for (const auto& p : perkValues) {
+                    if (p.col != o.cls.col) continue;
+                    pv = std::max(pv, p.v);
+                    for (const auto& clause : p.perks) {
+                        for (const auto id : clause) perks += Hex(id) + "|";
+                        perks += ";";
+                    }
+                    break;
+                }
+                out << KindName(item.kind) << ',' << Hex(item.formId) << ',' << Quote(item.name) << ',' << j << ','
+                    << Hex(e.formId) << ',' << Quote(e.name) << ',' << (o.hidden ? 1 : 0) << ',' << Name(o.cls.col) << ','
+                    << (o.bane ? "bane" : o.perk ? "perk" : "chance") << ',' << o.chance << ',' << perks << ',' << pv << ','
+                    << Quote(FormatCap(r.caps[i])) << '\n';
+            }
+            perkForms += anyPerk;
+            baneForms += anyBane;
+            chanceForms += anyChance;
+        }
+        std::printf("conditions: perk rows %zu (%zu forms), bane rows %zu (%zu forms), chance-scaled rows %zu (%zu forms)%s%s\n",
+                    perkRows, perkForms, baneRows, baneForms, chanceRows, chanceForms,
+                    gatedOut.empty() ? "" : ", written to ", gatedOut.c_str());
     }
 
     if (minCoverage >= 0.0 && 100.0 * r.Coverage() < minCoverage) {

@@ -273,7 +273,7 @@ namespace Huginn::Core::Effect
                 { R"re(turn (greater |lesser )?undead|repel)re", "influence_turn_undead" },
                 { R"re(banish)re", "influence_banish" },
                 { R"re(paraly|deep freeze|petrif)re", "control_paralysis" },
-                { R"re(knockdown|stagger|overthrow|unrelenting force|\bpush\b|repulse)re", "control_stagger" },
+                { R"re(knock ?(up|back|down)|stagger|overthrow|unrelenting force|\bpush\b|repulse)re", "control_stagger" },
                 { R"re(disarm)re", "control_disarm" },
                 { R"re(\bsleep)re", "control_sleep" },
                 { R"re(silence)re", "control_silence" },
@@ -290,13 +290,13 @@ namespace Huginn::Core::Effect
                 { R"re(water ?walk)re", "movement_water_walking" },
                 { R"re(water ?breath)re", "utility_water_breathing" },
                 { R"re(sprint|whirlwind|speed|swift|haste)re", "movement_speed" },
-                { R"re(teleport|portal|recall|mark\b|divine intervention|gates)re", "utility_teleport" },
-                { R"re(unlock|open lock|knock)re", "utility_unlock" },
+                { R"re(teleport|portal|recall|^(clear )?mark\b|divine intervention|gates)re", "utility_teleport" },
+                { R"re(unlock|open lock|\bknock\b(?! ?(back|down|up|out)))re", "utility_unlock" },
                 { R"re(telekin)re", "utility_telekinesis" },
                 { R"re(become ethereal|ethereal|etherealize)re", "defense_ethereal" },
                 { R"re(slow time|time slows)re", "utility_slow_time" },
                 { R"re(enlarge|shrink|size)re", "utility_size" },
-                { R"re(transmut)re", "utility_transmute" },
+                { R"re(^(master )?transmute( (mineral )?ore)?$)re", "utility_transmute" },
                 { R"re(carry weight|feather\b)re", "utility_carry_weight" },
                 { R"re(conjure|summon|call (dragon|of valor)|bound (sword|bow|dagger|battleaxe|shield)|reanimat|raise (zombie|dead)|dead thrall)re", "summon_creature" },
                 { R"re(ward\b)re", "defense_ward" },
@@ -389,20 +389,21 @@ namespace Huginn::Core::Effect
             static const Table t = Build({
                 { R"re(soul ?trap|fills? (a |the )?soul ?gems?|vulnerable to soul ?gems?|soul ?gems? on death|trap(s|ped)? (its|the|their) soul)re", "soul_trap" },
                 { R"re(teleport|portal|fast travel|transports? (you|the caster)|recall to|swaps? places|shifts? through (the )?shadows)re", "utility_teleport" },
-                { R"re(opening locks|opens? (a |the )?locks?\b|\bunlock)re", "utility_unlock" },
+                { R"re(opening locks|opens? (a |the )?locks?\b|\bunlock\w*\b.{0,30}\b(locks?|doors?|chests?|containers?)\b)re", "utility_unlock" },
                 { R"re(time slows|slows? (down )?time|slow time|world (around you )?(seems to )?slow)re", "utility_slow_time" },
                 { R"re(carry(ing)? (weight|capacity))re", "utility_carry_weight" },
                 { R"re(breathe? underwater|water ?breathing)re", "utility_water_breathing" },
                 { R"re(walk on water|water ?walking)re", "movement_water_walking" },
                 { R"re(excavat\w* ores?|transmut\w* (one|ore|iron|silver|ingredient))re", "utility_transmute" },
                 { R"re((caster.s |your |target.s )size\b|\benlarg|\bshrink)re", "utility_size" },
+                { R"re(recharges? .{0,40}enchant)re", "NONE" },
                 { R"re(cures? (all )?(diseases?|vampirism))re", "cure_disease" },
                 { R"re(cures? (all )?poison)re", "cure_poison" },
-                { R"re(^dispels?\b|removes? (all )?(magic(al)?|spell) effects|dispels? (all )?(cloak|armor|magic))re", "cure_dispel" },
+                { R"re(^dispels?\b|removes? (all )?(magic(al)?|spell) effects|dispels? (all )?(cloak|armor|magic)|effects (are|is) dispelled)re", "cure_dispel" },
                 { R"re((tosses|spawns|throws|drops) (a|an) .{0,40}spider)re", "summon_creature" },
                 { R"re(temporary damage)re", "drain_vital_health" },
                 { R"re(imbues? .{0,30}weapons? with)re", "damage_health" },
-                { R"re(\b(deal|deals|dealing|does|inflicts?|inflicting)\b.{0,40}(?<!more )(?<!less )(?<!extra )(?<!additional )(?<!double )damage(?! taken)|\bdamage to (the target.s )?(health|magicka|stamina))re", "DMG" },
+                { R"re(\b(deal|deals|dealing|does|inflicts?|inflicting)\b.{0,40}(?<!more )(?<!less )(?<!extra )(?<!additional )(?<!double )(?<!more attack )(?<!more physical )(?<!more melee )damage(?! taken)|\bdamage to (the target.s )?(health|magicka|stamina))re", "DMG" },
                 { R"re(paraly|immobili[sz]|in place\b|frozen solid|suspended in|petrif)re", "control_paralysis" },
                 { R"re(disarm)re", "control_disarm" },
                 { R"re(silenc)re", "control_silence" },
@@ -415,6 +416,7 @@ namespace Huginn::Core::Effect
                 { R"re(bends? the will|\bcommand\b|control (an?|the|target)\b|enslave|thrall|\bobey|fight for you)re", "influence_command" },
                 { R"re(courage|\brally)re", "influence_rally" },
                 { R"re(banish)re", "influence_banish" },
+                { R"re(immun\w* to stagger|resist\w* (to )?stagger)re", "defense_resist_stagger" },
                 { R"re(stagger|knock(s|ing|ed)? (them |enemies |targets |all targets )?(down|back)|knockdown|knockback|send(s|ing)? .{0,20}flying|launch(es)? (enemies|targets|them)|push(es|ing)? (away|back)|lose (its|their) balance|flung (away|back))re", "control_stagger" },
                 { R"re(\bslow(s|ed|ing)?\b(?! time)|movement speed (is )?reduc|reduc\w* (its |their |the target.s )?movement speed|hinder)re", "control_slow" },
                 { R"re(invisib|unseen|become(s)? (hidden|unseen)|cannot detect sneaking)re", "stealth_invisibility" },
@@ -426,7 +428,7 @@ namespace Huginn::Core::Effect
                 { R"re(detect (life|dead)|seen through walls|see (through walls|enemies|nearby|living)|\breveal)re", "vision_detect_life" },
                 { R"re(hovering light|create(s)? (a )?(ball of )?light\b|illuminat)re", "vision_light" },
                 { R"re(fall(ing)? damage|damage when falling|when falling|feather ?fall|levitat|\bfloat|thin air|jump(s|ing)? (higher|further))re", "movement_jump_fall" },
-                { R"re((move|moving|run|running|sprint\w*)\b.{0,25}faster|movement speed (is )?increas|increases? movement speed|\bdash\b|haste)re", "movement_speed" },
+                { R"re((move|moving|run|running|swim|swimming|sprint\w*)\b.{0,25}faster|movement speed (is )?increas|increases? movement speed|\bdash\b|haste)re", "movement_speed" },
                 { R"re(telekine)re", "utility_telekinesis" },
                 { R"re(reanimat|raises? (a |the |up to N )?(dead|corpse|zombie)|brings? a dead)re", "summon_reanimate" },
                 { R"re(\binfuse bound|binds? .{0,40}to a summoned)re", "NONE" },
@@ -436,7 +438,7 @@ namespace Huginn::Core::Effect
                 { R"re(reflect)re", "defense_reflect" },
                 { R"re(\bwards?\b)re", "defense_ward" },
                 { R"re((reduc|lower)\w* (its |their |the target.s |enemy |target.s )?armor\b|armor (rating )?(is )?reduced)re", "weakness_armor" },
-                { R"re(^take(s)? (double|twice the|N% more|more) damage)re", "TAKEMORE" },
+                { R"re(^take(s)? (double|twice the|N% more|more) damage|\btaking (double|twice the|N% more|more) (physical )?damage)re", "TAKEMORE" },
                 { R"re((avoid|resist|reduc\w*|ignore\w*) (all )?damage from (ranged|arrows|projectiles)|ranged (attacks?|weapons?) (deal|do) (N% )?less)re", "defense_resist_ranged" },
                 { R"re(armor rating|\bdefense\b|damage reduction|reduc\w* (all |incoming |physical )?damage taken|take(s)? (only )?(N% )?(half|less) (physical )?damage|half damage|invulner|ignores? N% of (all )?(physical )?damage|chance to (take no|avoid) damage)re", "defense_armor" },
                 { R"re(magic resist\w*|resist\w* (to )?magic)re", "MAGRES" },
@@ -457,7 +459,7 @@ namespace Huginn::Core::Effect
                 { R"re(\b(one-handed|two-handed|archery|marksman|block(?:ing)?|smithing|heavy armor|light armor|pickpocket(?:ing)?|lockpick(?:ing)?|alchemy|speech|alteration|conjuration|destruction|illusion|restoration|enchanting) (spells )?(cost|are|is|do|deal))re", "SKILL" },
                 { R"re((damage|drain)\w*\b.{0,40}\bmagicka\b(?!.{0,40}health)|magicka damage)re", "damage_magicka" },
                 { R"re((damage|drain)\w*\b.{0,40}\bstamina\b(?!.{0,40}health)|stamina damage)re", "damage_stamina" },
-                { R"re((more|extra|increased|additional|double) (attack |melee |physical |weapon )?damage|attack damage|damage (done )?(is )?increased|increases? damage)re", "ATKDMG" },
+                { R"re((more|extra|increased|additional|double) (attack |melee |physical |weapon )?damage|attack damage|damage (done )?(is )?increased|increases? damage|(reduc|lower)\w* (its |their |the target.s )?(physical|melee|weapon) damage)re", "ATKDMG" },
                 { R"re(\b(deal|deals|dealing|does|do|inflicts?|causing|cause)\b.{0,40}damage|damage (to|per second|each|equal)|\bN damage\b|\bkills?\b|destroys? (all|living)|burn(s|ing)? (those|the target|enemies)|comets?|slash wave|skewer|bleed)re", "damage_health" },
             });
             return t;
@@ -627,6 +629,35 @@ namespace Huginn::Core::Effect
             return "magic";
         }
 
+        /// The description route's spec for one effect, as ClassifyColumns
+        /// takes it: a detrimental effect turns a beneficial reading round
+        /// (resist -> weakness); "take more damage" is a weakness on a harmful
+        /// effect (detrimental, or hostile: 0.23.30, Nox's Nightmare is
+        /// hostile and not flagged detrimental) and the wearer's drawback, no
+        /// column, on a beneficial one.
+        std::string DescRoute(const MagicEffectRecord& r, bool* none = nullptr)
+        {
+            std::string ds = DescSpec(r.description, none);
+            if (ds.empty()) return ds;
+            if (r.detrimental) {
+                for (const auto& [a, b] : { std::pair<std::string_view, std::string_view>{ "resist_", "weakness_" },
+                                            { "fortify_combat_", "weaken_combat_" },
+                                            { "defense_armor", "weakness_armor" } }) {
+                    if (StartsWith(ds, a)) ds = std::string(b) + ds.substr(a.size());
+                }
+            }
+            if (ds == "TAKEMORE") ds = (r.detrimental || r.hostile) ? "weakness_armor" : "";
+            return ds;
+        }
+
+        bool BlankText(std::string_view s) noexcept
+        {
+            for (const char c : s) {
+                if (c != ' ' && c != '\t' && c != '\r' && c != '\n') return false;
+            }
+            return true;
+        }
+
         // =====================================================================
         // Spec string -> column
         // =====================================================================
@@ -721,12 +752,74 @@ namespace Huginn::Core::Effect
                 if (av == "AlchemySkillAdvance" && Contains(kw, "MagicEnchFortifyAlchemy")) {
                     return { "meta_potion_duration", Route::Keyword, {} };
                 }
+                // 0.23.30: a reanimate spell's corpse helper -- a script effect
+                // on the dead body (GetDead()==1), tagged MagicSummonUndead, no
+                // text (Requiem's ash pile, 000F52AB "Disintegrate"): not a summon.
+                if (a == kArchScript && Contains(kw, "MagicSummon") && BlankText(r.description) &&
+                    TestsSubjectDead(r.conditions)) {
+                    return { {}, Route::Helper, {} };
+                }
+                // 0.23.30: a description that says no column applies (spell
+                // power, "recharge the enchantments of your weapons") overrides
+                // a keyword or name: the Varla Stone carries MagicAlchRestoreMagicka
+                // at 1e9, which read as a full magicka restore.
+                {
+                    bool none = false;
+                    (void)DescSpec(r.description, &none);
+                    if (none) return { {}, Route::Unmapped, {}, true };
+                }
                 for (const auto& rule : KwTable()) {
                     if (!rule.re.Contains(kw)) continue;
                     std::string spec = rule.spec;
                     std::string el;
                     if (StartsWith(spec, "damage")) el = Element(r, kw, true);
                     if (spec == "survival_warmth" && det) spec = "survival_cold_exposure";
+                    // 0.23.30: a family tag yields to the description. Nox's
+                    // Nox_KW_* keywords sort script effects by school family
+                    // (Nox_KW_Illusion_Silence on Dispel Magic,
+                    // Nox_KW_Illusion_ShadowStride on Race Against Time and
+                    // Reveal Secrets, Nox_KW_Restoration_FortifyAttributes on
+                    // "Aura: Might"), and a vanilla family keyword on a script
+                    // effect does the same (MagicRestoreHealth on "Aura:
+                    // Thorns", REQ_SunDamage on Consecrate Dead). When the
+                    // effect's NAME does not say the tag's family, a
+                    // description naming another family decides. A name that
+                    // agrees keeps the tag (Nox's own Pain, Noise, Command,
+                    // Silence, Blind -- whose texts mention a stagger or say
+                    // nothing the table reads -- and Sunlight Targe), and so
+                    // does a description of the same family (King's Heart
+                    // heals, Possession is a frenzy) or one that says nothing
+                    // the table reads (Mind Vision, Thoughtsteal, Gather
+                    // Shadows stay misrouted: the override file's job).
+                    {
+                        bool noxOnly = false;
+                        for (const auto& k : r.keywords) {
+                            if (!rule.re.Contains(k)) continue;
+                            if (!StartsWith(k, "Nox_KW_")) {
+                                noxOnly = false;
+                                break;
+                            }
+                            noxOnly = true;
+                        }
+                        const std::string fam = FamilyOfSpec(spec);
+                        const bool familyTag = noxOnly || fam == "restore" || fam == "damage" || fam == "control" ||
+                                               fam == "influence" || fam == "stealth" || fam == "fortify_vital";
+                        const Col kc = ToColumns(spec, el).col;
+                        const auto nameCol = familyTag ? NameColumn(r.name) : std::nullopt;
+                        const bool nameAgrees = nameCol && kc != Col::_Count && FamilyKey(*nameCol) == FamilyKey(kc);
+                        // A damage keyword keeps its damage unless the text
+                        // never mentions damage (verifier, #205): Cyclonic
+                        // Rift's portal "take <mag> shock damage", Penance
+                        // Aura's "stagger and take ... damage" stay damage;
+                        // Consecrate Dead ("restores ... Magicka") does not.
+                        const bool damageKept = FamilyKey(kc) == Col::damage && Lower(r.description).find("damag") != std::string::npos;
+                        if (familyTag && !nameAgrees && !damageKept && !BlankText(r.description)) {
+                            const std::string ds = DescRoute(r);
+                            const std::string del = StartsWith(ds, "damage") ? DescElementOf(r.description) : std::string{};
+                            const Col dc = ds.empty() ? Col::_Count : ToColumns(ds, del).col;
+                            if (dc != Col::_Count && FamilyKey(dc) != FamilyKey(kc)) return { ds, Route::Description, del };
+                        }
+                    }
                     // No element for a scripted summon: script effects carry
                     // MagicSummon* keywords loosely (an Ice Wraith tagged Shock,
                     // "Modify Conjuration" tagged Fire).
@@ -921,9 +1014,25 @@ namespace Huginn::Core::Effect
         EffectClass ClassifyColumns(const MagicEffectRecord& r, const OverrideTable* overrides);
     }
 
+    bool SubjectIsUser(const MagicEffectRecord& r) noexcept
+    {
+        return r.delivery == kDeliverySelf || r.archetype == kArchSummonCreature || r.archetype == kArchBoundWeapon;
+    }
+
+    bool LandsOnOthers(const MagicEffectRecord& r) noexcept { return r.delivery != kDeliverySelf; }
+
+    bool NamesItsTarget(Col c) noexcept
+    {
+        // influence_command too (verifier, #205): Command Daedra (0006F953) is gated on
+        // daedra and that is what it is, as Banish is.
+        return c == Col::influence_turn_undead || c == Col::influence_banish || c == Col::damage_health_sun ||
+               c == Col::influence_command;
+    }
+
     EffectClass ClassifyEffect(const MagicEffectRecord& r, const OverrideTable* overrides)
     {
         EffectClass out = ClassifyColumns(r, overrides);
+        out.gate = ReadGate(r.conditions, SubjectIsUser(r));
         const std::string ln = Lower(r.name);
         out.hydrated = ln.find("hydrat") != std::string::npos;
         // Only the hidden-row checks read these, and they are the costly part
@@ -957,21 +1066,14 @@ namespace Huginn::Core::Effect
         Raw raw = ClassifyRaw(r, kw);
 
         if (raw.route == Route::Unmapped && !raw.final) {
-            std::string ds = DescSpec(r.description);
+            // "Take double damage": on a harmful effect a weakness applied
+            // (weakness_armor needs detrimental=1, or hostile since 0.23.30);
+            // on a beneficial one the wearer's own drawback (Pain of
+            // Adoration's mask): no column (DescRoute).
+            const std::string ds = DescRoute(r);
             if (!ds.empty()) {
-                if (r.detrimental) {
-                    for (const auto& [a, b] : { std::pair<std::string_view, std::string_view>{ "resist_", "weakness_" },
-                                                { "fortify_combat_", "weaken_combat_" },
-                                                { "defense_armor", "weakness_armor" } }) {
-                        if (StartsWith(ds, a)) ds = std::string(b) + ds.substr(a.size());
-                    }
-                }
-                // "Take double damage": on a detrimental effect a weakness
-                // applied (weakness_armor needs detrimental=1); on a beneficial
-                // one the wearer's own drawback (Pain of Adoration's mask): no column.
-                if (ds == "TAKEMORE") ds = r.detrimental ? "weakness_armor" : "";
                 raw.spec = ds;
-                raw.route = ds.empty() ? Route::Unmapped : Route::Description;
+                raw.route = Route::Description;
                 raw.element = StartsWith(ds, "damage") ? DescElementOf(r.description) : std::string{};
             }
         }
@@ -981,6 +1083,20 @@ namespace Huginn::Core::Effect
                 const std::string ln = Lower(r.name);
                 for (const auto& rule : StrongName()) {
                     if (rule.re.Contains(ln)) {
+                        // 0.23.30: a "Turn Undead" name over a health carrier
+                        // whose text says it deals damage is damage (Requiem's
+                        // 8717D82B on 589 weapons: "deals <mag> magic damage
+                        // to undead"); its undead condition makes it a bane
+                        // row (MapItem), not influence_turn_undead.
+                        if (rule.spec == "influence_turn_undead") {
+                            const std::string ds = DescRoute(r);
+                            if (StartsWith(ds, "damage")) {
+                                raw.spec = ds;
+                                raw.route = Route::Description;
+                                raw.element = DescElementOf(r.description);
+                                break;
+                            }
+                        }
                         raw.spec = rule.spec;
                         raw.route = Route::Name;
                         raw.element.clear();
@@ -988,6 +1104,13 @@ namespace Huginn::Core::Effect
                     }
                 }
             }
+        }
+        // 0.23.30: an engine cure archetype whose text says it dispels is a
+        // dispel (LoreRim's Potion of Dispel, 87AD3A55: CureDisease, "All
+        // temporary effects are dispelled"), not cure_disease.
+        if (raw.route == Route::Data && StartsWith(raw.spec, "cure") && raw.spec != "cure_dispel" &&
+            DescRoute(r) == "cure_dispel") {
+            raw.spec = "cure_dispel";
         }
         if (raw.spec == "summon_creature" && Contains(Lower(r.name), "reanimat")) raw.spec = "summon_reanimate";
 
