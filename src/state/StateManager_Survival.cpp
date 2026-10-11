@@ -91,6 +91,42 @@ namespace Huginn::State
       }
 
       // =========================================================================
+      // R3 thirst: DVSMP Survival Tweaks (DVSsurvivaltweaks.esp, LoreRim)
+      // Its DLL looks the six stage spells up by these FormIDs too
+      // (DVSMP_Survival_Tweaks.md, "Stage spells are still looked up by FormID
+      // (0x80F-0x814)"), and keeps exactly one on the player. The stage is
+      // read from which one is ACTIVE on the player (PollPlayerMagicEffects):
+      // its "Thirst - <stage>" effect is on the Active Effects page, and the
+      // spells' own conditions (not a vampire, not a lich) switch it off when
+      // thirst does not apply.
+      // =========================================================================
+
+      constexpr std::string_view dvsmpPlugin = "DVSsurvivaltweaks.esp";
+      std::size_t thirstSpells = 0;
+      for (std::size_t i = 0; i < m_thirstStageSpells.size(); ++i) {
+      m_thirstStageSpells[i] = dataHandler->LookupForm<RE::SpellItem>(
+          static_cast<RE::FormID>(0x80F + i), dvsmpPlugin);
+      if (m_thirstStageSpells[i]) ++thirstSpells;
+      }
+      m_thirstValue = dataHandler->LookupForm<RE::TESGlobal>(0x800, dvsmpPlugin);
+      m_thirstMaxValue = dataHandler->LookupForm<RE::TESGlobal>(0x802, dvsmpPlugin);
+      m_thirstInstalled = thirstSpells == m_thirstStageSpells.size();
+      if (thirstSpells > 0) {
+      logger::info("[StateManager] Thirst (DVSMP) {}: {}/6 stage spells, value={}, max={}"sv,
+          m_thirstInstalled ? "detected" : "INCOMPLETE, off", thirstSpells,
+          m_thirstValue ? "found" : "null", m_thirstMaxValue ? "found" : "null");
+      } else {
+      logger::info("[StateManager] Thirst: no thirst system found (DVSMP not installed)"sv);
+      }
+
+      // R3 regen_suppressed: where the survival need-stage abilities come from.
+      m_ccSurvivalFile = dataHandler->LookupModByName(survivalPlugin);
+      m_dvsmpFile = dataHandler->LookupModByName(dvsmpPlugin);
+      if (auto* lowerRegen = dataHandler->LookupForm<RE::SpellItem>(0x982, survivalPlugin)) {
+      m_ccLowerRegenSpellID = lowerRegen->GetFormID();
+      }
+
+      // =========================================================================
       // Native warmth function (CC Survival engine function)
       // GetWarmthRating returns the player's current warmth from gear/buffs.
       // More accurate than reading kVariable01 which may not be the warmth AV.

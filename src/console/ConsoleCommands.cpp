@@ -266,6 +266,14 @@ namespace Huginn::Console
          s.light, s.openDaylight ? " (open daylight)" : "");
       Print(extra.c_str());
       logger::info("[Console] {}"sv, extra);
+      // The survival stages behind hunger and thirst, and whether a survival
+      // stage ability is what holds regen_suppressed on (0.23.31).
+      const auto survival = std::format("  survival {} | hunger stage {} | thirst {} | regen suppressed {} (by a survival stage: {})",
+         s.survival ? "on" : "off", s.hungerStage,
+         sensors.thirstDetected ? std::format("stage {} (DVSMP)", s.thirstStage) : std::string("no thirst system"),
+         s.regenSuppressed ? "yes" : "no", sensors.survivalRegenDebuff ? "yes" : "no");
+      Print(survival.c_str());
+      logger::info("[Console] {}"sv, survival);
    }
 
    static void Cmd_Unlock(std::string_view /*arg*/)

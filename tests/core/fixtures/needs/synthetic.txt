@@ -2,7 +2,7 @@
 # (value >= 0.5 in at least one block) and to hit the edges of the r3_input
 # formulas and curves. Expected vectors: synthetic.expected.csv, made by
 #   python -I tools/needs/expected_vectors.py tests/core/fixtures/needs/synthetic.txt -o tests/core/fixtures/needs/synthetic.expected.csv
-# The five deferred needs (healing_blocked, thirst, target_magicka_low,
+# The four deferred needs (healing_blocked, target_magicka_low,
 # target_stamina_low, sneak_detected) always read input 0.
 
 # Every field omitted: the NeedSnapshot.h defaults. closestEnemy -1 reads as
@@ -214,21 +214,39 @@ warmth 0
 end
 
 # Survival on, raw -1 so the stages are read; fatigueStage 7 clamps to 5;
-# warmth 50 -> 0.75 deficit; coldStage 4 -> 0.8 -> 0.64.
+# warmth 50 -> 0.75 deficit; coldStage 4 -> 0.8 -> 0.64; thirstStage 9
+# clamps to 5 (thirst has no raw meter: the stage is all it reads).
 snapshot survival_stage
 survival 1
 hungerStage 5
 coldStage 4
 fatigueStage 7
+thirstStage 9
 warmth 50
 end
 
-# Survival off with every meter maxed: all four survival needs read 0.
+# The derived boundary of hunger and thirst (logistic 0.5 11, 0.23.31): stage
+# 3 is the first with a regeneration penalty (Hungry blocks health regen,
+# Thirsty halves stamina regen) and reads 0.75; stage 2 reads 0.25.
+snapshot survival_penalty_edge
+survival 1
+hungerStage 3
+thirstStage 2
+end
+
+snapshot survival_thirst_first_penalty
+survival 1
+hungerStage 2
+thirstStage 3
+end
+
+# Survival off with every meter maxed: all five survival needs read 0.
 snapshot survival_off_high
 survival 0
 hungerStage 5
 coldStage 5
 fatigueStage 5
+thirstStage 5
 hungerRaw 1000
 coldRaw 1000
 fatigueRaw 1000
@@ -237,10 +255,12 @@ end
 
 # Survival on: fatigueStage negative (rested) clamps to 0; hungerRaw 0 (>= 0,
 # so raw wins over hungerStage 5); coldRaw -1 with coldStage 2 -> 0.4;
-# warmth 300 over the 200 threshold -> deficit clamps to 0; hungerRaw edge.
+# warmth 300 over the 200 threshold -> deficit clamps to 0; hungerRaw edge;
+# thirstStage negative clamps to 0.
 snapshot survival_negative_fatigue
 survival 1
 fatigueStage -2
+thirstStage -1
 hungerRaw 0
 hungerStage 5
 coldStage 2

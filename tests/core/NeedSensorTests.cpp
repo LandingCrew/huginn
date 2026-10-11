@@ -805,3 +805,20 @@ TEST_CASE("probe sequence: the sea cliff of 2026-10-10 reaches the water with th
     CHECK(r.drop == doctest::Approx(3936.0));
     CHECK(r.waterDepth == 0.0f);
 }
+
+TEST_CASE("regen_suppressed: an effect lowers a regeneration rate when detrimental or negative, and non-zero")
+{
+    // LoreRim's Hungry: Health Regen Loss 100 on HealRateMult, a detrimental
+    // ability (the active effect's magnitude may carry either sign).
+    CHECK(LowersRegen(true, 100.0f));
+    CHECK(LowersRegen(true, -100.0f));
+    // A beneficial effect with a negative magnitude still lowers it.
+    CHECK(LowersRegen(false, -25.0f));
+    // Well Rested: Regenerate Stamina 50, beneficial.
+    CHECK_FALSE(LowersRegen(false, 50.0f));
+    // CC Survival's Lower Regeneration Rates reads 0 on LoreRim: a placeholder.
+    CHECK_FALSE(LowersRegen(true, 0.0f));
+    CHECK_FALSE(LowersRegen(true, -0.0f));
+    CHECK_FALSE(LowersRegen(true, std::numeric_limits<float>::quiet_NaN()));
+    CHECK_FALSE(LowersRegen(true, std::numeric_limits<float>::infinity()));
+}

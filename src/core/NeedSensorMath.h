@@ -12,6 +12,8 @@
 //                   bar over the time it has been the only one
 //   SecondsSince    a steady-clock timer read as seconds, NEVER when unset
 //   EncumbranceRatio
+//   LowersRegen     regen_suppressed's test on one active effect on a
+//                   regeneration-rate actor value (0.23.31)
 //
 // Times are seconds on any monotonic clock (the caller passes steady_clock
 // seconds); nothing here reads a clock.
@@ -121,5 +123,17 @@ namespace Huginn::Core::Needs
     {
         if (!(carryWeight > 0.0f) || !(inventoryWeight >= 0.0f)) return 0.0f;
         return inventoryWeight / carryWeight;
+    }
+
+    /// Whether an active effect on a regeneration-rate actor value (HealRate,
+    /// HealRateMult and the magicka and stamina pairs) lowers it, for
+    /// regen_suppressed: detrimental or a negative magnitude, as the old
+    /// regen-debuff test reads it, and by something -- a zero magnitude is a
+    /// placeholder that changes nothing (CC Survival's "Lower Regeneration
+    /// Rates" reads 0 on LoreRim). A non-finite magnitude says nothing.
+    [[nodiscard]] inline bool LowersRegen(bool detrimental, float magnitude) noexcept
+    {
+        if (!std::isfinite(magnitude) || magnitude == 0.0f) return false;
+        return detrimental || magnitude < 0.0f;
     }
 }

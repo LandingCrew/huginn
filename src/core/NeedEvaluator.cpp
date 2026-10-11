@@ -79,7 +79,7 @@ namespace Huginn::Core::Needs
                 case N::vampire_sun_exposure: return B(s.vampireStage >= kSunVulnerableStage && s.openDaylight);
                 // --- Survival
                 case N::hunger: return Survival(s, s.hungerRaw, s.hungerStage);
-                case N::thirst: return 0.0f;  // deferred
+                case N::thirst: return Survival(s, -1.0f, s.thirstStage);  // stage only: no meter is plumbed
                 case N::cold: return Survival(s, s.coldRaw, s.coldStage);
                 case N::fatigue: return Survival(s, s.fatigueRaw, s.fatigueStage);
                 case N::warmth_deficit:
