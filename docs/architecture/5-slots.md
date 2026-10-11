@@ -843,12 +843,16 @@ shows the Wheeler lock-timer prefix without a countdown (`LockTimerLabel`).
 A held key -- combat or normal lock -- keeps its ITEM but takes this run's
 numbers (`Core::PlanHeldRefresh`, same form and stack): from this run's scored
 row (data, utility and score -- no score from a Remembrance-only row or onto a
-pinned key), else from the generator output (data only: the scorer's floors
-drop a healing potion once health is back up, right after the player drank
-one), else for an override key from the override's own candidate. So the stack
+pinned key), else from the item's current data as the generator gathered it
+from the registries this run BEFORE any filter (`CandidateGenerator::
+FindGathered`, through `RunContext::lookupItem`; data only: the potion just
+drunk is on cooldown and, at full health, filtered, and the scorer never sees
+it), else for an override key from the override's own candidate. This holds
+for every kind of held key: a normal lock, the combat freeze, the Sticky
+activation lock. So the stack
 count, staff charge and ammo count on the widget move as the player uses them.
-An item in neither list (an unaffordable spell the freeze holds) keeps its
-stored data. The equipped check
+An item nobody gathered this run (gone -- the Gone path frees the key) keeps
+its stored data. The equipped check
 matches the stack when the key names one (`EquippedInstanceMatches`): the twin
 of an equipped dagger keeps its key. A combat lock forces one pipeline run when
 it turns `fMinLockDurationMs` old, so a non-urgent override waiting on that

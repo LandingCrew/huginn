@@ -36,21 +36,28 @@ namespace Huginn::Slot
         }
 
         // A held key's fresh numbers (core/HeldRefresh.h): the scored row for
-        // the same form and stack (data + utility + score), else the generated
-        // candidate (data only -- the scorer's floors drop a healing potion as
-        // soon as health is back up, which is right after the player drank
-        // one), else -- for an override key -- the override's own candidate.
-        // Keeps the key's type, name and seat.
+        // the same form and stack (data + utility + score), else the item's
+        // current pre-filter data (data only -- the filters and the scorer
+        // drop the potion just drunk: cooldown, full health), else -- for an
+        // override key -- the override's own candidate. Keeps the key's type,
+        // name and seat.
         void RefreshHeld(SlotAssignment& held,
             const std::vector<Core::ItemKey>& scoredKeys, std::span<const Scoring::ScoredCandidate> scored,
-            const std::vector<Core::ItemKey>& generatedKeys, std::span<const Candidate::CandidateVariant> generated,
-            const Override::OverrideCollection& overrides)
+            const SlotLocker::RunContext& run, const Override::OverrideCollection& overrides)
         {
             if (held.IsEmpty() || !held.candidate) {
                 return;
             }
+            std::optional<Candidate::CandidateVariant> current;
+            if (run.lookupItem) {
+                current = run.lookupItem(held.formID, held.uniqueID);
+            }
+            std::optional<Core::ItemKey> currentKey;
+            if (current) {
+                currentKey = Core::ItemKey{ Candidate::GetFormID(*current), Candidate::GetUniqueID(*current), false };
+            }
             const auto plan = Core::PlanHeldRefresh(held.formID, held.uniqueID, held.IsPinned(),
-                scoredKeys, generatedKeys);
+                scoredKeys, currentKey);
             if (plan.scoredIndex && *plan.scoredIndex < scored.size()) {
                 const auto& sc = scored[*plan.scoredIndex];
                 if (plan.refreshUtility) {
@@ -64,8 +71,8 @@ namespace Huginn::Slot
                 }
                 return;
             }
-            if (plan.generatedIndex && *plan.generatedIndex < generated.size()) {
-                held.candidate->candidate = generated[*plan.generatedIndex];
+            if (plan.useCurrent) {
+                held.candidate->candidate = std::move(*current);
                 return;
             }
             if (held.IsOverride()) {
@@ -242,11 +249,7 @@ namespace Huginn::Slot
         for (const auto& sc : scored) {
             scoredKeys.push_back({ sc.GetFormID(), sc.GetUniqueID(), sc.isRememberedOnly });
         }
-        std::vector<Core::ItemKey> generatedKeys;
-        generatedKeys.reserve(run.generated.size());
-        for (const auto& c : run.generated) {
-            generatedKeys.push_back({ Candidate::GetFormID(c), Candidate::GetUniqueID(c), false });
-        }
+
 
         SlotAssignments result;
         std::array<Telemetry::SlotChangeEvent, MAX_SLOTS> changes{};
@@ -424,7 +427,7 @@ namespace Huginn::Slot
                     // candidate carries the stack count, charge and ammo count
                     // the widget shows, frozen at lock time (core/HeldRefresh.h).
                     SlotAssignment held = lockedSlot.assignment;
-                    RefreshHeld(held, scoredKeys, scored, generatedKeys, run.generated, overrides);
+                    RefreshHeld(held, scoredKeys, scored, run, overrides);
                     lockedSlot.assignment = held;
                     TruncateCandidateViews(lockedSlot.assignment);
                     // Update FormID history for confirmed detection (locked path)

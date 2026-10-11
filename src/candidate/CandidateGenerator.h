@@ -134,6 +134,16 @@ namespace Huginn::Candidate
          */
         void StartCooldown(RE::FormID formID, SourceType type);
 
+        /// This item as the last GenerateCandidates gathered it from the
+        /// registries, BEFORE any filter (cooldown, full vitals, active buff,
+        /// affordability): its current count, charge and stack. nullopt if it
+        /// was not gathered (gone, or not a candidate type). Same form and
+        /// stack. For SlotLocker's held-key refresh; update thread only.
+        [[nodiscard]] std::optional<CandidateVariant> FindGathered(RE::FormID formID, uint16_t uniqueID) const;
+
+        /// The whole pre-filter gather of the last run (tests).
+        [[nodiscard]] const std::vector<CandidateVariant>& LastGathered() const noexcept { return m_lastGathered; }
+
         /**
          * @brief Get the last generation statistics.
          */
@@ -209,6 +219,10 @@ namespace Huginn::Candidate
         // local output vector by ApplyAllFilters.  Never moved-from, so
         // the allocation persists for the lifetime of the singleton.
         std::vector<CandidateVariant> m_gatherBuffer;
+
+        // The gather of the last run, copied BEFORE the filters move the
+        // survivors out of m_gatherBuffer (FindGathered).
+        std::vector<CandidateVariant> m_lastGathered;
 
         // Each known spell's magicka cost, perk- and Fortify-adjusted. Looking
         // the form up and running CalculateMagickaCost (perk entry points

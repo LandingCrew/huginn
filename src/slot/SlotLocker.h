@@ -168,11 +168,13 @@ namespace Huginn::Slot
             };
             std::function<ItemState(RE::FormID formID, uint16_t uniqueID)> probeItem;
 
-            /// This run's generator output -- every candidate, before the
-            /// scorer's floors. A held key refreshes its item data (count,
-            /// charge) from here when its item is not in the scored list
-            /// (core/HeldRefresh.h). Must outlive the ApplyLocks call.
-            std::span<const Candidate::CandidateVariant> generated;
+            /// The held item's CURRENT data, read from what the generator
+            /// gathered from the registries this run before any filter
+            /// (CandidateGenerator::FindGathered), by form and stack. A held key
+            /// takes its count/charge from here when the item is not in the
+            /// scored list (core/HeldRefresh.h). A function so the in-game
+            /// test can substitute it.
+            std::function<std::optional<Candidate::CandidateVariant>(RE::FormID formID, uint16_t uniqueID)> lookupItem;
         };
 
         // =========================================================================

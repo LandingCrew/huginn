@@ -9,19 +9,21 @@
 // one of five healing potions and the key showed [5] until combat ended
 // (verifier, PR #207).
 //
-// Two lists to look in, because the scored list is not every item: the scorer
-// drops anything under fMinimumContextWeight / fMinimumUtility, and a healing
-// potion's weight falls to its floor the moment health is back up -- exactly
-// after the player drank one. So:
+// Two sources, because the scored list is not every item: the scorer drops
+// anything under fMinimumContextWeight / fMinimumUtility, and the candidate
+// filters drop the very item just used -- a potion on cooldown (3 s), a health
+// potion at full health, a resist potion while its resist is up. All of them
+// are exactly the moment the count changed. So:
 //   - in this run's SCORED list (same form and stack): take its item data and
 //     its utility; its score too, unless the row was added for a Remembrance
 //     hold only (an unranked -inf score must not land on an ordinary key) or
 //     the held key is pinned (an override's score is the pinned +inf);
-//   - else in this run's GENERATED list (every candidate the generator made,
-//     before the scorer's floors): take its item data only, keep the utility
-//     and score the key had;
-//   - else keep everything: nothing fresher exists (a spell the affordability
-//     filter dropped while the freeze holds it on its key, for one).
+//   - else the item's CURRENT data, read from what the generator gathered from
+//     the registries this run BEFORE any filter (the caller's lookup,
+//     SlotLocker::RunContext::lookupItem): item data only, keep the utility and
+//     score the key had;
+//   - else keep everything: nothing fresher exists (the item is gone -- the
+//     Gone path frees the key -- or not gathered at all).
 //
 // Pure: standard library only, host-tested in tests/core/HeldRefreshTests.cpp.
 
@@ -61,16 +63,19 @@ namespace Huginn::Core
         /// Take the item data (and, per the flags, utility/score) from this
         /// scored row.
         std::optional<std::size_t> scoredIndex;
-        /// Not scored: take the item data only from this generated row.
-        std::optional<std::size_t> generatedIndex;
+        /// Not scored: take the item data only from the current (pre-filter)
+        /// lookup.
+        bool useCurrent = false;
         bool refreshUtility = false;
         bool refreshScore = false;
 
-        [[nodiscard]] bool Any() const noexcept { return scoredIndex || generatedIndex; }
+        [[nodiscard]] bool Any() const noexcept { return scoredIndex.has_value() || useCurrent; }
     };
 
+    /// `current`: the key of what the pre-filter lookup returned for this item,
+    /// if anything. Used only when it is exactly this item (form and stack).
     [[nodiscard]] inline HeldRefreshPlan PlanHeldRefresh(uint32_t formID, uint16_t uniqueID, bool heldPinned,
-        const std::vector<ItemKey>& scored, const std::vector<ItemKey>& generated)
+        const std::vector<ItemKey>& scored, std::optional<ItemKey> current)
     {
         HeldRefreshPlan plan;
         if (const auto s = FindHeldRefresh(formID, uniqueID, scored)) {
@@ -80,7 +85,7 @@ namespace Huginn::Core
             plan.refreshScore = ranked && !heldPinned;
             return plan;
         }
-        plan.generatedIndex = FindHeldRefresh(formID, uniqueID, generated);
+        plan.useCurrent = formID != 0 && current && current->formID == formID && current->uniqueID == uniqueID;
         return plan;
     }
 }

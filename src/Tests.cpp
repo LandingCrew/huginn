@@ -6391,39 +6391,119 @@ void RunSlotLockerOverrideScopeTest()
         }
     }
 
-    // --- 3. a held key's count follows the item, even off the scored list ---
-    // The healing-potion case: one drunk, health back up, the scorer drops the
-    // potion -- the frozen key must show the generator's new count, not [5].
+    // --- 3. a held key's count follows the item, even when filtered out ----
+    // The healing-potion case: one drunk -> the potion is on cooldown (3 s)
+    // and, at full health, dropped by the full-vitals filter; the scorer never
+    // sees it. The key must show the new count, not the old one, under the
+    // combat freeze and under a Sticky activation lock alike.
+    auto potion = [](RE::FormID id, int32_t count) {
+        Candidate::ItemCandidate item;
+        item.formID = id;
+        item.count = count;
+        return Candidate::CandidateVariant{ item };
+    };
+    auto countOn = [&](const SlotAssignments& r, size_t i) -> int32_t {
+        if (i >= r.size() || r[i].IsEmpty() || !r[i].candidate) return -1;
+        const auto* item = Candidate::TryGetAs<Candidate::ItemCandidate>(r[i].candidate->candidate);
+        return item ? item->count : -1;
+    };
+    auto heldOn = [&](RE::FormID id, int32_t count) {
+        SlotAssignments first = page({ id });
+        Scoring::ScoredCandidate sc;
+        sc.candidate = potion(id, count);
+        first[0].candidate = sc;
+        (void)locker.ApplyLocks(first, Override::OverrideCollection{});
+    };
+
+    // 3a. The REAL lookup survives the filters. Run the real generator twice
+    //     on this save: once as it is, once with health at 100% and the first
+    //     gathered health potion on cooldown. The filtered output must lose
+    //     that potion; FindGathered (what the locker reads) must still have it.
+    auto& gen = Candidate::CandidateGenerator::GetSingleton();
+    RE::FormID realPotion = 0;
+    int32_t realCount = 0;
+    if (gen.IsInitialized()) {
+        auto player = State::StateManager::GetSingleton().GetPlayerState();
+        (void)gen.GenerateCandidates(player, 1000.0f, {}, nullptr);
+        for (const auto& c : gen.LastGathered()) {
+            const auto* item = Candidate::TryGetAs<Candidate::ItemCandidate>(c);
+            if (item && item->count > 1 && item->type == Item::ItemType::HealthPotion) {
+                realPotion = item->formID;
+                realCount = item->count;
+                break;
+            }
+        }
+        if (realPotion != 0) {
+            gen.StartCooldown(realPotion, Candidate::SourceType::Potion);
+            player.vitals.health = 1.0f;
+            const auto filtered = gen.GenerateCandidates(player, 1000.0f, {}, nullptr);
+            const bool stillOffered = std::ranges::any_of(filtered,
+                [&](const Candidate::CandidateVariant& c) { return Candidate::GetFormID(c) == realPotion; });
+            const auto found = gen.FindGathered(realPotion, 0);
+            if (stillOffered) {
+                logger::warn("  (3a: potion {:08X} was not filtered by cooldown + full health -- filter path not exercised)"sv, realPotion);
+            }
+            if (!found) {
+                logger::error("TEST FAIL: FindGathered lost potion {:08X} to the cooldown / full-health filters"sv, realPotion);
+                passed = false;
+            } else {
+                // A frozen key showing it one higher takes the real lookup's count.
+                locker.Reset();
+                (void)locker.SetInCombat(true);
+                heldOn(realPotion, realCount + 1);
+                SlotLocker::RunContext run;
+                run.lookupItem = [&gen](RE::FormID id, uint16_t uid) { return gen.FindGathered(id, uid); };
+                const auto shown = locker.ApplyLocks(page({ D }), Override::OverrideCollection{}, {}, run);
+                if (countOn(shown, 0) != realCount) {
+                    logger::error("TEST FAIL: frozen key on {:08X} shows {} (real registry count {})"sv,
+                        realPotion, countOn(shown, 0), realCount);
+                    passed = false;
+                }
+                (void)locker.SetInCombat(false);
+            }
+        } else {
+            logger::info("  (3a skipped: no stack of 2+ health potions in this save)"sv);
+        }
+        gen.Reset();   // drop the test's cooldown; the load path resets it anyway
+    }
+
+    // 3b. Frozen key, count 5 -> 4 with the potion in no scored list (the
+    //     filters' result), lookup substituted by what the registry gathers.
     locker.Reset();
     (void)locker.SetInCombat(true);
     {
-        auto potion = [](int32_t count) {
-            Candidate::ItemCandidate item;
-            item.formID = P;
-            item.count = count;
-            return Candidate::CandidateVariant{ item };
-        };
-        SlotAssignments first = page({ P });
-        Scoring::ScoredCandidate sc;
-        sc.candidate = potion(5);
-        first[0].candidate = sc;
-        (void)locker.ApplyLocks(first, Override::OverrideCollection{});
-
-        const std::vector<Candidate::CandidateVariant> generated{ potion(4) };
+        heldOn(P, 5);
         SlotLocker::RunContext run;
-        run.generated = generated;
-        // The allocator has moved on (D on key 0); P is in no scored list.
+        run.lookupItem = [&](RE::FormID id, uint16_t) -> std::optional<Candidate::CandidateVariant> {
+            if (id == P) return potion(P, 4);
+            return std::nullopt;
+        };
         const auto shown = locker.ApplyLocks(page({ D }), Override::OverrideCollection{}, {}, run);
-        const bool held = shows(shown, 0, P);
-        const auto* item = held && shown[0].candidate
-            ? Candidate::TryGetAs<Candidate::ItemCandidate>(shown[0].candidate->candidate) : nullptr;
-        if (!held || !item || item->count != 4) {
+        if (!shows(shown, 0, P) || countOn(shown, 0) != 4) {
             logger::error("TEST FAIL: the frozen potion key did not take the new count (held={}, count={})"sv,
-                held, item ? item->count : -1);
+                shows(shown, 0, P), countOn(shown, 0));
             passed = false;
         }
     }
     (void)locker.SetInCombat(false);
+
+    // 3c. The Sticky activation lock (10 s, Wheeler) holds the same way.
+    locker.Reset();
+    {
+        heldOn(P, 5);
+        locker.LockSlotForActivation(0);
+        SlotLocker::RunContext run;
+        run.lookupItem = [&](RE::FormID id, uint16_t) -> std::optional<Candidate::CandidateVariant> {
+            if (id == P) return potion(P, 3);
+            return std::nullopt;
+        };
+        const auto shown = locker.ApplyLocks(page({ D }), Override::OverrideCollection{}, {}, run);
+        if (!shows(shown, 0, P) || countOn(shown, 0) != 3) {
+            logger::error("TEST FAIL: the activation-locked potion key did not take the new count (held={}, count={})"sv,
+                shows(shown, 0, P), countOn(shown, 0));
+            passed = false;
+        }
+    }
 
     locker.SetConfig(savedConfig);
     locker.Reset();

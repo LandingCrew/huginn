@@ -407,9 +407,6 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
     }
 
     CaptureEligible(ctx, candidates);
-    // Kept for the locker's held-key refresh (AllocateAndLock). Nothing below
-    // reads `candidates` again.
-    ctx.generated = std::move(candidates);
 
     // Name the dominant reason once per tick, off the weights the ranking just
     // used — the display explanation can't disagree with the scoring (#10).
@@ -674,7 +671,12 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
         }
         return st;
     };
-    lockRun.generated = ctx.generated;
+    // A held key's current count/charge, from the generator's pre-filter
+    // gather of this run (the potion just drunk is on cooldown and, at full
+    // health, filtered -- it is still gathered).
+    lockRun.lookupItem = [](RE::FormID formID, uint16_t uniqueID) {
+        return Candidate::CandidateGenerator::GetSingleton().FindGathered(formID, uniqueID);
+    };
     ctx.assignments = slotLocker.ApplyLocks(ctx.rawAssignments, ctx.overrides, ctx.scoredCandidates, lockRun);
 
     // Compute visual state for each slot
