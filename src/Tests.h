@@ -20,6 +20,7 @@ void RunOverrideNamespaceTests();      // Huginn_Overrides.ini section namespaci
 // field. Delete with its Tests.cpp body and Main.cpp call site.
 void RunSlotLockerResetTest();
 void RunSlotLockerInstanceLockTest();
+void RunSlotLockerOverrideScopeTest();
 void RunSlotSeatingTest();
 void RunFillJobKeysTest();
 void RunSlotClassCapTest();        // Regular-key slot class cap (SlotClassCap.h)

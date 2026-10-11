@@ -1,27 +1,43 @@
 #include "StateEvaluator.h"
+#include "StateConstants.h"
 #include "core/ActorTypeClassifier.h"
+#include "core/BucketHysteresis.h"
 #include "util/ScopedTimer.h"
 
 #include <algorithm>
+#include <array>
 
 namespace
 {
-   // Vital percentage bucketing - all three enums have identical ordinal layout
-   template<typename BucketEnum>
-   [[nodiscard]] constexpr BucketEnum ClassifyVitalPercentage(float percentage) noexcept
-   {
-      const float percent = percentage * 100.0f;
+   using Huginn::Core::BucketEdge;
 
-      // 6 buckets: Exponential distribution for better low-vital granularity
-      // Critical(0-10), VeryLow(11-25), Low(26-40), Medium(41-60), High(61-80), VeryHigh(81-100)
-      if (percent <= 10.0f)       return static_cast<BucketEnum>(0);  // Critical
-      else if (percent <= 25.0f)  return static_cast<BucketEnum>(1);  // VeryLow
-      else if (percent <= 40.0f)  return static_cast<BucketEnum>(2);  // Low
-      else if (percent <= 60.0f)  return static_cast<BucketEnum>(3);  // Medium
-      else if (percent <= 80.0f)  return static_cast<BucketEnum>(4);  // High
-      else                        return static_cast<BucketEnum>(5);  // VeryHigh
+   // The six vital buckets, in percent: Critical(<=10), VeryLow(<=25),
+   // Low(<=40), Medium(<=60), High(<=80), VeryHigh -- all three enums share
+   // the ordinal layout. Exponential spacing for low-vital granularity.
+   //
+   // The band applies to a RISING vital only (RisingBandEdge): a falling one
+   // changes bucket at the boundary, exactly where it did before hysteresis.
+   // The bucket feeds the hash that wakes the pipeline, and the override check
+   // (critical health and the rest, OverrideManager, on raw values) runs only
+   // when the pipeline does -- so a band on the falling side could hold back an
+   // urgent item. On the way up nothing is urgent, and that side is where a
+   // regenerating pool flaps.
+   [[nodiscard]] std::array<BucketEdge, 5> VitalEdges(float band) noexcept
+   {
+      const double points = static_cast<double>(band) * 100.0;
+      return { Huginn::Core::RisingBandEdge(10.0, points), Huginn::Core::RisingBandEdge(25.0, points),
+               Huginn::Core::RisingBandEdge(40.0, points), Huginn::Core::RisingBandEdge(60.0, points),
+               Huginn::Core::RisingBandEdge(80.0, points) };
    }
 
+   // One vital: the percent is formed in float exactly as the old classifier
+   // did (fraction * 100.0f, compared against 10/25/40/60/80, all exact in
+   // either width), so at band 0 the bucket is bit-for-bit the old one.
+   [[nodiscard]] int VitalBucket(float fraction, int previous, const std::array<BucketEdge, 5>& edges) noexcept
+   {
+      const float percent = fraction * 100.0f;
+      return Huginn::Core::HystereticBucket(static_cast<double>(percent), previous, edges);
+   }
 }
 
 namespace Huginn::State
@@ -32,11 +48,75 @@ namespace Huginn::State
    {
       SCOPED_TIMER("EvaluateCurrentState");
 
+      BucketMemory memory;
+      {
+         std::lock_guard lock(m_memoryMutex);
+         memory = m_memory;
+      }
+      BucketMemory unused;
+      return Evaluate(player, targets, memory, unused);
+   }
+
+   GameState StateEvaluator::EvaluateAndCommit(
+      const PlayerActorState& player,
+      const TargetCollection& targets,
+      BucketBands bands)
+   {
+      SCOPED_TIMER("EvaluateCurrentState");
+
+      std::lock_guard lock(m_memoryMutex);
+      BucketMemory memory = m_memory;
+      memory.bands = bands;
+      BucketMemory next;
+      const GameState state = Evaluate(player, targets, memory, next);
+      m_memory = next;
+      return state;
+   }
+
+   void StateEvaluator::ResetBucketMemory()
+   {
+      std::lock_guard lock(m_memoryMutex);
+      const BucketBands bands = m_memory.bands;
+      m_memory = BucketMemory{};
+      m_memory.bands = bands;
+   }
+
+   GameState StateEvaluator::Evaluate(
+      const PlayerActorState& player,
+      const TargetCollection& targets,
+      const BucketMemory& memory,
+      BucketMemory& next) const
+   {
+      next = BucketMemory{};
+      next.bands = memory.bands;
+
+      const auto vitalEdges = VitalEdges(memory.bands.vitalBand);
+      next.health = VitalBucket(player.vitals.health, memory.health, vitalEdges);
+      next.magicka = VitalBucket(player.vitals.magicka, memory.magicka, vitalEdges);
+      next.stamina = VitalBucket(player.vitals.stamina, memory.stamina, vitalEdges);
+
+      // Closest living hostile, not the crosshair primary -- see GameState::distance.
+      // No hostile is Ranged and clears the memory, so the next enemy to
+      // appear is bucketed where it actually stands. The target digest
+      // (StateManager::TargetDigest) still uses the raw band: it only opens
+      // the outer skip gate, and waking for a raw crossing the hash then
+      // ignores costs a skip check, not a re-score.
+      DistanceBucket distance = DistanceBucket::Ranged;
+      if (const auto enemy = targets.GetClosestEnemy(); enemy.has_value()) {
+         const double f = static_cast<double>(memory.bands.distanceFraction);
+         const std::array<BucketEdge, 2> edges{
+            Core::SquaredDistanceEdge(DistanceThresholds::EVAL_MELEE_MAX, f),
+            Core::SquaredDistanceEdge(DistanceThresholds::EVAL_MID_MAX, f) };
+         next.distance = Core::HystereticBucket(
+            static_cast<double>(enemy->distanceToPlayerSq), memory.distance, edges);
+         distance = static_cast<DistanceBucket>(next.distance);
+      }
+
       return GameState{
-      .health = EvaluateHealth(player),
-      .magicka = EvaluateMagicka(player),
-      .stamina = EvaluateStamina(player),
-      .distance = EvaluateDistance(targets),
+      .health = static_cast<HealthBucket>(next.health),
+      .magicka = static_cast<MagickaBucket>(next.magicka),
+      .stamina = static_cast<StaminaBucket>(next.stamina),
+      .distance = distance,
       .targetType = EvaluateTargetType(targets),
       .enemyCount = EvaluateEnemyCount(targets),
       .allyStatus = EvaluateAllyStatus(targets),
@@ -44,27 +124,6 @@ namespace Huginn::State
       .inCombat = player.isInCombat ? CombatStatus::InCombat : CombatStatus::NotInCombat,
       .isSneaking = player.isSneaking ? SneakStatus::Sneaking : SneakStatus::NotSneaking
       };
-   }
-
-   HealthBucket StateEvaluator::EvaluateHealth(const PlayerActorState& player) const
-   {
-      return ClassifyVitalPercentage<HealthBucket>(player.vitals.health);
-   }
-
-   MagickaBucket StateEvaluator::EvaluateMagicka(const PlayerActorState& player) const
-   {
-      return ClassifyVitalPercentage<MagickaBucket>(player.vitals.magicka);
-   }
-
-   StaminaBucket StateEvaluator::EvaluateStamina(const PlayerActorState& player) const
-   {
-      return ClassifyVitalPercentage<StaminaBucket>(player.vitals.stamina);
-   }
-
-   DistanceBucket StateEvaluator::EvaluateDistance(const TargetCollection& targets) const
-   {
-      // Closest living hostile, not the crosshair primary -- see GameState::distance.
-      return targets.ClosestEnemyDistanceBucket();
    }
 
    TargetType StateEvaluator::EvaluateTargetType(const TargetCollection& targets) const

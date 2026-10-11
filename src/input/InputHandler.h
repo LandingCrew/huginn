@@ -13,8 +13,13 @@ namespace Huginn::Input
     * @brief Callback when a slot key is pressed
     * @param slotIndex 0-based slot index (0, 1, 2 for slots 1, 2, 3)
     * @param hand Which hand to equip to
+    * @param pressedAt When the gesture's first key-down happened. A tap fires
+    *        only after the double-tap window, so the action lands 300 ms or
+    *        more after the player chose; the press grace (EquipManager) judges
+    *        the press against what the key showed at this moment instead.
     */
-   using SlotCallback = std::function<void(size_t slotIndex, EquipHand hand)>;
+   using SlotCallback = std::function<void(size_t slotIndex, EquipHand hand,
+      std::chrono::steady_clock::time_point pressedAt)>;
 
    /**
     * @brief Callback when a cycle key is pressed
@@ -191,6 +196,10 @@ namespace Huginn::Input
       {
       std::chrono::steady_clock::time_point pressTime;
       std::chrono::steady_clock::time_point lastTapTime;
+      // First key-down of the current gesture: the press itself for a tap or a
+      // hold, the FIRST tap's down for a double tap. Passed to the slot
+      // callback as the moment the player chose.
+      std::chrono::steady_clock::time_point gestureStart;
       bool isPressed = false;
       bool holdTriggered = false;
       bool pendingTapAction = false;  // Deferred tap waiting to fire

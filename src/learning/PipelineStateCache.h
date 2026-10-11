@@ -276,6 +276,23 @@ namespace Huginn::Learning
             return page;
         }
 
+        /// Was this item among the last run's eligible candidates -- generated
+        /// and past CandidateFilters (owned or known, affordable under the
+        /// uncastable-spell policy, not equipped, off cooldown)? The press
+        /// grace asks before acting on an item the key showed a moment ago.
+        /// uniqueID 0 matches any stack of the form, as SlotContent uses it.
+        [[nodiscard]] bool IsEligible(RE::FormID formID, uint16_t uniqueID) const
+        {
+            if (formID == 0) return false;
+            std::shared_lock lock(m_mutex);
+            for (const auto& row : m_eligible) {
+                if (row.formID == formID && (uniqueID == 0 || row.uniqueID == uniqueID)) {
+                    return true;
+                }
+            }
+            return false;
+        }
+
         [[nodiscard]] size_t GetCandidateCount() const
         {
             std::shared_lock lock(m_mutex);

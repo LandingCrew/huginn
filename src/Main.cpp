@@ -469,6 +469,7 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
         HUGINN_RUN_SUITE(RunOverrideNamespaceTests);      // Huginn_Overrides.ini section namespacing
         HUGINN_RUN_SUITE(RunSlotLockerResetTest);         // THROWAWAY (0.19.21): Reset() field completeness
         HUGINN_RUN_SUITE(RunSlotLockerInstanceLockTest);  // THROWAWAY (0.20.28): per-stack lock breaking
+        HUGINN_RUN_SUITE(RunSlotLockerOverrideScopeTest); // 0.23.37: override scope, combat lock
         HUGINN_RUN_SUITE(RunSlotSeatingTest);             // THROWAWAY (0.20.30): anti-juggling seating
         HUGINN_RUN_SUITE(RunFillJobKeysTest);             // bFillJobKeysFromRegular
         HUGINN_RUN_SUITE(RunSlotClassCapTest);            // [SlotLocker] class cap
@@ -586,7 +587,10 @@ static void OnDataLoaded()
             Slot::SlotLocker::GetSingleton().LockSlotForActivation(slotIndex);
         },
         .onItemUsed = [](RE::FormID formID) {
-            Slot::SlotLocker::GetSingleton().OnItemUsed(formID);
+            // An activation, not a departure: the item may well still be
+            // carried. The inventory scan reports it Gone if it is not.
+            Slot::SlotLocker::GetSingleton().OnItemUsed(formID, /*respectActivationLock=*/false,
+                Slot::SlotLocker::UseKind::Used);
         },
         .markHuginnEquip = [](RE::FormID formID) {
             Learning::EquipSourceTracker::GetSingleton().MarkHuginnEquip(formID);
@@ -646,6 +650,12 @@ static void OnDataLoaded()
             Slot::SlotAllocator::GetSingleton().SetCurrentPage(pageIndex);
         },
         .markPageDirty = [] {
+            // Only the wheel close calls this. The widget was hidden while the
+            // wheel was open, so the player first sees every key now: restart
+            // the locks so none of them can change under three seconds after
+            // that (2026-10-11: 9 of 55 "fast" changes were keys that had
+            // changed unseen while the wheel was open).
+            Slot::SlotLocker::GetSingleton().RestartLocks();
             Slot::SlotAllocator::GetSingleton().MarkPageDirty();
         },
         .noteSlotActivated = [](size_t pageIndex, size_t slotIndex, RE::FormID formID) {
@@ -736,8 +746,9 @@ static void OnDataLoaded()
         // SettingsReloader pushes it again on every reload.
 
         // Slot key callback: equip spell/item from slot
-        inputHandler.SetSlotCallback([&equipManager](size_t slotIndex, Input::EquipHand hand) {
-            equipManager.EquipSlot(slotIndex, hand);
+        inputHandler.SetSlotCallback([&equipManager](size_t slotIndex, Input::EquipHand hand,
+                                         std::chrono::steady_clock::time_point pressedAt) {
+            equipManager.EquipSlot(slotIndex, hand, pressedAt);
         });
 
         // Cycle key callback: cycle pages (v0.12.0 multi-page support)

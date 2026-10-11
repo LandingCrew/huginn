@@ -6277,6 +6277,130 @@ void RunSlotLockerInstanceLockTest()
 }
 
 // =============================================================================
+// SlotLocker: an override breaks only its own key; the combat lock (0.23.37)
+// =============================================================================
+// What it pins:
+//  1. An active override placed on key 1 breaks key 1's lock and no other:
+//     keys 0 and 2, whose allocator picks changed in the same run, keep their
+//     locked items. (2026-10-11 08:57:37.747 looked like an override breaking
+//     key 3 too; key 3 was a Remembrance hold, logged as "override".)
+//  2. Under a frozen combat lock an ordinary challenger never takes a key, an
+//     item used with more left (UseKind::Used) does not free it, a departure
+//     (UseKind::Gone) does, and leaving combat turns the freeze into a normal
+//     lock timed from then.
+// Same limitation as the tests above: it drives the LIVE singleton at
+// kPostLoadGame with the loading menu up.
+void RunSlotLockerOverrideScopeTest()
+{
+#ifndef NDEBUG
+    using namespace Huginn::Slot;
+
+    logger::info("Running SlotLocker override-scope / combat-lock test..."sv);
+
+    auto& locker = SlotLocker::GetSingleton();
+    const auto savedConfig = locker.GetConfig();
+
+    SlotLockConfig testConfig{};
+    testConfig.lockDurationMs = 3000.0f;
+    testConfig.minLockDurationMs = 500.0f;
+    testConfig.lockOnFill = true;
+    testConfig.overridesBreakLock = true;
+    testConfig.immediateBreakPriority = 50;
+    testConfig.combatLockDurationMs = -1.0f;
+    locker.SetConfig(testConfig);
+    locker.Reset();
+    (void)locker.SetInCombat(false);
+
+    auto page = [](std::initializer_list<RE::FormID> ids) {
+        SlotAssignments out;
+        size_t i = 0;
+        for (const RE::FormID id : ids) {
+            SlotAssignment a = SlotAssignment::Empty(i, SlotClassification::Regular);
+            if (id != 0) {
+                a.type = AssignmentType::Normal;
+                a.formID = id;
+                a.name = std::format("probe {:08X}", id);
+            }
+            out.push_back(std::move(a));
+            ++i;
+        }
+        return out;
+    };
+    auto shows = [](const SlotAssignments& r, size_t i, RE::FormID id) {
+        return i < r.size() && !r[i].IsEmpty() && r[i].formID == id;
+    };
+
+    bool passed = true;
+    constexpr RE::FormID A = 0x0BAD0A01, B = 0x0BAD0A02, C = 0x0BAD0A03;
+    constexpr RE::FormID D = 0x0BAD0A04, E = 0x0BAD0A05, F = 0x0BAD0A06, P = 0x0BAD0A07;
+
+    // --- 1. override scope --------------------------------------------------
+    (void)locker.ApplyLocks(page({ A, B, C }), Override::OverrideCollection{});
+    {
+        auto next = page({ D, P, E });
+        next[1].type = AssignmentType::Override;
+        Override::OverrideCollection ovr;
+        Override::OverrideResult r;
+        r.priority = 70;
+        r.reason = "probe override";
+        Candidate::ItemCandidate item;
+        item.formID = P;
+        r.candidate = Candidate::CandidateVariant{ item };
+        ovr.activeOverrides.push_back(std::move(r));
+        const auto shown = locker.ApplyLocks(next, ovr);
+        if (!shows(shown, 1, P)) {
+            logger::error("TEST FAIL: the override did not take its own key"sv);
+            passed = false;
+        }
+        if (!shows(shown, 0, A) || !shows(shown, 2, C)) {
+            logger::error("TEST FAIL: an override on key 1 broke another key's lock (key0={:08X}, key2={:08X})"sv,
+                shown.size() > 0 ? shown[0].formID : 0, shown.size() > 2 ? shown[2].formID : 0);
+            passed = false;
+        }
+    }
+
+    // --- 2. combat freeze ---------------------------------------------------
+    locker.Reset();
+    (void)locker.SetInCombat(true);
+    (void)locker.ApplyLocks(page({ A, B, C }), Override::OverrideCollection{});
+    (void)locker.Update(120000.0f);   // two minutes: a freeze has no timer
+    {
+        const auto shown = locker.ApplyLocks(page({ D, E, F }), Override::OverrideCollection{});
+        if (!shows(shown, 0, A) || !shows(shown, 1, B) || !shows(shown, 2, C)) {
+            logger::error("TEST FAIL: a frozen combat lock gave way to an ordinary challenger"sv);
+            passed = false;
+        }
+    }
+    locker.OnItemUsed(B, /*respectActivationLock=*/false, SlotLocker::UseKind::Used);
+    if (!locker.GetLockSnapshot()[1].isLocked) {
+        logger::error("TEST FAIL: one of B used (more left) freed its combat-locked key"sv);
+        passed = false;
+    }
+    locker.OnItemUsed(B, /*respectActivationLock=*/false, SlotLocker::UseKind::Gone);
+    if (locker.GetLockSnapshot()[1].isLocked) {
+        logger::error("TEST FAIL: B gone but its key is still combat-locked"sv);
+        passed = false;
+    }
+    (void)locker.SetInCombat(false);
+    {
+        const auto snap = locker.GetLockSnapshot();
+        if (!snap[0].isLocked || snap[0].remainingMs > testConfig.lockDurationMs + 1.0f) {
+            logger::error("TEST FAIL: leaving combat did not turn the freeze into a {:.0f}ms lock (locked={}, left={:.0f})"sv,
+                testConfig.lockDurationMs, snap[0].isLocked, snap[0].remainingMs);
+            passed = false;
+        }
+    }
+
+    locker.SetConfig(savedConfig);
+    locker.Reset();
+
+    if (passed) {
+        logger::info("  SlotLocker override-scope / combat-lock test PASSED"sv);
+    }
+#endif
+}
+
+// =============================================================================
 // THROWAWAY: slot seating keeps an item in its slot (0.20.30)
 // =============================================================================
 // Delete this block, its Tests.h declaration and its Main.cpp call site

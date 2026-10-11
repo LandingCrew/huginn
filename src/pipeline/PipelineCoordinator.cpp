@@ -10,6 +10,7 @@
 #include "override/OverrideManager.h"
 #include "slot/SlotAllocator.h"
 #include "slot/SlotLocker.h"
+#include "slot/SlotSettings.h"   // bucket hysteresis bands
 #include "slot/Remembrance.h"
 #include "slot/SlotUtils.h"
 #include "input/EquipManager.h"
@@ -145,9 +146,18 @@ void PipelineCoordinator::GatherState(PipelineContext& ctx)
     ctx.targets = stateManager.GetTargets();
     ctx.healthTracking = stateManager.GetHealthTracking();
 
-    // Evaluate GameState from the already-fetched snapshots (no extra copies)
-    ctx.currentState = g_stateEvaluator->EvaluateCurrentState(
-        ctx.playerState, ctx.targets);
+    // Evaluate GameState from the already-fetched snapshots (no extra copies).
+    // The one committing evaluation: the HP/MP/SP and distance buckets carry
+    // hysteresis (fVitalBucketHysteresis / fDistanceBucketHysteresis), so a
+    // value wobbling on a boundary stops re-scoring the page; the memory moves
+    // here only, once per run. Overrides still read the raw vitals.
+    const auto& slotSettings = Slot::SlotSettings::GetSingleton();
+    ctx.currentState = g_stateEvaluator->EvaluateAndCommit(
+        ctx.playerState, ctx.targets,
+        State::StateEvaluator::BucketBands{
+            .vitalBand = slotSettings.VitalBucketHysteresis(),
+            .distanceFraction = slotSettings.DistanceBucketHysteresis(),
+        });
     ctx.stateHash = ctx.currentState.GetHash();
 
     // Check if elemental damage requires pipeline run despite unchanged hash
@@ -567,7 +577,17 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
     // elsewhere), preferring to keep locked content. Lock-timer decay lives in
     // UpdateSubsystems (unconditional per tick), not here behind the skip gate.
     auto& slotLocker = Slot::SlotLocker::GetSingleton();
-    ctx.assignments = slotLocker.ApplyLocks(ctx.rawAssignments, ctx.overrides, ctx.scoredCandidates);
+    // Which keys show a Remembrance hold for the key the player pressed: under
+    // a combat lock only those may take a locked key.
+    Slot::SlotLocker::RunContext lockRun;
+    {
+        const auto pressedHolds = Slot::Remembrance::GetSingleton().GetPage(ctx.displayPageIndex);
+        for (size_t s = 0; s < pressedHolds.size() && s < lockRun.remembranceOnPressedKey.size(); ++s) {
+            const auto& hold = pressedHolds[s];
+            lockRun.remembranceOnPressedKey[s] = hold.Active() && (hold.shownSlot == SIZE_MAX || hold.shownSlot == s);
+        }
+    }
+    ctx.assignments = slotLocker.ApplyLocks(ctx.rawAssignments, ctx.overrides, ctx.scoredCandidates, lockRun);
 
     // Compute visual state for each slot
     Slot::ComputeVisualStates(ctx.assignments, ctx.rawAssignments, slotLocker);
@@ -610,7 +630,7 @@ void PipelineCoordinator::UpdateCaches(PipelineContext& ctx)
     // Cache slot contents for EquipManager (keyboard equip hotkeys)
     auto& equipMgr = Input::EquipManager::GetSingleton();
     for (const auto& assignment : ctx.assignments) {
-        equipMgr.SetSlotContent(assignment.slotIndex, Slot::ToSlotContent(assignment));
+        equipMgr.SetSlotContent(ctx.displayPageIndex, assignment.slotIndex, Slot::ToSlotContent(assignment));
     }
 }
 

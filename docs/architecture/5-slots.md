@@ -788,6 +788,107 @@ from `UpdateSubsystems`, *not* from behind the pipeline-skip gate, so locks deca
 in wall-clock time. It returns `true` if any lock expired, and the caller must
 force a pipeline run so the freed slot's content actually swaps.
 
+### Churn guards (0.23.37)
+
+A LoreRim fight on 2026-10-11 (08:55:51-08:57:51) changed page 0 129 times in
+141 s and produced at least three misclicks: a key pressed while it showed one
+item acted on the item that replaced it a fraction of a second later. Each key
+is locked for `fLockDurationMs` after every change, so no key changes twice
+inside 3 s on its own; the page still changes about every half second because
+eight keys come free at different times. The combat lock changes that policy
+in combat; the other guards take the misclick out of it and stop other sources
+of churn. Settings under `[SlotLocker]`; the open-wheel rule has none.
+
+**Combat lock** (`fCombatLockDurationMs`, default -1 = freeze, 0 = use
+`fLockDurationMs`, else up to 120000 ms; `src/core/CombatLock.h`, wired in
+`SlotLocker`). While the player is in combat (`StateManager::IsInCombat`,
+pushed every tick by `SlotLocker::SetInCombat`) a key locks for this long
+instead of `fLockDurationMs`, and a freeze has no timer. The challenger margin
+never reaches a combat-locked key; only these change it:
+
+- its item is gone: `OnItemUsed(..., UseKind::Gone)` -- the inventory scan
+  passes `Gone` only when none is left (`StillCarried`), weapon departures and
+  stale stacks always; a use with more left (`UseKind::Used`, the Wheeler
+  activation and a consumption from a stack) does not free it;
+- an override placed on that key (high priority at once, lower after
+  `fMinLockDurationMs`);
+- a Remembrance hold on the key the player pressed (`RunContext::
+  remembranceOnPressedKey`; a `sRemembranceTarget = Job` hold on another key
+  waits);
+- the end of the override or hold the key itself shows.
+
+A spell the affordability filter drops stays on its locked key (the lock
+re-shows it whatever the candidate list says) instead of leaving and coming
+back with the magicka. A seating move (home key, re-seat) does not release a
+combat lock, so items do not move between keys. At the end of every run in
+combat, every key showing an item that is not locked is locked (keys that
+entered combat unlocked, dedup refills); empty keys still fill normally. When
+combat ends, combat locks become normal locks with `fLockDurationMs` counted
+from then (`RemainingAfterCombat`), so the last kill does not reshuffle the
+page.
+
+**Lock gaps closed (0.23.37).** Of the page-0 changes in two fights that came
+less than 3 s after the same key's previous change (22 of 117 and 32 of 254,
+ignoring the `~` pulse marker):
+
+- *Seating moves* (7 and 10): `lock released: its item moved to seated slot`.
+  Expected outside combat (a home-key return moves in one run); under the
+  combat lock they now wait for combat to end.
+- *"Override" breaks of another key* (1 and 3): these were Remembrance holds
+  taking their own key; `ShouldBreakLock` labelled every non-timer break
+  "override". It now returns the reason (`BreakReason`) and the log names it.
+  An override breaks only its own key (in-game test
+  `RunSlotLockerOverrideScopeTest`).
+- *The player's own press* (`manually unlocked` + Remembrance): expected.
+- *No lock event*: (i) a dedup refill was shown but never locked, and changed
+  again 0.1-0.7 s later -- refills are now locked, and a locked key that
+  already showed an item beats any other copy of it in dedup (the incumbent
+  rule), which is what makes locking the refill safe; (ii) a key that changed
+  while the Wheeler wheel was open (the widget is hidden then) was first seen
+  at the close with part of its lock already spent -- the wheel close now
+  restarts every lock (`SlotLocker::RestartLocks`).
+
+**Press grace** (`fPressGraceMs`, default 600, 0 = off; `src/core/PressGrace.h`,
+wired in `EquipManager::EquipSlot`). A hotkey whose key changed less than that
+long before the key went down, or while the tap waited out the 300 ms double-tap
+window, acts on the item shown before the change, if it is still usable (an
+eligible candidate on the last run and, for inventory items, still carried).
+`EquipManager::SetSlotContent` records each key's previous item and change time;
+the InputHandler passes the gesture's first key-down time. It does not apply
+when nothing was shown before, when the player's own press on that key preceded
+the change by at most 2 s (a Remembrance swap-back: pressing again swaps back),
+or across a page switch. Everything downstream — the Remembrance note, the equip
+and the selection credit — concerns the item actually used. One info line when
+it fires: `[Grace] Page P slot S: pressed X, shown Yms ago; using previous Z`.
+Huginn's own Wheeler wheels are not covered: Wheeler equips its entry before it
+calls back.
+
+**Bucket hysteresis** (`fVitalBucketHysteresis` default 0.03,
+`fDistanceBucketHysteresis` default 0.1; `src/core/BucketHysteresis.h`, wired in
+`StateEvaluator`). The HP/MP/SP level and the closest-enemy distance band feed
+the GameState hash that wakes the pipeline and keys UsageMemory, and in that
+fight 85 of 91 state transitions were MP or distance moves. A recovering
+vital moves up a level only `band` past the boundary; a falling one moves at
+the boundary itself, so the hash change that lets an override be evaluated is
+never delayed (overrides read raw vitals). The distance band is symmetric, a
+fraction of the boundary distance. The pipeline commits the remembered buckets
+(`EvaluateAndCommit`, once per run); the equip capture reads them without
+moving them. The target digest keeps the raw band (it only opens the outer
+skip gate). Context weights and learner features read raw values and are
+unaffected.
+
+**Open-wheel writes** (`src/core/OpenWheelWrites.h`, wired in
+`WheelerBackend::Push`). The Wheeler push skips while the wheel is open unless
+an urgent override is up (priority >= `iAutoFocusMinPriority`, 50: critical
+health 100, magicka 70, stamina 60). That bypass used to write every entry of
+every page into the open wheel; 15 of 45 wheel opens in the 2026-10-11 session
+had such an override. Now, while the wheel is open, only the urgent override's
+own entry is written, on every page; every other entry gets what the wheel
+already holds (`WheelSync::GetCachedPage`), so its diff writes nothing. The
+auto-focus is unchanged, and the close re-runs the pipeline, which writes the
+full page. One debug line per entry written while open:
+`[WheelerClient] open-wheel write page P slot S: X`.
+
 ---
 
 ## Wildcard System
@@ -925,6 +1026,10 @@ fMinLockDurationMs = 500        ; Minimum time before a lock can break
 bLockOnFill = true              ; Lock when a slot fills from empty
 bOverridesBreakLock = true      ; Allow high-priority overrides to break locks
 iImmediateBreakPriority = 50    ; Override priority that bypasses fMinLockDurationMs
+fCombatLockDurationMs = -1      ; In combat: -1 = freeze until combat ends, 0 = fLockDurationMs, else ms (<= 120000)
+fPressGraceMs = 600             ; Misclick guard: a key changed this recently acts on its previous item; 0-2000, 0 = off
+fVitalBucketHysteresis = 0.03   ; HP/MP/SP level moves up only this far past a boundary (falls at it); 0-0.1
+fDistanceBucketHysteresis = 0.1 ; Distance band moves only this fraction past a boundary, both ways; 0-0.5
 ```
 
 ### [Overrides]

@@ -39,6 +39,19 @@ using namespace Huginn;
 // CONSUMPTION HELPERS
 // =============================================================================
 
+// Does the player still carry at least one of this form, per the scan just
+// taken? Tells SlotLocker a consumption (one fewer) from a departure (none
+// left): a combat lock gives way only to the second.
+static bool StillCarried(const Util::InventoryItemMap& inventory, RE::FormID formID)
+{
+    for (const auto& [object, data] : inventory) {
+        if (object && object->GetFormID() == formID && data.first > 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // Returns true if the count decrease was a real consumption (cast/drink/eat)
 // rather than a drop/sell/store, which must not confirm anything — see
 // InventoryExitTracker.
@@ -174,7 +187,10 @@ template <typename Registry>
         // pinning it. Otherwise SlotLocker holds the FormID until its timer
         // expires and re-pins it through the recompute the caller triggers,
         // leaving a recommendation for an item the player no longer owns.
-        Slot::SlotLocker::GetSingleton().OnItemUsed(change.formID, /*respectActivationLock=*/true);
+        // Gone or merely one fewer: a combat lock holds through the second.
+        Slot::SlotLocker::GetSingleton().OnItemUsed(change.formID, /*respectActivationLock=*/true,
+            StillCarried(inventory, change.formID) ? Slot::SlotLocker::UseKind::Used
+                                                   : Slot::SlotLocker::UseKind::Gone);
 
         if (teardown) {
             continue;  // no reward, and no per-item log line for ~70 phantom drops
@@ -237,6 +253,11 @@ static void UpdateSubsystems(float deltaSeconds, float deltaMs)
 
     {
         Huginn_ZONE_NAMED("SlotLocker::Update");
+        // Combat first: entering it switches new locks to fCombatLockDurationMs,
+        // leaving it turns combat locks back into normal ones (and may free
+        // some, when normal locking is off).
+        forcePipelineRun |= Slot::SlotLocker::GetSingleton().SetInCombat(
+            State::StateManager::GetSingleton().IsInCombat());
         // Lock expiry: decay wall-clock (not just on pipeline-active ticks) and
         // let the freed slot's content swap immediately
         forcePipelineRun |= Slot::SlotLocker::GetSingleton().Update(deltaMs);
@@ -341,7 +362,9 @@ static void MaintainRegistries(RE::PlayerCharacter* player,
                 // A torch dropped or burned out: break its lock, as
                 // ProcessInventoryChanges does for an item that leaves.
                 for (const auto formID : g_itemRegistry->ConsumeTorchDecreases()) {
-                    Slot::SlotLocker::GetSingleton().OnItemUsed(formID, /*respectActivationLock=*/true);
+                    Slot::SlotLocker::GetSingleton().OnItemUsed(formID, /*respectActivationLock=*/true,
+                        StillCarried(inventory, formID) ? Slot::SlotLocker::UseKind::Used
+                                                        : Slot::SlotLocker::UseKind::Gone);
                 }
             }
             if (inventoryChanged) {

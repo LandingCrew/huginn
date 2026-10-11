@@ -122,6 +122,11 @@ void ResetPipelineSubsystems() {
     Learning::SelectionLogV3::Reset();
 
     Pipeline::PipelineCoordinator::GetSingleton().ResetCrossSaveState();
+    // The bucket hysteresis remembers the last character's HP/MP/SP and
+    // distance bands; the next one is bucketed from its own raw values.
+    if (g_stateEvaluator) {
+        g_stateEvaluator->ResetBucketMemory();
+    }
 
     State::StateManager::GetSingleton().ResetTrackingState();
 }
@@ -240,10 +245,20 @@ Slot::SlotLockConfig LoadSlotLockerConfigFromINI(const CSimpleIniA& ini) {
   config.overridesBreakLock = ini.GetBoolValue(section, "bOverridesBreakLock", true);
   config.immediateBreakPriority = static_cast<int>(
     ini.GetLongValue(section, "iImmediateBreakPriority", 50));
+  // -1 (freeze until combat ends) or 0-120000; anything negative reads as -1,
+  // a NaN as the default.
+  {
+    const double combat = ini.GetDoubleValue(section, "fCombatLockDurationMs", -1.0);
+    config.combatLockDurationMs = !std::isfinite(combat) ? -1.0f
+      : combat < 0.0 ? -1.0f
+      : static_cast<float>(std::min(combat, 120000.0));
+  }
 
-  logger::info("[SlotLockerConfig] duration={:.0f}ms, min={:.0f}ms, lockOnFill={}, overridesBreak={}, breakPri={}",
+  logger::info("[SlotLockerConfig] duration={:.0f}ms, min={:.0f}ms, lockOnFill={}, overridesBreak={}, breakPri={}, combat={}",
     config.lockDurationMs, config.minLockDurationMs,
-    config.lockOnFill, config.overridesBreakLock, config.immediateBreakPriority);
+    config.lockOnFill, config.overridesBreakLock, config.immediateBreakPriority,
+    config.combatLockDurationMs < 0.0f ? std::string("freeze")
+      : std::format("{:.0f}ms", config.combatLockDurationMs));
 
   return config;
 }

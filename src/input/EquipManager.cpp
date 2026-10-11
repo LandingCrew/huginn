@@ -1,7 +1,9 @@
 #include "EquipManager.h"
 #include "Config.h"
 #include "Globals.h"
+#include "core/PressGrace.h"
 #include "learning/EquipSourceTracker.h"
+#include "learning/PipelineStateCache.h"
 #include "learning/SelectionTracker.h"
 #include "slot/SlotAllocator.h"
 #include "slot/Remembrance.h"
@@ -805,12 +807,140 @@ namespace Huginn::Input
       return true;
    }
 
-   void EquipManager::SetSlotContent(size_t index, const UI::SlotContent& content)
+   namespace
    {
-      if (index < MAX_SLOTS) {
-      std::unique_lock lock(m_slotMutex);
-      m_slotContents[index] = content;
+      // The same item for the press grace: emptiness, form and stack. A name
+      // or confidence refresh on the same item is not a change.
+      [[nodiscard]] bool SameSlotItem(const UI::SlotContent& a, const UI::SlotContent& b) noexcept
+      {
+         const bool aNone = a.IsEmpty() || a.IsNoMatch();
+         const bool bNone = b.IsEmpty() || b.IsNoMatch();
+         if (aNone || bNone) {
+            return aNone == bNone;
+         }
+         return a.formID == b.formID && a.uniqueID == b.uniqueID;
       }
+
+      [[nodiscard]] double SteadyMs(std::chrono::steady_clock::time_point t) noexcept
+      {
+         return std::chrono::duration<double, std::milli>(t.time_since_epoch()).count();
+      }
+   }
+
+   void EquipManager::SetSlotContent(size_t page, size_t index, const UI::SlotContent& content)
+   {
+      if (index >= MAX_SLOTS) {
+         return;
+      }
+      const auto now = std::chrono::steady_clock::now();
+      std::unique_lock lock(m_slotMutex);
+
+      // A different page: every key is about to be refilled by the player's
+      // own page switch. None of that is a change under their finger, and
+      // their presses on the old page say nothing about the new one.
+      if (page != m_contentPage) {
+         m_contentPage = page;
+         for (auto& h : m_history) {
+            h = SlotHistory{};
+         }
+      }
+
+      auto& h = m_history[index];
+      auto& current = m_slotContents[index];
+      if (h.pageFresh) {
+         h.pageFresh = false;
+         h.shownSince = now;
+      } else if (!SameSlotItem(current, content)) {
+         h.previous = current;
+         h.previousSince = h.shownSince;
+         h.changedAt = now;
+         h.hasChange = true;
+         h.shownSince = now;
+      }
+      current = content;
+   }
+
+   void EquipManager::NoteSlotAction(size_t slotIndex, std::chrono::steady_clock::time_point when)
+   {
+      if (slotIndex >= MAX_SLOTS) {
+         return;
+      }
+      std::unique_lock lock(m_slotMutex);
+      m_history[slotIndex].hasLastAction = true;
+      m_history[slotIndex].lastAction = when;
+   }
+
+   bool EquipManager::StillUsable(const UI::SlotContent& content)
+   {
+      if (content.IsEmpty() || content.IsNoMatch() || content.formID == 0) {
+         return false;
+      }
+      // The normal path's rules: the item must have been an eligible candidate
+      // on the last pipeline run -- generated and past CandidateFilters, so
+      // owned or known, affordable under the uncastable-spell policy, not
+      // equipped, off cooldown.
+      if (!Learning::PipelineStateCache::GetSingleton().IsEligible(content.formID, content.uniqueID)) {
+         return false;
+      }
+      // And an inventory item must still be carried NOW: the run above can be
+      // a few ticks old, and a potion drunk since would make the press a dud.
+      auto* form = RE::TESForm::LookupByID(content.formID);
+      if (!form) {
+         return false;
+      }
+      if (form->Is(RE::FormType::Spell)) {
+         return true;   // a known spell; eligibility covered affordability
+      }
+      auto* player = RE::PlayerCharacter::GetSingleton();
+      auto* bound = form->As<RE::TESBoundObject>();
+      return player && bound && Util::GetItemCountSafe(player, bound) > 0;
+   }
+
+   std::optional<UI::SlotContent> EquipManager::ResolvePressGrace(size_t slotIndex,
+      const UI::SlotContent& shown, std::chrono::steady_clock::time_point pressedAt) const
+   {
+      const float graceMs = Slot::SlotSettings::GetSingleton().PressGraceMs();
+      if (!(graceMs > 0.0f) || slotIndex >= MAX_SLOTS) {
+         return std::nullopt;
+      }
+
+      SlotHistory h;
+      size_t page = 0;
+      {
+         std::shared_lock lock(m_slotMutex);
+         h = m_history[slotIndex];
+         page = m_contentPage;
+      }
+
+      Core::PressGraceInput in;
+      in.graceMs = graceMs;
+      in.pressMs = SteadyMs(pressedAt);
+      in.hasChange = h.hasChange;
+      in.changedAtMs = SteadyMs(h.changedAt);
+      in.previousSinceMs = SteadyMs(h.previousSince);
+      in.previousEmpty = h.previous.IsEmpty() || h.previous.IsNoMatch() || h.previous.formID == 0;
+      in.previousSameItem = SameSlotItem(h.previous, shown);
+      in.hasLastAction = h.hasLastAction;
+      in.lastActionMs = SteadyMs(h.lastAction);
+      // Asked last, and only when it decides the press: the usability check
+      // walks the inventory.
+      in.previousUsable = true;
+      auto decision = Core::DecidePressGrace(in);
+      if (!decision.usePrevious) {
+         return std::nullopt;
+      }
+      const double sinceChangeMs = SteadyMs(std::chrono::steady_clock::now()) - in.changedAtMs;
+      if (!StillUsable(h.previous)) {
+         logger::debug("[Grace] Page {} slot {}: pressed '{}', shown {:.0f}ms ago; previous '{}' is no longer usable, using what is shown"sv,
+            page, slotIndex, shown.name, sinceChangeMs, h.previous.name);
+         return std::nullopt;
+      }
+      logger::info("[Grace] Page {} slot {}: pressed '{}', shown {:.0f}ms ago; using previous '{}' ({} {:.0f}ms {} the key went down)"sv,
+         page, slotIndex, shown.name, sinceChangeMs, h.previous.name,
+         decision.shownForMs < 0.0 ? "changed" : "it had been up",
+         decision.shownForMs < 0.0 ? -decision.shownForMs : decision.shownForMs,
+         decision.shownForMs < 0.0 ? "after" : "when");
+      return h.previous;
    }
 
    UI::SlotContent EquipManager::GetSlotContent(size_t index) const
@@ -820,11 +950,22 @@ namespace Huginn::Input
       return m_slotContents[index];
    }
 
-   bool EquipManager::EquipSlot(size_t slotIndex, EquipHand hand)
+   bool EquipManager::EquipSlot(size_t slotIndex, EquipHand hand,
+      std::optional<std::chrono::steady_clock::time_point> pressedAt)
    {
       // Get the slot content from cache (populated by update loop)
       // Returns by value — safe snapshot for cross-thread access.
       auto content = GetSlotContent(slotIndex);
+
+      // Press grace (fPressGraceMs): a key whose item changed just before the
+      // press, or while the tap waited out the double-tap window, acts on the
+      // item the player was looking at. Everything below -- the Remembrance
+      // note, the equip, the selection credit -- then concerns that item.
+      if (pressedAt) {
+         if (auto previous = ResolvePressGrace(slotIndex, content, *pressedAt)) {
+            content = std::move(*previous);
+         }
+      }
 
       if (content.IsEmpty() || content.IsNoMatch()) {
       // NoMatch = slot shows "(No damage)" / "(Learning...)" — a normal state,
@@ -992,6 +1133,12 @@ namespace Huginn::Input
       default:
       logger::warn("[EquipManager] Unknown slot content type"sv);
       break;
+      }
+
+      // The press grace's own-press exception reads this: a change that
+      // follows the player's press on this key is the press's doing.
+      if (success) {
+         NoteSlotAction(slotIndex, std::chrono::steady_clock::now());
       }
 
       // A remembered item put back is the player's undo, not a selection --

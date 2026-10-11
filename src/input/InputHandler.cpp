@@ -262,6 +262,11 @@ namespace Huginn::Input
 
       if (button->IsDown()) {
       logger::debug("[InputHandler] Slot {} KEY DOWN"sv, slotIndex + 1);
+      // A new gesture starts here unless this down is the second tap of a
+      // double tap, which keeps the first tap's moment of choice.
+      if (!state.pendingTapAction) {
+         state.gestureStart = std::chrono::steady_clock::now();
+      }
       state.pressTime = m_frameTime;
       state.isPressed = true;
       state.holdTriggered = false;
@@ -282,7 +287,7 @@ namespace Huginn::Input
            logger::info("[InputHandler] Slot {} HOLD TRIGGERED -> equip both hands"sv, slotIndex + 1);
 
            if (m_slotCallback) {
-            m_slotCallback(slotIndex, EquipHand::Both);
+            m_slotCallback(slotIndex, EquipHand::Both, state.gestureStart);
            }
         }
       }
@@ -306,7 +311,7 @@ namespace Huginn::Input
            logger::info("[InputHandler] Slot {} DOUBLE-TAP -> equip left hand ONLY"sv, slotIndex + 1);
 
            if (m_slotCallback) {
-            m_slotCallback(slotIndex, EquipHand::Left);
+            m_slotCallback(slotIndex, EquipHand::Left, state.gestureStart);
            }
         } else {
            // First tap - defer action, wait for potential double tap
@@ -343,7 +348,7 @@ namespace Huginn::Input
            logger::info("[InputHandler] Slot {} TAP (deferred) -> equip right hand"sv, i + 1);
 
            if (m_slotCallback) {
-            m_slotCallback(i, EquipHand::Right);
+            m_slotCallback(i, EquipHand::Right, state.gestureStart);
            }
         }
       }

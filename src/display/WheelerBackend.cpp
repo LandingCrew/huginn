@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>   // std::ceil (lock-timer quantization)
 
+#include "core/OpenWheelWrites.h"
 #include "slot/SlotAllocator.h"
 #include "slot/SlotLocker.h"
 #include "slot/SlotUtils.h"
@@ -38,7 +39,8 @@ namespace Huginn::Display
 
         // Urgent-override handling is Wheeler-local: an override at/above the
         // auto-focus threshold both pulls focus to the Huginn wheel and lets the
-        // push through even while the wheel is open (so an open wheel updates).
+        // push through even while the wheel is open -- for the override's own
+        // entry only (0.23.37); the rest of an open wheel stays as it opened.
         const auto* topOverride = ctx.overrides.GetTopOverride();
         const int autoFocusThreshold =
             Wheeler::WheelerSettings::GetSingleton().GetAutoFocusMinPriority();
@@ -79,10 +81,14 @@ namespace Huginn::Display
         }
         wheelerClient.RecoverInvalidatedWheels();
 
-        if (!wheelerClient.HasRecommendationWheel() ||
-            (wheelerClient.IsWheelOpen() && !hasUrgentOverride)) {
+        // Read once: the open state decides both the gate here and, past it,
+        // that only the override's entry may be written (see the page loop).
+        const bool wheelOpen = wheelerClient.IsWheelOpen();
+        if (!wheelerClient.HasRecommendationWheel() || (wheelOpen && !hasUrgentOverride)) {
             return;
         }
+        const RE::FormID urgentFormID = hasUrgentOverride
+            ? Candidate::GetFormID(*topOverride->candidate) : RE::FormID{ 0 };
 
         // Don't push while the player is rearranging wheels. Every move in the
         // editor shifts our indices, and nothing corrects them until edit-mode
@@ -309,6 +315,36 @@ namespace Huginn::Display
                 m_uniqueIDs.push_back(uid);
                 m_wildcardFlags.push_back(wild);
                 m_subtexts.push_back(std::move(sub));
+            }
+
+            // The wheel is open: we only got here because an urgent override
+            // let the push through. Write the override's own entry and leave
+            // every other entry as the wheel already shows it -- re-seats and
+            // lock expiries moving entries under the cursor are misclicks
+            // (core/OpenWheelWrites.h). Every page, the one on screen and the
+            // others (the player can turn to them without closing the wheel).
+            // The close re-runs the pipeline (CheckPendingWheelClose ->
+            // MarkPageDirty), which writes the full page again.
+            if (wheelOpen) {
+                Core::WheelPageContents incoming{ std::move(m_formIDs), std::move(m_wildcardFlags),
+                                                  std::move(m_uniqueIDs), std::move(m_subtexts) };
+                Core::WheelPageContents cached;
+                if (wheelerClient.GetCachedPage(page, cached.formIDs, cached.wildcard,
+                                                cached.uniqueIDs, cached.subtexts)) {
+                    std::vector<bool> writable(n, false);
+                    for (size_t s = 0; s < n; ++s) {
+                        const auto& a = pageAssignments[s];
+                        writable[s] = a.IsOverride() && a.formID == urgentFormID;
+                    }
+                    for (const size_t s : Core::RestrictToWritable(incoming, cached, writable)) {
+                        spdlog::debug("[WheelerClient] open-wheel write page {} slot {}: {}",
+                            page, s, incoming.formIDs[s] != 0 ? std::string_view{ pageAssignments[s].name } : "(empty)"sv);
+                    }
+                }
+                m_formIDs = std::move(incoming.formIDs);
+                m_wildcardFlags = std::move(incoming.wildcard);
+                m_uniqueIDs = std::move(incoming.uniqueIDs);
+                m_subtexts = std::move(incoming.subtexts);
             }
 
             wheelerClient.UpdateRecommendationsForPage(page, m_formIDs, m_wildcardFlags, m_uniqueIDs, m_subtexts);
