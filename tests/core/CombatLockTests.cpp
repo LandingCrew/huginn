@@ -209,17 +209,18 @@ TEST_CASE("combat lock: the equipped check matches the stack when the key names 
 
 TEST_CASE("combat lock: at onset a key on a normal lock becomes combat-locked on its item")
 {
-    // locked, alreadyCombat, holdsPinned, settling, empty
-    CHECK(ConvertsAtCombatOnset(true, false, false, false, false));
+    // locked, alreadyCombat, holdsPinned, settling, activationLock, empty
+    CHECK(ConvertsAtCombatOnset(true, false, false, false, false, false));
     // The 12:59:32 case: Circle of Strength on its 3 s lock at onset expired
     // 1.7 s into the fight and became Sun Shards. Converted, it stays.
 }
 
 TEST_CASE("combat lock: at onset the exceptions keep what they have")
 {
-    CHECK_FALSE(ConvertsAtCombatOnset(false, false, false, false, false));  // unlocked: the sweep locks it
-    CHECK_FALSE(ConvertsAtCombatOnset(true, true, false, false, false));    // already a combat lock
-    CHECK_FALSE(ConvertsAtCombatOnset(true, false, true, false, false));    // override / Remembrance item
-    CHECK_FALSE(ConvertsAtCombatOnset(true, false, false, true, false));    // Swap Back undo settle
-    CHECK_FALSE(ConvertsAtCombatOnset(true, false, false, false, true));    // nothing on it
+    CHECK_FALSE(ConvertsAtCombatOnset(false, false, false, false, false, false));  // unlocked: the sweep locks it
+    CHECK_FALSE(ConvertsAtCombatOnset(true, true, false, false, false, false));    // already a combat lock
+    CHECK_FALSE(ConvertsAtCombatOnset(true, false, true, false, false, false));    // override / Remembrance item
+    CHECK_FALSE(ConvertsAtCombatOnset(true, false, false, true, false, false));    // Swap Back undo settle
+    CHECK_FALSE(ConvertsAtCombatOnset(true, false, false, false, false, true));    // nothing on it
+    CHECK_FALSE(ConvertsAtCombatOnset(true, false, false, false, true, false));    // Sticky activation lock: keeps its 10 s
 }

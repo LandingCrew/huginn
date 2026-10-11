@@ -97,11 +97,15 @@ namespace Huginn::Core
     /// 13:01:02, 13:18:46; at 12:59:34 the player pressed it 2 s after it
     /// changed). Not converted: a key already combat-locked, one whose lock
     /// holds an override or Remembrance item (it keeps its own break rules),
-    /// and a Swap Back undo settle (it ends on its own time and fills once).
+    /// a Swap Back undo settle (it ends on its own time and fills once), and a
+    /// Sticky activation lock: its item may be the potion just drunk to the
+    /// last (the inventory scan's Gone respects that lock), and as a combat
+    /// lock nothing would free it all fight. It runs out on its own 10 s and
+    /// the sweep locks what comes next (verifier, PR #208).
     [[nodiscard]] constexpr bool ConvertsAtCombatOnset(bool locked, bool alreadyCombat, bool holdsPinned,
-        bool settling, bool empty) noexcept
+        bool settling, bool activationLock, bool empty) noexcept
     {
-        return locked && !alreadyCombat && !holdsPinned && !settling && !empty;
+        return locked && !alreadyCombat && !holdsPinned && !settling && !activationLock && !empty;
     }
 
     /// Whether the combat lock should treat the player as in combat. The game's

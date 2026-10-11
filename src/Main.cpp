@@ -668,6 +668,10 @@ static void OnDataLoaded()
             Telemetry::SoakMetrics::GetSingleton().RecordSlotPress(
                 pageIndex, slotIndex, allocator.IsRegularSlot(pageIndex, slotIndex),
                 age ? age->ageSec : -1.0f, age ? std::string_view{ age->wasName } : std::string_view{});
+            // A press like a hotkey's: no combat upsert on this key for a while.
+            if (pageIndex == allocator.GetCurrentPage()) {
+                Slot::SlotLocker::GetSingleton().NoteKeyPress(slotIndex);
+            }
 
             // Worn things only; a potion or soul gem displaces nothing.
             auto* form = RE::TESForm::LookupByID(formID);

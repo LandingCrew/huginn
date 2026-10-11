@@ -816,7 +816,10 @@ normal lock becomes combat-locked on the item it holds
 (`Core::ConvertsAtCombatOnset`, 0.23.38); before, it kept its 3 s timer, ran
 out 1-3 s into the fight and was refilled (2026-10-11 12:40:04, 12:59:32,
 13:01:02, 13:18:46). Keys holding an override or Remembrance item keep their
-own rules, and an undo settle ends on its own time. The challenger margin never
+own rules, an undo settle ends on its own time, and a Sticky activation lock
+keeps its 10 s (its item may be a potion drunk to the last, which the inventory
+scan's Gone does not free under that lock; a combat lock would show it all
+fight); the sweep locks what follows it. The challenger margin never
 reaches a combat-locked key; only these change it (and the combat upsert,
 below):
 
@@ -892,18 +895,33 @@ wildcard) that no key shows (by item or name) and that are not equipped (the
 locker cannot see `bSkipEquipped`), on a key the allocator placed them on or
 whose class they fit (`SlotClassifier::Matches`). That set already passed the
 ranking, the class cap and the slot filters; the class-cap term is not applied
-again. Pairing is greedy on the margin (`PlanCombatUpserts`). Never on a key
-showing an override, a Remembrance item or a wildcard, with an active hold of
-its own, changing this run, pressed (`SlotLocker::NoteKeyPress`: key down and
-the press acting) or changed less than `fPressGraceMs` ago, or upserted less
-than `fCombatUpsertCooldownSec` ago; never while the Wheeler wheel is open. The
-new item is combat-locked like any other. One info line each,
+again. Never a challenger: an item an upsert displaced this fight, or any item
+that left a key less than max(`fCombatUpsertCooldownSec`, 3 s) ago
+(`Core::CombatUpsertMemory`). Without that, a displaced item that the seating
+wants on another key upserted that key a run later: the home-key move the
+combat lock defers, as two changes in 0.1 s (verifier, #208). At most one
+upsert per page per run, and 3 s apart (`kCombatUpsertPageSpacingMs`): a
+context flip can put several keys past the barrier at once, and the spacing
+shows them one at a time, each past the press grace and the double-tap window.
+Pairing is greedy on the margin (`PlanCombatUpserts`). Never on a key showing
+an override, a Remembrance item or a wildcard, that the allocator wants for an
+override or Remembrance item this run (a non-urgent override waiting out
+`fMinLockDurationMs`: an upsert first would be two changes and would restart
+the wait), with an active hold of its own, changing this run, changed less than
+`fPressGraceMs` ago, pressed less than max(`fPressGraceMs`, 400 ms) ago, or
+upserted less than `fCombatUpsertCooldownSec` ago; never while the Wheeler wheel
+is open. Presses are noted by `SlotLocker::NoteKeyPress` at hotkey down, at key
+up (holding the key for the double-tap window + 100 ms, so a pending tap never
+acts on an upsert even with `fPressGraceMs = 0`), when the press acts, and on a
+Huginn-wheel activation. The new item is combat-locked like any other. One info
+line each,
 `[SlotLocker] Slot N combat upsert: 'Old' -> 'New' (s=+a vs -b, +d > 3.0 x ln m
 0.405)`, and the change counts as `upsert` in `[SlotChurn]` and the heartbeat.
 Replayed on the 2026-10-11 12:05-13:27 log (11 fights, 15.7 min in combat, 105
-page-0 changes): about 32-36 upserts at 3 (2.0-2.3 a minute) and 69-71 at 2. An
-upper bound: the log has the frozen items' scores only when some line printed
-them, often from a moment they lost, and minutes old.
+page-0 changes), before the page limit and the departure rule: about 32-36
+upserts at 3 (2.0-2.3 a minute) and 69-71 at 2. An upper bound: the log has the
+frozen items' scores only when some line printed them, often from a moment they
+lost, and minutes old.
 
 **Swap Back undo settle** (`src/core/UndoSettle.h`, `SlotLocker::
 SettleAfterUndo`, called by `Remembrance` for the undo and for a held item back
@@ -918,11 +936,14 @@ runs out the next run fills the key once and locks that fill even if it is the
 same item (`LockThisFill`; a combat lock in combat). An urgent override or a new
 Remembrance hold still takes the key meanwhile (the normal lock's rules); a use
 of the item (Wheeler reports the undo as one) does not end it, its being gone
-does. A Sticky activation lock on the key keeps its 10 s and only loses the
-label; a key whose lock holds the item without showing it is unlocked; a second
-report of the same undo changes nothing. The same rule out of combat: the change
-it saves is the same misclick hazard, and the cost is that the just-equipped
-item stays up, unlabelled, for up to a second instead of a stale pick.
+does. The settle replaces whatever lock the key has, the Sticky activation lock
+included (Wheeler takes it just before reporting the undo; the old per-tick
+release let go of it, and kept it would show the undone item for 10 s); a key
+whose lock holds the item without showing it is unlocked; a second report of
+the same undo changes nothing. The same rule out of combat: the change it saves
+is the same misclick hazard. The accepted cost, under every policy: the
+just-equipped item stays up, unlabelled, for the full second instead of a stale
+pick.
 
 Override evaluation no longer depends on lock expiries: the pipeline also wakes
 whenever a raw vital crosses an override's own activation or release threshold

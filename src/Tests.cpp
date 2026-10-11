@@ -6513,25 +6513,37 @@ void RunSlotLockerOverrideScopeTest()
 
     // --- 4. combat onset converts running normal locks (0.23.38) -----------
     // A key still on its 3 s lock when combat starts must not run out and be
-    // refilled 1-3 s into the fight (2026-10-11 12:59:32).
+    // refilled 1-3 s into the fight (2026-10-11 12:59:32). A Sticky activation
+    // lock is not converted: its item may be a potion drunk to the last.
     locker.Reset();
     (void)locker.SetInCombat(false);
     (void)locker.ApplyLocks(page({ A, B, C }), Override::OverrideCollection{});
+    locker.LockSlotForActivation(2);
     (void)locker.SetInCombat(true);
+    {
+        const auto snap = locker.GetLockSnapshot();
+        if (!snap[0].frozen || !snap[1].frozen) {
+            logger::error("TEST FAIL: a normal lock running at combat onset was not turned into a combat freeze"sv);
+            passed = false;
+        }
+        if (snap[2].frozen || !snap[2].isLocked) {
+            logger::error("TEST FAIL: a Sticky activation lock was converted at combat onset (frozen={})"sv, snap[2].frozen);
+            passed = false;
+        }
+    }
     (void)locker.Update(5000.0f);
     {
         const auto shown = locker.ApplyLocks(page({ D, E, F }), Override::OverrideCollection{});
-        const auto snap = locker.GetLockSnapshot();
-        if (!shows(shown, 0, A) || !shows(shown, 1, B) || !shows(shown, 2, C) || !snap[0].frozen) {
-            logger::error("TEST FAIL: a normal lock running at combat onset was not turned into a combat freeze"sv);
+        if (!shows(shown, 0, A) || !shows(shown, 1, B)) {
+            logger::error("TEST FAIL: a converted combat lock let its key change"sv);
             passed = false;
         }
     }
     (void)locker.SetInCombat(false);
 
     // --- 5. combat upsert (0.23.38) ------------------------------------------
-    // Key 0 frozen on A (s=-1.0); the allocator now wants D (s=+1.0) there:
-    // +2.0 > 3 x ln 1.5 = 1.216, so D takes it. E (+0.6) over B (+0.5) does not.
+    // Times are stepped through RunContext::now, so the page spacing (3 s) and
+    // the press floor are crossed without sleeping.
     auto scoredPage = [&](std::initializer_list<std::pair<RE::FormID, double>> rows) {
         SlotAssignments out;
         size_t i = 0;
@@ -6549,6 +6561,12 @@ void RunSlotLockerOverrideScopeTest()
         }
         return out;
     };
+    auto at = [](std::chrono::steady_clock::time_point t0, int ms) {
+        SlotLocker::RunContext run;
+        run.now = t0 + std::chrono::milliseconds(ms);
+        return run;
+    };
+    const Override::OverrideCollection none{};
     {
         auto cfg = testConfig;
         cfg.combatUpsertMarginMult = 3.0f;
@@ -6556,34 +6574,87 @@ void RunSlotLockerOverrideScopeTest()
         locker.SetConfig(cfg);
         locker.Reset();
         (void)locker.SetInCombat(true);
-        (void)locker.ApplyLocks(scoredPage({ { A, -1.0 }, { B, 0.5 } }), Override::OverrideCollection{});
+        const auto t0 = std::chrono::steady_clock::now();
+        // Key 0 frozen on A (s=0), key 1 on C (s=-1.5).
+        (void)locker.ApplyLocks(scoredPage({ { A, 0.0 }, { C, -1.5 } }), none, {}, at(t0, 0));
 
-        SlotLocker::RunContext wheel;
+        // 5a. Off: the freeze is absolute.
+        cfg.combatUpsertMarginMult = 0.0f;
+        locker.SetConfig(cfg);
+        auto shown = locker.ApplyLocks(scoredPage({ { D, 1.5 }, { E, -1.4 } }), none, {}, at(t0, 1000));
+        if (!shows(shown, 0, A) || !shows(shown, 1, C)) {
+            logger::error("TEST FAIL: fCombatUpsertMarginMult = 0 still upserted"sv);
+            passed = false;
+        }
+        cfg.combatUpsertMarginMult = 3.0f;
+        locker.SetConfig(cfg);
+
+        // 5b. The wheel open: none.
+        auto wheel = at(t0, 1100);
         wheel.wheelOpen = true;
-        auto shown = locker.ApplyLocks(scoredPage({ { D, 1.0 }, { E, 0.6 } }), Override::OverrideCollection{}, {}, wheel);
-        if (!shows(shown, 0, A)) {
+        shown = locker.ApplyLocks(scoredPage({ { D, 1.5 }, { E, -1.4 } }), none, {}, wheel);
+        if (!shows(shown, 0, A) || !shows(shown, 1, C)) {
             logger::error("TEST FAIL: a combat upsert landed while the Wheeler wheel was open"sv);
             passed = false;
         }
-        shown = locker.ApplyLocks(scoredPage({ { D, 1.0 }, { E, 0.6 } }), Override::OverrideCollection{});
-        if (!shows(shown, 0, D) || !shows(shown, 1, B) || !locker.GetLockSnapshot()[0].frozen) {
-            logger::error("TEST FAIL: combat upsert (key0={:08X}, key1={:08X}; want D frozen on 0, B kept on 1)"sv,
+
+        // 5c. A key just pressed: none there, even with fPressGraceMs = 0 (the
+        //     floor); key 1 is held by its own Remembrance hold. Nothing open.
+        locker.NoteKeyPress(0);
+        auto pressed = SlotLocker::RunContext{};   // the real clock: the press was just now
+        pressed.remembranceHoldOnKey[1] = true;
+        shown = locker.ApplyLocks(scoredPage({ { D, 1.5 }, { E, -1.4 } }), none, {}, pressed);
+        if (!shows(shown, 0, A) || !shows(shown, 1, C)) {
+            logger::error("TEST FAIL: a combat upsert landed on a key pressed under the press floor"sv);
+            passed = false;
+        }
+
+        // 5d. The allocator wants an override on key 1 (waiting out
+        //     fMinLockDurationMs): key 1 is left to it. D (+1.5) takes key 0
+        //     (+1.5 > 1.216); one upsert, A displaced.
+        auto withHold = at(t0, 2000);
+        auto waiting = scoredPage({ { D, 1.5 }, { E, -1.4 } });
+        waiting[1].type = AssignmentType::Override;   // no active override: the lock holds, the gate must too
+        shown = locker.ApplyLocks(waiting, none, {}, withHold);
+        if (!shows(shown, 0, D) || !shows(shown, 1, C) || !locker.GetLockSnapshot()[0].frozen) {
+            logger::error("TEST FAIL: combat upsert (key0={:08X}, key1={:08X}; want D frozen on 0, C kept on 1)"sv,
                 shown.size() > 0 ? shown[0].formID : 0, shown.size() > 1 ? shown[1].formID : 0);
             passed = false;
         }
-        // Within the cooldown nothing takes key 0 again, however good (a
-        // one-key page, so F is no challenger for key 1).
-        shown = locker.ApplyLocks(scoredPage({ { F, 9.0 } }), Override::OverrideCollection{});
+
+        // 5e. No cascade: A, displaced, is now the allocator's pick for key 1
+        //     and beats C by +1.5 -- past the page spacing, the press floor
+        //     and with key 1 open, it must still not come back.
+        shown = locker.ApplyLocks(scoredPage({ { D, 1.5 }, { A, 0.0 } }), none, {}, at(t0, 6000));
+        if (!shows(shown, 1, C)) {
+            logger::error("TEST FAIL: the item an upsert displaced came back on another key (key1={:08X})"sv,
+                shown.size() > 1 ? shown[1].formID : 0);
+            passed = false;
+        }
+
+        // 5f. Key 0 inside its cooldown takes nothing, however good (one-key page).
+        shown = locker.ApplyLocks(scoredPage({ { F, 9.0 } }), none, {}, at(t0, 7000));
         if (!shows(shown, 0, D)) {
             logger::error("TEST FAIL: a second combat upsert on key 0 inside fCombatUpsertCooldownSec"sv);
             passed = false;
         }
-        // 0 = off: the freeze is absolute.
-        cfg.combatUpsertMarginMult = 0.0f;
-        locker.SetConfig(cfg);
-        shown = locker.ApplyLocks(scoredPage({ { D, 1.0 }, { F, 9.0 } }), Override::OverrideCollection{});
-        if (!shows(shown, 1, B)) {
-            logger::error("TEST FAIL: fCombatUpsertMarginMult = 0 still upserted key 1"sv);
+        (void)locker.SetInCombat(false);
+
+        // 5g. Two keys clearing the barrier on one run: one changes; the
+        //     other waits out the page spacing.
+        locker.Reset();
+        (void)locker.SetInCombat(true);
+        const auto t1 = std::chrono::steady_clock::now();
+        (void)locker.ApplyLocks(scoredPage({ { A, -2.0 }, { B, -2.0 } }), none, {}, at(t1, 0));
+        shown = locker.ApplyLocks(scoredPage({ { D, 1.0 }, { E, 1.0 } }), none, {}, at(t1, 1000));
+        const int first = (shows(shown, 0, A) ? 0 : 1) + (shows(shown, 1, B) ? 0 : 1);
+        shown = locker.ApplyLocks(scoredPage({ { D, 1.0 }, { E, 1.0 } }), none, {}, at(t1, 1100));
+        const int second = (shows(shown, 0, A) ? 0 : 1) + (shows(shown, 1, B) ? 0 : 1);
+        shown = locker.ApplyLocks(scoredPage({ { D, 1.0 }, { E, 1.0 } }), none, {}, at(t1, 4100));
+        const int third = (shows(shown, 0, A) ? 0 : 1) + (shows(shown, 1, B) ? 0 : 1);
+        if (first != 1 || second != 1 || third != 2) {
+            logger::error("TEST FAIL: page limit (keys changed after each run: {}, {}, {}; want 1, 1, 2)"sv,
+                first, second, third);
             passed = false;
         }
         (void)locker.SetInCombat(false);
@@ -6629,6 +6700,44 @@ void RunSlotLockerOverrideScopeTest()
             passed = false;
         }
         (void)locker.SetInCombat(false);
+    }
+
+    // 6b. The fill after the settle is the SAME item (out of combat, where
+    //     ShouldLock alone would not lock it): it must still lock.
+    locker.Reset();
+    (void)locker.SetInCombat(false);
+    {
+        auto first = page({ P });
+        first[0].type = AssignmentType::Remembered;
+        (void)locker.ApplyLocks(first, Override::OverrideCollection{});
+        locker.SettleAfterUndo(0, P, 1000.0f);
+        (void)locker.ApplyLocks(page({ P }), Override::OverrideCollection{});
+        (void)locker.Update(1100.0f);
+        const auto shown = locker.ApplyLocks(page({ P }), Override::OverrideCollection{});
+        const auto snap = locker.GetLockSnapshot();
+        if (!shows(shown, 0, P) || !snap[0].isLocked || snap[0].frozen) {
+            logger::error("TEST FAIL: the same-item fill after a settle was not locked (locked={})"sv, snap[0].isLocked);
+            passed = false;
+        }
+    }
+
+    // 6c. Sticky: Wheeler takes the 10 s activation lock just before it
+    //     reports the undo. The settle replaces it: 1 s, then one fill.
+    locker.Reset();
+    (void)locker.SetInCombat(false);
+    {
+        auto first = page({ P });
+        first[0].type = AssignmentType::Remembered;
+        (void)locker.ApplyLocks(first, Override::OverrideCollection{});
+        locker.LockSlotForActivation(0);
+        locker.SettleAfterUndo(0, P, 1000.0f);
+        (void)locker.Update(1100.0f);
+        const auto shown = locker.ApplyLocks(page({ D }), Override::OverrideCollection{});
+        if (!shows(shown, 0, D)) {
+            logger::error("TEST FAIL: the undo settle did not replace the Sticky activation lock (key shows {:08X})"sv,
+                shown.empty() ? 0 : shown[0].formID);
+            passed = false;
+        }
     }
 
     locker.SetConfig(savedConfig);

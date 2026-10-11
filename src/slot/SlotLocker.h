@@ -4,6 +4,7 @@
 
 #include "SlotAssignment.h"
 #include "SlotSettings.h"
+#include "core/CombatUpsert.h"
 #include "override/OverrideConditions.h"
 #include "telemetry/SoakMetrics.h"
 #include <array>
@@ -95,6 +96,7 @@ namespace Huginn::Slot
         // and when the player last pressed it (NoteKeyPress). Epoch = never.
         std::chrono::steady_clock::time_point lastUpsertAt{};
         std::chrono::steady_clock::time_point lastPressAt{};
+        float pressHoldMs = 0.0f;   // how long that press keeps the key from an upsert (at least the floor)
 
         // Churn telemetry. What the player was SHOWN in this slot last run --
         // post-dedup, which `assignment` above is not: an unlocked slot stores
@@ -201,6 +203,10 @@ namespace Huginn::Slot
             float challengerMargin = 0.5f;   ///< fChallengerMargin: the barrier is a multiple of ln(1 + this)
             /// Key i has an active Remembrance hold of its own, or shows one.
             std::array<bool, MAX_SLOTS_PER_PAGE> remembranceHoldOnKey{};
+            /// This run's clock for the upsert and the churn record. Epoch (the
+            /// default) = steady_clock::now(); the in-game test passes later
+            /// times to step past the page spacing without sleeping.
+            std::chrono::steady_clock::time_point now{};
         };
 
         // =========================================================================
@@ -280,10 +286,12 @@ namespace Huginn::Slot
         /// left alone (a late second report of the same undo).
         void SettleAfterUndo(size_t slotIndex, RE::FormID formID, float settleMs);
 
-        /// The player pressed hotkey `slotIndex` (key down, and again when the
-        /// press acts). A key pressed less than fPressGraceMs ago takes no
-        /// combat upsert.
-        void NoteKeyPress(size_t slotIndex);
+        /// The player pressed key `slotIndex` of the displayed page (hotkey
+        /// down and up, the press acting, a Wheeler activation). The key takes
+        /// no combat upsert for max(fPressGraceMs, holdMs, the 400 ms floor):
+        /// the input handler passes its double-tap window at key up, so a tap
+        /// waiting in it never acts on an upsert (core/CombatUpsert.h).
+        void NoteKeyPress(size_t slotIndex, float holdMs = 0.0f);
 
         /// Unlock all slots (e.g., on page change)
         void UnlockAll();
@@ -377,6 +385,11 @@ namespace Huginn::Slot
         // The combat flag SetInCombat last saw. Guarded by m_mutex.
         bool m_inCombat = false;
 
+        // Combat upsert, page-wide (core::CombatUpsertMemory): items that
+        // recently left a key or that an upsert displaced this fight (never
+        // challengers), and the page's last upsert. Guarded by m_mutex.
+        Core::CombatUpsertMemory m_upsertMemory;
+
         // =========================================================================
         // INTERNAL HELPERS
         // =========================================================================
@@ -420,10 +433,18 @@ namespace Huginn::Slot
         /// key open to it takes a challenger whose score beats the key's own
         /// item by fCombatUpsertMarginMult x ln(1 + fChallengerMargin).
         /// Challengers: what the allocator placed on this page this run
-        /// (`wanted`, ordinary picks only) that no key shows, not equipped, on
-        /// a key the allocator placed it on or whose class it fits. The new
-        /// item is locked like any other. Caller holds m_mutex.
-        void ApplyCombatUpserts(SlotAssignments& result, const SlotAssignments& wanted, const RunContext& run);
+        /// (`wanted`, ordinary picks only) that no key shows, not equipped, not
+        /// displaced by an upsert this fight nor gone from a key recently, on
+        /// a key the allocator placed it on or whose class it fits. At most one
+        /// per run, kCombatUpsertPageSpacingMs apart. The new item is locked
+        /// like any other. Caller holds m_mutex.
+        void ApplyCombatUpserts(SlotAssignments& result, const SlotAssignments& wanted, const RunContext& run,
+            std::chrono::steady_clock::time_point now);
+
+        /// How long an item that left a key stays out of the challengers:
+        /// max(fCombatUpsertCooldownSec, kCombatUpsertPageSpacingMs). Caller
+        /// holds m_mutex.
+        [[nodiscard]] double UpsertRecentMs() const;
     };
 
 }  // namespace Huginn::Slot

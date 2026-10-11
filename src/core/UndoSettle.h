@@ -17,7 +17,9 @@
 // (SlotLocker::SettleAfterUndo), then fills once and locks that fill, even if
 // it is the same item; in combat that is a combat lock. An urgent override or
 // a new Remembrance hold on the key still takes it during the settle (the
-// normal lock's rules). The same everywhere, in combat or not.
+// normal lock's rules). The same everywhere, in combat or not. The cost: the
+// just-equipped item stays up, unlabelled, for the settle (1 s) instead of a
+// stale pick changing under the player's finger.
 //
 // Pure: standard library only, host-tested in tests/core/UndoSettleTests.cpp.
 
@@ -27,10 +29,9 @@ namespace Huginn::Core
 {
     enum class UndoSettleStart : uint8_t
     {
-        None,                ///< nothing to do: already settling, or the key is unrelated
-        Hold,                ///< hold what the key shows, as an ordinary item, for the settle
-        KeepActivationLock,  ///< a Sticky activation lock holds it already: only drop the label
-        Release,             ///< the key's lock holds the undone item without showing it: let go
+        None,      ///< nothing to do: already settling, or the key is unrelated
+        Hold,      ///< hold what the key shows, as an ordinary item, for the settle
+        Release,   ///< the key's lock holds the undone item without showing it: let go
     };
 
     struct UndoSettleStartInput
@@ -38,13 +39,15 @@ namespace Huginn::Core
         bool settling = false;        ///< the key is settling already (a second report of one undo)
         bool showsUndone = false;     ///< the key shows the undone item right now
         bool lockedOnUndone = false;  ///< the key's lock holds the undone item
-        bool activationLock = false;  ///< that lock is the Sticky activation lock (10 s)
     };
 
+    /// Hold replaces whatever lock the key has, a Sticky activation lock (10 s)
+    /// included: Wheeler takes that lock just before it reports the undo, and
+    /// the old per-tick release let go of it; kept, the undone item would stay
+    /// up for 10 s.
     [[nodiscard]] constexpr UndoSettleStart DecideUndoSettleStart(const UndoSettleStartInput& in) noexcept
     {
         if (in.settling) return UndoSettleStart::None;
-        if (in.showsUndone && in.lockedOnUndone && in.activationLock) return UndoSettleStart::KeepActivationLock;
         if (in.showsUndone) return UndoSettleStart::Hold;
         if (in.lockedOnUndone) return UndoSettleStart::Release;
         return UndoSettleStart::None;

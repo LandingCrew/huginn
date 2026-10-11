@@ -320,6 +320,10 @@ namespace Huginn::Input
            // First tap - defer action, wait for potential double tap
            state.lastTapTime = m_frameTime;
            state.pendingTapAction = true;  // Will fire in Update() if no double-tap
+           // The tap acts up to the window from now: no combat upsert on this
+           // key until then (plus one update tick).
+           Slot::SlotLocker::GetSingleton().NoteKeyPress(static_cast<size_t>(slotIndex),
+              m_doubleTapWindow * 1000.0f + 100.0f);
            logger::debug("[InputHandler] Slot {} TAP pending (waiting {:.0f}ms for double-tap)"sv,
             slotIndex + 1, m_doubleTapWindow * 1000.0f);
            // DO NOT call callback here - wait for timeout in Update()
