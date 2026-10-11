@@ -458,7 +458,10 @@ Map Phase 4, in `tools/replay`.
       [architecture/11-sequences-and-redundancy.md](architecture/11-sequences-and-redundancy.md),
       steps 1-2): compare pairs on presence plus a strength term with the
       current grading (Feather's carry-weight grade is 0.0046), and test
-      `recent_<family>` features, on held-out picks.
+      `recent_<family>` features (window up to 30 s), on held-out picks.
+      Decided 2026-10-10: the grading switches, and `recent_*` reaches R8,
+      only on held-out lift; the encumbrance curve is fitted from the
+      player's carry-weight picks.
 - **You decide:** go to R8, or stop and rethink. θ from this fit is the
   bootstrap for R8.
 
@@ -519,7 +522,12 @@ changed in the same PR, and the shipped INI loses the dead keys.
       the active-buff filters drop (for a shadow estimate of its weight:
       choice sets by `shown`, a zero-centred prior), and the summon count and
       limit; the summon
-      filter counts against the limit (the Twin Souls bug).
+      filter counts against the limit (the Twin Souls bug). Decided
+      2026-10-10 (doc 11, section 7): at the limit a summon scoring above the
+      one it would replace is still offered (greedy upgrade); a buff near expiry
+      reads partly uncovered; thralls await the user's test. With these
+      sensors, doc 11 step 7: the attacker's race on every hit and
+      `poison_damage_rate`, for anticipatory resists.
 - [ ] **Decide: which thread runs the update loop** (2026-10-09, two Tracy
       traces in `traces/202610/`, which is not checked in; the counts and
       times are trace09's unless marked). `OnUpdate`, driven by the InputEvent sink,
@@ -630,6 +638,12 @@ Map Phase 7: swap when μc − μi > ln m + z·σ_Δ, σ_Δ with shared weights
 cancelling. Lock, home keys and seating stay. Done when: host tests prove no
 swap-back on fixed beliefs; churn buckets on Δ/σ_Δ. **In game:** churn per
 press in the heartbeat against the R8 session.
+- [ ] **Slot juggling is a tracked problem** (the user, 2026-10-10: "need
+      watch the slot juggling"): the allocator moves items between slots too
+      often. An analysis of that night's session is pending, in local trace
+      notes (`traces/2026-10-10/trace-04-analysis.md`, not checked in). Its
+      numbers join the churn baseline under R8, and this stage is judged
+      against both.
 
 ### R10. Wildcards by uncertainty
 
@@ -706,6 +720,7 @@ after R8.
 | Soul Gem Fragment (LoreRim MISC item) | Find how LoreRim uses it first | Open |
 | Food at a cooking pot or spit (the R3 session: a spit read as a forge) | A `workstation_cooking` need (the bench kind exists: `core/BenchKind.h` reads it from the workbench keyword, 0.23.16) x food effect columns; smelter and tanning rack likewise if a column ever answers them | Sensor exists (`NeedSensorState::bench`); no need row |
 | Soups for the cold meter, apart from warming spells | Split `survival_warmth`: Restore Cold (Update.esm 01002EE5, a soup's; restores the cold meter, `cold`) from Fortify Warmth (01002EE6 / Variable09, warming spells, the Torch, soups; raises the warmth rating, `warmth_deficit`). Two mechanics, confirmed via LoreRim Discord (2026-10-09); one column today, so `cold` x `survival_warmth` also reaches a warming spell. A column change: fixtures regenerate from the dumps | Effect records tell them apart (MGEF, keyword `CCSM_RestoreCold`, name); the columns do not |
+| A resist before the hit (falmer, spiders: the user, 2026-10-10) | `threat_<element>` needs: the element damage the visible hostiles are expected to deal, learned per race from the damage this player took, × `resist_<element>`; plus the missing `poison_damage_rate` ([doc 11, section 8](architecture/11-sequences-and-redundancy.md)). Spiders are already an obvious pair (`target_arthropod` × `resist_poison`); falmer have no route | Missing: hits keep their element but not their attacker; poison is classified but not summed |
 | Resist Disease before a fight with disease carriers | A `disease_exposure` need (hostiles of a disease-carrying race in the fight: skeevers, wolves, bears, sabre cats, vampires -- a race table, as the target families) x `resist_disease`. 0.23.16 removed `diseased` x Resist Disease: resisting does not cure a disease already caught | Missing; no existing need covers it (`target_animal` also holds deer and horses) |
 
 ## Kept outside the rewrite
