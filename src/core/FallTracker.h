@@ -74,6 +74,13 @@ namespace Huginn::Core::Needs
     /// core/DropAhead.h ReadingAge::kMaxPollStepSec.
     inline constexpr double kFallMaxPollStepSec = 0.5;
 
+    /// One frame counts at most this much game time: three frames at the
+    /// 30 fps floor. Nobody has traced whether the update delta of the first
+    /// frame after a pausing menu is one frame or the whole pause (the wall
+    /// time behind that frame is the whole pause), and a short clock is the
+    /// safe side: it only lengthens the time a free fall is allowed.
+    inline constexpr double kFallMaxFrameSec = 0.1;
+
     /// One frame's game time, for the descent clock: the smaller of the
     /// wall-clock frame scaled by the game's global time multiplier (what
     /// Wheeler's slow time writes) and the delta the game hands the player's
@@ -83,13 +90,13 @@ namespace Huginn::Core::Needs
     /// the time a free fall is allowed. A frame with no wall time behind it
     /// (a second update in the same frame) counts nothing. Negative or
     /// non-finite inputs count nothing; one frame counts at most
-    /// kFallMaxPollStepSec.
+    /// kFallMaxFrameSec.
     [[nodiscard]] inline double GameFrameSec(double wallFrameSec, double timeMult, double updateDeltaSec) noexcept
     {
         const double scaled = wallFrameSec * timeMult;
-        double step = std::min(scaled, updateDeltaSec);
+        const double step = std::min(scaled, updateDeltaSec);
         if (!(step > 0.0)) return 0.0;  // also NaN
-        return std::min(step, kFallMaxPollStepSec);
+        return std::min(step, kFallMaxFrameSec);
     }
 
     /// Longest time a free fall takes from depth d0 down to d1 below its

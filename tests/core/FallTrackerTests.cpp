@@ -203,6 +203,16 @@ TEST_CASE("free-fall bound: the logged falls of 2026-10-10 against it")
     CHECK(SlowerThanFreeFall(300.0f, 290.0f, 0.1f));
 }
 
+// WHAT THE GAME-CLOCK TESTS BELOW PROVE, AND WHAT THEY DO NOT. They show the
+// tracker keeps a free fall WHEN the clock it is handed is right: slow time,
+// a hitch, a pausing menu, a long first frame after one. They do not prove
+// the clock is right. DropAheadProbe's hook summing GameFrameSec per frame
+// (from the real global time multiplier and update delta), and
+// PollPlayerPosition's subtraction of two GameSeconds readings, are engine
+// code; only the in-game check proves them: with Wheeler open mid-fall, the
+// `[Falling] end` line's game time reads about a fifth of its wall time
+// (roadmap R3).
+
 namespace
 {
     // One poll's game time from frames at 60 fps under a global time
@@ -223,7 +233,8 @@ TEST_CASE("game clock: one frame is the wall frame times the time multiplier, or
     CHECK(GameFrameSec(0.016, 0.2, 0.0032) == doctest::Approx(0.0032));  // ...or scaled: the same
     CHECK(GameFrameSec(0.300, 1.0, 0.050) == doctest::Approx(0.050));    // a hitch the game clamps
     CHECK(GameFrameSec(0.0, 1.0, 0.016) == 0.0);                         // a second update in one frame
-    CHECK(GameFrameSec(5.0, 1.0, 5.0) == doctest::Approx(kFallMaxPollStepSec));
+    CHECK(GameFrameSec(5.0, 1.0, 5.0) == doctest::Approx(kFallMaxFrameSec));
+    CHECK(kFallMaxFrameSec <= 0.1);  // ~3 frames at 30 fps, never a pause's length
     CHECK(GameFrameSec(-1.0, 1.0, 0.016) == 0.0);
     CHECK(GameFrameSec(std::nan(""), 1.0, 0.016) == 0.0);
 }
@@ -253,26 +264,67 @@ TEST_CASE("fall tracker: Wheeler's slow time (0.2) opened mid-fall keeps the ful
 
 TEST_CASE("fall tracker: a hitch does not re-anchor a fall")
 {
+    // A 0.3 s frame early in the fall. The physics either advances the
+    // game's clamped 0.05 s or the whole 0.3 s; the clock counts at most
+    // kFallMaxFrameSec of it, which is never more than the physics did, so
+    // the fall only looks faster.
     constexpr float kTop = 2000.0f;
     constexpr float kG = 954.0f;
-    for (const bool clamped : { true, false }) {
-        CAPTURE(clamped);
+    for (const double physicsSec : { 0.05, 0.3 }) {
+        CAPTURE(physicsSec);
         FallTracker t;
-        double game = 0.0;
+        double physics = 0.0;
         (void)t.Update(kTop, false, kMaxDelta, 0.0);
         float depth = 0.0f;
         for (int poll = 1; poll <= 10; ++poll) {
-            double dt = kPoll;
+            double step = kPoll;
+            double clock = kPoll;
             if (poll == 3) {
-                // A 0.3 s frame early in the fall: the game either clamps its
-                // delta (physics advances 0.05 s) or steps the whole 0.3 s.
-                dt = GameFrameSec(0.3, 1.0, clamped ? 0.05 : 0.3);
+                step = physicsSec;
+                clock = GameFrameSec(0.3, 1.0, physicsSec);
             }
-            game += dt;
-            const float z = FreeFallZ(kTop, kG, game);
-            depth = t.Update(z, true, kMaxDelta, dt);
+            physics += step;
+            const float z = FreeFallZ(kTop, kG, physics);
+            depth = t.Update(z, true, kMaxDelta, clock);
             CHECK(depth == doctest::Approx(kTop - z));
         }
         CHECK(depth > 400.0f);
+    }
+}
+
+TEST_CASE("fall tracker: a long first frame after a pausing menu does not re-anchor a fall")
+{
+    // A pausing menu opened 0.5 s into a fall: no frames run, the clock
+    // stands still. The first frame after it has the whole 8 s pause behind
+    // it on the wall clock, and nobody has traced whether its update delta
+    // is one frame or the gap. Either way it counts at most
+    // kFallMaxFrameSec.
+    constexpr float kTop = 3000.0f;
+    constexpr float kG = 954.0f;
+    for (const double firstDelta : { 1.0 / 60.0, 8.0 }) {
+        CAPTURE(firstDelta);
+        FallTracker t;
+        double physics = 0.0;
+        (void)t.Update(kTop, false, kMaxDelta, 0.0);
+        float depth = 0.0f;
+        for (int poll = 1; poll <= 5; ++poll) {
+            physics += kPoll;
+            depth = t.Update(FreeFallZ(kTop, kG, physics), true, kMaxDelta, kPoll);
+        }
+        // Paused: polls with no game time and the Z frozen.
+        for (int poll = 0; poll < 80; ++poll) {
+            CHECK(t.Update(FreeFallZ(kTop, kG, physics), true, kMaxDelta, 0.0) == doctest::Approx(depth));
+        }
+        // The first poll after: one long frame, then five normal ones; the
+        // physics ran one normal frame plus those five.
+        const double clock = GameFrameSec(8.0, 1.0, firstDelta) + 5.0 / 60.0;
+        physics += 6.0 / 60.0;
+        depth = t.Update(FreeFallZ(kTop, kG, physics), true, kMaxDelta, clock);
+        CHECK(depth == doctest::Approx(kTop - FreeFallZ(kTop, kG, physics)));
+        for (int poll = 0; poll < 5; ++poll) {
+            physics += kPoll;
+            depth = t.Update(FreeFallZ(kTop, kG, physics), true, kMaxDelta, kPoll);
+            CHECK(depth == doctest::Approx(kTop - FreeFallZ(kTop, kG, physics)));
+        }
     }
 }

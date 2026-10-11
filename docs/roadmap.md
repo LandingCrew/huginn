@@ -283,12 +283,19 @@ in. What was built: the [implementation map](architecture/9-implementation-map.m
         frame's wall time times the global time multiplier Wheeler writes,
         or the update's delta if smaller): a descent slower than a free fall
         re-anchors the take-off Z, so a slide no longer accumulates depth,
-        while a fall seen through an open wheel keeps its depth. In-game
-        check: a slide down a steep slope never shows the Falling reason; a
-        real cliff fall still does, also with Wheeler opened mid-fall, and
-        its end line's game time is about a fifth of the wall time while the
-        wheel is open (and with the Slow Time shout, whose use of the same
-        multiplier is not verified).
+        while a fall seen through an open wheel keeps its depth. One frame
+        counts at most 0.1 s of game time (whether the first frame after a
+        pausing menu hands the player's update the whole pause is not
+        traced). The host tests show the tracker keeps a free fall when the
+        clock is right; only the in-game check proves the clock (the hook's
+        sum and the poll's subtraction). In-game check:
+        - a slide down a steep slope never shows the Falling reason;
+        - a real cliff fall still does, also with Wheeler opened mid-fall,
+          and its end line's game time is about a fifth of the wall time
+          while the wheel is open (and with the Slow Time shout, whose use
+          of the same multiplier is not verified);
+        - a pausing menu (favorites, inventory) opened mid-fall keeps the
+          depth, and the fall's end line's game time leaves the pause out.
       - **OPEN: false water by a pond.** At 11:23-11:24 six jumps from a bank
         at feet -3005 read water at -3008 ahead; from the bank the probe read
         it shallow (`deep water` 28 and 91). The deep readings were taken

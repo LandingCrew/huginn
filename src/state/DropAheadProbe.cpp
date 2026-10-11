@@ -74,7 +74,8 @@ namespace Huginn::State::DropAheadProbe
             // The global time multiplier: the float Wheeler's SGTM writes
             // (wheeler src/bin/Utilities/Utils.cpp: RELOCATION_ID(511883,
             // 388443), the address BSTimer::GetCurrentGlobalTimeMult reads).
-            const double mult = RE::BSTimer::GetCurrentGlobalTimeMult();
+            static float* const s_timeMult = &RE::BSTimer::GetCurrentGlobalTimeMult();  // as Wheeler caches it
+            const double mult = *s_timeMult;
             const double step = Core::Needs::GameFrameSec(wall, mult, a_delta);
             g_gameSeconds.store(g_gameSeconds.load(std::memory_order_relaxed) + step,
                                 std::memory_order_relaxed);
