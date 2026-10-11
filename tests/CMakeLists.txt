@@ -76,6 +76,7 @@ target_compile_definitions(huginn_core_tests PRIVATE "HUGINN_REPO_ROOT=\"${PROJE
 if(MSVC)
    target_compile_options(huginn_core_tests PRIVATE /utf-8 /permissive- /Zc:preprocessor)
 endif()
+huginn_enable_warnings(huginn_core_tests)
 
 add_dependencies(huginn_core_tests huginn_core_purity)
 if(TARGET Huginn)
@@ -112,4 +113,5 @@ target_include_directories(huginn_effect_report PRIVATE "${PROJECT_SOURCE_DIR}/s
 if(MSVC)
    target_compile_options(huginn_effect_report PRIVATE /utf-8 /permissive- /Zc:preprocessor)
 endif()
+huginn_enable_warnings(huginn_effect_report)
 add_dependencies(huginn_effect_report huginn_core_purity)

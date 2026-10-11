@@ -557,7 +557,9 @@ level 40** (the user, 2026-10-10: "keep playing until the character is level
       -- Heal Undead / Heal Daedra / Necromantic Healing, Arcane Mending,
       Daedric Mind -- which a bane column (harm to a family) does not
       describe. They need their own reading (an ally-family heal or buff),
-      after the bane columns.
+      after the bane columns. Thundering Hooves belongs here too:
+      movement_speed on a ridden horse, a bane-only beneficial row on 4
+      forms (verifier of #205, 0.23.35).
 - **You decide:** go to R8, or stop and rethink. θ from this fit is the
   bootstrap for R8.
 

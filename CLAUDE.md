@@ -14,7 +14,9 @@ Huginn is an SKSE plugin for Skyrim — a **contextual quick-access system** tha
 cmake --preset vs2022-windows && cmake --build build --config Debug
 ```
 
-**Prerequisites:** Visual Studio 2022 (v143), vcpkg (`VCPKG_ROOT`), CommonLibSSE-NG v3.7.0 (`CommonLibSSEPath_NG`), `CompiledPluginsPath` set to your SKSE plugins output directory.
+**Prerequisites:** Visual Studio 2022 (v143), CMake 3.25+, vcpkg (`VCPKG_ROOT`), CommonLibSSE-NG v3.7.0 (`CommonLibSSEPath_NG`), `CompiledPluginsPath` set to your SKSE plugins output directory.
+
+**Warnings:** Huginn's own targets (the plugin, `huginn_core_tests`, `huginn_effect_report`) build at `/W4 /WX`, set in `cmake/HuginnWarnings.cmake`; CommonLib and Tracy are added as SYSTEM and stay at `/W0`. Configure with `-DHUGINN_WARNINGS_AS_ERRORS=OFF` to keep the warnings without failing the build.
 
 **Clean build:** Delete `build/`, then reconfigure and rebuild.
 
@@ -59,7 +61,7 @@ See [docs/README.md](docs/README.md) for full system design.
 | `src/persist/` | Learner weight serialization (cosave) |
 | `src/settings/` | SettingsReloader (dMenu hot-reload) |
 | `src/effect/` | Effect extractor (R2): EffectReader (forms -> records), EffectCatalog (cap(i) per item, built when the main menu first opens; not read for scoring yet), `hg dump all` |
-| `src/core/` | Pure, host-tested code (`huginn_core_tests`): the effect mapper (EffectColumns, EffectRecords, EffectRules, EffectMapper, CrossFeatures), MiniRegex, ActorTypeClassifier, TargetType, RingBuffer, SlotClassCapMath; the need vector (NeedEvaluator, NeedIds, ResponseCurve, R3); the selection log v3 format (DecisionLog) and need episodes (NeedEpisodes, R4) |
+| `src/core/` | Pure, host-tested code (`huginn_core_tests`): the effect mapper (EffectColumns, EffectRecords, EffectRules, EffectConditions, EffectMapper, CrossFeatures), MiniRegex, ActorTypeClassifier, TargetType, TargetFamilies, RingBuffer, SignatureDedup, the slot math (SlotAllocCore, SlotClassCapMath, SlotScoreMath, SlotSnapshotIO); the need vector and its sensors (NeedEvaluator, NeedIds, NeedSnapshot, NeedSnapshotIO, NeedSensorMath, ResponseCurve, DropAhead, WaterSelfCheck, FallTracker, BenchKind, R3); the selection log v3 format (DecisionLog) and need episodes (NeedEpisodes, R4) |
 
 ## Configuration
 
@@ -88,7 +90,7 @@ Registered as `Huginn` with short alias `hg` (in-game `~` console):
 | `hg unlock` | Clear all slot locks |
 | `hg rebuild` | Force rebuild all registries |
 | `hg weights <FormID>` | Show learner weight vector (hex FormID) |
-| `hg cap <FormID>` | Show an item's effect columns, per-stack cap and runtime cross-features (debug builds) |
+| `hg cap <FormID>` | Show an item's effect columns, per-stack cap, runtime cross-features, and its perk-gated rows with whether the player has each perk plus the perk-adjusted cap (debug builds) |
 | `hg page <N>` | Switch to page N |
 | `hg reset weights` | Clear learned item weights |
 | `hg reset all` | Full system reset |

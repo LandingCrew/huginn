@@ -354,8 +354,8 @@ namespace Huginn::Scoring
         const State::GameState& state,
         const State::PlayerActorState& player,
         const State::TargetCollection& targets,
-        const State::WorldState& world,
-        const Context::ContextWeightMap& weights,
+        const State::WorldState& /*world*/,
+        const Context::ContextWeightMap& /*weights*/,
         float contextWeight,
         const Learning::FeatureItemMetrics& metrics,
         float recencyBoost)

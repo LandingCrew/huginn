@@ -499,7 +499,7 @@ static void OnDataLoaded()
     }
     s_dataLoadedDone = true;
 
-    auto timeElapsed = std::chrono::high_resolution_clock::now() - start;
+    auto timeElapsed = std::chrono::high_resolution_clock::now() - g_pluginLoadStart;
     logger::info("time to main menu {}"sv, std::chrono::duration_cast<std::chrono::milliseconds>(timeElapsed).count());
 
     logger::info("Data loaded - Huginn ready"sv);
@@ -1021,7 +1021,7 @@ static void InstallHooks()
 
 extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_skse)
 {
-    start = std::chrono::high_resolution_clock::now();
+    g_pluginLoadStart = std::chrono::high_resolution_clock::now();
     OpenLog();
 
 #ifdef Huginn_TRACY_ENABLED

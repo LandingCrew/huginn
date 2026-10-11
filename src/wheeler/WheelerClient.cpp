@@ -256,7 +256,7 @@ namespace Huginn::Wheeler
         }
     }
 
-    void WheelerClient::OnEditModeChanged(bool entered, const WheelerAPI::WheelChange* changes, size_t changeCount)
+    void WheelerClient::OnEditModeChanged(bool entered, const WheelerAPI::WheelChange* /*changes*/, size_t changeCount)
     {
         spdlog::debug("[WheelerClient] EditModeChanged: entered={}, changeCount={}", entered, changeCount);
 

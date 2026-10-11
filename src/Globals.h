@@ -26,7 +26,7 @@
 // GLOBAL INSTANCES - Declared here, defined in Globals.cpp
 // =============================================================================
 
-extern std::chrono::high_resolution_clock::time_point start;
+extern std::chrono::high_resolution_clock::time_point g_pluginLoadStart;  // SKSEPlugin_Load, for "time to main menu"
 
 // Core system instances
 extern std::unique_ptr<Huginn::State::StateEvaluator> g_stateEvaluator;

@@ -234,7 +234,7 @@ namespace Huginn::Candidate
 
     void CandidateGenerator::GatherPotionCandidates(
         std::vector<CandidateVariant>& out,
-        const State::PlayerActorState& player)
+        const State::PlayerActorState& /*player*/)
     {
         if (!m_itemRegistry) {
             logger::warn("[CandidateGenerator] GatherPotionCandidates: m_itemRegistry is null");
@@ -277,7 +277,7 @@ namespace Huginn::Candidate
 
     void CandidateGenerator::GatherWeaponCandidates(
         std::vector<CandidateVariant>& out,
-        const State::PlayerActorState& player)
+        const State::PlayerActorState& /*player*/)
     {
         if (!m_weaponRegistry) {
             logger::warn("[CandidateGenerator] GatherWeaponCandidates: m_weaponRegistry is null");
@@ -359,7 +359,7 @@ namespace Huginn::Candidate
 
     void CandidateGenerator::GatherScrollCandidates(
         std::vector<CandidateVariant>& out,
-        const State::PlayerActorState& player)
+        const State::PlayerActorState& /*player*/)
     {
         if (!m_scrollRegistry || m_scrollRegistry->IsLoading()) {
             return;
@@ -385,7 +385,7 @@ namespace Huginn::Candidate
 
     void CandidateGenerator::GatherSoulGemCandidates(
         std::vector<CandidateVariant>& out,
-        const State::PlayerActorState& player)
+        const State::PlayerActorState& /*player*/)
     {
         if (!m_itemRegistry) {
             logger::warn("[CandidateGenerator] GatherSoulGemCandidates: m_itemRegistry is null");

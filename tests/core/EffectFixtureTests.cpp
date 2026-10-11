@@ -87,12 +87,12 @@ namespace
                 REQUIRE(eq != std::string::npos);
                 const auto col = FromName(kv.substr(0, eq));
                 REQUIRE(col.has_value());
-                const float want = std::stof(kv.substr(eq + 1));
+                const float wantValue = std::stof(kv.substr(eq + 1));
                 const float have = Get(r.caps[i], *col);
                 ++fr.values;
-                const bool same = std::fabs(have - want) <= 1e-4f + 1e-4f * std::fabs(want);
+                const bool same = std::fabs(have - wantValue) <= 1e-4f + 1e-4f * std::fabs(wantValue);
                 if (!same) ++fr.valueMismatch;
-                CHECK_MESSAGE(same, kv.substr(0, eq) << " got " << have << " want " << want);
+                CHECK_MESSAGE(same, kv.substr(0, eq) << " got " << have << " want " << wantValue);
             }
 
             // Every in-scope item carries exactly one kind column, and every

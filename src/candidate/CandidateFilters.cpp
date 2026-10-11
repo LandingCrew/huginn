@@ -354,7 +354,6 @@ namespace Huginn::Candidate
         if (m_config.maxCandidatesAfterFilter > 0 &&
             output.size() > m_config.maxCandidatesAfterFilter) {
             size_t beforeTrunc = output.size();
-            size_t weaponsBeforeTrunc = weaponsPassed;
             output.resize(m_config.maxCandidatesAfterFilter);
             // Recount weapons only if truncation happened (rare path)
             size_t weaponsAfter = 0;

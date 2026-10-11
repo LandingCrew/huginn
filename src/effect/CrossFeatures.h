@@ -42,6 +42,12 @@ namespace Huginn::Effect
 
     /// Does `actor` have the perk with this FormID? (A read of its perk list;
     /// false for a FormID that is not a perk.)
+    /// MAIN THREAD ONLY, for the reason PerkAdjustedCap below gives: it calls
+    /// Actor::HasPerk, which walks the game's perk array, and from the update
+    /// loop that races the main thread adding a perk. Today only `hg cap`
+    /// calls it (directly and through PerkAdjustedCap), on the main thread. Off the main
+    /// thread, test a copy of the perk FormIDs taken with the StateManager
+    /// snapshot instead.
     [[nodiscard]] bool HasPerkId(const RE::Actor* actor, RE::FormID perk);
 
     /// cap(i) with the item's perk rows the actor meets (0.23.30;
