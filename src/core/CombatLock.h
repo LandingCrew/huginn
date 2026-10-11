@@ -11,7 +11,8 @@
 // second.
 //
 // Under a combat lock the challenger margin never reaches a locked key: only
-// these change it --
+// these change it (and the combat upsert's much wider margin, measured against
+// the item on the key) --
 //   - its item is gone (consumed to the last one, dropped, sold): the lock is
 //     released at the source (SlotLocker::OnItemUsed with UseKind::Gone), so it
 //     never gets here; a spell or shout no longer known, or an item now
@@ -31,8 +32,12 @@
 // re-shows it whatever the candidate list says -- instead of leaving and coming
 // back with the magicka.
 //
+// When combat starts, every key on a normal lock becomes combat-locked on the
+// item it holds (ConvertsAtCombatOnset); unlocked keys are locked by the sweep.
 // When combat ends, locks taken under the combat duration fall back to the
 // normal timer, counted from the end of combat (no re-shuffle on the last kill).
+// The one way a better score takes a combat-locked key is the upsert
+// (core/CombatUpsert.h).
 //
 // Pure: standard library only, host-tested in tests/core/CombatLockTests.cpp.
 
@@ -83,6 +88,20 @@ namespace Huginn::Core
             return 0.0f;
         }
         return frozen ? normalMs : std::min(remainingMs, normalMs);
+    }
+
+    /// At combat onset, whether a key's running lock becomes a combat lock on
+    /// the item it holds. Before 0.23.38 only unlocked keys were combat-locked
+    /// (the sweep); a key still on its normal 3 s lock kept that timer, ran out
+    /// 1-3 s into the fight and was refilled (2026-10-11 12:40:04, 12:59:32,
+    /// 13:01:02, 13:18:46; at 12:59:34 the player pressed it 2 s after it
+    /// changed). Not converted: a key already combat-locked, one whose lock
+    /// holds an override or Remembrance item (it keeps its own break rules),
+    /// and a Swap Back undo settle (it ends on its own time and fills once).
+    [[nodiscard]] constexpr bool ConvertsAtCombatOnset(bool locked, bool alreadyCombat, bool holdsPinned,
+        bool settling, bool empty) noexcept
+    {
+        return locked && !alreadyCombat && !holdsPinned && !settling && !empty;
     }
 
     /// Whether the combat lock should treat the player as in combat. The game's

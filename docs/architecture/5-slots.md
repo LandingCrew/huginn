@@ -705,6 +705,9 @@ equip into an empty hand or quiver displaces nothing and starts no hold.
   left. Instances are not tracked: a weapon owned twice shows its
   best-scoring stack.
 - **Ends early** when the item goes back in a hand some other way.
+- **Undo settle.** When the item goes back in hand (the undo, or any other
+  way), the key that shows it settles for 1 s: it keeps the item, without the
+  "Swap Back" label, then fills once and locks (see Churn guards).
 - **Always a candidate.** If the ranking dropped the item, `ScoreCandidates`
   appends it unranked with `isRememberedOnly`, which only Pass 1a may place.
 - **Wins dedup.** A lock elsewhere on the same item is released in
@@ -788,7 +791,7 @@ from `UpdateSubsystems`, *not* from behind the pipeline-skip gate, so locks deca
 in wall-clock time. It returns `true` if any lock expired, and the caller must
 force a pipeline run so the freed slot's content actually swaps.
 
-### Churn guards (0.23.37)
+### Churn guards (0.23.37, 0.23.38)
 
 Counts in this section are `[SlotChurn]` lines -- page-0 changes as the locker
 made them -- in the 2026-10-11 LoreRim log, window 08:55:40-08:58:00 (119
@@ -808,8 +811,14 @@ of `fLockDurationMs`, and a freeze has no timer. "In combat" is the game's flag
 `fCombatNoEnemyReleaseSec` (default 5, 0 = off; `Core::CombatPresence`, fed the
 count the GameState `Enemies:` bucket uses): the flag can stay up for minutes
 after the last kill (09:23:56 last enemy, 09:26:05 flag down). The result is
-pushed every tick by `SlotLocker::SetInCombat`. The challenger margin never
-reaches a combat-locked key; only these change it:
+pushed every tick by `SlotLocker::SetInCombat`. At combat onset every key on a
+normal lock becomes combat-locked on the item it holds
+(`Core::ConvertsAtCombatOnset`, 0.23.38); before, it kept its 3 s timer, ran
+out 1-3 s into the fight and was refilled (2026-10-11 12:40:04, 12:59:32,
+13:01:02, 13:18:46). Keys holding an override or Remembrance item keep their
+own rules, and an undo settle ends on its own time. The challenger margin never
+reaches a combat-locked key; only these change it (and the combat upsert,
+below):
 
 - its item is gone: `OnItemUsed(..., UseKind::Gone)` -- the inventory scan
   passes `Gone` only when none is left (`StillCarried`), weapon departures and
@@ -866,6 +875,54 @@ item would be shown on no key). `fCombatNoEnemyReleaseSec` counts enemies within
 detection range (about 2048 units): a distant archer or a circling dragon thaws
 the keys, and they lock again when it returns. Changing
 `fCombatLockDurationMs` mid-fight affects locks taken after the change.
+
+**Combat upsert** (`fCombatUpsertMarginMult`, default 3, 0 = off;
+`fCombatUpsertCooldownSec`, default 10, 0 = no limit; `src/core/CombatUpsert.h`,
+wired in `SlotLocker::ApplyCombatUpserts`, after dedup and before the combat
+sweep; 0.23.38). The freeze cut page-0 changes in combat from 34-60 a minute to
+about 9, but made the key absolute. A challenger now takes a combat-locked key
+when `s(challenger) - s(item on the key) > fCombatUpsertMarginMult x ln(1 +
+fChallengerMargin)` (3 x ln 1.5 = 1.216, about 3.4x the utility under the
+bridge; both scores finite). It is measured against the item ON the key -- this
+run's score if it was scored, else the last score the key had (the conservative
+side) -- never against the allocator's seating, which keeps reshuffling behind
+the locks (48 `[Hold]` give-ways in 200 s at margins of 0.4-0.9). Challengers are
+the allocator's ordinary picks for this page (not override, Remembrance or
+wildcard) that no key shows (by item or name) and that are not equipped (the
+locker cannot see `bSkipEquipped`), on a key the allocator placed them on or
+whose class they fit (`SlotClassifier::Matches`). That set already passed the
+ranking, the class cap and the slot filters; the class-cap term is not applied
+again. Pairing is greedy on the margin (`PlanCombatUpserts`). Never on a key
+showing an override, a Remembrance item or a wildcard, with an active hold of
+its own, changing this run, pressed (`SlotLocker::NoteKeyPress`: key down and
+the press acting) or changed less than `fPressGraceMs` ago, or upserted less
+than `fCombatUpsertCooldownSec` ago; never while the Wheeler wheel is open. The
+new item is combat-locked like any other. One info line each,
+`[SlotLocker] Slot N combat upsert: 'Old' -> 'New' (s=+a vs -b, +d > 3.0 x ln m
+0.405)`, and the change counts as `upsert` in `[SlotChurn]` and the heartbeat.
+Replayed on the 2026-10-11 12:05-13:27 log (11 fights, 15.7 min in combat, 105
+page-0 changes): about 32-36 upserts at 3 (2.0-2.3 a minute) and 69-71 at 2. An
+upper bound: the log has the frozen items' scores only when some line printed
+them, often from a moment they lost, and minutes old.
+
+**Swap Back undo settle** (`src/core/UndoSettle.h`, `SlotLocker::
+SettleAfterUndo`, called by `Remembrance` for the undo and for a held item back
+in hand; 0.23.38). The first fill after an undo is made against state that has
+not caught up (the 2026-09-28 Skooma case), so the key used to follow the
+allocator unlocked for 1 s (`kSettleMs`), and in combat changed two or three
+times in it (12:45:03.1-03.6: Circle of Strength -> Staff of the Flame Atronach
+-> Raw Canine Meat in 0.45 s; also 12:54:53, 12:55:15, 12:56:20, 13:01:40). Now
+the key showing the undone item holds it for the settle, re-typed as an ordinary
+item so the "Swap Back" label goes on the next run as before; when the settle
+runs out the next run fills the key once and locks that fill even if it is the
+same item (`LockThisFill`; a combat lock in combat). An urgent override or a new
+Remembrance hold still takes the key meanwhile (the normal lock's rules); a use
+of the item (Wheeler reports the undo as one) does not end it, its being gone
+does. A Sticky activation lock on the key keeps its 10 s and only loses the
+label; a key whose lock holds the item without showing it is unlocked; a second
+report of the same undo changes nothing. The same rule out of combat: the change
+it saves is the same misclick hazard, and the cost is that the just-equipped
+item stays up, unlabelled, for up to a second instead of a stale pick.
 
 Override evaluation no longer depends on lock expiries: the pipeline also wakes
 whenever a raw vital crosses an override's own activation or release threshold

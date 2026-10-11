@@ -6511,6 +6511,126 @@ void RunSlotLockerOverrideScopeTest()
         }
     }
 
+    // --- 4. combat onset converts running normal locks (0.23.38) -----------
+    // A key still on its 3 s lock when combat starts must not run out and be
+    // refilled 1-3 s into the fight (2026-10-11 12:59:32).
+    locker.Reset();
+    (void)locker.SetInCombat(false);
+    (void)locker.ApplyLocks(page({ A, B, C }), Override::OverrideCollection{});
+    (void)locker.SetInCombat(true);
+    (void)locker.Update(5000.0f);
+    {
+        const auto shown = locker.ApplyLocks(page({ D, E, F }), Override::OverrideCollection{});
+        const auto snap = locker.GetLockSnapshot();
+        if (!shows(shown, 0, A) || !shows(shown, 1, B) || !shows(shown, 2, C) || !snap[0].frozen) {
+            logger::error("TEST FAIL: a normal lock running at combat onset was not turned into a combat freeze"sv);
+            passed = false;
+        }
+    }
+    (void)locker.SetInCombat(false);
+
+    // --- 5. combat upsert (0.23.38) ------------------------------------------
+    // Key 0 frozen on A (s=-1.0); the allocator now wants D (s=+1.0) there:
+    // +2.0 > 3 x ln 1.5 = 1.216, so D takes it. E (+0.6) over B (+0.5) does not.
+    auto scoredPage = [&](std::initializer_list<std::pair<RE::FormID, double>> rows) {
+        SlotAssignments out;
+        size_t i = 0;
+        for (const auto& [id, s] : rows) {
+            SlotAssignment a = SlotAssignment::Empty(i, SlotClassification::Regular);
+            a.type = AssignmentType::Normal;
+            a.formID = id;
+            a.name = std::format("probe {:08X}", id);
+            Scoring::ScoredCandidate sc;
+            sc.candidate = potion(id, 1);
+            a.candidate = sc;
+            a.score = s;
+            out.push_back(std::move(a));
+            ++i;
+        }
+        return out;
+    };
+    {
+        auto cfg = testConfig;
+        cfg.combatUpsertMarginMult = 3.0f;
+        cfg.combatUpsertCooldownSec = 10.0f;
+        locker.SetConfig(cfg);
+        locker.Reset();
+        (void)locker.SetInCombat(true);
+        (void)locker.ApplyLocks(scoredPage({ { A, -1.0 }, { B, 0.5 } }), Override::OverrideCollection{});
+
+        SlotLocker::RunContext wheel;
+        wheel.wheelOpen = true;
+        auto shown = locker.ApplyLocks(scoredPage({ { D, 1.0 }, { E, 0.6 } }), Override::OverrideCollection{}, {}, wheel);
+        if (!shows(shown, 0, A)) {
+            logger::error("TEST FAIL: a combat upsert landed while the Wheeler wheel was open"sv);
+            passed = false;
+        }
+        shown = locker.ApplyLocks(scoredPage({ { D, 1.0 }, { E, 0.6 } }), Override::OverrideCollection{});
+        if (!shows(shown, 0, D) || !shows(shown, 1, B) || !locker.GetLockSnapshot()[0].frozen) {
+            logger::error("TEST FAIL: combat upsert (key0={:08X}, key1={:08X}; want D frozen on 0, B kept on 1)"sv,
+                shown.size() > 0 ? shown[0].formID : 0, shown.size() > 1 ? shown[1].formID : 0);
+            passed = false;
+        }
+        // Within the cooldown nothing takes key 0 again, however good (a
+        // one-key page, so F is no challenger for key 1).
+        shown = locker.ApplyLocks(scoredPage({ { F, 9.0 } }), Override::OverrideCollection{});
+        if (!shows(shown, 0, D)) {
+            logger::error("TEST FAIL: a second combat upsert on key 0 inside fCombatUpsertCooldownSec"sv);
+            passed = false;
+        }
+        // 0 = off: the freeze is absolute.
+        cfg.combatUpsertMarginMult = 0.0f;
+        locker.SetConfig(cfg);
+        shown = locker.ApplyLocks(scoredPage({ { D, 1.0 }, { F, 9.0 } }), Override::OverrideCollection{});
+        if (!shows(shown, 1, B)) {
+            logger::error("TEST FAIL: fCombatUpsertMarginMult = 0 still upserted key 1"sv);
+            passed = false;
+        }
+        (void)locker.SetInCombat(false);
+        locker.SetConfig(testConfig);
+    }
+
+    // --- 6. Swap Back undo settle (0.23.38) ----------------------------------
+    // After the undo the key keeps its item, without the Remembrance type, for
+    // the settle; then it fills once and locks -- one change, not one per run.
+    locker.Reset();
+    (void)locker.SetInCombat(false);
+    {
+        auto first = page({ P });
+        first[0].type = AssignmentType::Remembered;
+        (void)locker.ApplyLocks(first, Override::OverrideCollection{});
+        locker.SettleAfterUndo(0, P, 1000.0f);
+        auto shown = locker.ApplyLocks(page({ D }), Override::OverrideCollection{});
+        if (!shows(shown, 0, P) || shown[0].IsRemembered()) {
+            logger::error("TEST FAIL: settling key did not keep the undone item as an ordinary item"sv);
+            passed = false;
+        }
+        (void)locker.Update(500.0f);
+        shown = locker.ApplyLocks(page({ E }), Override::OverrideCollection{});
+        if (!shows(shown, 0, P)) {
+            logger::error("TEST FAIL: settling key followed the allocator before the settle ended"sv);
+            passed = false;
+        }
+        (void)locker.SetInCombat(true);   // a fight starting mid-settle does not freeze the undone item
+        if (!locker.Update(600.0f)) {
+            logger::error("TEST FAIL: the end of the settle did not ask for a pipeline run"sv);
+            passed = false;
+        }
+        shown = locker.ApplyLocks(page({ D }), Override::OverrideCollection{});
+        const auto snap = locker.GetLockSnapshot();
+        if (!shows(shown, 0, D) || !snap[0].isLocked || !snap[0].frozen) {
+            logger::error("TEST FAIL: after the settle the key did not fill once and combat-lock (shows {:08X}, locked={}, frozen={})"sv,
+                shown.empty() ? 0 : shown[0].formID, snap[0].isLocked, snap[0].frozen);
+            passed = false;
+        }
+        shown = locker.ApplyLocks(page({ E }), Override::OverrideCollection{});
+        if (!shows(shown, 0, D)) {
+            logger::error("TEST FAIL: the fill after the settle changed again"sv);
+            passed = false;
+        }
+        (void)locker.SetInCombat(false);
+    }
+
     locker.SetConfig(savedConfig);
     locker.Reset();
 

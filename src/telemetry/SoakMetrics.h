@@ -43,6 +43,9 @@ namespace Huginn::Telemetry
         Seated,    // seating moved the slot's locked item to another slot (a
                    // home-key return, a guest going home), releasing the
                    // lock. Last, so the existing columns keep their order.
+        Upsert,    // a combat upsert: a challenger far above the item on a
+                   // combat-locked key took it (core/CombatUpsert.h). After
+                   // Seated for the same reason.
         Count
     };
 
@@ -60,7 +63,8 @@ namespace Huginn::Telemetry
         case SlotChange::Unheld:   return "unheld";
         case SlotChange::Remembrance: return "remembrance";
         case SlotChange::Seated:   return "seated";
-        default:                   return "?";
+        case SlotChange::Upsert:   return "upsert";
+        default:                  return "?";
         }
     }
 
@@ -93,6 +97,7 @@ namespace Huginn::Telemetry
         case SlotChange::Override:
         case SlotChange::Remembrance:
         case SlotChange::Seated:
+        case SlotChange::Upsert:
             return released;
         default:
             return SlotChange::Unheld;

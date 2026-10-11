@@ -1,4 +1,5 @@
 #include "InputHandler.h"
+#include "slot/SlotLocker.h"
 
 namespace Huginn::Input
 {
@@ -270,6 +271,8 @@ namespace Huginn::Input
       state.pressTime = m_frameTime;
       state.isPressed = true;
       state.holdTriggered = false;
+      // A key under the player's finger takes no combat upsert (fPressGraceMs).
+      Slot::SlotLocker::GetSingleton().NoteKeyPress(static_cast<size_t>(slotIndex));
       }
       else if (button->IsHeld()) {
       if (state.isPressed && !state.holdTriggered) {
