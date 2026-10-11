@@ -173,7 +173,7 @@ in. What was built: the [implementation map](architecture/9-implementation-map.m
       (union of hostiles in combat themselves; no line-of-sight logic, the
       user 2026-10-08), target summoned / casting / archer, restore pending,
       drop ahead. 87 of the 92 needs have a sensor; five are deferred (map
-      Phase 2). (88 of 93 since 0.23.19 added `deep_water_ahead`, below.)
+      Phase 2). (88 of 93 since 0.23.19 added `deep_water_ahead`, below; 89 since 0.23.31's thirst.)
 - [x] Drop ahead (the user, 2026-10-08): a Havok ray cast straight down from
       2–3 points ahead of the player (`bhkWorld::PickObject`), not a guessed
       floor and not the terrain heightmap, which sees through rock meshes.
@@ -360,6 +360,28 @@ in. What was built: the [implementation map](architecture/9-implementation-map.m
   evaluator); pipeline runs per second and `hg recs 40` match the old build.
 - [ ] **In game (you):** a 20-minute session where `hg needs` shows fire,
   darkness, hunger and combat onset firing and expiring.
+- [x] Thirst and hunger's curve (0.23.31; the user: "build it", after
+      `analysis/2026-10-10/correlations/verification.md` found thirst a stub
+      and hunger crossing 0.5 only at Famished). LoreRim's thirst is DVSMP
+      Survival Tweaks (`DVSsurvivaltweaks.esp`): its DLL keeps one of six
+      stage abilities on the player (0x80F-0x814); `thirst` reads the active
+      one / 5, like hunger's SMI stage. Both curves are `logistic 0.5 11`:
+      the centre is derived from the stage tables in `9-data/needs.csv`
+      (hunger, thirst) -- stage 3 is the first with a regeneration penalty in
+      both mods -- and the slope chosen so stage 3 reads 0.75 and stage 2
+      0.25. `regen_suppressed` now also counts a survival ability that lowers
+      a regeneration rate (the stages, Freezing Water, Addled); the
+      snapshot's `healthRegenSuppressed` holds health regen blocked (a cut of
+      100+) or debuffed by a spell, potion or disease. The old walk
+      skips abilities, so Hungry's Health Regen Loss (HealRateMult) never
+      registered (selection log after trace 05: hunger stage 3 read it at 12%
+      of contexts, no more than other stages). `hg needs` prints the stages.
+- [ ] **In game (you):** with the new `Huginn.ini` deployed (an old one keeps
+      `hunger = quadratic 0 1`), get Thirsty and Hungry: `hg needs` shows
+      thirst at Thirsty with input 0.60, value 0.75, and `regen suppressed yes (by a survival stage:
+      yes)`; the log has `Thirst (DVSMP): stage` and `Survival regen debuff`
+      lines at each change. Check Parched (stage 2, a zero-magnitude effect)
+      reads stage 2, not 0.
 
 ### R4. Selection log v3
 
@@ -739,8 +761,8 @@ after R8.
 | Smallest potion that covers the deficit | `overshoot_*` feature | R2 |
 | No second restore while one ticks (over-time lists) | `restore_pending` need | R3 |
 | Carry weight when encumbered | Encumbrance curve | R3 |
-| Hunger, cold, fatigue as a ramp | Curves on the raw 0–1000 value; plumb SMI's continuous value | R3 |
-| Thirst, only when a thirst system is found | `thirst` need + drink effects; scripted consumables need a second confirm (the effect appearing) | Missing |
+| Hunger, cold, fatigue as a ramp | Curves on the raw 0–1000 value; plumb SMI's continuous value | R3; hunger's curve from LoreRim's stage table (0.23.31) |
+| Thirst, only when a thirst system is found | `thirst` need + drink effects; scripted consumables need a second confirm (the effect appearing) | R3 (0.23.31): DVSMP's stage abilities (LoreRim); SunHelm and Last Seed not read |
 | LoreRim's healing block | `healing_blocked` need | Missing; dump the active effects in that state first |
 | Haggling gear at a merchant | `merchant` need; a worn-vs-offered cross-feature | Missing |
 | Enchanted apparel beyond the craft skills | Armour effect columns + worn-vs-candidate cross-feature | R2 |

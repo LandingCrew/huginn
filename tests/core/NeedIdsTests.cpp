@@ -67,7 +67,7 @@ TEST_CASE("need ids match needs.csv, in order, with their default curves")
     CHECK(i == kNeedCount);
 }
 
-TEST_CASE("need ids: count, uniqueness, the deferred five")
+TEST_CASE("need ids: count, uniqueness, the deferred four")
 {
     CHECK(kNeedCount == 93);  // 92 until 0.23.19 added deep_water_ahead
     std::set<std::string_view> ids;
@@ -77,7 +77,8 @@ TEST_CASE("need ids: count, uniqueness, the deferred five")
         if (n.deferred) deferred.insert(n.id);
     }
     CHECK(ids.size() == kNeedCount);
-    CHECK(deferred == std::set<std::string_view>{ "healing_blocked", "thirst", "target_magicka_low",
+    // thirst left the set in 0.23.31 (the DVSMP stage sensor).
+    CHECK(deferred == std::set<std::string_view>{ "healing_blocked", "target_magicka_low",
                                                   "target_stamina_low", "sneak_detected" });
     CHECK(Name(NeedId::drop_ahead) == "drop_ahead");
     CHECK(Name(NeedId::deep_water_ahead) == "deep_water_ahead");

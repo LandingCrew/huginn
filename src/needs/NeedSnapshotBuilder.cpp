@@ -82,7 +82,16 @@ namespace Huginn::Needs
       s.drainHealth = p.effects.hasHealthDrain;
       s.drainMagicka = p.effects.hasMagickaPoison;
       s.drainStamina = p.effects.hasStaminaPoison;
-      s.regenSuppressed = p.buffs.HasAnyRegenDebuff();
+      // The old walk's regen debuffs (spells, potions, diseases) or a survival
+      // need-stage ability lowering a regeneration rate (0.23.31: Hungry and
+      // worse block health regen on LoreRim; the old walk skips abilities).
+      // regen_suppressed reads any vital and any size of cut.
+      // healthRegenSuppressed: the old walk's Damage Health Regen debuff
+      // (spells, potions, diseases), or a survival ability that BLOCKS
+      // health regen (a cut of 100+: Hungry and worse, Severely Dehydrated,
+      // Freezing Water while swimming -- not its 25% while wet).
+      s.regenSuppressed = p.buffs.HasAnyRegenDebuff() || n.survivalRegen.Any();
+      s.healthRegenSuppressed = p.buffs.hasHealthRegenDebuff || n.survivalRegen.healthBlocked;
       s.encumbrance = n.encumbrance;
       s.vampireStage = p.vampireStage;
 
@@ -91,6 +100,7 @@ namespace Huginn::Needs
       s.hungerStage = p.hungerLevel;
       s.coldStage = p.coldLevel;
       s.fatigueStage = p.fatigueLevel;
+      s.thirstStage = n.thirstStage;
       s.hungerRaw = n.hungerRaw;
       s.coldRaw = n.coldRaw;
       s.fatigueRaw = n.fatigueRaw;

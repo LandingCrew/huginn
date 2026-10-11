@@ -121,6 +121,54 @@ TEST_CASE("survival: off gates everything; the CC meter beats the stage; stages 
     CHECK(In(s, NeedId::warmth_deficit) == 0.0f);
 }
 
+TEST_CASE("thirst: the DVSMP stage / 5, gated on survival, clamped; no meter")
+{
+    NeedSnapshot s;
+    s.thirstStage = 4;
+    CHECK(In(s, NeedId::thirst) == 0.0f);
+    s.survival = true;
+    CHECK(In(s, NeedId::thirst) == doctest::Approx(0.8));
+    s.thirstStage = 9;
+    CHECK(In(s, NeedId::thirst) == 1.0f);
+    s.thirstStage = -1;
+    CHECK(In(s, NeedId::thirst) == 0.0f);
+    s.hungerRaw = 900.0f;  // hunger's CC meter does not leak into thirst
+    s.thirstStage = 1;
+    CHECK(In(s, NeedId::thirst) == doctest::Approx(0.2));
+}
+
+// 0.23.31: hunger's and thirst's centre comes from the survival mods' stage
+// tables (needs.csv notes): stage 3 is the first with a regeneration penalty
+// in both (Hungry blocks health regen, Thirsty halves stamina regen), so it
+// must reach the episode onset (0.5) and stage 2 must not. The slope is
+// chosen so stages either side of the centre read 0.25 / 0.75; the bonus
+// stages (0 Well Fed / Quenched, 1 Fed / Hydrated) stay under one signature
+// step.
+TEST_CASE("survival stage curves: the first penalty stage is on, the stage before it is not")
+{
+    for (const NeedId id : { NeedId::hunger, NeedId::thirst }) {
+        INFO(Name(id));
+        const Curve c = kCurves[Index(id)];
+        CHECK(c == Curve{ CurveKind::Logistic, 0.5f, 11.0f });
+        const auto at = [&](int stage) {
+            NeedSnapshot s;
+            s.survival = true;
+            s.hungerStage = stage;
+            s.thirstStage = stage;
+            return Val(s, id);
+        };
+        CHECK(SignatureLevel(at(0)) == 0);
+        CHECK(SignatureLevel(at(1)) == 1);
+        CHECK(at(2) == doctest::Approx(0.25).epsilon(1e-3));
+        CHECK(at(2) < 0.5f);
+        CHECK(at(3) == doctest::Approx(0.75).epsilon(1e-3));
+        CHECK(at(3) >= 0.5f);
+        CHECK(at(4) > at(3));
+        CHECK(at(5) > at(4));
+        CHECK(at(5) <= 1.0f);
+    }
+}
+
 TEST_CASE("combat timers: onset only in combat, ended-recent only out of it, downtime needs no hostile")
 {
     NeedSnapshot s;  // never fought since the load
@@ -430,5 +478,5 @@ TEST_CASE("field table: unique names, every name readable")
     std::set<std::string_view> names;
     for (const auto& f : kFields) names.insert(f.name);
     CHECK(names.size() == kFields.size());
-    CHECK(kFields.size() == 83);  // 82 until 0.23.19 added waterDepthAhead
+    CHECK(kFields.size() == 85);  // 83 until 0.23.31 added thirstStage and healthRegenSuppressed
 }

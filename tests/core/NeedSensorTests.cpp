@@ -805,3 +805,70 @@ TEST_CASE("probe sequence: the sea cliff of 2026-10-10 reaches the water with th
     CHECK(r.drop == doctest::Approx(3936.0));
     CHECK(r.waterDepth == 0.0f);
 }
+
+TEST_CASE("regen_suppressed: an effect lowers a regeneration rate when detrimental or negative, and non-zero")
+{
+    // LoreRim's Hungry: Health Regen Loss 100 on HealRateMult, a detrimental
+    // ability (the active effect's magnitude may carry either sign).
+    CHECK(LowersRegen(true, 100.0f));
+    CHECK(LowersRegen(true, -100.0f));
+    // A beneficial effect with a negative magnitude still lowers it.
+    CHECK(LowersRegen(false, -25.0f));
+    // Well Rested: Regenerate Stamina 50, beneficial.
+    CHECK_FALSE(LowersRegen(false, 50.0f));
+    // CC Survival's Lower Regeneration Rates reads 0 on LoreRim: a placeholder.
+    CHECK_FALSE(LowersRegen(true, 0.0f));
+    CHECK_FALSE(LowersRegen(true, -0.0f));
+    CHECK_FALSE(LowersRegen(true, std::numeric_limits<float>::quiet_NaN()));
+    CHECK_FALSE(LowersRegen(true, std::numeric_limits<float>::infinity()));
+}
+
+TEST_CASE("regen debuffs per vital: health is its own signal, any vital is regen_suppressed")
+{
+    // LoreRim's Thirsty: Stamina Regen Loss 50 -- regen_suppressed, not health.
+    RegenDebuffs thirsty;
+    thirsty.Add(RegenVital::Stamina, true, 50.0f);
+    CHECK(thirsty.Any());
+    CHECK_FALSE(thirsty.health);
+    // Tired: Reduced Magicka Regeneration 100 -- the same.
+    RegenDebuffs tired;
+    tired.Add(RegenVital::Magicka, true, 100.0f);
+    CHECK(tired.Any());
+    CHECK_FALSE(tired.health);
+    // Hungry: Health Regen Loss 100 on HealRateMult -- health, blocked.
+    RegenDebuffs hungry;
+    hungry.Add(RegenVital::Health, true, 100.0f);
+    CHECK(hungry.health);
+    CHECK(hungry.healthBlocked);
+    CHECK(hungry.Any());
+    // Freezing Water while only wet: health regen -25%. Lowered, not
+    // blocked: regen_suppressed, not healthRegenSuppressed.
+    RegenDebuffs wet;
+    wet.Add(RegenVital::Health, true, 25.0f);
+    CHECK(wet.health);
+    CHECK_FALSE(wet.healthBlocked);
+    CHECK(wet.Any());
+    // Swimming in it: -100, blocked, whichever sign the magnitude carries.
+    RegenDebuffs swimming;
+    swimming.Add(RegenVital::Health, true, -100.0f);
+    CHECK(swimming.healthBlocked);
+    // A big cut on another vital never blocks health.
+    RegenDebuffs dehydrated;
+    dehydrated.Add(RegenVital::Stamina, true, 100.0f);
+    CHECK_FALSE(dehydrated.healthBlocked);
+    // Severely Dehydrated: stamina 200 and health 400 -- both.
+    RegenDebuffs severe;
+    severe.Add(RegenVital::Stamina, true, 200.0f);
+    severe.Add(RegenVital::Health, true, 400.0f);
+    CHECK(severe.health);
+    CHECK(severe.healthBlocked);
+    CHECK(severe.stamina);
+    CHECK_FALSE(severe.magicka);
+    // A placeholder, a buff, or no regen AV at all counts for nothing.
+    RegenDebuffs none;
+    none.Add(RegenVital::Health, true, 0.0f);
+    none.Add(RegenVital::Health, false, 50.0f);
+    none.Add(RegenVital::None, true, 100.0f);
+    CHECK_FALSE(none.Any());
+    CHECK(none == RegenDebuffs{});
+}

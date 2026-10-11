@@ -71,10 +71,11 @@ FIELDS = {
     # Status
     "poisoned": ("b", 0), "diseased": ("b", 0), "drainHealth": ("b", 0),
     "drainMagicka": ("b", 0), "drainStamina": ("b", 0), "regenSuppressed": ("b", 0),
+    "healthRegenSuppressed": ("b", 0),
     "encumbrance": ("f", 0.0), "vampireStage": ("i", 0),
     # Survival
     "survival": ("b", 0), "hungerStage": ("i", 0), "coldStage": ("i", 0),
-    "fatigueStage": ("i", 0), "hungerRaw": ("f", -1.0), "coldRaw": ("f", -1.0),
+    "fatigueStage": ("i", 0), "thirstStage": ("i", 0), "hungerRaw": ("f", -1.0), "coldRaw": ("f", -1.0),
     "fatigueRaw": ("f", -1.0), "warmth": ("f", 0.0),
     # Combat
     "inCombat": ("b", 0), "combatStartAgo": ("f", NEVER), "combatEndAgo": ("f", NEVER),
@@ -252,7 +253,7 @@ FORMULAS = {
     "vampire_sun_exposure": lambda s: 1.0 if (s["vampireStage"] >= 3 and s["openDaylight"]) else 0.0,
     # Survival
     "hunger": lambda s: survival_meter(s, "hungerRaw", "hungerStage"),
-    "thirst": lambda s: 0.0,  # deferred
+    "thirst": lambda s: clamp(s["thirstStage"], 0, 5) / 5.0 if s["survival"] else 0.0,
     "cold": lambda s: survival_meter(s, "coldRaw", "coldStage"),
     "fatigue": lambda s: survival_meter(s, "fatigueRaw", "fatigueStage"),
     "warmth_deficit": lambda s: clamp(1.0 - s["warmth"] / 200.0, 0.0, 1.0) if s["survival"] else 0.0,
@@ -329,7 +330,7 @@ FORMULAS = {
     "combat_ended_recent": lambda s: s["combatEndAgo"] if not s["inCombat"] else NEVER,
 }
 
-DEFERRED = {"healing_blocked", "thirst", "target_magicka_low", "target_stamina_low", "sneak_detected"}
+DEFERRED = {"healing_blocked", "target_magicka_low", "target_stamina_low", "sneak_detected"}
 
 
 # ---------------------------------------------------------------------------

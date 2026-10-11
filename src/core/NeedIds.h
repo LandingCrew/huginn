@@ -9,7 +9,7 @@
 // the csv id, so a need reads the same in code, logs, `hg needs` and docs.
 //
 // `curve` is the default response curve (the [Needs] INI section overrides
-// it per need); `deferred` marks the 5 needs whose sensor is not built yet
+// it per need); `deferred` marks the 4 needs whose sensor is not built yet
 // (their r3_input reads "0 (deferred: ...)"): they always read input 0.
 //
 // Pure: standard library only (src/core/README.md).
@@ -162,8 +162,8 @@ namespace Huginn::Core::Needs
         { "healing_blocked", "Status", { CurveKind::Step, 0.5f, 0.0f }, 2, true },
         { "encumbrance", "Status", { CurveKind::Logistic, 0.95f, 40.0f }, 1, false },
         { "vampire_sun_exposure", "Status", { CurveKind::Step, 0.5f, 0.0f }, 3, false },
-        { "hunger", "Survival", { CurveKind::Quadratic, 0.0f, 1.0f }, 1, false },
-        { "thirst", "Survival", { CurveKind::Quadratic, 0.0f, 1.0f }, 2, true },
+        { "hunger", "Survival", { CurveKind::Logistic, 0.5f, 11.0f }, 1, false },
+        { "thirst", "Survival", { CurveKind::Logistic, 0.5f, 11.0f }, 2, false },
         { "cold", "Survival", { CurveKind::Quadratic, 0.0f, 1.0f }, 1, false },
         { "fatigue", "Survival", { CurveKind::Quadratic, 0.0f, 1.0f }, 2, false },
         { "warmth_deficit", "Survival", { CurveKind::Linear, 0.0f, 1.0f }, 3, false },

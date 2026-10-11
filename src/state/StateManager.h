@@ -592,6 +592,29 @@ namespace Huginn::State
       RE::TESGlobal* m_smiColdEnabled = nullptr;        // 0xF28 - per-need enable flag
       RE::TESGlobal* m_smiExhaustionEnabled = nullptr;  // 0xF29 - per-need enable flag
 
+      // R3 thirst (0.23.31): DVSMP Survival Tweaks (DVSsurvivaltweaks.esp,
+      // LoreRim). Its DLL keeps exactly one of six stage abilities on the
+      // player, Survival_ThirstStage0Spell .. 5Spell (local 0x80F-0x814); the
+      // stage is the one whose effect is active (PollPlayerMagicEffects). The
+      // meter globals are read for the transition log only.
+      std::array<const RE::SpellItem*, 6> m_thirstStageSpells{};
+      RE::TESGlobal* m_thirstValue = nullptr;     // 0x800 Survival_ThirstValue
+      RE::TESGlobal* m_thirstMaxValue = nullptr;  // 0x802 Survival_ThirstMaxValue
+      bool m_thirstInstalled = false;
+
+      // R3 regen_suppressed (0.23.31): the files the survival abilities come
+      // from (CC Survival's hunger / exhaustion / cold stages, Freezing Water
+      // and Addled; DVSMP's thirst stages), null unless loaded, and CC
+      // Survival's always-on "Lower Regeneration Rates" (local 0x982), which
+      // is left out.
+      const RE::TESFile* m_ccSurvivalFile = nullptr;
+      const RE::TESFile* m_dvsmpFile = nullptr;
+      RE::FormID m_ccLowerRegenSpellID = 0;
+
+      // Transition-log memory, poll thread only (PollPlayerMagicEffects).
+      int m_lastThirstStage = -1;
+      Core::Needs::RegenDebuffs m_lastSurvivalRegen;
+
       // Native warmth function (CC Survival engine function)
       using GetWarmthRating_t = float(RE::Actor*);
       GetWarmthRating_t* m_getWarmthRating = nullptr;

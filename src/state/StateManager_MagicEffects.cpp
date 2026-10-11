@@ -122,6 +122,36 @@ namespace Huginn::State
     float pendingMagicka = 0.0f;
     float pendingStamina = 0.0f;
 
+    // R3 thirst and regen_suppressed (0.23.31): both come from survival
+    // ABILITIES, which the walk below otherwise skips. The forms they are
+    // matched against are cached with the survival globals.
+    CacheSurvivalGlobals();
+    int thirstStage = 0;
+    Core::Needs::RegenDebuffs survivalRegen;
+    const char* survivalRegenSource = nullptr;  // the first such spell, for the log
+    // Any ability defined in CC Survival's esl or DVSMP's esp: the need
+    // stages, and two that are not stages but do lower regen -- Freezing
+    // Water (health regen -100 swimming, -25 wet) and Addled (magicka and
+    // stamina regen -30).
+    const auto isSurvivalSpell = [this](const RE::MagicItem* s) {
+      const RE::FormID id = s->GetFormID();
+      if (id == m_ccLowerRegenSpellID) return false;  // always on in CC Survival: no stage
+      return (m_ccSurvivalFile && m_ccSurvivalFile->IsFormInMod(id)) ||
+             (m_dvsmpFile && m_dvsmpFile->IsFormInMod(id));
+    };
+    const auto regenVitalOf = [](RE::ActorValue av) {
+      using V = Core::Needs::RegenVital;
+      switch (av) {
+        case RE::ActorValue::kHealRate:
+        case RE::ActorValue::kHealRateMult: return V::Health;
+        case RE::ActorValue::kMagickaRate:
+        case RE::ActorValue::kMagickaRateMult: return V::Magicka;
+        case RE::ActorValue::kStaminaRate:
+        case RE::ActorValue::kStaminaRateMult: return V::Stamina;
+        default: return V::None;
+      }
+    };
+
     // Single iteration over active effects (pattern from EffectsSensor.cpp)
     if (activeEffects) {
       for (auto* effect : *activeEffects) {
@@ -137,6 +167,37 @@ namespace Huginn::State
 
         // Skip passive ability effects (survival mode, racial abilities, perks)
         auto* spell = effect->spell;
+
+        // R3, ahead of the ability skip: the survival need stages are
+        // abilities. An inactive effect (its conditions fail: thirst on a
+        // vampire) was skipped above, so only a stage that applies counts.
+        // Thirst: which DVSMP stage ability is on. regen_suppressed: a
+        // survival ability that lowers a regeneration rate -- LoreRim's
+        // Hungry and worse put Health Regen Loss on HealRateMult
+        // (100/200/400), Tired and worse Reduced Magicka Regeneration,
+        // Thirsty and worse Stamina Regen Loss, Severely Dehydrated Health
+        // Regen Loss 400; Freezing Water and Addled too. Fair to read: those
+        // regen-loss effects are Hide-in-UI, but the player sees the stage
+        // name (the HUD message and its Active Effects entry, "Hunger -
+        // Hungry") and their own regeneration stop on the vitals bars. Only
+        // survival abilities: a permanent one (the Atronach stone, Requiem's
+        // vampire stages, perks, traits) would pin the need on for good.
+        if (spell && spell->GetSpellType() == RE::MagicSystem::SpellType::kAbility) {
+          if (m_thirstInstalled) {
+            for (std::size_t i = 0; i < m_thirstStageSpells.size(); ++i) {
+              if (spell == m_thirstStageSpells[i]) {
+                thirstStage = std::max(thirstStage, static_cast<int>(i));
+              }
+            }
+          }
+          const auto vital = regenVitalOf(baseEffect->data.primaryAV);
+          if (vital != Core::Needs::RegenVital::None && isSurvivalSpell(spell)) {
+            const bool before = survivalRegen.Any();
+            survivalRegen.Add(vital, baseEffect->IsDetrimental(), effect->magnitude);
+            if (!before && survivalRegen.Any()) survivalRegenSource = spell->GetName();
+          }
+        }
+
         if (spell) {
           auto spellType = spell->GetSpellType();
           if (spellType == RE::MagicSystem::SpellType::kAbility ||
@@ -612,11 +673,34 @@ namespace Huginn::State
       }
     }
 
-    // R3: publish the pending restores (not part of this poll's change flag).
+    // R3 transitions, at info (Release pins the logger there): the thirst
+    // stage beside the DVSMP meter it came from -- the stage thresholds live
+    // in DVSMP's DLL, so the meter is what to check them against -- and the
+    // survival regen debuff with the spell that set it.
+    if (thirstStage != m_lastThirstStage) {
+      if (m_thirstInstalled) {
+        logger::info("[StateManager] Thirst (DVSMP): stage {} -> {}, meter {:.0f}/{:.0f}"sv,
+          m_lastThirstStage, thirstStage, m_thirstValue ? m_thirstValue->value : -1.0f,
+          m_thirstMaxValue ? m_thirstMaxValue->value : -1.0f);
+      }
+      m_lastThirstStage = thirstStage;
+    }
+    if (survivalRegen != m_lastSurvivalRegen) {
+      logger::info("[StateManager] Survival regen debuff: health={} (blocked={}) magicka={} stamina={} ({})"sv,
+        survivalRegen.health, survivalRegen.healthBlocked, survivalRegen.magicka, survivalRegen.stamina,
+        survivalRegenSource ? survivalRegenSource : "-");
+      m_lastSurvivalRegen = survivalRegen;
+    }
+
+    // R3: publish the pending restores, the thirst stage and the survival
+    // regen debuff (not part of this poll's change flag).
     UpdateNeedSensors([&](NeedSensorState& n) {
       n.restoreHealthPending = pendingHealth;
       n.restoreMagickaPending = pendingMagicka;
       n.restoreStaminaPending = pendingStamina;
+      n.thirstStage = thirstStage;
+      n.thirstDetected = m_thirstInstalled;
+      n.survivalRegen = survivalRegen;
     });
 
     // Update effects and buffs with change detection

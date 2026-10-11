@@ -12,6 +12,11 @@
 //                   bar over the time it has been the only one
 //   SecondsSince    a steady-clock timer read as seconds, NEVER when unset
 //   EncumbranceRatio
+//   LowersRegen     regen_suppressed's test on one active effect on a
+//                   regeneration-rate actor value (0.23.31)
+//   RegenDebuffs    those effects per vital: regen_suppressed reads any;
+//                   healthBlocked (a cut of kRegenBlockCut or more) feeds
+//                   the snapshot's healthRegenSuppressed
 //
 // Times are seconds on any monotonic clock (the caller passes steady_clock
 // seconds); nothing here reads a clock.
@@ -122,4 +127,65 @@ namespace Huginn::Core::Needs
         if (!(carryWeight > 0.0f) || !(inventoryWeight >= 0.0f)) return 0.0f;
         return inventoryWeight / carryWeight;
     }
+
+    /// Whether an active effect on a regeneration-rate actor value (HealRate,
+    /// HealRateMult and the magicka and stamina pairs) lowers it, for
+    /// regen_suppressed: detrimental or a negative magnitude, as the old
+    /// regen-debuff test reads it, and by something -- a zero magnitude is a
+    /// placeholder that changes nothing (CC Survival's "Lower Regeneration
+    /// Rates" reads 0 on LoreRim). A non-finite magnitude says nothing.
+    [[nodiscard]] inline bool LowersRegen(bool detrimental, float magnitude) noexcept
+    {
+        if (!std::isfinite(magnitude) || magnitude == 0.0f) return false;
+        return detrimental || magnitude < 0.0f;
+    }
+
+    /// The vital whose regeneration an actor value rates (HealRate and
+    /// HealRateMult: Health, and so on); the game side maps the AV.
+    enum class RegenVital : std::uint8_t
+    {
+        None,
+        Health,
+        Magicka,
+        Stamina,
+    };
+
+    /// A cut this large on a regeneration rate blocks it: HealRateMult is a
+    /// percentage (100 = normal), so -100 leaves nothing. LoreRim's Hungry
+    /// is exactly 100, Famished 200, Starving and Severely Dehydrated 400;
+    /// CC's Freezing Water is 100 while swimming and 25 while only wet.
+    inline constexpr float kRegenBlockCut = 100.0f;
+
+    /// Regeneration debuffs per vital, from LowersRegen effects. Per vital
+    /// because "no eating in combat" lifts only when HEALTH regen is blocked
+    /// (the user: "should be disabled if hp regen is blocked due to thirst or
+    /// food"), while regen_suppressed counts any vital and any size of cut
+    /// (Thirsty lowers stamina regen, Tired magicka regen, Freezing Water
+    /// while wet health regen by 25%).
+    struct RegenDebuffs
+    {
+        bool health = false;         // health regen lowered at all
+        bool healthBlocked = false;  // ... by kRegenBlockCut or more
+        bool magicka = false;
+        bool stamina = false;
+
+        /// Count one active effect on `vital`'s regeneration rate.
+        void Add(RegenVital vital, bool detrimental, float magnitude) noexcept
+        {
+            if (!LowersRegen(detrimental, magnitude)) return;
+            switch (vital) {
+                case RegenVital::Health:
+                    health = true;
+                    if (std::fabs(magnitude) >= kRegenBlockCut) healthBlocked = true;
+                    break;
+                case RegenVital::Magicka: magicka = true; break;
+                case RegenVital::Stamina: stamina = true; break;
+                case RegenVital::None: break;
+            }
+        }
+
+        [[nodiscard]] bool Any() const noexcept { return health || magicka || stamina; }
+
+        friend bool operator==(const RegenDebuffs&, const RegenDebuffs&) = default;
+    };
 }
