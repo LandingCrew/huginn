@@ -169,6 +169,34 @@ namespace Huginn::Slot
             return m_fillJobKeysFromRegular.load(std::memory_order_acquire);
         }
 
+        /// Press grace, in ms (core/PressGrace.h): a hotkey pressed less than
+        /// this long after its key's shown item changed acts on the item shown
+        /// before the change, if that item is still usable. 0 = off.
+        /// `[SlotLocker] fPressGraceMs`, 0-2000.
+        [[nodiscard]] float PressGraceMs() const noexcept
+        {
+            return m_pressGraceMs.load(std::memory_order_acquire);
+        }
+
+        /// Hysteresis on the HP/MP/SP level buckets, as a fraction of the
+        /// maximum (0.03 = 3 percentage points): a recovering vital moves up a
+        /// bucket only that far past the boundary; one falling from above a
+        /// boundary moves at the boundary itself, a re-fall inside the band is
+        /// no new change (core/BucketHysteresis.h). 0 = off.
+        /// `[SlotLocker] fVitalBucketHysteresis`, 0-0.1.
+        [[nodiscard]] float VitalBucketHysteresis() const noexcept
+        {
+            return m_vitalBucketHysteresis.load(std::memory_order_acquire);
+        }
+
+        /// Hysteresis on the closest-enemy distance band, as a fraction of the
+        /// boundary distance (0.1 = 10%, both ways). 0 = off.
+        /// `[SlotLocker] fDistanceBucketHysteresis`, 0-0.5.
+        [[nodiscard]] float DistanceBucketHysteresis() const noexcept
+        {
+            return m_distanceBucketHysteresis.load(std::memory_order_acquire);
+        }
+
         /// Monotonic generation counter — bumped on every config change
         /// (LoadFromFile / ResetToDefaults). Consumers can cache config copies
         /// and cheaply detect staleness without re-copying every access.
@@ -217,6 +245,9 @@ namespace Huginn::Slot
         std::atomic<float> m_remembranceMismatchMs{5000.0f};
         std::atomic<bool> m_fillJobKeysFromRegular{false};
         std::atomic<bool> m_remembranceToJobKey{false};
+        std::atomic<float> m_pressGraceMs{600.0f};
+        std::atomic<float> m_vitalBucketHysteresis{0.03f};
+        std::atomic<float> m_distanceBucketHysteresis{0.1f};
 
         /// Parse classification string to enum (logs warning on error, returns Regular)
         [[nodiscard]] static SlotClassification ParseClassification(const std::string& str);

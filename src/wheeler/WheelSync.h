@@ -157,6 +157,15 @@ namespace Huginn::Wheeler
         /// Wheel index for a page, or -1 if the page has none.
         [[nodiscard]] int32_t WheelIndexForPage(size_t pageIndex) const;
 
+        /// What UpdatePage last wrote (or adopted) for a page, in the same
+        /// shape it takes: per-slot FormIDs, wildcard flags, uniqueIDs and the
+        /// RAW incoming subtexts. Passing these back to UpdatePage writes
+        /// nothing for those slots. False (outputs untouched) if the page has
+        /// no wheel record.
+        bool GetCachedPage(size_t pageIndex, std::vector<RE::FormID>& formIDs,
+                           std::vector<bool>& isWildcard, std::vector<uint16_t>& uniqueIDs,
+                           std::vector<std::string>& subtexts) const;
+
         /// Page index owning a wheel, or -1 if the wheel is not ours.
         [[nodiscard]] int FindPageForWheel(int32_t wheelIndex) const;
 

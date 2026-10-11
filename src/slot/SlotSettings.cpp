@@ -253,6 +253,23 @@ namespace Huginn::Slot
         SKSE::log::info("[SlotSettings] Fill empty job keys from Regular keys: {}"sv,
             pullFromRegular ? "on" : "off");
 
+        // Churn guards (0.23.37): press grace and the bucket hysteresis. Read here with the rest of [SlotLocker] so `hg reload`
+        // and dMenu pick them up with the layout; the consumers (EquipManager,
+        // PipelineCoordinator -> StateEvaluator) read the atomics on every use.
+        const float graceMs = std::clamp(
+            static_cast<float>(finiteOr(ini.GetDoubleValue("SlotLocker", "fPressGraceMs", 600.0), 600.0)), 0.0f, 2000.0f);
+        const float vitalBand = std::clamp(
+            static_cast<float>(finiteOr(ini.GetDoubleValue("SlotLocker", "fVitalBucketHysteresis", 0.03), 0.03)), 0.0f, 0.1f);
+        const float distanceBand = std::clamp(
+            static_cast<float>(finiteOr(ini.GetDoubleValue("SlotLocker", "fDistanceBucketHysteresis", 0.1), 0.1)), 0.0f, 0.5f);
+        m_pressGraceMs.store(graceMs, std::memory_order_release);
+        m_vitalBucketHysteresis.store(vitalBand, std::memory_order_release);
+        m_distanceBucketHysteresis.store(distanceBand, std::memory_order_release);
+        SKSE::log::info("[SlotSettings] Press grace: {}"sv,
+            graceMs > 0.0f ? std::format("{:.0f}ms", graceMs) : std::string("off"));
+        SKSE::log::info("[SlotSettings] Bucket hysteresis: vitals {:.1f} points (on recovery), distance {:.0f}%"sv,
+            vitalBand * 100.0f, distanceBand * 100.0f);
+
         // Parsing succeeded - commit the new configuration under exclusive lock
         size_t committedCount;
         {
@@ -280,6 +297,9 @@ namespace Huginn::Slot
         m_homeKeyMemorySec.store(60.0f, std::memory_order_release);
         m_classRepeatDiscount.store(0.5f, std::memory_order_release);
         m_classFreeSlots.store(3, std::memory_order_release);
+        m_pressGraceMs.store(600.0f, std::memory_order_release);
+        m_vitalBucketHysteresis.store(0.03f, std::memory_order_release);
+        m_distanceBucketHysteresis.store(0.1f, std::memory_order_release);
         m_generation.fetch_add(1, std::memory_order_release);
         SKSE::log::info("[SlotSettings] Reset to defaults (1 page, {} slots)"sv, slotCount);
     }

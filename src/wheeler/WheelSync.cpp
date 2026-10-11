@@ -1132,6 +1132,22 @@ namespace Huginn::Wheeler
         return -1;
     }
 
+    bool WheelSync::GetCachedPage(size_t pageIndex, std::vector<RE::FormID>& formIDs,
+                                  std::vector<bool>& isWildcard, std::vector<uint16_t>& uniqueIDs,
+                                  std::vector<std::string>& subtexts) const
+    {
+        std::lock_guard<std::mutex> lock(m_pageDataMutex);
+        if (pageIndex >= m_pageWheels.size()) {
+            return false;
+        }
+        const auto& pw = m_pageWheels[pageIndex];
+        formIDs = pw.slotFormIDs;
+        isWildcard = pw.slotWildcard;
+        uniqueIDs = pw.slotUniqueIDs;
+        subtexts = pw.slotRawSubtexts;
+        return true;
+    }
+
     int WheelSync::FindPageForWheel(int32_t wheelIndex) const
     {
         // Thread safety: Protect iteration over m_pageWheels (called from callbacks)

@@ -15,6 +15,7 @@
 #include "learning/ScoredCandidate.h"
 #include "learning/ScorerSettings.h"   // MINIMUM_UTILITY — the floor test 6i is about
 #include "candidate/CandidateGenerator.h"
+#include "update/UpdateHandler.h"   // RunExclusive: test 3a runs the generator under the tick mutex
 #include "persist/BanditSerializer.h"
 #include "learning/StateFeatures.h"
 #include "learning/FeatureBanditLearner.h"
@@ -6272,6 +6273,249 @@ void RunSlotLockerInstanceLockTest()
 
     if (passed) {
         logger::info("  SlotLocker per-stack lock test PASSED"sv);
+    }
+#endif
+}
+
+// =============================================================================
+// SlotLocker: an override breaks only its own key; the combat lock (0.23.37)
+// =============================================================================
+// What it pins:
+//  1. An active override placed on key 1 breaks key 1's lock and no other:
+//     keys 0 and 2, whose allocator picks changed in the same run, keep their
+//     locked items. (2026-10-11 08:57:37.747 looked like an override breaking
+//     key 3 too; key 3 was a Remembrance hold, logged as "override".)
+//  2. Under a frozen combat lock an ordinary challenger never takes a key, an
+//     item used with more left (UseKind::Used) does not free it, a departure
+//     (UseKind::Gone) does, and leaving combat turns the freeze into a normal
+//     lock timed from then.
+// Same limitation as the tests above: it drives the LIVE singleton at
+// kPostLoadGame with the loading menu up.
+void RunSlotLockerOverrideScopeTest()
+{
+#ifndef NDEBUG
+    using namespace Huginn::Slot;
+
+    logger::info("Running SlotLocker override-scope / combat-lock test..."sv);
+
+    auto& locker = SlotLocker::GetSingleton();
+    const auto savedConfig = locker.GetConfig();
+
+    SlotLockConfig testConfig{};
+    testConfig.lockDurationMs = 3000.0f;
+    testConfig.minLockDurationMs = 500.0f;
+    testConfig.lockOnFill = true;
+    testConfig.overridesBreakLock = true;
+    testConfig.immediateBreakPriority = 50;
+    testConfig.combatLockDurationMs = -1.0f;
+    locker.SetConfig(testConfig);
+    locker.Reset();
+    (void)locker.SetInCombat(false);
+
+    auto page = [](std::initializer_list<RE::FormID> ids) {
+        SlotAssignments out;
+        size_t i = 0;
+        for (const RE::FormID id : ids) {
+            SlotAssignment a = SlotAssignment::Empty(i, SlotClassification::Regular);
+            if (id != 0) {
+                a.type = AssignmentType::Normal;
+                a.formID = id;
+                a.name = std::format("probe {:08X}", id);
+            }
+            out.push_back(std::move(a));
+            ++i;
+        }
+        return out;
+    };
+    auto shows = [](const SlotAssignments& r, size_t i, RE::FormID id) {
+        return i < r.size() && !r[i].IsEmpty() && r[i].formID == id;
+    };
+
+    bool passed = true;
+    constexpr RE::FormID A = 0x0BAD0A01, B = 0x0BAD0A02, C = 0x0BAD0A03;
+    constexpr RE::FormID D = 0x0BAD0A04, E = 0x0BAD0A05, F = 0x0BAD0A06, P = 0x0BAD0A07;
+
+    // --- 1. override scope --------------------------------------------------
+    (void)locker.ApplyLocks(page({ A, B, C }), Override::OverrideCollection{});
+    {
+        auto next = page({ D, P, E });
+        next[1].type = AssignmentType::Override;
+        Override::OverrideCollection ovr;
+        Override::OverrideResult r;
+        r.priority = 70;
+        r.reason = "probe override";
+        Candidate::ItemCandidate item;
+        item.formID = P;
+        r.candidate = Candidate::CandidateVariant{ item };
+        ovr.activeOverrides.push_back(std::move(r));
+        const auto shown = locker.ApplyLocks(next, ovr);
+        if (!shows(shown, 1, P)) {
+            logger::error("TEST FAIL: the override did not take its own key"sv);
+            passed = false;
+        }
+        if (!shows(shown, 0, A) || !shows(shown, 2, C)) {
+            logger::error("TEST FAIL: an override on key 1 broke another key's lock (key0={:08X}, key2={:08X})"sv,
+                shown.size() > 0 ? shown[0].formID : 0, shown.size() > 2 ? shown[2].formID : 0);
+            passed = false;
+        }
+    }
+
+    // --- 2. combat freeze ---------------------------------------------------
+    locker.Reset();
+    (void)locker.SetInCombat(true);
+    (void)locker.ApplyLocks(page({ A, B, C }), Override::OverrideCollection{});
+    (void)locker.Update(120000.0f);   // two minutes: a freeze has no timer
+    {
+        const auto shown = locker.ApplyLocks(page({ D, E, F }), Override::OverrideCollection{});
+        if (!shows(shown, 0, A) || !shows(shown, 1, B) || !shows(shown, 2, C)) {
+            logger::error("TEST FAIL: a frozen combat lock gave way to an ordinary challenger"sv);
+            passed = false;
+        }
+    }
+    locker.OnItemUsed(B, /*respectActivationLock=*/false, SlotLocker::UseKind::Used);
+    if (!locker.GetLockSnapshot()[1].isLocked) {
+        logger::error("TEST FAIL: one of B used (more left) freed its combat-locked key"sv);
+        passed = false;
+    }
+    locker.OnItemUsed(B, /*respectActivationLock=*/false, SlotLocker::UseKind::Gone);
+    if (locker.GetLockSnapshot()[1].isLocked) {
+        logger::error("TEST FAIL: B gone but its key is still combat-locked"sv);
+        passed = false;
+    }
+    (void)locker.SetInCombat(false);
+    {
+        const auto snap = locker.GetLockSnapshot();
+        if (!snap[0].isLocked || snap[0].remainingMs > testConfig.lockDurationMs + 1.0f) {
+            logger::error("TEST FAIL: leaving combat did not turn the freeze into a {:.0f}ms lock (locked={}, left={:.0f})"sv,
+                testConfig.lockDurationMs, snap[0].isLocked, snap[0].remainingMs);
+            passed = false;
+        }
+    }
+
+    // --- 3. a held key's count follows the item, even when filtered out ----
+    // The healing-potion case: one drunk -> the potion is on cooldown (3 s)
+    // and, at full health, dropped by the full-vitals filter; the scorer never
+    // sees it. The key must show the new count, not the old one, under the
+    // combat freeze and under a Sticky activation lock alike.
+    auto potion = [](RE::FormID id, int32_t count) {
+        Candidate::ItemCandidate item;
+        item.formID = id;
+        item.count = count;
+        return Candidate::CandidateVariant{ item };
+    };
+    auto countOn = [&](const SlotAssignments& r, size_t i) -> int32_t {
+        if (i >= r.size() || r[i].IsEmpty() || !r[i].candidate) return -1;
+        const auto* item = Candidate::TryGetAs<Candidate::ItemCandidate>(r[i].candidate->candidate);
+        return item ? item->count : -1;
+    };
+    auto heldOn = [&](RE::FormID id, int32_t count) {
+        SlotAssignments first = page({ id });
+        Scoring::ScoredCandidate sc;
+        sc.candidate = potion(id, count);
+        first[0].candidate = sc;
+        (void)locker.ApplyLocks(first, Override::OverrideCollection{});
+    };
+
+    // 3a. The REAL lookup survives the filters. Run the real generator twice
+    //     on this save: once as it is, once with health at 100% and the first
+    //     gathered health potion on cooldown. The filtered output must lose
+    //     that potion; FindGathered (what the locker reads) must still have it.
+    //     Run under UpdateHandler's tick mutex (RunExclusive): the generator's
+    //     buffers and spell-cost map are the update loop's, and a loading-
+    //     screen tick could otherwise run GenerateCandidates at the same time.
+    auto& gen = Candidate::CandidateGenerator::GetSingleton();
+    RE::FormID realPotion = 0;
+    int32_t realCount = 0;
+    auto* updateHandler = Update::UpdateHandler::GetSingleton();
+    if (gen.IsInitialized() && updateHandler) updateHandler->RunExclusive([&] {
+        auto player = State::StateManager::GetSingleton().GetPlayerState();
+        (void)gen.GenerateCandidates(player, 1000.0f, {}, nullptr);
+        for (const auto& c : gen.LastGathered()) {
+            const auto* item = Candidate::TryGetAs<Candidate::ItemCandidate>(c);
+            if (item && item->count > 1 && item->type == Item::ItemType::HealthPotion) {
+                realPotion = item->formID;
+                realCount = item->count;
+                break;
+            }
+        }
+        if (realPotion != 0) {
+            gen.StartCooldown(realPotion, Candidate::SourceType::Potion);
+            player.vitals.health = 1.0f;
+            const auto filtered = gen.GenerateCandidates(player, 1000.0f, {}, nullptr);
+            const bool stillOffered = std::ranges::any_of(filtered,
+                [&](const Candidate::CandidateVariant& c) { return Candidate::GetFormID(c) == realPotion; });
+            const auto found = gen.FindGathered(realPotion, 0);
+            if (stillOffered) {
+                logger::error("TEST FAIL: potion {:08X} survived cooldown + full health -- the filter path this step exists for was not exercised"sv, realPotion);
+                passed = false;
+            }
+            if (!found) {
+                logger::error("TEST FAIL: FindGathered lost potion {:08X} to the cooldown / full-health filters"sv, realPotion);
+                passed = false;
+            } else {
+                // A frozen key showing it one higher takes the real lookup's count.
+                locker.Reset();
+                (void)locker.SetInCombat(true);
+                heldOn(realPotion, realCount + 1);
+                SlotLocker::RunContext run;
+                run.lookupItem = [&gen](RE::FormID id, uint16_t uid) { return gen.FindGathered(id, uid); };
+                const auto shown = locker.ApplyLocks(page({ D }), Override::OverrideCollection{}, {}, run);
+                if (countOn(shown, 0) != realCount) {
+                    logger::error("TEST FAIL: frozen key on {:08X} shows {} (real registry count {})"sv,
+                        realPotion, countOn(shown, 0), realCount);
+                    passed = false;
+                }
+                (void)locker.SetInCombat(false);
+            }
+        } else {
+            logger::info("  (3a skipped: no stack of 2+ health potions in this save)"sv);
+        }
+        gen.Reset();   // drop the test's cooldown; the load path resets it anyway
+    });
+
+    // 3b. Frozen key, count 5 -> 4 with the potion in no scored list (the
+    //     filters' result), lookup substituted by what the registry gathers.
+    locker.Reset();
+    (void)locker.SetInCombat(true);
+    {
+        heldOn(P, 5);
+        SlotLocker::RunContext run;
+        run.lookupItem = [&](RE::FormID id, uint16_t) -> std::optional<Candidate::CandidateVariant> {
+            if (id == P) return potion(P, 4);
+            return std::nullopt;
+        };
+        const auto shown = locker.ApplyLocks(page({ D }), Override::OverrideCollection{}, {}, run);
+        if (!shows(shown, 0, P) || countOn(shown, 0) != 4) {
+            logger::error("TEST FAIL: the frozen potion key did not take the new count (held={}, count={})"sv,
+                shows(shown, 0, P), countOn(shown, 0));
+            passed = false;
+        }
+    }
+    (void)locker.SetInCombat(false);
+
+    // 3c. The Sticky activation lock (10 s, Wheeler) holds the same way.
+    locker.Reset();
+    {
+        heldOn(P, 5);
+        locker.LockSlotForActivation(0);
+        SlotLocker::RunContext run;
+        run.lookupItem = [&](RE::FormID id, uint16_t) -> std::optional<Candidate::CandidateVariant> {
+            if (id == P) return potion(P, 3);
+            return std::nullopt;
+        };
+        const auto shown = locker.ApplyLocks(page({ D }), Override::OverrideCollection{}, {}, run);
+        if (!shows(shown, 0, P) || countOn(shown, 0) != 3) {
+            logger::error("TEST FAIL: the activation-locked potion key did not take the new count (held={}, count={})"sv,
+                shows(shown, 0, P), countOn(shown, 0));
+            passed = false;
+        }
+    }
+
+    locker.SetConfig(savedConfig);
+    locker.Reset();
+
+    if (passed) {
+        logger::info("  SlotLocker override-scope / combat-lock test PASSED"sv);
     }
 #endif
 }

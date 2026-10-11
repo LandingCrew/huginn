@@ -67,6 +67,17 @@ namespace Huginn::Candidate
         m_cooldownMgr.Clear();
         m_stats.Reset();
         m_gatherBuffer.clear();
+        m_lastGathered.clear();
+    }
+
+    std::optional<CandidateVariant> CandidateGenerator::FindGathered(RE::FormID formID, uint16_t uniqueID) const
+    {
+        for (const auto& c : m_lastGathered) {
+            if (GetFormID(c) == formID && GetUniqueID(c) == uniqueID) {
+                return c;
+            }
+        }
+        return std::nullopt;
     }
 
     void CandidateGenerator::RefreshConfigFromGlobal() noexcept
@@ -139,6 +150,11 @@ namespace Huginn::Candidate
         { Huginn_ZONE_NAMED("Gather::SoulGems");  GatherSoulGemCandidates(m_gatherBuffer, player); }
         { Huginn_ZONE_NAMED("Gather::Apparel");   GatherApparelCandidates(m_gatherBuffer, player); }
         { Huginn_ZONE_NAMED("Gather::Torches");   GatherTorchCandidates(m_gatherBuffer, player); }
+
+        // Kept whole for FindGathered: the filters below move survivors out of
+        // m_gatherBuffer and drop the item just used (cooldown, full vitals,
+        // active buff), which is exactly when a held key needs its new count.
+        m_lastGathered = m_gatherBuffer;
 
         // Step 3: Filter gathered candidates into a local output vector.
         // Survivors are moved from m_gatherBuffer into output (one move per

@@ -883,6 +883,9 @@ namespace Huginn::State
       TargetDigest digest = ComputeTargetDigest();
       changed = !(digest == m_prevTargetDigest);
       m_prevTargetDigest = digest;
+      // The count GameState's `Enemies:` bucket is made from, published for
+      // the combat lock's no-enemy release (UpdateLoop -> SlotLocker).
+      m_enemyCount.store(m_targets.GetEnemyCount(), std::memory_order_release);
       }
 
       // R3: publish the need readings. Families are HELD for the fight: the

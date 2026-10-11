@@ -1,0 +1,104 @@
+// Host tests for src/core/OpenWheelWrites.h.
+
+#include "core/OpenWheelWrites.h"
+
+#include <doctest/doctest.h>
+
+#include <string>
+#include <vector>
+
+using namespace Huginn::Core;
+
+namespace
+{
+    WheelPageContents Page(std::vector<uint32_t> ids)
+    {
+        WheelPageContents p;
+        p.formIDs = ids;
+        p.wildcard.assign(ids.size(), false);
+        p.uniqueIDs.assign(ids.size(), 0);
+        p.subtexts.assign(ids.size(), std::string{});
+        return p;
+    }
+}
+
+TEST_CASE("open wheel: only the writable entry changes; the rest keep the wheel's content")
+{
+    // The wheel holds A B C D; the allocator re-seated everything and put the
+    // urgent potion P on slot 1.
+    const auto cached = Page({ 0xA, 0xB, 0xC, 0xD });
+    auto incoming = Page({ 0xC, 0xF00D, 0xA, 0xE });
+    incoming.subtexts = { "Favorite", "Low MP", "", "" };
+    const auto written = RestrictToWritable(incoming, cached, { false, true, false, false });
+    CHECK(written == std::vector<size_t>{ 1 });
+    CHECK(incoming.formIDs == std::vector<uint32_t>{ 0xA, 0xF00D, 0xC, 0xD });
+    CHECK(incoming.subtexts == std::vector<std::string>{ "", "Low MP", "", "" });
+}
+
+TEST_CASE("open wheel: a writable entry already on the wheel writes nothing")
+{
+    const auto cached = Page({ 0xA, 0xF00D });
+    auto incoming = Page({ 0xB, 0xF00D });
+    CHECK(RestrictToWritable(incoming, cached, { false, true }).empty());
+    CHECK(incoming.formIDs == std::vector<uint32_t>{ 0xA, 0xF00D });
+}
+
+TEST_CASE("open wheel: nothing writable freezes the whole page")
+{
+    const auto cached = Page({ 0xA, 0xB, 0xC });
+    auto incoming = Page({ 0xC, 0xB, 0xA });
+    incoming.wildcard = { true, true, true };
+    incoming.uniqueIDs = { 7, 8, 9 };
+    CHECK(RestrictToWritable(incoming, cached, {}).empty());
+    CHECK(incoming.formIDs == cached.formIDs);
+    CHECK(incoming.wildcard == cached.wildcard);
+    CHECK(incoming.uniqueIDs == cached.uniqueIDs);
+}
+
+TEST_CASE("open wheel: a subtext or uniqueID change on a writable entry counts as a write")
+{
+    const auto cached = Page({ 0xF00D });
+    auto incoming = Page({ 0xF00D });
+    incoming.subtexts = { "Low HP" };
+    CHECK(RestrictToWritable(incoming, cached, { true }) == std::vector<size_t>{ 0 });
+    auto again = Page({ 0xF00D });
+    again.uniqueIDs = { 3 };
+    CHECK(RestrictToWritable(again, cached, { true }) == std::vector<size_t>{ 0 });
+}
+
+TEST_CASE("open wheel: entries past the cache keep the incoming value")
+{
+    const auto cached = Page({ 0xA });
+    auto incoming = Page({ 0xB, 0xC });
+    const auto written = RestrictToWritable(incoming, cached, { false, false });
+    CHECK(incoming.formIDs == std::vector<uint32_t>{ 0xA, 0xC });
+    CHECK(written.empty());   // index 1 is not writable; nothing to compare it with
+}
+
+TEST_CASE("open wheel: every urgent override's entry is writable, not only the top one")
+{
+    const std::vector<uint32_t> ids{ 0xA, 0x100, 0xB, 0x200, 0x300 };
+    const std::vector<bool> isOverride{ false, true, false, true, true };
+    // Critical health (100) and critical magicka (70) both up; a 30-priority
+    // override below iAutoFocusMinPriority (50) stays frozen.
+    const std::vector<UrgentOverride> ovr{ { 0x100, 100 }, { 0x200, 70 }, { 0x300, 30 } };
+    const auto w = UrgentEntries(ids, isOverride, ovr, 50);
+    CHECK(w == std::vector<bool>{ false, true, false, true, false });
+    // The same item NOT placed as an override (an ordinary pick) is not writable.
+    const auto w2 = UrgentEntries({ 0x100 }, { false }, ovr, 50);
+    CHECK(w2 == std::vector<bool>{ false });
+}
+
+TEST_CASE("open wheel: the gate is the best urgent override WITH an item, not the top one")
+{
+    // Critical health with no potion (no item) on top, critical magicka with one.
+    const std::vector<UrgentOverride> ovr{ { 0, 100 }, { 0x200, 70 }, { 0x300, 30 } };
+    const auto top = TopUrgent(ovr, 50);
+    REQUIRE(top.has_value());
+    CHECK(*top == 1);
+    CHECK_FALSE(TopUrgent({ { 0, 100 }, { 0x300, 30 } }, 50).has_value());
+    CHECK_FALSE(TopUrgent({}, 50).has_value());
+    const auto both = TopUrgent({ { 0x200, 70 }, { 0x100, 100 } }, 50);
+    REQUIRE(both.has_value());
+    CHECK(*both == 1);
+}

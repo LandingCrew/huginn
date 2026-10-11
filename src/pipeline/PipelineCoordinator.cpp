@@ -8,8 +8,13 @@
 #include "candidate/CandidateGenerator.h"
 #include "context/ContextRuleEngine.h"   // Context::ContextReasonSignals (#10)
 #include "override/OverrideManager.h"
+#include "override/OverrideConfig.h"
+#include "core/BucketHysteresis.h"
+#include "core/CombatLock.h"
+#include "util/InventoryUtil.h"
 #include "slot/SlotAllocator.h"
 #include "slot/SlotLocker.h"
+#include "slot/SlotSettings.h"   // bucket hysteresis bands
 #include "slot/Remembrance.h"
 #include "slot/SlotUtils.h"
 #include "input/EquipManager.h"
@@ -145,9 +150,18 @@ void PipelineCoordinator::GatherState(PipelineContext& ctx)
     ctx.targets = stateManager.GetTargets();
     ctx.healthTracking = stateManager.GetHealthTracking();
 
-    // Evaluate GameState from the already-fetched snapshots (no extra copies)
-    ctx.currentState = g_stateEvaluator->EvaluateCurrentState(
-        ctx.playerState, ctx.targets);
+    // Evaluate GameState from the already-fetched snapshots (no extra copies).
+    // The one committing evaluation: the HP/MP/SP and distance buckets carry
+    // hysteresis (fVitalBucketHysteresis / fDistanceBucketHysteresis), so a
+    // value wobbling on a boundary stops re-scoring the page; the memory moves
+    // here only, once per run. Overrides still read the raw vitals.
+    const auto& slotSettings = Slot::SlotSettings::GetSingleton();
+    ctx.currentState = g_stateEvaluator->EvaluateAndCommit(
+        ctx.playerState, ctx.targets,
+        State::StateEvaluator::BucketBands{
+            .vitalBand = slotSettings.VitalBucketHysteresis(),
+            .distanceFraction = slotSettings.DistanceBucketHysteresis(),
+        });
     ctx.stateHash = ctx.currentState.GetHash();
 
     // Check if elemental damage requires pipeline run despite unchanged hash
@@ -209,6 +223,16 @@ void PipelineCoordinator::GatherState(PipelineContext& ctx)
         (Context::ColdTier(ctx.playerState) << 3));
 
     ctx.currentMagicka = ctx.actorValue->GetActorValue(RE::ActorValue::kMagicka);
+
+    // Override thresholds on the RAW vitals (see PipelineContext::overrideSignature).
+    {
+        namespace OC = Override::Config;
+        const auto& v = ctx.playerState.vitals;
+        const int hp = Core::OverrideZone(v.health, OC::CRITICAL_HEALTH_THRESHOLD(), OC::CRITICAL_HEALTH_HYSTERESIS());
+        const int mp = Core::OverrideZone(v.magicka, OC::CRITICAL_MAGICKA_THRESHOLD(), OC::CRITICAL_MAGICKA_HYSTERESIS());
+        const int sp = Core::OverrideZone(v.stamina, OC::CRITICAL_STAMINA_THRESHOLD(), OC::CRITICAL_STAMINA_HYSTERESIS());
+        ctx.overrideSignature = static_cast<uint8_t>(hp | (mp << 2) | (sp << 4));
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -233,7 +257,8 @@ bool PipelineCoordinator::CheckHashSkip(PipelineContext& ctx, bool pageChanged)
 
     // One run on each change, either way: into the dark and out of it, a
     // hunger or cold stage crossed, a warming effect starting or ending.
-    const bool ambientChanged = ctx.ambientSignature != m_lastAmbientSignature;
+    const bool ambientChanged = ctx.ambientSignature != m_lastAmbientSignature ||
+                                ctx.overrideSignature != m_lastOverrideSignature;
 
     if (ctx.stateHash == m_lastPipelineHash && !pageChanged &&
         !unhashedStateActive && !ambientChanged && !NeedsForcedRun()) {
@@ -246,6 +271,7 @@ bool PipelineCoordinator::CheckHashSkip(PipelineContext& ctx, bool pageChanged)
     m_wasFalling = ctx.fallingActive;
     m_wasUnderwater = ctx.underwaterActive;
     m_lastAmbientSignature = ctx.ambientSignature;
+    m_lastOverrideSignature = ctx.overrideSignature;
 
     // Commit point for the learner latch: everything below this line scores and
     // publishes, so whatever reward set the flag is about to reach the widget.
@@ -567,7 +593,96 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
     // elsewhere), preferring to keep locked content. Lock-timer decay lives in
     // UpdateSubsystems (unconditional per tick), not here behind the skip gate.
     auto& slotLocker = Slot::SlotLocker::GetSingleton();
-    ctx.assignments = slotLocker.ApplyLocks(ctx.rawAssignments, ctx.overrides, ctx.scoredCandidates);
+    // Which keys show a Remembrance hold for the key the player pressed: under
+    // a combat lock only those may take a locked key.
+    Slot::SlotLocker::RunContext lockRun;
+    {
+        const auto pressedHolds = Slot::Remembrance::GetSingleton().GetPage(ctx.displayPageIndex);
+        for (size_t s = 0; s < pressedHolds.size() && s < lockRun.remembranceOnPressedKey.size(); ++s) {
+            const auto& hold = pressedHolds[s];
+            lockRun.remembranceOnPressedKey[s] = hold.Active() && (hold.shownSlot == SIZE_MAX || hold.shownSlot == s);
+        }
+    }
+    // A combat-locked key's item, checked against the game every run: a spell
+    // or shout the player no longer knows, or an item now equipped / worn.
+    // The worn stack's uniqueID in one hand (the list carrying ExtraWorn, else
+    // the first, as WeaponRegistry::RefreshCharges reads it); -1 if none.
+    const auto wornUid = [](RE::PlayerCharacter* p, bool leftHand) -> int {
+        RE::InventoryEntryData* entry = p->GetEquippedEntryData(leftHand);
+        if (!entry || !entry->extraLists) return -1;
+        RE::ExtraDataList* worn = nullptr;
+        for (auto* xl : *entry->extraLists) {
+            if (!xl) continue;
+            if (!worn) worn = xl;
+            if (xl->HasType<RE::ExtraWorn>() || xl->HasType<RE::ExtraWornLeft>()) { worn = xl; break; }
+        }
+        const auto* xid = worn ? worn->GetByType<RE::ExtraUniqueID>() : nullptr;
+        return xid ? static_cast<int>(xid->uniqueID) : -1;
+    };
+    lockRun.probeItem = [player = ctx.player, wornUid](RE::FormID formID, uint16_t uniqueID) {
+        Slot::SlotLocker::RunContext::ItemState st;
+        auto* form = RE::TESForm::LookupByID(formID);
+        if (!form || !player) {
+            st.gone = form == nullptr;
+            return st;
+        }
+        if (form->Is(RE::FormType::Spell)) {
+            auto* spell = form->As<RE::SpellItem>();
+            st.gone = spell && !player->HasSpell(spell);
+            const auto& sel = player->GetActorRuntimeData().selectedSpells;
+            st.equipped = sel[RE::Actor::SlotTypes::kLeftHand] == spell ||
+                          sel[RE::Actor::SlotTypes::kRightHand] == spell;
+        } else if (form->Is(RE::FormType::Shout)) {
+            st.gone = !player->HasShout(form->As<RE::TESShout>());
+        } else if (form->Is(RE::FormType::SoulGem)) {
+            // A reusable gem (Azura's Star) emptied keeps its count -- no
+            // inventory event says it left -- and the gather skips empty gems.
+            // Not gathered this run = nothing on the key a press can use.
+            st.gone = !Candidate::CandidateGenerator::GetSingleton().FindGathered(formID, uniqueID).has_value();
+        } else if (form->Is(RE::FormType::Ammo)) {
+            const auto* ammo = player->GetCurrentAmmo();
+            st.equipped = ammo && ammo->GetFormID() == formID;
+        } else if (form->Is(RE::FormType::Armor)) {
+            // A named stack: worn only if THAT stack carries ExtraWorn (a walk
+            // of the one inventory entry; armour keys are rare in combat).
+            if (uniqueID == 0) {
+                st.equipped = player->GetWornArmor(formID) != nullptr;
+            } else {
+                auto* bound = form->As<RE::TESBoundObject>();
+                const auto inv = Util::GetInventorySafe(player,
+                    [bound](RE::TESBoundObject& obj) { return std::addressof(obj) == bound; });
+                for (const auto& [obj, data] : inv) {
+                    const auto& entry = data.second;
+                    if (!entry || !entry->extraLists) continue;
+                    for (auto* xl : *entry->extraLists) {
+                        if (!xl) continue;
+                        const auto* xid = xl->GetByType<RE::ExtraUniqueID>();
+                        if (xid && xid->uniqueID == uniqueID &&
+                            (xl->HasType<RE::ExtraWorn>() || xl->HasType<RE::ExtraWornLeft>())) {
+                            st.equipped = true;
+                        }
+                    }
+                }
+            }
+        } else if (form->Is(RE::FormType::Weapon) || form->Is(RE::FormType::Light) || form->Is(RE::FormType::Scroll)) {
+            for (const bool leftHand : { true, false }) {
+                const auto* obj = player->GetEquippedObject(leftHand);
+                const bool formMatches = obj && obj->GetFormID() == formID;
+                if (Core::EquippedInstanceMatches(formMatches, uniqueID,
+                        formMatches && uniqueID != 0 ? wornUid(player, leftHand) : -1)) {
+                    st.equipped = true;
+                }
+            }
+        }
+        return st;
+    };
+    // A held key's current count/charge, from the generator's pre-filter
+    // gather of this run (the potion just drunk is on cooldown and, at full
+    // health, filtered -- it is still gathered).
+    lockRun.lookupItem = [](RE::FormID formID, uint16_t uniqueID) {
+        return Candidate::CandidateGenerator::GetSingleton().FindGathered(formID, uniqueID);
+    };
+    ctx.assignments = slotLocker.ApplyLocks(ctx.rawAssignments, ctx.overrides, ctx.scoredCandidates, lockRun);
 
     // Compute visual state for each slot
     Slot::ComputeVisualStates(ctx.assignments, ctx.rawAssignments, slotLocker);
@@ -610,7 +725,7 @@ void PipelineCoordinator::UpdateCaches(PipelineContext& ctx)
     // Cache slot contents for EquipManager (keyboard equip hotkeys)
     auto& equipMgr = Input::EquipManager::GetSingleton();
     for (const auto& assignment : ctx.assignments) {
-        equipMgr.SetSlotContent(assignment.slotIndex, Slot::ToSlotContent(assignment));
+        equipMgr.SetSlotContent(ctx.displayPageIndex, assignment.slotIndex, Slot::ToSlotContent(assignment));
     }
 }
 

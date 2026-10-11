@@ -138,6 +138,14 @@ namespace Huginn::Wheeler
             WheelSync::GetSingleton().UpdatePage(pageIndex, spellFormIDs, isWildcard, uniqueIDs, subtexts);
         }
 
+        // What the page's wheel was last written with (WheelSync::GetCachedPage).
+        bool GetCachedPage(size_t pageIndex, std::vector<RE::FormID>& formIDs,
+                           std::vector<bool>& isWildcard, std::vector<uint16_t>& uniqueIDs,
+                           std::vector<std::string>& subtexts) const
+        {
+            return WheelSync::GetSingleton().GetCachedPage(pageIndex, formIDs, isWildcard, uniqueIDs, subtexts);
+        }
+
         // Check if at least one recommendation wheel exists.
         [[nodiscard]] bool HasRecommendationWheel() const
         {

@@ -50,7 +50,7 @@ namespace Huginn::Slot
 
     /// Convert a SlotAssignment to SlotContent for display layers.
     /// Handles all candidate types and assignment types appropriately.
-    [[nodiscard]] inline UI::SlotContent ToSlotContent(const SlotAssignment& assignment)
+    [[nodiscard]] inline UI::SlotContent ToSlotContentBody(const SlotAssignment& assignment)
     {
         if (assignment.IsEmpty() || !assignment.HasCandidate()) {
             // Show "(No healing)" etc. for typed slots, "(Learning...)" for Regular
@@ -162,6 +162,16 @@ namespace Huginn::Slot
             default:
                 return UI::SlotContent::Spell(name, confidence, formID);
         }
+    }
+
+    /// The slot content the hotkeys and the widget act on, flagged when it is
+    /// an override: the press grace must never take an urgent item back off
+    /// the key the player is pressing (EquipManager::ResolvePressGrace).
+    [[nodiscard]] inline UI::SlotContent ToSlotContent(const SlotAssignment& assignment)
+    {
+        UI::SlotContent content = ToSlotContentBody(assignment);
+        content.isOverride = assignment.IsOverride() && !content.IsEmpty() && !content.IsNoMatch();
+        return content;
     }
 
     /// Enrich slot assignments with visual state flags (override, wildcard,

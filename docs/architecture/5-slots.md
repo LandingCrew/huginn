@@ -788,6 +788,168 @@ from `UpdateSubsystems`, *not* from behind the pipeline-skip gate, so locks deca
 in wall-clock time. It returns `true` if any lock expired, and the caller must
 force a pipeline run so the freed slot's content actually swaps.
 
+### Churn guards (0.23.37)
+
+Counts in this section are `[SlotChurn]` lines -- page-0 changes as the locker
+made them -- in the 2026-10-11 LoreRim log, window 08:55:40-08:58:00 (119
+changes in 140 s) unless another window is named, with at least three misclicks:
+a key pressed while it showed one item acted on the item that replaced it a
+fraction of a second later. Each key is locked for `fLockDurationMs` after every
+change, but eight keys coming free at different times changed the page about
+every second. The combat lock changes that policy in combat; the other guards
+take the misclick out of it and close the gaps. Settings under `[SlotLocker]`;
+the open-wheel rule has none.
+
+**Combat lock** (`fCombatLockDurationMs`, default -1 = freeze, 0 = use
+`fLockDurationMs`, else up to 120000 ms; `src/core/CombatLock.h`, wired in
+`SlotLocker`). While the player is in combat a key locks for this long instead
+of `fLockDurationMs`, and a freeze has no timer. "In combat" is the game's flag
+(`StateManager::IsInCombat`) unless no enemy has been tracked for
+`fCombatNoEnemyReleaseSec` (default 5, 0 = off; `Core::CombatPresence`, fed the
+count the GameState `Enemies:` bucket uses): the flag can stay up for minutes
+after the last kill (09:23:56 last enemy, 09:26:05 flag down). The result is
+pushed every tick by `SlotLocker::SetInCombat`. The challenger margin never
+reaches a combat-locked key; only these change it:
+
+- its item is gone: `OnItemUsed(..., UseKind::Gone)` -- the inventory scan
+  passes `Gone` only when none is left (`StillCarried`), weapon departures and
+  stale stacks always; a use with more left (`UseKind::Used`, the Wheeler
+  activation and a consumption from a stack) does not free it. Checked on
+  every run as well (`RunContext::probeItem`): a spell or shout the player no
+  longer knows (and that this run did not score) is gone;
+- its item is now equipped / worn and the key holds no Remembrance or override
+  item (pressed into an empty hand, equipped from the inventory) -- unless the
+  allocator still places it there;
+- an override placed on that key (urgent ones at once, lower after
+  `fMinLockDurationMs`). An urgent override (>= `iImmediateBreakPriority`)
+  takes the key even with `bOverridesBreakLock = false`, or a freeze would hide
+  it all fight;
+- a Remembrance hold on the key the player pressed (`RunContext::
+  remembranceOnPressedKey`; a `sRemembranceTarget = Job` hold on another key
+  waits);
+- the end of the override or hold the key itself shows; and when the same item
+  stays but stops (or starts) being an override, the key is re-locked as what
+  it is now (`CombatLockBreak::Restyle`), so an ended override does not keep
+  its urgent styling, Wheeler label and `[O]` selection flag.
+
+A spell the affordability filter drops stays on its locked key (the lock
+re-shows it whatever the candidate list says) instead of leaving and coming
+back with the magicka. A seating move (home key, re-seat) does not release a
+combat lock, so items do not move between keys. At the end of every run in
+combat, every key showing an item that is not locked is locked; empty keys
+still fill. When combat ends, combat locks become normal locks with
+`fLockDurationMs` counted from then (`RemainingAfterCombat`). A frozen key
+shows the Wheeler lock-timer prefix without a countdown (`LockTimerLabel`).
+A held key -- combat or normal lock -- keeps its ITEM but takes this run's
+numbers (`Core::PlanHeldRefresh`, same form and stack): from this run's scored
+row (data, utility and score -- no score from a Remembrance-only row or onto a
+pinned key), else from the item's current data as the generator gathered it
+from the registries this run BEFORE any filter (`CandidateGenerator::
+FindGathered`, through `RunContext::lookupItem`; data only: the potion just
+drunk is on cooldown and, at full health, filtered, and the scorer never sees
+it), else for an override key from the override's own candidate. This holds
+for every kind of held key: a normal lock, the combat freeze, the Sticky
+activation lock. An override key takes the override's own current candidate
+first (only OverrideManager's candidates carry `overrideReason`, the "Low HP" /
+"Poisoned" label), and whatever the source the stored reason is kept when the
+new data has none. Under the combat lock a soul gem the gather no longer
+offers (a reusable gem emptied: its count does not change) counts as gone. So the stack
+count, staff charge and ammo count on the widget move as the player uses them.
+An item nobody gathered this run (gone -- the Gone path frees the key) keeps
+its stored data. The equipped check
+matches the stack when the key names one (`EquippedInstanceMatches`): the twin
+of an equipped dagger keeps its key. A combat lock forces one pipeline run when
+it turns `fMinLockDurationMs` old, so a non-urgent override waiting on that
+minimum is placed then. A seating or override move does not release the source
+key toward a pinned destination whose own lock will not let go this run (the
+item would be shown on no key). `fCombatNoEnemyReleaseSec` counts enemies within
+detection range (about 2048 units): a distant archer or a circling dragon thaws
+the keys, and they lock again when it returns. Changing
+`fCombatLockDurationMs` mid-fight affects locks taken after the change.
+
+Override evaluation no longer depends on lock expiries: the pipeline also wakes
+whenever a raw vital crosses an override's own activation or release threshold
+(`Core::OverrideZone`, `PipelineContext::overrideSignature`). Before, the shipped
+35% thresholds sit inside the Low bucket, and a fall from 39% to 30% woke the
+pipeline only because something else (in combat, mostly a lock expiry) did.
+
+**Post-lock dedup** (`src/core/DedupRules.h`). An override or Remembrance item
+is never cleared for a non-pinned copy of its name (a frozen key on another
+form with the same display name used to win "first seen" and hide the potion
+all fight), and between two pinned copies an override beats a Remembrance item
+wherever it sits; a non-pinned copy of a pinned item's name goes; a locked key that
+already showed the item (the incumbent) beats a newcomer; an unlocked copy of a
+locked key's name goes; otherwise the first stays. The refilled slot is locked.
+
+**Changes under 3 s after the same key's previous change** (19 of 119; window
+09:16:40-09:24:10: 29 of 257):
+
+- *Seating moves* (8 and 12): `lock released: its item moved to seated slot`.
+  Expected outside combat (a home-key return moves in one run); under the
+  combat lock they wait.
+- *"Override" breaks of another key* (1 and 3): Remembrance holds taking their
+  own key; `ShouldBreakLock` labelled every non-timer break "override". It now
+  returns the reason (`BreakReason`) and the log names it. An override breaks
+  only its own key (in-game test `RunSlotLockerOverrideScopeTest`).
+- *The player's own press* (`manually unlocked` + Remembrance): expected.
+- *Dedup refills* (1 and 2): shown but never locked, changed again 0.1-0.7 s
+  later. Now locked (rule above).
+- On the widget, a key that changed while the Wheeler wheel was open (the
+  widget is hidden then) was first seen at the close with part of its lock
+  spent; on the push timeline that adds about 3 more per window. The wheel
+  close now restarts every lock (`SlotLocker::RestartLocks`).
+
+**Press grace** (`fPressGraceMs`, default 600, 0 = off; `src/core/PressGrace.h`,
+wired in `EquipManager::EquipSlot`). A hotkey whose key changed less than that
+long before the key went down, or while the tap waited out the 300 ms double-tap
+window, acts on the item shown before the change, if it is still usable (an
+eligible candidate on the last run and, for inventory items, still carried).
+Never when the key now shows an override (`SlotContent::isOverride`): the urgent
+item is what the press gets; grace back TO an override that just left is
+allowed. `EquipManager::SetSlotContent` records each key's previous item and
+change time; the InputHandler passes the gesture's first key-down time. It does
+not apply when nothing was shown before, when the player's own press on that
+key preceded the change by at most 2 s (a Remembrance swap-back: pressing again
+swaps back), or across a page switch. Everything downstream -- the Remembrance
+note, the equip and the selection credit -- concerns the item actually used.
+One info line when it fires: `[Grace] Page P slot S: pressed X, shown Yms ago;
+using previous Z`. Not covered: Huginn's own Wheeler wheels (Wheeler equips its
+entry before it calls back), and shouts (not an inventory form; the usability
+check refuses them, so a shout is never the previous item acted on).
+
+**Bucket hysteresis** (`fVitalBucketHysteresis` default 0.03,
+`fDistanceBucketHysteresis` default 0.1; `src/core/BucketHysteresis.h`, wired in
+`StateEvaluator`). The HP/MP/SP level and the closest-enemy distance band feed
+the GameState hash that wakes the pipeline, key UsageMemory's recency boost,
+and feed PotionDiscriminator's "resource low" multiplier
+(`PotionDiscriminator.cpp`, `state.health <= VeryLow` and the like), which now
+stays on until the vital is 3 points past 25%. 85 of the 91 state transitions
+in the window were MP or distance moves. A recovering vital moves up a level
+only `band` past the boundary; one falling from above a boundary moves at the
+boundary itself, but one that falls back after recovering less than the band
+(8% -> 12% -> 9%) never left the lower level, so the second fall is no hash
+change. No override depends on that: overrides read raw vitals and the pipeline
+wakes on their own thresholds (above). The distance band is symmetric, a
+fraction of the boundary distance. The pipeline commits the remembered buckets
+(`EvaluateAndCommit`, once per run); the equip capture reads them without
+moving them. The target digest keeps the raw band (it only opens the outer
+skip gate). The context weights and the learner's features read raw values.
+
+**Open-wheel writes** (`src/core/OpenWheelWrites.h`, wired in
+`WheelerBackend::Push`). The Wheeler push skips while the wheel is open unless
+an urgent override is up (priority >= `iAutoFocusMinPriority`, 50: critical
+health 100, magicka 70, stamina 60). That bypass used to write every entry of
+every page into the open wheel; 15 of 45 wheel opens in the 2026-10-11 session
+had such an override. The gate and the auto-focus use the highest urgent
+override that carries an item (`TopUrgent`), so critical health with no potion
+over critical magicka with one still reaches the open wheel. While the wheel is
+open, only the entries of urgent overrides (`UrgentEntries`: every override at
+or above the threshold, not only the top one) are written, on every page; every other entry gets what the wheel
+already holds (`WheelSync::GetCachedPage`), so its diff writes nothing. The
+auto-focus is unchanged, and the close re-runs the pipeline, which writes the
+full page. One debug line per entry written while open:
+`[WheelerClient] open-wheel write page P slot S: X`.
+
 ---
 
 ## Wildcard System
@@ -925,6 +1087,11 @@ fMinLockDurationMs = 500        ; Minimum time before a lock can break
 bLockOnFill = true              ; Lock when a slot fills from empty
 bOverridesBreakLock = true      ; Allow high-priority overrides to break locks
 iImmediateBreakPriority = 50    ; Override priority that bypasses fMinLockDurationMs
+fCombatLockDurationMs = -1      ; In combat: -1 = freeze until combat ends, 0 = fLockDurationMs, else ms (<= 120000)
+fCombatNoEnemyReleaseSec = 5    ; ...but combat ends for the lock after this long with no enemy; 0 = off, 0-60
+fPressGraceMs = 600             ; Misclick guard: a key changed this recently acts on its previous item; 0-2000, 0 = off
+fVitalBucketHysteresis = 0.03   ; HP/MP/SP level moves up only this far past a boundary (falls at it); 0-0.1
+fDistanceBucketHysteresis = 0.1 ; Distance band moves only this fraction past a boundary, both ways; 0-0.5
 ```
 
 ### [Overrides]

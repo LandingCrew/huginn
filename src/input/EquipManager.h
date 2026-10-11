@@ -5,6 +5,8 @@
 #include "../slot/SlotSettings.h"
 // Note: std headers (functional) come from PCH via RE/Skyrim.h
 #include <array>
+#include <chrono>
+#include <optional>
 #include <shared_mutex>
 
 namespace Huginn::Input
@@ -40,15 +42,24 @@ namespace Huginn::Input
        * @brief Equip the item in a specific slot
        * @param slotIndex 0-based slot index from widget
        * @param hand Which hand(s) to equip to
+       * @param pressedAt When the player's key went down for this press (the
+       *   first key-down of a double tap). Given, the press grace applies
+       *   (core/PressGrace.h, fPressGraceMs): if the key's item changed just
+       *   before or during the press, the press acts on the item shown before
+       *   the change. Omitted (test harnesses, the slot capture) = no grace.
        * @return true if equip succeeded
        */
-      bool EquipSlot(size_t slotIndex, EquipHand hand);
+      bool EquipSlot(size_t slotIndex, EquipHand hand,
+         std::optional<std::chrono::steady_clock::time_point> pressedAt = std::nullopt);
 
       /**
        * @brief Update cached slot content (called from update loop)
        * Replaces the old dependency on SpellRecommendationWidget::GetSlotContent()
+       * @param page The page these contents belong to. A new page resets the
+       *   per-key change history the press grace reads: a page switch is the
+       *   player's own doing, not a key changing under their finger.
        */
-      void SetSlotContent(size_t index, const UI::SlotContent& content);
+      void SetSlotContent(size_t page, size_t index, const UI::SlotContent& content);
 
       /**
        * @brief Get cached slot content for a given index
@@ -138,7 +149,37 @@ namespace Huginn::Input
       static constexpr size_t MAX_SLOTS = Slot::MAX_SLOTS_PER_PAGE;
       std::array<UI::SlotContent, MAX_SLOTS> m_slotContents{};
 
-      /// Protects m_slotContents: shared_lock for reads, unique_lock for writes
+      /// Per-key change history for the press grace (core/PressGrace.h):
+      /// what the key showed before its last change, and when.
+      struct SlotHistory
+      {
+         std::chrono::steady_clock::time_point shownSince{};    ///< when the current content went up
+         bool hasChange = false;                                ///< a change since the page went up
+         std::chrono::steady_clock::time_point changedAt{};     ///< when the last change landed
+         UI::SlotContent previous{};                            ///< what the key showed before it
+         std::chrono::steady_clock::time_point previousSince{}; ///< when `previous` went up
+         bool pageFresh = true;                                 ///< next content is a page fill, not a change
+         bool hasLastAction = false;                            ///< the player has acted on this key
+         std::chrono::steady_clock::time_point lastAction{};    ///< when, on this page
+      };
+      std::array<SlotHistory, MAX_SLOTS> m_history{};
+      size_t m_contentPage = SIZE_MAX;   ///< page m_slotContents belongs to
+
+      /// Protects m_slotContents, m_history and m_contentPage: shared_lock for
+      /// reads, unique_lock for writes
       mutable std::shared_mutex m_slotMutex;
+
+      /// The press grace: the content this press should act on instead of
+      /// `shown`, or nullopt to act on `shown`. Logs a [Grace] line when it fires.
+      [[nodiscard]] std::optional<UI::SlotContent> ResolvePressGrace(size_t slotIndex,
+         const UI::SlotContent& shown, std::chrono::steady_clock::time_point pressedAt) const;
+
+      /// Can the item still be used: an eligible candidate on the last pipeline
+      /// run, and for inventory items still carried right now.
+      [[nodiscard]] static bool StillUsable(const UI::SlotContent& content);
+
+      /// Remember that the player acted on this key (the press grace's
+      /// own-press exception).
+      void NoteSlotAction(size_t slotIndex, std::chrono::steady_clock::time_point when);
    };
 }

@@ -5,6 +5,8 @@
 #include <array>
 #include <cmath>   // std::ceil (lock-timer quantization)
 
+#include "core/CombatLock.h"
+#include "core/OpenWheelWrites.h"
 #include "slot/SlotAllocator.h"
 #include "slot/SlotLocker.h"
 #include "slot/SlotUtils.h"
@@ -38,8 +40,8 @@ namespace Huginn::Display
 
         // Urgent-override handling is Wheeler-local: an override at/above the
         // auto-focus threshold both pulls focus to the Huginn wheel and lets the
-        // push through even while the wheel is open (so an open wheel updates).
-        const auto* topOverride = ctx.overrides.GetTopOverride();
+        // push through even while the wheel is open -- for the override's own
+        // entry only (0.23.37); the rest of an open wheel stays as it opened.
         const int autoFocusThreshold =
             Wheeler::WheelerSettings::GetSingleton().GetAutoFocusMinPriority();
         // The candidate check is not belt-and-braces. An override activates on
@@ -50,12 +52,22 @@ namespace Huginn::Display
         // Focus-stealing the wheel to show the player an empty answer while they
         // drown is worse than staying out of the way. Latent until #61 made
         // isUnderwater fire at all.
-        const bool hasUrgentOverride =
-            topOverride && topOverride->candidate &&
-            topOverride->priority >= autoFocusThreshold;
+        //
+        // Every override is considered, not just the top one: critical health
+        // with no potion (100, no item) over critical magicka with one (70)
+        // must still let the magicka potion through and focus the wheel
+        // (core::TopUrgent). Overrides without an item are kept out of the list.
+        std::vector<Core::UrgentOverride> urgentOverrides;
+        for (const auto& o : ctx.overrides.activeOverrides) {
+            if (o.candidate) {
+                urgentOverrides.push_back({ Candidate::GetFormID(*o.candidate), o.priority });
+            }
+        }
+        const auto topUrgent = Core::TopUrgent(urgentOverrides, autoFocusThreshold);
+        const bool hasUrgentOverride = topUrgent.has_value();
 
         if (hasUrgentOverride && wheelerClient.IsWheelOpen()) {
-            wheelerClient.TryUrgentAutoFocus(topOverride->priority);
+            wheelerClient.TryUrgentAutoFocus(urgentOverrides[*topUrgent].priority);
         }
 
         // #76: every page invalidated is indistinguishable from "wheels were
@@ -79,10 +91,14 @@ namespace Huginn::Display
         }
         wheelerClient.RecoverInvalidatedWheels();
 
-        if (!wheelerClient.HasRecommendationWheel() ||
-            (wheelerClient.IsWheelOpen() && !hasUrgentOverride)) {
+        // Read once: the open state decides both the gate here and, past it,
+        // that only the override's entry may be written (see the page loop).
+        const bool wheelOpen = wheelerClient.IsWheelOpen();
+        if (!wheelerClient.HasRecommendationWheel() || (wheelOpen && !hasUrgentOverride)) {
             return;
         }
+        // Every urgent override's item may be written into an open wheel
+        // (core/OpenWheelWrites.h, urgentOverrides above), not only the top one's.
 
         // Don't push while the player is rearranging wheels. Every move in the
         // editor shifts our indices, and nothing corrects them until edit-mode
@@ -208,6 +224,13 @@ namespace Huginn::Display
                     && assignment.slotIndex < lockSnapshot.size()
                     && lockSnapshot[assignment.slotIndex].isLocked) {
                     const float remainingMs = lockSnapshot[assignment.slotIndex].remainingMs;
+                    if (lockSnapshot[assignment.slotIndex].frozen) {
+                        // Combat freeze: no timer, so no countdown -- the
+                        // prefix alone marks the key as locked.
+                        assignment.subtextLabel = Core::LockTimerLabel(stConfig.lockTimerPrefix,
+                            stConfig.lockTimerShowSeconds, remainingMs, true);
+                        continue;
+                    }
                     if (remainingMs > 0.0f) {
                         if (stConfig.lockTimerShowSeconds) {
                             // #14: WHOLE seconds, not tenths. The subtext feeds
@@ -309,6 +332,38 @@ namespace Huginn::Display
                 m_uniqueIDs.push_back(uid);
                 m_wildcardFlags.push_back(wild);
                 m_subtexts.push_back(std::move(sub));
+            }
+
+            // The wheel is open: we only got here because an urgent override
+            // let the push through. Write the override's own entry and leave
+            // every other entry as the wheel already shows it -- re-seats and
+            // lock expiries moving entries under the cursor are misclicks
+            // (core/OpenWheelWrites.h). Every page, the one on screen and the
+            // others (the player can turn to them without closing the wheel).
+            // The close re-runs the pipeline (CheckPendingWheelClose ->
+            // MarkPageDirty), which writes the full page again.
+            if (wheelOpen) {
+                Core::WheelPageContents incoming{ std::move(m_formIDs), std::move(m_wildcardFlags),
+                                                  std::move(m_uniqueIDs), std::move(m_subtexts) };
+                Core::WheelPageContents cached;
+                if (wheelerClient.GetCachedPage(page, cached.formIDs, cached.wildcard,
+                                                cached.uniqueIDs, cached.subtexts)) {
+                    std::vector<uint32_t> ids(n, 0);
+                    std::vector<bool> isOverride(n, false);
+                    for (size_t s = 0; s < n; ++s) {
+                        ids[s] = pageAssignments[s].formID;
+                        isOverride[s] = pageAssignments[s].IsOverride();
+                    }
+                    const auto writable = Core::UrgentEntries(ids, isOverride, urgentOverrides, autoFocusThreshold);
+                    for (const size_t s : Core::RestrictToWritable(incoming, cached, writable)) {
+                        spdlog::debug("[WheelerClient] open-wheel write page {} slot {}: {}",
+                            page, s, incoming.formIDs[s] != 0 ? std::string_view{ pageAssignments[s].name } : "(empty)"sv);
+                    }
+                }
+                m_formIDs = std::move(incoming.formIDs);
+                m_wildcardFlags = std::move(incoming.wildcard);
+                m_uniqueIDs = std::move(incoming.uniqueIDs);
+                m_subtexts = std::move(incoming.subtexts);
             }
 
             wheelerClient.UpdateRecommendationsForPage(page, m_formIDs, m_wildcardFlags, m_uniqueIDs, m_subtexts);
