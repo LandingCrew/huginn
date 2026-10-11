@@ -192,7 +192,8 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
             // A weapon leaving the inventory: reconcile at once (a disarmed staff).
             eventSource->GetEventSource<RE::TESContainerChangedEvent>()->AddEventSink(
                 &Weapon::WeaponDepartureListener::GetSingleton());
-            logger::info("SpellRegistry + ExternalEquipListener + ApparelWornListener registered for TESEquipEvent notifications"sv);
+            logger::info("SpellRegistry + ExternalEquipListener + ApparelWornListener registered for TESEquipEvent; "
+                "ApparelWornListener + WeaponDepartureListener for TESContainerChangedEvent"sv);
         }
     }
 

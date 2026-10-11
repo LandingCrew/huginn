@@ -157,8 +157,10 @@ namespace Huginn::Scoring
         // (the ward trigger). It used to boost EVERY resist potion whatever its
         // element: Resist Fire sat on page 0 for six minutes against archers
         // and undead, corr=1.75x on melee-without-shield alone (2026-10-10
-        // 20:54-21:00). Nothing in the old engine knows an enemy's element
-        // before it lands, so before the first hit there is no boost.
+        // 20:54-21:00). Before the first hit there is no boost: the element
+        // of a spell a hostile is visibly casting IS sensed
+        // (StateManager_Targets hostileNeeds.castBits), but only into the R3
+        // need snapshot, and this scorer does not receive it.
         if (player.hasMeleeEquipped && !player.hasShieldEquipped) {
             const bool threatened =
                 (player.effects.isOnFire && Item::HasTag(item.tags, Item::ItemTag::ResistFire)) ||

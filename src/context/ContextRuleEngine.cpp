@@ -374,10 +374,12 @@ namespace Huginn::Context
         }
 
         // =====================================================================
-        // BUFF & RESIST POTIONS IN COMBAT
+        // BUFF POTIONS IN COMBAT
         // =====================================================================
-        // Fortify/resist potions are combat prep — popping them at the start of
-        // or during a fight is their whole use case.
+        // Fortify potions are combat prep — popping them at the start of or
+        // during a fight is their whole use case. Resist potions do not read
+        // this weight (ContextWeightForCandidate): a fight says nothing about
+        // the element, so they rise on their element's damage instead.
         if (player.isInCombat) {
             result.buffCombatWeight = m_config.weightBuffCombat;
         }
