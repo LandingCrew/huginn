@@ -69,9 +69,10 @@ spells".
   case is designed as an obvious pair (`target_arthropod` × `resist_poison`),
   but the R3 needs are logged only and nothing scores with them until R8.
   The live engine reaches Resist Poison only once the player is poisoned, and
-  it reads spiders as Beast. The falmer case has no route at all. Proposed: `threat_<element>` needs whose input is
-  the element damage the visible hostiles are expected to deal, learned per
-  race from the damage this player has taken. One new sensor: who hit the
+  it reads spiders as Beast. The falmer case has no route at all. Proposed:
+  `threat_<element>` needs whose input is the element damage the visible
+  hostiles are expected to deal, learned per race from the damage this player
+  has taken. One new sensor: who hit the
   player.
 
 ---
@@ -195,14 +196,18 @@ land in the same column space. Then:
   uncovered, a small bonus, with no hand constant.**
   - Read the remaining seconds, r = `duration` − `elapsedSeconds`, off the
     ActiveEffect (`CommonLibSSE-NG include/RE/A/ActiveEffect.h:108-109`).
+    When several active effects cover the same column, use the one with the
+    longest r: the buff lasts as long as its longest-lived source.
   - `left_j` is a logistic in r whose centre r₀ and slope are **fitted from
     this player's refresh picks**: the remaining seconds at which they re-pick
     an item whose effect is still up, against the time such items sat covered
     and unpicked. This is the method of decision 1 and `drop_ahead`
     (`tools/needs/fit_drop_curve.py`).
   - **The prior, labelled as one.** The fit starts from a prior on r₀ at
-    10 s, from the user's words ("a few seconds left"), with a slope of a few
-    seconds. It is a prior that data moves, not a derived value. Until refresh
+    about 5 s, the usual reading of "a few seconds left", with a slope of a
+    few seconds. Those were the question's words (section 7, question 4); the
+    user answered "yes, should get a small bonus". It is a prior that data
+    moves, not a derived value. Until refresh
     picks exist, the curve is the prior, so `left_j` stays near 1 for most of
     a buff and falls only in its last seconds. (The first draft's fallback,
     r / duration, was dropped: halfway through a buff it removed half of
@@ -279,6 +284,13 @@ land in the same column space. Then:
     so a close call reads covered ≈ 0.5 and only a clear upgrade reads near 0.
     No hand scale is involved. The R9 challenger margin then governs the
     actual swap on the page.
+  - **Risk: flapping returns as beliefs tighten.** σ_Δ shrinks with the
+    posterior, not with how fast the needs move. Once the learner is
+    confident, the smooth gate and the filter's band become near-steps again,
+    and a need-driven Δ wandering around 0 can toggle most of θ_covered from
+    tick to tick, held back only by R9's ln m margin on the page. Not fixed
+    here; it belongs to the R9 slot-stability item (roadmap), and the slot
+    churn measured there should be split by this gate.
   - **The hard summon filter** is binary, so it takes a band instead: it lets
     an upgrade through once Δ > σ_Δ and keeps letting it through until Δ < 0
     *(z = 1 is a choice; it becomes R9's z when that exists)*.
@@ -391,13 +403,18 @@ each other.
   a real want, and the curve is fitted, not moved by hand.** Two problems
   stand in the way of fitting it from picks alone:
   - **Earlier casts cannot be observed today.** At 0.9 the pair term reads
-    0.08 × 0.0046 × θ, so Feather is never on the page there. The only routes
+    0.12 × 0.0046 × θ (the curve, logistic c 0.95 and slope 40, reads 0.12
+    at 0.9), so Feather is never on the page there. The only routes
     to a cast near 90% are a menu pick (at cost κ) or an R10 wildcard. The
     five casts so far sit at 0.986–1.029, so a logistic fitted on them alone
     lands near c 1.0.
-  - **A basis does not fix it.** Picks at the cap saturate every
-    lower-centre curve, so those curves are credited with positives and get
-    no negatives. That is why the basis option is not used here.
+  - **A basis does not fix it.** At the cap every lower-centre curve reads
+    about 1, as does the c 0.95 one, so picks there cannot tell them apart:
+    the lower-centre weights are not identified from at-cap picks. Negatives
+    do exist (menu alternatives: Feather held and not picked while the
+    player opened the menu at 0.85–0.95), but with five picks they are too
+    few to separate the centres. That is why the basis option is not used
+    here.
   - **So the user's answer becomes a documented prior.** Fit a single logistic
     with a prior on its centre c pulling toward about 0.9, the user's stated
     want ("yes": nearing matters), recorded as their statement and not as a
@@ -633,7 +650,7 @@ quoted; each consequence is folded into the section named.
    hand. The five casts so far sit at or past the limit, and Feather is never
    shown at 0.9. So the fit starts from a documented prior on the centre
    pulling toward about 0.9 (the user's answer), which data can move; the
-   logistic basis is not used, because picks at the cap saturate its
+   logistic basis is not used, because at-cap picks cannot identify its
    lower-centre curves (section 3). Fit in R6, live in R8.
 2. **Summon upgrades: "upgrades, always offer the best - greed policy".** At
    the limit, a summon whose score ŝ (its utility without the covered term)
@@ -643,15 +660,18 @@ quoted; each consequence is folded into the section named.
    active summon's spell comes from its `SummonCreatureEffect` (or, for a
    staff, its `source`) in the player's active effects. Replacement is in
    scope as this gate; a learned replacement term was considered and dropped,
-   so there is no new weight (section 2.3; steps 3, 5 and 6).
+   so there is no new weight (section 2.3; steps 3, 5 and 6). "Always offer
+   the best" holds only approximately. The filter's band holds back near-ties
+   (Δ ≤ σ_Δ), and in the scorer a clear upgrade keeps a residual penalty,
+   1 − σ(Δ/σ_Δ) of θ_covered: about 27% at 1 σ, 5% at 3 σ.
 3. **Thralls: "let me test this".** Open, **user testing**. The sensor logs
    reanimated actors apart from summons, so either answer can be applied to
    play logged before it (section 2.3, section 5).
 4. **Refresh: "yes, should get a small bonus".** A buff with a few seconds left
    reads partly uncovered. The factor is a logistic in the remaining seconds,
    fitted from the player's own refresh picks and starting from a labelled
-   prior at 10 s ("a few seconds"). The bonus is small until those last
-   seconds. While the active-buff filters stand, each one passes an item once
+   prior at about 5 s (the question said "a few seconds left"; the answer was
+   "yes"). The bonus is small until those last seconds. While the active-buff filters stand, each one passes an item once
    its buff's remaining time is under that point, so the decision holds even
    if the filters never retire (section 2.3).
 5. **Grading: "your pick".** Decided as recommended: the pair term reads
