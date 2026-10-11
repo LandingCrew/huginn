@@ -18,8 +18,9 @@ namespace Huginn::State
 
       /// Hysteresis bands for the bucketed dimensions (core/BucketHysteresis.h).
       /// vitalBand: fraction of the maximum (0.03 = 3 points), applied on the
-      /// way UP only -- a falling vital changes bucket at the boundary itself,
-      /// so nothing urgent waits on the band. distanceFraction: fraction of the
+      /// way UP only -- a vital falling from above a boundary changes bucket at
+      /// the boundary itself; a re-fall inside the band is no new change (see
+      /// VitalEdges in the .cpp). distanceFraction: fraction of the
       /// boundary distance, both ways. 0 turns either off.
       struct BucketBands
       {

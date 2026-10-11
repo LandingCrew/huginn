@@ -74,3 +74,17 @@ TEST_CASE("open wheel: entries past the cache keep the incoming value")
     CHECK(incoming.formIDs == std::vector<uint32_t>{ 0xA, 0xC });
     CHECK(written.empty());   // index 1 is not writable; nothing to compare it with
 }
+
+TEST_CASE("open wheel: every urgent override's entry is writable, not only the top one")
+{
+    const std::vector<uint32_t> ids{ 0xA, 0x100, 0xB, 0x200, 0x300 };
+    const std::vector<bool> isOverride{ false, true, false, true, true };
+    // Critical health (100) and critical magicka (70) both up; a 30-priority
+    // override below iAutoFocusMinPriority (50) stays frozen.
+    const std::vector<UrgentOverride> ovr{ { 0x100, 100 }, { 0x200, 70 }, { 0x300, 30 } };
+    const auto w = UrgentEntries(ids, isOverride, ovr, 50);
+    CHECK(w == std::vector<bool>{ false, true, false, true, false });
+    // The same item NOT placed as an override (an ordinary pick) is not writable.
+    const auto w2 = UrgentEntries({ 0x100 }, { false }, ovr, 50);
+    CHECK(w2 == std::vector<bool>{ false });
+}

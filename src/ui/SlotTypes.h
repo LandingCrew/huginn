@@ -47,6 +47,12 @@ namespace Huginn::UI
         // 0 means "no instance in particular", which is right for the rest.
         uint16_t uniqueID = 0;
 
+        // Placed by an override (critical health, drowning, ...). Set by
+        // Slot::ToSlotContent after the factory call; the factories leave it
+        // false. Read by the press grace, which never acts on anything else
+        // while the key shows an urgent item.
+        bool isOverride = false;
+
         // Factory methods
         static SlotContent Empty() { return {}; }
         static SlotContent NoMatch(const std::string& slotTypeName) {

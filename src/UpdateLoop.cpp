@@ -8,6 +8,7 @@
 #include "override/OverrideManager.h"
 #include "slot/SlotAllocator.h"
 #include "slot/SlotLocker.h"
+#include "core/CombatLock.h"
 #include "slot/Remembrance.h"
 #include "wheeler/WheelerClient.h"
 #include "learning/PipelineStateCache.h"
@@ -256,8 +257,15 @@ static void UpdateSubsystems(float deltaSeconds, float deltaMs)
         // Combat first: entering it switches new locks to fCombatLockDurationMs,
         // leaving it turns combat locks back into normal ones (and may free
         // some, when normal locking is off).
-        forcePipelineRun |= Slot::SlotLocker::GetSingleton().SetInCombat(
-            State::StateManager::GetSingleton().IsInCombat());
+        // The game's flag, unless no enemy has been tracked for
+        // fCombatNoEnemyReleaseSec (it can stay up for minutes after the last
+        // kill). Single-threaded: UpdateSubsystems runs on the update thread.
+        static Core::CombatPresence s_combatPresence;
+        auto& stateMgr = State::StateManager::GetSingleton();
+        auto& locker = Slot::SlotLocker::GetSingleton();
+        const bool lockCombat = s_combatPresence.Update(stateMgr.IsInCombat(),
+            stateMgr.GetEnemyCount() > 0, deltaSeconds, locker.GetConfig().combatNoEnemyReleaseSec);
+        forcePipelineRun |= locker.SetInCombat(lockCombat);
         // Lock expiry: decay wall-clock (not just on pipeline-active ticks) and
         // let the freed slot's content swap immediately
         forcePipelineRun |= Slot::SlotLocker::GetSingleton().Update(deltaMs);

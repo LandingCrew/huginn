@@ -79,6 +79,21 @@ namespace Huginn::Core
         return bucket;
     }
 
+    /// Where a vital stands against one override's thresholds: 0 below the
+    /// activation threshold, 1 inside its release gap, 2 at or above
+    /// threshold + gap. The pipeline wakes on any change of these zones
+    /// (PipelineCoordinator::CheckHashSkip), so an override is evaluated where
+    /// its own thresholds are crossed -- not only when a hashed bucket happens
+    /// to move. The override thresholds (35% shipped) are not bucket edges, and
+    /// once the combat lock stops lock expiries from forcing runs, nothing else
+    /// would wake the pipeline for a fall from 39% to 30%.
+    [[nodiscard]] constexpr int OverrideZone(double value, double threshold, double gap) noexcept
+    {
+        if (value < threshold) return 0;
+        if (value < threshold + gap) return 1;
+        return 2;
+    }
+
     /// An edge whose band is the same absolute width both ways.
     [[nodiscard]] constexpr BucketEdge SymmetricEdge(double bound, double band) noexcept
     {

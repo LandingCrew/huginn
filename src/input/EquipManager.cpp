@@ -925,6 +925,7 @@ namespace Huginn::Input
       // Asked last, and only when it decides the press: the usability check
       // walks the inventory.
       in.previousUsable = true;
+      in.shownIsOverride = shown.isOverride;
       auto decision = Core::DecidePressGrace(in);
       if (!decision.usePrevious) {
          return std::nullopt;

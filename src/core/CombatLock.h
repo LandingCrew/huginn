@@ -4,23 +4,29 @@
 // key's lock lasts this long instead of fLockDurationMs, and -1 freezes the key
 // until combat ends.
 //
-// The user, 2026-10-11, after a fight that changed page 0 117 times in 140 s
-// ("combat probably needs a longer lock or freeze; make it an ini setting").
-// Every change re-locks its key for 3 s, but eight keys coming free at
-// different times changed the page about every half second.
+// The user, 2026-10-11, after a fight that changed page 0 119 times in 140 s
+// ([SlotChurn], 08:55:40-08:58:00; "combat probably needs a longer lock or
+// freeze; make it an ini setting"). Every change re-locks its key for 3 s, but
+// eight keys coming free at different times changed the page about every
+// second.
 //
 // Under a combat lock the challenger margin never reaches a locked key: only
 // these change it --
 //   - its item is gone (consumed to the last one, dropped, sold): the lock is
 //     released at the source (SlotLocker::OnItemUsed with UseKind::Gone), so it
-//     never gets here;
+//     never gets here; a spell or shout no longer known, or an item now
+//     equipped with no hold on the key, is caught on the run
+//     (DecideCombatLockItemRelease);
 //   - an override placed on THAT key (any priority; below
 //     iImmediateBreakPriority it waits fMinLockDurationMs, as a normal lock's
-//     high-priority break does not);
+//     high-priority break does not; an urgent one ignores
+//     bOverridesBreakLock = false, which under a freeze would hide it all fight);
 //   - a Remembrance hold shown on the key the player pressed;
 //   - the end of the override or Remembrance hold the key itself is showing
 //     (its own lifecycle: a frozen "Swap Back" for the rest of the fight would
-//     be wrong).
+//     be wrong), and a same-item flip in or out of override (Restyle).
+// "In combat" for the lock is the game's flag, released after
+// fCombatNoEnemyReleaseSec with no enemy tracked (CombatPresence).
 // A spell the affordability filter drops stays on its locked key -- the lock
 // re-shows it whatever the candidate list says -- instead of leaving and coming
 // back with the magicka.
@@ -31,7 +37,10 @@
 // Pure: standard library only, host-tested in tests/core/CombatLockTests.cpp.
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
+#include <string>
+#include <string_view>
 
 namespace Huginn::Core
 {
@@ -76,6 +85,66 @@ namespace Huginn::Core
         return frozen ? normalMs : std::min(remainingMs, normalMs);
     }
 
+    /// Whether the combat lock should treat the player as in combat. The game's
+    /// combat flag can outlive the enemies by minutes (2026-10-11: Enemies
+    /// One->None at 09:23:56, combat until 09:26:05), which would leave every
+    /// key frozen with nothing around. So once no enemy has been tracked for
+    /// `releaseSec` while the flag is up, the lock counts combat as over; an
+    /// enemy coming back restores it. releaseSec <= 0 = follow the flag alone.
+    struct CombatPresence
+    {
+        float noEnemySec = 0.0f;
+
+        [[nodiscard]] bool Update(bool inCombat, bool enemyPresent, float dtSec, float releaseSec) noexcept
+        {
+            if (!inCombat || enemyPresent) {
+                noEnemySec = 0.0f;
+                return inCombat;
+            }
+            noEnemySec += dtSec;
+            return releaseSec <= 0.0f || noEnemySec < releaseSec;
+        }
+    };
+
+    /// A combat-locked key checked against the game on every run, not only on
+    /// events: the item can stop being usable without an inventory event.
+    enum class CombatLockItemRelease : uint8_t
+    {
+        None,
+        Gone,       ///< a spell or shout the player no longer knows
+        Equipped,   ///< the key's item is now in the player's hands / on them
+    };
+
+    /// `allocatorKeepsIt`: the allocator still places this item on this key
+    /// this run (a slot that shows equipped items). Releasing then would only
+    /// re-lock the same item every run, so an equipped item is released only
+    /// when the allocator has moved on from it. A Remembrance or override item
+    /// is not released for being equipped -- the hold owns that key.
+    [[nodiscard]] constexpr CombatLockItemRelease DecideCombatLockItemRelease(
+        bool itemGone, bool itemEquipped, bool lockedIsPinned, bool allocatorKeepsIt) noexcept
+    {
+        if (itemGone) {
+            return CombatLockItemRelease::Gone;
+        }
+        if (itemEquipped && !lockedIsPinned && !allocatorKeepsIt) {
+            return CombatLockItemRelease::Equipped;
+        }
+        return CombatLockItemRelease::None;
+    }
+
+    /// The Wheeler lock-timer subtext. A frozen key has no timer to show, so it
+    /// gets the prefix alone (the "locked" marker) rather than a countdown that
+    /// never moves.
+    [[nodiscard]] inline std::string LockTimerLabel(std::string_view prefix, bool showSeconds,
+        float remainingMs, bool frozen)
+    {
+        if (frozen || !showSeconds) {
+            return std::string(prefix);
+        }
+        const int secs = static_cast<int>(std::ceil(remainingMs / 1000.0f));
+        return std::string(prefix) + " " + std::to_string(secs) + "s";
+    }
+
     enum class CombatLockBreak : uint8_t
     {
         Hold,          ///< keep the locked item
@@ -83,6 +152,9 @@ namespace Huginn::Core
         Override,      ///< an override placed on this key
         Remembrance,   ///< a Remembrance hold on the key the player pressed
         PinnedEnded,   ///< the override or hold this key showed is over
+        Restyle,       ///< same item, but it stopped (or started) being an override /
+                       ///< Remembrance item: re-lock it as what it is now, so an
+                       ///< ended override does not keep its urgent styling all fight
     };
 
     struct CombatLockBreakInput
@@ -99,6 +171,7 @@ namespace Huginn::Core
         bool remembranceOnPressedKey = false;  ///< this key is the one the player pressed for it
         bool newSameItem = false;            ///< the new assignment is the locked item
         bool lockedIsPinned = false;         ///< the locked item is an override or Remembrance item
+        bool newIsPinned = false;            ///< the new assignment is an override or Remembrance item
     };
 
     [[nodiscard]] constexpr CombatLockBreak DecideCombatLockBreak(const CombatLockBreakInput& in) noexcept
@@ -109,13 +182,17 @@ namespace Huginn::Core
         // The override first: one marking the item the key already shows
         // re-locks it AS the override (same item, so nothing visible moves) --
         // once: a key already locked on that override item just holds.
-        if (in.newIsOverrideForThisKey && in.overridesBreakLock &&
+        // bOverridesBreakLock = false does not stop an URGENT override
+        // (>= iImmediateBreakPriority) under a combat lock: with a freeze it
+        // would hide the critical-health potion for the whole fight.
+        const bool urgent = in.overridePriority >= in.immediateBreakPriority;
+        if (in.newIsOverrideForThisKey && (in.overridesBreakLock || urgent) &&
             !(in.newSameItem && in.lockedIsPinned) &&
-            (in.overridePriority >= in.immediateBreakPriority || in.elapsedMs >= in.minLockMs)) {
+            (urgent || in.elapsedMs >= in.minLockMs)) {
             return CombatLockBreak::Override;
         }
         if (in.newSameItem) {
-            return CombatLockBreak::Hold;
+            return in.lockedIsPinned != in.newIsPinned ? CombatLockBreak::Restyle : CombatLockBreak::Hold;
         }
         if (in.newIsRemembered && in.remembranceOnPressedKey) {
             return CombatLockBreak::Remembrance;

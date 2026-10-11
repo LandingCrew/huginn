@@ -2,6 +2,7 @@
 #include "override/OverrideConditions.h"
 #include "SlotClassifier.h"
 #include "core/CombatLock.h"
+#include "core/DedupRules.h"
 #include <chrono>
 #include <cmath>
 #include <optional>
@@ -54,6 +55,7 @@ namespace Huginn::Slot
 
     void SlotLocker::SetConfig(const SlotLockConfig& config)
     {
+        std::lock_guard<std::mutex> lock(m_mutex);
         m_config = config;
         spdlog::info("[SlotLocker] Config updated: lockDuration={:.0f}ms, minDuration={:.0f}ms, "
                      "lockOnFill={}, overridesBreakLock={}, immediateBreakPriority={}, combatLock={}",
@@ -92,6 +94,12 @@ namespace Huginn::Slot
             }
         }
         return anyExpired;
+    }
+
+    SlotLockConfig SlotLocker::GetConfig() const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_config;
     }
 
     bool SlotLocker::SetInCombat(bool inCombat)
@@ -182,6 +190,44 @@ namespace Huginn::Slot
         std::array<Telemetry::SlotChangeEvent, MAX_SLOTS> changes{};
         size_t changeCount = 0;
         result.reserve(newAssignments.size());
+
+        // A combat-locked key whose item stopped being usable without an
+        // inventory event: a spell or shout no longer known, or an item now
+        // equipped with no Remembrance hold on the key (pressed into an empty
+        // hand, or equipped from the inventory) -- the frozen key would show
+        // it for the rest of the fight. Released to normal fill; the sweep at
+        // the end re-locks whatever the key shows next.
+        if (m_inCombat && run.probeItem) {
+            for (size_t i = 0; i < std::min(newAssignments.size(), MAX_SLOTS); ++i) {
+                auto& slot = m_lockedSlots[i];
+                if (!slot.isLocked || !slot.combatLock || slot.assignment.IsEmpty() || slot.assignment.formID == 0) {
+                    continue;
+                }
+                auto state = run.probeItem(slot.assignment.formID, slot.assignment.uniqueID);
+                // Gone only if this run did not score it either: a spell the
+                // game call misses (a racial power, say) but the generator still
+                // produces is plainly known, and releasing it would re-lock the
+                // same spell every run.
+                if (state.gone) {
+                    for (const auto& sc : scored) {
+                        if (sc.GetFormID() == slot.assignment.formID) {
+                            state.gone = false;
+                            break;
+                        }
+                    }
+                }
+                const auto release = Core::DecideCombatLockItemRelease(state.gone, state.equipped,
+                    slot.assignment.IsPinned(), SameItem(newAssignments[i], slot.assignment));
+                if (release == Core::CombatLockItemRelease::None) continue;
+                spdlog::debug("[SlotLocker] Slot {} combat lock released: '{}' {}", i, slot.assignment.name,
+                    release == Core::CombatLockItemRelease::Gone ? "is no longer known" : "is equipped");
+                slot.isLocked = false;
+                slot.remainingMs = 0.0f;
+                slot.combatLock = false;
+                slot.frozen = false;
+                slot.releaseCause = Telemetry::SlotChange::Used;
+            }
+        }
 
         // An override showing an item in one slot releases any OTHER slot
         // still locked on that item, in the same pass. Otherwise the lock
@@ -280,6 +326,12 @@ namespace Huginn::Slot
                     case BreakReason::PinnedEnded:
                         lockedSlot.releaseCause = Telemetry::SlotChange::Expired;
                         whyName = "its override or Remembrance ended";
+                        break;
+                    case BreakReason::Restyle:
+                        // Same item, no longer (or now) an override /
+                        // Remembrance item: the run takes the new assignment
+                        // and the combat sweep below re-locks it as that.
+                        whyName = "same item, override/Remembrance state changed";
                         break;
                     case BreakReason::None:
                         break;
@@ -565,6 +617,7 @@ namespace Huginn::Slot
                 .remainingMs = slot.isLocked ? slot.remainingMs : 0.0f,
                 .previousFormID = slot.previousFormID,
                 .hadContent = slot.hadContent,
+                .frozen = slot.isLocked && slot.frozen,
             };
         }
         return snapshot;
@@ -772,12 +825,14 @@ namespace Huginn::Slot
             in.remembranceOnPressedKey = remembranceOnPressedKey;
             in.newSameItem = SameItem(newAssign, lock.assignment);
             in.lockedIsPinned = lock.assignment.IsPinned();
+            in.newIsPinned = newAssign.IsPinned();
             switch (Core::DecideCombatLockBreak(in)) {
             case Core::CombatLockBreak::Hold:        return BreakReason::None;
             case Core::CombatLockBreak::Expired:     return BreakReason::Expired;
             case Core::CombatLockBreak::Override:    return BreakReason::Override;
             case Core::CombatLockBreak::Remembrance: return BreakReason::Remembrance;
             case Core::CombatLockBreak::PinnedEnded: return BreakReason::PinnedEnded;
+            case Core::CombatLockBreak::Restyle:     return BreakReason::Restyle;
             }
             return BreakReason::None;
         }
@@ -820,54 +875,38 @@ namespace Huginn::Slot
         // to m_lockedSlots[i] (i == slotIndex). The index-parallel access below
         // relies on that invariant.
 
-        // First pass: collect names held by LOCKED slots — these win ties.
-        std::set<std::string_view> lockedNames;
-        std::set<std::string_view> incumbentNames;
-        std::array<bool, MAX_SLOTS> incumbent{};
-        for (size_t i = 0; i < result.size() && i < MAX_SLOTS; ++i) {
-            if (!result[i].IsEmpty() && m_lockedSlots[i].isLocked) {
-                lockedNames.insert(result[i].name);
-                const auto& slot = m_lockedSlots[i];
-                if (!slot.shownEmpty && slot.shownFormID == result[i].formID &&
-                    slot.shownUniqueID == result[i].uniqueID) {
-                    incumbent[i] = true;
-                    incumbentNames.insert(result[i].name);
-                }
-            }
+        // Who is cleared: core/DedupRules.h (pinned items never lose to a
+        // non-pinned copy; a locked incumbent beats a newcomer; an unlocked
+        // copy of a locked key's name goes; otherwise the first stays).
+        std::vector<Core::DedupRow> rows(std::min(result.size(), MAX_SLOTS));
+        for (size_t i = 0; i < rows.size(); ++i) {
+            const auto& a = result[i];
+            const auto& slot = m_lockedSlots[i];
+            rows[i].empty = a.IsEmpty();
+            if (rows[i].empty) continue;
+            rows[i].name = a.name;
+            rows[i].pinned = a.IsPinned();
+            rows[i].locked = slot.isLocked;
+            rows[i].incumbent = slot.isLocked && !slot.shownEmpty &&
+                slot.shownFormID == a.formID && slot.shownUniqueID == a.uniqueID;
         }
-
-        // Second pass: clear duplicates. An unlocked slot whose name is held by a
-        // locked slot is cleared outright; otherwise keep first occurrence.
-        std::set<std::string_view> seen;
+        const auto verdicts = Core::DedupDecide(rows);
         std::array<bool, MAX_SLOTS> cleared{};
-        for (size_t i = 0; i < result.size() && i < MAX_SLOTS; ++i) {
+        for (size_t i = 0; i < verdicts.size(); ++i) {
+            if (verdicts[i] == Core::DedupClear::Keep) continue;
             auto& assignment = result[i];
-            if (assignment.IsEmpty()) continue;
-
-            if (!incumbent[i] && !assignment.IsPinned() && incumbentNames.contains(assignment.name)) {
-                spdlog::debug("[SlotLocker] Post-lock dedup: clearing '{}' from slot {} (locked slot already showing it)",
-                    assignment.name, assignment.slotIndex);
-                assignment = SlotAssignment::Empty(assignment.slotIndex, assignment.classification);
-                cleared[i] = true;
-                continue;
+            const char* why = "duplicate";
+            switch (verdicts[i]) {
+            case Core::DedupClear::PinnedDuplicate:    why = "second copy of a pinned item"; break;
+            case Core::DedupClear::PinnedElsewhere:    why = "an override/Remembrance item shows it"; break;
+            case Core::DedupClear::IncumbentElsewhere: why = "locked slot already showing it"; break;
+            case Core::DedupClear::LockedElsewhere:    why = "unlocked, locked elsewhere"; break;
+            default: break;
             }
-
-            const bool isLocked = m_lockedSlots[i].isLocked;
-            if (!isLocked && lockedNames.contains(assignment.name)) {
-                spdlog::debug("[SlotLocker] Post-lock dedup: clearing unlocked '{}' from slot {} (locked elsewhere)",
-                    assignment.name, assignment.slotIndex);
-                assignment = SlotAssignment::Empty(assignment.slotIndex, assignment.classification);
-                cleared[i] = true;
-                continue;
-            }
-
-            auto [it, inserted] = seen.insert(assignment.name);
-            if (!inserted) {
-                spdlog::debug("[SlotLocker] Post-lock dedup: clearing duplicate '{}' from slot {}",
-                    assignment.name, assignment.slotIndex);
-                assignment = SlotAssignment::Empty(assignment.slotIndex, assignment.classification);
-                cleared[i] = true;
-            }
+            spdlog::debug("[SlotLocker] Post-lock dedup: clearing '{}' from slot {} ({})",
+                assignment.name, assignment.slotIndex, why);
+            assignment = SlotAssignment::Empty(assignment.slotIndex, assignment.classification);
+            cleared[i] = true;
         }
 
         // Third pass: don't leave a hole. A duplicate exists because a lock

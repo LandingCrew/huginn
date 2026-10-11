@@ -11,7 +11,7 @@
 // Entries moving under the cursor are misclicks.
 //
 // The rule: while the wheel is open, an entry is written only if it is
-// `writable` (the caller marks the urgent override's own entry); every other
+// `writable` (UrgentEntries: an urgent override's own entry); every other
 // entry gets what the wheel already holds, so the diff writes nothing there.
 //
 // Pure: standard library only, host-tested in tests/core/OpenWheelWritesTests.cpp.
@@ -31,6 +31,34 @@ namespace Huginn::Core
         std::vector<uint16_t> uniqueIDs;
         std::vector<std::string> subtexts;
     };
+
+    /// One active override that carries an item.
+    struct UrgentOverride
+    {
+        uint32_t formID = 0;
+        int priority = 0;
+    };
+
+    /// Which entries may be written into an open wheel: every entry that is an
+    /// override's item (`isOverride`) whose override is urgent -- priority at
+    /// or above `threshold` (iAutoFocusMinPriority). Not just the top one: a
+    /// critical-health and a critical-magicka override can be up together, and
+    /// both potions belong on the open wheel.
+    inline std::vector<bool> UrgentEntries(const std::vector<uint32_t>& formIDs, const std::vector<bool>& isOverride,
+        const std::vector<UrgentOverride>& overrides, int threshold)
+    {
+        std::vector<bool> out(formIDs.size(), false);
+        for (std::size_t s = 0; s < formIDs.size(); ++s) {
+            if (s >= isOverride.size() || !isOverride[s] || formIDs[s] == 0) continue;
+            for (const auto& o : overrides) {
+                if (o.formID == formIDs[s] && o.priority >= threshold) {
+                    out[s] = true;
+                    break;
+                }
+            }
+        }
+        return out;
+    }
 
     /// Replace every non-writable entry of `incoming` with `cached`, in place,
     /// and return the indices whose content will actually change (what the

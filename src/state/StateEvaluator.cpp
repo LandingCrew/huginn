@@ -15,13 +15,15 @@ namespace
    // Low(<=40), Medium(<=60), High(<=80), VeryHigh -- all three enums share
    // the ordinal layout. Exponential spacing for low-vital granularity.
    //
-   // The band applies to a RISING vital only (RisingBandEdge): a falling one
-   // changes bucket at the boundary, exactly where it did before hysteresis.
-   // The bucket feeds the hash that wakes the pipeline, and the override check
-   // (critical health and the rest, OverrideManager, on raw values) runs only
-   // when the pipeline does -- so a band on the falling side could hold back an
-   // urgent item. On the way up nothing is urgent, and that side is where a
-   // regenerating pool flaps.
+   // The band applies to a RISING vital only (RisingBandEdge): one falling from
+   // above a boundary changes bucket at the boundary, where it did before. One
+   // that falls back after recovering less than the band (8% -> 12% -> 9%)
+   // never left the lower bucket, so its second fall is no hash change -- the
+   // bucket is never LESS urgent than the raw value, but that fall does not
+   // wake the pipeline by itself. Overrides do not rely on it: they read raw
+   // vitals, and PipelineCoordinator wakes on their own thresholds
+   // (Core::OverrideZone). On the way up nothing is urgent, and that side is
+   // where a regenerating pool flaps.
    [[nodiscard]] std::array<BucketEdge, 5> VitalEdges(float band) noexcept
    {
       const double points = static_cast<double>(band) * 100.0;

@@ -252,6 +252,9 @@ Slot::SlotLockConfig LoadSlotLockerConfigFromINI(const CSimpleIniA& ini) {
     config.combatLockDurationMs = !std::isfinite(combat) ? -1.0f
       : combat < 0.0 ? -1.0f
       : static_cast<float>(std::min(combat, 120000.0));
+    const double noEnemy = ini.GetDoubleValue(section, "fCombatNoEnemyReleaseSec", 5.0);
+    config.combatNoEnemyReleaseSec = !std::isfinite(noEnemy) ? 5.0f
+      : static_cast<float>(std::clamp(noEnemy, 0.0, 60.0));
   }
 
   logger::info("[SlotLockerConfig] duration={:.0f}ms, min={:.0f}ms, lockOnFill={}, overridesBreak={}, breakPri={}, combat={}",
@@ -259,6 +262,8 @@ Slot::SlotLockConfig LoadSlotLockerConfigFromINI(const CSimpleIniA& ini) {
     config.lockOnFill, config.overridesBreakLock, config.immediateBreakPriority,
     config.combatLockDurationMs < 0.0f ? std::string("freeze")
       : std::format("{:.0f}ms", config.combatLockDurationMs));
+  logger::info("[SlotLockerConfig] combat lock lets go after {:.1f}s with no enemy (0 = never)",
+    config.combatNoEnemyReleaseSec);
 
   return config;
 }

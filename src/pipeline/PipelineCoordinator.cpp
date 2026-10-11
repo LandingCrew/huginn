@@ -8,6 +8,8 @@
 #include "candidate/CandidateGenerator.h"
 #include "context/ContextRuleEngine.h"   // Context::ContextReasonSignals (#10)
 #include "override/OverrideManager.h"
+#include "override/OverrideConfig.h"
+#include "core/BucketHysteresis.h"
 #include "slot/SlotAllocator.h"
 #include "slot/SlotLocker.h"
 #include "slot/SlotSettings.h"   // bucket hysteresis bands
@@ -219,6 +221,16 @@ void PipelineCoordinator::GatherState(PipelineContext& ctx)
         (Context::ColdTier(ctx.playerState) << 3));
 
     ctx.currentMagicka = ctx.actorValue->GetActorValue(RE::ActorValue::kMagicka);
+
+    // Override thresholds on the RAW vitals (see PipelineContext::overrideSignature).
+    {
+        namespace OC = Override::Config;
+        const auto& v = ctx.playerState.vitals;
+        const int hp = Core::OverrideZone(v.health, OC::CRITICAL_HEALTH_THRESHOLD(), OC::CRITICAL_HEALTH_HYSTERESIS());
+        const int mp = Core::OverrideZone(v.magicka, OC::CRITICAL_MAGICKA_THRESHOLD(), OC::CRITICAL_MAGICKA_HYSTERESIS());
+        const int sp = Core::OverrideZone(v.stamina, OC::CRITICAL_STAMINA_THRESHOLD(), OC::CRITICAL_STAMINA_HYSTERESIS());
+        ctx.overrideSignature = static_cast<uint8_t>(hp | (mp << 2) | (sp << 4));
+    }
 }
 
 // -----------------------------------------------------------------------------
@@ -243,7 +255,8 @@ bool PipelineCoordinator::CheckHashSkip(PipelineContext& ctx, bool pageChanged)
 
     // One run on each change, either way: into the dark and out of it, a
     // hunger or cold stage crossed, a warming effect starting or ending.
-    const bool ambientChanged = ctx.ambientSignature != m_lastAmbientSignature;
+    const bool ambientChanged = ctx.ambientSignature != m_lastAmbientSignature ||
+                                ctx.overrideSignature != m_lastOverrideSignature;
 
     if (ctx.stateHash == m_lastPipelineHash && !pageChanged &&
         !unhashedStateActive && !ambientChanged && !NeedsForcedRun()) {
@@ -256,6 +269,7 @@ bool PipelineCoordinator::CheckHashSkip(PipelineContext& ctx, bool pageChanged)
     m_wasFalling = ctx.fallingActive;
     m_wasUnderwater = ctx.underwaterActive;
     m_lastAmbientSignature = ctx.ambientSignature;
+    m_lastOverrideSignature = ctx.overrideSignature;
 
     // Commit point for the learner latch: everything below this line scores and
     // publishes, so whatever reward set the flag is about to reach the widget.
@@ -587,6 +601,35 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
             lockRun.remembranceOnPressedKey[s] = hold.Active() && (hold.shownSlot == SIZE_MAX || hold.shownSlot == s);
         }
     }
+    // A combat-locked key's item, checked against the game every run: a spell
+    // or shout the player no longer knows, or an item now equipped / worn.
+    lockRun.probeItem = [player = ctx.player](RE::FormID formID, uint16_t /*uniqueID*/) {
+        Slot::SlotLocker::RunContext::ItemState st;
+        auto* form = RE::TESForm::LookupByID(formID);
+        if (!form || !player) {
+            st.gone = form == nullptr;
+            return st;
+        }
+        if (form->Is(RE::FormType::Spell)) {
+            auto* spell = form->As<RE::SpellItem>();
+            st.gone = spell && !player->HasSpell(spell);
+            const auto& sel = player->GetActorRuntimeData().selectedSpells;
+            st.equipped = sel[RE::Actor::SlotTypes::kLeftHand] == spell ||
+                          sel[RE::Actor::SlotTypes::kRightHand] == spell;
+        } else if (form->Is(RE::FormType::Shout)) {
+            st.gone = !player->HasShout(form->As<RE::TESShout>());
+        } else if (form->Is(RE::FormType::Ammo)) {
+            const auto* ammo = player->GetCurrentAmmo();
+            st.equipped = ammo && ammo->GetFormID() == formID;
+        } else if (form->Is(RE::FormType::Armor)) {
+            st.equipped = player->GetWornArmor(formID) != nullptr;
+        } else if (form->Is(RE::FormType::Weapon) || form->Is(RE::FormType::Light) || form->Is(RE::FormType::Scroll)) {
+            const auto* left = player->GetEquippedObject(true);
+            const auto* right = player->GetEquippedObject(false);
+            st.equipped = (left && left->GetFormID() == formID) || (right && right->GetFormID() == formID);
+        }
+        return st;
+    };
     ctx.assignments = slotLocker.ApplyLocks(ctx.rawAssignments, ctx.overrides, ctx.scoredCandidates, lockRun);
 
     // Compute visual state for each slot

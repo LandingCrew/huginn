@@ -8,6 +8,7 @@
 #include "telemetry/SoakMetrics.h"
 #include <array>
 #include <cstdint>
+#include <functional>
 #include <mutex>
 #include <span>
 
@@ -30,6 +31,10 @@ namespace Huginn::Slot
         // In combat, the lock a key gets instead of lockDurationMs (core/CombatLock.h):
         // -1 = freeze until combat ends, 0 = use lockDurationMs, else ms (<= 120000).
         float combatLockDurationMs = -1.0f;
+        // In combat with no enemy tracked for this long, the combat lock lets go
+        // as if combat had ended (core::CombatPresence). 0 = follow the game's
+        // combat flag alone. Seconds, 0-60.
+        float combatNoEnemyReleaseSec = 5.0f;
     };
 
     // =============================================================================
@@ -147,6 +152,16 @@ namespace Huginn::Slot
             /// shown on it (Remembrance::Entry shown on its own slot). Under a
             /// combat lock only such a hold may take a locked key.
             std::array<bool, MAX_SLOTS_PER_PAGE> remembranceOnPressedKey{};
+
+            /// Game probe for a combat-locked key's item, asked on every run
+            /// in combat (core::DecideCombatLockItemRelease): gone = a spell or
+            /// shout no longer known; equipped = in the player's hands / worn.
+            struct ItemState
+            {
+                bool gone = false;
+                bool equipped = false;
+            };
+            std::function<ItemState(RE::FormID formID, uint16_t uniqueID)> probeItem;
         };
 
         // =========================================================================
@@ -156,8 +171,9 @@ namespace Huginn::Slot
         /// Set lock configuration (call during initialization or INI reload)
         void SetConfig(const SlotLockConfig& config);
 
-        /// Get current lock configuration
-        [[nodiscard]] const SlotLockConfig& GetConfig() const noexcept { return m_config; }
+        /// Get current lock configuration (a copy, read under m_mutex: SetConfig
+        /// can run from the dMenu reload while the update thread reads it).
+        [[nodiscard]] SlotLockConfig GetConfig() const;
 
         // =========================================================================
         // MAIN API
@@ -228,6 +244,7 @@ namespace Huginn::Slot
             float remainingMs = 0.0f;
             RE::FormID previousFormID = 0;
             bool hadContent = false;
+            bool frozen = false;   ///< no timer (combat freeze): remainingMs means nothing
         };
 
         /// Snapshot all slots' lock state under a SINGLE mutex acquisition.
@@ -315,7 +332,7 @@ namespace Huginn::Slot
             const SlotAssignment& newAssign) const;
 
         /// Why an existing lock lets go this run (None = it holds).
-        enum class BreakReason : uint8_t { None, Expired, Override, Remembrance, PinnedEnded };
+        enum class BreakReason : uint8_t { None, Expired, Override, Remembrance, PinnedEnded, Restyle };
 
         /// Determine if an existing lock should be broken, and why. Under a
         /// combat lock the rules are core::DecideCombatLockBreak's.

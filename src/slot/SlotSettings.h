@@ -180,8 +180,9 @@ namespace Huginn::Slot
 
         /// Hysteresis on the HP/MP/SP level buckets, as a fraction of the
         /// maximum (0.03 = 3 percentage points): a recovering vital moves up a
-        /// bucket only that far past the boundary; a falling one moves at the
-        /// boundary itself (core/BucketHysteresis.h). 0 = off.
+        /// bucket only that far past the boundary; one falling from above a
+        /// boundary moves at the boundary itself, a re-fall inside the band is
+        /// no new change (core/BucketHysteresis.h). 0 = off.
         /// `[SlotLocker] fVitalBucketHysteresis`, 0-0.1.
         [[nodiscard]] float VitalBucketHysteresis() const noexcept
         {

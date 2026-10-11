@@ -144,6 +144,13 @@ namespace Huginn::State
          return m_isInCombat.load(std::memory_order_acquire);
       }
 
+      /// Living hostiles tracked at the last target poll -- the count the
+      /// GameState `Enemies:` bucket is made from (TargetCollection::GetEnemyCount).
+      [[nodiscard]] int GetEnemyCount() const noexcept
+      {
+         return m_enemyCount.load(std::memory_order_acquire);
+      }
+
       // =============================================================================
       // STATE ACCESSORS (Thread-safe via copy-out pattern)
       // =============================================================================
@@ -441,6 +448,7 @@ namespace Huginn::State
       // Combat transition tracking (set in PollPlayerPosition, consumed by UpdateLoop)
       std::atomic<CombatTransition> m_combatTransition{CombatTransition::None};
       std::atomic<bool> m_isInCombat{false};
+      std::atomic<int> m_enemyCount{0};   // GetEnemyCount; written by PollTargets
       bool m_wasInCombat = false;  // Previous tick's combat state (single-writer in PollPlayerPosition)
 
       // Published combat / enemy-casting flags, debounced (see BoolDebouncer).

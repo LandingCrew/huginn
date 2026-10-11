@@ -144,3 +144,41 @@ TEST_CASE("press grace: reason names")
     CHECK(std::string(PressGraceReasonName(PressGraceReason::Grace)) == "grace");
     CHECK(std::string(PressGraceReasonName(PressGraceReason::OwnPress)) == "own press");
 }
+
+TEST_CASE("press grace: never takes an override back off the key")
+{
+    // An HP override landed on the key during the double-tap wait (after the
+    // key went down), or 400 ms before it: the press must drink the potion.
+    PressGraceInput in;
+    in.graceMs = 600.0;
+    in.pressMs = 10000.0;
+    in.hasChange = true;
+    in.previousSinceMs = 2000.0;
+    in.previousEmpty = false;
+    in.previousUsable = true;
+    in.shownIsOverride = true;
+    in.changedAtMs = 10120.0;
+    CHECK_FALSE(DecidePressGrace(in).usePrevious);
+    CHECK(DecidePressGrace(in).reason == PressGraceReason::ShownOverride);
+    in.changedAtMs = 9600.0;
+    CHECK_FALSE(DecidePressGrace(in).usePrevious);
+    CHECK(DecidePressGrace(in).reason == PressGraceReason::ShownOverride);
+    // Without the override the same press is graced.
+    in.shownIsOverride = false;
+    CHECK(DecidePressGrace(in).usePrevious);
+}
+
+TEST_CASE("press grace: grace back TO an override that just left is allowed")
+{
+    // The previous item was the override potion; the shown one is ordinary.
+    PressGraceInput in;
+    in.graceMs = 600.0;
+    in.pressMs = 10000.0;
+    in.hasChange = true;
+    in.changedAtMs = 9800.0;
+    in.previousSinceMs = 5000.0;
+    in.previousEmpty = false;
+    in.previousUsable = true;
+    in.shownIsOverride = false;
+    CHECK(DecidePressGrace(in).usePrevious);
+}

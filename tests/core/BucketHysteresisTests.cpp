@@ -90,8 +90,9 @@ TEST_CASE("bucket hysteresis: a rising vital crosses up only past bound + band")
 
 TEST_CASE("bucket hysteresis: a falling vital crosses down at the bound itself")
 {
-    // Urgency must not wait on the band: the hash change that wakes the
-    // pipeline (and with it the override check) fires exactly where it did.
+    // A fall from above a boundary changes the bucket exactly where it did
+    // without hysteresis (a re-fall inside the band is no change at all: the
+    // bucket never went up).
     const auto edges = VitalEdges(3.0);
     CHECK(HystereticBucket(80.0, 5, edges) == 4);
     CHECK(HystereticBucket(80.01, 5, edges) == 5);
@@ -206,4 +207,19 @@ TEST_CASE("bucket hysteresis: edge helpers")
     const auto d = SquaredDistanceEdge(100.0, 2.0);   // band past the origin clamps to 0
     CHECK(d.downAt == 0.0);
     CHECK(d.upAt == doctest::Approx(90000.0));
+}
+
+TEST_CASE("bucket hysteresis: override zones change exactly at the override's own thresholds")
+{
+    // Shipped critical health: activate below 0.35, release at 0.50.
+    CHECK(OverrideZone(0.39, 0.35, 0.15) == 1);
+    CHECK(OverrideZone(0.30, 0.35, 0.15) == 0);   // 39% -> 30%: a zone change, a run
+    CHECK(OverrideZone(0.35, 0.35, 0.15) == 1);
+    CHECK(OverrideZone(0.4999, 0.35, 0.15) == 1);
+    CHECK(OverrideZone(0.50, 0.35, 0.15) == 2);
+    // Both 39% and 30% are the Low bucket (25 < x <= 40): no bucket change,
+    // which is why the zone is needed at all.
+    const std::array<BucketEdge, 5> edges{ RisingBandEdge(10.0, 3.0), RisingBandEdge(25.0, 3.0),
+        RisingBandEdge(40.0, 3.0), RisingBandEdge(60.0, 3.0), RisingBandEdge(80.0, 3.0) };
+    CHECK(HystereticBucket(39.0, 2, edges) == HystereticBucket(30.0, 2, edges));
 }

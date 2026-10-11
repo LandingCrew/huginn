@@ -5,6 +5,7 @@
 #include <array>
 #include <cmath>   // std::ceil (lock-timer quantization)
 
+#include "core/CombatLock.h"
 #include "core/OpenWheelWrites.h"
 #include "slot/SlotAllocator.h"
 #include "slot/SlotLocker.h"
@@ -87,8 +88,14 @@ namespace Huginn::Display
         if (!wheelerClient.HasRecommendationWheel() || (wheelOpen && !hasUrgentOverride)) {
             return;
         }
-        const RE::FormID urgentFormID = hasUrgentOverride
-            ? Candidate::GetFormID(*topOverride->candidate) : RE::FormID{ 0 };
+        // Every urgent override's item may be written into an open wheel
+        // (core/OpenWheelWrites.h), not only the top one's.
+        std::vector<Core::UrgentOverride> urgentOverrides;
+        for (const auto& o : ctx.overrides.activeOverrides) {
+            if (o.candidate) {
+                urgentOverrides.push_back({ Candidate::GetFormID(*o.candidate), o.priority });
+            }
+        }
 
         // Don't push while the player is rearranging wheels. Every move in the
         // editor shifts our indices, and nothing corrects them until edit-mode
@@ -214,6 +221,13 @@ namespace Huginn::Display
                     && assignment.slotIndex < lockSnapshot.size()
                     && lockSnapshot[assignment.slotIndex].isLocked) {
                     const float remainingMs = lockSnapshot[assignment.slotIndex].remainingMs;
+                    if (lockSnapshot[assignment.slotIndex].frozen) {
+                        // Combat freeze: no timer, so no countdown -- the
+                        // prefix alone marks the key as locked.
+                        assignment.subtextLabel = Core::LockTimerLabel(stConfig.lockTimerPrefix,
+                            stConfig.lockTimerShowSeconds, remainingMs, true);
+                        continue;
+                    }
                     if (remainingMs > 0.0f) {
                         if (stConfig.lockTimerShowSeconds) {
                             // #14: WHOLE seconds, not tenths. The subtext feeds
@@ -331,11 +345,13 @@ namespace Huginn::Display
                 Core::WheelPageContents cached;
                 if (wheelerClient.GetCachedPage(page, cached.formIDs, cached.wildcard,
                                                 cached.uniqueIDs, cached.subtexts)) {
-                    std::vector<bool> writable(n, false);
+                    std::vector<uint32_t> ids(n, 0);
+                    std::vector<bool> isOverride(n, false);
                     for (size_t s = 0; s < n; ++s) {
-                        const auto& a = pageAssignments[s];
-                        writable[s] = a.IsOverride() && a.formID == urgentFormID;
+                        ids[s] = pageAssignments[s].formID;
+                        isOverride[s] = pageAssignments[s].IsOverride();
                     }
+                    const auto writable = Core::UrgentEntries(ids, isOverride, urgentOverrides, autoFocusThreshold);
                     for (const size_t s : Core::RestrictToWritable(incoming, cached, writable)) {
                         spdlog::debug("[WheelerClient] open-wheel write page {} slot {}: {}",
                             page, s, incoming.formIDs[s] != 0 ? std::string_view{ pageAssignments[s].name } : "(empty)"sv);

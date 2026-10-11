@@ -70,6 +70,11 @@ namespace Huginn::Pipeline
         // tier, bits 3-4 the cold tier (Context::DarknessApplies, HungerTier,
         // ColdTier).
         uint8_t ambientSignature = 0;
+        // Each vital's zone against its override's thresholds
+        // (Core::OverrideZone; 2 bits each: health, magicka, stamina). Compared
+        // like ambientSignature: a crossing of an override threshold always
+        // gets a run, whatever the buckets or the locks are doing.
+        uint8_t overrideSignature = 0;
 
         // Pipeline outputs (built by successive steps)
         std::vector<Scoring::ScoredCandidate> scoredCandidates;
@@ -219,6 +224,7 @@ namespace Huginn::Pipeline
             m_wasFalling = false;
             m_wasUnderwater = false;
             m_lastAmbientSignature = 0;
+            m_lastOverrideSignature = 0xFF;
         }
 
         /// Queue a one-shot full-detail recommendation dump (console `hg recs`).
@@ -299,6 +305,7 @@ namespace Huginn::Pipeline
         // latches above this is compared, not OR-ed in: CheckHashSkip runs
         // once whenever it changes, in either direction.
         uint8_t m_lastAmbientSignature = 0;
+        uint8_t m_lastOverrideSignature = 0xFF;   // never a real signature: first run always counts
 
         // Holds the displayed reason so a momentary one stays readable.
         // Label-only: ScoreCandidates above it always sees the raw weights.

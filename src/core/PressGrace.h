@@ -11,6 +11,10 @@
 // The rule: if the slot's shown item changed less than graceMs before the press
 // began (or after it began), the press acts on the item shown before that
 // change -- provided that item is still usable. Exceptions, in order:
+//   - the key shows an OVERRIDE (critical health, drowning, magicka, stamina):
+//     the urgent item arriving under the player's finger is exactly what the
+//     override is for, and acting on the item it displaced would undo it.
+//     Grace back TO an override that just left is fine;
 //   - nothing was shown before (an empty key that filled): act on what is shown;
 //   - the change was the same item (a stack swapped for its twin);
 //   - the player's own press on this key caused or followed the change: they
@@ -47,11 +51,13 @@ namespace Huginn::Core
         bool hasLastAction = false;      ///< the player has acted on this key before
         double lastActionMs = 0.0;       ///< when the player last acted on this key
         bool previousUsable = false;     ///< the previous item can still be used (caller's check)
+        bool shownIsOverride = false;    ///< the key shows an override's item now
     };
 
     enum class PressGraceReason : uint8_t
     {
         Off,               ///< graceMs <= 0
+        ShownOverride,     ///< the key shows an override: never taken back off it
         NoChange,          ///< the key has not changed since its page went up
         Settled,           ///< the change is older than graceMs: act on what is shown
         PreviousEmpty,     ///< nothing was shown before the change
@@ -76,6 +82,10 @@ namespace Huginn::Core
         PressGraceDecision out;
         if (!(in.graceMs > 0.0)) {
             out.reason = PressGraceReason::Off;
+            return out;
+        }
+        if (in.shownIsOverride) {
+            out.reason = PressGraceReason::ShownOverride;
             return out;
         }
         if (!in.hasChange) {
@@ -113,6 +123,7 @@ namespace Huginn::Core
     {
         switch (r) {
         case PressGraceReason::Off:              return "off";
+        case PressGraceReason::ShownOverride:    return "shown override";
         case PressGraceReason::NoChange:         return "no change";
         case PressGraceReason::Settled:          return "settled";
         case PressGraceReason::PreviousEmpty:    return "previous empty";

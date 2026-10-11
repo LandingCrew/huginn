@@ -109,7 +109,38 @@ TEST_CASE("combat lock: the end of the key's own override or hold releases it")
     auto in = Frozen();
     in.lockedIsPinned = true;
     CHECK(DecideCombatLockBreak(in) == CombatLockBreak::PinnedEnded);
-    in.newSameItem = true;   // still the same item: nothing ended
+    in.newSameItem = true;   // still the same item AND still pinned: nothing ended
+    in.newIsPinned = true;
+    CHECK(DecideCombatLockBreak(in) == CombatLockBreak::Hold);
+}
+
+TEST_CASE("combat lock: an override that ends on an item still offered is restyled, not frozen as an override")
+{
+    // The potion stays on the key as an ordinary pick: same item, no longer
+    // pinned. Holding the stored Override assignment kept the urgent styling,
+    // the Wheeler override label and the [O] selection flag all fight.
+    auto in = Frozen();
+    in.lockedIsPinned = true;
+    in.newSameItem = true;
+    in.newIsPinned = false;
+    CHECK(DecideCombatLockBreak(in) == CombatLockBreak::Restyle);
+    // And the other way, when bOverridesBreakLock keeps the override branch out.
+    in.lockedIsPinned = false;
+    in.newIsPinned = true;
+    in.overridesBreakLock = false;
+    CHECK(DecideCombatLockBreak(in) == CombatLockBreak::Restyle);
+}
+
+TEST_CASE("combat lock: an urgent override takes a frozen key even with bOverridesBreakLock off")
+{
+    auto in = Frozen();
+    in.newIsOverrideForThisKey = true;
+    in.overridesBreakLock = false;
+    in.overridePriority = 100;
+    in.elapsedMs = 10.0f;
+    CHECK(DecideCombatLockBreak(in) == CombatLockBreak::Override);
+    in.overridePriority = 30;   // not urgent: the setting is honoured
+    in.elapsedMs = 10000.0f;
     CHECK(DecideCombatLockBreak(in) == CombatLockBreak::Hold);
 }
 
@@ -120,7 +151,49 @@ TEST_CASE("combat lock: an override the key already shows holds; one marking its
     in.overridePriority = 70;
     in.newSameItem = true;
     in.lockedIsPinned = true;    // locked on the override already
+    in.newIsPinned = true;
     CHECK(DecideCombatLockBreak(in) == CombatLockBreak::Hold);
     in.lockedIsPinned = false;   // locked on the same potion as an ordinary pick
     CHECK(DecideCombatLockBreak(in) == CombatLockBreak::Override);
+}
+
+TEST_CASE("combat lock: no enemy for releaseSec ends combat for the lock; an enemy brings it back")
+{
+    CombatPresence p;
+    CHECK_FALSE(p.Update(false, false, 0.1f, 5.0f));
+    CHECK(p.Update(true, true, 0.1f, 5.0f));
+    // The last enemy dies; the game's flag stays up.
+    float t = 0.0f;
+    bool locked = true;
+    while (t < 4.9f) { locked = p.Update(true, false, 0.1f, 5.0f); t += 0.1f; }
+    CHECK(locked);
+    for (int i = 0; i < 3; ++i) locked = p.Update(true, false, 0.1f, 5.0f);
+    CHECK_FALSE(locked);
+    // An enemy comes back while the flag is still up.
+    CHECK(p.Update(true, true, 0.1f, 5.0f));
+    // 0 = follow the flag alone.
+    CombatPresence q;
+    for (int i = 0; i < 1000; ++i) locked = q.Update(true, false, 0.1f, 0.0f);
+    CHECK(locked);
+    // The flag dropping ends it at once whatever the timer.
+    CHECK_FALSE(q.Update(false, true, 0.1f, 0.0f));
+}
+
+TEST_CASE("combat lock: a frozen key is released when its spell is no longer known or its item is equipped")
+{
+    CHECK(DecideCombatLockItemRelease(true, false, false, false) == CombatLockItemRelease::Gone);
+    CHECK(DecideCombatLockItemRelease(true, false, true, true) == CombatLockItemRelease::Gone);
+    CHECK(DecideCombatLockItemRelease(false, true, false, false) == CombatLockItemRelease::Equipped);
+    // A Remembrance/override item keeps its key; so does an item the
+    // allocator still places there (equipped items shown on purpose).
+    CHECK(DecideCombatLockItemRelease(false, true, true, false) == CombatLockItemRelease::None);
+    CHECK(DecideCombatLockItemRelease(false, true, false, true) == CombatLockItemRelease::None);
+    CHECK(DecideCombatLockItemRelease(false, false, false, false) == CombatLockItemRelease::None);
+}
+
+TEST_CASE("combat lock: a frozen key shows no countdown in the lock-timer label")
+{
+    CHECK(LockTimerLabel("Locked", true, 2400.0f, false) == "Locked 3s");
+    CHECK(LockTimerLabel("Locked", true, 3000.0f, true) == "Locked");
+    CHECK(LockTimerLabel("Locked", false, 2400.0f, false) == "Locked");
 }
