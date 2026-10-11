@@ -91,6 +91,10 @@ namespace Huginn::Slot
         // lock even if it is the same item; cleared by that run.
         bool settling = false;
         bool lockNextFill = false;
+        // The last settle started on this key: which item, and when. A late
+        // report of the same undo inside the repeat window does nothing.
+        RE::FormID lastSettleFormID = 0;
+        std::chrono::steady_clock::time_point lastSettleAt{};
 
         // Combat upsert (core/CombatUpsert.h): when this key last took one,
         // and when the player last pressed it (NoteKeyPress). Epoch = never.
@@ -283,14 +287,19 @@ namespace Huginn::Slot
         /// "Swap Back" label goes on the next run -- for `settleMs`, then fills
         /// once and locks that fill (core/UndoSettle.h). A key whose lock holds
         /// the item without showing it is unlocked; a key already settling is
-        /// left alone (a late second report of the same undo).
-        void SettleAfterUndo(size_t slotIndex, RE::FormID formID, float settleMs);
+        /// left alone (a late second report of the same undo), and so is a key
+        /// that settled for this same item less than `repeatWindowMs` ago: a
+        /// Wheeler callback can arrive up to Remembrance's match window (1.5 s)
+        /// after the hold ended in hand, by when the 1 s settle has filled and
+        /// locked the key.
+        void SettleAfterUndo(size_t slotIndex, RE::FormID formID, float settleMs, float repeatWindowMs = 0.0f);
 
         /// The player pressed key `slotIndex` of the displayed page (hotkey
         /// down and up, the press acting, a Wheeler activation). The key takes
-        /// no combat upsert for max(fPressGraceMs, holdMs, the 400 ms floor):
-        /// the input handler passes its double-tap window at key up, so a tap
-        /// waiting in it never acts on an upsert (core/CombatUpsert.h).
+        /// no combat upsert for max(fPressGraceMs, holdMs, the 500 ms floor):
+        /// the input handler passes its hold threshold at key down and its
+        /// double-tap window at key up (each + 100 ms), so a pending hold or
+        /// tap never acts on an upsert (core/CombatUpsert.h).
         void NoteKeyPress(size_t slotIndex, float holdMs = 0.0f);
 
         /// Unlock all slots (e.g., on page change)

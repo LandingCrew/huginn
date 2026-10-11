@@ -38,10 +38,10 @@ namespace Huginn::Slot
         // item, without the "Swap Back" label, until the state has caught up,
         // then fills once and locks (SlotLocker::SettleAfterUndo,
         // core/UndoSettle.h).
-        void SettleIfOnScreen(size_t page, size_t slot, RE::FormID formID, float settleMs)
+        void SettleIfOnScreen(size_t page, size_t slot, RE::FormID formID, float settleMs, float repeatWindowMs)
         {
             if (SlotAllocator::GetSingleton().GetCurrentPage() == page) {
-                SlotLocker::GetSingleton().SettleAfterUndo(slot, formID, settleMs);
+                SlotLocker::GetSingleton().SettleAfterUndo(slot, formID, settleMs, repeatWindowMs);
             }
         }
     }
@@ -77,9 +77,9 @@ namespace Huginn::Slot
             // not show the equipped item as "Swap Back" until the lock runs
             // out, nor follow the allocator through its first, stale fills:
             // it settles (the label goes on the next run; one change later).
-            SettleIfOnScreen(page, s, formID, kSettleMs);
+            SettleIfOnScreen(page, s, formID, kSettleMs, static_cast<float>(kMatchWindowMs));
             if (shown != SIZE_MAX && shown != s) {
-                SettleIfOnScreen(page, shown, formID, kSettleMs);
+                SettleIfOnScreen(page, shown, formID, kSettleMs, static_cast<float>(kMatchWindowMs));
             }
             m_dirty = true;
             return true;
@@ -91,7 +91,7 @@ namespace Huginn::Slot
             ended = {};
             // Update settled the key already (a no-op here); a key still
             // showing the item settles now.
-            SettleIfOnScreen(page, slot, formID, kSettleMs);
+            SettleIfOnScreen(page, slot, formID, kSettleMs, static_cast<float>(kMatchWindowMs));
             m_dirty = true;
             return true;
         }
@@ -216,9 +216,9 @@ namespace Huginn::Slot
                     if (backInHand) {
                         // The undo's situation (a Wheeler undo lands here
                         // before its callback): settle, as OnSlotActivated does.
-                        SettleIfOnScreen(page, slot, heldID, kSettleMs);
+                        SettleIfOnScreen(page, slot, heldID, kSettleMs, static_cast<float>(kMatchWindowMs));
                         if (shown != slot) {
-                            SettleIfOnScreen(page, shown, heldID, kSettleMs);
+                            SettleIfOnScreen(page, shown, heldID, kSettleMs, static_cast<float>(kMatchWindowMs));
                         }
                     } else {
                         ReleaseIfOnScreen(page, slot);

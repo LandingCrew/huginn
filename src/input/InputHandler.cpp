@@ -271,8 +271,10 @@ namespace Huginn::Input
       state.pressTime = m_frameTime;
       state.isPressed = true;
       state.holdTriggered = false;
-      // A key under the player's finger takes no combat upsert (fPressGraceMs).
-      Slot::SlotLocker::GetSingleton().NoteKeyPress(static_cast<size_t>(slotIndex));
+      // A key under the player's finger takes no combat upsert: a hold acts
+      // at the hold threshold from now (plus one update tick).
+      Slot::SlotLocker::GetSingleton().NoteKeyPress(static_cast<size_t>(slotIndex),
+         m_holdThreshold * 1000.0f + 100.0f);
       }
       else if (button->IsHeld()) {
       if (state.isPressed && !state.holdTriggered) {

@@ -6658,6 +6658,46 @@ void RunSlotLockerOverrideScopeTest()
             passed = false;
         }
         (void)locker.SetInCombat(false);
+
+        // 5h. Same-run cascade: an urgent override breaks key 1 and the item it
+        //     displaces (C, +1.0) is the allocator's pick for key 0 (A, -1.0):
+        //     no upsert in a run where another key changes. 5i: on later runs C
+        //     stays out (it left a key less than the cooldown ago -- a
+        //     departure no upsert caused), and comes back once that has passed.
+        locker.Reset();
+        (void)locker.SetInCombat(true);
+        Override::OverrideCollection urgent;
+        {
+            Override::OverrideResult r;
+            r.priority = 100;
+            r.reason = "probe urgent override";
+            Candidate::ItemCandidate item;
+            item.formID = P;
+            r.candidate = Candidate::CandidateVariant{ item };
+            urgent.activeOverrides.push_back(std::move(r));
+        }
+        const auto t2 = std::chrono::steady_clock::now();
+        (void)locker.ApplyLocks(scoredPage({ { A, -1.0 }, { C, 1.0 } }), none, {}, at(t2, 0));
+        auto withOverride = scoredPage({ { C, 1.0 }, { P, 0.0 } });
+        withOverride[1].type = AssignmentType::Override;
+        shown = locker.ApplyLocks(withOverride, urgent, {}, at(t2, 5000));
+        if (!shows(shown, 1, P) || !shows(shown, 0, A)) {
+            logger::error("TEST FAIL: same-run cascade (key0={:08X}, key1={:08X}; want A kept on 0, the override on 1)"sv,
+                shown.size() > 0 ? shown[0].formID : 0, shown.size() > 1 ? shown[1].formID : 0);
+            passed = false;
+        }
+        shown = locker.ApplyLocks(withOverride, urgent, {}, at(t2, 5100));
+        if (!shows(shown, 0, A)) {
+            logger::error("TEST FAIL: an item that left a key 0.1 s ago (override break) upserted another key"sv);
+            passed = false;
+        }
+        shown = locker.ApplyLocks(withOverride, urgent, {}, at(t2, 16000));
+        if (!shows(shown, 0, C)) {
+            logger::error("TEST FAIL: past the cooldown the departed item still could not upsert (key0={:08X})"sv,
+                shown.empty() ? 0 : shown[0].formID);
+            passed = false;
+        }
+        (void)locker.SetInCombat(false);
         locker.SetConfig(testConfig);
     }
 
@@ -6719,6 +6759,14 @@ void RunSlotLockerOverrideScopeTest()
             logger::error("TEST FAIL: the same-item fill after a settle was not locked (locked={})"sv, snap[0].isLocked);
             passed = false;
         }
+        // A late Wheeler report of the same undo (inside the 1.5 s match
+        // window) must not restart a settle on the filled, locked key.
+        locker.SettleAfterUndo(0, P, 1000.0f, 1500.0f);
+        if (locker.GetLockSnapshot()[0].remainingMs < 2000.0f) {
+            logger::error("TEST FAIL: a late report of the same undo restarted the settle ({:.0f}ms left)"sv,
+                locker.GetLockSnapshot()[0].remainingMs);
+            passed = false;
+        }
     }
 
     // 6c. Sticky: Wheeler takes the 10 s activation lock just before it
@@ -6736,6 +6784,25 @@ void RunSlotLockerOverrideScopeTest()
         if (!shows(shown, 0, D)) {
             logger::error("TEST FAIL: the undo settle did not replace the Sticky activation lock (key shows {:08X})"sv,
                 shown.empty() ? 0 : shown[0].formID);
+            passed = false;
+        }
+    }
+
+    // 6d. Wheeler's other order: the hold ends in hand first (settle), then
+    //     Sticky's activation lock, then the late report. The repeat guard
+    //     must not leave the 10 s activation lock in place.
+    locker.Reset();
+    (void)locker.SetInCombat(false);
+    {
+        auto first = page({ P });
+        first[0].type = AssignmentType::Remembered;
+        (void)locker.ApplyLocks(first, Override::OverrideCollection{});
+        locker.SettleAfterUndo(0, P, 1000.0f, 1500.0f);
+        locker.LockSlotForActivation(0);
+        locker.SettleAfterUndo(0, P, 1000.0f, 1500.0f);
+        if (locker.GetLockSnapshot()[0].remainingMs > 1000.0f) {
+            logger::error("TEST FAIL: a late undo report left the Sticky activation lock on the undone item ({:.0f}ms left)"sv,
+                locker.GetLockSnapshot()[0].remainingMs);
             passed = false;
         }
     }

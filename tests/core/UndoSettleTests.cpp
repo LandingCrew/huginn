@@ -33,11 +33,28 @@ TEST_CASE("undo settle: a second report of the same undo changes nothing")
 TEST_CASE("undo settle: whatever lock the key has is replaced, a Sticky activation lock included")
 {
     // Wheeler under Sticky takes the 10 s activation lock just before it
-    // reports the undo; the settle replaces it (1 s, then one fill). The
-    // input carries no lock kind: no lock is exempt.
+    // reports the undo; the settle replaces it (1 s, then one fill).
     UndoSettleStartInput in;
     in.showsUndone = true;
     in.lockedOnUndone = true;
+    in.activationLockOnUndone = true;
+    CHECK(DecideUndoSettleStart(in) == UndoSettleStart::Hold);
+    in.activationLockOnUndone = false;
+    CHECK(DecideUndoSettleStart(in) == UndoSettleStart::Hold);
+}
+
+TEST_CASE("undo settle: a late report of an undo this key already settled does nothing")
+{
+    // Wheeler's callback can come up to 1.5 s after the hold ended in hand;
+    // the settle lasts 1 s, so the key may have filled -- with the same item --
+    // and locked. Restarting the settle would change it again.
+    UndoSettleStartInput in;
+    in.repeatOfSettled = true;
+    in.showsUndone = true;
+    in.lockedOnUndone = true;
+    CHECK(DecideUndoSettleStart(in) == UndoSettleStart::None);
+    // Unless Sticky's activation lock now holds the undone item there.
+    in.activationLockOnUndone = true;
     CHECK(DecideUndoSettleStart(in) == UndoSettleStart::Hold);
 }
 

@@ -29,18 +29,20 @@
 //   - changes this run anyway;
 //   - is inside press grace: changed less than fPressGraceMs ago, or pressed
 //     less than max(fPressGraceMs, the press floor) ago -- the floor covers
-//     the double-tap window, so a tap waiting in it never acts on an upsert
-//     even with fPressGraceMs = 0;
+//     the double-tap window and the hold threshold, so a pending tap or hold
+//     never acts on an upsert even with fPressGraceMs = 0;
 //   - took an upsert less than fCombatUpsertCooldownSec ago;
 // and never while the Wheeler wheel is open (only urgent override entries
 // write into an open wheel). The new item is combat-locked like any other.
 //
 // Never a challenger: an item an upsert displaced this fight, or one that
 // left any key less than max(fCombatUpsertCooldownSec, the page spacing) ago
-// (CombatUpsertMemory). Without that a displaced item could upsert the key
-// it "belongs" on a run later -- the home-key move the combat lock defers to
-// the end of the fight, back as two changes (verifier, PR #208). And at most
-// one upsert per page per run, kCombatUpsertPageSpacingMs apart.
+// (CombatUpsertMemory), or one leaving a key this very run. Without that a
+// displaced item could upsert the key it "belongs" on -- the home-key move the
+// combat lock defers to the end of the fight, back as two changes (verifier,
+// PR #208). And at most one upsert per page per run, kCombatUpsertPageSpacingMs
+// apart, and none in a run where any other key changes: one visible change
+// per run.
 //
 // Pure: standard library only, host-tested in tests/core/CombatUpsertTests.cpp.
 
@@ -92,10 +94,11 @@ namespace Huginn::Core
     inline constexpr double kCombatUpsertPageSpacingMs = 3000.0;
 
     /// The shortest a press keeps its key from an upsert, whatever
-    /// fPressGraceMs says (0 included): the default 300 ms double-tap window
-    /// plus one 100 ms update tick. The input handler asks for longer when its
-    /// window is longer (SlotLocker::NoteKeyPress).
-    inline constexpr double kCombatUpsertPressFloorMs = 400.0;
+    /// fPressGraceMs says (0 included): the longer of the input handler's
+    /// default double-tap window (300 ms, from key up) and hold threshold
+    /// (400 ms, from key down), plus one 100 ms update tick. The input handler
+    /// asks for longer when its own settings are longer (SlotLocker::NoteKeyPress).
+    inline constexpr double kCombatUpsertPressFloorMs = 500.0;
 
     enum class CombatUpsertGate : uint8_t
     {

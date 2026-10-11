@@ -763,6 +763,11 @@ namespace Huginn::Slot
             slot.frozen = false;
             slot.settling = false;
             slot.lockNextFill = false;
+            // Key i of the new page is another key: the old page's presses
+            // and upserts say nothing about it.
+            slot.lastUpsertAt = {};
+            slot.lastPressAt = {};
+            slot.pressHoldMs = 0.0f;
             // Every slot, locked or not: the whole page's content is about to
             // be replaced, and the player asked for that. Only caller is
             // SlotAllocator::SetCurrentPage.
@@ -771,18 +776,23 @@ namespace Huginn::Slot
         spdlog::debug("[SlotLocker] All slots unlocked");
     }
 
-    void SlotLocker::SettleAfterUndo(size_t slotIndex, RE::FormID formID, float settleMs)
+    void SlotLocker::SettleAfterUndo(size_t slotIndex, RE::FormID formID, float settleMs, float repeatWindowMs)
     {
         if (slotIndex >= MAX_SLOTS || formID == 0) {
             return;
         }
         std::lock_guard<std::mutex> lock(m_mutex);
         auto& slot = m_lockedSlots[slotIndex];
+        const auto now = std::chrono::steady_clock::now();
         Core::UndoSettleStartInput in;
         in.settling = slot.isLocked && slot.settling;
+        in.repeatOfSettled = slot.lastSettleFormID == formID &&
+            slot.lastSettleAt != std::chrono::steady_clock::time_point{} &&
+            std::chrono::duration<float, std::milli>(now - slot.lastSettleAt).count() < repeatWindowMs;
         // Shown, and the stored assignment is that item: the hold re-emits it.
         in.showsUndone = !slot.shownEmpty && slot.shownFormID == formID && slot.assignment.formID == formID;
         in.lockedOnUndone = slot.isLocked && slot.assignment.formID == formID;
+        in.activationLockOnUndone = in.lockedOnUndone && slot.isActivationLock;
         switch (Core::DecideUndoSettleStart(in)) {
         case Core::UndoSettleStart::None:
             return;
@@ -821,10 +831,12 @@ namespace Huginn::Slot
         slot.isActivationLock = false;
         slot.combatLock = false;
         slot.frozen = false;
-        slot.lockedAt = std::chrono::steady_clock::now();
+        slot.lockedAt = now;
         slot.minAgeWakeDone = false;
         slot.settling = true;
         slot.lockNextFill = false;
+        slot.lastSettleFormID = formID;
+        slot.lastSettleAt = now;
         spdlog::debug("[SlotLocker] Slot {} settles {:.0f}ms after a Swap Back undo: keeps '{}', then fills once and locks",
             slotIndex, settleMs, slot.assignment.name);
     }
@@ -865,6 +877,20 @@ namespace Huginn::Slot
                 : std::chrono::duration<double, std::milli>(now - t).count();
         };
         const size_t n = std::min(result.size(), MAX_SLOTS);
+
+        // One visible change per run: no upsert while any key changes this
+        // run (an override breaking its key, a Remembrance hold arriving, a
+        // refill). It also closes the same-run cascade: an item can only leave
+        // a key that changes, so the item an override just displaced is never
+        // upserted onto another key in the run it left (verifier, PR #208).
+        for (size_t i = 0; i < n; ++i) {
+            const auto& slot = m_lockedSlots[i];
+            const bool nowEmpty = result[i].IsEmpty();
+            if (nowEmpty != slot.shownEmpty ||
+                (!nowEmpty && (result[i].formID != slot.shownFormID || result[i].uniqueID != slot.shownUniqueID))) {
+                return;
+            }
+        }
 
         // Keys open to an upsert, with the score of the item ON the key: this
         // run's, when it was scored (RefreshHeld put it on the key), else the

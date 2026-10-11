@@ -37,6 +37,8 @@ namespace Huginn::Core
     struct UndoSettleStartInput
     {
         bool settling = false;        ///< the key is settling already (a second report of one undo)
+        bool repeatOfSettled = false; ///< this key settled for this item within the repeat window (a late report)
+        bool activationLockOnUndone = false;  ///< a Sticky activation lock holds the undone item on the key
         bool showsUndone = false;     ///< the key shows the undone item right now
         bool lockedOnUndone = false;  ///< the key's lock holds the undone item
     };
@@ -48,6 +50,13 @@ namespace Huginn::Core
     [[nodiscard]] constexpr UndoSettleStart DecideUndoSettleStart(const UndoSettleStartInput& in) noexcept
     {
         if (in.settling) return UndoSettleStart::None;
+        // A late report of an undo this key already settled: the settle may
+        // be over and the key filled and locked; restarting it would change
+        // the key again (Wheeler's callback can come up to 1.5 s after the
+        // hold ended in hand, the settle lasts 1 s). Unless Wheeler's Sticky
+        // activation lock, taken just before that report, now holds the
+        // undone item: replaced, as on a first report.
+        if (in.repeatOfSettled && !in.activationLockOnUndone) return UndoSettleStart::None;
         if (in.showsUndone) return UndoSettleStart::Hold;
         if (in.lockedOnUndone) return UndoSettleStart::Release;
         return UndoSettleStart::None;
