@@ -265,6 +265,20 @@ in. What was built: the [implementation map](architecture/9-implementation-map.m
         line carries the health before the take-off and at the landing poll,
         and a `[Falling] landed` line ~1 s later the health after the
         damage; the script fits to that measured loss when it is there.
+        0.23.29 (trace-04 verification §4: a 549-unit "fall" at 18:47:11 took
+        1.51 s from the gate and did no damage, a slide): the script rejects
+        slides itself, a fall whose gate-to-peak descent was slower than a
+        free fall from rest under Havok's 686 units/s^2 allows (plus one poll
+        and two frames; the logged falls' own gravity is ~950), and reads
+        several logs at once. On the five logs of 2026-10-10, with no
+        `--exclude`, it rejects six (12:08:36, 18:47:11, 11:32:35 and three
+        harmless ones) and fits centre 467, slope 0.0285 (bootstrap centre
+        445-485): the curve stays. `FallTracker` (now core/FallTracker.h,
+        host-tested) applies the same bound: a descent slower than a free
+        fall re-anchors the take-off Z, so a slide no longer accumulates
+        depth. In-game check: a slide down a steep slope never shows the
+        Falling reason; a real cliff fall still does, also with a menu
+        opened mid-fall.
       - **OPEN: false water by a pond.** At 11:23-11:24 six jumps from a bank
         at feet -3005 read water at -3008 ahead; from the bank the probe read
         it shallow (`deep water` 28 and 91). The deep readings were taken

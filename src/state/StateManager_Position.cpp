@@ -116,10 +116,18 @@ namespace Huginn::State
       // Swimming is excluded before the tracker sees it: diving is airborne to
       // nobody, but a 400-unit descent underwater would otherwise read as a
       // fall if the engine ever reports midair while submerged.
+      //
+      // Free falls only (0.23.29): a descent slower than gravity allows (a
+      // slide, a slope, hops) re-anchors the take-off Z (core/FallTracker.h).
+      // Its clock is unpaused time: the loop polls through a pausing menu,
+      // and a player who opens one mid-fall must keep the depth.
       const bool airborne = player->IsInMidair() && !newIsSwimming;
       const float maxPlausibleDelta =
           PhysicsConstants::MAX_FALL_SPEED * (m_playerPositionPollInterval / 1000.0f);
-      newFallDepth = m_fallTracker.Update(currentZ, airborne, maxPlausibleDelta);
+      const double fallNowSec = NeedClock::Now();
+      auto* fallUi = RE::UI::GetSingleton();
+      const bool fallPaused = fallUi && fallUi->GameIsPaused();
+      newFallDepth = m_fallTracker.Update(currentZ, airborne, maxPlausibleDelta, fallNowSec, fallPaused);
       newIsFalling = newFallDepth >= PhysicsConstants::FALL_DEPTH_MIN;
 
       // Transition only — the gate is otherwise invisible in a log, which makes
@@ -140,7 +148,6 @@ namespace Huginn::State
       // fall's start, if sooner). tools/needs/fit_drop_curve.py fits to that
       // measured loss when the line is there.
       const float hpNow = HealthFraction(player);
-      const double fallNowSec = NeedClock::Now();
       if (m_pendingLanding.pending &&
           (fallNowSec - m_pendingLanding.endAt >= kLandedReadDelaySec || (newIsFalling && !m_wasFalling))) {
       logger::debug("[Falling] landed — peak depth {:.0f} | hp {} -> {} ({:.1f} s after the end)"sv,
@@ -222,7 +229,10 @@ namespace Huginn::State
       // ::g_loadGeneration (Globals.h), which InitializeGameSystems bumps
       // once at every kNewGame / kPostLoadGame, a failed load included. Not
       // DropAheadProbe's file-local counter of the same name, which
-      // SetGameLoaded bumps twice a load (kPreLoadGame, then loaded). The
+      // SetGameLoaded bumps at each call: twice for a saved game that loads
+      // (kPreLoadGame, then kPostLoadGame), once for a load that fails (the
+      // kPreLoadGame call only) and once for a new game (kNewGame, which
+      // has no kPreLoadGame). The
       // flag and hold are the polls' state, under m_pollMutex since 0.23.26:
       // before, the Debug ForceUpdate at load could poll here on the main
       // thread beside a tick, and both could pass !m_blindSpotLogged and

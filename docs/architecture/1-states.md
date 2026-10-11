@@ -82,7 +82,7 @@ Supporting headers in the same directory that are *not* part of the split:
 [`StateTypes.h`](../../src/state/StateTypes.h) (tracking structs),
 [`StateConstants.h`](../../src/state/StateConstants.h) (thresholds),
 [`StateManagerConstants.h`](../../src/state/StateManagerConstants.h) (poll intervals,
-target tracking config), [`FallTracker.h`](../../src/state/FallTracker.h), and
+target tracking config), [`core/FallTracker.h`](../../src/core/FallTracker.h), and
 [`DamageEventSink.h`](../../src/state/DamageEventSink.h).
 
 **Benefits:**
@@ -360,10 +360,13 @@ Two v0.19.x corrections live here:
 
 - **Falling (#60).** `heightAboveGround` is gone. Raw `IsInMidair()` is true for
   every jump, kerb-hop and knockback, which drove `slowFallWeight` to full
-  constantly. [`FallTracker`](../../src/state/FallTracker.h) anchors on the take-off
+  constantly. [`FallTracker`](../../src/core/FallTracker.h) anchors on the take-off
   Z and reports the descent below it, with a plausibility clamp of
   `MAX_FALL_SPEED × pollInterval` per sample; swimming is excluded before the
-  tracker sees it. The anchor is single-writer in this poll and **must** be reset
+  tracker sees it. Since 0.23.29 it counts free falls only: a descent slower than
+  a free fall from rest under gravity (686 units/s²) allows, a slide or hops down a
+  slope, re-anchors it, so a slide no longer accumulates depth; its clock runs on
+  unpaused polls only. The anchor is single-writer in this poll and **must** be reset
   by `ResetTrackingState()` — the previous save's take-off Z describes a different
   world position.
 - **Underwater (#61).** The test now uses `GetWaterHeight()` (the height of the
