@@ -18,7 +18,7 @@
 #include "slot/Remembrance.h"
 #include "slot/SlotUtils.h"
 #include "input/EquipManager.h"
-#include "wheeler/WheelerClient.h"  // debug-only: ValidateWheelState in UpdateDebugWidgets
+#include "wheeler/WheelerClient.h"  // IsWheelOpen (combat upsert); ValidateWheelState in UpdateDebugWidgets
 #include "learning/PipelineStateCache.h"
 #include "telemetry/SoakMetrics.h"
 #include "ui/DebugSettings.h"
@@ -601,8 +601,21 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
         for (size_t s = 0; s < pressedHolds.size() && s < lockRun.remembranceOnPressedKey.size(); ++s) {
             const auto& hold = pressedHolds[s];
             lockRun.remembranceOnPressedKey[s] = hold.Active() && (hold.shownSlot == SIZE_MAX || hold.shownSlot == s);
+            // The combat upsert leaves alone a key with a hold of its own and
+            // the key showing it.
+            if (hold.Active()) {
+                lockRun.remembranceHoldOnKey[s] = true;
+                if (hold.shownSlot < lockRun.remembranceHoldOnKey.size()) {
+                    lockRun.remembranceHoldOnKey[hold.shownSlot] = true;
+                }
+            }
         }
     }
+    // Combat upsert inputs (core/CombatUpsert.h): none while the wheel is
+    // open, none on a key inside press grace, a barrier on the hold's margin.
+    lockRun.wheelOpen = Wheeler::WheelerClient::GetSingleton().IsWheelOpen();
+    lockRun.pressGraceMs = Slot::SlotSettings::GetSingleton().PressGraceMs();
+    lockRun.challengerMargin = Slot::SlotSettings::GetSingleton().ChallengerMargin();
     // A combat-locked key's item, checked against the game every run: a spell
     // or shout the player no longer knows, or an item now equipped / worn.
     // The worn stack's uniqueID in one hand (the list carrying ExtraWorn, else

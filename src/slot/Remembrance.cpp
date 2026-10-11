@@ -32,6 +32,18 @@ namespace Huginn::Slot
                 SlotLocker::GetSingleton().UnlockSlot(slot);
             }
         }
+
+        // The hold's item went back in hand (the undo, or re-equipped some
+        // other way): the key that shows it settles instead -- it keeps the
+        // item, without the "Swap Back" label, until the state has caught up,
+        // then fills once and locks (SlotLocker::SettleAfterUndo,
+        // core/UndoSettle.h).
+        void SettleIfOnScreen(size_t page, size_t slot, RE::FormID formID, float settleMs, float repeatWindowMs)
+        {
+            if (SlotAllocator::GetSingleton().GetCurrentPage() == page) {
+                SlotLocker::GetSingleton().SettleAfterUndo(slot, formID, settleMs, repeatWindowMs);
+            }
+        }
     }
 
     Remembrance& Remembrance::GetSingleton()
@@ -61,14 +73,17 @@ namespace Huginn::Slot
                 page, slot, NameOf(formID));
             const size_t shown = entry.shownSlot;
             entry = {};
-            // The slot is still locked on the remembered assignment; let go
-            // now, or it shows the equipped item as "Swap Back" until the
-            // lock runs out.
-            ReleaseIfOnScreen(page, s);
+            // The slot is still locked on the remembered assignment. It must
+            // not show the equipped item as "Swap Back" until the lock runs
+            // out, nor follow the allocator through its first, stale fills:
+            // it settles (the label goes on the next run; one change later).
+            // No repeat window: this undo ended an active hold, so an earlier
+            // settle for the same item (which cleared its own hold) was a
+            // different undo -- a second one inside 1.5 s settles again.
+            SettleIfOnScreen(page, s, formID, kSettleMs, 0.0f);
             if (shown != SIZE_MAX && shown != s) {
-                ReleaseIfOnScreen(page, shown);
+                SettleIfOnScreen(page, shown, formID, kSettleMs, 0.0f);
             }
-            m_undoSettleMs[page][slot] = kSettleMs;
             m_dirty = true;
             return true;
         }
@@ -77,7 +92,11 @@ namespace Huginn::Slot
         auto& ended = m_endedInHand[page][slot];
         if (ended.formID == formID && NowMs() - ended.endedAtMs <= kMatchWindowMs) {
             ended = {};
-            m_undoSettleMs[page][slot] = kSettleMs;
+            // Update settled the key already (a no-op here); a key still
+            // showing the item settles now. The one call with a repeat window:
+            // this report can arrive after that settle filled and locked the
+            // key, and must not start it again.
+            SettleIfOnScreen(page, slot, formID, kSettleMs, static_cast<float>(kMatchWindowMs));
             m_dirty = true;
             return true;
         }
@@ -193,14 +212,25 @@ namespace Huginn::Slot
                     spdlog::info("[Remembrance] Page {} Slot {}: hold on '{}' {}",
                         page, slot, NameOf(entry.formID), backInHand ? "ended, back in hand" : "expired");
                     const size_t shown = entry.shownSlot != SIZE_MAX ? entry.shownSlot : slot;
+                    const RE::FormID heldID = entry.formID;
                     m_endedInHand[page][slot] = backInHand ? Ended{ entry.formID, nowMs } : Ended{};
                     if (shown != slot) {
                         m_endedInHand[page][shown] = m_endedInHand[page][slot];
                     }
                     entry = {};
-                    ReleaseIfOnScreen(page, slot);
-                    if (shown != slot) {
-                        ReleaseIfOnScreen(page, shown);
+                    if (backInHand) {
+                        // The undo's situation (a Wheeler undo lands here
+                        // before its callback): settle, as OnSlotActivated does,
+                        // with no repeat window (an active hold just ended).
+                        SettleIfOnScreen(page, slot, heldID, kSettleMs, 0.0f);
+                        if (shown != slot) {
+                            SettleIfOnScreen(page, shown, heldID, kSettleMs, 0.0f);
+                        }
+                    } else {
+                        ReleaseIfOnScreen(page, slot);
+                        if (shown != slot) {
+                            ReleaseIfOnScreen(page, shown);
+                        }
                     }
                     changed = true;
                     continue;
@@ -220,16 +250,6 @@ namespace Huginn::Slot
             }
         }
 
-        // Slots settling after an undo: keep them unlocked and re-run.
-        for (size_t page = 0; page < MAX_PAGES; ++page) {
-            for (size_t slot = 0; slot < MAX_SLOTS_PER_PAGE; ++slot) {
-                float& settle = m_undoSettleMs[page][slot];
-                if (settle <= 0.0f) continue;
-                settle -= deltaMs;
-                ReleaseIfOnScreen(page, slot);
-                changed = true;
-            }
-        }
         return changed || std::exchange(m_dirty, false);
     }
 
@@ -312,7 +332,6 @@ namespace Huginn::Slot
         std::lock_guard<std::mutex> lock(m_mutex);
         m_pages = {};
         m_endedInHand = {};
-        m_undoSettleMs = {};
         m_dirty = false;
         m_pendingCount = 0;
         m_sampled = false;

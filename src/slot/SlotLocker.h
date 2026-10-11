@@ -4,6 +4,7 @@
 
 #include "SlotAssignment.h"
 #include "SlotSettings.h"
+#include "core/CombatUpsert.h"
 #include "override/OverrideConditions.h"
 #include "telemetry/SoakMetrics.h"
 #include <array>
@@ -35,6 +36,12 @@ namespace Huginn::Slot
         // as if combat had ended (core::CombatPresence). 0 = follow the game's
         // combat flag alone. Seconds, 0-60.
         float combatNoEnemyReleaseSec = 5.0f;
+        // Combat upsert (core/CombatUpsert.h): a challenger takes a
+        // combat-locked key when its score beats the key's item by this many
+        // times ln(1 + fChallengerMargin). 0 = off (the freeze is absolute).
+        float combatUpsertMarginMult = 3.0f;
+        // At most one upsert per key per this many seconds. 0 = no limit.
+        float combatUpsertCooldownSec = 10.0f;
     };
 
     // =============================================================================
@@ -77,6 +84,23 @@ namespace Huginn::Slot
         // hold that OnItemUsed must not break when asked to respect it, so a
         // just-activated item stays visible even after it's consumed.
         bool isActivationLock = false;
+
+        // A Swap Back undo settle (SettleAfterUndo, core/UndoSettle.h): the
+        // lock holds what the key showed at the undo, as an ordinary item, for
+        // the settle time. When it runs out, `lockNextFill` makes the next fill
+        // lock even if it is the same item; cleared by that run.
+        bool settling = false;
+        bool lockNextFill = false;
+        // The last settle started on this key: which item, and when. A late
+        // report of the same undo inside the repeat window does nothing.
+        RE::FormID lastSettleFormID = 0;
+        std::chrono::steady_clock::time_point lastSettleAt{};
+
+        // Combat upsert (core/CombatUpsert.h): when this key last took one,
+        // and when the player last pressed it (NoteKeyPress). Epoch = never.
+        std::chrono::steady_clock::time_point lastUpsertAt{};
+        std::chrono::steady_clock::time_point lastPressAt{};
+        float pressHoldMs = 0.0f;   // how long that press keeps the key from an upsert (at least the floor)
 
         // Churn telemetry. What the player was SHOWN in this slot last run --
         // post-dedup, which `assignment` above is not: an unlocked slot stores
@@ -175,6 +199,18 @@ namespace Huginn::Slot
             /// scored list (core/HeldRefresh.h). A function so the in-game
             /// test can substitute it.
             std::function<std::optional<Candidate::CandidateVariant>(RE::FormID formID, uint16_t uniqueID)> lookupItem;
+
+            /// Combat upsert inputs (core/CombatUpsert.h). The defaults (no
+            /// grace, wheel closed, no holds) are what a test harness wants.
+            bool wheelOpen = false;          ///< the Wheeler wheel is open: no upsert
+            float pressGraceMs = 0.0f;       ///< fPressGraceMs
+            float challengerMargin = 0.5f;   ///< fChallengerMargin: the barrier is a multiple of ln(1 + this)
+            /// Key i has an active Remembrance hold of its own, or shows one.
+            std::array<bool, MAX_SLOTS_PER_PAGE> remembranceHoldOnKey{};
+            /// This run's clock for the upsert and the churn record. Epoch (the
+            /// default) = steady_clock::now(); the in-game test passes later
+            /// times to step past the page spacing without sleeping.
+            std::chrono::steady_clock::time_point now{};
         };
 
         // =========================================================================
@@ -202,18 +238,23 @@ namespace Huginn::Slot
         [[nodiscard]] bool Update(float deltaMs);
 
         /// Tell the locker whether the player is in combat (every tick, before
-        /// Update). Entering combat: locks taken from now on use
-        /// fCombatLockDurationMs, and the next ApplyLocks locks every key that
-        /// shows an item. Leaving it: combat locks fall back to the normal timer
-        /// counted from now (core/CombatLock.h). @return true if that released a
-        /// lock (normal locking off) -- the caller must force a pipeline run.
+        /// Update). Entering combat: every key on a normal lock becomes
+        /// combat-locked on its item (core::ConvertsAtCombatOnset; override and
+        /// Remembrance keys and an undo settle keep theirs), locks taken from
+        /// now on use fCombatLockDurationMs, and the next ApplyLocks locks every
+        /// other key that shows an item. Leaving it: combat locks fall back to
+        /// the normal timer counted from now (core/CombatLock.h). @return true
+        /// if that released a lock (normal locking off) -- the caller must
+        /// force a pipeline run.
         [[nodiscard]] bool SetInCombat(bool inCombat);
 
         /// Restart every lock's timer at the full duration, as if each key had
         /// just changed. Called when the Wheeler wheel closes: the widget is
         /// hidden while the wheel is open, so a key that changed then is first
         /// SEEN at the close -- and its lock, started when it changed, used to
-        /// run out under three seconds after the player first saw it.
+        /// run out under three seconds after the player first saw it. Also
+        /// holds off the combat upsert for max(fPressGraceMs, the press floor)
+        /// (core::WheelClosedRecently): the player is reaching for a key.
         void RestartLocks();
 
         /// Apply locking logic to raw assignments from SlotAllocator
@@ -242,6 +283,26 @@ namespace Huginn::Slot
 
         /// Unlock a specific slot immediately
         void UnlockSlot(size_t slotIndex);
+
+        /// A Swap Back undo put `formID` back in hand (Remembrance). If key
+        /// `slotIndex` shows it, the key holds it -- as an ordinary item, so the
+        /// "Swap Back" label goes on the next run -- for `settleMs`, then fills
+        /// once and locks that fill (core/UndoSettle.h). A key whose lock holds
+        /// the item without showing it is unlocked; a key already settling is
+        /// left alone (a late second report of the same undo), and so is a key
+        /// that settled for this same item less than `repeatWindowMs` ago: a
+        /// Wheeler callback can arrive up to Remembrance's match window (1.5 s)
+        /// after the hold ended in hand, by when the 1 s settle has filled and
+        /// locked the key.
+        void SettleAfterUndo(size_t slotIndex, RE::FormID formID, float settleMs, float repeatWindowMs = 0.0f);
+
+        /// The player pressed key `slotIndex` of the displayed page (hotkey
+        /// down and up, the press acting, a Wheeler activation). The key takes
+        /// no combat upsert for max(fPressGraceMs, holdMs, the 500 ms floor):
+        /// the input handler passes its hold threshold at key down and its
+        /// double-tap window at key up (each + 100 ms), so a pending hold or
+        /// tap never acts on an upsert (core/CombatUpsert.h).
+        void NoteKeyPress(size_t slotIndex, float holdMs = 0.0f);
 
         /// Unlock all slots (e.g., on page change)
         void UnlockAll();
@@ -335,6 +396,14 @@ namespace Huginn::Slot
         // The combat flag SetInCombat last saw. Guarded by m_mutex.
         bool m_inCombat = false;
 
+        // Combat upsert, page-wide (core::CombatUpsertMemory): items that
+        // recently left a key or that an upsert displaced this fight (never
+        // challengers), and the page's last upsert. Guarded by m_mutex.
+        Core::CombatUpsertMemory m_upsertMemory;
+        // When the Wheeler wheel last closed (RestartLocks): no upsert for
+        // max(fPressGraceMs, the press floor) after it. Epoch = not since reset.
+        std::chrono::steady_clock::time_point m_wheelClosedAt{};
+
         // =========================================================================
         // INTERNAL HELPERS
         // =========================================================================
@@ -373,6 +442,23 @@ namespace Huginn::Slot
         /// (0.23.37): an unlocked refill changed again on the next run, 0.1-0.7 s
         /// later (2026-10-11 08:56:21.327, 09:20:33.462).
         void DedupePreferLocked(SlotAssignments& result, const SlotAssignments& wanted);
+
+        /// Combat upsert (core/CombatUpsert.h), after dedup: a combat-locked
+        /// key open to it takes a challenger whose score beats the key's own
+        /// item by fCombatUpsertMarginMult x ln(1 + fChallengerMargin).
+        /// Challengers: what the allocator placed on this page this run
+        /// (`wanted`, ordinary picks only) that no key shows, not equipped, not
+        /// displaced by an upsert this fight nor gone from a key recently, on
+        /// a key the allocator placed it on or whose class it fits. At most one
+        /// per run, kCombatUpsertPageSpacingMs apart. The new item is locked
+        /// like any other. Caller holds m_mutex.
+        void ApplyCombatUpserts(SlotAssignments& result, const SlotAssignments& wanted, const RunContext& run,
+            std::chrono::steady_clock::time_point now);
+
+        /// How long an item that left a key stays out of the challengers:
+        /// max(fCombatUpsertCooldownSec, kCombatUpsertPageSpacingMs). Caller
+        /// holds m_mutex.
+        [[nodiscard]] double UpsertRecentMs() const;
     };
 
 }  // namespace Huginn::Slot

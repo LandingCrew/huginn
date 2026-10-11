@@ -1,4 +1,5 @@
 #include "InputHandler.h"
+#include "slot/SlotLocker.h"
 
 namespace Huginn::Input
 {
@@ -270,6 +271,10 @@ namespace Huginn::Input
       state.pressTime = m_frameTime;
       state.isPressed = true;
       state.holdTriggered = false;
+      // A key under the player's finger takes no combat upsert: a hold acts
+      // at the hold threshold from now (plus one update tick).
+      Slot::SlotLocker::GetSingleton().NoteKeyPress(static_cast<size_t>(slotIndex),
+         m_holdThreshold * 1000.0f + 100.0f);
       }
       else if (button->IsHeld()) {
       if (state.isPressed && !state.holdTriggered) {
@@ -317,6 +322,10 @@ namespace Huginn::Input
            // First tap - defer action, wait for potential double tap
            state.lastTapTime = m_frameTime;
            state.pendingTapAction = true;  // Will fire in Update() if no double-tap
+           // The tap acts up to the window from now: no combat upsert on this
+           // key until then (plus one update tick).
+           Slot::SlotLocker::GetSingleton().NoteKeyPress(static_cast<size_t>(slotIndex),
+              m_doubleTapWindow * 1000.0f + 100.0f);
            logger::debug("[InputHandler] Slot {} TAP pending (waiting {:.0f}ms for double-tap)"sv,
             slotIndex + 1, m_doubleTapWindow * 1000.0f);
            // DO NOT call callback here - wait for timeout in Update()

@@ -255,6 +255,13 @@ Slot::SlotLockConfig LoadSlotLockerConfigFromINI(const CSimpleIniA& ini) {
     const double noEnemy = ini.GetDoubleValue(section, "fCombatNoEnemyReleaseSec", 5.0);
     config.combatNoEnemyReleaseSec = !std::isfinite(noEnemy) ? 5.0f
       : static_cast<float>(std::clamp(noEnemy, 0.0, 60.0));
+    // Combat upsert (core/CombatUpsert.h): 0-20 (0 = off), cooldown 0-300 s.
+    const double upsertMult = ini.GetDoubleValue(section, "fCombatUpsertMarginMult", 3.0);
+    config.combatUpsertMarginMult = !std::isfinite(upsertMult) ? 3.0f
+      : static_cast<float>(std::clamp(upsertMult, 0.0, 20.0));
+    const double upsertCooldown = ini.GetDoubleValue(section, "fCombatUpsertCooldownSec", 10.0);
+    config.combatUpsertCooldownSec = !std::isfinite(upsertCooldown) ? 10.0f
+      : static_cast<float>(std::clamp(upsertCooldown, 0.0, 300.0));
   }
 
   logger::info("[SlotLockerConfig] duration={:.0f}ms, min={:.0f}ms, lockOnFill={}, overridesBreak={}, breakPri={}, combat={}",
@@ -264,6 +271,12 @@ Slot::SlotLockConfig LoadSlotLockerConfigFromINI(const CSimpleIniA& ini) {
       : std::format("{:.0f}ms", config.combatLockDurationMs));
   logger::info("[SlotLockerConfig] combat lock lets go after {:.1f}s with no enemy (0 = never)",
     config.combatNoEnemyReleaseSec);
+  if (config.combatUpsertMarginMult > 0.0f) {
+    logger::info("[SlotLockerConfig] combat upsert: a challenger beating a combat-locked key's item by {:.1f} x ln(1 + fChallengerMargin) takes it, at most once per key per {:.0f}s",
+      config.combatUpsertMarginMult, config.combatUpsertCooldownSec);
+  } else {
+    logger::info("[SlotLockerConfig] combat upsert: off");
+  }
 
   return config;
 }

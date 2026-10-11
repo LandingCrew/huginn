@@ -1140,6 +1140,9 @@ namespace Huginn::Input
       // follows the player's press on this key is the press's doing.
       if (success) {
          NoteSlotAction(slotIndex, std::chrono::steady_clock::now());
+         // And the combat upsert's press gate: the press acting is a press
+         // too (it lands up to the double-tap window after the key went down).
+         Slot::SlotLocker::GetSingleton().NoteKeyPress(slotIndex);
       }
 
       // A remembered item put back is the player's undo, not a selection --
