@@ -401,7 +401,9 @@ TEST_CASE("target watch: the ceiling -- a lasting change through flicker is logg
         TargetWatch w;
         const auto commits = Drive(w, 0.0, 20.0, [&](int i) { return i % 2 ? b : a; });
         REQUIRE_FALSE(commits.empty());
-        CHECK(commits.front() <= TargetWatch::CEILING_SEC + 0.05);
+        // Literal times: the ceiling is 1.0 s, and the commit is the poll at it.
+        CHECK(commits.front() >= 0.95);
+        CHECK(commits.front() <= 1.05);
         // Rate-capped: at most about one line per ceiling window.
         CHECK(commits.size() <= 21);
         CHECK(w.Current().refID != 0);   // never "none" all fight
@@ -411,7 +413,8 @@ TEST_CASE("target watch: the ceiling -- a lasting change through flicker is logg
         TargetWatch w;
         const auto commits = Drive(w, 0.0, 20.0, [&](int i) { return (i / 2) % 2 ? b : a; });
         REQUIRE_FALSE(commits.empty());
-        CHECK(commits.front() <= TargetWatch::CEILING_SEC + 0.05);
+        CHECK(commits.front() >= 0.95);
+        CHECK(commits.front() <= 1.05);
         CHECK(commits.size() <= 21);
     }
     SUBCASE("an edge-of-range hostile: there two polls, gone one")
@@ -419,7 +422,8 @@ TEST_CASE("target watch: the ceiling -- a lasting change through flicker is logg
         TargetWatch w;
         const auto commits = Drive(w, 0.0, 30.0, [&](int i) { return i % 3 == 2 ? none : a; });
         REQUIRE_FALSE(commits.empty());
-        CHECK(commits.front() <= TargetWatch::CEILING_SEC + 0.15);   // the first poll with A past the ceiling
+        CHECK(commits.front() >= 0.95);                              // the first poll with A at or past 1.0 s
+        CHECK(commits.front() <= 1.15);
         CHECK(commits.size() <= 31);
     }
     SUBCASE("a stable new pick still logs at the dwell, not the ceiling")
@@ -451,13 +455,44 @@ TEST_CASE("target watch: the candidate is actor AND type -- a type change restar
 
 TEST_CASE("target watch: Reset drops a pending candidate and the ceiling clock")
 {
+    SUBCASE("the candidate")
+    {
+        TargetWatch w;
+        CHECK_FALSE(w.Observe(1.0, 0xA1, TargetType::Humanoid));
+        CHECK_FALSE(w.Observe(1.1, 0xA1, TargetType::Humanoid));
+        w.Reset();
+        CHECK_FALSE(w.Observe(1.3, 0xA1, TargetType::Humanoid));   // a fresh candidate, not 0.3 s old
+        CHECK_FALSE(w.Observe(1.5, 0xA1, TargetType::Humanoid));
+        CHECK(w.Observe(1.6, 0xA1, TargetType::Humanoid));
+    }
+    SUBCASE("the ceiling clock: after Reset only a full 1.0 s of flicker commits")
+    {
+        TargetWatch w;
+        CHECK_FALSE(w.Observe(0.0, 0xA1, TargetType::Humanoid));   // the ceiling clock starts at 0.0
+        CHECK_FALSE(w.Observe(0.1, 0xB2, TargetType::Humanoid));
+        w.Reset();
+        // A/B flicker from 0.5: no candidate ever holds, so only the ceiling
+        // can commit -- at 1.5 if Reset cleared the clock, at 1.0 if not.
+        double t = 0.5;
+        for (int i = 0; t < 1.45; ++i, t += 0.1) {
+            CHECK_FALSE(w.Observe(t, i % 2 ? 0xB2u : 0xA1u, TargetType::Humanoid));
+        }
+        CHECK(w.Observe(1.5, 0xA1, TargetType::Humanoid));
+    }
+}
+
+TEST_CASE("target watch: BRIEF_STALE_SEC at its boundary, from the newest brief switch")
+{
     TargetWatch w;
-    CHECK_FALSE(w.Observe(1.0, 0xA1, TargetType::Humanoid));
-    CHECK_FALSE(w.Observe(1.1, 0xA1, TargetType::Humanoid));
-    w.Reset();
-    CHECK_FALSE(w.Observe(1.3, 0xA1, TargetType::Humanoid));   // a fresh candidate, not 0.3 s old
-    CHECK_FALSE(w.Observe(1.5, 0xA1, TargetType::Humanoid));
-    CHECK(w.Observe(1.6, 0xA1, TargetType::Humanoid));
+    REQUIRE(PollUntilDue(w, 0.0, 0xA1, TargetType::Humanoid) > 0.0);
+    (void)w.Commit(Info(0xA1, "Bandit", TargetType::Humanoid));
+    CHECK_FALSE(w.Observe(1.0, 0xB2, TargetType::Humanoid));
+    CHECK_FALSE(w.Observe(1.1, 0xA1, TargetType::Humanoid));   // the brief switch, at 1.1
+    REQUIRE(w.PendingBrief() == 1);
+    CHECK_FALSE(w.Observe(6.0, 0xA1, TargetType::Humanoid));   // 4.9 s after it: kept
+    CHECK(w.PendingBrief() == 1);
+    CHECK_FALSE(w.Observe(6.2, 0xA1, TargetType::Humanoid));   // 5.1 s after it: dropped
+    CHECK(w.PendingBrief() == 0);
 }
 
 TEST_CASE("target watch: a brief count older than BRIEF_STALE_SEC does not ride on a later line")
@@ -504,4 +539,52 @@ TEST_CASE("actor log: the fight summary counts every switch and flip, brief ones
     const auto lines = f.Poll(10.0, false, {});
     REQUIRE(lines.size() == 1);
     CHECK(lines[0].ends_with("target switches=5 type flips=5"));
+}
+
+TEST_CASE("actor log: an actor capped in a fight, that leaves and returns while capped, stays unmet")
+{
+    Tracker::Config config;
+    config.lineCap = 1;
+    Fixture f(config);
+    // Fight 1: X's identity line uses the budget; Y's is held back.
+    auto lines = f.Poll(0.0, true, { Obs(0x10, true, TargetType::Humanoid), Obs(0x20, true, TargetType::Humanoid) });
+    CHECK(Contains(lines, "[Actors] +00000010"));
+    CHECK_FALSE(Contains(lines, "+00000020"));
+    // Y leaves (its left line held back too) and comes back, still capped.
+    f.Poll(0.1, true, { Obs(0x10, true, TargetType::Humanoid) });
+    f.Poll(3.0, true, { Obs(0x10, true, TargetType::Humanoid) });
+    lines = f.Poll(4.0, true, { Obs(0x10, true, TargetType::Humanoid), Obs(0x20, true, TargetType::Humanoid) });
+    CHECK(lines.empty());
+    f.Poll(10.0, false, {});
+
+    // Fight 2: Y was never shown, so it gets its identity line now.
+    lines = f.Poll(20.0, true, { Obs(0x20, true, TargetType::Humanoid) });
+    REQUIRE(lines.size() == 2);
+    CHECK(lines[1].starts_with("[Actors] +00000020 "));
+}
+
+TEST_CASE("actor log: an actor already met keeps its seen entry fresh while the cap holds its line")
+{
+    Tracker::Config config;
+    config.lineCap = 1;
+    config.seenCap = 2;
+    Fixture f(config);
+    f.Poll(0.0, true, { Obs(1, false, TargetType::Humanoid) });                  // 1 met
+    f.Poll(1.0, false, {});
+    // Fight 2: 2's identity line uses the budget; 1's "again" is held back,
+    // but 1 is touched after 2 -- the most recently met.
+    auto lines = f.Poll(2.0, true, { Obs(2, false, TargetType::Humanoid), Obs(1, false, TargetType::Humanoid) });
+    CHECK(Contains(lines, "[Actors] +00000002"));
+    CHECK_FALSE(Contains(lines, "again 00000001"));
+    f.Poll(3.0, false, {});
+    // Fight 3: 3 is met, and the seen set (2 entries) drops its oldest: 2, not 1.
+    f.Poll(4.0, true, { Obs(3, false, TargetType::Humanoid) });
+    f.Poll(5.0, false, {});
+    lines = f.Poll(6.0, true, { Obs(1, false, TargetType::Humanoid) });
+    REQUIRE(lines.size() == 2);
+    CHECK(lines[1].starts_with("[Actors] again 00000001 "));
+    f.Poll(7.0, false, {});
+    lines = f.Poll(8.0, true, { Obs(2, false, TargetType::Humanoid) });
+    REQUIRE(lines.size() == 2);
+    CHECK(lines[1].starts_with("[Actors] +00000002 "));
 }

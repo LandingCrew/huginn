@@ -215,8 +215,10 @@ namespace Huginn::Core::ActorLog
                 a.stamp = pollStamp_;
                 if (a.left) {
                     // Back after its left line: a short reminder, then on as before.
+                    // Refreshed in the seen set only if it is in it: an actor
+                    // whose identity line the cap held back stays unmet.
                     a.left = false;
-                    seen_.Touch(o.refID);
+                    if (seen_.Contains(o.refID)) seen_.Touch(o.refID);
                     Emit(AgainLine(o, a.id), out);
                 }
                 a.absentSince = -1.0;
@@ -409,8 +411,10 @@ namespace Huginn::Core::ActorLog
     // of that moment is logged whatever it is. A return to the logged pick
     // stops that clock only once it has held DWELL_SEC itself, so a one-poll
     // excursion is quiet and a persistent flicker logs at most about one
-    // line per CEILING_SEC. A brief count older than BRIEF_STALE_SEC is
-    // dropped, so flicker from minutes ago never rides on a new line.
+    // line per CEILING_SEC. The brief count is dropped once BRIEF_STALE_SEC
+    // has passed since the NEWEST brief switch, so flicker from minutes ago
+    // never rides on a new line -- but a long run of excursions spaced less
+    // than that apart keeps accumulating into one count.
     class TargetWatch
     {
     public:
