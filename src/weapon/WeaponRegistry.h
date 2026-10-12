@@ -552,11 +552,9 @@ namespace Huginn::Weapon
       std::atomic<bool> m_detailArrived{ false };
       void SetDetailStamp(uint32_t stamp) noexcept;
 
-      // RequestReconcileForEquip's memo: (form, stack) already asked for, in
-      // load generation m_equipAskedGeneration. Event thread only, but under
-      // its own mutex anyway.
+      // RequestReconcileForEquip's memo (core::EquipAskMemo). Event thread
+      // only, but under its own mutex anyway.
       std::mutex m_equipAskedMutex;
-      std::vector<Core::StackKey> m_equipAsked;
-      uint32_t m_equipAskedGeneration = 0;
+      Core::EquipAskMemo m_equipAsked;
    };
 }

@@ -6896,6 +6896,39 @@ void RunSlotLockerOverrideScopeTest()
     }
     (void)locker.SetInCombat(false);
 
+    // 8. Stack identity (0.23.40). Key 0 holds the plain copy (A, uid 0), key 1
+    //    a tempered copy (A, uid 4), both frozen. Selling the plain one
+    //    (OnStackDeparted, exact-stack) frees key 0 only. A plain stack that
+    //    gained a uniqueID (RekeyStack) keeps its key and its lock.
+    locker.Reset();
+    (void)locker.SetInCombat(true);
+    {
+        auto both = page({ A, A });
+        both[1].uniqueID = 4;
+        (void)locker.ApplyLocks(both, Override::OverrideCollection{});
+        locker.OnStackDeparted(A, 0);
+        const auto snap = locker.GetLockSnapshot();
+        if (snap[0].isLocked || !snap[1].isLocked) {
+            logger::error("TEST FAIL: selling the plain copy did not free exactly its key (key0 locked={}, key1 locked={})"sv,
+                snap[0].isLocked, snap[1].isLocked);
+            passed = false;
+        }
+    }
+    locker.Reset();
+    (void)locker.SetInCombat(true);
+    {
+        (void)locker.ApplyLocks(page({ A }), Override::OverrideCollection{});
+        locker.RekeyStack(A, 9);
+        auto next = page({ D });
+        const auto shown = locker.ApplyLocks(next, Override::OverrideCollection{});
+        if (!shows(shown, 0, A) || shown[0].uniqueID != 9 || !locker.GetLockSnapshot()[0].isLocked) {
+            logger::error("TEST FAIL: a plain stack that gained uid 9 did not keep its key and lock (uid={})"sv,
+                shown.empty() ? 0 : shown[0].uniqueID);
+            passed = false;
+        }
+    }
+    (void)locker.SetInCombat(false);
+
     locker.SetConfig(savedConfig);
     locker.Reset();
 

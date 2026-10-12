@@ -61,11 +61,13 @@ namespace Huginn::Display
 
     bool AnyPageHidesUidlessGear()
     {
+        // The lock-free checks first: HasRecommendationWheel takes WheelSync's
+        // page lock, and this runs on the game's event thread.
         auto& client = Wheeler::WheelerClient::GetSingleton();
         Core::WheelUidGate gate;
         gate.wheelerConnected = client.IsConnected();
-        gate.pageHasWheel = gate.wheelerConnected && client.HasRecommendationWheel();
         gate.instanceDetailKnown = g_weaponRegistry && g_weaponRegistry->HasInstanceDetail();
+        gate.pageHasWheel = gate.wheelerConnected && gate.instanceDetailKnown && client.HasRecommendationWheel();
         return Core::HidesUidlessGear(gate);
     }
 

@@ -455,9 +455,13 @@ static void MaintainRegistries(RE::PlayerCharacter* player,
                 // then dropped, sold or stashed would otherwise hold its slot for
                 // the rest of the hold, refusing every press (EquipManager) and
                 // showing something the player cannot use. A departure is not a use.
+                //
+                // Exact-stack (OnStackDeparted): a departed (form, 0) is the
+                // PLAIN stack, so a lock on the tempered copy of the same form
+                // survives. Ammo has no instances (every record and every lock
+                // is uid 0), so for it this is the form-wide release it was.
                 for (const auto& stack : departed) {
-                    Slot::SlotLocker::GetSingleton().OnItemUsed(
-                        stack.formID, stack.uniqueID, /*respectActivationLock=*/false);
+                    Slot::SlotLocker::GetSingleton().OnStackDeparted(stack.formID, stack.uniqueID);
                 }
                 // A plain stack that gained its uniqueID keeps its keys: the
                 // locks and the allocator's seats that named (form, 0) now

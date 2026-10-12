@@ -378,6 +378,14 @@ namespace Huginn::Slot
         void OnItemUsed(RE::FormID formID, uint16_t uniqueID, bool respectActivationLock,
             UseKind kind = UseKind::Gone);
 
+        /// A weapon stack left the inventory (the registry's reconcile): Gone,
+        /// activation lock not respected, and EXACT-STACK -- uniqueID 0 is the
+        /// plain stack and matches only a lock naming uid 0, so selling the
+        /// plain dagger leaves the tempered one's key alone
+        /// (core::LockMatchesStack). Every other caller keeps OnItemUsed's
+        /// "uid 0 = the whole form".
+        void OnStackDeparted(RE::FormID formID, uint16_t uniqueID);
+
         /// A plain weapon stack (form, uniqueID 0) gained its ExtraUniqueID
         /// (core/StackIdentity.h): every lock and shown record naming
         /// (formID, 0) now names (formID, newUniqueID). Nothing is unlocked;
@@ -428,6 +436,10 @@ namespace Huginn::Slot
         // =========================================================================
         // INTERNAL HELPERS
         // =========================================================================
+
+        /// OnItemUsed / OnStackDeparted: release the locks the event names.
+        void ReleaseOnItemEvent(RE::FormID formID, uint16_t uniqueID, bool respectActivationLock, UseKind kind,
+            bool exactStack);
 
         /// Determine if a new assignment should trigger a lock
         [[nodiscard]] bool ShouldLock(

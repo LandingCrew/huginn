@@ -77,7 +77,10 @@ namespace Huginn::Weapon
             const RE::TESEquipEvent* event,
             RE::BSTEventSource<RE::TESEquipEvent>*) override
         {
-            if (!event || !event->equipped || !g_weaponRegistry) {
+            // Cheapest first: atomics, then the actor and form, and only then
+            // Wheeler (AnyPageHidesUidlessGear takes WheelSync's page lock).
+            if (!event || !event->equipped || !g_weaponRegistry ||
+                !Learning::SelectionLogV3::IsInventoryExtraReadable() || !g_weaponRegistry->HasInstanceDetail()) {
                 return RE::BSEventNotifyControl::kContinue;
             }
             if (event->actor.get() != RE::PlayerCharacter::GetSingleton()) {
@@ -87,8 +90,11 @@ namespace Huginn::Weapon
             if (!form || form->GetFormType() != RE::FormType::Weapon) {
                 return RE::BSEventNotifyControl::kContinue;
             }
+            if (!Display::AnyPageHidesUidlessGear()) {
+                return RE::BSEventNotifyControl::kContinue;
+            }
             if (g_weaponRegistry->RequestReconcileForEquip(event->baseObject, event->uniqueID,
-                    Display::AnyPageHidesUidlessGear(), Learning::SelectionLogV3::IsInventoryExtraReadable())) {
+                    /*pageHides=*/true, /*extraReadable=*/true)) {
                 logger::debug("[WeaponRegistry] {:08X} equipped (uid{}) while held as uid 0: reconcile requested"sv,
                     event->baseObject, event->uniqueID);
             }

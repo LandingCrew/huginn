@@ -6,6 +6,7 @@
 #include "core/DedupRules.h"
 #include "core/HeldRefresh.h"
 #include "core/UndoSettle.h"
+#include "core/StackIdentity.h"
 #include <chrono>
 #include <cmath>
 #include <optional>
@@ -818,7 +819,8 @@ namespace Huginn::Slot
         std::lock_guard<std::mutex> lock(m_mutex);
         for (size_t i = 0; i < MAX_SLOTS; ++i) {
             auto& slot = m_lockedSlots[i];
-            if (!slot.assignment.IsEmpty() && slot.assignment.formID == formID && slot.assignment.uniqueID == 0) {
+            if (!slot.assignment.IsEmpty() && Core::RekeyedUniqueID(slot.assignment.formID,
+                    slot.assignment.uniqueID, formID, newUniqueID) != slot.assignment.uniqueID) {
                 slot.assignment.uniqueID = newUniqueID;
                 if (slot.assignment.candidate) {
                     Candidate::GetBase(slot.assignment.candidate->candidate).uniqueID = newUniqueID;
@@ -826,8 +828,8 @@ namespace Huginn::Slot
                 spdlog::debug("[SlotLocker] Slot {} keeps '{}': {:08X} uid0 -> uid{} ({})", i,
                     slot.assignment.name, formID, newUniqueID, slot.isLocked ? "lock kept" : "unlocked");
             }
-            if (!slot.shownEmpty && slot.shownFormID == formID && slot.shownUniqueID == 0) {
-                slot.shownUniqueID = newUniqueID;
+            if (!slot.shownEmpty) {
+                slot.shownUniqueID = Core::RekeyedUniqueID(slot.shownFormID, slot.shownUniqueID, formID, newUniqueID);
             }
         }
     }
@@ -1146,6 +1148,17 @@ namespace Huginn::Slot
 
     void SlotLocker::OnItemUsed(RE::FormID formID, uint16_t uniqueID, bool respectActivationLock, UseKind kind)
     {
+        ReleaseOnItemEvent(formID, uniqueID, respectActivationLock, kind, /*exactStack=*/false);
+    }
+
+    void SlotLocker::OnStackDeparted(RE::FormID formID, uint16_t uniqueID)
+    {
+        ReleaseOnItemEvent(formID, uniqueID, /*respectActivationLock=*/false, UseKind::Gone, /*exactStack=*/true);
+    }
+
+    void SlotLocker::ReleaseOnItemEvent(RE::FormID formID, uint16_t uniqueID, bool respectActivationLock,
+        UseKind kind, bool exactStack)
+    {
         if (formID == 0) {
             return;
         }
@@ -1160,8 +1173,10 @@ namespace Huginn::Slot
             // apart. A named stack matches only itself: evicting the tempered
             // dagger's twin because THIS one was sold is the mistake this
             // parameter exists to stop.
-            const bool sameItem = slot.assignment.formID == formID &&
-                (uniqueID == 0 || slot.assignment.uniqueID == uniqueID);
+            // A departure (exactStack) names the stack even at uid 0: the
+            // plain dagger sold, the tempered one kept (core::LockMatchesStack).
+            const bool sameItem = Core::LockMatchesStack(slot.assignment.formID, slot.assignment.uniqueID,
+                formID, uniqueID, exactStack);
             if (!sameItem) {
                 continue;
             }

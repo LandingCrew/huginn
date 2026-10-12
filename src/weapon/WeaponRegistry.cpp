@@ -99,7 +99,11 @@ namespace Huginn::Weapon
         continue;
       }
 
-      AddWeapon(sw);
+      if (AddWeapon(sw) && !scanReadsExtraLists) {
+        if (auto it = m_weaponIndex.find(MakeWeaponKey(sw.weapon->GetFormID(), sw.uniqueID)); it != m_weaponIndex.end()) {
+           m_weapons[it->second].degraded = true;
+        }
+      }
       }
 
       if (keyCollisions > 0) {
@@ -163,17 +167,14 @@ namespace Huginn::Weapon
       in.eventStackIndexed = uniqueID != 0 && m_weaponIndex.contains(MakeWeaponKey(formID, uniqueID));
       }
       const Core::StackKey asked{ formID, uniqueID };
+      const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+         std::chrono::steady_clock::now().time_since_epoch()).count();
       std::lock_guard memo(m_equipAskedMutex);
-      const uint32_t load = g_loadGeneration.load(std::memory_order_acquire);
-      if (m_equipAskedGeneration != load) {
-      m_equipAsked.clear();
-      m_equipAskedGeneration = load;
-      }
-      in.alreadyRequested = std::find(m_equipAsked.begin(), m_equipAsked.end(), asked) != m_equipAsked.end();
+      in.alreadyRequested = m_equipAsked.AlreadyAsked(g_loadGeneration.load(std::memory_order_acquire), asked, nowMs);
       if (!Core::ShouldRequestEquipReconcile(in)) {
       return false;
       }
-      m_equipAsked.push_back(asked);
+      m_equipAsked.Note(asked, nowMs);
       RequestReconcile();
       return true;
    }
@@ -531,6 +532,9 @@ namespace Huginn::Weapon
            if (AddWeapon(sw)) {
             weaponsAdded++;
             addedStacks.push_back({ sw.weapon->GetFormID(), sw.uniqueID });
+            if (!safeToAccessExtraLists) {
+              m_weapons[m_weaponIndex.at(key)].degraded = true;
+            }
             logger::trace("[WeaponRegistry] Added weapon: {}"sv, sw.weapon->GetName());
            }
         }
@@ -552,6 +556,10 @@ namespace Huginn::Weapon
         }
 
         invWeapon.isEquipped = sw.isEquipped;
+        // Found by a scan that read the extra data: a real stack now.
+        if (safeToAccessExtraLists) {
+           invWeapon.degraded = false;
+        }
 
         // A re-temper changes the stack's damage and the name the player reads
         // without changing its identity, so the record is never removed and
@@ -625,30 +633,31 @@ namespace Huginn::Weapon
       // it had left the inventory and the registry would churn itself empty
       // once per load. The add pass above is safe either way: it only inserts.
       if (safeToAccessExtraLists) {
-      std::vector<uint64_t> weaponsToRemove;
+      std::vector<std::pair<uint64_t, bool>> weaponsToRemove;   // key, degraded
       for (const auto& invWeapon : m_weapons) {
         if (!currentWeaponKeys.contains(invWeapon.Key())) {
-           weaponsToRemove.push_back(invWeapon.Key());
+           weaponsToRemove.emplace_back(invWeapon.Key(), invWeapon.degraded);
         }
       }
-      std::vector<Core::StackKey> removedStacks;
-      for (auto key : weaponsToRemove) {
+      std::vector<Core::RemovedStack> removedStacks;
+      for (const auto& [key, degraded] : weaponsToRemove) {
         if (RemoveWeapon(key)) {
            weaponsRemoved++;
            // The key IS the pair the caller needs: low 32 bits the form, high
            // 16 the stack (MakeWeaponKey). Reported per stack so a lock on the
            // player's OTHER copy of this form survives.
            removedStacks.push_back({ static_cast<RE::FormID>(key & 0xFFFFFFFFull),
-                                     static_cast<uint16_t>(key >> 32) });
+                                     static_cast<uint16_t>(key >> 32), degraded });
         }
       }
 
-      // A uid-0 record whose form is still carried under a uniqueID did not
-      // leave: the plain stack was equipped once and got its ExtraUniqueID, or
-      // (the primed reconcile after a load) the degraded record gave way to
-      // the real one. Reporting it as a departure broke every lock on the
-      // form -- Sticky, combat, settle -- on the key the player had just
-      // pressed (core/StackIdentity.h). It is re-pointed instead.
+      // A uid-0 record that gained its uniqueID did not leave: the plain
+      // stack was equipped once (a uniqueID of the form was added by this
+      // pass), or the degraded post-load record gave way to the real one.
+      // Reported as a departure, it broke every lock on the form -- Sticky,
+      // combat, settle -- on the key the player had just pressed. It is
+      // re-pointed instead (core/StackIdentity.h). A plain copy really sold
+      // beside a tempered one stays a departure, reported exact-stack.
       if (!removedStacks.empty()) {
         std::vector<Core::StackKey> currentStacks;
         currentStacks.reserve(m_weapons.size());
