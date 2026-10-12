@@ -318,6 +318,10 @@ namespace Huginn::Weapon
       bool isEquipped = false;     // Currently equipped
       float previousCharge = 0.0f; // Charge at last poll (for delta detection)
       bool temperReadZero = false; // Last extraList read saw ExtraHealth == 0 (see WeaponRegistry)
+      // Written by a scan that could not read extra data (the post-load
+      // window): one uid-0 record per form, not a stack of its own. Cleared
+      // when a detailed scan finds the same key (core/StackIdentity.h).
+      bool degraded = false;
 
       /// Registry key. ONE ENTRY PER INVENTORY STACK, not per base form.
       ///

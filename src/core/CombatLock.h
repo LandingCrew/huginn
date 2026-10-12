@@ -34,6 +34,8 @@
 //
 // When combat starts, every key on a normal lock becomes combat-locked on the
 // item it holds (ConvertsAtCombatOnset); unlocked keys are locked by the sweep.
+// A wildcard is the exception (DecideCombatOnset): released, never combat-locked,
+// and none is placed while combat lasts.
 // When combat ends, locks taken under the combat duration fall back to the
 // normal timer, counted from the end of combat (no re-shuffle on the last kill).
 // The one way a better score takes a combat-locked key is the upsert
@@ -106,6 +108,85 @@ namespace Huginn::Core
         bool settling, bool activationLock, bool empty) noexcept
     {
         return locked && !alreadyCombat && !holdsPinned && !settling && !activationLock && !empty;
+    }
+
+    // -------------------------------------------------------------------------
+    // Wildcards and the combat lock (0.23.40)
+    // -------------------------------------------------------------------------
+    // A wildcard is an exploration pick: a low-scored item shown for a while so
+    // the learner hears about it. Out of combat it costs a key for 30 s at most.
+    // Under the combat freeze it cost the key for the whole fight: on
+    // 2026-10-12 a wildcard Iron Dagger, on a mage's page, was converted to a
+    // combat lock at onset (08:56:04) and then combat-locked again after it
+    // came back as a wildcard (08:57:50). So in combat a wildcard gets no
+    // combat lock, a key showing one is released at onset for the fight-start
+    // re-score, and no new wildcard is placed until combat ends. Out of combat
+    // nothing here changes anything.
+
+    /// What combat onset does to one key's running lock.
+    enum class CombatOnsetAction : uint8_t
+    {
+        Keep,      ///< left as it is (unlocked, empty, or a lock with its own rules)
+        Convert,   ///< becomes a combat lock on its item (ConvertsAtCombatOnset)
+        Release,   ///< a wildcard: unlocked, so the fight-start re-score replaces it
+    };
+
+    /// `wildcard`: the key's locked item is a wildcard pick. A Sticky
+    /// activation lock or an undo settle on a wildcard keeps its own short
+    /// timer: the player just acted on that key. An override or Remembrance
+    /// item is never a wildcard.
+    [[nodiscard]] constexpr CombatOnsetAction DecideCombatOnset(bool locked, bool alreadyCombat, bool holdsPinned,
+        bool settling, bool activationLock, bool empty, bool wildcard) noexcept
+    {
+        if (!locked || empty || holdsPinned || settling || activationLock) {
+            return CombatOnsetAction::Keep;
+        }
+        if (wildcard) {
+            return CombatOnsetAction::Release;
+        }
+        return ConvertsAtCombatOnset(locked, alreadyCombat, holdsPinned, settling, activationLock, empty)
+            ? CombatOnsetAction::Convert : CombatOnsetAction::Keep;
+    }
+
+    /// The lock a key gets when it fills with `wildcard` an exploration pick:
+    /// never the combat lock, always the normal one (which may be off).
+    [[nodiscard]] constexpr LockDuration LockForFill(bool inCombat, bool wildcard, float normalMs, float combatMs) noexcept
+    {
+        return EffectiveLockDuration(inCombat && !wildcard, normalMs, combatMs);
+    }
+
+    /// The combat sweep (every shown, unlocked key is combat-locked) skips a
+    /// key showing a wildcard.
+    [[nodiscard]] constexpr bool CombatSweepLocks(bool shownEmpty, bool alreadyLocked, bool wildcard) noexcept
+    {
+        return !shownEmpty && !alreadyLocked && !wildcard;
+    }
+
+    /// Whether a wildcard may be placed on a key: never in combat (the lock's
+    /// own notion of it, CombatPresence).
+    [[nodiscard]] constexpr bool WildcardMayBePlaced(bool inCombat) noexcept
+    {
+        return !inCombat;
+    }
+
+    /// What WildcardManager does on a pipeline run, given the combat flag it
+    /// saw last run and now. In combat: place none and drop every page's
+    /// cached ones. On the first run after combat: restart every page's
+    /// refractory, so the first post-combat run does not roll a wildcard onto
+    /// a page that just settled. Otherwise: as before combat existed.
+    struct WildcardCombatStep
+    {
+        bool mayPlace = true;            ///< roll and swap wildcards this run
+        bool dropCached = false;         ///< clear every page's cached wildcards
+        bool restartRefractory = false;  ///< stamp every page's wildcard end time now
+    };
+
+    [[nodiscard]] constexpr WildcardCombatStep StepWildcardsForCombat(bool wasInCombat, bool inCombat) noexcept
+    {
+        if (inCombat) {
+            return { false, true, false };
+        }
+        return { true, false, wasInCombat };
     }
 
     /// Whether the combat lock should treat the player as in combat. The game's

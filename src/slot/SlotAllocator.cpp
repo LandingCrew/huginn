@@ -4,6 +4,7 @@
 #include "override/OverrideConditions.h"
 #include "override/OverrideConfig.h"
 #include "telemetry/SoakMetrics.h"
+#include "core/StackIdentity.h"
 #include <algorithm>
 #include <format>
 #include <set>
@@ -803,6 +804,27 @@ namespace Huginn::Slot
             for (size_t k = 0; k < HOME_MEMORY_PER_SLOT; ++k) {
                 const auto& d = m.departed[j][k];
                 m_departed[pageIndex][j][k] = { d.key, FromCoreNs(d.leftAtNs) };
+            }
+        }
+    }
+
+    void SlotAllocator::RekeyStack(RE::FormID formID, uint16_t newUniqueID) const
+    {
+        if (formID == 0 || newUniqueID == 0) {
+            return;
+        }
+        std::lock_guard<std::mutex> seatLock(m_seatingMutex);
+        auto rekey = [formID, newUniqueID](uint64_t& key) {
+            key = Core::RekeyDedupKey(key, formID, newUniqueID);
+        };
+        for (size_t p = 0; p < MAX_PAGES; ++p) {
+            for (size_t j = 0; j < MAX_SLOTS_PER_PAGE; ++j) {
+                rekey(m_seating[p][j]);
+                rekey(m_lastPlaced[p][j]);
+                rekey(m_homeClaims[p][j]);
+                for (auto& d : m_departed[p][j]) {
+                    rekey(d.key);
+                }
             }
         }
     }

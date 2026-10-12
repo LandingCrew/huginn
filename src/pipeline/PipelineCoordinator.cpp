@@ -26,6 +26,7 @@
 #include "display/ExplanationLabel.h"  // ReasonLabel for the [Context] transition log
 #include "display/WheelerBackend.h"
 #include "display/IntuitionBackend.h"
+#include "display/WheelUidFilter.h"   // uid-less weapons off a wheel page
 
 #ifdef _DEBUG
 #include "ui/UtilityScorerDebugWidget.h"
@@ -363,15 +364,20 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
         heldIDs, &heldUnaffordable);
 
     Context::ContextWeightMap contextWeights{};
+    // Read once for the tick: the wildcard roll below and AllocateAndLock
+    // must agree on it.
+    ctx.hideUidlessGear = Display::HidesUidlessGear(ctx.displayPageIndex);
     // The display page comes from ResolveDisplayPage, which ran earlier this
     // tick — so wildcards key and size against the same page AllocateAndLock
-    // will fill.
+    // will fill. In combat (the lock's notion of it) no wildcard is placed.
     ctx.scoredCandidates = g_utilityScorer->ScoreCandidates(
         candidates, ctx.currentState, ctx.playerState, ctx.targets, ctx.worldState,
         Scoring::WildcardPage{
             .index = ctx.displayPageIndex,
             .slotCount = ctx.displaySlotCount,
             .wildcardSlots = ctx.displayWildcardSlots,
+            .inCombat = Slot::SlotLocker::GetSingleton().IsInCombat(),
+            .hideUidlessGear = ctx.hideUidlessGear,
         },
         &contextWeights);
 
@@ -556,9 +562,17 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
     // snapshotted by ResolveDisplayPage (not m_currentPage), so an off-thread
     // switch mid-tick can't produce assignments for a different page than the
     // caches/push use.
+    //
+    // A page that feeds a Wheeler wheel is allocated without the weapons and
+    // armour that have no uniqueID: the wheel cannot show them, and the key
+    // takes the next item instead of a blank tile (display/WheelUidFilter.h).
+    // Only the allocation's input: the scored list itself stays whole for the
+    // lock's refresh and telemetry, `hg recs` and the selection log.
     auto& slotAllocator = Slot::SlotAllocator::GetSingleton();
+    const auto& pageCandidates = Display::CandidatesForWheelPage(ctx.displayPageIndex, ctx.hideUidlessGear,
+        ctx.scoredCandidates, ctx.pageCandidatesScratch);
     ctx.rawAssignments = slotAllocator.AllocateSlotsForPage(
-        ctx.displayPageIndex, ctx.scoredCandidates, ctx.overrides, ctx.playerState, ctx.worldState);
+        ctx.displayPageIndex, pageCandidates, ctx.overrides, ctx.playerState, ctx.worldState);
 
     // If an off-thread page mutation landed since the snapshot (Wheeler callback,
     // page-cycle keys, `hg page`, or a full SlotAllocator::Reset), abandon before
@@ -695,6 +709,16 @@ bool PipelineCoordinator::AllocateAndLock(PipelineContext& ctx)
     lockRun.lookupItem = [](RE::FormID formID, uint16_t uniqueID) {
         return Candidate::CandidateGenerator::GetSingleton().FindGathered(formID, uniqueID);
     };
+    // A lock taken on uid-less gear before the page hid it -- in the second
+    // after a load, before the registry read the extra data, or before
+    // Wheeler connected -- lets go, or it holds a blank wheel tile (all fight,
+    // under the combat freeze). So does a weapon locked in that second whose
+    // record has since gained its real uniqueID: the lock still names uid 0.
+    if (ctx.hideUidlessGear) {
+        lockRun.unshowable = [](const Slot::SlotAssignment& held) {
+            return held.candidate && Display::IsUidlessGear(held.candidate->candidate);
+        };
+    }
     ctx.assignments = slotLocker.ApplyLocks(ctx.rawAssignments, ctx.overrides, ctx.scoredCandidates, lockRun);
 
     // Compute visual state for each slot

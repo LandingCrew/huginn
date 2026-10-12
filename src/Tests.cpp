@@ -6837,6 +6837,98 @@ void RunSlotLockerOverrideScopeTest()
         }
     }
 
+    // 7. Wildcards (0.23.40). At combat onset a key holding a wildcard is
+    //    released, not frozen, while a ranked key beside it is converted; the
+    //    key's next ranked item is combat-locked; a wildcard fill in combat
+    //    takes the normal lock; and a lock on an item the page cannot show
+    //    (RunContext::unshowable: a uid-less weapon on a wheel page) lets go
+    //    even under the freeze.
+    constexpr RE::FormID W = 0x0BAD0A08;
+    locker.Reset();
+    (void)locker.SetInCombat(false);
+    {
+        auto first = page({ A, W });
+        first[1].type = AssignmentType::Wildcard;
+        (void)locker.ApplyLocks(first, Override::OverrideCollection{});
+        if (!locker.SetInCombat(true)) {
+            logger::error("TEST FAIL: combat onset with a wildcard on a key did not ask for a pipeline run"sv);
+            passed = false;
+        }
+        auto snap = locker.GetLockSnapshot();
+        if (!snap[0].isLocked || !snap[0].frozen) {
+            logger::error("TEST FAIL: the ranked key was not converted to a combat lock at onset"sv);
+            passed = false;
+        }
+        if (snap[1].isLocked) {
+            logger::error("TEST FAIL: the wildcard key is still locked after combat onset"sv);
+            passed = false;
+        }
+        const auto shown = locker.ApplyLocks(page({ A, B }), Override::OverrideCollection{});
+        snap = locker.GetLockSnapshot();
+        if (!shows(shown, 1, B) || !snap[1].frozen) {
+            logger::error("TEST FAIL: the released wildcard key did not take the ranked item under the combat lock"sv);
+            passed = false;
+        }
+    }
+    locker.Reset();
+    (void)locker.SetInCombat(true);
+    {
+        auto next = page({ W });
+        next[0].type = AssignmentType::Wildcard;
+        (void)locker.ApplyLocks(next, Override::OverrideCollection{});
+        const auto snap = locker.GetLockSnapshot();
+        if (snap[0].frozen) {
+            logger::error("TEST FAIL: a wildcard filled in combat was frozen until combat ends"sv);
+            passed = false;
+        }
+    }
+    locker.Reset();
+    (void)locker.SetInCombat(true);
+    {
+        (void)locker.ApplyLocks(page({ A }), Override::OverrideCollection{});
+        SlotLocker::RunContext run;
+        run.unshowable = [](const SlotAssignment& held) { return held.formID == A; };
+        const auto shown = locker.ApplyLocks(page({ D }), Override::OverrideCollection{}, {}, run);
+        if (!shows(shown, 0, D)) {
+            logger::error("TEST FAIL: a frozen lock on an item the wheel cannot show did not let go"sv);
+            passed = false;
+        }
+    }
+    (void)locker.SetInCombat(false);
+
+    // 8. Stack identity (0.23.40). Key 0 holds the plain copy (A, uid 0), key 1
+    //    a tempered copy (A, uid 4), both frozen. Selling the plain one
+    //    (OnStackDeparted, exact-stack) frees key 0 only. A plain stack that
+    //    gained a uniqueID (RekeyStack) keeps its key and its lock.
+    locker.Reset();
+    (void)locker.SetInCombat(true);
+    {
+        auto both = page({ A, A });
+        both[1].uniqueID = 4;
+        (void)locker.ApplyLocks(both, Override::OverrideCollection{});
+        locker.OnStackDeparted(A, 0);
+        const auto snap = locker.GetLockSnapshot();
+        if (snap[0].isLocked || !snap[1].isLocked) {
+            logger::error("TEST FAIL: selling the plain copy did not free exactly its key (key0 locked={}, key1 locked={})"sv,
+                snap[0].isLocked, snap[1].isLocked);
+            passed = false;
+        }
+    }
+    locker.Reset();
+    (void)locker.SetInCombat(true);
+    {
+        (void)locker.ApplyLocks(page({ A }), Override::OverrideCollection{});
+        locker.RekeyStack(A, 9);
+        auto next = page({ D });
+        const auto shown = locker.ApplyLocks(next, Override::OverrideCollection{});
+        if (!shows(shown, 0, A) || shown[0].uniqueID != 9 || !locker.GetLockSnapshot()[0].isLocked) {
+            logger::error("TEST FAIL: a plain stack that gained uid 9 did not keep its key and lock (uid={})"sv,
+                shown.empty() ? 0 : shown[0].uniqueID);
+            passed = false;
+        }
+    }
+    (void)locker.SetInCombat(false);
+
     locker.SetConfig(savedConfig);
     locker.Reset();
 

@@ -36,6 +36,9 @@ namespace Huginn::Telemetry
         static_assert(ClassifySlotChange(false, false, false, false, false, Override) == Override);
         static_assert(ClassifySlotChange(false, false, false, false, false, Unheld) == Unheld);
         static_assert(ClassifySlotChange(false, false, false, false, false, Upsert) == Upsert);
+        static_assert(ClassifySlotChange(false, false, false, false, false, Unshowable) == Unshowable);
+        static_assert(ClassifySlotChange(false, false, false, false, true, Unshowable) == Unshowable);
+        static_assert(ClassifySlotChange(false, true, false, false, false, Unshowable) == Clear);
         // A remembrance hold names itself over a wildcard and a lock, not over
         // an override or a trip through empty.
         static_assert(ClassifySlotChange(false, false, false, false, true, Expired, true) == Remembrance);

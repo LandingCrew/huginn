@@ -8,6 +8,7 @@
 #include "util/AlgorithmUtils.h"
 #include "util/InventoryUtil.h"
 #include "util/ExtraListStability.h"
+#include "core/InstanceDetail.h"
 
 namespace Huginn::Weapon
 {
@@ -23,6 +24,13 @@ namespace Huginn::Weapon
 
       // RAII guard to ensure m_isLoading gets cleared even on exception
       Util::AtomicBoolGuard guard{ m_isLoading, false };
+
+      // Read before the scan, as ReconcileWeapons does: ScanPlayerWeapons
+      // asks IsExtraListStable() itself, and the answer only goes from false
+      // to true within one load generation, so "stable here" implies it read
+      // the extra lists.
+      const uint32_t scanGeneration = g_loadGeneration.load(std::memory_order_acquire);
+      const bool scanReadsExtraLists = Util::IsExtraListStable();
 
       // Scan BEFORE acquiring lock (SKSE API calls)
       // Note: ScanPlayerWeapons() reads extraLists only when they are safe to
@@ -91,7 +99,11 @@ namespace Huginn::Weapon
         continue;
       }
 
-      AddWeapon(sw);
+      if (AddWeapon(sw) && !scanReadsExtraLists) {
+        if (auto it = m_weaponIndex.find(MakeWeaponKey(sw.weapon->GetFormID(), sw.uniqueID)); it != m_weaponIndex.end()) {
+           m_weapons[it->second].degraded = true;
+        }
+      }
       }
 
       if (keyCollisions > 0) {
@@ -112,7 +124,59 @@ namespace Huginn::Weapon
 
       logger::info("Weapon registry built: {} weapons, {} ammo types"sv,
       m_weapons.size(), m_ammo.size());
+
+      // The rebuild replaced every record: detailed only if this scan was.
+      SetDetailStamp(Core::InstanceDetail::AfterRebuild(scanGeneration, scanReadsExtraLists));
       // m_isLoading cleared by LoadingGuard destructor
+   }
+
+   void WeaponRegistry::SetDetailStamp(uint32_t stamp) noexcept
+   {
+      const uint32_t before = m_detailGeneration.exchange(stamp, std::memory_order_acq_rel);
+      const uint32_t load = g_loadGeneration.load(std::memory_order_acquire);
+      // The gate (core/WheelUidGate.h) opens on this pass: say so, and let
+      // the update loop force a re-allocation even if nothing else changed.
+      if (Core::InstanceDetail::Arrived(before, stamp, load)) {
+      m_detailArrived.store(true, std::memory_order_release);
+      logger::debug("[WeaponRegistry] Stacks read with their extra data (load generation {}): "
+                     "uniqueIDs are real from here"sv, stamp);
+      }
+   }
+
+   bool WeaponRegistry::HasInstanceDetail() const noexcept
+   {
+      return Core::InstanceDetail::Known(m_detailGeneration.load(std::memory_order_acquire),
+         g_loadGeneration.load(std::memory_order_acquire));
+   }
+
+   bool WeaponRegistry::RequestReconcileForEquip(RE::FormID formID, uint16_t uniqueID, bool pageHides,
+                                                 bool extraReadable)
+   {
+      Core::EquipReconcileInput in;
+      in.pageHides = pageHides;
+      in.extraReadable = extraReadable;
+      // Before detail every record reads 0, and the primed reconcile is coming anyway.
+      in.detailKnown = HasInstanceDetail();
+      in.eventUniqueID = uniqueID;
+      if (!in.pageHides || !in.extraReadable || !in.detailKnown) {
+      return false;   // the cheap gates first: no lock taken
+      }
+      {
+      std::shared_lock lock(m_mutex);
+      in.plainRecordHeld = m_weaponIndex.contains(MakeWeaponKey(formID, 0));
+      in.eventStackIndexed = uniqueID != 0 && m_weaponIndex.contains(MakeWeaponKey(formID, uniqueID));
+      }
+      const Core::StackKey asked{ formID, uniqueID };
+      const auto nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+         std::chrono::steady_clock::now().time_since_epoch()).count();
+      std::lock_guard memo(m_equipAskedMutex);
+      in.alreadyRequested = m_equipAsked.AlreadyAsked(g_loadGeneration.load(std::memory_order_acquire), asked, nowMs);
+      if (!Core::ShouldRequestEquipReconcile(in)) {
+      return false;
+      }
+      m_equipAsked.Note(asked, nowMs);
+      RequestReconcile();
+      return true;
    }
 
    void WeaponRegistry::RefreshCharges()
@@ -350,7 +414,8 @@ namespace Huginn::Weapon
    }
 
    size_t WeaponRegistry::ReconcileWeapons(const EquippedWeapons& equipped,
-                                          std::vector<DepartedStack>* departed)
+                                          std::vector<DepartedStack>* departed,
+                                          std::vector<Core::StackUpgrade>* upgraded)
    {
       Huginn_ZONE_NAMED("WeaponRegistry::ReconcileWeapons");
       SCOPED_TIMER("WeaponRegistry::ReconcileWeapons");
@@ -367,7 +432,12 @@ namespace Huginn::Weapon
       size_t ammoRemoved = 0;
 
       // === WEAPONS + AMMO ===
-      // Check if safe to access extraLists (v0.7.9)
+      // Check if safe to access extraLists (v0.7.9). The load generation is
+      // read FIRST: a load landing between the two reads stamps the clock
+      // before it bumps the generation, so the worst case is an old
+      // generation recorded below, which HasInstanceDetail() reads as "not
+      // yet" -- never a degraded scan passed off as a detailed one.
+      const uint32_t scanGeneration = g_loadGeneration.load(std::memory_order_acquire);
       const bool safeToAccessExtraLists = Util::IsExtraListStable();
 
       auto* player = RE::PlayerCharacter::GetSingleton();
@@ -441,6 +511,9 @@ namespace Huginn::Weapon
       std::unordered_set<uint64_t> seenKeys;
       seenKeys.reserve(scannedWeapons.size());
       size_t keyCollisions = 0;
+      // What this pass inserted, for telling a uid-0 record that gained its
+      // uniqueID from one that left (core::ClassifyRemovedStacks).
+      std::vector<Core::StackKey> addedStacks;
 
       for (const auto& sw : scannedWeapons) {
       if (!sw.weapon) continue;
@@ -458,6 +531,10 @@ namespace Huginn::Weapon
            // and counting those would report phantom changes every reconcile
            if (AddWeapon(sw)) {
             weaponsAdded++;
+            addedStacks.push_back({ sw.weapon->GetFormID(), sw.uniqueID });
+            if (!safeToAccessExtraLists) {
+              m_weapons[m_weaponIndex.at(key)].degraded = true;
+            }
             logger::trace("[WeaponRegistry] Added weapon: {}"sv, sw.weapon->GetName());
            }
         }
@@ -479,6 +556,10 @@ namespace Huginn::Weapon
         }
 
         invWeapon.isEquipped = sw.isEquipped;
+        // Found by a scan that read the extra data: a real stack now.
+        if (safeToAccessExtraLists) {
+           invWeapon.degraded = false;
+        }
 
         // A re-temper changes the stack's damage and the name the player reads
         // without changing its identity, so the record is never removed and
@@ -552,22 +633,48 @@ namespace Huginn::Weapon
       // it had left the inventory and the registry would churn itself empty
       // once per load. The add pass above is safe either way: it only inserts.
       if (safeToAccessExtraLists) {
-      std::vector<uint64_t> weaponsToRemove;
+      std::vector<std::pair<uint64_t, bool>> weaponsToRemove;   // key, degraded
       for (const auto& invWeapon : m_weapons) {
         if (!currentWeaponKeys.contains(invWeapon.Key())) {
-           weaponsToRemove.push_back(invWeapon.Key());
+           weaponsToRemove.emplace_back(invWeapon.Key(), invWeapon.degraded);
         }
       }
-      for (auto key : weaponsToRemove) {
+      std::vector<Core::RemovedStack> removedStacks;
+      for (const auto& [key, degraded] : weaponsToRemove) {
         if (RemoveWeapon(key)) {
            weaponsRemoved++;
            // The key IS the pair the caller needs: low 32 bits the form, high
            // 16 the stack (MakeWeaponKey). Reported per stack so a lock on the
            // player's OTHER copy of this form survives.
-           if (departed) {
-            departed->push_back({
-              static_cast<RE::FormID>(key & 0xFFFFFFFFull),
-              static_cast<uint16_t>(key >> 32) });
+           removedStacks.push_back({ static_cast<RE::FormID>(key & 0xFFFFFFFFull),
+                                     static_cast<uint16_t>(key >> 32), degraded });
+        }
+      }
+
+      // A uid-0 record that gained its uniqueID did not leave: the plain
+      // stack was equipped once (a uniqueID of the form was added by this
+      // pass), or the degraded post-load record gave way to the real one.
+      // Reported as a departure, it broke every lock on the form -- Sticky,
+      // combat, settle -- on the key the player had just pressed. It is
+      // re-pointed instead (core/StackIdentity.h). A plain copy really sold
+      // beside a tempered one stays a departure, reported exact-stack.
+      if (!removedStacks.empty()) {
+        std::vector<Core::StackKey> currentStacks;
+        currentStacks.reserve(m_weapons.size());
+        for (const auto& w : m_weapons) {
+           currentStacks.push_back({ w.data.formID, w.data.uniqueID });
+        }
+        const auto removals = Core::ClassifyRemovedStacks(removedStacks, currentStacks, addedStacks);
+        if (departed) {
+           for (const auto& d : removals.departed) {
+            departed->push_back({ d.formID, d.uniqueID });
+           }
+        }
+        for (const auto& u : removals.upgraded) {
+           logger::debug("[WeaponRegistry] {:08X}/uid0 is carried as uid{}: an identity upgrade, not a departure"sv,
+            u.formID, u.newUniqueID);
+           if (upgraded) {
+            upgraded->push_back(u);
            }
         }
       }
@@ -612,6 +719,11 @@ namespace Huginn::Weapon
       }
       }
       }  // end ReconcileWeapons::Apply zone
+
+      // Every record now carries the stack's real uniqueID (or none at all).
+      // A degraded reconcile only adds, so it leaves the stamp alone.
+      SetDetailStamp(Core::InstanceDetail::AfterReconcile(
+         m_detailGeneration.load(std::memory_order_acquire), scanGeneration, safeToAccessExtraLists));
 
       size_t totalChanges = weaponsAdded + weaponsRemoved + favoriteChanges + ammoAdded + ammoRemoved;
       if (totalChanges > 0) {

@@ -106,8 +106,13 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
     // they would measure against the PREVIOUS load's stamp — or the
     // default epoch on the first load — and the gate could never report
     // "unstable" on the exact path it exists to protect.
-    g_lastGameLoad = std::chrono::steady_clock::now();
-    const uint32_t loadGeneration = g_loadGeneration.fetch_add(1, std::memory_order_relaxed) + 1;
+    //
+    // Then the generation, with RELEASE: a reader that acquires the new
+    // generation also sees this stamp (core/InstanceDetail.h). The weapon
+    // registry reads the generation first and the stamp second, which is what
+    // keeps a scan inside this window from counting as detailed for it.
+    g_lastGameLoad.store(std::chrono::steady_clock::now(), std::memory_order_relaxed);
+    const uint32_t loadGeneration = g_loadGeneration.fetch_add(1, std::memory_order_release) + 1;
     logger::info("Game load timestamp recorded ({}, load generation {})"sv,
         isNewGame ? "kNewGame" : "kPostLoadGame", loadGeneration);
 
@@ -186,14 +191,18 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
                 &Learning::ExternalEquipListener::GetSingleton());
             eventSource->GetEventSource<RE::TESEquipEvent>()->AddEventSink(
                 &Apparel::ApparelWornListener::GetSingleton());
+            // A plain weapon's first equip gives it a uniqueID: reconcile at once.
+            eventSource->GetEventSource<RE::TESEquipEvent>()->AddEventSink(
+                &Weapon::WeaponDepartureListener::GetSingleton());
             // Armour leaving the inventory: reconcile at once (a dropped worn ring).
             eventSource->GetEventSource<RE::TESContainerChangedEvent>()->AddEventSink(
                 &Apparel::ApparelWornListener::GetSingleton());
             // A weapon leaving the inventory: reconcile at once (a disarmed staff).
             eventSource->GetEventSource<RE::TESContainerChangedEvent>()->AddEventSink(
                 &Weapon::WeaponDepartureListener::GetSingleton());
-            logger::info("SpellRegistry + ExternalEquipListener + ApparelWornListener registered for TESEquipEvent; "
-                "ApparelWornListener + WeaponDepartureListener for TESContainerChangedEvent"sv);
+            logger::info("SpellRegistry + ExternalEquipListener + ApparelWornListener + WeaponDepartureListener "
+                "registered for TESEquipEvent; ApparelWornListener + WeaponDepartureListener for "
+                "TESContainerChangedEvent"sv);
         }
     }
 

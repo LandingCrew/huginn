@@ -1,6 +1,8 @@
 #pragma once
 
 #include "Globals.h"
+#include "display/WheelUidFilter.h"
+#include "learning/SelectionLogV3.h"
 #include "weapon/WeaponRegistry.h"
 
 namespace Huginn::Weapon
@@ -23,8 +25,25 @@ namespace Huginn::Weapon
     // Weapons only. Ammo is counted at 2 Hz by RefreshCharges, which already
     // reports a type that runs out, and firing arrows would otherwise request
     // a full reconcile per shot.
+    //
+    // The FIRST EQUIP of a plain stack (0.23.40) asks for one too. A weapon
+    // that was never equipped, tempered or enchanted has no ExtraUniqueID, so
+    // the registry holds it as uniqueID 0, and while Wheeler drives a page it
+    // stays off that page (display/WheelUidFilter.h). Equipping it gives it
+    // one, but the registry would only read it at the 30 s reconcile -- and
+    // meanwhile the Swap Back hold for it, and any lock on it, has nothing to
+    // show. Asked only where it matters -- a page hides uid-less gear, so
+    // without Wheeler nothing changes -- when the registry holds a uniqueID-0
+    // record of the form that the event's stack is not already known by, only
+    // while the inventory's extra data may be read (no load under way, past
+    // the post-load window: SelectionLogV3::IsInventoryExtraReadable), and
+    // once per (form, stack) per load (core::ShouldRequestEquipReconcile).
+    // The reconcile that follows treats the plain record giving way to the
+    // new uniqueID as an upgrade, not a departure, so the key the player just
+    // pressed keeps its lock (core/StackIdentity.h).
     // =========================================================================
-    class WeaponDepartureListener final : public RE::BSTEventSink<RE::TESContainerChangedEvent>
+    class WeaponDepartureListener final : public RE::BSTEventSink<RE::TESContainerChangedEvent>,
+                                          public RE::BSTEventSink<RE::TESEquipEvent>
     {
     public:
         static WeaponDepartureListener& GetSingleton()
@@ -50,6 +69,34 @@ namespace Huginn::Weapon
             auto* form = RE::TESForm::LookupByID(event->baseObj);
             if (form && form->GetFormType() == RE::FormType::Weapon) {
                 g_weaponRegistry->RequestReconcile();
+            }
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        RE::BSEventNotifyControl ProcessEvent(
+            const RE::TESEquipEvent* event,
+            RE::BSTEventSource<RE::TESEquipEvent>*) override
+        {
+            // Cheapest first: atomics, then the actor and form, and only then
+            // Wheeler (AnyPageHidesUidlessGear takes WheelSync's page lock).
+            if (!event || !event->equipped || !g_weaponRegistry ||
+                !Learning::SelectionLogV3::IsInventoryExtraReadable() || !g_weaponRegistry->HasInstanceDetail()) {
+                return RE::BSEventNotifyControl::kContinue;
+            }
+            if (event->actor.get() != RE::PlayerCharacter::GetSingleton()) {
+                return RE::BSEventNotifyControl::kContinue;
+            }
+            auto* form = RE::TESForm::LookupByID(event->baseObject);
+            if (!form || form->GetFormType() != RE::FormType::Weapon) {
+                return RE::BSEventNotifyControl::kContinue;
+            }
+            if (!Display::AnyPageHidesUidlessGear()) {
+                return RE::BSEventNotifyControl::kContinue;
+            }
+            if (g_weaponRegistry->RequestReconcileForEquip(event->baseObject, event->uniqueID,
+                    /*pageHides=*/true, /*extraReadable=*/true)) {
+                logger::debug("[WeaponRegistry] {:08X} equipped (uid{}) while held as uid 0: reconcile requested"sv,
+                    event->baseObject, event->uniqueID);
             }
             return RE::BSEventNotifyControl::kContinue;
         }

@@ -415,6 +415,9 @@ static void MaintainRegistries(RE::PlayerCharacter* player,
                 // the pipeline has to be told to look, because nothing about
                 // inventory reaches the GameState hash the skip gate reads.
                 std::vector<Huginn::Weapon::WeaponRegistry::DepartedStack> departed;
+                // Plain stacks that gained a uniqueID (core/StackIdentity.h):
+                // not departures, re-pointed below.
+                std::vector<Huginn::Core::StackUpgrade> upgraded;
                 bool weaponSetChanged = false;
 
                 if (needsCharge) {
@@ -431,8 +434,12 @@ static void MaintainRegistries(RE::PlayerCharacter* player,
                     // favorite changes — every one of which changes what belongs
                     // on the widget, and was until now discarded.
                     weaponSetChanged |=
-                        g_weaponRegistry->ReconcileWeapons(equipped, &departed) > 0;
+                        g_weaponRegistry->ReconcileWeapons(equipped, &departed, &upgraded) > 0;
                     g_registryTimers.weaponReconcile.Reset(now);
+                    // The first detailed pass after a load opens the
+                    // wheel-page filter (display/WheelUidFilter.h): re-allocate
+                    // even when the reconcile itself changed nothing.
+                    weaponSetChanged |= g_weaponRegistry->TakeInstanceDetailArrived();
                 }
 
                 // Break any lock still pinning a stack the player no longer owns,
@@ -448,9 +455,21 @@ static void MaintainRegistries(RE::PlayerCharacter* player,
                 // then dropped, sold or stashed would otherwise hold its slot for
                 // the rest of the hold, refusing every press (EquipManager) and
                 // showing something the player cannot use. A departure is not a use.
+                //
+                // Exact-stack (OnStackDeparted): a departed (form, 0) is the
+                // PLAIN stack, so a lock on the tempered copy of the same form
+                // survives. Ammo has no instances (every record and every lock
+                // is uid 0), so for it this is the form-wide release it was.
                 for (const auto& stack : departed) {
-                    Slot::SlotLocker::GetSingleton().OnItemUsed(
-                        stack.formID, stack.uniqueID, /*respectActivationLock=*/false);
+                    Slot::SlotLocker::GetSingleton().OnStackDeparted(stack.formID, stack.uniqueID);
+                }
+                // A plain stack that gained its uniqueID keeps its keys: the
+                // locks and the allocator's seats that named (form, 0) now
+                // name (form, N), so nothing moves and no lock lets go.
+                for (const auto& up : upgraded) {
+                    if (up.newUniqueID == 0) continue;   // several carried: nothing to point at
+                    Slot::SlotLocker::GetSingleton().RekeyStack(up.formID, up.newUniqueID);
+                    Slot::SlotAllocator::GetSingleton().RekeyStack(up.formID, up.newUniqueID);
                 }
                 if (weaponSetChanged) {
                     Slot::SlotAllocator::GetSingleton().MarkPageDirty();

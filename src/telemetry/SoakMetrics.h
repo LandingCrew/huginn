@@ -47,6 +47,10 @@ namespace Huginn::Telemetry
         Upsert,    // a combat upsert: a challenger far above the item on a
                    // combat-locked key took it (core/CombatUpsert.h). After
                    // Seated for the same reason.
+        Unshowable,  // the key's lock let go because its item cannot be
+                     // shown on the page's Wheeler wheel (a weapon with no
+                     // uniqueID, display/WheelUidFilter.h; 0.23.40). Not the
+                     // ranking, so no challenger ratio. Last, as above.
         Count
     };
 
@@ -65,6 +69,7 @@ namespace Huginn::Telemetry
         case SlotChange::Remembrance: return "remembrance";
         case SlotChange::Seated:   return "seated";
         case SlotChange::Upsert:   return "upsert";
+        case SlotChange::Unshowable: return "unshowable";
         default:                  return "?";
         }
     }
@@ -91,6 +96,9 @@ namespace Huginn::Telemetry
         if (wasEmpty) return SlotChange::Fill;
         if (nowOverride) return SlotChange::Override;
         if (remembranceInvolved) return SlotChange::Remembrance;
+        // Ahead of the wildcard: a wildcard dagger the wheel cannot show
+        // leaves because of that, not on the wildcard's schedule.
+        if (released == SlotChange::Unshowable) return SlotChange::Unshowable;
         if (wildcardInvolved) return SlotChange::Wildcard;
         switch (released) {
         case SlotChange::Expired:

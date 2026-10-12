@@ -879,6 +879,70 @@ detection range (about 2048 units): a distant archer or a circling dragon thaws
 the keys, and they lock again when it returns. Changing
 `fCombatLockDurationMs` mid-fight affects locks taken after the change.
 
+**Wildcards in combat** (0.23.40; `Core::DecideCombatOnset`, `LockForFill`,
+`CombatSweepLocks`, `WildcardMayBePlaced`). A wildcard is an exploration pick,
+and under the freeze it held its key all fight: a mage's never-equipped Iron
+Dagger, rolled at 08:55:51, was converted at onset (08:56:04) and combat-locked
+again when it came back (08:57:50, 2026-10-12). Now a key whose lock holds a
+wildcard is released at onset instead of converted (a Sticky activation lock or
+an undo settle on one keeps its own short timer), `SetInCombat` forces a run
+when one is on screen, a wildcard fill takes the normal lock and never the
+combat lock, the sweep skips a wildcard, and `WildcardManager` places none
+while the locker counts the player in combat (`SlotLocker::IsInCombat`, the
+`CombatPresence` flag, passed as `WildcardPage::inCombat`): it rolls none,
+swaps none into the ranking, and drops every page's cached ones. On the first
+run after the fight the refractory restarts on every page
+(`Core::StepWildcardsForCombat`), so no wildcard lands on keys that just
+settled. Otherwise wildcards are untouched.
+
+**Uid-less gear on a wheel page** (0.23.40; `src/core/WheelUidGate.h`,
+`src/display/WheelUidFilter.h`). Wheeler cannot show a weapon or armour with no
+ExtraUniqueID (`WheelSync::RequiresUniqueID`), and a plain stack never
+equipped, tempered or enchanted has none. While Wheeler is connected and the
+page has a wheel of ours, the page is allocated without those rows (the
+display page in `PipelineCoordinator::AllocateAndLock`, the others in
+`WheelerBackend::Push`), so the key takes the next item and the widget and the
+wheel agree. The gate waits for `WeaponRegistry::HasInstanceDetail()`: for
+about a second after a load every weapon reads uid 0 until the primed
+reconcile reads the extra lists, and filtering then would empty the page of
+weapons and bring them back. A lock on such an item (taken in that second, or
+before Wheeler connected) is released at the start of the run
+(`RunContext::unshowable`; `[SlotChurn]` cause `unshowable`), the wildcard
+roll skips such rows (`WildcardPage::hideUidlessGear`), and a cached wildcard
+whose rows all read uid 0 is dropped rather than left blocking a re-roll
+(`Core::FateOfCachedWildcard`). The gate's stamp is `Core::InstanceDetail`;
+the pass that opens it forces a re-allocation. The scored list itself is not filtered:
+locks, telemetry, `hg recs` and the selection log still see the item. An item
+equipped once gets its uniqueID: while a page hides uid-less gear, a player
+weapon equip whose form the registry holds as uid 0 (and not by the event's
+uniqueID) requests a reconcile on the next tick (`WeaponDepartureListener`,
+`Core::ShouldRequestEquipReconcile`: only while
+`SelectionLogV3::IsInventoryExtraReadable()`; once per stack per load, an
+event without a uniqueID at most once per form per 2 s), and the item is
+eligible from that pass. Without Wheeler no request is made.
+
+**A plain stack gaining its uniqueID is not a departure** (0.23.40,
+`Core::ClassifyRemovedStacks`, with or without Wheeler). A reconcile that
+removes (form, 0) used to report it to `OnItemUsed`, whose uid 0 means every
+lock on the form: the Sticky, combat and settle locks of the key the player had
+just pressed let go, and the key refilled. It is an upgrade instead when a
+uniqueID of the form was added by the same pass (the equip) or the record was
+degraded -- written by the post-load scan that could not read extra data
+(`InventoryWeapon::degraded`). Then nothing is released, and the locks and the
+allocator's seats, home keys and claims naming (form, 0) are re-pointed to the
+new uniqueID when it is unique (`SlotLocker::RekeyStack`,
+`SlotAllocator::RekeyStack`): the key keeps its item and its lock. This changes
+the 30 s reconcile and the primed reconcile after every load too, Wheeler or
+not -- a deliberate improvement. Any other removal is a departure, even with a
+tempered copy of the form still carried (the plain dagger sold), and is
+released exact-stack (`SlotLocker::OnStackDeparted`, `Core::LockMatchesStack`):
+uid 0 there matches only a lock naming uid 0, so the tempered copy's key keeps
+its lock. Every other `OnItemUsed` caller (potions, ammo, a Wheeler activation)
+keeps "uid 0 = the whole form". Armour is not re-pointed (the apparel registry
+reports no departures). Apart from these reconcile rules, play without Wheeler
+is unchanged: nothing is hidden, and `EquipManager` equips a uid-0 weapon by
+its base form.
+
 **Combat upsert** (`fCombatUpsertMarginMult`, default 3, 0 = off;
 `fCombatUpsertCooldownSec`, default 10, 0 = no limit; `src/core/CombatUpsert.h`,
 wired in `SlotLocker::ApplyCombatUpserts`, after dedup and before the combat
