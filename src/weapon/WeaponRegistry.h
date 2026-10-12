@@ -3,6 +3,9 @@
 #include "WeaponData.h"
 #include "WeaponClassifier.h"
 #include "core/InstanceDetail.h"
+#include "core/StackIdentity.h"
+#include <mutex>
+#include <vector>
 #include <shared_mutex>  // v0.7.12 - thread safety
 #include <atomic>        // M3 v0.7.21 - atomic m_isLoading
 #include <type_traits>   // For ForEach visitor pattern
@@ -101,7 +104,8 @@ namespace Huginn::Weapon
        * @note OPTIMIZATION (v0.7.19): Use when caller already has equipped weapons cached
        */
       size_t ReconcileWeapons(const EquippedWeapons& equipped,
-                              std::vector<DepartedStack>* departed = nullptr);
+                              std::vector<DepartedStack>* departed = nullptr,
+                              std::vector<Core::StackUpgrade>* upgraded = nullptr);
 
       /// Ask for a reconcile on the next update tick, ahead of the 30 s timer:
       /// a weapon left the player's inventory (WeaponDepartureListener) --
@@ -133,13 +137,15 @@ namespace Huginn::Weapon
       return m_detailArrived.exchange(false, std::memory_order_acq_rel);
       }
 
-      /// The player equipped `formID` (a weapon): ask for a reconcile if the
-      /// registry holds a uniqueID-0 record of it. The first equip of a plain
-      /// stack gives it an ExtraUniqueID, and until a reconcile reads it the
-      /// stack stays off every wheel page (display/WheelUidFilter.h).
-      /// `uniqueID` is the equip event's (0 if it carried none): a stack the
-      /// registry already holds by that uniqueID needs nothing.
-      [[nodiscard]] bool NeedsReconcileForEquip(RE::FormID formID, uint16_t uniqueID) const;
+      /// The player equipped `formID` (a weapon), stack `uniqueID` (the equip
+      /// event's; 0 if it carried none). The first equip of a plain stack
+      /// gives it an ExtraUniqueID, and until a reconcile reads it the stack
+      /// stays off every wheel page (display/WheelUidFilter.h). Requests that
+      /// reconcile when core::ShouldRequestEquipReconcile says so -- a page
+      /// hides uid-less gear, the inventory may be read, the registry holds the
+      /// form plain and not this stack -- once per (form, stack) per load.
+      /// @return true if it requested one (for the log).
+      bool RequestReconcileForEquip(RE::FormID formID, uint16_t uniqueID, bool pageHides, bool extraReadable);
 
       // =============================================================================
       // WEAPON ACCESSORS
@@ -545,5 +551,12 @@ namespace Huginn::Weapon
       std::atomic<uint32_t> m_detailGeneration{ Core::InstanceDetail::kNone };
       std::atomic<bool> m_detailArrived{ false };
       void SetDetailStamp(uint32_t stamp) noexcept;
+
+      // RequestReconcileForEquip's memo: (form, stack) already asked for, in
+      // load generation m_equipAskedGeneration. Event thread only, but under
+      // its own mutex anyway.
+      std::mutex m_equipAskedMutex;
+      std::vector<Core::StackKey> m_equipAsked;
+      uint32_t m_equipAskedGeneration = 0;
    };
 }

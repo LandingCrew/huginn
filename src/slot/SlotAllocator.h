@@ -191,6 +191,12 @@ namespace Huginn::Slot
         /// page cycling does, so it bypasses the pipeline's hash-skip.
         void MarkPageDirty() noexcept { m_pageChanged = true; }
 
+        /// A plain weapon stack (form, uniqueID 0) gained its ExtraUniqueID
+        /// (core/StackIdentity.h): every page's seats, last placements, home
+        /// keys and home claims naming it now name (formID, newUniqueID), so
+        /// the item keeps its seat.
+        void RekeyStack(RE::FormID formID, uint16_t newUniqueID) const;
+
         /// `[SlotLocker] bFillJobKeysFromRegular`: an empty key with a class
         /// takes a matching item standing on a Regular key. The caller checks
         /// the setting; public so the unit test can drive it with a made-up

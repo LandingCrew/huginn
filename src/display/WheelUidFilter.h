@@ -27,6 +27,11 @@ namespace Huginn::Display
     /// wildcard roll, the allocation and the lock check agree.
     [[nodiscard]] bool HidesUidlessGear(size_t page);
 
+    /// Whether any page hides uid-less gear: Wheeler connected with a wheel
+    /// of ours, and the weapon registry past its post-load scan. For callers
+    /// off the pipeline (the weapon equip listener).
+    [[nodiscard]] bool AnyPageHidesUidlessGear();
+
     /// A weapon or armour row with no uniqueID: what Wheeler refuses.
     [[nodiscard]] bool IsUidlessGear(const Candidate::CandidateVariant& candidate) noexcept;
 

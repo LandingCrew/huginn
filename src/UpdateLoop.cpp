@@ -415,6 +415,9 @@ static void MaintainRegistries(RE::PlayerCharacter* player,
                 // the pipeline has to be told to look, because nothing about
                 // inventory reaches the GameState hash the skip gate reads.
                 std::vector<Huginn::Weapon::WeaponRegistry::DepartedStack> departed;
+                // Plain stacks that gained a uniqueID (core/StackIdentity.h):
+                // not departures, re-pointed below.
+                std::vector<Huginn::Core::StackUpgrade> upgraded;
                 bool weaponSetChanged = false;
 
                 if (needsCharge) {
@@ -431,7 +434,7 @@ static void MaintainRegistries(RE::PlayerCharacter* player,
                     // favorite changes — every one of which changes what belongs
                     // on the widget, and was until now discarded.
                     weaponSetChanged |=
-                        g_weaponRegistry->ReconcileWeapons(equipped, &departed) > 0;
+                        g_weaponRegistry->ReconcileWeapons(equipped, &departed, &upgraded) > 0;
                     g_registryTimers.weaponReconcile.Reset(now);
                     // The first detailed pass after a load opens the
                     // wheel-page filter (display/WheelUidFilter.h): re-allocate
@@ -455,6 +458,14 @@ static void MaintainRegistries(RE::PlayerCharacter* player,
                 for (const auto& stack : departed) {
                     Slot::SlotLocker::GetSingleton().OnItemUsed(
                         stack.formID, stack.uniqueID, /*respectActivationLock=*/false);
+                }
+                // A plain stack that gained its uniqueID keeps its keys: the
+                // locks and the allocator's seats that named (form, 0) now
+                // name (form, N), so nothing moves and no lock lets go.
+                for (const auto& up : upgraded) {
+                    if (up.newUniqueID == 0) continue;   // several carried: nothing to point at
+                    Slot::SlotLocker::GetSingleton().RekeyStack(up.formID, up.newUniqueID);
+                    Slot::SlotAllocator::GetSingleton().RekeyStack(up.formID, up.newUniqueID);
                 }
                 if (weaponSetChanged) {
                     Slot::SlotAllocator::GetSingleton().MarkPageDirty();

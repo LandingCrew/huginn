@@ -913,10 +913,20 @@ whose rows all read uid 0 is dropped rather than left blocking a re-roll
 (`Core::FateOfCachedWildcard`). The gate's stamp is `Core::InstanceDetail`;
 the pass that opens it forces a re-allocation. The scored list itself is not filtered:
 locks, telemetry, `hg recs` and the selection log still see the item. An item
-equipped once gets its uniqueID: a player weapon equip whose form the registry
-holds as uid 0 (and not by the event's uniqueID) requests a reconcile on the
-next tick (`WeaponDepartureListener`, outside the post-load window), and the
-item is eligible from that pass. Without Wheeler nothing
+equipped once gets its uniqueID: while a page hides uid-less gear, a player
+weapon equip whose form the registry holds as uid 0 (and not by the event's
+uniqueID) requests a reconcile on the next tick (`WeaponDepartureListener`,
+`Core::ShouldRequestEquipReconcile`: only while
+`SelectionLogV3::IsInventoryExtraReadable()`, once per form and stack per
+load), and the item is eligible from that pass. Without Wheeler no request is
+made. That reconcile, like the primed one after every load, sees (form, 0)
+removed while the form is still carried under a uniqueID: an identity
+upgrade, not a departure (`Core::ClassifyRemovedStacks`). It is not reported
+to `OnItemUsed` -- whose uid 0 means every lock on the form, and which broke
+the Sticky, combat and settle locks of the key the player had just pressed --
+and the locks and the allocator's seats naming (form, 0) are re-pointed to the
+new uniqueID (`SlotLocker::RekeyStack`, `SlotAllocator::RekeyStack`), so the
+key keeps its item and its lock. Without Wheeler nothing
 changes: `EquipManager` equips a uid-0 weapon by its base form.
 
 **Combat upsert** (`fCombatUpsertMarginMult`, default 3, 0 = off;

@@ -810,6 +810,28 @@ namespace Huginn::Slot
         }
     }
 
+    void SlotLocker::RekeyStack(RE::FormID formID, uint16_t newUniqueID)
+    {
+        if (formID == 0 || newUniqueID == 0) {
+            return;
+        }
+        std::lock_guard<std::mutex> lock(m_mutex);
+        for (size_t i = 0; i < MAX_SLOTS; ++i) {
+            auto& slot = m_lockedSlots[i];
+            if (!slot.assignment.IsEmpty() && slot.assignment.formID == formID && slot.assignment.uniqueID == 0) {
+                slot.assignment.uniqueID = newUniqueID;
+                if (slot.assignment.candidate) {
+                    Candidate::GetBase(slot.assignment.candidate->candidate).uniqueID = newUniqueID;
+                }
+                spdlog::debug("[SlotLocker] Slot {} keeps '{}': {:08X} uid0 -> uid{} ({})", i,
+                    slot.assignment.name, formID, newUniqueID, slot.isLocked ? "lock kept" : "unlocked");
+            }
+            if (!slot.shownEmpty && slot.shownFormID == formID && slot.shownUniqueID == 0) {
+                slot.shownUniqueID = newUniqueID;
+            }
+        }
+    }
+
     void SlotLocker::UnlockAll()
     {
         std::lock_guard<std::mutex> lock(m_mutex);

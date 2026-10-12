@@ -145,22 +145,37 @@ namespace Huginn::Weapon
          g_loadGeneration.load(std::memory_order_acquire));
    }
 
-   bool WeaponRegistry::NeedsReconcileForEquip(RE::FormID formID, uint16_t uniqueID) const
+   bool WeaponRegistry::RequestReconcileForEquip(RE::FormID formID, uint16_t uniqueID, bool pageHides,
+                                                 bool extraReadable)
    {
-      // A record of this form with no uniqueID: the stack the player just
-      // equipped may be that one, and has a uniqueID now. Only once the
-      // registry has detail -- before that every record reads 0, and the
-      // primed reconcile is coming anyway.
-      if (!HasInstanceDetail()) {
+      Core::EquipReconcileInput in;
+      in.pageHides = pageHides;
+      in.extraReadable = extraReadable;
+      // Before detail every record reads 0, and the primed reconcile is coming anyway.
+      in.detailKnown = HasInstanceDetail();
+      in.eventUniqueID = uniqueID;
+      if (!in.pageHides || !in.extraReadable || !in.detailKnown) {
+      return false;   // the cheap gates first: no lock taken
+      }
+      {
+      std::shared_lock lock(m_mutex);
+      in.plainRecordHeld = m_weaponIndex.contains(MakeWeaponKey(formID, 0));
+      in.eventStackIndexed = uniqueID != 0 && m_weaponIndex.contains(MakeWeaponKey(formID, uniqueID));
+      }
+      const Core::StackKey asked{ formID, uniqueID };
+      std::lock_guard memo(m_equipAskedMutex);
+      const uint32_t load = g_loadGeneration.load(std::memory_order_acquire);
+      if (m_equipAskedGeneration != load) {
+      m_equipAsked.clear();
+      m_equipAskedGeneration = load;
+      }
+      in.alreadyRequested = std::find(m_equipAsked.begin(), m_equipAsked.end(), asked) != m_equipAsked.end();
+      if (!Core::ShouldRequestEquipReconcile(in)) {
       return false;
       }
-      std::shared_lock lock(m_mutex);
-      if (!m_weaponIndex.contains(MakeWeaponKey(formID, 0))) {
-      return false;   // no plain stack of it: nothing to learn
-      }
-      // A tempered copy equipped beside plain ones is already known by its
-      // uniqueID; asking would buy an inventory walk per equip for nothing.
-      return uniqueID == 0 || !m_weaponIndex.contains(MakeWeaponKey(formID, uniqueID));
+      m_equipAsked.push_back(asked);
+      RequestReconcile();
+      return true;
    }
 
    void WeaponRegistry::RefreshCharges()
@@ -398,7 +413,8 @@ namespace Huginn::Weapon
    }
 
    size_t WeaponRegistry::ReconcileWeapons(const EquippedWeapons& equipped,
-                                          std::vector<DepartedStack>* departed)
+                                          std::vector<DepartedStack>* departed,
+                                          std::vector<Core::StackUpgrade>* upgraded)
    {
       Huginn_ZONE_NAMED("WeaponRegistry::ReconcileWeapons");
       SCOPED_TIMER("WeaponRegistry::ReconcileWeapons");
@@ -494,6 +510,9 @@ namespace Huginn::Weapon
       std::unordered_set<uint64_t> seenKeys;
       seenKeys.reserve(scannedWeapons.size());
       size_t keyCollisions = 0;
+      // What this pass inserted, for telling a uid-0 record that gained its
+      // uniqueID from one that left (core::ClassifyRemovedStacks).
+      std::vector<Core::StackKey> addedStacks;
 
       for (const auto& sw : scannedWeapons) {
       if (!sw.weapon) continue;
@@ -511,6 +530,7 @@ namespace Huginn::Weapon
            // and counting those would report phantom changes every reconcile
            if (AddWeapon(sw)) {
             weaponsAdded++;
+            addedStacks.push_back({ sw.weapon->GetFormID(), sw.uniqueID });
             logger::trace("[WeaponRegistry] Added weapon: {}"sv, sw.weapon->GetName());
            }
         }
@@ -611,16 +631,41 @@ namespace Huginn::Weapon
            weaponsToRemove.push_back(invWeapon.Key());
         }
       }
+      std::vector<Core::StackKey> removedStacks;
       for (auto key : weaponsToRemove) {
         if (RemoveWeapon(key)) {
            weaponsRemoved++;
            // The key IS the pair the caller needs: low 32 bits the form, high
            // 16 the stack (MakeWeaponKey). Reported per stack so a lock on the
            // player's OTHER copy of this form survives.
-           if (departed) {
-            departed->push_back({
-              static_cast<RE::FormID>(key & 0xFFFFFFFFull),
-              static_cast<uint16_t>(key >> 32) });
+           removedStacks.push_back({ static_cast<RE::FormID>(key & 0xFFFFFFFFull),
+                                     static_cast<uint16_t>(key >> 32) });
+        }
+      }
+
+      // A uid-0 record whose form is still carried under a uniqueID did not
+      // leave: the plain stack was equipped once and got its ExtraUniqueID, or
+      // (the primed reconcile after a load) the degraded record gave way to
+      // the real one. Reporting it as a departure broke every lock on the
+      // form -- Sticky, combat, settle -- on the key the player had just
+      // pressed (core/StackIdentity.h). It is re-pointed instead.
+      if (!removedStacks.empty()) {
+        std::vector<Core::StackKey> currentStacks;
+        currentStacks.reserve(m_weapons.size());
+        for (const auto& w : m_weapons) {
+           currentStacks.push_back({ w.data.formID, w.data.uniqueID });
+        }
+        const auto removals = Core::ClassifyRemovedStacks(removedStacks, currentStacks, addedStacks);
+        if (departed) {
+           for (const auto& d : removals.departed) {
+            departed->push_back({ d.formID, d.uniqueID });
+           }
+        }
+        for (const auto& u : removals.upgraded) {
+           logger::debug("[WeaponRegistry] {:08X}/uid0 is carried as uid{}: an identity upgrade, not a departure"sv,
+            u.formID, u.newUniqueID);
+           if (upgraded) {
+            upgraded->push_back(u);
            }
         }
       }

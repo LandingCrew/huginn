@@ -98,4 +98,9 @@ TEST_CASE("instance detail: kNone is the registry's initial stamp, and no load m
     for (const std::uint32_t load : { 0u, 1u, 2u, 1000u }) {
         CHECK_FALSE(ID::Known(ID::kNone, load));
     }
+    // A stamp from a later generation than the load in hand is not detail either.
+    for (const std::uint32_t load : { 0u, 1u, 2u, 1000u }) {
+        CHECK_FALSE(ID::Known(load + 1, load));
+        CHECK(ID::Known(load, load));
+    }
 }

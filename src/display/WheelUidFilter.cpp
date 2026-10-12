@@ -59,6 +59,16 @@ namespace Huginn::Display
         return Core::HidesUidlessGear(gate);
     }
 
+    bool AnyPageHidesUidlessGear()
+    {
+        auto& client = Wheeler::WheelerClient::GetSingleton();
+        Core::WheelUidGate gate;
+        gate.wheelerConnected = client.IsConnected();
+        gate.pageHasWheel = gate.wheelerConnected && client.HasRecommendationWheel();
+        gate.instanceDetailKnown = g_weaponRegistry && g_weaponRegistry->HasInstanceDetail();
+        return Core::HidesUidlessGear(gate);
+    }
+
     bool IsUidlessGear(const Candidate::CandidateVariant& candidate) noexcept
     {
         return Core::KeptOffWheelPage(true, Candidate::IsInstanceItem(candidate), Candidate::GetUniqueID(candidate));

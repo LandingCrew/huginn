@@ -1,7 +1,8 @@
 #pragma once
 
 #include "Globals.h"
-#include "util/ExtraListStability.h"
+#include "display/WheelUidFilter.h"
+#include "learning/SelectionLogV3.h"
 #include "weapon/WeaponRegistry.h"
 
 namespace Huginn::Weapon
@@ -31,11 +32,15 @@ namespace Huginn::Weapon
     // stays off that page (display/WheelUidFilter.h). Equipping it gives it
     // one, but the registry would only read it at the 30 s reconcile -- and
     // meanwhile the Swap Back hold for it, and any lock on it, has nothing to
-    // show. Asked only when the registry holds a uniqueID-0 record of the
-    // form that the event's stack is not already known by, and only outside
-    // the post-load window (extra lists stable, the registry past its primed
-    // reconcile): during a load the primed reconcile is coming anyway, and
-    // the reconcile reads extra lists only once they are safe.
+    // show. Asked only where it matters -- a page hides uid-less gear, so
+    // without Wheeler nothing changes -- when the registry holds a uniqueID-0
+    // record of the form that the event's stack is not already known by, only
+    // while the inventory's extra data may be read (no load under way, past
+    // the post-load window: SelectionLogV3::IsInventoryExtraReadable), and
+    // once per (form, stack) per load (core::ShouldRequestEquipReconcile).
+    // The reconcile that follows treats the plain record giving way to the
+    // new uniqueID as an upgrade, not a departure, so the key the player just
+    // pressed keeps its lock (core/StackIdentity.h).
     // =========================================================================
     class WeaponDepartureListener final : public RE::BSTEventSink<RE::TESContainerChangedEvent>,
                                           public RE::BSTEventSink<RE::TESEquipEvent>
@@ -72,7 +77,7 @@ namespace Huginn::Weapon
             const RE::TESEquipEvent* event,
             RE::BSTEventSource<RE::TESEquipEvent>*) override
         {
-            if (!event || !event->equipped || !g_weaponRegistry || !Util::IsExtraListStable()) {
+            if (!event || !event->equipped || !g_weaponRegistry) {
                 return RE::BSEventNotifyControl::kContinue;
             }
             if (event->actor.get() != RE::PlayerCharacter::GetSingleton()) {
@@ -82,10 +87,10 @@ namespace Huginn::Weapon
             if (!form || form->GetFormType() != RE::FormType::Weapon) {
                 return RE::BSEventNotifyControl::kContinue;
             }
-            if (g_weaponRegistry->NeedsReconcileForEquip(event->baseObject, event->uniqueID)) {
+            if (g_weaponRegistry->RequestReconcileForEquip(event->baseObject, event->uniqueID,
+                    Display::AnyPageHidesUidlessGear(), Learning::SelectionLogV3::IsInventoryExtraReadable())) {
                 logger::debug("[WeaponRegistry] {:08X} equipped (uid{}) while held as uid 0: reconcile requested"sv,
                     event->baseObject, event->uniqueID);
-                g_weaponRegistry->RequestReconcile();
             }
             return RE::BSEventNotifyControl::kContinue;
         }

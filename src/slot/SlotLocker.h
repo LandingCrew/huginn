@@ -378,6 +378,12 @@ namespace Huginn::Slot
         void OnItemUsed(RE::FormID formID, uint16_t uniqueID, bool respectActivationLock,
             UseKind kind = UseKind::Gone);
 
+        /// A plain weapon stack (form, uniqueID 0) gained its ExtraUniqueID
+        /// (core/StackIdentity.h): every lock and shown record naming
+        /// (formID, 0) now names (formID, newUniqueID). Nothing is unlocked;
+        /// the key keeps its item and its lock kind.
+        void RekeyStack(RE::FormID formID, uint16_t newUniqueID);
+
         /// Reset all locks (call on save load or game state reset)
         void Reset();
 
