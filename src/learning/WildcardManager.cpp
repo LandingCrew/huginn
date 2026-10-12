@@ -69,14 +69,35 @@ namespace Huginn::Scoring
         // combat freeze it held a key for the whole fight: a mage's Iron Dagger,
         // 2026-10-12 08:56-08:58. The expiry clock is not touched otherwise, so
         // out of combat everything below runs exactly as before.
-        if (!Core::WildcardMayBePlaced(page.inCombat)) {
-            if (PageHasActiveWildcard(cache)) {
-                logger::debug("[WildcardManager] Page {}: combat - dropped {} cached wildcard(s), "
-                    "none placed until it ends"sv, page.index, GetActiveWildcardCount(page.index));
-                ClearPageEntries(cache);
-                cache.wildcardEndTime = std::chrono::steady_clock::now();
+        //
+        // Every page, not only this one: a page the player switches to in the
+        // fight must not bring its cached wildcard back. And when combat ends
+        // the refractory restarts on every page, so the first run after the
+        // fight does not roll one onto keys that just settled.
+        {
+            const auto step = Core::StepWildcardsForCombat(m_wasInCombat, page.inCombat);
+            m_wasInCombat = page.inCombat;
+            const auto stepNow = std::chrono::steady_clock::now();
+            if (step.dropCached) {
+                for (size_t p = 0; p < m_pages.size(); ++p) {
+                    if (PageHasActiveWildcard(m_pages[p])) {
+                        logger::debug("[WildcardManager] Page {}: combat - dropped {} cached wildcard(s), "
+                            "none placed until it ends"sv, p, GetActiveWildcardCount(p));
+                        ClearPageEntries(m_pages[p]);
+                        m_pages[p].wildcardEndTime = stepNow;
+                    }
+                }
             }
-            return;
+            if (step.restartRefractory) {
+                for (auto& pageCache : m_pages) {
+                    pageCache.wildcardEndTime = stepNow;
+                }
+                logger::debug("[WildcardManager] Combat over - refractory ({:.1f}s) restarted on every page"sv,
+                    m_refractorySeconds);
+            }
+            if (!step.mayPlace) {
+                return;
+            }
         }
 
         // A page every slot of which sets bWildcardsEnabled=false can display no
@@ -194,6 +215,7 @@ namespace Huginn::Scoring
     void WildcardManager::Reset()
     {
         const auto now = std::chrono::steady_clock::now();
+        m_wasInCombat = false;
         for (auto& cache : m_pages) {
             ClearPageEntries(cache);
             // Forget the recorded shape too: a reset is a fresh start, and the
@@ -355,7 +377,7 @@ namespace Huginn::Scoring
 
     void WildcardManager::ApplyWildcardsToRanking(
         ScoredCandidateList& rankedCandidates,
-        const PageWildcards& cache,
+        PageWildcards& cache,
         size_t slotCount,
         bool hideUidlessGear)
     {
@@ -366,24 +388,36 @@ namespace Huginn::Scoring
 
         // Apply wildcards for each slot
         for (size_t slotIdx = 0; slotIdx < slotCount && slotIdx < MAX_WILDCARD_SLOTS; ++slotIdx) {
-            const auto& wildcardSlot = cache.slots[slotIdx];
+            auto& wildcardSlot = cache.slots[slotIdx];
             if (wildcardSlot.formID == 0) {
                 continue;
             }
 
-            // Find the candidate with this FormID
-            // A row the page's wheel cannot show is not one to surface (a
-            // wildcard rolled before the registry knew the stack had no
-            // uniqueID, in the second after a load).
+            // Find the candidate with this FormID -- a row the page's wheel
+            // can show. A wildcard whose rows all read uniqueID 0 on a page
+            // that hides them (rolled in the second after a load, before the
+            // registry knew) is dropped from the cache rather than skipped:
+            // skipped, it would block a re-roll for its whole cooldown while
+            // showing nothing (core::FateOfCachedWildcard).
+            bool anyRow = false;
             auto it = std::find_if(rankedCandidates.begin(), rankedCandidates.end(),
-                [&wildcardSlot, hideUidlessGear](const ScoredCandidate& s) {
-                    return s.GetFormID() == wildcardSlot.formID &&
-                           s.GetSourceType() == wildcardSlot.sourceType &&
-                           !Core::KeptOffWheelPage(hideUidlessGear, Candidate::IsInstanceItem(s.candidate),
-                               s.GetUniqueID());
+                [&wildcardSlot, hideUidlessGear, &anyRow](const ScoredCandidate& s) {
+                    if (s.GetFormID() != wildcardSlot.formID || s.GetSourceType() != wildcardSlot.sourceType) {
+                        return false;
+                    }
+                    anyRow = true;
+                    return !Core::KeptOffWheelPage(hideUidlessGear, Candidate::IsInstanceItem(s.candidate),
+                        s.GetUniqueID());
                 });
 
-            if (it == rankedCandidates.end()) {
+            const auto fate = Core::FateOfCachedWildcard(anyRow, it != rankedCandidates.end());
+            if (fate == Core::CachedWildcardFate::Drop) {
+                logger::debug("[WildcardManager] Slot {} wildcard {:08X} dropped: the page's wheel cannot show it "
+                    "(no uniqueID)"sv, slotIdx, wildcardSlot.formID);
+                wildcardSlot.formID = 0;
+                continue;
+            }
+            if (fate == Core::CachedWildcardFate::Absent) {
                 continue;  // Wildcard candidate no longer available
             }
 

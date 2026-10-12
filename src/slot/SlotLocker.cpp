@@ -361,7 +361,7 @@ namespace Huginn::Slot
                 slot.frozen = false;
                 slot.settling = false;
                 slot.isActivationLock = false;
-                slot.releaseCause = Telemetry::SlotChange::Used;
+                slot.releaseCause = Telemetry::SlotChange::Unshowable;
             }
         }
 
@@ -722,7 +722,8 @@ namespace Huginn::Slot
             } else if (slot.releaseCause == Telemetry::SlotChange::Used ||
                        slot.releaseCause == Telemetry::SlotChange::Override ||
                        slot.releaseCause == Telemetry::SlotChange::Remembrance ||
-                       slot.releaseCause == Telemetry::SlotChange::Seated) {
+                       slot.releaseCause == Telemetry::SlotChange::Seated ||
+                       slot.releaseCause == Telemetry::SlotChange::Unshowable) {
                 slot.releaseCause = m_config.lockDurationMs > 0.0f
                     ? Telemetry::SlotChange::Expired : Telemetry::SlotChange::Unheld;
             }

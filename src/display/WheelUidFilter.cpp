@@ -67,25 +67,28 @@ namespace Huginn::Display
     const Scoring::ScoredCandidateList& CandidatesForWheelPage(size_t page, bool hides,
         const Scoring::ScoredCandidateList& all, Scoring::ScoredCandidateList& scratch)
     {
+        // Which rows go: the pure decision (core::KeptOffRows), host-tested.
+        const auto rows = Core::KeptOffRows(hides, all, [](const Scoring::ScoredCandidate& sc) {
+            return Core::GearRow{ Candidate::IsInstanceItem(sc.candidate), sc.GetUniqueID() };
+        });
         std::vector<std::uint32_t> keptOff;
-        if (hides) {
-            for (const auto& sc : all) {
-                if (IsUidlessGear(sc.candidate)) {
-                    keptOff.push_back(sc.GetFormID());
-                }
-            }
+        keptOff.reserve(rows.size());
+        for (const auto i : rows) {
+            keptOff.push_back(all[i].GetFormID());
         }
-        const bool any = !keptOff.empty();
         NoteKeptOff(page, std::move(keptOff), all);
-        if (!any) {
+        if (rows.empty()) {
             return all;
         }
         scratch.clear();
-        scratch.reserve(all.size());
-        for (const auto& sc : all) {
-            if (!IsUidlessGear(sc.candidate)) {
-                scratch.push_back(sc);
+        scratch.reserve(all.size() - rows.size());
+        size_t next = 0;   // rows is ascending
+        for (size_t i = 0; i < all.size(); ++i) {
+            if (next < rows.size() && rows[next] == i) {
+                ++next;
+                continue;
             }
+            scratch.push_back(all[i]);
         }
         return scratch;
     }

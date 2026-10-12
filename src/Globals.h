@@ -58,7 +58,10 @@ extern RegistryTimers g_registryTimers;
 
 // Non-registry timers (kept separate — different lifecycle)
 extern std::chrono::steady_clock::time_point g_lastStateLog;
-extern std::chrono::steady_clock::time_point g_lastGameLoad;
+// Atomic: written by the load (main thread), read by the update loop
+// (Util::IsExtraListStable). Ordered by g_loadGeneration's release/acquire
+// pair, see core/InstanceDetail.h.
+extern std::atomic<std::chrono::steady_clock::time_point> g_lastGameLoad;
 // Incremented on every kPostLoadGame / kNewGame. Tags each selection-log
 // record, so rewards abandoned by a death-and-reload can be told apart from
 // the ones the learner kept (the cosave rolls it back; the log does not).

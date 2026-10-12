@@ -28,6 +28,7 @@
 // Pure: standard library only, host-tested in tests/core/WheelUidGateTests.cpp.
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <iterator>
 #include <utility>
@@ -52,6 +53,49 @@ namespace Huginn::Core
     [[nodiscard]] constexpr bool KeptOffWheelPage(bool hides, bool instanceItem, std::uint16_t uniqueID) noexcept
     {
         return hides && instanceItem && uniqueID == 0;
+    }
+
+    /// One row as the filter sees it.
+    struct GearRow
+    {
+        bool instanceItem = false;    ///< a weapon or armour (identified per instance)
+        std::uint16_t uniqueID = 0;
+    };
+
+    /// The rows of a page's list that the allocation leaves out, ascending.
+    /// `proj` turns an element of `rows` into a GearRow. Empty when the page
+    /// does not hide (the caller then allocates from the list itself, no copy).
+    template <class Rows, class Proj>
+    [[nodiscard]] std::vector<std::size_t> KeptOffRows(bool hides, const Rows& rows, Proj proj)
+    {
+        std::vector<std::size_t> out;
+        if (!hides) {
+            return out;
+        }
+        std::size_t i = 0;
+        for (const auto& row : rows) {
+            const GearRow g = proj(row);
+            if (KeptOffWheelPage(hides, g.instanceItem, g.uniqueID)) {
+                out.push_back(i);
+            }
+            ++i;
+        }
+        return out;
+    }
+
+    /// A cached wildcard on a page that hides uid-less gear (WildcardManager):
+    /// Use it if some row of its form can be shown; Drop it if its rows exist
+    /// but none can (it would otherwise sit in the cache for its whole
+    /// cooldown, showing nothing and blocking a re-roll); Absent if no row of
+    /// it is in the list this run (kept, as before: it may come back).
+    enum class CachedWildcardFate : std::uint8_t { Use, Absent, Drop };
+
+    [[nodiscard]] constexpr CachedWildcardFate FateOfCachedWildcard(bool anyRow, bool anyShowableRow) noexcept
+    {
+        if (anyShowableRow) {
+            return CachedWildcardFate::Use;
+        }
+        return anyRow ? CachedWildcardFate::Drop : CachedWildcardFate::Absent;
     }
 
     /// The log's dedup, per page: which forms were kept off last pass. Update()

@@ -7,7 +7,7 @@ namespace Huginn::Util
     bool IsExtraListStable() noexcept
     {
         const auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - g_lastGameLoad);
+            std::chrono::steady_clock::now() - g_lastGameLoad.load(std::memory_order_relaxed));
         return elapsed.count() >= static_cast<int64_t>(Config::EXTRALIST_STABILIZATION_MS);
     }
 }

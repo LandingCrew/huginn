@@ -70,7 +70,7 @@ void RegistryTimers::ResetAll(std::chrono::steady_clock::time_point now) noexcep
 }
 
 // Global game load timestamp for extraLists stabilization guard (v0.7.9)
-std::chrono::steady_clock::time_point g_lastGameLoad;
+std::atomic<std::chrono::steady_clock::time_point> g_lastGameLoad{};
 std::atomic<uint32_t> g_loadGeneration{ 0 };
 std::string g_launchStamp;
 std::string g_listName;

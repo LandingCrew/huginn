@@ -295,3 +295,25 @@ TEST_CASE("combat lock: a wildcard may be placed out of combat only")
     CHECK(WildcardMayBePlaced(false));
     CHECK_FALSE(WildcardMayBePlaced(true));
 }
+
+TEST_CASE("combat lock: the wildcard manager's step through a fight")
+{
+    // Out of combat, before and after: exactly as before (place, keep, no restart).
+    auto s = StepWildcardsForCombat(false, false);
+    CHECK(s.mayPlace);
+    CHECK_FALSE(s.dropCached);
+    CHECK_FALSE(s.restartRefractory);
+    // Onset and every run of the fight: place none, drop the caches.
+    for (const bool was : { false, true }) {
+        s = StepWildcardsForCombat(was, true);
+        CHECK_FALSE(s.mayPlace);
+        CHECK(s.dropCached);
+        CHECK_FALSE(s.restartRefractory);
+    }
+    // The first run after: placing is allowed again, but the refractory
+    // restarts now, so this run rolls nothing.
+    s = StepWildcardsForCombat(true, false);
+    CHECK(s.mayPlace);
+    CHECK_FALSE(s.dropCached);
+    CHECK(s.restartRefractory);
+}

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Globals.h"
+#include "util/ExtraListStability.h"
 #include "weapon/WeaponRegistry.h"
 
 namespace Huginn::Weapon
@@ -23,8 +24,21 @@ namespace Huginn::Weapon
     // Weapons only. Ammo is counted at 2 Hz by RefreshCharges, which already
     // reports a type that runs out, and firing arrows would otherwise request
     // a full reconcile per shot.
+    //
+    // The FIRST EQUIP of a plain stack (0.23.40) asks for one too. A weapon
+    // that was never equipped, tempered or enchanted has no ExtraUniqueID, so
+    // the registry holds it as uniqueID 0, and while Wheeler drives a page it
+    // stays off that page (display/WheelUidFilter.h). Equipping it gives it
+    // one, but the registry would only read it at the 30 s reconcile -- and
+    // meanwhile the Swap Back hold for it, and any lock on it, has nothing to
+    // show. Asked only when the registry holds a uniqueID-0 record of the
+    // form that the event's stack is not already known by, and only outside
+    // the post-load window (extra lists stable, the registry past its primed
+    // reconcile): during a load the primed reconcile is coming anyway, and
+    // the reconcile reads extra lists only once they are safe.
     // =========================================================================
-    class WeaponDepartureListener final : public RE::BSTEventSink<RE::TESContainerChangedEvent>
+    class WeaponDepartureListener final : public RE::BSTEventSink<RE::TESContainerChangedEvent>,
+                                          public RE::BSTEventSink<RE::TESEquipEvent>
     {
     public:
         static WeaponDepartureListener& GetSingleton()
@@ -49,6 +63,28 @@ namespace Huginn::Weapon
             // held costs one reconcile and changes nothing.
             auto* form = RE::TESForm::LookupByID(event->baseObj);
             if (form && form->GetFormType() == RE::FormType::Weapon) {
+                g_weaponRegistry->RequestReconcile();
+            }
+            return RE::BSEventNotifyControl::kContinue;
+        }
+
+        RE::BSEventNotifyControl ProcessEvent(
+            const RE::TESEquipEvent* event,
+            RE::BSTEventSource<RE::TESEquipEvent>*) override
+        {
+            if (!event || !event->equipped || !g_weaponRegistry || !Util::IsExtraListStable()) {
+                return RE::BSEventNotifyControl::kContinue;
+            }
+            if (event->actor.get() != RE::PlayerCharacter::GetSingleton()) {
+                return RE::BSEventNotifyControl::kContinue;
+            }
+            auto* form = RE::TESForm::LookupByID(event->baseObject);
+            if (!form || form->GetFormType() != RE::FormType::Weapon) {
+                return RE::BSEventNotifyControl::kContinue;
+            }
+            if (g_weaponRegistry->NeedsReconcileForEquip(event->baseObject, event->uniqueID)) {
+                logger::debug("[WeaponRegistry] {:08X} equipped (uid{}) while held as uid 0: reconcile requested"sv,
+                    event->baseObject, event->uniqueID);
                 g_weaponRegistry->RequestReconcile();
             }
             return RE::BSEventNotifyControl::kContinue;

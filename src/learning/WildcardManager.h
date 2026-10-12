@@ -196,7 +196,7 @@ namespace Huginn::Scoring
                               bool hideUidlessGear,
                               std::chrono::steady_clock::time_point now);
         void ApplyWildcardsToRanking(ScoredCandidateList& rankedCandidates,
-                                     const PageWildcards& cache,
+                                     PageWildcards& cache,
                                      size_t slotCount,
                                      bool hideUidlessGear);
 
@@ -224,6 +224,9 @@ namespace Huginn::Scoring
         float m_refractorySeconds = 5.0f;
 
         std::array<PageWildcards, MAX_WILDCARD_PAGES> m_pages;
+
+        // The combat flag the last ApplyWildcards saw (core::StepWildcardsForCombat).
+        bool m_wasInCombat = false;
 
         // Random number generator (thread-local for safety)
         std::mt19937& GetRNG();

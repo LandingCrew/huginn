@@ -4,6 +4,8 @@
 
 #include <doctest/doctest.h>
 
+#include <vector>
+
 using namespace Huginn::Core;
 
 TEST_CASE("wheel uid gate: only a connected Wheeler page with known instance data hides")
@@ -61,4 +63,33 @@ TEST_CASE("wheel uid gate: the log fires on a change only, per form")
     REQUIRE(c.removed.size() == 1);
     CHECK(c.removed[0] == 0x12EB7u);
     CHECK(log.Update({}).Empty());
+}
+
+TEST_CASE("wheel uid gate: the rows a hiding page leaves out, in order")
+{
+    const std::vector<GearRow> rows = {
+        { false, 0 },   // 0 a spell
+        { true, 0 },    // 1 the plain Iron Dagger
+        { true, 12 },   // 2 a tempered sword
+        { false, 0 },   // 3 a potion
+        { true, 0 },    // 4 a plain staff (WEAP)
+    };
+    const auto id = [](const GearRow& r) { return r; };
+    const auto out = KeptOffRows(true, rows, id);
+    REQUIRE(out.size() == 2);
+    CHECK(out[0] == 1u);
+    CHECK(out[1] == 4u);
+    // A page that does not hide leaves out nothing (and the caller copies nothing).
+    CHECK(KeptOffRows(false, rows, id).empty());
+    // Nothing uid-less: nothing to leave out.
+    const std::vector<GearRow> clean = { { false, 0 }, { true, 3 } };
+    CHECK(KeptOffRows(true, clean, id).empty());
+}
+
+TEST_CASE("wheel uid gate: a cached wildcard the wheel cannot show is dropped, not skipped")
+{
+    // anyRow, anyShowableRow
+    CHECK(FateOfCachedWildcard(true, true) == CachedWildcardFate::Use);
+    CHECK(FateOfCachedWildcard(true, false) == CachedWildcardFate::Drop);     // only uid-0 rows of it
+    CHECK(FateOfCachedWildcard(false, false) == CachedWildcardFate::Absent);  // not in the list this run
 }

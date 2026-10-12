@@ -890,8 +890,10 @@ when one is on screen, a wildcard fill takes the normal lock and never the
 combat lock, the sweep skips a wildcard, and `WildcardManager` places none
 while the locker counts the player in combat (`SlotLocker::IsInCombat`, the
 `CombatPresence` flag, passed as `WildcardPage::inCombat`): it rolls none,
-swaps none into the ranking, and drops the page's cached ones. Out of combat
-wildcards are untouched.
+swaps none into the ranking, and drops every page's cached ones. On the first
+run after the fight the refractory restarts on every page
+(`Core::StepWildcardsForCombat`), so no wildcard lands on keys that just
+settled. Otherwise wildcards are untouched.
 
 **Uid-less gear on a wheel page** (0.23.40; `src/core/WheelUidGate.h`,
 `src/display/WheelUidFilter.h`). Wheeler cannot show a weapon or armour with no
@@ -905,11 +907,16 @@ about a second after a load every weapon reads uid 0 until the primed
 reconcile reads the extra lists, and filtering then would empty the page of
 weapons and bring them back. A lock on such an item (taken in that second, or
 before Wheeler connected) is released at the start of the run
-(`RunContext::unshowable`), and the wildcard roll skips such rows
-(`WildcardPage::hideUidlessGear`). The scored list itself is not filtered:
+(`RunContext::unshowable`; `[SlotChurn]` cause `unshowable`), the wildcard
+roll skips such rows (`WildcardPage::hideUidlessGear`), and a cached wildcard
+whose rows all read uid 0 is dropped rather than left blocking a re-roll
+(`Core::FateOfCachedWildcard`). The gate's stamp is `Core::InstanceDetail`;
+the pass that opens it forces a re-allocation. The scored list itself is not filtered:
 locks, telemetry, `hg recs` and the selection log still see the item. An item
-equipped once gets its uniqueID, and is eligible from the weapon registry's
-next reconcile (30 s, or sooner on a departure). Without Wheeler nothing
+equipped once gets its uniqueID: a player weapon equip whose form the registry
+holds as uid 0 (and not by the event's uniqueID) requests a reconcile on the
+next tick (`WeaponDepartureListener`, outside the post-load window), and the
+item is eligible from that pass. Without Wheeler nothing
 changes: `EquipManager` equips a uid-0 weapon by its base form.
 
 **Combat upsert** (`fCombatUpsertMarginMult`, default 3, 0 = off;

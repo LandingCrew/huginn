@@ -8,6 +8,7 @@
 #include "util/AlgorithmUtils.h"
 #include "util/InventoryUtil.h"
 #include "util/ExtraListStability.h"
+#include "core/InstanceDetail.h"
 
 namespace Huginn::Weapon
 {
@@ -121,27 +122,45 @@ namespace Huginn::Weapon
       m_weapons.size(), m_ammo.size());
 
       // The rebuild replaced every record: detailed only if this scan was.
-      if (scanReadsExtraLists) {
-      NoteInstanceDetail(scanGeneration);
-      } else {
-      m_detailGeneration.store(kNoDetail, std::memory_order_release);
-      }
+      SetDetailStamp(Core::InstanceDetail::AfterRebuild(scanGeneration, scanReadsExtraLists));
       // m_isLoading cleared by LoadingGuard destructor
    }
 
-   void WeaponRegistry::NoteInstanceDetail(uint32_t scanGeneration) noexcept
+   void WeaponRegistry::SetDetailStamp(uint32_t stamp) noexcept
    {
-      // Logged on the transition: the first detailed pass after each load.
-      if (m_detailGeneration.exchange(scanGeneration, std::memory_order_acq_rel) != scanGeneration) {
+      const uint32_t before = m_detailGeneration.exchange(stamp, std::memory_order_acq_rel);
+      const uint32_t load = g_loadGeneration.load(std::memory_order_acquire);
+      // The gate (core/WheelUidGate.h) opens on this pass: say so, and let
+      // the update loop force a re-allocation even if nothing else changed.
+      if (Core::InstanceDetail::Arrived(before, stamp, load)) {
+      m_detailArrived.store(true, std::memory_order_release);
       logger::debug("[WeaponRegistry] Stacks read with their extra data (load generation {}): "
-                     "uniqueIDs are real from here"sv, scanGeneration);
+                     "uniqueIDs are real from here"sv, stamp);
       }
    }
 
    bool WeaponRegistry::HasInstanceDetail() const noexcept
    {
-      return m_detailGeneration.load(std::memory_order_acquire) ==
-             g_loadGeneration.load(std::memory_order_acquire);
+      return Core::InstanceDetail::Known(m_detailGeneration.load(std::memory_order_acquire),
+         g_loadGeneration.load(std::memory_order_acquire));
+   }
+
+   bool WeaponRegistry::NeedsReconcileForEquip(RE::FormID formID, uint16_t uniqueID) const
+   {
+      // A record of this form with no uniqueID: the stack the player just
+      // equipped may be that one, and has a uniqueID now. Only once the
+      // registry has detail -- before that every record reads 0, and the
+      // primed reconcile is coming anyway.
+      if (!HasInstanceDetail()) {
+      return false;
+      }
+      std::shared_lock lock(m_mutex);
+      if (!m_weaponIndex.contains(MakeWeaponKey(formID, 0))) {
+      return false;   // no plain stack of it: nothing to learn
+      }
+      // A tempered copy equipped beside plain ones is already known by its
+      // uniqueID; asking would buy an inventory walk per equip for nothing.
+      return uniqueID == 0 || !m_weaponIndex.contains(MakeWeaponKey(formID, uniqueID));
    }
 
    void WeaponRegistry::RefreshCharges()
@@ -648,9 +667,9 @@ namespace Huginn::Weapon
       }  // end ReconcileWeapons::Apply zone
 
       // Every record now carries the stack's real uniqueID (or none at all).
-      if (safeToAccessExtraLists) {
-      NoteInstanceDetail(scanGeneration);
-      }
+      // A degraded reconcile only adds, so it leaves the stamp alone.
+      SetDetailStamp(Core::InstanceDetail::AfterReconcile(
+         m_detailGeneration.load(std::memory_order_acquire), scanGeneration, safeToAccessExtraLists));
 
       size_t totalChanges = weaponsAdded + weaponsRemoved + favoriteChanges + ammoAdded + ammoRemoved;
       if (totalChanges > 0) {

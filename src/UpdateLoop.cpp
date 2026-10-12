@@ -433,6 +433,10 @@ static void MaintainRegistries(RE::PlayerCharacter* player,
                     weaponSetChanged |=
                         g_weaponRegistry->ReconcileWeapons(equipped, &departed) > 0;
                     g_registryTimers.weaponReconcile.Reset(now);
+                    // The first detailed pass after a load opens the
+                    // wheel-page filter (display/WheelUidFilter.h): re-allocate
+                    // even when the reconcile itself changed nothing.
+                    weaponSetChanged |= g_weaponRegistry->TakeInstanceDetailArrived();
                 }
 
                 // Break any lock still pinning a stack the player no longer owns,

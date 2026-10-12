@@ -169,6 +169,26 @@ namespace Huginn::Core
         return !inCombat;
     }
 
+    /// What WildcardManager does on a pipeline run, given the combat flag it
+    /// saw last run and now. In combat: place none and drop every page's
+    /// cached ones. On the first run after combat: restart every page's
+    /// refractory, so the first post-combat run does not roll a wildcard onto
+    /// a page that just settled. Otherwise: as before combat existed.
+    struct WildcardCombatStep
+    {
+        bool mayPlace = true;            ///< roll and swap wildcards this run
+        bool dropCached = false;         ///< clear every page's cached wildcards
+        bool restartRefractory = false;  ///< stamp every page's wildcard end time now
+    };
+
+    [[nodiscard]] constexpr WildcardCombatStep StepWildcardsForCombat(bool wasInCombat, bool inCombat) noexcept
+    {
+        if (inCombat) {
+            return { false, true, false };
+        }
+        return { true, false, wasInCombat };
+    }
+
     /// Whether the combat lock should treat the player as in combat. The game's
     /// combat flag can outlive the enemies by minutes (2026-10-11: Enemies
     /// One->None at 09:23:56, combat until 09:26:05), which would leave every

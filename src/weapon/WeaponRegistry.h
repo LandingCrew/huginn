@@ -2,6 +2,7 @@
 
 #include "WeaponData.h"
 #include "WeaponClassifier.h"
+#include "core/InstanceDetail.h"
 #include <shared_mutex>  // v0.7.12 - thread safety
 #include <atomic>        // M3 v0.7.21 - atomic m_isLoading
 #include <type_traits>   // For ForEach visitor pattern
@@ -122,6 +123,23 @@ namespace Huginn::Weapon
       /// about the stack (WheelSync::RequiresUniqueID, #74). From then on a
       /// record with uniqueID 0 is a stack that really has none.
       [[nodiscard]] bool HasInstanceDetail() const noexcept;
+
+      /// True once after the pass that gave HasInstanceDetail() its answer
+      /// for this load: the wheel-page filter's gate just opened, so the
+      /// caller forces a re-allocation (MarkPageDirty) even when the
+      /// reconcile changed nothing.
+      [[nodiscard]] bool TakeInstanceDetailArrived() noexcept
+      {
+      return m_detailArrived.exchange(false, std::memory_order_acq_rel);
+      }
+
+      /// The player equipped `formID` (a weapon): ask for a reconcile if the
+      /// registry holds a uniqueID-0 record of it. The first equip of a plain
+      /// stack gives it an ExtraUniqueID, and until a reconcile reads it the
+      /// stack stays off every wheel page (display/WheelUidFilter.h).
+      /// `uniqueID` is the equip event's (0 if it carried none): a stack the
+      /// registry already holds by that uniqueID needs nothing.
+      [[nodiscard]] bool NeedsReconcileForEquip(RE::FormID formID, uint16_t uniqueID) const;
 
       // =============================================================================
       // WEAPON ACCESSORS
@@ -522,10 +540,10 @@ namespace Huginn::Weapon
       std::atomic<bool> m_reconcileRequested{false};
 
       // The load generation of the last scan that read extra data
-      // (HasInstanceDetail). kNoDetail = none since construction or a
-      // degraded rebuild.
-      static constexpr uint32_t kNoDetail = UINT32_MAX;
-      std::atomic<uint32_t> m_detailGeneration{ kNoDetail };
-      void NoteInstanceDetail(uint32_t scanGeneration) noexcept;
+      // (HasInstanceDetail; core/InstanceDetail.h). kNone = none since
+      // construction or a degraded rebuild.
+      std::atomic<uint32_t> m_detailGeneration{ Core::InstanceDetail::kNone };
+      std::atomic<bool> m_detailArrived{ false };
+      void SetDetailStamp(uint32_t stamp) noexcept;
    };
 }
