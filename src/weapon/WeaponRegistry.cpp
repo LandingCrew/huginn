@@ -24,6 +24,13 @@ namespace Huginn::Weapon
       // RAII guard to ensure m_isLoading gets cleared even on exception
       Util::AtomicBoolGuard guard{ m_isLoading, false };
 
+      // Read before the scan, as ReconcileWeapons does: ScanPlayerWeapons
+      // asks IsExtraListStable() itself, and the answer only goes from false
+      // to true within one load generation, so "stable here" implies it read
+      // the extra lists.
+      const uint32_t scanGeneration = g_loadGeneration.load(std::memory_order_acquire);
+      const bool scanReadsExtraLists = Util::IsExtraListStable();
+
       // Scan BEFORE acquiring lock (SKSE API calls)
       // Note: ScanPlayerWeapons() reads extraLists only when they are safe to
       // read. On the load path they are not, so favorites/charge/instances are
@@ -112,7 +119,29 @@ namespace Huginn::Weapon
 
       logger::info("Weapon registry built: {} weapons, {} ammo types"sv,
       m_weapons.size(), m_ammo.size());
+
+      // The rebuild replaced every record: detailed only if this scan was.
+      if (scanReadsExtraLists) {
+      NoteInstanceDetail(scanGeneration);
+      } else {
+      m_detailGeneration.store(kNoDetail, std::memory_order_release);
+      }
       // m_isLoading cleared by LoadingGuard destructor
+   }
+
+   void WeaponRegistry::NoteInstanceDetail(uint32_t scanGeneration) noexcept
+   {
+      // Logged on the transition: the first detailed pass after each load.
+      if (m_detailGeneration.exchange(scanGeneration, std::memory_order_acq_rel) != scanGeneration) {
+      logger::debug("[WeaponRegistry] Stacks read with their extra data (load generation {}): "
+                     "uniqueIDs are real from here"sv, scanGeneration);
+      }
+   }
+
+   bool WeaponRegistry::HasInstanceDetail() const noexcept
+   {
+      return m_detailGeneration.load(std::memory_order_acquire) ==
+             g_loadGeneration.load(std::memory_order_acquire);
    }
 
    void WeaponRegistry::RefreshCharges()
@@ -367,7 +396,12 @@ namespace Huginn::Weapon
       size_t ammoRemoved = 0;
 
       // === WEAPONS + AMMO ===
-      // Check if safe to access extraLists (v0.7.9)
+      // Check if safe to access extraLists (v0.7.9). The load generation is
+      // read FIRST: a load landing between the two reads stamps the clock
+      // before it bumps the generation, so the worst case is an old
+      // generation recorded below, which HasInstanceDetail() reads as "not
+      // yet" -- never a degraded scan passed off as a detailed one.
+      const uint32_t scanGeneration = g_loadGeneration.load(std::memory_order_acquire);
       const bool safeToAccessExtraLists = Util::IsExtraListStable();
 
       auto* player = RE::PlayerCharacter::GetSingleton();
@@ -612,6 +646,11 @@ namespace Huginn::Weapon
       }
       }
       }  // end ReconcileWeapons::Apply zone
+
+      // Every record now carries the stack's real uniqueID (or none at all).
+      if (safeToAccessExtraLists) {
+      NoteInstanceDetail(scanGeneration);
+      }
 
       size_t totalChanges = weaponsAdded + weaponsRemoved + favoriteChanges + ammoAdded + ammoRemoved;
       if (totalChanges > 0) {

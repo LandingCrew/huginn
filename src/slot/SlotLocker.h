@@ -200,6 +200,14 @@ namespace Huginn::Slot
             /// test can substitute it.
             std::function<std::optional<Candidate::CandidateVariant>(RE::FormID formID, uint16_t uniqueID)> lookupItem;
 
+            /// A locked key's item that this page can no longer show -- a
+            /// weapon or armour with no uniqueID while Wheeler drives the
+            /// page's wheel (display/WheelUidFilter.h). Such a lock is released
+            /// at the start of the run, whatever kind it is, so the key fills
+            /// from this run's allocation (which left the item out) instead of
+            /// holding a tile the wheel shows blank. Empty = nothing is.
+            std::function<bool(const SlotAssignment&)> unshowable;
+
             /// Combat upsert inputs (core/CombatUpsert.h). The defaults (no
             /// grace, wheel closed, no holds) are what a test harness wants.
             bool wheelOpen = false;          ///< the Wheeler wheel is open: no upsert
@@ -239,14 +247,21 @@ namespace Huginn::Slot
 
         /// Tell the locker whether the player is in combat (every tick, before
         /// Update). Entering combat: every key on a normal lock becomes
-        /// combat-locked on its item (core::ConvertsAtCombatOnset; override and
-        /// Remembrance keys and an undo settle keep theirs), locks taken from
-        /// now on use fCombatLockDurationMs, and the next ApplyLocks locks every
-        /// other key that shows an item. Leaving it: combat locks fall back to
-        /// the normal timer counted from now (core/CombatLock.h). @return true
-        /// if that released a lock (normal locking off) -- the caller must
-        /// force a pipeline run.
+        /// combat-locked on its item (core::DecideCombatOnset; override and
+        /// Remembrance keys and an undo settle keep theirs), except a key
+        /// showing a wildcard, which is released for the fight-start re-score;
+        /// locks taken from now on use fCombatLockDurationMs (a wildcard's
+        /// never does), and the next ApplyLocks locks every other key that
+        /// shows an item. Leaving it: combat locks fall back to the normal
+        /// timer counted from now (core/CombatLock.h). @return true if that
+        /// released a lock (normal locking off, or a wildcard at onset) or a
+        /// wildcard is showing at onset -- the caller must force a pipeline run.
         [[nodiscard]] bool SetInCombat(bool inCombat);
+
+        /// The combat flag SetInCombat last saw: the lock's notion of combat
+        /// (CombatPresence-filtered). WildcardManager reads it so no wildcard
+        /// is placed while it is up (core::WildcardMayBePlaced).
+        [[nodiscard]] bool IsInCombat() const;
 
         /// Restart every lock's timer at the full duration, as if each key had
         /// just changed. Called when the Wheeler wheel closes: the widget is

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "IDisplayBackend.h"
+#include "learning/ScoredCandidate.h"
 
 #include <cstdint>
 #include <string>
@@ -25,6 +26,9 @@ namespace Huginn::Display
         std::vector<bool>        m_wildcardFlags;
         std::vector<uint16_t>    m_uniqueIDs;
         std::vector<std::string> m_subtexts;
+        // A page's candidates without the gear its wheel cannot show
+        // (WheelUidFilter.h), when any was left out. Same reuse as above.
+        Scoring::ScoredCandidateList m_pageCandidates;
     };
 
 }  // namespace Huginn::Display

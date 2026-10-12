@@ -879,6 +879,39 @@ detection range (about 2048 units): a distant archer or a circling dragon thaws
 the keys, and they lock again when it returns. Changing
 `fCombatLockDurationMs` mid-fight affects locks taken after the change.
 
+**Wildcards in combat** (0.23.40; `Core::DecideCombatOnset`, `LockForFill`,
+`CombatSweepLocks`, `WildcardMayBePlaced`). A wildcard is an exploration pick,
+and under the freeze it held its key all fight: a mage's never-equipped Iron
+Dagger, rolled at 08:55:51, was converted at onset (08:56:04) and combat-locked
+again when it came back (08:57:50, 2026-10-12). Now a key whose lock holds a
+wildcard is released at onset instead of converted (a Sticky activation lock or
+an undo settle on one keeps its own short timer), `SetInCombat` forces a run
+when one is on screen, a wildcard fill takes the normal lock and never the
+combat lock, the sweep skips a wildcard, and `WildcardManager` places none
+while the locker counts the player in combat (`SlotLocker::IsInCombat`, the
+`CombatPresence` flag, passed as `WildcardPage::inCombat`): it rolls none,
+swaps none into the ranking, and drops the page's cached ones. Out of combat
+wildcards are untouched.
+
+**Uid-less gear on a wheel page** (0.23.40; `src/core/WheelUidGate.h`,
+`src/display/WheelUidFilter.h`). Wheeler cannot show a weapon or armour with no
+ExtraUniqueID (`WheelSync::RequiresUniqueID`), and a plain stack never
+equipped, tempered or enchanted has none. While Wheeler is connected and the
+page has a wheel of ours, the page is allocated without those rows (the
+display page in `PipelineCoordinator::AllocateAndLock`, the others in
+`WheelerBackend::Push`), so the key takes the next item and the widget and the
+wheel agree. The gate waits for `WeaponRegistry::HasInstanceDetail()`: for
+about a second after a load every weapon reads uid 0 until the primed
+reconcile reads the extra lists, and filtering then would empty the page of
+weapons and bring them back. A lock on such an item (taken in that second, or
+before Wheeler connected) is released at the start of the run
+(`RunContext::unshowable`), and the wildcard roll skips such rows
+(`WildcardPage::hideUidlessGear`). The scored list itself is not filtered:
+locks, telemetry, `hg recs` and the selection log still see the item. An item
+equipped once gets its uniqueID, and is eligible from the weapon registry's
+next reconcile (30 s, or sooner on a departure). Without Wheeler nothing
+changes: `EquipManager` equips a uid-0 weapon by its base form.
+
 **Combat upsert** (`fCombatUpsertMarginMult`, default 3, 0 = off;
 `fCombatUpsertCooldownSec`, default 10, 0 = no limit; `src/core/CombatUpsert.h`,
 wired in `SlotLocker::ApplyCombatUpserts`, after dedup and before the combat

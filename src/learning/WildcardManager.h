@@ -37,6 +37,16 @@ namespace Huginn::Scoring
         size_t index = 0;          // pageIndex — keys the per-page wildcard cache
         size_t slotCount = 0;      // slots this page displays
         size_t wildcardSlots = 0;  // of those, how many set bWildcardsEnabled
+        // The locker counts the player in combat (SlotLocker::IsInCombat): no
+        // wildcard is placed, and the page's cached ones are dropped
+        // (core::WildcardMayBePlaced). An exploration pick held a key through
+        // a whole fight under the combat freeze (2026-10-12).
+        bool inCombat = false;
+        // The page feeds a Wheeler wheel, which cannot show a weapon or armour
+        // with no uniqueID (display/WheelUidFilter.h): such a row is never
+        // drawn, nor swapped up, as a wildcard -- the allocation will leave
+        // it out, and a wildcard nothing can show would hold the cache.
+        bool hideUidlessGear = false;
     };
 
     // =============================================================================
@@ -183,10 +193,12 @@ namespace Huginn::Scoring
                               const ScoredCandidateList& rankedCandidates,
                               size_t slotCount,
                               size_t wildcardSlots,
+                              bool hideUidlessGear,
                               std::chrono::steady_clock::time_point now);
         void ApplyWildcardsToRanking(ScoredCandidateList& rankedCandidates,
                                      const PageWildcards& cache,
-                                     size_t slotCount);
+                                     size_t slotCount,
+                                     bool hideUidlessGear);
 
         // Calculate wildcard probability for a given slot index
         [[nodiscard]] float GetProbabilityForSlot(size_t slotIndex, size_t slotCount) const;
@@ -200,7 +212,8 @@ namespace Huginn::Scoring
             const ScoredCandidateList& candidates,
             Candidate::SourceType sourceType,
             const std::vector<RE::FormID>& excludeFormIDs,
-            size_t minIndex);
+            size_t minIndex,
+            bool hideUidlessGear);
 
         // Settings
         bool m_enabled = true;

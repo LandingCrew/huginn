@@ -300,6 +300,15 @@ namespace Huginn::Candidate
         return GetBase(v).uniqueID;
     }
 
+    // Helper: Is this item identified per INSTANCE (ExtraUniqueID) rather than
+    // by its form? Weapons (staves included) and apparel -- the TESObjectWEAP
+    // and TESObjectARMO candidates, which is exactly the set
+    // Wheeler::WheelSync::RequiresUniqueID refuses with uniqueID 0. Everything
+    // else is the form alone.
+    [[nodiscard]] inline bool IsInstanceItem(const CandidateVariant& v) noexcept {
+        return std::holds_alternative<WeaponCandidate>(v) || std::holds_alternative<ApparelCandidate>(v);
+    }
+
     // Helper: Get SourceType from variant
     [[nodiscard]] inline SourceType GetSourceType(const CandidateVariant& v) noexcept {
         return GetBase(v).sourceType;

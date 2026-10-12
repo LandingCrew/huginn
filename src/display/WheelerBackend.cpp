@@ -14,6 +14,7 @@
 #include "wheeler/WheelerClient.h"
 #include "wheeler/WheelerSettings.h"
 #include "wheeler/WheelSync.h"   // RequiresUniqueID - what Wheeler will refuse
+#include "WheelUidFilter.h"
 
 namespace Huginn::Display
 {
@@ -198,9 +199,13 @@ namespace Huginn::Display
             } else {
                 // A page the player is not viewing: allocated here, on the
                 // push, inside Display::Wheeler's time (Tracy, 2026-10-09).
+                // Without the weapons and armour this page's wheel cannot
+                // show (display/WheelUidFilter.h), like the current page.
                 Huginn_ZONE_NAMED("Wheeler::AllocateOtherPage");
+                const auto& pageCandidates = CandidatesForWheelPage(page, HidesUidlessGear(page),
+                    ctx.scoredCandidates, m_pageCandidates);
                 pageAssignments = slotAllocator.AllocateSlotsForPage(
-                    page, ctx.scoredCandidates, ctx.overrides, ctx.playerState, ctx.worldState);
+                    page, pageCandidates, ctx.overrides, ctx.playerState, ctx.worldState);
             }
 
             // Populate subtext labels using priority order:
@@ -306,8 +311,15 @@ namespace Huginn::Display
                 // Offering it anyway was not harmless. Each one burned the #74
                 // defer window, then three rejects, then a slot clear -- API
                 // calls and log lines spent to arrive at the blank slot we can
-                // simply push. The widget still lists the item; only the wheel
-                // skips it, because only the wheel cannot draw it.
+                // simply push.
+                //
+                // Since 0.23.40 the allocation keeps such items off a page
+                // with a wheel (WheelUidFilter.h), so the widget and the wheel
+                // agree and this blank is a safety net. It is still reachable:
+                // in the second after a load every weapon reads uniqueID 0 and
+                // the filter waits for the registry (a real uniqueID arrives
+                // and #74 defers it); and a lock or an urgent override can
+                // carry an item past the allocation for one run.
                 if (formID != 0 && uid == 0 &&
                     Wheeler::WheelSync::RequiresUniqueID(formID)) {
                     logger::trace("[WheelerBackend] Page {} slot {}: {:08X} has no uniqueID - "

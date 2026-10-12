@@ -115,6 +115,14 @@ namespace Huginn::Weapon
       return m_reconcileRequested.exchange(false, std::memory_order_relaxed);
       }
 
+      /// True once a scan that read the inventory's extra data has run since
+      /// the last game load (g_loadGeneration). Until then -- about a second
+      /// after every load, until the primed reconcile -- every weapon record
+      /// is the degraded one with uniqueID 0, so "uniqueID 0" says nothing
+      /// about the stack (WheelSync::RequiresUniqueID, #74). From then on a
+      /// record with uniqueID 0 is a stack that really has none.
+      [[nodiscard]] bool HasInstanceDetail() const noexcept;
+
       // =============================================================================
       // WEAPON ACCESSORS
       // =============================================================================
@@ -512,5 +520,12 @@ namespace Huginn::Weapon
 
       // Set from the game's event thread (RequestReconcile), taken on the update thread
       std::atomic<bool> m_reconcileRequested{false};
+
+      // The load generation of the last scan that read extra data
+      // (HasInstanceDetail). kNoDetail = none since construction or a
+      // degraded rebuild.
+      static constexpr uint32_t kNoDetail = UINT32_MAX;
+      std::atomic<uint32_t> m_detailGeneration{ kNoDetail };
+      void NoteInstanceDetail(uint32_t scanGeneration) noexcept;
    };
 }

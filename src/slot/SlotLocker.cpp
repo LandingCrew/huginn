@@ -203,28 +203,51 @@ namespace Huginn::Slot
             // a Sticky activation lock keeps its 10 s (its item may be the
             // potion just drunk to the last, which nothing would free later).
             // Unlocked keys are locked by the sweep at the end of ApplyLocks.
+            //
+            // A wildcard is not converted: it is released, so the fight-start
+            // re-score (which places no wildcard in combat) gives the key a
+            // ranked item. Converting it held an exploration pick -- a dagger
+            // on a mage's page -- for the whole fight (2026-10-12 08:56:04).
+            // Whatever the combat setting: even with fCombatLockDurationMs = 0
+            // a wildcard has no business on a key once the fight starts.
             const auto d = Core::EffectiveLockDuration(true, m_config.lockDurationMs, m_config.combatLockDurationMs);
             size_t converted = 0;
-            if (d.combat) {
-                for (auto& slot : m_lockedSlots) {
-                    if (!Core::ConvertsAtCombatOnset(slot.isLocked, slot.combatLock, slot.assignment.IsPinned(),
-                            slot.settling, slot.isActivationLock, slot.assignment.IsEmpty())) {
-                        continue;
-                    }
-                    // lockedAt stays: the lock's age still counts toward
-                    // fMinLockDurationMs.
-                    slot.combatLock = true;
-                    slot.frozen = d.frozen;
-                    slot.remainingMs = d.ms;
-                    slot.totalDurationMs = d.ms;
-                    slot.minAgeWakeDone = false;
-                    ++converted;
+            size_t released = 0;
+            bool wildcardShown = false;
+            for (size_t i = 0; i < m_lockedSlots.size(); ++i) {
+                auto& slot = m_lockedSlots[i];
+                wildcardShown = wildcardShown || (!slot.shownEmpty && slot.shownWildcard);
+                const auto action = Core::DecideCombatOnset(slot.isLocked, slot.combatLock,
+                    slot.assignment.IsPinned(), slot.settling, slot.isActivationLock, slot.assignment.IsEmpty(),
+                    slot.assignment.IsWildcard());
+                if (action == Core::CombatOnsetAction::Release) {
+                    spdlog::debug("[SlotLocker] Slot {} lock released at combat onset: '{}' is a wildcard",
+                        i, slot.assignment.name);
+                    slot.isLocked = false;
+                    slot.remainingMs = 0.0f;
+                    slot.releaseCause = Telemetry::SlotChange::Expired;
+                    ++released;
+                    continue;
                 }
+                if (action != Core::CombatOnsetAction::Convert || !d.combat) {
+                    continue;
+                }
+                // lockedAt stays: the lock's age still counts toward
+                // fMinLockDurationMs.
+                slot.combatLock = true;
+                slot.frozen = d.frozen;
+                slot.remainingMs = d.ms;
+                slot.totalDurationMs = d.ms;
+                slot.minAgeWakeDone = false;
+                ++converted;
             }
-            spdlog::debug("[SlotLocker] Combat: keys lock {} while it lasts; {} running lock(s) now combat locks",
+            spdlog::debug("[SlotLocker] Combat: keys lock {} while it lasts; {} running lock(s) now combat locks, "
+                "{} wildcard lock(s) released",
                 m_config.combatLockDurationMs < 0.0f ? std::string("until it ends")
-                : std::format("for {:.0f}ms", m_config.combatLockDurationMs), converted);
-            return false;
+                : std::format("for {:.0f}ms", m_config.combatLockDurationMs), converted, released);
+            // A wildcard on screen, locked or not, is replaced by the next run:
+            // make sure there is one.
+            return released > 0 || wildcardShown;
         }
         // Combat over: no re-shuffle on the last kill. Each combat lock falls
         // back to the normal timer counted from now (or what it had left, if
@@ -256,6 +279,12 @@ namespace Huginn::Slot
         return released;
     }
 
+    bool SlotLocker::IsInCombat() const
+    {
+        std::lock_guard<std::mutex> lock(m_mutex);
+        return m_inCombat;
+    }
+
     void SlotLocker::RestartLocks()
     {
         std::lock_guard<std::mutex> lock(m_mutex);
@@ -273,7 +302,9 @@ namespace Huginn::Slot
 
     void SlotLocker::LockNow(LockedSlot& slot, const SlotAssignment& assignment)
     {
-        const auto d = Core::EffectiveLockDuration(m_inCombat, m_config.lockDurationMs, m_config.combatLockDurationMs);
+        // A wildcard never takes the combat lock (core::LockForFill).
+        const auto d = Core::LockForFill(m_inCombat, assignment.IsWildcard(), m_config.lockDurationMs,
+            m_config.combatLockDurationMs);
         slot.assignment = assignment;
         TruncateCandidateViews(slot.assignment);
         if (!Core::LockingEnabled(d)) {
@@ -310,6 +341,29 @@ namespace Huginn::Slot
         std::array<Telemetry::SlotChangeEvent, MAX_SLOTS> changes{};
         size_t changeCount = 0;
         result.reserve(newAssignments.size());
+
+        // A locked item this page can no longer show (RunContext::unshowable:
+        // a uid-less weapon while Wheeler drives the page). The allocation
+        // already left it out; the lock is all that keeps it on the key, as a
+        // blank wheel tile. Taken before every other rule, combat lock
+        // included, so this run fills the key.
+        if (run.unshowable) {
+            for (size_t i = 0; i < std::min(newAssignments.size(), MAX_SLOTS); ++i) {
+                auto& slot = m_lockedSlots[i];
+                if (!slot.isLocked || slot.assignment.IsEmpty() || !run.unshowable(slot.assignment)) {
+                    continue;
+                }
+                spdlog::debug("[SlotLocker] Slot {} lock released: '{}' ({:08X}) cannot be shown on this page's wheel",
+                    i, slot.assignment.name, slot.assignment.formID);
+                slot.isLocked = false;
+                slot.remainingMs = 0.0f;
+                slot.combatLock = false;
+                slot.frozen = false;
+                slot.settling = false;
+                slot.isActivationLock = false;
+                slot.releaseCause = Telemetry::SlotChange::Used;
+            }
+        }
 
         // A combat-locked key whose item stopped being usable without an
         // inventory event: a spell or shout no longer known, or an item now
@@ -500,16 +554,19 @@ namespace Huginn::Slot
             // The first fill after an undo settle locks even if it is the same
             // item (core/UndoSettle.h): one change after an undo, then a lock.
             const bool afterSettle = std::exchange(lockedSlot.lockNextFill, false);
+            // A wildcard fill takes the normal lock even in combat.
+            const auto fillSpec = Core::LockForFill(m_inCombat, newAssign.IsWildcard(), m_config.lockDurationMs,
+                m_config.combatLockDurationMs);
             if (Core::LockThisFill(ShouldLock(lockedSlot.assignment, newAssign), afterSettle,
-                    newAssign.IsEmpty(), Core::LockingEnabled(lockSpec))) {
+                    newAssign.IsEmpty(), Core::LockingEnabled(fillSpec))) {
                 // Lock the new assignment
                 LockNow(lockedSlot, newAssign);
-                if (lockSpec.frozen) {
+                if (fillSpec.frozen) {
                     spdlog::debug("[SlotLocker] Slot {} locked until combat ends: {} ({:08X})",
                         i, newAssign.name, newAssign.formID);
                 } else {
                     spdlog::debug("[SlotLocker] Slot {} locked for {:.0f}ms: {} ({:08X})",
-                        i, lockSpec.ms, newAssign.name, newAssign.formID);
+                        i, fillSpec.ms, newAssign.name, newAssign.formID);
                 }
             } else {
                 // No lock needed - just track the assignment for comparison next frame
@@ -549,10 +606,12 @@ namespace Huginn::Slot
         // the paths above left unlocked. Otherwise such a key stays open to
         // every challenger for the whole fight. Empty keys stay unlocked and
         // fill normally.
+        // Not a wildcard (core::CombatSweepLocks): none is placed in combat,
+        // and one that got through must not hold its key all fight.
         if (m_inCombat && lockSpec.combat) {
             for (size_t i = 0; i < result.size() && i < MAX_SLOTS; ++i) {
                 auto& slot = m_lockedSlots[i];
-                if (result[i].IsEmpty() || slot.isLocked) continue;
+                if (!Core::CombatSweepLocks(result[i].IsEmpty(), slot.isLocked, result[i].IsWildcard())) continue;
                 LockNow(slot, result[i]);
                 slot.previousFormID = slot.assignment.formID;
                 slot.hadContent = true;

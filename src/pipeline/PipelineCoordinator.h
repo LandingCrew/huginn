@@ -102,6 +102,14 @@ namespace Huginn::Pipeline
         // description of the page — see Scoring::WildcardPage.
         size_t displayWildcardSlots = 0;
         std::string displayPageName;
+        // The display page feeds a Wheeler wheel, so weapons and armour with
+        // no uniqueID stay off it this tick (display/WheelUidFilter.h). Read
+        // once, in ScoreCandidates, so the wildcard roll, the allocation and
+        // the lock check agree.
+        bool hideUidlessGear = false;
+        // The display page's candidates without that gear, when any was left
+        // out (CandidatesForWheelPage). Capacity kept across ticks.
+        Scoring::ScoredCandidateList pageCandidatesScratch;
 
         // R4: every eligible candidate of this run (no floor), copied out for
         // the selection log v3. A read of what ScoreCandidates produced; nothing
@@ -140,6 +148,8 @@ namespace Huginn::Pipeline
             displaySlotCount = 0;
             displayWildcardSlots = 0;
             displayPageName.clear();
+            hideUidlessGear = false;
+            pageCandidatesScratch.clear();
             eligible.clear();
         }
     };

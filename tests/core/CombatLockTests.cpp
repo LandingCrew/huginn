@@ -224,3 +224,74 @@ TEST_CASE("combat lock: at onset the exceptions keep what they have")
     CHECK_FALSE(ConvertsAtCombatOnset(true, false, false, false, false, true));    // nothing on it
     CHECK_FALSE(ConvertsAtCombatOnset(true, false, false, false, true, false));    // Sticky activation lock: keeps its 10 s
 }
+
+// -----------------------------------------------------------------------------
+// Wildcards (0.23.40): 2026-10-12, a wildcard Iron Dagger on a mage's page was
+// converted to a combat lock at onset (08:56:04) and held key 4 all fight.
+// -----------------------------------------------------------------------------
+
+TEST_CASE("combat lock: at onset a key showing a wildcard is released, not converted")
+{
+    // locked, alreadyCombat, holdsPinned, settling, activationLock, empty, wildcard
+    CHECK(DecideCombatOnset(true, false, false, false, false, false, true) == CombatOnsetAction::Release);
+    // The same key with a ranked item is converted, as before.
+    CHECK(DecideCombatOnset(true, false, false, false, false, false, false) == CombatOnsetAction::Convert);
+}
+
+TEST_CASE("combat lock: at onset the non-wildcard decision is ConvertsAtCombatOnset's")
+{
+    // Every combination of the six old inputs, with wildcard = false.
+    for (int bits = 0; bits < 64; ++bits) {
+        const bool locked = (bits & 1) != 0, already = (bits & 2) != 0, pinned = (bits & 4) != 0,
+                   settling = (bits & 8) != 0, activation = (bits & 16) != 0, empty = (bits & 32) != 0;
+        const auto action = DecideCombatOnset(locked, already, pinned, settling, activation, empty, false);
+        CHECK(action != CombatOnsetAction::Release);
+        CHECK((action == CombatOnsetAction::Convert) ==
+              ConvertsAtCombatOnset(locked, already, pinned, settling, activation, empty));
+    }
+}
+
+TEST_CASE("combat lock: a wildcard's own short lock (Sticky, undo settle) is kept at onset")
+{
+    CHECK(DecideCombatOnset(true, false, false, false, true, false, true) == CombatOnsetAction::Keep);   // Sticky
+    CHECK(DecideCombatOnset(true, false, false, true, false, false, true) == CombatOnsetAction::Keep);   // settle
+    CHECK(DecideCombatOnset(false, false, false, false, false, false, true) == CombatOnsetAction::Keep); // unlocked
+    CHECK(DecideCombatOnset(true, false, false, false, false, true, true) == CombatOnsetAction::Keep);   // empty
+}
+
+TEST_CASE("combat lock: a wildcard fill never takes the combat lock")
+{
+    // Freeze configured: a ranked fill in combat freezes, a wildcard gets the normal 3 s.
+    const auto ranked = LockForFill(true, false, 3000.0f, kCombatLockFreeze);
+    CHECK(ranked.frozen);
+    CHECK(ranked.combat);
+    const auto wild = LockForFill(true, true, 3000.0f, kCombatLockFreeze);
+    CHECK_FALSE(wild.frozen);
+    CHECK_FALSE(wild.combat);
+    CHECK(wild.ms == 3000.0f);
+    // A timed combat lock likewise.
+    CHECK_FALSE(LockForFill(true, true, 3000.0f, 20000.0f).combat);
+    // Out of combat nothing changes for either.
+    const auto outWild = LockForFill(false, true, 3000.0f, kCombatLockFreeze);
+    const auto outRanked = LockForFill(false, false, 3000.0f, kCombatLockFreeze);
+    CHECK(outWild.ms == outRanked.ms);
+    CHECK(outWild.frozen == outRanked.frozen);
+    CHECK(outWild.combat == outRanked.combat);
+    // With normal locking off, a wildcard in combat is not locked at all.
+    CHECK_FALSE(LockingEnabled(LockForFill(true, true, 0.0f, kCombatLockFreeze)));
+}
+
+TEST_CASE("combat lock: the sweep locks every shown unlocked key but a wildcard")
+{
+    // shownEmpty, alreadyLocked, wildcard
+    CHECK(CombatSweepLocks(false, false, false));
+    CHECK_FALSE(CombatSweepLocks(false, false, true));
+    CHECK_FALSE(CombatSweepLocks(true, false, false));
+    CHECK_FALSE(CombatSweepLocks(false, true, false));
+}
+
+TEST_CASE("combat lock: a wildcard may be placed out of combat only")
+{
+    CHECK(WildcardMayBePlaced(false));
+    CHECK_FALSE(WildcardMayBePlaced(true));
+}
