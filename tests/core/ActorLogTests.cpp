@@ -8,6 +8,7 @@
 #include <map>
 #include <ostream>
 #include <string>
+#include <utility>
 #include <vector>
 
 using namespace Huginn::Core::ActorLog;
@@ -254,9 +255,17 @@ TEST_CASE("actor log: identity and transition lines are capped per fight; the su
     REQUIRE(lines.size() == 1);
     CHECK(lines[0].ends_with("target switches=0 type flips=0, 9 lines suppressed"));
 
-    // The next fight starts with a fresh budget.
-    lines = f.Poll(10.0, true, { Obs(1, true, TargetType::Humanoid) });
-    CHECK(lines.size() == 2);
+    // The next fight starts with a fresh budget. Actor 1's identity line went
+    // out, so it is "again"; actor 4's was held back by the cap, so it was
+    // never marked as met and gets its identity line now.
+    lines = f.Poll(10.0, true, { Obs(1, true, TargetType::Humanoid), Obs(4, false, TargetType::Humanoid) });
+    REQUIRE(lines.size() == 3);
+    CHECK(lines[1].starts_with("[Actors] again 00000001 "));
+    CHECK(lines[2].starts_with("[Actors] +00000004 "));
+    // ... and the held-back count did not carry into this fight's summary.
+    lines = f.Poll(20.0, false, {});
+    REQUIRE(lines.size() == 1);
+    CHECK(lines[0].ends_with("target switches=0 type flips=0"));
 }
 
 namespace
@@ -329,32 +338,142 @@ TEST_CASE("target watch: a switch names the previous target; losing it says none
     CHECK_FALSE(w.Observe(6.0, 0, TargetType::None));
 }
 
-TEST_CASE("target watch: A/B/A/B at the poll rate logs nothing, and the next line counts the brief switches")
+TEST_CASE("target watch: one-poll excursions from the logged pick are quiet, and the next line counts them")
 {
     TargetWatch w;
     REQUIRE(PollUntilDue(w, 0.0, 0xA1, TargetType::Humanoid) > 0.0);
     (void)w.Commit(Info(0xA1, "Bandit", TargetType::Humanoid));
 
-    // Two bandits at about the same range: the closest flips every poll.
+    // B for one poll, then A long enough to hold again (0.3 s), five times.
     double t = 1.0;
-    for (int i = 0; i < 20; ++i, t += 0.1) {
-        CHECK_FALSE(w.Observe(t, i % 2 ? 0xA1u : 0xB2u, TargetType::Humanoid));
+    for (int k = 0; k < 5; ++k) {
+        CHECK_FALSE(w.Observe(t, 0xB2, TargetType::Humanoid));
+        t += 0.1;
+        for (int i = 0; i < 4; ++i, t += 0.1) CHECK_FALSE(w.Observe(t, 0xA1, TargetType::Humanoid));
     }
-    CHECK(w.PendingBrief() == 10);
+    CHECK(w.PendingBrief() == 5);
     // A third pick replacing a pending one before it held is brief too.
     CHECK_FALSE(w.Observe(t, 0xB2, TargetType::Humanoid));
     CHECK_FALSE(w.Observe(t + 0.1, 0xC3, TargetType::Beast));
-    CHECK(w.PendingBrief() == 11);
+    CHECK(w.PendingBrief() == 6);
     // C3 holds: logged, with the count, which then resets.
     REQUIRE(PollUntilDue(w, t + 0.2, 0xC3, TargetType::Beast) > 0.0);
-    CHECK(w.Commit(Info(0xC3, "Wolf", TargetType::Beast)).ends_with(" (was 000000A1 'Bandit' type=Humanoid) (+11 brief switches)"));
+    CHECK(w.Commit(Info(0xC3, "Wolf", TargetType::Beast)).ends_with(" (was 000000A1 'Bandit' type=Humanoid) (+6 brief switches)"));
     CHECK(w.PendingBrief() == 0);
 
     // One brief switch reads singular.
     CHECK_FALSE(w.Observe(20.0, 0xA1, TargetType::Humanoid));
-    CHECK_FALSE(w.Observe(20.1, 0xC3, TargetType::Beast));
+    for (double u = 20.1; u < 20.55; u += 0.1) CHECK_FALSE(w.Observe(u, 0xC3, TargetType::Beast));
     REQUIRE(PollUntilDue(w, 21.0, 0, TargetType::None) > 0.0);
     CHECK(w.Commit(TargetInfo{}).ends_with(" (+1 brief switch)"));
+}
+
+namespace
+{
+    // Feeds `pick(i)` at 10 Hz from `t0` for `seconds`; returns the times a
+    // Commit was asked for (and commits each, so the watch moves on).
+    template <class PickFn>
+    std::vector<double> Drive(TargetWatch& w, double t0, double seconds, PickFn&& pick)
+    {
+        std::vector<double> commits;
+        const int polls = static_cast<int>(seconds * 10.0 + 0.5);
+        for (int i = 0; i < polls; ++i) {
+            const double t = t0 + i * 0.1;
+            const auto [ref, type] = pick(i);
+            if (w.Observe(t, ref, type)) {
+                commits.push_back(t);
+                (void)w.Commit(ref ? Info(ref, "X", type) : TargetInfo{});
+            }
+        }
+        return commits;
+    }
+}
+
+TEST_CASE("target watch: the ceiling -- a lasting change through flicker is logged within CEILING_SEC")
+{
+    using Pick = std::pair<std::uint32_t, TargetType>;
+    const Pick a{ 0xA1, TargetType::Humanoid };
+    const Pick b{ 0xB2, TargetType::Daedra };
+    const Pick none{ 0, TargetType::None };
+
+    SUBCASE("A/B every poll, from none")
+    {
+        TargetWatch w;
+        const auto commits = Drive(w, 0.0, 20.0, [&](int i) { return i % 2 ? b : a; });
+        REQUIRE_FALSE(commits.empty());
+        CHECK(commits.front() <= TargetWatch::CEILING_SEC + 0.05);
+        // Rate-capped: at most about one line per ceiling window.
+        CHECK(commits.size() <= 21);
+        CHECK(w.Current().refID != 0);   // never "none" all fight
+    }
+    SUBCASE("A,A,B,B runs, from none")
+    {
+        TargetWatch w;
+        const auto commits = Drive(w, 0.0, 20.0, [&](int i) { return (i / 2) % 2 ? b : a; });
+        REQUIRE_FALSE(commits.empty());
+        CHECK(commits.front() <= TargetWatch::CEILING_SEC + 0.05);
+        CHECK(commits.size() <= 21);
+    }
+    SUBCASE("an edge-of-range hostile: there two polls, gone one")
+    {
+        TargetWatch w;
+        const auto commits = Drive(w, 0.0, 30.0, [&](int i) { return i % 3 == 2 ? none : a; });
+        REQUIRE_FALSE(commits.empty());
+        CHECK(commits.front() <= TargetWatch::CEILING_SEC + 0.15);   // the first poll with A past the ceiling
+        CHECK(commits.size() <= 31);
+    }
+    SUBCASE("a stable new pick still logs at the dwell, not the ceiling")
+    {
+        TargetWatch w;
+        const auto commits = Drive(w, 0.0, 2.0, [&](int) { return a; });
+        REQUIRE(commits.size() == 1);
+        CHECK(commits.front() == doctest::Approx(0.3));
+    }
+}
+
+TEST_CASE("target watch: the dwell boundary is DWELL_SEC (with the poll tolerance)")
+{
+    TargetWatch w;
+    CHECK_FALSE(w.Observe(1.0, 0xA1, TargetType::Humanoid));
+    CHECK_FALSE(w.Observe(1.0 + TargetWatch::DWELL_SEC - 0.05, 0xA1, TargetType::Humanoid));
+    CHECK(w.Observe(1.0 + TargetWatch::DWELL_SEC, 0xA1, TargetType::Humanoid));
+}
+
+TEST_CASE("target watch: the candidate is actor AND type -- a type change restarts the dwell")
+{
+    TargetWatch w;
+    CHECK_FALSE(w.Observe(1.0, 0xA1, TargetType::Humanoid));
+    CHECK_FALSE(w.Observe(1.1, 0xA1, TargetType::Daedra));   // a new candidate, the first one brief
+    CHECK(w.PendingBrief() == 1);
+    CHECK_FALSE(w.Observe(1.3, 0xA1, TargetType::Daedra));   // held 0.2 s, not 0.4
+    CHECK(w.Observe(1.4, 0xA1, TargetType::Daedra));
+}
+
+TEST_CASE("target watch: Reset drops a pending candidate and the ceiling clock")
+{
+    TargetWatch w;
+    CHECK_FALSE(w.Observe(1.0, 0xA1, TargetType::Humanoid));
+    CHECK_FALSE(w.Observe(1.1, 0xA1, TargetType::Humanoid));
+    w.Reset();
+    CHECK_FALSE(w.Observe(1.3, 0xA1, TargetType::Humanoid));   // a fresh candidate, not 0.3 s old
+    CHECK_FALSE(w.Observe(1.5, 0xA1, TargetType::Humanoid));
+    CHECK(w.Observe(1.6, 0xA1, TargetType::Humanoid));
+}
+
+TEST_CASE("target watch: a brief count older than BRIEF_STALE_SEC does not ride on a later line")
+{
+    TargetWatch w;
+    REQUIRE(PollUntilDue(w, 0.0, 0xA1, TargetType::Humanoid) > 0.0);
+    (void)w.Commit(Info(0xA1, "Bandit", TargetType::Humanoid));
+    CHECK_FALSE(w.Observe(1.0, 0xB2, TargetType::Humanoid));
+    for (double u = 1.1; u < 1.55; u += 0.1) CHECK_FALSE(w.Observe(u, 0xA1, TargetType::Humanoid));
+    CHECK(w.PendingBrief() == 1);
+
+    // Minutes later, a real change: the old flicker is not on its line.
+    REQUIRE(PollUntilDue(w, 120.0, 0xC3, TargetType::Beast) > 0.0);
+    CHECK(w.PendingBrief() == 0);
+    const auto line = w.Commit(Info(0xC3, "Wolf", TargetType::Beast));
+    CHECK(line.ends_with(" (was 000000A1 'Bandit' type=Humanoid)"));
 }
 
 TEST_CASE("target watch: a type flicker shorter than the dwell is not logged; Reset forgets everything")

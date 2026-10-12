@@ -8,8 +8,9 @@
 // [Target]  One line whenever the SCORING target (TargetCollection::
 //           ScoringTargetType's pick: the living hostile primary, else the
 //           closest living hostile) changes actor or classified type and the
-//           new pick holds TargetWatch::DWELL_SEC; shorter ones are counted on
-//           the next line. A type change on the same actor says so -- that is
+//           new pick holds TargetWatch::DWELL_SEC (or the change has lasted
+//           CEILING_SEC through flicker); shorter ones are counted on the next
+//           line. A type change on the same actor says so -- that is
 //           a classifier flicker, not a new enemy. In and out of fights.
 //
 // [Actors]  During a fight (the published combat flag), over the actors the
@@ -202,8 +203,11 @@ namespace Huginn::Core::ActorLog
                     a.everHostile = o.hostile;
                     a.died = o.dead;
                     a.stamp = pollStamp_;
-                    const bool metBefore = seen_.Touch(o.refID);
-                    Emit(metBefore ? AgainLine(o, a.id) : IdentityLine(o, a.id), out);
+                    // Met this session only once its identity line has been
+                    // shown: one the cap held back comes out in a later fight.
+                    const bool metBefore = seen_.Contains(o.refID);
+                    const bool shown = Emit(metBefore ? AgainLine(o, a.id) : IdentityLine(o, a.id), out);
+                    if (shown || metBefore) seen_.Touch(o.refID);
                     actors_.emplace(o.refID, std::move(a));
                     continue;
                 }
@@ -280,17 +284,19 @@ namespace Huginn::Core::ActorLog
         }
 
         // Every identity and transition line goes through here: the per-fight cap.
-        void Emit(std::string line, std::vector<std::string>& out)
+        // True when the line went out (false: held back by the cap).
+        bool Emit(std::string line, std::vector<std::string>& out)
         {
             if (linesThisFight_ < config_.lineCap) {
                 ++linesThisFight_;
                 out.push_back(std::move(line));
-                return;
+                return true;
             }
             if (suppressed_++ == 0) {
                 out.push_back(std::format("[Actors] cap reached ({} lines this fight), further lines suppressed",
                     config_.lineCap));
             }
+            return false;
         }
 
         void Diff(Actor& a, const Observation& o, std::vector<std::string>& out)
@@ -394,34 +400,58 @@ namespace Huginn::Core::ActorLog
     // "(+4 brief switches)". A type change on the same actor waits the same
     // way. The per-fight summary ([Actors] Tracker) counts every switch and
     // flip, brief or not.
+    //
+    // The dwell alone could hold a lasting change back forever: every new
+    // candidate restarts its clock, so A/B flicker -- or a hostile at the edge
+    // of range, there two polls and gone one -- never commits, and the line
+    // kept saying "none" all fight. So a second clock runs from the first
+    // poll the pick differs from the logged one; after CEILING_SEC the pick
+    // of that moment is logged whatever it is. A return to the logged pick
+    // stops that clock only once it has held DWELL_SEC itself, so a one-poll
+    // excursion is quiet and a persistent flicker logs at most about one
+    // line per CEILING_SEC. A brief count older than BRIEF_STALE_SEC is
+    // dropped, so flicker from minutes ago never rides on a new line.
     class TargetWatch
     {
     public:
         static constexpr double DWELL_SEC = 0.3;
+        static constexpr double CEILING_SEC = 1.0;
+        static constexpr double BRIEF_STALE_SEC = 5.0;
 
         /// One target poll's pick. True when it differs from the last logged
         /// one and has held DWELL_SEC: the caller builds a TargetInfo and
         /// calls Commit. Cheap otherwise.
         [[nodiscard]] bool Observe(double nowSec, std::uint32_t refID, TargetType type) noexcept
         {
+            if (brief_ > 0 && nowSec - lastBriefSec_ > BRIEF_STALE_SEC) {
+                brief_ = 0;
+            }
             if (refID == current_.refID && type == current_.type) {
                 // Back to the logged pick: any candidate in between was brief.
                 if (hasCandidate_) {
-                    ++brief_;
+                    CountBrief(nowSec);
                     hasCandidate_ = false;
+                }
+                // The ceiling clock stops only once the logged pick holds again.
+                if (sameSince_ < 0.0) sameSince_ = nowSec;
+                if (differsSince_ >= 0.0 && nowSec - sameSince_ >= DWELL_SEC - kPollJitterSec) {
+                    differsSince_ = -1.0;
                 }
                 return false;
             }
+            sameSince_ = -1.0;
+            if (differsSince_ < 0.0) differsSince_ = nowSec;
             if (hasCandidate_ && refID == candidateRef_ && type == candidateType_) {
                 // A small tolerance: polls land at ~100 ms, not exactly on it.
-                return nowSec - candidateSince_ >= DWELL_SEC - kPollJitterSec;
+                if (nowSec - candidateSince_ >= DWELL_SEC - kPollJitterSec) return true;
+            } else {
+                if (hasCandidate_) CountBrief(nowSec);   // replaced before it held
+                hasCandidate_ = true;
+                candidateRef_ = refID;
+                candidateType_ = type;
+                candidateSince_ = nowSec;
             }
-            if (hasCandidate_) ++brief_;   // replaced before it held
-            hasCandidate_ = true;
-            candidateRef_ = refID;
-            candidateType_ = type;
-            candidateSince_ = nowSec;
-            return false;
+            return nowSec - differsSince_ >= CEILING_SEC - kPollJitterSec;
         }
 
         /// Take `next` as the logged scoring target and return its [Target] line.
@@ -449,6 +479,8 @@ namespace Huginn::Core::ActorLog
                 brief_ = 0;
             }
             hasCandidate_ = false;
+            differsSince_ = -1.0;
+            sameSince_ = -1.0;
             current_ = std::move(next);
             return line;
         }
@@ -459,11 +491,19 @@ namespace Huginn::Core::ActorLog
         {
             current_ = TargetInfo{};
             hasCandidate_ = false;
+            differsSince_ = -1.0;
+            sameSince_ = -1.0;
             brief_ = 0;
         }
 
     private:
         static constexpr double kPollJitterSec = 0.02;
+
+        void CountBrief(double nowSec) noexcept
+        {
+            ++brief_;
+            lastBriefSec_ = nowSec;
+        }
 
         static std::string Short(const TargetInfo& t)
         {
@@ -475,6 +515,9 @@ namespace Huginn::Core::ActorLog
         std::uint32_t candidateRef_ = 0;
         TargetType candidateType_ = TargetType::None;
         double candidateSince_ = 0.0;
+        double differsSince_ = -1.0;   // first poll the pick differed from current_; < 0 = it does not
+        double sameSince_ = -1.0;      // first poll back on current_; < 0 = not on it
         std::size_t brief_ = 0;
+        double lastBriefSec_ = 0.0;
     };
 }

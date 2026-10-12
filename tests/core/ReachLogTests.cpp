@@ -218,4 +218,15 @@ TEST_CASE("reach: is the piece just put on enchanted?")
         g.enchantedStacks = 0;                                    // nothing enchanted at all
         CHECK(ClassifyEnchant(g) == Enchant::No);
     }
+    SUBCASE("more copies in stacks than the count reads (duplicate entries): still all enchanted")
+    {
+        // GetItemCountSafe keeps the first changes entry's delta; the walk
+        // sums every entry's stacks, so looseCopies can go negative.
+        StackFacts g;
+        g.enchantedStacks = 2;
+        g.looseCopies = -1;
+        CHECK(ClassifyEnchant(g) == Enchant::Yes);
+        g.plainStacks = 1;                                        // a plain stack among them: still ambiguous
+        CHECK(ClassifyEnchant(g) == Enchant::Ambiguous);
+    }
 }
