@@ -100,6 +100,11 @@ TEST_CASE("late catalog: one entry per key per load, a 'none' remembered, addres
     CHECK(t.Get(0xFF000002u, make("never made")) == nullptr);   // ...remembered
     CHECK(made == 2);
     CHECK(t.Peek(0xFF000001u) == a);
+    // A remembered "none" is an answer: Contains says so, Peek reads null.
+    CHECK(t.Contains(0xFF000001u));
+    CHECK(t.Contains(0xFF000002u));
+    CHECK(t.Peek(0xFF000002u) == nullptr);
+    CHECK_FALSE(t.Contains(0xFF000003u));
 
     // A new load: the same FF ID can name another potion. The old entry is
     // retired, not freed: the pointer handed out still reads the old value.
@@ -113,4 +118,36 @@ TEST_CASE("late catalog: one entry per key per load, a 'none' remembered, addres
     CHECK(*a == "Potion of Healing");
     CHECK(*b == "Potion of Fortify Two-Handed");
     CHECK(t.Made() == 3);
+}
+
+TEST_CASE("late catalog: a key ruled out before mapping is remembered as none and short-circuits")
+{
+    LateEntries<std::string> t;
+    int made = 0;
+    // The pattern of EffectCatalog::FindOrMapId: answer from the table when
+    // it has one; else look the form up and either map it or remember none.
+    auto findOrMapId = [&](std::uint32_t key, bool mapLate, int& lookups) -> const std::string* {
+        if (t.Contains(key)) return t.Peek(key);
+        ++lookups;
+        if (mapLate) {
+            return t.Get(key, [&made]() { ++made; return std::unique_ptr<std::string>{}; });   // out of scope
+        }
+        t.RememberNone(key);
+        return nullptr;
+    };
+    int lookups = 0;
+    for (int run = 0; run < 50; ++run) {          // fifty pipeline runs
+        CHECK(findOrMapId(0x0001397Eu, false, lookups) == nullptr);   // a static form left out
+        CHECK(findOrMapId(0x00012FCDu, true, lookups) == nullptr);    // a power: mapped once, out of scope
+    }
+    CHECK(lookups == 2);   // one lookup each, not one per run
+    CHECK(made == 1);
+
+    // RememberNone never overwrites an answer.
+    const std::string* p = t.Get(0xFF000010u, []() { return std::make_unique<std::string>("Potion"); });
+    t.RememberNone(0xFF000010u);
+    CHECK(t.Peek(0xFF000010u) == p);
+    // A load forgets the remembered none too.
+    t.Forget();
+    CHECK_FALSE(t.Contains(0x0001397Eu));
 }

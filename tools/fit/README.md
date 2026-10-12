@@ -69,3 +69,8 @@ python <repo>/tools/fit/gradcheck.py    # optional: fitlib's gradient against fi
 - Contexts carry `env` (interior, game hour, open daylight, raw light) for the darkness need.
 - Dead hostiles and the player's own summons stop counting in 0.23.41, so `enemy_count`,
   `surrounded`, the target families and `boss_fight` shift between builds.
+- Three needs change meaning at 0.23.41 with the same input names: `follower_present` counts
+  the player's own summons and thralls (it read teammates only), `regen_suppressed` drops
+  zero-magnitude placeholder effects, and `darkness` reads the held light (`core/LightHold.h`:
+  5 s darker / 3 s lighter) instead of each tick's reading.
+- So segment by build (the head's `build`) before pooling any of these across 0.23.41.

@@ -87,6 +87,21 @@ namespace Huginn::Core::Effect
             return it == live_.end() ? nullptr : it->second.get();
         }
 
+        /// Whether `key` has an answer this load: an entry, or a remembered
+        /// "no entry" (Peek then reads null). A caller that would otherwise
+        /// look the form up again stops here.
+        [[nodiscard]] bool Contains(std::uint32_t key) const { return live_.contains(key); }
+
+        /// Remember "no entry" for `key` this load, without a factory: a key
+        /// the caller ruled out before mapping (not a late kind). A key that
+        /// already has an answer keeps it.
+        void RememberNone(std::uint32_t key)
+        {
+            if (live_.contains(key)) return;
+            if (live_.size() >= kMaxLive) Forget();
+            live_.emplace(key, nullptr);
+        }
+
         /// A new load: every key is forgotten. The entries are retired, not
         /// freed, so a pointer handed out stays valid.
         void Forget()

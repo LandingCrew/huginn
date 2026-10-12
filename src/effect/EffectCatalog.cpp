@@ -261,13 +261,23 @@ namespace Huginn::Effect
         if (!Ready()) return nullptr;
         if (const auto* entry = Find(formID)) return entry;
         {
-            // A remembered answer (entry or none) without a form lookup.
+            // A remembered answer (entry or none) without a form lookup: the
+            // eligible list is re-read every pipeline run, and an out-of-scope
+            // key (a power, a static form the build left out) must not cost a
+            // LookupByID each time.
             std::lock_guard lock(lateMutex_);
-            if (const auto* entry = late_.Peek(formID)) return entry;
+            if (late_.Contains(formID)) return late_.Peek(formID);
         }
         const auto* form = RE::TESForm::LookupByID(formID);
         const auto* bound = form ? form->As<RE::TESBoundObject>() : nullptr;
-        return bound ? FindOrMap(bound) : nullptr;
+        if (!bound) return nullptr;   // not remembered: the ID may name a form made later this load
+        const auto* entry = FindOrMap(bound);   // remembers its answer when it maps
+        if (!entry) {
+            // Also the forms MapLate leaves out, which FindOrMap does not map.
+            std::lock_guard lock(lateMutex_);
+            late_.RememberNone(formID);
+        }
+        return entry;
     }
 
     void EffectCatalog::ForgetLate()
