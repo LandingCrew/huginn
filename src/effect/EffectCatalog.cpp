@@ -76,6 +76,9 @@ namespace Huginn::Effect
         }
     }
 
+    EffectCatalog::EffectCatalog() = default;
+    EffectCatalog::~EffectCatalog() = default;
+
     EffectCatalog& EffectCatalog::GetSingleton()
     {
         static EffectCatalog instance;
@@ -213,6 +216,74 @@ namespace Huginn::Effect
         if (!Ready()) return nullptr;
         const auto it = entries_.find(formID);
         return it == entries_.end() ? nullptr : &it->second;
+    }
+
+    std::unique_ptr<CatalogEntry> EffectCatalog::MapLateForm(const RE::TESBoundObject* form)
+    {
+        if (!lateReader_) lateReader_ = std::make_unique<EffectReader>();
+        ReadResult rr;
+        if (!lateReader_->ReadForm(form, nullptr, rr) || rr.items.empty()) return nullptr;
+        auto& item = rr.items.front();
+        MarkHeld(item);   // held or known: rule 1's tome test does not apply
+        auto classes = ClassifyAll(rr.effects, &overrides_);
+        ResolveZeroMagnitudes(rr.items, rr.effects, classes);
+        const ItemMapping m = MapItem(item, rr.effects, classes);
+        LogBudgetHits("a late entry"sv);
+        if (!m.inScope) {
+            logger::debug("[EffectCatalog] {:08X} '{}' held but out of scope: no late entry"sv, item.formId, item.name);
+            return nullptr;
+        }
+        auto entry = std::make_unique<CatalogEntry>(MakeEntry(m, Grade(m, pops_), pops_));
+        logger::debug("[EffectCatalog] late entry for {:08X} '{}' ({}, {}): {} column(s)"sv, item.formId, item.name,
+            KindName(item.kind), IsDynamicFormId(item.formId) ? "made at runtime" : "no tome teaches it",
+            entry->cap.size());
+        return entry;
+    }
+
+    const CatalogEntry* EffectCatalog::FindOrMap(const RE::TESBoundObject* form)
+    {
+        if (!form || !Ready()) return nullptr;
+        const RE::FormID id = form->GetFormID();
+        if (const auto* entry = Find(id)) return entry;
+        if (!MapLate(id, form->GetFormType() == RE::FormType::Spell)) return nullptr;
+        std::lock_guard lock(lateMutex_);
+        try {
+            return late_.Get(id, [&]() { return MapLateForm(form); });
+        }
+        catch (const std::exception& e) {
+            logger::warn("[EffectCatalog] late entry for {:08X} failed: {}"sv, id, e.what());
+            return late_.Get(id, []() { return std::unique_ptr<CatalogEntry>{}; });
+        }
+    }
+
+    const CatalogEntry* EffectCatalog::FindOrMapId(RE::FormID formID)
+    {
+        if (!Ready()) return nullptr;
+        if (const auto* entry = Find(formID)) return entry;
+        {
+            // A remembered answer (entry or none) without a form lookup.
+            std::lock_guard lock(lateMutex_);
+            if (const auto* entry = late_.Peek(formID)) return entry;
+        }
+        const auto* form = RE::TESForm::LookupByID(formID);
+        const auto* bound = form ? form->As<RE::TESBoundObject>() : nullptr;
+        return bound ? FindOrMap(bound) : nullptr;
+    }
+
+    void EffectCatalog::ForgetLate()
+    {
+        std::lock_guard lock(lateMutex_);
+        if (late_.Live() > 0) {
+            logger::debug("[EffectCatalog] load: {} late key(s) forgotten ({} made since launch)"sv, late_.Live(),
+                late_.Made());
+        }
+        late_.Forget();
+    }
+
+    std::size_t EffectCatalog::LateLive() const
+    {
+        std::lock_guard lock(lateMutex_);
+        return late_.Live();
     }
 
     const EffectClass* EffectCatalog::ClassOf(RE::FormID mgef) const

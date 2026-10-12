@@ -72,7 +72,11 @@ namespace Huginn::State
       bool isMage = false;  // Has spell equipped in either hand
 
       // Tracking metadata
-      float lastSeenTime = 0.0f;       // Game time when last detected (for pruning)
+      // 0.23.41: steady-clock seconds (NeedClock), not game days -- the prune's
+      // 3 s / 5 s timeouts were compared against game days and never fired
+      // (core/TargetTracking.h).
+      double lastSeenSec = 0.0;        // when a scan last refreshed the entry (for pruning)
+      double deadSinceSec = -1.0;      // when it was first seen dead; -1 while alive
       float lastVitalsPollTime = 0.0f; // Game time when vitals were last polled (v0.6.11 optimization)
       float priority = 0.0f;           // Priority score for eviction decisions
 
@@ -200,7 +204,7 @@ namespace Huginn::State
              isStaggered == other.isStaggered &&
              isFollower == other.isFollower &&
              isMage == other.isMage;
-      // Note: lastSeenTime and priority excluded (metadata, not state)
+      // Note: lastSeenSec, deadSinceSec and priority excluded (metadata, not state)
       }
    };
 

@@ -12,6 +12,7 @@
 #include "effect/CrossFeatures.h"
 #include "effect/EffectCatalog.h"
 #include "needs/NeedMonitor.h"
+#include "needs/NeedSettings.h"
 #include "state/StateManager.h"
 #include "util/ExtraListStability.h"
 #include "util/InventoryUtil.h"
@@ -197,7 +198,7 @@ namespace Huginn::Learning::SelectionLogV3
             if (!player || !catalog.Ready()) return out;
 
             auto inventory = Util::GetInventorySafe(player, [&catalog](RE::TESBoundObject& o) {
-                return catalog.Find(o.GetFormID()) != nullptr;
+                return catalog.FindOrMap(&o) != nullptr;   // 0.23.41: player-made potions too
             });
             const auto* ammo = player->GetCurrentAmmo();
             const auto* left = player->GetEquippedObject(true);
@@ -205,7 +206,7 @@ namespace Huginn::Learning::SelectionLogV3
             for (auto& [obj, data] : inventory) {
                 auto& [count, entryData] = data;
                 if (!obj || count <= 0) continue;
-                const auto* entry = catalog.Find(obj->GetFormID());
+                const auto* entry = catalog.FindOrMap(obj);
                 if (!entry) continue;
                 const bool perStack = obj->Is(RE::FormType::Weapon) || obj->Is(RE::FormType::Armor) ||
                                       obj->Is(RE::FormType::Light);
@@ -244,7 +245,7 @@ namespace Huginn::Learning::SelectionLogV3
             std::unordered_set<RE::FormID> seen;
             auto addSpell = [&](RE::SpellItem* spell) {
                 if (!spell || !seen.insert(spell->GetFormID()).second) return;
-                const auto* entry = catalog.Find(spell->GetFormID());
+                const auto* entry = catalog.FindOrMap(spell);   // 0.23.41: spells no tome teaches too
                 if (!entry) return;
                 out.items.push_back(HeldItem{ .form = spell->GetFormID(), .equipped = spell == left || spell == right,
                                               .entry = entry });
@@ -557,7 +558,7 @@ namespace Huginn::Learning::SelectionLogV3
                     Row r;
                     r.form = s.formID;
                     r.uid = s.uniqueID;
-                    if (const auto* entry = catalog.Find(s.formID)) {
+                    if (const auto* entry = catalog.FindOrMapId(s.formID)) {
                         r.kind = static_cast<uint8_t>(entry->kind);
                         r.cap = &entry->cap;
                     }
@@ -592,6 +593,19 @@ namespace Huginn::Learning::SelectionLogV3
                         if (const char* edid = race->GetFormEditorID(); edid && *edid) ctx->race = edid;
                     }
                 }
+            }
+
+            // Where and when (0.23.41): the darkness need reads 1 - the held
+            // light, or 0 in open daylight; the fit gets the cell type, the
+            // hour, the open-daylight flag and the raw light to condition on.
+            {
+                const auto world = State::StateManager::GetSingleton().GetWorldState();
+                const auto sensors = State::StateManager::GetSingleton().GetNeedSensors();
+                ctx->env.valid = true;
+                ctx->env.interior = world.isInterior;
+                ctx->env.hour = world.timeOfDay;
+                ctx->env.openDaylight = sensors.openDaylight;
+                ctx->env.light = world.lightLevel;
             }
 
             if (g_utilityScorer) {
@@ -639,7 +653,7 @@ namespace Huginn::Learning::SelectionLogV3
             Row r;
             r.form = d.form;
             r.flags = Flag::AddedAtPick | Flag::Held;
-            if (const auto* entry = Effect::EffectCatalog::GetSingleton().Find(d.form)) {
+            if (const auto* entry = Effect::EffectCatalog::GetSingleton().FindOrMapId(d.form)) {
                 r.kind = static_cast<uint8_t>(entry->kind);
                 r.cap = &entry->cap;
             }
@@ -788,6 +802,23 @@ namespace Huginn::Learning::SelectionLogV3
                     logger::warn("[SelectionV3] {} ended in a torn record; starting on a new line"sv,
                         path.filename().string());
                 }
+                const size_t headBytes = WriteHead(CurrentCurves());
+                logger::info("[SelectionV3] writing {} ({} bytes before this launch's segment)"sv, path.string(),
+                    m_fileBytes - headBytes);
+                return true;
+            }
+
+            /// The [Needs] curves in force, for the head (0.23.41).
+            static std::vector<Core::Needs::Curve> CurrentCurves()
+            {
+                const auto table = Needs::NeedSettings::GetSingleton().GetCurves();
+                return { table.begin(), table.end() };
+            }
+
+            /// Start a segment: a head line with the curves in force. Returns
+            /// its size in bytes.
+            size_t WriteHead(std::vector<Core::Needs::Curve> curves)
+            {
                 Head head;
                 head.launch = g_launchStamp;
                 head.list = g_listName;
@@ -801,13 +832,13 @@ namespace Huginn::Learning::SelectionLogV3
                 head.minSec = p.minSec;
                 head.graceSec = p.graceSec;
                 head.answerSlackSec = p.answerSlackSec;
+                head.curves = std::move(curves);
+                m_headCurves = head.curves;
                 const std::string line = m_encoder.BeginSegment(head);
                 m_ctxSeen.clear();
                 m_out << line;
                 m_fileBytes += line.size();
-                logger::info("[SelectionV3] writing {} ({} bytes before this launch's segment)"sv, path.string(),
-                    m_fileBytes - line.size());
-                return true;
+                return line.size();
             }
 
             /// Rename the full file aside; the next record opens a new one. A
@@ -850,6 +881,15 @@ namespace Huginn::Learning::SelectionLogV3
                         m_warnedOpen = true;
                     }
                     return;
+                }
+                // A hot reload changed the [Needs] curves (0.23.41): a new
+                // segment, so every record after it sits under a head that
+                // names the curves its values came from. A context taken
+                // before the reload but written after it is the one record
+                // that can carry the old curves' values.
+                if (auto curves = CurrentCurves(); curves != m_headCurves) {
+                    WriteHead(std::move(curves));
+                    logger::info("[SelectionV3] [Needs] curves changed: new segment (head line written)"sv);
                 }
                 d.seq = ++m_seq;
                 const bool ctxNew = d.ctx && !m_ctxSeen.contains(d.ctx->id);
@@ -906,6 +946,7 @@ namespace Huginn::Learning::SelectionLogV3
             std::ofstream m_out;
             std::uintmax_t m_fileBytes = 0;
             std::unordered_set<uint64_t> m_ctxSeen;   // for the debug line (the encoder decides)
+            std::vector<Core::Needs::Curve> m_headCurves;   // the curves the current segment's head names
             uint64_t m_seq = 0;
             bool m_truncatedTest = false;
             bool m_rotationFailed = false;
@@ -1093,7 +1134,7 @@ namespace Huginn::Learning::SelectionLogV3
             if (newRun || (!g_tick.entriesFromReadyCatalog && catalog.Ready())) {
                 g_tick.entries.clear();
                 g_tick.entries.reserve(g_tick.eligible.size());
-                for (const auto& e : g_tick.eligible) g_tick.entries.push_back(catalog.Find(e.formID));
+                for (const auto& e : g_tick.eligible) g_tick.entries.push_back(catalog.FindOrMapId(e.formID));
                 g_tick.entriesFromReadyCatalog = catalog.Ready();
             }
             if (live) {
@@ -1361,6 +1402,9 @@ namespace Huginn::Learning::SelectionLogV3
             g_heldDirty.store(true, std::memory_order_relaxed);
             g_instances.clear();   // dynamic enchantment IDs mean other things in another save
         }
+        // Late catalog entries (player-made potions, spells no tome teaches):
+        // an FF ID means another potion in another save (0.23.41).
+        Effect::EffectCatalog::GetSingleton().ForgetLate();
         g_heldWarm.store(false, std::memory_order_relaxed);
         {
             std::lock_guard lock(g_handMutex);

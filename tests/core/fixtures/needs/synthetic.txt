@@ -356,6 +356,22 @@ soleHostileTtk 60
 targetHealth 0
 end
 
+# One enemy whose bar has not moved: the sensor's NEVER is no estimate,
+# input 0 (0.23.41; it read boss_fight 1.00). Two hostiles in reach, three in
+# the fight: surrounded 0.5, enemy_count 0.5.
+snapshot boss_ttk_never
+inCombat 1
+enemyCount 1
+soleHostileTtk 1000000
+end
+
+snapshot two_in_reach_of_three
+inCombat 1
+enemyCount 3
+enemiesNear256 2
+closestEnemy 120
+end
+
 # One enemy with TTK 0 (>= 0, so input 0 by value), out of combat.
 snapshot boss_ttk_zero
 enemyCount 1

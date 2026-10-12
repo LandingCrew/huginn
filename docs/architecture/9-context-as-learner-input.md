@@ -204,6 +204,7 @@ Weights stop being hand-tuned, but sensors stay hand-written and become the main
 - Every soak recommendation gap (fortify potions, poisons, encumbrance, disease detection seeing 1 of 94 diseases, darkness firing in daylight, target-type flicker) becomes a missing or broken `need` or `cap` dimension. Grooming the state models is part of this work.
 - **The learner will learn sensor bugs away.** If darkness falsely fires in daylight, the player ignores torches and θ for darkness drops. That hides the bug.
 - **Mitigation:** log each θ's drift from its starting value. A collapse within a session usually means a broken sensor, not a preference change. That turns the learner into a sensor-bug detector.
+- **First use (2026-10-11):** a trial fit over the first 16 hours of v3 logging (`tools/fit/`) found dead hostiles counted alive until combat ended, the player's own summons read as hostile families, `boss_fight` firing on its sensor's "no estimate", `surrounded` and `enemy_count` reading a lone hostile as half a crowd, darkness flickering under torchlight, and no cap(i) for player-made potions; fixed in 0.23.41 (the implementation map, Phase 2).
 
 **Bootstrap**
 

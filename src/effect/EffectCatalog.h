@@ -37,15 +37,20 @@
 // =============================================================================
 
 #include "core/EffectMapper.h"
+#include "core/LateCatalog.h"
 
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <memory>
+#include <mutex>
 #include <optional>
 #include <unordered_map>
 
 namespace Huginn::Effect
 {
+    class EffectReader;
+
     struct CatalogEntry
     {
         Core::Effect::Kind kind = Core::Effect::Kind::Spell;
@@ -90,6 +95,25 @@ namespace Huginn::Effect
         /// The static entry of an in-scope base form, or nullptr.
         [[nodiscard]] const CatalogEntry* Find(RE::FormID formID) const;
 
+        /// Find, else -- for a form the player holds or knows that the build
+        /// never saw or left out by the tome rule -- an entry mapped now
+        /// (0.23.41, core/LateCatalog.h): a runtime FF form (a player-made
+        /// potion or poison) or a spell no tome teaches. Graded against the
+        /// build's populations, made once per load (the "no entry" answer
+        /// too), forgotten on the next load (ForgetLate), its address valid
+        /// for the process. Reads the form: the update loop's thread or the
+        /// main thread, as InstanceEntry.
+        [[nodiscard]] const CatalogEntry* FindOrMap(const RE::TESBoundObject* form);
+        /// The same by FormID (LookupByID); nullptr for an unknown ID.
+        [[nodiscard]] const CatalogEntry* FindOrMapId(RE::FormID formID);
+
+        /// A game load (or `hg reset all`): late entries are forgotten -- an
+        /// FF ID names another potion in another save. Their memory is kept.
+        void ForgetLate();
+
+        /// Late entries made this load, and in all.
+        [[nodiscard]] std::size_t LateLive() const;
+
         /// The per-instance entry of an inventory stack whose ExtraHealth
         /// (tempering) or ExtraEnchantment (a player enchantment) changes what
         /// the base form says; nullopt for a plain stack (use Find).
@@ -111,7 +135,8 @@ namespace Huginn::Effect
         [[nodiscard]] double BuildMs() const noexcept { return buildMs_; }
 
     private:
-        EffectCatalog() = default;
+        EffectCatalog();
+        ~EffectCatalog();
         void LoadOverrides();
 
         std::unordered_map<RE::FormID, CatalogEntry> entries_;
@@ -124,5 +149,12 @@ namespace Huginn::Effect
         std::atomic<bool> ready_{ false };
         std::atomic<bool> failed_{ false };
         bool built_ = false;
+
+        // Late entries (0.23.41): guarded by lateMutex_; the reader keeps the
+        // tome list it reads once.
+        [[nodiscard]] std::unique_ptr<CatalogEntry> MapLateForm(const RE::TESBoundObject* form);
+        mutable std::mutex lateMutex_;
+        Core::Effect::LateEntries<CatalogEntry> late_;
+        std::unique_ptr<EffectReader> lateReader_;
     };
 }

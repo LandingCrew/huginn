@@ -505,6 +505,13 @@ def _v3_row(raw, head, caps):
     }
 
 
+def head_curves(head):
+    """The [Needs] curves a head names (0.23.41), by need: {need: (kind, p1,
+    p2)}. Empty for a head written before 0.23.41 (no "curves" field): those
+    segments used the defaults of their build's needs.csv."""
+    return {n: tuple(c) for n, c in zip(head.get("needs", []), head.get("curves", []))}
+
+
 def iter_v3(paths, stats=None):
     """Yield every decision of the given v3 files, in file order, resolved:
     its context (need/input by name, the rows with cap(i) by column name and

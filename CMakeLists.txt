@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.25)  # add_subdirectory(... SYSTEM)
 
 # Version can be overridden via -DPROJECT_VERSION=x.y.z
 if(NOT DEFINED PROJECT_VERSION)
-   set(PROJECT_VERSION "0.23.40")
+   set(PROJECT_VERSION "0.23.41")
 endif()
 
 project(

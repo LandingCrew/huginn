@@ -139,6 +139,16 @@ namespace Huginn::Core::DecisionLog
         /// then the held rows are one plain row per base form, "equipped" is
         /// read from the hands and the nocked ammo only, and armour reads unworn.
         bool heldFull = true;
+        /// Where and when (0.23.41): what the darkness need's input cannot
+        /// say, for the fit to condition on. Written as "env" when valid.
+        struct Env
+        {
+            bool valid = false;
+            bool interior = false;      // an interior cell
+            float hour = 0.0f;          // game hour, 0-24
+            bool openDaylight = false;  // outdoors, full sky, climate daytime (darkness reads 0)
+            float light = -1.0f;        // the raw light on the player, 0-1, before the hold
+        } env;
         std::vector<Row> rows;
     };
 
@@ -194,6 +204,11 @@ namespace Huginn::Core::DecisionLog
         // (EpisodeTracker::Abandon). Written as "deathDrops":1; a head without
         // it (0.23.15) recorded `nothing` for episodes a death cut short.
         bool deathDrops = true;
+        /// The [Needs] curves in force, index-aligned with the head's "needs"
+        /// (0.23.41): written as "curves" when not empty, so a fit knows which
+        /// curve made each logged value. A change of curves mid-launch (a hot
+        /// reload) starts a new segment.
+        std::vector<Needs::Curve> curves;
     };
 
     // --- JSON helpers ---------------------------------------------------------

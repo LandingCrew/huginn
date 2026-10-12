@@ -236,6 +236,58 @@ TEST_CASE("boss fight: one hostile with an estimate only")
     CHECK(In(s, NeedId::boss_fight) == 0.0f);
 }
 
+TEST_CASE("boss fight: the sensor's NEVER (a bar that has not moved) is no estimate, not a long fight (0.23.41)")
+{
+    NeedSnapshot s;
+    s.enemyCount = 1;
+    s.soleHostileTtk = kNever;
+    CHECK(In(s, NeedId::boss_fight) == 0.0f);
+    CHECK(Val(s, NeedId::boss_fight) < 0.01f);   // the logistic's floor at 0 (was 1.00)
+    s.soleHostileTtk = 2.0f * kNever;   // anything past it too
+    CHECK(In(s, NeedId::boss_fight) == 0.0f);
+    s.soleHostileTtk = 900.0f;          // a real, very long estimate still reads
+    CHECK(In(s, NeedId::boss_fight) == 900.0f);
+    CHECK(Val(s, NeedId::boss_fight) > 0.99f);
+}
+
+TEST_CASE("surrounded: nothing with one hostile in reach, half with two, full with three (0.23.41)")
+{
+    NeedSnapshot s;
+    s.inCombat = true;
+    s.enemyCount = 5;
+    s.enemiesNear256 = 0;
+    CHECK(Val(s, NeedId::surrounded) == 0.0f);
+    s.enemiesNear256 = 1;
+    CHECK(In(s, NeedId::surrounded) == 1.0f);
+    CHECK(Val(s, NeedId::surrounded) == 0.0f);   // was 0.547 (1/3 through saturating 5)
+    s.enemiesNear256 = 2;
+    CHECK(Val(s, NeedId::surrounded) == doctest::Approx(0.5f));
+    s.enemiesNear256 = 3;
+    CHECK(Val(s, NeedId::surrounded) == 1.0f);
+    s.enemiesNear256 = 7;
+    CHECK(Val(s, NeedId::surrounded) == 1.0f);
+}
+
+TEST_CASE("enemy count: one hostile reads 0, three reach the onset, five or more saturate (0.23.41)")
+{
+    NeedSnapshot s;
+    s.inCombat = true;
+    s.enemyCount = 0;
+    CHECK(Val(s, NeedId::enemy_count) == 0.0f);
+    s.enemyCount = 1;
+    CHECK(In(s, NeedId::enemy_count) == 1.0f);
+    CHECK(Val(s, NeedId::enemy_count) == 0.0f);   // was 0.338 (1/6 through saturating 5)
+    s.enemyCount = 2;
+    CHECK(Val(s, NeedId::enemy_count) == doctest::Approx(0.25f));
+    CHECK(Val(s, NeedId::enemy_count) < 0.5f);    // no episode for two
+    s.enemyCount = 3;
+    CHECK(Val(s, NeedId::enemy_count) == doctest::Approx(0.5f));   // the old rule's ">= 3"
+    s.enemyCount = 5;
+    CHECK(Val(s, NeedId::enemy_count) == 1.0f);
+    s.enemyCount = 12;
+    CHECK(Val(s, NeedId::enemy_count) == 1.0f);
+}
+
 TEST_CASE("families and schools are bit reads")
 {
     NeedSnapshot s;

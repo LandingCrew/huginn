@@ -44,6 +44,7 @@ namespace Huginn::State
 
       // PollWorldObjects
       bool openDaylight = false;
+      float heldLight = 1.0f;            // the light the darkness need reads, held against flicker (0.23.41, core/LightHold.h)
       bool merchant = false;             // crosshair actor offers services
       std::uint8_t bench = 0;            // Core::Needs::BenchKind of the crosshair furniture (0.23.16)
 
@@ -60,6 +61,11 @@ namespace Huginn::State
       int thirstStage = 0;
       bool thirstDetected = false;
       Core::Needs::RegenDebuffs survivalRegen;
+      // 0.23.41: the walk's own regen debuffs (spells, potions, poisons,
+      // diseases; not abilities), by LowersRegen like survivalRegen: a
+      // zero-magnitude placeholder lowers nothing. regen_suppressed and
+      // healthRegenSuppressed read this, not PlayerActorState's old flags.
+      Core::Needs::RegenDebuffs effectRegen;
 
       // PollPlayerSurvival: the CC meters (0-1000), -1 when not read (SMI path)
       float hungerRaw = -1.0f;
@@ -82,5 +88,10 @@ namespace Huginn::State
       bool targetArcher = false;         // the scoring target holds a bow or crossbow
       float soleHostileTtk = -1.0f;
       bool followerBleedout = false;
+      // 0.23.41: a living actor the player commands (a summon, a thrall)
+      // within the 2048 detection range. follower_present reads it with the
+      // teammates: an ally the spells for others (Oakflesh on Target, Heal
+      // Other) can be cast on. Teammates stay TargetActorState::isFollower.
+      bool playerSummonNear = false;
    };
 }

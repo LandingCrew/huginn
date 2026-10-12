@@ -134,8 +134,15 @@ and `NeedSnapshotIO` (its text form), `NeedEvaluator` (the inputs of
 `needs.csv`'s `r3_input` column, the skip-gate signature, `TimeDriven`),
 `NeedSensorMath.h` and `DropAhead.h` (the sensors' arithmetic; the game side
 only reads forms and casts rays), `TargetFamilies.h` (the multi-hot family
-reading). Tests and the replayed fixtures: docs/testing/TESTING-INDEX.md
-section 0.
+reading), and since 0.23.41 `TargetTracking.h` (when a tracked actor leaves
+the list, in seconds, and the player's side), `LightHold.h` (the light the
+darkness need reads, held against flicker) and `EffectSourceLog.h` (the
+transition lines naming the effect behind drain_health and regen_suppressed).
+Tests and the replayed fixtures: docs/testing/TESTING-INDEX.md section 0.
+
+The effect catalog's late entries (0.23.41): `LateCatalog.h` (which held forms
+the catalog maps after its build -- player-made potions, spells no tome
+teaches -- and the per-load entry table).
 
 The selection log v3 (R4): `DecisionLog` (the records -- context, rows,
 decision -- and the encoder that turns them into JSON Lines, defining each cap

@@ -253,7 +253,7 @@ namespace Huginn::Console
       // Deep water ahead comes from the same probe pass (0.23.19): the
       // deepest water under the probes; a landing at least the safe depth
       // deep is no drop.
-      const auto extra = std::format("  drop ahead {}, deep water ahead {} ({}) | encumbrance {:.2f} | families 0x{:X} | combat {} ({}) | light {:.2f}{}",
+      const auto extra = std::format("  drop ahead {}, deep water ahead {} ({}) | encumbrance {:.2f} | families 0x{:X} | combat {} ({}) | light {:.2f} held (raw {:.2f}){}",
          s.dropAhead < 0.0f ? std::string("not measured") : std::format("{:.0f} units", s.dropAhead),
          s.waterDepthAhead < 0.0f ? std::string("not measured")
                                   : std::format("{:.0f} units (safe landing >= {:.0f})", s.waterDepthAhead,
@@ -263,7 +263,8 @@ namespace Huginn::Console
          s.inCombat ? std::format("{:.1f}s in", s.combatStartAgo)
                     : (s.combatEndAgo >= Core::Needs::kNever ? std::string("never since load")
                                                              : std::format("ended {:.1f}s ago", s.combatEndAgo)),
-         s.light, s.openDaylight ? " (open daylight)" : "");
+         s.light, State::StateManager::GetSingleton().GetWorldState().lightLevel,
+         s.openDaylight ? " (open daylight)" : "");
       Print(extra.c_str());
       logger::info("[Console] {}"sv, extra);
       // The survival stages behind hunger and thirst, and whether a survival
@@ -1475,8 +1476,11 @@ namespace Huginn::Console
       }
       auto* form = RE::TESForm::LookupByID(*id);
       const char* name = form ? form->GetName() : nullptr;
-      const auto* entry = catalog.Find(*id);
-      auto line = std::format("[cap] {:08X} {} : {}", *id, name ? name : "?",
+      // 0.23.41: a player-made potion or a spell no tome teaches is mapped
+      // late (EffectCatalog::FindOrMap), as the selection log does.
+      const bool built = catalog.Find(*id) != nullptr;
+      const auto* entry = catalog.FindOrMapId(*id);
+      auto line = std::format("[cap] {:08X} {}{} : {}", *id, name ? name : "?", entry && !built ? " (late entry)" : "",
          entry ? Core::Effect::FormatCap(entry->cap) : std::string("not in the catalog (out of scope or unknown)"));
       Print(line.c_str());
       logger::info("{}"sv, line);
