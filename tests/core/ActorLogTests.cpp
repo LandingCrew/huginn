@@ -234,3 +234,155 @@ TEST_CASE("actor log: a 5-minute fight with six bandits and a summon stays insid
     CHECK(total >= 20);
     CHECK(total <= 40);
 }
+
+TEST_CASE("actor log: identity and transition lines are capped per fight; the summary counts the rest")
+{
+    Tracker::Config config;
+    config.lineCap = 3;
+    Fixture f(config);
+    std::vector<Observation> crowd;
+    for (std::uint32_t r = 1; r <= 6; ++r) crowd.push_back(Obs(r, false, TargetType::Humanoid));
+    auto lines = f.Poll(0.0, true, crowd);
+    // started + 3 identities + the one cap line; 3 more identities suppressed
+    REQUIRE(lines.size() == 5);
+    CHECK(lines[0] == "[Actors] fight started (6 tracked)");
+    CHECK(lines[4] == "[Actors] cap reached (3 lines this fight), further lines suppressed");
+    CHECK(f.Poll(1.0, true, {}).empty());
+    lines = f.Poll(4.0, true, {});   // six left lines, all suppressed, no second cap line
+    CHECK(lines.empty());
+    lines = f.Poll(5.0, false, {});
+    REQUIRE(lines.size() == 1);
+    CHECK(lines[0].ends_with("target switches=0 type flips=0, 9 lines suppressed"));
+
+    // The next fight starts with a fresh budget.
+    lines = f.Poll(10.0, true, { Obs(1, true, TargetType::Humanoid) });
+    CHECK(lines.size() == 2);
+}
+
+namespace
+{
+    TargetInfo Info(std::uint32_t ref, const char* name, TargetType type, const char* rule = "closest")
+    {
+        TargetInfo t;
+        t.refID = ref;
+        t.name = name;
+        t.baseID = 0x3DF08;
+        t.raceEditorID = "NordRace";
+        t.raceName = "Nord";
+        t.type = type;
+        t.rule = rule;
+        t.hostile = ref != 0;
+        return t;
+    }
+
+    // Polls `watch` at 10 Hz from `t` with (ref, type) until it asks for a
+    // Commit; returns the time it did, or -1 within `maxPolls`.
+    double PollUntilDue(TargetWatch& watch, double t, std::uint32_t ref, TargetType type, int maxPolls = 10)
+    {
+        for (int i = 0; i < maxPolls; ++i, t += 0.1) {
+            if (watch.Observe(t, ref, type)) return t;
+        }
+        return -1.0;
+    }
+}
+
+TEST_CASE("target watch: a new pick is logged once it has held about 300 ms (3 polls)")
+{
+    TargetWatch w;
+    CHECK_FALSE(w.Observe(0.0, 0, TargetType::None));   // no target, as at start: nothing
+    CHECK_FALSE(w.Observe(1.0, 0xA1, TargetType::Humanoid));
+    CHECK_FALSE(w.Observe(1.1, 0xA1, TargetType::Humanoid));
+    CHECK_FALSE(w.Observe(1.2, 0xA1, TargetType::Humanoid));
+    CHECK(w.Observe(1.3, 0xA1, TargetType::Humanoid));
+    CHECK(w.Commit(Info(0xA1, "Bandit", TargetType::Humanoid, "crosshair")) ==
+          "[Target] 000000A1 'Bandit' base=0003DF08 race=NordRace 'Nord' type=Humanoid rule=crosshair hostile=1 dead=0 summon=-");
+    // Logged: the same pick again is quiet.
+    CHECK_FALSE(w.Observe(1.4, 0xA1, TargetType::Humanoid));
+    CHECK_FALSE(w.Observe(9.0, 0xA1, TargetType::Humanoid));
+}
+
+TEST_CASE("target watch: Differs-by-type -- a type change on the same actor is a change, with its own line")
+{
+    TargetWatch w;
+    REQUIRE(PollUntilDue(w, 0.0, 0xA1, TargetType::Humanoid) > 0.0);
+    (void)w.Commit(Info(0xA1, "Bandit", TargetType::Humanoid));
+
+    const double due = PollUntilDue(w, 5.0, 0xA1, TargetType::Daedra);
+    REQUIRE(due > 0.0);
+    CHECK(due == doctest::Approx(5.3));
+    CHECK(w.Commit(Info(0xA1, "Bandit", TargetType::Daedra)) ==
+          "[Target] 000000A1 'Bandit' base=0003DF08 race=NordRace 'Nord' type=Daedra rule=closest hostile=1 dead=0 "
+          "summon=- -- same actor, type Humanoid->Daedra (classifier flicker)");
+}
+
+TEST_CASE("target watch: a switch names the previous target; losing it says none")
+{
+    TargetWatch w;
+    REQUIRE(PollUntilDue(w, 0.0, 0xA1, TargetType::Humanoid) > 0.0);
+    (void)w.Commit(Info(0xA1, "Bandit", TargetType::Humanoid));
+
+    REQUIRE(PollUntilDue(w, 2.0, 0xB2, TargetType::Daedra) > 0.0);
+    CHECK(w.Commit(Info(0xB2, "Dremora", TargetType::Daedra)).ends_with(" (was 000000A1 'Bandit' type=Humanoid)"));
+
+    REQUIRE(PollUntilDue(w, 4.0, 0, TargetType::None) > 0.0);
+    CHECK(w.Commit(TargetInfo{}) == "[Target] none (was 000000B2 'Dremora' type=Daedra)");
+    CHECK_FALSE(w.Observe(6.0, 0, TargetType::None));
+}
+
+TEST_CASE("target watch: A/B/A/B at the poll rate logs nothing, and the next line counts the brief switches")
+{
+    TargetWatch w;
+    REQUIRE(PollUntilDue(w, 0.0, 0xA1, TargetType::Humanoid) > 0.0);
+    (void)w.Commit(Info(0xA1, "Bandit", TargetType::Humanoid));
+
+    // Two bandits at about the same range: the closest flips every poll.
+    double t = 1.0;
+    for (int i = 0; i < 20; ++i, t += 0.1) {
+        CHECK_FALSE(w.Observe(t, i % 2 ? 0xA1u : 0xB2u, TargetType::Humanoid));
+    }
+    CHECK(w.PendingBrief() == 10);
+    // A third pick replacing a pending one before it held is brief too.
+    CHECK_FALSE(w.Observe(t, 0xB2, TargetType::Humanoid));
+    CHECK_FALSE(w.Observe(t + 0.1, 0xC3, TargetType::Beast));
+    CHECK(w.PendingBrief() == 11);
+    // C3 holds: logged, with the count, which then resets.
+    REQUIRE(PollUntilDue(w, t + 0.2, 0xC3, TargetType::Beast) > 0.0);
+    CHECK(w.Commit(Info(0xC3, "Wolf", TargetType::Beast)).ends_with(" (was 000000A1 'Bandit' type=Humanoid) (+11 brief switches)"));
+    CHECK(w.PendingBrief() == 0);
+
+    // One brief switch reads singular.
+    CHECK_FALSE(w.Observe(20.0, 0xA1, TargetType::Humanoid));
+    CHECK_FALSE(w.Observe(20.1, 0xC3, TargetType::Beast));
+    REQUIRE(PollUntilDue(w, 21.0, 0, TargetType::None) > 0.0);
+    CHECK(w.Commit(TargetInfo{}).ends_with(" (+1 brief switch)"));
+}
+
+TEST_CASE("target watch: a type flicker shorter than the dwell is not logged; Reset forgets everything")
+{
+    TargetWatch w;
+    REQUIRE(PollUntilDue(w, 0.0, 0xA1, TargetType::Humanoid) > 0.0);
+    (void)w.Commit(Info(0xA1, "Bandit", TargetType::Humanoid));
+    CHECK_FALSE(w.Observe(1.0, 0xA1, TargetType::Daedra));
+    CHECK_FALSE(w.Observe(1.1, 0xA1, TargetType::Daedra));
+    CHECK_FALSE(w.Observe(1.2, 0xA1, TargetType::Humanoid));
+    CHECK(w.PendingBrief() == 1);
+
+    w.Reset();
+    CHECK(w.PendingBrief() == 0);
+    CHECK(w.Current().refID == 0);
+    CHECK_FALSE(w.Observe(2.0, 0, TargetType::None));
+}
+
+TEST_CASE("actor log: the fight summary counts every switch and flip, brief ones included")
+{
+    // The [Target] dwell does not touch the summary: A/B/A/B at the poll rate
+    // logs no [Target] line, and the summary still counts each change.
+    Fixture f;
+    const std::vector<Observation> both{ Obs(1, true, TargetType::Humanoid), Obs(2, true, TargetType::Daedra) };
+    for (int i = 0; i < 6; ++i) {
+        f.Poll(i * 0.1, true, both, i % 2 ? 2u : 1u, i % 2 ? TargetType::Daedra : TargetType::Humanoid);
+    }
+    const auto lines = f.Poll(10.0, false, {});
+    REQUIRE(lines.size() == 1);
+    CHECK(lines[0].ends_with("target switches=5 type flips=5"));
+}

@@ -367,7 +367,7 @@ namespace Huginn::State
       {
          RE::FormID refID = 0;
          TargetType type = TargetType::None;
-         const char* rule = "closest";   // crosshair / sticky / closest
+         const char* rule = "closest";   // crosshair / sticky / closest / held
          bool hostile = false;
          bool dead = false;
       };

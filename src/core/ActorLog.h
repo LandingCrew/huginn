@@ -7,9 +7,10 @@
 //
 // [Target]  One line whenever the SCORING target (TargetCollection::
 //           ScoringTargetType's pick: the living hostile primary, else the
-//           closest living hostile) changes actor or classified type. A type
-//           change on the same actor says so -- that is a classifier flicker,
-//           not a new enemy. In and out of fights.
+//           closest living hostile) changes actor or classified type and the
+//           new pick holds TargetWatch::DWELL_SEC; shorter ones are counted on
+//           the next line. A type change on the same actor says so -- that is
+//           a classifier flicker, not a new enemy. In and out of fights.
 //
 // [Actors]  During a fight (the published combat flag), over the actors the
 //           target poll already tracks -- no scan of its own:
@@ -18,7 +19,8 @@
 //                          leaving this fight)
 //             then by refID: hostility, type, died, revived, left tracking
 //             (absent LEAVE_GRACE_SEC, so a range flap is not two lines)
-//           and one summary line when the fight ends. Becoming or ceasing to
+//           and one summary line when the fight ends (identity and transition
+//           lines capped per fight, Config::lineCap). Becoming or ceasing to
 //           be the scoring target is the [Target] line, which names both
 //           actors; it is not repeated here.
 //
@@ -162,6 +164,10 @@ namespace Huginn::Core::ActorLog
         {
             std::size_t seenCap = 4096;
             double leaveGraceSec = 2.0;
+            // Identity and transition lines per fight. A combat flag stuck on
+            // while walking a city would log every passer-by within 512 units;
+            // past the cap they are counted, and the summary says how many.
+            std::size_t lineCap = 80;
         };
 
         Tracker() : Tracker(Config{}) {}
@@ -197,7 +203,7 @@ namespace Huginn::Core::ActorLog
                     a.died = o.dead;
                     a.stamp = pollStamp_;
                     const bool metBefore = seen_.Touch(o.refID);
-                    out.push_back(metBefore ? AgainLine(o, a.id) : IdentityLine(o, a.id));
+                    Emit(metBefore ? AgainLine(o, a.id) : IdentityLine(o, a.id), out);
                     actors_.emplace(o.refID, std::move(a));
                     continue;
                 }
@@ -207,7 +213,7 @@ namespace Huginn::Core::ActorLog
                     // Back after its left line: a short reminder, then on as before.
                     a.left = false;
                     seen_.Touch(o.refID);
-                    out.push_back(AgainLine(o, a.id));
+                    Emit(AgainLine(o, a.id), out);
                 }
                 a.absentSince = -1.0;
                 Diff(a, o, out);
@@ -220,7 +226,7 @@ namespace Huginn::Core::ActorLog
                     a.absentSince = nowSec;
                 } else if (nowSec - a.absentSince >= config_.leaveGraceSec) {
                     a.left = true;
-                    out.push_back(std::format("[Actors] {:08X} left tracking{}", ref, a.last.dead ? " (dead)" : ""));
+                    Emit(std::format("[Actors] {:08X} left tracking{}", ref, a.last.dead ? " (dead)" : ""), out);
                 }
             }
 
@@ -273,22 +279,36 @@ namespace Huginn::Core::ActorLog
                 o.refID, id.name, o.hostile ? 1 : 0, BandName(o.band), o.dead ? " (dead)" : "");
         }
 
-        static void Diff(Actor& a, const Observation& o, std::vector<std::string>& out)
+        // Every identity and transition line goes through here: the per-fight cap.
+        void Emit(std::string line, std::vector<std::string>& out)
+        {
+            if (linesThisFight_ < config_.lineCap) {
+                ++linesThisFight_;
+                out.push_back(std::move(line));
+                return;
+            }
+            if (suppressed_++ == 0) {
+                out.push_back(std::format("[Actors] cap reached ({} lines this fight), further lines suppressed",
+                    config_.lineCap));
+            }
+        }
+
+        void Diff(Actor& a, const Observation& o, std::vector<std::string>& out)
         {
             if (o.hostile != a.last.hostile) {
-                out.push_back(std::format("[Actors] {:08X} hostile {}->{}", o.refID, a.last.hostile ? 1 : 0, o.hostile ? 1 : 0));
+                Emit(std::format("[Actors] {:08X} hostile {}->{}", o.refID, a.last.hostile ? 1 : 0, o.hostile ? 1 : 0), out);
                 a.everHostile |= o.hostile;
             }
             if (o.type != a.last.type) {
-                out.push_back(std::format("[Actors] {:08X} type {}->{}", o.refID,
-                    State::GetTargetTypeName(a.last.type), State::GetTargetTypeName(o.type)));
+                Emit(std::format("[Actors] {:08X} type {}->{}", o.refID,
+                    State::GetTargetTypeName(a.last.type), State::GetTargetTypeName(o.type)), out);
             }
             if (o.dead && !a.last.dead) {
                 a.died = true;
-                out.push_back(std::format("[Actors] {:08X} died{}", o.refID,
-                    o.countedAlive ? " (the target list still counts it as a living hostile)" : ""));
+                Emit(std::format("[Actors] {:08X} died{}", o.refID,
+                    o.countedAlive ? " (the target list still counts it as a living hostile)" : ""), out);
             } else if (!o.dead && a.last.dead) {
-                out.push_back(std::format("[Actors] {:08X} revived", o.refID));
+                Emit(std::format("[Actors] {:08X} revived", o.refID), out);
             }
         }
 
@@ -313,9 +333,10 @@ namespace Huginn::Core::ActorLog
             const double secs = nowSec > fightStartSec_ ? nowSec - fightStartSec_ : 0.0;
             out.push_back(std::format(
                 "[Actors] fight ended after {:.0f}s: {} actors ({}), {} summons, {} hostile, {} died, "
-                "target switches={} type flips={}",
+                "target switches={} type flips={}{}",
                 secs, actors_.size(), types.empty() ? std::string("none") : types, summons, hostile, died,
-                targetSwitches_, typeFlips_));
+                targetSwitches_, typeFlips_,
+                suppressed_ ? std::format(", {} lines suppressed", suppressed_) : std::string()));
             ClearFight();
         }
 
@@ -328,6 +349,8 @@ namespace Huginn::Core::ActorLog
             lastTargetType_ = TargetType::None;
             targetSwitches_ = 0;
             typeFlips_ = 0;
+            linesThisFight_ = 0;
+            suppressed_ = 0;
         }
 
         Config config_;
@@ -340,6 +363,8 @@ namespace Huginn::Core::ActorLog
         TargetType lastTargetType_ = TargetType::None;
         std::size_t targetSwitches_ = 0;
         std::size_t typeFlips_ = 0;
+        std::size_t linesThisFight_ = 0;   // identity + transition lines (Emit)
+        std::size_t suppressed_ = 0;       // lines past Config::lineCap
     };
 
     // =========================================================================
@@ -353,24 +378,53 @@ namespace Huginn::Core::ActorLog
         std::string raceEditorID;
         std::string raceName;
         TargetType type = TargetType::None;
-        std::string rule;             // crosshair / sticky / closest
+        std::string rule;             // crosshair / sticky / closest / held
         bool hostile = false;
         bool dead = false;
         bool summon = false;
         std::string commander;
     };
 
+    // The [Target] line waits for a pick to hold DWELL_SEC (3 target polls)
+    // before it logs it. With the crosshair off the hostiles, the scoring
+    // target is the closest one by raw distance, re-read every 100 ms, so two
+    // bandits at about the same range alternate A/B/A/B at the poll rate --
+    // ten lines a second for nothing anyone could act on. A pick that does
+    // not last is counted, not logged, and the count rides on the next line:
+    // "(+4 brief switches)". A type change on the same actor waits the same
+    // way. The per-fight summary ([Actors] Tracker) counts every switch and
+    // flip, brief or not.
     class TargetWatch
     {
     public:
-        /// Has the scoring target changed actor or type since the last Commit?
-        /// Cheap: the caller builds a TargetInfo only when it has.
-        [[nodiscard]] bool Differs(std::uint32_t refID, TargetType type) const noexcept
+        static constexpr double DWELL_SEC = 0.3;
+
+        /// One target poll's pick. True when it differs from the last logged
+        /// one and has held DWELL_SEC: the caller builds a TargetInfo and
+        /// calls Commit. Cheap otherwise.
+        [[nodiscard]] bool Observe(double nowSec, std::uint32_t refID, TargetType type) noexcept
         {
-            return refID != current_.refID || type != current_.type;
+            if (refID == current_.refID && type == current_.type) {
+                // Back to the logged pick: any candidate in between was brief.
+                if (hasCandidate_) {
+                    ++brief_;
+                    hasCandidate_ = false;
+                }
+                return false;
+            }
+            if (hasCandidate_ && refID == candidateRef_ && type == candidateType_) {
+                // A small tolerance: polls land at ~100 ms, not exactly on it.
+                return nowSec - candidateSince_ >= DWELL_SEC - kPollJitterSec;
+            }
+            if (hasCandidate_) ++brief_;   // replaced before it held
+            hasCandidate_ = true;
+            candidateRef_ = refID;
+            candidateType_ = type;
+            candidateSince_ = nowSec;
+            return false;
         }
 
-        /// Take `next` as the scoring target and return its [Target] line.
+        /// Take `next` as the logged scoring target and return its [Target] line.
         [[nodiscard]] std::string Commit(TargetInfo next)
         {
             std::string line;
@@ -390,19 +444,37 @@ namespace Huginn::Core::ActorLog
                     line += std::format(" (was {})", Short(current_));
                 }
             }
+            if (brief_ > 0) {
+                line += std::format(" (+{} brief switch{})", brief_, brief_ == 1 ? "" : "es");
+                brief_ = 0;
+            }
+            hasCandidate_ = false;
             current_ = std::move(next);
             return line;
         }
 
         [[nodiscard]] const TargetInfo& Current() const noexcept { return current_; }
-        void Reset() { current_ = TargetInfo{}; }
+        [[nodiscard]] std::size_t PendingBrief() const noexcept { return brief_; }
+        void Reset()
+        {
+            current_ = TargetInfo{};
+            hasCandidate_ = false;
+            brief_ = 0;
+        }
 
     private:
+        static constexpr double kPollJitterSec = 0.02;
+
         static std::string Short(const TargetInfo& t)
         {
             return std::format("{:08X} '{}' type={}", t.refID, t.name, State::GetTargetTypeName(t.type));
         }
 
         TargetInfo current_;
+        bool hasCandidate_ = false;
+        std::uint32_t candidateRef_ = 0;
+        TargetType candidateType_ = TargetType::None;
+        double candidateSince_ = 0.0;
+        std::size_t brief_ = 0;
     };
 }

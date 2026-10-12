@@ -1,9 +1,10 @@
 #include "ReachReporter.h"
 #include "PipelineStateCache.h"
+#include "SelectionLogV3.h"
 #include "core/ReachLog.h"
 #include "state/StateManager.h"
 #include "telemetry/SoakMetrics.h"
-#include "util/ExtraListStability.h"
+#include "util/InventoryUtil.h"
 
 namespace Huginn::Learning::ReachReporter
 {
@@ -46,42 +47,51 @@ namespace Huginn::Learning::ReachReporter
             return Core::Reach::ClassifyKind(cls, food, poison);
         }
 
-        // The base form's enchantment, or a player one on the stack. The worn
-        // stack decides when one is marked worn (two Gold Rings, one enchanted);
-        // otherwise any enchanted stack of the form does. Extra data is read
-        // only once it is stable after a load (Util::IsExtraListStable).
-        bool IsEnchantedArmour(RE::FormID formID)
+        // Is the armour just put on enchanted? The facts for Core::Reach::
+        // ClassifyEnchant: the base form's enchantment, else the player ones on
+        // its stacks. Call only when SelectionLogV3::IsInventoryExtraReadable()
+        // (no load under way, past the post-load window): this walks the
+        // inventory's extra data.
+        Core::Reach::Enchant EnchantmentOf(RE::FormID formID)
         {
-            const auto* armor = RE::TESForm::LookupByID<RE::TESObjectARMO>(formID);
-            if (!armor) return false;
-            if (armor->formEnchanting) return true;
-            if (!Util::IsExtraListStable()) return false;
+            auto* armor = RE::TESForm::LookupByID<RE::TESObjectARMO>(formID);
+            if (!armor) return Core::Reach::Enchant::No;
+            Core::Reach::StackFacts f;
+            f.baseEnchanted = armor->formEnchanting != nullptr;
+            if (f.baseEnchanted) return Core::Reach::ClassifyEnchant(f);
 
             auto* player = RE::PlayerCharacter::GetSingleton();
             auto* changes = player ? player->GetInventoryChanges() : nullptr;
-            if (!changes || !changes->entryList) return false;
-            bool anyEnchanted = false;
-            bool wornSeen = false;
-            bool wornEnchanted = false;
+            if (!changes || !changes->entryList) return Core::Reach::Enchant::No;
+            int32_t inStacks = 0;
             for (auto* entry : *changes->entryList) {
                 if (!entry || !entry->object || entry->object->GetFormID() != formID || !entry->extraLists) continue;
                 for (auto* xl : *entry->extraLists) {
                     if (!xl) continue;
                     const auto* xe = xl->GetByType<RE::ExtraEnchantment>();
                     const bool enchanted = xe && xe->enchantment;
-                    anyEnchanted |= enchanted;
+                    const auto* xc = xl->GetByType<RE::ExtraCount>();
+                    inStacks += xc ? xc->count : 1;
+                    if (enchanted) {
+                        ++f.enchantedStacks;
+                    } else {
+                        ++f.plainStacks;
+                    }
                     if (xl->HasType<RE::ExtraWorn>() || xl->HasType<RE::ExtraWornLeft>()) {
-                        wornSeen = true;
-                        wornEnchanted |= enchanted;
+                        f.wornKnown = true;
+                        f.wornEnchanted |= enchanted;
                     }
                 }
             }
-            return wornSeen ? wornEnchanted : anyEnchanted;
+            // Copies with no extra data at all are plain ones.
+            f.looseCopies = Util::GetItemCountSafe(player, armor) - inStacks;
+            return Core::Reach::ClassifyEnchant(f);
         }
 
+        // A load under way, the post-load window, or the loading screen up.
         bool Loading()
         {
-            if (!Util::IsExtraListStable()) return true;
+            if (!SelectionLogV3::IsInventoryExtraReadable()) return true;
             auto* ui = RE::UI::GetSingleton();
             return ui && ui->IsMenuOpen(RE::LoadingMenu::MENU_NAME);
         }
@@ -129,7 +139,19 @@ namespace Huginn::Learning::ReachReporter
 
     void OnArmourPick(RE::FormID formID, std::string_view via, std::string_view caseLabel)
     {
-        const Core::Reach::GearEquip equip{ formID, IsEnchantedArmour(formID), Loading(), via };
+        // The cheap checks first: the inventory walk runs only for a menu equip
+        // outside a load (a quickload just after the inventory closed reads
+        // "menu (just closed)" while the engine re-dresses the player).
+        if (formID == 0 || !Core::Reach::IsMenuVia(via) || Loading()) {
+            return;
+        }
+        const auto enchant = EnchantmentOf(formID);
+        if (enchant == Core::Reach::Enchant::Ambiguous) {
+            logger::debug("[Reach] gear {:08X} '{}' not counted: plain and enchanted copies, none marked worn"sv,
+                formID, FormName(formID));
+            return;
+        }
+        const Core::Reach::GearEquip equip{ formID, enchant == Core::Reach::Enchant::Yes, false, via };
         if (!g_gearGate.Counts(equip, NowMs())) {
             return;
         }

@@ -7,7 +7,8 @@
 // base form, race, summon and commander, all perceivable (CLAUDE.md
 // "Forbidden Information"; no level, inventory or spell list) -- and logs.
 //
-// [Target]: on every change of the scoring target's actor or type.
+// [Target]: on a change of the scoring target's actor or type that holds
+//           0.3 s (core/ActorLog.h TargetWatch).
 // [Actors]: who was in the fight, transitions only; see core/ActorLog.h.
 // `hg actors`: DescribeTrackedActors.
 // =============================================================================
@@ -56,7 +57,9 @@ namespace Huginn::State
 
    void StateManager::LogTargetsAndActors(double nowSec, bool fighting, const ScoringPick& pick)
    {
-      if (m_targetWatch.Differs(pick.refID, pick.type)) {
+      // Logged once the new pick has held TargetWatch::DWELL_SEC; the brief
+      // ones are counted onto the next line.
+      if (m_targetWatch.Observe(nowSec, pick.refID, pick.type)) {
          Core::ActorLog::TargetInfo info;
          info.refID = pick.refID;
          info.type = pick.type;

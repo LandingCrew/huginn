@@ -166,3 +166,56 @@ TEST_CASE("reach: the heartbeat split")
     // Read-and-reset.
     CHECK(FormatSplit(split.Take()) == "reach fight=0 calm=0");
 }
+
+TEST_CASE("reach: the gear gate's memory is bounded")
+{
+    GearGate gate;
+    for (std::uint32_t id = 1; id <= GearGate::kMaxRemembered; ++id) {
+        CHECK(gate.Counts(GearEquip{ id, true, false, "inventory menu" }, 0));
+    }
+    CHECK(gate.Remembered() == GearGate::kMaxRemembered);
+    // Full: the next new piece clears the memory, then is remembered alone.
+    CHECK(gate.Counts(GearEquip{ 1000, true, false, "inventory menu" }, 1));
+    CHECK(gate.Remembered() == 1);
+    // Clearing only ends repeat windows early: piece 1 counts again.
+    CHECK(gate.Counts(GearEquip{ 1, true, false, "inventory menu" }, 2));
+    // ... and piece 1000's window survived the clear (it came after it).
+    CHECK_FALSE(gate.Counts(GearEquip{ 1000, true, false, "inventory menu" }, 3));
+}
+
+TEST_CASE("reach: is the piece just put on enchanted?")
+{
+    StackFacts f;
+    CHECK(ClassifyEnchant(f) == Enchant::No);                     // a plain piece, no stacks
+
+    f.baseEnchanted = true;                                       // a ring of Conjuration off the shelf
+    f.plainStacks = 3;
+    CHECK(ClassifyEnchant(f) == Enchant::Yes);
+
+    SUBCASE("the worn stack decides when one is marked")
+    {
+        StackFacts g;
+        g.enchantedStacks = 1;
+        g.plainStacks = 1;
+        g.wornKnown = true;
+        g.wornEnchanted = false;                                  // the plain Gold Ring went on
+        CHECK(ClassifyEnchant(g) == Enchant::No);
+        g.wornEnchanted = true;
+        CHECK(ClassifyEnchant(g) == Enchant::Yes);
+    }
+    SUBCASE("no stack marked worn: only when every copy is enchanted")
+    {
+        StackFacts g;
+        g.enchantedStacks = 1;                                    // the only copy, player-enchanted
+        CHECK(ClassifyEnchant(g) == Enchant::Yes);
+        g.enchantedStacks = 2;                                    // two, both enchanted
+        CHECK(ClassifyEnchant(g) == Enchant::Yes);
+        g.looseCopies = 1;                                        // plus a plain one with no extra data
+        CHECK(ClassifyEnchant(g) == Enchant::Ambiguous);
+        g.looseCopies = 0;
+        g.plainStacks = 1;                                        // plus a plain stack
+        CHECK(ClassifyEnchant(g) == Enchant::Ambiguous);
+        g.enchantedStacks = 0;                                    // nothing enchanted at all
+        CHECK(ClassifyEnchant(g) == Enchant::No);
+    }
+}

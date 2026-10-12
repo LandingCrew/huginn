@@ -84,6 +84,36 @@ namespace Huginn::Core::Reach
     }
 
     // -------------------------------------------------------------------------
+    // GEAR: is the piece just put on enchanted?
+    // -------------------------------------------------------------------------
+    // The equip event names the base form, not the stack. A base enchantment
+    // settles it. A player enchantment lives on one stack's extra data, so:
+    // the stack marked worn decides when one is; otherwise only when every
+    // copy of the form is enchanted (a plain Gold Ring put on while an
+    // enchanted one sits in the bag must not count). Mixed stacks with none
+    // marked worn: Ambiguous, not counted.
+    enum class Enchant : std::uint8_t { Yes, No, Ambiguous };
+
+    struct StackFacts
+    {
+        bool baseEnchanted = false;     // the base form's own enchantment
+        bool wornKnown = false;         // a stack of the form is marked worn
+        bool wornEnchanted = false;     // ... and it carries a player enchantment
+        int enchantedStacks = 0;        // stacks with a player enchantment
+        int plainStacks = 0;            // stacks with extra data but no enchantment
+        int looseCopies = 0;            // copies with no extra data at all (plain)
+    };
+
+    [[nodiscard]] constexpr Enchant ClassifyEnchant(const StackFacts& f) noexcept
+    {
+        if (f.baseEnchanted) return Enchant::Yes;
+        if (f.wornKnown) return f.wornEnchanted ? Enchant::Yes : Enchant::No;
+        if (f.enchantedStacks == 0) return Enchant::No;
+        if (f.plainStacks == 0 && f.looseCopies <= 0) return Enchant::Yes;
+        return Enchant::Ambiguous;
+    }
+
+    // -------------------------------------------------------------------------
     // GEAR: which armour equips are reaches
     // -------------------------------------------------------------------------
     // Contextual gear only: an enchanted piece (a ring of Conjuration, an
@@ -114,7 +144,7 @@ namespace Huginn::Core::Reach
             if (const auto it = last_.find(e.formID); it != last_.end() && nowMs - it->second < REPEAT_MS) {
                 return false;
             }
-            if (last_.size() >= kMaxRemembered) last_.clear();   // bounded; a stale entry only ends a repeat window early
+            if (last_.size() >= kMaxRemembered) last_.clear();   // bounded; clearing only ends repeat windows early
             last_[e.formID] = nowMs;
             return true;
         }
@@ -123,6 +153,12 @@ namespace Huginn::Core::Reach
         {
             std::lock_guard lock(mutex_);
             last_.clear();
+        }
+
+        [[nodiscard]] std::size_t Remembered()
+        {
+            std::lock_guard lock(mutex_);
+            return last_.size();
         }
 
     private:

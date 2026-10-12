@@ -95,6 +95,13 @@ namespace Huginn::Learning::SelectionLogV3
     /// post-load window, Util::IsExtraListStable, has been stamped by then).
     void OnLoadFinished();
 
+    /// May inventory extra data be read now? Not while a load is under way
+    /// (OnLoadStarting .. OnLoadFinished), nor in the post-load window
+    /// (Util::IsExtraListStable). For the other logging-only readers
+    /// (ReachReporter's gear check, 0.23.39); the old engine's registries keep
+    /// their own gate.
+    [[nodiscard]] bool IsInventoryExtraReadable();
+
     /// A game load (or `hg reset all`): episodes, pending picks, the menu's
     /// context and the cached held set are forgotten.
     void Reset();

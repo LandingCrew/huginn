@@ -861,8 +861,13 @@ namespace Huginn::State
         if (m_targets.primary.has_value() && m_targets.primary->isHostile && !m_targets.primary->isDead) {
           scoringTarget = m_targets.primary;
           // Which rule put the primary there: the crosshair this poll, the
-          // sticky memory of it, or (neither) the closest-hostile fallback.
-          scoringPick.rule = crosshairHit ? "crosshair" : (crosshairOrStickyActor ? "sticky" : "closest");
+          // sticky memory of it, the closest-hostile fallback, or -- none of
+          // them resolved an actor this poll -- a primary held from before
+          // (not reached today: the primary is reset when none resolves).
+          scoringPick.rule = crosshairHit ? "crosshair"
+                           : crosshairOrStickyActor ? "sticky"
+                           : primaryActor ? "closest"
+                                          : "held";
         } else {
           scoringTarget = m_targets.GetClosestEnemy();
           scoringPick.rule = "closest";
@@ -873,8 +878,11 @@ namespace Huginn::State
           scoringPick.refID = scoringTarget->actorFormID;
           scoringPick.type = scoringTarget->targetType;
           scoringPick.hostile = scoringTarget->isHostile;
-          scoringPick.dead = scoringTarget->isDead;
-          if (auto* actor = GetActorByFormID(scoringTarget->actorFormID); actor && actor->Get3D()) {
+          auto* actor = GetActorByFormID(scoringTarget->actorFormID);
+          // The actor's own flag too: a hostile's entry is not refreshed after
+          // it dies, so the entry alone would show a corpse as dead=0.
+          scoringPick.dead = scoringTarget->isDead || (actor && actor->IsDead());
+          if (actor && actor->Get3D()) {
             scoringArcher = HoldsRanged(actor);
           }
         }
