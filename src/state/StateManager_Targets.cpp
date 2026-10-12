@@ -215,6 +215,7 @@ namespace Huginn::State
       // This never touches highActorHandles — just crosshair raycast + FormID lookup.
 
       RE::Actor* crosshairOrStickyActor = nullptr;
+      bool crosshairHit = false;   // the [Target] line's rule: crosshair, else sticky
 
       // Try crosshair first
       auto* crosshairData = RE::CrosshairPickData::GetSingleton();
@@ -232,6 +233,7 @@ namespace Huginn::State
       const bool hasValidTime = (calendar != nullptr);
 
       if (crosshairOrStickyActor) {
+      crosshairHit = true;
       // Crosshair detected an actor — update sticky state
 #ifdef _DEBUG
       logger::trace("[StateManager] Crosshair HIT actor (FormID: {:08X})"sv, crosshairOrStickyActor->GetFormID());
@@ -318,6 +320,7 @@ namespace Huginn::State
       bool followerBleedout = false;    // R3: a teammate down on one knee
       bool scoringArcher = false;
       float soleTtk = -1.0f;
+      ScoringPick scoringPick;          // the [Target] / [Actors] logs (0.23.39)
       const double nowSec = NeedClock::Now();
       {
       std::unique_lock lock(m_targetsMutex);
@@ -857,11 +860,29 @@ namespace Huginn::State
         std::optional<TargetActorState> scoringTarget;
         if (m_targets.primary.has_value() && m_targets.primary->isHostile && !m_targets.primary->isDead) {
           scoringTarget = m_targets.primary;
+          // Which rule put the primary there: the crosshair this poll, the
+          // sticky memory of it, the closest-hostile fallback, or -- none of
+          // them resolved an actor this poll -- a primary held from before
+          // (not reached today: the primary is reset when none resolves).
+          scoringPick.rule = crosshairHit ? "crosshair"
+                           : crosshairOrStickyActor ? "sticky"
+                           : primaryActor ? "closest"
+                                          : "held";
         } else {
           scoringTarget = m_targets.GetClosestEnemy();
+          scoringPick.rule = "closest";
         }
         if (scoringTarget) {
-          if (auto* actor = GetActorByFormID(scoringTarget->actorFormID); actor && actor->Get3D()) {
+          // The same pick ScoringTargetType makes, so the [Target] line names
+          // the type scoring reads.
+          scoringPick.refID = scoringTarget->actorFormID;
+          scoringPick.type = scoringTarget->targetType;
+          scoringPick.hostile = scoringTarget->isHostile;
+          auto* actor = GetActorByFormID(scoringTarget->actorFormID);
+          // The actor's own flag too: a hostile's entry is not refreshed after
+          // it dies, so the entry alone would show a corpse as dead=0.
+          scoringPick.dead = scoringTarget->isDead || (actor && actor->IsDead());
+          if (actor && actor->Get3D()) {
             scoringArcher = HoldsRanged(actor);
           }
         }
@@ -886,6 +907,27 @@ namespace Huginn::State
       // The count GameState's `Enemies:` bucket is made from, published for
       // the combat lock's no-enemy release (UpdateLoop -> SlotLocker).
       m_enemyCount.store(m_targets.GetEnemyCount(), std::memory_order_release);
+
+      // [Actors] (0.23.39, logging only): the actors this poll tracks, while
+      // a fight is on -- and on the poll that ends one, so the summary sees
+      // it. No scan of its own: the list just built. `dead` is the actor's
+      // own flag: the hostile scan stops refreshing an entry when its actor
+      // dies, so the entry alone would never say so.
+      m_actorObs.clear();
+      if (m_combatDebounce.Value() || m_actorLog.InFight()) {
+        for (const auto& t : m_targets.targets) {
+          Core::ActorLog::Observation o;
+          o.refID = t.actorFormID;
+          o.hostile = t.isHostile;
+          o.type = t.targetType;
+          o.band = Core::ActorLog::BandOf(t.distanceToPlayerSq,
+              DistanceThresholds::EVAL_MELEE_MAX_SQ, DistanceThresholds::EVAL_MID_MAX_SQ);
+          const auto* actor = GetActorByFormID(t.actorFormID);
+          o.dead = t.isDead || (actor && actor->IsDead());
+          o.countedAlive = o.dead && !t.isDead && t.isHostile;
+          m_actorObs.push_back(o);
+        }
+      }
       }
 
       // R3: publish the need readings. Families are HELD for the fight: the
@@ -903,6 +945,8 @@ namespace Huginn::State
         if (hostileNeeds.castBits & 2) n.castFrostAt = nowSec;
         if (hostileNeeds.castBits & 4) n.castShockAt = nowSec;
       });
+
+      LogTargetsAndActors(nowSec, fighting, scoringPick);
 
       return changed;
    }

@@ -13,6 +13,7 @@
 #include "core/DropAhead.h"
 #include "core/WaterSelfCheck.h"
 #include "core/BenchKind.h"
+#include "core/ActorLog.h"       // pure: the [Target] / [Actors] logs (0.23.39)
 #include <array>
 #include <atomic>
 #include <mutex>
@@ -184,6 +185,12 @@ namespace Huginn::State
       // reads them; see NeedSensorState.h.
       [[nodiscard]] NeedSensorState GetNeedSensors() const noexcept;
 
+      // `hg actors`: one line per tracked actor (perceivable facts only:
+      // name, race, type, hostility, alive/dead, summon, distance band), the
+      // scoring target marked. Reads a copy of the targets and the actors as
+      // they stand; any thread.
+      [[nodiscard]] std::vector<std::string> DescribeTrackedActors() const;
+
       // =============================================================================
       // CONFIGURATION (Optional - defaults from StateManagerConstants.h)
       // =============================================================================
@@ -353,6 +360,20 @@ namespace Huginn::State
       // Cached actor type lookup (avoids repeated race string matching per poll)
       // Falls back to ClassifyActor on cache miss, stores result for future polls
       [[nodiscard]] TargetType GetCachedActorType(RE::Actor* actor);
+
+      // [Target] / [Actors] logs (StateManager_ActorLog.cpp, 0.23.39; logging
+      // only). The scoring target as PollTargets saw it this poll.
+      struct ScoringPick
+      {
+         RE::FormID refID = 0;
+         TargetType type = TargetType::None;
+         const char* rule = "closest";   // crosshair / sticky / closest / held
+         bool hostile = false;
+         bool dead = false;
+      };
+      // After the targets lock is released: the [Target] line on a change, and
+      // the [Actors] lines from m_actorObs while a fight is on.
+      void LogTargetsAndActors(double nowSec, bool fighting, const ScoringPick& pick);
 
       // =============================================================================
       // STATE STORAGE (3 models)
@@ -654,6 +675,13 @@ namespace Huginn::State
       [[nodiscard]] std::uint32_t GetCachedFamilies(RE::Actor* actor);
 
       Core::Needs::SoleHostileTtk m_soleHostileTtk;   // PollTargets only
+
+      // [Target] / [Actors] logs: PollTargets only (and ResetTrackingState,
+      // under m_pollMutex). m_actorObs is the per-poll scratch, filled under
+      // m_targetsMutex while a fight is on, read after it is released.
+      Core::ActorLog::TargetWatch m_targetWatch;
+      Core::ActorLog::Tracker m_actorLog;
+      std::vector<Core::ActorLog::Observation> m_actorObs;
       bool m_wasUnderwaterForTimer = false;   // PollPlayerPosition only
       Core::Needs::ReadingAge m_dropAge;      // PollPlayerPosition only: the drop reading's unpaused age
 

@@ -1335,6 +1335,11 @@ namespace Huginn::Learning::SelectionLogV3
         g_loadInProgress.store(false, std::memory_order_release);
     }
 
+    bool IsInventoryExtraReadable()
+    {
+        return ExtraListsReadable();
+    }
+
     void Reset()
     {
         {

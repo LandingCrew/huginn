@@ -53,8 +53,10 @@ namespace Huginn::Learning
         void OnExternalEquip(RE::FormID formID, const char* formType);
 
         /// R4: an armour equip Huginn did not make. Recorded in the selection
-        /// log v3 only (when player input is behind it); the learner and the
-        /// soak telemetry never see it. See ExternalEquipListener.
+        /// log v3 (when player input is behind it), and, when it is enchanted
+        /// gear put on through a menu, a [Reach] line and the heartbeat's reach
+        /// split (0.23.39, ReachReporter). The learner, accept% and reachIns
+        /// never see it. See ExternalEquipListener.
         void OnArmourEquip(RE::FormID formID);
 
         /// Replace the stored config snapshot (e.g., after INI hot-reload).

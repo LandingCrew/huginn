@@ -3,6 +3,7 @@
 #include <unordered_map>
 
 #include "EquipEvent.h"
+#include "core/WheelAttributionHold.h"
 #include <chrono>
 #include <mutex>
 #include <string>
@@ -95,7 +96,14 @@ namespace Huginn::Learning
             EquipEvent event;
             std::chrono::steady_clock::time_point selectedAt;
             std::chrono::steady_clock::time_point deadline;
+            // An outside pick via "Wheeler wheel" may be Huginn's own wheel,
+            // whose callback lands just after the equip event: held unannounced
+            // and unconfirmed until that callback or HOLD_MS (WheelAttributionHold).
+            Core::WheelAttributionHold hold;
         };
+
+        static void LogPending(const EquipEvent& event);
+        static std::int64_t SteadyMs(std::chrono::steady_clock::time_point t);
 
         static SelectionKind KindOf(RE::FormID formID);
 

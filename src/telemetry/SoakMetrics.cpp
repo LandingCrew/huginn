@@ -217,6 +217,7 @@ namespace Huginn::Telemetry
         const uint32_t pressLabeled = m_pressLabeled.exchange(0, std::memory_order_relaxed);
         const uint32_t pressOffPage = m_pressOffPage.exchange(0, std::memory_order_relaxed);
         const uint32_t pageFlips    = m_pageFlips.exchange(0, std::memory_order_relaxed);
+        const auto reach = m_reach.Take();
         const uint32_t returnsHome  = m_returnsHome.exchange(0, std::memory_order_relaxed);
         const uint32_t returnsWait  = m_returnsWaiting.exchange(0, std::memory_order_relaxed);
         const uint32_t returnsAway  = m_returnsAway.exchange(0, std::memory_order_relaxed);
@@ -326,12 +327,15 @@ namespace Huginn::Telemetry
         // place. reachIns = every attributed external equip (the player went
         // past Huginn); candidate = the ones Huginn had scored, i.e. could have
         // offered (hit+near+miss). workaround = presses that needed a labeled
-        // slot or a page past the first, plus page flips.
+        // slot or a page past the first, plus page flips. The reach split
+        // (0.23.39) is appended after them for the same reason: in a fight or
+        // not, and by kind; it counts enchanted gear too, which reachIns does
+        // not (ReachReporter).
         const uint32_t pressTotal = pressRegular + pressLabeled;
         logger::info(
             "[Soak] up={}h{:02}m{:02}s | equips hit={} near={} miss={} novel={} accept={} skipped={} | "
             "recompute={}/{} ticks override={} pageBail={} | slotChurn={} | learn items={} trains={} forgot={} | tick avg={:.3f} peak={:.3f} ms | "
-            "goals reachIns={} (candidate={}) presses={} (regular={} labeled={} offPage={}) pageFlips={}"sv,
+            "goals reachIns={} (candidate={}) presses={} (regular={} labeled={} offPage={}) pageFlips={} | {}"sv,
             upH, upM, upS,
             hit, near_, miss, novel, acceptStr, skipStr,
             recomputes, ticks, overrideRuns, pageBails,
@@ -339,7 +343,8 @@ namespace Huginn::Telemetry
             learnerItems, learnerTrains, learnerForgot,
             avgMs, peakMs,
             totalEquips, hit + near_ + miss,
-            pressTotal, pressRegular, pressLabeled, pressOffPage, pageFlips);
+            pressTotal, pressRegular, pressLabeled, pressOffPage, pageFlips,
+            Core::Reach::FormatSplit(reach));
 
         Huginn_PLOT("Huginn/Learner Items", static_cast<int64_t>(learnerItems));
         // Only plot windows that carry signal — zero-equip windows would drag the

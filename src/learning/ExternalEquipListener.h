@@ -101,7 +101,9 @@ namespace Huginn::Learning
                 // still nothing else. Feeding it to the learner would train the
                 // apparel candidates' weights and move accept%, i.e. change what
                 // the frozen engine does; that waits for R8, where all carried
-                // armour becomes a candidate.
+                // armour becomes a candidate. (0.23.39: enchanted gear put on
+                // through a menu is also logged as a reach -- a [Reach] line and
+                // the heartbeat's reach split, still nothing that scores.)
                 ExternalEquipLearner::GetSingleton().OnArmourEquip(form->GetFormID());
                 return RE::BSEventNotifyControl::kContinue;
             default:

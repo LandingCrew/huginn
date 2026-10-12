@@ -277,6 +277,21 @@ namespace Huginn::Console
       logger::info("[Console] {}"sv, survival);
    }
 
+   // 0.23.39: the actors the target poll tracks right now, with the fields
+   // the [Actors] log uses -- name, race, type, hostility, alive or dead,
+   // summon and commander, distance band; the scoring target marked.
+   // Perceivable facts only (CLAUDE.md "Forbidden Information"). To the
+   // console and the log.
+   static void Cmd_Actors(std::string_view /*arg*/)
+   {
+      const auto rows = State::StateManager::GetSingleton().DescribeTrackedActors();
+      for (size_t i = 0; i < rows.size(); ++i) {
+         const std::string line = i == 0 ? "Huginn actors: " + rows[i] : "  " + rows[i];
+         Print(line.c_str());
+         logger::info("[Console] hg actors: {}"sv, i == 0 ? rows[i] : line);
+      }
+   }
+
    static void Cmd_Unlock(std::string_view /*arg*/)
    {
       size_t lockedCount = CountLockedSlots();
@@ -1663,6 +1678,7 @@ namespace Huginn::Console
       { "refresh",       "Force immediate recommendation update",       false, Cmd_Refresh },
       { "recs",          "Dump top-N recommendation breakdown to log",  true,  Cmd_Recs },
       { "needs",         "Print the live need vector (non-zero needs)", false, Cmd_Needs },
+      { "actors",        "List the tracked actors (race, type, hostility, summon)", false, Cmd_Actors },
       { "unlock",        "Clear all slot locks",                        false, Cmd_Unlock },
       { "status",        "Show system status",                          false, Cmd_Status },
       { "weights",       "Show learner weight vector for FormID",          true,  Cmd_Weights },

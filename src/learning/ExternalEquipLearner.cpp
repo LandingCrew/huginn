@@ -1,6 +1,7 @@
 #include "ExternalEquipLearner.h"
 #include "PipelineStateCache.h"
 #include "PlayerInputGate.h"
+#include "ReachReporter.h"
 #include "SelectionLogV3.h"
 #include "SelectionTracker.h"
 #include "telemetry/SoakMetrics.h"
@@ -99,7 +100,12 @@ namespace Huginn::Learning
         if (via.empty()) {
             return;   // dressing by the engine or a script (an outfit at load): not a pick
         }
-        SelectionLogV3::OnUnlearnedPick(formID, std::move(via), "armour", ComputeAttribution(formID));
+        const char* caseLabel = ComputeAttribution(formID);
+        // 0.23.39: enchanted gear put on through a menu is a reach-in (kind=
+        // gear): a [Reach] line and the heartbeat's reach split. Still not the
+        // learner, accept% or reachIns -- logging only (ReachReporter).
+        ReachReporter::OnArmourPick(formID, via, caseLabel);
+        SelectionLogV3::OnUnlearnedPick(formID, std::move(via), "armour", caseLabel);
     }
 
     char ExternalEquipLearner::ShouldSkip(RE::FormID formID, std::string& via) const
