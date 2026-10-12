@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <deque>
 #include <mutex>
+#include "core/ReachLog.h"
 #include "core/SlotScoreMath.h"
 #include <optional>
 #include <span>
@@ -278,6 +279,13 @@ namespace Huginn::Telemetry
         // now attributed like any other outside selection.)
         void RecordEquipSkip(char reasonCode);
 
+        // One reach-in (ReachReporter): an outside selection that confirmed,
+        // or enchanted gear put on through a menu. Feeds only the heartbeat's
+        // reach split, appended to the end of the line; reachIns and accept%
+        // still come from RecordEquipCase alone, so gear (outside both) makes
+        // the split's total exceed reachIns by the gear count.
+        void RecordReach(bool inFight, Core::Reach::Kind kind) noexcept { m_reach.Record(inFight, kind); }
+
         // One pipeline recompute produced `candidateCount` scored candidates and
         // `displayedCount` widget items; `overrideActive` = a safety override was
         // the top recommendation this run.
@@ -352,6 +360,9 @@ namespace Huginn::Telemetry
         std::atomic<uint32_t> m_skipInput{0};  // n: no player input behind it (a script)
         std::atomic<uint32_t> m_skipStale{0};  // s: pipeline snapshot too old to attribute
         std::atomic<uint32_t> m_skipOff{0};    // x: external-equip learning disabled
+
+        // Reach-ins (window): in a fight or not, and by kind.
+        Core::Reach::Split m_reach;
 
         // Workarounds (window). Regular and labeled partition the presses;
         // offPage overlaps both (a labeled slot on page 2 counts in each).

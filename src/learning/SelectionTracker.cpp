@@ -2,6 +2,7 @@
 #include "EquipEventBus.h"
 #include "SelectionLog.h"
 #include "SelectionLogV3.h"
+#include "ReachReporter.h"
 #include "Config.h"
 #include "Globals.h"
 #include "telemetry/SoakMetrics.h"
@@ -70,6 +71,19 @@ namespace Huginn::Learning
         return false;
     }
 
+    std::int64_t SelectionTracker::SteadyMs(std::chrono::steady_clock::time_point t)
+    {
+        return std::chrono::duration_cast<std::chrono::milliseconds>(t.time_since_epoch()).count();
+    }
+
+    void SelectionTracker::LogPending(const EquipEvent& event)
+    {
+        logger::info("[Selection] Pending {:08X} '{}' src={} via={} kind={}{}{}"sv,
+            event.formID, FormName(event.formID), EquipSourceToString(event.source), event.via,
+            SelectionKindToString(event.kind),
+            event.attribution.empty() ? ""sv : " case="sv, event.attribution);
+    }
+
     void SelectionTracker::Select(RE::FormID formID, EquipSource source, std::string via,
                                   std::string attribution)
     {
@@ -86,23 +100,53 @@ namespace Huginn::Learning
         // One upgrade: an outside selection followed by a Huginn one for the
         // same item is a Huginn pick whose equip event arrived first (Wheeler
         // may equip before it calls back). Huginn's label wins, and the outside
-        // attribution is dropped so it never reaches accept%.
+        // attribution is dropped so it never reaches accept%. Inside the hold
+        // (WheelAttributionHold, 0.23.39) the outside pick was never announced,
+        // so the one Pending line written is Huginn's; after it, the late
+        // relabel is logged as before.
         {
-            std::lock_guard lock(m_mutex);
-            for (auto& p : m_pending) {
-                if (p.event.formID != formID) continue;
-                if (p.event.source == EquipSource::External && source != EquipSource::External) {
-                    logger::info("[Selection] {:08X} pending as External ({}) is a {} pick -- relabelled"sv,
-                        formID, p.event.via, EquipSourceToString(source));
-                    p.event.source = source;
-                    p.event.via = std::move(via);
-                    p.event.attribution.clear();
-                } else {
-                    logger::debug("[Selection] {:08X} already pending ({} via {}) -- same selection"sv,
-                        formID, EquipSourceToString(p.event.source), p.event.via);
+            std::optional<Pending> confirmNow;
+            bool known = false;
+            {
+                std::lock_guard lock(m_mutex);
+                for (auto it = m_pending.begin(); it != m_pending.end(); ++it) {
+                    Pending& p = *it;
+                    if (p.event.formID != formID) continue;
+                    known = true;
+                    if (p.event.source == EquipSource::External && source != EquipSource::External) {
+                        const bool wasHeld = p.hold.Held();
+                        const auto action = p.hold.OnHuginnSelect();
+                        if (!wasHeld) {
+                            logger::info("[Selection] {:08X} pending as External ({}) is a {} pick -- relabelled"sv,
+                                formID, p.event.via, EquipSourceToString(source));
+                        } else {
+                            logger::debug("[Selection] {:08X} equip event came {:.0f}ms ahead of its {} pick -- one selection"sv,
+                                formID, MsSince(p.selectedAt, std::chrono::steady_clock::now()),
+                                EquipSourceToString(source));
+                        }
+                        p.event.source = source;
+                        p.event.via = std::move(via);
+                        p.event.attribution.clear();
+                        if (action == Core::WheelAttributionHold::Action::Announce ||
+                            action == Core::WheelAttributionHold::Action::AnnounceConfirm) {
+                            LogPending(p.event);
+                        }
+                        if (action == Core::WheelAttributionHold::Action::AnnounceConfirm) {
+                            // Its count dropped during the hold: confirm now, outside the lock.
+                            confirmNow = std::move(p);
+                            m_pending.erase(it);
+                        }
+                    } else {
+                        logger::debug("[Selection] {:08X} already pending ({} via {}) -- same selection"sv,
+                            formID, EquipSourceToString(p.event.source), p.event.via);
+                    }
+                    break;
                 }
-                return;
             }
+            if (confirmNow) {
+                Confirm(confirmNow->event, confirmNow->selectedAt, "consumed");
+            }
+            if (known) return;
         }
 
         // Capture OUTSIDE m_mutex: it takes StateManager and cache locks.
@@ -134,16 +178,20 @@ namespace Huginn::Learning
             return;
         }
 
-        logger::info("[Selection] Pending {:08X} '{}' src={} via={} kind={}{}{}"sv,
-            formID, FormName(formID), EquipSourceToString(source), event.via,
-            SelectionKindToString(event.kind),
-            event.attribution.empty() ? ""sv : " case="sv, event.attribution);
+        Pending pending{ std::move(event), now, deadline, {} };
+        if (pending.hold.Begin(SteadyMs(now), source == EquipSource::External, pending.event.via) ==
+            Core::WheelAttributionHold::Action::Announce) {
+            LogPending(pending.event);
+        } else {
+            logger::debug("[Selection] Holding {:08X} '{}' (External via {}) up to {}ms for Huginn's wheel callback"sv,
+                formID, FormName(formID), pending.event.via, Core::WheelAttributionHold::HOLD_MS);
+        }
 
         std::lock_guard lock(m_mutex);
         for (const auto& p : m_pending) {
             if (p.event.formID == formID) return;  // lost a race to an identical select
         }
-        m_pending.push_back(Pending{ std::move(event), now, deadline });
+        m_pending.push_back(std::move(pending));
     }
 
     bool SelectionTracker::OnConsumed(RE::FormID formID)
@@ -153,6 +201,11 @@ namespace Huginn::Learning
             std::lock_guard lock(m_mutex);
             for (auto it = m_pending.begin(); it != m_pending.end(); ++it) {
                 if (it->event.formID == formID) {
+                    // Held (it may yet be Huginn's wheel): the drop is kept and
+                    // confirms when the hold resolves, under the right label.
+                    if (it->hold.OnConsumed() == Core::WheelAttributionHold::Action::Defer) {
+                        return true;
+                    }
                     hit = std::move(*it);
                     m_pending.erase(it);
                     break;
@@ -173,11 +226,25 @@ namespace Huginn::Learning
         EquipEventBus::GetSingleton().Tick(now);
 
         std::vector<Pending> due;
+        std::vector<Pending> consumed;   // held picks whose count dropped during the hold
         {
             std::lock_guard lock(m_mutex);
             if (m_pending.empty()) return;
+            const auto nowMs = SteadyMs(now);
             for (auto it = m_pending.begin(); it != m_pending.end();) {
-                if (now >= it->deadline) {
+                // A held pick whose window ran out without Huginn's callback:
+                // the player's own wheel. Announced now as the outside pick it is.
+                const auto action = it->hold.Tick(nowMs);
+                if (action == Core::WheelAttributionHold::Action::Announce ||
+                    action == Core::WheelAttributionHold::Action::AnnounceConfirm) {
+                    LogPending(it->event);
+                }
+                if (action == Core::WheelAttributionHold::Action::AnnounceConfirm) {
+                    consumed.push_back(std::move(*it));
+                    it = m_pending.erase(it);
+                    continue;
+                }
+                if (!it->hold.Held() && now >= it->deadline) {
                     due.push_back(std::move(*it));
                     it = m_pending.erase(it);
                 } else {
@@ -186,6 +253,9 @@ namespace Huginn::Learning
             }
         }
 
+        for (auto& p : consumed) {
+            Confirm(p.event, p.selectedAt, "consumed");
+        }
         for (auto& p : due) {
             if (p.event.kind == SelectionKind::Equip && IsStillEquipped(p.event.formID)) {
                 Confirm(p.event, p.selectedAt, "still equipped");
@@ -206,8 +276,12 @@ namespace Huginn::Learning
         std::lock_guard lock(m_mutex);
         for (auto it = m_pending.begin(); it != m_pending.end(); ++it) {
             if (it->event.formID == formID) {
-                logger::info("[Selection] Withdrawn {:08X} '{}' src={} -- {}"sv,
-                    formID, FormName(formID), EquipSourceToString(it->event.source), why);
+                // Only Huginn's own paths withdraw, so a held outside pick here
+                // is a Huginn pick whose equip event came first; it was never
+                // announced, and is not now.
+                logger::info("[Selection] Withdrawn {:08X} '{}' src={}{} -- {}"sv,
+                    formID, FormName(formID), EquipSourceToString(it->event.source),
+                    it->hold.Held() ? " (held: its equip event came ahead of the pick)"sv : ""sv, why);
                 m_pending.erase(it);
                 return;
             }
@@ -225,6 +299,7 @@ namespace Huginn::Learning
             m_lastEquipPick.clear();   // a repeat across a load or a reset is a new decision
         }
         EquipEventBus::GetSingleton().Reset();
+        ReachReporter::Reset();   // the gear repeat window
     }
 
     void SelectionTracker::ForgetRepeats()
@@ -258,6 +333,9 @@ namespace Huginn::Learning
         // relabelled above, or a pick that never confirmed, stays out of accept%.
         if (event.source == EquipSource::External && !event.attribution.empty()) {
             Telemetry::SoakMetrics::GetSingleton().RecordEquipCase(event.attribution[0]);
+            // The [Reach] line and the heartbeat's reach split: one per reach-in,
+            // counted exactly where reachIns is (0.23.39; logging only).
+            ReachReporter::OnSelectionReach(event);
         }
 
         // Log BEFORE dispatch: the log records the learner's prediction for the

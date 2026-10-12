@@ -175,6 +175,11 @@ namespace Huginn::State
       }
       m_familyCache.clear();
       m_soleHostileTtk.Reset();
+      // [Target] / [Actors]: a fight cut by the load ends with no summary, and
+      // the session's seen set goes (FF refIDs mean other actors in another save).
+      m_targetWatch.Reset();
+      m_actorLog.Reset();
+      m_actorObs.clear();
       m_wasUnderwaterForTimer = false;
       m_dropAge.Reset();
 
