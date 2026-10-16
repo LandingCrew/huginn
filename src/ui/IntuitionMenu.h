@@ -56,6 +56,10 @@ namespace Huginn::UI
         /// RE::UI opened or closed this menu: any kShow Show() queued has
         /// been consumed (HudVisibilityManager calls this).
         static void OnMenuOpenClose(bool a_opening) noexcept;
+        /// Update tick: a kShow RE::UI has not answered within
+        /// SHOW_PENDING_MAX_MS is warned about once, with a dump of what
+        /// RE::UI holds for this menu (diagnostic; changes nothing).
+        static void CheckPendingShow();
 
         // -- Singleton access (valid after Show() creates the instance) --
         static IntuitionMenu* GetSingleton();
