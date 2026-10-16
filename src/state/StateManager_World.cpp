@@ -233,6 +233,7 @@ namespace Huginn::State
       // Dark with a hysteresis band and a dwell both ways; a new place (an
       // interior cell, or an exterior worldspace -- not the exterior grid
       // cell) is taken at once (DarknessGate).
+      float heldLight = newState.lightLevel;
       {
       RE::FormID placeID = 0;
       if (cell && cell->IsInteriorCell()) {
@@ -240,6 +241,11 @@ namespace Huginn::State
       } else if (auto* worldspace = player->GetWorldspace()) {
         placeID = worldspace->GetFormID();
       }
+      // R3 darkness (0.23.41): the need reads the light HELD against
+      // flicker -- a darker reading taken after 5 s, a lighter one after
+      // 3 s, a new place at once (core/LightHold.h). The published level
+      // stays the measured one; the old engine's isDark keeps its gate.
+      heldLight = m_lightHold.Update(newState.lightLevel, placeID, NeedClock::Now());
       std::optional<BoolDebouncer::Suppressed> dropped;
       // Outdoors under an open sky, in the climate's daytime, it is not dark
       // however the shadow falls: the light on the player read 220.9 and 27.1
@@ -288,6 +294,7 @@ namespace Huginn::State
       const bool openDaylightNow = m_lastOpenDaylight;
       UpdateNeedSensors([&](NeedSensorState& n) {
       n.openDaylight = openDaylightNow;
+      n.heldLight = heldLight;
       n.merchant = merchant;
       n.bench = static_cast<std::uint8_t>(bench);
       });

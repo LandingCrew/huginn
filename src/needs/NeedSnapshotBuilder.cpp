@@ -90,8 +90,10 @@ namespace Huginn::Needs
       // (spells, potions, diseases), or a survival ability that BLOCKS
       // health regen (a cut of 100+: Hungry and worse, Severely Dehydrated,
       // Freezing Water while swimming -- not its 25% while wet).
-      s.regenSuppressed = p.buffs.HasAnyRegenDebuff() || n.survivalRegen.Any();
-      s.healthRegenSuppressed = p.buffs.hasHealthRegenDebuff || n.survivalRegen.healthBlocked;
+      // 0.23.41: the walk's debuffs by LowersRegen (n.effectRegen), not the
+      // old flags, which also take a zero-magnitude detrimental placeholder.
+      s.regenSuppressed = n.effectRegen.Any() || n.survivalRegen.Any();
+      s.healthRegenSuppressed = n.effectRegen.health || n.survivalRegen.healthBlocked;
       s.encumbrance = n.encumbrance;
       s.vampireStage = p.vampireStage;
 
@@ -135,11 +137,16 @@ namespace Huginn::Needs
       s.hostileSummoned = n.hostileSummoned;
 
       // Ally
-      s.followerPresent = src.targets.GetFollowerCount() > 0;
+      // A teammate, or the player's own summon or thrall (0.23.41): someone
+      // near to cast the spells for others on. ally_injured stays the
+      // teammate's bleedout: a summon does not kneel, it dies.
+      s.followerPresent = src.targets.GetFollowerCount() > 0 || n.playerSummonNear;
       s.followerBleedout = n.followerBleedout;
 
       // Environment
-      s.light = src.world.lightLevel;
+      // The light held against torchlight and shadow flicker (0.23.41,
+      // core/LightHold.h); WorldState::lightLevel is the raw reading.
+      s.light = n.heldLight;
       s.openDaylight = n.openDaylight;
       s.underwater = p.isUnderwater;
       s.submergedFor = (p.isUnderwater && n.submergedAt >= 0.0) ? SecondsSince(n.submergedAt, now) : 0.0f;

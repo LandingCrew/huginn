@@ -106,23 +106,23 @@ namespace Huginn::Core::Needs
         bool inCombat = false;        // debounced, as published
         float combatStartAgo = kNever;  // s since in_combat last went true
         float combatEndAgo = kNever;    // s since in_combat last went false
-        int enemyCount = 0;           // living hostiles tracked
+        int enemyCount = 0;           // living hostiles tracked (dead ones drop at once since 0.23.41)
         int enemiesNear256 = 0;       // living hostiles within 256 units
         float closestEnemy = -1.0f;   // units to the closest living hostile, -1 none
         bool anyCasting = false;      // a living hostile casting (debounced)
         bool targetCaster = false;    // the scoring target has a spell in a hand
         bool targetArcher = false;    // the scoring target has a bow or crossbow equipped
         float targetHealth = -1.0f;   // the scoring target's health fraction, -1 none
-        float soleHostileTtk = -1.0f; // s to kill the only hostile at its bar's rate, -1 n/a
+        float soleHostileTtk = -1.0f; // s to kill the only hostile at its bar's rate, -1 n/a, kNever no fall yet
         std::uint32_t families = 0;   // Family bits, held for the fight
         bool hostileSummoned = false; // a living hostile is a summon
 
         // --- Ally -----------------------------------------------------------
-        bool followerPresent = false;
+        bool followerPresent = false;   // a teammate, or the player's own summon or thrall (0.23.41)
         bool followerBleedout = false;  // a follower down on one knee
 
         // --- Environment ----------------------------------------------------
-        float light = 1.0f;           // game light on the player, 0-1
+        float light = 1.0f;           // game light on the player, 0-1, held against flicker (0.23.41, LightHold.h)
         bool openDaylight = false;    // outdoors, full sky, climate daytime
         bool underwater = false;
         float submergedFor = 0.0f;    // s under water (0 when not)

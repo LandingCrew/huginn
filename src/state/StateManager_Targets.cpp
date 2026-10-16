@@ -20,6 +20,7 @@
 #include "StateEvaluator.h"  // v0.6.11: For ClassifyActor
 #include "../Profiling.h"
 #include "core/TargetFamilies.h"
+#include "core/TargetTracking.h"
 
 namespace Huginn::State
 {
@@ -66,6 +67,16 @@ namespace Huginn::State
 
       // R3 target_summoned: a conjured creature (summon shader, a cast before it).
       bool IsSummon(RE::Actor* actor) { return actor->IsCommandedActor() || actor->IsSummoned(); }
+
+      // The player's side (core/TargetTracking.h): a teammate, an actor the
+      // player commands (a summon, a thrall), or one a teammate commands.
+      bool IsPlayerSideActor(RE::Actor* actor, RE::PlayerCharacter* player)
+      {
+         const auto commander = actor->GetCommandingActor();
+         RE::Actor* by = commander.get();
+         return Core::Targets::IsPlayerSide(actor->IsPlayerTeammate(), by != nullptr && by == player,
+                                            by != nullptr && by != player && by->IsPlayerTeammate());
+      }
 
       // Per poll, the readings of the living combat hostiles.
       struct HostileNeeds
@@ -138,36 +149,29 @@ namespace Huginn::State
       m_targets.Remove(formID);
    }
 
-   void StateManager::PruneStaleTargets(float gameTime) noexcept
+   void StateManager::PruneStaleTargets(double nowSec) noexcept
    {
-      // Remove targets that haven't been seen recently
+      // Remove targets that haven't been seen recently, dead ones 5 s after
+      // their death, and ones past their release range (core/TargetTracking.h).
+      // Seconds on the steady clock: until 0.23.41 the timeouts were compared
+      // against game days and never fired, so a hostile killed off the
+      // crosshair stayed counted alive until combat ended.
       std::vector<RE::FormID> toRemove;
 
       for (const auto& target : m_targets.targets) {
-      float timeSinceLastSeen = gameTime - target.lastSeenTime;
-
-      // Remove if out of range timeout
-      if (timeSinceLastSeen > TargetTracking::LAST_SEEN_TIMEOUT) {
+      // Differentiated ranges (v0.6.12): followers/hostiles 2048, non-follower
+      // allies 512 -- the RELEASE radius, not the acquisition radius. Pruning
+      // at the same 512 an ally is acquired at is what made the boundary flap:
+      // added on one poll, dropped on the next, for an NPC doing nothing but
+      // standing there. See TargetTracking::RANGE_RELEASE_MARGIN.
+      const float releaseRangeSq = (target.isHostile || target.isFollower)
+                                   ? TargetTracking::DETECTION_RELEASE_RANGE_SQ
+                                   : TargetTracking::ALLY_RELEASE_RANGE_SQ;
+      const Core::Targets::TrackedTiming timing{ target.lastSeenSec, target.isDead, target.deadSinceSec,
+                                                 target.distanceToPlayerSq, releaseRangeSq };
+      if (Core::Targets::PruneVerdict(timing, nowSec, TargetTracking::LAST_SEEN_TIMEOUT,
+                                      TargetTracking::DEAD_ACTOR_TIMEOUT) != Core::Targets::PruneReason::Keep) {
         toRemove.push_back(target.actorFormID);
-      }
-      // Remove if dead for too long
-      else if (target.isDead && timeSinceLastSeen > TargetTracking::DEAD_ACTOR_TIMEOUT) {
-        toRemove.push_back(target.actorFormID);
-      }
-      // Remove if out of detection range - apply differentiated ranges (v0.6.12)
-      // Followers/hostiles: 2048 range, Non-follower allies: 512 range
-      //
-      // RELEASE radius, not the acquisition radius. Pruning at the same 512 an
-      // ally is acquired at is what made the boundary flap: added on one poll,
-      // dropped on the next, for an NPC doing nothing but standing there. See
-      // TargetTracking::RANGE_RELEASE_MARGIN.
-      else {
-        float releaseRangeSq = (target.isHostile || target.isFollower)
-                               ? TargetTracking::DETECTION_RELEASE_RANGE_SQ
-                               : TargetTracking::ALLY_RELEASE_RANGE_SQ;
-        if (target.distanceToPlayerSq > releaseRangeSq) {
-           toRemove.push_back(target.actorFormID);
-        }
       }
       }
 
@@ -318,6 +322,7 @@ namespace Huginn::State
       bool changed = false;
       HostileNeeds hostileNeeds;        // R3: this poll's living combat hostiles
       bool followerBleedout = false;    // R3: a teammate down on one knee
+      bool playerSummonNear = false;    // R3: the player's own summon or thrall in range (0.23.41)
       bool scoringArcher = false;
       float soleTtk = -1.0f;
       ScoringPick scoringPick;          // the [Target] / [Actors] logs (0.23.39)
@@ -410,12 +415,18 @@ namespace Huginn::State
             if (!actor->IsHostileToActor(player)) {
               continue;
             }
+            // 0.23.41: the player's side is never a hostile, whatever the
+            // faction test says -- the staff's own Flame Atronach read as a
+            // hostile daedra in a draugr fight (core/TargetTracking.h).
+            if (IsPlayerSideActor(actor, player)) {
+              continue;
+            }
 
             RE::FormID formID = actor->GetFormID();
 
             // Acquire at 2048, hold to 2176. PruneStaleTargets releases
             // hostiles at the wider radius, so without the matching hold here
-            // an enemy at 2100 would stop refreshing lastSeenTime and die to
+            // an enemy at 2100 would stop refreshing lastSeenSec and die to
             // LAST_SEEN_TIMEOUT 3 s later carrying a stale distance -- the
             // acquire/prune disagreement this margin exists to remove.
             if (distSq > TargetTracking::DETECTION_RANGE_SQ &&
@@ -451,7 +462,7 @@ namespace Huginn::State
             TargetActorState targetState;
             targetState.actorFormID = formID;
             targetState.source = TargetSource::NearbyEnemy;
-            targetState.lastSeenTime = gameTime;
+            targetState.lastSeenSec = nowSec;
             targetState.distanceToPlayerSq = distSq;
             targetState.isHostile = true;
             targetState.isDead = false;
@@ -540,7 +551,7 @@ namespace Huginn::State
         TargetActorState primaryState;
         primaryState.actorFormID = formID;
         primaryState.source = TargetSource::Crosshair;  // Simplified
-        primaryState.lastSeenTime = gameTime;
+        primaryState.lastSeenSec = nowSec;
 
         // Get vitals (health, magicka, stamina)
         auto* actorValueOwner = primaryActor->AsActorValueOwner();
@@ -575,11 +586,18 @@ namespace Huginn::State
         float dz = targetPos.z - playerPos.z;
         primaryState.distanceToPlayerSq = dx * dx + dy * dy + dz * dz;
 
-        // Get hostility
-        primaryState.isHostile = primaryActor->IsHostileToActor(player);
+        // Get hostility: never the player's side (0.23.41, core/TargetTracking.h)
+        primaryState.isHostile = Core::Targets::CountsAsHostile(primaryActor->IsHostileToActor(player),
+                                                                IsPlayerSideActor(primaryActor, player));
 
-        // Get dead status
-        primaryState.isDead = primaryActor->IsDead();
+        // Get dead status; a corpse keeps the time its death was first seen
+        {
+           const auto* existing = m_targets.Find(formID);
+           const auto death = Core::Targets::NoteDeath(existing && existing->isDead,
+               existing ? existing->deadSinceSec : -1.0, primaryActor->IsDead(), nowSec);
+           primaryState.isDead = death.dead;
+           primaryState.deadSinceSec = death.deadSinceSec;
+        }
 
         // Get follower status
         primaryState.isFollower = primaryActor->IsPlayerTeammate();
@@ -664,7 +682,7 @@ namespace Huginn::State
             // teammate hysteresis below unreachable -- nothing past 2048 ever
             // got far enough to be offered the 2176 release radius, so a
             // tracked follower drifting to 2100 stopped refreshing
-            // lastSeenTime and died to LAST_SEEN_TIMEOUT three seconds later,
+            // lastSeenSec and died to LAST_SEEN_TIMEOUT three seconds later,
             // which is the exact failure the hysteresis was added to prevent.
             // Raised in review of #122.
             RE::NiPoint3 allyPos = ally->GetPosition();
@@ -683,8 +701,19 @@ namespace Huginn::State
               return false;
             }
 
-            // Now do the expensive checks (only for actors within max range)
-            if (ally->IsHostileToActor(player)) {
+            // R3 follower_present (0.23.41): the player's own summon or
+            // thrall near enough to target counts as an ally to buff or heal.
+            // Before the hostility test: a faction test can call it hostile.
+            const bool playerSide = IsPlayerSideActor(ally, player);
+            if (playerSide && distSq <= TargetTracking::DETECTION_RANGE_SQ) {
+              if (const auto commander = ally->GetCommandingActor(); commander && commander.get() == player) {
+                playerSummonNear = true;
+              }
+            }
+
+            // Now do the expensive checks (only for actors within max range).
+            // The player's side is never hostile (core/TargetTracking.h).
+            if (Core::Targets::CountsAsHostile(ally->IsHostileToActor(player), playerSide)) {
               return false;
             }
 
@@ -695,7 +724,7 @@ namespace Huginn::State
             // Hysteresis: acquire at the detection range, hold to the release
             // range. The prune below uses the same wider radius, so the two
             // agree; relaxing only the prune would not help, because an ally
-            // that stops being re-acquired stops refreshing lastSeenTime and
+            // that stops being re-acquired stops refreshing lastSeenSec and
             // dies to LAST_SEEN_TIMEOUT three seconds later instead.
             const bool alreadyTracked = m_targets.Find(allyFormID) != nullptr;
             float maxRangeSq;
@@ -732,7 +761,7 @@ namespace Huginn::State
             TargetActorState followerState;
             followerState.actorFormID = allyFormID;
             followerState.source = TargetSource::NearbyAlly;
-            followerState.lastSeenTime = gameTime;
+            followerState.lastSeenSec = nowSec;
             followerState.distanceToPlayerSq = distSq;
             followerState.isHostile = false;
             followerState.isDead = false;
@@ -805,17 +834,32 @@ namespace Huginn::State
       // =========================================================================
       {
         for (auto& target : m_targets.targets) {
-           if (target.lastSeenTime == gameTime) {
+           if (target.lastSeenSec == nowSec) {
             continue;
            }
 
            RE::Actor* actor = GetActorByFormID(target.actorFormID);
            if (!actor) continue;
 
+           // 0.23.41: the scans skip a dead actor, so its entry was never
+           // refreshed and stayed isDead = false -- a hostile killed off the
+           // crosshair was counted alive until combat ended. Note the death
+           // here; every count skips a dead entry, and the prune drops it 5 s
+           // later (core/TargetTracking.h).
+           const bool deadNow = actor->IsDead();
+           if (deadNow != target.isDead) {
+            const auto death = Core::Targets::NoteDeath(target.isDead, target.deadSinceSec, deadNow, nowSec);
+            if (death.dead && target.isHostile) {
+              logger::debug("[Targets] hostile {:08X} died: no longer counted"sv, target.actorFormID);
+            }
+            target.isDead = death.dead;
+            target.deadSinceSec = death.deadSinceSec;
+           }
+
            auto* actor3D = actor->Get3D();
            if (!actor3D) continue;
 
-           if (!actor->IsDead() && !actor->IsDisabled() && !actor->IsDeleted()) {
+           if (!deadNow && !actor->IsDisabled() && !actor->IsDeleted()) {
             RE::NiPoint3 actorPos = actor->GetPosition();
             float dx = actorPos.x - playerPos.x;
             float dy = actorPos.y - playerPos.y;
@@ -826,7 +870,7 @@ namespace Huginn::State
       }
 
       // Prune stale targets
-      PruneStaleTargets(gameTime);
+      PruneStaleTargets(nowSec);
 
       // Sync primary target with targets map
       m_targets.SyncPrimaryTarget();
@@ -940,6 +984,7 @@ namespace Huginn::State
         n.hostileSummoned = hostileNeeds.summoned;
         n.targetArcher = scoringArcher;
         n.followerBleedout = followerBleedout;
+        n.playerSummonNear = playerSummonNear;
         n.soleHostileTtk = soleTtk;
         if (hostileNeeds.castBits & 1) n.castFireAt = nowSec;
         if (hostileNeeds.castBits & 2) n.castFrostAt = nowSec;

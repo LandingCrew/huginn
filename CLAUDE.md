@@ -91,6 +91,7 @@ Registered as `Huginn` with short alias `hg` (in-game `~` console):
 | `hg rebuild` | Force rebuild all registries |
 | `hg weights <FormID>` | Show learner weight vector (hex FormID) |
 | `hg cap <FormID>` | Show an item's effect columns, per-stack cap, runtime cross-features, and its perk-gated rows with whether the player has each perk plus the perk-adjusted cap (debug builds) |
+| `hg actors` | List the actors the target poll tracks right now: name, race, type, hostile, dead, summon and its commander, distance band; the scoring target marked (to the console and the log) |
 | `hg page <N>` | Switch to page N |
 | `hg reset weights` | Clear learned item weights |
 | `hg reset all` | Full system reset |

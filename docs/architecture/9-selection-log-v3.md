@@ -94,13 +94,14 @@ contexts per segment and clears both at a head.
 | `list` | string | modlist folder (`LoreRim-5`, `simonrim-essentails`...) |
 | `build` | string | `"<version> (<git sha>)"` |
 | `cols` | string[243] | effect columns of `9-data/effects.csv`, in order (`cap.c` indexes it) |
-| `needs` | string[92] | needs of `9-data/needs.csv`, in order (`ctx.need`, `ctx.in`, `dec.open`, `dec.ep.i` index it) |
+| `needs` | string[94] | needs of `9-data/needs.csv`, in order (`ctx.need`, `ctx.in`, `dec.open`, `dec.ep.i` index it) |
 | `cross` | string[7] | the runtime cross-features, in order (`row.x` indexes it) |
 | `kinds` | string[10] | catalog kinds: `Spell Scroll Potion Poison Food Weapon Ammo Armor SoulGem Light` (`row.kind`) |
 | `src` | string[10] | the old engine's candidate source types (`row.src`) |
 | `row` | string[10] | the row columns, in order (below) |
 | `flags` | object | row flag bits by name |
 | `episode` | object | the episode definition in force: `onset`, `expiry`, `minSec`, `graceSec`, `answerSlackSec`, and `deathDrops: 1` (0.23.16: a death drops the open episodes and those in their grace; absent = 0.23.15, where a death could leave `nothing` records) |
+| `curves` | [kind, p1, p2][] | (0.23.41) the `[Needs]` response curves in force, index-aligned with `needs`: `["logistic", 0.5, 10]` (`core/ResponseCurve.h`), so a fit knows which curve made every logged `need` value from its `in`. A hot reload that changes a curve starts a new segment (a new head line) before the next record. Absent before 0.23.41: those segments used their build's `needs.csv` defaults unless the INI overrode them. `replay.head_curves(head)` reads it |
 
 ### `cap`
 
@@ -135,6 +136,7 @@ same tick.
 | `pipe.ageMs` | int ms | how old that page was when the context was taken |
 | `race` | string or null | editor ID of the hostile primary target's race (alive, hostile), else null |
 | `wc.base`, `wc.max` | float | the wildcard odds in force (per-slot probability base and cap) |
+| `env` | object | (0.23.41) where and when, for what the darkness need's input cannot say: `interior` 0/1 (an interior cell), `hour` (game hour, 0-24), `daylight` 0/1 (outdoors under a full sky in the climate's daytime: darkness reads 0), `light` (the raw light on the player, 0-1 in 0.1 steps, before the hold the darkness need reads -- `core/LightHold.h`). Absent before 0.23.41 |
 | `heldFull` | 0/1 | 1: the held rows were read in full. 0: taken while inventory extra data must not be read, from kPreLoadGame until the post-load window ends (`Util::IsExtraListStable`, the registries' gate, plus a v3-local load-in-progress flag): one plain row per base form, no unique IDs, no per-instance caps or stack charges, `equipped` from the hands and the nocked ammo only (armour reads unworn) |
 | `rows` | row[] | every item the player could choose (below) |
 
@@ -376,6 +378,10 @@ What bounds it:
 - `ctx.need` is the latest update tick's vector (the monitor runs every tick,
   ~100 ms); the page is the last pipeline run's (`pipe.ageMs`).
 - Game data changed by scripts after the catalog was built is not seen (the
-  catalog's own limit, R2).
+  catalog's own limit, R2). Items the build never saw -- a player-made potion
+  or poison (a dynamic `FF` form) -- and spells the player knows that no tome
+  teaches are mapped the first time they are held, graded against the build's
+  populations (0.23.41, `EffectCatalog::FindOrMap`, `core/LateCatalog.h`);
+  before 0.23.41 their rows had `kind` null and `cap` -1.
 - A press inside a menu opened before a game load (none in practice) falls back
   to the press-time context.

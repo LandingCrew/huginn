@@ -64,6 +64,13 @@ class GoldenFile(unittest.TestCase):
         self.assertEqual(h["kinds"][7], "Armor")
         self.assertEqual(h["episode"], {"onset": 0.5, "expiry": 0.25, "minSec": 1.0, "graceSec": 4.0,
                                         "answerSlackSec": 0.5, "deathDrops": 1})
+        # 0.23.41: the [Needs] curves in force, one per need, index-aligned.
+        self.assertEqual(len(h["curves"]), len(h["needs"]))
+        curves = dict(zip(h["needs"], h["curves"]))
+        self.assertEqual(curves["health_deficit"], ["logistic", 0.5, 10])
+        self.assertEqual(curves["enemy_count"], ["linear", 1, 5])
+        self.assertEqual(curves["darkness"], ["step", 0.5, 0])
+        self.assertEqual(replay.head_curves(h)["enemy_count"], ("linear", 1, 5))
 
     def test_key_press(self):
         d = self.decs[0]
@@ -82,6 +89,8 @@ class GoldenFile(unittest.TestCase):
         self.assertEqual(set(ctx["need"]), {"health_deficit", "in_combat"})
         self.assertEqual(ctx["pipe"], {"ok": 1, "page": 0, "slots": 8, "ageMs": 40})
         self.assertEqual(ctx["race"], "NordRace")
+        # 0.23.41: where and when, for the darkness fit.
+        self.assertEqual(ctx["env"], {"interior": 1, "hour": 13.5, "daylight": 0, "light": 0.3})
         self.assertEqual(len(ctx["rows"]), 5)
         c = d["chosen"]
         self.assertEqual(c["form"], "0003EADE")
@@ -184,7 +193,8 @@ def encode(segments):
                     "t": "ctx", "id": ctx["id"], "utc": ctx["utc"], "why": ctx["why"],
                     "need": [[head["needs"].index(k), v] for k, v in ctx["need"].items()],
                     "in": [[head["needs"].index(k), v] for k, v in ctx["input"].items()],
-                    "pipe": ctx["pipe"], "race": ctx["race"], "wc": ctx["wc"], "rows": rows}))
+                    "pipe": ctx["pipe"], "race": ctx["race"], "wc": ctx["wc"],
+                    **({"env": ctx["env"]} if "env" in ctx else {}), "rows": rows}))
             rec = {k: v for k, v in d.items() if k not in ("ctx", "add")}
             rec.update({"t": "dec", "v": 3, "ctx": ctx["id"], "add": [row(r) for r in d["add"]]})
             lines.append(json.dumps(rec))
@@ -209,6 +219,7 @@ def make_session():
              "need": {"magicka_deficit": 0.9, "enemy_close": 1}, "input": {"magicka_deficit": 0.8, "enemy_close": 300.0},
              "pipe": {"ok": 1, "page": 2, "slots": 8, "ageMs": 120}, "race": "DraugrRace",
              "wc": {"base": 0.165, "max": 0.5},
+             "env": {"interior": 0, "hour": 21.25, "daylight": 0, "light": 0.1},
              "rows": [r("0003EAE3", "Potion", "Potion", potion, 1 | 2 | 4 | 16, 0, 2.5,
                         {"overshoot_magicka": 0.1, "stack_count": 0.6}),
                       r("00012EB7", "Weapon", "Weapon", sword, 1 | 4, uid=12, x={"weapon_charge": 0.25}),
@@ -262,6 +273,7 @@ class PythonRoundTrip(unittest.TestCase):
                     self.assertEqual(g[k], w[k], k)
             self.assertEqual(got["ctx"]["need"], want["ctx"]["need"])
             self.assertEqual(got["ctx"]["input"], want["ctx"]["input"])
+            self.assertEqual(got["ctx"].get("env"), want["ctx"].get("env"))   # absent stays absent
         self.assertIs(decs[0]["ctx"], decs[2]["ctx"])           # shared within a segment
         self.assertIsNot(decs[0]["ctx"], decs[3]["ctx"])        # redefined in the next one
         self.assertEqual(decs[2]["chosen"]["form"], "00099999")

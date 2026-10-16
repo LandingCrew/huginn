@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Config.h"
+#include "core/TargetTracking.h"
 #include <cstdint>
 
 namespace Huginn::State
@@ -49,13 +50,17 @@ namespace Huginn::State
       inline constexpr float DETECTION_RELEASE_RANGE_SQ =
          (DETECTION_RANGE + RANGE_RELEASE_MARGIN) * (DETECTION_RANGE + RANGE_RELEASE_MARGIN);
 
-      // Last seen timeout (seconds)
-      // Why 3.0f: Remove targets not seen for 3 seconds (likely out of range/dead)
-      inline constexpr float LAST_SEEN_TIMEOUT = 3.0f;
+      // Last seen timeout, real (steady-clock) seconds
+      // Why 3 s: Remove targets not seen for 3 seconds (out of range, unloaded)
+      // 0.23.41: compared against TargetActorState::lastSeenSec (seconds). Until
+      // then it was compared against game DAYS and never fired
+      // (core/TargetTracking.h).
+      inline constexpr double LAST_SEEN_TIMEOUT = Core::Targets::kNotSeenSec;
 
-      // Dead actor timeout (seconds)
-      // Why 5.0f: Keep dead actors tracked for 5 seconds (for necromancy/looting context)
-      inline constexpr float DEAD_ACTOR_TIMEOUT = 5.0f;
+      // Dead actor timeout, real seconds from the death being noticed
+      // Why 5 s: Keep dead actors tracked (flagged dead, counted by nothing)
+      // for 5 seconds (necromancy/looting context)
+      inline constexpr double DEAD_ACTOR_TIMEOUT = Core::Targets::kDeadSec;
 
       // Priority threshold for eviction
       // When collection is full, evict targets with priority < NEW_TARGET_MIN_PRIORITY

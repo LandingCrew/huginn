@@ -260,16 +260,16 @@ FORMULAS = {
     # Enemy
     "in_combat": lambda s: float(s["inCombat"]),
     "combat_onset": lambda s: s["combatStartAgo"] if s["inCombat"] else NEVER,
-    "enemy_count": lambda s: s["enemyCount"] / 6.0,
+    "enemy_count": lambda s: float(s["enemyCount"]),  # 0.23.41: was / 6.0
     "enemy_close": enemy_distance,
     "enemy_mid": enemy_distance,
     "enemy_far": enemy_far_distance,
-    "surrounded": lambda s: s["enemiesNear256"] / 3.0,
+    "surrounded": lambda s: float(s["enemiesNear256"]),  # 0.23.41: was / 3.0
     "enemy_casting": lambda s: float(s["anyCasting"]),
     "target_caster": lambda s: float(s["targetCaster"]),
     "target_archer": lambda s: float(s["targetArcher"]),
     "target_health_low": lambda s: 0.0 if s["targetHealth"] < 0 else 1.0 - s["targetHealth"],
-    "boss_fight": lambda s: s["soleHostileTtk"] if (s["enemyCount"] == 1 and s["soleHostileTtk"] >= 0) else 0.0,
+    "boss_fight": lambda s: s["soleHostileTtk"] if (s["enemyCount"] == 1 and 0 <= s["soleHostileTtk"] < NEVER) else 0.0,
     "target_magicka_low": lambda s: 0.0,  # deferred
     "target_stamina_low": lambda s: 0.0,  # deferred
     # Target type (families bits, Family enum order)

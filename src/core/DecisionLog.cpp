@@ -227,7 +227,22 @@ namespace Huginn::Core::DecisionLog
         out += R"(,"answerSlackSec":)";
         AppendSeconds(out, head.answerSlackSec);
         if (head.deathDrops) out += R"(,"deathDrops":1)";
-        out += "}}\n";
+        out += '}';
+        if (!head.curves.empty()) {
+            out += R"(,"curves":[)";
+            for (std::size_t i = 0; i < head.curves.size(); ++i) {
+                if (i) out += ',';
+                out += '[';
+                out += JsonString(Needs::KindName(head.curves[i].kind));
+                out += ',';
+                AppendNum(out, head.curves[i].p1);
+                out += ',';
+                AppendNum(out, head.curves[i].p2);
+                out += ']';
+            }
+            out += ']';
+        }
+        out += "}\n";
         return out;
     }
 
@@ -334,6 +349,17 @@ namespace Huginn::Core::DecisionLog
                 AppendNum(ctxLine, c.wildcardMax);
                 ctxLine += R"(},"heldFull":)";
                 ctxLine += c.heldFull ? '1' : '0';
+                if (c.env.valid) {
+                    ctxLine += R"(,"env":{"interior":)";
+                    ctxLine += c.env.interior ? '1' : '0';
+                    ctxLine += R"(,"hour":)";
+                    AppendNum(ctxLine, c.env.hour);
+                    ctxLine += R"(,"daylight":)";
+                    ctxLine += c.env.openDaylight ? '1' : '0';
+                    ctxLine += R"(,"light":)";
+                    AppendNum(ctxLine, c.env.light);
+                    ctxLine += '}';
+                }
                 ctxLine += R"(,"rows":[)";
                 for (std::size_t i = 0; i < c.rows.size(); ++i) {
                     if (i) ctxLine += ',';

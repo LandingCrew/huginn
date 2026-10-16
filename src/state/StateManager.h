@@ -14,6 +14,8 @@
 #include "core/WaterSelfCheck.h"
 #include "core/BenchKind.h"
 #include "core/ActorLog.h"       // pure: the [Target] / [Actors] logs (0.23.39)
+#include "core/LightHold.h"      // pure: the darkness need's held light (0.23.41)
+#include "core/EffectSourceLog.h"  // pure: drain_health / regen_suppressed source lines (0.23.41)
 #include <array>
 #include <atomic>
 #include <mutex>
@@ -351,8 +353,9 @@ namespace Huginn::State
       // Remove target from collection
       void RemoveTarget(RE::FormID formID) noexcept;
 
-      // Prune stale targets (out of range, dead, timeout)
-      void PruneStaleTargets(float gameTime) noexcept;
+      // Prune stale targets (out of range, dead, timeout): steady-clock
+      // seconds (NeedClock), core/TargetTracking.h PruneVerdict (0.23.41)
+      void PruneStaleTargets(double nowSec) noexcept;
 
       // Calculate target priority score
       [[nodiscard]] static float CalculateTargetPriority(const TargetActorState& target) noexcept;
@@ -383,6 +386,7 @@ namespace Huginn::State
       // Light reading -> isDark, with the band and a dwell both ways.
       // Poll thread only (PollWorldObjects), so no lock. Reset on save load.
       DarknessGate m_darkGate;
+      Core::Needs::LightHold m_lightHold;   // R3 darkness: the held light (0.23.41), PollWorldObjects only
       bool m_lastOpenDaylight = false;   // for the transition-only "[World] open daylight" line
       std::uint8_t m_lastBench = 0;      // PollWorldObjects: for the transition-only "[World] bench" line
       // Light below which it counts as dark ([ContextWeights] fDarkLightLevel,
@@ -643,6 +647,10 @@ namespace Huginn::State
       // Transition-log memory, poll thread only (PollPlayerMagicEffects).
       int m_lastThirstStage = -1;
       Core::Needs::RegenDebuffs m_lastSurvivalRegen;
+      // R3 (0.23.41): the transition lines naming the effect behind
+      // drain_health and regen_suppressed (PollPlayerMagicEffects only).
+      Core::Needs::SourceWatch m_drainHealthWatch{ "drain_health" };
+      Core::Needs::SourceWatch m_regenWatch{ "regen_suppressed" };
 
       // Native warmth function (CC Survival engine function)
       using GetWarmthRating_t = float(RE::Actor*);

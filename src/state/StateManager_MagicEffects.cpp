@@ -29,6 +29,50 @@ namespace Huginn::State
            n.find("Peryite's Gift") != std::string_view::npos;
   }
 
+  // R3 (0.23.41): the active effect that set drain_health or regen_suppressed,
+  // for the transition line (core/EffectSourceLog.h).
+  static std::string_view SpellTypeName(RE::MagicSystem::SpellType t)
+  {
+    using T = RE::MagicSystem::SpellType;
+    switch (t) {
+    case T::kSpell: return "spell";
+    case T::kDisease: return "disease";
+    case T::kPower: return "power";
+    case T::kLesserPower: return "lesser power";
+    case T::kAbility: return "ability";
+    case T::kPoison: return "poison";
+    case T::kEnchantment: return "enchantment";
+    case T::kPotion: return "potion";
+    case T::kIngredient: return "ingredient";
+    case T::kLeveledSpell: return "leveled spell";
+    case T::kAddiction: return "addiction";
+    case T::kVoicePower: return "shout";
+    case T::kStaffEnchantment: return "staff enchantment";
+    case T::kScroll: return "scroll";
+    default: return "other";
+    }
+  }
+
+  static Core::Needs::EffectSource SourceOf(const RE::ActiveEffect* effect, const RE::EffectSetting* mgef,
+                                            const RE::MagicItem* spell)
+  {
+    Core::Needs::EffectSource s;
+    if (mgef) {
+      s.effectID = mgef->GetFormID();
+      if (const char* n = mgef->GetFullName()) s.effect = n;
+    }
+    if (spell) {
+      s.spellID = spell->GetFormID();
+      if (const char* n = spell->GetName()) s.spell = n;
+      s.spellType = SpellTypeName(spell->GetSpellType());
+    }
+    if (effect) {
+      s.magnitude = effect->magnitude;
+      s.duration = effect->duration;
+    }
+    return s;
+  }
+
   // =============================================================================
   // RACE FORMID CACHING (v0.6.6)
   // =============================================================================
@@ -129,6 +173,14 @@ namespace Huginn::State
     int thirstStage = 0;
     Core::Needs::RegenDebuffs survivalRegen;
     const char* survivalRegenSource = nullptr;  // the first such spell, for the log
+    Core::Needs::EffectSource survivalRegenEffect;  // the same, for the regen_suppressed line
+    // R3 regen_suppressed (0.23.41): the walk's own regen debuffs (spells,
+    // potions, poisons, diseases), counted with LowersRegen as the survival
+    // abilities are -- a zero-magnitude placeholder lowers nothing -- and the
+    // first effect behind each need, for its transition line.
+    Core::Needs::RegenDebuffs effectRegen;
+    Core::Needs::EffectSource effectRegenSource;
+    Core::Needs::EffectSource drainHealthSource;
     // Any ability defined in CC Survival's esl or DVSMP's esp: the need
     // stages, and two that are not stages but do lower regen -- Freezing
     // Water (health regen -100 swimming, -25 wet) and Addled (magicka and
@@ -194,7 +246,10 @@ namespace Huginn::State
           if (vital != Core::Needs::RegenVital::None && isSurvivalSpell(spell)) {
             const bool before = survivalRegen.Any();
             survivalRegen.Add(vital, baseEffect->IsDetrimental(), effect->magnitude);
-            if (!before && survivalRegen.Any()) survivalRegenSource = spell->GetName();
+            if (!before && survivalRegen.Any()) {
+              survivalRegenSource = spell->GetName();
+              survivalRegenEffect = SourceOf(effect, baseEffect, spell);
+            }
           }
         }
 
@@ -285,6 +340,15 @@ namespace Huginn::State
         // under multiple archetypes (ValueModifier, PeakValueModifier, etc.)
         // and we want to catch them all.
         bool isRegenEffect = false;
+
+        // R3 regen_suppressed (0.23.41): the need's own count, beside the old
+        // flags below (frozen: they also take a zero-magnitude detrimental
+        // placeholder as a debuff).
+        if (const auto vital = regenVitalOf(primaryAV); vital != Core::Needs::RegenVital::None) {
+          const bool before = effectRegen.Any();
+          effectRegen.Add(vital, baseEffect->IsDetrimental(), magnitude);
+          if (!before && effectRegen.Any()) effectRegenSource = SourceOf(effect, baseEffect, spell);
+        }
 
         // Health Regen
         if (primaryAV == RE::ActorValue::kHealRate ||
@@ -533,6 +597,7 @@ namespace Huginn::State
 
               if (isActiveDrain) {
                 if (primaryAV == RE::ActorValue::kHealth) {
+                  if (!newEffects.hasHealthDrain) drainHealthSource = SourceOf(effect, baseEffect, spell);
                   newEffects.hasHealthDrain = true;
                 } else if (primaryAV == RE::ActorValue::kMagicka) {
                   newEffects.hasMagickaPoison = true;
@@ -691,6 +756,15 @@ namespace Huginn::State
         survivalRegenSource ? survivalRegenSource : "-");
       m_lastSurvivalRegen = survivalRegen;
     }
+    // R3 (0.23.41): which effect turned drain_health and regen_suppressed on,
+    // one line per transition (core/EffectSourceLog.h).
+    if (auto line = m_drainHealthWatch.Update(newEffects.hasHealthDrain, drainHealthSource)) {
+      logger::info("[StateManager] {}"sv, *line);
+    }
+    if (auto line = m_regenWatch.Update(effectRegen.Any() || survivalRegen.Any(),
+                                        effectRegen.Any() ? effectRegenSource : survivalRegenEffect)) {
+      logger::info("[StateManager] {}"sv, *line);
+    }
 
     // R3: publish the pending restores, the thirst stage and the survival
     // regen debuff (not part of this poll's change flag).
@@ -701,6 +775,7 @@ namespace Huginn::State
       n.thirstStage = thirstStage;
       n.thirstDetected = m_thirstInstalled;
       n.survivalRegen = survivalRegen;
+      n.effectRegen = effectRegen;
     });
 
     // Update effects and buffs with change detection

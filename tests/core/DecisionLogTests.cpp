@@ -61,6 +61,12 @@ namespace
             h.list = "synthetic";
             h.build = "0.23.15 (test)";
             h.sourceNames = { "Spell", "Potion", "Scroll", "Weapon", "Ammo", "SoulGem", "Food", "Staff", "Apparel", "Torch" };
+            // 0.23.41: the [Needs] curves in force, one per need. Set here, not
+            // from the csv defaults, so a default changing does not move the
+            // golden file: step 0.5 everywhere but two.
+            h.curves.assign(Needs::kNeedCount, Needs::Curve{ Needs::CurveKind::Step, 0.5f, 0.0f });
+            h.curves[N(Needs::NeedId::health_deficit)] = { Needs::CurveKind::Logistic, 0.5f, 10.0f };
+            h.curves[N(Needs::NeedId::enemy_count)] = { Needs::CurveKind::Linear, 1.0f, 5.0f };
             return h;
         }
 
@@ -96,6 +102,11 @@ namespace
             p->race = "NordRace";
             p->wildcardBase = 0.165f;
             p->wildcardMax = 0.5f;
+            p->env.valid = true;          // 0.23.41: an interior at 13:30, raw light 0.3
+            p->env.interior = true;
+            p->env.hour = 13.5f;
+            p->env.openDaylight = false;
+            p->env.light = 0.3f;
             {
                 Row r;   // 0: a potion on key 3
                 r.form = 0x0003EADE;

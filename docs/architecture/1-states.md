@@ -451,7 +451,8 @@ graph TB
 | `isStaggered` | `bool` | Target is staggered — damage window (v0.6.6) |
 | `isFollower` | `bool` | Target is player's teammate, via `IsPlayerTeammate()` (v0.6.10) |
 | `isMage` | `bool` | Target has spell equipped in either hand (v0.6.11) |
-| `lastSeenTime` | `float` | Game time when last detected |
+| `lastSeenSec` | `double` | Steady-clock seconds when a scan last refreshed it (0.23.41; was `lastSeenTime`, game days) |
+| `deadSinceSec` | `double` | Steady-clock seconds when it was first seen dead; -1 while alive (0.23.41) |
 | `lastVitalsPollTime` | `float` | Game time when vitals were last polled (v0.6.11) |
 | `priority` | `float` | Tracking priority score |
 
@@ -461,7 +462,19 @@ graph TB
   map — for N ≤ 50 a contiguous vector beats `unordered_map` on both lookup and
   the whole-collection copy-out.
 - It holds **enemies and allies together**; `isHostile` separates them.
-- Automatic pruning: `LAST_SEEN_TIMEOUT` 3s, `DEAD_ACTOR_TIMEOUT` 5s.
+- Automatic pruning (`core/TargetTracking.h` `PruneVerdict`): an entry no scan
+  refreshed for `LAST_SEEN_TIMEOUT` (3 s), a dead one `DEAD_ACTOR_TIMEOUT` (5 s)
+  after its death was noticed, one past its release range. Seconds on the steady
+  clock since 0.23.41: before, both were compared against game days and never
+  fired, and since the scans skip dead actors a hostile killed off the crosshair
+  kept `isDead = false` and was counted alive until combat ended. The pass that
+  updates stale entries' distances now reads each actor's dead flag
+  (`NoteDeath`), so a death stops counting on the poll that sees it.
+- The player's side never counts as hostile (0.23.41, `IsPlayerSide`): a
+  teammate, an actor the player commands (a summon, a thrall) or one a teammate
+  commands is skipped by the hostile scan and read non-hostile as the primary,
+  whatever the faction test says (the player's staff-summoned Flame Atronach
+  read as a hostile daedra).
 - Priority-based eviction when full (`EvictIfFull`, floor
   `NEW_TARGET_MIN_PRIORITY` 0.5).
 - Two aggregates are cached alongside and kept in sync by

@@ -87,16 +87,27 @@ namespace Huginn::Core::Needs
                 // --- Enemy
                 case N::in_combat: return B(s.inCombat);
                 case N::combat_onset: return s.inCombat ? s.combatStartAgo : kNever;
-                case N::enemy_count: return static_cast<float>(s.enemyCount) / 6.0f;
+                // 0.23.41: the raw count; the curve (linear 1..5) makes one
+                // hostile 0. enemyCount / 6 through a saturating curve read
+                // 0.34 for every single hostile.
+                case N::enemy_count: return static_cast<float>(s.enemyCount);
                 case N::enemy_close: return Distance(s);
                 case N::enemy_mid: return Distance(s);
                 case N::enemy_far: return s.closestEnemy < 0.0f ? 0.0f : s.closestEnemy;   // no hostile: 0, not far
-                case N::surrounded: return static_cast<float>(s.enemiesNear256) / 3.0f;
+                // 0.23.41: the raw count in melee reach; the curve (linear
+                // 1..3) makes one hostile 0, two 0.5, three or more 1.
+                // enemiesNear256 / 3 read 0.55 for a single hostile in reach.
+                case N::surrounded: return static_cast<float>(s.enemiesNear256);
                 case N::enemy_casting: return B(s.anyCasting);
                 case N::target_caster: return B(s.targetCaster);
                 case N::target_archer: return B(s.targetArcher);
                 case N::target_health_low: return s.targetHealth < 0.0f ? 0.0f : 1.0f - s.targetHealth;
-                case N::boss_fight: return (s.enemyCount == 1 && s.soleHostileTtk >= 0.0f) ? s.soleHostileTtk : 0.0f;
+                // 0.23.41: kNever (a bar that has not moved in the window) is
+                // "no estimate", not "a very long fight": it read boss_fight 1.00
+                // in 347 contexts of the 0.23.15-0.23.38 v3 log.
+                case N::boss_fight:
+                    return (s.enemyCount == 1 && s.soleHostileTtk >= 0.0f && s.soleHostileTtk < kNever)
+                               ? s.soleHostileTtk : 0.0f;
                 case N::target_magicka_low: return 0.0f;  // deferred (perception line)
                 case N::target_stamina_low: return 0.0f;  // deferred (perception line)
                 // --- Target type
