@@ -94,8 +94,8 @@ namespace Huginn::UI
                 a_unanswered,
                 selfIndex >= 0 ? std::format("on stack at {}", selfIndex) : "not on stack",
                 ui->menuStack.size(), stack);
-            logger::warn("[Intuition] UI dump (#{}): showingMenus={} menuSystemVisible={} closingAllMenus={} paused={} modal={}"sv,
-                a_unanswered, ui->IsShowingMenus(), ui->menuSystemVisible, ui->closingAllMenus,
+            logger::warn("[Intuition] UI dump (#{}): menuSystemVisible={} closingAllMenus={} pauseCount={} modal={}"sv,
+                a_unanswered, ui->menuSystemVisible, ui->closingAllMenus,
                 ui->numPausesGame, ui->modal);
         }
 
