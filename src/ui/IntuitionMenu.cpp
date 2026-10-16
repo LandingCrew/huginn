@@ -44,12 +44,96 @@ namespace Huginn::UI
             return std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now().time_since_epoch()).count();
         }
+
+        // The kShow last reported as unanswered (its g_showQueuedMs value),
+        // so each one is reported once, from the tick or from Show().
+        std::atomic<std::int64_t> g_showReportedMs{ 0 };
+        // kShows in a row that RE::UI never answered; reset when it opens us.
+        std::atomic<int> g_showsUnanswered{ 0 };
+
+        // What RE::UI holds for IntuitionMenu, for a kShow it never answered
+        // (2026-10-11 08:05: every kShow after a door went unanswered for the
+        // rest of the session; inventory still opened, compass still drew).
+        // Tells "UI believes we are still on the stack" (kShow is a no-op)
+        // from "the message never ran". Main thread only: menuStack and
+        // menuMap are mutated there, so this runs as a UI task.
+        void DumpUiState(int a_unanswered)
+        {
+            auto* ui = RE::UI::GetSingleton();
+            if (!ui) return;
+
+            auto nameOf = [ui](const RE::IMenu* a_menu) -> std::string {
+                for (const auto& [name, entry] : ui->menuMap) {
+                    if (entry.menu.get() == a_menu) return std::string(name.c_str());
+                }
+                return "?";
+            };
+
+            const auto* self = IntuitionMenu::GetSingleton();
+            const auto it = ui->menuMap.find(RE::BSFixedString(IntuitionMenu::MENU_NAME));
+            if (it == ui->menuMap.end()) {
+                logger::warn("[Intuition] UI dump (#{}): IntuitionMenu not in menuMap"sv, a_unanswered);
+            } else {
+                const RE::IMenu* entryMenu = it->second.menu.get();
+                logger::warn("[Intuition] UI dump (#{}): menuMap entry menu={} (singleton {}) create={} flags=0x{:X} onStack={}"sv,
+                    a_unanswered, entryMenu ? "set" : "null",
+                    entryMenu == self ? "same" : "differs",
+                    it->second.create == &IntuitionMenu::CreateInstance ? "ours" : "other",
+                    entryMenu ? entryMenu->menuFlags.underlying() : 0u,
+                    entryMenu ? entryMenu->OnStack() : false);
+            }
+
+            std::string stack;
+            int selfIndex = -1;
+            for (std::uint32_t i = 0; i < ui->menuStack.size(); ++i) {
+                const RE::IMenu* menu = ui->menuStack[i].get();
+                if (menu && menu == self) selfIndex = static_cast<int>(i);
+                stack += std::format("{}{}", i ? ", " : "", menu ? nameOf(menu) : "null");
+            }
+            logger::warn("[Intuition] UI dump (#{}): IntuitionMenu {} | stack[{}]: {}"sv,
+                a_unanswered,
+                selfIndex >= 0 ? std::format("on stack at {}", selfIndex) : "not on stack",
+                ui->menuStack.size(), stack);
+            logger::warn("[Intuition] UI dump (#{}): showingMenus={} menuSystemVisible={} closingAllMenus={} paused={} modal={}"sv,
+                a_unanswered, ui->IsShowingMenus(), ui->menuSystemVisible, ui->closingAllMenus,
+                ui->numPausesGame, ui->modal);
+        }
+
+        // One warning per unanswered kShow (queued at a_queuedAt), plus the
+        // UI dump. Called from the tick, and from Show() for the case the tick
+        // missed (it is suspended through a load screen).
+        void ReportUnansweredShow(std::int64_t a_queuedAt, std::int64_t a_now)
+        {
+            if (g_showReportedMs.exchange(a_queuedAt, std::memory_order_acq_rel) == a_queuedAt) return;
+            const int unanswered = g_showsUnanswered.fetch_add(1, std::memory_order_acq_rel) + 1;
+            logger::warn("[Intuition] kShow queued {} ms ago never answered by RE::UI ({} in a row)"sv,
+                a_now - a_queuedAt, unanswered);
+            if (auto* tasks = SKSE::GetTaskInterface()) {
+                tasks->AddUITask([unanswered]() { DumpUiState(unanswered); });
+            }
+        }
     }
 
     void IntuitionMenu::OnMenuOpenClose(bool a_opening) noexcept
     {
         logger::info("IntuitionMenu {} by RE::UI"sv, a_opening ? "opened" : "closed");
         g_showQueuedMs.store(0, std::memory_order_release);
+        if (a_opening) {
+            const int unanswered = g_showsUnanswered.exchange(0, std::memory_order_acq_rel);
+            if (unanswered > 0) {
+                logger::info("[Intuition] opened after {} unanswered kShow(s)"sv, unanswered);
+            }
+        }
+    }
+
+    void IntuitionMenu::CheckPendingShow()
+    {
+        const std::int64_t queuedAt = g_showQueuedMs.load(std::memory_order_acquire);
+        if (queuedAt == 0) return;
+        const std::int64_t now = NowMs();
+        if (now - queuedAt >= SHOW_PENDING_MAX_MS) {
+            ReportUnansweredShow(queuedAt, now);
+        }
     }
 
     void IntuitionMenu::Show()
@@ -93,6 +177,9 @@ namespace Huginn::UI
                 logger::info("IntuitionMenu::Show() - kShow already queued {} ms ago, skipping"sv,
                     NowMs() - queuedAt);
                 return;
+            }
+            if (queuedAt != 0) {
+                ReportUnansweredShow(queuedAt, NowMs());
             }
             auto* msgQueue = RE::UIMessageQueue::GetSingleton();
             if (msgQueue) {

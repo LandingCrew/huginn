@@ -21,6 +21,7 @@
 #include "weapon/WeaponRegistry.h"
 #include "telemetry/SoakMetrics.h"
 #include "needs/NeedMonitor.h"
+#include "ui/IntuitionMenu.h"
 
 // For the ProcessInventoryChanges constraint: std::same_as / std::convertible_to
 // from <concepts>, std::remove_cvref_t from <type_traits>. Both explicit because
@@ -686,6 +687,10 @@ void OnUpdate(float deltaSeconds)
         }
         if (!loaded) return;
     }
+
+    // A kShow RE::UI never answered leaves the widget gone for good; warn
+    // once per kShow, with a dump of RE::UI's view of the menu (diagnostic).
+    UI::IntuitionMenu::CheckPendingShow();
 
     // The learner's play clock (memory with a useful life): loaded, unpaused
     // play only -- an open inventory or journal does not age what was learned.
