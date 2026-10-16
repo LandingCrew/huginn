@@ -15,6 +15,8 @@
 #   define Huginn_ZONE_NAMED_VAR(var, n) ZoneNamedN(var, n, true)
 #   define Huginn_FRAME_MARK    FrameMark
 #   define Huginn_SET_THREAD(n) tracy::SetThreadName(n)
+    // The name the profiler's client list shows instead of SkyrimSE.exe.
+#   define Huginn_PROGRAM_NAME(n) TracySetProgramName(n)
 
     // Time-series plot for long-play drift/leak watching (candidate counts,
     // learned-item growth, accept-rate). `name` MUST be a persistent string
@@ -32,6 +34,7 @@
 #   define Huginn_ZONE_NAMED_VAR(var, n) ((void)0)
 #   define Huginn_FRAME_MARK    ((void)0)
 #   define Huginn_SET_THREAD(n) ((void)0)
+#   define Huginn_PROGRAM_NAME(n) ((void)0)
 #   define Huginn_PLOT(name, val) ((void)0)
 #   define Huginn_ALLOC(ptr, size) ((void)0)
 #   define Huginn_FREE(ptr)        ((void)0)

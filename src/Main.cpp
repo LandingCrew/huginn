@@ -3,6 +3,7 @@
 #include <spdlog/spdlog.h>
 
 #include "Config.h"
+#include "Profiling.h"
 #include "Globals.h"
 #include "UpdateLoop.h"
 #include "Tests.h"
@@ -1058,6 +1059,8 @@ extern "C" DLLEXPORT bool SKSEAPI SKSEPlugin_Load(const SKSE::LoadInterface* a_s
 #else
     logger::info("{} v{} ({}) [RELEASE]{} Loading"sv, Huginn::PROJECT_NAME, Huginn::VERSION_STRING, Huginn::GIT_COMMIT, tracyTag);
 #endif
+    // Tells this client apart from SwingSight's in the profiler's client list.
+    Huginn_PROGRAM_NAME("Huginn");
 
     SKSE::Init(a_skse);
     InstallHooks();                // before the engine's threads exist; see above
