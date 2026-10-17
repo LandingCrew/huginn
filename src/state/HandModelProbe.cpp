@@ -136,6 +136,7 @@ namespace Huginn::State::HandModelProbe
          Core::PartReading reading;
          std::string chain;   // the first parents, nearest first
          std::string culledAt;  // the culled node, if any
+         bool reachedBipedRoot = false;  // passed the biped's own root (seen when not on the skeleton)
       };
 
       PartView ReadPart(const RE::BIPOBJECT& obj, int slot, const RE::NiAVObject* root3D, const RE::NiAVObject* bipedRoot)
@@ -162,8 +163,11 @@ namespace Huginn::State::HandModelProbe
                if (!v.chain.empty()) v.chain += " < ";
                v.chain += name.empty() ? "(unnamed)" : std::string(name);
             }
-            if (node == root3D || node == bipedRoot) {
-               // Above here is the cell's scene graph, not the player.
+            if (node == bipedRoot) v.reachedBipedRoot = true;
+            if (node == root3D) {
+               // Above here is the cell's scene graph, not the player. Only
+               // the view's 3D counts: a biped root that is not under it is
+               // a stale skeleton, the case this is here to catch.
                v.reading.onSkeleton = true;
                break;
             }
@@ -178,7 +182,11 @@ namespace Huginn::State::HandModelProbe
          std::string weaponSlots;      // when no part: what the weapon slots hold instead
       };
 
-      BipedView ReadBiped(RE::PlayerCharacter* player, bool firstPerson, const RE::TESObjectWEAP* weapon)
+      // `otherWeapon`: the other hand's weapon. Variants (an enchanted copy)
+      // share their template's first-person model object, so a match on that
+      // object alone would take the other hand's part for this one's.
+      BipedView ReadBiped(RE::PlayerCharacter* player, bool firstPerson, const RE::TESObjectWEAP* weapon,
+         const RE::TESObjectWEAP* otherWeapon)
       {
          BipedView v;
          const auto& biped = player->GetBiped(firstPerson);
@@ -186,6 +194,7 @@ namespace Huginn::State::HandModelProbe
          v.hasBiped = true;
          const RE::NiAVObject* root3D = player->Get3D(firstPerson);
          const RE::TESForm* model1st = weapon->firstPersonModelObject;
+         if (otherWeapon && otherWeapon->firstPersonModelObject == weapon->firstPersonModelObject) model1st = nullptr;
          for (int i = 0; i < RE::BIPED_OBJECTS::kTotal; ++i) {
             const auto* item = biped->objects[i].item;
             if (item && (item == weapon || item == model1st)) {
@@ -230,7 +239,9 @@ namespace Huginn::State::HandModelProbe
             }
             out += std::format("slot {} {}{}{}", p.slot,
                p.reading.attached ? "under " + p.chain : std::string("attached to nothing"),
-               p.reading.attached && !p.reading.onSkeleton ? ", not under the player's 3D" : "",
+               p.reading.attached && !p.reading.onSkeleton
+                  ? (p.reachedBipedRoot ? ", under the biped's root but not the player's 3D" : ", not under the player's 3D")
+                  : "",
                p.reading.culled ? ", culled at " + p.culledAt : std::string());
          }
          return out;
@@ -308,7 +319,7 @@ namespace Huginn::State::HandModelProbe
 
       void LogEnded(int side, const Core::FaultWatch::Event& ev, std::string_view how)
       {
-         logger::info("[HandModel] {} hand: the '{}' fault ended, {} after {:.1f} s ({} draw/sheathe changes)"sv,
+         logger::info("[HandModel] {} hand: the '{}' fault ended, {} after {:.1f} s ({} sheathes in between)"sv,
             kSideName[side], Core::ModelStateName(ev.state), how, ev.faultSec, ev.poseChanges);
       }
 
@@ -323,21 +334,25 @@ namespace Huginn::State::HandModelProbe
             const auto* weapon = ModelledWeapon(objects[side], objects[1 - side], side);
             if (!weapon) {
                if (const auto ev = hand.watch.Update(0, pose, view, Core::ModelState::Ok, nowSec); ev.kind == K::SwappedOut) {
-                  LogEnded(side, ev, "the weapon swapped out");
+                  // The left hand also reads null when the right holds the same form.
+                  LogEnded(side, ev, side == kLeft && objects[side] && objects[side] == objects[kRight]
+                                        ? "no longer judged (the right hand holds the same form)"
+                                        : "the weapon swapped out");
                }
                continue;
             }
+            const auto* otherWeapon = ModelledWeapon(objects[1 - side], objects[side], 1 - side);
 
             // Only a drawn weapon is judged: skip the scene-graph reads otherwise.
             BipedView judged;
             auto state = Core::ModelState::Ok;
             if (pose == Core::HandPose::Drawn) {
-               judged = ReadBiped(player, firstPerson, weapon);
+               judged = ReadBiped(player, firstPerson, weapon, otherWeapon);
                state = Judge(judged);
             }
             const auto ev = hand.watch.Update(weapon->GetFormID(), pose, view, state, nowSec);
             if (ev.kind == K::Onset) {
-               const BipedView other = ReadBiped(player, !firstPerson, weapon);
+               const BipedView other = ReadBiped(player, !firstPerson, weapon, otherWeapon);
                logger::warn("[HandModel] {} hand: {} is equipped and drawn, but its {}-person model is {} | 1st: {} | 3rd: {} | {} | {:.0f} s since the load"sv,
                   kSideName[side], hand.objectName, firstPerson ? "first" : "third", Core::ModelStateName(ev.state),
                   Describe(firstPerson ? judged : other), Describe(firstPerson ? other : judged),
@@ -405,8 +420,9 @@ namespace Huginn::State::HandModelProbe
             rows.push_back(std::format("{}: {} (not judged)", kSideName[side], FormLabel(objects[side])));
             continue;
          }
-         const BipedView first = ReadBiped(player, true, weapon);
-         const BipedView third = ReadBiped(player, false, weapon);
+         const auto* otherWeapon = ModelledWeapon(objects[1 - side], objects[side], 1 - side);
+         const BipedView first = ReadBiped(player, true, weapon, otherWeapon);
+         const BipedView third = ReadBiped(player, false, weapon, otherWeapon);
          const std::string judged = pose == Core::HandPose::Drawn
             ? std::string(Core::ModelStateName(Judge(firstPerson ? first : third)))
             : std::format("not judged while {}", PoseName(pose));

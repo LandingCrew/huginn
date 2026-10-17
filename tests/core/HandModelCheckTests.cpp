@@ -92,13 +92,13 @@ TEST_CASE("hand model: a sheathe ends nothing; only the same check passing does"
     w.Update(kStaff, M, k1st, ModelState::Ok, 15.0);
     CHECK(w.Update(kStaff, D, k1st, ModelState::Culled, 16.0).kind == K::None);
     CHECK(w.Update(kStaff, D, k1st, ModelState::Culled, 20.0).kind == K::None);  // no second onset
-    // Fixed by a later sheathe and draw: one line, four pose changes per cycle.
+    // Fixed by a later sheathe and draw: one line, one sheathe per cycle.
     w.Update(kStaff, M, k1st, ModelState::Ok, 21.0);
     w.Update(kStaff, S, k3rd, ModelState::Ok, 22.0);
     w.Update(kStaff, M, k1st, ModelState::Ok, 23.0);
     const auto back = w.Update(kStaff, D, k1st, ModelState::Ok, 24.0);
     CHECK(back.kind == K::Recovered);
-    CHECK(back.poseChanges == 8);
+    CHECK(back.poseChanges == 2);
     CHECK(back.faultSec == doctest::Approx(14.0));
 }
 

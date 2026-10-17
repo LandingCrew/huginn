@@ -114,7 +114,7 @@ namespace Huginn::Core
             EventKind kind = EventKind::None;
             ModelState state = ModelState::Ok;  // Onset: the fault; Recovered/SwappedOut: the fault that ended
             double faultSec = 0.0;              // Recovered/SwappedOut: since the fault was first seen
-            int poseChanges = 0;                // Recovered/SwappedOut: pose changes since onset
+            int poseChanges = 0;                // Recovered/SwappedOut: sheathes (drawn -> not drawn) since onset
         };
 
         FaultWatch() = default;
@@ -139,9 +139,13 @@ namespace Huginn::Core
             if (formID == 0) return ev;
 
             if (pose != m_pose) {
+                if (m_reported) {
+                    // Sheathes only: at 250 ms sampling the Moving phase can be missed.
+                    if (m_pose == HandPose::Drawn) ++m_poseChanges;
+                } else {
+                    ClearFault();  // an unreported fault restarts on any pose change
+                }
                 m_pose = pose;
-                if (m_reported) ++m_poseChanges;
-                else ClearFault();  // an unreported fault restarts on any pose change
             }
             if (pose != HandPose::Drawn) return ev;
 
