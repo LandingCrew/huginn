@@ -214,4 +214,78 @@ namespace Huginn::Core
         double m_since = 0.0;
         int m_poseChanges = 0;
     };
+
+    // -------------------------------------------------------------------------
+    // A draw or sheathe that never finishes. 2026-10-17, the second sighting:
+    // `hg hands` 5.5 s after a staff (a two-hander) replaced Firebolt while
+    // drawn read "drawing/sheathing", the staff still on WeaponBack. The game
+    // never finished the draw, so the model never moved to the hand -- and
+    // FaultWatch never judged it, because a moving pose is not judged. A draw
+    // takes about a second; one weapon state other than drawn or sheathed
+    // held for kStuckSec is reported, then its end.
+    //
+    // `state` is the caller's weapon-state id (the engine's enum); 0 is
+    // sheathed and 3 drawn, the two settled states.
+    // -------------------------------------------------------------------------
+    class PoseStuckWatch
+    {
+    public:
+        static constexpr double kStuckSec = 3.0;
+        static constexpr std::uint8_t kSheathed = 0;
+        static constexpr std::uint8_t kDrawn = 3;
+
+        enum class EventKind : std::uint8_t
+        {
+            None,
+            Stuck,    // `state` held kStuckSec
+            Settled,  // a reported stuck state ended; `state` is the one it ended in
+        };
+
+        struct Event
+        {
+            EventKind kind = EventKind::None;
+            std::uint8_t state = 0;      // Stuck: the stuck state; Settled: the new one
+            std::uint8_t stuckIn = 0;    // Settled: the state that was stuck
+            double heldSec = 0.0;        // how long the stuck state held
+        };
+
+        PoseStuckWatch() = default;
+        explicit PoseStuckWatch(double stuckSec) noexcept : m_stuckSec(stuckSec) {}
+
+        Event Update(std::uint8_t state, double nowSec) noexcept
+        {
+            Event ev;
+            if (!m_started || state != m_state) {
+                if (m_reported) ev = { EventKind::Settled, state, m_state, nowSec - m_since };
+                m_started = true;
+                m_state = state;
+                m_since = nowSec;
+                m_reported = false;
+                return ev;
+            }
+            if (!m_reported && state != kSheathed && state != kDrawn && nowSec - m_since >= m_stuckSec) {
+                m_reported = true;
+                ev = { EventKind::Stuck, state, state, nowSec - m_since };
+            }
+            return ev;
+        }
+
+        [[nodiscard]] bool Reported() const noexcept { return m_reported; }
+        /// How long the current state has held.
+        [[nodiscard]] double HeldSec(double nowSec) const noexcept { return m_started ? nowSec - m_since : 0.0; }
+
+        void Reset() noexcept
+        {
+            m_started = false;
+            m_reported = false;
+        }
+
+    private:
+        double m_stuckSec = kStuckSec;
+        bool m_started = false;
+        bool m_reported = false;
+        std::uint8_t m_state = 0;
+        double m_since = 0.0;
+    };
 }
+

@@ -48,7 +48,7 @@ namespace Huginn::State::HandModelProbe
          std::string fromName;  // "" = empty hand
          double at = -1.0;      // game seconds; -1 = in the hand since the load
          bool huginn = false;
-         Core::HandPose pose = Core::HandPose::Sheathed;
+         RE::WEAPON_STATE state = RE::WEAPON_STATE::kSheathed;
          double sinceCast = -1.0;    // seconds before the swap; -1 = none in kRecentSec
          double sinceAttack = -1.0;
       };
@@ -69,6 +69,7 @@ namespace Huginn::State::HandModelProbe
       double g_lastJudge = -1.0;
       double g_lastCastAt = -1.0;
       double g_lastAttackAt = -1.0;
+      Core::PoseStuckWatch g_stuck;
 
       std::size_t ThisThread() { return std::hash<std::thread::id>{}(std::this_thread::get_id()); }
 
@@ -95,14 +96,37 @@ namespace Huginn::State::HandModelProbe
          }
       }
 
-      std::string_view PoseName(Core::HandPose pose)
+      RE::WEAPON_STATE WeaponState(RE::PlayerCharacter* player) { return player->AsActorState()->GetWeaponState(); }
+
+      std::string_view WeaponStateName(RE::WEAPON_STATE state)
       {
-         switch (pose) {
-         case Core::HandPose::Drawn: return "drawn";
-         case Core::HandPose::Sheathed: return "sheathed";
-         case Core::HandPose::Moving: return "drawing/sheathing";
+         switch (state) {
+         case RE::WEAPON_STATE::kSheathed: return "sheathed";
+         case RE::WEAPON_STATE::kWantToDraw: return "want-to-draw";
+         case RE::WEAPON_STATE::kDrawing: return "drawing";
+         case RE::WEAPON_STATE::kDrawn: return "drawn";
+         case RE::WEAPON_STATE::kWantToSheathe: return "want-to-sheathe";
+         case RE::WEAPON_STATE::kSheathing: return "sheathing";
          }
          return "?";
+      }
+
+      // The behaviour graph's view of the equip and the hands -- what the
+      // weapon state machine waits on. "-" when the graph has no such variable.
+      std::string GraphState(RE::PlayerCharacter* player)
+      {
+         auto b = [&](const char* name) -> std::string {
+            bool v = false;
+            return player->GetGraphVariableBool(name, v) ? (v ? "1" : "0") : "-";
+         };
+         auto i = [&](const char* name) -> std::string {
+            std::int32_t v = 0;
+            return player->GetGraphVariableInt(name, v) ? std::to_string(v) : "-";
+         };
+         return std::format("IsEquipping {} IsUnequipping {} IsAttacking {} IsCastingRight {} IsCastingLeft {} "
+                            "iRightHandType {} iLeftHandType {} iEquippedItemState {}",
+            b("IsEquipping"), b("IsUnequipping"), b("IsAttacking"), b("IsCastingRight"), b("IsCastingLeft"),
+            i("iRightHandType"), i("iLeftHandType"), i("iEquippedItemState"));
       }
 
       bool InFirstPerson()
@@ -258,7 +282,7 @@ namespace Huginn::State::HandModelProbe
          return std::format("in the hand {:.1f} s: swapped in from {} by {}, pose {}, last cast {}, last attack {}",
             nowSec - s.at, s.fromName.empty() ? std::string("an empty hand") : s.fromName,
             s.huginn ? "Huginn (key or wheel)" : "something else (menu, favorites, another mod, the game)",
-            PoseName(s.pose), Ago(s.sinceCast), Ago(s.sinceAttack));
+            WeaponStateName(s.state), Ago(s.sinceCast), Ago(s.sinceAttack));
       }
 
       // ---- the hook --------------------------------------------------------
@@ -281,7 +305,7 @@ namespace Huginn::State::HandModelProbe
          if (player->AsActorState()->GetAttackState() != RE::ATTACK_STATE_ENUM::kNone) g_lastAttackAt = nowSec;
       }
 
-      void TrackSwaps(RE::PlayerCharacter* player, double nowSec, Core::HandPose pose)
+      void TrackSwaps(RE::PlayerCharacter* player, double nowSec, RE::WEAPON_STATE state)
       {
          std::array<const RE::TESForm*, 2> objects{ player->GetEquippedObject(false), player->GetEquippedObject(true) };
          for (int side = 0; side < 2; ++side) {
@@ -295,7 +319,7 @@ namespace Huginn::State::HandModelProbe
                swap.fromName = hand.objectName;
                swap.at = nowSec;
                swap.huginn = id && Learning::EquipSourceTracker::GetSingleton().IsRecentHuginnEquip(id, kHuginnEquipWindowMs);
-               swap.pose = pose;
+               swap.state = state;
                swap.sinceCast = SinceOrNone(g_lastCastAt, nowSec);
                swap.sinceAttack = SinceOrNone(g_lastAttackAt, nowSec);
             }
@@ -309,7 +333,7 @@ namespace Huginn::State::HandModelProbe
                } else {
                   logger::debug("[HandModel] {} hand: {} -> {} | by {} | pose {} | last cast {} | last attack {}"sv,
                      kSideName[side], hand.swap.fromName.empty() ? std::string("nothing") : hand.swap.fromName,
-                     hand.objectName, hand.swap.huginn ? "Huginn" : "other", PoseName(pose),
+                     hand.objectName, hand.swap.huginn ? "Huginn" : "other", WeaponStateName(state),
                      Ago(hand.swap.sinceCast), Ago(hand.swap.sinceAttack));
                }
             }
@@ -366,6 +390,44 @@ namespace Huginn::State::HandModelProbe
       }
    }
 
+   namespace
+   {
+      // Both hands' parts, where they hang, for the stuck line.
+      std::string DescribeHandParts(RE::PlayerCharacter* player)
+      {
+         std::array<const RE::TESForm*, 2> objects{ player->GetEquippedObject(false), player->GetEquippedObject(true) };
+         std::string out;
+         for (int side = 0; side < 2; ++side) {
+            if (!out.empty()) out += " | ";
+            const auto* weapon = ModelledWeapon(objects[side], objects[1 - side], side);
+            if (!weapon) {
+               out += std::format("{}: {}", kSideName[side], FormLabel(objects[side]));
+               continue;
+            }
+            const auto* other = ModelledWeapon(objects[1 - side], objects[side], 1 - side);
+            out += std::format("{}: {} 1st: {}; 3rd: {}; {}", kSideName[side], g_hands[side].objectName,
+               Describe(ReadBiped(player, true, weapon, other)), Describe(ReadBiped(player, false, weapon, other)),
+               DescribeSwap(g_hands[side].swap, DropAheadProbe::GameSeconds()));
+         }
+         return out;
+      }
+
+      void WatchStuck(RE::PlayerCharacter* player, double nowSec, RE::WEAPON_STATE state)
+      {
+         using K = Core::PoseStuckWatch::EventKind;
+         const auto ev = g_stuck.Update(static_cast<std::uint8_t>(state), nowSec);
+         if (ev.kind == K::Stuck) {
+            logger::warn("[HandModel] weapon state stuck in {} for {:.1f} s ({} person) | graph: {} | {} | {:.0f} s since the load"sv,
+               WeaponStateName(state), ev.heldSec, InFirstPerson() ? "first" : "third", GraphState(player),
+               DescribeHandParts(player), g_loadedAt >= 0.0 ? nowSec - g_loadedAt : -1.0);
+         } else if (ev.kind == K::Settled) {
+            logger::info("[HandModel] weapon state left {} after {:.1f} s, now {} | graph: {}"sv,
+               WeaponStateName(static_cast<RE::WEAPON_STATE>(ev.stuckIn)), ev.heldSec, WeaponStateName(state),
+               GraphState(player));
+         }
+      }
+   }
+
    void OnPlayerUpdate(RE::PlayerCharacter* player)
    {
       Huginn_ZONE_NAMED("HandModel::PlayerUpdateHook");
@@ -380,12 +442,15 @@ namespace Huginn::State::HandModelProbe
          g_lastJudge = -1.0;
          g_lastCastAt = -1.0;
          g_lastAttackAt = -1.0;
+         g_stuck.Reset();
       }
       if (!WorldReady(player)) return;
 
+      const auto state = WeaponState(player);
       const auto pose = PoseOf(player);
       TrackActivity(player, nowSec);
-      TrackSwaps(player, nowSec, pose);
+      TrackSwaps(player, nowSec, state);
+      WatchStuck(player, nowSec, state);
       if (g_lastJudge >= 0.0 && nowSec - g_lastJudge < kJudgeIntervalSec) return;
       g_lastJudge = nowSec;
       JudgeHands(player, nowSec, pose);
@@ -411,8 +476,10 @@ namespace Huginn::State::HandModelProbe
       const auto pose = PoseOf(player);
       const double nowSec = DropAheadProbe::GameSeconds();
       const bool firstPerson = InFirstPerson();
-      rows.push_back(std::format("{}, {} person{}", PoseName(pose), firstPerson ? "first" : "third",
-         hookThread ? "" : " (not on the probe's thread: fault and swap state not read)"));
+      rows.push_back(std::format("{}{}, {} person{} | graph: {}", WeaponStateName(WeaponState(player)),
+         hookThread ? std::format(" for {:.1f} s", g_stuck.HeldSec(nowSec)) : std::string(),
+         firstPerson ? "first" : "third",
+         hookThread ? "" : " (not on the probe's thread: fault and swap state not read)", GraphState(player)));
       std::array<const RE::TESForm*, 2> objects{ player->GetEquippedObject(false), player->GetEquippedObject(true) };
       for (int side = 0; side < 2; ++side) {
          const auto* weapon = ModelledWeapon(objects[side], objects[1 - side], side);
@@ -425,7 +492,7 @@ namespace Huginn::State::HandModelProbe
          const BipedView third = ReadBiped(player, false, weapon, otherWeapon);
          const std::string judged = pose == Core::HandPose::Drawn
             ? std::string(Core::ModelStateName(Judge(firstPerson ? first : third)))
-            : std::format("not judged while {}", PoseName(pose));
+            : std::format("not judged while {}", WeaponStateName(WeaponState(player)));
          std::string tracked;
          if (hookThread) {
             const auto& hand = g_hands[side];

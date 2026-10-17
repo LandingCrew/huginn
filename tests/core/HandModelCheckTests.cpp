@@ -157,3 +157,31 @@ TEST_CASE("hand model: reset forgets everything")
     CHECK(w.Update(kStaff, D, k1st, ModelState::NoPart, 3.0).kind == K::None);
     CHECK(w.Update(kStaff, D, k1st, ModelState::NoPart, 5.0).kind == K::Onset);
 }
+
+TEST_CASE("pose stuck: a draw that never finishes is reported once, then its end")
+{
+    constexpr std::uint8_t kWantToDraw = 1, kDrawing = 2, kDrawn = 3;
+    PoseStuckWatch w;
+    w.Update(kDrawn, 0.0);
+    // A normal draw: about a second in the moving states.
+    w.Update(0, 1.0);
+    CHECK(w.Update(kWantToDraw, 1.1).kind == PoseStuckWatch::EventKind::None);
+    CHECK(w.Update(kDrawing, 1.3).kind == PoseStuckWatch::EventKind::None);
+    CHECK(w.Update(kDrawn, 2.0).kind == PoseStuckWatch::EventKind::None);
+    // Settled states never report, however long.
+    CHECK(w.Update(kDrawn, 60.0).kind == PoseStuckWatch::EventKind::None);
+
+    // The sighting: drawing, and it stays there.
+    w.Update(kDrawing, 100.0);
+    CHECK(w.Update(kDrawing, 102.9).kind == PoseStuckWatch::EventKind::None);
+    const auto stuck = w.Update(kDrawing, 103.0);
+    CHECK(stuck.kind == PoseStuckWatch::EventKind::Stuck);
+    CHECK(stuck.state == kDrawing);
+    CHECK(w.Update(kDrawing, 130.0).kind == PoseStuckWatch::EventKind::None);  // once
+    const auto settled = w.Update(0, 131.0);  // the player sheathes
+    CHECK(settled.kind == PoseStuckWatch::EventKind::Settled);
+    CHECK(settled.stuckIn == kDrawing);
+    CHECK(settled.state == 0);
+    CHECK(settled.heldSec == doctest::Approx(31.0));
+    CHECK_FALSE(w.Reported());
+}
