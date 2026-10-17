@@ -1,7 +1,7 @@
 #pragma once
 
 // =============================================================================
-// HAND MODEL CHECK -- is the weapon in a hand actually on the skeleton (0.23.44)
+// HAND MODEL CHECK -- is the drawn weapon actually on the skeleton (0.23.44)
 // =============================================================================
 // A diagnostic, not a sensor. 2026-10-17: a staff picked from the Huginn wheel
 // was equipped -- the game reported it in the right hand for the next minute
@@ -11,23 +11,27 @@
 //
 // The game layer (state/HandModelProbe.cpp) reads, for the weapon in a hand,
 // the biped part the engine attached for it (BipedAnim::objects[i].partClone
-// with item == the weapon) and reduces it to a PartReading. Judged by pose:
+// with item == the weapon) in the biped of the current view, and reduces it to
+// a PartReading. Judged only while the weapon is drawn -- the complaint is a
+// weapon missing from the hand, and sheathed parts vary by mod (Simple Dual
+// Sheath, IED) and by hand (vanilla shows no sheathed left-hand weapon):
 //
-//   - no part, or a part not attached to any node: a fault in any pose;
-//   - drawn: the part must sit under a hand node (WEAPON or SHIELD) and not be
-//     culled. A culled or sheath-hung part while drawn is a fault;
-//   - sheathed: culled or off the hand is normal (sheathed is not in the hand,
-//     and Immersive Equipment Displays may cull the vanilla sheath model);
-//   - drawing or sheathing: not judged. The part moves between nodes partway
-//     through the animation.
+//   - no part, a part attached to nothing, or a part whose parents do not
+//     reach the player's 3D root: a fault;
+//   - a part culled, or under a culled parent: a fault;
+//   - a part with no hand node (WEAPON or SHIELD) among its parents -- still
+//     on the sheath: a fault.
 //
 // FaultWatch turns those judgements into transitions for the log: a fault is
-// reported once it has held for kOnsetSec on the same weapon (a model still
-// loading after a swap or a load is not one), then once more when it ends --
-// the model back, or the weapon swapped out. A draw or sheathe in between
-// restarts an unreported fault and leaves a reported one standing.
+// reported once it has held for kOnsetSec on the same weapon in the same view
+// (a model still loading after a swap or a load is not one), then once more
+// when it ends -- the same check passing again (drawn, in the view that
+// raised it), or the weapon swapped out. A sheathe, a draw or a view change
+// restarts an unreported fault and leaves a reported one standing: it is not
+// judged again until the weapon is drawn in that view.
 //
-// Seconds on one monotonic clock (the caller's); nothing here reads a clock.
+// Seconds on one monotonic clock (the caller's; the game layer uses the game
+// clock, which stops while paused); nothing here reads a clock.
 //
 // Pure: standard library only (src/core/README.md).
 // =============================================================================
@@ -41,35 +45,38 @@ namespace Huginn::Core
     {
         Sheathed,
         Drawn,
-        Moving,  // drawing or sheathing: not judged
+        Moving,  // drawing or sheathing
     };
 
-    /// What the game layer found for the weapon in one hand.
+    /// What the game layer found for the weapon in one hand, in one biped.
     struct PartReading
     {
         bool found = false;       // a biped part with a model for this weapon
         bool attached = false;    // the part has a parent node
-        bool culled = false;      // the part itself is app-culled
+        bool onSkeleton = false;  // its parents reach the player's 3D root
+        bool culled = false;      // the part, or a parent below the root, is app-culled
         bool inHandNode = false;  // a WEAPON or SHIELD node is among its parents
     };
 
     enum class ModelState : std::uint8_t
     {
         Ok,
-        NoPart,     // no biped part carries a model for the weapon
+        NotInHand,  // the part hangs off a non-hand node (a sheath)
+        Culled,     // the part or a parent is culled
+        Orphaned,   // attached, but not under the player's 3D
         Detached,   // a part, attached to nothing
-        Culled,     // drawn, but the part is culled
-        NotInHand,  // drawn, but the part hangs off a non-hand node (a sheath)
+        NoPart,     // no biped part carries a model for the weapon
     };
 
     [[nodiscard]] constexpr std::string_view ModelStateName(ModelState s) noexcept
     {
         switch (s) {
         case ModelState::Ok: return "ok";
-        case ModelState::NoPart: return "missing (no biped part)";
+        case ModelState::NotInHand: return "not in the hand (still on a sheath node)";
+        case ModelState::Culled: return "culled (the part or a parent)";
+        case ModelState::Orphaned: return "orphaned (its parents never reach the player's 3D)";
         case ModelState::Detached: return "detached (part has no parent)";
-        case ModelState::Culled: return "culled while drawn";
-        case ModelState::NotInHand: return "not in the hand while drawn";
+        case ModelState::NoPart: return "missing (no biped part)";
         }
         return "?";
     }
@@ -78,15 +85,14 @@ namespace Huginn::Core
     /// same form can show in more than one biped slot).
     [[nodiscard]] constexpr int ModelStateRank(ModelState s) noexcept { return static_cast<int>(s); }
 
-    /// Judge one reading. Not called for HandPose::Moving.
-    [[nodiscard]] constexpr ModelState JudgePart(const PartReading& r, HandPose pose) noexcept
+    /// Judge one reading of a drawn weapon.
+    [[nodiscard]] constexpr ModelState JudgePart(const PartReading& r) noexcept
     {
         if (!r.found) return ModelState::NoPart;
         if (!r.attached) return ModelState::Detached;
-        if (pose == HandPose::Drawn) {
-            if (r.culled) return ModelState::Culled;
-            if (!r.inHandNode) return ModelState::NotInHand;
-        }
+        if (!r.onSkeleton) return ModelState::Orphaned;
+        if (r.culled) return ModelState::Culled;
+        if (!r.inHandNode) return ModelState::NotInHand;
         return ModelState::Ok;
     }
 
@@ -99,7 +105,7 @@ namespace Huginn::Core
         {
             None,
             Onset,      // a fault held kOnsetSec: report it
-            Recovered,  // a reported fault judged ok again
+            Recovered,  // a reported fault's check passed again
             SwappedOut, // a reported fault's weapon left the hand
         };
 
@@ -115,8 +121,9 @@ namespace Huginn::Core
         explicit FaultWatch(double onsetSec) noexcept : m_onsetSec(onsetSec) {}
 
         /// One judgement. `formID` 0 = no modelled weapon in the hand (ends
-        /// any fault). `state` is ignored when `pose` is Moving.
-        Event Update(std::uint32_t formID, HandPose pose, ModelState state, double nowSec) noexcept
+        /// any fault). `view` is which biped was read (the caller's id: first
+        /// or third person). `state` is read only when `pose` is Drawn.
+        Event Update(std::uint32_t formID, HandPose pose, std::uint8_t view, ModelState state, double nowSec) noexcept
         {
             Event ev;
             if (formID != m_formID) {
@@ -126,8 +133,7 @@ namespace Huginn::Core
                 ClearFault();
                 m_formID = formID;
                 m_pose = pose;
-                if (formID == 0 || pose == HandPose::Moving) return ev;
-                StartOrContinue(state, nowSec);
+                if (formID != 0 && pose == HandPose::Drawn) Start(state, view, nowSec);
                 return ev;
             }
             if (formID == 0) return ev;
@@ -137,21 +143,37 @@ namespace Huginn::Core
                 if (m_reported) ++m_poseChanges;
                 else ClearFault();  // an unreported fault restarts on any pose change
             }
-            if (pose == HandPose::Moving) return ev;
+            if (pose != HandPose::Drawn) return ev;
 
-            if (state == ModelState::Ok) {
-                if (m_reported) {
-                    ev = { EventKind::Recovered, m_state, nowSec - m_since, m_poseChanges };
-                }
+            if (m_reported) {
+                // Only the check that raised it may end it.
+                if (view != m_view || state != ModelState::Ok) return ev;
+                ev = { EventKind::Recovered, m_state, nowSec - m_since, m_poseChanges };
                 ClearFault();
                 return ev;
             }
-            return StartOrContinue(state, nowSec);
+            if (m_faulted && view != m_view) ClearFault();  // a view change restarts it
+            if (state == ModelState::Ok) {
+                ClearFault();
+                return ev;
+            }
+            if (!m_faulted) {
+                Start(state, view, nowSec);
+                return ev;
+            }
+            // A different fault on the same weapon keeps the clock running;
+            // the reported state is the latest one seen before the report.
+            m_state = state;
+            if (nowSec - m_since >= m_onsetSec) {
+                m_reported = true;
+                m_poseChanges = 0;
+                ev = { EventKind::Onset, m_state, nowSec - m_since, 0 };
+            }
+            return ev;
         }
 
         [[nodiscard]] bool Reported() const noexcept { return m_reported; }
         [[nodiscard]] bool Pending() const noexcept { return m_faulted && !m_reported; }
-        [[nodiscard]] ModelState State() const noexcept { return m_faulted ? m_state : ModelState::Ok; }
 
         /// A game load: nothing carries across.
         void Reset() noexcept
@@ -162,27 +184,13 @@ namespace Huginn::Core
         }
 
     private:
-        Event StartOrContinue(ModelState state, double nowSec) noexcept
+        void Start(ModelState state, std::uint8_t view, double nowSec) noexcept
         {
-            Event ev;
-            if (state == ModelState::Ok) return ev;
-            if (!m_faulted) {
-                m_faulted = true;
-                m_since = nowSec;
-                m_state = state;
-                return ev;
-            }
-            // A different fault on the same weapon keeps the clock running;
-            // the reported state is the latest one seen before the report.
-            if (!m_reported) {
-                m_state = state;
-                if (nowSec - m_since >= m_onsetSec) {
-                    m_reported = true;
-                    m_poseChanges = 0;
-                    ev = { EventKind::Onset, m_state, nowSec - m_since, 0 };
-                }
-            }
-            return ev;
+            if (state == ModelState::Ok) return;
+            m_faulted = true;
+            m_since = nowSec;
+            m_state = state;
+            m_view = view;
         }
 
         void ClearFault() noexcept
@@ -195,6 +203,7 @@ namespace Huginn::Core
         double m_onsetSec = kOnsetSec;
         std::uint32_t m_formID = 0;
         HandPose m_pose = HandPose::Sheathed;
+        std::uint8_t m_view = 0;
         bool m_faulted = false;
         bool m_reported = false;
         ModelState m_state = ModelState::Ok;

@@ -1,6 +1,6 @@
 #include "HandModelProbe.h"
 
-#include "NeedSensorState.h"  // NeedClock
+#include "DropAheadProbe.h"  // GameSeconds: the game clock
 #include "Profiling.h"
 #include "core/HandModelCheck.h"
 #include "learning/EquipSourceTracker.h"
@@ -8,7 +8,9 @@
 #include <array>
 #include <atomic>
 #include <format>
+#include <functional>
 #include <string_view>
+#include <thread>
 
 namespace Huginn::State::HandModelProbe
 {
@@ -18,22 +20,33 @@ namespace Huginn::State::HandModelProbe
       // Bumped by every SetGameLoaded; the hook resets its own state when it
       // sees the change, so that state is only ever touched on its thread.
       std::atomic<std::uint32_t> g_loadGeneration{ 0 };
+      // The hook's thread; DescribeHands reads the tracked state only there.
+      std::atomic<std::size_t> g_hookThread{ 0 };
 
+      // Game seconds (DropAheadProbe::GameSeconds): they stop while the game
+      // is paused, so a fault pending when a menu opens does not pass the
+      // onset on the first tick after it closes.
       constexpr double kJudgeIntervalSec = 0.25;
       // How far back "last cast" / "last attack" look before calling it none.
       constexpr double kRecentSec = 30.0;
-      // EquipSourceTracker marks precede the hand change (Huginn's equip) or
-      // follow it by a frame (the Wheeler callback); this covers both.
+      // How far back a Huginn equip mark is looked for. The mark lands in the
+      // same frame as the equip (EquipManager before it, the Wheeler callback
+      // a millisecond after it, both before the next PlayerCharacter::Update),
+      // so the window only has to cover the probe's own frame.
       constexpr float kHuginnEquipWindowMs = 1500.0f;
+      // The parent walk's bound: the XPMSSE chain from WEAPON to the root is
+      // well under this.
+      constexpr int kMaxDepth = 256;
 
       enum Side : int { kRight = 0, kLeft = 1 };
       constexpr std::array<std::string_view, 2> kSideName{ "right", "left" };
+      constexpr std::uint8_t kView1st = 1;
+      constexpr std::uint8_t kView3rd = 3;
 
       struct Swap
       {
          std::string fromName;  // "" = empty hand
-         RE::FormID from = 0;
-         double at = -1.0;      // NeedClock seconds; -1 = in the hand since the load
+         double at = -1.0;      // game seconds; -1 = in the hand since the load
          bool huginn = false;
          Core::HandPose pose = Core::HandPose::Sheathed;
          double sinceCast = -1.0;    // seconds before the swap; -1 = none in kRecentSec
@@ -42,13 +55,13 @@ namespace Huginn::State::HandModelProbe
 
       struct Hand
       {
-         RE::FormID object = 0;  // whatever the hand holds (weapon, spell, shield ...)
+         RE::FormID object = 0;   // whatever the hand holds (weapon, spell, shield ...)
+         std::string objectName;  // taken when it entered the hand
          Swap swap;
          Core::FaultWatch watch;
       };
 
-      // Hook thread (main) only; DescribeHands reads it from the console,
-      // also the main thread.
+      // Hook thread (main) only.
       std::array<Hand, 2> g_hands;
       std::uint32_t g_seenGeneration = 0;
       bool g_firstFrame = true;
@@ -57,10 +70,13 @@ namespace Huginn::State::HandModelProbe
       double g_lastCastAt = -1.0;
       double g_lastAttackAt = -1.0;
 
+      std::size_t ThisThread() { return std::hash<std::thread::id>{}(std::this_thread::get_id()); }
+
       // The weapon in a hand, if it has a model to show; null otherwise
       // (spells, shields, torches, fists, model-less "unarmed" forms). The
-      // left hand of a two-hander, or a second copy of the right hand's
-      // form, reads as null: one part, judged once, for the right hand.
+      // left hand of a two-hander or bow, or a second copy of the right
+      // hand's form, reads as null: one part, judged once, for the right hand
+      // (so a missing left copy of a dual-wielded form is not seen).
       const RE::TESObjectWEAP* ModelledWeapon(const RE::TESForm* obj, const RE::TESForm* other, int side)
       {
          const auto* weapon = obj ? obj->As<RE::TESObjectWEAP>() : nullptr;
@@ -102,31 +118,54 @@ namespace Huginn::State::HandModelProbe
          return std::format("'{}' ({:08X})", name && *name ? name : "?", form->GetFormID());
       }
 
+      // No world to read: a load, the main menu (quit to the menu leaves the
+      // player singleton alive, with no message to say so), no player 3D.
+      bool WorldReady(RE::PlayerCharacter* player)
+      {
+         if (auto* ui = RE::UI::GetSingleton()) {
+            if (ui->IsMenuOpen(RE::LoadingMenu::MENU_NAME) || ui->IsMenuOpen(RE::MainMenu::MENU_NAME)) return false;
+         }
+         return player->Get3D() != nullptr;
+      }
+
       // ---- reading the biped ---------------------------------------------
 
       struct PartView
       {
          int slot = -1;
          Core::PartReading reading;
-         std::string chain;  // the first parents, nearest first
+         std::string chain;   // the first parents, nearest first
+         std::string culledAt;  // the culled node, if any
       };
 
-      PartView ReadPart(const RE::BIPOBJECT& obj, int slot)
+      PartView ReadPart(const RE::BIPOBJECT& obj, int slot, const RE::NiAVObject* root3D, const RE::NiAVObject* bipedRoot)
       {
          PartView v;
          v.slot = slot;
          const RE::NiAVObject* part = obj.partClone.get();
          if (!part) return v;
          v.reading.found = true;
-         v.reading.culled = part->GetAppCulled();
+         if (part->GetAppCulled()) {
+            v.reading.culled = true;
+            v.culledAt = "the part";
+         }
          int depth = 0;
-         for (const RE::NiNode* node = part->parent; node && depth < 8; node = node->parent, ++depth) {
+         for (const RE::NiNode* node = part->parent; node && depth < kMaxDepth; node = node->parent, ++depth) {
             v.reading.attached = true;
             const std::string_view name = node->name.c_str();
             if (name == "WEAPON" || name == "SHIELD") v.reading.inHandNode = true;
+            if (node->GetAppCulled() && !v.reading.culled) {
+               v.reading.culled = true;
+               v.culledAt = name.empty() ? std::string("(unnamed)") : std::string(name);
+            }
             if (depth < 3) {
                if (!v.chain.empty()) v.chain += " < ";
                v.chain += name.empty() ? "(unnamed)" : std::string(name);
+            }
+            if (node == root3D || node == bipedRoot) {
+               // Above here is the cell's scene graph, not the player.
+               v.reading.onSkeleton = true;
+               break;
             }
          }
          return v;
@@ -135,18 +174,23 @@ namespace Huginn::State::HandModelProbe
       struct BipedView
       {
          bool hasBiped = false;
-         std::vector<PartView> parts;  // every slot whose item is the weapon
+         std::vector<PartView> parts;  // every slot whose item is the weapon (or its first-person model)
          std::string weaponSlots;      // when no part: what the weapon slots hold instead
       };
 
-      BipedView ReadBiped(RE::PlayerCharacter* player, bool firstPerson, const RE::TESForm* weapon)
+      BipedView ReadBiped(RE::PlayerCharacter* player, bool firstPerson, const RE::TESObjectWEAP* weapon)
       {
          BipedView v;
          const auto& biped = player->GetBiped(firstPerson);
          if (!biped) return v;
          v.hasBiped = true;
+         const RE::NiAVObject* root3D = player->Get3D(firstPerson);
+         const RE::TESForm* model1st = weapon->firstPersonModelObject;
          for (int i = 0; i < RE::BIPED_OBJECTS::kTotal; ++i) {
-            if (biped->objects[i].item == weapon) v.parts.push_back(ReadPart(biped->objects[i], i));
+            const auto* item = biped->objects[i].item;
+            if (item && (item == weapon || item == model1st)) {
+               v.parts.push_back(ReadPart(biped->objects[i], i, root3D, biped->root));
+            }
          }
          if (v.parts.empty()) {
             // A stale part (the last weapon's) would show here.
@@ -160,11 +204,11 @@ namespace Huginn::State::HandModelProbe
          return v;
       }
 
-      Core::ModelState Judge(const BipedView& v, Core::HandPose pose)
+      Core::ModelState Judge(const BipedView& v)
       {
          auto best = Core::ModelState::NoPart;
          for (const auto& p : v.parts) {
-            const auto s = Core::JudgePart(p.reading, pose);
+            const auto s = Core::JudgePart(p.reading);
             if (Core::ModelStateRank(s) < Core::ModelStateRank(best)) best = s;
          }
          return best;
@@ -184,16 +228,13 @@ namespace Huginn::State::HandModelProbe
                out += std::format("slot {} without a model", p.slot);
                continue;
             }
-            out += std::format("slot {} {}{}", p.slot,
+            out += std::format("slot {} {}{}{}", p.slot,
                p.reading.attached ? "under " + p.chain : std::string("attached to nothing"),
-               p.reading.culled ? ", culled" : "");
+               p.reading.attached && !p.reading.onSkeleton ? ", not under the player's 3D" : "",
+               p.reading.culled ? ", culled at " + p.culledAt : std::string());
          }
          return out;
       }
-
-      // Drawn, the model the player sees is the current view's; sheathed,
-      // the first-person biped's sheath is never on screen, so the third.
-      bool JudgedView(Core::HandPose pose) { return pose == Core::HandPose::Drawn && InFirstPerson(); }
 
       std::string Ago(double sec)
       {
@@ -204,7 +245,7 @@ namespace Huginn::State::HandModelProbe
       {
          if (s.at < 0.0) return "in the hand since the load";
          return std::format("in the hand {:.1f} s: swapped in from {} by {}, pose {}, last cast {}, last attack {}",
-            nowSec - s.at, s.from ? s.fromName : std::string("an empty hand"),
+            nowSec - s.at, s.fromName.empty() ? std::string("an empty hand") : s.fromName,
             s.huginn ? "Huginn (key or wheel)" : "something else (menu, favorites, another mod, the game)",
             PoseName(s.pose), Ago(s.sinceCast), Ago(s.sinceAttack));
       }
@@ -238,11 +279,9 @@ namespace Huginn::State::HandModelProbe
             const RE::FormID id = obj ? obj->GetFormID() : 0;
             if (id == hand.object && !g_firstFrame) continue;
 
-            const RE::TESForm* before = hand.object ? RE::TESForm::LookupByID(hand.object) : nullptr;
             Swap swap;
             if (!g_firstFrame) {
-               swap.from = hand.object;
-               swap.fromName = FormLabel(before);
+               swap.fromName = hand.objectName;
                swap.at = nowSec;
                swap.huginn = id && Learning::EquipSourceTracker::GetSingleton().IsRecentHuginnEquip(id, kHuginnEquipWindowMs);
                swap.pose = pose;
@@ -250,60 +289,63 @@ namespace Huginn::State::HandModelProbe
                swap.sinceAttack = SinceOrNone(g_lastAttackAt, nowSec);
             }
             hand.object = id;
+            hand.objectName = obj ? FormLabel(obj) : std::string();
             hand.swap = std::move(swap);
 
             if (ModelledWeapon(obj, objects[1 - side], side)) {
                if (hand.swap.at < 0.0) {
-                  logger::debug("[HandModel] {} hand at the load: {}"sv, kSideName[side], FormLabel(obj));
+                  logger::debug("[HandModel] {} hand at the load: {}"sv, kSideName[side], hand.objectName);
                } else {
                   logger::debug("[HandModel] {} hand: {} -> {} | by {} | pose {} | last cast {} | last attack {}"sv,
-                     kSideName[side], hand.swap.from ? hand.swap.fromName : std::string("nothing"), FormLabel(obj),
-                     hand.swap.huginn ? "Huginn" : "other", PoseName(pose), Ago(hand.swap.sinceCast),
-                     Ago(hand.swap.sinceAttack));
+                     kSideName[side], hand.swap.fromName.empty() ? std::string("nothing") : hand.swap.fromName,
+                     hand.objectName, hand.swap.huginn ? "Huginn" : "other", PoseName(pose),
+                     Ago(hand.swap.sinceCast), Ago(hand.swap.sinceAttack));
                }
             }
          }
          g_firstFrame = false;
       }
 
+      void LogEnded(int side, const Core::FaultWatch::Event& ev, std::string_view how)
+      {
+         logger::info("[HandModel] {} hand: the '{}' fault ended, {} after {:.1f} s ({} draw/sheathe changes)"sv,
+            kSideName[side], Core::ModelStateName(ev.state), how, ev.faultSec, ev.poseChanges);
+      }
+
       void JudgeHands(RE::PlayerCharacter* player, double nowSec, Core::HandPose pose)
       {
+         using K = Core::FaultWatch::EventKind;
          std::array<const RE::TESForm*, 2> objects{ player->GetEquippedObject(false), player->GetEquippedObject(true) };
+         const bool firstPerson = InFirstPerson();
+         const std::uint8_t view = firstPerson ? kView1st : kView3rd;
          for (int side = 0; side < 2; ++side) {
             auto& hand = g_hands[side];
             const auto* weapon = ModelledWeapon(objects[side], objects[1 - side], side);
             if (!weapon) {
-               if (const auto ev = hand.watch.Update(0, pose, Core::ModelState::Ok, nowSec);
-                   ev.kind == Core::FaultWatch::EventKind::SwappedOut) {
-                  logger::info("[HandModel] {} hand: the {} model fault ended with the weapon swapped out after {:.1f} s ({} draw/sheathe changes)"sv,
-                     kSideName[side], Core::ModelStateName(ev.state), ev.faultSec, ev.poseChanges);
+               if (const auto ev = hand.watch.Update(0, pose, view, Core::ModelState::Ok, nowSec); ev.kind == K::SwappedOut) {
+                  LogEnded(side, ev, "the weapon swapped out");
                }
                continue;
             }
 
-            // Moving is not judged: skip the scene-graph reads.
-            const bool firstPerson = JudgedView(pose);
+            // Only a drawn weapon is judged: skip the scene-graph reads otherwise.
             BipedView judged;
             auto state = Core::ModelState::Ok;
-            if (pose != Core::HandPose::Moving) {
+            if (pose == Core::HandPose::Drawn) {
                judged = ReadBiped(player, firstPerson, weapon);
-               state = Judge(judged, pose);
+               state = Judge(judged);
             }
-            const auto ev = hand.watch.Update(weapon->GetFormID(), pose, state, nowSec);
-            using K = Core::FaultWatch::EventKind;
+            const auto ev = hand.watch.Update(weapon->GetFormID(), pose, view, state, nowSec);
             if (ev.kind == K::Onset) {
                const BipedView other = ReadBiped(player, !firstPerson, weapon);
-               const double sinceLoad = g_loadedAt >= 0.0 ? nowSec - g_loadedAt : -1.0;
-               logger::warn("[HandModel] {} hand: {} is equipped, but its model is {} | {}, {} person | judged {}: {} | {}: {} | {} | {:.0f} s since the load"sv,
-                  kSideName[side], FormLabel(weapon), Core::ModelStateName(ev.state), PoseName(pose),
-                  InFirstPerson() ? "first" : "third", firstPerson ? "1st" : "3rd", Describe(judged),
-                  firstPerson ? "3rd" : "1st", Describe(other), DescribeSwap(hand.swap, nowSec), sinceLoad);
+               logger::warn("[HandModel] {} hand: {} is equipped and drawn, but its {}-person model is {} | 1st: {} | 3rd: {} | {} | {:.0f} s since the load"sv,
+                  kSideName[side], hand.objectName, firstPerson ? "first" : "third", Core::ModelStateName(ev.state),
+                  Describe(firstPerson ? judged : other), Describe(firstPerson ? other : judged),
+                  DescribeSwap(hand.swap, nowSec), g_loadedAt >= 0.0 ? nowSec - g_loadedAt : -1.0);
             } else if (ev.kind == K::Recovered) {
-               logger::info("[HandModel] {} hand: {} model back after {:.1f} s ({}; {} draw/sheathe changes)"sv,
-                  kSideName[side], FormLabel(weapon), ev.faultSec, Core::ModelStateName(ev.state), ev.poseChanges);
+               LogEnded(side, ev, "the model back in the hand");
             } else if (ev.kind == K::SwappedOut) {
-               logger::info("[HandModel] {} hand: the {} model fault ended with the weapon swapped out after {:.1f} s ({} draw/sheathe changes)"sv,
-                  kSideName[side], Core::ModelStateName(ev.state), ev.faultSec, ev.poseChanges);
+               LogEnded(side, ev, "the weapon swapped out");
             }
          }
       }
@@ -313,7 +355,8 @@ namespace Huginn::State::HandModelProbe
    {
       Huginn_ZONE_NAMED("HandModel::PlayerUpdateHook");
       if (!g_gameLoaded.load(std::memory_order_acquire) || !player) return;
-      const double nowSec = NeedClock::Now();
+      g_hookThread.store(ThisThread(), std::memory_order_relaxed);
+      const double nowSec = DropAheadProbe::GameSeconds();
       if (const auto gen = g_loadGeneration.load(std::memory_order_acquire); gen != g_seenGeneration) {
          g_seenGeneration = gen;
          for (auto& hand : g_hands) hand = Hand{};
@@ -323,8 +366,7 @@ namespace Huginn::State::HandModelProbe
          g_lastCastAt = -1.0;
          g_lastAttackAt = -1.0;
       }
-      if (auto* ui = RE::UI::GetSingleton(); ui && ui->IsMenuOpen(RE::LoadingMenu::MENU_NAME)) return;
-      if (!player->Get3D()) return;
+      if (!WorldReady(player)) return;
 
       const auto pose = PoseOf(player);
       TrackActivity(player, nowSec);
@@ -343,13 +385,19 @@ namespace Huginn::State::HandModelProbe
    std::vector<std::string> DescribeHands(RE::PlayerCharacter* player)
    {
       std::vector<std::string> rows;
-      if (!player) {
-         rows.emplace_back("no player");
+      if (!player || !WorldReady(player)) {
+         rows.emplace_back("no world loaded");
          return rows;
       }
+      // The tracked state (faults, swaps) belongs to the hook's thread; the
+      // console is expected to run there too (the main thread), and reads
+      // the live parts either way.
+      const bool hookThread = ThisThread() == g_hookThread.load(std::memory_order_relaxed);
       const auto pose = PoseOf(player);
-      const double nowSec = NeedClock::Now();
-      rows.push_back(std::format("{}, {} person", PoseName(pose), InFirstPerson() ? "first" : "third"));
+      const double nowSec = DropAheadProbe::GameSeconds();
+      const bool firstPerson = InFirstPerson();
+      rows.push_back(std::format("{}, {} person{}", PoseName(pose), firstPerson ? "first" : "third",
+         hookThread ? "" : " (not on the probe's thread: fault and swap state not read)"));
       std::array<const RE::TESForm*, 2> objects{ player->GetEquippedObject(false), player->GetEquippedObject(true) };
       for (int side = 0; side < 2; ++side) {
          const auto* weapon = ModelledWeapon(objects[side], objects[1 - side], side);
@@ -359,15 +407,18 @@ namespace Huginn::State::HandModelProbe
          }
          const BipedView first = ReadBiped(player, true, weapon);
          const BipedView third = ReadBiped(player, false, weapon);
-         std::string judged = "not judged while drawing/sheathing";
-         if (pose != Core::HandPose::Moving) {
-            judged = std::string(Core::ModelStateName(Judge(JudgedView(pose) ? first : third, pose)));
+         const std::string judged = pose == Core::HandPose::Drawn
+            ? std::string(Core::ModelStateName(Judge(firstPerson ? first : third)))
+            : std::format("not judged while {}", PoseName(pose));
+         std::string tracked;
+         if (hookThread) {
+            const auto& hand = g_hands[side];
+            tracked = std::format(" (probe: {}) | {}",
+               hand.watch.Reported() ? "fault reported" : hand.watch.Pending() ? "fault pending" : "no fault",
+               DescribeSwap(hand.swap, nowSec));
          }
-         const auto& watch = g_hands[side].watch;
-         rows.push_back(std::format("{}: {} | {} (probe: {}) | 1st: {} | 3rd: {} | {}", kSideName[side],
-            FormLabel(weapon), judged,
-            watch.Reported() ? "fault reported" : watch.Pending() ? "fault pending" : "no fault",
-            Describe(first), Describe(third), DescribeSwap(g_hands[side].swap, nowSec)));
+         rows.push_back(std::format("{}: {} | {}{} | 1st: {} | 3rd: {}", kSideName[side], FormLabel(weapon), judged,
+            tracked, Describe(first), Describe(third)));
       }
       return rows;
    }

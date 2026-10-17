@@ -5,15 +5,18 @@
 // =============================================================================
 // Diagnostic only: nothing reads it but the log and `hg hands`. For each hand
 // holding a weapon with a model, finds the biped part the engine attached for
-// it (BipedAnim::objects[i] with item == the weapon, its partClone) and judges
-// it (Core::JudgePart). Drawn, it reads the biped of the current view (the
-// first-person one in first person: that is the model the player sees).
-// Sheathed, it reads the third-person one.
+// it (BipedAnim::objects[i] with item == the weapon or its first-person model
+// object, its partClone, and the parents up to the player's 3D root) and
+// judges it (Core::JudgePart) while the weapon is drawn, in the biped of the
+// current view (the first-person one in first person: the model the player
+// sees). Sheathed is not judged.
 //
 // Where it runs: from the PlayerCharacter::Update hook DropAheadProbe installs,
 // on the main thread (the scene graph is the main thread's), every frame for
-// the hand contents and every 250 ms for the models. On between kPostLoadGame
-// / kNewGame and kPreLoadGame, and never while a LoadingMenu is open.
+// the hand contents and every 250 game-ms for the models; timed on the game
+// clock (DropAheadProbe::GameSeconds), which stops while paused. On between
+// kPostLoadGame / kNewGame and kPreLoadGame, and never while a LoadingMenu or
+// the MainMenu is open or the player has no 3D.
 //
 // Logs, under [HandModel]:
 //   - debug, each change of the weapon in a hand, with what it replaced,
