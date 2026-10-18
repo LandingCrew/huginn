@@ -50,6 +50,7 @@ namespace Huginn::State::HandModelProbe
          bool huginn = false;
          RE::WEAPON_STATE state = RE::WEAPON_STATE::kSheathed;
          double sinceCast = -1.0;    // seconds before the swap; -1 = none in kRecentSec
+         std::string castWhat;       // the hand and caster state of that last cast
          double sinceAttack = -1.0;
       };
 
@@ -68,6 +69,8 @@ namespace Huginn::State::HandModelProbe
       double g_loadedAt = -1.0;
       double g_lastJudge = -1.0;
       double g_lastCastAt = -1.0;
+      std::string_view g_lastCastWhat;  // its caster state (CastPhaseName)
+      int g_lastCastSide = 0;
       double g_lastAttackAt = -1.0;
       Core::PoseStuckWatch g_stuck;
 
@@ -109,6 +112,23 @@ namespace Huginn::State::HandModelProbe
          case RE::WEAPON_STATE::kSheathing: return "sheathing";
          }
          return "?";
+      }
+
+      // A caster state that is part of a cast, or "" when idle. A charged
+      // fire-and-forget spell held in the hand sits in kReady, not kCharging:
+      // counting only kCharging and kCasting missed the swap made from the
+      // wheel with a charged spell still held (2026-10-18).
+      std::string_view CastPhaseName(RE::MagicCaster::State state)
+      {
+         switch (state) {
+         case RE::MagicCaster::State::kUnk01: return "starting";
+         case RE::MagicCaster::State::kUnk02: return "starting a charge";
+         case RE::MagicCaster::State::kReady: return "charged, held";
+         case RE::MagicCaster::State::kUnk04: return "about to start";
+         case RE::MagicCaster::State::kCharging: return "charging";
+         case RE::MagicCaster::State::kCasting: return "casting";
+         default: return {};
+         }
       }
 
       // The behaviour graph's view of the equip and the hands -- what the
@@ -276,13 +296,19 @@ namespace Huginn::State::HandModelProbe
          return sec < 0.0 ? std::format("none in the {:.0f} s before", kRecentSec) : std::format("{:.1f} s before", sec);
       }
 
+      std::string CastAgo(const Swap& s)
+      {
+         return s.sinceCast < 0.0 || s.castWhat.empty() ? Ago(s.sinceCast)
+                                                        : std::format("{} ({})", Ago(s.sinceCast), s.castWhat);
+      }
+
       std::string DescribeSwap(const Swap& s, double nowSec)
       {
          if (s.at < 0.0) return "in the hand since the load";
          return std::format("in the hand {:.1f} s: swapped in from {} by {}, pose {}, last cast {}, last attack {}",
             nowSec - s.at, s.fromName.empty() ? std::string("an empty hand") : s.fromName,
             s.huginn ? "Huginn (key or wheel)" : "something else (menu, favorites, another mod, the game)",
-            WeaponStateName(s.state), Ago(s.sinceCast), Ago(s.sinceAttack));
+            WeaponStateName(s.state), CastAgo(s), Ago(s.sinceAttack));
       }
 
       // ---- the hook --------------------------------------------------------
@@ -294,12 +320,16 @@ namespace Huginn::State::HandModelProbe
 
       void TrackActivity(RE::PlayerCharacter* player, double nowSec)
       {
+         // Every frame, before TrackSwaps: on the swap's own frame the caster
+         // may already be reset, so the line reads what this kept from the
+         // frame before.
          for (const auto source : { RE::MagicSystem::CastingSource::kLeftHand, RE::MagicSystem::CastingSource::kRightHand }) {
             const auto* caster = player->GetMagicCaster(source);
             if (!caster) continue;
-            const auto state = caster->state.get();
-            if (state == RE::MagicCaster::State::kCharging || state == RE::MagicCaster::State::kCasting) {
+            if (const auto phase = CastPhaseName(caster->state.get()); !phase.empty()) {
                g_lastCastAt = nowSec;
+               g_lastCastWhat = phase;
+               g_lastCastSide = source == RE::MagicSystem::CastingSource::kRightHand ? kRight : kLeft;
             }
          }
          if (player->AsActorState()->GetAttackState() != RE::ATTACK_STATE_ENUM::kNone) g_lastAttackAt = nowSec;
@@ -321,6 +351,7 @@ namespace Huginn::State::HandModelProbe
                swap.huginn = id && Learning::EquipSourceTracker::GetSingleton().IsRecentHuginnEquip(id, kHuginnEquipWindowMs);
                swap.state = state;
                swap.sinceCast = SinceOrNone(g_lastCastAt, nowSec);
+               if (swap.sinceCast >= 0.0) swap.castWhat = std::format("{} hand {}", kSideName[g_lastCastSide], g_lastCastWhat);
                swap.sinceAttack = SinceOrNone(g_lastAttackAt, nowSec);
             }
             hand.object = id;
@@ -334,7 +365,7 @@ namespace Huginn::State::HandModelProbe
                   logger::debug("[HandModel] {} hand: {} -> {} | by {} | pose {} | last cast {} | last attack {}"sv,
                      kSideName[side], hand.swap.fromName.empty() ? std::string("nothing") : hand.swap.fromName,
                      hand.objectName, hand.swap.huginn ? "Huginn" : "other", WeaponStateName(state),
-                     Ago(hand.swap.sinceCast), Ago(hand.swap.sinceAttack));
+                     CastAgo(hand.swap), Ago(hand.swap.sinceAttack));
                }
             }
          }
@@ -441,6 +472,7 @@ namespace Huginn::State::HandModelProbe
          g_loadedAt = nowSec;
          g_lastJudge = -1.0;
          g_lastCastAt = -1.0;
+         g_lastCastWhat = {};
          g_lastAttackAt = -1.0;
          g_stuck.Reset();
       }
