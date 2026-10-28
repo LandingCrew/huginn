@@ -7,6 +7,7 @@
 #include "learning/PipelineStateCache.h"
 #include "state/StateManager.h"
 #include "state/DropAheadProbe.h"
+#include "state/HandModelProbe.h"
 #include "Profiling.h"
 #include "core/ActorTypeClassifier.h"
 #include "candidate/CandidateGenerator.h"
@@ -290,6 +291,20 @@ namespace Huginn::Console
          const std::string line = i == 0 ? "Huginn actors: " + rows[i] : "  " + rows[i];
          Print(line.c_str());
          logger::info("[Console] hg actors: {}"sv, i == 0 ? rows[i] : line);
+      }
+   }
+
+   // 0.23.44: the weapon model in each hand, live -- run it when a weapon
+   // shows equipped but not in the hand. Where each biped's part for the
+   // weapon hangs, culled or not, and the swap that put it there
+   // (state/HandModelProbe.h). To the console and the log.
+   static void Cmd_Hands(std::string_view /*arg*/)
+   {
+      const auto rows = State::HandModelProbe::DescribeHands(RE::PlayerCharacter::GetSingleton());
+      for (size_t i = 0; i < rows.size(); ++i) {
+         const std::string line = i == 0 ? "Huginn hands: " + rows[i] : "  " + rows[i];
+         Print(line.c_str());
+         logger::info("[Console] hg hands: {}"sv, i == 0 ? rows[i] : line);
       }
    }
 
@@ -1683,6 +1698,7 @@ namespace Huginn::Console
       { "recs",          "Dump top-N recommendation breakdown to log",  true,  Cmd_Recs },
       { "needs",         "Print the live need vector (non-zero needs)", false, Cmd_Needs },
       { "actors",        "List the tracked actors (race, type, hostility, summon)", false, Cmd_Actors },
+      { "hands",         "Show where each hand's weapon model hangs (invisible weapons)", false, Cmd_Hands },
       { "unlock",        "Clear all slot locks",                        false, Cmd_Unlock },
       { "status",        "Show system status",                          false, Cmd_Status },
       { "weights",       "Show learner weight vector for FormID",          true,  Cmd_Weights },

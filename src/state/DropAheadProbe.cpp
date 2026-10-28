@@ -1,5 +1,7 @@
 #include "DropAheadProbe.h"
 
+#include "HandModelProbe.h"
+
 #include "NeedSensorState.h"  // NeedClock
 #include "Profiling.h"
 #include "StateConstants.h"  // PhysicsConstants: HEAD_HEIGHT, INVALID_WATER_HEIGHT_VALUE
@@ -585,6 +587,15 @@ namespace Huginn::State::DropAheadProbe
                logger::error("[DropAhead] an exception in the probe was caught (logged once); drop ahead unmeasured"sv);
             }
             Store(Status::NotLoaded, -1.0f, -1.0f, -1.0);
+         }
+         // The hand model diagnostic (0.23.44) rides the same main-thread hook.
+         try {
+            HandModelProbe::OnPlayerUpdate(a_this);
+         } catch (...) {
+            static std::atomic<bool> s_logged{ false };
+            if (!s_logged.exchange(true)) {
+               logger::error("[HandModel] an exception in the probe was caught (logged once)"sv);
+            }
          }
       }
    }

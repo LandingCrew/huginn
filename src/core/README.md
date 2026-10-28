@@ -140,6 +140,10 @@ darkness need reads, held against flicker) and `EffectSourceLog.h` (the
 transition lines naming the effect behind drain_health and regen_suppressed).
 Tests and the replayed fixtures: docs/testing/TESTING-INDEX.md section 0.
 
+A diagnostic (0.23.44): `HandModelCheck.h` (whether the drawn weapon in a hand is
+on the skeleton, judged by pose, and when a missing model is worth a log line;
+the game side is state/HandModelProbe).
+
 The effect catalog's late entries (0.23.41): `LateCatalog.h` (which held forms
 the catalog maps after its build -- player-made potions, spells no tome
 teaches -- and the per-load entry table).

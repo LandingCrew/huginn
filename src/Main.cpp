@@ -67,6 +67,7 @@
 #include "learning/EquipSubscribers.h"
 #include "needs/NeedSettings.h"
 #include "state/DropAheadProbe.h"
+#include "state/HandModelProbe.h"
 
 using namespace Huginn;
 
@@ -819,6 +820,7 @@ void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
         break;
     case SKSE::MessagingInterface::kPreLoadGame:
         State::DropAheadProbe::SetGameLoaded(false);  // R3: off through the load
+        State::HandModelProbe::SetGameLoaded(false);
         Learning::SelectionLogV3::OnLoadStarting();   // R4: no extra-list reads through the load
         break;
     case SKSE::MessagingInterface::kNewGame:
@@ -827,6 +829,7 @@ void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
         InitializeGameSystems(/*isNewGame=*/true);
         Learning::SelectionLogV3::OnLoadFinished();   // R4: after the load stamp
         State::DropAheadProbe::SetGameLoaded(true);  // R3: the probe hook may cast now
+        State::HandModelProbe::SetGameLoaded(true);
         break;
     case SKSE::MessagingInterface::kPostLoadGame:
     {
@@ -838,7 +841,10 @@ void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
         logger::info("Game loaded{}"sv, loaded ? ""sv : " -- FAILED (learner left as it was)"sv);
         InitializeGameSystems(/*isNewGame=*/false, loaded);
         Learning::SelectionLogV3::OnLoadFinished();   // R4: after the load stamp
-        if (loaded) State::DropAheadProbe::SetGameLoaded(true);  // R3: the probe hook may cast now
+        if (loaded) {
+            State::DropAheadProbe::SetGameLoaded(true);  // R3: the probe hook may cast now
+            State::HandModelProbe::SetGameLoaded(true);
+        }
         break;
     }
     default:
@@ -1028,10 +1034,12 @@ static void InstallHooks()
 
     // R3: drop_ahead casts its rays from PlayerCharacter::Update, on the
     // main thread (a vtable hook, no trampoline). Inert until a game loads.
+    // The hand model probe (0.23.44) rides the same hook.
     if (State::DropAheadProbe::InstallPlayerUpdateHook()) {
-        logger::info("PlayerCharacter::Update hook installed (drop ahead)"sv);
+        logger::info("PlayerCharacter::Update hook installed (drop ahead, hand model probe)"sv);
     } else {
-        logger::error("Failed to install the PlayerCharacter::Update hook (drop ahead stays unmeasured)"sv);
+        logger::error("Failed to install the PlayerCharacter::Update hook (drop ahead stays unmeasured, "
+                      "the hand model probe inactive)"sv);
     }
 
 #ifdef _DEBUG
