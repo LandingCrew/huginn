@@ -114,7 +114,8 @@ namespace Huginn::Effect
         /// in every save of this launch.
         void ForgetLate();
 
-        /// Late entries made this load, and in all.
+        /// Late keys live now (load-order keys kept across loads, FF keys since
+        /// the last load), and entries made in all.
         [[nodiscard]] std::size_t LateLive() const;
 
         /// The per-instance entry of an inventory stack whose ExtraHealth

@@ -68,8 +68,8 @@ namespace Huginn::Core::Effect
     {
     public:
         /// The live entry of `key`, made by `make()` (returning
-        /// std::unique_ptr<Value>, null for "no entry") on the first call of
-        /// this load. Null when there is none.
+        /// std::unique_ptr<Value>, null for "no entry") on the first call since
+        /// the key was last forgotten. Null when there is none.
         template <class Make>
         const Value* Get(std::uint32_t key, Make&& make)
         {
@@ -89,12 +89,12 @@ namespace Huginn::Core::Effect
             return it == live_.end() ? nullptr : it->second.get();
         }
 
-        /// Whether `key` has an answer this load: an entry, or a remembered
+        /// Whether `key` has an answer until it is forgotten: an entry, or a remembered
         /// "no entry" (Peek then reads null). A caller that would otherwise
         /// look the form up again stops here.
         [[nodiscard]] bool Contains(std::uint32_t key) const { return live_.contains(key); }
 
-        /// Remember "no entry" for `key` this load, without a factory: a key
+        /// Remember "no entry" for `key` until it is forgotten, without a factory: a key
         /// the caller ruled out before mapping (not a late kind). A key that
         /// already has an answer keeps it.
         void RememberNone(std::uint32_t key)

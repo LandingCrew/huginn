@@ -403,6 +403,12 @@ namespace Huginn::Spell
       return it->second;
    }
 
+   void SpellRegistry::ForgetLearnedTimes()
+   {
+      std::unique_lock lock(m_mutex);
+      m_learnedAt.clear();
+   }
+
    size_t SpellRegistry::GetSpellCountByType(SpellType type) const
    {
       return CountMatching([type](const SpellData& spell) { return spell.type == type; });

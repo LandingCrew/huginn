@@ -59,8 +59,13 @@ namespace Huginn::Spell
 
       // When ReconcileSpells/AddNewSpell added the spell (0.23.45): the reach
       // case for a spell learned before the pipeline scored it. nullopt for a
-      // spell RebuildRegistry found (the load's own, not learned in play).
+      // spell the load brought (RebuildRegistry, or the load's own reconcile
+      // followed by ForgetLearnedTimes), not learned in play.
       [[nodiscard]] std::optional<std::chrono::steady_clock::time_point> LearnedAt(RE::FormID formID) const;
+
+      // Drop every learned time: after a save load's reconcile, whose inserts
+      // are the save's own spells (the first load fills an empty registry).
+      void ForgetLearnedTimes();
 
       // Get count of spells of a specific type (efficient - no allocation)
       [[nodiscard]] size_t GetSpellCountByType(SpellType type) const;
@@ -126,7 +131,8 @@ namespace Huginn::Spell
       // so `hg rebuild` / `hg reset all` pick up edits without a game restart).
       std::filesystem::path m_overridesPath;
 
-      // LearnedAt's store, guarded by m_mutex; cleared by RebuildRegistry.
+      // LearnedAt's store, guarded by m_mutex; cleared by RebuildRegistry and
+      // ForgetLearnedTimes.
       std::unordered_map<RE::FormID, std::chrono::steady_clock::time_point> m_learnedAt;
    };
 }

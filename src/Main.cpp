@@ -182,6 +182,7 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
     } else {
         logger::info("Force reconciling spell registry on save load"sv);
         g_spellRegistry->ReconcileSpells();
+        g_spellRegistry->ForgetLearnedTimes();   // the save's spells, not learned in play (reach case N)
     }
 
     // Issue #3: Use atomic flag to ensure single TESEquipEvent registration
