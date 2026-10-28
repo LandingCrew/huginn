@@ -331,28 +331,55 @@ namespace Huginn::Effect
         return true;
     }
 
+    namespace
+    {
+        // The dump's order: spells, scrolls, alchemy, weapons, ammo, armour,
+        // soul gems, lights.
+        constexpr std::size_t kLoadOrderArrays = 8;
+
+        template <class F>
+        decltype(auto) WithLoadOrderArray(RE::TESDataHandler& dh, std::size_t which, F&& f)
+        {
+            switch (which) {
+                case 0: return f(dh.GetFormArray<RE::SpellItem>());
+                case 1: return f(dh.GetFormArray<RE::ScrollItem>());
+                case 2: return f(dh.GetFormArray<RE::AlchemyItem>());
+                case 3: return f(dh.GetFormArray<RE::TESObjectWEAP>());
+                case 4: return f(dh.GetFormArray<RE::TESAmmo>());
+                case 5: return f(dh.GetFormArray<RE::TESObjectARMO>());
+                case 6: return f(dh.GetFormArray<RE::TESSoulGem>());
+                default: return f(dh.GetFormArray<RE::TESObjectLIGH>());
+            }
+        }
+    }
+
+    bool EffectReader::ReadLoadOrderSlice(ReadResult& out, Core::SliceCursor& cursor, const std::function<bool()>& stop)
+    {
+        auto* dh = RE::TESDataHandler::GetSingleton();
+        if (!dh) return true;
+        ReadTomes();
+        // Every named form of the eight arrays, in order (core/SlicedWalk.h):
+        // the arrays are fetched again for each form, so one that grew or
+        // moved between slices is read from where it is now.
+        return Core::WalkSlice(
+            cursor, kLoadOrderArrays,
+            [dh](std::size_t a) {
+                return WithLoadOrderArray(*dh, a, [](auto& array) { return static_cast<std::size_t>(array.size()); });
+            },
+            [&](std::size_t a, std::size_t i) {
+                WithLoadOrderArray(*dh, a, [&](auto& array) {
+                    auto* f = array[static_cast<std::uint32_t>(i)];
+                    if (Named(f)) ReadForm(f, nullptr, out);
+                });
+            },
+            stop);
+    }
+
     ReadResult EffectReader::ReadLoadOrder()
     {
         ReadResult out;
-        auto* dh = RE::TESDataHandler::GetSingleton();
-        if (!dh) return out;
-        ReadTomes();
-        // The dump's order: spells, scrolls, alchemy, weapons, ammo, armour,
-        // soul gems, lights.
-        auto readAll = [&](auto& array) {
-            for (auto* f : array) {
-                if (!Named(f)) continue;
-                ReadForm(f, nullptr, out);
-            }
-        };
-        readAll(dh->GetFormArray<RE::SpellItem>());
-        readAll(dh->GetFormArray<RE::ScrollItem>());
-        readAll(dh->GetFormArray<RE::AlchemyItem>());
-        readAll(dh->GetFormArray<RE::TESObjectWEAP>());
-        readAll(dh->GetFormArray<RE::TESAmmo>());
-        readAll(dh->GetFormArray<RE::TESObjectARMO>());
-        readAll(dh->GetFormArray<RE::TESSoulGem>());
-        readAll(dh->GetFormArray<RE::TESObjectLIGH>());
+        Core::SliceCursor cursor;
+        ReadLoadOrderSlice(out, cursor, []() { return false; });
         return out;
     }
 }
