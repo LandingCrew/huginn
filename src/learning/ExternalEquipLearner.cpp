@@ -159,12 +159,15 @@ namespace Huginn::Learning
             // was scored -- that no pipeline run has scored it. A tome read,
             // then straight into the magic menu, which pauses the pipeline
             // (Ice Shiv, 2026-10-16). Not a miss; the reward is unchanged.
+            // The label stays fixed (the fit tools count by the exact case
+            // string); the age goes to the debug line.
             if (m_env.spellLearnedAt) {
                 if (const auto learned = m_env.spellLearnedAt(formID)) {
                     const auto now = std::chrono::steady_clock::now();
                     if (now - *learned <= NEW_SPELL_WINDOW || *learned > cache.ScoredAt()) {
-                        const auto ago = std::chrono::duration_cast<std::chrono::seconds>(now - *learned).count();
-                        return std::format("N (new: learned {} s ago)", ago);
+                        logger::debug("[ExternalEquipLearner] {:08X} learned {} s ago, not scored yet -- case N"sv,
+                            formID, std::chrono::duration_cast<std::chrono::seconds>(now - *learned).count());
+                        return "N (new spell)";
                     }
                 }
             }
