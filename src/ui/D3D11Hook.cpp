@@ -2,6 +2,7 @@
 #include "ImGuiCommon.h"
 #include "ImGuiRenderer.h"
 #include "WelcomeBanner.h"
+#include "effect/EffectCatalog.h"
 #ifdef _DEBUG
 #include "StateManagerDebugWidget.h"
 #include "RegistryDebugWidget.h"  // v0.7.5
@@ -16,6 +17,11 @@ namespace Huginn::UI
     {
         // Call original Present first
         D3D11Hook::_originalPresent(a1);
+
+        // Once a frame: the effect catalog's next read slice, if one is due
+        // (0.23.47; queued as an SKSE task, so the read stays on the main
+        // thread). One atomic load otherwise; safe before kDataLoaded.
+        Effect::EffectCatalog::OnFrame();
 
         // Then render our ImGui overlay
         // The hook goes in at SKSEPlugin_Load, long before kDataLoaded brings

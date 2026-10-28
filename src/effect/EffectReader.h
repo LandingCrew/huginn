@@ -19,17 +19,21 @@
 // per-effect cost, and for a Cloak or SpawnHazard the effects of the spell it
 // carries (associatedForm, or the hazard's spell), one level deep.
 //
-// Plain form reads, no writes. Not main-thread only: ReadLoadOrder runs on
-// the main thread (the catalog build, a task queued when the main menu opens,
-// traced; kNewGame / kPostLoadGame if it never opened; kDataLoaded only with
-// no UI) and from the console (`hg dump all`); ReadForm also runs on the
-// update loop's thread, for a per-instance cap (EffectCatalog::InstanceEntry
-// from SelectionLogV3's held set) -- a game job thread in gameplay
-// (UpdateLoop.cpp, THREADS above OnUpdate) -- and from the console (`hg cap`).
+// Plain form reads, no writes. Not main-thread only: the load-order read runs
+// on the main thread (the catalog build: since 0.23.47 in slices of a few ms,
+// one SKSE task per frame from when the main menu opens, traced; the rest at
+// once at kPreLoadGame / kNewGame / kPostLoadGame; kDataLoaded only with no
+// UI) and from the console (`hg dump all`, ReadLoadOrder in one go); ReadForm
+// also runs on the update loop's thread, for a per-instance cap
+// (EffectCatalog::InstanceEntry from SelectionLogV3's held set) -- a game job
+// thread in gameplay (UpdateLoop.cpp, THREADS above OnUpdate) -- and from the
+// console (`hg cap`).
 // =============================================================================
 
 #include "core/EffectRecords.h"
+#include "core/SlicedWalk.h"
 
+#include <functional>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -66,6 +70,12 @@ namespace Huginn::Effect
     public:
         /// Every named item-like form in the load order.
         [[nodiscard]] ReadResult ReadLoadOrder();
+
+        /// ReadLoadOrder in slices: reads on from `cursor` into `out` until
+        /// `stop()` (asked after each form) says yes. True when the load order
+        /// is done. The same forms in the same order as ReadLoadOrder (which is
+        /// this with a `stop` that never says yes), however it is sliced.
+        bool ReadLoadOrderSlice(ReadResult& out, Core::SliceCursor& cursor, const std::function<bool()>& stop);
 
         /// One form (and, for a weapon or armour stack, a player enchantment
         /// that replaces the form's own), into `out` with its effects appended

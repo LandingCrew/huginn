@@ -30,10 +30,25 @@
 // AddKeywordToForm or SetNthEffectMagnitude after a save loads -- is not seen;
 // there is no rebuild. Keyword distributors (KID, SPID) finish before the build.
 //
-// Threads: the forms are read on the main thread (a task queued at the main menu); the mapping
-// runs on a worker thread (seconds in a Debug build on LoreRim) and publishes
-// with Ready() (release/acquire). Before Ready() every accessor answers
-// "nothing"; after it the catalog is immutable, so readers need no lock.
+// Threads: the forms are read on the main thread; the mapping runs on a worker
+// thread (seconds in a Debug build on LoreRim) and publishes with Ready()
+// (release/acquire). Before Ready() every accessor answers "nothing"; after it
+// the catalog is immutable, so readers need no lock.
+//
+// The read in slices (0.23.47): in one go it held the main thread 3.1-3.25 s
+// at the main menu on LoreRim (Tracy, five traces, 2026-10-16/17), the largest
+// stall left. It still reads every form on the main thread -- the same reads,
+// in the same order (core/SlicedWalk.h) -- but in slices of kReadSliceBudget,
+// one SKSE task per frame: the Present hook (OnFrame) queues the next slice
+// once the last one has run, so a task pass that runs the tasks queued during
+// it cannot chain two slices into one frame. Not moved to a thread of its own:
+// the read calls engine code (CalculateMagickaCost, GetArmorRating, editor-ID
+// lookups, the condition function table) and walks TESDataHandler's arrays,
+// and other plugins may still touch forms at the main menu; on the main
+// thread none of that can race. What is left of the read when a game starts
+// loading is read at once (FinishPendingRead at kPreLoadGame, Build at
+// kNewGame / kPostLoadGame), before the save touches any form, so the records
+// are those of the main menu, as in one go.
 // =============================================================================
 
 #include "core/EffectMapper.h"
@@ -45,6 +60,7 @@
 #include <memory>
 #include <mutex>
 #include <optional>
+#include <string_view>
 #include <unordered_map>
 
 namespace Huginn::Effect
@@ -73,9 +89,26 @@ namespace Huginn::Effect
         static EffectCatalog& GetSingleton();
 
         /// Read the load order (on the calling thread) and map it (on a worker
-        /// thread). Once; later calls are ignored. Ready() turns true when the
-        /// worker is done.
-        void Build();
+        /// thread). Once; later calls are ignored -- except that a call while
+        /// the main menu's sliced read is under way reads the rest of it now.
+        /// Ready() turns true when the worker is done. `why` names the caller
+        /// in the log when it ends a sliced read.
+        void Build(std::string_view why = "a direct build");
+
+        /// From the task queued when the main menu opens: start the read in
+        /// slices of kReadSliceBudget, one per frame (OnFrame), then map it as
+        /// Build does. A no-op once a build has started.
+        void BuildInSlices();
+
+        /// kPreLoadGame: read what is left of a sliced read now, before the
+        /// save changes any form. A no-op with none under way (a build that
+        /// never started is left to kPostLoadGame's Build, as before).
+        void FinishPendingRead(std::string_view why);
+
+        /// From the Present hook, once a frame, any thread: queue the next
+        /// slice as an SKSE task if the last one has run. One atomic load
+        /// when there is nothing to do.
+        static void OnFrame();
 
         /// From kDataLoaded: build when the main menu first opens (a main-thread
         /// task then), which is after every plugin's kDataLoaded handler and
@@ -142,6 +175,17 @@ namespace Huginn::Effect
         EffectCatalog();
         ~EffectCatalog();
         void LoadOverrides();
+
+        // The read in slices (0.23.47), under readMutex_ (the main thread's
+        // tasks and the load messages; a lock so a game job thread running an
+        // SKSE task could not race it either). `built_` is under it too.
+        struct PendingRead;
+        bool StartReadLocked();
+        void ReadLocked(bool sliced, std::string_view why);
+        void FinishReadLocked(std::string_view lastAtOnce);
+        void RunSlice();
+        std::mutex readMutex_;
+        std::unique_ptr<PendingRead> pending_;
 
         std::unordered_map<RE::FormID, CatalogEntry> entries_;
         std::unordered_map<RE::FormID, Core::Effect::EffectClass> classes_;

@@ -551,7 +551,8 @@ static void OnDataLoaded()
     // that run after Huginn (KID, SPID) add keywords the catalog reads. The
     // build waits for the main menu to open (after every plugin's kDataLoaded
     // handler and the tasks they queued), reads the forms then on the main
-    // thread and maps them on a worker thread. Nothing reads it for scoring yet.
+    // thread -- in slices of a few ms, one a frame (0.23.47) -- and maps them
+    // on a worker thread. Nothing reads it for scoring yet.
     Effect::EffectCatalog::GetSingleton().ScheduleBuild();
 
     // Initialize StateEvaluator
@@ -824,13 +825,16 @@ void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
         OnDataLoaded();
         break;
     case SKSE::MessagingInterface::kPreLoadGame:
+        // 0.23.47: what is left of the main menu's sliced read, now, before
+        // the save changes a form (the loading screen pays for it, not the menu).
+        Effect::EffectCatalog::GetSingleton().FinishPendingRead("kPreLoadGame"sv);
         State::DropAheadProbe::SetGameLoaded(false);  // R3: off through the load
         State::HandModelProbe::SetGameLoaded(false);
         Learning::SelectionLogV3::OnLoadStarting();   // R4: no extra-list reads through the load
         break;
     case SKSE::MessagingInterface::kNewGame:
         logger::info("New game started"sv);
-        Effect::EffectCatalog::GetSingleton().Build();  // no-op once built at the main menu
+        Effect::EffectCatalog::GetSingleton().Build("kNewGame"sv);  // no-op once read at the main menu
         InitializeGameSystems(/*isNewGame=*/true);
         Learning::SelectionLogV3::OnLoadFinished();   // R4: after the load stamp
         State::DropAheadProbe::SetGameLoaded(true);  // R3: the probe hook may cast now
@@ -838,7 +842,7 @@ void MessageHandler(SKSE::MessagingInterface::Message* a_msg)
         break;
     case SKSE::MessagingInterface::kPostLoadGame:
     {
-        Effect::EffectCatalog::GetSingleton().Build();  // no-op once built at the main menu
+        Effect::EffectCatalog::GetSingleton().Build("kPostLoadGame"sv);  // no-op once read at the main menu
         // SKSE passes the load's success as the data pointer itself (non-null
         // = loaded). A failed load must not reset the learner's character.
         const bool loaded = a_msg->data != nullptr;

@@ -76,6 +76,7 @@ port, checked bit for bit against the loop it replaced) and `core/RingBuffer.h`.
 |---|---|
 | `EffectColumnsTests.cpp` | `core/EffectColumns.h` equals `docs/architecture/9-data/effects.csv` (ids, order, levels, families); every rule pattern compiles |
 | `EffectFixtureTests.cpp` | rows sampled from three `hg dump all` CSVs (`tests/core/fixtures/effects_{vanilla,simonrim,lorerim}.csv`): each effect row's column, each item's scope and its effect columns; named LoreRim food (0.23.16): raw vs roasted Mammoth Snout (hunger size, cooked riders, Weak Stomach as `self_harm_stamina`), Apple Pie and Honey Nut Treat (`fortify_vital_magicka`, not a restore), Strange Meat |
+| `SlicedWalkTests.cpp` | `core/SlicedWalk.h` (0.23.47), the effect catalog's sliced load-order read: any slice size (every size from 1 up, and random sizes) visits exactly the (sequence, index) pairs of one unsliced walk, in order; empty sequences, a done cursor, a sequence that grows between slices |
 | `MiniRegexTests.cpp` | the regex subset; and `fixtures/regex_oracle.csv`: every rule pattern against Python's `re` on real names, descriptions and keyword lists (match, span, group 1) |
 | `EffectMapperTests.cpp` | values, percentiles, sentinels, the hidden-row whitelist, payloads, scope, item features, cross-features, the deviations from the reference extractor; the side-effect rule (0.23.16: harm rows on food and potions to `self_harm*`, poisons and spells untouched, `hostile` and the primary row) |
 

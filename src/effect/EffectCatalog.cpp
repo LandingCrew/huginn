@@ -5,9 +5,11 @@
 #include "Profiling.h"
 #include "core/MiniRegex.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <functional>
 #include <memory>
 #include <thread>
 
@@ -16,6 +18,17 @@ namespace Huginn::Effect
     namespace
     {
         using namespace Core::Effect;
+
+        /// One slice of the main menu's load-order read. ~3.1 s of reading on
+        /// LoreRim is then ~780 slices, one a frame: ~13 s at 60 fps before the
+        /// worker starts mapping. The read finishes at once when a game starts
+        /// loading, so a quick Continue costs what is left of the 3 s in the
+        /// loading screen instead of a frozen menu.
+        constexpr auto kReadSliceBudget = std::chrono::milliseconds(4);
+
+        /// Set when a slice ended with forms left to read; the next Present
+        /// (EffectCatalog::OnFrame) clears it and queues the next slice.
+        std::atomic<bool> g_sliceWanted{ false };
 
         /// Builds the catalog the first time the main menu opens: after every
         /// plugin's kDataLoaded handler and the tasks they queued, so keyword
@@ -35,7 +48,7 @@ namespace Huginn::Effect
                 if (fired_.exchange(true)) return;
                 logger::info("[EffectCatalog] main menu opened: building"sv);
                 if (auto* tasks = SKSE::GetTaskInterface()) {
-                    tasks->AddTask([]() { EffectCatalog::GetSingleton().Build(); });
+                    tasks->AddTask([]() { EffectCatalog::GetSingleton().BuildInSlices(); });
                 }
                 else {
                     EffectCatalog::GetSingleton().Build();
@@ -75,6 +88,17 @@ namespace Huginn::Effect
             return e;
         }
     }
+
+    struct EffectCatalog::PendingRead
+    {
+        EffectReader reader;
+        ReadResult result;
+        Core::SliceCursor cursor;
+        std::chrono::steady_clock::time_point t0;
+        double busyMs = 0.0;      // main-thread time, every slice
+        double longestMs = 0.0;   // the longest slice
+        std::size_t slices = 0;
+    };
 
     EffectCatalog::EffectCatalog() = default;
     EffectCatalog::~EffectCatalog() = default;
@@ -135,30 +159,110 @@ namespace Huginn::Effect
         if (ui->IsMenuOpen(RE::MainMenu::MENU_NAME)) g_mainMenuBuild.Fire();
     }
 
-    void EffectCatalog::Build()
+    void EffectCatalog::Build(std::string_view why)
     {
-        if (built_) return;
-        built_ = true;
-        const auto t0 = std::chrono::steady_clock::now();
+        std::lock_guard lock(readMutex_);
+        if (!StartReadLocked()) return;
+        ReadLocked(false, why);
+    }
 
-        // Forms are read here, on the calling (main) thread. The mapping is
-        // pure code over plain records, so it runs on a worker: in a Debug
-        // build it takes seconds on LoreRim, which the main thread should not
-        // wait for. Nothing reads the catalog before Ready().
-        logger::info("[EffectCatalog] reading the load order"sv);
-        std::shared_ptr<ReadResult> read;
+    void EffectCatalog::BuildInSlices()
+    {
+        std::lock_guard lock(readMutex_);
+        if (!StartReadLocked()) return;
+        ReadLocked(true, {});
+    }
+
+    void EffectCatalog::FinishPendingRead(std::string_view why)
+    {
+        std::lock_guard lock(readMutex_);
+        if (pending_) ReadLocked(false, why);
+    }
+
+    void EffectCatalog::RunSlice()
+    {
+        std::lock_guard lock(readMutex_);
+        if (pending_) ReadLocked(true, {});
+    }
+
+    void EffectCatalog::OnFrame()
+    {
+        if (!g_sliceWanted.load(std::memory_order_relaxed)) return;
+        if (!g_sliceWanted.exchange(false, std::memory_order_acq_rel)) return;
+        auto* tasks = SKSE::GetTaskInterface();
+        if (!tasks) return;   // not before SKSE hands it out; the load finishes the read
         try {
-            Huginn_ZONE_NAMED("EffectCatalog::Read (main thread)");
-            LoadOverrides();
-            read = std::make_shared<ReadResult>(EffectReader{}.ReadLoadOrder());
+            tasks->AddTask([]() { EffectCatalog::GetSingleton().RunSlice(); });
+        }
+        catch (...) {
+            g_sliceWanted.store(true, std::memory_order_release);   // the next frame tries again
+        }
+    }
+
+    bool EffectCatalog::StartReadLocked()
+    {
+        if (built_) return pending_ != nullptr;   // a sliced read under way goes on
+        built_ = true;
+        logger::info("[EffectCatalog] reading the load order"sv);
+        pending_ = std::make_unique<PendingRead>();
+        pending_->t0 = std::chrono::steady_clock::now();
+        return true;
+    }
+
+    void EffectCatalog::ReadLocked(bool sliced, std::string_view why)
+    {
+        auto& p = *pending_;
+        const auto s0 = std::chrono::steady_clock::now();
+        bool done = false;
+        // The forms are read here, on the calling (main) thread, the per-form
+        // reads unchanged (EffectReader::ReadForm); only where the read stops
+        // and resumes is new. The overrides are part of the first slice.
+        auto read = [&](const std::function<bool()>& stop) {
+            if (p.slices == 0) LoadOverrides();
+            return p.reader.ReadLoadOrderSlice(p.result, p.cursor, stop);
+        };
+        try {
+            if (sliced) {
+                Huginn_ZONE_NAMED("EffectCatalog::ReadSlice (main thread)");
+                const auto until = s0 + kReadSliceBudget;
+                done = read([until]() { return std::chrono::steady_clock::now() >= until; });
+            }
+            else {
+                Huginn_ZONE_NAMED("EffectCatalog::ReadRest (main thread)");
+                done = read([]() { return false; });
+            }
         }
         catch (const std::exception& e) {
             failed_.store(true, std::memory_order_release);
+            pending_.reset();
+            g_sliceWanted.store(false, std::memory_order_release);
             logger::error("[EffectCatalog] reading the load order failed: {}; the catalog stays empty"sv, e.what());
             return;
         }
+        const double ms = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - s0).count();
+        p.busyMs += ms;
+        p.longestMs = std::max(p.longestMs, ms);
+        ++p.slices;
+        if (!done) {
+            g_sliceWanted.store(true, std::memory_order_release);   // OnFrame queues the next slice
+            return;
+        }
+        FinishReadLocked(sliced ? std::string{} : std::format("; the last {:.0f} ms at once ({})", ms, why));
+    }
+
+    void EffectCatalog::FinishReadLocked(std::string_view lastAtOnce)
+    {
+        auto p = std::move(pending_);
+        g_sliceWanted.store(false, std::memory_order_release);
+        const auto t0 = p->t0;
+        const double readMs = p->busyMs;   // main-thread time, every slice
+        auto read = std::make_shared<ReadResult>(std::move(p->result));
         formsRead_ = read->items.size();
-        const double readMs = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+        logger::info("[EffectCatalog] load order read: {} forms, {} magic effects; {:.0f} ms on the main thread in {} "
+                     "slice(s), longest {:.1f} ms, {:.1f} s from start to end{}"sv,
+            formsRead_, read->effects.size(), readMs, p->slices, p->longestMs,
+            std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count(), lastAtOnce);
+        p.reset();
 
         std::thread([this, read, readMs, t0]() {
             Huginn_SET_THREAD("Huginn effect catalog");
