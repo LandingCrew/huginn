@@ -1,4 +1,5 @@
 #include "ContextRuleEngine.h"
+#include "core/Coverage.h"     // SummonLimitReached (0.23.46)
 #include <algorithm>
 #include <cmath>
 
@@ -361,8 +362,11 @@ namespace Huginn::Context
 
         // SUMMON SPELLS
         // =====================================================================
-        // Relevant when in combat AND no active summon
-        if (player.isInCombat && !player.buffs.hasActiveSummon) {
+        // Relevant when in combat AND the summon limit has room (0.23.46: the
+        // same test as the summon filter; with the vanilla limit of 1 that is
+        // "no active summon", as before)
+        if (player.isInCombat &&
+            !Core::Coverage::SummonLimitReached(player.buffs.summonCount, player.buffs.summonLimit)) {
             result.summonWeight = m_config.weightSummon;
         }
 

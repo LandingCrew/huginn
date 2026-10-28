@@ -88,7 +88,11 @@ def build(D, include_nothing=True, latest_caps=False, v2=None):
     needs, cols, caps, cross = D['needs'], D['cols'], D['caps'], D['cross']
     K, J = len(needs), len(cols)
     CI = {c: j for j, c in enumerate(cols)}
-    xcol = np.array([CI[c] for c in cross])            # cross-features are effect columns by name
+    # Cross-features that name an effect column scale that column; the others
+    # (0.23.46: `covered`, not an effect column) go to arrays of their own.
+    xpos = {i: n for n, i in enumerate(i for i, c in enumerate(cross) if c in CI)}
+    xcol = np.array([CI[c] for c in cross if c in CI], dtype=int)
+    COVIX = cross.index('covered') if 'covered' in cross else -1
     ncap = len(caps)
     CapMat = np.zeros((ncap + 1, J))                    # last row = no cap (not in catalog)
     for g, c in enumerate(caps):
@@ -140,7 +144,8 @@ def build(D, include_nothing=True, latest_caps=False, v2=None):
     R = max(len(rows) for d, rows in recs)
     Dn = len(recs)
     CAPID = np.full((Dn, R), ncap, dtype=np.int32)
-    XA = np.zeros((Dn, R, len(cross)), dtype=np.float64)
+    XA = np.zeros((Dn, R, len(xcol)), dtype=np.float64)
+    COV = np.zeros((Dn, R), dtype=np.float64)          # covered(i), 0 before 0.23.46
     MASK = np.zeros((Dn, R), dtype=bool)
     INHA = np.zeros((Dn, R))
     ITEM = np.zeros((Dn, R), dtype=np.int32)
@@ -167,7 +172,10 @@ def build(D, include_nothing=True, latest_caps=False, v2=None):
                 cid = latest[r[FORM]]
             CAPID[di, ri] = cid if cid >= 0 else ncap
             for j, v in r[X]:
-                XA[di, ri, j] = v
+                if j in xpos:
+                    XA[di, ri, xpos[j]] = v
+                elif j == COVIX:
+                    COV[di, ri] = v
             MASK[di, ri] = True
             on_page = bool(r[FLAGS] & F['shown']) or (is_ch and d['out'] in ('key', 'wheel'))
             INHA[di, ri] = 0.0 if on_page else 1.0
@@ -184,7 +192,7 @@ def build(D, include_nothing=True, latest_caps=False, v2=None):
                 Y[di] = ri
         meta.append({'launch': d['launch'], 'out': d['out'], 'name': d['name'], 'kind': d['kind'],
                      'ctxkey': d['ctxkey'], 'build': d['build'], 'case': d['case'], 'need_ep': d['ep']['gi'] if d['ep'] else None})
-    return dict(CapMat=CapMat, xcol=xcol, CAPID=CAPID, X=XA, MASK=MASK, INHA=INHA, ITEM=ITEM, SLOT=SLOTA, UTIL=UTILA,
+    return dict(CapMat=CapMat, xcol=xcol, CAPID=CAPID, X=XA, COV=COV, MASK=MASK, INHA=INHA, ITEM=ITEM, SLOT=SLOTA, UTIL=UTILA,
                 V2=V2, CLS=CLS, Y=Y, N=N, OUT=OUT, LA=LA, v2ok=v2ok, launches=launches, items=items,
                 classes=classes, meta=meta, K=K, J=J, needs=needs, cols=cols, R=R)
 

@@ -69,6 +69,8 @@ python <repo>/tools/fit/gradcheck.py    # optional: fitlib's gradient against fi
 - The cross-features end with `covered` (0..1, mapped by name like the others): how much of the
   item's effect is already up on the player, with doc 11's refresh prior applied
   (`covered / left(cr)` undoes it; `core/Coverage.h`). Absent from older rows (read 0).
+  It is not an effect column, so `fitlib.build` keeps it out of `X`/`xcol` and returns it as
+  `COV` (decisions x rows); no model term reads it yet.
 - Contexts carry `summon` (`n`, `limit`, `act`): the summon count, the perk limit, and every
   commanded actor with its source spell, kind (summon / reanimate / other) and timer. `None` in
   `v3load.py`'s context dict before 0.23.46.

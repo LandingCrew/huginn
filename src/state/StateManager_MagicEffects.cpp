@@ -742,10 +742,17 @@ namespace Huginn::State
     // 0.23.46: the commanded-actor limit, as the engine computes it for a
     // cast: 1, through the player's perk entry points (Twin Souls adds 1; an
     // entry point may also set or multiply). The summon filter reads it.
+    // Evaluated only while a summon is up -- the limit cannot matter with
+    // none, and the perk machinery runs off this thread as little as it can;
+    // with none the last value stands (1 until the first summon).
     {
-      float limit = 1.0f;
-      RE::BGSEntryPoint::HandleEntryPoint(RE::BGSEntryPoint::ENTRY_POINT::kModCommandedActorLimit, player, &limit);
-      newBuffs.summonLimit = limit;
+      static float s_lastLimit = 1.0f;
+      if (summonCount > 0) {
+        float limit = 1.0f;
+        RE::BGSEntryPoint::HandleEntryPoint(RE::BGSEntryPoint::ENTRY_POINT::kModCommandedActorLimit, player, &limit);
+        s_lastLimit = limit;
+      }
+      newBuffs.summonLimit = s_lastLimit;
     }
 
     // 0.23.46 (v3 log only): the actors the player commands, each with the
