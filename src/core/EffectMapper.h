@@ -291,6 +291,16 @@ namespace Huginn::Core::Effect
     /// Rule 1: a player-facing item Huginn describes.
     [[nodiscard]] bool InScope(const ItemRecord& item, const EffectTable& effects);
 
+    /// Rule 1's first tests for a spell, from its type and casting type alone:
+    /// a plain spell, cast fire-and-forget or concentration. False means
+    /// InScope is false whatever the rest of the record says -- an ability, a
+    /// power, a disease -- so a caller can rule it out without reading it.
+    [[nodiscard]] constexpr bool SpellShapeInScope(int spellType, int castingType) noexcept
+    {
+        return spellType == kSpellTypeSpell &&
+               (castingType == kCastFireAndForget || castingType == kCastConcentration);
+    }
+
     [[nodiscard]] ItemMapping MapItem(const ItemRecord& item, const EffectTable& effects,
                                       const std::vector<EffectClass>& classes);
 

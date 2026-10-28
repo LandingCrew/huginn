@@ -99,19 +99,23 @@ namespace Huginn::Effect
         /// never saw or left out by the tome rule -- an entry mapped now
         /// (0.23.41, core/LateCatalog.h): a runtime FF form (a player-made
         /// potion or poison) or a spell no tome teaches. Graded against the
-        /// build's populations, made once per load (the "no entry" answer
-        /// too), forgotten on the next load (ForgetLate), its address valid
-        /// for the process. Reads the form: the update loop's thread or the
-        /// main thread, as InstanceEntry.
+        /// build's populations, made once (the "no entry" answer too; a spell
+        /// whose type alone rules it out, an ability, is answered without a
+        /// read), an FF one forgotten on the next load (ForgetLate), its
+        /// address valid for the process. Reads the form: the update loop's
+        /// thread or the main thread, as InstanceEntry.
         [[nodiscard]] const CatalogEntry* FindOrMap(const RE::TESBoundObject* form);
         /// The same by FormID (LookupByID); nullptr for an unknown ID.
         [[nodiscard]] const CatalogEntry* FindOrMapId(RE::FormID formID);
 
-        /// A game load (or `hg reset all`): late entries are forgotten -- an
-        /// FF ID names another potion in another save. Their memory is kept.
+        /// A game load (or `hg reset all`): late FF entries are forgotten --
+        /// an FF ID names another potion in another save. Their memory is
+        /// kept. A load-order key keeps its answer: its form is the same form
+        /// in every save of this launch.
         void ForgetLate();
 
-        /// Late entries made this load, and in all.
+        /// Late keys live now (load-order keys kept across loads, FF keys since
+        /// the last load), and entries made in all.
         [[nodiscard]] std::size_t LateLive() const;
 
         /// The per-instance entry of an inventory stack whose ExtraHealth

@@ -24,12 +24,14 @@
 //               and left out on purpose (rule 1), and stays out.
 //   MarkHeld    rule 1 for a spell the player knows: the tome test does not
 //               apply; every other rule stands (InScope).
-//   LateEntries one entry per FormID for the current load, made once (a
-//               "no entry" answer is remembered too), forgotten on the next
-//               load -- an FF ID names another potion in another save -- but
-//               kept alive for the process, so an address handed out stays
-//               valid and never names another entry (the v3 encoder keys
-//               catalog caps by address).
+//   LateEntries one entry per FormID, made once (a "no entry" answer is
+//               remembered too). On the next load an FF key is forgotten --
+//               an FF ID names another potion in another save -- but kept
+//               alive for the process, so an address handed out stays valid
+//               and never names another entry (the v3 encoder keys catalog
+//               caps by address). A load-order key keeps its answer
+//               (0.23.45): its form cannot change between saves, and
+//               re-mapping some 200 known abilities cost ~0.6 s per load.
 //
 // Pure: standard library only (src/core/README.md).
 // =============================================================================
@@ -66,8 +68,8 @@ namespace Huginn::Core::Effect
     {
     public:
         /// The live entry of `key`, made by `make()` (returning
-        /// std::unique_ptr<Value>, null for "no entry") on the first call of
-        /// this load. Null when there is none.
+        /// std::unique_ptr<Value>, null for "no entry") on the first call since
+        /// the key was last forgotten. Null when there is none.
         template <class Make>
         const Value* Get(std::uint32_t key, Make&& make)
         {
@@ -87,12 +89,12 @@ namespace Huginn::Core::Effect
             return it == live_.end() ? nullptr : it->second.get();
         }
 
-        /// Whether `key` has an answer this load: an entry, or a remembered
+        /// Whether `key` has an answer until it is forgotten: an entry, or a remembered
         /// "no entry" (Peek then reads null). A caller that would otherwise
         /// look the form up again stops here.
         [[nodiscard]] bool Contains(std::uint32_t key) const { return live_.contains(key); }
 
-        /// Remember "no entry" for `key` this load, without a factory: a key
+        /// Remember "no entry" for `key` until it is forgotten, without a factory: a key
         /// the caller ruled out before mapping (not a late kind). A key that
         /// already has an answer keeps it.
         void RememberNone(std::uint32_t key)
@@ -102,8 +104,8 @@ namespace Huginn::Core::Effect
             live_.emplace(key, nullptr);
         }
 
-        /// A new load: every key is forgotten. The entries are retired, not
-        /// freed, so a pointer handed out stays valid.
+        /// Every key is forgotten (the kMaxLive bound). The entries are
+        /// retired, not freed, so a pointer handed out stays valid.
         void Forget()
         {
             for (auto& [key, value] : live_) {
@@ -112,12 +114,32 @@ namespace Huginn::Core::Effect
             live_.clear();
         }
 
+        /// A new load: only the keys `forget(key)` names are forgotten,
+        /// retired as in Forget; the rest keep their answer (entry or none)
+        /// at the same address. Returns how many were forgotten.
+        template <class Pred>
+        std::size_t ForgetIf(Pred&& forget)
+        {
+            std::size_t n = 0;
+            for (auto it = live_.begin(); it != live_.end();) {
+                if (!forget(it->first)) {
+                    ++it;
+                    continue;
+                }
+                if (it->second) retired_.push_back(std::move(it->second));
+                it = live_.erase(it);
+                ++n;
+            }
+            return n;
+        }
+
         [[nodiscard]] std::size_t Live() const noexcept { return live_.size(); }
         [[nodiscard]] std::size_t Retired() const noexcept { return retired_.size(); }
         [[nodiscard]] std::size_t Made() const noexcept { return made_; }
 
-        /// Keys remembered per load before they are all retired (a bound, not
-        /// a working size: a save holds a few dozen player-made potions).
+        /// Keys remembered before they are all retired (a bound, not a working
+        /// size: a save holds a few dozen player-made potions, a character a
+        /// few hundred known spells).
         static constexpr std::size_t kMaxLive = 4096;
 
     private:

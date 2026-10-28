@@ -425,8 +425,7 @@ namespace Huginn::Core::Effect
         if (IsBadItemName(it.name)) return false;
         switch (it.kind) {
             case Kind::Spell: {
-                if (it.spellType != kSpellTypeSpell) return false;
-                if (it.castingType != kCastFireAndForget && it.castingType != kCastConcentration) return false;
+                if (!SpellShapeInScope(it.spellType, it.castingType)) return false;
                 if (!(it.magickaCost < 5000.0f)) return false;
                 const bool visible = std::any_of(it.effects.begin(), it.effects.end(), [&](const EffectRow& r) {
                     return r.effect < effects.size() && !effects[r.effect].HiddenInUI();

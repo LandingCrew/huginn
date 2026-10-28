@@ -272,6 +272,8 @@ namespace Huginn::Telemetry
         // Classify an attributed external equip by its ExternalEquipLearner case
         // label ('A'..'E'). E = Huginn displayed it and the player equipped it
         // (a hit); A = player equipped something never surfaced (a miss).
+        // N (0.23.45) = a spell learned before a run scored it: new=, a
+        // reach-in, not in accept%.
         void RecordEquipCase(char caseClass);
 
         // Count an external equip that a ShouldSkip filter caught BEFORE
@@ -361,6 +363,7 @@ namespace Huginn::Telemetry
         std::atomic<uint32_t> m_near{0};   // C/D: near-miss or other page
         std::atomic<uint32_t> m_miss{0};   // B: candidate but low-ranked
         std::atomic<uint32_t> m_novel{0};  // A: not a candidate at all
+        std::atomic<uint32_t> m_learned{0}; // N: a spell learned before a run scored it (0.23.45)
 
         // External equips filtered before attribution (window). These are NOT
         // failures — wheel-open is the expected outcome for a wheel activation.

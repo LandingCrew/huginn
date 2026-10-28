@@ -245,8 +245,19 @@ namespace Huginn::Effect
         if (!form || !Ready()) return nullptr;
         const RE::FormID id = form->GetFormID();
         if (const auto* entry = Find(id)) return entry;
-        if (!MapLate(id, form->GetFormType() == RE::FormType::Spell)) return nullptr;
+        const bool isSpell = form->GetFormType() == RE::FormType::Spell;
+        if (!MapLate(id, isSpell)) return nullptr;
         std::lock_guard lock(lateMutex_);
+        if (isSpell) {
+            // 0.23.45: an ability, power or disease is never in scope (rule
+            // 1), so no read: the ~200 abilities a character knows cost ~2.6
+            // ms each to read and map, all at once after a load.
+            const auto* s = static_cast<const RE::SpellItem*>(form);
+            if (!SpellShapeInScope(static_cast<int>(s->GetSpellType()), static_cast<int>(s->GetCastingType()))) {
+                late_.RememberNone(id);
+                return nullptr;
+            }
+        }
         try {
             return late_.Get(id, [&]() { return MapLateForm(form); });
         }
@@ -283,11 +294,13 @@ namespace Huginn::Effect
     void EffectCatalog::ForgetLate()
     {
         std::lock_guard lock(lateMutex_);
-        if (late_.Live() > 0) {
-            logger::debug("[EffectCatalog] load: {} late key(s) forgotten ({} made since launch)"sv, late_.Live(),
-                late_.Made());
+        // Only FF keys: a load-order form is the same form in every save of
+        // this launch, so its answer (entry or none) stands (0.23.45).
+        const std::size_t forgotten = late_.ForgetIf([](std::uint32_t key) { return IsDynamicFormId(key); });
+        if (forgotten > 0 || late_.Live() > 0) {
+            logger::debug("[EffectCatalog] load: {} late FF key(s) forgotten, {} load-order key(s) kept ({} made "
+                          "since launch)"sv, forgotten, late_.Live(), late_.Made());
         }
-        late_.Forget();
     }
 
     std::size_t EffectCatalog::LateLive() const

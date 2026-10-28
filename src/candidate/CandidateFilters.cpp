@@ -105,8 +105,12 @@ namespace Huginn::Candidate
                         return FilterResult::FullVitals;
                 }
 
-                // 4. Active Buff
-                if (checkResists && IsResistPotionRedundant(c, player.resistances))
+                // 4. Active Buff. Not the resist check for food/alcohol: it
+                // is eaten for hunger, and a stew's side resist (LoreRim) let
+                // a poison-immunity necklace strip every stew from the list.
+                if (checkResists &&
+                    c.type != Item::ItemType::Food && c.type != Item::ItemType::Alcohol &&
+                    IsResistPotionRedundant(c, player.resistances))
                     return FilterResult::ActiveBuff;
                 if (checkBuffs) {
                     if (Item::HasTag(c.tags, Item::ItemTag::Waterbreathing) && player.buffs.hasWaterBreathing)

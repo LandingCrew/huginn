@@ -70,16 +70,17 @@ namespace Huginn::Learning
         }
 
         // The case label is the recommendation-quality signal (E = Huginn
-        // displayed it and the player went past it anyway; A = never surfaced).
+        // displayed it and the player went past it anyway; A = never surfaced;
+        // N = a spell learned before the pipeline could score it).
         // SelectionTracker records it to the soak telemetry once the selection
         // confirms.
-        const char* caseLabel = ComputeAttribution(formID);
+        std::string caseLabel = ComputeAttribution(formID);
 
         logger::debug("[ExternalEquipLearner] {} {:08X} via {} -- case {}"sv,
             formType, formID, via, caseLabel);
 
         SelectionTracker::GetSingleton().Select(formID, EquipSource::External,
-            std::move(via), caseLabel);
+            std::move(via), std::move(caseLabel));
     }
 
     void ExternalEquipLearner::OnArmourEquip(RE::FormID formID)
@@ -100,12 +101,12 @@ namespace Huginn::Learning
         if (via.empty()) {
             return;   // dressing by the engine or a script (an outfit at load): not a pick
         }
-        const char* caseLabel = ComputeAttribution(formID);
+        std::string caseLabel = ComputeAttribution(formID);
         // 0.23.39: enchanted gear put on through a menu is a reach-in (kind=
         // gear): a [Reach] line and the heartbeat's reach split. Still not the
         // learner, accept% or reachIns -- logging only (ReachReporter).
         ReachReporter::OnArmourPick(formID, via, caseLabel);
-        SelectionLogV3::OnUnlearnedPick(formID, std::move(via), "armour", caseLabel);
+        SelectionLogV3::OnUnlearnedPick(formID, std::move(via), "armour", std::move(caseLabel));
     }
 
     char ExternalEquipLearner::ShouldSkip(RE::FormID formID, std::string& via) const
@@ -148,14 +149,30 @@ namespace Huginn::Learning
         return SKIP_NONE;
     }
 
-    const char* ExternalEquipLearner::ComputeAttribution(RE::FormID formID) const
+    std::string ExternalEquipLearner::ComputeAttribution(RE::FormID formID) const
     {
         auto& cache = PipelineStateCache::GetSingleton();
         auto info = cache.GetCandidateInfo(formID);
 
-        // Case A: Not a candidate — player went out of their way to equip something
-        // the pipeline didn't even consider.
         if (!info.wasCandidate) {
+            // Case N: a spell learned so recently -- or after the cached list
+            // was scored -- that no pipeline run has scored it. A tome read,
+            // then straight into the magic menu, which pauses the pipeline
+            // (Ice Shiv, 2026-10-16). Not a miss; the reward is unchanged.
+            // The label stays fixed (the fit tools count by the exact case
+            // string); the age goes to the debug line.
+            if (m_env.spellLearnedAt) {
+                if (const auto learned = m_env.spellLearnedAt(formID)) {
+                    const auto now = std::chrono::steady_clock::now();
+                    if (now - *learned <= NEW_SPELL_WINDOW || *learned > cache.ScoredAt()) {
+                        logger::debug("[ExternalEquipLearner] {:08X} learned {} s ago, not scored yet -- case N"sv,
+                            formID, std::chrono::duration_cast<std::chrono::seconds>(now - *learned).count());
+                        return "N (new spell)";
+                    }
+                }
+            }
+            // Case A: Not a candidate — player went out of their way to equip something
+            // the pipeline didn't even consider.
             return "A (not candidate)";
         }
 
