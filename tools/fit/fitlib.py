@@ -199,7 +199,7 @@ def build(D, include_nothing=True, latest_caps=False, v2=None):
 
 def subset(S, idx):
     out = dict(S)
-    for k in ('CAPID', 'X', 'MASK', 'INHA', 'ITEM', 'SLOT', 'UTIL', 'V2', 'CLS', 'Y', 'N', 'OUT', 'LA', 'v2ok'):
+    for k in ('CAPID', 'X', 'COV', 'MASK', 'INHA', 'ITEM', 'SLOT', 'UTIL', 'V2', 'CLS', 'Y', 'N', 'OUT', 'LA', 'v2ok'):
         out[k] = S[k][idx]
     out['meta'] = [S['meta'][i] for i in idx]
     return out
