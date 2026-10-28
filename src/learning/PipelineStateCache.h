@@ -143,6 +143,7 @@ namespace Huginn::Learning
             std::unique_lock lock(m_mutex);
 
             m_timestamp.store(SteadyNow(), std::memory_order_release);
+            m_scoredAt.store(SteadyNow(), std::memory_order_release);
             m_currentPage = currentPage;
             m_sortedPrefix = std::min(sortedPrefix, scored.size());
             m_valid = true;
@@ -310,6 +311,15 @@ namespace Huginn::Learning
             return AgeMs() > maxAgeMs;
         }
 
+        /// When Update last stored a scored list (0.23.45). Unlike the stale
+        /// check's timestamp, a skipped run (RefreshTimestamp) does not move
+        /// it: a spell learned after it cannot be in the list.
+        [[nodiscard]] std::chrono::steady_clock::time_point ScoredAt() const
+        {
+            return std::chrono::steady_clock::time_point(
+                std::chrono::steady_clock::duration(m_scoredAt.load(std::memory_order_acquire)));
+        }
+
     private:
         PipelineStateCache() = default;
         ~PipelineStateCache() = default;
@@ -330,6 +340,7 @@ namespace Huginn::Learning
 
         mutable std::shared_mutex m_mutex;
         std::atomic<int64_t> m_timestamp{0};
+        std::atomic<int64_t> m_scoredAt{0};   // ScoredAt; only Update moves it
 
         bool m_valid = false;
         size_t m_sortedPrefix = 0;

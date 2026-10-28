@@ -4,6 +4,10 @@
 #include "SpellClassifier.h"
 #include "registry/FormRegistry.h"  // Huginn::Registry::FormRegistry core (finding #8)
 
+#include <chrono>
+#include <optional>
+#include <unordered_map>
+
 namespace Huginn::Spell
 {
    // SpellRegistry maintains a database of all player-known spells with metadata
@@ -52,6 +56,11 @@ namespace Huginn::Spell
       // RebuildRegistry may reallocate the entry store and dangle it). Copy immediately;
       // never store. For cross-thread or retained access use GetAllSpells/ForEachSpell.
       [[nodiscard]] const SpellData* GetSpellData(RE::FormID formID) const;
+
+      // When ReconcileSpells/AddNewSpell added the spell (0.23.45): the reach
+      // case for a spell learned before the pipeline scored it. nullopt for a
+      // spell RebuildRegistry found (the load's own, not learned in play).
+      [[nodiscard]] std::optional<std::chrono::steady_clock::time_point> LearnedAt(RE::FormID formID) const;
 
       // Get count of spells of a specific type (efficient - no allocation)
       [[nodiscard]] size_t GetSpellCountByType(SpellType type) const;
@@ -116,5 +125,8 @@ namespace Huginn::Spell
       // Path the overrides INI was loaded from (re-loaded on each RebuildRegistry
       // so `hg rebuild` / `hg reset all` pick up edits without a game restart).
       std::filesystem::path m_overridesPath;
+
+      // LearnedAt's store, guarded by m_mutex; cleared by RebuildRegistry.
+      std::unordered_map<RE::FormID, std::chrono::steady_clock::time_point> m_learnedAt;
    };
 }

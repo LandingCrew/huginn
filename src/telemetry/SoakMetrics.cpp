@@ -64,6 +64,7 @@ namespace Huginn::Telemetry
         case 'C': m_near.fetch_add(1, std::memory_order_relaxed); break;   // near-miss
         case 'B': m_miss.fetch_add(1, std::memory_order_relaxed); break;   // low-ranked candidate
         case 'A': m_novel.fetch_add(1, std::memory_order_relaxed); break;  // not a candidate
+        case 'N': m_learned.fetch_add(1, std::memory_order_relaxed); break; // just learned: not in accept%
         default: break;
         }
     }
@@ -207,6 +208,7 @@ namespace Huginn::Telemetry
         const uint32_t near_ = m_near.exchange(0, std::memory_order_relaxed);
         const uint32_t miss  = m_miss.exchange(0, std::memory_order_relaxed);
         const uint32_t novel = m_novel.exchange(0, std::memory_order_relaxed);
+        const uint32_t learned = m_learned.exchange(0, std::memory_order_relaxed);
         const uint32_t skipInput = m_skipInput.exchange(0, std::memory_order_relaxed);
         const uint32_t skipStale = m_skipStale.exchange(0, std::memory_order_relaxed);
         const uint32_t skipOff   = m_skipOff.exchange(0, std::memory_order_relaxed);
@@ -253,6 +255,8 @@ namespace Huginn::Telemetry
             churnPeakSlot = std::exchange(m_churnPeakSlot, 0);
         }
 
+        // A spell learned before any run scored it (N) is a reach-in but not
+        // a recommendation Huginn could have made: out of accept%.
         const uint32_t totalEquips = hit + near_ + miss + novel;
         // No equips in the window: print n/a, not a fake 0% (reads as rejection)
         const float accept = 100.0f * static_cast<float>(hit) / std::max(totalEquips, 1u);
@@ -336,16 +340,16 @@ namespace Huginn::Telemetry
         // not (ReachReporter).
         const uint32_t pressTotal = pressRegular + pressLabeled;
         logger::info(
-            "[Soak] up={}h{:02}m{:02}s | equips hit={} near={} miss={} novel={} accept={} skipped={} | "
+            "[Soak] up={}h{:02}m{:02}s | equips hit={} near={} miss={} novel={} new={} accept={} skipped={} | "
             "recompute={}/{} ticks override={} pageBail={} | slotChurn={} | learn items={} trains={} forgot={} | tick avg={:.3f} peak={:.3f} ms | "
             "goals reachIns={} (candidate={}) presses={} (regular={} labeled={} offPage={}) pageFlips={} | {}"sv,
             upH, upM, upS,
-            hit, near_, miss, novel, acceptStr, skipStr,
+            hit, near_, miss, novel, learned, acceptStr, skipStr,
             recomputes, ticks, overrideRuns, pageBails,
             churnStr,
             learnerItems, learnerTrains, learnerForgot,
             avgMs, peakMs,
-            totalEquips, hit + near_ + miss,
+            totalEquips + learned, hit + near_ + miss,
             pressTotal, pressRegular, pressLabeled, pressOffPage, pageFlips,
             Core::Reach::FormatSplit(reach));
 

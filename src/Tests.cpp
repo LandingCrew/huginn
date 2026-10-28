@@ -6905,6 +6905,10 @@ void RunSlotLockerOverrideScopeTest()
     {
         auto both = page({ A, A });
         both[1].uniqueID = 4;
+        // A tempered copy reads "<name> - Fine" (WeaponRegistry: the stack's
+        // display name). With one name the post-lock dedup (by name,
+        // core/DedupRules.h) cleared key 1 before the sale was tested.
+        both[1].name += " - Fine";
         (void)locker.ApplyLocks(both, Override::OverrideCollection{});
         locker.OnStackDeparted(A, 0);
         const auto snap = locker.GetLockSnapshot();

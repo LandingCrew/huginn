@@ -3,6 +3,7 @@
 #include "LearningSettings.h"  // For LearningConfig
 #include <chrono>
 #include <functional>
+#include <optional>
 #include <string>
 
 namespace Huginn::Learning
@@ -76,6 +77,9 @@ namespace Huginn::Learning
         struct Environment
         {
             std::function<size_t()> currentDisplayPage;
+            // When the spell registry added a spell in play (0.23.45, the N
+            // case); optional: unwired, a just-learned spell reads as A.
+            std::function<std::optional<std::chrono::steady_clock::time_point>(RE::FormID)> spellLearnedAt;
         };
 
         // Validates immediately rather than waiting for an equip event that may
@@ -148,8 +152,14 @@ namespace Huginn::Learning
         /// `via` receives how the player made it when there was player input.
         char ShouldSkip(RE::FormID formID, std::string& via) const;
 
-        /// The A-E case label for this equip, from pipeline state.
-        const char* ComputeAttribution(RE::FormID formID) const;
+        /// The A-E case label for this equip, from pipeline state; N for a
+        /// spell learned since the pipeline last scored (0.23.45).
+        std::string ComputeAttribution(RE::FormID formID) const;
+
+        /// A spell the player learned this recently, or after the cached list
+        /// was scored, is the N case rather than A: the pipeline has not had
+        /// a run to score it (the magic menu pauses it). Not a miss.
+        static constexpr std::chrono::seconds NEW_SPELL_WINDOW{ 120 };
     };
 
 }  // namespace Huginn::Learning

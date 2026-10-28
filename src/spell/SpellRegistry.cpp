@@ -93,6 +93,7 @@ namespace Huginn::Spell
 
       // Clear existing data
       ClearStoreLocked();
+      m_learnedAt.clear();
 
       // Classify and add each spell (AddSpell assumes lock is held by caller)
       for (auto* spell : playerSpells) {
@@ -216,6 +217,7 @@ namespace Huginn::Spell
 
       // Add to registry (fast in-memory operations only)
       PushEntryLocked(std::move(spellData), formID);
+      m_learnedAt[formID] = std::chrono::steady_clock::now();
       }
 
       logger::info("Dynamically added new spell: {} ({:08X})"sv, spell->GetName(), spell->GetFormID());
@@ -284,6 +286,7 @@ namespace Huginn::Spell
 
       size_t newSpellsAdded = 0;
       size_t spellsRemoved = 0;
+      const auto now = std::chrono::steady_clock::now();
 
       // STEP 1: Insert newly-classified spells (registry <- current).
       // Double-check against m_formIDIndex: another thread (AddNewSpell) may have
@@ -292,6 +295,7 @@ namespace Huginn::Spell
       if (m_formIDIndex.contains(data.formID)) continue;
       const RE::FormID formID = data.formID;
       PushEntryLocked(std::move(data), formID);
+      m_learnedAt[formID] = now;
       newSpellsAdded++;
       }
 
@@ -387,6 +391,16 @@ namespace Huginn::Spell
       }
 
       return &m_entries[it->second];
+   }
+
+   std::optional<std::chrono::steady_clock::time_point> SpellRegistry::LearnedAt(RE::FormID formID) const
+   {
+      std::shared_lock lock(m_mutex);
+      const auto it = m_learnedAt.find(formID);
+      if (it == m_learnedAt.end()) {
+      return std::nullopt;
+      }
+      return it->second;
    }
 
    size_t SpellRegistry::GetSpellCountByType(SpellType type) const
@@ -615,6 +629,7 @@ namespace Huginn::Spell
       if (!RemoveEntryLocked(formID)) {  // swap-pop in the shared core
       return false;
       }
+      m_learnedAt.erase(formID);
 
       logger::info("Removed spell: {} ({:08X})"sv, spellName, formID);
 

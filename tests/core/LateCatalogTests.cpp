@@ -151,3 +151,52 @@ TEST_CASE("late catalog: a key ruled out before mapping is remembered as none an
     t.Forget();
     CHECK_FALSE(t.Contains(0x0001397Eu));
 }
+
+TEST_CASE("late catalog: a load forgets only FF keys; load-order answers keep their address (0.23.45)")
+{
+    LateEntries<std::string> t;
+    auto entry = [](const char* text) { return [text]() { return std::make_unique<std::string>(text); }; };
+    const std::string* potion = t.Get(0xFF0048C4u, entry("Potion of Restore Magicka"));   // player-made
+    const std::string* oakflesh = t.Get(0x8D005B23u, entry("Oakflesh on Target"));       // no tome teaches it
+    t.RememberNone(0x00012FCDu);   // an ability: ruled out before mapping
+    t.RememberNone(0xFF0048C5u);   // an FF none
+    REQUIRE(t.Live() == 4);
+
+    const std::size_t forgotten = t.ForgetIf([](std::uint32_t key) { return IsDynamicFormId(key); });
+    CHECK(forgotten == 2);
+    CHECK(t.Live() == 2);
+    CHECK(t.Retired() == 1);   // the FF entry is retired, not freed
+    CHECK_FALSE(t.Contains(0xFF0048C4u));
+    CHECK_FALSE(t.Contains(0xFF0048C5u));
+    CHECK(t.Contains(0x00012FCDu));          // the static none stands
+    CHECK(t.Peek(0x00012FCDu) == nullptr);
+    CHECK(t.Peek(0x8D005B23u) == oakflesh);  // same address, not re-made
+    CHECK(*potion == "Potion of Restore Magicka");
+
+    // The next load's FF form with the same ID is made afresh.
+    const std::string* next = t.Get(0xFF0048C4u, entry("Potion of Fortify Two-Handed"));
+    CHECK(next != potion);
+    CHECK(t.Get(0x8D005B23u, entry("never made")) == oakflesh);
+    CHECK(t.Made() == 3);
+}
+
+TEST_CASE("late catalog: a spell's type and casting type rule it out exactly as InScope does (0.23.45)")
+{
+    // EffectCatalog::FindOrMap answers "none" from these two fields without
+    // reading the form; that is only sound if InScope agrees for every pair.
+    for (int spellType = 0; spellType <= 13; ++spellType) {
+        for (int castingType = 0; castingType <= 3; ++castingType) {
+            SpellFixture f;
+            f.spell.spellType = spellType;
+            f.spell.castingType = castingType;
+            MarkHeld(f.spell);
+            const bool shape = SpellShapeInScope(spellType, castingType);
+            CAPTURE(spellType);
+            CAPTURE(castingType);
+            CHECK(InScope(f.spell, f.effects) == shape);   // the fixture passes every later test
+        }
+    }
+    CHECK_FALSE(SpellShapeInScope(4, kCastConstant));   // an ability
+    CHECK_FALSE(SpellShapeInScope(2, kCastFireAndForget));   // a power
+    CHECK(SpellShapeInScope(kSpellTypeSpell, kCastConcentration));
+}

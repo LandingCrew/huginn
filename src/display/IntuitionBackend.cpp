@@ -24,10 +24,11 @@ namespace Huginn::Display
 
         auto* intuition = UI::IntuitionMenu::GetSingleton();
         if (!intuition) {
-            // Throttled warning: log once per 5 seconds when singleton is null
+            // Throttled warning: log once per 5 seconds when singleton is null.
+            // Not with [Widget] bEnabled=false: then the menu is never shown.
             auto sinceWarn = std::chrono::duration_cast<std::chrono::seconds>(
                 ctx.now - m_lastNullWarn);
-            if (sinceWarn.count() >= 5) {
+            if (sinceWarn.count() >= 5 && UI::IntuitionSettings::GetSingleton().IsEnabled()) {
                 auto* ui = RE::UI::GetSingleton();
                 bool menuOpen = ui ? ui->IsMenuOpen(UI::IntuitionMenu::MENU_NAME) : false;
                 logger::warn("[Intuition] singleton is NULL - menuOpen={}"sv, menuOpen);
