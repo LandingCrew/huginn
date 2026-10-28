@@ -8,6 +8,33 @@ The user answered the open questions the same evening; section 7 records the
 decisions (2026-10-10) and the body follows them. Section 8 adds a proposal
 for anticipation: a resist offered before the hit.
 
+**As built (0.23.46): steps 3 and 4.** Logged only, moved ahead of R6 so the
+rest of the R5 data play records them (`9-selection-log-v3.md` has the
+fields):
+- `filtered_by` is a row column (`fb`) for **every** candidate filter, not
+  only the active-buff ones (`core/FilterReason.h`: affordability, equipped,
+  the three full vitals, the seven active-buff reasons, cooldown, duplicate,
+  truncated), so "covered" is told apart from the rest as section 2.1 asks.
+- `covered(i)` follows section 2.3's formula (`core/Coverage.h`): the
+  strength of an active effect is its column's value in the cap of the item
+  that cast it, `kNeutralStrength` when that is unknown; detrimental effects
+  and abilities never cover. `left(r)` is the decision-4 prior (centre 5 s,
+  scale 2 s) and is applied in the logged value; the row column `cr` holds the
+  r it used, so the fit can undo it. The upgrade gate is not applied (it
+  needs ŝ, R8); summons read min(1, n / L) times left(r) of the oldest at the
+  limit.
+- Each context carries `summon`: n (the living actors the player commands:
+  the summon filter's count), the limit (the perk entry point from 1), and
+  every commanded actor (the player's own commanded-actor list) with its
+  source spell or staff, kind (summon, reanimate, other) and timer, so
+  thralls are logged apart (decision 3) and the gate can be applied offline.
+- Step 4: the summon filter hides summon spells once n reaches the limit
+  (`Core::Coverage::SummonLimitReached`). With a limit of 1 that is the old
+  test exactly; under Twin Souls the second summon stays on offer. The
+  population counted is unchanged (thralls count, as the engine counts them
+  against the same limit); the summon context rule
+  (`ContextRuleEngine.cpp:365`) still reads "any summon up".
+
 The user's observation (2026-10-10):
 
 > something i noticed - learned combos? some spells immidately combo into

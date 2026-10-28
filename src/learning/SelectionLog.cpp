@@ -154,7 +154,9 @@ namespace Huginn::Learning
             const std::string scorePart = chosen
                 ? std::format("rank={} util={:.2f} ctx={:.2f}", RankString(chosen), chosen->utility,
                       chosen->breakdown.contextWeight)
-                : std::string("not a candidate");
+                : event.notCandidate.empty()
+                    ? std::string("not a candidate")
+                    : std::format("not a candidate filtered_by={}", event.notCandidate);   // 0.23.46
             const std::string overPart = over
                 ? std::format("{:08X} '{}'", over->formID, over->name)
                 : std::string("-");

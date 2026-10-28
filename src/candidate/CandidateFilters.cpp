@@ -1,5 +1,6 @@
 #include "CandidateFilters.h"
 #include "spell/SpellData.h"  // For Spell::HasTag (ScrollTag is alias)
+#include "core/Coverage.h"     // SummonLimitReached (0.23.46)
 #include <algorithm>
 
 namespace Huginn::Candidate
@@ -17,7 +18,7 @@ namespace Huginn::Candidate
     // Runs affordability, equipped, full vitals, and active buff checks.
     // Returns early on first failure (cheapest filters first).
     // =========================================================================
-    CandidateFilters::FilterResult CandidateFilters::RunVisitorFilters(
+    std::optional<Core::Filter::Reason> CandidateFilters::RunVisitorFilters(
         const CandidateVariant& candidate,
         const State::PlayerActorState& player,
         float currentMagicka) const
@@ -26,7 +27,11 @@ namespace Huginn::Candidate
         const bool checkBuffs = m_config.filterActiveBuffs;
         const bool checkResists = m_config.filterRedundantResists;
 
-        return std::visit([&](const auto& c) -> FilterResult {
+        // 0.23.46: each drop names its filter (Core::Filter::Reason) for the
+        // selection log v3's `filtered_by`; which candidates are dropped is
+        // unchanged except the summon test, which counts against the limit.
+        using R = Core::Filter::Reason;
+        return std::visit([&](const auto& c) -> std::optional<R> {
             using T = std::decay_t<decltype(c)>;
 
             // =================================================================
@@ -39,12 +44,12 @@ namespace Huginn::Candidate
                         policy == UncastableSpellPolicy::Disallow ? "filtered" : "kept",
                         ToString(policy), c.name, c.formID, c.effectiveCost, currentMagicka);
                     if (policy == UncastableSpellPolicy::Disallow)
-                        return FilterResult::Affordability;
+                        return R::affordability;
                 }
 
                 // 2. Equipped
                 if (player.IsSpellEquipped(c.formID))
-                    return FilterResult::Equipped;
+                    return R::equipped;
 
                 // 3. Full Vitals -- the CASTER's, so not for a heal aimed at
                 // someone else, nor one that works over time (an aura is cast
@@ -54,32 +59,38 @@ namespace Huginn::Candidate
                     !Spell::HasTagExt(c.tagsExt, Spell::SpellTagExt::TargetsOthers) &&
                     !Spell::HasTagExt(c.tagsExt, Spell::SpellTagExt::HealsOverTime) &&
                     player.vitals.health >= State::DefaultState::FULL_VITAL - FULL_VITAL_EPSILON)
-                    return FilterResult::FullVitals;
+                    return R::full_health;
                 if (m_config.filterMagickaWhenFull &&
                     Spell::HasTag(c.tags, Spell::SpellTag::RestoreMagicka) &&
                     player.vitals.magicka >= State::DefaultState::FULL_VITAL - FULL_VITAL_EPSILON)
-                    return FilterResult::FullVitals;
+                    return R::full_magicka;
 
                 // 4. Active Buff
                 if (checkBuffs) {
                     if (Spell::HasTag(c.tags, Spell::SpellTag::Invisibility) && player.buffs.isInvisible)
-                        return FilterResult::ActiveBuff;
+                        return R::invisibility;
                     if (Spell::HasTag(c.tags, Spell::SpellTag::Muffle) && player.buffs.hasMuffle)
-                        return FilterResult::ActiveBuff;
+                        return R::muffle;
                     if (Spell::HasTag(c.tags, Spell::SpellTag::Armor) && player.buffs.hasArmorBuff)
-                        return FilterResult::ActiveBuff;
-                    if (c.type == Spell::SpellType::Summon && player.buffs.hasActiveSummon)
-                        return FilterResult::ActiveBuff;
+                        return R::armor;
+                    // A summon only once the player's summon LIMIT is reached
+                    // (0.23.46). It hid every summon spell while any one was
+                    // up, so under Twin Souls (limit 2) the second summon was
+                    // never offered (doc 11, step 4). With the vanilla limit
+                    // of 1 this is the old test exactly.
+                    if (c.type == Spell::SpellType::Summon &&
+                        Core::Coverage::SummonLimitReached(player.buffs.summonCount, player.buffs.summonLimit))
+                        return R::summon_limit;
                     // Warming aura already running: do not offer it again.
                     // Warm FOOD stays: it restores cold outright.
                     if (Spell::HasTagExt(c.tagsExt, Spell::SpellTagExt::Warming) &&
                         player.buffs.hasWarmingEffect)
-                        return FilterResult::ActiveBuff;
+                        return R::warming;
                 }
                 if (checkResists && IsResistSpellRedundant(c, player.resistances))
-                    return FilterResult::ActiveBuff;
+                    return R::resist;
 
-                return FilterResult::Passed;
+                return std::nullopt;
             }
             // =================================================================
             // ITEM (Potion, Food, SoulGem)
@@ -87,22 +98,22 @@ namespace Huginn::Candidate
             else if constexpr (std::is_same_v<T, ItemCandidate>) {
                 // 1. Affordability (count > 0)
                 if (c.count <= 0)
-                    return FilterResult::Affordability;
+                    return R::affordability;
 
                 // 3. Full Vitals (skip for food/alcohol)
                 if (c.type != Item::ItemType::Food && c.type != Item::ItemType::Alcohol) {
                     if (m_config.filterHealingWhenFull &&
                         Item::HasTag(c.tags, Item::ItemTag::RestoreHealth) &&
                         player.vitals.health >= State::DefaultState::FULL_VITAL - FULL_VITAL_EPSILON)
-                        return FilterResult::FullVitals;
+                        return R::full_health;
                     if (m_config.filterMagickaWhenFull &&
                         Item::HasTag(c.tags, Item::ItemTag::RestoreMagicka) &&
                         player.vitals.magicka >= State::DefaultState::FULL_VITAL - FULL_VITAL_EPSILON)
-                        return FilterResult::FullVitals;
+                        return R::full_magicka;
                     if (m_config.filterStaminaWhenFull &&
                         Item::HasTag(c.tags, Item::ItemTag::RestoreStamina) &&
                         player.vitals.stamina >= State::DefaultState::FULL_VITAL - FULL_VITAL_EPSILON)
-                        return FilterResult::FullVitals;
+                        return R::full_stamina;
                 }
 
                 // 4. Active Buff. Not the resist check for food/alcohol: it
@@ -111,15 +122,15 @@ namespace Huginn::Candidate
                 if (checkResists &&
                     c.type != Item::ItemType::Food && c.type != Item::ItemType::Alcohol &&
                     IsResistPotionRedundant(c, player.resistances))
-                    return FilterResult::ActiveBuff;
+                    return R::resist;
                 if (checkBuffs) {
                     if (Item::HasTag(c.tags, Item::ItemTag::Waterbreathing) && player.buffs.hasWaterBreathing)
-                        return FilterResult::ActiveBuff;
+                        return R::waterbreathing;
                     if (Item::HasTag(c.tags, Item::ItemTag::Invisibility) && player.buffs.isInvisible)
-                        return FilterResult::ActiveBuff;
+                        return R::invisibility;
                 }
 
-                return FilterResult::Passed;
+                return std::nullopt;
             }
             // =================================================================
             // SCROLL
@@ -127,7 +138,7 @@ namespace Huginn::Candidate
             else if constexpr (std::is_same_v<T, ScrollCandidate>) {
                 // 1. Affordability (count > 0)
                 if (c.count <= 0)
-                    return FilterResult::Affordability;
+                    return R::affordability;
 
                 // 3. Full Vitals (as for spells: not for others, not over time)
                 if (m_config.filterHealingWhenFull &&
@@ -135,43 +146,43 @@ namespace Huginn::Candidate
                     !Spell::HasTagExt(c.tagsExt, Spell::SpellTagExt::TargetsOthers) &&
                     !Spell::HasTagExt(c.tagsExt, Spell::SpellTagExt::HealsOverTime) &&
                     player.vitals.health >= State::DefaultState::FULL_VITAL - FULL_VITAL_EPSILON)
-                    return FilterResult::FullVitals;
+                    return R::full_health;
 
                 // 4. Active Buff
                 if (checkBuffs) {
                     if (Spell::HasTag(c.tags, Spell::SpellTag::Invisibility) && player.buffs.isInvisible)
-                        return FilterResult::ActiveBuff;
+                        return R::invisibility;
                     if (Spell::HasTag(c.tags, Spell::SpellTag::Muffle) && player.buffs.hasMuffle)
-                        return FilterResult::ActiveBuff;
+                        return R::muffle;
                 }
 
-                return FilterResult::Passed;
+                return std::nullopt;
             }
             // =================================================================
             // AMMO
             // =================================================================
             else if constexpr (std::is_same_v<T, AmmoCandidate>) {
-                if (c.count <= 0) return FilterResult::Affordability;
-                if (c.isEquipped) return FilterResult::Equipped;
-                return FilterResult::Passed;
+                if (c.count <= 0) return R::affordability;
+                if (c.isEquipped) return R::equipped;
+                return std::nullopt;
             }
             // =================================================================
             // WEAPON
             // =================================================================
             else if constexpr (std::is_same_v<T, WeaponCandidate>) {
                 // Weapons pass all visitor filters (equipped-skip is per-slot in SlotAllocator)
-                return FilterResult::Passed;
+                return std::nullopt;
             }
             // =================================================================
             // TORCH
             // =================================================================
             else if constexpr (std::is_same_v<T, TorchCandidate>) {
-                if (c.count <= 0) return FilterResult::Affordability;
-                if (c.isEquipped) return FilterResult::Equipped;
-                return FilterResult::Passed;
+                if (c.count <= 0) return R::affordability;
+                if (c.isEquipped) return R::equipped;
+                return std::nullopt;
             }
             else {
-                return FilterResult::Passed;
+                return std::nullopt;
             }
         }, candidate);
     }
@@ -223,15 +234,15 @@ namespace Huginn::Candidate
         const CandidateVariant& candidate, const State::PlayerActorState& player) const
     {
         if (!m_config.filterActiveBuffs && !m_config.filterRedundantResists) return true;
-        auto result = RunVisitorFilters(candidate, player, 999999.0f);
-        return result != FilterResult::ActiveBuff;
+        const auto result = RunVisitorFilters(candidate, player, 999999.0f);
+        return !result || !Core::Filter::IsActiveBuff(*result);
     }
 
     bool CandidateFilters::PassesFullVitalsFilter(
         const CandidateVariant& candidate, const State::PlayerActorState& player) const
     {
-        auto result = RunVisitorFilters(candidate, player, 999999.0f);
-        return result != FilterResult::FullVitals;
+        const auto result = RunVisitorFilters(candidate, player, 999999.0f);
+        return !result || !Core::Filter::IsFullVital(*result);
     }
 
     // =========================================================================
@@ -244,9 +255,17 @@ namespace Huginn::Candidate
         float currentMagicka,
         FilterStats& stats,
         std::span<const RE::FormID> heldIDs,
-        std::vector<CandidateVariant>* heldUnaffordable)
+        std::vector<CandidateVariant>* heldUnaffordable,
+        std::vector<Core::Filter::Dropped>* dropped)
     {
         stats.Reset();
+        if (dropped) dropped->clear();
+        // 0.23.46: every drop, with its reason, for the selection log v3 only.
+        const auto recordDrop = [dropped](const CandidateVariant& c, Core::Filter::Reason reason) {
+            if (!dropped) return;
+            const auto& base = GetBase(c);
+            dropped->push_back(Core::Filter::Dropped{ base.formID, base.uniqueID, reason });
+        };
         stats.inputCount = gatherBuffer.size();
 
         // Safety: Validate vector integrity before filtering.
@@ -288,10 +307,12 @@ namespace Huginn::Candidate
             // 1-4. Consolidated visitor: affordability, equipped, full vitals, active buff
             //       Single std::visit dispatch instead of 4 separate ones.
             {
-                auto result = RunVisitorFilters(c, player, currentMagicka);
-                if (result != FilterResult::Passed) {
-                    switch (result) {
-                        case FilterResult::Affordability:
+                using R = Core::Filter::Reason;
+                const auto result = RunVisitorFilters(c, player, currentMagicka);
+                if (result) {
+                    recordDrop(c, *result);   // before the hold's aside list may move it
+                    switch (*result) {
+                        case R::affordability:
                             ++stats.filteredByAffordability;
                             if (isWeapon) ++weaponsFilteredByAffordability;
                             // A Remembrance hold's own item, set aside rather
@@ -305,19 +326,20 @@ namespace Huginn::Candidate
                                 heldUnaffordable->push_back(std::move(c));
                             }
                             break;
-                        case FilterResult::Equipped:
+                        case R::equipped:
                             ++stats.filteredByEquipped;
                             if (isWeapon) ++weaponsFilteredByEquipped;
                             break;
-                        case FilterResult::FullVitals:
+                        case R::full_health:
+                        case R::full_magicka:
+                        case R::full_stamina:
                             ++stats.filteredByFullVitals;
                             if (isWeapon) ++weaponsFilteredByFullVitals;
                             break;
-                        case FilterResult::ActiveBuff:
+                        default:   // the active-buff filters (Core::Filter::IsActiveBuff)
                             ++stats.filteredByActiveBuff;
                             if (isWeapon) ++weaponsFilteredByActiveBuff;
                             break;
-                        default: break;
                     }
                     continue;
                 }
@@ -328,6 +350,7 @@ namespace Huginn::Candidate
                 const auto& base = GetBase(c);
                 if (activeCooldowns.contains(CooldownManager::MakeKey(base.formID, base.sourceType))) {
                     logger::trace("Cooldown filtered: {} [{:X}]", base.name, base.formID);
+                    recordDrop(c, Core::Filter::Reason::cooldown);
                     ++stats.filteredByCooldown;
                     if (isWeapon) ++weaponsFilteredByCooldown;
                     continue;
@@ -339,6 +362,7 @@ namespace Huginn::Candidate
             const uint64_t key = base.GetDeduplicationKey();
             auto [iter, inserted] = m_deduplicationSet.insert(key);
             if (!inserted) {
+                recordDrop(c, Core::Filter::Reason::duplicate);
                 ++stats.filteredByDuplication;
                 if (isWeapon) ++weaponsDeduplicated;
                 // Trace, not warn: a duplicate is a normal outcome, and this
@@ -358,6 +382,9 @@ namespace Huginn::Candidate
         if (m_config.maxCandidatesAfterFilter > 0 &&
             output.size() > m_config.maxCandidatesAfterFilter) {
             size_t beforeTrunc = output.size();
+            for (size_t i = m_config.maxCandidatesAfterFilter; i < output.size(); ++i) {
+                recordDrop(output[i], Core::Filter::Reason::truncated);
+            }
             output.resize(m_config.maxCandidatesAfterFilter);
             // Recount weapons only if truncation happened (rare path)
             size_t weaponsAfter = 0;

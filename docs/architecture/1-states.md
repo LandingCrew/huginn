@@ -267,6 +267,8 @@ graph TB
 | `hasCloakActive` | `bool` | Any cloak spell active | 100ms |
 | `activeCloakType` | `EffectType` | None/CloakFire/CloakFrost/CloakShock | 100ms |
 | `hasActiveSummon` | `bool` | Conjured creature active | 100ms |
+| `summonCount` | `uint8_t` | Living actors the player commands (summons and thralls; 0.23.46) | 100ms |
+| `summonLimit` | `float` | Commanded-actor limit from the perk entry point, from 1 (Twin Souls: 2; 0.23.46) | 100ms |
 | `hasHealthRegenBuff` | `bool` | Fortify Health Regen (v0.6.6) | 100ms |
 | `hasHealthRegenDebuff` | `bool` | Damage Health Regen (v0.6.6) | 100ms |
 | `hasMagickaRegenBuff` | `bool` | Fortify Magicka Regen (v0.6.6) | 100ms |

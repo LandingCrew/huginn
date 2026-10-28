@@ -12,6 +12,7 @@
 #include "StateConstants.h"
 #include "../Profiling.h"
 #include "../util/NameMatch.h"
+#include "../effect/EffectCatalog.h"
 
 namespace Huginn::State
 {
@@ -71,6 +72,43 @@ namespace Huginn::State
       s.duration = effect->duration;
     }
     return s;
+  }
+
+  // 0.23.46 (selection log v3 only): one beneficial active effect into the
+  // covered(i) table (core/Coverage.h). Its column is its magic effect's R2
+  // class; its strength the value that column has in the cap of the item that
+  // cast it -- the spell, potion or scroll, else the staff or worn piece (an
+  // enchantment's source) -- or kNeutralStrength when that item is not in the
+  // catalog or its cap lacks the column. Summon columns are counted, not added.
+  static void AddCoverage(Core::Coverage::Active& out, const Effect::EffectCatalog& catalog,
+                          const RE::ActiveEffect* effect, const RE::EffectSetting* mgef, const RE::MagicItem* spell)
+  {
+    const auto* cls = catalog.ClassOf(mgef->GetFormID());
+    if (!cls) return;
+    const Effect::CatalogEntry* src = spell ? catalog.Find(spell->GetFormID()) : nullptr;
+    if (!src && effect->source) src = catalog.Find(effect->source->GetFormID());
+    const float remaining = effect->duration > 0.0f ? std::max(0.0f, effect->duration - effect->elapsedSeconds)
+                                                    : Core::Coverage::kNoTimer;
+    for (const auto col : { cls->col, cls->col2 }) {
+      const auto i = static_cast<std::size_t>(col);
+      if (i >= Core::Effect::kColumnCount) continue;
+      if (Core::Effect::kColumns[i].level != Core::Effect::Level::Specific) continue;
+      if (Core::Coverage::IsSummonCountColumn(col)) continue;
+      float strength = src ? Core::Effect::Get(src->cap, col) : 0.0f;
+      if (!(strength > 0.0f)) strength = Core::Effect::kNeutralStrength;
+      out.Add(col, strength, remaining);
+    }
+  }
+
+  static Core::Coverage::CommandedActor::Kind CommandedKind(const RE::EffectSetting* mgef)
+  {
+    using K = Core::Coverage::CommandedActor::Kind;
+    if (!mgef) return K::Other;
+    switch (mgef->GetArchetype()) {
+    case RE::EffectSetting::Archetype::kSummonCreature: return K::Summon;
+    case RE::EffectSetting::Archetype::kReanimate: return K::Reanimate;
+    default: return K::Other;
+    }
   }
 
   // =============================================================================
@@ -204,6 +242,11 @@ namespace Huginn::State
       }
     };
 
+    // 0.23.46 (v3 log only): covered(i)'s table, filled in the same walk.
+    auto& catalog = Effect::EffectCatalog::GetSingleton();
+    const bool catalogReady = catalog.Ready();
+    Core::Coverage::Active coverage;
+
     // Single iteration over active effects (pattern from EffectsSensor.cpp)
     if (activeEffects) {
       for (auto* effect : *activeEffects) {
@@ -263,6 +306,13 @@ namespace Huginn::State
             // Nord (2026-09-29).
             continue;
           }
+        }
+
+        // 0.23.46: a beneficial effect (a buff, a worn enchantment, a restore
+        // still running) covers its column for covered(i). Abilities stay out,
+        // as above; a detrimental one never covers.
+        if (catalogReady && !baseEffect->IsDetrimental()) {
+          AddCoverage(coverage, catalog, effect, baseEffect, spell);
         }
 
         auto archetype = baseEffect->GetArchetype();
@@ -662,6 +712,9 @@ namespace Huginn::State
 
     // Check for active summons by verifying living summoned creatures exist
     // (pattern from ActiveBuffsSensor - more accurate than kSummonCreature archetype)
+    // 0.23.46: counted, not just found (the summon filter compares the count
+    // with the limit below), so the walk no longer stops at the first.
+    int summonCount = 0;
     if (player) {
       auto* processLists = RE::ProcessLists::GetSingleton();
       if (processLists) {
@@ -678,11 +731,57 @@ namespace Huginn::State
           // const: only comparing, not modifying the commanding actor
           const RE::Actor* commandingActor = actor->GetCommandingActor().get();
           if (commandingActor && commandingActor == player) {
-            newBuffs.hasActiveSummon = true;
-            break;
+            ++summonCount;
           }
         }
       }
+    }
+    newBuffs.hasActiveSummon = summonCount > 0;
+    newBuffs.summonCount = static_cast<std::uint8_t>(std::min(summonCount, 255));
+
+    // 0.23.46: the commanded-actor limit, as the engine computes it for a
+    // cast: 1, through the player's perk entry points (Twin Souls adds 1; an
+    // entry point may also set or multiply). The summon filter reads it.
+    {
+      float limit = 1.0f;
+      RE::BGSEntryPoint::HandleEntryPoint(RE::BGSEntryPoint::ENTRY_POINT::kModCommandedActorLimit, player, &limit);
+      newBuffs.summonLimit = limit;
+    }
+
+    // 0.23.46 (v3 log only): the actors the player commands, each with the
+    // effect that made it -- its kind, its source (the spell or scroll, or the
+    // staff for a staff's enchantment), its timer -- from the player's own
+    // commanded-actor list. Thralls are logged apart from summons (doc 11
+    // decision 3: whether they count is the user's test).
+    std::vector<Core::Coverage::CommandedActor> commanded;
+    if (auto* process = player->GetActorRuntimeData().currentProcess; process && process->middleHigh) {
+      for (auto& data : process->middleHigh->commandedActors) {
+        auto actorPtr = data.commandedActor.get();
+        auto* actor = actorPtr.get();
+        if (!actor || actor->IsDead()) continue;
+        Core::Coverage::CommandedActor entry;
+        entry.actor = actor->GetFormID();
+        if (const auto* ae = data.activeEffect) {
+          entry.kind = CommandedKind(ae->GetBaseObject());
+          const RE::TESForm* src = ae->source && ae->source->Is(RE::FormType::Weapon)
+                                       ? static_cast<const RE::TESForm*>(ae->source)
+                                       : static_cast<const RE::TESForm*>(ae->spell);
+          entry.source = src ? src->GetFormID() : 0;
+          entry.remaining = ae->duration > 0.0f ? std::max(0.0f, ae->duration - ae->elapsedSeconds)
+                                                : Core::Coverage::kNoTimer;
+          entry.elapsed = ae->elapsedSeconds;
+        }
+        commanded.push_back(entry);
+      }
+    }
+    coverage.summons = summonCount;
+    coverage.summonLimit = newBuffs.summonLimit;
+    coverage.summonRemaining = Core::Coverage::OldestRemaining(commanded);
+    {
+      std::unique_lock lock(m_coverageMutex);
+      m_coverage.valid = catalogReady;
+      m_coverage.active = coverage;
+      m_coverage.commanded = std::move(commanded);
     }
 
     // =============================================================================
@@ -832,18 +931,20 @@ namespace Huginn::State
         // context rule and the DROWNING override, and "never detected under
         // water" and "thought you could already breathe" looked identical in a
         // log without it (2026-09-27, fully submerged, nothing surfaced).
-        const std::tuple<bool, bool, bool, bool, bool, bool, bool, bool> printed{
+        // 0.23.46: the summon count and limit replace the summon bool (the
+        // filter compares them).
+        const std::tuple<bool, bool, bool, int, float, bool, bool, bool, bool> printed{
           newBuffs.hasArmorBuff,
-          newBuffs.hasCloakActive, newBuffs.isInvisible, newBuffs.hasActiveSummon,
+          newBuffs.hasCloakActive, newBuffs.isInvisible, newBuffs.summonCount, newBuffs.summonLimit,
           newBuffs.hasWaterBreathing,
           newEffects.isOnFire, newEffects.isPoisoned, newEffects.isFrozen };
-        using PrintedFlags = std::tuple<bool, bool, bool, bool, bool, bool, bool, bool>;
+        using PrintedFlags = std::tuple<bool, bool, bool, int, float, bool, bool, bool, bool>;
         static std::optional<PrintedFlags> lastPrinted;
         if (!lastPrinted || *lastPrinted != printed) {
         lastPrinted = printed;
-        logger::debug("[StateManager] Magic state: armor={} cloak={} invis={} summon={} waterBreathing={} | fire={} poison={} frost={}",
+        logger::debug("[StateManager] Magic state: armor={} cloak={} invis={} summons={}/{} waterBreathing={} | fire={} poison={} frost={}",
            newBuffs.hasArmorBuff,
-           newBuffs.hasCloakActive, newBuffs.isInvisible, newBuffs.hasActiveSummon,
+           newBuffs.hasCloakActive, newBuffs.isInvisible, newBuffs.summonCount, newBuffs.summonLimit,
            newBuffs.hasWaterBreathing,
            newEffects.isOnFire, newEffects.isPoisoned, newEffects.isFrozen);
         }

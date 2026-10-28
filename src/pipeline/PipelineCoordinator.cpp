@@ -361,7 +361,7 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
     const auto heldIDs = Slot::Remembrance::GetSingleton().ActiveFormIDs();
     std::vector<Candidate::CandidateVariant> heldUnaffordable;
     auto candidates = candidateGen.GenerateCandidates(ctx.playerState, ctx.currentMagicka,
-        heldIDs, &heldUnaffordable);
+        heldIDs, &heldUnaffordable, &ctx.filtered);
 
     Context::ContextWeightMap contextWeights{};
     // Read once for the tick: the wildcard roll below and AllocateAndLock
@@ -757,7 +757,8 @@ void PipelineCoordinator::UpdateCaches(PipelineContext& ctx)
         ctx.scoredCandidates, ctx.assignments,
         ctx.displayPageIndex,
         g_utilityScorer->GetConfig().topNCandidates,
-        std::move(ctx.eligible), ctx.displaySlotCount);   // R4: the selection log v3's rows
+        std::move(ctx.eligible), ctx.displaySlotCount,    // R4: the selection log v3's rows
+        std::move(ctx.filtered));                         // 0.23.46: and why the others were dropped
 
     // Cache slot contents for EquipManager (keyboard equip hotkeys)
     auto& equipMgr = Input::EquipManager::GetSingleton();

@@ -7,7 +7,9 @@
 #include "SelectionTracker.h"
 #include "TestHarness.h"
 #include "UtilityScorer.h"
+#include "core/Coverage.h"
 #include "core/CrossFeatures.h"
+#include "core/FilterReason.h"
 #include "core/NeedEpisodes.h"
 #include "effect/CrossFeatures.h"
 #include "effect/EffectCatalog.h"
@@ -77,6 +79,28 @@ namespace Huginn::Learning::SelectionLogV3
             r.cross[static_cast<size_t>(Cross::stack_count)] = f.stackCount;
             r.cross[static_cast<size_t>(Cross::ammo_matches_launcher)] = f.ammoMatchesLauncher;
             r.cross[static_cast<size_t>(Cross::school_fortified)] = f.schoolFortified;
+        }
+
+        // 0.23.46: the two per-row annotations doc 11 step 3 asks for, set
+        // when a context is taken (never per tick):
+        //   fb       the filter that dropped a row that is not eligible
+        //            (core/FilterReason.h), from the same pipeline run as the
+        //            eligible flags;
+        //   covered  how much of the row's effect is already active on the
+        //            player (core/Coverage.h), with `cr` the remaining
+        //            seconds of the effect that gave it.
+        void Annotate(Row& r, const Core::Coverage::Active* coverage, const std::vector<Core::Filter::Dropped>& filtered)
+        {
+            if (!(r.flags & Flag::Eligible)) {
+                if (const auto reason = Core::Filter::Find(filtered, r.form, r.uid)) {
+                    r.filteredBy = static_cast<uint8_t>(*reason);
+                }
+            }
+            if (coverage && r.cap) {
+                const auto c = Core::Coverage::Covered(*r.cap, *coverage);
+                r.cross[static_cast<size_t>(Cross::covered)] = c.value;
+                r.coveredSec = c.value > 0.0f ? c.remaining : kNone;
+            }
         }
 
         // =====================================================================
@@ -322,6 +346,8 @@ namespace Huginn::Learning::SelectionLogV3
         {
             uint64_t cacheGeneration = UINT64_MAX;
             std::vector<PipelineStateCache::EligibleRow> eligible;
+            // 0.23.46: what the same run's filters dropped, and why.
+            std::vector<Core::Filter::Dropped> filtered;
             // The catalog entry of each eligible row, looked up once per run
             // (nullptr: not in the catalog); redone once the catalog is ready.
             std::vector<const Effect::CatalogEntry*> entries;
@@ -470,12 +496,14 @@ namespace Huginn::Learning::SelectionLogV3
             ctx->why = why;
             ctx->menu = std::move(menu);
             std::vector<PipelineStateCache::EligibleRow> wildcardRows;   // eligible rows with a propensity
+            std::vector<Core::Filter::Dropped> filtered;
             RunGate gate;
             {
                 std::lock_guard lock(g_tickMutex);
                 ctx->need = g_tick.need;
                 ctx->input = g_tick.input;
                 ctx->rows = g_tick.rows;
+                filtered = g_tick.filtered;
                 for (const auto& e : g_tick.eligible) {
                     if (std::isfinite(e.wildcardPropensity)) wildcardRows.push_back(e);
                 }
@@ -584,6 +612,18 @@ namespace Huginn::Learning::SelectionLogV3
                 }
             }
 
+            // 0.23.46: why the filters dropped each row that is not eligible,
+            // and how much of each row's effect is already up (doc 11 step 3);
+            // the player's summons, their limit and their sources (steps 3-4).
+            {
+                const auto coverage = State::StateManager::GetSingleton().GetCoverage();
+                for (auto& r : ctx->rows) Annotate(r, coverage.valid ? &coverage.active : nullptr, filtered);
+                ctx->summon.valid = true;
+                ctx->summon.count = player.buffs.summonCount;
+                ctx->summon.limit = player.buffs.summonLimit;
+                ctx->summon.list = coverage.commanded;
+            }
+
             // The hostile target's race (perceivable: its name and look are on
             // screen; the race map keys on it).
             const auto targets = State::StateManager::GetSingleton().GetTargets();
@@ -656,6 +696,16 @@ namespace Huginn::Learning::SelectionLogV3
             if (const auto* entry = Effect::EffectCatalog::GetSingleton().FindOrMapId(d.form)) {
                 r.kind = static_cast<uint8_t>(entry->kind);
                 r.cap = &entry->cap;
+            }
+            {
+                // 0.23.46: annotated as the context's rows are, at the confirmation.
+                std::vector<Core::Filter::Dropped> filtered;
+                {
+                    std::lock_guard lock(g_tickMutex);
+                    filtered = g_tick.filtered;
+                }
+                const auto coverage = State::StateManager::GetSingleton().GetCoverage();
+                Annotate(r, coverage.valid ? &coverage.active : nullptr, filtered);
             }
             d.added.push_back(std::move(r));
             d.row = static_cast<int>(rows.size());
@@ -1124,11 +1174,12 @@ namespace Huginn::Learning::SelectionLogV3
             std::lock_guard lock(g_tickMutex);
             uint64_t generation = g_tick.cacheGeneration;
             bool newRun = PipelineStateCache::GetSingleton().TakeEligibleIfNewer(g_tick.cacheGeneration,
-                g_tick.eligible, generation);
+                g_tick.eligible, generation, &g_tick.filtered);
             g_tick.cacheGeneration = generation;
             if (newRun && !g_runGate.IsCurrent(generation)) {
                 // The previous save's candidates, still cached after a load.
                 g_tick.eligible.clear();
+                g_tick.filtered.clear();
             }
             auto& catalog = Effect::EffectCatalog::GetSingleton();
             if (newRun || (!g_tick.entriesFromReadyCatalog && catalog.Ready())) {

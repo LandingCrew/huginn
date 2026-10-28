@@ -16,6 +16,7 @@
 #include "core/ActorLog.h"       // pure: the [Target] / [Actors] logs (0.23.39)
 #include "core/LightHold.h"      // pure: the darkness need's held light (0.23.41)
 #include "core/EffectSourceLog.h"  // pure: drain_health / regen_suppressed source lines (0.23.41)
+#include "core/Coverage.h"       // pure: covered(i)'s active-effect table, the commanded actors (0.23.46)
 #include <array>
 #include <atomic>
 #include <mutex>
@@ -186,6 +187,18 @@ namespace Huginn::State
       // R3: the need vector's own readings (copy-out). Nothing that scores
       // reads them; see NeedSensorState.h.
       [[nodiscard]] NeedSensorState GetNeedSensors() const noexcept;
+
+      /// 0.23.46 (selection log v3 only): what is active on the player in
+      /// cap(i)'s column space (core/Coverage.h) and the actors the player
+      /// commands, from the last magic-effects poll (copy-out). Nothing that
+      /// scores reads it; the summon filter reads PlayerActorState's count.
+      struct CoverageState
+      {
+         bool valid = false;   // a poll has run with the effect catalog ready
+         Core::Coverage::Active active;
+         std::vector<Core::Coverage::CommandedActor> commanded;
+      };
+      [[nodiscard]] CoverageState GetCoverage() const;
 
       // `hg actors`: one line per tracked actor (perceivable facts only:
       // name, race, type, hostility, alive/dead, summon, distance band), the
@@ -402,6 +415,7 @@ namespace Huginn::State
       StaminaTrackingState m_staminaTracking;   // v0.6.9
       MagickaTrackingState m_magickaTracking;   // v0.6.9
       NeedSensorState m_needSensors;            // R3, under m_needMutex
+      CoverageState m_coverage;                 // 0.23.46, under m_coverageMutex
 
       // =============================================================================
       // THREAD SYNCHRONIZATION (4 locks)
@@ -412,6 +426,7 @@ namespace Huginn::State
       mutable std::shared_mutex m_targetsMutex;    // Protects TargetCollection
       mutable std::shared_mutex m_trackingMutex;   // Protects Health/Stamina/MagickaTrackingState
       mutable std::shared_mutex m_needMutex;       // Protects NeedSensorState (R3)
+      mutable std::shared_mutex m_coverageMutex;   // Protects m_coverage (0.23.46, v3 log only)
       // Serialises the polls and the reset (0.23.26). The poll methods' own
       // state (m_fallTracker, m_pendingLanding, the trackers, the blind-spot
       // flags ...) is "single-writer", but there were two writers: the

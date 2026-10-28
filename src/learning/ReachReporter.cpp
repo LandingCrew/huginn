@@ -125,6 +125,7 @@ namespace Huginn::Learning::ReachReporter
         // Press-time state, the in-combat flag GameState (and so the pipeline) uses.
         line.inFight = event.gameState.inCombat == State::CombatStatus::InCombat;
         line.caseLabel = event.attribution;
+        line.notCandidate = event.notCandidate;
         if (const auto* row = event.shown.Find(event.formID)) {
             line.scored = true;
             line.ranked = row->rank < PipelineStateCache::kUnrankedTail;
@@ -165,6 +166,9 @@ namespace Huginn::Learning::ReachReporter
         line.inFight = State::StateManager::GetSingleton().IsInCombat();
         line.caseLabel = caseLabel;
         auto& cache = PipelineStateCache::GetSingleton();
+        if (!caseLabel.empty() && caseLabel[0] == 'A') {
+            line.notCandidate = cache.NotCandidateReason(formID);   // 0.23.46
+        }
         if (const auto info = cache.GetCandidateInfo(formID); info.wasCandidate) {
             line.scored = true;
             line.ranked = info.rank < PipelineStateCache::kUnrankedTail;

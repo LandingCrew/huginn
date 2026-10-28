@@ -206,6 +206,12 @@ namespace Huginn::State
     bool hasArmorBuff = false;          // Any armor spell active (Oakflesh, Stoneflesh, etc.)
     bool hasCloakActive = false;        // Flame Cloak, Frost Cloak, Lightning Cloak
     bool hasActiveSummon = false;       // Any conjured creature
+    // 0.23.46: how many living actors the player commands (summons and
+    // thralls, the same walk as hasActiveSummon) and the commanded-actor limit
+    // the perks give (BGSEntryPoint kModCommandedActorLimit from 1; Twin Souls
+    // makes it 2). The summon filter hides summon spells only at the limit.
+    std::uint8_t summonCount = 0;
+    float summonLimit = 1.0f;
 
     EffectType activeCloakType = EffectType::None;  // Fire/Frost/Shock
 
@@ -276,6 +282,10 @@ namespace Huginn::State
       if (hasActiveSummon != other.hasActiveSummon) {
         logger::trace("  {}.hasActiveSummon changed: {} -> {}", prefix, other.hasActiveSummon, hasActiveSummon);
       }
+      if (summonCount != other.summonCount || summonLimit != other.summonLimit) {
+        logger::trace("  {}.summons changed: {}/{} -> {}/{}", prefix, other.summonCount, other.summonLimit,
+                      summonCount, summonLimit);
+      }
       // Regen buffs/debuffs (v0.6.6)
       if (hasHealthRegenBuff != other.hasHealthRegenBuff) {
         logger::trace("  {}.hasHealthRegenBuff changed: {} -> {}", prefix, other.hasHealthRegenBuff, hasHealthRegenBuff);
@@ -328,6 +338,8 @@ namespace Huginn::State
                    hasCloakActive == other.hasCloakActive &&
                    activeCloakType == other.activeCloakType &&
                    hasActiveSummon == other.hasActiveSummon &&
+                   summonCount == other.summonCount &&
+                   summonLimit == other.summonLimit &&
                    // Regen buffs/debuffs (v0.6.6)
                    hasHealthRegenBuff == other.hasHealthRegenBuff &&
                    hasHealthRegenDebuff == other.hasHealthRegenDebuff &&

@@ -155,6 +155,9 @@ namespace Huginn::Learning
         event.kind = KindOf(formID);
         event.via = std::move(via);
         event.attribution = std::move(attribution);
+        if (!event.attribution.empty() && event.attribution[0] == 'A') {
+            event.notCandidate = PipelineStateCache::GetSingleton().NotCandidateReason(formID);
+        }
         event.shown = PipelineStateCache::GetSingleton().TakeSnapshot();
         event.loadGeneration = g_loadGeneration.load(std::memory_order_relaxed);
         // R4: the selection log v3's context for this press (logging only).

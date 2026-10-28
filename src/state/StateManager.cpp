@@ -176,6 +176,10 @@ namespace Huginn::State
          std::unique_lock lock(m_needMutex);
          m_needSensors = NeedSensorState{};
       }
+      {
+         std::unique_lock lock(m_coverageMutex);
+         m_coverage = CoverageState{};
+      }
       m_familyCache.clear();
       m_soleHostileTtk.Reset();
       // [Target] / [Actors]: a fight cut by the load ends with no summary, and
@@ -259,6 +263,12 @@ namespace Huginn::State
    {
       std::shared_lock lock(m_needMutex);
       return m_needSensors;  // Copy-out pattern
+   }
+
+   StateManager::CoverageState StateManager::GetCoverage() const
+   {
+      std::shared_lock lock(m_coverageMutex);
+      return m_coverage;  // Copy-out pattern
    }
 
 } // namespace Huginn::State

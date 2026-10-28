@@ -46,7 +46,7 @@ python <repo>/tools/fit/gradcheck.py    # optional: fitlib's gradient against fi
 
 | Script | What it does |
 |---|---|
-| `v3load.py` | Reads the v3 file into a compact pickle: columns, needs and cross-features mapped by name across heads (the 0.23.16, 0.23.19 and 0.23.30 schema additions), caps de-duplicated by content, contexts and decisions joined. Records the source path (for the v2 log). |
+| `v3load.py` | Reads the v3 file into a compact pickle: columns, needs and cross-features mapped by name across heads (the 0.23.16, 0.23.19, 0.23.30 and 0.23.46 schema additions), the row columns past the tenth by the head's names (`fb`, `cr`; None on older rows), caps de-duplicated by content, contexts and decisions joined. Records the source path (for the v2 log). |
 | `common.py` | Shared: the work directory, `load()` (v3.pkl with each decision's rows and chosen row), the row and flag constants, `v2_path()`. |
 | `fitlib.py` | The dataset builder, doc 9's conditional logit (θ need × effect, per-item b, menu cost κ, optional outside option u0), the baselines, an L-BFGS optimiser and the metrics. |
 | `inspect_heads.py` | Every head of the file and what changed between consecutive ones. |
@@ -58,6 +58,25 @@ python <repo>/tools/fit/gradcheck.py    # optional: fitlib's gradient against fi
 | `pairs.py` | Paired differences (model − baseline) with launch-bootstrap intervals, from `cv_picks.pkl`. |
 | `drift.py` | Fit on every launch: θ's drift from θ0 with its information, the u0 need weights, evidence per obvious pair. |
 | `gradcheck.py` | fitlib's analytic gradient against finite differences, and one full loss evaluation's time. |
+
+## Reading logs written by 0.23.46 and later
+
+- Rows have two more columns, named by the head's `row` list: `fb` (`filtered_by`, the candidate
+  filter that dropped a row that is not `eligible`, by name from the head's `filters`) and `cr`
+  (the remaining seconds behind `covered`, -1 = no timer). `v3load.py` puts them at `FB` and `CR`
+  (`common.py`) as a name and a float; rows written before 0.23.46 read `None` for both. Re-run
+  `v3load.py` after updating: an older `v3.pkl` has 10-field rows.
+- The cross-features end with `covered` (0..1, mapped by name like the others): how much of the
+  item's effect is already up on the player, with doc 11's refresh prior applied
+  (`covered / left(cr)` undoes it; `core/Coverage.h`). Absent from older rows (read 0).
+- Contexts carry `summon` (`n`, `limit`, `act`): the summon count, the perk limit, and every
+  commanded actor with its source spell, kind (summon / reanimate / other) and timer. `None` in
+  `v3load.py`'s context dict before 0.23.46.
+- Behaviour change in the same build: the summon filter compares the summon count with the limit
+  (the Twin Souls bug), so with a limit above 1 summon spells stay eligible until the limit is
+  reached. Segment by build before pooling summon eligibility across 0.23.46.
+- `filtered_by` is the shadow fit's input (doc 11 step 6): the active-buff reasons (`invisibility`,
+  `muffle`, `armor`, `summon_limit`, `warming`, `waterbreathing`, `resist`) are the covered drops.
 
 ## Reading logs written by 0.23.41 and later
 

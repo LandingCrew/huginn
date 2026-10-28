@@ -117,7 +117,8 @@ namespace Huginn::Candidate
             const State::PlayerActorState& player,
             float currentMagicka,
             std::span<const RE::FormID> heldIDs = {},
-            std::vector<CandidateVariant>* heldUnaffordable = nullptr
+            std::vector<CandidateVariant>* heldUnaffordable = nullptr,
+            std::vector<Core::Filter::Dropped>* dropped = nullptr   // 0.23.46: what the filters dropped, and why (v3 log)
         );
 
         /**

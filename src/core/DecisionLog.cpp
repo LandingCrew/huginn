@@ -11,8 +11,17 @@ namespace Huginn::Core::DecisionLog
     {
         constexpr std::array<std::string_view, kCrossCount> kCrossNames{
             "overshoot_health", "overshoot_magicka", "overshoot_stamina", "weapon_charge",
-            "stack_count",      "ammo_matches_launcher", "school_fortified",
+            "stack_count",      "ammo_matches_launcher", "school_fortified", "covered",
         };
+
+        std::string_view SummonKindName(Coverage::CommandedActor::Kind k) noexcept
+        {
+            switch (k) {
+            case Coverage::CommandedActor::Kind::Summon: return "summon";
+            case Coverage::CommandedActor::Kind::Reanimate: return "reanimate";
+            default: return "other";
+            }
+        }
 
         bool IsValidUtf8(std::string_view text)
         {
@@ -213,9 +222,11 @@ namespace Huginn::Core::DecisionLog
         }
         out += R"(],"src":)";
         AppendNameList(out, head.sourceNames);
-        out += R"(,"row":["form","uid","kind","src","cap","flags","slot","util","x","wp"])";
+        out += R"(,"row":["form","uid","kind","src","cap","flags","slot","util","x","wp","fb","cr"])";
         out += R"(,"flags":{"eligible":1,"scored":2,"held":4,"equipped":8,"shown":16,"wildcard":32,)"
                R"("override":64,"remembered":128,"addedAtPick":256})";
+        out += R"(,"filters":)";   // 0.23.46: a row's "fb" indexes this
+        AppendNameList(out, Filter::kReasonNames);
         out += R"(,"episode":{"onset":)";
         AppendNum(out, head.onset);
         out += R"(,"expiry":)";
@@ -303,6 +314,11 @@ namespace Huginn::Core::DecisionLog
         AppendSparse(out, r.cross);
         out += ',';
         AppendNum(out, r.wildcardP);
+        out += ',';
+        if (r.filteredBy == kNoFilter) out += "null";
+        else AppendInt(out, r.filteredBy);
+        out += ',';
+        AppendNum(out, r.coveredSec);
         out += ']';
     }
 
@@ -359,6 +375,29 @@ namespace Huginn::Core::DecisionLog
                     ctxLine += R"(,"light":)";
                     AppendNum(ctxLine, c.env.light);
                     ctxLine += '}';
+                }
+                if (c.summon.valid) {
+                    ctxLine += R"(,"summon":{"n":)";
+                    AppendInt(ctxLine, c.summon.count);
+                    ctxLine += R"(,"limit":)";
+                    AppendNum(ctxLine, c.summon.limit);
+                    ctxLine += R"(,"act":[)";
+                    for (std::size_t i = 0; i < c.summon.list.size(); ++i) {
+                        const auto& e = c.summon.list[i];
+                        if (i) ctxLine += ',';
+                        ctxLine += '[';
+                        ctxLine += e.source ? JsonString(FormHex(e.source)) : std::string("null");
+                        ctxLine += ",\"";
+                        ctxLine += SummonKindName(e.kind);
+                        ctxLine += "\",";
+                        AppendNum(ctxLine, e.remaining);
+                        ctxLine += ',';
+                        AppendNum(ctxLine, e.elapsed);
+                        ctxLine += ',';
+                        ctxLine += JsonString(FormHex(e.actor));
+                        ctxLine += ']';
+                    }
+                    ctxLine += "]}";
                 }
                 ctxLine += R"(,"rows":[)";
                 for (std::size_t i = 0; i < c.rows.size(); ++i) {

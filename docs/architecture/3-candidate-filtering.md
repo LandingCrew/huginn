@@ -103,7 +103,7 @@ table is the code, not an idealisation:
 
 | | Affordability | Equipped | Full vitals | Active buff |
 |---|---|---|---|---|
-| **Spell** | `currentMagicka < effectiveCost` → policy-dependent (§3) | `player.IsSpellEquipped(formID)` | RestoreHealth, RestoreMagicka | Invisibility, Muffle, Armor, `SpellType::Summon` vs `hasActiveSummon`, plus resist redundancy |
+| **Spell** | `currentMagicka < effectiveCost` → policy-dependent (§3) | `player.IsSpellEquipped(formID)` | RestoreHealth, RestoreMagicka | Invisibility, Muffle, Armor, `SpellType::Summon` once `summonCount` reaches `summonLimit` (0.23.46; before, any summon up hid them all), plus resist redundancy |
 | **Item** (Potion/Food/SoulGem) | `count <= 0` | — (never filtered) | RestoreHealth, RestoreMagicka, RestoreStamina — **skipped entirely for `Food` and `Alcohol`** | resist redundancy, Waterbreathing, Invisibility |
 | **Scroll** | `count <= 0` | — | RestoreHealth only | Invisibility, Muffle |
 | **Ammo** | `count <= 0` | `isEquipped` | — | — |

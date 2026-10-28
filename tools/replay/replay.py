@@ -486,10 +486,26 @@ def _sparse(pairs, names):
     return {names[i]: v for i, v in pairs}
 
 
-def _v3_row(raw, head, caps):
-    form, uid, kind, src, cap, flags, slot, util, x, wp = raw
+def _row_extras(head):
+    """Where the row columns added after the first ten sit, by the head's
+    `row` list (a column may only be appended within v3): (fb index, cr index),
+    None for a column this head does not have. 0.23.46 added fb and cr."""
+    names = head.get("row") or []
+    return (names.index("fb") if "fb" in names else None,
+            names.index("cr") if "cr" in names else None)
+
+
+def _v3_row(raw, head, caps, extras=(None, None)):
+    form, uid, kind, src, cap, flags, slot, util, x, wp = raw[:10]
     if cap != -1 and cap not in caps:
         raise V3FormatError(f"cap {cap} used before it is defined")
+    # 0.23.46: fb (the candidate filter that dropped a row that is not
+    # eligible, by name from the head's "filters") and cr (the remaining
+    # seconds behind x["covered"], -1 = no timer). Rows written before 0.23.46
+    # have neither: both read None, and x has no "covered".
+    i_fb, i_cr = extras
+    fb = raw[i_fb] if i_fb is not None and i_fb < len(raw) else None
+    cr = raw[i_cr] if i_cr is not None and i_cr < len(raw) else None
     return {
         "form": form,
         "uid": uid,
@@ -502,6 +518,8 @@ def _v3_row(raw, head, caps):
         "util": util,
         "x": _sparse(x, head["cross"]),
         "wp": wp,
+        "fb": None if fb is None else head["filters"][fb],
+        "cr": cr,
     }
 
 
@@ -518,6 +536,9 @@ def iter_v3(paths, stats=None):
     the cross-features by name), `rows` = the context's rows then the
     decision's added rows, and `chosen` = rows[row] (None for nothing).
     Caps and contexts are per segment: a head line starts a new one.
+
+    0.23.46 additions, defaulted for older files: a row's "fb" and "cr" (None),
+    x["covered"] (absent), the context's "summon" (absent: ctx.get("summon")).
 
     Damage is skipped and counted, never raised (a crash or a full disk can
     tear the last record a launch wrote; the writer starts on a new line):
@@ -551,6 +572,7 @@ def iter_v3(paths, stats=None):
         stats.setdefault(key, 0)
     for path in paths:
         head, caps, ctxs = None, {}, {}
+        extras = (None, None)
         damaged = False   # damage since the last good head
         lost_head = False  # a lost head already counted for this damage
         # A corrupt .gz: what decodes before the break may be garbage that
@@ -575,6 +597,7 @@ def iter_v3(paths, stats=None):
                         damaged = True
                         continue
                     head, caps, ctxs, damaged, lost_head = rec, {}, {}, False, False
+                    extras = _row_extras(rec)
                     continue
                 if head is None:
                     if damaged:
@@ -591,7 +614,7 @@ def iter_v3(paths, stats=None):
                         ctx = {k: v for k, v in rec.items() if k not in ("rows", "need", "in")}
                         ctx["need"] = _sparse(rec["need"], head["needs"])
                         ctx["input"] = _sparse(rec["in"], head["needs"])
-                        ctx["rows"] = [_v3_row(r, head, caps) for r in rec["rows"]]
+                        ctx["rows"] = [_v3_row(r, head, caps, extras) for r in rec["rows"]]
                         ctxs[rec["id"]] = ctx
                     elif t == "dec":
                         if rec.get("v") != 3:
@@ -604,7 +627,7 @@ def iter_v3(paths, stats=None):
                             raise V3FormatError(f"{path}:{lineno}: context {ctx_id} used before it is defined")
                         d = dict(rec)
                         d["ctx"] = ctxs[ctx_id] if ctx_id is not None else None
-                        d["add"] = [_v3_row(r, head, caps) for r in rec["add"]]
+                        d["add"] = [_v3_row(r, head, caps, extras) for r in rec["add"]]
                         d["rows"] = (d["ctx"]["rows"] if d["ctx"] else []) + d["add"]
                         d["chosen"] = d["rows"][rec["row"]] if rec["row"] >= 0 else None
                         d["head"] = head
