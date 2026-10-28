@@ -17,8 +17,8 @@ schema of that log, field by field.
 |---|---|
 | Code | `src/core/DecisionLog.h/.cpp` (records, encoder), `src/core/NeedEpisodes.h` (episodes), `src/learning/SelectionLogV3*.cpp` (the game side) |
 | Reader | `tools/replay/replay.py`: `iter_v3` / `load_v3`, `--v3 FILE...` prints a summary |
-| Tests | `tests/core/DecisionLogTests.cpp` (encoder vs the golden file), `tests/core/NeedEpisodesTests.cpp`, `tools/replay/test_replay_v3.py` (CTest `replay_v3_roundtrip`) |
-| Golden file | `tests/core/fixtures/decisions/synthetic_v3.jsonl` |
+| Tests | `tests/core/DecisionLogTests.cpp` (encoder vs the golden file), `tests/core/NeedEpisodesTests.cpp`, `tests/core/CoverageTests.cpp` (covered(i), the filter reasons), `tools/replay/test_replay_v3.py` (CTest `replay_v3_roundtrip`) |
+| Golden file | `tests/core/fixtures/decisions/synthetic_v3.jsonl`; `synthetic_v3_0.23.45.jsonl` beside it is the same session as 0.23.45 wrote it (before `fb`, `cr`, `covered`, `summon`), which the reader must keep decoding |
 
 ## Files
 
@@ -95,11 +95,12 @@ contexts per segment and clears both at a head.
 | `build` | string | `"<version> (<git sha>)"` |
 | `cols` | string[243] | effect columns of `9-data/effects.csv`, in order (`cap.c` indexes it) |
 | `needs` | string[94] | needs of `9-data/needs.csv`, in order (`ctx.need`, `ctx.in`, `dec.open`, `dec.ep.i` index it) |
-| `cross` | string[7] | the runtime cross-features, in order (`row.x` indexes it) |
+| `cross` | string[8] | the runtime cross-features, in order (`row.x` indexes it). 7 before 0.23.46 (no `covered`) |
 | `kinds` | string[10] | catalog kinds: `Spell Scroll Potion Poison Food Weapon Ammo Armor SoulGem Light` (`row.kind`) |
 | `src` | string[10] | the old engine's candidate source types (`row.src`) |
-| `row` | string[10] | the row columns, in order (below) |
+| `row` | string[12] | the row columns, in order (below). 10 before 0.23.46 (no `fb`, `cr`) |
 | `flags` | object | row flag bits by name |
+| `filters` | string[15] | (0.23.46) the candidate filters' reasons, in order (`row.fb` indexes it; `core/FilterReason.h`). Absent before 0.23.46 |
 | `episode` | object | the episode definition in force: `onset`, `expiry`, `minSec`, `graceSec`, `answerSlackSec`, and `deathDrops: 1` (0.23.16: a death drops the open episodes and those in their grace; absent = 0.23.15, where a death could leave `nothing` records) |
 | `curves` | [kind, p1, p2][] | (0.23.41) the `[Needs]` response curves in force, index-aligned with `needs`: `["logistic", 0.5, 10]` (`core/ResponseCurve.h`), so a fit knows which curve made every logged `need` value from its `in`. A hot reload that changes a curve starts a new segment (a new head line) before the next record. Absent before 0.23.41: those segments used their build's `needs.csv` defaults unless the INI overrode them. `replay.head_curves(head)` reads it |
 
@@ -137,6 +138,7 @@ same tick.
 | `race` | string or null | editor ID of the hostile primary target's race (alive, hostile), else null |
 | `wc.base`, `wc.max` | float | the wildcard odds in force (per-slot probability base and cap) |
 | `env` | object | (0.23.41) where and when, for what the darkness need's input cannot say: `interior` 0/1 (an interior cell), `hour` (game hour, 0-24), `daylight` 0/1 (outdoors under a full sky in the climate's daytime: darkness reads 0), `light` (the raw light on the player, 0-1 in 0.1 steps, before the hold the darkness need reads -- `core/LightHold.h`). Absent before 0.23.41 |
+| `summon` | object | (0.23.46) the player's summons: `n` the living actors the player commands (the count the summon filter compares), `limit` the commanded-actor limit the perks give (the perk entry point from 1; Twin Souls makes it 2; read only while a summon is up, so with `n` 0 it is the last value read in this launch, 1 before the first summon: meaningful only when `n` > 0), `act` one entry per living commanded actor, `[source, kind, remaining, elapsed, actor]`: the spell or scroll that cast it (the staff for a staff's enchantment; null if unknown), `"summon"` / `"reanimate"` / `"other"` (its effect's archetype: thralls apart from summons, doc 11 decision 3), seconds left on that effect (-1 = no timer), seconds since it was cast (a new cast dismisses the oldest), the actor's reference. Absent before 0.23.46 |
 | `heldFull` | 0/1 | 1: the held rows were read in full. 0: taken while inventory extra data must not be read, from kPreLoadGame until the post-load window ends (`Util::IsExtraListStable`, the registries' gate, plus a v3-local load-in-progress flag): one plain row per base form, no unique IDs, no per-instance caps or stack charges, `equipped` from the hands and the nocked ammo only (armour reads unworn) |
 | `rows` | row[] | every item the player could choose (below) |
 
@@ -156,6 +158,8 @@ Each row is an array, in the order `head.row` names:
 | 7 | `util` | float or null | the old engine's utility, for rows that passed its floors; else null |
 | 8 | `x` | [[i, v]] | non-zero runtime cross-features, `i` into `head.cross` |
 | 9 | `wp` | float or null | wildcard propensity, for a row shown as a wildcard (below) |
+| 10 | `fb` | int or null | (0.23.46) `filtered_by`: for a row that is not `eligible`, the candidate filter that dropped it in the same pipeline run as the eligible flags, an index into `head.filters`; null for an eligible row, and for one no registry gathered at all (not a candidate type, a registry that does not know it). Absent in older rows: read as null |
+| 11 | `cr` | float or null | (0.23.46) the remaining seconds of the active effect that gave the row's `covered` (-1 = no timer: a constant effect, or a summon below the limit); null when `covered` is 0. Absent in older rows: read as null |
 
 | Flag | Bit | Meaning |
 |---|---|---|
@@ -188,6 +192,18 @@ an eligible row of the same FormID as one item: it is held, and it is shown or
 equipped if either row says so. Count it once in H \ A. In a `heldFull: 1`
 context every stack has its own row and nothing needs merging.
 
+**Filter reasons** (`head.filters`, `core/FilterReason.h`; 0.23.46), in the
+filters' order: `affordability` (a spell over the magicka on hand under the
+uncastable policy Disallow, or a count of 0), `equipped`, `full_health`,
+`full_magicka`, `full_stamina`; the active-buff filters `invisibility`,
+`muffle`, `armor` (any armour-rating buff up), `summon_limit` (the player's
+summon limit reached), `warming`, `waterbreathing`, `resist` (the element
+already resisted past the threshold); then `cooldown`, `duplicate` (a second
+candidate of one key: the first stays eligible) and `truncated` (past
+`maxCandidatesAfterFilter`). The shadow fit of doc 11 groups the active-buff
+seven as "covered" drops; a shown row with `fb` is still a key alternative
+(choice sets come from `shown`, never from eligibility).
+
 **Runtime cross-features** (`effects.csv` item features; the math is
 `core/CrossFeatures.h`, the inputs `effect/CrossFeatures.cpp`), computed every
 update tick for the eligible rows over the live player state, and when a
@@ -200,6 +216,36 @@ context is taken for the held rows:
 | `stack_count` | 0..1 | log1p(count) / log1p(20), saturating at 20 carried (the inventory's count) |
 | `ammo_matches_launcher` | 0/1 | arrows with a bow, bolts with a crossbow in hand |
 | `school_fortified` | 0/1 | a Fortify <school> of the item's school is active on the player |
+| `covered` | 0..1 | (0.23.46) how much of the item's effect is already active on the player (below). Not an effects.csv column; set when a context is taken, for every row with a cap |
+
+**`covered`** (doc 11 section 2.3, step 3; the math is `core/Coverage.h`, the
+active-effect walk `StateManager_MagicEffects.cpp`), logging only:
+
+- covered(i) = max over the **specific** columns j of cap(i) of
+  min(1, active_j / cap_j(i)) × left(r_j).
+- active_j: the strongest **beneficial** active effect on the player (not an
+  ability; never a detrimental one) whose magic effect's R2 class is column j,
+  graded as cap is: the value column j has in the cap of the item that cast it
+  (the spell, potion or scroll, else the staff or worn piece for an
+  enchantment). A source outside the catalog, or whose cap lacks the column (a
+  perk row), counts at `kNeutralStrength` (0.5), as the mapper grades an
+  unknown strength.
+- r_j: the remaining seconds (duration - elapsed) of the longest-lived such
+  effect; none for a constant effect (worn gear), which never runs out.
+- left(r): the refresh prior of doc 11 decision 4, a logistic centred at 5 s
+  with scale 2 s (0.08 at 0 s, 0.5 at 5 s, 0.99 at 15 s), 1 with no timer. A
+  buff with a few seconds left reads partly uncovered. It is a prior: `cr` is
+  the r of the column that gave the value, so a fit can undo it exactly
+  (covered / left(cr)) and apply its own curve.
+- Summons (summon_creature*, summon_reanimate) are counted: min(1, n / L) with
+  `summon.n` and `summon.limit`, times left(r) of the oldest summon once
+  n >= L. Doc 11's greedy upgrade gate is not applied (it needs R8's score);
+  `summon.act` carries the sources and timers to apply it offline. A bound
+  weapon is an ordinary column.
+- Equal-column buffs that do not stack (Oakflesh up, Stoneflesh offered) read
+  partly covered (0.4 / 0.8 = 0.5); different columns never cover each other.
+- Limits: a buff that targets others (Oakflesh on Target) reads covered by the
+  player's own buff of its column; a worn enchanted piece covers itself.
 
 **Wildcard propensity** (`wp`): the probability of the roll that put this item
 on the page as a wildcard -- P(its slot rolled a wildcard) × (the entries of its
@@ -226,7 +272,7 @@ being active and the refractory period). Only rows shown as wildcards carry it.
 | `add` | row[] | rows not in the context: the chosen item when it was missing |
 | `src` | string | the old label: `Hotkey`, `Wheeler`, `External` |
 | `via` | string | how: `key 3 (s2)`, `Huginn wheel`, `inventory menu`, `favorites menu`, `magic menu`, `menu (just closed)`, `vanilla hotkey`, `own wheel`, `Wheeler wheel` |
-| `case` | string | the old A–E attribution of an outside pick |
+| `case` | string | the old A–E attribution of an outside pick. Unchanged by 0.23.46: why a case-A item was not a candidate is the chosen row's `fb` (the debug log's `[Reach]` and `[Selection] Confirmed` lines carry it as a separate `filtered_by=` field) |
 | `how` | string | what confirmed it: `consumed`, `still equipped`, `used` (a soul gem) |
 | `kind` | string | `consume` or `equip` |
 | `confirmMs` | int ms | press to confirmation |
@@ -312,7 +358,9 @@ Only what the player can perceive or what Huginn already reads: the player's
 own inventory, spells and equipment, the need vector (R3's sensors), the page,
 and the race of a hostile target in view (its look and name are on screen; the
 race map keys on it). No enemy spell lists, inventories, levels or hidden
-numbers.
+numbers. `covered` and `summon` (0.23.46) read the player's own active effects
+(the Active Effects menu lists them), the summons at the player's side and the
+perks the player chose.
 
 ## Volume and cost
 

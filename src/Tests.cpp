@@ -3692,11 +3692,32 @@ void RunUnitTests()
 
             testPlayer.isInCombat = true;
             testPlayer.buffs.hasActiveSummon = true;  // Already has summon
+            testPlayer.buffs.summonCount = 1;         // 0.23.46: the weight reads the count against the limit
 
             auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
 
             if (weights.summonWeight != 0.0f) {
                 logger::error("TEST FAIL: Combat+HasSummon should give summonWeight=0.0, got {:.3f}",
+                    weights.summonWeight);
+                return;
+            }
+        }
+
+        // Test 7f (0.23.46): one summon up under Twin Souls (limit 2) -> the
+        // limit has room, summonWeight = 0.4
+        {
+            State::PlayerActorState testPlayer{};
+            State::TargetCollection testTargets{};
+
+            testPlayer.isInCombat = true;
+            testPlayer.buffs.hasActiveSummon = true;
+            testPlayer.buffs.summonCount = 1;
+            testPlayer.buffs.summonLimit = 2.0f;
+
+            auto weights = engine.EvaluateRules(testPlayer, testTargets, testWorld);
+
+            if (std::abs(weights.summonWeight - 0.4f) > 0.01f) {
+                logger::error("TEST FAIL: Combat+1/2 summons should give summonWeight=0.4, got {:.3f}",
                     weights.summonWeight);
                 return;
             }
@@ -5585,6 +5606,7 @@ void RunRegressionTests()
         PlayerActorState player{};
         player.isInCombat = true;
         player.buffs.hasActiveSummon = true;  // Already has summon
+        player.buffs.summonCount = 1;         // 0.23.46: the weight reads the count against the limit
         TargetCollection testTargets{};
         WorldState testWorld{};
 

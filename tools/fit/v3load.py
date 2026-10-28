@@ -4,7 +4,13 @@ directory, common.py). The first step of every other script here.
 usage: python v3load.py <path/to/Huginn_Selections_v3.jsonl>
 Columns/needs are mapped by NAME to a global index (union over heads), so the
 0.23.16 (+4 cols), 0.23.19 (+deep_water_ahead), 0.23.35 (+combat_regen_ok)
-schema additions are handled. Caps are deduped globally by content."""
+schema additions are handled. Caps are deduped globally by content.
+
+0.23.46 added two row columns, read by the head's `row` names and None for
+older rows: FB (the candidate filter that dropped a row that is not eligible,
+by name) and CR (the remaining seconds behind the `covered` cross-feature,
+-1 = no timer); the `covered` cross-feature itself (mapped by name like the
+others) and the context's `summon` object (None before 0.23.46)."""
 import json, pickle, sys
 from collections import Counter
 from pathlib import Path
@@ -38,36 +44,38 @@ def load(path):
             hcross = gix(r['cross'], crossix, cross)
             segcaps = {}
             seg = len(heads)
-            heads.append({k: r[k] for k in ('launch', 'list', 'build', 'kinds', 'src', 'row', 'flags', 'episode') if k in r} | {'ncols': len(r['cols']), 'nneeds': len(r['needs'])})
+            heads.append({k: r[k] for k in ('launch', 'list', 'build', 'kinds', 'src', 'row', 'flags', 'episode', 'filters') if k in r} | {'ncols': len(r['cols']), 'nneeds': len(r['needs'])})
             kinds, srcs = r['kinds'], r['src']
+            hfilters = r.get('filters', [])
+            rnames = r.get('row') or []
+            ifb = rnames.index('fb') if 'fb' in rnames else None
+            icr = rnames.index('cr') if 'cr' in rnames else None
+
+            def row_tuple(f):
+                form, uid, kind, src, cap, flags, slot, util, x, wp = f[:10]
+                fb = f[ifb] if ifb is not None and ifb < len(f) else None
+                cr = f[icr] if icr is not None and icr < len(f) else None
+                return (form, uid, None if kind is None else kinds[kind], None if src is None else srcs[src],
+                        -1 if cap == -1 else segcaps[cap], flags, slot, util,
+                        tuple((hcross[i], v) for i, v in x), wp,
+                        None if fb is None else hfilters[fb], cr)
         elif t == 'cap':
             c = tuple(sorted((hcol[i], v) for i, v in r['c']))
             if c not in capkey:
                 capkey[c] = len(capstore); capstore.append(c)
             segcaps[r['id']] = capkey[c]
         elif t == 'ctx':
-            rows = []
-            for f in r['rows']:
-                form, uid, kind, src, cap, flags, slot, util, x, wp = f
-                rows.append((form, uid, None if kind is None else kinds[kind], None if src is None else srcs[src],
-                             -1 if cap == -1 else segcaps[cap], flags, slot, util,
-                             tuple((hcross[i], v) for i, v in x), wp))
+            rows = [row_tuple(f) for f in r['rows']]
             key = (head['launch'], r['id'])
             ctxs[key] = {'seg': seg, 'id': r['id'], 'utc': r['utc'], 'why': r['why'], 'menu': r.get('menu'),
                          'need': {hneed[i]: v for i, v in r['need']}, 'in': {hneed[i]: v for i, v in r['in']},
                          'pipe': r.get('pipe'), 'race': r.get('race'), 'heldFull': r.get('heldFull'),
-                         'wc': r.get('wc'), 'rows': rows}
+                         'wc': r.get('wc'), 'summon': r.get('summon'), 'rows': rows}
         elif t == 'dec':
             d = {k: v for k, v in r.items() if k not in ('t', 'add')}
             d['seg'] = seg
             d['build'] = head['build']
-            add = []
-            for f in r['add']:
-                form, uid, kind, src, cap, flags, slot, util, x, wp = f
-                add.append((form, uid, None if kind is None else kinds[kind], None if src is None else srcs[src],
-                            -1 if cap == -1 else segcaps[cap], flags, slot, util,
-                            tuple((hcross[i], v) for i, v in x), wp))
-            d['add'] = add
+            d['add'] = [row_tuple(f) for f in r['add']]
             d['ctxkey'] = (head['launch'], r['ctx']) if r.get('ctx') is not None else None
             if d['ep'] and 'i' in d['ep']:
                 d['ep']['gi'] = hneed[d['ep']['i']]

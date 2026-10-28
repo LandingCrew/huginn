@@ -50,6 +50,7 @@ namespace
         Effect::Cap fireSpell = Sorted({ { C("damage"), 0.4f }, { C("damage_health_fire"), 0.4f }, { C("school_destruction"), 1.0f } });
         Effect::Cap boots = Sorted({ { C("armour_rating"), 0.3f } });
         Effect::Cap soup = Sorted({ { C("survival"), 0.5f }, { C("survival_hunger"), 0.5f } });
+        Effect::Cap familiar = Sorted({ { C("summon"), 0.6f }, { C("summon_creature"), 0.6f }, { C("school_conjuration"), 1.0f } });
 
         std::shared_ptr<const Context> press, menu, onset;
         std::vector<Decision> decisions;
@@ -159,6 +160,28 @@ namespace
                 r.flags = Flag::Held;
                 p->rows.push_back(r);
             }
+            {
+                // 5 (0.23.46): a summon spell the summon filter dropped at the
+                // limit (2 of 2 up), covered 0.8176 = left(8 s), the oldest
+                // summon's 8 s.
+                Row r;
+                r.form = 0x000640B6;
+                r.kind = static_cast<std::uint8_t>(Effect::Kind::Spell);
+                r.flags = Flag::Held;
+                r.filteredBy = static_cast<std::uint8_t>(Filter::Reason::summon_limit);
+                r.cross[static_cast<std::size_t>(Cross::covered)] = 0.8176f;
+                r.coveredSec = 8.0f;
+                r.cap = &familiar;
+                p->rows.push_back(r);
+            }
+            // 0.23.46: the player's summons: a familiar (8 s left, cast 52 s
+            // ago) and a thrall with no timer, against a limit of 2.
+            p->summon.valid = true;
+            p->summon.count = 2;
+            p->summon.limit = 2.0f;
+            p->summon.list.push_back({ 0x000640B6, 0xFF000ABC, Coverage::CommandedActor::Kind::Summon, 8.0f, 52.0f });
+            p->summon.list.push_back({ 0x0007E8DF, 0xFF000ABD, Coverage::CommandedActor::Kind::Reanimate,
+                                       Coverage::kNoTimer, 10.25f });
             press = p;
 
             auto m = std::make_shared<Context>(*p);   // the inventory opened a second later
@@ -382,5 +405,5 @@ TEST_CASE("decision log: the synthetic session matches the golden file")
         CHECK(line.front() == '{');
         CHECK(line.back() == '}');
     }
-    CHECK(n == 21);
+    CHECK(n == 23);   // 21 before 0.23.46's summon row added a cap to each segment
 }

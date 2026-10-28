@@ -26,8 +26,10 @@ EFFECTS_CSV = DATA / 'effects.csv'
 
 F = {'eligible': 1, 'scored': 2, 'held': 4, 'equipped': 8, 'shown': 16, 'wildcard': 32,
      'override': 64, 'remembered': 128, 'addedAtPick': 256}
-# row tuple indices
-FORM, UID, KIND, SRC, CAP, FLAGS, SLOT, UTIL, X, WP = range(10)
+# row tuple indices. FB (the filter that dropped a row that is not eligible, by
+# name) and CR (the remaining seconds behind the `covered` cross-feature) start
+# at 0.23.46 and are None on older rows (v3load.py).
+FORM, UID, KIND, SRC, CAP, FLAGS, SLOT, UTIL, X, WP, FB, CR = range(12)
 
 
 def work_dir():

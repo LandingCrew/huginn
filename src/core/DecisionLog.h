@@ -39,7 +39,9 @@
 // Pure: standard library only (src/core/README.md).
 // =============================================================================
 
+#include "Coverage.h"
 #include "EffectMapper.h"
+#include "FilterReason.h"
 #include "NeedEvaluator.h"
 
 #include <array>
@@ -70,14 +72,19 @@ namespace Huginn::Core::DecisionLog
         stack_count,
         ammo_matches_launcher,
         school_fortified,
+        /// 0.23.46: how much of the item's effect is already active on the
+        /// player (core/Coverage.h; doc 11 step 3). Logged only, and not an
+        /// effects.csv column: R8 gives it one shared weight, not a pair.
+        covered,
         _Count
     };
     inline constexpr std::size_t kCrossCount = static_cast<std::size_t>(Cross::_Count);
-    /// The effects.csv column each cross-feature fills (same names).
+    /// The effects.csv column each cross-feature fills (same names);
+    /// Col::_Count for one with no column (covered).
     inline constexpr std::array<Effect::Col, kCrossCount> kCrossColumns{
         Effect::Col::overshoot_health, Effect::Col::overshoot_magicka, Effect::Col::overshoot_stamina,
         Effect::Col::weapon_charge,    Effect::Col::stack_count,       Effect::Col::ammo_matches_launcher,
-        Effect::Col::school_fortified,
+        Effect::Col::school_fortified, Effect::Col::_Count,
     };
 
     // --- A row's flags --------------------------------------------------------
@@ -96,6 +103,7 @@ namespace Huginn::Core::DecisionLog
 
     inline constexpr std::uint8_t kNoKind = 255;    // not in the effect catalog
     inline constexpr std::uint8_t kNoSource = 255;  // not a candidate of the old engine
+    inline constexpr std::uint8_t kNoFilter = 255;  // not dropped by a candidate filter
     inline constexpr float kNone = std::numeric_limits<float>::quiet_NaN();
 
     /// One item the player could have chosen.
@@ -110,6 +118,14 @@ namespace Huginn::Core::DecisionLog
         float util = kNone;                 // the old engine's utility (Scored rows), else none
         std::array<float, kCrossCount> cross{};
         float wildcardP = kNone;            // P(this item was rolled as the wildcard it is shown as)
+        /// 0.23.46, row column "fb": the candidate filter that dropped the item
+        /// in the last pipeline run (a Core::Filter::Reason), for a row that
+        /// is not eligible; kNoFilter otherwise (eligible, or never gathered).
+        std::uint8_t filteredBy = kNoFilter;
+        /// 0.23.46, row column "cr": the remaining seconds of the effect that
+        /// gave `covered` (Coverage::Result::remaining; -1 = no timer); none
+        /// when the row is not covered.
+        float coveredSec = kNone;
         /// cap(i): the catalog's static entry (immutable, process lifetime) or
         /// a per-instance entry owned by capOwner. nullptr = not in the catalog.
         const Effect::Cap* cap = nullptr;
@@ -149,6 +165,17 @@ namespace Huginn::Core::DecisionLog
             bool openDaylight = false;  // outdoors, full sky, climate daytime (darkness reads 0)
             float light = -1.0f;        // the raw light on the player, 0-1, before the hold
         } env;
+        /// The player's summons (0.23.46; doc 11 steps 3-4): the count the
+        /// summon filter compares against the limit, the commanded-actor limit
+        /// the perks give, and every living commanded actor with the spell or
+        /// item behind it. Written as "summon" when valid.
+        struct Summon
+        {
+            bool valid = false;
+            int count = 0;                    // living actors the player commands (the filter's count)
+            float limit = 1.0f;               // the commanded-actor limit (perk entry point)
+            std::vector<Coverage::CommandedActor> list;
+        } summon;
         std::vector<Row> rows;
     };
 

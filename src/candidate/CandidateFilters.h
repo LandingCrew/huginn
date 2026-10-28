@@ -4,6 +4,8 @@
 #include "CandidateConfig.h"
 #include "CooldownManager.h"
 #include "state/PlayerActorState.h"
+#include "core/FilterReason.h"
+#include <optional>
 #include <span>
 #include <vector>
 #include <unordered_set>
@@ -168,7 +170,8 @@ namespace Huginn::Candidate
             float currentMagicka,
             FilterStats& stats,
             std::span<const RE::FormID> heldIDs = {},
-            std::vector<CandidateVariant>* heldUnaffordable = nullptr
+            std::vector<CandidateVariant>* heldUnaffordable = nullptr,
+            std::vector<Core::Filter::Dropped>* dropped = nullptr   // 0.23.46: each drop and its reason (v3 log)
         );
 
         // =========================================================================
@@ -188,17 +191,11 @@ namespace Huginn::Candidate
         // Reusable deduplication set (avoids repeated allocation in ApplyAllFilters)
         mutable std::unordered_set<uint64_t> m_deduplicationSet;
 
-        // Consolidated visitor result — which filter rejected a candidate
-        enum class FilterResult : uint8_t {
-            Passed,
-            Affordability,
-            Equipped,
-            FullVitals,
-            ActiveBuff
-        };
-
-        // Single std::visit dispatch running affordability, equipped, full vitals, active buff
-        [[nodiscard]] FilterResult RunVisitorFilters(
+        // Single std::visit dispatch running affordability, equipped, full
+        // vitals, active buff: the filter that rejected the candidate, nullopt
+        // when it passed. 0.23.46: the reason names the branch (full_health,
+        // armor, summon_limit ...), not just the stage, for the v3 log.
+        [[nodiscard]] std::optional<Core::Filter::Reason> RunVisitorFilters(
             const CandidateVariant& candidate,
             const State::PlayerActorState& player,
             float currentMagicka

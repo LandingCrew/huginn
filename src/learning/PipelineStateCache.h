@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ScoredCandidate.h"
+#include "core/FilterReason.h"
 #include "slot/SlotAssignment.h"
 #include "slot/SlotClassifier.h"
 #include <chrono>
@@ -138,7 +139,8 @@ namespace Huginn::Learning
             size_t currentPage,
             size_t sortedPrefix,
             std::vector<EligibleRow> eligible = {},
-            size_t pageSlots = 0)
+            size_t pageSlots = 0,
+            std::vector<Core::Filter::Dropped> filtered = {})
         {
             std::unique_lock lock(m_mutex);
 
@@ -148,6 +150,7 @@ namespace Huginn::Learning
             m_sortedPrefix = std::min(sortedPrefix, scored.size());
             m_valid = true;
             m_eligible = std::move(eligible);
+            m_filtered = std::move(filtered);
             m_pageSlots = pageSlots;
             ++m_generation;
 
@@ -254,13 +257,32 @@ namespace Huginn::Learning
 
         /// R4: the eligible rows of the last run, if it is newer than
         /// `haveGeneration` (else nothing is copied and false is returned).
-        bool TakeEligibleIfNewer(uint64_t haveGeneration, std::vector<EligibleRow>& out, uint64_t& generation) const
+        /// 0.23.46: `filtered` (if given) gets the same run's dropped candidates.
+        bool TakeEligibleIfNewer(uint64_t haveGeneration, std::vector<EligibleRow>& out, uint64_t& generation,
+                                 std::vector<Core::Filter::Dropped>* filtered = nullptr) const
         {
             std::shared_lock lock(m_mutex);
             if (m_generation == haveGeneration) return false;
             out = m_eligible;
+            if (filtered) *filtered = m_filtered;
             generation = m_generation;
             return true;
+        }
+
+        /// 0.23.46: why the last run did not make this item a candidate, for
+        /// the debug log's case-A lines: "unscored" when it was eligible but
+        /// the scorer's floors left it out, the filter that dropped it, or
+        /// "not-gathered" when no registry produced it at all.
+        [[nodiscard]] std::string_view NotCandidateReason(RE::FormID formID) const
+        {
+            std::shared_lock lock(m_mutex);
+            for (const auto& row : m_eligible) {
+                if (row.formID == formID) return "unscored";
+            }
+            if (const auto reason = Core::Filter::Find(m_filtered, formID, 0)) {
+                return Core::Filter::ReasonName(*reason);
+            }
+            return "not-gathered";
         }
 
         /// R4: the page as shown by the last run, and how old it is.
@@ -350,6 +372,7 @@ namespace Huginn::Learning
         size_t m_currentPage = 0;
         // R4 (selection log v3 only)
         std::vector<EligibleRow> m_eligible;
+        std::vector<Core::Filter::Dropped> m_filtered;   // 0.23.46: the run's filter drops
         size_t m_pageSlots = 0;
         uint64_t m_generation = 0;
     };

@@ -24,7 +24,10 @@
 //     menu opens, at an episode's onset. It adds the page as shown
 //     (PipelineStateCache), every held item (inventory and known spells in
 //     the catalog, per-instance caps for tempered and player-enchanted gear;
-//     cached for a second) and the hostile target's race;
+//     cached for a second) and the hostile target's race; and (0.23.46) on
+//     every row the candidate filter that dropped it (`fb`) and how much of
+//     its effect is already up (`covered`, `cr`), and the player's summons
+//     against their limit (StateManager::GetCoverage, the pipeline's drops);
 //   - the outcome: SelectionTracker's confirmed selections (key, wheel,
 //     menu), the picks the frozen learner drops (a stale pipeline cache,
 //     learning from outside equips switched off, armour; recorded here only,

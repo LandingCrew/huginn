@@ -115,6 +115,9 @@ namespace Huginn::Pipeline
         // the selection log v3. A read of what ScoreCandidates produced; nothing
         // downstream of scoring reads it.
         std::vector<Learning::PipelineStateCache::EligibleRow> eligible;
+        // 0.23.46: every gathered candidate the filters dropped, with the
+        // filter that dropped it (the selection log v3's `filtered_by`).
+        std::vector<Core::Filter::Dropped> filtered;
 
 
         /// Reset all fields for reuse, preserving allocated container capacity.
@@ -151,6 +154,7 @@ namespace Huginn::Pipeline
             hideUidlessGear = false;
             pageCandidatesScratch.clear();
             eligible.clear();
+            filtered.clear();
         }
     };
 

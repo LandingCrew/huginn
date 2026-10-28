@@ -615,16 +615,32 @@ sensor from `PotionDiscriminator`'s timer; `ChoiceLearner`; scorer; cosave
 `THTA`/`BIAS`; then the prune list in the map, with every consumer of a
 pruned symbol (console, selection log, `ReasonHold`, debug widget, `Tests.cpp`)
 changed in the same PR, and the shipped INI loses the dead keys.
-- [ ] Before the cutover, between R6 and R8 (doc 11, steps 3-4): log a
+- [x] Before the cutover (doc 11, steps 3-4), moved ahead of R6 so the
+      rest of the R5 data play (the mage, level 21 to 40) records it: a
       `covered(i)` cross-feature on held rows, a `filtered_by` reason on rows
-      the active-buff filters drop (for a shadow estimate of its weight:
-      choice sets by `shown`, a zero-centred prior), and the summon count and
-      limit; the summon
-      filter counts against the limit (the Twin Souls bug). Decided
+      the filters drop (for a shadow estimate of its weight: choice sets by
+      `shown`, a zero-centred prior), and the summon count and limit; the
+      summon filter counts against the limit (the Twin Souls bug). Decided
       2026-10-10 (doc 11, section 7): at the limit a summon scoring above the
       one it would replace is still offered (greedy upgrade); a buff near expiry
-      reads partly uncovered; thralls await the user's test. With these
-      sensors, doc 11 step 7: the attacker's race on every hit and
+      reads partly uncovered; thralls await the user's test.
+      **Built in 0.23.46** (logging only, plus the summon limit fix):
+      - `filtered_by` is the row column `fb`, for every filter, not only the
+        active-buff ones (15 reasons, `core/FilterReason.h`); the `[Reach]`
+        and `[Selection] Confirmed` debug lines add `filtered_by=` for a
+        case-A pick (`unscored` = eligible but under the floors,
+        `not-gathered` = no registry produced it), the case label unchanged.
+      - `covered` is cross-feature 7, with the refresh prior (5 s, scale 2 s)
+        applied and its remaining seconds in the row column `cr`
+        (`core/Coverage.h`). The greedy upgrade gate is R8's (it needs ŝ).
+      - Contexts carry `summon`: the count, the perk limit, and every
+        commanded actor with its source, kind (summon / reanimate) and timer.
+      - The summon filter hides summon spells once the count reaches the
+        limit (`kModCommandedActorLimit` from 1); with the vanilla limit
+        nothing changes. **In game (you):** with Twin Souls (or any limit of 2)
+        and one summon up, a second summon spell stays on offer; at two it
+        drops out with `filtered_by` `summon_limit` in the v3 log.
+- [ ] With those sensors, doc 11 step 7: the attacker's race on every hit and
       `poison_damage_rate`, for anticipatory resists.
 - [ ] **Decide: which thread runs the update loop** (2026-10-09, two Tracy
       traces in `traces/202610/`, which is not checked in; the counts and

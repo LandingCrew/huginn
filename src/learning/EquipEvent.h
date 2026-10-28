@@ -71,6 +71,11 @@ namespace Huginn::Learning
         SelectionKind   kind = SelectionKind::Equip;
         std::string     via;                 // How, in words: "key s3", "inventory menu", "own wheel"...
         std::string     attribution;         // External only: the A-E case label
+        // 0.23.46: case A only -- why the item was not a candidate at the press
+        // (PipelineStateCache::NotCandidateReason: a filter's name, "unscored",
+        // "not-gathered"). Static strings. Debug lines only; the case label
+        // above is unchanged.
+        std::string_view notCandidate;
 
         // Press-time state (EquipEventBus::Capture)
         StateFeatures   features{};

@@ -127,6 +127,10 @@ TEST_CASE("reach: the [Reach] line")
         in.inFight = false;
         const auto line = FormatLine(in);
         CHECK(line.find(" fight=no case=A (not candidate) rank=- util=- |") != std::string::npos);
+        // 0.23.46: why, as a field of its own; the case label is unchanged.
+        in.notCandidate = "affordability";
+        CHECK(FormatLine(in).find(" case=A (not candidate) rank=- util=- filtered_by=affordability | page 0:") !=
+              std::string::npos);
     }
     SUBCASE("gear: no case label, no page cached yet")
     {

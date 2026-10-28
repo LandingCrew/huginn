@@ -177,6 +177,11 @@ namespace Huginn::Core::Reach
         std::string_view via;
         bool inFight = false;
         std::string_view caseLabel;   // ExternalEquipLearner's A-E label ("" = none)
+        // 0.23.46: for a case-A pick, why it was not a candidate (the filter
+        // that dropped it, "unscored", "not-gathered"; "" = not given). A
+        // field of its own after util=, so the case label stays as it was
+        // (the fit tools and SoakMetrics group by it).
+        std::string_view notCandidate;
         bool scored = false;          // Huginn scored it in the run the pick saw
         bool ranked = false;          // its rank is known (inside the sorted prefix), else "tail"
         std::size_t rank = 0;         // 0-based, as the selection log prints it
@@ -187,7 +192,8 @@ namespace Huginn::Core::Reach
     };
 
     /// "[Reach] 'Fast Healing' 0002F3B8 kind=spell via=magic menu fight=no
-    ///  case=B-low (low rank) rank=14 util=0.83 | page 0: 0=Oakflesh 1=Lesser Ward"
+    ///  case=B-low (low rank) rank=14 util=0.83 | page 0: 0=Oakflesh 1=Lesser Ward";
+    ///  a case-A pick adds " filtered_by=<reason>" after util=.
     [[nodiscard]] inline std::string FormatLine(const Line& in)
     {
         std::string out = std::format("[Reach] '{}' {:08X} kind={} via={} fight={} case={}",
@@ -200,6 +206,9 @@ namespace Huginn::Core::Reach
             out += std::format(" rank={} util={:.2f}", in.rank, in.utility);
         } else {
             out += std::format(" rank=tail util={:.2f}", in.utility);
+        }
+        if (!in.notCandidate.empty()) {
+            out += std::format(" filtered_by={}", in.notCandidate);
         }
         if (!in.pageKnown) {
             out += " | page ?";

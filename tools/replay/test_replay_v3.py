@@ -30,6 +30,9 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 REPO = HERE.parent.parent
 GOLDEN = REPO / "tests" / "core" / "fixtures" / "decisions" / "synthetic_v3.jsonl"
+# The golden file as 0.23.45 wrote it: no fb/cr row columns, no covered, no
+# summon. The reader must keep reading files written before 0.23.46.
+GOLDEN_0_23_45 = REPO / "tests" / "core" / "fixtures" / "decisions" / "synthetic_v3_0.23.45.jsonl"
 
 # python -I leaves the script's folder off sys.path: load replay.py by path
 # (and write no __pycache__ into the tree).
@@ -61,6 +64,11 @@ class GoldenFile(unittest.TestCase):
         self.assertEqual(len(h["cols"]), 243)
         self.assertEqual(len(h["needs"]), 94)  # 93 until 0.23.30 added combat_regen_ok
         self.assertEqual(h["cross"][4], "stack_count")
+        # 0.23.46: covered at the end of cross, two row columns, the filter names.
+        self.assertEqual(h["cross"][7], "covered")
+        self.assertEqual(h["row"][-2:], ["fb", "cr"])
+        self.assertEqual(h["filters"][8], "summon_limit")
+        self.assertEqual(len(h["filters"]), 15)
         self.assertEqual(h["kinds"][7], "Armor")
         self.assertEqual(h["episode"], {"onset": 0.5, "expiry": 0.25, "minSec": 1.0, "graceSec": 4.0,
                                         "answerSlackSec": 0.5, "deathDrops": 1})
@@ -91,7 +99,7 @@ class GoldenFile(unittest.TestCase):
         self.assertEqual(ctx["race"], "NordRace")
         # 0.23.41: where and when, for the darkness fit.
         self.assertEqual(ctx["env"], {"interior": 1, "hour": 13.5, "daylight": 0, "light": 0.3})
-        self.assertEqual(len(ctx["rows"]), 5)
+        self.assertEqual(len(ctx["rows"]), 6)
         c = d["chosen"]
         self.assertEqual(c["form"], "0003EADE")
         self.assertEqual(c["kind"], "Potion")
@@ -112,6 +120,18 @@ class GoldenFile(unittest.TestCase):
         self.assertEqual(rows[2]["cap"], {"weapon_damage": 0.55})
         self.assertEqual((rows[3]["kind"], rows[3]["src"], rows[3]["flags"]), ("Armor", None, 4 | 8))
         self.assertEqual((rows[4]["kind"], rows[4]["cap"], rows[4]["cap_id"]), (None, None, -1))
+        # 0.23.46: the summon spell the summon filter dropped at the limit.
+        self.assertEqual(rows[5]["form"], "000640B6")
+        self.assertEqual(rows[5]["flags"], 4)
+        self.assertEqual(rows[5]["fb"], "summon_limit")
+        self.assertTrue(close(rows[5]["x"]["covered"], 0.8176))
+        self.assertEqual(rows[5]["cr"], 8)
+        self.assertEqual(rows[5]["cap"], {"summon": 0.6, "summon_creature": 0.6, "school_conjuration": 1})
+        for r in rows[:5]:
+            self.assertEqual((r["fb"], r["cr"]), (None, None))
+            self.assertNotIn("covered", r["x"])
+        self.assertEqual(ctx["summon"], {"n": 2, "limit": 2, "act": [["000640B6", "summon", 8, 52, "FF000ABC"],
+                                                                     ["0007E8DF", "reanimate", -1, 10.25, "FF000ABD"]]})
 
     def test_menu_pick_of_armour_with_added_row(self):
         d = self.decs[1]
@@ -142,6 +162,7 @@ class GoldenFile(unittest.TestCase):
                                    "onset": "2026-10-09 12:01:00.000"})
         self.assertEqual(d["ctx"]["why"], "onset")
         self.assertIsNone(d["ctx"]["race"])
+        self.assertNotIn("summon", d["ctx"])   # 0.23.46: written only when valid
         self.assertEqual(d["ctx"]["rows"][0]["cap"], {"survival": 0.5, "survival_hunger": 0.5})
 
     def test_held_detail_and_pre_press_equipped(self):
@@ -157,6 +178,31 @@ class GoldenFile(unittest.TestCase):
         d = self.decs[5]
         self.assertIsNot(d["ctx"], self.decs[0]["ctx"])   # a fresh table after the second head
         self.assertEqual(d["ctx"]["rows"][0]["cap"], self.decs[0]["ctx"]["rows"][0]["cap"])
+
+
+class GoldenFile0_23_45(unittest.TestCase):
+    """The same session as 0.23.45 wrote it, before fb/cr, covered and summon:
+    every row reads fb = cr = None, no row has covered, no context a summon."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.decs = replay.load_v3([GOLDEN_0_23_45])
+
+    def test_defaults(self):
+        self.assertEqual([d["out"] for d in self.decs], ["key", "menu", "menu", "nothing", "wheel", "key"])
+        h = self.decs[0]["head"]
+        self.assertEqual(len(h["row"]), 10)
+        self.assertNotIn("filters", h)
+        self.assertNotIn("covered", h["cross"])
+        self.assertEqual(len(self.decs[0]["ctx"]["rows"]), 5)
+        for d in self.decs:
+            self.assertNotIn("summon", d["ctx"])
+            for r in d["rows"]:
+                self.assertEqual((r["fb"], r["cr"]), (None, None))
+                self.assertNotIn("covered", r["x"])
+        # Everything else decodes as before.
+        self.assertTrue(close(self.decs[0]["chosen"]["x"]["stack_count"], 0.4553))
+        self.assertEqual(self.decs[1]["case"], "A (not candidate)")
 
 
 # --- An encoder written from the schema doc, independent of the C++ one ------
@@ -180,9 +226,12 @@ def encode(segments):
 
         def row(r):
             x = [[head["cross"].index(k), v] for k, v in r["x"].items()]
-            return [r["form"], r["uid"], None if r["kind"] is None else head["kinds"].index(r["kind"]),
-                    None if r["src"] is None else head["src"].index(r["src"]), cap_id(r["cap"]),
-                    r["flags"], r["slot"], r["util"], x, r["wp"]]
+            out = [r["form"], r["uid"], None if r["kind"] is None else head["kinds"].index(r["kind"]),
+                   None if r["src"] is None else head["src"].index(r["src"]), cap_id(r["cap"]),
+                   r["flags"], r["slot"], r["util"], x, r["wp"]]
+            if "fb" in head.get("row", []):   # 0.23.46 heads: the two appended columns
+                out += [None if r.get("fb") is None else head["filters"].index(r["fb"]), r.get("cr")]
+            return out
 
         for d in decs:
             ctx = d["ctx"]
@@ -211,9 +260,9 @@ def make_session():
     sword = {"weapon_damage": 0.75, "weapon_type_sword": 1}
     potion = {"restore": 0.33, "restore_magicka": 0.33}
 
-    def r(form, kind, src, cap, flags, slot=-1, util=None, x=None, wp=None, uid=0):
+    def r(form, kind, src, cap, flags, slot=-1, util=None, x=None, wp=None, uid=0, fb=None, cr=None):
         return {"form": form, "uid": uid, "kind": kind, "src": src, "cap": cap, "flags": flags,
-                "slot": slot, "util": util, "x": x or {}, "wp": wp}
+                "slot": slot, "util": util, "x": x or {}, "wp": wp, "fb": fb, "cr": cr}
 
     ctx_a = {"id": 10, "utc": "2026-10-09 15:00:00.000", "why": "press",
              "need": {"magicka_deficit": 0.9, "enemy_close": 1}, "input": {"magicka_deficit": 0.8, "enemy_close": 300.0},
@@ -223,7 +272,9 @@ def make_session():
              "rows": [r("0003EAE3", "Potion", "Potion", potion, 1 | 2 | 4 | 16, 0, 2.5,
                         {"overshoot_magicka": 0.1, "stack_count": 0.6}),
                       r("00012EB7", "Weapon", "Weapon", sword, 1 | 4, uid=12, x={"weapon_charge": 0.25}),
-                      r("0001397D", "Ammo", "Ammo", None, 1 | 4, x={"ammo_matches_launcher": 1})]}
+                      r("0001397D", "Ammo", "Ammo", None, 1 | 4, x={"ammo_matches_launcher": 1}),
+                      # 0.23.46: a potion on cooldown, its effect up with 12.5 s left.
+                      r("0003EAE5", "Potion", None, potion, 4, x={"covered": 0.75}, fb="cooldown", cr=12.5)]}
     ctx_b = {"id": 11, "utc": "2026-10-09 15:00:30.000", "why": "onset",
              "need": {"darkness": 0.8}, "input": {"darkness": 0.9},
              "pipe": {"ok": 0, "page": -1, "slots": 0, "ageMs": 0}, "race": None,
@@ -243,7 +294,7 @@ def make_session():
     seg1 = [dec(1, "key", ctx_a, 0, "0003EAE3", src="Hotkey"),
             dec(2, "nothing", ctx_b, ep={"need": "darkness", "i": 63, "durSec": 4.0, "peak": 0.8,
                                          "onset": "2026-10-09 15:00:30.000"}),
-            dec(3, "menu", ctx_a, 3, "00099999", add=[r("00099999", "Armor", None, sword, 4 | 256)],
+            dec(3, "menu", ctx_a, 4, "00099999", add=[r("00099999", "Armor", None, sword, 4 | 256)],
                 learned=0, skip="stale", ctxAgeMs=900)]
     seg2 = [dec(4, "wheel", ctx_a, 1, "00012EB7", src="Wheeler")]
     return head, seg1, seg2
@@ -269,7 +320,7 @@ class PythonRoundTrip(unittest.TestCase):
             want_rows = want["ctx"]["rows"] + want["add"]
             self.assertEqual(len(got["rows"]), len(want_rows))
             for g, w in zip(got["rows"], want_rows):
-                for k in ("form", "uid", "kind", "src", "cap", "flags", "slot", "util", "x", "wp"):
+                for k in ("form", "uid", "kind", "src", "cap", "flags", "slot", "util", "x", "wp", "fb", "cr"):
                     self.assertEqual(g[k], w[k], k)
             self.assertEqual(got["ctx"]["need"], want["ctx"]["need"])
             self.assertEqual(got["ctx"]["input"], want["ctx"]["input"])
@@ -284,6 +335,31 @@ class PythonRoundTrip(unittest.TestCase):
         text = encode([(head, seg1), (head, seg2)])
         self.check(self.roundtrip(text), seg1, seg2)
         self.check(self.roundtrip(text, ".jsonl.gz"), seg1, seg2)
+
+    def test_old_head_rows_default_the_new_columns(self):
+        # A pre-0.23.46 head: ten row columns, no filters, no covered. The rows
+        # written under it decode with fb/cr None -- also when a later segment
+        # of the same file has the new head.
+        head, seg1, seg2 = make_session()
+        old = dict(head)
+        old["row"] = head["row"][:10]
+        old.pop("filters")
+        old["cross"] = [c for c in head["cross"] if c != "covered"]
+        for d in seg1 + seg2:
+            for r in d["ctx"]["rows"] + d["add"]:
+                r["x"].pop("covered", None)
+        text = encode([(old, seg1), (head, seg2)])
+        for d in seg1:   # what the old segment reads back as
+            for r in d["ctx"]["rows"] + d["add"]:
+                r["fb"], r["cr"] = None, None
+        decs = self.roundtrip(text)
+        self.assertEqual(len(decs[0]["ctx"]["rows"]), 4)
+        for d in decs[:3]:
+            for r in d["rows"]:
+                self.assertEqual((r["fb"], r["cr"]), (None, None))
+                self.assertNotIn("covered", r["x"])
+        self.assertNotIn("filters", decs[0]["head"])
+        self.assertIn("filters", decs[3]["head"])
 
     def test_refuses_malformed(self):
         head, seg1, seg2 = make_session()
