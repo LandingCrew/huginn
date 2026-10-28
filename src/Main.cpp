@@ -1034,10 +1034,12 @@ static void InstallHooks()
 
     // R3: drop_ahead casts its rays from PlayerCharacter::Update, on the
     // main thread (a vtable hook, no trampoline). Inert until a game loads.
+    // The hand model probe (0.23.44) rides the same hook.
     if (State::DropAheadProbe::InstallPlayerUpdateHook()) {
-        logger::info("PlayerCharacter::Update hook installed (drop ahead)"sv);
+        logger::info("PlayerCharacter::Update hook installed (drop ahead, hand model probe)"sv);
     } else {
-        logger::error("Failed to install the PlayerCharacter::Update hook (drop ahead stays unmeasured)"sv);
+        logger::error("Failed to install the PlayerCharacter::Update hook (drop ahead stays unmeasured, "
+                      "the hand model probe inactive)"sv);
     }
 
 #ifdef _DEBUG

@@ -9,14 +9,17 @@
 // object, its partClone, and the parents up to the player's 3D root) and
 // judges it (Core::JudgePart) while the weapon is drawn, in the biped of the
 // current view (the first-person one in first person: the model the player
-// sees). Sheathed is not judged.
+// sees). Sheathed is not judged. When the other hand holds the same form or
+// a variant sharing that model object, a part goes to the hand whose node
+// (WEAPON right, SHIELD left) it hangs under (Core::PartIsHands).
 //
 // Where it runs: from the PlayerCharacter::Update hook DropAheadProbe installs,
 // on the main thread (the scene graph is the main thread's), every frame for
 // the hand contents and every 250 game-ms for the models; timed on the game
 // clock (DropAheadProbe::GameSeconds), which stops while paused. On between
 // kPostLoadGame / kNewGame and kPreLoadGame, and never while a LoadingMenu or
-// the MainMenu is open or the player has no 3D.
+// the MainMenu is open or the player has no 3D; the first frame after such a
+// gap restarts the pending (unreported) fault and stuck timers.
 //
 // Logs, under [HandModel]:
 //   - debug, each change of the weapon in a hand, with what it replaced,
