@@ -119,6 +119,8 @@ namespace Huginn::Core::DecisionLog
     inline constexpr std::uint8_t kNoFilter = 255;  // not dropped by a candidate filter
     inline constexpr float kNone = std::numeric_limits<float>::quiet_NaN();
     inline constexpr std::int8_t kNoHotkey = -1;
+    inline constexpr std::int16_t kExNone = -2;     // no shadow score on the row
+    inline constexpr std::int16_t kExLearned = -1;  // a shadow score with no positive need term
 
     /// One item the player could have chosen.
     struct Row
@@ -145,6 +147,19 @@ namespace Huginn::Core::DecisionLog
         /// 0.23.53, row column "hk": the vanilla favourites hotkey bound to
         /// the item (0-7 = keys 1-8), kNoHotkey when none.
         std::int8_t hotkey = kNoHotkey;
+        /// 0.23.56 (R8.2), row columns "mu", "sd", "lm", "um", "ex": the new
+        /// model in shadow (core/ChoiceScore.h; the old engine still ranks).
+        /// mu and sd the row's score and its sd under the diagonal posterior
+        /// (no kappa); lm the D2 legacy feature ln learn mult (0 off the
+        /// floors) and um util missing (0/1), for a candidate of the run;
+        /// ex the explanation: the (need, column) of the largest
+        /// theta n cap term, kExLearned when none is positive ("learned").
+        float mu = kNone;
+        float sd = kNone;
+        float lm = kNone;
+        std::int8_t um = -1;                 // -1 = none
+        std::int16_t exNeed = kExNone;
+        std::int16_t exCol = -1;
         /// cap(i): the catalog's static entry (immutable, process lifetime) or
         /// a per-instance entry owned by capOwner. nullptr = not in the catalog.
         const Effect::Cap* cap = nullptr;
@@ -284,6 +299,11 @@ namespace Huginn::Core::DecisionLog
         /// new segment, as the curves do. A head without it (before 0.23.55)
         /// centred left(r) at 5 s.
         float refreshPriorSec = 5.0f;
+        /// 0.23.56 (R8.2): the bootstrap file the shadow model was seeded from
+        /// (its created_utc and SHA-256), written as "bootstrap" when the file
+        /// was read; absent when the new model is off or before 0.23.56.
+        std::string bootstrapCreatedUtc;
+        std::string bootstrapSha256;
     };
 
     // --- JSON helpers ---------------------------------------------------------

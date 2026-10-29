@@ -71,6 +71,9 @@ namespace
             h.curves.assign(Needs::kNeedCount, Needs::Curve{ Needs::CurveKind::Step, 0.5f, 0.0f });
             h.curves[N(Needs::NeedId::health_deficit)] = { Needs::CurveKind::Logistic, 0.5f, 10.0f };
             h.curves[N(Needs::NeedId::enemy_count)] = { Needs::CurveKind::Linear, 1.0f, 5.0f };
+            // 0.23.56 (R8.2): the bootstrap the shadow model was seeded from.
+            h.bootstrapCreatedUtc = "2026-10-29 12:29:59";
+            h.bootstrapSha256 = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff";
             return h;
         }
 
@@ -150,6 +153,14 @@ namespace
                 r.old.prior = 0.55f;
                 r.old.ctx = 0.8f;
                 r.old.floor = static_cast<std::uint8_t>(Floor::pass);
+                // 0.23.56 (R8.2): the shadow score; explained by
+                // health_deficit x restore_health; four nulls (wu, hk) between.
+                r.mu = 1.25f;
+                r.sd = 0.4f;
+                r.lm = 0.3125f;
+                r.um = 0;
+                r.exNeed = static_cast<std::int16_t>(N(Needs::NeedId::health_deficit));
+                r.exCol = static_cast<std::int16_t>(C("restore_health"));
                 p->rows.push_back(r);
             }
             {
@@ -205,13 +216,19 @@ namespace
                 r.kind = static_cast<std::uint8_t>(Effect::Kind::Armour);
                 r.flags = Flag::Held | Flag::Equipped;
                 r.cap = &boots;
-                // 0.23.53: held, never gathered: the learner's metrics only
-                // (the row ends after rec).
+                // 0.23.53: held, never gathered: the learner's metrics only.
                 r.old.est = 0.0f;
                 r.old.alpha = 0.0f;
                 r.old.trains = 0.0f;
                 r.old.ucb = 1.0f;
                 r.old.rec = 0.0f;
+                // 0.23.56 (R8.2): scored by the shadow model at the context
+                // (ln learn mult 0, util missing 1), no positive need term.
+                r.mu = -0.5f;
+                r.sd = 0.35f;
+                r.lm = 0.0f;
+                r.um = 1;
+                r.exNeed = kExLearned;
                 p->rows.push_back(r);
             }
             {
@@ -522,7 +539,28 @@ TEST_CASE("decision log: the old engine's columns end at the last one set (0.23.
     CHECK(encodeRow(r) == R"(["00000012",0,null,null,-1,4,-1,null,[],null,null,null,0,0,0,1,0,null,null,null,null,0])");
     // The head names the columns and the floors.
     const std::string head = Encoder().BeginSegment(Synthetic::MakeHead());
-    CHECK(head.find(R"("fb","cr","est","a","n","ucb","rec","prior","cw","fl","wu","hk"])") != std::string::npos);
+    CHECK(head.find(R"("fb","cr","est","a","n","ucb","rec","prior","cw","fl","wu","hk","mu","sd","lm","um","ex"])") != std::string::npos);
+    // 0.23.56 (R8.2): the bootstrap the shadow model was seeded from
+    CHECK(head.find(R"(,"bootstrap":{"created_utc":"2026-10-29 12:29:59","sha256":"0011)") != std::string::npos);
+    {
+        Head none = Synthetic::MakeHead();
+        none.bootstrapSha256.clear();
+        CHECK(Encoder().BeginSegment(none).find("bootstrap") == std::string::npos);
+    }
+    // 0.23.56: the shadow columns end at the last one set, and the hotkey
+    // column reads null (not -1) when a later column is written.
+    r.hotkey = kNoHotkey;
+    r.mu = 0.5f;
+    CHECK(encodeRow(r) == R"(["00000012",0,null,null,-1,4,-1,null,[],null,null,null,0,0,0,1,0,null,null,null,null,null,0.5])");
+    r.um = 1;
+    r.exNeed = kExLearned;
+    CHECK(encodeRow(r) == R"(["00000012",0,null,null,-1,4,-1,null,[],null,null,null,0,0,0,1,0,null,null,null,null,null,0.5,null,null,1,"learned"])");
+    r.exNeed = 3;
+    r.exCol = 26;
+    CHECK(encodeRow(r).ends_with(R"(1,[3,26]])"));
+    r.mu = kNone;
+    r.um = -1;
+    r.exNeed = kExNone;
     CHECK(head.find(R"("addedAtPick":256,"favorite":512})") != std::string::npos);
     CHECK(head.find(R"("floors":["pass","cold","ctx","util","suppressed"])") != std::string::npos);
     // 0.23.55: covered(i)'s left(r) centre, [Scoring] fRefreshPriorSec.

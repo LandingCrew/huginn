@@ -414,3 +414,24 @@ So for the `three` group:
 
 The `picks` group reads no `nothing` record; there only `loadout_two_handed` is
 affected, and the same split applies.
+
+## R8.2: replay equivalence (`export_scores.py`, 0.23.56)
+
+`export_scores.py` writes fitlib's per-row logits under a bootstrap file
+(fitlib.Model.scores with p built from the document: theta by name, the pairs it
+lacks at the effects.csv prior, the recent rows appended as needs, b per form
+through the form map, kappa, the spec's feature weights; the curve needs re-read
+through the file's curves; theta_covered 0). The C++ core reproduces them
+(`tests/core/ChoiceReplayTests.cpp`).
+
+```sh
+python export_scores.py --synthetic --write-fixture      # the checked-in fixture (tests/core/fixtures/choice/)
+python export_scores.py --until 0.23.44                  # after v3load.py --char <id>: the real log, to the work dir
+HUGINN_REPLAY_FIXTURE=<work>/replay_scores.jsonl HUGINN_REPLAY_OUT=<work>/replay_cpp.jsonl \
+    <build>/tests/Release/huginn_core_tests.exe -tc="choice?replay*"
+python export_scores.py --compare <work>/replay_cpp.jsonl <work>/replay_scores.jsonl
+```
+
+`test_fit.py` (ReplayEquivalence) fails when the checked-in fixture is not what
+`--synthetic` writes now: a change to fitlib's model, the synthetic log or the
+shipped bootstrap regenerates it with `--write-fixture`.

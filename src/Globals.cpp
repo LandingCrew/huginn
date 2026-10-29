@@ -32,6 +32,7 @@ std::unique_ptr<Huginn::Learning::FeatureBanditLearner> g_featureBanditLearner;
 
 // Usage memory (v0.13.x) - Short-term situational recall for recency boosting
 std::unique_ptr<Huginn::Learning::UsageMemory> g_usageMemory;
+std::unique_ptr<Huginn::Learning::ChoiceLearner> g_choiceLearner;
 
 // Utility scoring system (v0.9.0) - Unified scorer for all candidate types
 std::unique_ptr<Huginn::Scoring::UtilityScorer> g_utilityScorer;
@@ -103,6 +104,10 @@ namespace Huginn {
 void ResetPipelineSubsystems() {
     if (g_utilityScorer) g_utilityScorer->Reset();
     if (g_usageMemory) g_usageMemory->Clear();
+    // R8.2: the new learner (shadow) back to the bootstrap: no cosave yet, so
+    // a load and `hg reset all` both start it from the file. b follows
+    // [Learning] sBootstrapBias against the character the load resolved.
+    if (g_choiceLearner) g_choiceLearner->ResetToBootstrap(g_activeCharacterID.load(std::memory_order_relaxed));
 
     Override::OverrideManager::GetSingleton().Reset();
     Candidate::CandidateGenerator::GetSingleton().Reset();

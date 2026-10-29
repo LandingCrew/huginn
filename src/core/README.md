@@ -162,3 +162,44 @@ the need vector reads it as `loadout_quarterstaff` instead of
 `loadout_two_handed`. The game side
 (`learning/SelectionLogV3*`) builds the records and writes the lines on a
 background thread. Schema: docs/architecture/9-selection-log-v3.md.
+
+The new model, in shadow (R8.2, 0.23.56; the old engine still ranks):
+
+- `MiniJson.*`: a strict JSON reader in MiniRegex's pattern (vcpkg.json has
+  no JSON library and this folder is standard library only). Numbers parse with
+  `std::from_chars` (correctly rounded: the same double Python's `float()`
+  reads); strings, arrays and objects keep their contents behind one pointer,
+  so the bootstrap's ~70k numbers own no container (0.7 s to 0.12 s in a
+  Debug build).
+- `Bootstrap.*`: the reader of the R8 bootstrap file, format version 1
+  (docs/architecture/9-bootstrap-format.md): reader rules 1-10 exactly as
+  `tools/fit/bootstrap.validate` checks them; names mapped to the build (an
+  unknown name skipped, a missing pair at its effects.csv prior from
+  `ObviousPairs.h`, the same for recent rows, u0 and curves); items resolved
+  through the caller's resolver with the kind and name cross-check;
+  `[Learning] sBootstrapBias` (`UseFileBias`); the stable keys the learner's
+  entries carry (`StableKey`: a hash of names, never a position).
+- `ObviousPairs.h`: GENERATED (`tools/effects/make_obvious_pairs.py`) from
+  effects.csv's `obvious_needs`, with fitlib's signs.
+- `ChoiceScore.h`: the score -- v = theta^T n once per tick, mu_i over a(i)
+  (graded, presence, presence+strength), b, the features, theta_covered,
+  kappa off the page, sigma_i^2 under the diagonal approximation, the
+  explanation (the largest theta n cap term), doc 11's greedy upgrade gate,
+  and the live recent_<family> tracker.
+- `ChoiceUpdate.h`: the update in fitlib.Model.info's form (precision +=
+  n_k^2 Var_p, step = variance), fitlib.build's choice set with Plackett-Luce
+  removal, the per-item b moves, the b battery, the onset counter.
+- `Battery.h`: the useful-life curve, moved here from FeatureBanditLearner
+  (which calls it with the same arithmetic) and shared with b.
+- `Sha256.h`: the bootstrap's digest for the v3 head.
+
+Their tests: `MiniJsonTests.cpp`, `BootstrapTests.cpp` (the golden fixtures, a
+negative case per reader rule, the prior fill), `ChoiceModelTests.cpp` (the
+score per grading, kappa, the explanation, recent and its exclusions, covered
+and the gate, the update, Plackett-Luce, onsets, the battery, the bias modes),
+`ChoiceReplayTests.cpp` (fitlib's per-row logits under the shipped bootstrap
+to 1e-5, from `tools/fit/export_scores.py`'s fixture; the real log through
+`HUGINN_REPLAY_FIXTURE`), `ChoiceCostTests.cpp` (the parse and one 500-row
+pass, reported), and `LegacyFloorPassTests.cpp` (the old floor loop moved to
+`learning/legacy/LegacyLearnFeature.h` builds R8.1's list bit for bit; that
+header is not core, but it is a template over plain types and compiles here).

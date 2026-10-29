@@ -36,7 +36,8 @@ namespace Huginn::Scoring
         const State::WorldState& world,  // Stage 1f: Added WorldState
         float combatOnsetAgo,
         const WildcardPage& displayPage,
-        Context::ContextWeightMap* outWeights)
+        Context::ContextWeightMap* outWeights,
+        std::vector<Legacy::Row>* outLegacy)
     {
         SCOPED_TIMER("UtilityScorer::ScoreCandidates");
 
@@ -90,42 +91,49 @@ namespace Huginn::Scoring
         auto qReader = m_featureLearner.AcquireReader();
         auto usageReader = m_usageMemory.AcquireReader(state);
 
-        // Score all candidates
-        float maxUtilitySeen = 0.0f;
-        for (const auto& candidate : candidates) {
-            Huginn_ZONE_NAMED("Score::Candidate");
-            // Early filter: Skip candidates with very low context weight
-            // Stage 1f: Use GetContextWeight instead of Candidate::GetRelevance
-            // Favorites always pass — they represent explicit player intent and must
-            // remain observable by the learner even when context weight is low.
-            //
-            // R8.1 (0.23.55): no Suppress skip here any more. A favourite under
-            // Suppress never reaches the scorer: the favorite_suppressed filter
-            // drops it (CandidateFilters, Core::Gate::FavoriteSuppressed).
-            const bool favorited = IsCandidateFavorited(candidate);
-            float contextWeight = Context::WeightForCandidate(candidate, weights);
-            if (contextWeight < m_config.minimumContextWeight && !favorited) {
-                continue;
+        // The floor loop and the cold-start rescue live in the legacy learn
+        // feature module since R8.2 (learning/legacy/LegacyLearnFeature.h):
+        // moved unchanged in arithmetic, called with this scorer's own
+        // ScoreCandidateInternal, so the list is built exactly as before. The
+        // per-candidate floors it reports are the D2 feature's input (the new
+        // model in shadow reads them off this same pass).
+        struct Hooks
+        {
+            UtilityScorer& self;
+            const State::GameState& state;
+            const State::PlayerActorState& player;
+            const State::TargetCollection& targets;
+            const State::WorldState& world;
+            float combatOnsetAgo;
+            const Context::ContextWeightMap& weights;
+            const std::array<float, Learning::StateFeatures::NUM_FEATURES>& phi;
+            Learning::FeatureBanditLearner::LockedReader& qReader;
+            Learning::UsageMemory::SnapshotReader& usageReader;
+
+            bool Favorited(const Candidate::CandidateVariant& c) const { return self.IsCandidateFavorited(c); }
+            float ContextWeight(const Candidate::CandidateVariant& c) const { return Context::WeightForCandidate(c, weights); }
+            RE::FormID FormID(const Candidate::CandidateVariant& c) const { return Candidate::GetFormID(c); }
+            Learning::FeatureItemMetrics LearnerMetrics(RE::FormID id) const { return qReader.GetMetrics(id, phi); }
+            float Recency(RE::FormID id) const { return usageReader.GetRecencyBoost(id); }
+            ScoredCandidate Score(const Candidate::CandidateVariant& c, float contextWeight,
+                const Learning::FeatureItemMetrics& metrics, float recencyBoost) const
+            {
+                return self.ScoreCandidateInternal(c, state, player, targets, world, combatOnsetAgo, weights,
+                    contextWeight, metrics, recencyBoost);
             }
-
-            RE::FormID formID = Candidate::GetFormID(candidate);
-            const auto metrics = [&] {
-                Huginn_ZONE_NAMED("Score::LearnerMetrics");
-                return qReader.GetMetrics(formID, phi);
-            }();
-            float recencyBoost = usageReader.GetRecencyBoost(formID);
-
-            ScoredCandidate result = ScoreCandidateInternal(
-                candidate, state, player, targets, world, combatOnsetAgo, weights,
-                contextWeight, metrics, recencyBoost);
-
-            maxUtilitySeen = std::max(maxUtilitySeen, result.utility);
-
-            // Post-filter: Skip candidates with very low utility
-            if (result.utility >= m_config.minimumUtility) {
-                scored.push_back(std::move(result));
-            }
-        }
+            float Utility(const ScoreBreakdown& b) const { return self.ComputeUtility(b); }
+            bool HardGated(const Candidate::CandidateVariant& c) const { return Context::IsHardContextGated(c); }
+            float Ucb(const Learning::FeatureItemMetrics& m) const { return m.ucb; }
+        };
+        Hooks hooks{ *this, state, player, targets, world, combatOnsetAgo, weights, phi, qReader, usageReader };
+        const Legacy::FloorParams floorParams{
+            .minimumContextWeight = m_config.minimumContextWeight,
+            .minimumUtility = m_config.minimumUtility,
+            .topNCandidates = m_config.topNCandidates,
+            .coldStartUCBBoost = m_config.coldStartUCBBoost,
+        };
+        const auto pass = Legacy::FloorPass(candidates, floorParams, hooks, scored, outLegacy);
+        const float maxUtilitySeen = pass.maxUtilitySeen;
 
         // Diagnostic: Rate-limited warning when 0 candidates pass the filter
         // NOTE: Single-threaded (ScoreCandidates called from update thread only)
@@ -141,85 +149,15 @@ namespace Huginn::Scoring
             }
         }
 
-        // Cold-start fallback: if too few candidates passed to fill slots, boost context
-        // via UCB so untried items can surface. Triggers when scored < topNCandidates (10),
-        // which covers both "Top 0" (empty weight table) and "Top 1" (only 1 item has real
-        // context weight, e.g. a favorited weapon). The fallback self-heals as UCB decays.
-        if (scored.size() < m_config.topNCandidates && m_config.coldStartUCBBoost > 0.0f) {
-            Huginn_ZONE_NAMED("Score::ColdStart");
-            // Dedup against already-scored candidates by linear scan — this branch
-            // only runs when scored.size() < topNCandidates (<10), so a scan beats
-            // allocating a hash set every cold-start tick.
-            const auto alreadyScored = [&scored](RE::FormID id) {
-                for (const auto& s : scored) {
-                    if (s.GetFormID() == id) return true;
-                }
-                return false;
-            };
-
-            size_t coldStartCount = 0;
-            for (const auto& candidate : candidates) {
-                RE::FormID formID = Candidate::GetFormID(candidate);
-                if (alreadyScored(formID)) continue;
-
-                // R8.1 (0.23.55): no Suppress skip here either: a suppressed
-                // favourite is a filter drop (favorite_suppressed) and never a
-                // candidate, so it cannot come back as a cold-start pick.
-
-                float contextWeight = Context::WeightForCandidate(candidate, weights);
-
-                // A closed hard gate is not a cold start. For a source with no
-                // baseline (apparel) a sub-minimum context weight means the
-                // context FORBIDS the candidate, not that nobody has tried it —
-                // and an untried piece has a high UCB by construction, so the
-                // floor below would clear minimumContextWeight and put a fortify
-                // ring in a dungeon slot. Above the minimum the gate is open and
-                // the boost applies as it does everywhere else.
-                if (Context::IsHardContextGated(candidate) &&
-                    contextWeight < m_config.minimumContextWeight) {
-                    continue;
-                }
-
-                // UCB-driven context floor for untried/low-visit items (Phase 3.5c: FeatureBanditLearner)
-                // Uses locked reader — no per-candidate lock acquisition
-                auto metrics = qReader.GetMetrics(formID, phi);
-                float boostedContext = std::max(contextWeight,
-                    m_config.coldStartUCBBoost * metrics.ucb);
-
-                if (boostedContext < m_config.minimumContextWeight) continue;
-
-                float recencyBoost = usageReader.GetRecencyBoost(formID);
-
-                // Score candidate normally, then recompute utility with boosted context
-                ScoredCandidate result = ScoreCandidateInternal(
-                    candidate, state, player, targets, world, combatOnsetAgo, weights,
-                    contextWeight, metrics, recencyBoost);
-
-                // Override context weight and recompute utility with the boosted
-                // value via the shared formula helper (reads contextWeight from
-                // the breakdown, so the assignment above must come first).
-                result.breakdown.contextWeight = boostedContext;
-                result.utility = ComputeUtility(result.breakdown);
-
-                if (result.utility >= m_config.minimumUtility) {
-                    result.isColdStartBoosted = true;
-                    scored.push_back(std::move(result));
-                    ++coldStartCount;
-                }
-
-                if (scored.size() >= m_config.topNCandidates) break;
-            }
-
-            if (coldStartCount > 0) {
-                // Rate-limited: same cadence as the "0 candidates" diagnostic above
-                // NOTE: Single-threaded (ScoreCandidates called from update thread only)
-                static auto s_lastColdStartLog = std::chrono::steady_clock::time_point{};
-                auto now = std::chrono::steady_clock::now();
-                if (std::chrono::duration_cast<std::chrono::seconds>(now - s_lastColdStartLog).count() >= 5) {
-                    logger::warn("[UtilityScorer] Cold start: {} candidates boosted via UCB context floor ({:.2f})",
-                        coldStartCount, m_config.coldStartUCBBoost);
-                    s_lastColdStartLog = now;
-                }
+        if (pass.coldStartCount > 0) {
+            // Rate-limited: same cadence as the "0 candidates" diagnostic above
+            // NOTE: Single-threaded (ScoreCandidates called from update thread only)
+            static auto s_lastColdStartLog = std::chrono::steady_clock::time_point{};
+            auto now = std::chrono::steady_clock::now();
+            if (std::chrono::duration_cast<std::chrono::seconds>(now - s_lastColdStartLog).count() >= 5) {
+                logger::warn("[UtilityScorer] Cold start: {} candidates boosted via UCB context floor ({:.2f})",
+                    pass.coldStartCount, m_config.coldStartUCBBoost);
+                s_lastColdStartLog = now;
             }
         }
 

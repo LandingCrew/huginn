@@ -110,18 +110,8 @@ namespace Huginn::Learning
 
    float FeatureBanditLearner::RetentionAt(const ItemLearningData& data, double now) const noexcept
    {
-      if (!m_life.enabled) {
-         return 1.0f;
-      }
-      // Hours, in double: the clock runs for days.
-      const double idle = std::max(0.0, now - data.chosenAt) / 3600.0;
-      const double life = m_life.lifeHours + m_life.lifePerPickHours * std::log1p(std::max(0.0f, data.trainCount));
-      const double s = m_life.fadeHours;
-      const double x = (idle - life) / s;
-      if (x > 60.0) {
-         return 0.0f;
-      }
-      return static_cast<float>(std::min(1.0, (1.0 + std::exp(-life / s)) / (1.0 + std::exp(x))));
+      // core/Battery.h (R8.2): the same expression, shared with ChoiceLearner's b.
+      return Core::Battery::RetentionAt(m_life, now, data.chosenAt, data.trainCount);
    }
 
    size_t FeatureBanditLearner::MaybeForgetFaded()

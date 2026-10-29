@@ -28,6 +28,7 @@
 // until that column is split (roadmap "Needs and effects to add").
 
 #include "DumpCsv.h"
+#include "core/ObviousPairs.h"
 
 #include <doctest/doctest.h>
 
@@ -38,6 +39,7 @@
 #include <ostream>
 #include <set>
 #include <string>
+#include <tuple>
 #include <vector>
 
 namespace
@@ -209,4 +211,31 @@ TEST_CASE("obvious pairs: deep water ahead is answered by Waterbreathing")
     CHECK(ColumnsFor(effects, "deep_water_ahead") == std::set<std::string>{ "utility_water_breathing" });
     CHECK(ColumnsFor(effects, "underwater").contains("utility_water_breathing"));
     CHECK(ContainsNoCase(needs.at("deep_water_ahead").at("obvious_effects"), "waterbreathing"));
+}
+
+TEST_CASE("obvious pairs: core/ObviousPairs.h is effects.csv's obvious_needs, with fitlib's signs (R8.2)")
+{
+    // The bootstrap reader's prior fill reads the generated header
+    // (tools/effects/make_obvious_pairs.py); the fit reads the csv
+    // (fitlib.obvious_pairs). The two must name the same pairs and signs.
+    using namespace Huginn::Core;
+    const auto effects = ReadTable("effects.csv");
+    std::set<std::tuple<std::string, std::string, int>> csv;
+    for (const auto& [id, row] : effects) {
+        for (const auto& need : SplitIds(row.at("obvious_needs"))) {
+            int sign = (need == "combat_regen_ok" && id == "kind_food") ? -1 : 1;
+            if (id.rfind("overshoot_", 0) == 0) sign = 0;
+            csv.emplace(id, need, sign);
+        }
+    }
+    std::set<std::tuple<std::string, std::string, int>> header;
+    for (const auto& p : Obvious::kPairs) {
+        header.emplace(std::string(Effect::kColumns[static_cast<std::size_t>(p.col)].id),
+                       std::string(Needs::kNeeds[static_cast<std::size_t>(p.need)].id), static_cast<int>(p.sign));
+    }
+    CHECK(header.size() == Obvious::kPairCount);   // no pair twice
+    CHECK(header == csv);
+    CHECK(Obvious::PriorOf(Needs::NeedId::combat_regen_ok, Effect::Col::kind_food).sign == -1);
+    CHECK(Obvious::PriorOf(Needs::NeedId::health_deficit, Effect::Col::overshoot_health).isObvious);
+    CHECK_FALSE(Obvious::PriorOf(Needs::NeedId::health_deficit, Effect::Col::damage).isObvious);
 }

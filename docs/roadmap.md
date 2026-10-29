@@ -967,6 +967,33 @@ changed in the same PR, and the shipped INI loses the dead keys.
         inside the window restarts both clocks alike.
       - The v3 head records `refreshPriorSec` (`covered(i)`'s `left(r)`
         centre); a hot reload that changes it starts a new segment.
+- [x] **Steps 3-4 of the order above, built in 0.23.56 (R8.2, the second PR on
+      `rewrite-r8`): the bootstrap reader, `ChoiceLearner` and the choice scorer,
+      in shadow** (the old engine still ranks; the new model is computed and
+      logged). The map's Phase 6, as built, says what each piece is
+      ([9-implementation-map.md](architecture/9-implementation-map.md), "As
+      built (R8.2)"). **The D2 deviation:** R6 chose `theta + b + recent + learn
+      mult (D2)`, so R8 keeps the minimum old-scorer code that computes its
+      `ln learn mult` feature exactly (the old learner, prior, recency, the
+      context weights as a binary gate, the floors and the cold start), moved
+      into `src/learning/legacy/LegacyLearnFeature` unchanged in arithmetic,
+      behind `[Scoring] bLegacyLearnFeature = true` (read and logged here; PR 3
+      makes it the live input; PR 4 keeps it out of the prune). Retiring it
+      needs a refit on 0.23.53+ logs where a variant without the old scorer
+      passes the gate.
+      - Done-when items met here: the explanation label is the largest term
+        (host test); the update's Var_p precision, step = variance,
+        Plackett-Luce and opportunity counting (host tests); the scorer
+        reproduces R6's per-row logits on the logged data (1,865 decisions,
+        largest difference 6e-11, identical hit@8 / page hit@1 / NLL).
+      - New INI keys: `[Scoring] bLegacyLearnFeature`, `fCoveredPrior`;
+        `[Learning] sBootstrapBias` (default `match`, R6 open point 4, the
+        user's), `fThetaProcessNoise`; `[Favorites] fFavoriteLifeMult`.
+      - Not in this PR: the cosave (THTA/BIAS next to BNDW), the ranking by the
+        new score, the prune.
+      - **In game (you):** the shadow columns appear in the v3 log; the pages
+        match 0.23.55's (the old engine still ranks); the bootstrap line in
+        the log; `Pipeline::ScoreShadow` in a Tracy trace under 1 ms.
 - [ ] With those sensors, doc 11 step 7: the attacker's race on every hit and
       `poison_damage_rate`, for anticipatory resists.
 - [ ] **Decide: which thread runs the update loop** (2026-10-09, two Tracy

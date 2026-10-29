@@ -1,0 +1,207 @@
+#pragma once
+
+// =============================================================================
+// CHOICE LEARNER (R8.2) -- doc 9's learner, seeded from the R6 bootstrap; SHADOW
+// =============================================================================
+// The new model (core/ChoiceScore.h) and its online update
+// (core/ChoiceUpdate.h), held for the plugin: the bootstrap file
+// (Data/SKSE/Plugins/Huginn_Bootstrap.json, core/Bootstrap.h), the per-item b
+// with its battery on the play clock, recent_<family>'s pick timeline, the
+// Plackett-Luce memory of which items each context already gave up, and the
+// opportunity counter.
+//
+// SHADOW in R8.2: the old engine still ranks. PipelineCoordinator scores every
+// held or eligible row with a snapshot of this learner and logs mu, sd and the
+// explanation in the v3 rows; picks update it. Nothing it computes reaches a
+// slot. No cosave yet: every load (and `hg reset`) resets it to the bootstrap.
+//
+// State.
+//   theta, strength, the recent rows and theta_covered: one {mu, sigma^2}
+//   entry per weight, each with a stable key (core/Bootstrap.h StableKey: a
+//   hash of the need and column NAMES, the recent family and tau, "covered"),
+//   never a position (the lesson of StateFeatures.h:63-67, where a positional
+//   cosave key broke once). The entries sit in a dense array in the build's
+//   index order for the scorer's speed; ExportEntries / ImportEntries (the
+//   cosave of PR 3) go by key only.
+//   b per item: {mu, sigma^2, n, play seconds at the last pick}, prior N(0, 0.25),
+//   seeded from the file's items under [Learning] sBootstrapBias.
+//   kappa and the feature weights: the file's, fixed (format v1 gives them no
+//   precision, so there is no belief to update).
+//
+// Threading: a shared_mutex. The update thread writes (OnPick, the onset
+// counter, the battery sweep); a scoring pass takes one copy-out Snapshot
+// (shared_ptr to an immutable copy, rebuilt only after a write).
+// =============================================================================
+
+#include "core/Bootstrap.h"
+#include "core/Battery.h"
+#include "core/ChoiceScore.h"
+#include "core/ChoiceUpdate.h"
+#include "core/DecisionLog.h"
+#include "core/NeedEvaluator.h"
+
+#include <SimpleIni.h>
+
+#include <atomic>
+#include <cstdint>
+#include <deque>
+#include <filesystem>
+#include <memory>
+#include <optional>
+#include <set>
+#include <shared_mutex>
+#include <string>
+#include <unordered_map>
+#include <utility>
+#include <vector>
+
+namespace Huginn::Learning
+{
+    /// The INI keys the new model reads (R8.2).
+    struct ChoiceSettings
+    {
+        Core::Bootstrap::BiasMode biasMode = Core::Bootstrap::BiasMode::Match;   // [Learning] sBootstrapBias
+        double thetaProcessNoise = 1.0e-4;   // [Learning] fThetaProcessNoise (per onset, variance units)
+        double coveredPrior = -1.0;          // [Scoring] fCoveredPrior (precision 1)
+        double favoriteLifeMult = 2.0;       // [Favorites] fFavoriteLifeMult (Boost mode)
+        bool legacyLearnFeature = true;      // [Scoring] bLegacyLearnFeature (R8.2: logged only)
+
+        static ChoiceSettings FromIni(const CSimpleIniA& ini);
+    };
+
+    class ChoiceLearner
+    {
+    public:
+        static constexpr const char* kFileName = "Huginn_Bootstrap.json";
+
+        /// One immutable copy for a scoring pass.
+        struct Snapshot
+        {
+            Core::Choice::Model model;
+            std::unordered_map<std::uint32_t, Core::Choice::BBelief> b;
+            std::vector<Core::Bootstrap::BuildCurve> curves;
+            Core::Battery::MemoryLife life;
+            double favoriteLifeMult = 2.0;
+            bool favoritesBoost = true;
+            std::uint64_t version = 0;
+
+            /// The need vector the model reads: the live curve outputs, with each
+            /// need the file carries a curve for re-read through that curve from
+            /// its logged input (format doc, curves; curve.with_curve).
+            [[nodiscard]] std::array<double, Core::Choice::K> Needs(const Core::Needs::NeedArray& value,
+                                                                    const Core::Needs::NeedArray& input) const;
+            /// b as the score reads it now (the battery applied).
+            [[nodiscard]] Core::Choice::BRead B(std::uint32_t form, bool favorite, double playNow) const;
+        };
+
+        struct Stats
+        {
+            bool ready = false;
+            std::size_t picksLearned = 0;
+            std::size_t picksSkipped = 0;     // repeats, unusable picks
+            std::size_t onsets = 0;           // need onsets seen
+            std::size_t onsetsCounted = 0;    // ... with an answering item on the page (variance grown)
+            std::size_t bEntries = 0;
+            std::size_t forgotten = 0;
+            double lastLogp = 0.0;
+        };
+
+        ChoiceLearner() = default;
+
+        /// Read, check and map the bootstrap file (once, at kDataLoaded or the
+        /// first game load). A missing or invalid file logs ONE error and leaves
+        /// the new model off (Ready() false). Logs the parse time.
+        bool LoadBootstrap(const std::filesystem::path& path);
+        [[nodiscard]] bool Ready() const noexcept { return m_ready.load(std::memory_order_acquire); }
+
+        void SetSettings(const ChoiceSettings& s);
+        [[nodiscard]] ChoiceSettings GetSettings() const;
+        void SetMemoryLife(const Core::Battery::MemoryLife& life);
+        void SetFavoritesBoost(bool boost);
+
+        /// Back to the bootstrap: theta etc. from the file, b from the file's
+        /// items when sBootstrapBias allows it for `characterID` (the save's
+        /// HCID), the timeline, the Plackett-Luce memory and the onset counter
+        /// cleared. Every load and `hg reset` (no cosave in R8.2).
+        void ResetToBootstrap(std::uint64_t characterID);
+
+        [[nodiscard]] std::shared_ptr<const Snapshot> GetSnapshot();
+
+        /// recent_<family> at steady time `t` in load generation `gen`.
+        [[nodiscard]] std::vector<double> RecentValues(const Snapshot& s, double t, std::uint32_t gen) const;
+
+        /// One confirmed pick, as the selection log v3 recorded it (the same
+        /// context and rows, so the choice set is fitlib's). `pickTime` is the
+        /// decision moment on the steady clock.
+        void OnPick(const Core::DecisionLog::Decision& d, double pickTime);
+
+        /// The opportunity counter: the shadow need vector of a pipeline run
+        /// and the attributes of what the page shows.
+        void OnPipelineRun(const std::array<double, Core::Choice::K>& n, const std::vector<Core::Choice::Attr>& page);
+
+        void AdvancePlayTime(float seconds) noexcept;
+        [[nodiscard]] double GetPlaySeconds() const noexcept { return m_playSeconds.load(std::memory_order_relaxed); }
+        /// At most once a minute of play: delete the b entries past their life.
+        std::size_t MaybeForgetFaded();
+
+        // ---- what PR 3 reads ------------------------------------------------
+        struct Entry
+        {
+            std::uint64_t key = 0;
+            double mu = 0.0;
+            double var = 0.0;
+        };
+        struct BEntry
+        {
+            std::uint32_t form = 0;
+            double mu = 0.0;
+            double var = 0.0;
+            float n = 0.0f;
+            std::uint32_t minutesSinceChosen = 0;
+        };
+        [[nodiscard]] std::vector<Entry> ExportEntries() const;
+        /// Applies every entry whose key the build knows; returns how many.
+        std::size_t ImportEntries(const std::vector<Entry>& entries);
+        [[nodiscard]] std::vector<BEntry> ExportB() const;
+        void ImportB(const std::vector<BEntry>& entries);
+
+        [[nodiscard]] Stats GetStats() const;
+        /// The file's created_utc and SHA-256 (the v3 head's "bootstrap").
+        [[nodiscard]] std::pair<std::string, std::string> FileIdentity() const;
+        [[nodiscard]] std::vector<Core::Bootstrap::BuildCurve> Curves() const;
+
+    private:
+        void BuildKeys();
+        void Touch() noexcept { ++m_version; }
+
+        mutable std::shared_mutex m_mutex;
+        std::atomic<bool> m_ready{ false };
+        ChoiceSettings m_settings;
+        Core::Battery::MemoryLife m_life;
+        bool m_favoritesBoost = true;
+
+        // the file, mapped once
+        std::optional<Core::Bootstrap::Document> m_doc;
+        Core::Choice::Model m_bootModel;
+        std::vector<Core::Bootstrap::BuildCurve> m_curves;
+        std::vector<Core::Bootstrap::ResolvedItem> m_bootItems;
+        bool m_itemsResolved = false;
+        std::string m_createdUtc, m_sha256;
+
+        // the learner
+        Core::Choice::Model m_model;
+        std::unordered_map<std::uint32_t, Core::Choice::BBelief> m_b;
+        std::vector<std::uint64_t> m_keys;                       // per slot (theta, strength, recent, covered)
+        std::unordered_map<std::uint64_t, std::size_t> m_slotOf;  // key -> slot
+        Core::Choice::RecentTracker m_recent;
+        Core::Choice::OnsetCounter m_onsetCounter;
+        std::deque<std::pair<std::uint64_t, std::set<std::uint64_t>>> m_taken;   // context id -> stacks taken
+        std::uint64_t m_nextPickId = 1;
+        Stats m_stats;
+
+        std::uint64_t m_version = 1;
+        std::shared_ptr<const Snapshot> m_snapshot;
+        std::atomic<double> m_playSeconds{ 0.0 };
+        std::atomic<double> m_lastForgetSweep{ 0.0 };
+    };
+}

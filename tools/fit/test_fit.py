@@ -275,8 +275,8 @@ class OldEngineColumns(TempWork):
         self.assertIsNone(rows[2][common.OLD])        # a row with none of the columns
         self.assertEqual(rows[3][common.FB], 'cooldown')   # the earlier columns unchanged
         self.assertTrue(all(r[common.OLD] is None for r in old['rows']))
-        self.assertEqual(len(rows[0]), 13)
-        self.assertEqual(len(old['rows'][0]), 13)
+        self.assertEqual(len(rows[0]), 14)          # 0.23.56: SHADOW appended
+        self.assertEqual(len(old['rows'][0]), 14)
         self.assertEqual(new['old']['topN'], 10)       # kept as written
         self.assertIsNone(old['old'])
         rids = {(d['launch'], d['out']): d['rid'] for d in D['decs']}
@@ -306,6 +306,81 @@ class OldEngineColumns(TempWork):
         self.assertEqual(new[0]['ctx']['rows'][1]['hk'], 0)
         self.assertEqual(new[0]['rid'], 7)
         self.assertTrue(all(r['est'] is None and r['hk'] is None for d in old for r in d['rows']))
+
+
+class ShadowColumns(TempWork):
+    """0.23.56 (R8.2): the new model in shadow (row columns mu, sd, lm, um, ex; the head's
+    bootstrap). v3load keeps them as the row tuple's SHADOW element (None on older rows), ex as
+    (need id, column id) by the loader's global names or "learned"; the fit reads none of it."""
+
+    def text(self):
+        def older(r):                # a 0.23.55 writer: no shadow columns, no bootstrap
+            if r['t'] == 'head':
+                r['row'] = r['row'][:22]
+                r.pop('bootstrap', None)
+            elif r['t'] == 'ctx':
+                r['rows'] = [row[:22] for row in r['rows']]
+            elif r['t'] == 'dec':
+                r['add'] = [row[:22] for row in r['add']]
+        old = edit_lines(session('20261028-100000', CHAR_A, '0.23.55 (abc1234)', minute=1), older)
+        new = session('20261029-100000', CHAR_A, '0.23.56 (abc1234)', minute=2)
+        return old + new
+
+    def test_v3load(self):
+        D = v3load.load([self.write('v3.jsonl', self.text())])
+        new = D['ctxs'][('20261029-100000', 10)]['rows']
+        old = D['ctxs'][('20261028-100000', 10)]['rows']
+        sh = new[0][common.SHADOW]
+        self.assertEqual(sh[:4], (0.875, 0.25, 0.125, 0))
+        k, j = sh[common.S_EX]
+        self.assertEqual((D['needs'][k], D['cols'][j]), ('magicka_deficit', 'restore_magicka'))
+        self.assertEqual(new[2][common.SHADOW][common.S_EX], 'learned')
+        self.assertIsNone(new[1][common.SHADOW])
+        self.assertTrue(all(r[common.SHADOW] is None for r in old))
+        self.assertEqual(D['heads'][-1]['bootstrap']['created_utc'], '2026-10-29 12:29:59')
+        self.assertNotIn('bootstrap', D['heads'][0])
+
+    def test_build_ignores_them(self):
+        self.quiet(v3load.main, [str(self.write('v3.jsonl', self.text()))])
+        S = fitlib.build(common.load(), include_nothing=True)
+        new = np.array([m['launch'] == '20261029-100000' for m in S['meta']])
+        for key in ('N', 'Y', 'CAPID', 'INHA', 'UTIL'):
+            a, b = S[key][new], S[key][~new]
+            self.assertTrue(np.array_equal(a, b, equal_nan=a.dtype.kind == 'f'), key)
+
+
+class ReplayEquivalence(unittest.TestCase):
+    """R8.2: export_scores.py writes the fixture the C++ replay test reads (fitlib's logits under
+    the shipped bootstrap). The checked-in fixture is what --synthetic --write-fixture writes now:
+    a change to fitlib's model, the synthetic log or the bootstrap must regenerate it."""
+
+    def test_fixture_is_current(self):
+        import export_scores
+        with tempfile.TemporaryDirectory() as tmp:
+            env = os.environ.get('HUGINN_FIT_WORK')
+            os.environ['HUGINN_FIT_WORK'] = tmp
+            try:
+                with contextlib.redirect_stdout(io.StringIO()):
+                    path = export_scores.main(['--synthetic', '--out', 'replay.jsonl'])
+            finally:
+                if env is None:
+                    os.environ.pop('HUGINN_FIT_WORK', None)
+                else:
+                    os.environ['HUGINN_FIT_WORK'] = env
+            got = Path(path).read_text(encoding='utf-8')
+        want = export_scores.FIXTURE.read_text(encoding='utf-8')
+        self.assertEqual(got, want, 'regenerate: python tools/fit/export_scores.py --synthetic --write-fixture')
+
+    def test_fixture_exercises_the_terms(self):
+        rows = [json.loads(l) for l in open(common.REPO / 'tests' / 'core' / 'fixtures' / 'choice' / 'replay_synthetic.jsonl',
+                                            encoding='utf-8')]
+        decs = [r for r in rows if r['t'] == 'dec']
+        self.assertGreater(len(decs), 40)
+        self.assertTrue(any(d['rec'] for d in decs))                       # recent_<family>
+        self.assertTrue(any(d['in'] for d in decs))                        # a curve need
+        self.assertTrue(any(r[4] != 0 for d in decs for r in d['rows']))   # ln learn mult
+        self.assertTrue(any(r[3] in rows[0]['items'] for d in decs for r in d['rows']))   # b
+        self.assertTrue(any(r[2] == 1 for d in decs for r in d['rows']))   # kappa
 
 
 class HardGateDrops(TempWork):

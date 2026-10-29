@@ -383,6 +383,19 @@ namespace Huginn::Settings
         if (g_featureBanditLearner) {
             g_featureBanditLearner->SetMemoryLife(Learning::LearningSettings::GetSingleton().BuildConfig().memory);
         }
+        // R8.2: the new learner's keys ([Learning] sBootstrapBias and
+        // fThetaProcessNoise, [Scoring] fCoveredPrior and bLegacyLearnFeature,
+        // [Favorites] fFavoriteLifeMult) and its battery. sBootstrapBias and
+        // fCoveredPrior take effect at the next load or `hg reset all`.
+        if (g_choiceLearner) {
+            const auto cs = mainIni ? Learning::ChoiceSettings::FromIni(*mainIni) : Learning::ChoiceSettings{};
+            g_choiceLearner->SetSettings(cs);
+            Scoring::Legacy::SetEnabled(cs.legacyLearnFeature);
+            g_choiceLearner->SetMemoryLife(Learning::LearningSettings::GetSingleton().BuildConfig().memory);
+            if (utilityScorer) {
+                g_choiceLearner->SetFavoritesBoost(utilityScorer->GetConfig().favoritesMode == Scoring::FavoritesMode::Boost);
+            }
+        }
 
         // 2. Re-initialize slot allocator FIRST (re-reads SlotSettings for new page count)
         Slot::SlotAllocator::GetSingleton().Initialize();

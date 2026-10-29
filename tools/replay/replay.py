@@ -429,10 +429,13 @@ V3_FLAGS = {"eligible": 1, "scored": 2, "held": 4, "equipped": 8, "shown": 16, "
             "override": 64, "remembered": 128, "addedAtPick": 256, "favorite": 512}
 # Row columns appended within v3 after the first ten, by name (the head's `row`
 # list says which a segment has, and where): 0.23.46 fb, cr; 0.23.53 the old
-# engine's score parts est..wu and fl, and the favourites hotkey hk. A row may
-# end before the last of them (0.23.53 writes up to the last one set): a
-# column past a row's end reads None.
-V3_APPENDED = ("fb", "cr", "est", "a", "n", "ucb", "rec", "prior", "cw", "fl", "wu", "hk")
+# engine's score parts est..wu and fl, and the favourites hotkey hk; 0.23.56
+# (R8.2) the new model in shadow: mu, sd, lm (the D2 legacy feature ln learn
+# mult), um (util missing) and ex (the explanation: [need index, column index]
+# or "learned"). A row may end before the last of them (written up to the last
+# one set): a column past a row's end reads None.
+V3_APPENDED = ("fb", "cr", "est", "a", "n", "ucb", "rec", "prior", "cw", "fl", "wu", "hk",
+               "mu", "sd", "lm", "um", "ex")
 
 
 class V3FormatError(ValueError):
@@ -543,7 +546,26 @@ def _v3_row(raw, head, caps, extras=None):
         "fl": None if fl is None else head["floors"][fl],
         "wu": col.get("wu"),
         "hk": col.get("hk"),
+        # 0.23.56 (R8.2): the new model in shadow; ex as (need, column) names,
+        # "learned", or None
+        "mu": col.get("mu"),
+        "sd": col.get("sd"),
+        "lm": col.get("lm"),
+        "um": col.get("um"),
+        "ex": _shadow_ex(col.get("ex"), head),
     }
+
+
+def _shadow_ex(ex, head):
+    """A row's explanation (0.23.56): [need index, column index] -> (need,
+    column) by the head's names; "learned" stays; None when the row has none."""
+    if isinstance(ex, list) and len(ex) == 2:
+        needs, cols = head.get("needs", []), head.get("cols", [])
+        k, j = ex
+        if 0 <= k < len(needs) and 0 <= j < len(cols):
+            return (needs[k], cols[j])
+        return None
+    return ex if ex == "learned" else None
 
 
 def head_curves(head):

@@ -17,6 +17,7 @@
 #include "UsageMemory.h"
 #include "StateFeatures.h"
 #include "candidate/CandidateTypes.h"
+#include "legacy/LegacyLearnFeature.h"
 
 #include <vector>
 
@@ -83,7 +84,8 @@ namespace Huginn::Scoring
             const State::WorldState& world,
             float combatOnsetAgo,
             const WildcardPage& displayPage,
-            Context::ContextWeightMap* outWeights = nullptr);
+            Context::ContextWeightMap* outWeights = nullptr,
+            std::vector<Legacy::Row>* outLegacy = nullptr);
 
         // Configuration access
         [[nodiscard]] const ScorerConfig& GetConfig() const noexcept { return m_config; }

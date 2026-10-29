@@ -2,11 +2,13 @@
 
 #include "ScoredCandidate.h"
 #include "core/FilterReason.h"
+#include "core/DecisionLog.h"
 #include "core/OldScore.h"
 #include "slot/SlotAssignment.h"
 #include "slot/SlotClassifier.h"
 #include <chrono>
 #include <limits>
+#include <memory>
 #include <mutex>
 #include <shared_mutex>
 #include <string>
@@ -15,6 +17,8 @@
 
 namespace Huginn::Learning
 {
+    struct ShadowRun;   // learning/ChoiceShadow.h (R8.2)
+
     // =========================================================================
     // PIPELINE STATE CACHE
     // =========================================================================
@@ -92,6 +96,20 @@ namespace Huginn::Learning
             /// 0.23.53: the old engine's score parts for the row, whatever the
             /// floors (PipelineCoordinator::CaptureEligible).
             Core::DecisionLog::OldScore old;
+            /// 0.23.56 (R8.2): the D2 legacy feature off the same pass
+            /// (learning/legacy/LegacyLearnFeature.h): ln learn mult (0 off
+            /// the floors) and util missing.
+            float lnLearnMult = std::numeric_limits<float>::quiet_NaN();
+            int8_t utilMissing = -1;
+            /// 0.23.56 (R8.2): the new model in shadow (PipelineCoordinator::
+            /// ScoreShadow): mu, its sd, the logit (mu - kappa off the
+            /// allocated page) and the explanation (need, column; -1 learned,
+            /// -2 none). Logged only: the old engine still ranks.
+            float shadowMu = std::numeric_limits<float>::quiet_NaN();
+            float shadowSd = std::numeric_limits<float>::quiet_NaN();
+            float shadowLogit = std::numeric_limits<float>::quiet_NaN();
+            int16_t exNeed = Core::DecisionLog::kExNone;
+            int16_t exCol = -1;
         };
 
         /// 0.23.53: the old engine's view of a run, for the selection log v3
@@ -105,6 +123,11 @@ namespace Huginn::Learning
             Core::DecisionLog::OldRun run;
             uint32_t stateHash = 0;
             std::vector<EligibleRow> dropped;
+            /// 0.23.56 (R8.2): the new model's tick of the same run (its
+            /// snapshot, v and W), so the selection log v3 scores the held rows
+            /// the run never gathered with the same tick as the eligible ones
+            /// (learning/ChoiceShadow.h). Null when the new model is off.
+            std::shared_ptr<const ShadowRun> shadow;
         };
 
         /// R4: the page as shown, without the scored list (cheap; the selection
