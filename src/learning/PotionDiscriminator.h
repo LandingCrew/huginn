@@ -58,7 +58,7 @@ namespace Huginn::Scoring
         // @param combatOnsetAgo seconds since the current fight began, kNever
         //        out of combat (core/CombatOnset.h): the combat_onset sensor's
         //        clock. R8.1 (0.23.55): the discriminator's own combat timer
-        //        (OnCombatStart / OnCombatEnd / Update) is gone; this is the
+        //        (its start / end / update hooks) is gone; this is the
         //        one combat clock, so its start window and the combat_onset
         //        need agree. The multiplier itself stays: the legacy floors
         //        (R8's D2 feature) read it.

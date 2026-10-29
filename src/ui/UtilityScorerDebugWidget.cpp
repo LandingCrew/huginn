@@ -294,6 +294,12 @@ namespace Huginn::UI
         // R8.4: the choice score's parts, as [Recs] prints them: the top three
         // theta[need][col] n a terms (the first is the explanation), b, and the
         // D2 legacy feature (lm on a row the old floors kept, "um" otherwise).
+        // The fallback ranking (no bootstrap) has no choice parts: `choice` is
+        // unset there, so it says so instead of printing "learned" and lm 0.
+        if (candidate.fallbackRanked) {
+            ImGui::TextColored(ScorerColors::LABEL_DIM, "fallback: s = ln u (no bootstrap)");
+            return;
+        }
         const auto& p = candidate.choice;
         bool any = false;
         for (const auto& t : p.top) {
@@ -333,7 +339,9 @@ namespace Huginn::UI
 
         ImGui::PushStyleColor(ImGuiCol_PlotHistogram, ScorerColors::UTILITY_BAR);
         char overlay[48];
-        if (std::isfinite(s)) {
+        if (std::isfinite(s) && candidate.fallbackRanked) {
+            snprintf(overlay, sizeof(overlay), "s %+.2f  fallback", s);   // ln u: no mu, no sd
+        } else if (std::isfinite(s)) {
             snprintf(overlay, sizeof(overlay), "mu %+.2f  sd %.2f", s, std::sqrt(std::max(candidate.choice.var, 0.0)));
         } else {
             snprintf(overlay, sizeof(overlay), "%s", s > 0 ? "pinned" : "unranked");

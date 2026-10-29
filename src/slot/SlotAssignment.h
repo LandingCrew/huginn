@@ -117,7 +117,10 @@ namespace Huginn::Slot
 
         static SlotAssignment Empty(size_t index, SlotClassification classification)
         {
-            return { index, AssignmentType::Empty, classification, std::nullopt, 0, 0, "", 0.0f };
+            // The score is stated, not left to a trailing positional slot: R8.4
+            // removed `utility` from in front of it, and a stale trailing 0.0f
+            // then filled `score` (empty slots scored 0, not -inf).
+            return { index, AssignmentType::Empty, classification, std::nullopt, 0, 0, "", Core::kUnrankedScore };
         }
 
         static SlotAssignment FromCandidate(

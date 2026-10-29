@@ -127,7 +127,7 @@ namespace Huginn::State
       // =============================================================================
       // The published combat flag flips inside PollPlayerPosition, which also
       // stamps NeedSensorState::combatStartAt / combatEndAt on the same
-      // transition. R8.1 (0.23.55): the destructive ConsumeCombatTransition
+      // transition. R8.1 (0.23.55): the destructive combat-transition latch
       // that fed the legacy potion multiplier's own timer is gone; it reads
       // combatStartAt (GetCombatStartAt), the combat_onset clock.
 

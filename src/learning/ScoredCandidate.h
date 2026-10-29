@@ -75,7 +75,9 @@ namespace Huginn::Scoring
         Candidate::CandidateVariant candidate;  // The actual candidate (spell/item/weapon/etc)
         // The old engine's utility (R8.3: NOT the ranking). Set on the rows the
         // old floors kept (legacyScored), 0 on the others; the v2 selection
-        // log, [Recs] and the reach lines print it. Nothing orders on it.
+        // log and the fallback's [Recs] line print it. Nothing orders on it
+        // but the fallback ranking (legacy module); tools/prune/r8_check.py
+        // budgets every read of it outside the files that log it.
         float utility = 0.0f;
         ScoreBreakdown breakdown;               // the old utility's parts (legacy rows only)
         bool isWildcard = false;                // True if this is a wildcard exploration pick

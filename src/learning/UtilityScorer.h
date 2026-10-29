@@ -46,7 +46,7 @@ namespace Huginn::Scoring
         // Component access (for advanced configuration)
         [[nodiscard]] WildcardManager& GetWildcardManager() noexcept { return m_wildcardMgr; }
 
-        // R8.1 (0.23.55): OnCombatStart / OnCombatEnd are gone with the
+        // R8.1 (0.23.55): the combat start / end hooks are gone with the
         // potion multiplier's own combat timer; the legacy pass takes the
         // combat_onset clock instead.
         // @return true if a displayed exploration wildcard expired this tick
@@ -67,8 +67,8 @@ namespace Huginn::Scoring
         // detail: append the inputs the D2 feature was computed from, as the
         // row's logged breakdown carries them, to each line.
         // force: bypass the membership-change dedup (on-demand `hg recs` dumps).
-        // fallback (R8.3): the list is the fallback ranking (no bootstrap,
-        // Legacy::Run::FallbackRanking).
+        // fallback (R8.3): the list is the fallback ranking (no bootstrap;
+        // built by the legacy module, learning/legacy/LegacyRun.h).
         void LogTopCandidates(const ScoredCandidateList& ranked, size_t count = 5,
             bool detail = false, bool force = false, bool fallback = false) const;
 

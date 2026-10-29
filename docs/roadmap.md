@@ -1122,17 +1122,32 @@ changed in the same PR, and the shipped INI loses the dead keys.
         library): the PRUNED symbols appear nowhere in the code under `src/`,
         `tools/` and `tests/` (comments included, Markdown excluded), nor the
         pruned keys in the shipped INI, its templates or the dMenu JSON; the
-        LEGACY symbols (the old engine's types and globals, the old score's
-        config fields, and the utility -> rank-score bridge) appear only in the
-        allowlisted files, each with its reason (the legacy module, the old
-        learner's own files and subscribers, BanditSerializer, the selection
-        logs, `core/OldScore.h` and the v3 format, the settings loaders, the R7
-        slot math and its harness, `LegacyFloorPassTests`), or in a BUDGETED
-        file within its count: `PipelineCoordinator.cpp` names the old engine
-        on one line, its `Legacy::LegacyPass` call; `UtilityScorer.{h,cpp}`,
-        the live scorer that ranks, on none; ConsoleCommands, Main, Globals,
-        SettingsReloader and `Tests.cpp` on their R8.4 line counts, so a new use
-        anywhere in them fails. To get there the legacy half of UtilityScorer
+        LEGACY lines appear only in the allowlisted files, each with its reason
+        (the legacy module, the old learner's own files and subscribers,
+        BanditSerializer, the selection logs, `core/OldScore.h` and the v3
+        format, the settings loaders, the R7 slot math and its harness, the
+        legacy host tests), or in a BUDGETED file within its count, each line
+        matching one of the file's allowed forms. A LEGACY line names the old
+        engine's types, globals or config fields, the utility -> rank-score
+        bridge, the legacy module's facade (`Legacy::` / `Scoring::Legacy`, its
+        include, `ctx.legacy`, `FallbackRanking`, `KeptFor`, `RowFor`,
+        `OldScoreCapture`, ...), or reads the old utility's members (`.utility`,
+        `.breakdown` and its fields; C++ only) -- so utility cannot rank or
+        display again through a wrapper or a member read (review 2: the first
+        version listed only the inner names, and nine probes passed it).
+        Budgets, patterned: `PipelineCoordinator.cpp` 20 lines (the pass or its
+        skip, the switch, the fallback call, the old learner's weights-changed
+        latch, the D2 feature per candidate, the v2 / v3 log copies, four
+        comments) and its header 6; `UpdateLoop.cpp` 4 (the old learner's play
+        clock and forget sweep, which run with the switch off so BNDW ages);
+        `SoakMetrics.cpp` 2 (the `[Soak]` heartbeat's old-learner counts: the
+        soak's check that the forget sweep keeps BNDW bounded; reads only, off
+        the lm / um path); `UtilityScorer.cpp` 4 (only `[Recs]` lines logging
+        lm's inputs and the fallback's line) and its header 0;
+        `PipelineStateCache.h` 2 (the v2 log's cached rows); `SlotSnapshot.cpp`
+        1 (the R7 capture's utility token). Counted: ConsoleCommands, Main,
+        Globals, SettingsReloader and `Tests.cpp` on their R8.4 line counts, so
+        a new use anywhere in them fails. To get there the legacy half of UtilityScorer
         (the pass, the per-candidate score, λ, the favourites helper and the
         old learner, prior, correlation, potion and context-rule members) moved
         to `learning/legacy/LegacyScorer.{h,cpp}` (`g_legacyScorer`, review
@@ -1143,11 +1158,26 @@ changed in the same PR, and the shipped INI loses the dead keys.
         OldScore columns, moved unchanged from `CaptureEligible`; the old
         learner's clock, forget sweep, counts and weights-changed latch), and
         the facts the live filters and the skip gate share with the context
-        rules moved to `context/ContextFacts.h`. Ten mutation probes (an old
-        learner call in UtilityScorer, a `topNCandidates` or `lambdaMax` read,
-        a `RankOnUtility` call or a dead accessor in the pipeline, a legacy
-        global in a non-legacy console command or test, `DisplayUtility` in the
-        widget code, `g_legacyScorer` in a display backend) each fail it. Stale comments in surviving code that named
+        rules moved to `context/ContextFacts.h`. `tools/prune/test_r8_check.py`
+        runs 25 mutation probes in memory, each of which must fail the check:
+        utility ranking again in the pipeline (`sc.score = log(sc.utility)`),
+        an `ln util` feature in RankOnChoice, the Verbose breakdown back in
+        IntuitionMenu, `utility * contextWeight` in UtilityScorer, a facade
+        call from SoakMetrics, a display backend or a `using namespace`, a
+        changed allowed form, a breakdown read in SlotLocker, an old learner
+        call in UtilityScorer, a `topNCandidates` or `lambdaMax` read, a
+        `RankOnUtility` call or a dead accessor in the pipeline, a legacy
+        global in a console command or test, `DisplayUtility` in the HUD menu,
+        `g_legacyScorer` in a display backend, a pruned symbol (the tier
+        preference, a Suppress branch, the discriminator's timer, the
+        elemental window) and a pruned INI key. PRUNED also covers what R8.1
+        pruned that has a name (the potion multiplier's own combat timer:
+        `OnCombatStart` / `OnCombatEnd` / `ConsumeCombatTransition`, and its
+        members scoped to PotionDiscriminator) and `Suppress` in
+        UtilityScorer; the R8.1 Suppress skips had no name of their own, and
+        `FavoritesMode::Suppress` stays (the INI mode, the filter's input, and
+        the legacy scorer's fav = 0 arm that keeps a filter drop's v3 OldScore
+        columns as they were). Stale comments in surviving code that named
         the old engine were edited (the classifiers, GameState.h,
         CandidateGenerator, WeaponData.h and about 30 other files).
       - **Behaviour against 0.24.0:** none in the ranking (the pruned steps were
