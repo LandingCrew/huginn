@@ -123,6 +123,23 @@ decisions, folds and seed).
 - `theta + recent + A* feature (no b)` (0.23.52): the rehearsal's best variant
   without the per-item b, which belongs to this character (the verifier of
   2026-10-28: b costs hits on items the training set never picked).
+- The old score's components (0.23.54, the R8 component test of 2026-10-29,
+  ported for the real fit; `fitlib.row_features`): which part of ln(old util)
+  does the work. All are θ + b + κ + `recent_<family>` plus:
+  - `... + learn mult (D2)`: `ln learn mult` = ln(1 + λ(α) · learningScore),
+    the old learner's multiplier in the utility, on the rows the old engine
+    scored, and `util missing` (the not-scored flag);
+  - `... + learn mult + fav/corr/potion (D5)`: D2 plus the favourite,
+    correlation and potion multipliers;
+  - `... + old learner state (L1)`: `ln learner` = ln(1 + λ(α) · (α · est +
+    rec)), the learner's per-item state without the prior and the UCB, carried
+    forward from the latest earlier v2 record that holds the item
+    (`fitlib.learner_before`: the same character; a dynamic FF form only in the
+    same launch and load), and `eligible` (the row's flag): no old scorer.
+
+  They read the v2 log (`Huginn_Selections.jsonl`, joined by form and time
+  within 2 s; `fitlib.load_v2` keeps every candidate's learner breakdown). With
+  no v2 log they read 0.
 
 ### honest.py -- the honest yardstick
 
@@ -160,12 +177,15 @@ decisions:
   array the fit reads, the obvious pairs and `fitlib.py`'s code; plus the
   spec, the schedule and `--maxiter`), so run one process per spec
   (`--spec`), then one naming them all to combine; a rebuilt `v3.pkl` or a
-  `fitlib.py` change refits; `--no-cache` refits always. CV results come from
+  `fitlib.py` change refits; `--no-cache` refits always. It loads the v2 log as
+  cv.py does (0.23.54: the learner features read it, and `fitlib.data_key`
+  covers them), so the two give the same key. CV results come from
   `cv_<group>.pkl` only when cv.py wrote it with the same `data_key`, folds,
   seed and maxiter (cv.py fits at `CV_MAXITER`, 300; so `--maxiter 300`
   reuses it), and only for a spec whose definition there (`cv.spec_key`) is
-  the current one: a spec redefined in cv.py under the same name refits. Specs that read the v2 log (`ctx`, `cheap`) are refused: honest.py
-  does not load it.
+  the current one: a spec redefined in cv.py under the same name refits. The `ctx` and `cheap` specs (the old context weights) are refused:
+  they are cv.py baselines, and the data key leaves out the slot classes
+  `cheap` reads (`fitlib.DATA_KEY_SKIP`).
 - **Port of the verifier's scripts** (`r6-verify/online.py`, `fwd_launch.py`,
   `combine.py` in the 2026-10-28 session scratchpad): the same schedule (chunks
   of 5 picks, warm start, 150 picks before the first tested launch, launch
@@ -232,12 +252,21 @@ writes (deterministic text) and validates the document.
   never-picked item whose kind matches by chance still gets one, so R8's
   reader cross-checks the resolved form's kind and name (the format doc).
 - Refused: split and latest-caps specs (diagnostics), specs without θ (the
-  baselines), the `ctx` and `cheap` features (they read the v2 log), a bias
-  need with presence + strength.
+  baselines), the `ctx` and `cheap` features (they read the old engine's
+  context weights; since 0.23.54 the exported `learn`, `mults` and `learner`
+  features read the v2 log too), a bias need with presence + strength.
 - `source.builds` is [oldest, newest] by version, two builds of one version
   ordered by when they were logged.
 - The default spec is `theta + b + recent_<family>`; pass the one R6's
-  yardstick chose.
+  yardstick chose. The learner features (`learn`, `mults`, `learner`) export
+  (0.23.54; the v2 log is loaded for them); `ctx` and `cheap` do not.
+- `--hold-needs NEED ...` (0.23.54) holds those needs' θ rows (and their
+  strength block) at the prior centre θ0: for a need the log misreads. The R6
+  bootstrap holds `loadout_two_handed`, which every log before 0.23.51 turned on
+  for the quarterstaff (below); the file names it in `source.held_needs`.
+- `--provenance JSON` (0.23.54) writes a JSON object as the file's
+  `provenance`: how the spec was chosen (the data and its digests, the
+  yardstick, the gate). Informational; the reader never checks it.
 
 ### Tests
 

@@ -31,10 +31,11 @@ TRANSIENT = {'Arcane Anchor'}   # LoreRim tome-learning spell (memory: churn exp
 # The fit's code, for the result caches (data_key): a change to this file invalidates them.
 CODE_KEY = hashlib.sha1(Path(__file__).read_bytes()).hexdigest()[:16]
 DATA_KEY_VERSION = 1
-# build() fields data_key leaves out: read only by the 'ctx' and 'cheap' row features (the v2
-# log, which honest.py and export.py refuse), so cv.py (which loads the v2 log) and honest.py
-# (which does not) give the same key for the same decisions.
-DATA_KEY_SKIP = ('V2', 'v2ok', 'CLS', 'classes')
+# build() fields data_key leaves out: read only by the 'cheap' row feature (the slot classes of
+# the v2 log; honest.py and export.py refuse it) or by nobody (v2ok). V2 is keyed since 0.23.54:
+# the 'mults' feature (D5) reads it, and cv.py and honest.py both load the v2 log, so they
+# still give the same key for the same decisions.
+DATA_KEY_SKIP = ('v2ok', 'CLS', 'classes')
 
 
 def data_key(S, obv=None):
@@ -62,10 +63,29 @@ def data_key(S, obv=None):
 # ---------------------------------------------------------------------------
 # v2 join (context weights for the baselines)
 # ---------------------------------------------------------------------------
+class V2Index(defaultdict):
+    """load_v2's result: {picked form: [(utc, {candidate form: V2 tuple})]} (join_v2 joins a v3
+    pick to its record), plus `appear`: {candidate form: [(utc, launch, gen, char, V2 tuple)]}
+    in time order, every record the form was a scored candidate in (learner_before)."""
+    def __init__(self):
+        super().__init__(list)
+        self.appear = defaultdict(list)
+
+
+# The v2 candidate fields load_v2 keeps, in this order (a V2 tuple; 'cls' is the slot class).
+V2_COLS = ('ctx', 'corr', 'potion', 'fav', 'cls', 'util', 'lambda', 'learn', 'est', 'alpha', 'rec', 'prior')
+V2I = {c: i for i, c in enumerate(V2_COLS)}
+
+
 def load_v2(path=None, since='2026-10-09 14'):
-    """The v2 log's candidates by form, for the old-engine baselines (common.v2_path when
-    no path is given). Empty when there is no v2 log: those baselines then read NaN."""
-    idx = defaultdict(list)
+    """The v2 log's candidates by form, for the old-engine baselines and the learner features
+    (common.v2_path when no path is given). Empty when there is no v2 log: those baselines then
+    read NaN and the learner features 0. A candidate is a V2 tuple (V2_COLS): the context weight,
+    the correlation / potion / favourite multipliers, the slot class, the utility, and the old
+    learner's part: lambda(confidence), the learning score, the bandit estimate, its confidence
+    alpha, the recency boost and the prior. UtilityScorer: util = ctx (1 + lambda learn) corr
+    potion fav, learn = alpha est + (1 - alpha) prior + beta ucb + rec."""
+    idx = V2Index()
     path = path or v2_path()
     if path is None or not Path(path).exists():
         print('no v2 log (Huginn_Selections.jsonl): the context-weight baselines read NaN', file=sys.stderr)
@@ -83,9 +103,35 @@ def load_v2(path=None, since='2026-10-09 14'):
             c = dict(zip(cols, c))
             cl = 'FoodAny' if c['type'] == 'Food' else c['need']
             if c['form'] not in cands:
-                cands[c['form']] = (c['ctx'], c['corr'], c['potion'], c['fav'], cl, c['util'])
-        idx[r['form']].append((T(r['utc']), cands))
+                cands[c['form']] = (c['ctx'], c['corr'], c['potion'], c['fav'], cl, c['util'],
+                                    c.get('lambda', 0.0), c.get('learn', 0.0), c.get('est', 0.0),
+                                    c.get('alpha', 0.0), c.get('rec', 0.0), c.get('prior', 0.0))
+        t = T(r['utc'])
+        idx[r['form']].append((t, cands))
+        for f, c in cands.items():
+            idx.appear[f].append((t, r.get('launch'), r.get('gen', 1), r.get('char'), c))
+    for v in idx.appear.values():
+        v.sort(key=lambda a: a[0])
     return idx
+
+
+def learner_before(v2, form, t, launch, gen, char):
+    """The V2 tuple of `form` in the latest v2 record strictly before t written for the same
+    character (a record or decision without `char` matches any), or None. A dynamic (FF) form
+    is looked for only in the same launch and load generation: its id means nothing in another
+    load. (The R8 component test's carry-forward, 2026-10-29: the old learner's state of an item
+    that is not a candidate in this pick's record.)"""
+    lst = getattr(v2, 'appear', {}).get(form)
+    if not lst:
+        return None
+    j = bisect.bisect_left([a[0] for a in lst], t) - 1
+    ff = form.startswith('FF')
+    while j >= 0:
+        _, la, g, ch, c = lst[j]
+        if (ch is None or char is None or ch == char) and (not ff or (la == launch and g == gen)):
+            return c
+        j -= 1
+    return None
 
 
 def join_v2(idx, d):
@@ -260,6 +306,8 @@ def build(D, include_nothing=True, latest_caps=False, v2=None, since=None, until
     SLOTA = np.full((Dn, R), -1, dtype=np.int32)
     UTILA = np.full((Dn, R), np.nan)
     V2 = np.full((Dn, R, 4), np.nan)          # ctx corr potion fav
+    LRN = np.zeros((Dn, R, 2))                # the learner features (row_features 'learn', 'learner')
+    ELIG = np.zeros((Dn, R))                  # the row's eligible flag (passed the candidate filters)
     CLS = np.full((Dn, R), -1, dtype=np.int32)
     Y = np.full(Dn, -1, dtype=np.int32)
     N = np.zeros((Dn, K))
@@ -298,10 +346,21 @@ def build(D, include_nothing=True, latest_caps=False, v2=None, since=None, until
                 SLOTA[di, ri] = min(r[SLOT], 7)
             if r[UTIL] is not None:
                 UTILA[di, ri] = r[UTIL]
-            if cands and r[FORM] in cands:
-                c = cands[r[FORM]]
+            if r[FLAGS] & F['eligible']:
+                ELIG[di, ri] = 1.0
+            c = cands.get(r[FORM]) if cands else None
+            if c is not None:
                 V2[di, ri] = c[:4]
                 CLS[di, ri] = classes.setdefault(c[4], len(classes))
+                if r[UTIL] is not None:     # D2: the learner's multiplier, on rows the old engine scored
+                    LRN[di, ri, 0] = math.log(max(1.0 + c[V2I['lambda']] * c[V2I['learn']], 1e-6))
+            # L1: the learner's own state, from this pick's record or the latest earlier one
+            cf = c if c is not None else (
+                learner_before(v2, r[FORM], T(d['utc']), d['launch'], d.get('gen', 1), d.get('char'))
+                if (v2 is not None and d['out'] != 'nothing') else None)
+            if cf is not None:
+                rc = c[V2I['rec']] if c is not None else 0.0      # recency: only this pick's own
+                LRN[di, ri, 1] = math.log(max(1.0 + cf[V2I['lambda']] * (cf[V2I['alpha']] * cf[V2I['est']] + rc), 1e-6))
             if is_ch:
                 Y[di] = ri
         meta.append({'launch': d['launch'], 'out': d['out'], 'name': d['name'], 'kind': d['kind'],
@@ -309,7 +368,7 @@ def build(D, include_nothing=True, latest_caps=False, v2=None, since=None, until
                      'ep_why': ep_why(d)})
     REC, rec_names = recent_families(D, [d for d, _ in recs], cols, caps, recency)
     return dict(CapMat=CapMat, xcol=xcol, CAPID=CAPID, X=XA, COV=COV, MASK=MASK, INHA=INHA, ITEM=ITEM, SLOT=SLOTA, UTIL=UTILA,
-                V2=V2, CLS=CLS, Y=Y, N=N, IN=IN, OUT=OUT, LA=LA, SEG=SEG, REC=REC, v2ok=v2ok, launches=launches, items=items,
+                V2=V2, LRN=LRN, ELIG=ELIG, CLS=CLS, Y=Y, N=N, IN=IN, OUT=OUT, LA=LA, SEG=SEG, REC=REC, v2ok=v2ok, launches=launches, items=items,
                 classes=classes, meta=meta, K=K, J=J, needs=needs, cols=cols, R=R,
                 segments=segment_names(list(split_at)), recency_names=rec_names)
 
@@ -385,9 +444,10 @@ def recent_families(D, decs, cols, caps, taus):
 
 def subset(S, idx):
     out = dict(S)
-    for k in ('CAPID', 'X', 'COV', 'MASK', 'INHA', 'ITEM', 'SLOT', 'UTIL', 'V2', 'CLS', 'Y', 'N', 'IN', 'OUT', 'LA', 'SEG',
-              'REC', 'v2ok'):
-        out[k] = S[k][idx]
+    for k in ('CAPID', 'X', 'COV', 'MASK', 'INHA', 'ITEM', 'SLOT', 'UTIL', 'V2', 'LRN', 'ELIG', 'CLS', 'Y', 'N', 'IN',
+              'OUT', 'LA', 'SEG', 'REC', 'v2ok'):
+        if k in S:                  # a hand-made dataset (the tests) may lack the v2-derived arrays
+            out[k] = S[k][idx]
     out['meta'] = [S['meta'][i] for i in idx]
     return out
 
@@ -787,7 +847,18 @@ def astar_online(S, every=5, min_train=150):
 # row features for baselines
 # ---------------------------------------------------------------------------
 def row_features(S, spec):
-    """spec: list of names among 'astar', 'ctx', 'cheap', 'pos'."""
+    """spec: list of names among 'astar', 'learn', 'mults', 'learner', 'ctx', 'cheap', 'pos'.
+
+    The old score's components (the R8 component test, 2026-10-29; read from the v2 log):
+      learn    (D2) 'ln learn mult': ln(1 + lambda(alpha) learningScore), the old learner's
+               multiplier in the utility, on the rows the old engine scored (passed its floors)
+               of a pick whose v2 record joins, else 0; and 'util missing', the not-scored flag.
+      mults    (D5, with learn) 'ln fav', 'ln corr', 'ln potion': the other multipliers, same rows.
+      learner  (L1, no old scorer) 'ln learner': ln(1 + lambda(alpha) (alpha est + rec)), the
+               learner's own per-item state (FeatureBanditLearner's estimate and confidence,
+               UsageMemory's recency; no prior, no UCB), from the pick's v2 record or else the
+               latest earlier one that holds the item (learner_before); and 'eligible', the row's
+               eligible flag."""
     feats = []
     names = []
     U = S['UTIL']; V = S['V2']
@@ -795,6 +866,17 @@ def row_features(S, spec):
         miss = np.isnan(U)
         feats += [np.where(miss, 0.0, np.log(np.maximum(np.nan_to_num(U, nan=1.0), 1e-6))), miss.astype(float)]
         names += ['ln util', 'util missing']
+    if 'learn' in spec:
+        feats += [S['LRN'][..., 0], np.isnan(U).astype(float)]
+        names += ['ln learn mult', 'util missing']
+    if 'mults' in spec:
+        ok = ~np.isnan(V[..., 0]) & ~np.isnan(U)
+        for i, n in ((3, 'fav'), (1, 'corr'), (2, 'potion')):
+            feats.append(np.where(ok, np.log(np.maximum(np.nan_to_num(V[..., i], nan=1.0), 1e-6)), 0.0))
+            names.append('ln ' + n)
+    if 'learner' in spec:
+        feats += [S['LRN'][..., 1], S['ELIG']]
+        names += ['ln learner', 'eligible']
     if 'ctx' in spec:
         miss = np.isnan(V[..., 0])
         for i, n in enumerate(['ctx', 'corr', 'potion', 'fav']):

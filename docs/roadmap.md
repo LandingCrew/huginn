@@ -602,7 +602,7 @@ Map Phase 4, in `tools/fit` (the scripts and their flags: [tools/fit/README.md](
     biased against it; pooling lets the two biases partly cancel.
   - Final test, after R8: `[Reach]` reach-ins per hour of play against the old
     engine's baseline. R8 rolls back if it loses.
-- **The rehearsal (2026-10-28, level 21; pending its verifier, not the final
+- **The rehearsal (2026-10-28, level 21; verified 2026-10-28, not the final
   fit).** Grouped 10-fold by launch over the mage's log. A* (the old ranking
   from the logged utilities): key/wheel hit@8 87.4%, menu 18.5% (82 of 443).
   Doc 9's θ + b: key/wheel 59.3%, menu 53.3%, page hit@1 40.9% against A*'s
@@ -613,8 +613,148 @@ Map Phase 4, in `tools/fit` (the scripts and their flags: [tools/fit/README.md](
   leave-one-launch-out was ~9 h on 288 launches), build segmentation, the
   yardstick (hit@8 for key/wheel, menu and all picks, page hit@1, page NLL,
   each with a launch-bootstrap interval on model − A*).
+  - *The verifier's honest numbers.* The CV above is optimistic: grouped
+    K-fold trains on launches after the held-out one, so b learns an item the
+    player only took up later from its future. On a train-on-past online
+    replay (refit every 5 picks, warm start) the best variant, θ + b +
+    `recent_<family>` + ln(old utility), caught menu picks +38 points above A*
+    and pooled −2.0 [−5.1, +0.9] (the gate passes); pure θ + b (with or
+    without `recent`) caught menu +25 to +29 and pooled −16 to −20 (fails).
 - **Open for R8** (noted, not decided): the best rehearsal variant leans on the
   old engine's utility as an input -- the hand-tuned layer R8 and R11 retire.
+  *The component test (2026-10-29) and the real fit below* narrowed it: of the
+  old utility only the learner's multiplier ln(1 + λ(α) · learningScore) does
+  the work (the context weights, favourite, correlation and potion multipliers
+  add nothing that passes the gate alone), and no variant without an old-engine
+  part passes.
+- **The real fit (2026-10-29, 0.23.54, branch `r6-real-fit`).** The mage
+  (`FEFD1B039AC78799`) over all three log parts (`-20261015-180003-1`,
+  `-20261029-022335-1`, the current file; the soak character and the others
+  excluded): 1,865 picks (1,026 key, 396 wheel, 443 menu) in 76 launches,
+  2026-10-09 14:29 to 2026-10-28 17:29, builds 0.23.15 to 0.23.44. **These are
+  the rehearsal's picks**: the launches logged since (0.23.47, 2026-10-29) hold
+  `nothing` records only, and no log reaches 0.23.51 (no laps, the old
+  `loadout_two_handed`). Grouped 10-fold CV (seed 1) and the online replay
+  (`honest.py`: refit every 5 picks, warm start, 150 picks before the first
+  tested launch; 1,715 picks tested in 71 launches, 1,300 key/wheel and 415
+  menu), launch bootstrap of 2,000 draws. The component variants are ported
+  into `tools/fit` (0.23.54; `fitlib.row_features` `learn`, `mults`,
+  `learner`) and reproduce the component test's scratch numbers to 0.1 point.
+  Picks model, hit@8 in % (model − A* [95% CI]); A* online: key/wheel 87.1,
+  menu 18.3, pooled 70.4, page hit@1 20.2:
+
+  | spec (all with κ) | online menu | online pooled | online gate | CV menu | CV pooled | CV gate |
+  |---|---|---|---|---|---|---|
+  | θ + b (doc 9) | 47.7 (+29.4 [+23.8, +35.8]) | 54.2 (−16.2 [−20.0, −12.7]) | fail | +35.0 | −13.1 [−17.1, −9.2] | fail |
+  | θ + b, presence grading | 51.6 (+33.3 [+27.4, +39.2]) | 55.5 (−14.9 [−19.3, −10.9]) | fail | +38.1 | −11.7 | fail |
+  | θ + b, presence + strength | 51.1 (+32.8 [+26.9, +38.8]) | 55.5 (−15.0 [−19.3, −11.1]) | fail | +37.9 | −12.2 | fail |
+  | θ + b + `recent_<family>` | 56.1 (+37.8 [+33.3, +43.7]) | 58.0 (−12.4 [−17.0, −8.1]) | fail | +42.0 | −9.2 | fail |
+  | + old learner state (L1, no old scorer) | 57.6 (+39.3 [+34.3, +45.2]) | 65.3 (−5.1 [−9.7, −1.0]) | fail | +44.2 | −3.8 [−7.6, −0.1] | fail |
+  | + ln util, no b | 49.2 (+30.8 [+26.8, +36.6]) | 64.8 (−5.7 [−8.7, −2.6]) | fail | +38.6 | −3.3 [−6.2, +0.1] | pass |
+  | + ln util (tbra) | 56.4 (+38.1 [+33.3, +43.9]) | 68.3 (−2.1 [−5.3, +0.8]) | **pass** | +42.9 | −1.4 [−4.5, +2.0] | pass |
+  | **+ learn mult (D2)** | 58.6 (+40.2 [+35.3, +45.7]) | 68.1 (−2.3 [−6.6, +1.6]) | **pass** | +44.9 | −1.3 [−5.0, +2.2] | pass |
+  | + learn mult + fav/corr/potion (D5) | 59.0 (+40.7 [+35.7, +46.6]) | 69.2 (−1.3 [−5.5, +2.6]) | **pass** | +43.6 | −0.8 [−4.5, +2.9] | pass |
+
+  "+" rows are θ + b + κ + `recent_<family>` plus the named feature. Page
+  hit@1 is 39.8 to 43.1 for every model against A*'s 20.2; key/wheel hit@8
+  is 56 to 72 against A*'s 87 (key presses exist only for items the old page
+  showed). Paired on the online replay (a − b, pooled hit@8): D2 − tbra −0.2
+  [−2.0, +1.4]; D5 − D2 +1.0 [+0.5, +1.8]; D2 − L1 +2.8 [+1.8, +3.9]; L1 −
+  θ+b+recent +7.3 [+5.8, +8.5]; recent − θ+b +3.8 [+2.2, +6.2] (menu +8.4
+  [+5.0, +12.4]); presence − graded +1.3 [+0.1, +2.3] (menu +3.9 [+1.1, +6.0],
+  page hit@1 −2.5 [−3.9, −1.2]); presence + strength − presence −0.1 [−0.7,
+  +0.7]. The full tables: the PR's description; the bootstrap's `provenance`
+  holds every row above.
+  - *Joined picks only (the verifier of 2026-10-29: an evaluation leak).* 27
+    of the 1,715 tested picks, all menu equips (armour picks write no v2
+    record), have no v2 record, so `ln learn mult` (D2) and the
+    favourite/correlation/potion features (D5) read 0 on every row of those
+    picks: an all-zero decision tells the model the pick was an unscored item.
+    On those 27, D2 and D5 hit 74.1%, tbra (ln util read from v3, no leak)
+    51.9%, L1 59.3%, A* 0%. On the 1,688 joined picks, online: D2 menu +37.9
+    [+32.4, +44.1], pooled −3.6 [−7.8, +0.3]; D5 pooled −2.5 [−6.6, +1.5];
+    tbra menu +37.1 [+32.0, +43.4], pooled −3.0 [−6.1, +0.0]; L1 pooled −6.2
+    [−10.6, −1.9]. The gate verdicts do not change, but D2's pooled upper end
+    falls from +1.6 to +0.3, and paired D2 − tbra on menu goes from +2.2
+    [−0.4, +4.3] to +0.8 [−1.9, +3.0] (pooled −0.6 [−2.3, +1.0]): **D2's menu
+    lead over tbra is mostly this artefact.** CV (all) has the same leak (37
+    unjoined picks); joined, D2 pools −2.7 [−6.2, +0.7] and tbra −2.6 [−5.5,
+    +0.5]. The bootstrap's `provenance` carries the joined-only yardstick of
+    every spec (`metrics_online_joined`). The shipped fit still trains on
+    those decisions (not fixed here: carrying the learn score forward or
+    dropping them is a refit); the train/serve side of the same zeros is in
+    the format doc.
+  - *Selection.* D2 was picked from about 25 component variants (the
+    component test), all scored on this same online replay, so its pooled
+    upper end after that selection (+1.6; +0.3 on joined picks) is weak
+    evidence that it is not worse than A*. It ties with tbra, the variant the
+    rehearsal fixed in advance (paired D2 − tbra pooled −0.2 [−2.0, +1.4];
+    −0.6 [−2.3, +1.0] joined): the case for D2 is that it ties tbra with less
+    of the old score, not that it beats it.
+  - **Chosen for R8's bootstrap: D2**, θ + b + κ + `recent_<family>` +
+    `ln learn mult` + `util missing`. It passes the gate on the online replay
+    and is the smallest part of the old score that does: **no variant without
+    the old scorer passes** (L1, which keeps only the old learner's per-item
+    state, misses the pooled check by about one point; pure θ + b by 12 to 16).
+    So R8 still needs, live, FeatureBanditLearner (estimate, confidence, UCB),
+    PriorCalculator, UsageMemory's recency, λ(confidence) and the old floors
+    that decide which rows are scored (and the floors read
+    `fMinimumContextWeight`, so the context weights still enter as a gate).
+    It retires the context weights as a score term and the favourite,
+    correlation and potion multipliers. D5 pools a significant +1.0 point
+    better but keeps those three multipliers; not chosen (open below).
+  - **The file:** [`configs/Huginn_Bootstrap.json`](../configs/Huginn_Bootstrap.json)
+    (format version 1, [architecture/9-bootstrap-format.md](architecture/9-bootstrap-format.md#the-shipped-file-r6-02354);
+    the format gained the component feature names). R8 installs it to
+    `Data/SKSE/Plugins/` with its reader; nothing installs or reads it yet.
+    `provenance` names the files and their SHA-256, the range, the builds, the
+    spec and the metrics. Fitted on every pick with two departures from the
+    evaluated D2: encumbrance read through the fitted curve (below), and
+    `loadout_two_handed` held at its prior (`--hold-needs`; logs before 0.23.51
+    turned it on for the quarterstaff in 85% of its contexts; held, the fit's
+    NLL on all picks rises 23.7 nats, 0.013 per pick). 459 items keyed, 31
+    dynamic and 14 forms the 2026-10-10 dump lacks dropped. κ 2.69; `ln learn
+    mult` weight 1.36, `util missing` 0.11.
+  - **The encumbrance curve, for R8:** `encumbrance = logistic 0.9887 73.42`
+    (centre sd 0.007, Laplace; on the profile the posterior is within 0.6
+    nats of its best from 0.98 to 1.00, 2.2 at 0.96 and 5.9 at 0.90). The data moved the centre off the prior's 0.9:
+    the profile's data NLL at 0.90 is 10.4 nats worse than at 1.00, so the
+    player reaches for carry weight at the limit, not when nearing it
+    (Feather on Self is 15 of the 28 carry-weight picks, 13 of them at a load
+    ratio of 0.986 to 1.042; the other picks with the column are at 0.32 to
+    0.99). The pair's weight is +3.27 (prior +1). The file's
+    `curves` carries it; θ was fitted with it.
+  - **Three outcomes:** the same picks plus 14,014 `nothing` records
+    (15,879 decisions in 293 launches), fitted on the old logs as they are (no
+    laps, the old `loadout_two_handed`; README, "Reading logs written before
+    0.23.51"). Grouped 10-fold CV, hit@8 against A* on the same choice sets:
+    θ + b + u0(n): menu 51.7 (+33.2 [+26.3, +40.9]), pooled 58.6 (−12.6
+    [−16.3, −8.8]), page hit@1 40.6 (+19.8); θ + b + u0(n) + `recent`: menu
+    60.1 (+41.5 [+35.5, +48.6]), pooled 62.1 (−9.0 [−13.5, −4.5]), page hit@1
+    40.8 (+20.0); both fail the gate, as their picks-only twins do. The
+    `nothing` outcome: held-out NLL per decision 0.614 [0.582, 0.643] with
+    `recent` and 0.635 without, against 0.701 for κ + u0(n) alone and 0.687
+    for A*'s ranking + u0(n). Online replay of θ + b + u0(n) + `recent`
+    (refit every 25 picks, not 5: one fit on the 15,879 decisions takes 20 to
+    60 s, and the 603 refits of `--every 5` would have taken about 5 h; 341
+    refits, 2.4 h): menu 53.5 (+35.2 [+30.6, +40.2]), pooled 56.3 (−14.2
+    [−19.1, −9.8]), fails, like its picks-only twin (−12.4 at every 5). The bootstrap is the picks model
+    (`outcomes: "picks"`, no u0): R8 ranks, and a u0 learned from `nothing`
+    records sampled only at other needs' onsets is the bias 0.23.51 fixed; refit
+    u0 once there are lap records (`--since 0.23.51`).
+- **Open for you (R8):** (1) D2 or D5: D5 pools +1.0 [+0.5, +1.8] better
+  online but keeps the favourite, correlation and potion multipliers. (2)
+  Presence grading: menu up, page hit@1 down (above); the bootstrap stays
+  graded. (3) `loadout_two_handed`: held at its prior in the file; the
+  alternative is to ship its fitted row as `loadout_quarterstaff` (85% of its
+  old contexts were the staff). (4) b is this character's: whether R8 applies it
+  to the next one (LoreRim 5.1) or starts b at 0 (θ + `recent` + ln util
+  without b fails online: pooled −5.7 [−8.7, −2.6]). (5) D2 keeps the old
+  learner and floors running. Since 0.23.53 (#222) every v3 row logs the old
+  learner's state, the floor reason and the `favorite` bit (the gaps the
+  component test listed); the fit cannot use them yet (no log here reaches
+  0.23.53), but a refit on logs from 0.23.53 on can test whether the floors'
+  scored membership or only the learner score carries D2's edge.
 - **Tools for the real run and R8 (0.23.52,
   [tools/fit/README.md](../tools/fit/README.md)).** `honest.py`: the
   rehearsal's verifier found grouped K-fold flatters the model (it trains on
@@ -628,17 +768,23 @@ Map Phase 4, in `tools/fit` (the scripts and their flags: [tools/fit/README.md](
   + local FormID.
 - [ ] Conditional logit with the three outcomes (key, menu at cost κ, nothing),
       u0 per need, sparse θ, small b, Plackett–Luce co-picks; split by launch.
+      *Not done: the real fit ran it (above, "Three outcomes") only as a
+      plain fit over the old logs, which the data note below rules out (none
+      reaches 0.23.51, so neither `--since` nor `--split-at 0.23.51` had a new
+      segment, and the bias stays in). Those numbers are a preview; the box
+      waits for a run on 0.23.51+ data.*
       **Data (0.23.51):** logs before 0.23.51 have no lap records and read the
       quarterstaff as `loadout_two_handed`; run the three-outcome group with
       `--since 0.23.51`, or `--split-at 0.23.51` (the default
       `--split-needs` splits the seven needs concerned), never a plain fit
       over every file ([tools/fit/README.md](../tools/fit/README.md#reading-logs-written-before-02351)).
-- [ ] Report on held-out play against A* on the same choice sets, by the
-      criterion above (`cv.py`'s yardstick). *Superseded 2026-10-28:* "key
+- [x] Report on held-out play against A* on the same choice sets, by the
+      criterion above (`cv.py`'s yardstick). *The real fit's table above:
+      online replay and CV.* *Superseded 2026-10-28:* "key
       hit rate against **76%** (arm A*, the plain ranking replay can
       reproduce; 81% was the live page with holds), and menu-pick hits against
       **7 of 83**" -- key hit@8 is now reported only, not a gate.
-- [ ] Sequences and redundancy, offline part (proposal,
+- [x] Sequences and redundancy, offline part (proposal,
       [architecture/11-sequences-and-redundancy.md](architecture/11-sequences-and-redundancy.md),
       steps 1-2): compare pairs on presence plus a strength term with the
       current grading (Feather's carry-weight grade is 0.0046), and test
@@ -651,6 +797,13 @@ Map Phase 4, in `tools/fit` (the scripts and their flags: [tools/fit/README.md](
       N(ln 40, 0.5²); only the obvious pair (and its strength twin) reads the
       curve -- with every pair of the need free, the need's dense weights
       fitted the load itself and pulled the centre to the grid's floor.*
+      *Results (the real fit): `recent_<family>` lifts held-out picks
+      (online pooled +3.8 [+2.2, +6.2], menu +8.4), so it reaches R8 (it is in
+      the bootstrap). Presence grading is mixed: menu +3.9 [+1.1, +6.0] and
+      pooled +1.3 [+0.1, +2.3], but page hit@1 −2.5 [−3.9, −1.2]; presence +
+      strength equals presence. The bootstrap stays graded; switching is
+      yours to decide (open below). The encumbrance curve: logistic 0.9887
+      73.42 (above).*
 - [ ] **`bane_<family>` columns, after R6's first fit** (the user,
       2026-10-10). Rows that fire only on a target family (Requiem's triple
       shock damage to constructs 8719DC31 on 776 weapons, "deals 20 magic

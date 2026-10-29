@@ -62,6 +62,7 @@ file is about 650 KiB.
 | `items` | object[] | the per-item b: `{plugin, local, name, b, precision, picks}`, keyed by the plugin that owns the FormID's load-order index (below) |
 | `items_dropped` | object | {reason: count} of the fitted items not written (below); informational |
 | `curves` | object | {need name: `["logistic", centre, slope]`}: response curves fitted by `tools/fit/curve.py` |
+| `provenance` | object | optional, informational, never checked: how the spec was chosen (the data, the yardstick, the gate); `export.py --provenance` (0.23.54) |
 
 ## The score
 
@@ -133,10 +134,33 @@ file contributes 0.
 | `ln util` | the old engine's utility of i in d: `ln(max(utility, 1e-6))`, 0 when i has none |
 | `util missing` | 1 when the old engine gave i no utility in d, else 0 |
 | `slot 0` .. `slot 7` | 1 when i is shown in that slot of the page in d, else 0 (a position term: it describes a page that exists; it cannot build one) |
+| `ln learn mult` | the old learner's multiplier in i's utility: `ln(max(1 + lambda(alpha) * learningScore, 1e-6))`, with `learningScore = alpha * est + (1 - alpha) * prior + beta * ucb + rec` and `lambda(alpha)` as `UtilityScorer` computes them (FeatureBanditLearner's estimate, confidence and UCB, PriorCalculator's prior, UsageMemory's recency), when the old engine scored i in d (i passed its floors); 0 otherwise |
+| `ln fav`, `ln corr`, `ln potion` | `ln(max(m, 1e-6))` of the old engine's favourite, correlation and potion multiplier of i in d, on the same rows as `ln learn mult`; 0 otherwise |
+| `ln learner` | `ln(max(1 + lambda(alpha) * (alpha * est + rec), 1e-6))`: the old learner's per-item state alone (no prior, no UCB), on every row whose item the learner has a record of (in the fit: the latest earlier v2 record that holds the item, its recency only from d's own record); 0 otherwise |
+| `eligible` | 1 when i passed the candidate filters in d (the v3 row's `eligible` flag), else 0 |
 
 `ln util` and `util missing` read the old engine's ranking, the hand-tuned layer
 R8 and R11 retire (roadmap R6, "Open for R8"); a file without them fits the
 model on its own.
+
+The old score's components (added in 0.23.54 for R6's real fit, the R8
+component test of 2026-10-29) split `ln util` = `ln ctx + ln learn mult + ln fav
++ ln corr + ln potion` (UtilityScorer: `util = ctx (1 + lambda learn) corr
+potion fav`, which the v2 log reproduces to a median relative error of 1e-4).
+`ln learn mult` with `util missing` is the minimal part of the old score that
+passed R6's gate; it drops the hand-tuned context weights as a score term but
+still needs the old learner and the old floors (which rows are scored) live.
+`ln learner` with `eligible` needs only the old learner's per-item state. In the
+fit these come from the v2 log (`Huginn_Selections.jsonl`) joined to the v3
+pick by form and time (within 2 s): rows of a pick without a v2 record (armour
+picks write none) read 0 for `ln learn mult`, so a live reader that computes it
+for every scored row gives it on rows the fit saw as 0. The same zeros leak
+into the evaluation: an all-zero decision tells the model the pick was an
+unscored item, so D2 and D5 catch 74% of the 27 unjoined tested picks (tbra,
+whose `ln util` comes from v3, 52%; A* 0%). The shipped file's `provenance`
+carries the yardstick on the joined picks only (`metrics_online_joined`;
+roadmap R6, the real fit). A version-1 reader
+written before 0.23.54 rejects these names (rule 8); none existed then.
 
 ### `curves`
 
@@ -262,7 +286,8 @@ What `bootstrap.validate` checks, and what a version-1 reader rejects:
    `cols`, `tau_s` in `taus_s`, `theta` and `precision` (and `theta_strength`
    with `presence+strength`) of J numbers, every precision above 0, `u0`
    exactly with `three`.
-8. `features[].name` from the list above, `w` a number.
+8. `features[].name` from the list above, `w` a number (the list grew in
+   0.23.54; no reader predates it).
 9. `items[]`: `plugin` a non-empty string, `local` 6 upper-case hex digits,
    `b` and `precision` numbers, `precision` above 0, no two items with the
    same plugin (ignoring case) and local.
@@ -282,3 +307,28 @@ python <repo>/tools/fit/export.py --spec "theta + b + recent_<family>" --curve c
 `hg dump all` in game writes `Huginn_All.csv`; run it on the load order the log
 was written with. The spec is the one R6's yardstick chose (`honest.py`); the
 default is `theta + b + recent_<family>`.
+
+## The shipped file (R6, 0.23.54)
+
+[`configs/Huginn_Bootstrap.json`](../../configs/Huginn_Bootstrap.json) is R6's
+real fit: the mage (`FEFD1B039AC78799`), 1,865 picks in 76 launches
+(2026-10-09 to 2026-10-28, builds 0.23.15 to 0.23.44), spec
+`theta + b + recent + learn mult (D2)`, chosen by R6's gate on the online
+replay (roadmap R6), with the fitted encumbrance curve and
+`loadout_two_handed` held at its prior (`source.held_needs`). Its
+`provenance` field names the log files (with their SHA-256), the pick range,
+the builds, the spec, the reasons, and the yardstick of every spec R6 compared
+(online and CV). It was written by:
+
+```sh
+python <repo>/tools/fit/export.py --spec "theta + b + recent + learn mult (D2)" \
+    --curve curve_encumbrance.json --forms <SKSE>/Huginn_All.csv \
+    --hold-needs loadout_two_handed --provenance provenance.json --out Huginn_Bootstrap.json
+```
+
+`configs/` holds the files the build installs into `Data/SKSE/Plugins/`
+(`Huginn.ini`, `Huginn_Overrides.ini`). R8 installs this one there as
+`Data/SKSE/Plugins/Huginn_Bootstrap.json`, beside `Huginn.ini`, in the change
+that adds its reader: until then no install or `COPY_OUTPUT` rule copies it and
+nothing in the plugin reads it. A refit replaces the file in place (the same
+name), with its provenance.
