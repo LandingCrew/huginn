@@ -134,7 +134,19 @@ namespace Huginn::State::HandModelProbe
          case RE::MagicCaster::State::kUnk01: return "starting";
          case RE::MagicCaster::State::kUnk02: return "starting a charge";
          case RE::MagicCaster::State::kReady: return "charged, held";
-         case RE::MagicCaster::State::kUnk04: return "about to start";
+         // kUnk04: CommonLib v3.7.0 guesses "PreStart?" (MagicCaster.h:35),
+         // and this read "about to start" until 0.23.50. The LoreRim log of
+         // 2026-10-28 puts it after the release: the player charged Conjure
+         // Skeletal Hero from 13:27:50.5 (magicka 95 -> 19 by 13:27:51.4,
+         // the charge done), the last non-idle state the probe saw was
+         // kUnk04 at ~13:27:52.56 (a swap at 13:27:58.359 logged "last cast
+         // 5.8 s before"), the summon effect was up at 13:27:52.684 and the
+         // skeleton appeared at 13:27:52.803. All three swaps of that session
+         // logged kUnk04 as the last cast state (two after that cast, one
+         // 0.7 s after Circle of Strength). So it is the release, between
+         // letting go and the spell landing; the name is still a reading of
+         // the log, not of the engine.
+         case RE::MagicCaster::State::kUnk04: return "just released";
          case RE::MagicCaster::State::kCharging: return "charging";
          case RE::MagicCaster::State::kCasting: return "casting";
          default: return {};

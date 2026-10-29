@@ -475,6 +475,48 @@ waterDepthAhead 40
 dropAhead 0
 end
 
+# time_to_edge and edge_approach (0.23.50, core/EdgeApproach.h). Running at a
+# cliff the far probe just found: 280 units at 300 units per game second is
+# 0.933 s (~0.85), and the proximity climbing 0.9 per game second (~1).
+snapshot edge_run_far
+dropAhead 900
+edgeDistance 280
+edgeSpeed 300
+edgeApproach 0.9
+end
+
+# The curve centres: 175 units at 116.66667 units/s is 1.5 s (0.5), and an
+# approach of 0.3 per game second (0.5).
+snapshot edge_centres
+dropAhead 900
+edgeDistance 175
+edgeSpeed 116.66667
+edgeApproach 0.3
+end
+
+# Standing beside the edge (speed 0): never, 0. What drop_ahead cannot tell
+# from walking off it (drop_ahead ~1 here).
+snapshot edge_standing
+dropAhead 900
+edgeDistance 70
+edgeSpeed 0
+end
+
+# Moving away from the edge: never; backing off is a negative trend (~0).
+snapshot edge_backing_off
+dropAhead 900
+edgeDistance 70
+edgeSpeed -150
+edgeApproach -0.8
+end
+
+# Moving with no edge ahead (-1): never.
+snapshot edge_none_moving
+dropAhead 100
+edgeDistance -1
+edgeSpeed 300
+end
+
 # Crosshair: lock, smithing bench, ore vein, merchant.
 snapshot crosshair_smithing
 lock 1

@@ -95,7 +95,7 @@ the checked-in fixtures byte for byte.
 
 **The need vector (R3, 0.23.14).** `core/ResponseCurve.h`, `core/NeedIds.h`
 (generated from `needs.csv`), `core/NeedSnapshot*`, `core/NeedEvaluator.*`,
-`core/NeedSensorMath.h`, `core/DropAhead.h`, `core/TargetFamilies.h`:
+`core/NeedSensorMath.h`, `core/DropAhead.h`, `core/EdgeApproach.h`, `core/TargetFamilies.h`:
 
 | Test | What it pins |
 |---|---|
@@ -103,6 +103,7 @@ the checked-in fixtures byte for byte.
 | `ResponseCurveTests.cpp` | each curve kind against hand-worked values; [0,1] for any input; parse/format round trip; bad INI values refused |
 | `NeedEvaluatorTests.cpp` | named cases for the `r3_input` formulas (gates, NEVER, families, ammo by launcher...), the 0.05 signature, `Advance`, `TimeDriven`, the text record |
 | `NeedSensorTests.cpp` | drop-ahead geometry (points, direction, the 20 units/s threshold, cliff, slope, no hit, bridge over water, wading; unknown probes: uphill, a wall, stairs, a crowd); water (0.23.19): deep water a safe landing and shallow water a drop to its surface, the deepest water ahead (`MeasureAhead`: a cliff into the sea, a stream, a lake shore, no hit over water, water only below the ray's bottom, unknown probes, the `kSafeLandingDepth` edge); the 16000-unit down ray (0.23.22) and the LoreRim sea cliff of 2026-10-10 it now reaches (the 4000 ray read a 3936 void there); the probe sequence (`ProbeAll`) over a scripted world: the picks it casts, a cliff, a parapet blocked at the knee, an invisible wall, walkable slopes of 5-30 degrees, a crest then a cliff, a step up, stairs, a crowd; the teleport test, the decaying sum, the time-to-kill estimate; the drop reading's unpaused age (0.23.16); the bench kind by workbench keyword (0.23.16) |
+| `EdgeApproachTests.cpp` | `time_to_edge` and `edge_approach` (0.23.50, `core/EdgeApproach.h`): an edge is a known probe point with a drop at drop_ahead's centre (466) or more, never an unknown one or a deep-water landing; the speed along the probe direction; seconds = distance / speed, NEVER standing, backing off or with no edge; the approach trend's least-squares slope over 1.5 GAME seconds (the same trend under Wheeler's 0.2), its minimum passes and span, the restart on a direction flip, a backwards clock or a non-finite sample, a slow arc dropping old passes, a wall reading as the proximity falling |
 | `WaterSelfCheckTests.cpp` | the drop-ahead probe's water self-check (0.23.23, `core/WaterSelfCheck.h`): a plane more than 150 units over the feet of a dry, grounded player contradicts the engine (the false water of 2026-10-10 11:23: 234 and 364), swimming / under water / airborne / mounted / no water never do; the 0.5 s hold (fires once; a break, another plane, a gap over 0.5 s restart it; a slow frame does not); the per-load blacklist (cell + height within 4 units, Known / Full, removal after a swim proves a plane real); the swim check against the engine's water (the 13:51 cave pool, -1040 both) |
 | `TargetFamiliesTests.cpp` | the multi-hot family reading on all 539 `race_map.csv` rows (family \| also) and named cases |
 | `NeedFixtureTests.cpp` | every snapshot in `tests/core/fixtures/needs/*.txt` gives the vector in its `.expected.csv` |

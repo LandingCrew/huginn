@@ -137,6 +137,8 @@ def make_ini(rows):
     w(";   the csv's defaults (curve_kind, curve_p1, curve_p2); a key left out or")
     w(";   unreadable keeps its default. Hot-reloadable (hg reload / dMenu).")
     w(";   darkness's centre mirrors 1 - [ContextWeights] fDarkLightLevel.")
+    w(";   time_to_edge and edge_approach read drop_ahead's csv curve (466), not")
+    w(";   a drop_ahead line here: overriding drop_ahead leaves them as they are.")
     group = None
     for r in rows:
         if r["group"] != group:

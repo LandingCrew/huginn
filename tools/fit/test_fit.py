@@ -181,8 +181,9 @@ class Loader(TempWork):
 
 
 class NewAndUnknownKeys(TempWork):
-    """A later build adds need ids (time_to_edge, edge_approach: branch edge-approach) and
-    record fields; an older build's records lack fields the loader reads. Both load."""
+    """A later build adds need ids (placeholders: since 0.23.50 the synthetic session itself
+    carries time_to_edge and edge_approach) and record fields; an older build's records lack
+    fields the loader reads. Both load."""
 
     def text(self):
         old = session('20261010-100000', CHAR_A, '0.23.38 (c265bab)', minute=1)
@@ -192,8 +193,8 @@ class NewAndUnknownKeys(TempWork):
                 for k in ('char', 'gen', 'open', 'ep', 'preEquipped', 'confirmMs'):
                     r.pop(k, None)
         old = edit_lines(old, drop_fields)
-        new = session('20261029-100000', CHAR_A, '0.23.48 (abc1234)', minute=2,
-                      new_needs=('time_to_edge', 'edge_approach'))
+        new = session('20261029-100000', CHAR_A, '0.23.50 (abc1234)', minute=2,
+                      new_needs=('future_need_a', 'future_need_b'))
 
         def add_fields(r):           # fields no build writes yet
             if r['t'] == 'ctx':
@@ -207,8 +208,8 @@ class NewAndUnknownKeys(TempWork):
     def test_v3load(self):
         D = v3load.load([self.write('v3.jsonl', self.text())])
         self.assertEqual(len(D['decs']), 8)
-        self.assertEqual(D['needs'][-2:], ['time_to_edge', 'edge_approach'])
-        k = D['needs'].index('time_to_edge')
+        self.assertEqual(D['needs'][-2:], ['future_need_a', 'future_need_b'])
+        k = D['needs'].index('future_need_a')
         new_ctx = D['ctxs'][('20261029-100000', 10)]
         old_ctx = D['ctxs'][('20261010-100000', 10)]
         self.assertEqual(new_ctx['need'][k], 0.7)
@@ -222,7 +223,7 @@ class NewAndUnknownKeys(TempWork):
     def test_build_reads_new_needs_as_columns(self):
         self.quiet(v3load.main, [str(self.write('v3.jsonl', self.text()))])
         S = fitlib.build(common.load(), include_nothing=True)
-        k = S['needs'].index('time_to_edge')
+        k = S['needs'].index('future_need_a')
         new = np.array([m['launch'] == '20261029-100000' for m in S['meta']])
         self.assertTrue((S['N'][~new, k] == 0).all())
         self.assertTrue((S['N'][new, k] > 0).any())
@@ -230,8 +231,8 @@ class NewAndUnknownKeys(TempWork):
     def test_replay_reader(self):
         decs = replay.load_v3([self.write('v3.jsonl', self.text())])
         self.assertEqual(len(decs), 8)
-        self.assertEqual(decs[4]['ctx']['need']['time_to_edge'], 0.7)
-        self.assertNotIn('time_to_edge', decs[0]['ctx']['need'])
+        self.assertEqual(decs[4]['ctx']['need']['future_need_a'], 0.7)
+        self.assertNotIn('future_need_a', decs[0]['ctx']['need'])
         self.assertNotIn('char', decs[0])
 
 

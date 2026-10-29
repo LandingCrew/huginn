@@ -268,6 +268,15 @@ namespace Huginn::Console
          s.openDaylight ? " (open daylight)" : "");
       Print(extra.c_str());
       logger::info("[Console] {}"sv, extra);
+      // time_to_edge and edge_approach (0.23.50, core/EdgeApproach.h): the
+      // readings behind them, and the probe pass's proximity.
+      const auto proximity = sensors.dropAgeSec < 0.0 ? std::string("-") : std::format("{:.2f}", probe.edgeProximity);
+      const auto edge = std::format("  edge {} | speed toward it {:.0f} units/game s | proximity {} | approach {:+.2f}/game s (window {:.1f} game s)",
+         s.edgeDistance < 0.0f ? std::string("none (or not measured)")
+                               : std::format("{:.0f} units (a drop >= {:.0f})", s.edgeDistance, Core::Needs::kEdgeDropThreshold),
+         s.edgeSpeed, proximity, s.edgeApproach, Core::Needs::EdgeApproachTracker::kWindowSec);
+      Print(edge.c_str());
+      logger::info("[Console] {}"sv, edge);
       // The survival stages behind hunger and thirst, and whether a survival
       // stage ability is what holds regen_suppressed on (0.23.31).
       const auto survival = std::format("  survival {} | hunger stage {} | thirst {} | regen suppressed {} (by a survival stage: {}) | health regen suppressed {} (by a survival stage: {})",

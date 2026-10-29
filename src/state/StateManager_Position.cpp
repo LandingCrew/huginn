@@ -369,12 +369,22 @@ namespace Huginn::State
       // deep_water_ahead (0.23.19): the same probe pass, the same staleness.
       // -1 while swimming (the probe is skipped): reads 0, see Reading.
       const float waterDepth = fresh ? reading.waterDepth : -1.0f;
+      // time_to_edge and edge_approach (0.23.50, core/EdgeApproach.h): the
+      // same pass, the same staleness; stale reads "no edge, no trend".
+      const float edgeDistance = fresh ? reading.edgeDistance : -1.0f;
+      const float edgeSpeed = fresh ? reading.edgeSpeed : 0.0f;
+      const float edgeApproach = fresh ? reading.edgeApproach : 0.0f;
       Huginn_PLOT("Needs drop_ahead (units, -1 unmeasured)", drop);
       Huginn_PLOT("Needs deep_water_ahead (units, -1 unmeasured)", waterDepth);
+      Huginn_PLOT("Needs edge distance (units, -1 none)", edgeDistance);
+      Huginn_PLOT("Needs edge approach (proximity per game s)", edgeApproach);
       UpdateNeedSensors([&](NeedSensorState& n) {
         n.encumbrance = encumbrance;
         n.dropAhead = drop;
         n.waterDepthAhead = waterDepth;
+        n.edgeDistance = edgeDistance;
+        n.edgeSpeed = edgeSpeed;
+        n.edgeApproach = edgeApproach;
         n.dropAgeSec = age;
         if (underwater != m_wasUnderwaterForTimer) {
           n.submergedAt = underwater ? nowSec : -1.0;

@@ -130,6 +130,9 @@ namespace Huginn::Core::Needs
         float fallDepth = 0.0f;       // units below the take-off point
         float dropAhead = -1.0f;      // units from the feet down to the surface ahead, -1 not measured
         float waterDepthAhead = -1.0f;  // deepest water under the drop probes, units; 0 none, -1 not measured
+        float edgeDistance = -1.0f;   // units along the probe direction to the nearest dangerous probe point, -1 none (0.23.50)
+        float edgeSpeed = 0.0f;       // speed along the probe direction, units per GAME second, < 0 away
+        float edgeApproach = 0.0f;    // proximity to an edge per game second over ~1.5 s (core/EdgeApproach.h)
         bool lock = false;            // crosshair on a locked object
         int workstation = 0;          // Workstation
         bool oreVein = false;
@@ -196,7 +199,9 @@ namespace Huginn::Core::Needs
         HUGINN_NEED_FIELD(followerPresent), HUGINN_NEED_FIELD(followerBleedout),
         HUGINN_NEED_FIELD(light), HUGINN_NEED_FIELD(openDaylight), HUGINN_NEED_FIELD(underwater),
         HUGINN_NEED_FIELD(submergedFor), HUGINN_NEED_FIELD(swimming), HUGINN_NEED_FIELD(fallDepth),
-        HUGINN_NEED_FIELD(dropAhead), HUGINN_NEED_FIELD(waterDepthAhead), HUGINN_NEED_FIELD(lock),
+        HUGINN_NEED_FIELD(dropAhead), HUGINN_NEED_FIELD(waterDepthAhead),
+        HUGINN_NEED_FIELD(edgeDistance), HUGINN_NEED_FIELD(edgeSpeed), HUGINN_NEED_FIELD(edgeApproach),
+        HUGINN_NEED_FIELD(lock),
         HUGINN_NEED_FIELD(workstation), HUGINN_NEED_FIELD(oreVein), HUGINN_NEED_FIELD(merchant),
         HUGINN_NEED_FIELD(enchantedWeapon), HUGINN_NEED_FIELD(weaponCharge), HUGINN_NEED_FIELD(bow),
         HUGINN_NEED_FIELD(crossbow), HUGINN_NEED_FIELD(arrows), HUGINN_NEED_FIELD(bolts),

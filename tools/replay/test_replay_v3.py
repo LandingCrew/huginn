@@ -62,7 +62,7 @@ class GoldenFile(unittest.TestCase):
         h = self.decs[0]["head"]
         self.assertEqual(h["v"], 3)
         self.assertEqual(len(h["cols"]), 243)
-        self.assertEqual(len(h["needs"]), 94)  # 93 until 0.23.30 added combat_regen_ok
+        self.assertEqual(len(h["needs"]), 96)  # 94 until 0.23.50 added time_to_edge and edge_approach; 93 until 0.23.30 added combat_regen_ok
         self.assertEqual(h["cross"][4], "stack_count")
         # 0.23.46: covered at the end of cross, two row columns, the filter names.
         self.assertEqual(h["cross"][7], "covered")

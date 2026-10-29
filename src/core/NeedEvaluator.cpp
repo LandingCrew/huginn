@@ -137,6 +137,14 @@ namespace Huginn::Core::Needs
                 case N::falling: return s.fallDepth;
                 case N::drop_ahead: return s.dropAhead < 0.0f ? 0.0f : s.dropAhead;
                 case N::deep_water_ahead: return s.waterDepthAhead < 0.0f ? 0.0f : s.waterDepthAhead;
+                // 0.23.50 (core/EdgeApproach.h): seconds to the nearest
+                // dangerous probe point at the speed toward it; no edge,
+                // standing still or moving away is never, and so is a crawl
+                // slower than one that reaches it in kNever seconds.
+                case N::time_to_edge:
+                    if (s.edgeDistance < 0.0f || !(s.edgeSpeed > 0.0f)) return kNever;
+                    return std::min(s.edgeDistance / s.edgeSpeed, kNever);
+                case N::edge_approach: return s.edgeApproach;
                 case N::lock_in_crosshair: return B(s.lock);
                 case N::workstation_smithing: return B(s.workstation == static_cast<int>(Workstation::Smithing));
                 case N::workstation_enchanting: return B(s.workstation == static_cast<int>(Workstation::Enchanting));

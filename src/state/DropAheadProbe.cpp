@@ -13,6 +13,7 @@
 #include <cmath>
 #include <limits>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 
@@ -51,6 +52,24 @@ namespace Huginn::State::DropAheadProbe
       Core::Needs::FalseWaterHold g_falseWaterHold;
       bool g_swimMatchLogged = false;
       bool g_swimMismatchLogged = false;
+
+      // time_to_edge and edge_approach (0.23.50, core/EdgeApproach.h).
+      // Hook-thread only, like the throttle above. g_lastPosGameAt: the game
+      // clock at g_lastPos, for the speed on the game clock; g_lastSpace: the
+      // interior cell or worldspace of the last pass, for the reset on a
+      // change of space.
+      double g_lastPosGameAt = -1.0;
+      std::optional<Core::Needs::SpaceKey> g_lastSpace;
+      Core::Needs::EdgeApproachTracker g_edgeTracker;
+
+      // Forget the approach window and the last space: the next pass starts
+      // a new trend. A game load, the main menu, a loading screen, every
+      // skip. (A teleport or a change of space resets the window alone.)
+      void ResetEdge() noexcept
+      {
+         g_edgeTracker.Reset();
+         g_lastSpace.reset();
+      }
 
       constexpr std::chrono::milliseconds kInterval{ 100 };
 
@@ -374,10 +393,21 @@ namespace Huginn::State::DropAheadProbe
                              Core::Needs::WaterPlaneBlacklist::kCapacity));
       }
 
+      // A skip, or no reading: the edge fields keep Reading's "nothing" values.
       void Store(Status status, float drop, float waterDepth, double atSec)
       {
          std::lock_guard lock(g_mutex);
-         g_latest = { status, drop, waterDepth, atSec };
+         g_latest = Reading{};
+         g_latest.status = status;
+         g_latest.drop = drop;
+         g_latest.waterDepth = waterDepth;
+         g_latest.atSec = atSec;
+      }
+
+      void Store(const Reading& reading)
+      {
+         std::lock_guard lock(g_mutex);
+         g_latest = reading;
       }
 
       // The status line (0.23.16): debug, and at most one per
@@ -420,6 +450,11 @@ namespace Huginn::State::DropAheadProbe
             g_falseWaterHold.Reset();
             g_swimMatchLogged = false;
             g_swimMismatchLogged = false;
+            // A load the hook never saw a loading screen for (verifier of
+            // #219): the last position is from before it, not movement.
+            g_lastPosAt = -1.0;
+            g_lastPosGameAt = -1.0;
+            ResetEdge();
          }
          const auto now = std::chrono::steady_clock::now();
          if (now - g_lastProbe < kInterval) return;
@@ -440,6 +475,8 @@ namespace Huginn::State::DropAheadProbe
             // A skip before the self-check ran (a load, no 3D, no cell ...)
             // breaks its hold; airborne / swimming / mounted it ran already.
             if (s != Status::Airborne && s != Status::Swimming && s != Status::Mounted) g_falseWaterHold.Reset();
+            // No pass: the approach window restarts after it (EdgeApproachTracker).
+            ResetEdge();
             Store(s, -1.0f, -1.0f, nowSec);
             if (WantTransitionLog(s, nowSec)) LogTransition(s, nowSec, "");
          };
@@ -450,12 +487,15 @@ namespace Huginn::State::DropAheadProbe
             if (ui->IsMenuOpen(RE::MainMenu::MENU_NAME)) {
                g_gameLoaded.store(false, std::memory_order_release);
                g_lastPosAt = -1.0;
+               g_lastPosGameAt = -1.0;
+               ResetEdge();
                Store(Status::NotLoaded, -1.0f, -1.0f, -1.0);  // no reading: nothing for a paused age to keep
                if (WantTransitionLog(Status::NotLoaded, nowSec)) LogTransition(Status::NotLoaded, nowSec, "");
                return;
             }
             if (ui->IsMenuOpen(RE::LoadingMenu::MENU_NAME)) {
                g_lastPosAt = -1.0;  // a load: the next position is no movement
+               g_lastPosGameAt = -1.0;
                return skip(Status::Loading);
             }
          }
@@ -466,19 +506,42 @@ namespace Huginn::State::DropAheadProbe
          const RE::NiPointer<RE::bhkWorld> world(cell->GetbhkWorld());
          if (!world) return skip(Status::NoWorld);
 
+         // A change of space (an interior cell, or an exterior worldspace;
+         // core SpaceKey) restarts the approach window: a load door or a
+         // worldspace change. Walking into the next exterior cell does not.
+         {
+            Core::Needs::SpaceKey space;
+            space.interior = cell->IsInteriorCell();
+            if (space.interior) {
+               space.formId = cell->GetFormID();
+            } else if (const auto* ws = cell->GetRuntimeData().worldSpace) {
+               space.formId = ws->GetFormID();
+            }
+            if (g_lastSpace && *g_lastSpace != space) g_edgeTracker.Reset();
+            g_lastSpace = space;
+         }
+
          const RE::NiPoint3 pos = player->GetPosition();
          const Core::Needs::Vec3 feet{ pos.x, pos.y, pos.z };
          // A teleport (coc, a load door, fast travel) is no heading: the old
          // to new position would aim the probes anywhere. Use the facing.
          float dt = g_lastPosAt < 0.0 ? 0.0f : static_cast<float>(nowSec - g_lastPosAt);
+         // The same move on the game clock (0.23.50): time_to_edge's speed.
+         // The heading above stays on the wall clock, as it was.
+         const double gameNow = g_gameSeconds.load(std::memory_order_relaxed);
+         float gameDt = g_lastPosGameAt < 0.0 ? 0.0f : static_cast<float>(gameNow - g_lastPosGameAt);
          if (dt > 0.0f && Core::Needs::IsTeleport(g_lastPos, feet)) {
             logger::debug("[DropAhead] a {:.0f}-unit jump: a teleport, heading from the facing"sv,
                std::hypot(feet.x - g_lastPos.x, feet.y - g_lastPos.y, feet.z - g_lastPos.z));
             dt = 0.0f;
+            gameDt = 0.0f;
+            g_edgeTracker.Reset();  // the window described the place left behind
          }
          const auto velocity = Core::Needs::HorizontalVelocity(g_lastPos, feet, dt);
+         const auto gameVelocity = Core::Needs::HorizontalVelocity(g_lastPos, feet, gameDt);
          g_lastPos = feet;
          g_lastPosAt = nowSec;
+         g_lastPosGameAt = gameNow;
 
          // Airborne the feet are on nothing (the fall has its own need),
          // swimming the surface is the water, mounted the player's Z is the
@@ -535,7 +598,20 @@ namespace Huginn::State::DropAheadProbe
          const auto ahead = Core::Needs::MeasureAhead(feet.z, hits, cfg);
          const float drop = ahead.drop;
          const Status status = drop < 0.0f ? Status::AllUnknown : Status::Measured;
-         Store(status, drop, ahead.waterDepth, nowSec);
+         // time_to_edge and edge_approach (0.23.50, core/EdgeApproach.h): the
+         // nearest dangerous known point, the speed toward it on the game
+         // clock, and this pass added to the approach window. A pass with
+         // every probe unknown is a pass all the same: proximity 0.
+         Reading reading;
+         reading.status = status;
+         reading.drop = drop;
+         reading.waterDepth = ahead.waterDepth;
+         reading.atSec = nowSec;
+         reading.edgeDistance = Core::Needs::NearestEdgeDistance(feet.z, hits, cfg).value_or(-1.0f);
+         reading.edgeSpeed = Core::Needs::SpeedToward(gameVelocity, dir);
+         reading.edgeProximity = Core::Needs::EdgeProximity(feet.z, hits, cfg);
+         reading.edgeApproach = g_edgeTracker.Add({ gameNow, dir, reading.edgeProximity });
+         Store(reading);
          if (status == Status::Measured) g_measuredCount.fetch_add(1, std::memory_order_relaxed);
          if (!WantTransitionLog(status, nowSec)) return;
          // Per probe: the hit Z (or "void"), the RAW water height the game
@@ -569,9 +645,12 @@ namespace Huginn::State::DropAheadProbe
          };
          LogTransition(status, nowSec, fmt::format(": drop {:.0f} | deep water {:.0f} (safe landing >= {:.0f}) | dir "
                                            "({:.2f}, {:.2f}) | probes [{}] [{}] [{}] | water cells: {} neighbour, "
-                                           "{} unknown | unknown {} rejected {} | feet z {:.0f}",
+                                           "{} unknown | unknown {} rejected {} | feet z {:.0f} | edge {} speed {:.0f}/game s "
+                                           "proximity {:.2f} approach {:+.2f}/game s",
             drop, ahead.waterDepth, Core::Needs::kSafeLandingDepth, dir.x, dir.y, probe(0), probe(1), probe(2),
-            neighbourCells, unknownCells, unknown, cast.rejected, feet.z));
+            neighbourCells, unknownCells, unknown, cast.rejected, feet.z,
+            reading.edgeDistance < 0.0f ? std::string("none") : fmt::format("{:.0f}", reading.edgeDistance),
+            reading.edgeSpeed, reading.edgeProximity, reading.edgeApproach));
       }
 
       void HookUpdate(RE::PlayerCharacter* a_this, float a_delta)
@@ -586,6 +665,7 @@ namespace Huginn::State::DropAheadProbe
             if (!s_logged.exchange(true)) {
                logger::error("[DropAhead] an exception in the probe was caught (logged once); drop ahead unmeasured"sv);
             }
+            ResetEdge();
             Store(Status::NotLoaded, -1.0f, -1.0f, -1.0);
          }
          // The hand model diagnostic (0.23.44) rides the same main-thread hook.
