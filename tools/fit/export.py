@@ -22,8 +22,11 @@ space). A dynamic (FF) form, a form the dump lacks and a form whose index owner 
 cannot tell are dropped and counted (`items_dropped`). The dump's load
 order must be the log's -- light (FE) plugins shift when a list update adds or removes one --
 so an item whose catalog kind differs from the dump's, or a picked item whose logged name
-differs from the dump's, is dropped and counted too (never a wrong key), with a WARNING. b is
-this character's (it may not transfer to a new one); theta is meant to.
+differs from the dump's, is dropped and counted too, with a WARNING. That drops the wrong keys
+these checks can see, not all of them: a never-picked item whose kind matches by chance, or an
+index index_owners attributes wrongly, still gets a wrong key (the format doc, Items: R8's
+reader cross-checks the resolved form's kind and name). b is this character's (it may not
+transfer to a new one); theta is meant to.
 
 The output goes to the work directory (bootstrap.json by default): never into the repository."""
 import argparse
@@ -178,8 +181,8 @@ def document(S, Sv, M, p, spec_name, grading, three, forms, curves, source, log=
                     unknown.append(form)
                 continue
             dplugin, dname, dkind = forms[int(form, 16)]
-            # A form map from another load order points this FormID at another record: never
-            # write a wrong key. The kind is checked for every item, the name for picked ones.
+            # A form map from another load order points this FormID at another record: drop the
+            # wrong keys we can see. The kind is checked for every item, the name for picked ones.
             lk = (log_kinds or {}).get(form)
             if lk and dkind and lk != dkind:
                 dropped['kind differs from the form map'] += 1

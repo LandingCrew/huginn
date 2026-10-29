@@ -36,7 +36,8 @@ the fit reads, the obvious pairs and fitlib.py's code), the spec, the schedule a
 settings (--maxiter), so parallel runs with different --spec, then one run naming them all,
 combine without refitting, and a rebuilt v3.pkl or a fitlib.py change refits. CV results are
 also taken from cv_<group>.pkl when it was written with the same data_key, folds, seed and
-maxiter (cv.py fits with CV_MAXITER, 300; its specs of the same name)."""
+maxiter (cv.py fits with CV_MAXITER, 300), for each spec whose definition there (cv.spec_key)
+is the current one."""
 import argparse
 import hashlib
 import os
@@ -113,10 +114,11 @@ def cached(path, use, compute):
     return val, False
 
 
-def cv_from_pickle(a, dkey):
-    """cv_<group>.pkl's results, when written with the same data_key (the same decisions, data
-    and fit code), folds, seed and maxiter; else {}. A pickle from before the key was stored
-    (no 'data_key') is never reused."""
+def cv_from_pickle(a, dkey, specs):
+    """cv_<group>.pkl's results for the specs (name: spec) it holds with the same definition
+    (cv.spec_key: a spec redefined in cv.py under the same name is refitted), when it was written
+    with the same data_key (the same decisions, data and fit code), folds, seed and maxiter; else
+    {}. A pickle from before the key or the definitions were stored is never reused."""
     p = work(f'cv_{a.group}.pkl')
     if not p.exists():
         return {}
@@ -125,15 +127,19 @@ def cv_from_pickle(a, dkey):
     args = C.get('args', {})
     same = (C.get('data_key') == dkey and C.get('maxiter') == a.maxiter
             and args.get('folds') == a.folds and args.get('seed') == a.seed and not args.get('loo'))
-    return C['results'] if same else {}
+    if not same:
+        return {}
+    defs = C.get('specs') or {}
+    return {name: C['results'][name] for name, spec in specs.items()
+            if name in C['results'] and defs.get(name) == cv.spec_key(spec)}
 
 
 def table_lines(rows, title):
-    """rows: [(label, ys, levels, verdict)] -> text: one line per label."""
+    """rows: [(label, ys, verdict)] -> text: one line per label."""
     mets = list(YARDSTICK)
     w = 40
     out = [title, f'  {"":42} ' + ''.join(f'{m:>{w}}' for m in mets) + '   gate']
-    for label, ys, lv, v in rows:
+    for label, ys, v in rows:
         cells = []
         for m in mets:
             if m in ys:
@@ -177,12 +183,12 @@ def main(argv=None):
     P(f'CV: grouped {int(fold_of.max()) + 1}-fold by launch (seed {a.seed})')
     P(f'specs: {", ".join(specs)}\n')
 
-    from_cv = cv_from_pickle(a, dkey)
+    from_cv = cv_from_pickle(a, dkey, specs)
     use = not a.no_cache
     res_cv, res_on, timing = {}, {}, {}
     for name, spec in specs.items():
         t0 = time.time()
-        common_parts = (dkey, a.group, name, repr(sorted(spec.items())), a.maxiter)
+        common_parts = (dkey, a.group, name, cv.spec_key(spec), a.maxiter)
         if name in from_cv:
             res_cv[name], how_cv = from_cv[name], 'cv pickle'
         else:
@@ -240,7 +246,7 @@ def main(argv=None):
 
     P('\n=== summary: model level (model - A* [95% CI]) n, per method ===')
     for meth in METHODS:
-        P('\n'.join(table_lines([(name, ys[(name, meth)], lv[(name, meth)], verdicts[(name, meth)][0]) for name in specs],
+        P('\n'.join(table_lines([(name, ys[(name, meth)], verdicts[(name, meth)][0]) for name in specs],
                                 f'-- {meth}')))
     P('\n=== R6 gate (menu lower end > 0 and pooled upper end >= 0) ===')
     for name in specs:

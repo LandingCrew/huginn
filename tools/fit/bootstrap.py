@@ -106,7 +106,7 @@ def dumps(doc):
     return _dump(doc, 0) + '\n'
 
 
-def _matrix(doc, key, rows, cols, errs, allow_none=False):
+def _matrix(doc, key, rows, cols, errs, allow_none=False, positive=False):
     m = doc.get(key)
     if m is None:
         if not allow_none:
@@ -121,6 +121,9 @@ def _matrix(doc, key, rows, cols, errs, allow_none=False):
             return
         if not all(_isnum(x) for x in r):
             errs.append(f'{key}[{i}]: not all finite numbers')
+            return
+        if positive and not all(x > 0 for x in r):
+            errs.append(f'{key}[{i}]: a precision must be above 0 (sigma^2 = 1 / precision)')
             return
 
 
@@ -153,10 +156,10 @@ def validate(doc):
             errs.append(f'{key}: duplicate names')
     K, J = len(needs), len(cols)
     _matrix(doc, 'theta', K, J, errs)
-    _matrix(doc, 'theta_precision', K, J, errs)
+    _matrix(doc, 'theta_precision', K, J, errs, positive=True)
     strength = model.get('grading') == 'presence+strength'
     _matrix(doc, 'theta_strength', K, J, errs, allow_none=not strength)
-    _matrix(doc, 'theta_strength_precision', K, J, errs, allow_none=not strength)
+    _matrix(doc, 'theta_strength_precision', K, J, errs, allow_none=not strength, positive=True)
     if not strength and (doc.get('theta_strength') is not None or doc.get('theta_strength_precision') is not None):
         errs.append('theta_strength: only with grading presence+strength')
     tb = doc.get('theta_bias')
@@ -187,6 +190,8 @@ def validate(doc):
                 v = f.get(key)
                 if not isinstance(v, list) or len(v) != J or not all(_isnum(x) for x in v):
                     errs.append(f'recent.features[{i}].{key}: {J} numbers')
+                elif key == 'precision' and not all(x > 0 for x in v):
+                    errs.append(f'recent.features[{i}].precision: above 0')
             if (model.get('outcomes') == 'three') != ('u0' in f):
                 errs.append(f'recent.features[{i}].u0: present exactly when outcomes three')
     for i, f in enumerate(doc.get('features') or []):
@@ -201,6 +206,8 @@ def validate(doc):
             errs.append(f'items[{i}].local: 6 upper-case hex digits')
         if not _isnum(it.get('b')) or not _isnum(it.get('precision')):
             errs.append(f'items[{i}]: b and precision numbers')
+        elif it['precision'] <= 0:
+            errs.append(f'items[{i}].precision: above 0')
         key = (str(p).lower(), loc)
         if key in seen:
             errs.append(f'items[{i}]: duplicate plugin + local')

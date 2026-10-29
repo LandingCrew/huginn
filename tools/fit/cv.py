@@ -39,6 +39,12 @@ from fitlib import *
 
 CV_MAXITER = 300     # L-BFGS iterations per fold fit (stored in cv_<group>.pkl for honest.py)
 
+
+def spec_key(spec):
+    """A spec's definition as text. Results are reused by it, not by the spec's name (honest.py's
+    caches, and cv_<group>.pkl's 'specs'), so a spec redefined under the same name is refitted."""
+    return repr(sorted(spec.items()))
+
 PICKS = {
     'kappa only': dict(theta=False, item=False, outside=False),
     'position': dict(theta=False, item=False, outside=False, feat_spec=['pos']),
@@ -190,7 +196,8 @@ def main(argv=None):
     with open(work(f'cv_{a.group}.pkl'), 'wb') as f:
         pickle.dump({'results': results, 'meta': S['meta'], 'launches': launches, 'fold_of': fold_of,
                      'segments': S['segments'], 'SEG': S['SEG'], 'yardstick': ys, 'astar_beta': betas,
-                     'timing': timing, 'args': vars(a), 'maxiter': CV_MAXITER, 'data_key': data_key(S, obv)}, f)
+                     'timing': timing, 'args': vars(a), 'maxiter': CV_MAXITER, 'data_key': data_key(S, obv),
+                     'specs': {name: spec_key(spec) for name, spec in specs.items()}}, f)
     P(f'[{time.time() - t_start:.0f}s] wrote {work(f"cv_{a.group}.pkl")}')
     out.close()
 

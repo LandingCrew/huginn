@@ -662,6 +662,47 @@ class OnlineSchedule(unittest.TestCase):
             if astar_a[i] is not None and 'page_logp' in astar_a[i]:
                 self.assertAlmostEqual(astar_a[i]['page_logp'], astar_b[i]['page_logp'], places=9)
 
+    def test_astar_temperature_is_the_past(self):
+        """A*'s page temperature for a chunk is fitted on the decisions before it only: each tested
+        page_logp is softmax(beta * z) with beta from the chunk's training set, and changing one pick
+        inside a chunk changes neither the earlier chunks nor the other decisions of its own chunk
+        (test_no_future_leak changes only the last launch, so it misses a leak inside a chunk)."""
+        S = synth_S(260, per_launch=40, seed=3)
+        every, mt = 10, 60
+        a = fitlib.astar_online(S, every, mt)
+        _, z = fitlib.astar_scores(S)
+        chunks = list(fitlib.online_chunks(S, every, mt))
+        checked = 0
+        for tr, te in chunks:
+            beta = fitlib.page_temperature(S, z, tr)
+            for i in te:
+                if a[i] is None or 'page_logp' not in a[i]:
+                    continue
+                on = S['MASK'][i] & (S['INHA'][i] == 0)
+                sp = beta * z[i][on]
+                y = np.where(on)[0].tolist().index(int(S['Y'][i]))
+                m = sp.max()
+                self.assertAlmostEqual(a[i]['page_logp'], float(sp[y] - m - np.log(np.exp(sp - m).sum())), places=7)
+                checked += 1
+        self.assertGreater(checked, 20)
+        # one key pick of a middle chunk moved to another on-page row: a pick page_temperature reads
+        tr, te = chunks[len(chunks) // 2]
+        keys = [i for i in te if S['OUT'][i] == 'key']
+        self.assertGreaterEqual(len(keys), 2)
+        d = keys[-1]
+        on = np.where(S['INHA'][d] == 0)[0]
+        new = next(int(r) for r in on if r != S['Y'][d] and abs(z[d, r] - z[d, S['Y'][d]]) > 1e-3)
+        S2 = dict(S)
+        S2['Y'] = S['Y'].copy()
+        S2['Y'][d] = new
+        b = fitlib.astar_online(S2, every, mt)
+        for i in range(d):                        # every earlier decision, those of d's chunk included
+            if a[i] is not None and 'page_logp' in a[i]:
+                self.assertAlmostEqual(a[i]['page_logp'], b[i]['page_logp'], places=9, msg=f'decision {i}')
+        # the change is one a temperature fitted on the chunk itself would see
+        self.assertNotAlmostEqual(fitlib.page_temperature(S, z, np.concatenate([tr, te])),
+                                  fitlib.page_temperature(S2, z, np.concatenate([tr, te])), places=6)
+
     def test_cv_results_matches_the_old_loop(self):
         """cv_results is cv.py's former fold loop (fit from init on the other folds)."""
         S = synth_S(300, per_launch=30, seed=4)
@@ -827,6 +868,11 @@ class BootstrapFormat(unittest.TestCase):
         self.assertTrue(broken(lambda d: d['curves'].update(encumbrance=['logistic', 0.9, 0])))
         self.assertTrue(broken(lambda d: d['needs'].append('hunger')))
         self.assertTrue(broken(lambda d: d.update(theta_bias=[0, 0, 0, 0])))      # no bias with presence+strength
+        # a precision is above 0 (sigma^2 = 1 / precision)
+        self.assertTrue(broken(lambda d: d['theta_precision'][0].__setitem__(1, 0)))
+        self.assertTrue(broken(lambda d: d['theta_strength_precision'][2].__setitem__(0, -1.0)))
+        self.assertTrue(broken(lambda d: d['recent']['features'][1]['precision'].__setitem__(3, 0.0)))
+        self.assertTrue(broken(lambda d: d['items'][1].update(precision=0)))
         self.assertEqual(broken(lambda d: d.update(future_field={'x': 1})), [])  # unknown fields are allowed
         minimal = golden_documents()['bootstrap_v1_minimal.json']
         self.assertTrue(bootstrap.validate(dict(minimal, theta_strength=[[0, 0], [0, 0]])))
@@ -879,9 +925,13 @@ class BootstrapFormat(unittest.TestCase):
         self.assertEqual(f, {0x3EAE3: ('Skyrim.esm', 'Potion of X', 'Potion'), 0xFE012ABC: ('Light, Mod.esp', 'Spell, Y', 'Spell')})
 
 
+# FE012ABC is an injected record (as the real dump's FE97B053): defined by 'Light - Patch.esp' inside
+# Light.esp's index FE012 ('Light - Patch.esp' owns FE013), so the file keys it by Light.esp, the
+# index owner (bootstrap.index_owners), and doc_scores resolves that key back to FE012ABC.
 SYN_FORMS = {0x0003EAE3: ('Skyrim.esm', 'Feather', 'Spell'), 0x00012EB7: ('Skyrim.esm', 'Bread', 'Food'),
-             0xFE012ABC: ('Light.esp', 'Potion', 'Potion'), 0x0001397D: ('Skyrim.esm', 'Sword', 'Weapon'),
-             0x00099999: ('Skyrim.esm', 'Not the Elixir', 'Potion')}
+             0xFE012ABC: ('Light - Patch.esp', 'Potion', 'Potion'), 0x0001397D: ('Skyrim.esm', 'Sword', 'Weapon'),
+             0x00099999: ('Skyrim.esm', 'Not the Elixir', 'Potion'),
+             0xFE012001: ('Light.esp', 'Light item', 'Armor'), 0xFE013800: ('Light - Patch.esp', 'Patch item', 'Armor')}
 
 
 def with_cross_and_slots(S, seed=11):
@@ -1000,6 +1050,10 @@ class Export(unittest.TestCase):
         by = {(it['plugin'], it['local']): it for it in d['items']}
         self.assertAlmostEqual(by[('Skyrim.esm', '03EAE3')]['b'], q['b'][0], places=5)
         self.assertAlmostEqual(by[('Light.esp', '000ABC')]['b'], q['b'][2], places=5)
+        # the injected record is written under its index owner, never its defining plugin
+        self.assertEqual(by[('Light.esp', '000ABC')]['name'], 'Potion')
+        self.assertNotIn('light - patch.esp', {it['plugin'].lower() for it in d['items']})
+        self.assertTrue(any('injected' in m and 'FE012ABC (Light - Patch.esp in Light.esp)' in m for m in msgs))
         self.assertEqual(by[('Skyrim.esm', '03EAE3')]['picks'], int((S['Y'] == 0).sum()))
         # the dynamic Apple is dropped; the "Elixir" is named otherwise in the map: dropped, warned
         self.assertEqual(d['items_dropped'], {'dynamic (FF)': 1, 'name differs from the form map': 1})
@@ -1042,6 +1096,9 @@ class Export(unittest.TestCase):
         Fm, _ = fitlib.row_features(Sv, M.feat_spec)
         _, logit_m, u0_m = M.scores(Sv, p, Fm)
         logit_r, u0_r = doc_scores(doc, S, SYN_FORMS)
+        # the injected Potion (FE012ABC) is carried and scored with its b (the reader finds it via Light.esp)
+        if M.item:
+            self.assertIn(('Light.esp', '000ABC'), {(it['plugin'], it['local']) for it in doc['items']})
         # an item the file does not carry reads b = 0 in the reader
         kept = {(it['plugin'], it['local']) for it in doc['items']}
         q = M.unpack(p)
@@ -1151,6 +1208,27 @@ class HonestMain(TempWork):
         _, out = self.quiet(honest.main, self.ARGS + ['--maxiter', '300', '--no-cache'])
         self.assertIn('CV fitted', out)
         self.assertEqual(list(self.dir.glob('honest_cache_*.pkl')), [])
+
+    def test_redefined_spec_is_not_reused(self):
+        """cv_<group>.pkl's results are reused by the spec's definition, not its name: a spec
+        changed in cv.py under the same name, or a pickle without the definitions, is refitted."""
+        self.log(3)
+        self.quiet(cv.main, ['picks', '--folds', '2', '--spec', 'theta + b (doc 9)', '--nboot', '20'])
+        with open(self.dir / 'cv_picks.pkl', 'rb') as f:
+            C = pickle.load(f)
+        self.assertEqual(C['specs']['theta + b (doc 9)'], cv.spec_key(cv.PICKS['theta + b (doc 9)']))
+        _, out = self.quiet(honest.main, self.ARGS + ['--maxiter', '300', '--no-cache'])
+        self.assertIn('CV cv pickle', out)
+        for defs in ({'theta + b (doc 9)': cv.spec_key({'outside': False, 'feat_spec': ['pos']})}, None):
+            C2 = dict(C)
+            if defs is None:
+                del C2['specs']                           # written before the definitions were stored
+            else:
+                C2['specs'] = defs                        # the spec was something else when cv.py ran
+            with open(self.dir / 'cv_picks.pkl', 'wb') as f:
+                pickle.dump(C2, f)
+            _, out = self.quiet(honest.main, self.ARGS + ['--maxiter', '300', '--no-cache'])
+            self.assertIn('CV fitted', out)
 
 
 class CurveMain(TempWork):

@@ -163,7 +163,8 @@ decisions:
   `fitlib.py` change refits; `--no-cache` refits always. CV results come from
   `cv_<group>.pkl` only when cv.py wrote it with the same `data_key`, folds,
   seed and maxiter (cv.py fits at `CV_MAXITER`, 300; so `--maxiter 300`
-  reuses it). Specs that read the v2 log (`ctx`, `cheap`) are refused: honest.py
+  reuses it), and only for a spec whose definition there (`cv.spec_key`) is
+  the current one: a spec redefined in cv.py under the same name refits. Specs that read the v2 log (`ctx`, `cheap`) are refused: honest.py
   does not load it.
 - **Port of the verifier's scripts** (`r6-verify/online.py`, `fwd_launch.py`,
   `combine.py` in the 2026-10-28 session scratchpad): the same schedule (chunks
@@ -226,8 +227,10 @@ writes (deterministic text) and validates the document.
   `BOOB.esp`). Dynamic (FF) forms, forms the dump lacks, forms at an index
   whose owner the dump cannot tell, and forms whose catalog kind (any item)
   or logged name (picked items) differs from the dump's are dropped and
-  counted (`items_dropped`), never written under a wrong key: run `hg dump
-  all` on the load order the log was written with.
+  counted (`items_dropped`): run `hg dump all` on the load order the log was
+  written with. That drops the wrong keys these checks can see, not all: a
+  never-picked item whose kind matches by chance still gets one, so R8's
+  reader cross-checks the resolved form's kind and name (the format doc).
 - Refused: split and latest-caps specs (diagnostics), specs without θ (the
   baselines), the `ctx` and `cheap` features (they read the v2 log), a bias
   need with presence + strength.

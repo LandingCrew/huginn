@@ -216,7 +216,19 @@ owner. Not written, and counted in `items_dropped` by reason:
   WARNING naming them;
 - `kind differs from the form map`, `name differs from the form map`: the dump
   names another record at that FormID than the log did (a load order change;
-  light plugins shift when a list update adds or removes one). Never a wrong key.
+  light plugins shift when a list update adds or removes one).
+
+These checks drop every wrong key **they can see**, not every wrong key. The
+kind is checked for every item, the name only for picked items (the log names
+only what was picked). So after a load order change, an item never picked whose
+kind matches the other record's by chance is keyed to that record, and the one
+case `index_owners` cannot see (above) keys an index to the wrong plugin. On
+the mage's log the load order did change mid-log (the 14 forms the 2026-10-10
+dump lacks are all light forms first seen from launch 20261017 on), yet every
+one of the 24 picked light items matches the dump by name. A reader should
+therefore cross-check what `LookupForm` returns: its form type against the
+item's kind, and its name against `name` (which the file carries), and skip an
+item that disagrees.
 
 ## Names
 
@@ -238,20 +250,22 @@ What `bootstrap.validate` checks, and what a version-1 reader rejects:
 1. `format` and `version` as above.
 2. `model.grading` and `model.outcomes` from the lists above.
 3. `needs` and `cols`: non-empty strings, no duplicates.
-4. `theta` and `theta_precision`: K rows of J finite numbers.
-   `theta_strength` and `theta_strength_precision`: the same shape, present
-   exactly when `grading` is `presence+strength`. `theta_bias`: null or J
+4. `theta` and `theta_precision`: K rows of J finite numbers, every
+   precision above 0 (σ² = 1 / precision).
+   `theta_strength` and `theta_strength_precision`: the same shape (precisions
+   above 0), present exactly when `grading` is `presence+strength`. `theta_bias`: null or J
    numbers, and null with `presence+strength`.
 5. `kappa`: a number.
 6. `u0`: present (`bias`, and `need` with names from `needs`) exactly when
    `outcomes` is `three`; null otherwise.
 7. `recent`: null, or `window_s` and `taus_s`, and each feature's `family` in
    `cols`, `tau_s` in `taus_s`, `theta` and `precision` (and `theta_strength`
-   with `presence+strength`) of J numbers, `u0` exactly with `three`.
+   with `presence+strength`) of J numbers, every precision above 0, `u0`
+   exactly with `three`.
 8. `features[].name` from the list above, `w` a number.
 9. `items[]`: `plugin` a non-empty string, `local` 6 upper-case hex digits,
-   `b` and `precision` numbers, no two items with the same plugin (ignoring
-   case) and local.
+   `b` and `precision` numbers, `precision` above 0, no two items with the
+   same plugin (ignoring case) and local.
 10. `curves`: needs from `needs`, each `["logistic", centre, slope]` with a
     slope other than 0.
 
