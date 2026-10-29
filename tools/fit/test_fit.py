@@ -135,6 +135,19 @@ class Loader(TempWork):
         self.assertEqual(len(D['ctxs']), 6)                       # two contexts per launch
         self.assertEqual(v3load.load(f2)['decs'][0]['out'], 'wheel')   # one path still works
 
+    def test_torn_head_keeps_the_earlier_launch_contexts(self):
+        # a crash mid-line, then the next launch's head appended to the torn line
+        la = session('20261010-100000', CHAR_A, '0.23.38 (c265bab)', minute=1)
+        lb = session('20261011-100000', CHAR_B, '0.23.40 (f7a02d2)', minute=2)
+        lb = edit_lines(lb, lambda r: r.update(utc='2026-10-11 09:09:09.000') if r['t'] == 'ctx' else None)
+        clean = v3load.load([self.write('a.jsonl', la)])
+        D = v3load.load([self.write('torn.jsonl', la + '{"t":"ctx","v":3,"id":99,"rows":[[1,' + lb)])
+        self.assertGreater(D['stats']['other_launch'], 0)
+        self.assertGreater(D['stats']['dup_ctx'], 0)
+        for k, c in clean['ctxs'].items():
+            self.assertEqual(D['ctxs'][k]['utc'], c['utc'])
+        self.assertEqual(len(v3load.keep_char(D, CHAR_A)['decs']), len(clean['decs']))
+
     def test_char_keeps_one_character(self):
         f1, f2 = self.files()
         D = v3load.keep_char(v3load.load([f1, f2]), CHAR_A)

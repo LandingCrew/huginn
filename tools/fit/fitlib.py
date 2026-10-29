@@ -426,9 +426,19 @@ def launch_folds(S, k=10, seed=1):
 # ---------------------------------------------------------------------------
 def astar_scores(S):
     """(rank score, ln util): the logged utility (a row without one ranks last) and its log,
-    the score the slot code ranks by since R7 (a row without a utility reads ln 1e-6)."""
+    the score the slot code ranks by since R7. A row without a utility reads the lowest
+    ln util on its page (else in its choice set, else 0) -- not ln 1e-6, which pulled the
+    fitted page temperature from 0.71 to 0.20 (22 of 1422 key/wheel picks, verifier of
+    #218) and left A*'s page NLL near uniform."""
     U = S['UTIL']
-    return np.nan_to_num(U, nan=-1.0), np.log(np.maximum(np.nan_to_num(U, nan=0.0), 1e-6))
+    miss = np.isnan(U)
+    L = np.log(np.maximum(np.where(miss, 1.0, U), 1e-6))
+    valid = ~miss & S['MASK']
+    page = valid & (S['INHA'] == 0)
+    lo_page = np.where(page, L, np.inf).min(axis=1, keepdims=True)
+    lo_all = np.where(valid, L, np.inf).min(axis=1, keepdims=True)
+    lo = np.where(np.isfinite(lo_page), lo_page, np.where(np.isfinite(lo_all), lo_all, 0.0))
+    return np.nan_to_num(U, nan=-1.0), np.where(miss, lo, L)
 
 
 def page_temperature(S, z, idx, iters=50):

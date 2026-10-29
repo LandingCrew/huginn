@@ -10,7 +10,9 @@ Each file is read on its own (a file starts with a head; a launch cut by the
 rotation starts again with a head of the same launch in the next file), and a
 torn line -- the last one of a copy taken while the game writes -- is skipped
 and counted (stats: bad, before_head, bad_ctx, bad_dec, other_launch -- a
-decision of another launch than the head in force, behind a torn head).
+decision of another launch than the head in force, behind a torn head --
+and dup_ctx: a context id the launch already has, which behind a torn head
+is the next launch's; the first one read is kept).
 
 --char <id>  keeps one character's decisions (dec.char, 16 hex digits) and the
              contexts of that character's launches. The others are dropped
@@ -120,7 +122,10 @@ def load(paths):
                 ctx.update({'seg': seg, 'id': r['id'], 'rows': rows,
                             'need': {hneed[i]: v for i, v in r.get('need', [])},
                             'in': {hneed[i]: v for i, v in r.get('in', [])}})
-                ctxs[(head['launch'], r['id'])] = ctx
+                key = (head['launch'], r['id'])
+                if key in ctxs:
+                    stats['dup_ctx'] += 1; continue      # behind a torn head: another launch's ids
+                ctxs[key] = ctx
             elif t == 'dec':
                 if r.get('launch', head['launch']) != head['launch']:
                     stats['other_launch'] += 1; continue      # behind a torn head of another launch

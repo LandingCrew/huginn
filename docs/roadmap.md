@@ -534,7 +534,10 @@ Map Phase 4, in `tools/fit` (the scripts and their flags: [tools/fit/README.md](
   76%" below). The user's fitness function is menu reaches for items Huginn
   could have recommended.
   - Offline gate, held out by launch: menu picks caught (hit@8) above A*, and
-    all picks pooled (key + wheel + menu) hit@8 not worse than A*.
+    all picks pooled (key + wheel + menu) hit@8 not worse than A*. Both are
+    read on the 95% interval of model minus A* (bootstrap over launches):
+    "above" means its lower end is above 0, "not worse" means its upper end
+    is at or above 0 (the rehearsal's pooled -1.1 [-4.0, +2.2] passes).
   - Key hit@8 alone is reported, not a gate: key presses exist only for items
     the old page showed, so they are biased toward A*, while menu picks are
     biased against it; pooling lets the two biases partly cancel.
