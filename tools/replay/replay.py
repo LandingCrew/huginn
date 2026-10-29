@@ -33,8 +33,9 @@ Selection log v3 (R4, Huginn_Selections_v3.jsonl; schema in
 docs/architecture/9-selection-log-v3.md): `iter_v3(paths)` / `load_v3(paths)`
 decode it -- every decision with its context, the need vector by name, every
 row with cap(i) by column name and the cross-features -- and
-    python -I tools/replay/replay.py --v3 [FILE ...]
-prints counts, sizes and the old ranking's hit rate on it. The R6 fit reads
+    python -I tools/replay/replay.py --v3 [FILE ...] [--char ID]
+prints counts, sizes and the old ranking's hit rate on it (one character's
+decisions with --char; every character's without). The R6 fit reads
 v3; the policies above stay on the v2 log (R5's cheap test).
 """
 
@@ -49,6 +50,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 
 DEFAULT_LOG = os.path.expanduser(r"~/Documents/My Games/Skyrim.INI/SKSE/Huginn_Selections.jsonl")
+V2_CHAR = "3F3E2A8817962D59"   # the soak run's character: the v2 replay's default --char
 
 # The shipped constants (FeatureBanditLearner.h, ScorerSettings.h, Config.h).
 LEARNING_RATE = 0.1
@@ -660,8 +662,10 @@ def load_v3(paths, stats=None):
     return decs
 
 
-def summarize_v3(paths):
-    """Counts, sizes and a plain-ranking smoke number for a v3 log."""
+def summarize_v3(paths, char=None):
+    """Counts, sizes and a plain-ranking smoke number for a v3 log. With char,
+    the decisions, outcomes, rows and hits are that character's only; the
+    record sizes are always the whole file's."""
     sizes = defaultdict(lambda: [0, 0])   # record type -> [count, bytes]
     size_stats = {}
     for path in paths:
@@ -674,6 +678,9 @@ def summarize_v3(paths):
             sizes[t][1] += len(raw)
     stats = {}
     decs = list(iter_v3(paths, stats))
+    n_all = len(decs)
+    if char is not None:
+        decs = [d for d in decs if d.get("char") == char]
     by_out = defaultdict(int)
     rows = []
     hits = defaultdict(lambda: [0, 0])
@@ -695,7 +702,8 @@ def summarize_v3(paths):
         h[0] += 1
         h[1] += (c["form"], c["uid"]) in top
     total_bytes = sum(b for _, b in sizes.values())
-    print(f"{len(decs)} decisions in {len(paths)} file(s), {total_bytes} bytes")
+    print(f"{len(decs)} decisions in {len(paths)} file(s), {total_bytes} bytes"
+          + (f" (character {char}: {len(decs)} of {n_all})" if char is not None else ""))
     if any(stats[k] for k in ("bad_lines", "skipped", "lost_heads", "truncated")):
         print(f"  damage: {stats['bad_lines']} unreadable line(s), {stats['skipped']} record(s) skipped, "
               f"{stats['lost_heads']} lost head(s), {stats['truncated']} truncated file(s)")
@@ -716,17 +724,19 @@ def main():
     ap.add_argument("--v3", nargs="*", metavar="FILE",
                     help="read selection log v3 file(s) (.jsonl or .jsonl.gz; default "
                          "Huginn_Selections_v3.jsonl) and print a summary")
-    ap.add_argument("--char", default="3F3E2A8817962D59")
+    ap.add_argument("--char", default=None,
+                    help="keep one character (dec.char): --v3 reads every character without it; "
+                         f"the v2 replay defaults to the soak run's {V2_CHAR}")
     ap.add_argument("--from-launch", default="20261003-013602", help="first launch of the run (UTC stamp)")
     ap.add_argument("--to-launch", default="20261004-235959",
                     help="last launch to include (UTC stamp); the default ends the soak run, before 0.23.0")
     args = ap.parse_args()
 
     if args.v3 is not None:
-        summarize_v3(args.v3 or [args.log or DEFAULT_LOG_V3])
+        summarize_v3(args.v3 or [args.log or DEFAULT_LOG_V3], args.char)
         return
     args.log = args.log or DEFAULT_LOG
-    recs = load(args.log, args.char, args.from_launch, args.to_launch)
+    recs = load(args.log, args.char or V2_CHAR, args.from_launch, args.to_launch)
     print(f"{len(recs)} selections from {args.log}")
     validate(recs)
 

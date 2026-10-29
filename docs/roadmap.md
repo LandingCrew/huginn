@@ -522,15 +522,44 @@ agent runs the cheap test on today's log: one weight per slot class × logged
 
 ### R6. Offline fit: go / no-go
 
-Map Phase 4, in `tools/replay`. **Starts after the user's character reaches
-level 40** (the user, 2026-10-10: "keep playing until the character is level
-40, might take a few days"): the fit needs the data play, and the tables PR
-(0.23.34, below) lands first.
+Map Phase 4, in `tools/fit` (the scripts and their flags: [tools/fit/README.md](../tools/fit/README.md)).
+- **Decided by the user, 2026-10-28: R6 is a go; continue to R8 without
+  waiting for level 40.** This supersedes the gate of 2026-10-10 ("keep
+  playing until the character is level 40, might take a few days"). The
+  user's reasons: LoreRim 5.1 will force a new character (both a mid-play one
+  and one from scratch); the rewrite likely won't finish before 5.1 drops;
+  and mid-game is where Huginn matters most. The fit runs on the mage's log as
+  it stands (level 21 at the rehearsal).
+- **The criterion** (the user, 2026-10-28; replaces "key hit rate against
+  76%" below). The user's fitness function is menu reaches for items Huginn
+  could have recommended.
+  - Offline gate, held out by launch: menu picks caught (hit@8) above A*, and
+    all picks pooled (key + wheel + menu) hit@8 not worse than A*.
+  - Key hit@8 alone is reported, not a gate: key presses exist only for items
+    the old page showed, so they are biased toward A*, while menu picks are
+    biased against it; pooling lets the two biases partly cancel.
+  - Final test, after R8: `[Reach]` reach-ins per hour of play against the old
+    engine's baseline. R8 rolls back if it loses.
+- **The rehearsal (2026-10-28, level 21; pending its verifier, not the final
+  fit).** Grouped 10-fold by launch over the mage's log. A* (the old ranking
+  from the logged utilities): key/wheel hit@8 87.4%, menu 18.5% (82 of 443).
+  Doc 9's θ + b: key/wheel 59.3%, menu 53.3%, page hit@1 40.9% against A*'s
+  20.7%. θ + b + `recent_<family>` + ln(old utility) as a feature: all picks
+  pooled 69.9% against A*'s 71.0% (−1.1, CI [−4.0, +2.2]), menu 61.6%. The
+  fixes the rehearsal needed are in the tools (0.23.49): several log files
+  and one character (`v3load.py --char`), grouped K-fold by launch (the old
+  leave-one-launch-out was ~9 h on 288 launches), build segmentation, the
+  yardstick (hit@8 for key/wheel, menu and all picks, page hit@1, page NLL,
+  each with a launch-bootstrap interval on model − A*).
+- **Open for R8** (noted, not decided): the best rehearsal variant leans on the
+  old engine's utility as an input -- the hand-tuned layer R8 and R11 retire.
 - [ ] Conditional logit with the three outcomes (key, menu at cost κ, nothing),
       u0 per need, sparse θ, small b, Plackett–Luce co-picks; split by launch.
-- [ ] Report on held-out play: key hit rate against **76%** (arm A*, the plain
-      ranking replay can reproduce; 81% was the live page with holds), and
-      menu-pick hits against **7 of 83**.
+- [ ] Report on held-out play against A* on the same choice sets, by the
+      criterion above (`cv.py`'s yardstick). *Superseded 2026-10-28:* "key
+      hit rate against **76%** (arm A*, the plain ranking replay can
+      reproduce; 81% was the live page with holds), and menu-pick hits against
+      **7 of 83**" -- key hit@8 is now reported only, not a gate.
 - [ ] Sequences and redundancy, offline part (proposal,
       [architecture/11-sequences-and-redundancy.md](architecture/11-sequences-and-redundancy.md),
       steps 1-2): compare pairs on presence plus a strength term with the
@@ -560,8 +589,8 @@ level 40** (the user, 2026-10-10: "keep playing until the character is level
       after the bane columns. Thundering Hooves belongs here too:
       movement_speed on a ridden horse, a bane-only beneficial row on 4
       forms (verifier of #205, 0.23.35).
-- **You decide:** go to R8, or stop and rethink. θ from this fit is the
-  bootstrap for R8.
+- **You decide:** go to R8, or stop and rethink. *Decided 2026-10-28: go*
+  (above). θ from this fit is the bootstrap for R8.
 
 ### R7. Slot code handles any score sign
 

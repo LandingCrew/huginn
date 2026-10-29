@@ -11,7 +11,9 @@ effects.csv (theta0 = +T0, combat_regen_ok x kind_food = -T0, overshoot_* pairs 
 logged overshoot is signed and not curved), sigma_obv for obvious pairs, sigma_dense
 otherwise; b_i ~ N(0, sigma_b^2).
 """
+import bisect
 import csv
+import datetime as dt
 import json
 import math
 import sys
@@ -84,7 +86,39 @@ def obvious_pairs(needs, cols, path=EFFECTS_CSV):
 # ---------------------------------------------------------------------------
 # dataset
 # ---------------------------------------------------------------------------
-def build(D, include_nothing=True, latest_caps=False, v2=None):
+def version(build):
+    """The plugin version in a head's `build` ('0.23.40 (f7a02d2)' -> (0, 23, 40)), or in a
+    version given on the command line ('0.23.41'); None when it does not read as one."""
+    try:
+        return tuple(int(x) for x in str(build).split()[0].split('.'))
+    except (ValueError, IndexError):
+        return None
+
+
+def segment_names(split_at):
+    """Labels of the build segments split_at cuts ('0.23.41' -> ['<0.23.41', '>=0.23.41'])."""
+    cuts = sorted(split_at, key=version)
+    if not cuts:
+        return ['all']
+    return [f'<{cuts[0]}'] + [f'>={c}' + (f',<{n}' if n else '') for c, n in zip(cuts, cuts[1:] + [None])]
+
+
+def build(D, include_nothing=True, latest_caps=False, v2=None, since=None, until=None, split_at=(),
+          recency=(5.0, 30.0)):
+    """The dataset: one entry per decision, its choice set and the arrays the model reads.
+
+    Build segmentation (the head's `build` of the segment that logged the decision):
+      since, until  keep the decisions logged by plugin versions in [since, until] (both
+                    inclusive, '0.23.41'; either may be None). A decision whose build does not
+                    read as a version is kept only when neither is given.
+      split_at      versions that cut the kept decisions into segments: SEG (per decision)
+                    is the number of cuts at or below its version, `segments` their labels.
+                    split_needs() turns that into per-segment need columns; the CV reports
+                    its yardstick per segment too.
+    recency: the time constants (s) of the recent_<family> features (doc 11 step 2): REC
+    (decisions x features), exp(-dt / tau) for each effect family (and kind_*) of the item
+    picked last in the launch when that pick is at most max(recency) s old; recency_names.
+    Only the non-zero columns are kept. () skips them."""
     needs, cols, caps, cross = D['needs'], D['cols'], D['caps'], D['cross']
     K, J = len(needs), len(cols)
     CI = {c: j for j, c in enumerate(cols)}
@@ -101,7 +135,7 @@ def build(D, include_nothing=True, latest_caps=False, v2=None):
     # latest cap per form (0.23.34 changed the tables): optional remap
     latest = {}
     if latest_caps:
-        for key, c in sorted(D['ctxs'].items(), key=lambda kv: kv[1]['utc']):
+        for key, c in sorted(D['ctxs'].items(), key=lambda kv: kv[1]['utc'] or ''):
             for r in c['rows']:
                 if r[CAP] >= 0 and r[UID] == 0:
                     latest[r[FORM]] = r[CAP]
@@ -109,6 +143,15 @@ def build(D, include_nothing=True, latest_caps=False, v2=None):
     decs = [d for d in decs if d['name'] not in TRANSIENT]
     if not include_nothing:
         decs = [d for d in decs if d['out'] != 'nothing']
+    lo, hi = (version(since) if since else None), (version(until) if until else None)
+    if lo is not None or hi is not None:
+        decs = [d for d in decs if version(d['build']) is not None
+                and (lo is None or version(d['build']) >= lo) and (hi is None or version(d['build']) <= hi)]
+    if not decs:
+        raise ValueError(f'no decisions to fit (builds {since or "any"} .. {until or "any"})')
+    if any(version(v) is None for v in split_at):
+        raise ValueError(f'split_at: {list(split_at)} are not all versions (0.23.41)')
+    cuts = sorted(version(v) for v in split_at)
     decs.sort(key=lambda d: (d['launch'], d['seq']))
     # Plackett-Luce: picks sharing a context (menu co-picks), in seq order
     taken = defaultdict(set)
@@ -158,12 +201,14 @@ def build(D, include_nothing=True, latest_caps=False, v2=None):
     OUT = np.empty(Dn, dtype=object)
     LA = np.zeros(Dn, dtype=np.int32)
     v2ok = np.zeros(Dn, dtype=bool)
+    SEG = np.zeros(Dn, dtype=np.int32)
     classes = {}
     meta = []
     for di, (d, rows) in enumerate(recs):
         for k, v in d['C']['need'].items():
             N[di, k] = v
         OUT[di] = d['out']; LA[di] = LI[d['launch']]
+        SEG[di] = bisect.bisect_right(cuts, version(d['build']) or (0,))
         cands = join_v2(v2, d) if (v2 is not None and d['out'] != 'nothing') else None
         v2ok[di] = cands is not None
         for ri, (r, is_ch) in enumerate(rows):
@@ -192,17 +237,298 @@ def build(D, include_nothing=True, latest_caps=False, v2=None):
                 Y[di] = ri
         meta.append({'launch': d['launch'], 'out': d['out'], 'name': d['name'], 'kind': d['kind'],
                      'ctxkey': d['ctxkey'], 'build': d['build'], 'case': d['case'], 'need_ep': d['ep']['gi'] if d['ep'] else None})
+    REC, rec_names = recent_families(D, [d for d, _ in recs], cols, caps, recency)
     return dict(CapMat=CapMat, xcol=xcol, CAPID=CAPID, X=XA, COV=COV, MASK=MASK, INHA=INHA, ITEM=ITEM, SLOT=SLOTA, UTIL=UTILA,
-                V2=V2, CLS=CLS, Y=Y, N=N, OUT=OUT, LA=LA, v2ok=v2ok, launches=launches, items=items,
-                classes=classes, meta=meta, K=K, J=J, needs=needs, cols=cols, R=R)
+                V2=V2, CLS=CLS, Y=Y, N=N, OUT=OUT, LA=LA, SEG=SEG, REC=REC, v2ok=v2ok, launches=launches, items=items,
+                classes=classes, meta=meta, K=K, J=J, needs=needs, cols=cols, R=R,
+                segments=segment_names(list(split_at)), recency_names=rec_names)
+
+
+def pick_time(d):
+    """When the decision was made: a pick's utc less its confirmation delay, a nothing's context utc."""
+    if d['out'] == 'nothing':
+        return T(d['C']['utc'])
+    return T(d['utc']) - dt.timedelta(milliseconds=d.get('confirmMs') or 0)
+
+
+def recent_families(D, decs, cols, caps, taus):
+    """recent_<family> (doc 11 step 2) for each decision of decs: see build(). The previous pick
+    is the last usable pick (a context, a chosen row, not simonrim or transient) of the same
+    launch and load generation strictly before the decision."""
+    if not taus:
+        return np.zeros((len(decs), 0)), []
+    fams = [r['id'] for r in csv.DictReader(open(EFFECTS_CSV, encoding='utf-8')) if r['level'] == 'family']
+    fams += [c for c in cols if c.startswith('kind_')]
+    CI = {c: j for j, c in enumerate(cols)}
+    famj = [CI[f] for f in fams if f in CI]
+    window = max(taus)
+    timeline = defaultdict(list)                    # (launch, gen) -> [(t, dec)] in time order
+    for d in D['decs']:
+        if (d['out'] != 'nothing' and d['list'] != SIMONRIM and d['C'] is not None and d['name'] not in TRANSIENT
+                and d['chosen'] is not None):
+            timeline[(d['launch'], d.get('gen', 1))].append((pick_time(d), d))
+    for v in timeline.values():
+        v.sort(key=lambda x: x[0])
+    times = {k: [t for t, _ in v] for k, v in timeline.items()}
+    M = np.zeros((len(decs), len(famj) * len(taus)))
+    for i, d in enumerate(decs):
+        key = (d['launch'], d.get('gen', 1))
+        lst = timeline.get(key)
+        if not lst:
+            continue
+        t = pick_time(d)
+        k = bisect.bisect_left(times[key], t) - 1   # the last pick strictly before t
+        while k >= 0 and lst[k][1] is d:
+            k -= 1
+        if k < 0:
+            continue
+        age = (t - lst[k][0]).total_seconds()
+        cid = lst[k][1]['chosen'][CAP]
+        if age > window or cid < 0:
+            continue
+        cap = dict(caps[cid])
+        for fi, j in enumerate(famj):
+            if cap.get(j, 0) > 0:
+                for ti, tau in enumerate(taus):
+                    M[i, ti * len(famj) + fi] = math.exp(-age / tau)
+    names = [f'recent_{cols[j]}@{tau:g}s' for tau in taus for j in famj]
+    keep = M.any(axis=0)
+    return M[:, keep], [n for n, k in zip(names, keep) if k]
 
 
 def subset(S, idx):
     out = dict(S)
-    for k in ('CAPID', 'X', 'COV', 'MASK', 'INHA', 'ITEM', 'SLOT', 'UTIL', 'V2', 'CLS', 'Y', 'N', 'OUT', 'LA', 'v2ok'):
+    for k in ('CAPID', 'X', 'COV', 'MASK', 'INHA', 'ITEM', 'SLOT', 'UTIL', 'V2', 'CLS', 'Y', 'N', 'OUT', 'LA', 'SEG', 'REC', 'v2ok'):
         out[k] = S[k][idx]
     out['meta'] = [S['meta'][i] for i in idx]
     return out
+
+
+# ---------------------------------------------------------------------------
+# variants of a (sub)set: each returns a new S and obvious-pair map, S unchanged
+# ---------------------------------------------------------------------------
+# The needs whose sensor changed meaning at 0.23.41 (README, 'Reading logs written by
+# 0.23.41 and later'), plus every target_<family>: split_needs' default.
+BUILD_SPLIT_NEEDS = ('follower_present', 'regen_suppressed', 'darkness', 'enemy_count', 'surrounded', 'boss_fight')
+
+
+def split_need_names(S, names=None):
+    """names, or BUILD_SPLIT_NEEDS and every target_<family>; 'all' = every need."""
+    if names == 'all':
+        return list(S['needs'])
+    if names is None:
+        return list(BUILD_SPLIT_NEEDS) + [n for n in S['needs'] if n.startswith('target_')]
+    return list(names)
+
+
+def split_needs(S, obv, names=None):
+    """Each named need becomes one column per build segment (S['SEG'], build's split_at): the
+    first segment keeps the column, every later one gets a copy '<need>@<segment>' that reads
+    the need only in that segment (and the original reads 0 there). Obvious pairs are copied
+    to the new columns. A no-op with one segment."""
+    nseg = len(S['segments'])
+    NI = {n: i for i, n in enumerate(S['needs'])}
+    ks = [NI[n] for n in split_need_names(S, names) if n in NI]
+    if nseg < 2 or not ks:
+        return S, obv
+    N = S['N'].copy()
+    seg = S['SEG']
+    extra, names_out, obv2 = [], [], dict(obv)
+    for g in range(1, nseg):
+        for k in ks:
+            for (kk, j), sg in obv.items():
+                if kk == k:
+                    obv2[(S['K'] + len(extra), j)] = sg
+            extra.append(N[:, k] * (seg == g))
+            names_out.append(f"{S['needs'][k]}@{S['segments'][g]}")
+    N[:, ks] *= (seg == 0)[:, None]
+    out = dict(S)
+    out['N'] = np.hstack([N, np.stack(extra, axis=1)])
+    out['needs'] = list(S['needs']) + names_out
+    out['K'] = S['K'] + len(extra)
+    return out, obv2
+
+
+def with_recency(S, obv):
+    """The recent_<family> features (build's REC) appended as needs, so theta pairs them with
+    every effect column (no obvious pairs: they start at 0)."""
+    out = dict(S)
+    out['N'] = np.hstack([S['N'], S['REC']])
+    out['needs'] = list(S['needs']) + list(S['recency_names'])
+    out['K'] = S['K'] + S['REC'].shape[1]
+    return out, obv
+
+
+def presence_grading(S, obv, strength=False):
+    """Doc 11 step 1: an effect column reads 1 where the item has it (presence) instead of its
+    grade; with strength, a second block of columns adds (grade - 0.5) where present. The
+    obvious pairs stay on the presence columns."""
+    out = dict(S)
+    C = S['CapMat']
+    P = (C > 0).astype(float)
+    if strength:
+        out['CapMat'] = np.hstack([P, (C - 0.5) * P])
+        out['cols'] = list(S['cols']) + [c + '~strength' for c in S['cols']]
+        out['J'] = 2 * S['J']
+    else:
+        out['CapMat'] = P
+    return out, obv
+
+
+VARIANTS = ('split', 'recent', 'presence', 'presence+strength')
+
+
+def variant(S, obv, which, split_names=None):
+    """S and obv with the named VARIANTS applied in order."""
+    for w in which:
+        if w == 'split':
+            S, obv = split_needs(S, obv, split_names)
+        elif w == 'recent':
+            S, obv = with_recency(S, obv)
+        elif w in ('presence', 'presence+strength'):
+            S, obv = presence_grading(S, obv, strength=w == 'presence+strength')
+        else:
+            raise ValueError(f'unknown variant {w!r} (one of {VARIANTS})')
+    return S, obv
+
+
+# ---------------------------------------------------------------------------
+# folds: grouped by launch
+# ---------------------------------------------------------------------------
+KW = ('key', 'wheel')
+
+
+def launch_folds(S, k=10, seed=1):
+    """Grouped K-fold by launch: the fold of every launch (S['launches'] order), so no launch is
+    in two folds. Deterministic for a seed: the launches are shuffled by the seed, ordered by
+    key/wheel picks, then picks, then decisions (descending; a stable sort, so ties keep the
+    shuffled order), and each goes to the fold with the fewest key/wheel picks, then picks,
+    then decisions, then the lowest index. k is capped at the launch count (k = launches is
+    leave-one-launch-out); every fold gets at least one launch."""
+    L = len(S['launches'])
+    k = max(1, min(int(k), L))
+    kw = np.bincount(S['LA'][np.isin(S['OUT'], KW)], minlength=L)
+    pk = np.bincount(S['LA'][S['Y'] >= 0], minlength=L)
+    nd = np.bincount(S['LA'], minlength=L)
+    perm = np.random.default_rng(seed).permutation(L)
+    order = sorted(perm.tolist(), key=lambda l: (-kw[l], -pk[l], -nd[l]))
+    fold = np.full(L, -1, dtype=np.int32)
+    load = [(0, 0, 0)] * k
+    for l in order:
+        f = min(range(k), key=lambda f: (load[f], f))
+        fold[l] = f
+        load[f] = (load[f][0] + int(kw[l]), load[f][1] + int(pk[l]), load[f][2] + int(nd[l]))
+    return fold
+
+
+# ---------------------------------------------------------------------------
+# A*: the old engine's ranking replayed from the logged utilities
+# ---------------------------------------------------------------------------
+def astar_scores(S):
+    """(rank score, ln util): the logged utility (a row without one ranks last) and its log,
+    the score the slot code ranks by since R7 (a row without a utility reads ln 1e-6)."""
+    U = S['UTIL']
+    return np.nan_to_num(U, nan=-1.0), np.log(np.maximum(np.nan_to_num(U, nan=0.0), 1e-6))
+
+
+def page_temperature(S, z, idx, iters=50):
+    """beta maximising the within-page log-likelihood of softmax(beta * z) over the key/wheel
+    picks among idx whose chosen row is on the page (concave in beta; Newton). Floored at
+    1e-3, so the ranking within the page stays z's."""
+    rows = np.array([d for d in idx if S['OUT'][d] in KW and S['Y'][d] >= 0 and S['INHA'][d, S['Y'][d]] == 0], dtype=int)
+    if not len(rows):
+        return 1.0
+    on = S['MASK'][rows] & (S['INHA'][rows] == 0)
+    Z = np.where(on, z[rows], 0.0)
+    zy = z[rows, S['Y'][rows]]
+    beta = 1.0
+    for _ in range(iters):
+        a = np.where(on, beta * Z, -np.inf)
+        a -= a.max(axis=1, keepdims=True)
+        p = np.exp(a); p /= p.sum(axis=1, keepdims=True)
+        ez = (p * Z).sum(axis=1)
+        g = (zy - ez).sum()
+        h = -(p * (Z - ez[:, None]) ** 2).sum()
+        if h > -1e-12:
+            break
+        step = g / h
+        beta = max(1e-3, beta - step)
+        if abs(step) < 1e-8:
+            break
+    return float(beta)
+
+
+def astar_results(S, fold_of_dec):
+    """The A* ranking's per-decision metrics on S (metrics_from_scores): hit@k by the logged
+    utility; within the page by softmax(beta * ln util) with beta fitted on the other folds'
+    key/wheel pages (page_temperature), so its page NLL is a fair yardstick and not the raw
+    utilities read as logits. Returns (results, {fold: beta})."""
+    rank, z = astar_scores(S)
+    sp = np.zeros_like(z)
+    betas = {}
+    for f in np.unique(fold_of_dec):
+        te = fold_of_dec == f
+        b = page_temperature(S, z, np.where(~te)[0] if (~te).any() else np.where(te)[0])
+        sp[te] = b * z[te]
+        betas[int(f)] = b
+    return metrics_from_scores(S, sp, rank, None), betas
+
+
+# ---------------------------------------------------------------------------
+# the yardstick: model against A* on the same choice sets
+# ---------------------------------------------------------------------------
+YARDSTICK = {
+    'key/wheel hit@8': lambda r: r.get('full_hit8') if r['out'] in KW else None,
+    'menu hit@8': lambda r: r.get('full_hit8') if r['out'] == 'menu' else None,
+    'all picks hit@8': lambda r: r.get('full_hit8') if r['out'] != 'nothing' else None,
+    'page hit@1': lambda r: r.get('page_hit1') if r['out'] in KW else None,
+    'page NLL': lambda r: -r['page_logp'] if r['out'] in KW and 'page_logp' in r else None,
+}
+
+
+def boot_mean(by_launch, nboot=2000, seed=2):
+    """(mean, 2.5%, 97.5%, n) of the values in {launch: [values]}, launches resampled with
+    replacement (each draw: the mean over every value of the drawn launches); None without
+    values."""
+    ls = [l for l in sorted(by_launch) if by_launch[l]]
+    if not ls:
+        return None
+    sums = np.array([sum(by_launch[l]) for l in ls], dtype=float)
+    cnts = np.array([len(by_launch[l]) for l in ls], dtype=float)
+    draw = np.random.default_rng(seed).integers(0, len(ls), size=(nboot, len(ls)))
+    means = sums[draw].sum(axis=1) / cnts[draw].sum(axis=1)
+    return float(sums.sum() / cnts.sum()), float(np.percentile(means, 2.5)), float(np.percentile(means, 97.5)), int(cnts.sum())
+
+
+def yardstick(res, base, metrics=YARDSTICK, nboot=2000, seed=2, keep=None):
+    """{metric: (model mean, base mean, model - base, CI low, CI high, n)} over the decisions
+    where both have the metric (res and base aligned by decision; keep: an optional bool mask
+    over decisions). The CI is a bootstrap over launches of the paired difference."""
+    out = {}
+    for name, fn in metrics.items():
+        a_sum = b_sum = 0.0
+        d_by = defaultdict(list)
+        for i, (a, b) in enumerate(zip(res, base)):
+            if a is None or b is None or (keep is not None and not keep[i]):
+                continue
+            va, vb = fn(a), fn(b)
+            if va is None or vb is None:
+                continue
+            a_sum += float(va); b_sum += float(vb)
+            d_by[a['launch']].append(float(va) - float(vb))
+        d = boot_mean(d_by, nboot, seed)
+        if d is not None:
+            out[name] = (a_sum / d[3], b_sum / d[3], d[0], d[1], d[2], d[3])
+    return out
+
+
+def yardstick_lines(name, ys, base='A*'):
+    """The yardstick as text lines."""
+    lines = [f'{name}  vs  {base}',
+             f'    {"metric":16} {"model":>7} {base:>7} {"diff":>8}  {"95% CI":>19}  {"n":>5}']
+    for m, (ma, mb, d, lo, hi, n) in ys.items():
+        lines.append(f'    {m:16} {ma:7.4f} {mb:7.4f} {d:+8.4f}  [{lo:+.4f}, {hi:+.4f}]  {n:5}')
+    return lines
 
 
 # ---------------------------------------------------------------------------
@@ -471,8 +797,7 @@ def metrics_from_scores(S, s_page, s_rank, logp=None, tiebreak=None):
 
 
 def summarize(res, nboot=2000, seed=1):
-    """Means with launch-bootstrap 95% CIs."""
-    rng = np.random.default_rng(seed)
+    """Means with launch-bootstrap 95% CIs (boot_mean: launches without a value are not drawn)."""
     out = {}
     launches = sorted({r['launch'] for r in res})
     by = defaultdict(list)
@@ -491,17 +816,9 @@ def summarize(res, nboot=2000, seed=1):
     }
     for k, fn in keys.items():
         per = {l: [float(v) for v in (fn(r) for r in by[l]) if v is not None] for l in launches}
-        tot = [v for l in launches for v in per[l]]
-        if not tot:
-            continue
-        mean = float(np.mean(tot))
-        bs = []
-        for _ in range(nboot):
-            pick = rng.choice(len(launches), len(launches))
-            vals = [v for i in pick for v in per[launches[i]]]
-            if vals:
-                bs.append(np.mean(vals))
-        out[k] = (mean, float(np.percentile(bs, 2.5)), float(np.percentile(bs, 97.5)), len(tot))
+        b = boot_mean(per, nboot, seed)
+        if b is not None:
+            out[k] = b
     return out
 
 
