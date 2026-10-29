@@ -16,6 +16,9 @@ using namespace Huginn::Core;
 
 namespace
 {
+    // The refresh prior's centre as shipped ([Scoring] fRefreshPriorSec = 5).
+    constexpr float kCentre = Coverage::kRefreshPriorSec;
+
     Effect::Col C(std::string_view name)
     {
         const auto c = Effect::FromName(name);
@@ -33,12 +36,30 @@ namespace
 TEST_CASE("coverage: the refresh prior")
 {
     using Coverage::LeftPrior;
-    CHECK(LeftPrior(Coverage::kNoTimer) == 1.0f);         // constant: never runs out
-    CHECK(LeftPrior(5.0f) == doctest::Approx(0.5f));       // the prior's centre
-    CHECK(LeftPrior(0.0f) == doctest::Approx(0.0759f).epsilon(0.001));
-    CHECK(LeftPrior(15.0f) > 0.99f);
-    CHECK(LeftPrior(60.0f) == doctest::Approx(1.0f));
-    CHECK(LeftPrior(3.0f) < LeftPrior(4.0f));               // monotone in r
+    CHECK(LeftPrior(Coverage::kNoTimer, kCentre) == 1.0f);         // constant: never runs out
+    CHECK(LeftPrior(5.0f, kCentre) == doctest::Approx(0.5f));       // the prior's centre
+    CHECK(LeftPrior(0.0f, kCentre) == doctest::Approx(0.0759f).epsilon(0.001));
+    CHECK(LeftPrior(15.0f, kCentre) > 0.99f);
+    CHECK(LeftPrior(60.0f, kCentre) == doctest::Approx(1.0f));
+    CHECK(LeftPrior(3.0f, kCentre) < LeftPrior(4.0f, kCentre));               // monotone in r
+}
+
+TEST_CASE("coverage: the refresh prior's centre is the configured one (R8.1, fRefreshPriorSec)")
+{
+    using Coverage::LeftPrior;
+    // Half uncovered at the configured centre, whatever it is; the scale stays 2 s.
+    CHECK(LeftPrior(8.0f, 8.0f) == doctest::Approx(0.5f));
+    CHECK(LeftPrior(10.0f, 8.0f) == doctest::Approx(LeftPrior(7.0f, 5.0f)));   // a shift, not a rescale
+    CHECK(LeftPrior(Coverage::kNoTimer, 8.0f) == 1.0f);                       // still no timer, no factor
+    CHECK(LeftPrior(5.0f, 8.0f) < LeftPrior(5.0f, kCentre));                  // a later centre reads 5 s as less covered
+
+    // And covered(i) carries it: Oakflesh with 8 s left is half covered at centre 8.
+    const Effect::Cap oakflesh = Sorted({ { C("defense"), 0.4f }, { C("defense_armor"), 0.4f }, { C("school_alteration"), 1.0f } });
+    Coverage::Active a;
+    a.Add(C("defense_armor"), 0.4f, 8.0f);
+    CHECK(Coverage::Covered(oakflesh, a, 8.0f).value == doctest::Approx(0.5f).epsilon(1e-4));
+    CHECK(Coverage::Covered(oakflesh, a, 8.0f).remaining == 8.0f);
+    CHECK(Coverage::Covered(oakflesh, a, kCentre).value > 0.8f);
 }
 
 TEST_CASE("coverage: a buff of the same column covers by strength")
@@ -46,35 +67,35 @@ TEST_CASE("coverage: a buff of the same column covers by strength")
     const Effect::Cap oakflesh = Sorted({ { C("defense"), 0.4f }, { C("defense_armor"), 0.4f }, { C("school_alteration"), 1.0f } });
     const Effect::Cap stoneflesh = Sorted({ { C("defense"), 0.8f }, { C("defense_armor"), 0.8f }, { C("school_alteration"), 1.0f } });
     Coverage::Active a;
-    CHECK(Coverage::Covered(oakflesh, a).value == 0.0f);   // nothing active
+    CHECK(Coverage::Covered(oakflesh, a, kCentre).value == 0.0f);   // nothing active
 
     a.Add(C("defense_armor"), 0.4f, 60.0f);                // Oakflesh up, a minute left
-    const auto self = Coverage::Covered(oakflesh, a);
+    const auto self = Coverage::Covered(oakflesh, a, kCentre);
     CHECK(self.value == doctest::Approx(1.0f).epsilon(1e-4));
     CHECK(self.remaining == 60.0f);
     // A stronger spell of the column reads half covered: Oakflesh up does not
     // make Stoneflesh redundant (the armour filter's problem, doc 11 2.1).
-    CHECK(Coverage::Covered(stoneflesh, a).value == doctest::Approx(0.5f).epsilon(1e-3));
+    CHECK(Coverage::Covered(stoneflesh, a, kCentre).value == doctest::Approx(0.5f).epsilon(1e-3));
 
     SUBCASE("near expiry reads partly uncovered")
     {
         Coverage::Active b;
         b.Add(C("defense_armor"), 0.4f, 5.0f);
-        CHECK(Coverage::Covered(oakflesh, b).value == doctest::Approx(0.5f));
-        CHECK(Coverage::Covered(oakflesh, b).remaining == 5.0f);
+        CHECK(Coverage::Covered(oakflesh, b, kCentre).value == doctest::Approx(0.5f));
+        CHECK(Coverage::Covered(oakflesh, b, kCentre).remaining == 5.0f);
     }
     SUBCASE("families and item features never cover")
     {
         Coverage::Active b;
         b.Add(C("defense"), 1.0f, Coverage::kNoTimer);           // a family: ignored by Covered
         b.Add(C("school_alteration"), 1.0f, Coverage::kNoTimer); // a feature: ignored
-        CHECK(Coverage::Covered(oakflesh, b).value == 0.0f);
+        CHECK(Coverage::Covered(oakflesh, b, kCentre).value == 0.0f);
     }
     SUBCASE("another column does not cover")
     {
         Coverage::Active b;
         b.Add(C("resist_fire"), 1.0f, Coverage::kNoTimer);
-        CHECK(Coverage::Covered(oakflesh, b).value == 0.0f);
+        CHECK(Coverage::Covered(oakflesh, b, kCentre).value == 0.0f);
     }
 }
 
@@ -100,28 +121,28 @@ TEST_CASE("coverage: summons count against the limit")
     const Effect::Cap thrall = Sorted({ { C("summon"), 0.7f }, { C("summon_reanimate"), 0.7f } });
     const Effect::Cap bound = Sorted({ { C("summon"), 0.5f }, { C("summon_bound_weapon"), 0.5f } });
     Coverage::Active a;
-    CHECK(Coverage::Covered(wolf, a).value == 0.0f);
+    CHECK(Coverage::Covered(wolf, a, kCentre).value == 0.0f);
 
     a.summons = 1;
     a.summonLimit = 2.0f;           // Twin Souls
     a.summonRemaining = 3.0f;       // the oldest is about to go, but there is room
-    CHECK(Coverage::Covered(wolf, a).value == doctest::Approx(0.5f));
-    CHECK(Coverage::Covered(wolf, a).remaining == Coverage::kNoTimer);   // no refresh factor below the limit
-    CHECK(Coverage::Covered(thrall, a).value == doctest::Approx(0.5f));
-    CHECK(Coverage::Covered(bound, a).value == 0.0f);   // a bound weapon is not a summon count
+    CHECK(Coverage::Covered(wolf, a, kCentre).value == doctest::Approx(0.5f));
+    CHECK(Coverage::Covered(wolf, a, kCentre).remaining == Coverage::kNoTimer);   // no refresh factor below the limit
+    CHECK(Coverage::Covered(thrall, a, kCentre).value == doctest::Approx(0.5f));
+    CHECK(Coverage::Covered(bound, a, kCentre).value == 0.0f);   // a bound weapon is not a summon count
 
     a.summons = 2;                  // at the limit: the refresh factor of the one a cast would dismiss
     a.summonRemaining = 60.0f;
-    CHECK(Coverage::Covered(wolf, a).value == doctest::Approx(1.0f).epsilon(1e-4));
+    CHECK(Coverage::Covered(wolf, a, kCentre).value == doctest::Approx(1.0f).epsilon(1e-4));
     a.summonRemaining = 5.0f;
-    CHECK(Coverage::Covered(wolf, a).value == doctest::Approx(0.5f));
-    CHECK(Coverage::Covered(wolf, a).remaining == 5.0f);
+    CHECK(Coverage::Covered(wolf, a, kCentre).value == doctest::Approx(0.5f));
+    CHECK(Coverage::Covered(wolf, a, kCentre).remaining == 5.0f);
 
     SUBCASE("vanilla limit")
     {
         Coverage::Active b;
         b.summons = 1;
-        CHECK(Coverage::Covered(wolf, b).value == doctest::Approx(1.0f));
+        CHECK(Coverage::Covered(wolf, b, kCentre).value == doctest::Approx(1.0f));
     }
 }
 
@@ -181,6 +202,28 @@ TEST_CASE("filter reasons: names, groups and lookup")
     }
     CHECK(Filter::IsFullVital(Reason::full_stamina));
     CHECK_FALSE(Filter::IsFullVital(Reason::equipped));
+
+    // R8.1 (0.23.55): the four hard gates, appended. The ranges above keep
+    // their values (old files index their own head's list, but the groups are
+    // read by value in the plugin), and the head lists 19 names.
+    CHECK(Filter::kReasonCount == 19);
+    CHECK(static_cast<int>(Reason::invisibility) == 5);
+    CHECK(static_cast<int>(Reason::resist) == 11);
+    CHECK(static_cast<int>(Reason::truncated) == 14);
+    CHECK(static_cast<int>(Reason::no_follower) == 15);
+    CHECK(Filter::ReasonName(Reason::no_follower) == "no_follower");
+    CHECK(Filter::ReasonName(Reason::no_workstation) == "no_workstation");
+    CHECK(Filter::ReasonName(Reason::not_dark) == "not_dark");
+    CHECK(Filter::ReasonName(Reason::favorite_suppressed) == "favorite_suppressed");
+    for (const auto r : { Reason::no_follower, Reason::no_workstation, Reason::not_dark, Reason::favorite_suppressed }) {
+        CHECK(Filter::IsHardGate(r));
+        CHECK_FALSE(Filter::IsActiveBuff(r));
+        CHECK_FALSE(Filter::IsFullVital(r));
+    }
+    for (std::size_t i = 0; i < static_cast<std::size_t>(Reason::no_follower); ++i) {
+        CHECK_FALSE(Filter::IsHardGate(static_cast<Reason>(i)));
+    }
+    CHECK(Filter::ReasonName(Reason::_Count) == "?");
 
     const std::vector<Filter::Dropped> dropped{
         { 0x100, 0, Reason::affordability },

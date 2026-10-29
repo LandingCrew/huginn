@@ -144,9 +144,9 @@ namespace Huginn::State
          *timer = 0.0f;
       }
 
-      // --- Combat transition tracking ---
-      m_combatTransition.store(CombatTransition::None, std::memory_order_relaxed);
+      // --- Combat state ---
       m_isInCombat.store(false, std::memory_order_relaxed);
+      m_lastRefreshDue = 0;
       m_wasInCombat = false;
       m_combatDebounce.Reset();
       m_castingDebounce.Reset();
@@ -263,6 +263,12 @@ namespace Huginn::State
    {
       std::shared_lock lock(m_needMutex);
       return m_needSensors;  // Copy-out pattern
+   }
+
+   double StateManager::GetCombatStartAt() const noexcept
+   {
+      std::shared_lock lock(m_needMutex);
+      return m_needSensors.combatStartAt;
    }
 
    StateManager::CoverageState StateManager::GetCoverage() const

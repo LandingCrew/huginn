@@ -308,6 +308,60 @@ class OldEngineColumns(TempWork):
         self.assertTrue(all(r['est'] is None and r['hk'] is None for d in old for r in d['rows']))
 
 
+class HardGateDrops(TempWork):
+    """0.23.55 (R8.1): a row dropped by each of the four hard gates reads its reason by the
+    head's own filter list, in v3load and in tools/replay; the older reasons read the same."""
+    NEW = ('no_follower', 'no_workstation', 'not_dark', 'favorite_suppressed')
+    SWORD = {"weapon_damage": 0.75, "weapon_type_sword": 1}
+
+    def text(self):
+        head, seg1, seg2 = trv3.make_session()
+        self.assertEqual(head['filters'][-4:], list(self.NEW))     # the golden head (0.23.55)
+        r = seg1[0]['ctx']['rows'][0]
+        extra = [dict(r, form='000A000' + str(i), uid=0, kind=kind, src=None, cap=cap, flags=4, slot=-1,
+                      util=None, x={}, wp=None, fb=fb, cr=None, **{k: None for k in trv3.OLD_KEYS})
+                 for i, (fb, kind, cap) in enumerate([
+                     ('no_follower', 'Spell', {"restore": 0.5, "restore_health_other": 0.5}),
+                     ('no_workstation', 'Armor', None),
+                     ('not_dark', 'Light', None),
+                     ('favorite_suppressed', 'Weapon', self.SWORD)])]
+        seg1[0]['ctx']['rows'] = seg1[0]['ctx']['rows'] + extra
+        head = dict(head, launch='20261029-120000')
+        for d in seg1 + seg2:
+            d['launch'], d['char'] = '20261029-120000', CHAR_A
+        return trv3.encode([(head, seg1), (head, seg2)])
+
+    def test_v3load(self):
+        D = v3load.load([self.write('v3.jsonl', self.text())])
+        rows = D['ctxs'][('20261029-120000', 10)]['rows']
+        self.assertEqual([row[common.FB] for row in rows[-4:]], list(self.NEW))
+        self.assertEqual([row[common.FORM] for row in rows[-4:]], [f'000A000{i}' for i in range(4)])
+        self.assertTrue(all(not row[common.FLAGS] & common.F['eligible'] for row in rows[-4:]))
+        self.assertEqual(rows[3][common.FB], 'cooldown')          # an older reason, unchanged
+        self.assertIsNone(rows[0][common.FB])                      # an eligible row: none
+        self.assertEqual(len(D['heads'][0]['filters']), 19)
+
+    def test_replay_reader(self):
+        decs = replay.load_v3([self.write('v3.jsonl', self.text())])
+        rows = decs[0]['ctx']['rows']
+        self.assertEqual([r['fb'] for r in rows[-4:]], list(self.NEW))
+        self.assertEqual(rows[3]['fb'], 'cooldown')
+
+    def test_older_head_reads_the_same(self):
+        # The same rows under a 0.23.54 head (15 names): the older reasons keep their
+        # indices, so a file written before 0.23.55 decodes exactly as before.
+        def older(r):
+            if r['t'] == 'head':
+                r['filters'] = r['filters'][:15]
+            elif r['t'] == 'ctx':
+                r['rows'] = [row for row in r['rows'] if not str(row[0]).startswith('000A000')]
+        text = edit_lines(self.text(), older)
+        D = v3load.load([self.write('v3.jsonl', text)])
+        rows = D['ctxs'][('20261029-120000', 10)]['rows']
+        self.assertEqual(rows[3][common.FB], 'cooldown')
+        self.assertEqual(len(D['heads'][0]['filters']), 15)
+
+
 class FloorCheck(TempWork):
     """v3load.floor_check: each row's old-engine floor (fl) against the tests the scorer
     applies. The C++ encoder's golden session (whose floors CaptureEligible's rules give)

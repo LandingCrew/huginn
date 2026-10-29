@@ -1,5 +1,6 @@
 #include "CandidateGenerator.h"
 #include "Profiling.h"
+#include "state/StateManager.h"   // SetResistFilterThreshold (R8.1)
 #include <algorithm>
 
 namespace Huginn::Candidate
@@ -56,6 +57,9 @@ namespace Huginn::Candidate
 
         // Create filters
         m_filters = std::make_unique<CandidateFilters>(m_cooldownMgr, m_config);
+        // R8.1: the refresh pass's resist bits are computed by the magic-effects
+        // poll against the threshold the resist filter uses.
+        State::StateManager::GetSingleton().SetResistFilterThreshold(m_config.resistThresholdToFilter);
 
         m_initialized = true;
 
@@ -85,6 +89,7 @@ namespace Huginn::Candidate
         // Copy global config to local snapshot.
         // Safe because writes only occur when the update loop is paused.
         m_config = g_candidateConfig;
+        State::StateManager::GetSingleton().SetResistFilterThreshold(m_config.resistThresholdToFilter);   // R8.1
 
         // Re-sync cooldown durations with new config values
         m_cooldownMgr.SetDuration(SourceType::Spell, m_config.spellCooldown);
@@ -123,8 +128,9 @@ namespace Huginn::Candidate
     std::vector<CandidateVariant> CandidateGenerator::GenerateCandidates(
         const State::PlayerActorState& player,
         float currentMagicka,
+        const Core::Gate::Inputs& gates,
         std::span<const RE::FormID> heldIDs,
-        std::vector<CandidateVariant>* heldUnaffordable,
+        std::vector<CandidateVariant>* heldAside,
         std::vector<Core::Filter::Dropped>* dropped)
     {
         if (dropped) dropped->clear();
@@ -165,8 +171,8 @@ namespace Huginn::Candidate
         std::vector<CandidateVariant> output;
         {
             Huginn_ZONE_NAMED("Candidates::Filter");
-            m_filters->ApplyAllFilters(m_gatherBuffer, output, player, currentMagicka, m_stats.filterStats,
-                heldIDs, heldUnaffordable, dropped);
+            m_filters->ApplyAllFilters(m_gatherBuffer, output, player, currentMagicka, gates, m_stats.filterStats,
+                heldIDs, heldAside, dropped);
         }
 
         // Calculate generation time
@@ -478,9 +484,9 @@ namespace Huginn::Candidate
         }
 
         // No context gate here, deliberately. Every other source is gathered
-        // unconditionally and filtered by weight downstream, and apparel follows
-        // the same path: WeightForCandidate returns 0.0 away from a workstation,
-        // so minimumContextWeight drops these before scoring. Gating the GATHER
+        // unconditionally and filtered downstream, and apparel follows the same
+        // path: the no_workstation filter (R8.1; before, WeightForCandidate's
+        // 0.0 and minimumContextWeight) drops these away from a workstation. Gating the GATHER
         // on world.isLookingAtWorkstation would be a second, redundant policy in
         // a second place — and the pool is tiny by construction, because
         // ApparelRegistry only ever holds craft-relevant pieces.
@@ -561,8 +567,8 @@ namespace Huginn::Candidate
             return;
         }
 
-        // No context gate, as with apparel: WeightForCandidate returns 0 unless
-        // it is dark, so minimumContextWeight drops torches before scoring.
+        // No context gate, as with apparel: the not_dark filter (R8.1; before,
+        // WeightForCandidate's 0) drops torches unless it is dark.
         size_t gathered = 0;
         for (const auto& torch : m_itemRegistry->GetTorches()) {
             if (torch.count <= 0 || torch.name.empty()) continue;
@@ -612,11 +618,12 @@ namespace Huginn::Candidate
         logger::info("  Scanned: {} spells, {} potions, {} weapons, {} scrolls",
             m_stats.spellsScanned, m_stats.potionsScanned,
             m_stats.weaponsScanned, m_stats.scrollsScanned);
-        logger::info("  Filtered: {} afford, {} equipped, {} cooldown, {} buff, {} dupe",
+        logger::info("  Filtered: {} afford, {} equipped, {} cooldown, {} buff, {} gate, {} dupe",
             m_stats.filterStats.filteredByAffordability,
             m_stats.filterStats.filteredByEquipped,
             m_stats.filterStats.filteredByCooldown,
             m_stats.filterStats.filteredByActiveBuff,
+            m_stats.filterStats.filteredByHardGate,
             m_stats.filterStats.filteredByDuplication);
         logger::info("  Time: {:.2f}ms", m_stats.generationTimeMs);
     }

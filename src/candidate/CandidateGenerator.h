@@ -76,7 +76,8 @@ namespace Huginn::Candidate
      *
      * // In update loop
      * generator.Update(deltaSeconds);
-     * auto candidates = generator.GenerateCandidates(player, magicka);
+     * auto candidates = generator.GenerateCandidates(player, magicka,
+     *     Context::HardGateInputs(player, targets, world, suppressFavorites));
      * ```
      *
      * PERFORMANCE TARGET: <2ms per generation
@@ -108,6 +109,10 @@ namespace Huginn::Candidate
          *
          * @param player Current player state (vitals, buffs, equipment)
          * @param currentMagicka Player's current magicka (for affordability check)
+         * @param gates R8.1: the hard gates' facts, Context::HardGateInputs of
+         *        the same state (follower near, station, darkness, Suppress)
+         * @param heldAside A Remembrance hold's own item that affordability or
+         *        a hard gate dropped, set aside for the hold only
          * @return Vector of filtered candidates, ready for scoring
          * @note The per-tick display reason is no longer produced here — the
          *       pipeline derives it once from the scorer's context weights
@@ -116,8 +121,9 @@ namespace Huginn::Candidate
         [[nodiscard]] std::vector<CandidateVariant> GenerateCandidates(
             const State::PlayerActorState& player,
             float currentMagicka,
+            const Core::Gate::Inputs& gates,
             std::span<const RE::FormID> heldIDs = {},
-            std::vector<CandidateVariant>* heldUnaffordable = nullptr,
+            std::vector<CandidateVariant>* heldAside = nullptr,
             std::vector<Core::Filter::Dropped>* dropped = nullptr   // 0.23.46: what the filters dropped, and why (v3 log)
         );
 

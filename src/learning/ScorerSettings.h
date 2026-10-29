@@ -42,6 +42,12 @@ namespace Huginn::Scoring
         // Performance
         inline constexpr size_t TOP_N_CANDIDATES = 10;
 
+        // R8.1 (0.23.55): the refresh pass (doc 11 decision 4). An active-buff
+        // filter lets its item through in the buff's last N seconds, and
+        // covered(i)'s left(r) prior is centred there. 0 turns the pass off.
+        inline constexpr float REFRESH_PRIOR_SEC = 5.0f;
+        inline constexpr float REFRESH_PRIOR_SEC_MAX = 120.0f;
+
         // Favorites
         inline constexpr const char* FAVORITES_MODE = "Boost";
         inline constexpr float FAVORITES_BOOST_MIN = 1.3f;
@@ -54,7 +60,8 @@ namespace Huginn::Scoring
     // =========================================================================
     // Singleton that loads scoring parameters from Data/SKSE/Plugins/Huginn.ini.
     // Reads [Scoring] section (core, correlations, potion discrimination,
-    // thresholds, performance) and [Favorites] section (mode, boost range).
+    // thresholds, performance, the refresh pass) and [Favorites] section
+    // (mode, boost range).
     //
     // Call BuildConfig() to produce a ScorerConfig struct suitable for
     // UtilityScorer::SetConfig().
@@ -116,6 +123,10 @@ namespace Huginn::Scoring
 
         // --- Performance ---
         size_t topNCandidates = ScorerDefaults::TOP_N_CANDIDATES;
+
+        // --- Refresh pass (R8.1) --- pushed into StateManager on every load
+        // (SetRefreshPriorSec), which computes the filters' bits with it.
+        float refreshPriorSec = ScorerDefaults::REFRESH_PRIOR_SEC;
 
         // --- Favorites ---
         FavoritesMode favoritesMode = FavoritesMode::Boost;

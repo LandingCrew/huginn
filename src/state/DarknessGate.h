@@ -2,6 +2,7 @@
 
 #include "BoolDebouncer.h"
 #include "StateConstants.h"
+#include "core/HardGates.h"   // IsDarkReading: the torch gate's boundary (R8.1)
 
 #include <cstdint>
 #include <optional>
@@ -39,8 +40,7 @@ namespace Huginn::State
                   BoolDebouncer::Clock::time_point now,
                   std::optional<BoolDebouncer::Suppressed>* suppressed = nullptr) noexcept
       {
-         const float threshold = m_debounce.Value() ? enter + LightLevel::DARK_EXIT_GAP : enter;
-         const bool raw = light < threshold;
+         const bool raw = Core::Gate::IsDarkReading(light, enter, m_debounce.Value(), LightLevel::DARK_EXIT_GAP);
          if (placeID != m_placeID) {
             m_placeID = placeID;
             m_debounce.Reset(raw);

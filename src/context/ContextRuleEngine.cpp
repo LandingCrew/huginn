@@ -17,21 +17,14 @@ namespace Huginn::Context
     // =============================================================================
     Apparel::CraftSkill CraftSkillForWorkstation(int32_t benchType) noexcept
     {
-        using BenchType = RE::TESFurniture::WorkBenchData::BenchType;
-
-        switch (static_cast<BenchType>(benchType)) {
-        case BenchType::kCreateObject:
-        case BenchType::kSmithingWeapon:
-        case BenchType::kSmithingArmor:
-            return Apparel::CraftSkill::Smithing;
-        case BenchType::kEnchanting:
-        case BenchType::kEnchantingExperiment:
-            return Apparel::CraftSkill::Enchanting;
-        case BenchType::kAlchemy:
-        case BenchType::kAlchemyExperiment:
-            return Apparel::CraftSkill::Alchemy;
-        default:
-            return Apparel::CraftSkill::None;
+        // The case list is Core::Gate::CraftOfBench (R8.1), shared with the
+        // no_workstation filter; this only converts the enum.
+        switch (Core::Gate::CraftOfBench(benchType)) {
+        case Core::Gate::Craft::Smithing: return Apparel::CraftSkill::Smithing;
+        case Core::Gate::Craft::Enchanting: return Apparel::CraftSkill::Enchanting;
+        case Core::Gate::Craft::Alchemy: return Apparel::CraftSkill::Alchemy;
+        case Core::Gate::Craft::None:
+        default: return Apparel::CraftSkill::None;
         }
     }
 
@@ -291,22 +284,22 @@ namespace Huginn::Context
         // =====================================================================
         // WORKSTATION → Fortify Crafting
         // =====================================================================
-        // The bench-type case list lives in CraftSkillForWorkstation, above.
-        if (world.isLookingAtWorkstation) {
-            switch (CraftSkillForWorkstation(world.workstationType)) {
-            case Apparel::CraftSkill::Smithing:
-                result.fortifySmithingWeight = m_config.weightAtForge;
-                break;
-            case Apparel::CraftSkill::Enchanting:
-                result.fortifyEnchantingWeight = m_config.weightAtEnchanter;
-                break;
-            case Apparel::CraftSkill::Alchemy:
-                result.fortifyAlchemyWeight = m_config.weightAtAlchemyLab;
-                break;
-            case Apparel::CraftSkill::None:
-            default:
-                break;
-            }
+        // The bench-type case list lives in Core::Gate::CraftOfBench, and the
+        // station is read by StationCraft: the no_workstation filter (R8.1)
+        // reads the same, so it drops exactly the apparel this leaves at 0.
+        switch (StationCraft(world)) {
+        case Core::Gate::Craft::Smithing:
+            result.fortifySmithingWeight = m_config.weightAtForge;
+            break;
+        case Core::Gate::Craft::Enchanting:
+            result.fortifyEnchantingWeight = m_config.weightAtEnchanter;
+            break;
+        case Core::Gate::Craft::Alchemy:
+            result.fortifyAlchemyWeight = m_config.weightAtAlchemyLab;
+            break;
+        case Core::Gate::Craft::None:
+        default:
+            break;
         }
     }
 
@@ -355,7 +348,8 @@ namespace Huginn::Context
         // FOLLOWERS -- spells aimed at someone else (Healing Touch, Oakflesh
         // on Target) have no one to land on without one, and a heal for
         // someone else answers THEIR wound, not the player's.
-        result.followerPresent = !targets.GetNearbyFollowers().empty();
+        // FollowerNear is the no_follower filter's test too (R8.1).
+        result.followerPresent = FollowerNear(targets);
         if (targets.HasInjuredFollower()) {
             result.allyHealWeight = m_config.weightAllyInjured;
         }

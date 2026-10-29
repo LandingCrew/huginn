@@ -1,4 +1,5 @@
 #include "PotionDiscriminator.h"
+#include "core/CombatOnset.h"   // the one combat clock (R8.1)
 #include <algorithm>
 
 namespace Huginn::Scoring
@@ -11,7 +12,8 @@ namespace Huginn::Scoring
     float PotionDiscriminator::GetMultiplier(
         const State::GameState& state,
         const State::PlayerActorState& player,
-        const Candidate::CandidateVariant& candidate) const
+        const Candidate::CandidateVariant& candidate,
+        float combatOnsetAgo) const
     {
         // Only applies to items (potions, food, etc.)
         const auto* item = Candidate::TryGetAs<Candidate::ItemCandidate>(candidate);
@@ -19,13 +21,14 @@ namespace Huginn::Scoring
             return 1.0f;  // Not an item, no multiplier
         }
 
-        return CalculateItemMultiplier(state, player, *item);
+        return CalculateItemMultiplier(state, player, *item, combatOnsetAgo);
     }
 
     float PotionDiscriminator::CalculateItemMultiplier(
         const State::GameState& state,
         const State::PlayerActorState& player,
-        const Candidate::ItemCandidate& item) const
+        const Candidate::ItemCandidate& item,
+        float combatOnsetAgo) const
     {
         using namespace Item;
 
@@ -42,7 +45,7 @@ namespace Huginn::Scoring
                             HasTag(item.tags, ItemTag::RestoreStamina);
 
         // Regen potions are better at combat start (get full duration benefit)
-        if (isRegenPotion && IsInCombatStartWindow()) {
+        if (isRegenPotion && IsInCombatStartWindow(combatOnsetAgo)) {
             multiplier *= m_config.regenPotionCombatStartMult;
         }
 
@@ -92,10 +95,11 @@ namespace Huginn::Scoring
             }
         }
 
-        // Sustained combat → Regen potions more valuable
-        // Load atomics once to ensure consistent view within this check
-        bool inCombat = m_inCombat.load(std::memory_order_relaxed);
-        float combatDuration = m_combatDuration.load(std::memory_order_relaxed);
+        // Sustained combat → Regen potions more valuable. R8.1: in combat and
+        // the fight's seconds from the combat_onset clock (core/CombatOnset.h);
+        // out of combat the seconds read 0, as the old timer did.
+        const bool inCombat = combatOnsetAgo < Core::Needs::kNever;
+        const float combatDuration = Core::Needs::CombatSeconds(combatOnsetAgo);
         if (inCombat && combatDuration > PotionConstants::SUSTAINED_COMBAT_THRESHOLD && isRegenPotion) {
             multiplier *= PotionConstants::SUSTAINED_COMBAT_REGEN_MULT;
         }
@@ -106,7 +110,7 @@ namespace Huginn::Scoring
 
         if (item.type == ItemType::Poison) {
             // Poisons are best applied at combat start (before engagement)
-            if (IsInCombatStartWindow()) {
+            if (IsInCombatStartWindow(combatOnsetAgo)) {
                 multiplier *= PotionConstants::POISON_COMBAT_START_MULT;
             }
 
@@ -142,39 +146,10 @@ namespace Huginn::Scoring
         return std::clamp(multiplier, PotionConstants::MIN_MULTIPLIER, PotionConstants::MAX_MULTIPLIER);
     }
 
-    void PotionDiscriminator::OnCombatStart()
+    bool PotionDiscriminator::IsInCombatStartWindow(float combatOnsetAgo) const
     {
-        m_combatDuration.store(0.0f, std::memory_order_relaxed);
-        m_inCombat.store(true, std::memory_order_release);  // Release ensures duration is visible
-    }
-
-    void PotionDiscriminator::OnCombatEnd()
-    {
-        m_inCombat.store(false, std::memory_order_relaxed);
-        m_combatDuration.store(0.0f, std::memory_order_relaxed);
-    }
-
-    void PotionDiscriminator::Update(float deltaSeconds)
-    {
-        if (m_inCombat.load(std::memory_order_relaxed)) {
-            // Proper atomic read-modify-write via CAS loop.
-            // std::atomic<float> lacks fetch_add, so compare_exchange_weak
-            // ensures no lost updates if called from multiple threads.
-            float expected = m_combatDuration.load(std::memory_order_relaxed);
-            while (!m_combatDuration.compare_exchange_weak(
-                expected, expected + deltaSeconds,
-                std::memory_order_relaxed, std::memory_order_relaxed)) {
-                // expected is reloaded on failure; loop retries with fresh value
-            }
-        }
-    }
-
-    bool PotionDiscriminator::IsInCombatStartWindow() const
-    {
-        // Load both atomically for consistent view
-        bool inCombat = m_inCombat.load(std::memory_order_acquire);  // Acquire pairs with release in OnCombatStart
-        float duration = m_combatDuration.load(std::memory_order_relaxed);
-        return inCombat && duration < m_config.combatStartWindow;
+        // R8.1: the combat_onset sensor's clock, not a timer of our own.
+        return Core::Needs::InCombatStartWindow(combatOnsetAgo, m_config.combatStartWindow);
     }
 
 

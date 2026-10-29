@@ -22,10 +22,16 @@ namespace Huginn::Context
                 // A spell for someone else answers that someone: nothing without
                 // a follower near, and a heal only for a follower's wound --
                 // never the caster's own health or armour.
-                if (HasTagExt(c.tagsExt, SpellTagExt::TargetsOthers)) {
-                    if (!weights.followerPresent) {
-                        return 0.0f;
-                    }
+                const bool targetsOthers = HasTagExt(c.tagsExt, SpellTagExt::TargetsOthers);
+                // R8.1 (0.23.55): unreachable in a pipeline run. The
+                // no_follower filter (CandidateFilters) drops these first, on
+                // the same Core::Gate::NoFollower; followerPresent is
+                // Context::FollowerNear, the fact the filter reads. Kept for
+                // the legacy feature path until PR 2.
+                if (Core::Gate::NoFollower(targetsOthers, weights.followerPresent)) {
+                    return 0.0f;
+                }
+                if (targetsOthers) {
                     float forOthers = std::max(weights.spellWeight, weights.baseRelevanceWeight);
                     if (HasTag(c.tags, SpellTag::RestoreHealth)) {
                         forOthers = std::max(forOthers, weights.allyHealWeight);
@@ -354,10 +360,13 @@ namespace Huginn::Context
             // =====================================================================
             else if constexpr (std::is_same_v<T, Candidate::ScrollCandidate>) {
                 // A scroll for someone else: as the spell arm above.
-                if (HasTagExt(c.tagsExt, Scroll::ScrollTagExt::TargetsOthers)) {
-                    if (!weights.followerPresent) {
-                        return 0.0f;
-                    }
+                const bool targetsOthers = HasTagExt(c.tagsExt, Scroll::ScrollTagExt::TargetsOthers);
+                // R8.1: unreachable in a pipeline run (the no_follower filter,
+                // the same Core::Gate::NoFollower).
+                if (Core::Gate::NoFollower(targetsOthers, weights.followerPresent)) {
+                    return 0.0f;
+                }
+                if (targetsOthers) {
                     float forOthers = std::max(weights.spellWeight, weights.baseRelevanceWeight);
                     if (HasTag(c.tags, Scroll::ScrollTag::RestoreHealth)) {
                         forOthers = std::max(forOthers, weights.allyHealWeight);
@@ -423,6 +432,12 @@ namespace Huginn::Context
             // Returning 0.0 away from a workstation puts it below
             // minimumContextWeight, so it is dropped by the early filter in
             // UtilityScorer rather than scored and discarded.
+            //
+            // R8.1 (0.23.55): the 0.0 is now unreachable in a pipeline run. The
+            // no_workstation filter (CandidateFilters, Core::Gate::NoWorkstation
+            // on Context::StationCraft, the test EvaluateRules raises these
+            // weights by) drops the piece before scoring. Kept for the legacy
+            // feature path until PR 2.
             else if constexpr (std::is_same_v<T, Candidate::ApparelCandidate>) {
                 // Every craft the piece fortifies, not just the strongest one. A
                 // player-made "Fortify Alchemy 5 / Fortify Smithing 20" ring has a
@@ -449,6 +464,11 @@ namespace Huginn::Context
             // 0 in daylight drops a torch below minimumContextWeight before
             // scoring, so the bar is never cluttered with one. darknessWeight is
             // itself 0 while a torch is already out (DarknessApplies).
+            //
+            // R8.1 (0.23.55): the 0 is now unreachable in a pipeline run. The
+            // not_dark filter (CandidateFilters, Core::Gate::NotDark on the same
+            // DarknessApplies) drops the torch before scoring. Kept for the
+            // legacy feature path until PR 2.
             else if constexpr (std::is_same_v<T, Candidate::TorchCandidate>) {
                 (void)c;
                 return weights.darknessWeight;
@@ -464,6 +484,11 @@ namespace Huginn::Context
 
     bool IsHardContextGated(const Candidate::CandidateVariant& candidate) noexcept
     {
+        // R8.1 (0.23.55): legacy, kept until PR 2. The filters now drop gated
+        // apparel and torches (no_workstation, not_dark) before the cold start
+        // sees them, so this no longer decides anything in a pipeline run.
+        // Spells for others were never in it: the cold start could raise one
+        // at ctx 0 until the no_follower filter took them out too.
         // Deliberately a source-type test rather than "WeightForCandidate
         // returned 0.0". baseRelevanceWeight is INI-settable and can legitimately
         // be 0, which would make every source look hard-gated and disable the

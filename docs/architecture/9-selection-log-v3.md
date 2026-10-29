@@ -110,9 +110,10 @@ contexts per segment and clears both at a head.
 | `src` | string[10] | the old engine's candidate source types (`row.src`) |
 | `row` | string[22] | the row columns, in order (below). 12 before 0.23.53 (no `est`..`hk`), 10 before 0.23.46 (no `fb`, `cr`) |
 | `flags` | object | row flag bits by name (`favorite` since 0.23.53) |
-| `filters` | string[15] | (0.23.46) the candidate filters' reasons, in order (`row.fb` indexes it; `core/FilterReason.h`). Absent before 0.23.46 |
-| `floors` | string[5] | (0.23.53) how the old engine's floors treated an eligible row, in order: `pass`, `cold`, `ctx`, `util`, `suppressed` (`row.fl` indexes it; `core/OldScore.h`, [below](#the-old-engines-score-parts-02353)). Absent before 0.23.53 |
+| `filters` | string[19] | (0.23.46) the candidate filters' reasons, in order (`row.fb` indexes it; `core/FilterReason.h`). 15 before 0.23.55 (no `no_follower` .. `favorite_suppressed`); absent before 0.23.46 |
+| `floors` | string[5] | (0.23.53) how the old engine's floors treated an eligible row, in order: `pass`, `cold`, `ctx`, `util`, `suppressed` (`row.fl` indexes it; `core/OldScore.h`, [below](#the-old-engines-score-parts-02353)). `suppressed` is not written from 0.23.55 (a suppressed favourite is a filter drop, `favorite_suppressed`); the name stays so older rows read. Absent before 0.23.53 |
 | `episode` | object | the episode definition in force: `onset`, `expiry`, `minSec`, `graceSec`, `answerSlackSec`, and `deathDrops: 1` (0.23.16: a death drops the open episodes and those in their grace; absent = 0.23.15, where a death could leave `nothing` records), and `lapSec`, `lapMaxStepSec`, `lapIdleSec` (0.23.51: the lap grid and the idle hold of its clock, [Laps](#laps); absent = every episode judged whole, no lap records). `replay.head_lap_sec(head)` reads it |
+| `refreshPriorSec` | float | (0.23.55) `[Scoring] fRefreshPriorSec` in force: the centre of `covered`'s left(r) prior, and the active-buff filters' refresh window. The centre is read when a context is taken; a record whose context was taken under a different centre than the current head's starts a new segment naming that centre, so every record's `covered` values sit under the head that names their centre (a hot reload that changes it starts a new segment at the first record taken after it). Absent before 0.23.55: the centre was 5 s |
 | `curves` | [kind, p1, p2][] | (0.23.41) the `[Needs]` response curves in force, index-aligned with `needs`: `["logistic", 0.5, 10]` (`core/ResponseCurve.h`), so a fit knows which curve made every logged `need` value from its `in`. A hot reload that changes a curve starts a new segment (a new head line) before the next record. Absent before 0.23.41: those segments used their build's `needs.csv` defaults unless the INI overrode them. `replay.head_curves(head)` reads it |
 
 ### `cap`
@@ -189,7 +190,7 @@ Each row is an array, in the order `head.row` names:
 
 | Flag | Bit | Meaning |
 |---|---|---|
-| `eligible` | 1 | a candidate of the last pipeline run, **before** the old floors (`fMinimumContextWeight`, `fMinimumUtility`) dropped any: every item CandidateGenerator produced (after its hard filters: uncastable, on cooldown, equipped, buff already active) |
+| `eligible` | 1 | a candidate of the last pipeline run, **before** the old floors (`fMinimumContextWeight`, `fMinimumUtility`) dropped any: every item CandidateGenerator produced (after its hard filters: uncastable, on cooldown, equipped, buff already active; from 0.23.55 also the hard gates: no follower for a spell for others, no station for fortify apparel, not dark for a torch, a suppressed favourite) |
 | `scored` | 2 | ...that also passed the old floors (`util` is set) |
 | `held` | 4 | carried (inventory stacks the catalog describes) or a spell the player knows |
 | `equipped` | 8 | in a hand, worn, or the nocked ammo, when the context was taken (a press's context is taken after the press's own equip: see `dec.preEquipped`) |
@@ -231,6 +232,21 @@ candidate of one key: the first stays eligible) and `truncated` (past
 seven as "covered" drops; a shown row with `fb` is still a key alternative
 (choice sets come from `shown`, never from eligibility).
 
+0.23.55 (R8.1) appends the hard gates, the old engine's context zeros moved
+into the filters ([3-candidate-filtering.md §2.7](3-candidate-filtering.md#27-hard-gates-r81-02355)):
+`no_follower` (a spell or scroll for someone else, no follower near),
+`no_workstation` (fortify apparel, no station up for a craft it fortifies),
+`not_dark` (a torch while darkness does not apply: daylight, or a light already
+up) and `favorite_suppressed` (a favourite under `sFavoritesMode = Suppress`).
+In the visitor they run before the active-buff filters, so an item both gated
+and covered reads the gate. Appended, so the indices above do not move; a row's
+`fb` indexes its own head's list, so older files read unchanged. In the same
+build the active-buff seven let their item through in the buff's last
+`[Scoring] fRefreshPriorSec` seconds (default 5; the refresh pass,
+§2.8 there): a covered item can be eligible with `covered` > 0, and the
+`covered` prior's centre is that key. Segment by build before pooling
+eligibility across 0.23.55.
+
 ### The old engine's score parts (0.23.53)
 
 The R6 component test found that R8 passes the gate only by keeping the old
@@ -243,7 +259,7 @@ computes for it whatever the floors, logged only (nothing scores from it):
 | Row | `est` `a` `n` `ucb` `rec` | `prior` `cw` | `fl` | `wu` | read when |
 |---|---|---|---|---|---|
 | eligible, `scored` | the parts its `util` was computed from (its breakdown); `n` read just after the scoring pass (see Limits) | yes | `pass` or `cold` | null | the run |
-| eligible, not scored | computed again (`UtilityScorer::ExplainCandidate`: the scoring loop's own `ScoreCandidateInternal`) | yes | `ctx`, `util` or `suppressed` | yes | the run |
+| eligible, not scored | computed again (`UtilityScorer::ExplainCandidate`: the scoring loop's own `ScoreCandidateInternal`) | yes | `ctx`, `util` (or `suppressed`, before 0.23.55) | yes | the run |
 | dropped by a filter (`fb`) | as above | yes | null | yes | the run |
 | held, never gathered | the learner's metrics and the recency, against the run's `old.phi` and state hash | null | null | null | the context |
 
@@ -258,7 +274,8 @@ session's first run (`pipe.ok` 0) has no `old` and no parts.
 
 **The floors** (`fl`), read off the same tests `UtilityScorer::ScoreCandidates`
 applies, in its order: a favourite under favourites mode Suppress is never
-scored (`suppressed`); a non-favourite under `minCtx` is dropped (`ctx`);
+scored (`suppressed`; written until 0.23.55, when such a favourite became a
+filter drop, `favorite_suppressed`); a non-favourite under `minCtx` is dropped (`ctx`);
 anything else not kept fell under `minUtil` (`util`). A kept row is `pass`, or
 `cold` when the cold-start rescue kept it (fewer than `topN` rows passed, and
 its context was raised to max(`cw`, `coldBoost` × `ucb`)). The cold start
@@ -324,8 +341,10 @@ active-effect walk `StateManager_MagicEffects.cpp`), logging only:
   unknown strength.
 - r_j: the remaining seconds (duration - elapsed) of the longest-lived such
   effect; none for a constant effect (worn gear), which never runs out.
-- left(r): the refresh prior of doc 11 decision 4, a logistic centred at 5 s
-  with scale 2 s (0.08 at 0 s, 0.5 at 5 s, 0.99 at 15 s), 1 with no timer. A
+- left(r): the refresh prior of doc 11 decision 4, a logistic centred at
+  `[Scoring] fRefreshPriorSec` (from 0.23.55; the head's `refreshPriorSec`,
+  default 5 s; a fixed 5 s before) with scale 2 s (at the default: 0.08 at
+  0 s, 0.5 at 5 s, 0.99 at 15 s), 1 with no timer. A
   buff with a few seconds left reads partly uncovered. It is a prior: `cr` is
   the r of the column that gave the value, so a fit can undo it exactly
   (covered / left(cr)) and apply its own curve.

@@ -904,6 +904,69 @@ changed in the same PR, and the shipped INI loses the dead keys.
         nothing changes. **In game (you):** with Twin Souls (or any limit of 2)
         and one summon up, a second summon spell stays on offer; at two it
         drops out with `filtered_by` `summon_limit` in the v3 log.
+- [x] **Steps 1-2 of the order above, built in 0.23.55 (R8.1, the first PR on
+      `rewrite-r8`)**, with doc 11 decision 4 (the filter half of step 5):
+      - Hard zeros into `CandidateFilters`: four reasons appended to
+        `core/FilterReason.h` (`no_follower`, `no_workstation`, `not_dark`,
+        `favorite_suppressed`; the v3 head writes the names, so old files read
+        the same). One predicate each in `core/HardGates.h`, on facts
+        `Context::HardGateInputs` reads from the state with the same three
+        functions `EvaluateRules` raises the old weights by (`FollowerNear`,
+        `StationCraft`, `DarknessApplies`); run in the visitor before the
+        active-buff filters. The two Suppress skips in `UtilityScorer` are gone;
+        `WeightForCandidate`'s zero arms and `IsHardContextGated` stay for the
+        legacy learn feature (PR 2), commented as unreachable in a run. A
+        Remembrance hold's own gated item is set aside for the hold, as an
+        unaffordable one is.
+      - One combat clock: `PotionDiscriminator`'s timer, `UtilityScorer`'s
+        `OnCombatStart` / `OnCombatEnd` and its `Update` pass-through, and
+        `ConsumeCombatTransition` with its `StateManager` plumbing are gone.
+        The discriminator's start window, sustained-combat and lingering-poison
+        tests read `NeedSensorState::combatStartAt` (`core/CombatOnset.h`), the
+        `combat_onset` need's clock; the multiplier stays (the legacy floors).
+      - The refresh pass: `[Scoring] fRefreshPriorSec = 5` (hot-reloaded); each
+        active-buff filter passes its item in the blocking buff's last
+        `fRefreshPriorSec` seconds, never for an effect with no duration
+        (`core/RefreshPass.h`; bits computed by the magic-effects poll,
+        `ActorBuffs::refreshDue`, and compared by the skip gate). `covered(i)`'s
+        `left(r)` is centred on the same key.
+      - Behaviour against 0.23.54 changes only so: the gated items are
+        `filtered_by` instead of eligible-unscored (`fl` `ctx`, or
+        `suppressed`, which is no longer written); a spell for others at
+        context weight 0 can no longer be raised by the cold start; buffs come
+        back in their last `fRefreshPriorSec` seconds (a summon spell at the
+        limit in the last seconds of the oldest summon, the one a cast
+        dismisses: never while a thrall or an untimed summon is the oldest).
+        The gates run before dedup and truncation, so a gated item no longer
+        takes a dedup key or a `maxCandidatesAfterFilter` place (the 10.8k
+        logged decisions have no `duplicate` or `truncated` row). They also run
+        before the active-buff filters and the cooldown stage, so an item that
+        hits a gate as well is logged with the gate's reason where 0.23.54
+        logged the active-buff one (`armor`, `invisibility`, ...) or
+        `cooldown`: a `TargetsOthers` armour spell while armoured with no
+        follower near reads `no_follower`, a Suppress favourite caught by an
+        active-buff filter reads `favorite_suppressed`. A shadow fit of
+        `covered(i)` from the `IsActiveBuff` drops loses those rows. A
+        Remembrance hold's gated item on cooldown is not set aside: 0.23.54
+        dropped it at cooldown, so the hold could not place it then either.
+      - The combat clock differs from the old timer. The old one advanced by
+        the tick's `deltaSeconds` (`UtilityScorer::Update` from
+        `UpdateSubsystems`): not at all while the world is unloaded (the tick
+        returns early through load screens and every load door), and at most
+        1 s across any gap between ticks (an alt-tab, a stall). The new one is
+        `NeedClock` (`steady_clock`), so load-door, alt-tab and gap time count
+        in full: `fCombatStartWindow` (10 s) can run out behind a load door
+        where the old timer was still inside it. Pausing menus are no
+        difference in kind: the loop ticks on the main thread while one is
+        open, so the old timer ran there too, short only of what the 1 s clamp
+        cut from each gap between ticks. And the old state outlived a
+        load: `UtilityScorer::Reset` never reset the discriminator, so a save
+        loaded mid-fight into a non-combat save kept `m_inCombat` true, and the
+        sustained-combat regen multiplier stayed on until the next combat exit.
+        The new clock reads `isInCombat`, so that is gone. Re-entering combat
+        inside the window restarts both clocks alike.
+      - The v3 head records `refreshPriorSec` (`covered(i)`'s `left(r)`
+        centre); a hot reload that changes it starts a new segment.
 - [ ] With those sensors, doc 11 step 7: the attacker's race on every hit and
       `poison_damage_rate`, for anticipatory resists.
 - [ ] **Decide: which thread runs the update loop** (2026-10-09, two Tracy

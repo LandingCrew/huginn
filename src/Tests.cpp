@@ -53,6 +53,30 @@
 
 using namespace Huginn;
 
+namespace
+{
+    // R8.1 (0.23.55): the reason the candidate filters give one candidate on
+    // this state (nullopt: kept). The hard gates read the state as the
+    // pipeline does (Context::HardGateInputs), so a candidate the old context
+    // weight zeroed is dropped here before any scorer could see it.
+    [[maybe_unused]] std::optional<Core::Filter::Reason> FilterReasonFor(const Candidate::CandidateVariant& c,
+        const State::PlayerActorState& player, const State::TargetCollection& targets,
+        const State::WorldState& world, bool suppressFavorites = false)
+    {
+        Candidate::CooldownManager cooldowns;
+        const Candidate::CandidateConfig config{};
+        Candidate::CandidateFilters filters(cooldowns, config);
+        std::vector<Candidate::CandidateVariant> in{ c };
+        std::vector<Candidate::CandidateVariant> out;
+        Candidate::FilterStats stats;
+        std::vector<Core::Filter::Dropped> dropped;
+        filters.ApplyAllFilters(in, out, player, 1.0e6f,
+            Context::HardGateInputs(player, targets, world, suppressFavorites), stats, {}, nullptr, &dropped);
+        if (dropped.empty()) return std::nullopt;
+        return dropped.front().reason;
+    }
+}
+
 // =============================================================================
 // MULTIPLICATIVE SCORING FORMULA TESTS (Stage 2d)
 // =============================================================================
@@ -3280,6 +3304,12 @@ void RunUnitTests()
                 logger::error("TEST FAIL (6k): a heal for others with no follower near should weigh 0");
                 return;
             }
+            // R8.1: and the filters drop it before scoring (no_follower), so
+            // the cold-start rescue can no longer raise it from that 0.
+            if (FilterReasonFor(healOther, hurtPlayer, testTargets, testWorld) != Core::Filter::Reason::no_follower) {
+                logger::error("TEST FAIL (6k): a heal for others with no follower near should be filtered no_follower");
+                return;
+            }
 
             State::TargetCollection withFollower;
             State::TargetActorState follower;
@@ -3298,6 +3328,29 @@ void RunUnitTests()
                 logger::error("TEST FAIL (6k): a heal for others with a hurt follower should weigh allyHealWeight "
                     "{:.3f}, got {:.3f}", hurt.allyHealWeight, w);
                 return;
+            }
+            if (const auto r = FilterReasonFor(healOther, State::PlayerActorState{}, withFollower, testWorld)) {
+                logger::error("TEST FAIL (6k): a heal for others with a follower near was filtered ({})",
+                    Core::Filter::ReasonName(*r));
+                return;
+            }
+
+            // R8.1: favourites mode Suppress is a filter too (favorite_suppressed),
+            // not a skip inside the scorer: a favourite weapon goes, a plain one stays.
+            {
+                Candidate::WeaponCandidate fav{};
+                fav.name = "Favourite Sword";
+                fav.formID = 0x0BADF00D;
+                fav.isFavorited = true;
+                Candidate::WeaponCandidate plain = fav;
+                plain.isFavorited = false;
+                const State::PlayerActorState anyone{};
+                if (FilterReasonFor(fav, anyone, testTargets, testWorld, true) != Core::Filter::Reason::favorite_suppressed ||
+                    FilterReasonFor(fav, anyone, testTargets, testWorld, false).has_value() ||
+                    FilterReasonFor(plain, anyone, testTargets, testWorld, true).has_value()) {
+                    logger::error("TEST FAIL (6k): Suppress should filter a favourite (favorite_suppressed) and nothing else");
+                    return;
+                }
             }
 
             logger::info("  ✓ PASS: spells for others: 0 alone, {:.2f} with a hurt follower"sv, w);
@@ -3372,6 +3425,12 @@ void RunUnitTests()
                         st.name, stationWeight, Context::WeightForCandidate(gear, weights));
                     return;
                 }
+                // R8.1: its own station keeps it past the filters.
+                if (const auto r = FilterReasonFor(gear, testPlayer, testTargets, testWorld)) {
+                    logger::error("TEST FAIL (6j): at {} the fortify apparel was filtered ({})",
+                        st.name, Core::Filter::ReasonName(*r));
+                    return;
+                }
 
                 // Gear for a DIFFERENT craft must not ride the same station. The
                 // three weights are separate fields; reading the wrong one would
@@ -3388,6 +3447,12 @@ void RunUnitTests()
 
                 if (Context::WeightForCandidate(wrongCraft, weights) >= stationWeight - 0.01f) {
                     logger::error("TEST FAIL (6j): at {} apparel for another craft reached the station weight",
+                        st.name);
+                    return;
+                }
+                // R8.1: another craft's station is no station for it (no_workstation).
+                if (FilterReasonFor(wrongCraft, testPlayer, testTargets, testWorld) != Core::Filter::Reason::no_workstation) {
+                    logger::error("TEST FAIL (6j): at {} apparel for another craft should be filtered no_workstation",
                         st.name);
                     return;
                 }
@@ -3418,12 +3483,19 @@ void RunUnitTests()
                         st.name, stationWeight, Context::WeightForCandidate(dual, weights));
                     return;
                 }
+                // R8.1: and passes the filters at either of its stations.
+                if (const auto r = FilterReasonFor(dual, testPlayer, testTargets, testWorld)) {
+                    logger::error("TEST FAIL (6j): at {} a dual-fortify piece was filtered ({})",
+                        st.name, Core::Filter::ReasonName(*r));
+                    return;
+                }
             }
 
             // Away from any workstation every craft skill scores exactly 0 — not
-            // a small number, zero. minimumContextWeight drops it before scoring
-            // rather than after, which is the whole reason apparel costs nothing
-            // in the 99% of play that happens away from a bench.
+            // a small number, zero. R8.1 (0.23.55): and the no_workstation
+            // filter drops it before scoring (until then minimumContextWeight
+            // did), which is the whole reason apparel costs nothing in the 99%
+            // of play that happens away from a bench.
             {
                 State::PlayerActorState testPlayer{};
                 State::WorldState testWorld{};   // isLookingAtWorkstation stays false
@@ -3442,6 +3514,11 @@ void RunUnitTests()
                     if (const float w = Context::WeightForCandidate(gear, weights); w != 0.0f) {
                         logger::error("TEST FAIL (6j): {} apparel away from a workstation should "
                             "score 0.0, got {:.3f}", Apparel::CraftSkillToString(skill), w);
+                        return;
+                    }
+                    if (FilterReasonFor(gear, testPlayer, testTargets, testWorld) != Core::Filter::Reason::no_workstation) {
+                        logger::error("TEST FAIL (6j): {} apparel away from a workstation should be "
+                            "filtered no_workstation", Apparel::CraftSkillToString(skill));
                         return;
                     }
 
@@ -4785,6 +4862,17 @@ void RunUnitTests()
                 if (Context::WeightForCandidate(torch, dayWeights) != 0.0f ||
                     !Context::IsHardContextGated(torch)) {
                     logger::error("TEST FAIL: a torch must score 0 in daylight and be hard-gated");
+                    return;
+                }
+                // R8.1: the not_dark filter drops it in daylight and with a
+                // torch already out, before scoring; in the dark it stays.
+                State::PlayerActorState torchOut = player;
+                torchOut.hasTorchEquipped = true;
+                if (FilterReasonFor(torch, player, targets, dark).has_value() ||
+                    FilterReasonFor(torch, player, targets, State::WorldState{}) != Core::Filter::Reason::not_dark ||
+                    FilterReasonFor(torch, torchOut, targets, dark) != Core::Filter::Reason::not_dark) {
+                    logger::error("TEST FAIL: a torch should pass the filters in the dark and be filtered "
+                        "not_dark in daylight or with a torch already out");
                     return;
                 }
             }
@@ -6451,7 +6539,10 @@ void RunSlotLockerOverrideScopeTest()
     auto* updateHandler = Update::UpdateHandler::GetSingleton();
     if (gen.IsInitialized() && updateHandler) updateHandler->RunExclusive([&] {
         auto player = State::StateManager::GetSingleton().GetPlayerState();
-        (void)gen.GenerateCandidates(player, 1000.0f, {}, nullptr);
+        // R8.1: the hard gates on this save's own state, as the pipeline reads it.
+        const auto gates = Context::HardGateInputs(player, State::StateManager::GetSingleton().GetTargets(),
+            State::StateManager::GetSingleton().GetWorldState(), false);
+        (void)gen.GenerateCandidates(player, 1000.0f, gates, {}, nullptr);
         for (const auto& c : gen.LastGathered()) {
             const auto* item = Candidate::TryGetAs<Candidate::ItemCandidate>(c);
             if (item && item->count > 1 && item->type == Item::ItemType::HealthPotion) {
@@ -6463,7 +6554,7 @@ void RunSlotLockerOverrideScopeTest()
         if (realPotion != 0) {
             gen.StartCooldown(realPotion, Candidate::SourceType::Potion);
             player.vitals.health = 1.0f;
-            const auto filtered = gen.GenerateCandidates(player, 1000.0f, {}, nullptr);
+            const auto filtered = gen.GenerateCandidates(player, 1000.0f, gates, {}, nullptr);
             const bool stillOffered = std::ranges::any_of(filtered,
                 [&](const Candidate::CandidateVariant& c) { return Candidate::GetFormID(c) == realPotion; });
             const auto found = gen.FindGathered(realPotion, 0);

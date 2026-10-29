@@ -127,20 +127,13 @@ namespace Huginn::State
       }
 
       // =============================================================================
-      // COMBAT TRANSITION TRACKING
+      // COMBAT STATE
       // =============================================================================
-      // Detected inside PollPlayerPosition (which already holds the lock and
-      // knows exactly when isInCombat flips). Avoids the full PlayerActorState
-      // copy that the old UpdateLoop combat tracking required.
-
-      enum class CombatTransition : uint8_t { None, Entered, Exited };
-
-      /// Consume and reset the combat transition flag (destructive read).
-      /// Returns the transition that occurred since the last call.
-      [[nodiscard]] CombatTransition ConsumeCombatTransition() noexcept
-      {
-         return m_combatTransition.exchange(CombatTransition::None, std::memory_order_acq_rel);
-      }
+      // The published combat flag flips inside PollPlayerPosition, which also
+      // stamps NeedSensorState::combatStartAt / combatEndAt on the same
+      // transition. R8.1 (0.23.55): the destructive ConsumeCombatTransition
+      // that fed PotionDiscriminator's own timer is gone; the discriminator
+      // reads combatStartAt (GetCombatStartAt), the combat_onset clock.
 
       /// Lightweight combat state check (no full PlayerActorState copy).
       [[nodiscard]] bool IsInCombat() const noexcept
@@ -187,6 +180,12 @@ namespace Huginn::State
       // R3: the need vector's own readings (copy-out). Nothing that scores
       // reads them; see NeedSensorState.h.
       [[nodiscard]] NeedSensorState GetNeedSensors() const noexcept;
+
+      /// R8.1 (0.23.55): NeedSensorState::combatStartAt alone (NeedClock
+      /// seconds the published combat flag last went true; -1 never), without
+      /// the whole copy. The combat_onset need's clock, which the
+      /// PotionDiscriminator now reads too (core/CombatOnset.h).
+      [[nodiscard]] double GetCombatStartAt() const noexcept;
 
       /// 0.23.46 (selection log v3 only): what is active on the player in
       /// cap(i)'s column space (core/Coverage.h) and the actors the player
@@ -408,7 +407,20 @@ namespace Huginn::State
 
    public:
       void SetDarkLightLevel(float level) noexcept { m_darkLightLevel.store(level); }
+
+      // R8.1 (0.23.55): the refresh pass (core/RefreshPass.h). The magic-effects
+      // poll computes ActorBuffs::refreshDue against these: the window
+      // ([Scoring] fRefreshPriorSec, pushed in by ScorerSettings) and the
+      // resist filter's threshold (CandidateConfig, pushed in by
+      // CandidateGenerator). Any thread; the poll reads them atomically.
+      void SetRefreshPriorSec(float sec) noexcept { m_refreshPriorSec.store(sec); }
+      [[nodiscard]] float GetRefreshPriorSec() const noexcept { return m_refreshPriorSec.load(); }
+      void SetResistFilterThreshold(float threshold) noexcept { m_resistFilterThreshold.store(threshold); }
    private:
+      std::atomic<float> m_refreshPriorSec{ Core::Refresh::kDefaultRefreshSec };
+      std::atomic<float> m_resistFilterThreshold{ 50.0f };   // CandidateConfig::resistThresholdToFilter's default
+      Core::Refresh::DueBits m_lastRefreshDue = 0;            // PollPlayerMagicEffects: for the transition line
+
       PlayerActorState m_playerState;
       TargetCollection m_targets;
       HealthTrackingState m_healthTracking;
@@ -485,8 +497,7 @@ namespace Huginn::State
       // outer skip gate in UpdateLoop via IsElementalWindowActive)
       std::atomic<bool> m_elementalWindowActive{false};
 
-      // Combat transition tracking (set in PollPlayerPosition, consumed by UpdateLoop)
-      std::atomic<CombatTransition> m_combatTransition{CombatTransition::None};
+      // Published combat flag (set in PollPlayerPosition)
       std::atomic<bool> m_isInCombat{false};
       std::atomic<int> m_enemyCount{0};   // GetEnemyCount; written by PollTargets
       bool m_wasInCombat = false;  // Previous tick's combat state (single-writer in PollPlayerPosition)

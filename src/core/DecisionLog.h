@@ -198,6 +198,12 @@ namespace Huginn::Core::DecisionLog
         /// The old engine's run behind the eligible rows (0.23.53, OldScore.h);
         /// written as "old" when valid.
         OldRun old;
+        /// 0.23.55 (R8.1): the left(r) centre ([Scoring] fRefreshPriorSec)
+        /// the rows' covered(i) was computed with, read when the context was
+        /// taken. Not written: the writer starts a new segment when it differs
+        /// from the head's, so a hot reload between capture and write cannot
+        /// put a row under a head naming another centre.
+        float refreshPriorSec = 5.0f;
         std::vector<Row> rows;
     };
 
@@ -272,6 +278,12 @@ namespace Huginn::Core::DecisionLog
         /// curve made each logged value. A change of curves mid-launch (a hot
         /// reload) starts a new segment.
         std::vector<Needs::Curve> curves;
+        /// 0.23.55 (R8.1): [Scoring] fRefreshPriorSec, the centre of
+        /// covered(i)'s left(r) prior (and the refresh pass's window), written
+        /// as "refreshPriorSec". A change mid-launch (a hot reload) starts a
+        /// new segment, as the curves do. A head without it (before 0.23.55)
+        /// centred left(r) at 5 s.
+        float refreshPriorSec = 5.0f;
     };
 
     // --- JSON helpers ---------------------------------------------------------

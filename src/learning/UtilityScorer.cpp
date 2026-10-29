@@ -34,6 +34,7 @@ namespace Huginn::Scoring
         const State::PlayerActorState& player,
         const State::TargetCollection& targets,
         const State::WorldState& world,  // Stage 1f: Added WorldState
+        float combatOnsetAgo,
         const WildcardPage& displayPage,
         Context::ContextWeightMap* outWeights)
     {
@@ -98,13 +99,10 @@ namespace Huginn::Scoring
             // Favorites always pass — they represent explicit player intent and must
             // remain observable by the learner even when context weight is low.
             //
-            // Suppress mode is the exception: its multiplier is 0, so scoring a
-            // favorite only to drop it at minimumUtility was wasted work -- and
-            // with fMinimumUtility = 0 it was not dropped at all.
+            // R8.1 (0.23.55): no Suppress skip here any more. A favourite under
+            // Suppress never reaches the scorer: the favorite_suppressed filter
+            // drops it (CandidateFilters, Core::Gate::FavoriteSuppressed).
             const bool favorited = IsCandidateFavorited(candidate);
-            if (favorited && m_config.favoritesMode == FavoritesMode::Suppress) {
-                continue;
-            }
             float contextWeight = Context::WeightForCandidate(candidate, weights);
             if (contextWeight < m_config.minimumContextWeight && !favorited) {
                 continue;
@@ -118,7 +116,7 @@ namespace Huginn::Scoring
             float recencyBoost = usageReader.GetRecencyBoost(formID);
 
             ScoredCandidate result = ScoreCandidateInternal(
-                candidate, state, player, targets, world, weights,
+                candidate, state, player, targets, world, combatOnsetAgo, weights,
                 contextWeight, metrics, recencyBoost);
 
             maxUtilitySeen = std::max(maxUtilitySeen, result.utility);
@@ -164,13 +162,9 @@ namespace Huginn::Scoring
                 RE::FormID formID = Candidate::GetFormID(candidate);
                 if (alreadyScored(formID)) continue;
 
-                // The same Suppress skip as the main loop. A suppressed favorite
-                // was never scored there, so alreadyScored() lets it through, and
-                // with fMinimumUtility = 0 its zero utility passed the check below
-                // and it came back as a cold-start pick.
-                if (m_config.favoritesMode == FavoritesMode::Suppress && IsCandidateFavorited(candidate)) {
-                    continue;
-                }
+                // R8.1 (0.23.55): no Suppress skip here either: a suppressed
+                // favourite is a filter drop (favorite_suppressed) and never a
+                // candidate, so it cannot come back as a cold-start pick.
 
                 float contextWeight = Context::WeightForCandidate(candidate, weights);
 
@@ -198,7 +192,7 @@ namespace Huginn::Scoring
 
                 // Score candidate normally, then recompute utility with boosted context
                 ScoredCandidate result = ScoreCandidateInternal(
-                    candidate, state, player, targets, world, weights,
+                    candidate, state, player, targets, world, combatOnsetAgo, weights,
                     contextWeight, metrics, recencyBoost);
 
                 // Override context weight and recompute utility with the boosted
@@ -355,6 +349,7 @@ namespace Huginn::Scoring
         const State::PlayerActorState& player,
         const State::TargetCollection& targets,
         const State::WorldState& /*world*/,
+        float combatOnsetAgo,
         const Context::ContextWeightMap& /*weights*/,
         float contextWeight,
         const Learning::FeatureItemMetrics& metrics,
@@ -417,7 +412,7 @@ namespace Huginn::Scoring
         // Step 6: Get potion multiplier (1.0 for non-potions)
         // =====================================================================
         result.breakdown.potionMultiplier =
-            m_potionDiscrim.GetMultiplier(state, player, candidate);
+            m_potionDiscrim.GetMultiplier(state, player, candidate, combatOnsetAgo);
 
         // =====================================================================
         // Step 7: Get favorites multiplier
@@ -545,23 +540,9 @@ namespace Huginn::Scoring
         // and out of the list across ticks.
     }
 
-    // =========================================================================
-    // COMBAT STATE TRACKING
-    // =========================================================================
-
-    void UtilityScorer::OnCombatStart()
-    {
-        m_potionDiscrim.OnCombatStart();
-    }
-
-    void UtilityScorer::OnCombatEnd()
-    {
-        m_potionDiscrim.OnCombatEnd();
-    }
-
     bool UtilityScorer::Update(float deltaSeconds)
     {
-        m_potionDiscrim.Update(deltaSeconds);
+        (void)deltaSeconds;   // R8.1: the PotionDiscriminator's timer, its one reader, is gone
         bool forceRun = m_wildcardMgr.UpdateExpiry();
 
         // Vital envelopes tick every frame, not just when the pipeline runs: a
