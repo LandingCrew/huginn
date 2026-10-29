@@ -233,7 +233,10 @@ namespace Huginn::Core::Choice
         t.r.assign(r.begin(), r.end());
         t.r.resize(m.recent.size(), 0.0);
         const bool st = m.HasStrength() && m.strength.size() == K * J;
-        for (std::size_t k = 0; k < K; ++k) {
+        // A model without its K*J theta block (default-constructed) scores the
+        // theta part as 0 rather than reading past an empty vector.
+        const bool th = m.theta.size() == K * J;
+        for (std::size_t k = 0; k < K && th; ++k) {
             const double nk = n[k];
             if (nk == 0.0) continue;
             t.active.push_back(static_cast<std::uint16_t>(k));
@@ -467,6 +470,13 @@ namespace Huginn::Core::Choice
                                          std::string_view list) noexcept
     {
         return !nothing && hasContext && hasChosenRow && name != kTransientName && list != kSimonRimList;
+    }
+
+    /// The decision moment of a pick: its confirmation time less the
+    /// confirmation delay (fitlib.pick_time: utc - confirmMs). Seconds.
+    [[nodiscard]] constexpr double PickTime(double confirmedAt, double confirmMs) noexcept
+    {
+        return confirmedAt - confirmMs / 1000.0;
     }
 
     struct RecentPick

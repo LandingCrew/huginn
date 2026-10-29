@@ -211,6 +211,11 @@ namespace Huginn::Core::Bootstrap
                     for (const Value& t : taus->Items()) {
                         if (IsNum(&t)) d.taus.push_back(t.AsNumber());
                     }
+                    // fitlib.recent_families reads the window as max(taus): a file
+                    // that says otherwise would score other values than it was fitted on
+                    if (!d.taus.empty() && d.window != *std::max_element(d.taus.begin(), d.taus.end())) {
+                        errs.push_back("recent.window_s: the largest of taus_s");
+                    }
                 }
                 const Value* feats = rec->IsObject() ? rec->Find("features") : nullptr;
                 if (feats && feats->IsArray()) {

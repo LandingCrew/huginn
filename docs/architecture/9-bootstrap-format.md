@@ -282,7 +282,10 @@ What `bootstrap.validate` checks, and what a version-1 reader rejects:
 5. `kappa`: a number.
 6. `u0`: present (`bias`, and `need` with names from `needs`) exactly when
    `outcomes` is `three`; null otherwise.
-7. `recent`: null, or `window_s` and `taus_s`, and each feature's `family` in
+7. `recent`: null, or `window_s` and `taus_s` (`window_s` equal to the largest
+   of `taus_s` when there is one: `fitlib.recent_families` reads the window as
+   `max(taus)`, so a file that differed would score values it was not fitted
+   on), and each feature's `family` in
    `cols`, `tau_s` in `taus_s`, `theta` and `precision` (and `theta_strength`
    with `presence+strength`) of J numbers, every precision above 0, `u0`
    exactly with `three`.

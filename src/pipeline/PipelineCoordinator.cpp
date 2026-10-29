@@ -640,6 +640,16 @@ void PipelineCoordinator::CaptureEligible(PipelineContext& ctx,
     // and a check that the moved floor loop reports the floors this capture
     // derives on its own (they are the same tests; a mismatch is a bug).
     const bool haveLegacy = ctx.legacyRows.size() == candidates.size();
+    // Two candidates with one dedup key (type, uid, form) read the same scored
+    // row here (scoredByKey), but the floor pass's cold start scores only the
+    // first (alreadyScored by form): the second reads the legacy row of the
+    // candidate that was kept, so its floor, lm and um agree with its utility.
+    std::unordered_map<uint64_t, size_t> keptByKey;
+    if (haveLegacy) {
+        for (size_t i = 0; i < candidates.size(); ++i) {
+            if (ctx.legacyRows[i].Scored()) keptByKey.try_emplace(Candidate::GetBase(candidates[i]).GetDeduplicationKey(), i);
+        }
+    }
     size_t floorMismatch = 0;
     size_t candIndex = 0;
     for (const auto& c : candidates) {
@@ -670,7 +680,11 @@ void PipelineCoordinator::CaptureEligible(PipelineContext& ctx,
         }
         row.old = explain(c, true, scored);
         if (haveLegacy) {
-            const auto& lg = ctx.legacyRows[ci];
+            size_t li = ci;
+            if (scored && !ctx.legacyRows[ci].Scored()) {
+                if (const auto k = keptByKey.find(base.GetDeduplicationKey()); k != keptByKey.end()) li = k->second;
+            }
+            const auto& lg = ctx.legacyRows[li];
             row.lnLearnMult = lg.Scored() ? lg.lnLearnMult : 0.0f;
             row.utilMissing = lg.utilMissing ? 1 : 0;
             if (static_cast<uint8_t>(lg.floor) != row.old.floor) ++floorMismatch;

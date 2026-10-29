@@ -1126,6 +1126,7 @@ class BootstrapFormat(unittest.TestCase):
                                                                 plugin='SKYRIM.ESM'))))       # plugin names ignore case
         self.assertTrue(broken(lambda d: d['recent']['features'][0].update(family='nope')))
         self.assertTrue(broken(lambda d: d['recent']['features'][0].pop('u0')))
+        self.assertTrue(broken(lambda d: d['recent'].update(window_s=20.0)))   # window = max(taus_s)
         self.assertTrue(broken(lambda d: d['features'].append({'name': 'ln ctx', 'w': 1})))
         self.assertTrue(broken(lambda d: d['curves'].update(encumbrance=['logistic', 0.9, 0])))
         self.assertTrue(broken(lambda d: d['needs'].append('hunger')))

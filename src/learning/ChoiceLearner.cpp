@@ -186,8 +186,14 @@ namespace Huginn::Learning
             m_bootItems = std::move(items);
             m_itemsResolved = RE::TESDataHandler::GetSingleton() != nullptr;
             m_doc = std::move(*read.doc);
-            m_keys.clear();
-            m_slotOf.clear();
+            // The live model is filled here, before Ready() turns true: a tick on
+            // the loading-screen thread can run the shadow between this call and
+            // ResetPipelineSubsystems (step 8), and it must never see an empty
+            // theta. ResetToBootstrap later redoes this and seeds b.
+            m_model = m_bootModel;
+            m_model.covered = C::Weight{ m_settings.coveredPrior, 1.0 };
+            m_b.clear();
+            BuildKeys();
             Touch();
         }
         const auto& rep = mapped.report;
@@ -277,7 +283,7 @@ namespace Huginn::Learning
         {
             const std::size_t KJ = C::K * C::J;
             const bool st = m.HasStrength() && m.strength.size() == KJ;
-            if (slot < KJ) return &m.theta[slot];
+            if (slot < KJ) return m.theta.size() == KJ ? &m.theta[slot] : nullptr;
             slot -= KJ;
             if (st) {
                 if (slot < KJ) return &m.strength[slot];

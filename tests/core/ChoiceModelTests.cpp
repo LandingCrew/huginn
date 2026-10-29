@@ -193,6 +193,23 @@ TEST_CASE("choice score: the explanation is the largest single theta n cap term"
     CHECK(Score(m, t0, at, {}).Learned());
 }
 
+TEST_CASE("choice score: a model without its theta block scores 0 instead of reading past it")
+{
+    // ChoiceLearner fills its model before Ready() turns true; this is the
+    // core's own guard should an empty model ever reach a tick.
+    Model empty;
+    const Tick t = MakeTick(empty, Needs1(kHD, 1.0), {});
+    CHECK(t.active.empty());
+    CHECK(t.v[kRH] == 0.0);
+    const Attr at = A(Grading::Graded, { { kRH, 0.5 } });
+    const auto r = Score(empty, t, at, {});
+    CHECK(r.mu == 0.0);
+    CHECK(r.Learned());
+    CHECK_FALSE(Answers(empty, kHD, at));
+    GrowNeed(empty, kHD, 0.1);   // no-op, no out-of-range write
+    CHECK(empty.theta.empty());
+}
+
 TEST_CASE("choice score: recent_<family> -- latest usable pick, same generation, window, the family's column")
 {
     Model m = Blank();

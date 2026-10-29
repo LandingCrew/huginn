@@ -250,6 +250,7 @@ TEST_CASE("bootstrap: reader rules, one negative case each")
     CHECK(Rejected(Replace(full, "\"hunger\": -0.5", "\"thirst\": -0.5"), "u0.need"));
     // 7. recent
     CHECK(Rejected(Replace(full, "\"window_s\": 30.0,", ""), "recent: window_s"));
+    CHECK(Rejected(Replace(full, "\"window_s\": 30.0,", "\"window_s\": 20.0,"), "recent.window_s: the largest of taus_s"));
     CHECK(Rejected(Replace(full, "\"family\": \"summon\",\n    \"tau_s\": 5.0", "\"family\": \"nope\",\n    \"tau_s\": 5.0"),
                    "family: a name from cols"));
     CHECK(Rejected(Replace(full, "\"tau_s\": 5.0,", "\"tau_s\": 7.0,"), "tau_s: one of taus_s"));

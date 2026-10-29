@@ -204,7 +204,7 @@ namespace Huginn::Learning
             // The decision moment on the steady clock: the confirmation (now)
             // less the confirmation delay, as fitlib.pick_time reads utc - confirmMs.
             const double now = std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count();
-            learner.OnPick(d, now - static_cast<double>(d.confirmMs) / 1000.0);
+            learner.OnPick(d, Core::Choice::PickTime(now, static_cast<double>(d.confirmMs)));
         }
 
         ChoiceLearner& m_learner;

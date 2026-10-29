@@ -8,8 +8,10 @@
 // logit for every row of fitlib.build's choice sets. This test reads the
 // shipped bootstrap with core/Bootstrap.h (names mapped, missing pairs at the
 // prior, items resolved through the fixture's form map), rebuilds
-// recent_<family> with the live tracker from the fixture's pick timeline (and
-// checks it against fitlib's values), re-reads the curve needs through the
+// recent_<family> with the live tracker from EVERY logged pick -- applying
+// Choice::UsablePick and the confirmMs subtraction (Choice::PickTime) itself, as
+// ChoiceSubscriber does live, and checking both against fitlib's timeline and
+// pick times -- (and checks the values against fitlib's), re-reads the curve needs through the
 // file's curves, and scores every row with core/ChoiceScore.h. theta_covered
 // is 0 (the bootstrap has no covered weight; the fit did not read covered).
 //
@@ -164,8 +166,14 @@ TEST_CASE("choice replay: the C++ score reproduces fitlib's per-row logits under
         auto r = Json::Parse(line);
         REQUIRE(r.Ok());
         Event e;
-        e.ts = r.value->Find("ts")->AsNumber();
+        // the decision moment from the logged utc and confirmMs, as the live
+        // subscriber computes it; checked against fitlib.pick_time below
+        const Json::Value* utc = r.value->Find("utc");
+        const Json::Value* cms = r.value->Find("cms");
+        REQUIRE_MESSAGE((utc && cms), "fixture predates the raw pick fields: regenerate it with export_scores.py");
         e.pick = r.value->Find("t")->AsString() == "pick";
+        const bool nothing = e.pick && r.value->Find("out")->AsString() == "nothing";
+        e.ts = nothing ? utc->AsNumber() : C::PickTime(utc->AsNumber(), cms->AsNumber());
         e.v = std::move(*r.value);
         events.push_back(std::move(e));
     }
@@ -179,11 +187,23 @@ TEST_CASE("choice replay: the C++ score reproduces fitlib's per-row logits under
     if (!outPath.empty()) out.open(outPath, std::ios::binary);
 
     C::RecentTracker tracker;
-    double maxMu = 0.0, maxLogit = 0.0, maxRec = 0.0;
+    double maxMu = 0.0, maxLogit = 0.0, maxRec = 0.0, maxTs = 0.0;
     std::size_t decisions = 0, rows = 0, withRecent = 0, withB = 0, withLm = 0, offPage = 0;
+    std::size_t picksUsed = 0, picksSkipped = 0, useDisagrees = 0;
     for (const auto& e : events) {
         const Json::Value& v = e.v;
+        if (const Json::Value* ts = v.Find("ts"); ts && ts->IsNumber()) maxTs = std::max(maxTs, std::abs(e.ts - ts->AsNumber()));
         if (e.pick) {
+            // fitlib.recent_families' exclusions, by the live test
+            const bool usable = C::UsablePick(v.Find("out")->AsString() == "nothing", v.Find("ctx")->AsBool(),
+                                              v.Find("chosen")->AsBool(), v.Find("name")->AsString(),
+                                              v.Find("list")->AsString());
+            useDisagrees += usable != v.Find("use")->AsBool() ? 1 : 0;
+            if (!usable) {
+                ++picksSkipped;
+                continue;
+            }
+            ++picksUsed;
             C::RecentPick p;
             p.t = e.ts;
             p.gen = gen(v.Find("lg")->AsString());
@@ -262,7 +282,10 @@ TEST_CASE("choice replay: the C++ score reproduces fitlib's per-row logits under
     MESSAGE("replay: " << decisions << " decisions, " << rows << " rows (" << offPage << " off the page, " << withB
                        << " with a b, " << withLm << " with ln learn mult), " << withRecent << " with a recent family; "
                        << "largest |mu - fitlib| " << maxMu << ", |logit - fitlib| " << maxLogit
-                       << ", |recent - fitlib| " << maxRec);
+                       << ", |recent - fitlib| " << maxRec << "; picks " << picksUsed << " usable, " << picksSkipped
+                       << " excluded by UsablePick, largest |pick time - fitlib| " << maxTs);
+    CHECK(useDisagrees == 0);
+    CHECK(maxTs < 1e-6);
     CHECK(decisions == static_cast<std::size_t>(head.Find("decisions")->AsNumber()));
     CHECK(maxMu < 1e-5);
     CHECK(maxLogit < 1e-5);
@@ -273,5 +296,6 @@ TEST_CASE("choice replay: the C++ score reproduces fitlib's per-row logits under
         CHECK(withB > 0);
         CHECK(withLm > 0);
         CHECK(offPage > 0);
+        CHECK(picksSkipped >= 4);   // the transient, SimonRim, nothing and no-context picks
     }
 }

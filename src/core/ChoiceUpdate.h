@@ -46,6 +46,15 @@
 // A pick renews it from what is left (mu <- b_eff, var <- var_eff, n <- r n + 1,
 // the clock restarts), as the old learner's pick does; an update that only
 // passes an item over moves its stored mu and var but does not renew its life.
+// That is an approximation for a faded passed-over item (r < 1): its P and
+// gradient are computed from the read (b_eff, var_eff), but the precision and
+// the step land on the stored belief, so the read moves by r var' grad instead
+// of the exact var_eff' grad. It is conservative: with the stored var at most
+// the prior's 0.25 (precision only grows from it), the read's step and its
+// variance drop are never larger than the exact update on the read belief; a
+// faded item under-learns from being passed over and never over-learns. At
+// r = 1 (inside the useful life) it is exact. Renewing the clock instead would
+// make a pass-over count as a use.
 // A favourite in Boost mode lives fFavoriteLifeMult times longer (doc 9's open
 // point: the lifetime route, no pseudo-picks).
 //
@@ -349,6 +358,7 @@ namespace Huginn::Core::Choice
     /// term sum_j mu_kj a_j, plus the strength block's, is above 0)?
     [[nodiscard]] inline bool Answers(const Model& m, std::size_t k, const Attr& at) noexcept
     {
+        if (k >= K || m.theta.size() != K * J) return false;
         double s = 0.0;
         for (const auto& [j, a] : at.a) s += m.Th(k, j).mu * a;
         if (m.HasStrength() && m.strength.size() == K * J) {
@@ -361,7 +371,7 @@ namespace Huginn::Core::Choice
     /// variance grows by q.
     inline void GrowNeed(Model& m, std::size_t k, double q) noexcept
     {
-        if (!(q > 0.0) || k >= K) return;
+        if (!(q > 0.0) || k >= K || m.theta.size() != K * J) return;
         for (std::size_t j = 0; j < J; ++j) m.Th(k, j).var += q;
         if (m.HasStrength() && m.strength.size() == K * J) {
             for (std::size_t j = 0; j < J; ++j) m.strength[k * J + j].var += q;

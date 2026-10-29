@@ -25,9 +25,13 @@ theta_covered is 0 (format v1 does not carry it; the fit did not read covered).
 The fixture (JSON lines):
   head  {"t":"head","bootstrap":<path>,"needs":[...],"cols":[...],"items":{FORM:[plugin,local,name]},
          "decisions":n,"source":...}
-  pick  {"t":"pick","lg":<launch|gen>,"ts":<seconds>,"id":<k>,"cap":bool,"cols":[col index...]}
-        every usable pick of the log (fitlib.recent_families' timeline), in time order
-  dec   {"t":"dec","i":<S index>,"lg":...,"ts":<pick time>,"id":<k>,"n":[[need,v]...],"in":[[need,v]...],
+  pick  {"t":"pick","lg":<launch|gen>,"utc":<seconds>,"cms":<confirmMs>,"ts":<fitlib pick time>,"id":<k>,
+         "name":...,"list":...,"out":...,"ctx":bool,"chosen":bool,"use":bool,"cap":bool,"cols":[col index...]}
+        EVERY pick of the log, unfiltered, in logged-utc order: the C++ test applies
+        Choice::UsablePick and the confirmMs subtraction (Choice::PickTime) itself, as
+        ChoiceSubscriber does live, and checks both against fitlib.recent_families' timeline
+        ("use") and fitlib.pick_time ("ts", null for a pick fitlib does not use)
+  dec   {"t":"dec","i":<S index>,"lg":...,"utc":...,"cms":...,"ts":<pick time>,"id":<k>,"n":[[need,v]...],"in":[[need,v]...],
          "rec":{"family@tau":v},"y":<chosen row>,"out":"key"/"wheel"/"menu",
          "rows":[[cap pairs],[cross pairs by column],off,FORM,lm,um,mu,logit]...}
 """
@@ -169,22 +173,37 @@ def write_fixture(path, D, S, decs, doc, doc_path, imap, source):
     Fm, _ = row_features(Sv, M.feat_spec)
     s_item, logit, _ = M.scores(Sv, p, Fm)
     inv_item = {i: f for f, i in S['items'].items()}
-    tl = timeline(D)
-    ids = {id(d): k for k, (_, _, d) in enumerate(tl)}
+    usable = {id(d) for _, _, d in timeline(D)}
+    picks = list(D['decs'])
+    ids = {id(d): k for k, d in enumerate(picks)}
     lg = lambda key: f'{key[0]}|{key[1]}'
-    t0 = min([t for _, t, _ in tl] + [pick_time(d) for d in decs])
+
+    def logged_utc(d):
+        # the pick's own utc (a record without one: its context's), as the log carries it
+        if d.get('utc'):
+            return T(d['utc'])
+        return T(d['C']['utc']) if d.get('C') else None
+
+    t0 = min([u for u in (logged_utc(d) for d in picks) if u is not None] + [pick_time(d) for d in decs])
     secs = lambda t: (t - t0).total_seconds()
+    utc_s = lambda d: secs(logged_utc(d)) if logged_utc(d) is not None else 0.0
+    cms = lambda d: fmt(float(d.get('confirmMs') or 0))
     curve_needs = set(curves) & set(NI)
     with open(path, 'w', encoding='utf-8', newline='\n') as fh:
         fh.write(json.dumps({'t': 'head', 'bootstrap': str(doc_path), 'needs': S['needs'], 'cols': S['cols'],
                              'items': {f: list(v[0]) for f, v in imap.items() if f in S['items']},
                              'decisions': len(decs), 'source': source, 'kappa': doc['kappa'],
                              'recent': rec_names}) + '\n')
-        for k, (key, t, d) in enumerate(tl):
-            ch = d['chosen']
-            cid = ch[CAP]
+        for k in sorted(range(len(picks)), key=lambda k: (utc_s(picks[k]), k)):
+            d = picks[k]
+            ch = d.get('chosen')
+            cid = ch[CAP] if ch is not None else -1
             cols = [j for j, v in D['caps'][cid] if v > 0] if cid >= 0 else []
-            fh.write(json.dumps({'t': 'pick', 'lg': lg(key), 'ts': secs(t), 'id': k, 'cap': cid >= 0,
+            use = id(d) in usable
+            fh.write(json.dumps({'t': 'pick', 'lg': lg((d['launch'], d.get('gen', 1))), 'utc': utc_s(d), 'cms': cms(d),
+                                 'ts': secs(pick_time(d)) if use else None, 'id': k, 'name': d['name'],
+                                 'list': d['list'], 'out': d['out'], 'ctx': d.get('C') is not None,
+                                 'chosen': ch is not None, 'use': use, 'cap': cid >= 0,
                                  'cols': sorted(set(cols))}) + '\n')
         Dn, R = S['CAPID'].shape
         for i, d in enumerate(decs):
@@ -205,7 +224,8 @@ def write_fixture(path, D, S, decs, doc, doc_path, imap, source):
             n = [[S['needs'][k], fmt(v)] for k, v in enumerate(S['N_raw'][i]) if v != 0.0]
             inp = [[nm, fmt(S['IN'][i, NI[nm]])] for nm in sorted(curve_needs) if np.isfinite(S['IN'][i, NI[nm]])]
             rec = {nm[len('recent_'):-1]: fmt(REC[i, r]) for r, nm in enumerate(rec_names) if REC[i, r] != 0.0}
-            fh.write(json.dumps({'t': 'dec', 'i': i, 'lg': lg((d['launch'], d.get('gen', 1))), 'ts': secs(pick_time(d)),
+            fh.write(json.dumps({'t': 'dec', 'i': i, 'lg': lg((d['launch'], d.get('gen', 1))), 'utc': utc_s(d),
+                                 'cms': cms(d), 'ts': secs(pick_time(d)),
                                  'id': ids.get(id(d), -1), 'n': n, 'in': inp, 'rec': rec, 'y': int(S['Y'][i]),
                                  'out': d['out'], 'rows': rows}) + '\n')
     return Sv, M, p, s_item, logit
@@ -331,10 +351,13 @@ def synthetic_D(doc, n_dec=48, seed=5):
                  'confirmMs': int(rng.integers(0, 3000)), 'build': '0.23.56 (synthetic)', 'case': '', 'ep': None,
                  'char': 'FEFD1B039AC78799', 'kind': '', 'repeat': 0}
             decs.append(d)
-    # a transient spell's pick and a SimonRim pick: in no choice set and no timeline
+    # a transient spell's pick, a SimonRim pick, a nothing record and a pick without a context:
+    # in no choice set and no timeline (the C++ replay applies Choice::UsablePick to every pick)
     first = decs[3]
     decs.append(dict(first, seq=999, name='Arcane Anchor', utc=first['utc'][:-3] + '901'))
     decs.append(dict(first, seq=1000, list=SIMONRIM, utc=first['utc'][:-3] + '902'))
+    decs.append(dict(first, seq=1001, out='nothing', utc=first['utc'][:-3] + '903', confirmMs=0))
+    decs.append(dict(first, seq=1002, ctxkey=('none', -1), utc=first['utc'][:-3] + '904'))
     D = {'needs': needs, 'cols': cols, 'cross': cross, 'caps': caps, 'ctxs': ctxs, 'decs': decs, 'heads': []}
     for d in D['decs']:
         c = D['ctxs'].get(d['ctxkey'])
