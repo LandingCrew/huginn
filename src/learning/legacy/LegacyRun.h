@@ -6,8 +6,9 @@
 // *** Part of the legacy module R8 KEEPS for D2 (see LegacyLearnFeature.h). ***
 //
 // R8.4 confined the old engine to an allowlist (tools/prune/r8_check.py): the
-// pipeline names it in one call, UtilityScorer::LegacyPass, and reads
-// everything else through this header:
+// pipeline names it in one call, Legacy::LegacyPass (below; the pass itself is
+// LegacyScorer.h, split out of UtilityScorer), and reads everything else
+// through this header:
 //   - Run: what one pass produced -- the rows the old floors kept (their
 //     utility and breakdown, for the v2 log and the D2 feature), the floors'
 //     verdict per candidate, the row each candidate reads (its own, or the
@@ -15,10 +16,15 @@
 //   - OldScoreCapture: the selection log v3's OldScore columns (0.23.53), the
 //     audit trail a refit needs to retire this module: the old engine's
 //     score parts of every candidate, whatever the floors;
+//   - Run::FallbackRanking: the R8.3 fallback ranking, ln utility over the
+//     kept rows, used only while the choice model is not live (no bootstrap,
+//     or an invalid one; an error line says so). The one place utility still
+//     ranks; it lives here because the pass is here anyway;
 //   - the old learner's play clock, forget sweep and counts (UpdateLoop, the
 //     [Soak] heartbeat), which run whether or not the switch is on, so BNDW
 //     keeps ageing.
-// Nothing here ranks: the choice score reads the D2 feature off Run's rows.
+// With the choice model live nothing here ranks: the choice score reads the D2
+// feature off Run's rows.
 // =============================================================================
 
 #include "LegacyLearnFeature.h"
@@ -40,15 +46,10 @@ namespace Huginn::State
     struct WorldState;
 }
 
-namespace Huginn::Scoring
-{
-    class UtilityScorer;
-}
-
 namespace Huginn::Scoring::Legacy
 {
-    /// One pipeline run's legacy pass (UtilityScorer::LegacyPass), or a skipped
-    /// one (bLegacyLearnFeature off with the choice model live).
+    /// One pipeline run's legacy pass (LegacyPass below), or a skipped one
+    /// (bLegacyLearnFeature off with the choice model live).
     struct Run
     {
         bool ran = false;
@@ -74,18 +75,36 @@ namespace Huginn::Scoring::Legacy
         [[nodiscard]] const ScoredCandidate* KeptFor(std::size_t i) const noexcept;
         /// Kept rows, for the [Pipeline] and capture counts.
         [[nodiscard]] std::size_t KeptCount() const noexcept { return kept.size(); }
+
+        /// The R8.3 FALLBACK ranking (the bootstrap is missing or invalid): a
+        /// copy of the kept rows, each flagged legacyScored and ranked on
+        /// ln utility (ScoredCandidate::RankOnUtility). Unsorted; the live
+        /// scorer sorts it. The only place utility still ranks.
+        [[nodiscard]] ScoredCandidateList FallbackRanking() const;
     };
+
+    /// THE pipeline's one call into the old engine (R8.4): the legacy pass
+    /// (LegacyScorer::Pass) over this run's candidates, on the live scorer's
+    /// held magicka / stamina. A skipped Run if the scorer was never built.
+    [[nodiscard]] Run LegacyPass(
+        const std::vector<Candidate::CandidateVariant>& candidates,
+        const State::GameState& state,
+        const State::PlayerActorState& player,
+        const State::TargetCollection& targets,
+        const State::WorldState& world,
+        float combatOnsetAgo);
 
     /// The selection log v3's OldScore columns (0.23.53) for one run: what the
     /// old engine computes for a candidate whatever the floors. A kept row
     /// takes the parts its utility used (its breakdown); any other candidate,
-    /// and every filter drop, is put through the scorer's own
-    /// ScoreCandidateInternal again with no floor. Reads only. Opens the old
-    /// learner's and UsageMemory's readers for its lifetime when the pass ran.
+    /// and every filter drop, is put through the legacy scorer's own
+    /// per-candidate score again with no floor (LegacyScorer::ExplainCandidate).
+    /// Reads only. Opens the old learner's and UsageMemory's readers for its
+    /// lifetime when the pass ran.
     class OldScoreCapture
     {
     public:
-        OldScoreCapture(UtilityScorer& scorer, const Run& run,
+        OldScoreCapture(const Run& run,
             const State::GameState& state, const State::PlayerActorState& player,
             const State::TargetCollection& targets, const State::WorldState& world,
             float combatOnsetAgo);
@@ -93,7 +112,7 @@ namespace Huginn::Scoring::Legacy
         OldScoreCapture(const OldScoreCapture&) = delete;
         OldScoreCapture& operator=(const OldScoreCapture&) = delete;
 
-        /// The pass ran (the old parts are captured at all).
+        /// The pass ran and the legacy scorer exists (the old parts are captured at all).
         [[nodiscard]] bool Valid() const noexcept;
         /// The run head: the floors' parameters, the learner totals and the
         /// state features. `scored` = the kept rows that are ranked.

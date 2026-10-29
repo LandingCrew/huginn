@@ -45,7 +45,14 @@ namespace Huginn::Learning
             return instance;
         }
 
-        // Sentinel rank for candidates beyond the reported prefix (iTopNCandidates).
+        // How many leading rows of the ranked list get a reported rank (the
+        // [Reach] attribution's near / far miss, the rank column of the v2 and
+        // v3 logs). R8.4: a constant of its own, 10 -- what iTopNCandidates
+        // (default and shipped value) gave it before -- so the legacy floors'
+        // key no longer sets it.
+        static constexpr size_t kReportedRankPrefix = 10;
+
+        // Sentinel rank for candidates beyond the reported prefix (kReportedRankPrefix).
         // Until R7 their true rank was unknown (partial_sort left the tail
         // unordered); the list is fully sorted now, but attribution still
         // treats them as far-miss (B-low), never near-miss, as before. Consumers
@@ -172,7 +179,7 @@ namespace Huginn::Learning
         // attribution classifies them as far-miss exactly as before.
         // NOTE: wildcard swaps run after sorting, so a prefix rank may hold a
         // wildcard-promoted item — intentional: attribution should see what was
-        // actually surfaced, not the pre-wildcard utility order.
+        // actually surfaced, not the pre-wildcard score order.
         // R4: `eligible` (moved in) and `pageSlots` are kept for the selection
         // log v3 only; attribution and the v2 log read none of it.
         void Update(

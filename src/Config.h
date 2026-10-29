@@ -48,7 +48,7 @@ namespace Huginn::Config
    // which regressed every used item onto a fixed number with no contrast and
    // let a trained item's learned boost reach ~24x: the soak run's crowding
    // (docs/playtest/Soak-2026-10-LoreRim.md). On 0-1 the boost tops out near
-   // 1 + lambdaMax = 4x.
+   // 1 + λ_max ([Scoring] fLambdaMax) = 4x.
    inline constexpr float CHOICE_TARGET = 1.0f;
    inline constexpr float PASSED_OVER_TARGET = 0.0f;
 

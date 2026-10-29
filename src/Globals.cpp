@@ -9,6 +9,7 @@
 #include "learning/SelectionTracker.h"
 #include "learning/SelectionLogV3.h"
 #include "pipeline/PipelineCoordinator.h"
+#include "learning/legacy/LegacyScorer.h"   // g_legacyScorer's destructor
 
 #include <algorithm>
 #include <filesystem>
@@ -36,6 +37,9 @@ std::unique_ptr<Huginn::Learning::ChoiceLearner> g_choiceLearner;
 
 // Utility scoring system (v0.9.0) - Unified scorer for all candidate types
 std::unique_ptr<Huginn::Scoring::UtilityScorer> g_utilityScorer;
+
+// R8.4: the legacy scorer (the D2 feature's input; learning/legacy/LegacyScorer.h)
+std::unique_ptr<Huginn::Scoring::Legacy::LegacyScorer> g_legacyScorer;
 
 // Timer for periodic state logging
 std::chrono::steady_clock::time_point g_lastStateLog;
@@ -89,8 +93,6 @@ std::atomic<bool> g_updateSystemFailed{false};
 // =============================================================================
 namespace Huginn {
     State::StateEvaluator* GetStateEvaluator() { return g_stateEvaluator.get(); }
-    Learning::FeatureBanditLearner* GetFeatureBanditLearner() { return g_featureBanditLearner.get(); }
-    Learning::UsageMemory* GetUsageMemory() { return g_usageMemory.get(); }
 }
 
 // =============================================================================

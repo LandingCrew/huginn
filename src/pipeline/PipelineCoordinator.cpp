@@ -387,7 +387,8 @@ void PipelineCoordinator::EnrichElementalDamage(PipelineContext& ctx)
 // Without a usable bootstrap the pipeline ranks on the old utility instead
 // (ln u, the R7 bridge) over the rows the floors keep: the FALLBACK, so the
 // game stays playable; `hg status` and an error line say so. It has no
-// favourites rank scaling and no potion tier preference any more.
+// favourites rank scaling and no potion tier preference any more, and since
+// R8.4 it is built in the legacy module (Legacy::Run::FallbackRanking).
 
 namespace
 {
@@ -492,7 +493,7 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
     // rules, prior, correlation or potion work). THE one call into the old
     // engine (R8.4, tools/prune/r8_check.py).
     if (runLegacy) {
-        ctx.legacy = g_utilityScorer->LegacyPass(candidates, ctx.currentState, ctx.playerState, ctx.targets, ctx.worldState, ctx.combatOnsetAgo);
+        ctx.legacy = Scoring::Legacy::LegacyPass(candidates, ctx.currentState, ctx.playerState, ctx.targets, ctx.worldState, ctx.combatOnsetAgo);
     }
     else {
         ctx.legacy.Skip(candidates.size());
@@ -502,13 +503,11 @@ void PipelineCoordinator::ScoreCandidates(PipelineContext& ctx)
         ctx.scoredCandidates = RankOnChoice(ctx, candidates);
     }
     else {
-        // FALLBACK: the old ranking, ln utility over the rows the floors kept
-        // (a copy: ctx.legacy's rows index the kept list).
-        ctx.scoredCandidates = ctx.legacy.kept;
-        for (auto& sc : ctx.scoredCandidates) {
-            sc.legacyScored = true;
-            sc.RankOnUtility(sc.utility);
-        }
+        // FALLBACK (no bootstrap, or an invalid one; logged above as an
+        // error): the old ranking, ln utility over the rows the floors kept.
+        // It lives in the legacy module (Legacy::Run::FallbackRanking, R8.4):
+        // nothing in this file turns a utility into a rank score.
+        ctx.scoredCandidates = ctx.legacy.FallbackRanking();
     }
 
     // The display page comes from ResolveDisplayPage, which ran earlier this
@@ -647,9 +646,9 @@ Scoring::ScoredCandidateList PipelineCoordinator::RankOnChoice(PipelineContext& 
             }
         }
         C::SetLegacy(x.feat, C::LegacyFeature(legacyOn, lg.Scored(), static_cast<double>(lg.lnLearnMult)));
-        if (sc.legacyScored && std::isfinite(sc.utility)) {
-            x.feat[static_cast<size_t>(C::Feature::ln_util)] = std::log(std::max(static_cast<double>(sc.utility), 1e-6));
-        }
+        // R8.4: no `ln util` feature. D2 reads only ln learn mult and util
+        // missing; the old utility does not enter the choice score (the
+        // bootstrap reader zeroes an `ln util` weight, core/Bootstrap.cpp).
         x.feat[static_cast<size_t>(C::Feature::eligible)] = 1.0;
         const auto b = snap->B(form, Candidate::IsFavorited(c), run->playNow);
         x.bMu = b.mu;
@@ -768,7 +767,7 @@ void PipelineCoordinator::CaptureEligible(PipelineContext& ctx,
     old.dropped.clear();
     old.stateHash = ctx.currentState.GetHash();
     old.run = {};
-    const Scoring::Legacy::OldScoreCapture capture(*g_utilityScorer, ctx.legacy, ctx.currentState, ctx.playerState,
+    const Scoring::Legacy::OldScoreCapture capture(ctx.legacy, ctx.currentState, ctx.playerState,
         ctx.targets, ctx.worldState, ctx.combatOnsetAgo);
     const bool withOld = capture.Valid();
     if (withOld) {
@@ -1129,15 +1128,17 @@ void PipelineCoordinator::UpdateCaches(PipelineContext& ctx)
     // counter beside the cache).
     LogChoiceRows(ctx);
     // Cache pipeline state for external equip attribution.
-    // sortedPrefix = topNCandidates: ranks are reported for that prefix only.
-    // The whole list is in score order since R7 (UtilityScorer sorts it all),
-    // but attribution classifies past the prefix as a far miss, and that stays
-    // as it was; see PipelineStateCache::Update. Page comes from the tick
+    // sortedPrefix = kReportedRankPrefix: ranks are reported for that prefix
+    // only. The whole list is in score order since R7 (UtilityScorer sorts it
+    // all), but attribution classifies past the prefix as a far miss, and that
+    // stays as it was; see PipelineStateCache::Update. R8.4: a constant of its
+    // own (10, the old iTopNCandidates default the logs were written with),
+    // no longer the legacy floors' iTopNCandidates. Page comes from the tick
     // snapshot so it matches ctx.assignments exactly.
     Learning::PipelineStateCache::GetSingleton().Update(
         ctx.scoredCandidates, ctx.assignments,
         ctx.displayPageIndex,
-        g_utilityScorer->GetConfig().topNCandidates,
+        Learning::PipelineStateCache::kReportedRankPrefix,
         std::move(ctx.eligible), ctx.displaySlotCount,    // R4: the selection log v3's rows
         std::move(ctx.filtered),                          // 0.23.46: and why the others were dropped
         std::move(ctx.oldScore));                         // 0.23.53: the old engine's view of the run

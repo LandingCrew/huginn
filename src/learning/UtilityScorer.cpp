@@ -1,7 +1,4 @@
 #include "UtilityScorer.h"
-#include "context/ContextWeightSettings.h"       // For BuildConfig() in constructor
-#include "context/ContextWeightForCandidate.h"   // Context::WeightForCandidate (moved from here, #10)
-#include "util/ScopedTimer.h"
 #include "state/StateManager.h"                 // GetPlayerVitals: vital envelopes tick every frame
 #include "Profiling.h"
 #include "core/EffectColumns.h"   // [Recs]: the explanation's column names (R8.3)
@@ -11,155 +8,16 @@
 
 namespace Huginn::Scoring
 {
-    UtilityScorer::UtilityScorer(Learning::FeatureBanditLearner& featureLearner, Learning::UsageMemory& usageMemory, const ScorerConfig& config)
-        : m_featureLearner(featureLearner)
-        , m_usageMemory(usageMemory)
-        , m_config(config)
-        , m_correlationBooster(m_config)
-        , m_potionDiscrim(m_config)
-        , m_contextEngine(State::ContextWeightSettings::GetSingleton().BuildConfig())  // BuildConfig pattern
+    UtilityScorer::UtilityScorer(const ScorerConfig& config)
+        : m_config(config)
     {
-        // Configure wildcard manager from scorer config
         m_wildcardMgr.SetEnabled(true);  // Always enabled by default
     }
 
-    // =========================================================================
-    // MAIN SCORING METHOD
-    // =========================================================================
-
-    Legacy::Run UtilityScorer::LegacyPass(
-        const std::vector<Candidate::CandidateVariant>& candidates,
-        const State::GameState& state,
-        const State::PlayerActorState& player,
-        const State::TargetCollection& targets,
-        const State::WorldState& world,  // Stage 1f: Added WorldState
-        float combatOnsetAgo)
-    {
-        SCOPED_TIMER("UtilityScorer::LegacyPass");
-
-        Legacy::Run run;
-        run.ran = true;
-        ScoredCandidateList& scored = run.kept;
-        scored.reserve(candidates.size());
-
-        // Magicka and stamina are scored at their recent low while they
-        // regenerate (VitalEnvelope), on a COPY: the rule engine stays pure --
-        // a stateful engine let one evaluation's low leak into the next, which
-        // the threshold tests caught -- and nothing but the context weights
-        // sees the held value. Health is not held; see VitalEnvelope.
-        // The envelopes are ticked every frame in Update(); this only reads them.
-        State::PlayerActorState scoringPlayer = player;
-        scoringPlayer.vitals.magicka = m_magickaEnvelope.Value(player.vitals.magicka);
-        scoringPlayer.vitals.stamina = m_staminaEnvelope.Value(player.vitals.stamina);
-
-        // Stage 1f: Evaluate context rules ONCE for all candidates
-        // This replaces per-candidate relevance from CandidateGenerator
-        // Tracy zones below split this function (and Pipeline::ScoreCandidates,
-        // its caller) so a trace can say which part costs: see the 2026-10-03
-        // entry in docs/profiling/tracy-traces.md. The per-candidate ones
-        // (Score::Candidate, Score::LearnerMetrics, Score::Prior,
-        // Score::Correlation) give MTPC per candidate; Counts / runs = pool size.
-        Context::ContextWeightMap weights{};
-        {
-            Huginn_ZONE_NAMED("Score::ContextRules");
-            weights = m_contextEngine.EvaluateRules(scoringPlayer, targets, world);
-        }
-
-        // Hand the map back: the v3 log's old parts read the SAME weights the
-        // floors tested (Legacy::OldScoreCapture).
-        run.weights = weights;
-
-        // Phase 3.5c: Pre-compute StateFeatures for FeatureBanditLearner (once per scoring pass)
-        auto stateFeatures = Learning::StateFeatures::FromState(player, targets);
-        auto phi = stateFeatures.ToArray();  // Pre-compute once for locked reader
-
-        // The forget sweep (roadmap Phase 3 #3a) left this pass in R8.3: it
-        // runs from UpdateLoop beside the choice learner's, so it keeps
-        // running while bLegacyLearnFeature is off and this pass does not.
-
-        // Acquire locked readers once for the entire scoring loop.
-        // Eliminates per-candidate mutex acquire/release (~200 lock ops → 2).
-        auto qReader = m_featureLearner.AcquireReader();
-        auto usageReader = m_usageMemory.AcquireReader(state);
-
-        // The floor loop and the cold-start rescue live in the legacy learn
-        // feature module since R8.2 (learning/legacy/LegacyLearnFeature.h):
-        // moved unchanged in arithmetic, called with this scorer's own
-        // ScoreCandidateInternal, so the list is built exactly as before. The
-        // per-candidate floors it reports are the D2 feature's input (the new
-        // model in shadow reads them off this same pass).
-        struct Hooks
-        {
-            UtilityScorer& self;
-            const State::GameState& state;
-            const State::PlayerActorState& player;
-            const State::TargetCollection& targets;
-            const State::WorldState& world;
-            float combatOnsetAgo;
-            const Context::ContextWeightMap& weights;
-            const std::array<float, Learning::StateFeatures::NUM_FEATURES>& phi;
-            Learning::FeatureBanditLearner::LockedReader& qReader;
-            Learning::UsageMemory::SnapshotReader& usageReader;
-
-            bool Favorited(const Candidate::CandidateVariant& c) const { return self.IsCandidateFavorited(c); }
-            float ContextWeight(const Candidate::CandidateVariant& c) const { return Context::WeightForCandidate(c, weights); }
-            RE::FormID FormID(const Candidate::CandidateVariant& c) const { return Candidate::GetFormID(c); }
-            Learning::FeatureItemMetrics LearnerMetrics(RE::FormID id) const { return qReader.GetMetrics(id, phi); }
-            float Recency(RE::FormID id) const { return usageReader.GetRecencyBoost(id); }
-            ScoredCandidate Score(const Candidate::CandidateVariant& c, float contextWeight,
-                const Learning::FeatureItemMetrics& metrics, float recencyBoost) const
-            {
-                return self.ScoreCandidateInternal(c, state, player, targets, world, combatOnsetAgo, weights,
-                    contextWeight, metrics, recencyBoost);
-            }
-            float Utility(const ScoreBreakdown& b) const { return self.ComputeUtility(b); }
-            bool HardGated(const Candidate::CandidateVariant& c) const { return Context::IsHardContextGated(c); }
-            float Ucb(const Learning::FeatureItemMetrics& m) const { return m.ucb; }
-        };
-        Hooks hooks{ *this, state, player, targets, world, combatOnsetAgo, weights, phi, qReader, usageReader };
-        const Legacy::FloorParams floorParams{
-            .minimumContextWeight = m_config.minimumContextWeight,
-            .minimumUtility = m_config.minimumUtility,
-            .topNCandidates = m_config.topNCandidates,
-            .coldStartUCBBoost = m_config.coldStartUCBBoost,
-        };
-        const auto pass = Legacy::FloorPass(candidates, floorParams, hooks, scored, &run.rows);
-        const float maxUtilitySeen = pass.maxUtilitySeen;
-
-        // Diagnostic, rate-limited. R8.3: no longer an empty page (every
-        // candidate is ranked on the choice score); it means no row gets the
-        // D2 feature this run.
-        // NOTE: Single-threaded (called from the update thread only)
-        if (scored.empty() && !candidates.empty()) {
-            static auto s_lastWarnTime = std::chrono::steady_clock::time_point{};
-            auto now = std::chrono::steady_clock::now();
-            if (std::chrono::duration_cast<std::chrono::seconds>(now - s_lastWarnTime).count() >= 5) {
-                logger::debug("[UtilityScorer] Legacy pass: 0/{} candidates passed minimumUtility={:.2f} "
-                    "(max utility seen: {:.4f}, baseRelevance: {:.4f}); no row gets ln learn mult"sv,
-                    candidates.size(), m_config.minimumUtility,
-                    maxUtilitySeen, weights.baseRelevanceWeight);
-                s_lastWarnTime = now;
-            }
-        }
-
-        if (pass.coldStartCount > 0) {
-            // Rate-limited: same cadence as the diagnostic above
-            // NOTE: Single-threaded (called from the update thread only)
-            static auto s_lastColdStartLog = std::chrono::steady_clock::time_point{};
-            auto now = std::chrono::steady_clock::now();
-            if (std::chrono::duration_cast<std::chrono::seconds>(now - s_lastColdStartLog).count() >= 5) {
-                logger::debug("[UtilityScorer] Legacy pass cold start: {} candidates boosted via UCB context floor ({:.2f})"sv,
-                    pass.coldStartCount, m_config.coldStartUCBBoost);
-                s_lastColdStartLog = now;
-            }
-        }
-
-        // No post-floor steps (R8.4 deleted the two R8.3 stopped calling):
-        // the utility a row carries is the floor pass's, which the D2 feature
-        // was fitted on.
-        run.ResolveRows(candidates);
-        return run;
-    }
+    // R8.4: the legacy pass, the old per-candidate score and the members it
+    // used (the old learner, prior, correlations, potion multiplier, context
+    // rules) moved to the legacy module (src/learning/legacy/) unchanged in
+    // arithmetic; tools/prune/r8_check.py keeps them out of this file.
 
     void UtilityScorer::RankAndApplyWildcards(ScoredCandidateList& scored, const WildcardPage& displayPage)
     {
@@ -185,149 +43,9 @@ namespace Huginn::Scoring
         }
     }
 
-    // =========================================================================
-    // INTERNAL SCORING IMPLEMENTATION
-    // =========================================================================
-
-    ScoredCandidate UtilityScorer::ScoreCandidateInternal(
-        const Candidate::CandidateVariant& candidate,
-        const State::GameState& state,
-        const State::PlayerActorState& player,
-        const State::TargetCollection& targets,
-        const State::WorldState& /*world*/,
-        float combatOnsetAgo,
-        const Context::ContextWeightMap& /*weights*/,
-        float contextWeight,
-        const Learning::FeatureItemMetrics& metrics,
-        float recencyBoost)
-    {
-        ScoredCandidate result;
-        result.candidate = candidate;
-
-        // =====================================================================
-        // Step 1: Use pre-computed context weight (caller already called GetContextWeight)
-        // =====================================================================
-        result.breakdown.contextWeight = contextWeight;
-
-        // =====================================================================
-        // Step 2: Use pre-computed learning metrics (from LockedReader or direct API)
-        // =====================================================================
-        result.breakdown.rewardEstimate = metrics.rewardEstimate;
-        result.breakdown.ucb = metrics.ucb;
-        result.breakdown.confidence = metrics.confidence;
-
-        // =====================================================================
-        // Step 3: Calculate prior from PriorCalculator
-        // =====================================================================
-        result.breakdown.prior = [&] {
-            Huginn_ZONE_NAMED("Score::Prior");
-            return m_priorCalc.CalculatePrior(player, candidate);
-        }();
-
-        // =====================================================================
-        // Step 4: Compute learning score: α*R + (1-α)*prior + β*UCB
-        // =====================================================================
-        float alpha = result.breakdown.confidence;
-        float beta = m_config.explorationWeight;
-
-        result.breakdown.learningScore =
-            alpha * result.breakdown.rewardEstimate +
-            (1.0f - alpha) * result.breakdown.prior +
-            beta * result.breakdown.ucb;
-
-        // Record λ(confidence) so logged breakdowns reproduce the utility formula
-        result.breakdown.lambda = ComputeAdaptiveLambda(alpha);
-
-        // =====================================================================
-        // Step 4b: Recency boost from UsageMemory (event-driven short-term recall)
-        // =====================================================================
-        // Additive to learningScore — context weight still gates final utility.
-        // Uses pre-computed value from LockedReader (or direct API for single-candidate path).
-        result.breakdown.recencyBoost = recencyBoost;
-        result.breakdown.learningScore += recencyBoost;
-
-        // =====================================================================
-        // Step 5: Calculate correlation bonus
-        // =====================================================================
-        result.breakdown.correlationBonus = [&] {
-            Huginn_ZONE_NAMED("Score::Correlation");
-            return m_correlationBooster.CalculateBonus(player, targets, candidate);
-        }();
-
-        // =====================================================================
-        // Step 6: Get potion multiplier (1.0 for non-potions)
-        // =====================================================================
-        result.breakdown.potionMultiplier =
-            m_potionDiscrim.GetMultiplier(state, player, candidate, combatOnsetAgo);
-
-        // =====================================================================
-        // Step 7: Get favorites multiplier
-        // =====================================================================
-        // Boost mode: the uniform favoritesBoostMax (what the floor pass has
-        // always tested against; R8.4 removed the rank scaling that used to
-        // replace it after the floors).
-        result.breakdown.favoritesMultiplier = GetFavoritesMultiplier(candidate);
-
-        // =====================================================================
-        // Step 8: Compute final utility via the shared formula helper.
-        // NOTE: breakdown.learningScore already includes recencyBoost (added in
-        //       Step 4b). The cold-start block uses breakdown.learningScore
-        //       directly, so it inherits the boost automatically. Do NOT add
-        //       a separate recencyBoost term in the cold-start path.
-        // =====================================================================
-        result.utility = ComputeUtility(result.breakdown);
-
-        return result;
-    }
-
-    float UtilityScorer::ComputeUtility(const ScoreBreakdown& breakdown) const
-    {
-        const float lambda = ComputeAdaptiveLambda(breakdown.confidence);
-
-        // Formula: utility = ctx × (1 + λ×learn) × corr × potion × fav
-        return breakdown.contextWeight *                    // [0,1] gate
-               (1.0f + lambda * breakdown.learningScore) *  // Learning boost
-               breakdown.correlationBonus *                 // Multiplicative
-               breakdown.potionMultiplier *
-               breakdown.favoritesMultiplier;
-    }
-
-    // =========================================================================
-    // ADAPTIVE LAMBDA CALCULATION (Stage 2b)
-    // =========================================================================
-
-    float UtilityScorer::ComputeAdaptiveLambda(float confidence) const
-    {
-        // λ(confidence) = λMin + confidence × (λMax - λMin)
-        // At confidence=0: λ = 0.5 (context dominates)
-        // At confidence=1: λ = 3.0 (learning amplified 6×)
-        return m_config.lambdaMin +
-               confidence * (m_config.lambdaMax - m_config.lambdaMin);
-    }
-
-    // =========================================================================
-    // FAVORITES HANDLING
-    // =========================================================================
-
-    float UtilityScorer::GetFavoritesMultiplier(const Candidate::CandidateVariant& candidate) const
-    {
-        // Suppress: 0 for a favourite, as before. Unreachable in a run since
-        // R8.1 (the favorite_suppressed filter drops it before scoring); kept
-        // so ExplainCandidate's arithmetic is unchanged.
-        if (m_config.favoritesMode == FavoritesMode::Suppress) {
-            return IsCandidateFavorited(candidate) ? 0.0f : 1.0f;
-        }
-        return m_config.FavoritesMultiplier(IsCandidateFavorited(candidate));
-    }
-
-    bool UtilityScorer::IsCandidateFavorited(const Candidate::CandidateVariant& candidate) const
-    {
-        return Candidate::IsFavorited(candidate);
-    }
-
     bool UtilityScorer::Update(float deltaSeconds)
     {
-        (void)deltaSeconds;   // R8.1: the PotionDiscriminator's timer, its one reader, is gone
+        (void)deltaSeconds;   // R8.1: the potion multiplier's combat timer, its one reader, is gone
         bool forceRun = m_wildcardMgr.UpdateExpiry();
 
         // Vital envelopes tick every frame, not just when the pipeline runs: a
@@ -345,11 +63,6 @@ namespace Huginn::Scoring
         m_wildcardMgr.Reset();
         m_magickaEnvelope.Reset();
         m_staminaEnvelope.Reset();
-    }
-
-    void UtilityScorer::SetContextWeightConfig(const State::ContextWeightConfig& config)
-    {
-        m_contextEngine.SetConfig(config);
     }
 
     // =========================================================================

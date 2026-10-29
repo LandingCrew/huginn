@@ -7,8 +7,14 @@ learner's learning score on the rows the old floors pass. So two lists:
           (comments included; Markdown docs excluded, they follow in R11) must find nothing.
           The shipped INI and the dMenu JSON must not carry the pruned INI keys.
   LEGACY  the old engine R8 keeps for D2 only. These may appear only in the allowlisted files
-          below, each with its reason. PipelineCoordinator.cpp, the live pipeline, may name the
-          old engine on ONE line: its call into the legacy pass.
+          below, each with its reason, or in a BUDGET file: a live file allowed a fixed number of
+          LEGACY lines (optionally each matching a pattern), so a new use anywhere in it fails.
+          PipelineCoordinator.cpp, the live pipeline, may name the old engine on ONE line: its
+          call into the legacy pass. UtilityScorer.{h,cpp}, the live scorer that ranks, on none.
+          The list covers the old engine's types and globals, its config fields (C++ only: they
+          are common words in the Python fit tools), and the utility -> rank-score bridge
+          (RankOnUtility, BridgeScore, DisplayUtility), so utility cannot rank again outside the
+          fallback in the legacy module and the slot harness that states scores as utilities.
 
 Exits 1 and prints every hit on a violation; 0 otherwise. Standard library only.
 
@@ -67,6 +73,10 @@ PRUNED = {
     'm_elementalWindowActive': 'the skip gate elemental window: flag',
     'elementalDamageActive': 'the skip gate elemental window: context field',
     'm_wasElementalDamageActive': 'the skip gate elemental window: latch',
+    # Dead accessors and helpers off the D2 path (R8.4 review)
+    'GetFeatureBanditLearner': 'Globals accessor with no caller (slipped past -w FeatureBanditLearner)',
+    'GetUsageMemory': 'Globals accessor with no caller',
+    'GetContextWeight': 'ScoredCandidate::GetContextWeight, no caller',
     # tools/replay's old learner (map Phase 4)
     'ChoiceTarget': 'tools/replay old learner policy',
     'UsefulLife': 'tools/replay old learner policy',
@@ -97,7 +107,20 @@ LEGACY = [
     'fMinimumUtility', 'fMinimumContextWeight', 'fColdStartUCBBoost',
     # the context rules (the floors' input; a binary gate on which rows get the feature)
     'ContextRuleEngine', 'EvaluateRules', 'ContextWeightMap', 'WeightForCandidate', 'IsHardContextGated',
+    # the legacy scorer split out of UtilityScorer (R8.4) and its global
+    'LegacyScorer', 'g_legacyScorer',
+    # the utility -> rank-score bridge: only the fallback (legacy module) and the slot harness
+    'RankOnUtility', 'BridgeScore', 'DisplayUtility',
 ]
+# The old score's config fields (ScorerConfig.h): C++ only.
+LEGACY_CPP = [
+    'lambdaMin', 'lambdaMax', 'explorationWeight', 'favoritesBoostMax', 'FavoritesMultiplier',
+    'topNCandidates',
+    'bowArrowBonus', 'crossbowBoltBonus', 'meleeDefensiveBonus', 'silverUndeadBonus', 'fortifySchoolBonus',
+    'staffLowMagickaBonus', 'twoHandedDefensiveBonus',
+    'combatStartWindow', 'regenPotionCombatStartMult', 'flatRestoreLowResourceMult',
+]
+CPP_GLOBS = ['*.h', '*.hpp', '*.cpp', '*.inl']
 
 ALLOW = [
     ('src/learning/legacy/*', 'the legacy module: the D2 feature, the pass handle, the v3 OldScore capture, '
@@ -108,8 +131,6 @@ ALLOW = [
     ('src/learning/PriorCalculator.*', 'the old score: prior'),
     ('src/learning/CorrelationBooster.*', 'the old score: correlations'),
     ('src/learning/PotionDiscriminator.*', 'the old score: potion multiplier'),
-    ('src/learning/UtilityScorer.*', 'the old scorer: hosts the legacy pass (also the rank sort, wildcards, '
-                                     'envelopes, [Recs])'),
     ('src/context/ContextRuleEngine.*', 'the context rules: the floors\' input'),
     ('src/context/ContextWeightForCandidate.*', 'the context rules: weight per candidate, the hard-gate check'),
     ('src/context/ContextWeightConfig.h', 'the context rules: config'),
@@ -120,21 +141,42 @@ ALLOW = [
     ('src/learning/SelectionLog.cpp', 'the v2 selection log (the audit trail for refits)'),
     ('src/learning/SelectionLogV3.cpp', 'the v3 OldScore columns (the audit trail for refits)'),
     ('src/core/OldScore.h', 'the v3 OldScore columns\' record'),
-    ('src/console/ConsoleCommands.cpp', 'hg weights, hg dump weights, the dumps\' train-count columns, hg reset'),
-    ('src/Main.cpp', 'construction and the equip-bus registration'),
-    ('src/Globals.h', 'construction'),
-    ('src/Globals.cpp', 'construction'),
+    ('src/core/DecisionLog.cpp', 'the v3 format: the OldRun head writes the floors\' lambdaMin / lambdaMax'),
+    ('tests/core/DecisionLogTests.cpp', 'the v3 format\'s host test (the OldRun head)'),
     ('src/learning/ScorerSettings.*', 'settings loader: [Scoring] / [Favorites]'),
     ('src/learning/ScorerConfig.h', 'settings loader: the config it builds'),
     ('src/learning/LearningSettings.h', 'settings loader: [Learning] (the old learner\'s memory life)'),
     ('src/context/ContextWeightSettings.*', 'settings loader: [ContextWeights]'),
-    ('src/settings/SettingsReloader.*', 'settings loader: hot reload and the dMenu reset'),
-    ('src/Tests.cpp', 'the in-game Debug suite\'s legacy tests'),
     ('tests/core/LegacyFloorPassTests.cpp', 'the host test of the moved floor loop (bit for bit)'),
+    # The R7 slot math states slot scores as utilities through the bridge: the definitions, the
+    # golden snapshot format (utility tokens), the Debug capture harness and the host slot tests.
+    ('src/learning/ScoredCandidate.h', 'the bridge: RankOnUtility\'s definition'),
+    ('src/core/SlotScoreMath.h', 'the bridge: BridgeScore / DisplayUtility\'s definitions'),
+    ('src/core/SlotSnapshotIO.*', 'the R7 golden snapshot format: utility tokens bridged on load'),
+    ('src/slot/SlotCapture.cpp', 'the R7 capture harness (Debug, test mode): synthetic scores as utilities'),
+    ('tests/core/SlotScoreMathTests.cpp', 'the bridge\'s host test'),
+    ('tests/core/SlotAllocAdversarialTests.cpp', 'host slot tests: synthetic scores as utilities'),
+    ('tests/core/SlotAllocTestSupport.h', 'host slot tests: synthetic scores as utilities'),
 ]
-# Live files allowed a fixed number of LEGACY lines, each matching a pattern.
+# Files allowed a fixed number of LEGACY lines (and, with a pattern, each must match it): a new
+# use anywhere in the file fails, so a whole-file allowlist cannot hide one. A budget is the
+# file's footprint at R8.4; shrinking is fine, growing needs this table edited, with a reason.
 BUDGET = {
-    'src/pipeline/PipelineCoordinator.cpp': (1, re.compile(r'g_utilityScorer->LegacyPass\(')),
+    # The live pipeline: its one call into the legacy pass.
+    'src/pipeline/PipelineCoordinator.cpp': (1, re.compile(r'Scoring::Legacy::LegacyPass\('),
+                                             'the one call into the legacy pass'),
+    # The live scorer that ranks (sort, wildcards, envelopes, [Recs]): none.
+    'src/learning/UtilityScorer.h': (0, None, 'the live scorer: no old engine'),
+    'src/learning/UtilityScorer.cpp': (0, None, 'the live scorer: no old engine'),
+    # Construction, settings and the legacy commands and tests (counted, not whole-file).
+    'src/console/ConsoleCommands.cpp': (32, None, 'hg weights, hg dump weights, the dumps\' train-count '
+                                                   'columns, hg status counts, hg reset'),
+    'src/Main.cpp': (23, None, 'construction and the equip-bus registration'),
+    'src/Globals.h': (8, None, 'construction'),
+    'src/Globals.cpp': (6, None, 'construction and the reset'),
+    'src/settings/SettingsReloader.cpp': (8, None, 'settings loader: hot reload and the dMenu reset'),
+    'src/settings/SettingsReloader.h': (2, None, 'settings loader: the reset-weights doc comment'),
+    'src/Tests.cpp': (293, None, 'the in-game Debug suite\'s legacy and slot-harness tests'),
 }
 
 
@@ -207,9 +249,10 @@ def main():
         print(f'PRUNED INI keys: 0 hits ({", ".join(PRUNED_INI_KEYS)} in {", ".join(INI_FILES)})')
 
     # --- LEGACY ---
-    hits = git_grep(LEGACY, ROOTS, CODE_GLOBS)
+    hits = set(git_grep(LEGACY, ROOTS, CODE_GLOBS)) | set(git_grep(LEGACY_CPP, ['src', 'tests'], CPP_GLOBS))
+    legacy_words = LEGACY + LEGACY_CPP
     per_file = defaultdict(list)
-    for h in hits:
+    for h in sorted(hits):
         per_file[h[0]].append(h)
     violations = []
     allowed_counts = {}
@@ -219,23 +262,30 @@ def main():
             allowed_counts[path] = (len(fh), why)
             continue
         if path in BUDGET:
-            n, pat = BUDGET[path]
-            ok = [h for h in fh if pat.search(h[2])]
-            rest = [h for h in fh if not pat.search(h[2])]
+            n, pat, why = BUDGET[path]
+            ok = [h for h in fh if pat is None or pat.search(h[2])]
+            rest = [h for h in fh if pat is not None and not pat.search(h[2])]
             if len(ok) <= n and not rest:
-                allowed_counts[path] = (len(fh), f'budget {n}: {pat.pattern}')
+                allowed_counts[path] = (len(fh), f'budget {n}{": " + pat.pattern if pat else ""}; {why}')
                 continue
-            violations += rest + ok[n:]
+            if len(ok) > n:
+                print(f'LEGACY budget: {path} has {len(ok)} LEGACY line(s), budget {n} ({why}); all listed below')
+                violations += ok
+            violations += rest
             continue
         violations += fh
+    for path, (n, pat, why) in BUDGET.items():   # a budgeted file with no LEGACY line at all
+        if path not in per_file and path not in allowed_counts:
+            allowed_counts[path] = (0, f'budget {n}; {why}')
     if violations:
         print(f'LEGACY: {len(violations)} hit(s) outside the D2 allowlist:')
         for path, num, text in violations:
-            print(f'  {path}:{num}: [{", ".join(words_in(text, LEGACY))}] {text.strip()[:160]}')
+            print(f'  {path}:{num}: [{", ".join(words_in(text, legacy_words))}] {text.strip()[:160]}')
         bad += len(violations)
     else:
-        print(f'LEGACY: 0 hits outside the allowlist ({len(LEGACY)} symbols; {sum(c for c, _ in allowed_counts.values())} '
-              f'allowed lines in {len(allowed_counts)} files)')
+        print(f'LEGACY: 0 hits outside the allowlist ({len(legacy_words)} symbols; '
+              f'{sum(c for c, _ in allowed_counts.values())} allowed lines in {len(allowed_counts)} files, '
+              f'{len(BUDGET)} of them budgeted)')
     if args.verbose:
         for path, (n, why) in sorted(allowed_counts.items()):
             print(f'  {n:4d}  {path}  ({why})')

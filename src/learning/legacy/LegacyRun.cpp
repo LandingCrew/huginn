@@ -5,7 +5,7 @@
 #include "learning/FeatureBanditLearner.h"
 #include "learning/StateFeatures.h"
 #include "learning/UsageMemory.h"
-#include "learning/UtilityScorer.h"
+#include "LegacyScorer.h"
 #include "state/GameState.h"
 #include "state/PlayerActorState.h"
 #include "state/TargetActorState.h"
@@ -14,7 +14,6 @@
 #include <array>
 #include <numeric>
 #include <optional>
-#include <unordered_map>
 
 namespace Huginn::Scoring::Legacy
 {
@@ -41,34 +40,37 @@ namespace Huginn::Scoring::Legacy
 
     void Run::ResolveRows(const std::vector<Candidate::CandidateVariant>& candidates)
     {
-        // Moved from PipelineCoordinator::ScoreCandidates (R8.3) unchanged.
-        rowOf.resize(candidates.size());
-        std::unordered_map<uint64_t, std::size_t> keptByKey;
-        for (std::size_t i = 0; i < candidates.size() && i < rows.size(); ++i) {
-            if (rows[i].Scored()) keptByKey.try_emplace(Candidate::GetBase(candidates[i]).GetDeduplicationKey(), i);
-        }
+        // R8.3's rule (moved from PipelineCoordinator::ScoreCandidates
+        // unchanged; pure since R8.4: ResolveRowOf, LegacyLearnFeature.h).
+        std::vector<uint64_t> keys(candidates.size());
         for (std::size_t i = 0; i < candidates.size(); ++i) {
-            rowOf[i] = i;
-            if (i < rows.size() && !rows[i].Scored()) {
-                const auto k = keptByKey.find(Candidate::GetBase(candidates[i]).GetDeduplicationKey());
-                if (k != keptByKey.end()) rowOf[i] = k->second;
-            }
+            keys[i] = Candidate::GetBase(candidates[i]).GetDeduplicationKey();
         }
+        ResolveRowOf(keys, rows, rowOf);
     }
 
     Row Run::RowFor(std::size_t i) const noexcept
     {
-        const std::size_t li = i < rowOf.size() ? rowOf[i] : i;
-        return li < rows.size() ? rows[li] : Row{};
+        return RowAt(rowOf, rows, i);
     }
 
     const ScoredCandidate* Run::KeptFor(std::size_t i) const noexcept
     {
-        const Row r = RowFor(i);
-        if (!r.Scored() || r.scoredIndex < 0 || static_cast<std::size_t>(r.scoredIndex) >= kept.size()) {
-            return nullptr;
+        const int k = KeptIndexAt(rowOf, rows, i, kept.size());
+        return k < 0 ? nullptr : &kept[static_cast<std::size_t>(k)];
+    }
+
+    ScoredCandidateList Run::FallbackRanking() const
+    {
+        // Moved from PipelineCoordinator::ScoreCandidates (R8.3) unchanged: a
+        // copy, because the rows index the kept list.
+        ScoredCandidateList out = kept;
+        for (auto& sc : out) {
+            sc.legacyScored = true;
+            sc.fallbackRanked = true;   // R8.4: Verbose labels the score s, not mu
+            sc.RankOnUtility(sc.utility);
         }
-        return &kept[static_cast<std::size_t>(r.scoredIndex)];
+        return out;
     }
 
     // -------------------------------------------------------------------------
@@ -83,7 +85,7 @@ namespace Huginn::Scoring::Legacy
 
     struct OldScoreCapture::Impl
     {
-        UtilityScorer& scorer;
+        const LegacyScorer* scorer;   // g_legacyScorer; null leaves the capture invalid
         const Run& run;
         const State::GameState& state;
         const State::PlayerActorState& player;
@@ -95,26 +97,27 @@ namespace Huginn::Scoring::Legacy
         std::optional<Learning::UsageMemory::SnapshotReader> usage;
     };
 
-    OldScoreCapture::OldScoreCapture(UtilityScorer& scorer, const Run& run,
+    OldScoreCapture::OldScoreCapture(const Run& run,
         const State::GameState& state, const State::PlayerActorState& player,
         const State::TargetCollection& targets, const State::WorldState& world,
         float combatOnsetAgo)
-        : m(new Impl{ scorer, run, state, player, targets, world, combatOnsetAgo, {}, {}, {} })   // in place: the readers hold locks
+        : m(new Impl{ g_legacyScorer.get(), run, state, player, targets, world, combatOnsetAgo, {}, {}, {} })   // in place: the readers hold locks
     {
         m->phi = Learning::StateFeatures::FromState(player, targets).ToArray();
-        if (run.ran && g_featureBanditLearner) m->learner.emplace(g_featureBanditLearner->AcquireReader());
-        if (run.ran && g_usageMemory) m->usage.emplace(g_usageMemory->AcquireReader(state));
+        if (!Valid()) return;
+        if (g_featureBanditLearner) m->learner.emplace(g_featureBanditLearner->AcquireReader());
+        if (g_usageMemory) m->usage.emplace(g_usageMemory->AcquireReader(state));
     }
 
     OldScoreCapture::~OldScoreCapture() = default;
 
-    bool OldScoreCapture::Valid() const noexcept { return m->run.ran; }
+    bool OldScoreCapture::Valid() const noexcept { return m->run.ran && m->scorer != nullptr; }
 
     Core::DecisionLog::OldRun OldScoreCapture::Head(int scored) const
     {
         Core::DecisionLog::OldRun run{};
-        if (!m->run.ran) return run;
-        const auto& cfg = m->scorer.GetConfig();
+        if (!Valid()) return run;
+        const auto& cfg = m->scorer->GetConfig();
         run.valid = true;
         run.minCtx = cfg.minimumContextWeight;
         run.minUtil = cfg.minimumUtility;
@@ -141,8 +144,9 @@ namespace Huginn::Scoring::Legacy
         const ScoredCandidate* kept) const
     {
         namespace DL = Core::DecisionLog;
-        const auto& cfg = m->scorer.GetConfig();
         DL::OldScore o;
+        if (!Valid()) return o;
+        const auto& cfg = m->scorer->GetConfig();
         const RE::FormID form = Candidate::GetFormID(c);
         o.favorite = Candidate::IsFavorited(c);
         o.ctx = Context::WeightForCandidate(c, m->run.weights);   // before a cold-start boost
@@ -164,8 +168,8 @@ namespace Huginn::Scoring::Legacy
         o.alpha = metrics.confidence;
         o.ucb = metrics.ucb;
         o.rec = rec;
-        const auto ex = m->scorer.ExplainCandidate(c, m->state, m->player, m->targets, m->world, m->combatOnsetAgo,
-            m->run.weights, o.ctx, metrics, rec);
+        const auto ex = m->scorer->ExplainCandidate(c, m->state, m->player, m->targets, m->combatOnsetAgo,
+            o.ctx, metrics, rec);
         o.prior = ex.breakdown.prior;
         o.wouldUtil = ex.utility;
         if (eligible) {

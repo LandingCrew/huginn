@@ -601,7 +601,10 @@ Map Phase 4, in `tools/fit` (the scripts and their flags: [tools/fit/README.md](
     the old page showed, so they are biased toward A*, while menu picks are
     biased against it; pooling lets the two biases partly cancel.
   - Final test, after R8: `[Reach]` reach-ins per hour of play against the old
-    engine's baseline. R8 rolls back if it loses.
+    engine's baseline. R8 rolls back if it loses. The baseline (the October
+    soak, docs/playtest/Soak-2026-10-LoreRim.md): 92 reach-ins in 9.1 h, about
+    10 an hour, 1.1 to 20.8 per session and driven by the content (roads and
+    towns low, the dungeon session high), so compare like content.
 - **The rehearsal (2026-10-28, level 21; verified 2026-10-28, not the final
   fit).** Grouped 10-fold by launch over the mage's log. A* (the old ranking
   from the logged utilities): key/wheel hit@8 87.4%, menu 18.5% (82 of 443).
@@ -1091,34 +1094,67 @@ changed in the same PR, and the shipped INI loses the dead keys.
         the passed-over logic, UsageMemory and its subscriber; PriorCalculator,
         CorrelationBooster, PotionDiscriminator::GetMultiplier;
         ComputeAdaptiveLambda, ComputeUtility, the cold start; fMinimumUtility,
-        fMinimumContextWeight, fColdStartUCBBoost, iTopNCandidates,
+        fMinimumContextWeight, fColdStartUCBBoost, iTopNCandidates (the cold
+        start only: the rank prefix `[Reach]` and the v2 / v3 logs report is
+        `PipelineStateCache::kReportedRankPrefix` = 10 since the R8.4 review),
         fLambdaMin/Max, the exploration weight, the correlation keys and
         `[ContextWeights]`; IsHardContextGated, ContextRuleEngine::EvaluateRules,
         ContextWeightMap, WeightForCandidate; the Config.h learning constants;
         BNDW; the v2 selection log and the v3 OldScore columns; `hg weights`,
         `hg dump weights` and the dumps' train-count columns (`hg theta` comes
         in R11).
+      - **Also kept, not for D2's feature (named here so the claim above is
+        exact):** the R8.3 FALLBACK ranking -- ln utility over the kept rows,
+        used only while the bootstrap is missing or invalid (an error line and
+        `hg status` say so) -- now `Legacy::Run::FallbackRanking` in the legacy
+        module, the one place utility still ranks; and the R7 bridge
+        (`ScoredCandidate::RankOnUtility`, `Core::BridgeScore`,
+        `Core::DisplayUtility`), which the fallback, the R7 golden snapshot
+        format, the Debug capture harness and the slot tests use to state slot
+        scores as utilities. `r8_check` confines both. Pruned in the review: the
+        choice score's `ln util` feature (computed live from the old utility,
+        off D2's path: the bootstrap reader now refuses a weight on it, read as
+        0, and warns), the widget's `confidence` payload (exp(score), never read
+        by AS2: now 0), `ScoredCandidate::GetContextWeight` and the
+        `Globals::GetFeatureBanditLearner` / `GetUsageMemory` accessors (no
+        callers).
       - **Confinement, mechanical:** `tools/prune/r8_check.py` (standard
         library): the PRUNED symbols appear nowhere in the code under `src/`,
         `tools/` and `tests/` (comments included, Markdown excluded), nor the
         pruned keys in the shipped INI, its templates or the dMenu JSON; the
-        LEGACY symbols appear only in the allowlisted files, each with its
-        reason (the legacy module, the old learner's own files and subscribers,
-        BanditSerializer, the selection logs and `core/OldScore.h`,
-        ConsoleCommands, Main and Globals, the settings loaders, `Tests.cpp`,
-        `LegacyFloorPassTests`), and `PipelineCoordinator.cpp` names the old
-        engine on one line, its `LegacyPass` call. To get there the pipeline
-        reads the pass through `learning/legacy/LegacyRun.h` (`Legacy::Run`:
-        the kept rows, the floors' rows, the row each candidate reads, the
-        weights; `Legacy::OldScoreCapture`: the v3 OldScore columns, moved
-        unchanged from `CaptureEligible`; the old learner's clock, forget sweep,
-        counts and weights-changed latch), and the facts the live filters and
-        the skip gate share with the context rules moved to
-        `context/ContextFacts.h`. Stale comments in surviving code that named
+        LEGACY symbols (the old engine's types and globals, the old score's
+        config fields, and the utility -> rank-score bridge) appear only in the
+        allowlisted files, each with its reason (the legacy module, the old
+        learner's own files and subscribers, BanditSerializer, the selection
+        logs, `core/OldScore.h` and the v3 format, the settings loaders, the R7
+        slot math and its harness, `LegacyFloorPassTests`), or in a BUDGETED
+        file within its count: `PipelineCoordinator.cpp` names the old engine
+        on one line, its `Legacy::LegacyPass` call; `UtilityScorer.{h,cpp}`,
+        the live scorer that ranks, on none; ConsoleCommands, Main, Globals,
+        SettingsReloader and `Tests.cpp` on their R8.4 line counts, so a new use
+        anywhere in them fails. To get there the legacy half of UtilityScorer
+        (the pass, the per-candidate score, λ, the favourites helper and the
+        old learner, prior, correlation, potion and context-rule members) moved
+        to `learning/legacy/LegacyScorer.{h,cpp}` (`g_legacyScorer`, review
+        fix), the pipeline reads the pass through `learning/legacy/LegacyRun.h`
+        (`Legacy::Run`: the kept rows, the floors' rows, the row each candidate
+        reads (pure since the review, host-tested in `LegacyRunTests`), the
+        weights, the fallback ranking; `Legacy::OldScoreCapture`: the v3
+        OldScore columns, moved unchanged from `CaptureEligible`; the old
+        learner's clock, forget sweep, counts and weights-changed latch), and
+        the facts the live filters and the skip gate share with the context
+        rules moved to `context/ContextFacts.h`. Ten mutation probes (an old
+        learner call in UtilityScorer, a `topNCandidates` or `lambdaMax` read,
+        a `RankOnUtility` call or a dead accessor in the pipeline, a legacy
+        global in a non-legacy console command or test, `DisplayUtility` in the
+        widget code, `g_legacyScorer` in a display backend) each fail it. Stale comments in surviving code that named
         the old engine were edited (the classifiers, GameState.h,
         CandidateGenerator, WeaponData.h and about 30 other files).
       - **Behaviour against 0.24.0:** none in the ranking (the pruned steps were
-        already uncalled since R8.3). Visible: the Verbose mode's detail text,
+        already uncalled since R8.3; `ln util` had weight 0 in the shipped
+        bootstrap; the rank prefix constant equals the shipped
+        `iTopNCandidates`). Visible: the Verbose mode's detail text (`mu:`, or
+        `s:` in the fallback, none on a row only the Remembrance hold placed),
         the debug widget, `[Reach]`'s `score=` field, `[Recs]` without the old
         utility (with `detail`, lm's inputs), and the v3 head's `favMin` now
         equals `favMax` (the multiplier is uniform). `[Soak]`, the cosave and
@@ -1266,7 +1302,13 @@ changed in the same PR, and the shipped INI loses the dead keys.
       swings. R7's hold tie band was checked and is refuted as a cause. The
       new scorer reads cap(i), where that food is `fortify_vital_magicka`
       (0.23.16 fixture), and a continuous need replaces the tier flips; the
-      lock and the challenger rule are R9.
+      lock and the challenger rule are R9. **Accept (proposed at R8.4, the
+      user's call):** read from `[SlotChurn]` and the heartbeat, not worse
+      than the baseline on like content -- at most 6 a minute outdoors, at most
+      40.7 a minute in combat, a session median at most 7.2 a minute, and no
+      5-minute window above 141. Worse is not a rollback by itself (the
+      ranking is reach-ins' test); it goes to R9 as the challenger rule's
+      starting number.
 
 ### R9. Bayesian challenger rule
 

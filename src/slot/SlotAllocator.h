@@ -107,7 +107,7 @@ namespace Huginn::Slot
         /// Prefer AllocateSlotsForPage(GetCurrentPage(), ...) so allocation and the
         /// page snapshot can't diverge.
         ///
-        /// @param candidates     Scored candidates from UtilityScorer (sorted by utility)
+        /// @param candidates     Ranked candidates (UtilityScorer::RankAndApplyWildcards: sorted by SlotScore())
         /// @param overrides      Active overrides from OverrideManager (already prioritized)
         /// @param player         Current player state (for context-aware decisions)
         /// @param world          Current world state (for context-aware decisions)

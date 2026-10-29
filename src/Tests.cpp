@@ -23,6 +23,8 @@
 #include "learning/EquipSubscribers.h"
 #include "learning/EquipSourceTracker.h"
 #include "learning/UsageMemory.h"
+#include "learning/PriorCalculator.h"      // the legacy score parts (R8.4: no longer via UtilityScorer.h)
+#include "learning/CorrelationBooster.h"
 #include "util/ScopedTimer.h"
 #include "util/NameMatch.h"
 #include "context/ContextRuleEngine.h"
@@ -4030,7 +4032,7 @@ void RunUnitTests()
             smithingPotion.combatSkill = Item::CombatSkill::Smithing;
             smithingPotion.name = "Fortify Smithing Potion";
 
-            // Extract weight using UtilityScorer's GetContextWeight logic
+            // Extract the weight as Context::WeightForCandidate does
             float weight = 0.0f;
             if (Item::HasTag(smithingPotion.tags, Item::ItemTag::FortifyCombatSkill)) {
                 if (smithingPotion.combatSkill == Item::CombatSkill::Smithing) {
@@ -5302,7 +5304,7 @@ void RunRegressionTests()
         healingWardSpell.tags = Spell::SpellTag::RestoreHealth | Spell::SpellTag::Ward;
         healingWardSpell.name = "Healing Ward (multi-tag test)";
 
-        // Simulate GetContextWeight logic with max() accumulation
+        // Simulate the per-candidate weight lookup with max() accumulation
         float contextWeight = weights.baseRelevanceWeight;
         if (Spell::HasTag(healingWardSpell.tags, Spell::SpellTag::RestoreHealth)) {
             contextWeight = std::max(contextWeight, weights.healingWeight);

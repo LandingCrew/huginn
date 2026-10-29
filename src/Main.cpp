@@ -20,6 +20,7 @@
 #include "learning/FeatureBanditLearner.h"
 #include "learning/StateFeatures.h"
 #include "learning/UtilityScorer.h"
+#include "learning/legacy/LegacyScorer.h"   // g_legacyScorer (R8.4)
 #include "update/UpdateHandler.h"
 #include "input/InputHandler.h"
 #include "input/KeybindingSettings.h"
@@ -324,19 +325,27 @@ static void InitializeGameSystems(bool isNewGame, bool loadSucceeded = true)
     }
 
     if (!g_utilityScorer) {
-        g_utilityScorer = std::make_unique<Huginn::Scoring::UtilityScorer>(*g_featureBanditLearner, *g_usageMemory);
+        g_utilityScorer = std::make_unique<Huginn::Scoring::UtilityScorer>();
         logger::info("UtilityScorer initialized"sv);
+    }
+    // R8.4: the legacy scorer (D2's input), split out of UtilityScorer. It
+    // holds references to the old learner and UsageMemory, which are built
+    // once above and never replaced.
+    if (!g_legacyScorer) {
+        g_legacyScorer = std::make_unique<Huginn::Scoring::Legacy::LegacyScorer>(*g_featureBanditLearner, *g_usageMemory);
     }
 
     {
         auto& scorerSettings = Scoring::ScorerSettings::GetSingleton();
         if (haveMainIni) scorerSettings.LoadFromIni(mainIni);
-        g_utilityScorer->SetConfig(scorerSettings.BuildConfig());
+        const auto scorerConfig = scorerSettings.BuildConfig();
+        g_utilityScorer->SetConfig(scorerConfig);
+        g_legacyScorer->SetConfig(scorerConfig);
     }
 
     // ── 6. ContextWeightSettings + WildcardConfig ──────────────────────
     if (haveMainIni) State::ContextWeightSettings::GetSingleton().LoadFromIni(mainIni);
-    g_utilityScorer->SetContextWeightConfig(State::ContextWeightSettings::GetSingleton().BuildConfig());
+    g_legacyScorer->SetContextWeightConfig(State::ContextWeightSettings::GetSingleton().BuildConfig());
 
     // ── 6a. NeedSettings (R3: the [Needs] response curves; logged only) ─
     if (haveMainIni) Needs::NeedSettings::GetSingleton().LoadFromIni(mainIni);

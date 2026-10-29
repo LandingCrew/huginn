@@ -88,10 +88,12 @@ namespace Huginn::Core
         return std::log(static_cast<double>(utility));
     }
 
-    /// The old engine's utility back from a score: exp(score), for display
-    /// only (the debug widget's bar, the widget's unused confidence payload).
-    /// Defined for any sign: 0 for -inf, finite for +inf (clamped to the
-    /// largest float), 0 for NaN. Under the bridge it returns the utility.
+    /// The bridge undone: exp(score). R8.4: no runtime reader (the widget's
+    /// unused confidence payload sends 0 now); kept for the in-game suite's
+    /// slot tests, which build a list from scores and state them as
+    /// utilities, and its own host test. Defined for any sign: 0 for -inf,
+    /// finite for +inf (clamped to the largest float), 0 for NaN. Under the
+    /// bridge it returns the utility.
     [[nodiscard]] inline float DisplayUtility(SlotScore score) noexcept
     {
         if (!(score == score)) {

@@ -84,6 +84,9 @@ namespace Huginn::Scoring
         // legacy feature (ln learn mult) applies to it. False with
         // [Scoring] bLegacyLearnFeature off.
         bool legacyScored = false;
+        // R8.4: ranked by the FALLBACK (Legacy::Run::FallbackRanking: no
+        // bootstrap): `score` is s = ln utility, not mu, and `choice` is unset.
+        bool fallbackRanked = false;
 
         // R8.3: what the slot code ranks on (SlotScore()): the choice score mu
         // (core/ChoiceScore.h, core/ChoiceLive.h), any sign; or, when the
@@ -144,17 +147,13 @@ namespace Huginn::Scoring
             return isRememberedOnly ? Core::kUnrankedScore : score;
         }
 
-        /// The fallback ranking (and the harness tests): rank on the old
-        /// utility through the bridge, ln(u).
+        /// Rank on a utility through the R7 bridge, ln(u). R8.4: called only
+        /// by the fallback ranking (Legacy::Run::FallbackRanking) and by the
+        /// slot harness and tests, which state slot scores as utilities;
+        /// tools/prune/r8_check.py keeps it out of every other file.
         void RankOnUtility(float u) noexcept {
             utility = u;
             score = Core::BridgeScore(u);
-        }
-
-        [[nodiscard]] float GetContextWeight() const noexcept {
-            // The old context weight of a legacy row (the D2 feature's floor input)
-            // NOTE: baseRelevance field removed in v0.12.x - use breakdown.contextWeight instead
-            return breakdown.contextWeight;
         }
 
         // Check if this is a specific candidate type

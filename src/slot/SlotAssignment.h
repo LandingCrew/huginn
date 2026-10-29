@@ -19,7 +19,7 @@ namespace Huginn::Slot
     enum class AssignmentType : uint8_t
     {
         Empty,      // Slot has no content
-        Normal,     // Standard utility-based assignment
+        Normal,     // Standard ranked assignment (on SlotScore(): the choice score)
         Override,   // Forced by override condition (critical health, etc.)
         Wildcard,   // Exploration pick (blue styling in widget)
         Remembered, // What pressing this slot took off (Remembrance.h): not ranked

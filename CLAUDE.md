@@ -35,12 +35,12 @@ Game (SKSE) → StateManager (11 polls) → 6 State Types → StateEvaluator →
 score(item) = μ = Σ_j v_j · a_j(item) + b(item) + θ_covered · covered(item) + w · ln learn mult(item) + w' · util missing(item)
               v_j = Σ_k n_k θ[k][j] + Σ_f recent_f θ_f[j]      (n = the need vector, a = cap(i) + cross-features)
 ```
-Every candidate that passes the filters is ranked on μ (`ScoredCandidate::score`, `SlotScore()`), seeded from `Huginn_Bootstrap.json` (R6's D2) and learned by `ChoiceLearner`. The last two terms are **D2's legacy feature**: the old engine's `ln(1 + λ(α)·learningScore)` on the rows the old floors keep, behind `[Scoring] bLegacyLearnFeature` (`src/learning/legacy/LegacyLearnFeature`). Without a usable bootstrap the pipeline falls back to ranking on the old `utility = contextWeight × (1 + λ(confidence) × learningScore)` (ln u), and `hg status` says so. R8.4 (0.24.1) pruned the rest of the old ranking layer and confined what D2 keeps to an allowlist: `python -I tools/prune/r8_check.py` must pass (the pipeline names the old engine in one call, `LegacyPass`, and reads it through `learning/legacy/LegacyRun.h`).
+Every candidate that passes the filters is ranked on μ (`ScoredCandidate::score`, `SlotScore()`), seeded from `Huginn_Bootstrap.json` (R6's D2) and learned by `ChoiceLearner`. The last two terms are **D2's legacy feature**: the old engine's `ln(1 + λ(α)·learningScore)` on the rows the old floors keep, behind `[Scoring] bLegacyLearnFeature` (`src/learning/legacy/LegacyLearnFeature`). Without a usable bootstrap the pipeline falls back to ranking on the old `utility = contextWeight × (1 + λ(confidence) × learningScore)` (ln u), and `hg status` says so. R8.4 (0.24.1) pruned the rest of the old ranking layer and confined what D2 keeps to an allowlist: `python -I tools/prune/r8_check.py` must pass (the pipeline names the old engine in one call, `Legacy::LegacyPass`, and reads it through `learning/legacy/LegacyRun.h`; the fallback ranking lives there too).
 
 **Key architectural separation:**
 - `ChoiceLearner` — θ (needs × effect columns), b per item, recent; the score (`core/ChoiceScore.h`, `core/ChoiceLive.h`) and its update (`core/ChoiceUpdate.h`)
 - `ContextRuleEngine`, `PriorCalculator`, `FeatureBanditLearner` (contextual bandit over 18-float feature vectors, see [docs/architecture/4-contextual-bandits.md](docs/architecture/4-contextual-bandits.md)) — the old engine, kept ONLY as inputs to D2's legacy feature (which rows it applies to, and its value), in the files `tools/prune/r8_check.py` allows
-- `UtilityScorer` — R8.3: the legacy pass (`LegacyPass`) and the sort + wildcards (`RankAndApplyWildcards`); nothing ranks on utility
+- `UtilityScorer` — the sort + wildcards (`RankAndApplyWildcards`), the magicka / stamina envelopes, `[Recs]`; no old-engine code (R8.4: the legacy pass is `legacy/LegacyScorer`). Utility ranks only in the fallback above
 
 See [docs/README.md](docs/README.md) for full system design.
 
@@ -50,7 +50,7 @@ See [docs/README.md](docs/README.md) for full system design.
 |-----------|---------|
 | `src/state/` | StateManager + 11 poll methods, 6 state types |
 | `src/candidate/` | Candidate generation and filtering |
-| `src/learning/` | ChoiceLearner (the ranking's model, R8.2; live from R8.3), ChoiceShadow (the run's tick, for the v3 log's held rows); FeatureBanditLearner, PriorCalculator, UtilityScorer (the legacy pass); `legacy/LegacyLearnFeature` (the part of the old score R8 keeps: R6's D2, a live score input from R8.3) and `legacy/LegacyRun` (the pipeline's one handle on it, the v3 OldScore capture, the old learner's clock; R8.4) |
+| `src/learning/` | ChoiceLearner (the ranking's model, R8.2; live from R8.3), ChoiceShadow (the run's tick, for the v3 log's held rows); FeatureBanditLearner, PriorCalculator, UtilityScorer (sort, wildcards, envelopes); `legacy/LegacyScorer` (the legacy pass, R8.4), `legacy/LegacyLearnFeature` (the part of the old score R8 keeps: R6's D2, a live score input from R8.3) and `legacy/LegacyRun` (the pipeline's one handle on it, the v3 OldScore capture, the old learner's clock; R8.4) |
 | `src/spell/`, `src/learning/item/`, `src/weapon/`, `src/scroll/` | Registries and classifiers |
 | `src/slot/` | Slot allocation, locking, classification |
 | `src/context/` | ContextFacts (the facts the hard gates and the skip gate read, R8.4); ContextRuleEngine and the context weights (kept for D2: the legacy floors' input only); ReasonHold (the label's hold) |

@@ -9,6 +9,7 @@
 #include "slot/Remembrance.h"
 #include "slot/SlotSettings.h"
 #include "learning/ScorerSettings.h"
+#include "learning/legacy/LegacyScorer.h"   // g_legacyScorer (R8.4)
 #include "learning/LearningSettings.h"
 #include "learning/ExternalEquipLearner.h"
 #include "context/ContextWeightSettings.h"
@@ -372,9 +373,12 @@ namespace Huginn::Settings
 
         // 1. Apply scorer config + context weight config + wildcard config
         auto* utilityScorer = g_utilityScorer.get();
+        if (g_legacyScorer) {
+            g_legacyScorer->SetConfig(Scoring::ScorerSettings::GetSingleton().BuildConfig());
+            g_legacyScorer->SetContextWeightConfig(State::ContextWeightSettings::GetSingleton().BuildConfig());
+        }
         if (utilityScorer) {
             utilityScorer->SetConfig(Scoring::ScorerSettings::GetSingleton().BuildConfig());
-            utilityScorer->SetContextWeightConfig(State::ContextWeightSettings::GetSingleton().BuildConfig());
             // Reuse the caller's parsed INI when available (reload path); otherwise
             // parse Huginn.ini here (reset-to-defaults path).
             if (mainIni) {

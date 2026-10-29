@@ -119,10 +119,9 @@ namespace Huginn::Scoring
         // Performance
         // ---------------------------------------------------------------------
 
-        // How many top candidates count as ranked: the cold-start floor (fewer
-        // scored than this triggers it) and the ranks the selection log reports.
-        // The scorer sorts the WHOLE list since R7 (0.23.11); this no longer
-        // limits the sort.
+        // The legacy floors' cold start: fewer rows kept than this triggers
+        // it (so it decides which rows get the D2 feature). R8.4: nothing
+        // else; the reported rank prefix is PipelineStateCache's own constant.
         size_t topNCandidates = 10;
 
         // ---------------------------------------------------------------------

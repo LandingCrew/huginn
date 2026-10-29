@@ -131,6 +131,7 @@ namespace Huginn::Core::Bootstrap
         std::size_t recentMapped = 0, recentPrior = 0, recentUnknown = 0;
         std::size_t curvesMapped = 0, curvesUnknown = 0;
         std::size_t featuresWeighted = 0;
+        std::size_t featuresRefused = 0;                      // R8.4: a weight on `ln util` (read as 0)
     };
 
     struct BuildCurve
