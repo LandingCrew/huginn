@@ -154,7 +154,7 @@ stretches one lap began.
 | `wc.base`, `wc.max` | float | the wildcard odds in force (per-slot probability base and cap) |
 | `env` | object | (0.23.41) where and when, for what the darkness need's input cannot say: `interior` 0/1 (an interior cell), `hour` (game hour, 0-24), `daylight` 0/1 (outdoors under a full sky in the climate's daytime: darkness reads 0), `light` (the raw light on the player, 0-1 in 0.1 steps, before the hold the darkness need reads -- `core/LightHold.h`). Absent before 0.23.41 |
 | `summon` | object | (0.23.46) the player's summons: `n` the living actors the player commands (the count the summon filter compares), `limit` the commanded-actor limit the perks give (the perk entry point from 1; Twin Souls makes it 2; read only while a summon is up, so with `n` 0 it is the last value read in this launch, 1 before the first summon: meaningful only when `n` > 0), `act` one entry per living commanded actor, `[source, kind, remaining, elapsed, actor]`: the spell or scroll that cast it (the staff for a staff's enchantment; null if unknown), `"summon"` / `"reanimate"` / `"other"` (its effect's archetype: thralls apart from summons, doc 11 decision 3), seconds left on that effect (-1 = no timer), seconds since it was cast (a new cast dismisses the oldest), the actor's reference. Absent before 0.23.46 |
-| `old` | object | (0.23.53) the old engine's pipeline run behind the eligible rows (the run `pipe` describes): `minCtx` and `minUtil` (`fMinimumContextWeight`, `fMinimumUtility`), `topN` (`iTopNCandidates`: the cold start runs when fewer rows than this pass), `coldBoost` (the cold start raises a row's context to `coldBoost` × `ucb`), `beta` (the exploration weight), `lambdaMin`, `lambdaMax`, `n0` (the learner's pseudo-observations), `fav` (`"boost"`, `"off"`, `"suppress"`), `favMin`, `favMax` (the favourites multiplier's range), `scored` (rows the run kept), `total` (the learner's total evidence, the UCB's), `phi` (the 18 state features the learner read, `StateFeatures`). Written when a run of this session is cached (`pipe.ok` 1). Absent before 0.23.53 |
+| `old` | object | (0.23.53) the old engine's pipeline run behind the eligible rows, taken with them (not necessarily the run `pipe` describes: `pipe` is read off the page as shown, and the two can be one run apart, as the eligible flags and `pipe` already could): `minCtx` and `minUtil` (`fMinimumContextWeight`, `fMinimumUtility`), `topN` (`iTopNCandidates`: the cold start runs when fewer rows than this pass), `coldBoost` (the cold start raises a row's context to `coldBoost` × `ucb`), `beta` (the exploration weight), `lambdaMin`, `lambdaMax`, `n0` (the learner's pseudo-observations), `fav` (`"boost"`, `"off"`, `"suppress"`), `favMin`, `favMax` (the favourites multiplier's range), `scored` (rows the run kept), `total` (the learner's total evidence, the UCB's), `phi` (the 18 state features the learner read, `StateFeatures`). Written when a run of this session is cached (`pipe.ok` 1). Absent before 0.23.53 |
 | `heldFull` | 0/1 | 1: the held rows were read in full. 0: taken while inventory extra data must not be read, from kPreLoadGame until the post-load window ends (`Util::IsExtraListStable`, the registries' gate, plus a v3-local load-in-progress flag): one plain row per base form, no unique IDs, no per-instance caps or stack charges, `equipped` from the hands and the nocked ammo only (armour reads unworn) |
 | `rows` | row[] | every item the player could choose (below) |
 
@@ -242,7 +242,7 @@ computes for it whatever the floors, logged only (nothing scores from it):
 
 | Row | `est` `a` `n` `ucb` `rec` | `prior` `cw` | `fl` | `wu` | read when |
 |---|---|---|---|---|---|
-| eligible, `scored` | the parts its `util` was computed from (its breakdown); `n` read with them | yes | `pass` or `cold` | null | the run |
+| eligible, `scored` | the parts its `util` was computed from (its breakdown); `n` read just after the scoring pass (see Limits) | yes | `pass` or `cold` | null | the run |
 | eligible, not scored | computed again (`UtilityScorer::ExplainCandidate`: the scoring loop's own `ScoreCandidateInternal`) | yes | `ctx`, `util` or `suppressed` | yes | the run |
 | dropped by a filter (`fb`) | as above | yes | null | yes | the run |
 | held, never gathered | the learner's metrics and the recency, against the run's `old.phi` and state hash | null | null | null | the context |
@@ -263,6 +263,10 @@ anything else not kept fell under `minUtil` (`util`). A kept row is `pass`, or
 `cold` when the cold-start rescue kept it (fewer than `topN` rows passed, and
 its context was raised to max(`cw`, `coldBoost` × `ucb`)). The cold start
 also looks at `ctx` rows it does not keep: they stay `ctx`.
+`tools/fit/v3load.py` checks every row's `fl` against these rules and the
+context's `old` floors when it loads a log (`floor_check`) and prints any
+violation: the floors are copied by hand from the scorer's tests, so a real
+log is where the two drifting apart would show.
 
 **What follows from them:**
 - learn = a·est + (1 − a)·prior + beta·ucb + rec, λ = lambdaMin + a·(lambdaMax − lambdaMin), and
@@ -288,7 +292,9 @@ number per launch, from 1, written as `"rid"` into its v2 record
 `rid`). The breakdown of the scored candidates in the v2 record no longer
 needs the form-and-time join. Null for `nothing`, for the picks the learner
 skips (`learned: 0`: they write no v2 record), and when the v2 writer dropped
-the record (its queue full).
+the record (its queue full). The rid is set once the record is queued, so if
+the v2 writer then fails to write it (the file will not open, a write error)
+the decision carries an rid that no v2 record has, and the join misses it.
 
 **Runtime cross-features** (`effects.csv` item features; the math is
 `core/CrossFeatures.h`, the inputs `effect/CrossFeatures.cpp`), computed every
@@ -618,10 +624,12 @@ adds at most 30 s of lap clock per spell ([Laps](#laps)).
 `dec.rid`), projected over the 2026-10-29 log (1,041,112 rows, 5,389 contexts,
 6,195 decisions in 30.4 h of LoreRim play; 2.25 MB/h as written) with values
 drawn from the v2 log's candidate breakdowns and each row written as the
-encoder writes it: +27.7 B per scored row, +34.6 per unscored eligible row,
+encoder writes it: +27.7 B per scored row (an independent estimate from the
+same breakdowns, taking `n` as n_eff = 2a/(1 − a), gives 30.8 B), +34.6 per unscored eligible row,
 +36.6 per filter drop, +10.9 per held row never gathered (mostly
 `0,0,0,1,0`: an item the learner has no entry for), +293 B per context
-(`old`), +11 B per decision (`rid`): **+0.89 MB/h (+40%), 3.1 MB/h in all**,
+(`old`), +11 B per decision (`rid`): **+0.89 MB/h (+40%), 3.1 MB/h in all**
+(about 1.0 MB/h with the higher estimate: take the figure as up to ~10% low),
 about 26 B per row on average; a 64 MiB file then holds about 20 hours of
 LoreRim play. The synthetic golden session grew from 23,440 to 24,885 bytes.
 The CPU side: the scored rows reuse their breakdown (one learner lookup each

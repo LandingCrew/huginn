@@ -116,6 +116,9 @@ namespace Huginn::Learning::SelectionLogV3
                     if (const auto* o = FindDropped(dropped, r.form, r.uid)) {
                         r.old = *o;
                         r.old.floor = Core::DecisionLog::kNoFloor;   // not eligible: no floor
+                        // A candidate the old engine read as favourited, as an
+                        // eligible row's bit is set from e.old.favorite.
+                        if (o->favorite) r.flags |= Flag::Favorite;
                     }
                 }
             }

@@ -308,6 +308,66 @@ class OldEngineColumns(TempWork):
         self.assertTrue(all(r['est'] is None and r['hk'] is None for d in old for r in d['rows']))
 
 
+class FloorCheck(TempWork):
+    """v3load.floor_check: each row's old-engine floor (fl) against the tests the scorer
+    applies. The C++ encoder's golden session (whose floors CaptureEligible's rules give)
+    passes; rows edited to break each rule are caught, and a value logged equal to its
+    floor is not judged."""
+    GOLDEN = HERE.parents[1] / 'tests' / 'core' / 'fixtures' / 'decisions' / 'synthetic_v3.jsonl'
+    # row columns of the 0.23.53 head (DecisionLog.cpp): flags 5, cw 18, fl 19, wu 20
+    FLAGS, CW, FL, WU = 5, 18, 19, 20
+    FLOORS = ['pass', 'cold', 'ctx', 'util', 'suppressed']
+
+    def golden(self):
+        return self.GOLDEN.read_text(encoding='utf-8')
+
+    def test_golden_passes(self):
+        bad, checked, _ = v3load.floor_check(v3load.load([self.write('v3.jsonl', self.golden())]))
+        self.assertGreater(checked, 0)
+        self.assertEqual(dict(bad), {})
+
+    def test_older_rows_skipped(self):
+        p = self.GOLDEN.parent / 'synthetic_v3_0.23.52.jsonl'
+        bad, checked, _ = v3load.floor_check(v3load.load([p]))
+        self.assertEqual((dict(bad), checked), ({}, 0))
+
+    def test_violations(self):
+        def breaks(r):               # context 1 (the second segment writes it again)
+            if r['t'] != 'ctx' or r['id'] != 1:
+                return
+            rows = {row[0]: row for row in r['rows']}
+            fl = self.FLOORS.index
+            a = rows['0003EADE']     # scored, pass, cw 0.8: call it ctx
+            a[self.FL] = fl('ctx')
+            b = rows['00012EB7']     # unscored util: a wu above minUtil 0.1
+            b[self.WU] = 0.25
+            c = rows['000640B6']     # a filter drop: give it a floor
+            c[self.FL] = fl('util')
+            c[self.WU] = 0.0001
+            r['rows'].append(['00099999', 0, 0, 0, -1, 1, -1, None, [], None, None, None,
+                              0, 0, 0, 1, 0, 0.3, 0.9, fl('suppressed'), 0])   # fav is boost
+            r['rows'].append(['00099998', 0, 0, 0, -1, 1, -1, None, [], None, None, None,
+                              0, 0, 0, 1, 0, 0.3, 0.01, fl('util'), 0.01])    # non-favourite, cw < minCtx
+            r['rows'].append(['00099997', 0, 0, 0, -1, 3, -1, 0.5, [], None, None, None,
+                              0, 0, 0, 1, 0, 0.3, 0.01, fl('pass')])          # non-favourite pass, cw < minCtx
+            r['rows'].append(['00099996', 0, 0, 0, -1, 1, -1, None, [], None, None, None,
+                              0, 0, 0, 1, 0, 0.3, 0.05, fl('ctx'), 0.1])      # both exactly at a floor
+            r['rows'].append(['00099995', 0, 0, 0, -1, 1 | 512, -1, None, [], None, None, None,
+                              0, 0, 0, 1, 0, 0.3, 0.01, fl('util'), 0.05])    # a favourite under minCtx
+        D = v3load.load([self.write('v3.jsonl', edit_lines(self.golden(), breaks))])
+        bad, checked, ex = v3load.floor_check(D)
+        self.assertEqual(dict(bad), {'ctx_above_min': 1, 'scored_mismatch': 1, 'util_above_min': 1,
+                                     'not_eligible': 1, 'not_suppress': 1, 'util_below_ctx': 1,
+                                     'pass_below_ctx': 1})
+        self.assertEqual(ex['ctx_above_min'][0][2], '0003EADE')
+        self.assertEqual(ex['util_above_min'][0][2], '00012EB7')
+        self.assertEqual(ex['not_eligible'][0][2], '000640B6')
+        self.assertEqual(ex['util_below_ctx'][0][2], '00099998')
+        self.assertEqual(ex['pass_below_ctx'][0][2], '00099997')
+        _, out = self.quiet(v3load.main, [str(self.write('v3b.jsonl', edit_lines(self.golden(), lambda r: None)))])
+        self.assertIn('no violations', out)
+
+
 def lap_session(launch, char, build):
     """The synthetic session plus the lapped stretches (0.23.51) of two lap ticks, none
     answered. Tick 1 (15:02:30, judged 15:02:34) cuts three stretches: hunger and diseased,

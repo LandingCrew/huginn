@@ -49,14 +49,17 @@ None), kept as the row tuple's OLD element -- a tuple indexed by O_EST..O_HK
 carries none of them (every row before 0.23.53); the `favorite` flag bit; the
 context's `old` object (the run's scorer parameters, kept as written; None
 before); and the decision's `rid` (the id its v2 record carries; None when it
-has none, and before 0.23.53)."""
+has none, and before 0.23.53). main() also checks each row's floor `fl`
+against the context's `old` floors (floor_check) and prints the violations: the
+floors are derived by hand from UtilityScorer::ScoreCandidates' tests, and a
+real log is where the two would be seen to drift apart."""
 import argparse
 import json
 import pickle
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from common import work
+from common import F, FLAGS, FORM, O_CW, O_FL, O_WU, OLD, work
 
 # Decision fields the fit scripts read, with the value a record that lacks
 # one gets (an older build, or a field a later one drops).
@@ -231,6 +234,65 @@ def listing(D):
     return lines
 
 
+# Relative slack for comparing two logged numbers: the encoder writes 4
+# significant digits, so each side may be off by half a unit in the 4th.
+FLOOR_TOL = 1e-3
+
+
+def floor_check(D):
+    """Check each row's old-engine floor (`fl`, 0.23.53) against the tests
+    UtilityScorer::ScoreCandidates applies, with the context's `old` floors.
+    PipelineCoordinator::CaptureEligible derives `fl` by copying those tests by hand;
+    this catches the two drifting apart, on a real log. Returns (Counter of violations
+    by kind, the rows checked, up to 5 examples per kind as (ctx key, row index, form)).
+    Kinds:
+      not_eligible    fl set on a row that is not eligible
+      scored_mismatch fl pass/cold on an unscored row, or ctx/util/suppressed on a scored one
+      ctx_above_min   fl ctx with cw > minCtx (the context floor would not have dropped it)
+      util_above_min  fl util with wu > minUtil (the utility floor would not have dropped it)
+      util_below_ctx  fl util on a non-favourite with cw < minCtx (that is ctx)
+      pass_below_ctx  fl pass on a non-favourite with cw < minCtx (only the cold start keeps it)
+      not_suppress    fl suppressed when the run's favourites mode is not suppress
+    A comparison counts only beyond the 4-digit rounding of both sides (FLOOR_TOL), so a
+    value logged equal to its floor is not judged. "Favourite" is the row's `favorite`
+    bit, which every candidate the old engine read as favourited carries; a bit set by
+    the held scan alone only skips a check."""
+    def above(a, b):             # a > b beyond the rounding of either
+        return a - b > FLOOR_TOL * max(abs(a), abs(b), 1e-6)
+
+    bad, examples, checked = Counter(), defaultdict(list), 0
+    for key, c in D['ctxs'].items():
+        o = c.get('old')
+        if not o:
+            continue
+        min_ctx, min_util = o.get('minCtx'), o.get('minUtil')
+        for i, r in enumerate(c['rows']):
+            old = r[OLD]
+            if old is None or old[O_FL] is None:
+                continue
+            checked += 1
+            fl, cw, wu, flags = old[O_FL], old[O_CW], old[O_WU], r[FLAGS]
+            fav = flags & F['favorite']
+            kinds = []
+            if not flags & F['eligible']:
+                kinds.append('not_eligible')
+            if bool(flags & F['scored']) != (fl in ('pass', 'cold')):
+                kinds.append('scored_mismatch')
+            if fl == 'ctx' and None not in (cw, min_ctx) and above(cw, min_ctx):
+                kinds.append('ctx_above_min')
+            if fl == 'util' and None not in (wu, min_util) and above(wu, min_util):
+                kinds.append('util_above_min')
+            if fl in ('util', 'pass') and not fav and None not in (cw, min_ctx) and above(min_ctx, cw):
+                kinds.append(f'{fl}_below_ctx')
+            if fl == 'suppressed' and o.get('fav') not in (None, 'suppress'):
+                kinds.append('not_suppress')
+            for k in kinds:
+                bad[k] += 1
+                if len(examples[k]) < 5:
+                    examples[k].append((key, i, r[FORM]))
+    return bad, checked, dict(examples)
+
+
 def is_lap(d):
     """A nothing record that stands for a lapped stretch of a still-open episode (0.23.51)."""
     return d['out'] == 'nothing' and bool(d.get('ep')) and d['ep'].get('why') == 'lap'
@@ -255,6 +317,10 @@ def main(argv=None):
               f'{len({d["launch"] for d in D["decs"]})} launches, {len(D["ctxs"])} contexts')
     print(dict(D['stats']), len(D['cols']), 'cols', len(D['needs']), 'needs', len(D['cross']), 'cross',
           len(D['caps']), 'caps', len(D['ctxs']), 'ctxs')
+    bad, checked, examples = floor_check(D)
+    if checked:                  # 0.23.53 rows: the old floors as the scorer applies them
+        print(f'old-engine floors: {checked} rows checked, '
+              + (f'VIOLATIONS {dict(bad)} e.g. {examples}' if bad else 'no violations'))
     with open(work('v3.pkl'), 'wb') as f:
         pickle.dump(D, f, protocol=5)
     print('wrote', work('v3.pkl'))
