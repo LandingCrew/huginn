@@ -78,14 +78,9 @@ namespace Huginn::Scoring
         auto stateFeatures = Learning::StateFeatures::FromState(player, targets);
         auto phi = stateFeatures.ToArray();  // Pre-compute once for locked reader
 
-        // Forget what faded past its useful life (roadmap Phase 3 #3a). At most
-        // once a minute of play; the fading itself is read off the play clock
-        // per candidate below, so nothing here touches the weights. Replaced
-        // the 2%/hour weight decay.
-        {
-            Huginn_ZONE_NAMED("Score::Forget");
-            m_featureLearner.MaybeForgetFaded();
-        }
+        // The forget sweep (roadmap Phase 3 #3a) left this pass in R8.3: it
+        // runs from UpdateLoop beside the choice learner's, so it keeps
+        // running while bLegacyLearnFeature is off and this pass does not.
 
         // Acquire locked readers once for the entire scoring loop.
         // Eliminates per-candidate mutex acquire/release (~200 lock ops → 2).

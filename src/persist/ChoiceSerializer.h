@@ -16,7 +16,11 @@ namespace Huginn::Persist
    //            weights {key, mu, var} (theta, strength, recent, covered) that
    //            moved from the bootstrap -- the load gives every other key the
    //            file's value, so writing them all (~36k, 0.87 MB a save)
-   //            would restore the same state;
+   //            would restore the same state. The saving is early only: an
+   //            answered onset grows the variance of all of its need's theta
+   //            and strength columns (2 x J = 486 entries), so a fight's worth
+   //            of needs is thousands of entries, and long play nears the
+   //            full set;
    //   BIAS v1  b per item {formID, mu, var, n, play minutes since chosen,
    //            favourite bit}. The map's plan was {formID, b, n, minutes};
    //            the variance and the favourite bit are added (ChoiceCosave.h).
@@ -37,6 +41,10 @@ namespace Huginn::Persist
    //                      longer knows are dropped and counted), then BIAS in
    //                      place of b; with no THTA / BIAS (an older save) b
    //                      follows sBootstrapBias.
+   //   model off          (no or invalid bootstrap) nothing is applied; the
+   //                      records this save holds are kept and every save
+   //                      this session makes writes them back unchanged, so
+   //                      a session without the bootstrap loses no learning.
    // =========================================================================
 
    inline constexpr uint32_t kRecordType_Theta = 'ATHT';  // 'THTA' on disk
@@ -53,7 +61,8 @@ namespace Huginn::Persist
 
    [[nodiscard]] const char* LoadDecisionName(LoadDecision d) noexcept;
 
-   /// SaveCallback: the two records (nothing when the model is off).
+   /// SaveCallback: the two records (when the model is off, the records the
+   /// load read, carried over unchanged).
    void SaveChoiceRecords(SKSE::SerializationInterface* a_intfc);
    /// LoadCallback: one record each; `length` is the SKSE record length.
    void LoadThetaRecord(SKSE::SerializationInterface* a_intfc, uint32_t version, uint32_t length);

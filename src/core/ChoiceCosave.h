@@ -63,6 +63,13 @@ namespace Huginn::Core::ChoiceCosave
 
     inline constexpr std::uint8_t kBiasFavorite = 1;
 
+    /// The largest blob a valid record can be (version, both strings at their
+    /// cap, count, every entry at the count's cap). The plugin rejects an SKSE
+    /// record longer than this BEFORE it allocates the read buffer, so a
+    /// corrupt length cannot throw bad_alloc on the game thread.
+    inline constexpr std::size_t kMaxThetaBlobBytes = 4 + 2 * (2 + kMaxText) + 4 + kMaxThetaEntries * kThetaStride;
+    inline constexpr std::size_t kMaxBiasBlobBytes = 4 + 4 + kMaxBiasEntries * kBiasStride;
+
     struct ThetaEntry
     {
         std::uint64_t key = 0;

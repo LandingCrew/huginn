@@ -6,7 +6,8 @@
 // under std::stable_sort), the legacy switch (core/ChoiceLive.h: off gives
 // constant features and a score that ignores the old learner), and the
 // ranking pass (core/ChoiceLive.h: top terms, positions and kappa only after
-// the allocation).
+// the allocation), the blob caps the plugin checks before a read, and the
+// CriticalHealth label (display/NeedReason.h).
 
 #include "core/ChoiceCosave.h"
 #include "core/ChoiceLive.h"
@@ -14,12 +15,14 @@
 #include "core/NeedEvaluator.h"
 #include "core/NeedSnapshot.h"
 #include "core/SlotScoreMath.h"
+#include "display/NeedReason.h"
 
 #include <doctest/doctest.h>
 
 #include <algorithm>
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <cstring>
 #include <limits>
 #include <ostream>
@@ -152,6 +155,21 @@ TEST_CASE("cosave: a length that does not match the count, a truncated blob or a
     auto badText = good;
     Poke<std::uint16_t>(badText, 4, static_cast<std::uint16_t>(CC::kMaxText + 1));
     CHECK_FALSE(CC::DecodeTheta(badText, CC::kThetaVersion).has_value());
+}
+
+TEST_CASE("cosave: the blob caps the plugin checks before reading hold the largest valid record, and no more")
+{
+    // Both strings at their cap and no entries: the header part of the cap.
+    CC::ThetaRecord t;
+    t.createdUtc.assign(CC::kMaxText, 'u');
+    t.sha256.assign(CC::kMaxText, 'f');
+    const auto header = CC::EncodeTheta(t);
+    CHECK(header.size() + static_cast<std::size_t>(CC::kMaxThetaEntries) * CC::kThetaStride == CC::kMaxThetaBlobBytes);
+    CHECK(CC::EncodeBias(CC::BiasRecord{}).size() + static_cast<std::size_t>(CC::kMaxBiasEntries) * CC::kBiasStride ==
+          CC::kMaxBiasBlobBytes);
+    // A record length must fit SKSE's u32.
+    static_assert(CC::kMaxThetaBlobBytes < 0xFFFFFFFFull);
+    static_assert(CC::kMaxBiasBlobBytes < 0xFFFFFFFFull);
 }
 
 TEST_CASE("cosave: entries that are not finite or have var <= 0 are dropped and counted, the rest kept")
@@ -411,4 +429,23 @@ TEST_CASE("ranking pass: positions and kappa enter only after the allocation; a 
     const C::Tick t = C::MakeTick(nanModel, {}, {});
     C::ScoreForRanking(nanModel, t, std::vector<C::Attr>(1), x, std::vector<C::GateRow>(1), SIZE_MAX, 1.0, 1, out);
     CHECK(out[0].s.mu == -kInf);
+}
+
+TEST_CASE("need reason: health_deficit names LowHealth while on and CriticalHealth from kCriticalHealthNeed")
+{
+    using R = Huginn::Context::ContextReason;
+    const auto hd = static_cast<std::int16_t>(Needs::Index(Needs::NeedId::health_deficit));
+    CHECK(Huginn::Display::ExplainedReason(hd, 0.49) == R::None);
+    CHECK(Huginn::Display::ExplainedReason(hd, 0.5) == R::LowHealth);
+    CHECK(Huginn::Display::ExplainedReason(hd, 0.969) == R::LowHealth);
+    CHECK(Huginn::Display::ExplainedReason(hd, Huginn::Display::kCriticalHealthNeed) == R::CriticalHealth);
+    CHECK(Huginn::Display::ExplainedReason(hd, 1.0) == R::CriticalHealth);
+    // The default curve puts the old 15% health line just past the threshold.
+    const auto atCritical = Needs::Evaluate(Needs::Info(Needs::NeedId::health_deficit).curve, 0.85f);
+    CHECK(atCritical >= Huginn::Display::kCriticalHealthNeed);
+    CHECK(Needs::Evaluate(Needs::Info(Needs::NeedId::health_deficit).curve, 0.8f) < Huginn::Display::kCriticalHealthNeed);
+    // Only the deficit: a fast drop or a drain stays LowHealth however high.
+    const auto hf = static_cast<std::int16_t>(Needs::Index(Needs::NeedId::health_falling));
+    CHECK(Huginn::Display::ExplainedReason(hf, 1.0) == R::LowHealth);
+    CHECK(Huginn::Display::ExplainedReason(-1, 1.0) == R::None);
 }

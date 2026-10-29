@@ -18,6 +18,17 @@ namespace Huginn::Persist
    static std::optional<std::vector<Learning::ChoiceLearner::BEntry>> s_pendingBias;
    static std::size_t s_biasUnresolved = 0;
 
+   // Fallback mode (no bootstrap, or an invalid one): the records the load
+   // read, kept as they were and written back by every save in this session.
+   // Without them one session with Huginn_Bootstrap.json missing would drop
+   // theta and b from every save made in it. Set by ResolveLoadedChoice;
+   // BIAS holds the FormIDs as resolved at load, so a save writes them in this
+   // session's load order. b's play minutes stay as read (the battery does
+   // not run while the model is off). Unused once the model is ready, which
+   // is fixed for the session (LoadBootstrap runs once).
+   static std::optional<CC::ThetaRecord> s_carriedTheta;
+   static std::optional<CC::BiasRecord> s_carriedBias;
+
    const char* LoadDecisionName(LoadDecision d) noexcept
    {
       switch (d) {
@@ -36,30 +47,56 @@ namespace Huginn::Persist
       s_biasUnresolved = 0;
    }
 
+   static bool WriteTheta(SKSE::SerializationInterface* a_intfc, const CC::ThetaRecord& rec)
+   {
+      const auto blob = CC::EncodeTheta(rec);
+      if (!a_intfc->OpenRecord(kRecordType_Theta, CC::kThetaVersion) ||
+          !a_intfc->WriteRecordData(blob.data(), static_cast<uint32_t>(blob.size()))) {
+         logger::error("[Cosave] Failed to write the THTA record ({} bytes)"sv, blob.size());
+         return false;
+      }
+      return true;
+   }
+
+   static bool WriteBias(SKSE::SerializationInterface* a_intfc, const CC::BiasRecord& rec)
+   {
+      const auto blob = CC::EncodeBias(rec);
+      if (!a_intfc->OpenRecord(kRecordType_Bias, CC::kBiasVersion) ||
+          !a_intfc->WriteRecordData(blob.data(), static_cast<uint32_t>(blob.size()))) {
+         logger::error("[Cosave] Failed to write the BIAS record ({} bytes)"sv, blob.size());
+         return false;
+      }
+      return true;
+   }
+
    void SaveChoiceRecords(SKSE::SerializationInterface* a_intfc)
    {
       if (!g_choiceLearner || !g_choiceLearner->Ready()) {
-         // Fallback ranking (no bootstrap): there is no theta to save. A save
-         // made now carries no THTA/BIAS, so its next load starts from the
-         // bootstrap (logged there).
-         logger::warn("[Cosave] Choice model off (no bootstrap): no THTA / BIAS written"sv);
+         // Fallback ranking (no bootstrap): no theta lives in memory. Write
+         // back what the load read, unchanged, so the next load with the
+         // bootstrap restored finds the learning this session could not use.
+         const bool theta = s_carriedTheta && WriteTheta(a_intfc, *s_carriedTheta);
+         const bool bias = s_carriedBias && WriteBias(a_intfc, *s_carriedBias);
+         logger::warn("[Cosave] Choice model off (no bootstrap): THTA {} / BIAS {} carried over from the load "
+                      "unchanged ({} theta entries, {} b entries)"sv,
+            theta ? "written" : "not", bias ? "written" : "not",
+            theta ? s_carriedTheta->entries.size() : 0, bias ? s_carriedBias->entries.size() : 0);
          return;
       }
       // THTA
       {
          CC::ThetaRecord rec;
          std::tie(rec.createdUtc, rec.sha256) = g_choiceLearner->FileIdentity();
-         // Only the weights that moved from the bootstrap: a key the save
-         // lacks takes the file's value on load (MergeTheta), so this writes
-         // the same state in hundreds of entries rather than ~36k.
+         // Only the weights whose {mu, var} moved from the bootstrap: a key
+         // the save lacks takes the file's value on load (MergeTheta), so this
+         // writes the same state. The saving shrinks with play: every answered
+         // onset grows the variance of all of its need's theta and strength
+         // columns (GrowNeed, 2 x J entries), so each need that has had an
+         // onset adds about 486 entries, and a long game nears the full set.
          const auto entries = g_choiceLearner->ExportEntries(/*movedOnly=*/true);
          rec.entries.reserve(entries.size());
          for (const auto& e : entries) rec.entries.push_back(CC::ThetaEntry{ e.key, e.mu, e.var });
-         const auto blob = CC::EncodeTheta(rec);
-         if (!a_intfc->OpenRecord(kRecordType_Theta, CC::kThetaVersion) ||
-             !a_intfc->WriteRecordData(blob.data(), static_cast<uint32_t>(blob.size()))) {
-            logger::error("[Cosave] Failed to write the THTA record ({} bytes)"sv, blob.size());
-         } else {
+         if (WriteTheta(a_intfc, rec)) {
             logger::info("[Cosave] Saved THTA: {} theta entries moved from the bootstrap (bootstrap {}, sha256 {})"sv,
                rec.entries.size(), rec.createdUtc.empty() ? "?" : rec.createdUtc, rec.sha256.substr(0, 16));
          }
@@ -73,19 +110,22 @@ namespace Huginn::Persist
             rec.entries.push_back(CC::BiasEntry{ e.form, e.mu, e.var, e.n, e.minutesSinceChosen,
                static_cast<uint8_t>(e.favorite ? CC::kBiasFavorite : 0) });
          }
-         const auto blob = CC::EncodeBias(rec);
-         if (!a_intfc->OpenRecord(kRecordType_Bias, CC::kBiasVersion) ||
-             !a_intfc->WriteRecordData(blob.data(), static_cast<uint32_t>(blob.size()))) {
-            logger::error("[Cosave] Failed to write the BIAS record ({} bytes)"sv, blob.size());
-         } else {
+         if (WriteBias(a_intfc, rec)) {
             logger::info("[Cosave] Saved BIAS: {} b entries"sv, rec.entries.size());
          }
       }
    }
 
    static std::optional<std::vector<std::byte>> ReadBlob(SKSE::SerializationInterface* a_intfc, uint32_t length,
-      const char* tag)
+      std::size_t maxLength, const char* tag)
    {
+      // Before the allocation: a corrupt length must not throw bad_alloc on
+      // the game thread. SKSE skips the unread rest of the record.
+      if (length > maxLength) {
+         logger::error("[Cosave] {} record of {} bytes, above the largest valid one ({}) -- skipping"sv, tag, length,
+            maxLength);
+         return std::nullopt;
+      }
       std::vector<std::byte> blob(length);
       const uint32_t got = length ? a_intfc->ReadRecordData(blob.data(), length) : 0;
       if (got != length) {
@@ -97,7 +137,7 @@ namespace Huginn::Persist
 
    void LoadThetaRecord(SKSE::SerializationInterface* a_intfc, uint32_t version, uint32_t length)
    {
-      const auto blob = ReadBlob(a_intfc, length, "THTA");
+      const auto blob = ReadBlob(a_intfc, length, CC::kMaxThetaBlobBytes, "THTA");
       if (!blob) return;
       std::string why;
       auto rec = CC::DecodeTheta(*blob, version, &why);
@@ -112,7 +152,7 @@ namespace Huginn::Persist
 
    void LoadBiasRecord(SKSE::SerializationInterface* a_intfc, uint32_t version, uint32_t length)
    {
-      const auto blob = ReadBlob(a_intfc, length, "BIAS");
+      const auto blob = ReadBlob(a_intfc, length, CC::kMaxBiasBlobBytes, "BIAS");
       if (!blob) return;
       std::string why;
       auto rec = CC::DecodeBias(*blob, version, &why);
@@ -144,10 +184,33 @@ namespace Huginn::Persist
       auto bias = std::move(s_pendingBias);
       ResetPendingChoice();
       if (!learner.Ready()) {
-         logger::warn("[Cosave] Choice model off (no bootstrap): THTA {} / BIAS {} not applied ({})"sv,
-            theta ? "read" : "absent", bias ? "read" : "absent", LoadDecisionName(decision));
+         // Fallback mode: nothing to apply them to. Keep this save's records
+         // (what it holds, or nothing) for the saves this session makes; a new
+         // game has none, and a failed load leaves the carried records as they
+         // were.
+         if (decision == LoadDecision::NewGame) {
+            s_carriedTheta.reset();
+            s_carriedBias.reset();
+         } else if (decision != LoadDecision::Failed) {
+            s_carriedTheta = std::move(theta);
+            s_carriedBias.reset();
+            if (bias) {
+               CC::BiasRecord rec;
+               rec.entries.reserve(bias->size());
+               for (const auto& e : *bias) {
+                  rec.entries.push_back(CC::BiasEntry{ e.form, e.mu, e.var, e.n, e.minutesSinceChosen,
+                     static_cast<uint8_t>(e.favorite ? CC::kBiasFavorite : 0) });
+               }
+               s_carriedBias = std::move(rec);
+            }
+         }
+         logger::warn("[Cosave] Choice model off (no bootstrap): THTA {} / BIAS {} not applied ({}); kept to be "
+                      "written back by this session's saves"sv,
+            s_carriedTheta ? "read" : "absent", s_carriedBias ? "read" : "absent", LoadDecisionName(decision));
          return;
       }
+      s_carriedTheta.reset();
+      s_carriedBias.reset();
       switch (decision) {
       case LoadDecision::Failed:
          logger::warn("[Cosave] Load failed -- the choice learner is left as it was"sv);

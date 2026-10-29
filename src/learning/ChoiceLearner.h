@@ -183,8 +183,11 @@ namespace Huginn::Learning
         };
         /// Every keyed weight, or (movedOnly, what THTA writes) only those
         /// whose {mu, var} differ from the bootstrap's: the load's merge gives
-        /// a key the save lacks the file's value, so the result is the same
-        /// and a save carries hundreds of entries, not ~36k (0.87 MB).
+        /// a key the save lacks the file's value, so the result is the same.
+        /// The saving is early only: every answered onset grows the variance
+        /// of all of its need's theta and strength columns (GrowNeed, 2 x J =
+        /// 486 entries), so a fight's worth of needs is thousands of entries
+        /// and long play nears the full set (~36k, 0.87 MB).
         [[nodiscard]] std::vector<Entry> ExportEntries(bool movedOnly = false) const;
         /// Every key the build holds, in slot order (the load's merge).
         [[nodiscard]] std::vector<std::uint64_t> Keys() const;

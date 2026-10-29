@@ -25,9 +25,16 @@ namespace Huginn::Display
     // A need speaks only when it is ON: n_k >= kReasonNeedOn, the opportunity
     // counter's onset level (core/ChoiceUpdate.h). Without it a term of 0.04 x
     // a large theta could label a potion "Low HP" at 95% health.
+    //
+    // health_deficit at n >= kCriticalHealthNeed is CriticalHealth (the top
+    // display priority, "Critical HP"), the old labels' 15% health line
+    // (VitalThreshold::CRITICAL): on the default curve (logistic 0.5 10) a
+    // deficit of 0.85 is n = 0.9707. A [Needs] or bootstrap curve for
+    // health_deficit moves the health level this means.
     // =========================================================================
 
     inline constexpr double kReasonNeedOn = 0.5;
+    inline constexpr double kCriticalHealthNeed = 0.97;
 
     [[nodiscard]] constexpr Context::ContextReason ReasonOfNeed(std::string_view need) noexcept
     {
@@ -75,6 +82,10 @@ namespace Huginn::Display
     [[nodiscard]] inline Context::ContextReason ExplainedReason(int16_t need, double n) noexcept
     {
         if (need < 0 || !(n >= kReasonNeedOn)) return Context::ContextReason::None;
-        return ReasonOfNeedIndex(static_cast<std::size_t>(need));
+        const auto k = static_cast<std::size_t>(need);
+        if (k == Core::Needs::Index(Core::Needs::NeedId::health_deficit) && n >= kCriticalHealthNeed) {
+            return Context::ContextReason::CriticalHealth;
+        }
+        return ReasonOfNeedIndex(k);
     }
 }

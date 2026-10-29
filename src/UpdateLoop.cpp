@@ -698,6 +698,10 @@ void OnUpdate(float deltaSeconds)
             if (g_choiceLearner) g_choiceLearner->AdvancePlayTime(deltaSeconds);
         }
     }
+    // Both forget sweeps run here, at most once a minute of play each. The old
+    // learner's left UtilityScorer's legacy pass in R8.3, which does not run
+    // with bLegacyLearnFeature off, so BNDW would grow while the switch is off.
+    if (g_featureBanditLearner) g_featureBanditLearner->MaybeForgetFaded();
     if (g_choiceLearner) g_choiceLearner->MaybeForgetFaded();
 
     float deltaMs = deltaSeconds * 1000.0f;

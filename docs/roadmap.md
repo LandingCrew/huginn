@@ -1021,7 +1021,9 @@ changed in the same PR, and the shipped INI loses the dead keys.
         training.
       - The cosave: `THTA` (the bootstrap's created_utc and SHA-256; the keyed
         weights {key, mu, var} that moved from the bootstrap, since the load
-        gives every other key the file's value) and `BIAS` ({formID, mu, var, n, play minutes,
+        gives every other key the file's value; early only: an answered
+        onset moves all 486 of its need's theta and strength variances, so
+        long play nears the full ~36k) and `BIAS` ({formID, mu, var, n, play minutes,
         favourite bit}: the variance and the bit beyond the map's plan), pure
         codec `core/ChoiceCosave`, written in BanditSerializer's callbacks by
         `persist/ChoiceSerializer`. **BNDW STAYS** (D2 reads the old learner's
@@ -1030,6 +1032,8 @@ changed in the same PR, and the shipped INI loses the dead keys.
         character keeps the in-memory learning (b's 0xFF forms from the save);
         otherwise THTA per key over the bootstrap (unknown keys dropped and
         counted), BIAS for b; no THTA = the bootstrap, b under sBootstrapBias.
+        With the model off (no bootstrap), a save writes back the records
+        its load read, so a session without the file loses no learning.
         `hg reset weights`, `hg reset all` and the dMenu reset return theta to
         the bootstrap and clear b; `hg status` and the `[Soak]` heartbeat
         (`choice theta=moved/entries b=`) report the counts; the learner latch
@@ -1160,6 +1164,12 @@ changed in the same PR, and the shipped INI loses the dead keys.
       pushes ~4.6/s in fights, and the soak denominators move. Here, where
       the scorer reads the needs, re-scoring on a need step is the point;
       measure the wildcard share and the Wheeler push rate when it lands.
+      **Flapping** (no hysteresis; the levels round at x.025): argued, not
+      measured -- no need in needs.csv is known to sit on a boundary with
+      noise (0/1 facts, darkness held 5 s / 3 s, one-way vitals and decays,
+      distance needs that follow motion), and a run per tick (~10/s) is the
+      ceiling. **Soak gate:** quiet-scene `runs/s` above 1 (model 0.44)
+      stops the soak until `Signature` gets one level of hysteresis.
 - [ ] **After the rework, measure slot churn against this baseline.** The
       user, on the R3 build's LoreRim session (2026-10-09): "slot churn
       definitely increased". Measured in that session: 4-6 slot changes a
