@@ -137,7 +137,7 @@ namespace Huginn::Core::Needs
                 case N::falling: return s.fallDepth;
                 case N::drop_ahead: return s.dropAhead < 0.0f ? 0.0f : s.dropAhead;
                 case N::deep_water_ahead: return s.waterDepthAhead < 0.0f ? 0.0f : s.waterDepthAhead;
-                // 0.23.48 (core/EdgeApproach.h): seconds to the nearest
+                // 0.23.50 (core/EdgeApproach.h): seconds to the nearest
                 // dangerous probe point at the speed toward it; no edge,
                 // standing still or moving away is never, and so is a crawl
                 // slower than one that reaches it in kNever seconds.

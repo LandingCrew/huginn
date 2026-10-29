@@ -1,4 +1,4 @@
-// core/EdgeApproach.h: time_to_edge and edge_approach (0.23.48), two needs
+// core/EdgeApproach.h: time_to_edge and edge_approach (0.23.50), two needs
 // from the drop_ahead probe pass. The game side (state/DropAheadProbe.cpp)
 // only feeds the probe hits, the game clock and the probe direction.
 

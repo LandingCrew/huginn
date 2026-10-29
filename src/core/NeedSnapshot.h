@@ -130,7 +130,7 @@ namespace Huginn::Core::Needs
         float fallDepth = 0.0f;       // units below the take-off point
         float dropAhead = -1.0f;      // units from the feet down to the surface ahead, -1 not measured
         float waterDepthAhead = -1.0f;  // deepest water under the drop probes, units; 0 none, -1 not measured
-        float edgeDistance = -1.0f;   // units along the probe direction to the nearest dangerous probe point, -1 none (0.23.48)
+        float edgeDistance = -1.0f;   // units along the probe direction to the nearest dangerous probe point, -1 none (0.23.50)
         float edgeSpeed = 0.0f;       // speed along the probe direction, units per GAME second, < 0 away
         float edgeApproach = 0.0f;    // proximity to an edge per game second over ~1.5 s (core/EdgeApproach.h)
         bool lock = false;            // crosshair on a locked object

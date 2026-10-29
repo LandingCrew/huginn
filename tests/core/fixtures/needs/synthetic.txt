@@ -475,7 +475,7 @@ waterDepthAhead 40
 dropAhead 0
 end
 
-# time_to_edge and edge_approach (0.23.48, core/EdgeApproach.h). Running at a
+# time_to_edge and edge_approach (0.23.50, core/EdgeApproach.h). Running at a
 # cliff the far probe just found: 280 units at 300 units per game second is
 # 0.933 s (~0.85), and the proximity climbing 0.9 per game second (~1).
 snapshot edge_run_far

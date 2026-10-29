@@ -135,7 +135,7 @@ namespace Huginn::State::HandModelProbe
          case RE::MagicCaster::State::kUnk02: return "starting a charge";
          case RE::MagicCaster::State::kReady: return "charged, held";
          // kUnk04: CommonLib v3.7.0 guesses "PreStart?" (MagicCaster.h:35),
-         // and this read "about to start" until 0.23.48. The LoreRim log of
+         // and this read "about to start" until 0.23.50. The LoreRim log of
          // 2026-10-28 puts it after the release: the player charged Conjure
          // Skeletal Hero from 13:27:50.5 (magicka 95 -> 19 by 13:27:51.4,
          // the charge done), the last non-idle state the probe saw was

@@ -369,7 +369,7 @@ namespace Huginn::State
       // deep_water_ahead (0.23.19): the same probe pass, the same staleness.
       // -1 while swimming (the probe is skipped): reads 0, see Reading.
       const float waterDepth = fresh ? reading.waterDepth : -1.0f;
-      // time_to_edge and edge_approach (0.23.48, core/EdgeApproach.h): the
+      // time_to_edge and edge_approach (0.23.50, core/EdgeApproach.h): the
       // same pass, the same staleness; stale reads "no edge, no trend".
       const float edgeDistance = fresh ? reading.edgeDistance : -1.0f;
       const float edgeSpeed = fresh ? reading.edgeSpeed : 0.0f;

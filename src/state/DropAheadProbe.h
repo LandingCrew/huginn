@@ -34,7 +34,7 @@
 // Anything the probe throws is caught (logged once); the game's own update
 // has already run, first.
 //
-// The same pass feeds time_to_edge and edge_approach (0.23.48,
+// The same pass feeds time_to_edge and edge_approach (0.23.50,
 // core/EdgeApproach.h): the nearest dangerous point, the speed toward it on
 // the game clock, and the approach trend, whose window resets on a game load,
 // a change of space (load door, worldspace), a teleport and every skip.
@@ -87,7 +87,7 @@ namespace Huginn::State::DropAheadProbe
       float drop = -1.0f;        // -1 = not measured
       float waterDepth = -1.0f;  // the deepest water over the known probes, units; 0 none, -1 not measured (0.23.19)
       double atSec = -1.0;       // NeedClock seconds of the reading; -1 = none yet
-      // time_to_edge and edge_approach (0.23.48, core/EdgeApproach.h), from
+      // time_to_edge and edge_approach (0.23.50, core/EdgeApproach.h), from
       // the same pass. Every skip stores the "nothing" values below.
       float edgeDistance = -1.0f;  // units along the probe direction to the nearest dangerous known point; -1 none
       float edgeSpeed = 0.0f;      // horizontal speed along the probe direction, units per GAME second (< 0 away)

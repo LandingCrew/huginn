@@ -53,7 +53,7 @@ namespace Huginn::State::DropAheadProbe
       bool g_swimMatchLogged = false;
       bool g_swimMismatchLogged = false;
 
-      // time_to_edge and edge_approach (0.23.48, core/EdgeApproach.h).
+      // time_to_edge and edge_approach (0.23.50, core/EdgeApproach.h).
       // Hook-thread only, like the throttle above. g_lastPosGameAt: the game
       // clock at g_lastPos, for the speed on the game clock; g_lastSpace: the
       // interior cell or worldspace of the last pass, for the reset on a
@@ -526,7 +526,7 @@ namespace Huginn::State::DropAheadProbe
          // A teleport (coc, a load door, fast travel) is no heading: the old
          // to new position would aim the probes anywhere. Use the facing.
          float dt = g_lastPosAt < 0.0 ? 0.0f : static_cast<float>(nowSec - g_lastPosAt);
-         // The same move on the game clock (0.23.48): time_to_edge's speed.
+         // The same move on the game clock (0.23.50): time_to_edge's speed.
          // The heading above stays on the wall clock, as it was.
          const double gameNow = g_gameSeconds.load(std::memory_order_relaxed);
          float gameDt = g_lastPosGameAt < 0.0 ? 0.0f : static_cast<float>(gameNow - g_lastPosGameAt);
@@ -598,7 +598,7 @@ namespace Huginn::State::DropAheadProbe
          const auto ahead = Core::Needs::MeasureAhead(feet.z, hits, cfg);
          const float drop = ahead.drop;
          const Status status = drop < 0.0f ? Status::AllUnknown : Status::Measured;
-         // time_to_edge and edge_approach (0.23.48, core/EdgeApproach.h): the
+         // time_to_edge and edge_approach (0.23.50, core/EdgeApproach.h): the
          // nearest dangerous known point, the speed toward it on the game
          // clock, and this pass added to the approach window. A pass with
          // every probe unknown is a pass all the same: proximity 0.

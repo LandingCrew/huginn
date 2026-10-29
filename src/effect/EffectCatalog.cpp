@@ -23,7 +23,7 @@ namespace Huginn::Effect
         /// once when a game starts loading, so a quick Continue costs what is
         /// left of the ~3 s in the loading screen instead of a frozen menu.
         ///
-        /// 12 ms since 0.23.48 (was 4). At 4 ms the LoreRim main menu read
+        /// 12 ms since 0.23.50 (was 4). At 4 ms the LoreRim main menu read
         /// too little before the player loaded: the log of 2026-10-28
         /// 21:37:40.669 reads "load order read: 33375 forms, 10031 magic
         /// effects; 3176 ms on the main thread in 228 slice(s), longest

@@ -268,7 +268,7 @@ namespace Huginn::Console
          s.openDaylight ? " (open daylight)" : "");
       Print(extra.c_str());
       logger::info("[Console] {}"sv, extra);
-      // time_to_edge and edge_approach (0.23.48, core/EdgeApproach.h): the
+      // time_to_edge and edge_approach (0.23.50, core/EdgeApproach.h): the
       // readings behind them, and the probe pass's proximity.
       const auto proximity = sensors.dropAgeSec < 0.0 ? std::string("-") : std::format("{:.2f}", probe.edgeProximity);
       const auto edge = std::format("  edge {} | speed toward it {:.0f} units/game s | proximity {} | approach {:+.2f}/game s (window {:.1f} game s)",
