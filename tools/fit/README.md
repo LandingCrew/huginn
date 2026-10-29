@@ -19,8 +19,9 @@ The baselines that read the old engine's context weights also read the v2 log
 to the v3 file `v3load.py` read, else none (those baselines then read NaN).
 `effects.csv` (the obvious pairs) comes from `docs/architecture/9-data/`.
 
-The v3 file rotates at 64 MiB (`Huginn_Selections_v3-<launch>-1.jsonl` is the
-older part); `v3.pkl` for both parts is ~120 MB. `v3load.py` takes under a
+The v3 file rotates at 64 MiB (`Huginn_Selections_v3-<launch>-1.jsonl` is an
+older part; give every part, oldest first: on 2026-10-28 there are two,
+`-20261015-180003-1` and `-20261029-022335-1`); `v3.pkl` is ~120 MB. `v3load.py` takes under a
 minute; a 10-fold `cv.py picks` takes about half an hour, `three` a few hours.
 Run them at low priority while the game is up (PowerShell: start the process,
 then set its `PriorityClass` to `Idle`), and without `python -I`: the scripts
@@ -30,8 +31,8 @@ import their siblings (`common`, `fitlib`) by name.
 
 ```sh
 cd <scratch>
-python <repo>/tools/fit/v3load.py <SKSE>/Huginn_Selections_v3-20261015-180003-1.jsonl <SKSE>/Huginn_Selections_v3.jsonl --list
-python <repo>/tools/fit/v3load.py <SKSE>/Huginn_Selections_v3-20261015-180003-1.jsonl <SKSE>/Huginn_Selections_v3.jsonl --char FEFD1B039AC78799
+python <repo>/tools/fit/v3load.py <SKSE>/Huginn_Selections_v3-20261015-180003-1.jsonl <SKSE>/Huginn_Selections_v3-20261029-022335-1.jsonl <SKSE>/Huginn_Selections_v3.jsonl --list
+python <repo>/tools/fit/v3load.py <same files> --char FEFD1B039AC78799
 python <repo>/tools/fit/inspect_heads.py "<same v3 file>"   # optional: what changed between heads
 python <repo>/tools/fit/audit.py        # -> audit.txt
 python <repo>/tools/fit/sensors.py      # -> sensors.txt
@@ -41,10 +42,15 @@ python <repo>/tools/fit/cv.py picks     # -> cv_picks.pkl, cv_picks.txt (also on
 python <repo>/tools/fit/pairs.py        # -> pairs.txt (reads cv_picks.pkl)
 python <repo>/tools/fit/drift.py        # -> drift_picks_three.txt, fit_all_<mode>.pkl
 python <repo>/tools/fit/gradcheck.py    # optional: fitlib's gradient against finite differences
+python <repo>/tools/fit/honest.py       # -> honest_picks.txt/.pkl: online (train-on-past) beside CV, the R6 gate
+python <repo>/tools/fit/curve.py        # -> curve_encumbrance.txt/.json: the encumbrance curve (R6)
+python <repo>/tools/fit/export.py --curve curve_encumbrance.json --forms <SKSE>/Huginn_All.csv   # -> bootstrap.json (R8)
 ```
 
 `<SKSE>` is `<Documents>/My Games/Skyrim.INI/SKSE`. `v3load.py` first; `pairs.py`
-after `cv.py picks`. The rest only need `v3.pkl`.
+after `cv.py picks`; `export.py --curve` after `curve.py`. The rest only need
+`v3.pkl` (`honest.py` reuses `cv_picks.pkl` when it was written for the same
+decisions, folds and seed).
 
 ### v3load.py
 
@@ -114,13 +120,123 @@ after `cv.py picks`. The rest only need `v3.pkl`.
   utility as a feature (`A* feature`), alone and with `recent`.
 - Every result list in `cv_<group>.pkl` is aligned with its `meta`, one entry per
   decision; `yardstick` holds the tables, `fold_of` the folds.
+- `theta + recent + A* feature (no b)` (0.23.51): the rehearsal's best variant
+  without the per-item b, which belongs to this character (the verifier of
+  2026-10-28: b costs hits on items the training set never picked).
+
+### honest.py -- the honest yardstick
+
+`python honest.py [picks|three] [--every N] [--min-train N] [--spec TEXT ...] [--folds K] [--seed S] [--since V] [--until V] [--nboot N] [--maxiter N] [--no-cache]`
+
+Grouped K-fold trains on launches after the held-out one too, so a held-out
+pick of an item the player only took up later is fitted from its future (the
+R6 verifier, 2026-10-28). `honest.py` adds what R8 would have scored live, a
+**train-on-past online replay**, and reports it beside the CV on the same
+decisions:
+
+- **Schedule** (`fitlib.online_chunks`): decisions in log order (launch, then
+  seq). A launch is tested once the earlier launches hold `--min-train` picks
+  (default 150; never 0). Within it, every `--every` picks (default 5) the
+  model is refitted on every earlier launch plus the launch's earlier
+  decisions, warm-started from the previous refit, and scores the next
+  `--every` picks. A\*'s page temperature is fitted on each chunk's past too;
+  its ranking (so its hit@8) does not depend on the schedule.
+- **Reported**, per spec and for A\*: key/wheel hit@8, menu hit@8, all picks
+  pooled hit@8, page hit@1 and page NLL, each as the level with its
+  bootstrap-over-launches interval and as model minus A\* with its interval,
+  for `CV (all)` (cv.py's numbers), `CV (online)` (the same CV results on the
+  decisions the online replay tested) and `online`; and **R6's gate** on each
+  (`fitlib.gate`, roadmap R6: menu lower end > 0 and pooled upper end >= 0).
+  The online verdict is the honest one; `CV (online)` against `online`
+  separates the schedule from the decision set.
+- **Specs**: the cv.py specs whose name contains a `--spec` text; by default
+  `honest.HONEST_DEFAULT`: θ + b, θ + b + `recent_<family>`, θ + b + recent +
+  A\* feature, and the same without b. Split and latest-caps specs are refused.
+- **Cost**: one fit per chunk (380 on the mage's 1,865 picks at `--every 5`),
+  roughly half an hour to an hour per spec on one core. Each spec's online and
+  CV results are cached in the work directory
+  (`honest_cache_<kind>_<group>_<hash>.pkl`, keyed by the decisions, the spec,
+  the schedule and the fit settings), so run one process per spec (`--spec`),
+  then one naming them all to combine; `--no-cache` refits.
+- **Port of the verifier's scripts** (`r6-verify/online.py`, `fwd_launch.py`,
+  `combine.py` in the 2026-10-28 session scratchpad): the same schedule (chunks
+  of 5 picks, warm start, 150 picks before the first tested launch, launch
+  bootstrap with 2,000 draws), with the A\* temperature fitted on the past
+  instead of on the CV folds, and the yardstick's metrics. `--every` larger
+  than any launch is the verifier's per-launch refit (`fwd_launch.py`).
+
+### curve.py -- the encumbrance curve
+
+`python curve.py [--need encumbrance] [--col utility_carry_weight] [--spec NAME] [--three] [--all-pairs] [--prior-centre 0.9] [--prior-centre-sd 0.05] [--prior-slope 40] [--prior-slope-sd 0.5] [--rounds 10] [--quick-profile] [--since V] [--until V]`
+
+Roadmap R6 and doc 11 decision 1: the encumbrance curve is fitted from the
+player's carry-weight picks, from a documented prior on its centre near 0.9.
+
+- **Model**: the need's column reads `logistic(in; c, s)` of the logged input
+  (`ctx.in`, now in `build()`'s `IN`), and (c, ln s) are fitted with doc 9's
+  model: a coarse start over c, then coordinate ascent (model, then curve).
+  Only the need's **obvious pairs** read the curve (encumbrance x
+  `utility_carry_weight` and its `~strength` twin; `Model(theta_fixed=...)`
+  holds the rest of the row at its prior centre). With every pair free
+  (`--all-pairs`), a low centre turns the need into a "heavily loaded"
+  indicator that its 243 dense weights fit to anything correlated with the load
+  (the mage's log: the data's NLL fell monotonically to c 0.70).
+- **The prior** (the user's answer, recorded as a statement, not derived):
+  `c ~ Normal(0.9, 0.05^2)`; `ln s ~ Normal(ln 40, 0.5^2)` (the shipped slope).
+  `--prior-*` override it for a test.
+- **Spec**: default `theta + b, presence + strength` (doc 11 decision 5:
+  Feather's carry-weight grade is 0.0046, which cancels the pair under the
+  current grading).
+- **Reported**: the carry-weight picks and their load ratios, the start scan,
+  the fitted (c, s) with a Laplace interval, the pair's weights, and the
+  profile over c with the model refitted at every point (`--quick-profile`:
+  held at its fit, conditional), with a WARNING if its best centre is on the
+  grid's edge. `curve_<need>.json` carries the curve, its interval, the prior
+  and the `[Needs]` line (`encumbrance = logistic <c> <s>`).
+
+### export.py -- the R8 bootstrap file
+
+`python export.py [--spec NAME] [--three] [--forms Huginn_All.csv] [--curve JSON ...] [--out bootstrap.json] [--since V] [--until V] [--maxiter N]`
+
+Fits one spec on every kept decision and writes the bootstrap file, format
+version 1: [docs/architecture/9-bootstrap-format.md](../../docs/architecture/9-bootstrap-format.md)
+(the fields, the score formula, the reader rules). `bootstrap.py` builds,
+writes (deterministic text) and validates the document.
+
+- θ (needs x effect columns) with its diagonal precision; θ's strength block
+  for presence + strength; κ; u0 per need for a three-outcome spec; the
+  `recent_<family>` rows; the extra feature weights (`ln util`, `util
+  missing`); per-item b keyed by **defining plugin + local FormID**; the curves
+  of `--curve` (a curve's need is re-read through it before the fit, so θ
+  matches it).
+- Items are keyed through `hg dump all`'s CSV (`--forms`; default
+  `Huginn_All.csv` beside the v3 file). Dynamic (FF) forms, forms the dump
+  lacks, and forms whose catalog kind (any item) or logged name (picked items)
+  differs from the dump's are dropped and counted (`items_dropped`), never
+  written under a wrong key: run `hg dump all` on the load order the log was
+  written with.
+- Refused: split and latest-caps specs (diagnostics), the `ctx` and `cheap`
+  features (they read the v2 log), a bias need with presence + strength.
+- The default spec is `theta + b + recent_<family>`; pass the one R6's
+  yardstick chose.
 
 ### Tests
 
 `python tools/fit/test_fit.py` (numpy; exit 0 = pass): the loader's multi-file
 read, `--char` and `--list`, new need ids and unknown fields (and older records
 without them), the build segmentation and `recent_<family>`, the folds (no launch
-in two folds, deterministic), the A\* temperature and the pooled yardstick.
+in two folds, deterministic), the A\* temperature and the pooled yardstick; and
+(0.23.51) the online schedule (each test chunk trained on exactly its past,
+chunks of N picks inside one launch, no fit on no picks), no future leak (the
+online results and A\*'s page temperature before the last launch do not change
+when its choices do), `cv_results` against the former fold loop, R6's gate, the
+curve (the plugin's logistic, the pair-only mask held exactly, a known centre
+recovered, a tight prior held), the bootstrap format (the golden files are the
+writer's output and validate; the reader rules reject broken documents; item
+keys for full, light and dynamic forms; the form map's CSV) and the export (θ,
+b and κ round-trip; kind and name mismatches dropped; three outcomes, recent
+and the strength block; a log end to end). `--write-golden` rewrites
+`tests/core/fixtures/bootstrap/` after a deliberate format change.
 
 ## The scripts
 
@@ -128,7 +244,7 @@ in two folds, deterministic), the A\* temperature and the pooled yardstick.
 |---|---|
 | `v3load.py` | Reads the v3 file(s) into a compact pickle (several files in order, one character with `--char`, a listing with `--list`): columns, needs and cross-features mapped by name across heads (the 0.23.16, 0.23.19, 0.23.30 and 0.23.46 schema additions), the row columns past the tenth by the head's names (`fb`, `cr`; None on older rows), caps de-duplicated by content, contexts and decisions joined. Records the source path (for the v2 log). |
 | `common.py` | Shared: the work directory, `load()` (v3.pkl with each decision's rows and chosen row), the row and flag constants, `v2_path()`. |
-| `fitlib.py` | The dataset builder (with build segmentation and `recent_<family>`), doc 9's conditional logit (θ need × effect, per-item b, menu cost κ, optional outside option u0), the baselines and variants, an L-BFGS optimiser, the folds by launch, A\* and the yardstick. |
+| `fitlib.py` | The dataset builder (with build segmentation, `recent_<family>` and the logged curve inputs `IN`), doc 9's conditional logit (θ need × effect, per-item b, menu cost κ, optional outside option u0, optional held θ weights), the baselines and variants, an L-BFGS optimiser, the folds by launch and the online schedule, A\* and the yardstick, R6's gate. |
 | `inspect_heads.py` | Every head of the file and what changed between consecutive ones. |
 | `audit.py` | Counts per launch and build, context joins, duplicates, every need's range and firing rate, curve inputs (present, sentinel), effect columns ever used. |
 | `sensors.py` | Sensor sanity: curve output against input, target family against race, flicker, darkness, step needs that stay on, items missing from the catalog. |
@@ -138,6 +254,10 @@ in two folds, deterministic), the A\* temperature and the pooled yardstick.
 | `pairs.py` | Paired differences (model − baseline) with launch-bootstrap intervals, from `cv_picks.pkl`. |
 | `drift.py` | Fit on every launch: θ's drift from θ0 with its information, the u0 need weights, evidence per obvious pair. |
 | `gradcheck.py` | fitlib's analytic gradient against finite differences, and one full loss evaluation's time. |
+| `honest.py` | The honest yardstick: the online (train-on-past) replay beside grouped CV on the same decisions, the yardstick for each, R6's gate. |
+| `curve.py` | The encumbrance curve fit from the carry-weight picks, from the documented prior; writes the `[Needs]` line and `curve_<need>.json`. |
+| `export.py` | Fits a spec on every decision and writes the R8 bootstrap file (θ, u0, κ, recent, features, b by plugin + local FormID, curves). |
+| `bootstrap.py` | The bootstrap format, version 1: document, deterministic text, validation, item keys. No numpy. |
 | `test_fit.py` | The tests above. |
 
 ## Reading logs written by 0.23.46 and later

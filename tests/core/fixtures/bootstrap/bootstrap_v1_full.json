@@ -1,0 +1,118 @@
+{
+ "format": "huginn.bootstrap",
+ "version": 1,
+ "created_utc": "2026-10-28 12:00:00",
+ "source": {
+  "char": "0000000000000001",
+  "launches": 3,
+  "first_launch": "20261009-141228",
+  "last_launch": "20261028-171653",
+  "decisions": 120,
+  "picks": 100,
+  "builds": ["0.23.41 (abc1234)","0.23.50 (def5678)"],
+  "forms": "Huginn_All.csv",
+  "tool": "golden example"
+ },
+ "model": {
+  "spec": "theta + b + u0(n) + recent",
+  "outcomes": "three",
+  "grading": "presence+strength"
+ },
+ "needs": ["health_deficit","encumbrance","hunger"],
+ "cols": ["restore_health","utility_carry_weight","kind_food","summon"],
+ "theta": [
+  [2.5,0.0,0.0,-0.125],
+  [0.0,1.75,0.0,0.0],
+  [0.0,0.0,1.5,0.0]
+ ],
+ "theta_precision": [
+  [40.5,11.1111,11.1111,12.0],
+  [11.1111,3.25,11.1111,11.1111],
+  [11.1111,11.1111,20.0,11.1111]
+ ],
+ "theta_strength": [
+  [0.5,0.0,0.0,0.0],
+  [0.0,-0.25,0.0,0.0],
+  [0.0,0.0,0.375,0.0]
+ ],
+ "theta_strength_precision": [
+  [15.0,11.1111,11.1111,11.1111],
+  [15.0,11.1111,11.1111,11.1111],
+  [15.0,11.1111,11.1111,11.1111]
+ ],
+ "theta_bias": null,
+ "kappa": 3.125,
+ "u0": {
+  "bias": -1.5,
+  "need": {
+   "health_deficit": 0.25,
+   "encumbrance": 0.0,
+   "hunger": -0.5
+  }
+ },
+ "recent": {
+  "window_s": 30.0,
+  "taus_s": [5.0,30.0],
+  "features": [
+   {
+    "family": "summon",
+    "tau_s": 5.0,
+    "theta": [0.0,0.0,0.0,-0.75],
+    "precision": [11.1111,11.1111,11.1111,14.0],
+    "theta_strength": [0.0,0.0,0.0,0.125],
+    "u0": 0.0625
+   },
+   {
+    "family": "summon",
+    "tau_s": 30.0,
+    "theta": [0.25,0.0,0.0,-0.5],
+    "precision": [12.0,11.1111,11.1111,13.0],
+    "theta_strength": [0.0,0.0,0.0,0.0],
+    "u0": 0.0
+   }
+  ]
+ },
+ "features": [
+  {
+   "name": "ln util",
+   "w": 0.875
+  },
+  {
+   "name": "util missing",
+   "w": -2.25
+  }
+ ],
+ "items": [
+  {
+   "plugin": "ccBGSSSE001-Fish.esm",
+   "local": "00087E",
+   "name": "Roasted Carp",
+   "b": 0.125,
+   "precision": 4.5,
+   "picks": 2
+  },
+  {
+   "plugin": "Skyrim.esm",
+   "local": "03EAF3",
+   "name": "Potion of Minor Healing",
+   "b": 0.375,
+   "precision": 9.5,
+   "picks": 12
+  },
+  {
+   "plugin": "Update.esm",
+   "local": "000801",
+   "name": "Feather on Self",
+   "b": -0.0625,
+   "precision": 4.25,
+   "picks": 1
+  }
+ ],
+ "items_dropped": {
+  "dynamic (FF)": 2,
+  "not in the form map": 1
+ },
+ "curves": {
+  "encumbrance": ["logistic",0.9,40.0]
+ }
+}

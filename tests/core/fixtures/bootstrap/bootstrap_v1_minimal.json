@@ -1,0 +1,41 @@
+{
+ "format": "huginn.bootstrap",
+ "version": 1,
+ "created_utc": "2026-10-28 12:00:00",
+ "source": {
+  "char": "0000000000000001",
+  "launches": 3,
+  "first_launch": "20261009-141228",
+  "last_launch": "20261028-171653",
+  "decisions": 120,
+  "picks": 100,
+  "builds": ["0.23.41 (abc1234)","0.23.50 (def5678)"],
+  "forms": "Huginn_All.csv",
+  "tool": "golden example"
+ },
+ "model": {
+  "spec": "theta + b (doc 9)",
+  "outcomes": "picks",
+  "grading": "graded"
+ },
+ "needs": ["health_deficit","encumbrance"],
+ "cols": ["restore_health","utility_carry_weight"],
+ "theta": [
+  [1.0,0.0],
+  [0.0,1.0]
+ ],
+ "theta_precision": [
+  [1.5,11.1111],
+  [11.1111,1.25]
+ ],
+ "theta_strength": null,
+ "theta_strength_precision": null,
+ "theta_bias": null,
+ "kappa": 2.5,
+ "u0": null,
+ "recent": null,
+ "features": [],
+ "items": [],
+ "items_dropped": {},
+ "curves": {}
+}

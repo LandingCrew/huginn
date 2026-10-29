@@ -133,7 +133,10 @@ def build(D, include_nothing=True, latest_caps=False, v2=None, since=None, until
     recency: the time constants (s) of the recent_<family> features (doc 11 step 2): REC
     (decisions x features), exp(-dt / tau) for each effect family (and kind_*) of the item
     picked last in the launch when that pick is at most max(recency) s old; recency_names.
-    Only the non-zero columns are kept. () skips them."""
+    Only the non-zero columns are kept. () skips them.
+    IN (decisions x needs) holds each context's logged curve inputs (`ctx.in`, the value a
+    need's response curve read), NaN where the context has none: the curve fit (curve.py)
+    re-applies a curve to them."""
     needs, cols, caps, cross = D['needs'], D['cols'], D['caps'], D['cross']
     K, J = len(needs), len(cols)
     CI = {c: j for j, c in enumerate(cols)}
@@ -229,6 +232,7 @@ def build(D, include_nothing=True, latest_caps=False, v2=None, since=None, until
     CLS = np.full((Dn, R), -1, dtype=np.int32)
     Y = np.full(Dn, -1, dtype=np.int32)
     N = np.zeros((Dn, K))
+    IN = np.full((Dn, K), np.nan)             # the logged curve inputs (ctx.in), NaN when absent
     OUT = np.empty(Dn, dtype=object)
     LA = np.zeros(Dn, dtype=np.int32)
     v2ok = np.zeros(Dn, dtype=bool)
@@ -238,6 +242,9 @@ def build(D, include_nothing=True, latest_caps=False, v2=None, since=None, until
     for di, (d, rows) in enumerate(recs):
         for k, v in d['C']['need'].items():
             N[di, k] = v
+        for k, v in (d['C'].get('in') or {}).items():
+            if v is not None:
+                IN[di, k] = v
         OUT[di] = d['out']; LA[di] = LI[d['launch']]
         SEG[di] = bisect.bisect_right(cuts, version(d['build']) or (0,))
         cands = join_v2(v2, d) if (v2 is not None and d['out'] != 'nothing') else None
@@ -271,7 +278,7 @@ def build(D, include_nothing=True, latest_caps=False, v2=None, since=None, until
                      'ep_why': ep_why(d)})
     REC, rec_names = recent_families(D, [d for d, _ in recs], cols, caps, recency)
     return dict(CapMat=CapMat, xcol=xcol, CAPID=CAPID, X=XA, COV=COV, MASK=MASK, INHA=INHA, ITEM=ITEM, SLOT=SLOTA, UTIL=UTILA,
-                V2=V2, CLS=CLS, Y=Y, N=N, OUT=OUT, LA=LA, SEG=SEG, REC=REC, v2ok=v2ok, launches=launches, items=items,
+                V2=V2, CLS=CLS, Y=Y, N=N, IN=IN, OUT=OUT, LA=LA, SEG=SEG, REC=REC, v2ok=v2ok, launches=launches, items=items,
                 classes=classes, meta=meta, K=K, J=J, needs=needs, cols=cols, R=R,
                 segments=segment_names(list(split_at)), recency_names=rec_names)
 
@@ -347,7 +354,8 @@ def recent_families(D, decs, cols, caps, taus):
 
 def subset(S, idx):
     out = dict(S)
-    for k in ('CAPID', 'X', 'COV', 'MASK', 'INHA', 'ITEM', 'SLOT', 'UTIL', 'V2', 'CLS', 'Y', 'N', 'OUT', 'LA', 'SEG', 'REC', 'v2ok'):
+    for k in ('CAPID', 'X', 'COV', 'MASK', 'INHA', 'ITEM', 'SLOT', 'UTIL', 'V2', 'CLS', 'Y', 'N', 'IN', 'OUT', 'LA', 'SEG',
+              'REC', 'v2ok'):
         out[k] = S[k][idx]
     out['meta'] = [S['meta'][i] for i in idx]
     return out
@@ -597,6 +605,153 @@ def yardstick_lines(name, ys, base='A*'):
     return lines
 
 
+def level(res, metric, nboot=2000, seed=2, keep=None):
+    """boot_mean of one YARDSTICK metric of one result list on its own (not paired): the
+    model's level with its launch-bootstrap interval. None without values."""
+    fn = YARDSTICK[metric]
+    by = defaultdict(list)
+    for i, r in enumerate(res):
+        if r is None or (keep is not None and not keep[i]):
+            continue
+        v = fn(r)
+        if v is not None:
+            by[r['launch']].append(float(v))
+    return boot_mean(by, nboot, seed)
+
+
+# ---------------------------------------------------------------------------
+# R6's offline gate (roadmap R6, the user's criterion of 2026-10-28)
+# ---------------------------------------------------------------------------
+# On the 95% launch-bootstrap interval of model - A*: menu picks caught (hit@8) ABOVE A*
+# (the interval's lower end > 0), and all picks pooled (key + wheel + menu) NOT WORSE
+# (its upper end >= 0). Key hit@8 alone is reported, not gated.
+GATE = (('menu hit@8', 'lower', '>', 0.0), ('all picks hit@8', 'upper', '>=', 0.0))
+
+
+def gate(ys):
+    """R6's gate on a yardstick (GATE): (verdict, lines). verdict is False when any condition
+    fails, else None when a gated metric is missing, else True; lines say why, one per condition."""
+    failed = missing = False
+    lines = []
+    for metric, end, op, bound in GATE:
+        if metric not in ys:
+            lines.append(f'{metric}: missing, no verdict')
+            missing = True
+            continue
+        _, _, d, lo, hi, n = ys[metric]
+        x = lo if end == 'lower' else hi
+        ok = x > bound if op == '>' else x >= bound
+        lines.append(f'{metric}: diff {d:+.4f}, {end} end {x:+.4f} {op} {bound:g}: {"ok" if ok else "FAILS"}')
+        failed |= not ok
+    return (False if failed else None if missing else True), lines
+
+
+def verdict_word(v):
+    return {True: 'PASS', False: 'FAIL', None: 'no verdict'}[v]
+
+
+# ---------------------------------------------------------------------------
+# held-out schedules: grouped K-fold by launch, and train-on-past (online)
+# ---------------------------------------------------------------------------
+def fit_eval(Str, Ste, obv, model_kw, nitems, p0=None, maxiter=300):
+    """Fit model_kw on Str (from p0, else the model's init) and evaluate on Ste: (results, p)."""
+    M = Model(Str, obvious=obv, nitems=nitems, **model_kw)
+    Fm, _ = row_features(Str, M.feat_spec)
+    p, _, _ = lbfgs(lambda q: M.loss(Str, q, Fm)[:2], M.init() if p0 is None else p0, maxiter=maxiter)
+    M2 = Model(Ste, obvious=obv, nitems=nitems, **model_kw)
+    return evaluate(M2, Ste, p), p
+
+
+def split_spec(spec):
+    """A cv.py spec dict -> (Model keyword arguments, variants, latest caps?)."""
+    spec = dict(spec)
+    latest = spec.pop('_latest', False)
+    which = spec.pop('_with', [])
+    return spec, which, latest
+
+
+def cv_results(S, obv, spec, FOLD, split_names=None, maxiter=300):
+    """Grouped K-fold held-out results of one spec (cv.py): one entry per decision of S; a fold
+    with no picks held out is not fitted and its decisions carry stubs (no metrics)."""
+    model_kw, which, _ = split_spec(spec)
+    res = [None] * len(S['Y'])
+    for f in np.unique(FOLD):
+        te = np.where(FOLD == f)[0]
+        tr = np.where(FOLD != f)[0]
+        if not (S['Y'][te] >= 0).any() or not len(tr):
+            continue
+        Str, ov = variant(subset(S, tr), obv, which, split_names)
+        Ste, _ = variant(subset(S, te), obv, which, split_names)
+        r, _ = fit_eval(Str, Ste, ov, model_kw, len(S['items']), maxiter=maxiter)
+        for i, x in zip(te, r):
+            res[i] = x
+    return [r if r is not None else {'launch': S['LA'][i], 'out': S['OUT'][i], 'logp': None} for i, r in enumerate(res)]
+
+
+def online_chunks(S, every=5, min_train=150):
+    """The train-on-past schedule (the honest yardstick): yields (train, test) index arrays.
+
+    Decisions are taken in log order -- build() sorts them by (launch, seq), and launch ids
+    (UTC 'YYYYMMDD-HHMMSS') sort chronologically, so the order is the order the game wrote
+    them, i.e. what was known when. A launch is evaluated only when the earlier launches hold at
+    least min_train picks (and at least one); within it the decisions are cut into consecutive chunks of `every`
+    picks (a chunk ends at its every-th pick; the last may be shorter), each tested by a fit on
+    every earlier launch plus the decisions of this launch before the chunk. Decisions of a
+    launch below min_train are never tested but enter the later training sets."""
+    LA = np.asarray(S['LA'])
+    if len(LA) and (np.diff(LA) < 0).any():
+        raise ValueError('online_chunks: decisions are not in launch order (build() sorts them)')
+    pick = np.asarray(S['Y']) >= 0
+    every = max(1, int(every))
+    for L in range(len(S['launches'])):
+        idxL = np.where(LA == L)[0]
+        if not len(idxL):
+            continue
+        past = np.where(LA < L)[0]
+        if pick[past].sum() < max(1, min_train):        # never a fit on no picks
+            continue
+        start = 0
+        while start < len(idxL):
+            end, n = start, 0
+            while end < len(idxL) and n < every:
+                n += int(pick[idxL[end]])
+                end += 1
+            yield np.concatenate([past, idxL[:start]]), idxL[start:end]
+            start = end
+
+
+def online_results(S, obv, spec, every=5, min_train=150, split_names=None, maxiter=300, progress=None):
+    """The online replay of one spec over online_chunks: one refit per chunk, warm-started from
+    the previous chunk's fit (itself fitted on strictly earlier decisions). Returns (results,
+    fits): results aligned with S, None for a decision never tested."""
+    model_kw, which, _ = split_spec(spec)
+    res = [None] * len(S['Y'])
+    p, fits = None, 0
+    for tr, te in online_chunks(S, every, min_train):
+        Str, ov = variant(subset(S, tr), obv, which, split_names)
+        Ste, _ = variant(subset(S, te), obv, which, split_names)
+        r, p = fit_eval(Str, Ste, ov, model_kw, len(S['items']), p0=p, maxiter=maxiter)
+        for i, x in zip(te, r):
+            res[i] = x
+        fits += 1
+        if progress:
+            progress(fits, int(S['LA'][te[0]]))
+    return res, fits
+
+
+def astar_online(S, every=5, min_train=150):
+    """A* on the online schedule: the same ranking (hit@k does not depend on the schedule), its
+    page temperature fitted on each chunk's training decisions only. None where not tested."""
+    rank, z = astar_scores(S)
+    sp = np.zeros_like(z)
+    tested = np.zeros(len(S['Y']), dtype=bool)
+    for tr, te in online_chunks(S, every, min_train):
+        sp[te] = page_temperature(S, z, tr) * z[te]
+        tested[te] = True
+    res = metrics_from_scores(S, sp, rank, None)
+    return [r if tested[i] else None for i, r in enumerate(res)]
+
+
 # ---------------------------------------------------------------------------
 # row features for baselines
 # ---------------------------------------------------------------------------
@@ -636,7 +791,10 @@ def row_features(S, spec):
 class Model:
     def __init__(self, S, theta=True, item=True, kappa=True, outside=True, feat_spec=(), T0=1.0,
                  sig_obv=1.0, sig_dense=0.3, sig_b=0.5, sig_u=1.0, sig_w=10.0, bias_need=False, obvious=None,
-                 nitems=None):
+                 nitems=None, theta_fixed=None):
+        """theta_fixed: an optional bool mask (needs x columns, without the bias need) of theta
+        weights held at their prior centre theta0: their gradient is zeroed, so a fit started from
+        init() (or from a p that holds them at theta0) never moves them (curve.py)."""
         self.theta, self.item, self.kappa, self.outside = theta, item, kappa, outside
         self.feat_spec = list(feat_spec)
         self.K = S['K'] + (1 if bias_need else 0); self.J = S['J']
@@ -646,6 +804,10 @@ class Model:
         self.theta0 = np.zeros((self.K, self.J)); self.sig = np.full((self.K, self.J), sig_dense)
         for (k, j), sgn in (obvious or {}).items():
             self.theta0[k, j] = sgn * T0; self.sig[k, j] = sig_obv
+        self.fixed = None
+        if theta_fixed is not None:
+            self.fixed = np.zeros((self.K, self.J), dtype=bool)
+            self.fixed[:theta_fixed.shape[0], :theta_fixed.shape[1]] = theta_fixed
         F_, self.fnames = row_features(S, self.feat_spec)
         self.nf = len(self.fnames)
         # layout
@@ -721,6 +883,8 @@ class Model:
             E = Gcap @ S['CapMat']                              # D x J
             E[:, S['xcol']] += np.einsum('drx,dr->dx', S['X'], Gr)
             gT = N.T @ E
+            if self.fixed is not None:
+                gT[self.fixed] = 0.0
             a, b = self.off['theta']; grad[a:b] = gT.ravel()
         if self.item:
             a, b = self.off['b']
@@ -736,6 +900,8 @@ class Model:
             if self.theta:
                 a, b = self.off['theta']
                 dlt = (p[a:b] - self.theta0.ravel()); s2 = self.sig.ravel() ** 2
+                if self.fixed is not None:
+                    dlt = np.where(self.fixed.ravel(), 0.0, dlt)
                 f += 0.5 * (dlt ** 2 / s2).sum(); grad[a:b] += dlt / s2
             if self.item:
                 a, b = self.off['b']

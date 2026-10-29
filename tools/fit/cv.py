@@ -59,6 +59,9 @@ PICKS = {
     # the old engine's utility as one more feature (the 2026-10-28 rehearsal's best variant)
     'theta + b + A* feature (ln util)': dict(outside=False, feat_spec=['astar']),
     'theta + b + recent + A* feature': dict(outside=False, feat_spec=['astar'], _with=['recent']),
+    # without b: what transfers to a new character (b is per item, of this one; the R6 verifier
+    # of 2026-10-28 found b costs held-out hits on items the training set never picked)
+    'theta + recent + A* feature (no b)': dict(outside=False, item=False, feat_spec=['astar'], _with=['recent']),
 }
 PICKS_SPLIT = {   # only with --split-at
     'theta + b, needs split by build': dict(outside=False, _with=['split']),
@@ -143,26 +146,10 @@ def main(argv=None):
 
     results, timing = {}, {}
     for name, spec in specs.items():
-        spec = dict(spec)
-        SS = S_latest if spec.pop('_latest', False) else S
-        which = spec.pop('_with', [])
+        SS = S_latest if split_spec(spec)[2] else S
         t0 = time.time()
-        res = [None] * len(SS['Y'])
-        for f in range(nf):
-            te = np.where(FOLD == f)[0]
-            tr = np.where(FOLD != f)[0]
-            if not (SS['Y'][te] >= 0).any() or not len(tr):
-                continue
-            Str, ov = variant(subset(SS, tr), obv, which, a.split_needs)
-            Ste, _ = variant(subset(SS, te), obv, which, a.split_needs)
-            M = Model(Str, obvious=ov, nitems=len(SS['items']), **spec)
-            p = fit(M, Str, maxiter=300)
-            M2 = Model(Ste, obvious=ov, nitems=len(SS['items']), **spec)
-            for i, r in zip(te, evaluate(M2, Ste, p)):
-                res[i] = r
-        # a fold that was not fitted (no picks held out): stubs keep the list aligned with meta
-        results[name] = [r if r is not None else {'launch': SS['LA'][i], 'out': SS['OUT'][i], 'logp': None}
-                         for i, r in enumerate(res)]
+        # a fold that was not fitted (no picks held out) gets stubs, so the list stays aligned with meta
+        results[name] = cv_results(SS, obv, spec, FOLD, a.split_needs, maxiter=300)
         timing[name] = time.time() - t0
         P(f'[{timing[name]:.0f}s] {name}')
 
