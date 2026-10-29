@@ -113,6 +113,7 @@ contexts per segment and clears both at a head.
 | `filters` | string[19] | (0.23.46) the candidate filters' reasons, in order (`row.fb` indexes it; `core/FilterReason.h`). 15 before 0.23.55 (no `no_follower` .. `favorite_suppressed`); absent before 0.23.46 |
 | `floors` | string[5] | (0.23.53) how the old engine's floors treated an eligible row, in order: `pass`, `cold`, `ctx`, `util`, `suppressed` (`row.fl` indexes it; `core/OldScore.h`, [below](#the-old-engines-score-parts-02353)). `suppressed` is not written from 0.23.55 (a suppressed favourite is a filter drop, `favorite_suppressed`); the name stays so older rows read. Absent before 0.23.53 |
 | `episode` | object | the episode definition in force: `onset`, `expiry`, `minSec`, `graceSec`, `answerSlackSec`, and `deathDrops: 1` (0.23.16: a death drops the open episodes and those in their grace; absent = 0.23.15, where a death could leave `nothing` records), and `lapSec`, `lapMaxStepSec`, `lapIdleSec` (0.23.51: the lap grid and the idle hold of its clock, [Laps](#laps); absent = every episode judged whole, no lap records). `replay.head_lap_sec(head)` reads it |
+| `refreshPriorSec` | float | (0.23.55) `[Scoring] fRefreshPriorSec` in force: the centre of `covered`'s left(r) prior, and the active-buff filters' refresh window. A hot reload that changes it starts a new segment before the next record, as the curves do (a context taken before the reload and written after it is the one record that can carry the old centre). Absent before 0.23.55: the centre was 5 s |
 | `curves` | [kind, p1, p2][] | (0.23.41) the `[Needs]` response curves in force, index-aligned with `needs`: `["logistic", 0.5, 10]` (`core/ResponseCurve.h`), so a fit knows which curve made every logged `need` value from its `in`. A hot reload that changes a curve starts a new segment (a new head line) before the next record. Absent before 0.23.41: those segments used their build's `needs.csv` defaults unless the INI overrode them. `replay.head_curves(head)` reads it |
 
 ### `cap`
@@ -273,8 +274,8 @@ session's first run (`pipe.ok` 0) has no `old` and no parts.
 
 **The floors** (`fl`), read off the same tests `UtilityScorer::ScoreCandidates`
 applies, in its order: a favourite under favourites mode Suppress is never
-scored (`suppressed`; before 0.23.55 only, when such a favourite became a
-filter drop); a non-favourite under `minCtx` is dropped (`ctx`);
+scored (`suppressed`; written until 0.23.55, when such a favourite became a
+filter drop, `favorite_suppressed`); a non-favourite under `minCtx` is dropped (`ctx`);
 anything else not kept fell under `minUtil` (`util`). A kept row is `pass`, or
 `cold` when the cold-start rescue kept it (fewer than `topN` rows passed, and
 its context was raised to max(`cw`, `coldBoost` × `ucb`)). The cold start
@@ -340,8 +341,10 @@ active-effect walk `StateManager_MagicEffects.cpp`), logging only:
   unknown strength.
 - r_j: the remaining seconds (duration - elapsed) of the longest-lived such
   effect; none for a constant effect (worn gear), which never runs out.
-- left(r): the refresh prior of doc 11 decision 4, a logistic centred at 5 s
-  with scale 2 s (0.08 at 0 s, 0.5 at 5 s, 0.99 at 15 s), 1 with no timer. A
+- left(r): the refresh prior of doc 11 decision 4, a logistic centred at
+  `[Scoring] fRefreshPriorSec` (from 0.23.55; the head's `refreshPriorSec`,
+  default 5 s; a fixed 5 s before) with scale 2 s (at the default: 0.08 at
+  0 s, 0.5 at 5 s, 0.99 at 15 s), 1 with no timer. A
   buff with a few seconds left reads partly uncovered. It is a prior: `cr` is
   the r of the column that gave the value, so a fit can undo it exactly
   (covered / left(cr)) and apply its own curve.

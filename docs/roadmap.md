@@ -934,7 +934,27 @@ changed in the same PR, and the shipped INI loses the dead keys.
         `filtered_by` instead of eligible-unscored (`fl` `ctx`, or
         `suppressed`, which is no longer written); a spell for others at
         context weight 0 can no longer be raised by the cold start; buffs come
-        back in their last `fRefreshPriorSec` seconds.
+        back in their last `fRefreshPriorSec` seconds (a summon spell at the
+        limit in the last seconds of the oldest summon, the one a cast
+        dismisses: never while a thrall or an untimed summon is the oldest).
+        The gates run before dedup and truncation, so a gated item no longer
+        takes a dedup key or a `maxCandidatesAfterFilter` place (the 10.8k
+        logged decisions have no `duplicate` or `truncated` row).
+      - The combat clock differs from the old timer. The old one advanced by
+        the tick's `deltaSeconds` (`UtilityScorer::Update` from
+        `UpdateSubsystems`): not at all while the world is unloaded (the tick
+        returns early through load screens and every load door), and at most
+        1 s across any gap between ticks (an alt-tab, a stall). The new one is
+        `NeedClock` (`steady_clock`), so load-door, alt-tab and gap time count
+        in full: `fCombatStartWindow` (10 s) can run out behind a load door
+        where the old timer was still inside it. And the old state outlived a
+        load: `UtilityScorer::Reset` never reset the discriminator, so a save
+        loaded mid-fight into a non-combat save kept `m_inCombat` true, and the
+        sustained-combat regen multiplier stayed on until the next combat exit.
+        The new clock reads `isInCombat`, so that is gone. Re-entering combat
+        inside the window restarts both clocks alike.
+      - The v3 head records `refreshPriorSec` (`covered(i)`'s `left(r)`
+        centre); a hot reload that changes it starts a new segment.
 - [ ] With those sensors, doc 11 step 7: the attacker's race on every hit and
       `poison_damage_rate`, for anticipatory resists.
 - [ ] **Decide: which thread runs the update loop** (2026-10-09, two Tracy

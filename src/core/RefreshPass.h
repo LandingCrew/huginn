@@ -18,8 +18,10 @@
 //   - resist: the element's resistance stays over the threshold until enough
 //     of its timed parts have ended (ResistTimeLeft); the part no effect
 //     explains (abilities, gear, a racial resistance) is taken as permanent;
-//   - summon_limit: the count stays at the limit until enough summons have
-//     timed out (SummonTimeLeft).
+//   - summon_limit: a cast at the limit dismisses the oldest commanded summon
+//     or thrall, so the block is that one's timer: Coverage::OldestRemaining,
+//     the same value covered(i) reads (a thrall or any untimed summon as the
+//     oldest: never due).
 //
 // The state layer computes the bits on each magic-effects poll
 // (StateManager_MagicEffects.cpp, ActorBuffs::refreshDue), so a crossing marks
@@ -161,27 +163,6 @@ namespace Huginn::Core::Refresh
         return kNoTimer;   // unreachable: before part 0 ends the value is `total`, over the threshold
     }
 
-    /// Seconds until `count` living commanded actors fall below the limit
-    /// (`limit`, already a count: Coverage::SummonLimitCount): the end of the
-    /// (count - limit + 1)-th soonest timer among them; 0 below the limit;
-    /// kNoTimer when fewer of them have a timer than must end. `remainings`:
-    /// each commanded actor's remaining seconds (kNoTimer: none).
-    template <class Range>
-    [[nodiscard]] constexpr float SummonTimeLeft(const Range& remainings, int count, int limit) noexcept
-    {
-        const int need = count - std::max(limit, 1) + 1;
-        if (need <= 0) return 0.0f;
-        constexpr std::size_t kMaxTimers = 16;
-        std::array<float, kMaxTimers> timed{};
-        std::size_t n = 0;
-        for (const float r : remainings) {
-            if (r >= 0.0f && n < kMaxTimers) timed[n++] = r;
-        }
-        if (static_cast<std::size_t>(need) > n) return kNoTimer;
-        std::sort(timed.begin(), timed.begin() + static_cast<std::ptrdiff_t>(n));
-        return timed[static_cast<std::size_t>(need) - 1];
-    }
-
     /// What the poll reads to decide which blocks are due.
     struct Inputs
     {
@@ -190,7 +171,7 @@ namespace Huginn::Core::Refresh
         std::array<float, kElementCount> resistTotal{};   // the player's resistance per element
         float resistThreshold = 50.0f;                    // the resist filter's threshold
         bool summonBlocked = false;                       // the summon limit reached (the filter's test)
-        float summonLeft = kNoTimer;                      // SummonTimeLeft
+        float summonLeft = kNoTimer;                      // Coverage::OldestRemaining
     };
 
     /// The blocks due for their refresh: blocking now, and ending within refreshSec.

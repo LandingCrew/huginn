@@ -40,12 +40,10 @@ namespace Huginn::Candidate
         template <class T>
         [[nodiscard]] std::optional<R> HardGate(const T& c, const Core::Gate::Inputs& g) noexcept
         {
-            // A favourite under Suppress (as Candidate::IsFavorited: only
-            // spells and weapons carry the flag).
-            if constexpr (std::is_same_v<T, SpellCandidate> || std::is_same_v<T, WeaponCandidate>) {
-                if (Core::Gate::FavoriteSuppressed(c.isFavorited, g.suppressFavorites))
-                    return R::favorite_suppressed;
-            }
+            // A favourite under Suppress (IsFavoritedCandidate: the one test
+            // Candidate::IsFavorited and the scorer read too).
+            if (Core::Gate::FavoriteSuppressed(IsFavoritedCandidate(c), g.suppressFavorites))
+                return R::favorite_suppressed;
             if constexpr (std::is_same_v<T, SpellCandidate>) {
                 if (Core::Gate::NoFollower(Spell::HasTagExt(c.tagsExt, Spell::SpellTagExt::TargetsOthers), g.followerNear))
                     return R::no_follower;

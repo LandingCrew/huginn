@@ -195,23 +195,52 @@ TEST_CASE("refresh pass: the resist block, timed parts against a permanent base"
     CHECK(full.n == ResistParts::kMax);
 }
 
-TEST_CASE("refresh pass: the summon limit block")
+TEST_CASE("refresh pass: the summon limit block is the oldest summon's timer")
 {
-    using Refresh::SummonTimeLeft;
-    const std::vector<float> one{ 3.0f };
-    CHECK(SummonTimeLeft(one, 1, 1) == 3.0f);                 // vanilla: the one summon's timer
-    CHECK(SummonTimeLeft(one, 1, 2) == 0.0f);                 // Twin Souls, one up: not blocking
-    const std::vector<float> two{ 40.0f, 6.0f };
-    CHECK(SummonTimeLeft(two, 2, 2) == 6.0f);                 // the first to time out frees the limit
-    CHECK(SummonTimeLeft(two, 3, 2) == 40.0f);                // over the limit: two must end
-    const std::vector<float> thrall{ Refresh::kNoTimer };
-    CHECK(SummonTimeLeft(thrall, 1, 1) == Refresh::kNoTimer); // a thrall never times out
-    const std::vector<float> mixed{ Refresh::kNoTimer, 9.0f };
-    CHECK(SummonTimeLeft(mixed, 2, 2) == 9.0f);               // the timed summon frees the second place
-    CHECK(SummonTimeLeft(mixed, 2, 1) == Refresh::kNoTimer);  // limit 1: the thrall must end too
-    const std::vector<float> unknown{};
-    CHECK(SummonTimeLeft(unknown, 1, 1) == Refresh::kNoTimer);  // counted but not listed: never
-    CHECK(SummonTimeLeft(one, 1, 0) == 3.0f);                 // a limit under 1 is 1
+    // A cast at the limit dismisses the oldest commanded summon or thrall, so
+    // the block ends with that one: Coverage::OldestRemaining, the value
+    // covered(i) reads. ComputeDue reads it as Inputs::summonLeft.
+    using K = Coverage::CommandedActor::Kind;
+    const auto due = [](const std::vector<Coverage::CommandedActor>& list, int count, float limit) {
+        Refresh::Inputs in;
+        in.summonBlocked = Coverage::SummonLimitReached(count, limit);
+        in.summonLeft = Coverage::OldestRemaining(list);
+        return Refresh::IsDue(Refresh::ComputeDue(in, 5.0f), Refresh::Block::summon_limit);
+    };
+
+    // Vanilla: the one summon's timer.
+    const std::vector<Coverage::CommandedActor> one{ { 1, 11, K::Summon, 3.0f, 57.0f } };
+    CHECK(due(one, 1, 1.0f));
+    CHECK_FALSE(due(one, 1, 2.0f));                     // Twin Souls, one up: not blocking
+
+    // Twin Souls, two timed summons: the oldest (largest elapsed) decides,
+    // even when the younger one would time out first.
+    const std::vector<Coverage::CommandedActor> two{
+        { 1, 11, K::Summon, 40.0f, 80.0f },             // the oldest: 40 s left
+        { 2, 12, K::Summon, 3.0f, 10.0f },              // younger, 3 s left
+    };
+    CHECK(Coverage::OldestRemaining(two) == 40.0f);
+    CHECK_FALSE(due(two, 2, 2.0f));
+
+    // Twin Souls with a Dead Thrall (the oldest, no timer) and one timed
+    // summon in its last seconds: a cast would dismiss the thrall, so the
+    // block never ends on a timer -- never due.
+    const std::vector<Coverage::CommandedActor> thrall{
+        { 1, 11, K::Reanimate, Coverage::kNoTimer, 900.0f },
+        { 2, 12, K::Summon, 3.0f, 57.0f },
+    };
+    CHECK(Coverage::OldestRemaining(thrall) == Coverage::kNoTimer);
+    CHECK_FALSE(due(thrall, 2, 2.0f));
+
+    // A commanded actor of another kind is not a summon slot: skipped.
+    const std::vector<Coverage::CommandedActor> other{
+        { 1, 11, K::Other, Coverage::kNoTimer, 900.0f },
+        { 2, 12, K::Summon, 3.0f, 57.0f },
+    };
+    CHECK(due(other, 1, 1.0f));
+
+    // Counted but not listed: no timer, never due.
+    CHECK_FALSE(due({}, 1, 1.0f));
 }
 
 TEST_CASE("refresh pass: ComputeDue sets a bit only while the block holds and ends soon")

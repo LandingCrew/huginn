@@ -319,19 +319,22 @@ namespace Huginn::Candidate
         return GetBase(v).name;
     }
 
-    // Helper: Check if candidate is favorited. Single source of truth — used by
-    // both ScoredCandidate::IsFavorited and UtilityScorer's favorites gate.
-    // Only spells and weapons carry a favorites flag.
+    // Helper: Check if candidate is favorited. Single source of truth -- used by
+    // ScoredCandidate::IsFavorited, the favorite_suppressed filter (R8.1,
+    // CandidateFilters) and the scorer's favourites logic. A candidate type is
+    // favourited when it carries an isFavorited flag (today spells and
+    // weapons); a type that gains one is picked up by every caller at once.
+    template <class T>
+    [[nodiscard]] constexpr bool IsFavoritedCandidate(const T& c) noexcept {
+        if constexpr (requires { c.isFavorited; }) {
+            return c.isFavorited;
+        } else {
+            return false;  // Items, scrolls, ammo don't have favorites
+        }
+    }
+
     [[nodiscard]] inline bool IsFavorited(const CandidateVariant& v) noexcept {
-        return std::visit([](const auto& c) -> bool {
-            using T = std::decay_t<decltype(c)>;
-            if constexpr (std::is_same_v<T, SpellCandidate> ||
-                          std::is_same_v<T, WeaponCandidate>) {
-                return c.isFavorited;
-            } else {
-                return false;  // Items, scrolls, ammo don't have favorites
-            }
-        }, v);
+        return std::visit([](const auto& c) -> bool { return IsFavoritedCandidate(c); }, v);
     }
 
     // NOTE: GetRelevance() helper removed in v0.12.x - use ContextRuleEngine.Evaluate() instead

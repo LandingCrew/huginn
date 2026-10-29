@@ -230,7 +230,10 @@ constant effect) never runs out, so its block never passes.
 - resist: the element's resistance stays over `resistThresholdToFilter` until enough of its
   timed parts (value modifiers on the element's AV, weaknesses subtracting) have ended;
   whatever no timed effect explains (gear, a race, an ability) is permanent;
-- summon_limit: the count stays at the limit until enough commanded actors time out.
+- summon_limit: a cast at the limit dismisses the oldest commanded summon or thrall, so the
+  block ends with that one's timer (`Coverage::OldestRemaining`, the value `covered(i)` reads,
+  so the two cannot disagree). With a thrall or any untimed summon as the oldest, it never
+  passes, even while a younger summon is in its last seconds.
 
 The magic-effects poll computes one bit per block (`ActorBuffs::refreshDue`, against the
 window and the threshold pushed into `StateManager`), so a block entering its last seconds

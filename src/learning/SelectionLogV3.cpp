@@ -1017,6 +1017,8 @@ namespace Huginn::Learning::SelectionLogV3
                 head.lapIdleSec = p.lapIdleSec;
                 head.curves = std::move(curves);
                 m_headCurves = head.curves;
+                head.refreshPriorSec = State::StateManager::GetSingleton().GetRefreshPriorSec();
+                m_headRefreshPriorSec = head.refreshPriorSec;
                 const std::string line = m_encoder.BeginSegment(head);
                 m_ctxSeen.clear();
                 m_out << line;
@@ -1074,6 +1076,12 @@ namespace Huginn::Learning::SelectionLogV3
                     WriteHead(std::move(curves));
                     logger::info("[SelectionV3] [Needs] curves changed: new segment (head line written)"sv);
                 }
+                // R8.1 (0.23.55): the same for [Scoring] fRefreshPriorSec,
+                // covered(i)'s left(r) centre, which the head records.
+                else if (State::StateManager::GetSingleton().GetRefreshPriorSec() != m_headRefreshPriorSec) {
+                    WriteHead(std::move(curves));
+                    logger::info("[SelectionV3] [Scoring] fRefreshPriorSec changed: new segment (head line written)"sv);
+                }
                 d.seq = ++m_seq;
                 const bool ctxNew = d.ctx && !m_ctxSeen.contains(d.ctx->id);
                 const size_t capsBefore = m_encoder.CapsDefined();
@@ -1130,6 +1138,7 @@ namespace Huginn::Learning::SelectionLogV3
             std::uintmax_t m_fileBytes = 0;
             std::unordered_set<uint64_t> m_ctxSeen;   // for the debug line (the encoder decides)
             std::vector<Core::Needs::Curve> m_headCurves;   // the curves the current segment's head names
+            float m_headRefreshPriorSec = Core::Refresh::kDefaultRefreshSec;   // the left(r) centre the head names (R8.1)
             uint64_t m_seq = 0;
             bool m_truncatedTest = false;
             bool m_rotationFailed = false;

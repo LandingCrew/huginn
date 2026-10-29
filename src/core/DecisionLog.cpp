@@ -253,6 +253,8 @@ namespace Huginn::Core::DecisionLog
             AppendSeconds(out, head.lapIdleSec);
         }
         out += '}';
+        out += R"(,"refreshPriorSec":)";   // 0.23.55: covered(i)'s left(r) centre
+        AppendSeconds(out, head.refreshPriorSec);
         if (!head.curves.empty()) {
             out += R"(,"curves":[)";
             for (std::size_t i = 0; i < head.curves.size(); ++i) {

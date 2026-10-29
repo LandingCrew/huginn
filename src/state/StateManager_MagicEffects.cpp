@@ -14,7 +14,6 @@
 #include "../util/NameMatch.h"
 #include "../effect/EffectCatalog.h"
 #include "core/RefreshPass.h"   // the refresh pass (R8.1)
-#include <ranges>
 
 namespace Huginn::State
 {
@@ -827,12 +826,11 @@ namespace Huginn::State
     coverage.summons = summonCount;
     coverage.summonLimit = newBuffs.summonLimit;
     coverage.summonRemaining = Core::Coverage::OldestRemaining(commanded);
-    // R8.1: the summon filter's block (the summon filter's own test) and when
-    // enough of the commanded actors time out to free a place.
+    // R8.1: the summon filter's block (the summon filter's own test), and the
+    // timer of the summon a cast would dismiss -- the oldest -- which is what
+    // covered(i) reads too, so the filter and covered(i) cannot disagree.
     refresh.summonBlocked = Core::Coverage::SummonLimitReached(summonCount, newBuffs.summonLimit);
-    refresh.summonLeft = Core::Refresh::SummonTimeLeft(
-        commanded | std::views::transform([](const Core::Coverage::CommandedActor& c) { return c.remaining; }),
-        summonCount, Core::Coverage::SummonLimitCount(newBuffs.summonLimit));
+    refresh.summonLeft = coverage.summonRemaining;
     {
       std::unique_lock lock(m_coverageMutex);
       m_coverage.valid = catalogReady;

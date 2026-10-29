@@ -525,6 +525,11 @@ TEST_CASE("decision log: the old engine's columns end at the last one set (0.23.
     CHECK(head.find(R"("fb","cr","est","a","n","ucb","rec","prior","cw","fl","wu","hk"])") != std::string::npos);
     CHECK(head.find(R"("addedAtPick":256,"favorite":512})") != std::string::npos);
     CHECK(head.find(R"("floors":["pass","cold","ctx","util","suppressed"])") != std::string::npos);
+    // 0.23.55: covered(i)'s left(r) centre, [Scoring] fRefreshPriorSec.
+    CHECK(head.find(R"(,"refreshPriorSec":5.000)") != std::string::npos);
+    Head h = Synthetic::MakeHead();
+    h.refreshPriorSec = 3.0f;
+    CHECK(Encoder().BeginSegment(h).find(R"(,"refreshPriorSec":3.000)") != std::string::npos);
 }
 
 TEST_CASE("decision log: a pick carries the v2 record id; nothing carries none (0.23.53)")

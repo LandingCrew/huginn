@@ -22,14 +22,16 @@ namespace Huginn::Context
                 // A spell for someone else answers that someone: nothing without
                 // a follower near, and a heal only for a follower's wound --
                 // never the caster's own health or armour.
-                if (HasTagExt(c.tagsExt, SpellTagExt::TargetsOthers)) {
-                    // R8.1 (0.23.55): unreachable in a pipeline run. The
-                    // no_follower filter (CandidateFilters, Core::Gate::NoFollower
-                    // on Context::FollowerNear) drops these first. Kept for the
-                    // legacy feature path until PR 2; the two read one test.
-                    if (!weights.followerPresent) {
-                        return 0.0f;
-                    }
+                const bool targetsOthers = HasTagExt(c.tagsExt, SpellTagExt::TargetsOthers);
+                // R8.1 (0.23.55): unreachable in a pipeline run. The
+                // no_follower filter (CandidateFilters) drops these first, on
+                // the same Core::Gate::NoFollower; followerPresent is
+                // Context::FollowerNear, the fact the filter reads. Kept for
+                // the legacy feature path until PR 2.
+                if (Core::Gate::NoFollower(targetsOthers, weights.followerPresent)) {
+                    return 0.0f;
+                }
+                if (targetsOthers) {
                     float forOthers = std::max(weights.spellWeight, weights.baseRelevanceWeight);
                     if (HasTag(c.tags, SpellTag::RestoreHealth)) {
                         forOthers = std::max(forOthers, weights.allyHealWeight);
@@ -358,11 +360,13 @@ namespace Huginn::Context
             // =====================================================================
             else if constexpr (std::is_same_v<T, Candidate::ScrollCandidate>) {
                 // A scroll for someone else: as the spell arm above.
-                if (HasTagExt(c.tagsExt, Scroll::ScrollTagExt::TargetsOthers)) {
-                    // R8.1: unreachable in a pipeline run (the no_follower filter).
-                    if (!weights.followerPresent) {
-                        return 0.0f;
-                    }
+                const bool targetsOthers = HasTagExt(c.tagsExt, Scroll::ScrollTagExt::TargetsOthers);
+                // R8.1: unreachable in a pipeline run (the no_follower filter,
+                // the same Core::Gate::NoFollower).
+                if (Core::Gate::NoFollower(targetsOthers, weights.followerPresent)) {
+                    return 0.0f;
+                }
+                if (targetsOthers) {
                     float forOthers = std::max(weights.spellWeight, weights.baseRelevanceWeight);
                     if (HasTag(c.tags, Scroll::ScrollTag::RestoreHealth)) {
                         forOthers = std::max(forOthers, weights.allyHealWeight);

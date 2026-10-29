@@ -272,6 +272,12 @@ namespace Huginn::Core::DecisionLog
         /// curve made each logged value. A change of curves mid-launch (a hot
         /// reload) starts a new segment.
         std::vector<Needs::Curve> curves;
+        /// 0.23.55 (R8.1): [Scoring] fRefreshPriorSec, the centre of
+        /// covered(i)'s left(r) prior (and the refresh pass's window), written
+        /// as "refreshPriorSec". A change mid-launch (a hot reload) starts a
+        /// new segment, as the curves do. A head without it (before 0.23.55)
+        /// centred left(r) at 5 s.
+        float refreshPriorSec = 5.0f;
     };
 
     // --- JSON helpers ---------------------------------------------------------
