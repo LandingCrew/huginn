@@ -665,6 +665,32 @@ Map Phase 4, in `tools/fit` (the scripts and their flags: [tools/fit/README.md](
   page hit@1 −2.5 [−3.9, −1.2]); presence + strength − presence −0.1 [−0.7,
   +0.7]. The full tables: the PR's description; the bootstrap's `provenance`
   holds every row above.
+  - *Joined picks only (the verifier of 2026-10-29: an evaluation leak).* 27
+    of the 1,715 tested picks, all menu equips (armour picks write no v2
+    record), have no v2 record, so `ln learn mult` (D2) and the
+    favourite/correlation/potion features (D5) read 0 on every row of those
+    picks: an all-zero decision tells the model the pick was an unscored item.
+    On those 27, D2 and D5 hit 74.1%, tbra (ln util read from v3, no leak)
+    51.9%, L1 59.3%, A* 0%. On the 1,688 joined picks, online: D2 menu +37.9
+    [+32.4, +44.1], pooled −3.6 [−7.8, +0.3]; D5 pooled −2.5 [−6.6, +1.5];
+    tbra menu +37.1 [+32.0, +43.4], pooled −3.0 [−6.1, +0.0]; L1 pooled −6.2
+    [−10.6, −1.9]. The gate verdicts do not change, but D2's pooled upper end
+    falls from +1.6 to +0.3, and paired D2 − tbra on menu goes from +2.2
+    [−0.4, +4.3] to +0.8 [−1.9, +3.0] (pooled −0.6 [−2.3, +1.0]): **D2's menu
+    lead over tbra is mostly this artefact.** CV (all) has the same leak (37
+    unjoined picks); joined, D2 pools −2.7 [−6.2, +0.7] and tbra −2.6 [−5.5,
+    +0.5]. The bootstrap's `provenance` carries the joined-only yardstick of
+    every spec (`metrics_online_joined`). The shipped fit still trains on
+    those decisions (not fixed here: carrying the learn score forward or
+    dropping them is a refit); the train/serve side of the same zeros is in
+    the format doc.
+  - *Selection.* D2 was picked from about 25 component variants (the
+    component test), all scored on this same online replay, so its pooled
+    upper end after that selection (+1.6; +0.3 on joined picks) is weak
+    evidence that it is not worse than A*. It ties with tbra, the variant the
+    rehearsal fixed in advance (paired D2 − tbra pooled −0.2 [−2.0, +1.4];
+    −0.6 [−2.3, +1.0] joined): the case for D2 is that it ties tbra with less
+    of the old score, not that it beats it.
   - **Chosen for R8's bootstrap: D2**, θ + b + κ + `recent_<family>` +
     `ln learn mult` + `util missing`. It passes the gate on the online replay
     and is the smallest part of the old score that does: **no variant without
@@ -740,11 +766,13 @@ Map Phase 4, in `tools/fit` (the scripts and their flags: [tools/fit/README.md](
   ([architecture/9-bootstrap-format.md](architecture/9-bootstrap-format.md);
   golden examples in `tests/core/fixtures/bootstrap/`), with b keyed by plugin
   + local FormID.
-- [x] Conditional logit with the three outcomes (key, menu at cost κ, nothing),
+- [ ] Conditional logit with the three outcomes (key, menu at cost κ, nothing),
       u0 per need, sparse θ, small b, Plackett–Luce co-picks; split by launch.
-      *Run in the real fit (above, "Three outcomes"), on the old logs as they
-      are: none reaches 0.23.51, so neither `--since` nor `--split-at 0.23.51`
-      has a new segment, and the bias below stays in.*
+      *Not done: the real fit ran it (above, "Three outcomes") only as a
+      plain fit over the old logs, which the data note below rules out (none
+      reaches 0.23.51, so neither `--since` nor `--split-at 0.23.51` had a new
+      segment, and the bias stays in). Those numbers are a preview; the box
+      waits for a run on 0.23.51+ data.*
       **Data (0.23.51):** logs before 0.23.51 have no lap records and read the
       quarterstaff as `loadout_two_handed`; run the three-outcome group with
       `--since 0.23.51`, or `--split-at 0.23.51` (the default

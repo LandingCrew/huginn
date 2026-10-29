@@ -4555,6 +4555,287 @@
     "gate": "FAIL"
    }
   },
+  "metrics_online_joined": {
+   "theta + b (doc 9)": {
+    "key/wheel hit@8": {
+     "model": 56.3,
+     "astar": 87.1,
+     "diff": -30.8,
+     "ci95": [-34.9,-27.3],
+     "n": 1300
+    },
+    "menu hit@8": {
+     "model": 47.9,
+     "astar": 19.6,
+     "diff": 28.4,
+     "ci95": [22.7,35.3],
+     "n": 388
+    },
+    "all picks hit@8": {
+     "model": 54.4,
+     "astar": 71.6,
+     "diff": -17.2,
+     "ci95": [-20.9,-13.6],
+     "n": 1688
+    },
+    "page hit@1": {
+     "model": 42.3,
+     "astar": 20.2,
+     "diff": 22.2,
+     "ci95": [18.1,25.8],
+     "n": 1300
+    },
+    "gate": "FAIL"
+   },
+   "theta + b, presence grading": {
+    "key/wheel hit@8": {
+     "model": 56.8,
+     "astar": 87.1,
+     "diff": -30.3,
+     "ci95": [-35.2,-26.4],
+     "n": 1300
+    },
+    "menu hit@8": {
+     "model": 52.3,
+     "astar": 19.6,
+     "diff": 32.7,
+     "ci95": [27.0,39.3],
+     "n": 388
+    },
+    "all picks hit@8": {
+     "model": 55.7,
+     "astar": 71.6,
+     "diff": -15.8,
+     "ci95": [-20.1,-11.9],
+     "n": 1688
+    },
+    "page hit@1": {
+     "model": 39.8,
+     "astar": 20.2,
+     "diff": 19.7,
+     "ci95": [15.4,23.1],
+     "n": 1300
+    },
+    "gate": "FAIL"
+   },
+   "theta + b, presence + strength": {
+    "key/wheel hit@8": {
+     "model": 56.8,
+     "astar": 87.1,
+     "diff": -30.2,
+     "ci95": [-34.8,-26.5],
+     "n": 1300
+    },
+    "menu hit@8": {
+     "model": 51.8,
+     "astar": 19.6,
+     "diff": 32.2,
+     "ci95": [26.4,38.8],
+     "n": 388
+    },
+    "all picks hit@8": {
+     "model": 55.7,
+     "astar": 71.6,
+     "diff": -15.9,
+     "ci95": [-20.1,-12.0],
+     "n": 1688
+    },
+    "page hit@1": {
+     "model": 40.2,
+     "astar": 20.2,
+     "diff": 20.1,
+     "ci95": [15.9,23.7],
+     "n": 1300
+    },
+    "gate": "FAIL"
+   },
+   "theta + b + recent_<family>": {
+    "key/wheel hit@8": {
+     "model": 58.6,
+     "astar": 87.1,
+     "diff": -28.5,
+     "ci95": [-32.1,-25.2],
+     "n": 1300
+    },
+    "menu hit@8": {
+     "model": 55.7,
+     "astar": 19.6,
+     "diff": 36.1,
+     "ci95": [31.2,42.6],
+     "n": 388
+    },
+    "all picks hit@8": {
+     "model": 57.9,
+     "astar": 71.6,
+     "diff": -13.6,
+     "ci95": [-18.0,-9.3],
+     "n": 1688
+    },
+    "page hit@1": {
+     "model": 41.1,
+     "astar": 20.2,
+     "diff": 20.9,
+     "ci95": [17.0,24.9],
+     "n": 1300
+    },
+    "gate": "FAIL"
+   },
+   "theta + b + recent + A* feature": {
+    "key/wheel hit@8": {
+     "model": 72.2,
+     "astar": 87.1,
+     "diff": -14.9,
+     "ci95": [-18.1,-12.5],
+     "n": 1300
+    },
+    "menu hit@8": {
+     "model": 56.7,
+     "astar": 19.6,
+     "diff": 37.1,
+     "ci95": [32.0,43.4],
+     "n": 388
+    },
+    "all picks hit@8": {
+     "model": 68.6,
+     "astar": 71.6,
+     "diff": -3.0,
+     "ci95": [-6.1,0.0],
+     "n": 1688
+    },
+    "page hit@1": {
+     "model": 42.2,
+     "astar": 20.2,
+     "diff": 22.0,
+     "ci95": [16.9,26.7],
+     "n": 1300
+    },
+    "gate": "PASS"
+   },
+   "theta + recent + A* feature (no b)": {
+    "key/wheel hit@8": {
+     "model": 69.8,
+     "astar": 87.1,
+     "diff": -17.3,
+     "ci95": [-20.4,-15.2],
+     "n": 1300
+    },
+    "menu hit@8": {
+     "model": 49.0,
+     "astar": 19.6,
+     "diff": 29.4,
+     "ci95": [25.1,35.8],
+     "n": 388
+    },
+    "all picks hit@8": {
+     "model": 65.0,
+     "astar": 71.6,
+     "diff": -6.6,
+     "ci95": [-9.5,-3.6],
+     "n": 1688
+    },
+    "page hit@1": {
+     "model": 39.4,
+     "astar": 20.2,
+     "diff": 19.2,
+     "ci95": [14.2,24.0],
+     "n": 1300
+    },
+    "gate": "FAIL"
+   },
+   "theta + b + recent + learn mult (D2)": {
+    "key/wheel hit@8": {
+     "model": 71.2,
+     "astar": 87.1,
+     "diff": -15.9,
+     "ci95": [-19.7,-12.6],
+     "n": 1300
+    },
+    "menu hit@8": {
+     "model": 57.5,
+     "astar": 19.6,
+     "diff": 37.9,
+     "ci95": [32.4,44.1],
+     "n": 388
+    },
+    "all picks hit@8": {
+     "model": 68.0,
+     "astar": 71.6,
+     "diff": -3.6,
+     "ci95": [-7.8,0.3],
+     "n": 1688
+    },
+    "page hit@1": {
+     "model": 43.1,
+     "astar": 20.2,
+     "diff": 22.9,
+     "ci95": [18.1,27.5],
+     "n": 1300
+    },
+    "gate": "PASS"
+   },
+   "theta + b + recent + learn mult + fav/corr/potion (D5)": {
+    "key/wheel hit@8": {
+     "model": 72.4,
+     "astar": 87.1,
+     "diff": -14.7,
+     "ci95": [-18.6,-11.2],
+     "n": 1300
+    },
+    "menu hit@8": {
+     "model": 58.0,
+     "astar": 19.6,
+     "diff": 38.4,
+     "ci95": [32.9,44.9],
+     "n": 388
+    },
+    "all picks hit@8": {
+     "model": 69.1,
+     "astar": 71.6,
+     "diff": -2.5,
+     "ci95": [-6.6,1.5],
+     "n": 1688
+    },
+    "page hit@1": {
+     "model": 42.6,
+     "astar": 20.2,
+     "diff": 22.5,
+     "ci95": [17.8,26.9],
+     "n": 1300
+    },
+    "gate": "PASS"
+   },
+   "theta + b + recent + old learner state (L1)": {
+    "key/wheel hit@8": {
+     "model": 67.8,
+     "astar": 87.1,
+     "diff": -19.3,
+     "ci95": [-23.3,-15.9],
+     "n": 1300
+    },
+    "menu hit@8": {
+     "model": 57.5,
+     "astar": 19.6,
+     "diff": 37.9,
+     "ci95": [32.5,44.4],
+     "n": 388
+    },
+    "all picks hit@8": {
+     "model": 65.4,
+     "astar": 71.6,
+     "diff": -6.2,
+     "ci95": [-10.6,-1.9],
+     "n": 1688
+    },
+    "page hit@1": {
+     "model": 42.6,
+     "astar": 20.2,
+     "diff": 22.5,
+     "ci95": [18.3,26.6],
+     "n": 1300
+    },
+    "gate": "FAIL"
+   }
+  },
   "metrics_cv_all": {
    "theta + b (doc 9)": {
     "key/wheel hit@8": {
@@ -4836,6 +5117,6 @@
     "gate": "FAIL"
    }
   },
-  "notes": ["Chosen: D2, the variant with the smallest part of the old score that passes the gate on the online replay (menu +40.2 [+35.3,+45.7], pooled -2.3 [-6.6,+1.6]). No variant without the old scorer passes: L1 (old learner state only) pooled -5.1 [-9.7,-1.0]; theta + b + recent -12.4 [-17.0,-8.1]; theta + b -16.2 [-20.0,-12.7].","D2 needs the old engine live in R8: FeatureBanditLearner (estimate, confidence, UCB), PriorCalculator (prior), UsageMemory (recency), lambda(confidence), and the old floors (fMinimumContextWeight, fMinimumUtility, cold start) that decide which rows are scored. It drops the context weights as a score term and the favourite, correlation and potion multipliers.","D5 (D2 + fav/corr/potion multipliers) pools +1.0 [+0.5,+1.8] better than D2 on the online replay (paired); not chosen because it keeps three more hand-tuned multipliers R8 retires.","This file differs from the evaluated D2 in two ways: theta is fitted on encumbrance read through the fitted curve (logistic 0.9887 73.42, curve.py) instead of the logged one (0.95 40), and loadout_two_handed is held at its prior (export.py --hold-needs): every log before 0.23.51 turned it on for the quarterstaff (85% of its contexts). Held, the fit's posterior on all 1865 picks rises by 23.7 nats (0.013 per pick).","The picks are the rehearsal's: the logs since 2026-10-28 17:30 hold no picks (launches of 0.23.47 with nothing records only), so the real fit is on the same 1865 picks as the rehearsal and the component test."]
+  "notes": ["Chosen: D2, the variant with the smallest part of the old score that passes the gate on the online replay (menu +40.2 [+35.3,+45.7], pooled -2.3 [-6.6,+1.6]); on the 1688 tested picks whose v2 record joins (metrics_online_joined) menu +37.9 [+32.4,+44.1], pooled -3.6 [-7.8,+0.3]. No variant without the old scorer passes: L1 (old learner state only) pooled -5.1 [-9.7,-1.0]; theta + b + recent -12.4 [-17.0,-8.1]; theta + b -16.2 [-20.0,-12.7].","D2 needs the old engine live in R8: FeatureBanditLearner (estimate, confidence, UCB), PriorCalculator (prior), UsageMemory (recency), lambda(confidence), and the old floors (fMinimumContextWeight, fMinimumUtility, cold start) that decide which rows are scored. It drops the context weights as a score term and the favourite, correlation and potion multipliers.","D5 (D2 + fav/corr/potion multipliers) pools +1.0 [+0.5,+1.8] better than D2 on the online replay (paired); not chosen because it keeps three more hand-tuned multipliers R8 retires.","This file differs from the evaluated D2 in two ways: theta is fitted on encumbrance read through the fitted curve (logistic 0.9887 73.42, curve.py) instead of the logged one (0.95 40), and loadout_two_handed is held at its prior (export.py --hold-needs): every log before 0.23.51 turned it on for the quarterstaff (85% of its contexts). Held, the fit's posterior on all 1865 picks rises by 23.7 nats (0.013 per pick).","The picks are the rehearsal's: the logs since 2026-10-28 17:30 hold no picks (launches of 0.23.47 with nothing records only), so the real fit is on the same 1865 picks as the rehearsal and the component test.","Evaluation leak through a missing v2 record: 27 of the 1715 tested picks (all menu equips; armour picks write no v2 record) have no v2 record, so on every row of those picks 'ln learn mult' (D2) and the fav/corr/potion features (D5) read 0, and an all-zero decision tells the model the pick was an unscored item. On those picks D2 hits 74.1% and D5 74.1%, against 51.9% for tbra (ln util read from v3, no leak), 59.3% for L1 and 0.0% for A*. metrics_online_joined is the online yardstick without them: the gate verdicts do not change, but D2's pooled upper end falls from +1.6 to +0.3, and paired D2 - tbra on menu goes from +2.2 [-0.4,+4.3] to +0.8 [-1.9,+3.0] (pooled -0.6 [-2.3,+1.0]): D2's menu lead over tbra is mostly this artefact. CV (all) has the same leak; on the joined picks D2 pools -2.7 [-6.2,+0.7] and tbra -2.6 [-5.5,+0.5] (both still pass).","Selection: D2 was picked from about 25 component variants (the R8 component test of 2026-10-29), all scored on this same online replay, so its pooled upper end after that selection (+1.6, +0.3 on joined picks) is weak evidence that it is not worse than A*. It ties with tbra (theta + b + recent + ln util), the variant the rehearsal fixed in advance: paired D2 - tbra pooled -0.2 [-2.0,+1.4], -0.6 [-2.3,+1.0] on joined picks. The case for D2 is that it ties tbra with less of the old score, not that it beats it."]
  }
 }

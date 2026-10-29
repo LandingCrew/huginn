@@ -252,8 +252,9 @@ writes (deterministic text) and validates the document.
   never-picked item whose kind matches by chance still gets one, so R8's
   reader cross-checks the resolved form's kind and name (the format doc).
 - Refused: split and latest-caps specs (diagnostics), specs without θ (the
-  baselines), the `ctx` and `cheap` features (they read the v2 log), a bias
-  need with presence + strength.
+  baselines), the `ctx` and `cheap` features (they read the old engine's
+  context weights; since 0.23.54 the exported `learn`, `mults` and `learner`
+  features read the v2 log too), a bias need with presence + strength.
 - `source.builds` is [oldest, newest] by version, two builds of one version
   ordered by when they were logged.
 - The default spec is `theta + b + recent_<family>`; pass the one R6's

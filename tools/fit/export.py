@@ -3,15 +3,19 @@
 
 usage: python export.py [--spec NAME] [--three] [--forms Huginn_All.csv] [--curve curve_encumbrance.json ...]
                         [--out bootstrap.json] [--since V] [--until V] [--maxiter N]
+                        [--hold-needs NEED ...] [--provenance provenance.json]
 (after v3load.py; --curve after curve.py)
 
 What is written: theta (needs x effect columns) and its diagonal precision, theta_strength
 for the presence + strength grading, theta_bias for a bias-need spec, kappa, u0 per need
 (three-outcome specs), the recent_<family> weights (as rows of theta for each family and time
-constant), the extra row-feature weights (ln util, util missing, slot N), the per-item b
+constant), the extra row-feature weights (ln util, util missing, slot N; and from 0.23.54
+the old learner's components: ln learn mult, ln fav, ln corr, ln potion, ln learner, eligible,
+which read the v2 log), the per-item b
 keyed by plugin + local FormID, and the fitted response curves (--curve). A curve's
 need is re-read through it (curve.with_curve) before the fit, so theta matches the curve the
-file ships.
+file ships. --hold-needs keeps the named needs' theta rows at their prior centre (a need the log
+misreads); --provenance writes a JSON object as the file's informational `provenance`.
 
 Items. The log names forms by their runtime FormID, which changes with the load order; the
 file keys each item by the plugin that owns its FormID's load-order index and its FormID

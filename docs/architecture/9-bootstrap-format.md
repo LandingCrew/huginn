@@ -154,7 +154,12 @@ still needs the old learner and the old floors (which rows are scored) live.
 fit these come from the v2 log (`Huginn_Selections.jsonl`) joined to the v3
 pick by form and time (within 2 s): rows of a pick without a v2 record (armour
 picks write none) read 0 for `ln learn mult`, so a live reader that computes it
-for every scored row gives it on rows the fit saw as 0. A version-1 reader
+for every scored row gives it on rows the fit saw as 0. The same zeros leak
+into the evaluation: an all-zero decision tells the model the pick was an
+unscored item, so D2 and D5 catch 74% of the 27 unjoined tested picks (tbra,
+whose `ln util` comes from v3, 52%; A* 0%). The shipped file's `provenance`
+carries the yardstick on the joined picks only (`metrics_online_joined`;
+roadmap R6, the real fit). A version-1 reader
 written before 0.23.54 rejects these names (rule 8); none existed then.
 
 ### `curves`
@@ -316,7 +321,9 @@ the builds, the spec, the reasons, and the yardstick of every spec R6 compared
 (online and CV). It was written by:
 
 ```sh
-python <repo>/tools/fit/export.py --spec "theta + b + recent + learn mult (D2)"        --curve curve_encumbrance.json --forms <SKSE>/Huginn_All.csv        --hold-needs loadout_two_handed --provenance provenance.json --out Huginn_Bootstrap.json
+python <repo>/tools/fit/export.py --spec "theta + b + recent + learn mult (D2)" \
+    --curve curve_encumbrance.json --forms <SKSE>/Huginn_All.csv \
+    --hold-needs loadout_two_handed --provenance provenance.json --out Huginn_Bootstrap.json
 ```
 
 `configs/` holds the files the build installs into `Data/SKSE/Plugins/`
