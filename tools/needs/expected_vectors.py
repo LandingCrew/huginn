@@ -88,7 +88,9 @@ FIELDS = {
     # Environment
     "light": ("f", 1.0), "openDaylight": ("b", 0), "underwater": ("b", 0),
     "submergedFor": ("f", 0.0), "swimming": ("b", 0), "fallDepth": ("f", 0.0),
-    "dropAhead": ("f", -1.0), "waterDepthAhead": ("f", -1.0), "lock": ("b", 0), "workstation": ("i", 0),
+    "dropAhead": ("f", -1.0), "waterDepthAhead": ("f", -1.0),
+    "edgeDistance": ("f", -1.0), "edgeSpeed": ("f", 0.0), "edgeApproach": ("f", 0.0),  # 0.23.48
+    "lock": ("b", 0), "workstation": ("i", 0),
     "oreVein": ("b", 0), "merchant": ("b", 0),
     # Equipment
     "enchantedWeapon": ("b", 0), "weaponCharge": ("f", 1.0), "bow": ("b", 0),
@@ -299,6 +301,11 @@ FORMULAS = {
     "falling": lambda s: s["fallDepth"],
     "drop_ahead": lambda s: 0.0 if s["dropAhead"] < 0 else s["dropAhead"],
     "deep_water_ahead": lambda s: 0.0 if s["waterDepthAhead"] < 0 else s["waterDepthAhead"],
+    # 0.23.48. NOT independent of the C++: transcribed from the csv r3_input
+    # by the same agent that wrote the NeedEvaluator cases for these two.
+    "time_to_edge": lambda s: (NEVER if (s["edgeDistance"] < 0 or s["edgeSpeed"] <= 0)
+                               else min(s["edgeDistance"] / s["edgeSpeed"], NEVER)),
+    "edge_approach": lambda s: s["edgeApproach"],
     "lock_in_crosshair": lambda s: float(s["lock"]),
     "workstation_smithing": lambda s: 1.0 if s["workstation"] == 1 else 0.0,
     "workstation_enchanting": lambda s: 1.0 if s["workstation"] == 2 else 0.0,

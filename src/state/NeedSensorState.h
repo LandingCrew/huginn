@@ -41,6 +41,10 @@ namespace Huginn::State
       float dropAhead = -1.0f;           // units; -1 = not measured (airborne, swimming, no physics world)
       float waterDepthAhead = -1.0f;     // the same probe pass: deepest water ahead, units; 0 none, -1 as dropAhead
       double dropAgeSec = -1.0;          // the probe's last reading: its age in UNPAUSED seconds; -1 = none
+      // The same probe pass (0.23.48, core/EdgeApproach.h), the same staleness:
+      float edgeDistance = -1.0f;        // units to the nearest dangerous known probe point; -1 none or not measured
+      float edgeSpeed = 0.0f;            // speed along the probe direction, units per GAME second (< 0 away)
+      float edgeApproach = 0.0f;         // the approach trend, proximity per game second; 0 not measured
 
       // PollWorldObjects
       bool openDaylight = false;

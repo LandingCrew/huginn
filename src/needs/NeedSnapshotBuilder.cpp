@@ -154,6 +154,9 @@ namespace Huginn::Needs
       s.fallDepth = p.fallDepth;
       s.dropAhead = n.dropAhead;
       s.waterDepthAhead = n.waterDepthAhead;
+      s.edgeDistance = n.edgeDistance;
+      s.edgeSpeed = n.edgeSpeed;
+      s.edgeApproach = n.edgeApproach;
       s.lock = src.world.isLookingAtLock;
       s.workstation = WorkstationOf(n);
       s.oreVein = src.world.isLookingAtOreVein;
